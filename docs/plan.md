@@ -28,11 +28,18 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 - ✅ IL2P codec (spec v0.6 incl. IL2P+CRC): Type 0/1 headers, scrambler, RS(0x11D) FEC,
   block segmentation, Hamming CRC trailer. Byte-exact vs all three spec example packets;
   error-correction + fuzz roundtrip tests. (2026-07-14)
-- ⬜ HDLC bit layer (flags, stuffing, NRZI, FCS) for classic AX.25.
-- ⬜ WAV/raw-PCM offline harness.
-- ⬜ 300 BPSK demodulator (UZ7HO lineage) + IL2P sync-word hunter (±1 bit).
-- ⬜ 1200 AFSK demodulator (UZ7HO discriminator design; direwolf papers as cross-ref).
-- Exit: corpus decode rates ≥ QtSoundModem and ≥ NinoTNC on identical recordings.
+- ✅ HDLC bit layer (flags, stuffing, abort, NRZI, FCS) + streaming IL2P deframer
+  (±1-bit sync tolerance). (2026-07-14)
+- ✅ WAV 16-bit PCM read/write offline harness. (2026-07-14)
+- ✅ 300 BPSK modulator + demodulator (differential detection per the IL2P symbol map;
+  QtSM P300 filter plan) — clean/noisy/offset/multi-block loopbacks green. (2026-07-14)
+- ✅ 1200 AFSK modulator + demodulator (UZ7HO Mux3 chain: BPF → mix → I/Q LPF →
+  cross-multiply discriminator, power-normalised, envelope slicer, direwolf-style DPLL) —
+  clean/noisy/quiet/back-to-back loopbacks green. (2026-07-14)
+- ⬜ Cross-validation against an independent implementation (direwolf-generated WAVs) and
+  the Phase 0 hardware corpus.
+- Exit: corpus decode rates ≥ QtSoundModem and ≥ NinoTNC on identical recordings
+  (needs Phase 0 recordings — loopback tests alone do not demonstrate this).
 
 ### Phase 2 — live RX + DCD + waterfall ⬜
 ALSA capture (48 kHz native, polyphase ÷4 to 12 kHz), per-channel DCD (DPLL
