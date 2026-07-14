@@ -46,10 +46,29 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 - Exit: corpus decode rates ≥ QtSoundModem and ≥ NinoTNC on identical recordings
   (needs Phase 0 recordings — loopback tests alone do not demonstrate this).
 
-### Phase 2 — live RX + DCD + waterfall ⬜
-ALSA capture (48 kHz native, polyphase ÷4 to 12 kHz), per-channel DCD (DPLL
-popcount-hysteresis + decoupled energy busy detector), spectrum feed; PDN `kind: soundmodem`
-port (RX-only) with `ICarrierSense` via the PortSupervisor probe; waterfall UI in the node.
+### Phase 2 — live RX + DCD + waterfall 🟡 in progress
+- ✅ Native DCD (2026-07-14): `PacketDcd` (direwolf DPLL transition-quality scoring,
+  30/32-6/32 hysteresis) + `EnergyBusyDetector` (display-decoupled block power vs
+  min-tracking noise floor, 6/3 dB hysteresis, hold, warm-up-aware seeding). Exposed on
+  both demodulators as `CarrierDetect` / `ChannelBusy` + `ResetCarrierState()` — the
+  surface the PDN `ICarrierSense` adapter consumes. Behavioural tests incl. the
+  steady-carrier-is-busy-but-not-DCD case headless QtSM cannot see.
+- ✅ Spectrum feed groundwork (2026-07-14): native radix-2 `Fft` + `SpectrumSource`
+  (Hann, 4096-pt, dB-scaled u8 bins ≈2 kB/line ~3/s per channel).
+- ✅ ALSA layer (2026-07-14): `AlsaPcm` (libasound P/Invoke, capture+playback, xrun
+  recovery, `Drain` for sample-domain PTT release) + `Decimator` (real anti-aliased
+  48 k→12 k ÷4; aliasing-suppression test). Hardware smoke tests are SkippableFact —
+  NOTE: they skip on this dev box because user `tf` lacks the `audio` group
+  (`sudo usermod -aG audio tf` to enable); they will run on the bench/Pi.
+- ⬜ SoundChannel composition: capture loop → decimator → N modems per audio side
+  (multiplex model) + per-channel DCD aggregation + spectrum tap.
+- ⬜ Standalone KISS-TCP daemon (`pdn-soundmodem` binary): config file, KISS framing
+  (implement in-repo from the KISS spec — do NOT depend on AGPL Packet.Kiss), sub-channel
+  nibble ↔ modem mux, TX queue (Phase 3 gates actual PTT).
+- ⬜ packet.net side: `kind: soundmodem` transport + `transport is ICarrierSense` probe at
+  PortSupervisor (seam mapped in the research doc §5), spectrum SSE endpoint + waterfall
+  UI (PdnPortTuningApi is the template; add to the SSE token allowlist; node-api.yaml).
+- ⬜ Live RX soak on real audio hardware.
 
 ### Phase 3 — TX ⬜
 Modulators, sample-domain PTT timing (RTS/DTR + CM108 hidraw + PDN `IRigControl`),
@@ -62,6 +81,21 @@ extension (aligned with whatever format the NinoTNC ecosystem agrees), Windows a
 extra decode-only listeners per passband.
 
 ## Amendment log
+
+### 2026-07-14 (later) — Phase 1 complete in software; DCD, spectrum, ALSA land
+
+Same-day continuation: HDLC bit layer + IL2P streaming deframer; WAV harness; AFSK 1200 and
+BPSK 300 modulator/demodulator pairs with loopback suites (noise, offset, quiet, multi-block,
+back-to-back); cross-validation vs Dire Wolf built from source — 4/4 parity with atest on
+clean AFSK and IL2P-over-AFSK fixtures (committed as regression tests), 34-vs-38 on the
+100-frame noise battery (single decoder vs multi-slicer; multi-decoder bank is the Phase 4
+answer). Two real-world demod fixes came out of direwolf audio: discriminator clamping
+(silence noise over near-zero power deafened the envelope slicer) and flush-tail handling.
+Then Phase 2 groundwork: native DCD (PacketDcd + EnergyBusyDetector on both demods),
+radix-2 FFT + SpectrumSource waterfall feed, AlsaPcm P/Invoke + anti-aliased ÷4 Decimator.
+`tools/Packet.SoundModem.Decode` (sm-decode) added as our atest equivalent. 101 tests
+(99 pass + 2 ALSA smoke tests that need the audio group). Remaining Phase 1 exit gate —
+hardware corpus ≥ QtSM/NinoTNC — needs bench-rig time (Phase 0).
 
 ### 2026-07-14 — repo founded; IL2P codec lands
 Repo created from the packet.net research + decisions. Scaffold (net10.0, CPM, xunit +
