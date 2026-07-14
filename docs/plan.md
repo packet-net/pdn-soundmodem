@@ -36,8 +36,13 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 - ✅ 1200 AFSK modulator + demodulator (UZ7HO Mux3 chain: BPF → mix → I/Q LPF →
   cross-multiply discriminator, power-normalised, envelope slicer, direwolf-style DPLL) —
   clean/noisy/quiet/back-to-back loopbacks green. (2026-07-14)
-- ⬜ Cross-validation against an independent implementation (direwolf-generated WAVs) and
-  the Phase 0 hardware corpus.
+- ✅ Cross-validation vs Dire Wolf (independent implementation): 4/4 decode parity with
+  atest on gen_packets AFSK and **IL2P-over-AFSK** fixtures (committed as regression
+  tests); direwolf's RESERVED-bit convention tolerated as designed. On the 100-frame
+  increasing-noise battery: ours 34 vs atest 38 (single decoder vs multi-slicer — the
+  Phase 4 multi-decoder bank is the path to parity+). `tools/Packet.SoundModem.Decode`
+  (sm-decode) is our atest equivalent. (2026-07-14)
+- ⬜ Phase 0 hardware corpus validation (needs rig time).
 - Exit: corpus decode rates ≥ QtSoundModem and ≥ NinoTNC on identical recordings
   (needs Phase 0 recordings — loopback tests alone do not demonstrate this).
 

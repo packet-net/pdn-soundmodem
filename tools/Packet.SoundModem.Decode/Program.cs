@@ -1,0 +1,114 @@
+using Packet.SoundModem.Audio;
+using Packet.SoundModem.Hdlc;
+using Packet.SoundModem.Il2p;
+using Packet.SoundModem.Modems;
+
+// sm-decode: offline WAV decoder — this project's equivalent of direwolf's `atest`,
+// for corpus benchmarking and cross-validation against other modems.
+//
+//   sm-decode <file.wav> [afsk1200|bpsk300] [--il2p] [--crc] [--quiet]
+//
+// afsk1200 (default): classic AX.25 (NRZI + HDLC), or IL2P-over-AFSK with --il2p
+// (per the IL2P symbol map AFSK carries raw bits — no NRZI — mark = '1').
+// bpsk300 implies IL2P. Prints one line per decoded frame and a final count.
+
+if (args.Length < 1)
+{
+    Console.Error.WriteLine("usage: sm-decode <file.wav> [afsk1200|bpsk300] [--il2p] [--crc] [--quiet]");
+    return 2;
+}
+
+string path = args[0];
+string mode = args.Skip(1).FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal)) ?? "afsk1200";
+bool il2p = args.Contains("--il2p") || mode == "bpsk300";
+bool crc = args.Contains("--crc");
+bool quiet = args.Contains("--quiet");
+
+var (samples, sampleRate) = WavFile.ReadMono(path);
+
+// Flush tail: a file can end flush with the last closing flag, which would otherwise be
+// stranded inside the demodulator's FIR pipeline (a live stream never "ends").
+Array.Resize(ref samples, samples.Length + sampleRate / 2);
+
+int count = 0;
+
+void OnFrame(byte[] frame)
+{
+    count++;
+    if (!quiet)
+    {
+        Console.WriteLine($"[{count}] {Monitor.Format(frame)}");
+    }
+}
+
+Action<int> bitSink;
+if (il2p)
+{
+    var deframer = new Il2pDeframer((frame, _) => OnFrame(frame), crcMode: crc);
+    bitSink = deframer.PushBit;
+}
+else
+{
+    var deframer = new HdlcDeframer(OnFrame);
+    var nrzi = new NrziDecoder();
+    bitSink = level => deframer.PushBit(nrzi.Decode(level));
+}
+
+switch (mode)
+{
+    case "afsk1200":
+        var afsk = new Afsk1200Demodulator(sampleRate, bitSink);
+        afsk.Process(samples);
+        break;
+    case "bpsk300":
+        var bpsk = new Bpsk300Demodulator(sampleRate, bitSink);
+        bpsk.Process(samples);
+        break;
+    default:
+        Console.Error.WriteLine($"unknown mode '{mode}'");
+        return 2;
+}
+
+Console.WriteLine($"{count} frames decoded from {Path.GetFileName(path)} ({mode}{(il2p ? " il2p" : "")})");
+return 0;
+
+internal static class Monitor
+{
+    /// <summary>Formats an AX.25 frame as SRC>DEST[,digis]:info for eyeballing.</summary>
+    internal static string Format(byte[] frame)
+    {
+        if (frame.Length < 15)
+        {
+            return Convert.ToHexString(frame);
+        }
+
+        static string Call(ReadOnlySpan<byte> address)
+        {
+            var chars = new char[6];
+            for (int i = 0; i < 6; i++)
+            {
+                chars[i] = (char)(address[i] >> 1);
+            }
+
+            int ssid = (address[6] >> 1) & 0xF;
+            string call = new string(chars).TrimEnd();
+            return ssid == 0 ? call : $"{call}-{ssid}";
+        }
+
+        string dest = Call(frame.AsSpan(0, 7));
+        string source = Call(frame.AsSpan(7, 7));
+        int position = 14;
+        var digis = new List<string>();
+        while ((frame[position - 1] & 0x01) == 0 && position + 7 <= frame.Length)
+        {
+            digis.Add(Call(frame.AsSpan(position, 7)));
+            position += 7;
+        }
+
+        string via = digis.Count > 0 ? "," + string.Join(',', digis) : "";
+        string payload = position + 2 <= frame.Length
+            ? System.Text.Encoding.Latin1.GetString(frame, position + 2, frame.Length - position - 2)
+            : "";
+        return $"{source}>{dest}{via}:{payload}";
+    }
+}

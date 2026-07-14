@@ -1,8 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <ItemGroup>
-    <None Include="Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>sm-decode</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />

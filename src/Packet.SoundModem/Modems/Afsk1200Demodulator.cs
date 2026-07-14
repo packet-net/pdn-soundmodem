@@ -70,6 +70,12 @@ public sealed class Afsk1200Demodulator
             float power = _i1 * _i1 + _q1 * _q1;
             float discriminator = ((_i0 - _i2) * _q1 - (_q0 - _q2) * _i1) / (power + 1e-12f);
 
+            // During silence the normalisation divides noise by near-zero power, producing
+            // huge garbage that would blow up the envelope thresholds below and deafen the
+            // slicer for the next transmission. The legitimate range is set by the tone
+            // deviation (|disc| ≈ 2π·500/rate·2 ≪ 1), so clamp hard.
+            discriminator = Math.Clamp(discriminator, -1f, 1f);
+
             // Envelope-based slicer threshold (fast attack, slow decay), midway between the
             // mark and space extremes. A mean tracker fails here: an HDLC flag preamble is
             // 87.5 % mark (seven hold bits per flag), which drags a mean far off centre —
