@@ -5,6 +5,7 @@
     <Description>Headless soundcard packet modem core: IL2P/AX.25 framing and FEC now; demodulators, KISS TCP and DCD to follow.</Description>
     <PackageTags>packet-radio;ax25;il2p;soundmodem;kiss;fec;reed-solomon;amateur-radio</PackageTags>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
 </Project>
