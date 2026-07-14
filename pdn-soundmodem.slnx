@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Packet.SoundModem/Packet.SoundModem.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj" />
+  </Folder>
+</Solution>
