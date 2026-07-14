@@ -12,6 +12,7 @@ public sealed class BitDpll
     private readonly double _increment;
     private readonly double _inertia;
     private readonly Action<int> _bitSink;
+    private readonly Action<double>? _transitionObserver;
     private double _phase; // −0.5 … +0.5, wrap = sampling instant
     private int _lastLevel;
 
@@ -22,7 +23,11 @@ public sealed class BitDpll
     /// <param name="bitSink">Receives the sampled level (0/1) once per symbol.</param>
     /// <param name="inertia">Phase retained on each transition nudge. Dire Wolf uses 0.74
     /// when locked; lower values acquire faster but jitter more.</param>
-    public BitDpll(int baud, int sampleRate, Action<int> bitSink, double inertia = 0.74)
+    /// <param name="transitionObserver">Called with the pre-nudge phase of every observed
+    /// transition — the timing-quality signal <see cref="PacketDcd"/> scores.</param>
+    public BitDpll(
+        int baud, int sampleRate, Action<int> bitSink, double inertia = 0.74,
+        Action<double>? transitionObserver = null)
     {
         ArgumentNullException.ThrowIfNull(bitSink);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
@@ -30,6 +35,7 @@ public sealed class BitDpll
         _increment = (double)baud / sampleRate;
         _inertia = inertia;
         _bitSink = bitSink;
+        _transitionObserver = transitionObserver;
     }
 
     /// <summary>Advances the clock by one sample of sliced level (0/1).</summary>
@@ -45,6 +51,7 @@ public sealed class BitDpll
         if (level != _lastLevel)
         {
             _lastLevel = level;
+            _transitionObserver?.Invoke(_phase);
             _phase *= _inertia;
         }
     }

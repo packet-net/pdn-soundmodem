@@ -17,6 +17,8 @@ public sealed class Bpsk300Demodulator
     private readonly FirFilter _lowPassI;
     private readonly FirFilter _lowPassQ;
     private readonly BitDpll _dpll;
+    private readonly PacketDcd _packetDcd = new();
+    private readonly EnergyBusyDetector _energyBusy;
     private readonly float[] _delayI;
     private readonly float[] _delayQ;
     private readonly double _oscillatorStep;
@@ -46,7 +48,22 @@ public sealed class Bpsk300Demodulator
         int samplesPerSymbol = sampleRate / 300;
         _delayI = new float[samplesPerSymbol];
         _delayQ = new float[samplesPerSymbol];
-        _dpll = new BitDpll(300, sampleRate, bitSink);
+        _dpll = new BitDpll(300, sampleRate, bitSink, transitionObserver: _packetDcd.OnTransition);
+        _energyBusy = new EnergyBusyDetector(sampleRate);
+    }
+
+    /// <summary>True while DPLL transition timing indicates a coherent packet signal.</summary>
+    public bool CarrierDetect => _packetDcd.Asserted;
+
+    /// <summary>Channel-busy for carrier sense: packet DCD or any significant in-band
+    /// energy (a carrier, voice, another mode).</summary>
+    public bool ChannelBusy => _packetDcd.Asserted || _energyBusy.Busy;
+
+    /// <summary>Clears carrier state, e.g. while the channel's own transmitter is keyed.</summary>
+    public void ResetCarrierState()
+    {
+        _packetDcd.Reset();
+        _energyBusy.Reset();
     }
 
     /// <summary>Processes a block of audio samples.</summary>
@@ -55,6 +72,7 @@ public sealed class Bpsk300Demodulator
         foreach (float sample in samples)
         {
             float filtered = _bandPass.Next(sample);
+            _energyBusy.Process(filtered);
 
             _oscillatorPhase += _oscillatorStep;
             if (_oscillatorPhase > 2 * Math.PI)
