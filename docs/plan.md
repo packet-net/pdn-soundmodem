@@ -47,14 +47,17 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   increasing-noise battery: ours 34 vs atest 38 (single decoder vs multi-slicer — the
   Phase 4 multi-decoder bank is the path to parity+). `tools/Packet.SoundModem.Decode`
   (sm-decode) is our atest equivalent. (2026-07-14)
-- 🟡 Real-corpus benchmark (2026-07-15, WA8LMF TNC Test CD Track 2 — 26 min of off-air
-  1200 AFSK APRS, kept locally in corpus/, redistribution TBC): **direwolf atest 983;
-  ours: single 228, multi-flat(7-branch) 267** — loopbacks and the synthetic battery
-  hid a large real-world gap (per-station level/twist diversity). Emphasis variants
-  (QtSM emph_all: ×3 branches) added to the multi bank; benchmark rerun pending.
-  Known further levers from the research: per-tone AGC (direwolf's twist killer),
-  dual-threshold slicing + Memory-ARQ (UZ7HO), slicer-level banks, searching/locked
-  DPLL inertia. This corpus number is now the honest Phase 1 AFSK exit gate.
+- ✅ Real-corpus benchmark — **direwolf parity** (2026-07-15, WA8LMF TNC Test CD
+  Track 2, 26 min of off-air 1200 AFSK APRS, kept locally in corpus/, redistribution
+  TBC): at 12 kHz **atest 970 / ours (multi+emphasis, 21 branches) 970**. The road
+  there is instructive: single flat decoder 228@44.1k / 60@12k, flat 7-branch multi
+  267 — real-world per-station twist/level diversity is THE dominant factor, and the
+  QtSM emph_all emphasis branches (flat/+6/+12 dB-per-octave ×each offset) closed the
+  whole gap. `afsk1200-multi` is therefore the recommended AFSK mode. Known issue: the
+  single-decoder DPLL degrades at 10 samples/bit (60@12k vs 228@44.1k) — sub-sample
+  transition interpolation is the future fix; further levers if ever needed: per-tone
+  AGC, dual-threshold + Memory-ARQ, slicer banks. 44.1 kHz full-bank run pending for
+  the apples-to-apples vs atest's 983.
 - ⬜ Phase 0 hardware corpus validation for the IL2P modes (needs rig time).
 - Exit: corpus decode rates ≥ QtSoundModem and ≥ NinoTNC on identical recordings
   (needs Phase 0 recordings — loopback tests alone do not demonstrate this).
