@@ -1,0 +1,16 @@
+[Unit]
+Description=pdn-soundmodem headless soundcard packet modem
+After=sound.target network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pdn-soundmodem --config /etc/pdn-soundmodem/soundmodem.json
+Restart=on-failure
+RestartSec=5
+User=pdn-soundmodem
+SupplementaryGroups=audio dialout
+# Real-time-ish scheduling headroom for the audio thread (optional; see docs).
+LimitRTPRIO=10
+
+[Install]
+WantedBy=multi-user.target

@@ -121,11 +121,39 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 - ✅ FX.25 modem/daemon wiring (2026-07-15): Afsk1200Modem fx25 option (Receive /
   TransmitReceive with dedupe across the FX.25 and embedded-HDLC paths); daemon modes
   afsk1200-fx25 / afsk1200-fx25rx; transparency + dedupe tests.
-- ⬜ .deb packaging; DCD-over-KISS extension (awaiting an agreed NinoTNC-ecosystem
-  format); Windows audio backend (deferred 2026-07-15); extra decode-only listeners;
-  multi-decoder banks for the PSK modes.
+- ✅ .deb packaging (2026-07-15): packaging/build-deb.sh (amd64/arm64/armhf,
+  self-contained single file, Depends: libasound2 only, systemd unit + example config,
+  pdn-soundmodem system user with audio+dialout). amd64 package binary smoke-tested
+  (4/4 on the direwolf fixture); arm64 built ready for the Pi.
+- ⬜ DCD-over-KISS extension (awaiting an agreed NinoTNC-ecosystem format); Windows
+  audio backend (deferred 2026-07-15); extra decode-only listeners; multi-decoder banks
+  for the PSK modes.
+
+## Blocked on Tom / hardware (2026-07-15)
+
+- **NuGet**: publish workflow ran on the v0.1.0 tag — pack + tests green, but the
+  NUGET_API_KEY org secret is NOT visible to this repo, so the push was skipped
+  (deliberate warn-and-skip). Grant the secret to pdn-soundmodem (org secret →
+  repository access, or `gh secret set NUGET_API_KEY -R packet-net/pdn-soundmodem`),
+  then re-run: `gh workflow run publish -R packet-net/pdn-soundmodem -f override_version=0.1.0`.
+  The packet.net port package starts once the package indexes.
+- **Hardware** (Phase 0 + gates): `sudo usermod -aG audio tf` on this box for local ALSA
+  tests; soundcard on the NinoTNC bench rig for the WAV corpus; a Pi for the DSP
+  benchmark and .deb trial; over-air NinoTNC runs to gate each mode (esp. whether
+  NinoTNC's 9600 GFSK matches the direwolf-validated baseband, the QPSK phase maps, and
+  the legacy-max-FEC bit behaviour).
 
 ## Amendment log
+
+### 2026-07-15 (later) — FX.25 + multi-decoder + daemon config + .deb; publish staged
+
+Multi-decoder AFSK bank lands at exact atest parity (38/38-reference on the direwolf noise
+battery, from 34 single-decoder). FX.25 codec + deframer cross-validated bidirectionally
+with direwolf and wired into the AFSK modem/daemon with transparent-dedupe. Daemon gains a
+JSON config file and .deb packaging (amd64 smoke-tested, arm64 built). NuGet publish
+workflow added and v0.1.0 tagged with Tom's authorization — pack+tests green on the org
+runner; push skipped pending the NUGET_API_KEY secret being granted to this repo (see
+Blocked on Tom). 147 tests green.
 
 ### 2026-07-15 — QPSK + 9600 modems; the legacy-max-FEC interop discovery
 

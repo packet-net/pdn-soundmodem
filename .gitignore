@@ -8,3 +8,4 @@ artifacts/
 *.nupkg
 *.snupkg
 appsettings.Local.json
+artifacts/
