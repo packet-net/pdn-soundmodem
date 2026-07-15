@@ -46,5 +46,6 @@ prior art and stays GPL:
 
 The sibling [packet.net](https://github.com/packet-net/packet.net) repo is AGPL-3.0; the two
 combine under GPLv3 §13 / AGPLv3 §13. Nothing MIT-licensed may depend on this package.
+**[PROVENANCE.md](PROVENANCE.md) records, per component, what this code is truly based on.**
 
 The NuGet package id is `pdn-soundmodem`; the assembly and namespace are `Packet.SoundModem`.
