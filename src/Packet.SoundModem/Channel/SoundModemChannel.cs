@@ -1,0 +1,197 @@
+using System.Threading.Channels;
+using Packet.SoundModem.Dsp;
+using Packet.SoundModem.Modems;
+
+namespace Packet.SoundModem.Channel;
+
+/// <summary>KISS channel-access parameters, in KISS units where noted.</summary>
+public sealed class CsmaParameters
+{
+    /// <summary>Preamble length in milliseconds. Default 300.</summary>
+    public int TxDelayMilliseconds { get; set; } = 300;
+
+    /// <summary>p-persistence parameter, 0–255 (p = (value+1)/256). Default 63 (p=0.25).</summary>
+    public int Persistence { get; set; } = 63;
+
+    /// <summary>Slot time in milliseconds. Default 100.</summary>
+    public int SlotTimeMilliseconds { get; set; } = 100;
+
+    /// <summary>Audio kept flowing after the last frame, in milliseconds. Software modems
+    /// need a non-zero tail so they do not clip their own transmissions. Default 20.</summary>
+    public int TxTailMilliseconds { get; set; } = 20;
+}
+
+/// <summary>
+/// One audio channel hosting up to 16 logical modems (the QtSoundModem multiplex model,
+/// addressed by KISS sub-channel): fans received audio into every modem plus the spectrum
+/// source, aggregates carrier sense, and runs the transmit side — classic AX.25 §6
+/// p-persistent CSMA gated on the aggregated <see cref="ChannelBusy"/>, PTT keying, and
+/// device-paced audio with a drain before unkey (sample-domain TX-complete).
+/// </summary>
+public sealed class SoundModemChannel
+{
+    private readonly Dictionary<int, IModem> _modems = [];
+    private readonly Channel<(int SubChannel, byte[] Frame, TaskCompletionSource Done)> _txQueue =
+        System.Threading.Channels.Channel.CreateUnbounded<(int, byte[], TaskCompletionSource)>();
+    private readonly TimeProvider _time;
+    private readonly Random _random;
+    private readonly SpectrumSource? _spectrum;
+    private volatile bool _transmitting;
+
+    /// <summary>Creates a channel.</summary>
+    /// <param name="sampleRate">DSP sample rate all modems and TX audio run at.</param>
+    /// <param name="time">Clock for CSMA waits (injectable per repo discipline).</param>
+    /// <param name="spectrumSink">Optional waterfall line sink (see
+    /// <see cref="SpectrumSource"/>).</param>
+    /// <param name="randomSeed">Seed for the p-persistence roll (tests); null = random.</param>
+    public SoundModemChannel(
+        int sampleRate,
+        TimeProvider? time = null,
+        Action<ReadOnlyMemory<byte>>? spectrumSink = null,
+        int? randomSeed = null)
+    {
+        SampleRate = sampleRate;
+        _time = time ?? TimeProvider.System;
+        _random = randomSeed is int seed ? new Random(seed) : new Random();
+        if (spectrumSink is not null)
+        {
+            _spectrum = new SpectrumSource(sampleRate, spectrumSink);
+        }
+    }
+
+    /// <summary>The channel's DSP sample rate.</summary>
+    public int SampleRate { get; }
+
+    /// <summary>Channel-access tunables (KISS parameter commands update these).</summary>
+    public CsmaParameters Csma { get; } = new();
+
+    /// <summary>Raised for every received frame, with the sub-channel that decoded it.
+    /// Called from the receive-processing thread.</summary>
+    public event Action<int, byte[]>? FrameReceived;
+
+    /// <summary>True while any modem sees packet or energy busy, or we are transmitting.</summary>
+    public bool ChannelBusy => _transmitting || _modems.Values.Any(m => m.ChannelBusy);
+
+    /// <summary>True while any modem's packet DCD is asserted.</summary>
+    public bool CarrierDetect => _modems.Values.Any(m => m.CarrierDetect);
+
+    /// <summary>The modems keyed by sub-channel.</summary>
+    public IReadOnlyDictionary<int, IModem> Modems => _modems;
+
+    /// <summary>Adds a modem on a KISS sub-channel (0–15).</summary>
+    public void AddModem(int subChannel, Func<Action<byte[]>, IModem> factory)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(subChannel);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(subChannel, 15);
+        _modems.Add(subChannel, factory(frame => FrameReceived?.Invoke(subChannel, frame)));
+    }
+
+    /// <summary>Feeds received audio to every modem and the spectrum source. Skipped
+    /// while transmitting (half duplex).</summary>
+    public void ProcessReceive(ReadOnlySpan<float> samples)
+    {
+        _spectrum?.Process(samples);
+        if (_transmitting)
+        {
+            return;
+        }
+
+        foreach (IModem modem in _modems.Values)
+        {
+            modem.Process(samples);
+        }
+    }
+
+    /// <summary>Queues a frame for transmission on a sub-channel. The returned task
+    /// completes when the frame's audio has fully left the device (ACKMODE's answer).</summary>
+    public Task EnqueueTransmit(int subChannel, byte[] frame)
+    {
+        if (!_modems.ContainsKey(subChannel))
+        {
+            return Task.FromException(new ArgumentException($"no modem on sub-channel {subChannel}"));
+        }
+
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_txQueue.Writer.TryWrite((subChannel, frame, done)))
+        {
+            done.SetException(new InvalidOperationException("transmit queue closed"));
+        }
+
+        return done.Task;
+    }
+
+    /// <summary>
+    /// Runs the transmit side until cancelled: waits for queued frames, acquires the
+    /// channel (p-persistent CSMA), keys PTT, plays every queued frame back-to-back,
+    /// drains, unkeys.
+    /// </summary>
+    public async Task RunTransmitterAsync(IAudioOutput output, IPttControl ptt, CancellationToken cancellation)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(ptt);
+        if (output.SampleRate != SampleRate)
+        {
+            throw new ArgumentException(
+                $"output rate {output.SampleRate} != channel rate {SampleRate}", nameof(output));
+        }
+
+        var reader = _txQueue.Reader;
+        while (await reader.WaitToReadAsync(cancellation).ConfigureAwait(false))
+        {
+            // Classic p-persistence (AX.25 §6.4): when the channel is clear, roll p; on
+            // failure wait one slot and try again; while busy, keep waiting slots.
+            while (true)
+            {
+                if (ChannelBusy)
+                {
+                    await Delay(Csma.SlotTimeMilliseconds, cancellation).ConfigureAwait(false);
+                    continue;
+                }
+
+                if (_random.Next(256) <= Csma.Persistence)
+                {
+                    break;
+                }
+
+                await Delay(Csma.SlotTimeMilliseconds, cancellation).ConfigureAwait(false);
+            }
+
+            _transmitting = true;
+            try
+            {
+                ptt.Key();
+                bool first = true;
+                while (reader.TryRead(out var item))
+                {
+                    IModem modem = _modems[item.SubChannel];
+                    // Subsequent frames in one keyup need only a token preamble.
+                    int txDelay = first ? Csma.TxDelayMilliseconds : 30;
+                    first = false;
+                    float[] samples = modem.Modulate(item.Frame, txDelay);
+                    output.Write(samples);
+                    output.Drain();
+                    item.Done.TrySetResult();
+                }
+
+                if (Csma.TxTailMilliseconds > 0)
+                {
+                    output.Write(new float[SampleRate * Csma.TxTailMilliseconds / 1000]);
+                }
+
+                output.Drain();
+            }
+            finally
+            {
+                ptt.Unkey();
+                _transmitting = false;
+                foreach (IModem modem in _modems.Values)
+                {
+                    modem.ResetCarrierState();
+                }
+            }
+        }
+    }
+
+    private Task Delay(int milliseconds, CancellationToken cancellation) =>
+        Task.Delay(TimeSpan.FromMilliseconds(milliseconds), _time, cancellation);
+}

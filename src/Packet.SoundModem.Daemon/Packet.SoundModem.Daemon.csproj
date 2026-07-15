@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>pdn-soundmodem</AssemblyName>
+    <!-- The NuGet restore identity must differ from the library's PackageId
+         (pdn-soundmodem); the shipped binary name comes from AssemblyName above. -->
+    <PackageId>pdn-soundmodem-daemon</PackageId>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Packet.SoundModem/Packet.SoundModem.csproj" />
+  </ItemGroup>
+
+</Project>

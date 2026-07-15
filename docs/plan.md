@@ -14,6 +14,11 @@ Founding research: [packet.net `docs/research/headless-soundmodem.md`](https://g
 - Both deployment shapes are goals: integrated PDN port and standalone KISS-TCP daemon,
   one core, headless-first.
 - Naming: repo/package/daemon `pdn-soundmodem`; assembly/namespace `Packet.SoundModem`.
+- (2026-07-15) Hardware gates batch up; work continues software-only until the rig/Pi/audio
+  group are ready. PDN-side DCD/utilisation reaches operators via a **port-level status
+  surface** (new port-scoped API/metric/dashboard fed by any carrier-sense-capable
+  transport), not by widening `radio:` read-models. **Linux-only** audio for now; the
+  layer's shape admits an SDL3 backend later.
 
 ## Phases
 
@@ -60,11 +65,18 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   48 k→12 k ÷4; aliasing-suppression test). Hardware smoke tests are SkippableFact —
   NOTE: they skip on this dev box because user `tf` lacks the `audio` group
   (`sudo usermod -aG audio tf` to enable); they will run on the bench/Pi.
-- ⬜ SoundChannel composition: capture loop → decimator → N modems per audio side
-  (multiplex model) + per-channel DCD aggregation + spectrum tap.
-- ⬜ Standalone KISS-TCP daemon (`pdn-soundmodem` binary): config file, KISS framing
-  (implement in-repo from the KISS spec — do NOT depend on AGPL Packet.Kiss), sub-channel
-  nibble ↔ modem mux, TX queue (Phase 3 gates actual PTT).
+- ✅ SoundModemChannel (2026-07-15): multiplex composition — N modems per audio side
+  behind IModem (Afsk1200Modem, Bpsk300Modem), aggregated CarrierDetect/ChannelBusy,
+  spectrum tap, TX queue with classic p-persistent CSMA, PTT bracketing, per-frame
+  TX-complete tasks, half-duplex RX suppression + carrier reset after TX.
+- ✅ Standalone KISS-TCP daemon (2026-07-15): `pdn-soundmodem` binary — in-repo KISS
+  framing (no AGPL dependency), multi-client TCP server, sub-channel nibble ↔ modem mux,
+  ACKMODE with true TX-complete echo (post-drain, not a timer), KISS parameter commands
+  actually honoured (TXDELAY/P/SLOTTIME/TXTAIL — QtSM ignores these), serial RTS/DTR PTT,
+  ALSA capture→decimate→RX loop, `--wav` offline mode (smoke-tested: 4/4 on the direwolf
+  fixture). End-to-end tests: KISS-in → audio → independent demod, RX → broadcast to all
+  clients, ACKMODE echo ordering, param plumbing. Not yet: config file, CM108 PTT,
+  spectrum-over-TCP, stereo second channel, live-audio soak (hardware).
 - ⬜ packet.net side: `kind: soundmodem` transport + `transport is ICarrierSense` probe at
   PortSupervisor (seam mapped in the research doc §5), spectrum SSE endpoint + waterfall
   UI (PdnPortTuningApi is the template; add to the SSE token allowlist; node-api.yaml).
