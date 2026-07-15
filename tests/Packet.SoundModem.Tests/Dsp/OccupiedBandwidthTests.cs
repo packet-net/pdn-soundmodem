@@ -121,6 +121,13 @@ public class OccupiedBandwidthTests
     /// 12 and 328 Hz on mode 14 — the same transmitter, ~7 % apart on payload statistics
     /// alone. Asserting tighter than that would be measuring noise, not compliance.
     /// </summary>
+    /// <remarks>
+    /// The recordings these came from are checked in at <c>samples/ninotnc/</c> — they
+    /// cannot be regenerated without that rig, TNC and firmware, so a number here can
+    /// always be traced back to a signal. See issue #2: the numbers are currently derived
+    /// over a different window from our own signal and need re-deriving; the recordings
+    /// themselves are sound.
+    /// </remarks>
     public static TheoryData<string, double> NinoTncMeasured => new()
     {
         { "afsk300", 305 },
