@@ -28,6 +28,13 @@ Verified from TARPN's own cable documentation (TK-790 wiring page + operator's m
 
 ## Levels
 
+- **Turn the CM108's Auto Gain Control OFF** and set a fixed capture gain. AGC on was
+  silently applying ~12 dB (rxPeak 0.198 with, 0.050 without, same decode rates — our
+  demodulator power-normalises so it does not care). It matters anyway: with AGC on, any
+  level or deviation reading is the codec's opinion rather than the signal's, so the
+  `--level-check` verdict is meaningless. Bench-good fixed setting on this rig:
+  `amixer -c 3 sset 'Auto Gain Control' off; amixer -c 3 sset Mic 32` (+8 dB) → rxPeak
+  ≈ 0.2, deterministic.
 - **NinoTNC → widget** (pin 1 → IN): the widget's IN is a mic-class input. Put the
   NinoTNC's TXA range on **MIC (0–200 mV)** and start with TX-DEV low; raise while
   watching our waterfall (`/tools/waterfall` or the daemon) — healthy is a bright but
@@ -101,9 +108,17 @@ readback, not the request.
 | **us → NinoTNC** (its demod locking) | 6/6 @ 20 ms | 6/6 @ 20 ms | 6/6 @ 20 ms | **needs ~100 ms** | — |
 
 So **20 ms is enough for everything except the QPSK modes**, and our own demodulator locks
-on ~20 ms in every mode tested — the NinoTNC's QPSK demodulator is the only thing here
-that wants more. QPSK-2400 falls off a cliff between 100 ms (6/6) and 50 ms (0/6); 150 ms
-gave 5/6, 300 ms 6/6.
+on ~20 ms in every mode tested. QPSK-2400 falls off a cliff between 75 ms (5/6) and 50 ms
+(0-1/6) — repeated with the mode verified, 2 runs each.
+
+**That cliff is our fault, not the NinoTNC's** (issue #1). Its receiver decodes its *own*
+47 ms-preamble bursts when they are recorded and replayed into it (3/4; control: its
+300 ms bursts 4/4), so it can acquire on 47 ms of a compliant signal. Ours is not
+compliant: our QPSK-2400 measures **4506 Hz** of 99% occupied bandwidth against Nino's
+**1992 Hz** and his published 2400 Hz spec, because `QpskModulator` shapes phase only and
+never pulse-shapes I/Q. His ~2400 Hz receive filter therefore sees a distorted signal and
+needs longer to lock. Expect QPSK to join the other modes at 20-50 ms once #1 lands — and
+note the same defect would splatter on air.
 
 **Retraction:** an earlier note here claimed "QPSK from cold wants ≥500 ms TXDELAY". That
 was wrong on both halves. The failures that produced it were the QPSK *modulator* bug
@@ -196,11 +211,14 @@ Fixed along the way (all found by this rig, none by loopback/WAV testing):
 
 Known behaviours (NinoTNC-side, not ours):
 
-- **Our own transmissions come back on our own input.** The widget passes OUT→IN with
-  enough level to decode (bench: all 8 of our mode-12 bursts decode off our own capture,
-  ~20 dB below the NinoTNC's). Harmless here — the bench scores each direction by the
-  *other* end's report — but it means this rig cannot be used to measure our RX in
-  isolation while transmitting, and a real installation relies on PTT muting.
+- **Our own transmissions come back on our own input, ~41 dB down** (measured: our TX
+  reads 0.0017 in our capture where the NinoTNC's reads 0.193). Cause is the rig's
+  four-wire twisted bundle carrying OUT and IN together — capacitive coupling, and Tom
+  confirms the construction. It is **not** the codec monitoring playback into capture:
+  muting `Mic Capture` silences our own TX too, so it arrives through the mic input.
+  Harmless here (the bench scores each direction by the *other* end's report) but it means
+  this rig cannot measure our RX in isolation while transmitting; a real installation
+  relies on PTT muting.
 
 - **TXDELAY changes take effect one frame late.** The GETALL readback updates
   immediately, but the air does not: with the NinoTNC moved 300 → 50 ms, burst #00 still
@@ -209,5 +227,11 @@ Known behaviours (NinoTNC-side, not ours):
   TXDELAY change on the frame that follows it. (Thanks Tom — called it.)
 - **The first frames after a *mode* change are unreliable**, independent of TXDELAY. This
   rig now settles 1500 ms after SETHW (`--settle-ms`) before it trusts anything.
+- **SETHW silently fails.** It is fire-and-forget and the firmware never acknowledges it;
+  observed on 3.44 refusing a mode-11 change and carrying on in mode 8. Both directions
+  then score 0, which reads exactly like "this mode is broken" rather than "the mode never
+  changed". `nino-bench` now verifies the running mode from GETALL's `BrdSwchMod` low byte
+  and retries, and aborts rather than report a number from the wrong mode. Tracked for the
+  PDN driver as packet.net#633.
 - The spontaneous once-per-minute diagnostic frame (`TNC>USB`, `=00:` registers) shows
   up as a KISS data frame — hosts should not treat it as channel traffic.

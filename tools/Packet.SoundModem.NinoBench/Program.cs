@@ -215,16 +215,64 @@ static int NinoBitRate(byte mode) => mode switch
     6 or 7 or 10 => 1200, 8 or 12 or 13 or 14 => 300, 9 => 600, 11 => 2400, _ => 1200,
 };
 
-// Set mode (SETHW payload = mode + 16 => applied without touching flash), let the modem
-// settle, then TXDELAY. The settle matters: the first frames after a mode change were
-// initially misread as "this mode needs a long TXDELAY".
-SerialKiss(new KissFrame(0, KissCommand.SetHardware, [(byte)(ninoMode + 16)]));
-Thread.Sleep(settleMs);
+// Firmware mode byte (low byte of BrdSwchMod) -> DIP mode, per packet.net's
+// NinoTncCatalog. The firmware does NOT report the DIP number back.
+var firmwareByteToMode = new Dictionary<byte, byte>
+{
+    [0x00] = 0, [0x41] = 1, [0xB0] = 2, [0x40] = 3, [0xA3] = 4, [0xF1] = 5, [0x02] = 6,
+    [0x93] = 7, [0x91] = 8, [0x92] = 9, [0xA0] = 10, [0xA2] = 11, [0x31] = 12, [0x22] = 13,
+    [0x23] = 14, [0x90] = 14, [0xF3] = 15,
+};
+
+byte? RunningMode(string diag)
+{
+    int i = diag.IndexOf("BrdSwchMod:", StringComparison.Ordinal);
+    if (i < 0 || !int.TryParse(diag.Substring(i + 11, 8), System.Globalization.NumberStyles.HexNumber, null, out int v))
+    {
+        return null;
+    }
+
+    return firmwareByteToMode.TryGetValue((byte)(v & 0xFF), out byte m) ? m : (byte)255;
+}
+
+// Set mode (SETHW payload = mode + 16 => applied without touching flash — upstream: "To
+// prevent an immediate flash memory write, add 16"), let the modem settle, then TXDELAY.
+//
+// VERIFY the mode took. SETHW is fire-and-forget and has been observed to silently not
+// apply, which is indistinguishable at the frame level from "this mode is broken": both
+// directions simply score 0 while the TNC happily runs the *previous* mode. Every result
+// this rig prints depends on the mode actually being what we asked for, so prove it from
+// BrdSwchMod rather than assume it.
+bool modeOk = false;
+for (int attempt = 1; attempt <= 3 && !modeOk; attempt++)
+{
+    SerialKiss(new KissFrame(0, KissCommand.SetHardware, [(byte)(ninoMode + 16)]));
+    Thread.Sleep(settleMs);
+    string? diag = GetAll($"mode-verify attempt {attempt}");
+    byte? running = diag is null ? null : RunningMode(diag);
+    if (running == ninoMode)
+    {
+        modeOk = true;
+    }
+    else
+    {
+        Console.Error.WriteLine(
+            $"  !! SETHW did not take: asked for mode {ninoMode}, TNC reports " +
+            $"{(running is null or 255 ? "unknown" : running.ToString())} — retrying");
+    }
+}
+
+if (!modeOk)
+{
+    Console.Error.WriteLine($"FAILED to put the NinoTNC in mode {ninoMode} after 3 attempts");
+    return 1;
+}
+
 SerialKiss(new KissFrame(0, KissCommand.TxDelay, [(byte)(txDelayMs / 10)]));
 Thread.Sleep(400);
 Console.WriteLine(
-    $"NinoTNC mode {ninoMode} set (non-persist), settle {settleMs} ms, TXDELAY {txDelayMs} ms;" +
-    $" our mode {ourMode} @ {dspRate} Hz");
+    $"NinoTNC mode {ninoMode} set (non-persist, verified), settle {settleMs} ms," +
+    $" TXDELAY {txDelayMs} ms; our mode {ourMode} @ {dspRate} Hz");
 
 // ---- audio ----
 using var capture = AlsaPcm.Open(audioDevice, AlsaPcm.Direction.Capture, 1, CaptureRate);
