@@ -21,21 +21,26 @@ public sealed class BpskModem : IModem
     /// <param name="carrierFrequency">Carrier centre; 1500 Hz convention.</param>
     /// <param name="baud">Symbol rate — also the bit rate, BPSK carrying one bit per
     /// symbol.</param>
+    /// <param name="rollOff">RRC roll-off.</param>
     public BpskModem(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
-        double carrierFrequency = 1500, int baud = 300)
+        double carrierFrequency = 1500, int baud = 300,
+        double rollOff = BpskModulator.DefaultRollOff)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _crc = crc;
         _baud = baud;
         var deframer = new Il2pDeframer((frame, _) => frameReceived(frame), crc);
         _demodulator = new BpskDemodulator(sampleRate, deframer.PushBit, carrierFrequency, baud);
-        _modulator = new BpskModulator(sampleRate, baud, carrierFrequency);
+        _modulator = new BpskModulator(sampleRate, baud, carrierFrequency, rollOff);
     }
 
     /// <summary>Creates the 300 bps mode (300 baud, 1500 Hz centre) — NinoTNC mode 8.</summary>
+    /// <remarks>Roll-off 0.20, matching the 328 Hz a NinoTNC's own mode-8 transmission
+    /// measures; the 0.35 default put us at 352 Hz, wider than the TNC we share the
+    /// channel with.</remarks>
     public static BpskModem Bpsk300(int sampleRate, Action<byte[]> frameReceived, bool crc = true) =>
-        new(sampleRate, frameReceived, crc, 1500, 300);
+        new(sampleRate, frameReceived, crc, 1500, 300, 0.20);
 
     /// <summary>Creates the 1200 bps mode (1200 baud, 1500 Hz centre) — NinoTNC mode 10,
     /// sharing its 1200 sym/s and 2400 Hz OBW with 2400 QPSK.</summary>

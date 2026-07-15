@@ -28,7 +28,7 @@ public sealed class QpskModulator
     public const double DefaultRollOff = 0.35;
 
     /// <summary>Pulse truncation, in symbols either side of centre.</summary>
-    private const int PulseSpan = 6;
+    private const int PulseSpan = 16;
 
     private readonly double _rollOff;
     private readonly int _sampleRate;

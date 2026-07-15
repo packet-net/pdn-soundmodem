@@ -4,17 +4,32 @@ namespace Packet.SoundModem.Tests.Dsp;
 
 /// <summary>
 /// Every transmitter in this library, measured against the occupied bandwidth its mode is
-/// allowed. A modem that splatters is a defect whether or not it decodes, and it is not
-/// something a loopback test can see — this suite exists because ours did splatter, for
-/// months, while every functional test passed: 1200 sym/s QPSK measured 5344 Hz of 99 %
-/// OBW against Nino's published 2400 Hz, and only a spectrum measurement against a real
-/// NinoTNC caught it.
+/// allowed. A modem that splatters is a defect whether or not it decodes, and no loopback
+/// can see it: every functional test, the Dire Wolf cross-validation and the WA8LMF
+/// benchmark all passed while 1200 sym/s QPSK measured 5344 Hz of 99 % OBW against a
+/// published 2400 Hz. Only measuring the spectrum against a real NinoTNC caught it.
 /// </summary>
 /// <remarks>
-/// Limits are Nino's published figures for the equivalent NinoTNC mode (release-notes.txt,
-/// "MODE SWITCH MAPPING v3/4.43"), because those modes are what these modems interoperate
-/// with and share channels with. Where Nino publishes none, the limit is the voice channel
-/// these modes ride through (3 kHz) — stated, not inferred.
+/// <para>
+/// Two rules, both regression guards rather than post-mortems:
+/// </para>
+/// <list type="number">
+///   <item>Never exceed the published figure for the equivalent NinoTNC mode
+///         (release-notes.txt, "MODE SWITCH MAPPING v3/4.43"). Where Nino publishes none,
+///         the limit is the voice channel the mode rides through (3 kHz) — stated, not
+///         inferred.</item>
+///   <item><b>Never be wider than a NinoTNC actually is for the same mode.</b> The
+///         published figures are ceilings, not descriptions: mode 12 is published at
+///         500 Hz and measures 305. Sharing a channel with a TNC that is narrower than us
+///         is our problem, not the channel's.</item>
+/// </list>
+/// <para>
+/// The reference numbers in <see cref="NinoTncMeasured"/> are from a real NinoTNC
+/// (firmware 3.44) recorded on the CM108 bench loop — see docs/ninotnc-loop.md. They are
+/// measured through a 48 kHz codec, which does nothing to a 300-2500 Hz signal, and at
+/// ~40 dB SNR, where noise sits far below the 0.5 % tails, so they compare fairly with our
+/// synthesised waveform.
+/// </para>
 /// </remarks>
 public class OccupiedBandwidthTests
 {
@@ -97,6 +112,41 @@ public class OccupiedBandwidthTests
     {
         MeasureObw(Create(mode)).Should().BeLessThanOrEqualTo(
             limitHz, "mode '{0}' is fed through a radio's mic input", mode);
+    }
+
+    /// <summary>
+    /// 99 % OBW of a real NinoTNC's own transmission per mode, measured on the bench loop
+    /// (firmware 3.44, 2026-07-15). The assertion allows 10 %, sized to the scatter the
+    /// references themselves demonstrate: his 300 AFSK modulator measures 305 Hz on mode
+    /// 12 and 328 Hz on mode 14 — the same transmitter, ~7 % apart on payload statistics
+    /// alone. Asserting tighter than that would be measuring noise, not compliance.
+    /// </summary>
+    public static TheoryData<string, double> NinoTncMeasured => new()
+    {
+        { "afsk300", 305 },
+        { "afsk300-il2pc", 328 },
+        { "bpsk300", 328 },
+        { "qpsk600", 328 },
+        { "bpsk1200", 1828 },
+        { "qpsk2400", 1852 },
+        { "afsk1200", 2414 },
+        { "afsk1200-il2p", 2355 },
+
+        // qpsk3600 is deliberately absent. The NinoTNC's own mode 5 measures 1828 Hz —
+        // essentially the Nyquist floor for 1800 sym/s — and we cannot match it: copying
+        // that shaping needs roll-off ~0.10, which our own demodulator cannot decode at
+        // 6⅔ samples per symbol (bench-swept: 0.10 fails a clean loopback, 0.15/0.20 fail
+        // under noise). We transmit 1995 Hz, ~9 % wider. Add the row once a matched RRC
+        // receive filter or a higher DSP rate for this mode lands — issue #1.
+    };
+
+    [Theory]
+    [MemberData(nameof(NinoTncMeasured))]
+    public void Transmitters_Are_Never_Wider_Than_A_NinoTNC_In_The_Same_Mode(string mode, double ninoHz)
+    {
+        MeasureObw(Create(mode)).Should().BeLessThanOrEqualTo(
+            ninoHz * 1.10,
+            "a real NinoTNC transmits mode '{0}' in {1} Hz and we share its channel", mode, ninoHz);
     }
 
     [Fact]

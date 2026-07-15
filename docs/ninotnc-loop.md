@@ -138,26 +138,52 @@ cross-validation and the WA8LMF benchmark all passed while the PSK modes were tr
 up to 4x their published width. This is a guard against regression, not a post-mortem: the
 modem was a day old when it was measured and fixed.
 
-| mode | before shaping | now | limit | source of limit |
+Two rules are enforced. The published figure is a **ceiling**, not a description of what
+a NinoTNC does — mode 12 is published at 500 Hz and measures 305 — so the operative rule is
+**never wider than a NinoTNC actually is in the same mode**. Its per-mode figures below are
+measured on this rig (firmware 3.44) and are what the tests hold us to.
+
+| mode | ours before | ours now | NinoTNC's own | published |
 |---|---|---|---|---|
-| afsk300 (12/13/14) | 519 Hz | **337 Hz** | 500 | Nino: "filtered for 500 Hz OBW" |
-| bpsk300 (8) | 1245 Hz | **352 Hz** | 500 | Nino: 300 sym/s, 500 Hz OBW |
-| qpsk600 (9) | 2013 Hz | **352 Hz** | 500 | Nino: 300 sym/s, 500 Hz OBW |
-| bpsk1200 (10) | 3504 Hz | **1400 Hz** | 2400 | Nino: 1200 sym/s, 2400 Hz OBW |
-| qpsk2400 (11) | 5344 Hz | **1400 Hz** | 2400 | Nino: 1200 sym/s, 2400 Hz OBW |
-| qpsk3600 (5) | 5663 Hz | **2101 Hz** | 3000 | none published — the voice channel it rides |
-| afsk1200 (6/7) | 2379 Hz | 2379 Hz | 3000 | none published — the voice channel it rides |
+| afsk300 (12) | 519 | **325** | 305 | 500 |
+| afsk300-il2pc (14) | 519 | **325** | 328 | 500 |
+| bpsk300 (8) | 1245 | **322** | 328 | 500 |
+| qpsk600 (9) | 2013 | **325** | 328 | 500 |
+| bpsk1200 (10) | 3504 | **1400** | 1828 | 2400 |
+| qpsk2400 (11) | 5344 | **1403** | 1852 | 2400 |
+| qpsk3600 (5) | 5663 | **1995** | **1828** | none |
+| afsk1200 (6) | 2379 | 2379 | 2414 | none |
+| afsk1200-il2p (7) | 2391 | 2391 | 2355 | none |
 
-Reference point, same meter, same rig: **a real NinoTNC's mode 11 measures 1887 Hz**
-against its own 2400 Hz spec. We were at 5344 Hz. We are now at 1400 Hz — narrower than
-the NinoTNC itself.
+Every mode is now at or inside the NinoTNC's own width except **qpsk3600, which is ~9 %
+wider and cannot currently be fixed** — see below. The 1200 sym/s modes are far narrower
+than the TNC; the 300 sym/s modes copy it closely.
 
-The fix was root-raised-cosine pulse shaping (β 0.35) on I/Q for `QpskModulator` and
-`BpskModulator`, replacing direct phase synthesis at constant envelope; and an explicit
-500 Hz band-limit on the 300 AFSK transmit path, which Nino's notes describe his own modes
-as having. The direct-FSK modes (0/2/4) are excluded from the published-limit table on
-purpose: their 10/20 kHz figures are *RF* bandwidth after FM modulation, not the audio
-baseband we generate, so they are pinned against their own shaping filter instead.
+**How.** Root-raised-cosine pulse shaping on I/Q for `QpskModulator` and `BpskModulator`,
+replacing direct phase synthesis at constant envelope, plus a band-limit on the 300 AFSK
+transmit path. Roll-off is chosen per mode, copying Nino where we were wider than him:
+
+- **0.20 for the 300 sym/s modes** (bpsk300, qpsk600) — 0.35 left us at 352 Hz, wider than
+  his 328.
+- **0.35 for the 1200 sym/s modes** (bpsk1200, qpsk2400) — deliberately *not* copying him.
+  His mode 11 is 1852 Hz where we are 1403 Hz, so matching would mean widening for no gain,
+  and the bench says wider is worse: sweeping our roll-off up made his decode of us drop
+  (0.35 → 4/6, 0.6 → 0/6, 0.9 → 0/6 at a short preamble).
+- **0.25 for qpsk3600** — a receiver limit, not a choice. His mode 5 sits at 1828 Hz for
+  1800 sym/s, essentially the Nyquist floor, which is how 3600 bps fits a voice channel.
+  Copying it needs roll-off ~0.10; bench-swept, our own demodulator then fails a *clean*
+  loopback, and 0.15/0.20 fail under noise or on multi-block frames — 1800 Bd at 12 kHz
+  leaves only 6⅔ samples per symbol, and a near-Nyquist pulse needs finer symbol timing
+  than that. A matched RRC receive filter, or running mode 5 at a higher DSP rate, is the
+  way in. Issue #1.
+- **400 Hz band-limit for 300 AFSK** — his notes say "filtered for 500 Hz OBW" but he
+  actually transmits 305-328; 500 left us at 337, wider than him. 400 gives 325. This is a
+  floor set by the signal, not the filter: 360 reaches 319 but our own receiver stops
+  decoding it.
+
+The direct-FSK modes (0/2/4) are excluded on purpose: their 10/20 kHz figures are *RF*
+bandwidth after FM modulation, not the audio baseband we generate, so they are pinned
+against their own shaping filter instead.
 
 ## Coverage
 

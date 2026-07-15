@@ -17,22 +17,28 @@ namespace Packet.SoundModem.Modems;
 /// </remarks>
 public sealed class BpskModulator
 {
-    /// <summary>RRC roll-off; matches <see cref="QpskModulator"/>.</summary>
-    private const double RollOff = 0.35;
+    /// <summary>Default RRC roll-off; matches <see cref="QpskModulator"/>.</summary>
+    public const double DefaultRollOff = 0.35;
 
     /// <summary>Pulse truncation, in symbols either side of centre.</summary>
     private const int PulseSpan = 6;
 
+    private readonly double _rollOff;
     private readonly int _sampleRate;
     private readonly double _carrierStep;
     private readonly int _samplesPerSymbol;
 
     /// <summary>Creates a modulator at the given sample rate, symbol rate and carrier
     /// (300 baud on 1500 Hz is the NinoTNC HF convention).</summary>
-    public BpskModulator(int sampleRate = 12000, int baud = 300, double carrierFrequency = 1500)
+    public BpskModulator(
+        int sampleRate = 12000, int baud = 300, double carrierFrequency = 1500,
+        double rollOff = DefaultRollOff)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(sampleRate, 8000);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
+        ArgumentOutOfRangeException.ThrowIfNegative(rollOff);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(rollOff, 1);
+        _rollOff = rollOff;
         if (sampleRate % baud != 0)
         {
             throw new ArgumentException($"sample rate must be a multiple of {baud}", nameof(sampleRate));
@@ -74,7 +80,7 @@ public sealed class BpskModulator
             double i = 0;
             for (int symbol = first; symbol <= last; symbol++)
             {
-                i += symbols[symbol] * FilterDesign.RootRaisedCosine(centre - symbol, RollOff);
+                i += symbols[symbol] * FilterDesign.RootRaisedCosine(centre - symbol, _rollOff);
             }
 
             carrierPhase += _carrierStep;

@@ -44,8 +44,16 @@ public sealed class Afsk300Modem : IModem
     private const double LowPassCutoff = 400;
     private const double ToneShift = 100;
 
-    /// <summary>Nino's published occupied bandwidth for the SSB AFSK modes.</summary>
-    private const double ObwHz = 500;
+    /// <summary>
+    /// Transmit band-limit. Nino publishes 500 Hz for these modes, but his own mode-12
+    /// transmission measures 305 Hz on the bench — so 500 is a ceiling, not what he
+    /// actually does, and filtering to it left us 10 % wider than the TNC we share the
+    /// channel with. 400 Hz puts us at 325 Hz, inside the 305-328 Hz his own two 300 AFSK
+    /// modes span, and the tones only need ±100 Hz. This is a floor set by the signal, not
+    /// the filter: 360 Hz reaches only 319 Hz and starts eating the modulation — our own
+    /// receiver stops decoding it.
+    /// </summary>
+    private const double ObwHz = 400;
 
     private readonly AfskDemodulator _demodulator;
     private readonly AfskModulator _modulator;
