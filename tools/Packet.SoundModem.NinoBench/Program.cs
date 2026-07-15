@@ -63,6 +63,7 @@ IModem modem = ourMode switch
 {
     "afsk1200" => new Afsk1200Modem(dspRate, OnFrame),
     "afsk1200-multi" => new Afsk1200MultiModem(dspRate, OnFrame, offsetPairs: 3),
+    "afsk1200-il2p" => new Afsk1200Il2pModem(dspRate, OnFrame, crc: true),
     "bpsk300" => new Bpsk300Modem(dspRate, OnFrame, crc: true),
     "qpsk2400" => QpskModem.Qpsk2400(dspRate, OnFrame),
     "qpsk3600" => QpskModem.Qpsk3600(dspRate, OnFrame),

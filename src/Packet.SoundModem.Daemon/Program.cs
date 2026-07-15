@@ -110,6 +110,8 @@ foreach (ModemConfig modemConfig in modems)
         "afsk1200-fx25" => new Afsk1200Modem(DspRate, sink, frequency ?? 1700, Fx25Mode.TransmitReceive),
         "afsk1200-fx25rx" => new Afsk1200Modem(DspRate, sink, frequency ?? 1700, Fx25Mode.Receive),
         "afsk1200-multi" => new Afsk1200MultiModem(DspRate, sink, offsetPairs: 3, centerFrequency: frequency ?? 1700),
+        "afsk1200-il2p" => new Afsk1200Il2pModem(DspRate, sink, crc: true, frequency ?? 1700),
+        "afsk1200-il2p-nocrc" => new Afsk1200Il2pModem(DspRate, sink, crc: false, frequency ?? 1700),
         "bpsk300" => new Bpsk300Modem(DspRate, sink, crc: true, frequency ?? 1500),
         "bpsk300-nocrc" => new Bpsk300Modem(DspRate, sink, crc: false, frequency ?? 1500),
         "qpsk2400" => QpskModem.Qpsk2400(DspRate, sink),

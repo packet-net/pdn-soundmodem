@@ -64,7 +64,8 @@ from the GETALL diagnostic registers (`AX25RxPkts` / `IL2PRxPkts`), not just KIS
 delivery. RX level at our ADC ≈ 0.17–0.28 full-scale peak per mode ("GOOD" band —
 no deviation/pot change needed).
 
-**All six supported pairs pass bidirectionally, sustained:**
+**All seven supported pairs pass bidirectionally, sustained** (mode 7 added
+2026-07-15, same campaign):
 
 | pair (ours : NinoTNC mode) | NinoTNC → us | us → NinoTNC | DCD assert lag | DCD release lag |
 |---|---|---|---|---|
@@ -74,6 +75,7 @@ no deviation/pot change needed).
 | qpsk3600 : 5 | 15/15 | 15/15 | avg 53 ms | avg 85 ms, max 120 ms |
 | fsk9600 : 0 | 25/25 | 25/25 | avg 0 ms, max 2 ms | avg 171 ms, max 242 ms |
 | fsk9600-il2p : 2 | 25/25 | 25/25 | avg 0 ms, max 2 ms | avg 167 ms, max 240 ms |
+| afsk1200-il2p : 7 | 25/25 | 25/25 | avg 13 ms | avg 101 ms, max 241 ms |
 
 DCD lags are `IModem.ChannelBusy` sampled every 2 ms against the capture envelope
 (>0.04 assert reference, <0.02 release reference); release lag is dominated by the

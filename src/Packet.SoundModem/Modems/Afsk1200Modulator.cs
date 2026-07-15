@@ -33,14 +33,28 @@ public sealed class Afsk1200Modulator
     public float[] Modulate(ReadOnlySpan<byte> hdlcBits, float amplitude = 0.8f)
     {
         var encoder = new NrziEncoder();
-        var samples = new float[(int)Math.Ceiling(hdlcBits.Length * _samplesPerBit)];
+        var levels = new byte[hdlcBits.Length];
+        for (int i = 0; i < hdlcBits.Length; i++)
+        {
+            levels[i] = (byte)encoder.Encode(hdlcBits[i]);
+        }
+
+        return ModulateLevels(levels, amplitude);
+    }
+
+    /// <summary>Modulates line levels directly — 1 = mark, 0 = space, no NRZI. The IL2P
+    /// bit layer uses this: its transparency comes from packet-synchronous scrambling and
+    /// its bits go on the wire raw (Dire Wolf's IL2P receiver likewise taps the
+    /// pre-NRZI-decode bit).</summary>
+    public float[] ModulateLevels(ReadOnlySpan<byte> levels, float amplitude = 0.8f)
+    {
+        var samples = new float[(int)Math.Ceiling(levels.Length * _samplesPerBit)];
         double phase = 0;
         double bitClock = 0;
         int position = 0;
 
-        foreach (byte bit in hdlcBits)
+        foreach (byte level in levels)
         {
-            int level = encoder.Encode(bit);
             double step = level == 1 ? _markStep : _spaceStep;
             bitClock += _samplesPerBit;
             while (position < bitClock && position < samples.Length)
