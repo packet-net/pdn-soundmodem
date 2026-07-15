@@ -93,7 +93,14 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 - ⬜ packet.net side: `kind: soundmodem` transport + `transport is ICarrierSense` probe at
   PortSupervisor (seam mapped in the research doc §5), spectrum SSE endpoint + waterfall
   UI (PdnPortTuningApi is the template; add to the SSE token allowlist; node-api.yaml).
-- ⬜ Live RX soak on real audio hardware.
+- ✅ Live RX soak (2026-07-15): 60 s daemon run on this box's real HDA codec via the
+  fresh audio group — 48 kHz capture → decimator → 21-branch multi bank, KISS TCP up,
+  clean exit. Found+fixed on first contact: consumer cards refuse direct 12 kHz
+  playback opens ("snd_pcm_set_params: Invalid argument") — TX now plays at the
+  card-native rate through a new image-rejecting Upsampler/UpsamplingAudioOutput
+  (the mirror of the capture decimator), covered by a full simulated-card-path
+  roundtrip test. Longer soaks + a decode of real off-air audio still worthwhile
+  when an RF source is nearby.
 
 ### Phase 3 — TX 🟡 software done for all Phase-1..3 modes
 - ✅ TX for AFSK 1200 / BPSK 300 / QPSK 2400 / QPSK 3600 / 9600 (classic + IL2P), with

@@ -118,7 +118,7 @@ foreach (ModemConfig modemConfig in modems)
         "fsk9600-il2p" => new Fsk9600Modem(DspRate, sink, Fsk9600Framing.Il2pCrc),
         _ => throw new ArgumentException($"unknown mode '{mode}'"),
     });
-    Console.WriteLine($"modem {subChannel}: {mode} @ {frequency ?? (mode == "afsk1200" ? 1700 : 1500)} Hz");
+    Console.WriteLine($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");
 }
 
 channel.FrameReceived += (subChannel, frame) =>
@@ -200,9 +200,11 @@ await using var server = new KissTcpServer(channel, kissPort);
 server.Start();
 Console.WriteLine($"kiss tcp: 127.0.0.1:{server.LocalPort}");
 
-// Transmit side: modulate at the DSP rate; the ALSA plug layer upsamples. (Proper
-// interpolation or native-rate modulators are a Phase 3 refinement.)
-var playback = new AlsaAudioOutput(device, DspRate);
+// Transmit side: modulate at the DSP rate; play at the card-native capture rate through
+// the image-rejecting upsampler (cards commonly refuse to open 12 kHz playback directly).
+IAudioOutput playback = captureRate == DspRate
+    ? new AlsaAudioOutput(device, DspRate)
+    : new UpsamplingAudioOutput(new AlsaAudioOutput(device, captureRate), DspRate);
 Task transmitter = channel.RunTransmitterAsync(playback, ptt, cancellation.Token);
 
 // Receive side: capture at the card-native rate, decimate to the DSP rate.
@@ -227,5 +229,5 @@ while (!cancellation.IsCancellationRequested)
 
 await transmitter.ContinueWith(_ => { }, TaskScheduler.Default);
 (ptt as IDisposable)?.Dispose();
-playback.Dispose();
+(playback as IDisposable)?.Dispose();
 return 0;
