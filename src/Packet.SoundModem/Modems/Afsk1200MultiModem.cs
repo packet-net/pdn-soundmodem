@@ -15,8 +15,7 @@ public sealed class Afsk1200MultiModem : IModem
     private readonly Afsk1200Demodulator[] _demodulators;
     private readonly Afsk1200Modulator _modulator;
     private readonly Action<byte[]> _frameReceived;
-    private readonly Queue<(ulong Hash, long At)> _recent = new();
-    private readonly long _dedupeWindow;
+    private readonly FrameDeduper _deduper;
     private readonly int _dedupeChunk;
     private long _samplesProcessed;
 
@@ -37,7 +36,7 @@ public sealed class Afsk1200MultiModem : IModem
         ArgumentNullException.ThrowIfNull(frameReceived);
         ArgumentOutOfRangeException.ThrowIfNegative(offsetPairs);
         _frameReceived = frameReceived;
-        _dedupeWindow = 3L * sampleRate;
+        _deduper = new FrameDeduper(3L * sampleRate);
         _dedupeChunk = sampleRate / 10;
         _modulator = new Afsk1200Modulator(sampleRate);
 
@@ -102,32 +101,9 @@ public sealed class Afsk1200MultiModem : IModem
     {
         // Several branches usually decode the same transmission within a frame-time of
         // each other; emit the first and drop content-identical repeats in the window.
-        ulong hash = Fnv1a(frame);
-        while (_recent.Count > 0 && _samplesProcessed - _recent.Peek().At > _dedupeWindow)
+        if (_deduper.ShouldEmit(frame, _samplesProcessed))
         {
-            _recent.Dequeue();
+            _frameReceived(frame);
         }
-
-        foreach ((ulong seenHash, _) in _recent)
-        {
-            if (seenHash == hash)
-            {
-                return;
-            }
-        }
-
-        _recent.Enqueue((hash, _samplesProcessed));
-        _frameReceived(frame);
-    }
-
-    private static ulong Fnv1a(ReadOnlySpan<byte> data)
-    {
-        ulong hash = 14695981039346656037UL;
-        foreach (byte value in data)
-        {
-            hash = (hash ^ value) * 1099511628211UL;
-        }
-
-        return hash;
     }
 }

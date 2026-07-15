@@ -118,9 +118,12 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   Cross-validated bidirectionally vs Dire Wolf: 4/4 decoding gen_packets -X audio
   (fixture committed), 3/3 of our TX decoded by atest and explicitly labelled FX.25.
   Not yet surfaced as a modem/daemon option (parallel-RX + dedupe wiring pending).
-- ⬜ FX.25 modem/daemon wiring; .deb packaging; DCD-over-KISS extension (awaiting an
-  agreed NinoTNC-ecosystem format); Windows audio backend (deferred 2026-07-15);
-  extra decode-only listeners; multi-decoder banks for the PSK modes.
+- ✅ FX.25 modem/daemon wiring (2026-07-15): Afsk1200Modem fx25 option (Receive /
+  TransmitReceive with dedupe across the FX.25 and embedded-HDLC paths); daemon modes
+  afsk1200-fx25 / afsk1200-fx25rx; transparency + dedupe tests.
+- ⬜ .deb packaging; DCD-over-KISS extension (awaiting an agreed NinoTNC-ecosystem
+  format); Windows audio backend (deferred 2026-07-15); extra decode-only listeners;
+  multi-decoder banks for the PSK modes.
 
 ## Amendment log
 
