@@ -70,7 +70,22 @@ public sealed class AlsaPcm : IDisposable
             Throw(err, $"snd_pcm_set_params({device}, {sampleRate} Hz, {channels} ch)");
         }
 
-        return new AlsaPcm(pcm, direction, channels, sampleRate);
+        var opened = new AlsaPcm(pcm, direction, channels, sampleRate);
+        if (direction == Direction.Capture)
+        {
+            // Some USB codecs (observed: CM108B behind an EHCI hub) return EIO from the
+            // first snd_pcm_readi when relying on read-auto-start; an explicit start
+            // after configuration makes them stream. Harmless on devices that don't
+            // need it (the stream is PREPARED at this point).
+            err = snd_pcm_start(pcm);
+            if (err < 0)
+            {
+                opened.Dispose();
+                Throw(err, $"snd_pcm_start({device})");
+            }
+        }
+
+        return opened;
     }
 
     /// <summary>Reads interleaved frames (capture PCM). Blocks until the span is filled.
@@ -141,6 +156,11 @@ public sealed class AlsaPcm : IDisposable
     {
         ObjectDisposedException.ThrowIf(_pcm == IntPtr.Zero, this);
         _ = snd_pcm_drain(_pcm);
+
+        // Draining leaves the PCM in SETUP state; without a re-prepare the next
+        // writei fails with EBADFD. Re-arm so the handle stays reusable across
+        // transmissions.
+        _ = snd_pcm_prepare(_pcm);
     }
 
     /// <inheritdoc />
@@ -177,6 +197,12 @@ public sealed class AlsaPcm : IDisposable
 
     [DllImport(Lib)]
     private static extern int snd_pcm_recover(IntPtr pcm, int err, int silent);
+
+    [DllImport(Lib)]
+    private static extern int snd_pcm_start(IntPtr pcm);
+
+    [DllImport(Lib)]
+    private static extern int snd_pcm_prepare(IntPtr pcm);
 
     [DllImport(Lib)]
     private static extern int snd_pcm_drain(IntPtr pcm);
