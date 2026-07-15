@@ -48,6 +48,10 @@ public sealed class QpskModem : IModem
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples) => _demodulator.Process(samples);
 
+    /// <summary>Fraction of a symbol over which transmitted phase transitions are swept.
+    /// See <see cref="QpskModulator.Modulate"/>; bench-tuned against the NinoTNC.</summary>
+    public double TxRampFraction { get; set; } = 0.25;
+
     /// <inheritdoc />
     public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds)
     {
@@ -59,7 +63,7 @@ public sealed class QpskModem : IModem
         }
 
         byte[] bits = Il2pFramer.FrameBits(wire, preambleBits, Il2pFramer.PreambleStyle.Zeros);
-        return _modulator.Modulate(bits);
+        return _modulator.Modulate(bits, rampFraction: TxRampFraction);
     }
 
     /// <inheritdoc />

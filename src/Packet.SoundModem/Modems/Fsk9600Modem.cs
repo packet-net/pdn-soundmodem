@@ -35,8 +35,10 @@ public sealed class Fsk9600Modem : IModem
     private readonly BitDpll _dpll;
     private readonly PacketDcd _packetDcd = new();
     private readonly EnergyBusyDetector _energyBusy;
+    private readonly int _upsample;
     private float _peakHigh;
     private float _peakLow;
+    private float _previousFiltered;
     private float _previousExcess;
 
     /// <summary>Creates the modem.</summary>
@@ -71,7 +73,13 @@ public sealed class Fsk9600Modem : IModem
             bitSink = deframer.PushBit;
         }
 
-        _dpll = new BitDpll(Baud, sampleRate, bitSink, transitionObserver: _packetDcd.OnTransition);
+        // At 48 kHz there are only 5 samples per bit — each quantised DPLL nudge is
+        // ±10% of a bit. Dire Wolf's demod_9600 interpolates ×2 before its PLL for the
+        // same reason ("upsample" in demod_9600.c); do likewise so timing corrections
+        // land on a 10-points-per-bit grid.
+        _upsample = sampleRate / Baud < 8 ? 2 : 1;
+        _dpll = new BitDpll(
+            Baud, sampleRate * _upsample, bitSink, transitionObserver: _packetDcd.OnTransition);
     }
 
     /// <inheritdoc />
@@ -96,22 +104,32 @@ public sealed class Fsk9600Modem : IModem
             float filtered = _rxFilter.Next(sample);
             _energyBusy.Process(filtered);
 
-            // Envelope-midpoint slicer (as in the AFSK demod): tracks soundcard DC offset
-            // and level without assuming a centred signal.
-            _peakHigh += (filtered - _peakHigh) * (filtered > _peakHigh ? 0.08f : 0.0002f);
-            _peakLow += (filtered - _peakLow) * (filtered < _peakLow ? 0.08f : 0.0002f);
-            float excess = filtered - (_peakHigh + _peakLow) * 0.5f;
-            int level = excess > 0 ? 1 : 0;
+            for (int point = 1; point <= _upsample; point++)
+            {
+                // Linear interpolation between successive filtered samples (point ==
+                // _upsample is the sample itself) — see the _upsample ctor note.
+                float value = _previousFiltered
+                    + (filtered - _previousFiltered) * point / _upsample;
 
-            // NOTE: sub-sample crossing interpolation (a measured win for AFSK/BPSK) is
-            // deliberately NOT used here. At 5 samples/bit behind the tight 0.55·baud
-            // pulse filter, the crossings carry strong data-dependent ISI offsets, and
-            // interpolating them faithfully makes the DPLL chase that jitter into the
-            // closed eye for unlucky bit patterns (found by the back-to-back loopback
-            // test). Quantised nudges average the ISI out; revisit with matched-filter
-            // timing against a real off-air 9600 corpus.
-            _previousExcess = excess;
-            _dpll.Sample(level);
+                // Envelope-midpoint slicer (as in the AFSK demod): tracks soundcard DC
+                // offset and level without assuming a centred signal.
+                _peakHigh += (value - _peakHigh) * (value > _peakHigh ? 0.08f : 0.0002f);
+                _peakLow += (value - _peakLow) * (value < _peakLow ? 0.08f : 0.0002f);
+                float excess = value - (_peakHigh + _peakLow) * 0.5f;
+                int level = excess > 0 ? 1 : 0;
+
+                // NOTE: sub-sample crossing interpolation (a measured win for AFSK/BPSK)
+                // is deliberately NOT used here. At 5 samples/bit behind the tight
+                // 0.55·baud pulse filter, the crossings carry strong data-dependent ISI
+                // offsets, and interpolating them faithfully makes the DPLL chase that
+                // jitter into the closed eye for unlucky bit patterns (found by the
+                // back-to-back loopback test). Quantised nudges average the ISI out;
+                // revisit with matched-filter timing against a real off-air 9600 corpus.
+                _previousExcess = excess;
+                _dpll.Sample(level);
+            }
+
+            _previousFiltered = filtered;
         }
     }
 
@@ -162,6 +180,7 @@ public sealed class Fsk9600Modem : IModem
         _energyBusy.Reset();
         _peakHigh = 0;
         _peakLow = 0;
+        _previousFiltered = 0;
         _previousExcess = 0;
     }
 }

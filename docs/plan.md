@@ -120,12 +120,19 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   pre-v0.6 max-FEC selector — cleared, they parse payload blocks with the legacy
   2/4/6/8-parity plan and reject 16-parity frames (the spec's own example packets would
   not decode!). `Il2pCodec.Encode` now defaults `legacyMaxFecBit: true` for interop
-  (spec-exact output remains available; our RX ignores the bit). Bench must confirm
-  NinoTNC behaviour.
+  (spec-exact output remains available; our RX ignores the bit). ✅ Bench confirmed
+  against NinoTNC firmware 3.41 (2026-07-15): all four IL2P pairs decode our frames
+  with `IL2PRxUnCr` = 0.
 - ✅ CM108 hidraw PTT (`--ptt cm108:/dev/hidraw0[:gpio]`, direwolf/QtSM-compatible
   5-byte report; 2026-07-15).
-- ⬜ PDN `IRigControl` PTT (packet.net side); over-air NinoTNC interop runs for every
-  mode (hardware).
+- ✅ **Wired NinoTNC interop, every supported mode, both directions, sustained**
+  (2026-07-15, firmware 3.41, CM108 loop per docs/ninotnc-loop.md § Results): afsk1200,
+  bpsk300, qpsk2400, qpsk3600, fsk9600 classic + IL2P — 100% each way after three rig
+  fixes (AlsaPcm start/re-prepare; continuous-time QPSK phase synthesis; ×2 DPLL
+  interpolation on 9600 RX). DCD assert/release lags measured and CSMA-safe.
+- ⬜ PDN `IRigControl` PTT (packet.net side); over-air (RF) NinoTNC runs when a radio
+  pair is available — the wired loop already answers the baseband/phase-map/FEC-bit
+  questions.
 
 ### Phase 4 — breadth 🟡
 - ✅ Multi-decoder offset bank (2026-07-15): `Afsk1200MultiModem` — 2·pairs+1 branches at
@@ -158,13 +165,37 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   confirmed indexed on nuget.org).
 - ~~audio group~~ **RESOLVED**: `usermod -aG audio tf` run; both ALSA hardware smoke
   tests now pass on this box's real sound card (via `sg audio` until re-login).
-- **Hardware still pending**: soundcard on the NinoTNC bench rig for the IL2P-mode WAV
-  corpus; a Pi for the DSP benchmark and .deb trial; over-air NinoTNC runs to gate each
-  mode (esp. whether NinoTNC's 9600 GFSK matches the direwolf-validated baseband, the
-  QPSK phase maps, and the legacy-max-FEC bit behaviour). A live ALSA RX soak on this
-  box is now possible any time (audio group granted).
+- ~~soundcard on the NinoTNC bench rig~~ **RESOLVED** (2026-07-15): CM108 widget wired
+  to the NinoTNC per docs/ninotnc-loop.md; every supported mode validated bidirectionally
+  (see § Results there). The open wire questions are answered: NinoTNC's 9600 GFSK
+  matches the direwolf-validated baseband both ways, the spec QPSK phase map is
+  NinoTNC-compatible (no pairwise-negotiation divergence), and the legacy-max-FEC bit
+  default is confirmed right.
+- **Hardware still pending**: a Pi for the DSP benchmark and .deb trial; over-air (RF)
+  NinoTNC runs; per-mode WAV corpus recording off the rig (bench decode counts exist,
+  committed corpora don't yet).
 
 ## Amendment log
+
+### 2026-07-15 (later still) — NinoTNC loop: all six pairs bidirectional, sustained
+
+The wired CM108↔NinoTNC rig (docs/ninotnc-loop.md) ran its first full campaign against
+firmware 3.41 via the new `nino-bench` tool, which reads NinoTNC-side truth from the
+GETALL diagnostic registers. Every supported pair (afsk1200:6, bpsk300:8, qpsk2400:11,
+qpsk3600:5, fsk9600:0, fsk9600-il2p:2) now passes 100% both directions in sustained
+runs, with DCD assert/release lag measured against the audio envelope (assert ≤ tens of
+ms, release always late — CSMA-safe). Three defects found and fixed, none of which any
+loopback/WAV test caught: AlsaPcm needed an explicit capture `snd_pcm_start` (CM108B
+EIO) and a `snd_pcm_prepare` after drain (second TX EBADFD); QpskModulator's
+integer-boundary synthesis jittered 1800-baud symbol edges by ±½ sample and collapsed
+the phase ramp to a hard step (56–88% NinoTNC decode → 100% after continuous-time
+rewrite; `TxRampFraction` default 0.25 — 0.5 drops to ~7%, the NinoTNC wants sharp
+transitions); Fsk9600Modem RX now interpolates ×2 before the DPLL à la direwolf
+(classic-HDLC 88% → 100%, DCD assert lag → ≤2 ms). Also learned: QPSK-from-cold wants
+≥500 ms TXDELAY (NinoTNC demod lock); the bench initially mis-blamed audio for what was
+a `SerialPort.ReadTimeout` TimeoutException silently killing its serial pump — GETALL
+before/after each direction now makes that class of error self-diagnosing. Level
+verdict for the rig as wired: RX peak 0.17–0.28 FS across modes, no pot changes needed.
 
 ### 2026-07-15 (later) — FX.25 + multi-decoder + daemon config + .deb; publish staged
 

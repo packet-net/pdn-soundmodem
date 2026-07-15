@@ -25,6 +25,7 @@ int frames = 10;
 int txDelayMs = 300;
 int payloadLength = 40;
 bool levelCheckOnly = false;
+double qpskRamp = 0.25;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -38,6 +39,7 @@ for (int i = 0; i < args.Length; i++)
         case "--txdelay-ms": txDelayMs = int.Parse(Next()); break;
         case "--payload": payloadLength = int.Parse(Next()); break;
         case "--level-check": levelCheckOnly = true; break;
+        case "--qpsk-ramp": qpskRamp = double.Parse(Next()); break;
         default: Console.Error.WriteLine($"unknown option {args[i]}"); return 2;
     }
 }
@@ -68,6 +70,11 @@ IModem modem = ourMode switch
     "fsk9600-il2p" => new Fsk9600Modem(dspRate, OnFrame, Fsk9600Framing.Il2pCrc),
     _ => throw new ArgumentException($"unknown our-mode '{ourMode}'"),
 };
+
+if (modem is QpskModem qpsk)
+{
+    qpsk.TxRampFraction = qpskRamp;
+}
 
 void OnFrame(byte[] frame)
 {

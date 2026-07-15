@@ -54,3 +54,53 @@ Sources: [TK-790 cable doc](https://tarpn.net/t/builder/builders_wiring_kenwood_
 (pins 1/3/5/6), [operator's manual](https://tarpn.net/t/nino-tnc/n9600a/n9600a_operation.html)
 (levels, PTT electrical, pin-2 inhibit), [CM108 Radio Widget](https://www.tindie.com/products/tomwardill/cm108-radio-widget/)
 (pad semantics, SQL = VOLDOWN event).
+
+## Results — 2026-07-15, NinoTNC firmware 3.41
+
+Rig: the loop above on `plughw:3,0` (CM108B, full-speed USB behind an EHCI hub),
+NinoTNC in software-controlled mode (DIPs 1111), MIC TXA range, 1x / AC / CD jumpers,
+driven by `nino-bench` (`tools/Packet.SoundModem.NinoBench`). NinoTNC-side truth read
+from the GETALL diagnostic registers (`AX25RxPkts` / `IL2PRxPkts`), not just KISS
+delivery. RX level at our ADC ≈ 0.17–0.28 full-scale peak per mode ("GOOD" band —
+no deviation/pot change needed).
+
+**All six supported pairs pass bidirectionally, sustained:**
+
+| pair (ours : NinoTNC mode) | NinoTNC → us | us → NinoTNC | DCD assert lag | DCD release lag |
+|---|---|---|---|---|
+| afsk1200 : 6 | 25/25 | 25/25 | avg 13 ms | avg 100 ms, max 269 ms |
+| bpsk300 : 8 | 15/15 | 15/15 | avg 48 ms | avg 160 ms, max 389 ms |
+| qpsk2400 : 11 | 15/15 | 15/15 | avg 33 ms | avg 86 ms, max 120 ms |
+| qpsk3600 : 5 | 15/15 | 15/15 | avg 53 ms | avg 85 ms, max 120 ms |
+| fsk9600 : 0 | 25/25 | 25/25 | avg 0 ms, max 2 ms | avg 171 ms, max 242 ms |
+| fsk9600-il2p : 2 | 25/25 | 25/25 | avg 0 ms, max 2 ms | avg 167 ms, max 240 ms |
+
+DCD lags are `IModem.ChannelBusy` sampled every 2 ms against the capture envelope
+(>0.04 assert reference, <0.02 release reference); release lag is dominated by the
+deliberate PacketDcd/EnergyBusyDetector hysteresis + hold, i.e. DCD reliably outlives
+the carrier by ~0.1–0.4 s and never releases early — the safe side for CSMA.
+
+Fixed along the way (all found by this rig, none by loopback/WAV testing):
+
+- `AlsaPcm`: CM108B capture needs an explicit `snd_pcm_start` (EIO from readi
+  otherwise); playback needs `snd_pcm_prepare` after `snd_pcm_drain` (EBADFD on the
+  second transmission otherwise).
+- `QpskModulator`: phase trajectory is now evaluated in continuous time. The old
+  integer-boundary synthesis collapsed the quarter-symbol ramp to a single hard-stepped
+  sample and jittered symbol boundaries by ±½ sample at 1800 baud (12 kHz ÷ 1800 =
+  6⅔ samples/symbol) — the NinoTNC decoded only ~56–88% of those bursts. Continuous-time
+  quarter-symbol ramps decode 100%. (A half-symbol ramp decodes ~7% — the NinoTNC wants
+  sharp-ish transitions; keep `TxRampFraction` at 0.25.)
+- `Fsk9600Modem`: RX now interpolates ×2 before the DPLL (Dire Wolf demod_9600's
+  trick) — at 5 samples/bit the quantised timing nudges cost ~12% of classic-HDLC
+  frames (no FEC to hide the resulting bit errors; IL2P at the same baud was already
+  100%). At 10 points/bit classic 9600 is 25/25 and DCD assert lag collapsed to ≤2 ms.
+
+Known behaviours (NinoTNC-side, not ours):
+
+- **QPSK from cold wants ≥500 ms TXDELAY**: the very first QPSK burst after a mode
+  change at 300 ms TXDELAY sometimes misses (its demod locking from cold); once warm,
+  300 ms is fine. Recommend `txdelay-ms: 500` on QPSK ports facing NinoTNCs — matches
+  TARPN's own advice.
+- The spontaneous once-per-minute diagnostic frame (`TNC>USB`, `=00:` registers) shows
+  up as a KISS data frame — hosts should not treat it as channel traffic.

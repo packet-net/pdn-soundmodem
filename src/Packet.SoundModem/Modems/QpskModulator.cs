@@ -32,51 +32,55 @@ public sealed class QpskModulator
     }
 
     /// <summary>Modulates logical bits (even count; byte streams always are) to audio.</summary>
-    public float[] Modulate(ReadOnlySpan<byte> bits, float amplitude = 0.8f)
+    /// <param name="bits">Logical bits, one per byte LSB.</param>
+    /// <param name="amplitude">Peak amplitude.</param>
+    /// <param name="rampFraction">Fraction of a symbol over which each phase transition
+    /// is swept (raised-cosine trajectory). Evaluated in continuous time, so fractional
+    /// samples-per-symbol rates (1800 baud at 12 kHz = 6⅔) neither jitter the symbol
+    /// boundaries nor collapse the ramp to a hard step — both mattered on the NinoTNC
+    /// bench loop, whose 3600 QPSK demodulator misses hard-stepped bursts.</param>
+    public float[] Modulate(ReadOnlySpan<byte> bits, float amplitude = 0.8f, double rampFraction = 0.5)
     {
         if (bits.Length % 2 != 0)
         {
             throw new ArgumentException("QPSK needs an even number of bits", nameof(bits));
         }
 
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(rampFraction, 0);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(rampFraction, 1);
+
         int symbolCount = bits.Length / 2;
         var samples = new float[(int)Math.Ceiling(symbolCount * _samplesPerSymbol)];
-        double carrierPhase = 0;
-        double symbolPhase = 0;
-        double clock = 0;
-        int position = 0;
 
+        // Cumulative phase before each symbol boundary; phases[k] -> phases[k + 1] is
+        // the transition at boundary time k * samplesPerSymbol.
+        var phases = new double[symbolCount + 1];
         for (int symbol = 0; symbol < symbolCount; symbol++)
         {
             int dibit = ((bits[symbol * 2] & 1) << 1) | (bits[symbol * 2 + 1] & 1);
-            double step = DibitToQuarterTurns[dibit] * Math.PI / 2;
-            double previousPhase = symbolPhase;
-            symbolPhase += step;
-
-            clock += _samplesPerSymbol;
-            int symbolSamples = 0;
-            int total = (int)(clock - position);
-            int ramp = Math.Max(1, (int)(_samplesPerSymbol / 4));
-            while (position < clock && position < samples.Length)
-            {
-                carrierPhase += _carrierStep;
-                double phase = symbolPhase;
-                if (step != 0 && symbolSamples < ramp)
-                {
-                    // Sweep smoothly from the previous symbol phase to the new one over
-                    // the first quarter symbol (raised-cosine phase trajectory).
-                    double progress = 0.5 - 0.5 * Math.Cos(Math.PI * (symbolSamples + 1) / ramp);
-                    phase = previousPhase + step * progress;
-                }
-
-                samples[position++] = amplitude * (float)Math.Sin(carrierPhase + phase);
-                symbolSamples++;
-            }
-
-            _ = total;
+            phases[symbol + 1] = phases[symbol] + DibitToQuarterTurns[dibit] * (Math.PI / 2);
         }
 
-        return position == samples.Length ? samples : samples[..position];
+        double rampSamples = _samplesPerSymbol * rampFraction;
+        double carrierPhase = 0;
+        for (int position = 0; position < samples.Length; position++)
+        {
+            carrierPhase += _carrierStep;
+
+            // The most recent boundary at or before this sample instant.
+            int boundary = Math.Min((int)(position / _samplesPerSymbol), symbolCount - 1);
+            double sinceBoundary = position - boundary * _samplesPerSymbol;
+            double phase = phases[boundary + 1];
+            if (sinceBoundary < rampSamples)
+            {
+                double progress = 0.5 - 0.5 * Math.Cos(Math.PI * sinceBoundary / rampSamples);
+                phase = phases[boundary] + (phases[boundary + 1] - phases[boundary]) * progress;
+            }
+
+            samples[position] = amplitude * (float)Math.Sin(carrierPhase + phase);
+        }
+
+        return samples;
     }
 
     private static int[] BuildDibitMap()
