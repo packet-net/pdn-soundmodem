@@ -40,7 +40,7 @@ internal static class Il2pHeaderCodec
     /// SABME/unknown control, or a malformed header).
     /// </summary>
     internal static bool TryEncodeType1(
-        ReadOnlySpan<byte> ax25Frame, Span<byte> header, out int payloadOffset)
+        ReadOnlySpan<byte> ax25Frame, Span<byte> header, bool legacyMaxFecBit, out int payloadOffset)
     {
         payloadOffset = 0;
         if (header.Length != HeaderLength)
@@ -136,18 +136,25 @@ internal static class Il2pHeaderCodec
             return false;
         }
 
-        SetField(header, 7, 1, 1, 1); // header type 1; RESERVED (bit 7 byte 0) stays 0
+        SetField(header, 7, 1, 1, 1); // header type 1
+        // The RESERVED bit (bit 7 of byte 0) is the pre-v0.6 "max FEC" flag. Spec v0.6
+        // reserves it (its example packets have it clear), but Dire Wolf's decoder — and
+        // the NinoTNC lineage the flag came from — still select the parity plan from it:
+        // clear means the legacy 2/4/6/8-parity payload blocks, so a cleared bit with
+        // 16-parity blocks is rejected by those decoders. Interop therefore wants it set.
+        SetField(header, 7, 0, 1, legacyMaxFecBit ? 1 : 0);
         SetField(header, 7, 11, 10, payloadCount);
         return true;
     }
 
     /// <summary>Builds a Type 0 (transparent) header: all fields zero except the
     /// payload byte count.</summary>
-    internal static void EncodeType0(int payloadByteCount, Span<byte> header)
+    internal static void EncodeType0(int payloadByteCount, Span<byte> header, bool legacyMaxFecBit)
     {
         ArgumentOutOfRangeException.ThrowIfGreaterThan(payloadByteCount, Il2pCodec.MaxPayloadBytes);
         ArgumentOutOfRangeException.ThrowIfLessThan(payloadByteCount, 1);
         header.Clear();
+        SetField(header, 7, 0, 1, legacyMaxFecBit ? 1 : 0);
         SetField(header, 7, 11, 10, payloadByteCount);
     }
 

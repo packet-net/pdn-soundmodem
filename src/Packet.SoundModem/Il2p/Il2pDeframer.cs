@@ -29,6 +29,7 @@ public sealed class Il2pDeframer
     private int _bitCount;
     private int _length;
     private int _expectedLength;
+    private int _invert;
 
     /// <summary>Creates a deframer delivering decoded AX.25 frames to
     /// <paramref name="frameReceived"/>.</summary>
@@ -61,8 +62,15 @@ public sealed class Il2pDeframer
         if (_state == State.Hunting)
         {
             _syncShift = ((_syncShift << 1) | bit) & 0xFFFFFF;
-            if (BitOperations.PopCount((uint)(_syncShift ^ Il2pCodec.SyncWord)) <= 1)
+            // Hunt the sync word and its complement: the spec's FSK symbol maps note some
+            // radios invert the signal and recommend checking for inverted data. A
+            // complemented match latches inversion for the rest of that frame.
+            bool direct = BitOperations.PopCount((uint)(_syncShift ^ Il2pCodec.SyncWord)) <= 1;
+            bool inverted = BitOperations.PopCount(
+                (uint)((~_syncShift & 0xFFFFFF) ^ Il2pCodec.SyncWord)) <= 1;
+            if (direct || inverted)
             {
+                _invert = inverted ? 1 : 0;
                 _state = State.CollectingHeader;
                 _byteShift = 0;
                 _bitCount = 0;
@@ -72,6 +80,7 @@ public sealed class Il2pDeframer
             return;
         }
 
+        bit ^= _invert;
         _byteShift = (_byteShift << 1) | bit; // MSB first
         if (++_bitCount < 8)
         {

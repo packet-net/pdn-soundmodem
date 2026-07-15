@@ -61,4 +61,30 @@ public class DirewolfCrossValidationTests
                 .Should().Contain("The quick brown fox jumps over the lazy dog!");
         }
     }
+
+    [Fact]
+    public void All_Four_Direwolf_Classic_9600_Frames_Decode()
+    {
+        var (samples, sampleRate) = WavFile.ReadMono(Fixture("direwolf-fsk9600-4frames.wav"));
+
+        var frames = new List<byte[]>();
+        var modem = new Fsk9600Modem(sampleRate, frames.Add, Fsk9600Framing.ClassicHdlc);
+        modem.Process(WithFlushTail(samples, sampleRate));
+
+        frames.Should().HaveCount(4);
+    }
+
+    [Fact]
+    public void All_Four_Direwolf_Il2p_9600_Frames_Decode()
+    {
+        // Dire Wolf's 9600 IL2P baseband is inverted relative to ours; the deframer's
+        // polarity-agnostic sync hunt (spec-recommended) must absorb that.
+        var (samples, sampleRate) = WavFile.ReadMono(Fixture("direwolf-il2p-fsk9600-4frames.wav"));
+
+        var frames = new List<byte[]>();
+        var modem = new Fsk9600Modem(sampleRate, frames.Add, Fsk9600Framing.Il2p);
+        modem.Process(WithFlushTail(samples, sampleRate));
+
+        frames.Should().HaveCount(4);
+    }
 }

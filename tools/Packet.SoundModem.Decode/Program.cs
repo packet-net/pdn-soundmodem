@@ -6,7 +6,7 @@ using Packet.SoundModem.Modems;
 // sm-decode: offline WAV decoder — this project's equivalent of direwolf's `atest`,
 // for corpus benchmarking and cross-validation against other modems.
 //
-//   sm-decode <file.wav> [afsk1200|bpsk300] [--il2p] [--crc] [--quiet]
+//   sm-decode <file.wav> [afsk1200|bpsk300|qpsk2400|qpsk3600|fsk9600|fsk9600-il2p] [--il2p] [--crc] [--quiet]
 //
 // afsk1200 (default): classic AX.25 (NRZI + HDLC), or IL2P-over-AFSK with --il2p
 // (per the IL2P symbol map AFSK carries raw bits — no NRZI — mark = '1').
@@ -20,7 +20,7 @@ if (args.Length < 1)
 
 string path = args[0];
 string mode = args.Skip(1).FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal)) ?? "afsk1200";
-bool il2p = args.Contains("--il2p") || mode == "bpsk300";
+bool il2p = args.Contains("--il2p") || mode is "bpsk300" or "qpsk2400" or "qpsk3600" or "fsk9600-il2p";
 bool crc = args.Contains("--crc");
 bool quiet = args.Contains("--quiet");
 
@@ -57,13 +57,26 @@ else
 switch (mode)
 {
     case "afsk1200":
-        var afsk = new Afsk1200Demodulator(sampleRate, bitSink);
-        afsk.Process(samples);
+        new Afsk1200Demodulator(sampleRate, bitSink).Process(samples);
         break;
     case "bpsk300":
-        var bpsk = new Bpsk300Demodulator(sampleRate, bitSink);
-        bpsk.Process(samples);
+        new Bpsk300Demodulator(sampleRate, bitSink).Process(samples);
         break;
+    case "qpsk2400":
+        new QpskDemodulator(sampleRate, 1200, (a, b) => { bitSink(a); bitSink(b); }, 1500).Process(samples);
+        break;
+    case "qpsk3600":
+        new QpskDemodulator(sampleRate, 1800, (a, b) => { bitSink(a); bitSink(b); }, 1650).Process(samples);
+        break;
+    case "fsk9600" or "fsk9600-il2p":
+    {
+        var framing = mode == "fsk9600"
+            ? Fsk9600Framing.ClassicHdlc
+            : (crc ? Fsk9600Framing.Il2pCrc : Fsk9600Framing.Il2p);
+        var modem = new Fsk9600Modem(sampleRate, OnFrame, framing);
+        modem.Process(samples);
+        break;
+    }
     default:
         Console.Error.WriteLine($"unknown mode '{mode}'");
         return 2;

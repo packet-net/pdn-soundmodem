@@ -22,9 +22,11 @@ public readonly record struct Il2pDecodeInfo(
 /// </summary>
 /// <remarks>
 /// Encoding is byte-exact against all three example packets in the spec (S-frame,
-/// UI-frame, I-frame, provided by G4KLX). Note the spec examples leave the RESERVED
-/// header bit (ex-"FEC level") clear, whereas Dire Wolf sets it; this encoder follows
-/// the spec (clear) and the decoder ignores the bit entirely.
+/// UI-frame, I-frame, provided by G4KLX) when <c>legacyMaxFecBit</c> is false. The
+/// default keeps that pre-v0.6 bit set for interop: Dire Wolf's decoder (empirically,
+/// via atest cross-validation) selects the legacy variable-parity plan when it is clear
+/// and rejects 16-parity frames — the NinoTNC lineage is expected to match, bench-gated.
+/// Our decoder ignores the bit and accepts either form.
 /// </remarks>
 public static class Il2pCodec
 {
@@ -55,8 +57,11 @@ public static class Il2pCodec
     /// <param name="ax25Frame">The AX.25 frame to encapsulate.</param>
     /// <param name="appendCrc">Append the optional Hamming-encoded CRC-16/X-25 trailer
     /// ("IL2P+CRC"). Both stations must agree on its presence.</param>
+    /// <param name="legacyMaxFecBit">Set the pre-v0.6 "max FEC" header bit (RESERVED in
+    /// v0.6). Default true: Dire Wolf (and the NinoTNC lineage) reject 16-parity frames
+    /// without it. Pass false only to produce byte-exact v0.6 spec-example output.</param>
     /// <exception cref="ArgumentException">The frame is empty or too large to encapsulate.</exception>
-    public static byte[] Encode(ReadOnlySpan<byte> ax25Frame, bool appendCrc)
+    public static byte[] Encode(ReadOnlySpan<byte> ax25Frame, bool appendCrc, bool legacyMaxFecBit = true)
     {
         if (ax25Frame.IsEmpty)
         {
@@ -65,7 +70,7 @@ public static class Il2pCodec
 
         Span<byte> header = stackalloc byte[Il2pHeaderCodec.HeaderLength];
         ReadOnlySpan<byte> payload;
-        if (Il2pHeaderCodec.TryEncodeType1(ax25Frame, header, out int payloadOffset))
+        if (Il2pHeaderCodec.TryEncodeType1(ax25Frame, header, legacyMaxFecBit, out int payloadOffset))
         {
             payload = ax25Frame[payloadOffset..];
         }
@@ -78,7 +83,7 @@ public static class Il2pCodec
                     nameof(ax25Frame));
             }
 
-            Il2pHeaderCodec.EncodeType0(ax25Frame.Length, header);
+            Il2pHeaderCodec.EncodeType0(ax25Frame.Length, header, legacyMaxFecBit);
             payload = ax25Frame;
         }
 

@@ -10,11 +10,12 @@ using Packet.SoundModem.Modems;
 //                  [--modem N:MODE[:FREQ]]... [--ptt serial:/dev/ttyUSB0[:rts|:dtr]]
 //                  [--txdelay MS] [--wav FILE]
 //
-// Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc. Multiple --modem options share the
+// Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, qpsk2400, qpsk3600 (both IL2P+CRC),
+// fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC). Multiple --modem options share the
 // audio channel and are addressed by the KISS port nibble (QtSoundModem multiplex model).
 // --wav decodes a file instead of live audio (testing/corpus runs) and exits.
 
-const int DspRate = 12000;
+// 9600-family modems need 48 kHz; everything else runs at 12 kHz.
 
 string device = "default";
 int captureRate = 48000;
@@ -52,6 +53,8 @@ if (modemSpecs.Count == 0)
     modemSpecs.Add("0:afsk1200");
 }
 
+int DspRate = modemSpecs.Any(s => s.Contains("9600", StringComparison.Ordinal)) ? 48000 : 12000;
+
 if (captureRate % DspRate != 0)
 {
     Console.Error.WriteLine($"--capture-rate must be a multiple of {DspRate}");
@@ -72,6 +75,10 @@ foreach (string spec in modemSpecs)
         "afsk1200" => new Afsk1200Modem(DspRate, sink, frequency ?? 1700),
         "bpsk300" => new Bpsk300Modem(DspRate, sink, crc: true, frequency ?? 1500),
         "bpsk300-nocrc" => new Bpsk300Modem(DspRate, sink, crc: false, frequency ?? 1500),
+        "qpsk2400" => QpskModem.Qpsk2400(DspRate, sink),
+        "qpsk3600" => QpskModem.Qpsk3600(DspRate, sink),
+        "fsk9600" => new Fsk9600Modem(DspRate, sink, Fsk9600Framing.ClassicHdlc),
+        "fsk9600-il2p" => new Fsk9600Modem(DspRate, sink, Fsk9600Framing.Il2pCrc),
         _ => throw new ArgumentException($"unknown mode '{mode}'"),
     });
     Console.WriteLine($"modem {subChannel}: {mode} @ {frequency ?? (mode == "afsk1200" ? 1700 : 1500)} Hz");

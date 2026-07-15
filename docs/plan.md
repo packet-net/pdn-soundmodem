@@ -82,17 +82,44 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   UI (PdnPortTuningApi is the template; add to the SSE token allowlist; node-api.yaml).
 - ⬜ Live RX soak on real audio hardware.
 
-### Phase 3 — TX ⬜
-Modulators, sample-domain PTT timing (RTS/DTR + CM108 hidraw + PDN `IRigControl`),
-modem-side CSMA (`ICsmaChannelParams`), `ITxCompletionTransport`; bench-rig loop tests;
-then QPSK 2400/3600 and 9600 GFSK legs, each gated on NinoTNC over-air interop.
+### Phase 3 — TX 🟡 software done for all Phase-1..3 modes
+- ✅ TX for AFSK 1200 / BPSK 300 / QPSK 2400 / QPSK 3600 / 9600 (classic + IL2P), with
+  modem-side p-persistent CSMA, serial RTS/DTR PTT, sample-domain TX-complete (drain) and
+  TX tail — all in SoundModemChannel + the daemon (2026-07-15).
+- ✅ QPSK 2400/3600 modem pair (spec QPSK symbol map, differential detection, fractional
+  one-symbol delay for 1800 Bd at 12 kHz); loopbacks incl. noise/offset/multi-block.
+- ✅ 9600 baseband modem, both framings, cross-validated BOTH WAYS vs Dire Wolf:
+  classic G3RUH (NRZI→scramble TX order confirmed empirically; 4/4 their audio, 3/3 ours
+  in atest) and IL2P (4/4 their audio via the new polarity-agnostic sync hunt; 3/3 ours
+  in atest after the legacy-max-FEC discovery below).
+- 🔎 **Interop discovery (desk-found, exactly the class the research predicted):** the
+  v0.6-RESERVED header bit is still read by Dire Wolf (and the NinoTNC lineage) as the
+  pre-v0.6 max-FEC selector — cleared, they parse payload blocks with the legacy
+  2/4/6/8-parity plan and reject 16-parity frames (the spec's own example packets would
+  not decode!). `Il2pCodec.Encode` now defaults `legacyMaxFecBit: true` for interop
+  (spec-exact output remains available; our RX ignores the bit). Bench must confirm
+  NinoTNC behaviour.
+- ⬜ CM108 hidraw PTT; PDN `IRigControl` PTT (packet.net side); over-air NinoTNC interop
+  runs for every mode (hardware).
 
-### Phase 4 — breadth ⬜
-Multi-decoder offset bank (RCVR pairs), FX.25, standalone KISS-TCP daemon + .deb, DCD-over-KISS
-extension (aligned with whatever format the NinoTNC ecosystem agrees), Windows audio backend,
-extra decode-only listeners per passband.
+### Phase 4 — breadth ⬜ (daemon shipped early in Phase 2)
+Multi-decoder offset bank (RCVR pairs), FX.25, daemon config file + .deb, CM108 PTT,
+DCD-over-KISS extension (aligned with whatever format the NinoTNC ecosystem agrees),
+Windows audio backend (deferred by decision 2026-07-15), extra decode-only listeners.
 
 ## Amendment log
+
+### 2026-07-15 — QPSK + 9600 modems; the legacy-max-FEC interop discovery
+
+QPSK 2400/3600 (spec symbol map, fractional-delay differential detection) and the 9600
+baseband modem (classic G3RUH + IL2P framings) land with loopback suites; sm-decode grows
+all modes; the daemon registers them (48 kHz auto-selected for 9600). Bidirectional Dire
+Wolf cross-validation added for 9600 both framings (fixtures committed). Two wire-truth
+finds: IL2P baseband polarity differs between implementations → the deframer now hunts the
+sync word in both polarities (spec-recommended); and the v0.6 RESERVED header bit is still
+a live max-FEC selector in Dire Wolf's decoder — clear = legacy variable-parity plan →
+16-parity frames rejected. Encode now defaults the bit ON (`legacyMaxFecBit`), spec-exact
+mode retained for the vector tests. 131 tests green.
 
 ### 2026-07-14 (later) — Phase 1 complete in software; DCD, spectrum, ALSA land
 

@@ -35,7 +35,7 @@ public class Il2pSpecVectorTests
     {
         byte[] ax25 = Convert.FromHexString(ax25Hex);
 
-        byte[] encoded = Il2pCodec.Encode(ax25, appendCrc: true);
+        byte[] encoded = Il2pCodec.Encode(ax25, appendCrc: true, legacyMaxFecBit: false);
 
         Convert.ToHexString(encoded).Should().Be(il2pHex.ToUpperInvariant(), name);
     }
