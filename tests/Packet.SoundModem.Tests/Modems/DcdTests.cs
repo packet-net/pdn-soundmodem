@@ -134,7 +134,7 @@ public class DcdTests
         byte[] wire = Packet.SoundModem.Il2p.Il2pCodec.Encode(ax25, appendCrc: true);
         byte[] bits = Packet.SoundModem.Il2p.Il2pFramer.FrameBits(
             wire, 96, Packet.SoundModem.Il2p.Il2pFramer.PreambleStyle.Zeros);
-        float[] burst = new Bpsk300Modulator(SampleRate).Modulate(bits);
+        float[] burst = new BpskModulator(SampleRate).Modulate(bits);
 
         var random = new Random(5);
         var audio = Noise(SampleRate + burst.Length + SampleRate, 0.02f, random);
@@ -143,7 +143,7 @@ public class DcdTests
             audio[SampleRate + i] += burst[i];
         }
 
-        var demodulator = new Bpsk300Demodulator(SampleRate, _ => { });
+        var demodulator = new BpskDemodulator(SampleRate, _ => { });
 
         demodulator.Process(audio.AsSpan(0, SampleRate - 1200));
         demodulator.ChannelBusy.Should().BeFalse("quiet before the burst");

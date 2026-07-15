@@ -2,8 +2,10 @@ using Packet.SoundModem.Il2p;
 
 namespace Packet.SoundModem.Modems;
 
-/// <summary>QPSK carrying IL2P — the NinoTNC 2400 (1200 baud, 1500 Hz) and 3600
-/// (1800 baud, 1650 Hz) mode family — as an <see cref="IModem"/>.</summary>
+/// <summary>QPSK carrying IL2P — the NinoTNC 600 (300 baud, 1500 Hz), 2400 (1200 baud,
+/// 1500 Hz) and 3600 (1800 baud, 1650 Hz) mode family — as an <see cref="IModem"/>.
+/// Symbol rates and carriers are Nino's, per the v3/4.43 mode-switch mapping in
+/// flashtnc's release-notes.txt.</summary>
 public sealed class QpskModem : IModem
 {
     private readonly QpskDemodulator _demodulator;
@@ -27,6 +29,11 @@ public sealed class QpskModem : IModem
             carrier);
         _modulator = new QpskModulator(sampleRate, baud, carrier);
     }
+
+    /// <summary>Creates the 600 bps mode (300 baud, 1500 Hz centre) — NinoTNC mode 9,
+    /// an SSB-friendly 500 Hz-OBW mode sharing its symbol rate with 300 BPSK.</summary>
+    public static QpskModem Qpsk600(int sampleRate, Action<byte[]> frameReceived, bool crc = true) =>
+        new(sampleRate, 300, 1500, frameReceived, crc);
 
     /// <summary>Creates the 2400 bps mode (1200 baud, 1500 Hz centre).</summary>
     public static QpskModem Qpsk2400(int sampleRate, Action<byte[]> frameReceived, bool crc = true) =>

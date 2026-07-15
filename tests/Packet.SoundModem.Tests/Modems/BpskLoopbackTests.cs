@@ -7,12 +7,12 @@ public class BpskLoopbackTests
 {
     private const int SampleRate = 12000;
 
-    private static (Bpsk300Demodulator Demodulator, List<byte[]> Frames) BuildReceiver(
+    private static (BpskDemodulator Demodulator, List<byte[]> Frames) BuildReceiver(
         double carrier = 1500)
     {
         var frames = new List<byte[]>();
         var deframer = new Il2pDeframer((frame, _) => frames.Add(frame), crcMode: true);
-        var demodulator = new Bpsk300Demodulator(SampleRate, deframer.PushBit, carrier);
+        var demodulator = new BpskDemodulator(SampleRate, deframer.PushBit, carrier);
         return (demodulator, frames);
     }
 
@@ -40,7 +40,7 @@ public class BpskLoopbackTests
     {
         byte[] wire = Il2pCodec.Encode(ax25, appendCrc: true);
         byte[] bits = Il2pFramer.FrameBits(wire, preambleBits, Il2pFramer.PreambleStyle.Zeros);
-        return new Bpsk300Modulator(SampleRate).Modulate(bits);
+        return new BpskModulator(SampleRate).Modulate(bits);
     }
 
     [Fact]
@@ -74,7 +74,7 @@ public class BpskLoopbackTests
         byte[] ax25 = Convert.FromHexString("86A24040404060969668908A94FF03F0");
         byte[] wire = Il2pCodec.Encode(ax25, appendCrc: true);
         byte[] bits = Il2pFramer.FrameBits(wire, 96, Il2pFramer.PreambleStyle.Zeros);
-        float[] audio = new Bpsk300Modulator(SampleRate, carrierFrequency: 1505).Modulate(bits);
+        float[] audio = new BpskModulator(SampleRate, carrierFrequency: 1505).Modulate(bits);
 
         var (demodulator, frames) = BuildReceiver(carrier: 1500);
         demodulator.Process(WithPadding(audio));
@@ -87,7 +87,7 @@ public class BpskLoopbackTests
     {
         byte[] first = Convert.FromHexString("968264888AAEE4969668908A946F81");
         byte[] second = Convert.FromHexString("968264888AAEE4969668908A9465B8CF303132333435363738");
-        var modulator = new Bpsk300Modulator(SampleRate);
+        var modulator = new BpskModulator(SampleRate);
         var bits = new List<byte>();
         bits.AddRange(Il2pFramer.FrameBits(
             Il2pCodec.Encode(first, appendCrc: true), 96, Il2pFramer.PreambleStyle.Zeros));

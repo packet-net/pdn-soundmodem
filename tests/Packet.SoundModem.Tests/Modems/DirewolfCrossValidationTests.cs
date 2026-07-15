@@ -68,7 +68,7 @@ public class DirewolfCrossValidationTests
         var (samples, sampleRate) = WavFile.ReadMono(Fixture("direwolf-fsk9600-4frames.wav"));
 
         var frames = new List<byte[]>();
-        var modem = new Fsk9600Modem(sampleRate, frames.Add, Fsk9600Framing.ClassicHdlc);
+        var modem = FskModem.Fsk9600(sampleRate, frames.Add, FskFraming.ClassicHdlc);
         modem.Process(WithFlushTail(samples, sampleRate));
 
         frames.Should().HaveCount(4);
@@ -82,7 +82,7 @@ public class DirewolfCrossValidationTests
         var (samples, sampleRate) = WavFile.ReadMono(Fixture("direwolf-il2p-fsk9600-4frames.wav"));
 
         var frames = new List<byte[]>();
-        var modem = new Fsk9600Modem(sampleRate, frames.Add, Fsk9600Framing.Il2p);
+        var modem = new FskModem(sampleRate, frames.Add, FskFraming.Il2p);
         modem.Process(WithFlushTail(samples, sampleRate));
 
         frames.Should().HaveCount(4);

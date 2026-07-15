@@ -79,7 +79,7 @@ switch (mode)
         new Afsk1200MultiModem(sampleRate, OnFrame, offsetPairs: 3).Process(samples);
         break;
     case "bpsk300":
-        new Bpsk300Demodulator(sampleRate, bitSink).Process(samples);
+        new BpskDemodulator(sampleRate, bitSink).Process(samples);
         break;
     case "qpsk2400":
         new QpskDemodulator(sampleRate, 1200, (a, b) => { bitSink(a); bitSink(b); }, 1500).Process(samples);
@@ -90,9 +90,9 @@ switch (mode)
     case "fsk9600" or "fsk9600-il2p":
     {
         var framing = mode == "fsk9600"
-            ? Fsk9600Framing.ClassicHdlc
-            : (crc ? Fsk9600Framing.Il2pCrc : Fsk9600Framing.Il2p);
-        var modem = new Fsk9600Modem(sampleRate, OnFrame, framing);
+            ? FskFraming.ClassicHdlc
+            : (crc ? FskFraming.Il2pCrc : FskFraming.Il2p);
+        var modem = new FskModem(sampleRate, OnFrame, framing);
         modem.Process(samples);
         break;
     }

@@ -4,8 +4,8 @@ using Packet.SoundModem.Il2p;
 
 namespace Packet.SoundModem.Modems;
 
-/// <summary>Framing carried over the 9600 baud baseband.</summary>
-public enum Fsk9600Framing
+/// <summary>Framing carried over the direct-FSK baseband.</summary>
+public enum FskFraming
 {
     /// <summary>Classic G3RUH: HDLC, NRZI, free-running x¹⁷+x¹²+1 scrambler.</summary>
     ClassicHdlc,
@@ -19,18 +19,19 @@ public enum Fsk9600Framing
 }
 
 /// <summary>
-/// 9600 baud baseband FSK ("RUH") modem, Dire Wolf demod_9600 lineage: the receive chain
-/// is a low-pass filter, an envelope-tracking slicer and the shared DPLL; transmit shapes
-/// a ±1 NRZ pulse train through the same low-pass design. Runs at 48 kHz (5 samples per
-/// bit). Framing per <see cref="Fsk9600Framing"/>. Over-air NinoTNC mode-2 equivalence is
-/// bench-gated; the classic and IL2P legs are cross-validated against Dire Wolf audio.
+/// Direct baseband FSK ("RUH") modem, Dire Wolf demod_9600 lineage: the receive chain is
+/// a low-pass filter, an envelope-tracking slicer and the shared DPLL; transmit shapes a
+/// ±1 NRZ pulse train through the same low-pass design. Runs at 48 kHz (5 samples per bit
+/// at 9600, 10 at 4800). Framing per <see cref="FskFraming"/>. Covers the NinoTNC 9600
+/// GFSK (modes 0 AX.25 / 2 IL2P+CRC) and 4800 GFSK (mode 4, IL2P+CRC) modes; the classic
+/// and IL2P legs are cross-validated against Dire Wolf audio and bench-proven against a
+/// NinoTNC.
 /// </summary>
-public sealed class Fsk9600Modem : IModem
+public sealed class FskModem : IModem
 {
-    private const int Baud = 9600;
-
+    private readonly int _baud;
     private readonly int _sampleRate;
-    private readonly Fsk9600Framing _framing;
+    private readonly FskFraming _framing;
     private readonly FirFilter _rxFilter;
     private readonly BitDpll _dpll;
     private readonly PacketDcd _packetDcd = new();
@@ -42,24 +43,28 @@ public sealed class Fsk9600Modem : IModem
     private float _previousExcess;
 
     /// <summary>Creates the modem.</summary>
-    /// <param name="sampleRate">Sample rate; must be a multiple of 9600 (48000 typical).</param>
+    /// <param name="sampleRate">Sample rate; must be a multiple of <paramref name="baud"/>
+    /// (48000 typical).</param>
     /// <param name="frameReceived">Receives each decoded AX.25 frame.</param>
     /// <param name="framing">Wire framing (classic G3RUH vs IL2P).</param>
-    public Fsk9600Modem(int sampleRate, Action<byte[]> frameReceived, Fsk9600Framing framing)
+    /// <param name="baud">Baseband symbol rate: 9600 (modes 0/2) or 4800 (mode 4).</param>
+    public FskModem(int sampleRate, Action<byte[]> frameReceived, FskFraming framing, int baud = 9600)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
-        if (sampleRate % Baud != 0)
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
+        if (sampleRate % baud != 0)
         {
-            throw new ArgumentException($"sample rate must be a multiple of {Baud}", nameof(sampleRate));
+            throw new ArgumentException($"sample rate must be a multiple of {baud}", nameof(sampleRate));
         }
 
+        _baud = baud;
         _sampleRate = sampleRate;
         _framing = framing;
-        _rxFilter = new FirFilter(FilterDesign.LowPass(0.55 * Baud, sampleRate, 48 * sampleRate / 48000));
+        _rxFilter = new FirFilter(FilterDesign.LowPass(0.55 * baud, sampleRate, 48 * sampleRate / 48000));
         _energyBusy = new EnergyBusyDetector(sampleRate);
 
         Action<int> bitSink;
-        if (framing == Fsk9600Framing.ClassicHdlc)
+        if (framing == FskFraming.ClassicHdlc)
         {
             var deframer = new HdlcDeframer(frameReceived);
             var descrambler = new G3ruhScrambler();
@@ -69,25 +74,36 @@ public sealed class Fsk9600Modem : IModem
         else
         {
             var deframer = new Il2pDeframer(
-                (frame, _) => frameReceived(frame), crcMode: framing == Fsk9600Framing.Il2pCrc);
+                (frame, _) => frameReceived(frame), crcMode: framing == FskFraming.Il2pCrc);
             bitSink = deframer.PushBit;
         }
 
-        // At 48 kHz there are only 5 samples per bit — each quantised DPLL nudge is
-        // ±10% of a bit. Dire Wolf's demod_9600 interpolates ×2 before its PLL for the
+        // At 48 kHz there are only 5 samples per bit at 9600 — each quantised DPLL nudge
+        // is ±10% of a bit. Dire Wolf's demod_9600 interpolates ×2 before its PLL for the
         // same reason ("upsample" in demod_9600.c); do likewise so timing corrections
-        // land on a 10-points-per-bit grid.
-        _upsample = sampleRate / Baud < 8 ? 2 : 1;
+        // land on a 10-points-per-bit grid. 4800 already has 10 samples/bit at 48 kHz, so
+        // it needs no interpolation.
+        _upsample = sampleRate / baud < 8 ? 2 : 1;
         _dpll = new BitDpll(
-            Baud, sampleRate * _upsample, bitSink, transitionObserver: _packetDcd.OnTransition);
+            baud, sampleRate * _upsample, bitSink, transitionObserver: _packetDcd.OnTransition);
     }
+
+    /// <summary>Creates the 9600 baud mode — NinoTNC mode 0 (classic AX.25) or 2
+    /// (IL2P+CRC), 20 kHz OBW.</summary>
+    public static FskModem Fsk9600(int sampleRate, Action<byte[]> frameReceived, FskFraming framing) =>
+        new(sampleRate, frameReceived, framing, 9600);
+
+    /// <summary>Creates the 4800 baud mode — NinoTNC mode 4 (IL2P+CRC), 10 kHz OBW.</summary>
+    public static FskModem Fsk4800(
+        int sampleRate, Action<byte[]> frameReceived, FskFraming framing = FskFraming.Il2pCrc) =>
+        new(sampleRate, frameReceived, framing, 4800);
 
     /// <inheritdoc />
     public string Mode => _framing switch
     {
-        Fsk9600Framing.ClassicHdlc => "fsk9600",
-        Fsk9600Framing.Il2pCrc => "fsk9600-il2pc",
-        _ => "fsk9600-il2p",
+        FskFraming.ClassicHdlc => $"fsk{_baud}",
+        FskFraming.Il2pCrc => $"fsk{_baud}-il2pc",
+        _ => $"fsk{_baud}-il2p",
     };
 
     /// <inheritdoc />
@@ -137,9 +153,9 @@ public sealed class Fsk9600Modem : IModem
     public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds)
     {
         byte[] wireBits;
-        if (_framing == Fsk9600Framing.ClassicHdlc)
+        if (_framing == FskFraming.ClassicHdlc)
         {
-            int openingFlags = Math.Max(2, txDelayMilliseconds * Baud / (8 * 1000));
+            int openingFlags = Math.Max(2, txDelayMilliseconds * _baud / (8 * 1000));
             byte[] hdlcBits = HdlcFramer.FrameBits(ax25Frame, openingFlags, closingFlags: 2);
             var nrzi = new NrziEncoder();
             var scrambler = new G3ruhScrambler();
@@ -151,14 +167,14 @@ public sealed class Fsk9600Modem : IModem
         }
         else
         {
-            byte[] wire = Il2pCodec.Encode(ax25Frame, appendCrc: _framing == Fsk9600Framing.Il2pCrc);
-            int preambleBits = Math.Max(16, txDelayMilliseconds * Baud / 1000);
+            byte[] wire = Il2pCodec.Encode(ax25Frame, appendCrc: _framing == FskFraming.Il2pCrc);
+            int preambleBits = Math.Max(16, txDelayMilliseconds * _baud / 1000);
             wireBits = Il2pFramer.FrameBits(wire, preambleBits, Il2pFramer.PreambleStyle.Alternating);
         }
 
         // ±1 NRZ pulse train through the pulse-shaping low-pass ('1' = positive deviation).
-        int samplesPerBit = _sampleRate / Baud;
-        var shaper = new FirFilter(FilterDesign.LowPass(0.55 * Baud, _sampleRate, 48 * _sampleRate / 48000));
+        int samplesPerBit = _sampleRate / _baud;
+        var shaper = new FirFilter(FilterDesign.LowPass(0.55 * _baud, _sampleRate, 48 * _sampleRate / 48000));
         var samples = new float[wireBits.Length * samplesPerBit];
         int position = 0;
         foreach (byte bit in wireBits)

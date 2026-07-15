@@ -36,15 +36,15 @@ public class Fsk9600LoopbackTests
     }
 
     [Theory]
-    [InlineData(Fsk9600Framing.ClassicHdlc)]
-    [InlineData(Fsk9600Framing.Il2pCrc)]
-    [InlineData(Fsk9600Framing.Il2p)]
-    public void A_Clean_Frame_Roundtrips(Fsk9600Framing framing)
+    [InlineData(FskFraming.ClassicHdlc)]
+    [InlineData(FskFraming.Il2pCrc)]
+    [InlineData(FskFraming.Il2p)]
+    public void A_Clean_Frame_Roundtrips(FskFraming framing)
     {
         byte[] frame = SampleFrame(1, 100);
         var frames = new List<byte[]>();
-        var tx = new Fsk9600Modem(SampleRate, _ => { }, framing);
-        var rx = new Fsk9600Modem(SampleRate, frames.Add, framing);
+        var tx = new FskModem(SampleRate, _ => { }, framing);
+        var rx = new FskModem(SampleRate, frames.Add, framing);
 
         rx.Process(WithPadding(tx.Modulate(frame, txDelayMilliseconds: 50)));
 
@@ -52,14 +52,14 @@ public class Fsk9600LoopbackTests
     }
 
     [Theory]
-    [InlineData(Fsk9600Framing.ClassicHdlc, 0.08f, 41)]
-    [InlineData(Fsk9600Framing.Il2pCrc, 0.10f, 42)]
-    public void Frames_Survive_Additive_Gaussian_Noise(Fsk9600Framing framing, float sigma, int seed)
+    [InlineData(FskFraming.ClassicHdlc, 0.08f, 41)]
+    [InlineData(FskFraming.Il2pCrc, 0.10f, 42)]
+    public void Frames_Survive_Additive_Gaussian_Noise(FskFraming framing, float sigma, int seed)
     {
         byte[] frame = SampleFrame(seed, 60);
         var frames = new List<byte[]>();
-        var tx = new Fsk9600Modem(SampleRate, _ => { }, framing);
-        var rx = new Fsk9600Modem(SampleRate, frames.Add, framing);
+        var tx = new FskModem(SampleRate, _ => { }, framing);
+        var rx = new FskModem(SampleRate, frames.Add, framing);
 
         rx.Process(WithPadding(tx.Modulate(frame, txDelayMilliseconds: 60), seed, sigma));
 
@@ -72,8 +72,8 @@ public class Fsk9600LoopbackTests
         byte[] first = SampleFrame(2, 30);
         byte[] second = SampleFrame(3, 45);
         var frames = new List<byte[]>();
-        var tx = new Fsk9600Modem(SampleRate, _ => { }, Fsk9600Framing.Il2pCrc);
-        var rx = new Fsk9600Modem(SampleRate, frames.Add, Fsk9600Framing.Il2pCrc);
+        var tx = new FskModem(SampleRate, _ => { }, FskFraming.Il2pCrc);
+        var rx = new FskModem(SampleRate, frames.Add, FskFraming.Il2pCrc);
 
         float[] a = tx.Modulate(first, txDelayMilliseconds: 50);
         float[] b = tx.Modulate(second, txDelayMilliseconds: 10);

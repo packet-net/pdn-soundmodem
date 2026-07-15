@@ -67,7 +67,7 @@ public class ChannelLoopbackTests
     {
         var channel = new SoundModemChannel(SampleRate, randomSeed: 42);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        channel.AddModem(1, sink => new Bpsk300Modem(SampleRate, sink));
+        channel.AddModem(1, sink => new BpskModem(SampleRate, sink));
         channel.Csma.Persistence = 255; // always transmit on the first clear roll
         return channel;
     }
@@ -131,7 +131,7 @@ public class ChannelLoopbackTests
         var received = new List<(int SubChannel, byte[] Frame)>();
         var rxChannel = new SoundModemChannel(SampleRate);
         rxChannel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        rxChannel.AddModem(1, sink => new Bpsk300Modem(SampleRate, sink));
+        rxChannel.AddModem(1, sink => new BpskModem(SampleRate, sink));
         rxChannel.FrameReceived += (subChannel, decoded) => received.Add((subChannel, decoded));
         rxChannel.ProcessReceive([.. output.Snapshot(), .. new float[SampleRate / 2]]);
 

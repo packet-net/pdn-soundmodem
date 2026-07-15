@@ -3,15 +3,16 @@ using Packet.SoundModem.Dsp;
 namespace Packet.SoundModem.Modems;
 
 /// <summary>
-/// 300-baud BPSK demodulator (differential detection, UZ7HO lineage): band-pass →
+/// BPSK demodulator (differential detection, UZ7HO lineage): band-pass →
 /// complex mix to baseband → I/Q low-pass → multiply by the conjugate of the
 /// one-symbol-delayed baseband. The real part of that product is positive when the
 /// carrier phase repeated (a '1' per the IL2P symbol map) and negative on a reversal
 /// (a '0'), independent of absolute phase and tolerant of small frequency offsets.
 /// Emits logical bits once per symbol — feed straight into
-/// <see cref="Il2p.Il2pDeframer"/>.
+/// <see cref="Il2p.Il2pDeframer"/>. Covers the NinoTNC 300 (mode 8) and 1200 (mode 10)
+/// BPSK symbol rates.
 /// </summary>
-public sealed class Bpsk300Demodulator
+public sealed class BpskDemodulator
 {
     private readonly FirFilter _bandPass;
     private readonly FirFilter _lowPassI;
@@ -28,28 +29,34 @@ public sealed class Bpsk300Demodulator
 
     /// <summary>Creates a demodulator delivering logical bits to <paramref name="bitSink"/>
     /// once per symbol.</summary>
-    /// <param name="sampleRate">Input sample rate (must be a multiple of 300).</param>
+    /// <param name="sampleRate">Input sample rate (must be a multiple of
+    /// <paramref name="baud"/>).</param>
     /// <param name="bitSink">Receives each decided bit (1 = phase repeat, 0 = reversal).</param>
     /// <param name="carrierFrequency">Carrier centre, 1500 Hz by convention.</param>
-    public Bpsk300Demodulator(int sampleRate, Action<int> bitSink, double carrierFrequency = 1500)
+    /// <param name="baud">Symbol rate: 300 (mode 8) or 1200 (mode 10).</param>
+    public BpskDemodulator(
+        int sampleRate, Action<int> bitSink, double carrierFrequency = 1500, int baud = 300)
     {
         ArgumentNullException.ThrowIfNull(bitSink);
-        if (sampleRate % 300 != 0)
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
+        if (sampleRate % baud != 0)
         {
-            throw new ArgumentException("sample rate must be a multiple of 300", nameof(sampleRate));
+            throw new ArgumentException($"sample rate must be a multiple of {baud}", nameof(sampleRate));
         }
 
-        // QtSoundModem's P300 filter set: 600 Hz-wide band-pass, 200 Hz I/Q low-pass.
+        // QtSoundModem's P300 filter set, scaled by symbol rate: band-pass ±baud (which
+        // lands on Nino's published OBW at both rates — 500 Hz at 300 Bd, 2400 Hz at
+        // 1200 Bd), I/Q low-pass at ⅔·baud.
         _bandPass = new FirFilter(FilterDesign.BandPass(
-            carrierFrequency - 300, carrierFrequency + 300, sampleRate, 256 * sampleRate / 12000));
-        _lowPassI = new FirFilter(FilterDesign.LowPass(200, sampleRate, 128 * sampleRate / 12000));
-        _lowPassQ = new FirFilter(FilterDesign.LowPass(200, sampleRate, 128 * sampleRate / 12000));
+            carrierFrequency - baud, carrierFrequency + baud, sampleRate, 256 * sampleRate / 12000));
+        _lowPassI = new FirFilter(FilterDesign.LowPass(baud * 2.0 / 3.0, sampleRate, 128 * sampleRate / 12000));
+        _lowPassQ = new FirFilter(FilterDesign.LowPass(baud * 2.0 / 3.0, sampleRate, 128 * sampleRate / 12000));
         _oscillatorStep = 2 * Math.PI * carrierFrequency / sampleRate;
 
-        int samplesPerSymbol = sampleRate / 300;
+        int samplesPerSymbol = sampleRate / baud;
         _delayI = new float[samplesPerSymbol];
         _delayQ = new float[samplesPerSymbol];
-        _dpll = new BitDpll(300, sampleRate, bitSink, transitionObserver: _packetDcd.OnTransition);
+        _dpll = new BitDpll(baud, sampleRate, bitSink, transitionObserver: _packetDcd.OnTransition);
         _energyBusy = new EnergyBusyDetector(sampleRate);
     }
 

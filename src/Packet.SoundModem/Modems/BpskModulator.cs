@@ -1,31 +1,33 @@
 namespace Packet.SoundModem.Modems;
 
 /// <summary>
-/// 300-baud BPSK modulator per the IL2P symbol map (spec draft v0.6): a '1' bit is no
-/// change in carrier phase, a '0' bit is a 180° change — differential encoding is inherent
-/// in the symbol map, not applied separately. Phase transitions are shaped with a cosine
+/// BPSK modulator per the IL2P symbol map (spec draft v0.6): a '1' bit is no change in
+/// carrier phase, a '0' bit is a 180° change — differential encoding is inherent in the
+/// symbol map, not applied separately. Phase transitions are shaped with a cosine
 /// amplitude ramp over a quarter symbol to limit keying sidebands (the UZ7HO approach;
-/// full spectral shaping for on-air use is a Phase 3 concern).
+/// full spectral shaping for on-air use is a Phase 3 concern). Covers the NinoTNC
+/// 300 (mode 8) and 1200 (mode 10) BPSK symbol rates, both on a 1500 Hz carrier.
 /// </summary>
-public sealed class Bpsk300Modulator
+public sealed class BpskModulator
 {
     private readonly int _sampleRate;
     private readonly double _carrierStep;
     private readonly int _samplesPerSymbol;
 
-    /// <summary>Creates a modulator at the given sample rate and carrier (1500 Hz is the
-    /// NinoTNC HF convention).</summary>
-    public Bpsk300Modulator(int sampleRate = 12000, double carrierFrequency = 1500)
+    /// <summary>Creates a modulator at the given sample rate, symbol rate and carrier
+    /// (300 baud on 1500 Hz is the NinoTNC HF convention).</summary>
+    public BpskModulator(int sampleRate = 12000, int baud = 300, double carrierFrequency = 1500)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(sampleRate, 8000);
-        if (sampleRate % 300 != 0)
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
+        if (sampleRate % baud != 0)
         {
-            throw new ArgumentException("sample rate must be a multiple of 300", nameof(sampleRate));
+            throw new ArgumentException($"sample rate must be a multiple of {baud}", nameof(sampleRate));
         }
 
         _sampleRate = sampleRate;
         _carrierStep = 2 * Math.PI * carrierFrequency / sampleRate;
-        _samplesPerSymbol = sampleRate / 300;
+        _samplesPerSymbol = sampleRate / baud;
     }
 
     /// <summary>The configured sample rate.</summary>
