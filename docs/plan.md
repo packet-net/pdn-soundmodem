@@ -142,19 +142,17 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   audio backend (deferred 2026-07-15); extra decode-only listeners; multi-decoder banks
   for the PSK modes.
 
-## Blocked on Tom / hardware (2026-07-15)
+## Blocked on Tom / hardware (updated 2026-07-15 later)
 
-- **NuGet**: publish workflow ran on the v0.1.0 tag — pack + tests green, but the
-  NUGET_API_KEY org secret is NOT visible to this repo, so the push was skipped
-  (deliberate warn-and-skip). Grant the secret to pdn-soundmodem (org secret →
-  repository access, or `gh secret set NUGET_API_KEY -R packet-net/pdn-soundmodem`),
-  then re-run: `gh workflow run publish -R packet-net/pdn-soundmodem -f override_version=0.1.0`.
-  The packet.net port package starts once the package indexes.
-- **Hardware** (Phase 0 + gates): `sudo usermod -aG audio tf` on this box for local ALSA
-  tests; soundcard on the NinoTNC bench rig for the WAV corpus; a Pi for the DSP
-  benchmark and .deb trial; over-air NinoTNC runs to gate each mode (esp. whether
-  NinoTNC's 9600 GFSK matches the direwolf-validated baseband, the QPSK phase maps, and
-  the legacy-max-FEC bit behaviour).
+- ~~NuGet~~ **RESOLVED**: NUGET_API_KEY granted; 0.1.0 and 0.1.1 published (0.1.0
+  confirmed indexed on nuget.org).
+- ~~audio group~~ **RESOLVED**: `usermod -aG audio tf` run; both ALSA hardware smoke
+  tests now pass on this box's real sound card (via `sg audio` until re-login).
+- **Hardware still pending**: soundcard on the NinoTNC bench rig for the IL2P-mode WAV
+  corpus; a Pi for the DSP benchmark and .deb trial; over-air NinoTNC runs to gate each
+  mode (esp. whether NinoTNC's 9600 GFSK matches the direwolf-validated baseband, the
+  QPSK phase maps, and the legacy-max-FEC bit behaviour). A live ALSA RX soak on this
+  box is now possible any time (audio group granted).
 
 ## Amendment log
 
