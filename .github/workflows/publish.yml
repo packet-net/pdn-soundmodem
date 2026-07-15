@@ -1,0 +1,74 @@
+name: publish
+
+# Publishes the pdn-soundmodem NuGet package (the modem core library) on `v*` tags,
+# modelled on packet.net's publish-libs.yml. Requires the org NUGET_API_KEY secret to be
+# visible to this repository; if it is not, the push step warns and skips.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      override_version:
+        description: 'Override version (workflow_dispatch only; the tag wins for push events)'
+        required: false
+        default: ''
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: [self-hosted, Linux, X64]
+    env:
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            ref="${GITHUB_REF#refs/tags/v}"
+          else
+            ref="${{ inputs.override_version }}"
+          fi
+          if [ -z "$ref" ]; then
+            echo "::error::no version (tag v* or override_version required)"
+            exit 1
+          fi
+          echo "version=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: test
+        run: dotnet test --configuration Release
+
+      - name: pack
+        run: |
+          dotnet pack src/Packet.SoundModem/Packet.SoundModem.csproj \
+            --configuration Release \
+            --output ./artifacts \
+            -p:Version=${{ steps.version.outputs.version }}
+
+      - name: push to nuget.org
+        if: env.NUGET_API_KEY != ''
+        run: |
+          dotnet nuget push "./artifacts/pdn-soundmodem.${{ steps.version.outputs.version }}.nupkg" \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "${NUGET_API_KEY}" \
+            --skip-duplicate
+          if [ -f "./artifacts/pdn-soundmodem.${{ steps.version.outputs.version }}.snupkg" ]; then
+            dotnet nuget push "./artifacts/pdn-soundmodem.${{ steps.version.outputs.version }}.snupkg" \
+              --source https://api.nuget.org/v3/index.json \
+              --api-key "${NUGET_API_KEY}" \
+              --skip-duplicate || \
+              echo "::warning::snupkg push failed; main nupkg still uploaded."
+          fi
+
+      - name: warn if NUGET_API_KEY missing
+        if: env.NUGET_API_KEY == ''
+        run: echo "::warning::NUGET_API_KEY is not visible to this repo — push skipped. Grant the org secret access to pdn-soundmodem."
