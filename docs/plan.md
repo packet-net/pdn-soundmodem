@@ -113,8 +113,13 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 - ✅ Daemon config file (2026-07-15): `--config soundmodem.json` (comments + trailing
   commas tolerated; `soundmodem.example.json` in repo root); CLI flags still work and
   append.
-- ⬜ FX.25; .deb packaging; DCD-over-KISS extension (awaiting an agreed
-  NinoTNC-ecosystem format); Windows audio backend (deferred by decision 2026-07-15);
+- ✅ FX.25 (2026-07-15): codec (11 correlation tags, RS fcr=1 at 16/32/64 check bytes,
+  rotating-flag fill, format auto-pick) + streaming deframer with miscorrection guard.
+  Cross-validated bidirectionally vs Dire Wolf: 4/4 decoding gen_packets -X audio
+  (fixture committed), 3/3 of our TX decoded by atest and explicitly labelled FX.25.
+  Not yet surfaced as a modem/daemon option (parallel-RX + dedupe wiring pending).
+- ⬜ FX.25 modem/daemon wiring; .deb packaging; DCD-over-KISS extension (awaiting an
+  agreed NinoTNC-ecosystem format); Windows audio backend (deferred 2026-07-15);
   extra decode-only listeners; multi-decoder banks for the PSK modes.
 
 ## Amendment log

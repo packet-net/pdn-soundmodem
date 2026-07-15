@@ -87,4 +87,18 @@ public class DirewolfCrossValidationTests
 
         frames.Should().HaveCount(4);
     }
+
+    [Fact]
+    public void All_Four_Direwolf_Fx25_Frames_Decode_Via_The_Fx25_Path()
+    {
+        var (samples, sampleRate) = WavFile.ReadMono(Fixture("direwolf-fx25-afsk1200-4frames.wav"));
+
+        var frames = new List<byte[]>();
+        var deframer = new Packet.SoundModem.Fx25.Fx25Deframer((frame, _) => frames.Add(frame));
+        var nrzi = new NrziDecoder();
+        var demodulator = new Afsk1200Demodulator(sampleRate, level => deframer.PushBit(nrzi.Decode(level)));
+        demodulator.Process(WithFlushTail(samples, sampleRate));
+
+        frames.Should().HaveCount(4);
+    }
 }

@@ -1,4 +1,5 @@
 using Packet.SoundModem.Audio;
+using Packet.SoundModem.Fx25;
 using Packet.SoundModem.Hdlc;
 using Packet.SoundModem.Il2p;
 using Packet.SoundModem.Modems;
@@ -22,6 +23,7 @@ string path = args[0];
 string mode = args.Skip(1).FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal)) ?? "afsk1200";
 bool il2p = args.Contains("--il2p") || mode is "bpsk300" or "qpsk2400" or "qpsk3600" or "fsk9600-il2p";
 bool crc = args.Contains("--crc");
+bool fx25 = args.Contains("--fx25");
 bool quiet = args.Contains("--quiet");
 
 var (samples, sampleRate) = WavFile.ReadMono(path);
@@ -46,6 +48,20 @@ if (il2p)
 {
     var deframer = new Il2pDeframer((frame, _) => OnFrame(frame), crcMode: crc);
     bitSink = deframer.PushBit;
+}
+else if (fx25)
+{
+    var deframer = new Fx25Deframer((frame, corrected) =>
+    {
+        if (!quiet)
+        {
+            Console.WriteLine($"    (fx25, {corrected} bytes corrected)");
+        }
+
+        OnFrame(frame);
+    });
+    var nrzi = new NrziDecoder();
+    bitSink = level => deframer.PushBit(nrzi.Decode(level));
 }
 else
 {
