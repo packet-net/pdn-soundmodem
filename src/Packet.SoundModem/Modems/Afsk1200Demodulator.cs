@@ -24,6 +24,7 @@ public sealed class Afsk1200Demodulator
     private float _q0, _q1, _q2;
     private float _peakHigh;
     private float _peakLow;
+    private float _previousExcess;
 
     /// <summary>Creates a demodulator delivering NRZI line levels (one per bit) to
     /// <paramref name="bitSink"/>.</summary>
@@ -100,9 +101,19 @@ public sealed class Afsk1200Demodulator
             // QtSoundModem's adaptive min/max thresholds exist for the same reason.
             _peakHigh += (discriminator - _peakHigh) * (discriminator > _peakHigh ? 0.08f : 0.0008f);
             _peakLow += (discriminator - _peakLow) * (discriminator < _peakLow ? 0.08f : 0.0008f);
-            int level = discriminator > (_peakHigh + _peakLow) * 0.5f ? 1 : 0;
+            float excess = discriminator - (_peakHigh + _peakLow) * 0.5f;
+            int level = excess > 0 ? 1 : 0;
 
-            _dpll.Sample(level);
+            // Sub-sample transition timing: linear zero-crossing interpolation of the
+            // slicer input between the previous and current sample.
+            double crossing = 0;
+            if ((excess > 0) != (_previousExcess > 0) && excess != _previousExcess)
+            {
+                crossing = Math.Clamp(excess / (double)(excess - _previousExcess), 0, 0.999);
+            }
+
+            _previousExcess = excess;
+            _dpll.Sample(level, crossing);
         }
     }
 }

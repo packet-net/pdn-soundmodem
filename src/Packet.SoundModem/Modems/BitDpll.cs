@@ -39,7 +39,17 @@ public sealed class BitDpll
     }
 
     /// <summary>Advances the clock by one sample of sliced level (0/1).</summary>
-    public void Sample(int level)
+    /// <param name="level">The sliced level at this sample.</param>
+    /// <param name="crossingFraction">How far <b>before</b> this sample the underlying
+    /// analog crossing occurred, as a fraction of one sample (0 = at this sample). At
+    /// coarse samples-per-bit ratios (10 at 12 kHz/1200 Bd) quantised nudges inject up to
+    /// ±5 % of a bit of clock jitter per transition; interpolating the crossing from the
+    /// pre/post slicer input removes it (measured on WA8LMF Track 2 at 12 kHz: the single
+    /// decoder went 60 → 268). A searching/locked inertia switch was also tried and
+    /// REGRESSED badly (268 → 31) — with the crossing interpolation the fixed inertia is
+    /// already stable through acquisition, so keep it fixed. Callers that cannot estimate
+    /// the crossing pass 0.</param>
+    public void Sample(int level, double crossingFraction = 0)
     {
         _phase += _increment;
         if (_phase >= 0.5)
@@ -51,8 +61,15 @@ public sealed class BitDpll
         if (level != _lastLevel)
         {
             _lastLevel = level;
-            _transitionObserver?.Invoke(_phase);
-            _phase *= _inertia;
+            // Nudge as if at the true crossing instant, then re-advance to now. A
+            // crossing that lands just before the sampling wrap would take the phase
+            // out of the [-0.5, 0.5) domain and invert the nudge direction — clamp the
+            // look-back at the wrap edge (the emit for that cycle already happened).
+            double back = crossingFraction * _increment;
+            double atCrossing = Math.Max(_phase - back, -0.4999);
+            back = _phase - atCrossing;
+            _transitionObserver?.Invoke(atCrossing);
+            _phase = atCrossing * _inertia + back;
         }
     }
 }

@@ -47,18 +47,19 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   increasing-noise battery: ours 34 vs atest 38 (single decoder vs multi-slicer — the
   Phase 4 multi-decoder bank is the path to parity+). `tools/Packet.SoundModem.Decode`
   (sm-decode) is our atest equivalent. (2026-07-14)
-- ✅ Real-corpus benchmark — **direwolf parity** (2026-07-15, WA8LMF TNC Test CD
-  Track 2, 26 min of off-air 1200 AFSK APRS, kept locally in corpus/, redistribution
-  TBC): at 12 kHz **atest 970 / ours (multi+emphasis, 21 branches) 970**. The road
-  there is instructive: single flat decoder 228@44.1k / 60@12k, flat 7-branch multi
-  267 — real-world per-station twist/level diversity is THE dominant factor, and the
-  QtSM emph_all emphasis branches (flat/+6/+12 dB-per-octave ×each offset) closed the
-  whole gap. `afsk1200-multi` is therefore the recommended AFSK mode. Known issue: the
-  single-decoder DPLL degrades at 10 samples/bit (60@12k vs 228@44.1k) — sub-sample
-  transition interpolation is the future fix; further levers if ever needed: per-tone
-  AGC, dual-threshold + Memory-ARQ, slicer banks. 44.1 kHz full-bank final: **954 vs
-  atest's 983 (97%)** — the residual is tap-scaling at the non-native rate; 12 kHz (the
-  daemon's native rate) is at parity.
+- ✅ Real-corpus benchmark — **ahead of the reference on Track 2** (2026-07-15, WA8LMF
+  TNC Test CD Tracks 1+2, off-air 1200 AFSK APRS, kept locally in corpus/,
+  redistribution TBC). At 12 kHz (the daemon's native rate), multi+emphasis bank:
+  **Track 2 ours 972 vs atest 970; Track 1 ours 959 vs atest 999 (96 %)**. The path:
+  flat single 60 → emphasis branches (the twist killer, 267→970) → sub-sample DPLL
+  crossing interpolation (single 60→269; Track 1 937→959; Track 2 970→972). Frame-set
+  diffs show the remaining Track-1 misses are marginal-SNR frames spread across many
+  stations (direwolf's multi-slicer edge); next levers if wanted: slicer-level branches,
+  per-tone AGC, dual-threshold + Memory-ARQ. Negative results banked in code comments:
+  searching/locked inertia switching regressed badly (268→31), and crossing
+  interpolation on the 9600 baseband chases ISI jitter into the eye at 5 samples/bit —
+  both documented in BitDpll/Fsk9600Modem. 44.1 kHz full-bank (pre-interpolation): 954
+  vs atest 983.
 - ⬜ Phase 0 hardware corpus validation for the IL2P modes (needs rig time).
 - Exit: corpus decode rates ≥ QtSoundModem and ≥ NinoTNC on identical recordings
   (needs Phase 0 recordings — loopback tests alone do not demonstrate this).

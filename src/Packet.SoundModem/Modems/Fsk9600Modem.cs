@@ -37,6 +37,7 @@ public sealed class Fsk9600Modem : IModem
     private readonly EnergyBusyDetector _energyBusy;
     private float _peakHigh;
     private float _peakLow;
+    private float _previousExcess;
 
     /// <summary>Creates the modem.</summary>
     /// <param name="sampleRate">Sample rate; must be a multiple of 9600 (48000 typical).</param>
@@ -99,8 +100,17 @@ public sealed class Fsk9600Modem : IModem
             // and level without assuming a centred signal.
             _peakHigh += (filtered - _peakHigh) * (filtered > _peakHigh ? 0.08f : 0.0002f);
             _peakLow += (filtered - _peakLow) * (filtered < _peakLow ? 0.08f : 0.0002f);
-            int level = filtered > (_peakHigh + _peakLow) * 0.5f ? 1 : 0;
+            float excess = filtered - (_peakHigh + _peakLow) * 0.5f;
+            int level = excess > 0 ? 1 : 0;
 
+            // NOTE: sub-sample crossing interpolation (a measured win for AFSK/BPSK) is
+            // deliberately NOT used here. At 5 samples/bit behind the tight 0.55·baud
+            // pulse filter, the crossings carry strong data-dependent ISI offsets, and
+            // interpolating them faithfully makes the DPLL chase that jitter into the
+            // closed eye for unlucky bit patterns (found by the back-to-back loopback
+            // test). Quantised nudges average the ISI out; revisit with matched-filter
+            // timing against a real off-air 9600 corpus.
+            _previousExcess = excess;
             _dpll.Sample(level);
         }
     }
@@ -152,5 +162,6 @@ public sealed class Fsk9600Modem : IModem
         _energyBusy.Reset();
         _peakHigh = 0;
         _peakLow = 0;
+        _previousExcess = 0;
     }
 }

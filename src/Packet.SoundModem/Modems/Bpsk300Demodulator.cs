@@ -24,6 +24,7 @@ public sealed class Bpsk300Demodulator
     private readonly double _oscillatorStep;
     private double _oscillatorPhase;
     private int _delayPosition;
+    private float _previousDecision;
 
     /// <summary>Creates a demodulator delivering logical bits to <paramref name="bitSink"/>
     /// once per symbol.</summary>
@@ -94,7 +95,14 @@ public sealed class Bpsk300Demodulator
 
             // Re(z·conj(z_delayed)): + on phase repeat ('1'), − on reversal ('0').
             float decision = i * delayedI + q * delayedQ;
-            _dpll.Sample(decision > 0 ? 1 : 0);
+            double crossing = 0;
+            if ((decision > 0) != (_previousDecision > 0) && decision != _previousDecision)
+            {
+                crossing = Math.Clamp(decision / (double)(decision - _previousDecision), 0, 0.999);
+            }
+
+            _previousDecision = decision;
+            _dpll.Sample(decision > 0 ? 1 : 0, crossing);
         }
     }
 }
