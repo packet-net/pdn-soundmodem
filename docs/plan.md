@@ -182,6 +182,28 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-15 (night) — TXDELAY: 20 ms is enough (and the 500 ms claim was wrong)
+
+Tom challenged the "QPSK needs ≥500 ms TXDELAY" note — suspecting it conflated *preamble
+length* with *the modem settling after a mode change*, and flagging that the NinoTNC may
+send the frame after a TXDELAY change at the old setting. Both suspicions were right, and
+the rig can now prove it: GETALL register 0B (`PreamblCnt`) is a readback of the applied
+preamble in 16-bit words, and the bench reports per-burst air duration.
+
+- **TXDELAY applies one frame late.** The readback updates immediately; the air does not.
+  Moved 300 → 50 ms, burst #00 measured 571 ms and #01+ 330 ms — a 241 ms excess, exactly
+  the old setting. Never measure a TXDELAY change on the frame after it.
+- **20 ms is enough** for afsk1200, fsk9600 and bpsk300 in both directions (6/6), and
+  **our demodulator locks on ~13-20 ms preambles in every mode tested**. Only the
+  NinoTNC's QPSK demodulator wants more: QPSK-2400 goes 6/6 at 100 ms and 0/6 at 50 ms.
+- **The 500 ms claim is retracted.** It was the QPSK modulator bug (since fixed) plus
+  unreliable first frames after a mode change, misread as a preamble requirement. The
+  bench now settles 1500 ms after SETHW (`--settle-ms`) rather than papering over it with
+  a long TXDELAY.
+
+Tables in docs/ninotnc-loop.md § How short can TXDELAY be?. Bench gained `--our-txdelay-ms`
+so the two directions can be swept independently — conflating them is what hid this.
+
 ### 2026-07-15 (evening) — v44 firmware, 13/15 mode coverage, and the silence bug
 
 Tom pointed at NinoTNC firmware v44 and its mode table. Flashed the bench TNC 3.41 → 3.44

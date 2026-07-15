@@ -88,6 +88,29 @@ The stray single misses (mode 12 and 11 at 7/8 and 11/12 us→NinoTNC) are the N
 declining one of ours; every other cell is clean, and no run recorded a capture xrun.
 
 
+## How short can TXDELAY be?
+
+Measured per direction, because the two ends have different minima and conflating them
+hides which is the constraint (`--txdelay-ms` sets the NinoTNC's, `--our-txdelay-ms` ours).
+Preambles are quantised to 16-bit words, so the applied value is the GETALL `PreamblCnt`
+readback, not the request.
+
+| direction | afsk1200 (6) | fsk9600 (0) | bpsk300 (8) | qpsk2400 (11) | qpsk3600 (5) |
+|---|---|---|---|---|---|
+| **NinoTNC → us** (our demod locking) | 5/6 @ 13 ms | 6/6 @ 20 ms | 6/6 @ 20 ms | 6/6 @ 20 ms | 6/6 @ 18 ms |
+| **us → NinoTNC** (its demod locking) | 6/6 @ 20 ms | 6/6 @ 20 ms | 6/6 @ 20 ms | **needs ~100 ms** | — |
+
+So **20 ms is enough for everything except the QPSK modes**, and our own demodulator locks
+on ~20 ms in every mode tested — the NinoTNC's QPSK demodulator is the only thing here
+that wants more. QPSK-2400 falls off a cliff between 100 ms (6/6) and 50 ms (0/6); 150 ms
+gave 5/6, 300 ms 6/6.
+
+**Retraction:** an earlier note here claimed "QPSK from cold wants ≥500 ms TXDELAY". That
+was wrong on both halves. The failures that produced it were the QPSK *modulator* bug
+(integer-boundary phase synthesis, fixed above) plus unreliable first frames after a mode
+change — not preamble length. 100 ms is enough, and even that ceiling is the NinoTNC's,
+not ours.
+
 ## Coverage
 
 Against Nino's v44 mode table ([v44-op-modes.png](https://github.com/ninocarrillo/flashtnc/blob/master/v44-op-modes.png)
@@ -178,9 +201,12 @@ Known behaviours (NinoTNC-side, not ours):
   *other* end's report — but it means this rig cannot be used to measure our RX in
   isolation while transmitting, and a real installation relies on PTT muting.
 
-- **QPSK from cold wants ≥500 ms TXDELAY**: the very first QPSK burst after a mode
-  change at 300 ms TXDELAY sometimes misses (its demod locking from cold); once warm,
-  300 ms is fine. Recommend `txdelay-ms: 500` on QPSK ports facing NinoTNCs — matches
-  TARPN's own advice.
+- **TXDELAY changes take effect one frame late.** The GETALL readback updates
+  immediately, but the air does not: with the NinoTNC moved 300 → 50 ms, burst #00 still
+  measured 571 ms long and #01 onward 330 ms — a 241 ms excess, i.e. exactly the old
+  setting. Change TXDELAY at least one frame before you depend on it, and never measure a
+  TXDELAY change on the frame that follows it. (Thanks Tom — called it.)
+- **The first frames after a *mode* change are unreliable**, independent of TXDELAY. This
+  rig now settles 1500 ms after SETHW (`--settle-ms`) before it trusts anything.
 - The spontaneous once-per-minute diagnostic frame (`TNC>USB`, `=00:` registers) shows
   up as a KISS data frame — hosts should not treat it as channel traffic.

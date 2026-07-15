@@ -27,6 +27,8 @@ int payloadLength = 40;
 bool levelCheckOnly = false;
 double qpskRamp = 0.25;
 string? recordPath = null;
+int settleMs = 1500;
+int? ourTxDelayMs = null;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -42,6 +44,11 @@ for (int i = 0; i < args.Length; i++)
         case "--level-check": levelCheckOnly = true; break;
         case "--qpsk-ramp": qpskRamp = double.Parse(Next()); break;
         case "--record": recordPath = Next(); break;
+        case "--settle-ms": settleMs = int.Parse(Next()); break;
+        // Our TX preamble, when it should differ from the NinoTNC's TXDELAY: the two
+        // directions have independent minima and conflating them hides which end is the
+        // constraint.
+        case "--our-txdelay-ms": ourTxDelayMs = int.Parse(Next()); break;
         default: Console.Error.WriteLine($"unknown option {args[i]}"); return 2;
     }
 }
@@ -169,6 +176,7 @@ string? GetAll(string label)
                 if (eq >= 0)
                 {
                     Console.WriteLine($"  [diag {label}] {text[eq..]}");
+                    ReportPreamble(text[eq..]);
                     return text[eq..];
                 }
             }
@@ -181,12 +189,42 @@ string? GetAll(string label)
     return null;
 }
 
-// Set mode (SETHW payload = mode + 16 => applied without touching flash) + TXDELAY.
+// PreamblCnt (register 0B) is a readback of the configured preamble in 16-bit words, so
+// it says what TXDELAY the firmware ACTUALLY applied — the only honest check that a
+// KISS TXDELAY landed, and in which units.
+void ReportPreamble(string diag)
+{
+    int i = diag.IndexOf("PreamblCnt:", StringComparison.Ordinal);
+    if (i < 0)
+    {
+        return;
+    }
+
+    if (int.TryParse(diag.Substring(i + 11, 8), System.Globalization.NumberStyles.HexNumber, null, out int words))
+    {
+        int bitRate = NinoBitRate(ninoMode);
+        Console.WriteLine(
+            $"      applied preamble: {words} words = {words * 16000.0 / bitRate:F0} ms at {bitRate} bps" +
+            $" (requested TXDELAY {txDelayMs} ms)");
+    }
+}
+
+static int NinoBitRate(byte mode) => mode switch
+{
+    0 or 2 or 3 => 9600, 1 => 19200, 4 => 4800, 5 => 3600,
+    6 or 7 or 10 => 1200, 8 or 12 or 13 or 14 => 300, 9 => 600, 11 => 2400, _ => 1200,
+};
+
+// Set mode (SETHW payload = mode + 16 => applied without touching flash), let the modem
+// settle, then TXDELAY. The settle matters: the first frames after a mode change were
+// initially misread as "this mode needs a long TXDELAY".
 SerialKiss(new KissFrame(0, KissCommand.SetHardware, [(byte)(ninoMode + 16)]));
-Thread.Sleep(300);
+Thread.Sleep(settleMs);
 SerialKiss(new KissFrame(0, KissCommand.TxDelay, [(byte)(txDelayMs / 10)]));
-Thread.Sleep(200);
-Console.WriteLine($"NinoTNC mode {ninoMode} set (non-persist), TXDELAY {txDelayMs} ms; our mode {ourMode} @ {dspRate} Hz");
+Thread.Sleep(400);
+Console.WriteLine(
+    $"NinoTNC mode {ninoMode} set (non-persist), settle {settleMs} ms, TXDELAY {txDelayMs} ms;" +
+    $" our mode {ourMode} @ {dspRate} Hz");
 
 // ---- audio ----
 using var capture = AlsaPcm.Open(audioDevice, AlsaPcm.Direction.Capture, 1, CaptureRate);
@@ -369,11 +407,12 @@ for (int seq = 0; seq < frames; seq++)
     }
 
     Console.WriteLine(
-        $"  #{seq:D2} decode={(decoded ? "ok" : "MISS")} audio={audioStart:F0}..{audioEnd:F0}ms dcd={dcdOn:F0}..{dcdOff:F0}ms");
+        $"  #{seq:D2} decode={(decoded ? "ok" : "MISS")} audio={audioStart:F0}..{audioEnd:F0}ms" +
+        $" (burst {audioEnd - audioStart:F0}ms) dcd={dcdOn:F0}..{dcdOff:F0}ms");
 }
 
 // ---- Direction A: us -> NinoTNC ----
-Console.WriteLine($"— us -> NinoTNC: {frames} frames");
+Console.WriteLine($"— us -> NinoTNC: {frames} frames, our preamble {ourTxDelayMs ?? txDelayMs} ms");
 GetAll("before-A");
 int okA = 0;
 for (int seq = 100; seq < 100 + frames; seq++)
@@ -381,7 +420,7 @@ for (int seq = 100; seq < 100 + frames; seq++)
     byte[] frame = MakeFrame(seq);
     int before;
     lock (serialGate) { before = serialFrames.Count; }
-    float[] audio = modem.Modulate(frame, txDelayMs);
+    float[] audio = modem.Modulate(frame, ourTxDelayMs ?? txDelayMs);
     playback.Write(audio);
     playback.Drain();
 
