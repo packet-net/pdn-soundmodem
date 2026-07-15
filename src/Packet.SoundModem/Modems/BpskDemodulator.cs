@@ -56,7 +56,7 @@ public sealed class BpskDemodulator
         int samplesPerSymbol = sampleRate / baud;
         _delayI = new float[samplesPerSymbol];
         _delayQ = new float[samplesPerSymbol];
-        _dpll = new BitDpll(baud, sampleRate, bitSink, transitionObserver: _packetDcd.OnTransition);
+        _dpll = new BitDpll(baud, sampleRate, bitSink, transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
         _energyBusy = new EnergyBusyDetector(sampleRate);
     }
 

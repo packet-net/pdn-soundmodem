@@ -73,7 +73,7 @@ else
 switch (mode)
 {
     case "afsk1200":
-        new Afsk1200Demodulator(sampleRate, bitSink).Process(samples);
+        new AfskDemodulator(sampleRate, bitSink).Process(samples);
         break;
     case "afsk1200-multi":
         new Afsk1200MultiModem(sampleRate, OnFrame, offsetPairs: 3).Process(samples);

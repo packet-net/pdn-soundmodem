@@ -15,9 +15,9 @@ namespace Packet.SoundModem.Modems;
 /// </summary>
 public sealed class Afsk1200MultiModem : IModem
 {
-    private readonly Afsk1200Demodulator[] _demodulators;
+    private readonly AfskDemodulator[] _demodulators;
     private readonly EmphasisFilter[] _preFilters;
-    private readonly Afsk1200Modulator _modulator;
+    private readonly AfskModulator _modulator;
     private float[] _scratch = [];
     private readonly Action<byte[]> _frameReceived;
     private readonly FrameDeduper _deduper;
@@ -47,18 +47,18 @@ public sealed class Afsk1200MultiModem : IModem
         _frameReceived = frameReceived;
         _deduper = new FrameDeduper(3L * sampleRate);
         _dedupeChunk = sampleRate / 10;
-        _modulator = new Afsk1200Modulator(sampleRate);
+        _modulator = new AfskModulator(sampleRate);
 
         int emphasisCount = emphasisVariants ? 3 : 1;
         int frequencyCount = 2 * offsetPairs + 1;
-        _demodulators = new Afsk1200Demodulator[frequencyCount * emphasisCount];
+        _demodulators = new AfskDemodulator[frequencyCount * emphasisCount];
         _preFilters = new EmphasisFilter[_demodulators.Length];
         for (int i = 0; i < _demodulators.Length; i++)
         {
             int step = (i % frequencyCount) - offsetPairs;
             var deframer = new HdlcDeframer(OnFrame);
             var nrzi = new NrziDecoder();
-            _demodulators[i] = new Afsk1200Demodulator(
+            _demodulators[i] = new AfskDemodulator(
                 sampleRate,
                 level => deframer.PushBit(nrzi.Decode(level)),
                 centerFrequency + step * offsetHz);
@@ -110,7 +110,7 @@ public sealed class Afsk1200MultiModem : IModem
     /// <inheritdoc />
     public void ResetCarrierState()
     {
-        foreach (Afsk1200Demodulator demodulator in _demodulators)
+        foreach (AfskDemodulator demodulator in _demodulators)
         {
             demodulator.ResetCarrierState();
         }

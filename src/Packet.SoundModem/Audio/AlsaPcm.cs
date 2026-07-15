@@ -26,6 +26,7 @@ public sealed class AlsaPcm : IDisposable
     private const int AccessRwInterleaved = 3;
 
     private IntPtr _pcm;
+    private int _xruns;
 
     private AlsaPcm(IntPtr pcm, Direction direction, int channels, int sampleRate)
     {
@@ -43,6 +44,13 @@ public sealed class AlsaPcm : IDisposable
 
     /// <summary>Configured sample rate (the device may resample via the plug layer).</summary>
     public int SampleRate { get; }
+
+    /// <summary>Number of xruns recovered so far — capture overruns or playback
+    /// underruns. Recovery is silent and lossy: the stream restarts, so every xrun is a
+    /// discontinuity in the sample stream and can corrupt a frame in flight. Non-zero
+    /// here means the machine is not keeping up, and long frames (300 baud runs for
+    /// seconds) are hit hardest.</summary>
+    public int Xruns => _xruns;
 
     /// <summary>Opens and configures a PCM device (e.g. "default", "plughw:0,0").</summary>
     /// <param name="device">ALSA device name.</param>
@@ -109,6 +117,7 @@ public sealed class AlsaPcm : IDisposable
 
             if (got < 0)
             {
+                Interlocked.Increment(ref _xruns);
                 int recovered = snd_pcm_recover(_pcm, (int)got, 1);
                 Throw(recovered, "snd_pcm_readi");
                 continue;
@@ -141,6 +150,7 @@ public sealed class AlsaPcm : IDisposable
 
             if (put < 0)
             {
+                Interlocked.Increment(ref _xruns);
                 int recovered = snd_pcm_recover(_pcm, (int)put, 1);
                 Throw(recovered, "snd_pcm_writei");
                 continue;

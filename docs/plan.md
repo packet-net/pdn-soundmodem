@@ -82,7 +82,7 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   NOTE: they skip on this dev box because user `tf` lacks the `audio` group
   (`sudo usermod -aG audio tf` to enable); they will run on the bench/Pi.
 - ✅ SoundModemChannel (2026-07-15): multiplex composition — N modems per audio side
-  behind IModem (Afsk1200Modem, Bpsk300Modem), aggregated CarrierDetect/ChannelBusy,
+  behind IModem (AfskModem family, BpskModem), aggregated CarrierDetect/ChannelBusy,
   spectrum tap, TX queue with classic p-persistent CSMA, PTT bracketing, per-frame
   TX-complete tasks, half-duplex RX suppression + carrier reset after TX.
 - ✅ Standalone KISS-TCP daemon (2026-07-15): `pdn-soundmodem` binary — in-repo KISS
@@ -125,11 +125,16 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   with `IL2PRxUnCr` = 0.
 - ✅ CM108 hidraw PTT (`--ptt cm108:/dev/hidraw0[:gpio]`, direwolf/QtSM-compatible
   5-byte report; 2026-07-15).
-- ✅ **Wired NinoTNC interop, every supported mode, both directions, sustained**
-  (2026-07-15, firmware 3.41, CM108 loop per docs/ninotnc-loop.md § Results): afsk1200,
-  bpsk300, qpsk2400, qpsk3600, fsk9600 classic + IL2P — 100% each way after three rig
-  fixes (AlsaPcm start/re-prepare; continuous-time QPSK phase synthesis; ×2 DPLL
-  interpolation on 9600 RX). DCD assert/release lags measured and CSMA-safe.
+- ✅ **Wired NinoTNC interop — 13 of 15 DIP modes, both directions** (2026-07-15,
+  firmware **3.44**, CM108 loop; full tables in docs/ninotnc-loop.md § Results +
+  § Coverage). Every NinoTNC mode except the two C4FSK ones now has a counterpart here
+  and passes bidirectionally: fsk9600 (0), fsk9600-il2p (2), fsk4800-il2p (4), qpsk3600
+  (5), afsk1200 (6), afsk1200-il2p (7), bpsk300 (8), qpsk600 (9), bpsk1200 (10), qpsk2400
+  (11), afsk300 (12), afsk300-il2p (13), afsk300-il2pc (14). DCD assert/release lags
+  measured and CSMA-safe throughout.
+- ⬜ **C4FSK (modes 1/3) is the remaining coverage gap** — coherent 4-level FSK (19200 in
+  20 kHz OBW, 9600 in 10 kHz; 2079/1039 Hz outer deviation), new in firmware 3/4.42. A
+  genuinely new modem, not a reparameterisation of an existing one.
 - ⬜ PDN `IRigControl` PTT (packet.net side); over-air (RF) NinoTNC runs when a radio
   pair is available — the wired loop already answers the baseband/phase-map/FEC-bit
   questions.
@@ -176,6 +181,56 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   committed corpora don't yet).
 
 ## Amendment log
+
+### 2026-07-15 (evening) — v44 firmware, 13/15 mode coverage, and the silence bug
+
+Tom pointed at NinoTNC firmware v44 and its mode table. Flashed the bench TNC 3.41 → 3.44
+with this repo's own flasher (`packet-tune flash-tnc`, 184 s, clean), re-ran the whole
+matrix green on 3.44, then went after **full mode coverage**.
+
+Nino's v3/4.43 mode-switch mapping (in flashtnc's release-notes.txt) turns out to document
+every mode's symbol rate, carrier and OBW, so most of the gap was reparameterisation, and
+each new mode worked *first try* on the bench: mode 9 (600 QPSK = 300 sym/s on 1500 Hz),
+mode 10 (1200 BPSK = 1200 sym/s on 1500), mode 4 (4800 GFSK). The BPSK and direct-FSK
+classes were baud-generalised and renamed to the mode families they now are
+(`Bpsk300Modem` → `BpskModem` + Bpsk300/Bpsk1200 factories; `Fsk9600Modem` → `FskModem` +
+Fsk9600/Fsk4800; `Fsk9600Framing` → `FskFraming`), following the QpskModem precedent.
+Modes 12/13/14 (300 AFSK, 1600/1800 Hz — measured off-air to confirm) needed a new
+`Afsk300Modem` over a generalised `AfskDemodulator`/`AfskModulator`. **Coverage is now 13
+of 15 DIP positions; the gap is C4FSK (modes 1/3).**
+
+The 300 baud bring-up then paid for itself several times over. It stuck at 3-6 of 8 frames
+while the FEC modes on the same audio did better — the tell that the *bits* were marginal,
+not the signal. Recording the link and decoding it offline showed each burst was actually
+perfect when a **fresh** demodulator saw it and lossy when a **long-running** one did;
+logging the envelope trackers found the cause. With no signal, the discriminator's power
+normalisation divides noise by ~zero power and emits full-scale garbage, and the trackers
+learn it — so every burst opened with its peaks pinned and its slice point up to a third
+of the eye off centre. **The clamp meant to bound that garbage was a fixed ±1: ~2x the
+legitimate ±0.5 at Bell 202's ±500 Hz shift, but 10x the ±0.105 of the ±100 Hz HF modes.**
+It now tracks each mode's own full deviation. Result: 300 AFSK 8/8, **and the WA8LMF
+benchmark improved — Track 2 @12 kHz single decoder 269 → 426, multi-bank 972 → 983 (atest
+970).** A constant that was merely generous for one mode had been costing real off-air
+frames for the whole project.
+
+That in turn exposed a latent `PacketDcd` bug: transition scoring can only drop DCD when
+it *sees* badly-timed transitions, so it relied on receiver noise to notice a signal had
+stopped — on a genuinely quiet channel (squelched radio, wired loop, or our own now-silent
+demodulator) **DCD latched on for ever**. It now also drops after 24 transition-free
+symbols, which tightened release from a ragged 60-300 ms to a consistent 60-91 ms. Exactly
+the end-of-DCD accuracy the CSMA seam depends on.
+
+Negative results, banked in code comments so they are not re-attempted: a **silence
+squelch** (zero the discriminator below an absolute power floor) is intuitive and
+measurably worthless once the clamp is right — Track 2 scored 269 unclamped / 426 clamped
+/ 270 squelched-only / 427 both, so it was dropped rather than kept on plausibility. An
+earlier *relative* version of that gate was far worse than useless (Track 2 972 → **65**):
+one loud frame parks the tracker and squelches every quieter frame after it, which is
+precisely what that track exists to test. And a 7×7 filter-cutoff sweep produced an
+erratic, non-monotonic surface I nearly tuned constants against — it was noise thrown off
+by the real bug, not a filter optimum. Every fix here is attributed by toggling it alone
+against a corpus, because three of them went in together and the tempting story ("the
+squelch fixed it") turned out to be the wrong one.
 
 ### 2026-07-15 (later still) — NinoTNC loop: all six pairs bidirectional, sustained
 

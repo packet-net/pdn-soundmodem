@@ -18,8 +18,12 @@ Early — Phase 1 (see [docs/plan.md](docs/plan.md)). What exists today:
   segmentation, Hamming-protected trailing CRC. Byte-exact against all three example packets
   in the spec, with error-correction and fuzz roundtrip coverage.
 
-Next: HDLC/AX.25 bit layer, then the demodulators (300 BPSK IL2P+CRC and 1200 AFSK first),
-DCD, audio I/O (ALSA), KISS TCP, and the spectrum/waterfall feed.
+Modem coverage tracks the NinoTNC mode table: 13 of its 15 DIP-selectable modes are
+implemented and bench-proven bidirectionally against a real NinoTNC (firmware 3.44) over a
+wired CM108 loop — 9600 GFSK (AX.25 + IL2P+CRC), 4800 GFSK, 3600/2400/600 QPSK,
+1200/300 BPSK, 1200 AFSK (AX.25 + IL2P+CRC) and 300 HF AFSK (AX.25/IL2P/IL2P+CRC), plus
+FX.25 on 1200 AFSK. The gap is C4FSK (modes 1/3). See
+[docs/ninotnc-loop.md](docs/ninotnc-loop.md) § Coverage.
 
 The research that scoped this project lives in
 [packet.net `docs/research/headless-soundmodem.md`](https://github.com/packet-net/packet.net/blob/main/docs/research/headless-soundmodem.md).

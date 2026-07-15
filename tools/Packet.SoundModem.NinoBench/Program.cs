@@ -26,6 +26,7 @@ int txDelayMs = 300;
 int payloadLength = 40;
 bool levelCheckOnly = false;
 double qpskRamp = 0.25;
+string? recordPath = null;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -40,6 +41,7 @@ for (int i = 0; i < args.Length; i++)
         case "--payload": payloadLength = int.Parse(Next()); break;
         case "--level-check": levelCheckOnly = true; break;
         case "--qpsk-ramp": qpskRamp = double.Parse(Next()); break;
+        case "--record": recordPath = Next(); break;
         default: Console.Error.WriteLine($"unknown option {args[i]}"); return 2;
     }
 }
@@ -64,6 +66,9 @@ IModem modem = ourMode switch
     "afsk1200" => new Afsk1200Modem(dspRate, OnFrame),
     "afsk1200-multi" => new Afsk1200MultiModem(dspRate, OnFrame, offsetPairs: 3),
     "afsk1200-il2p" => new Afsk1200Il2pModem(dspRate, OnFrame, crc: true),
+    "afsk300" => new Afsk300Modem(dspRate, OnFrame, Afsk300Framing.Ax25),
+    "afsk300-il2p" => new Afsk300Modem(dspRate, OnFrame, Afsk300Framing.Il2p),
+    "afsk300-il2pc" => new Afsk300Modem(dspRate, OnFrame, Afsk300Framing.Il2pCrc),
     "bpsk300" => new BpskModem(dspRate, OnFrame, crc: true),
     "bpsk1200" => BpskModem.Bpsk1200(dspRate, OnFrame),
     "qpsk600" => QpskModem.Qpsk600(dspRate, OnFrame),
@@ -190,6 +195,7 @@ IAudioOutput playback = dspRate == CaptureRate
     : new UpsamplingAudioOutput(new AlsaAudioOutput(audioDevice, CaptureRate), dspRate);
 
 var decimator = dspRate == CaptureRate ? null : new Decimator(CaptureRate, CaptureRate / dspRate);
+var recorded = recordPath is null ? null : new List<float>();
 double capturePeak = 0;
 double envelope = 0;
 var envelopeGate = new object();
@@ -224,6 +230,7 @@ var capturePump = new Thread(() =>
         {
             envelope = peak;
             capturePeak = Math.Max(capturePeak, peak);
+            recorded?.AddRange(floats.AsSpan(0, got));
         }
 
         if (decimator is null)
@@ -275,7 +282,8 @@ double AirtimeSeconds(int frameBytes)
 {
     int bitRate = ourMode switch
     {
-        "bpsk300" => 300, "qpsk600" => 600, "bpsk1200" => 1200,
+        "bpsk300" or "afsk300" or "afsk300-il2p" or "afsk300-il2pc" => 300,
+        "qpsk600" => 600, "bpsk1200" => 1200,
         "qpsk2400" => 2400, "qpsk3600" => 3600,
         "fsk9600" or "fsk9600-il2p" => 9600, "fsk4800-il2p" => 4800, _ => 1200,
     };
@@ -301,6 +309,8 @@ if (levelCheckOnly)
     };
     Console.WriteLine($"level-check: capture peak {peak:F3} full-scale -> {verdict}; decoded {decoded}/1");
     pumpRunning = false;
+    Thread.Sleep(100);
+    WriteRecording();
     (playback as IDisposable)?.Dispose();
     return 0;
 }
@@ -404,7 +414,9 @@ GetAll("after-A");
 
 double peakAll;
 lock (envelopeGate) { peakAll = capturePeak; }
-Console.WriteLine($"== {ourMode}:{ninoMode}  nino->us {okB}/{frames}  us->nino {okA}/{frames}  rxPeak {peakAll:F3}");
+Console.WriteLine(
+    $"== {ourMode}:{ninoMode}  nino->us {okB}/{frames}  us->nino {okA}/{frames}" +
+    $"  rxPeak {peakAll:F3}  captureXruns {capture.Xruns}");
 if (dcdAssertLagsMs.Count > 0)
 {
     Console.WriteLine(
@@ -413,5 +425,20 @@ if (dcdAssertLagsMs.Count > 0)
 }
 
 pumpRunning = false;
+Thread.Sleep(100);
+WriteRecording();
 (playback as IDisposable)?.Dispose();
 return 0;
+
+void WriteRecording()
+{
+    if (recordPath is null || recorded is null)
+    {
+        return;
+    }
+
+    float[] samples;
+    lock (envelopeGate) { samples = recorded.ToArray(); }
+    WavFile.WriteMono(recordPath, samples, CaptureRate);
+    Console.WriteLine($"recorded {samples.Length / (double)CaptureRate:F1}s of {CaptureRate} Hz capture -> {recordPath}");
+}

@@ -17,12 +17,12 @@ public class AfskLoopbackTests
         return frame;
     }
 
-    private static (Afsk1200Demodulator Demodulator, List<byte[]> Frames) BuildReceiver()
+    private static (AfskDemodulator Demodulator, List<byte[]> Frames) BuildReceiver()
     {
         var frames = new List<byte[]>();
         var deframer = new HdlcDeframer(frames.Add);
         var nrzi = new NrziDecoder();
-        var demodulator = new Afsk1200Demodulator(SampleRate, level => deframer.PushBit(nrzi.Decode(level)));
+        var demodulator = new AfskDemodulator(SampleRate, level => deframer.PushBit(nrzi.Decode(level)));
         return (demodulator, frames);
     }
 
@@ -51,7 +51,7 @@ public class AfskLoopbackTests
     public void A_Clean_Frame_Roundtrips_Through_Audio()
     {
         byte[] frame = SampleFrame(1, 64);
-        var modulator = new Afsk1200Modulator(SampleRate);
+        var modulator = new AfskModulator(SampleRate);
         float[] audio = modulator.Modulate(HdlcFramer.FrameBits(frame, openingFlags: 30, closingFlags: 2));
 
         var (demodulator, frames) = BuildReceiver();
@@ -64,7 +64,7 @@ public class AfskLoopbackTests
     public void A_Quiet_Signal_Still_Decodes()
     {
         byte[] frame = SampleFrame(2, 40);
-        var modulator = new Afsk1200Modulator(SampleRate);
+        var modulator = new AfskModulator(SampleRate);
         float[] audio = modulator.Modulate(
             HdlcFramer.FrameBits(frame, openingFlags: 30, closingFlags: 2), amplitude: 0.05f);
 
@@ -80,7 +80,7 @@ public class AfskLoopbackTests
     public void Frames_Survive_Additive_Gaussian_Noise(float sigma, int seed)
     {
         byte[] frame = SampleFrame(seed, 48);
-        var modulator = new Afsk1200Modulator(SampleRate);
+        var modulator = new AfskModulator(SampleRate);
         float[] audio = modulator.Modulate(HdlcFramer.FrameBits(frame, openingFlags: 40, closingFlags: 2));
 
         var (demodulator, frames) = BuildReceiver();
@@ -94,7 +94,7 @@ public class AfskLoopbackTests
     {
         byte[] first = SampleFrame(3, 20);
         byte[] second = SampleFrame(4, 35);
-        var modulator = new Afsk1200Modulator(SampleRate);
+        var modulator = new AfskModulator(SampleRate);
         var bits = new List<byte>();
         bits.AddRange(HdlcFramer.FrameBits(first, openingFlags: 30, closingFlags: 1));
         bits.AddRange(HdlcFramer.FrameBits(second, openingFlags: 1, closingFlags: 2));
@@ -112,7 +112,7 @@ public class AfskLoopbackTests
     public void Audio_Split_Into_Small_Blocks_Decodes_Identically()
     {
         byte[] frame = SampleFrame(5, 30);
-        var modulator = new Afsk1200Modulator(SampleRate);
+        var modulator = new AfskModulator(SampleRate);
         float[] audio = WithPadding(
             modulator.Modulate(HdlcFramer.FrameBits(frame, openingFlags: 30, closingFlags: 2)));
 

@@ -55,27 +55,68 @@ Sources: [TK-790 cable doc](https://tarpn.net/t/builder/builders_wiring_kenwood_
 (levels, PTT electrical, pin-2 inhibit), [CM108 Radio Widget](https://www.tindie.com/products/tomwardill/cm108-radio-widget/)
 (pad semantics, SQL = VOLDOWN event).
 
-## Results — 2026-07-15, NinoTNC firmware 3.41
+## Results — 2026-07-15, NinoTNC firmware 3.44
 
 Rig: the loop above on `plughw:3,0` (CM108B, full-speed USB behind an EHCI hub),
-NinoTNC in software-controlled mode (DIPs 1111), MIC TXA range, 1x / AC / CD jumpers,
+NinoTNC flashed to **v3.44** (the current flashtnc release) and in software-controlled
+mode (DIPs 1111), MIC TXA range, 1x / AC / CD jumpers,
 driven by `nino-bench` (`tools/Packet.SoundModem.NinoBench`). NinoTNC-side truth read
 from the GETALL diagnostic registers (`AX25RxPkts` / `IL2PRxPkts`), not just KISS
 delivery. RX level at our ADC ≈ 0.17–0.28 full-scale peak per mode ("GOOD" band —
 no deviation/pot change needed).
 
-**All seven supported pairs pass bidirectionally, sustained** (mode 7 added
-2026-07-15, same campaign):
+**Every mode the NinoTNC has that is not C4FSK now has a pdn-soundmodem counterpart,
+and all of them pass bidirectionally** (13 of the 15 DIP positions; see § Coverage):
 
-| pair (ours : NinoTNC mode) | NinoTNC → us | us → NinoTNC | DCD assert lag | DCD release lag |
-|---|---|---|---|---|
-| afsk1200 : 6 | 25/25 | 25/25 | avg 13 ms | avg 100 ms, max 269 ms |
-| bpsk300 : 8 | 15/15 | 15/15 | avg 48 ms | avg 160 ms, max 389 ms |
-| qpsk2400 : 11 | 15/15 | 15/15 | avg 33 ms | avg 86 ms, max 120 ms |
-| qpsk3600 : 5 | 15/15 | 15/15 | avg 53 ms | avg 85 ms, max 120 ms |
-| fsk9600 : 0 | 25/25 | 25/25 | avg 0 ms, max 2 ms | avg 171 ms, max 242 ms |
-| fsk9600-il2p : 2 | 25/25 | 25/25 | avg 0 ms, max 2 ms | avg 167 ms, max 240 ms |
-| afsk1200-il2p : 7 | 25/25 | 25/25 | avg 13 ms | avg 101 ms, max 241 ms |
+| DIP | pair (ours : NinoTNC mode) | NinoTNC → us | us → NinoTNC | DCD assert lag | DCD release lag |
+|---|---|---|---|---|---|
+| 0 | fsk9600 : 0 | 12/12 | 12/12 | avg 0 ms | avg 67 ms, max 90 ms |
+| 2 | fsk9600-il2p : 2 | 12/12 | 12/12 | avg 0 ms, max 2 ms | avg 65 ms, max 90 ms |
+| 4 | fsk4800-il2p : 4 | 12/12 | 12/12 | avg 1 ms, max 8 ms | avg 64 ms, max 90 ms |
+| 5 | qpsk3600 : 5 | 12/12 | 12/12 | avg 18 ms, max 31 ms | avg 86 ms, max 120 ms |
+| 6 | afsk1200 : 6 | 12/12 | 12/12 | avg 13 ms, max 31 ms | avg 115 ms, max 209 ms |
+| 7 | afsk1200-il2p : 7 | 12/12 | 12/12 | avg 8 ms, max 37 ms | avg 130 ms, max 362 ms |
+| 8 | bpsk300 : 8 | 10/10 | 10/10 | avg 10 ms, max 31 ms | avg 161 ms, max 389 ms |
+| 9 | qpsk600 : 9 | 10/10 | 10/10 | avg 7 ms, max 31 ms | avg 149 ms, max 631 ms |
+| 10 | bpsk1200 : 10 | 10/10 | 10/10 | avg 45 ms, max 362 ms | avg 87 ms, max 149 ms |
+| 11 | qpsk2400 : 11 | 12/12 | 11/12 | avg 8 ms, max 31 ms | avg 89 ms, max 121 ms |
+| 12 | afsk300 : 12 | 8/8 | 7/8 | avg 11 ms, max 29 ms | avg 398 ms, max 1230 ms |
+| 13 | afsk300-il2p : 13 | 8/8 | 8/8 | avg 12 ms, max 31 ms | avg 379 ms, max 750 ms |
+| 14 | afsk300-il2pc : 14 | 8/8 | 8/8 | avg 23 ms, max 152 ms | avg 276 ms, max 645 ms |
+
+The stray single misses (mode 12 and 11 at 7/8 and 11/12 us→NinoTNC) are the NinoTNC
+declining one of ours; every other cell is clean, and no run recorded a capture xrun.
+
+
+## Coverage
+
+Against Nino's v44 mode table ([v44-op-modes.png](https://github.com/ninocarrillo/flashtnc/blob/master/v44-op-modes.png)
++ the "MODE SWITCH MAPPING v3/4.43" block in flashtnc's release-notes.txt, which is also
+where the per-mode symbol rates, carriers and OBW figures below come from):
+
+| DIP | NinoTNC mode | our modem | state |
+|---|---|---|---|
+| 0 | 9600 GFSK AX.25 | `fsk9600` | ✅ bench-proven |
+| 1 | 19200 C4FSK IL2P+CRC | — | ❌ no C4FSK modem |
+| 2 | 9600 GFSK IL2P+CRC | `fsk9600-il2p` | ✅ bench-proven |
+| 3 | 9600 C4FSK IL2P+CRC | — | ❌ no C4FSK modem |
+| 4 | 4800 GFSK IL2P+CRC | `fsk4800-il2p` | ✅ bench-proven |
+| 5 | 3600 QPSK IL2P+CRC | `qpsk3600` | ✅ bench-proven |
+| 6 | 1200 AFSK AX.25 | `afsk1200` | ✅ bench-proven |
+| 7 | 1200 AFSK IL2P+CRC | `afsk1200-il2p` | ✅ bench-proven |
+| 8 | 300 BPSK IL2P+CRC | `bpsk300` | ✅ bench-proven |
+| 9 | 600 QPSK IL2P+CRC | `qpsk600` | ✅ bench-proven |
+| 10 | 1200 BPSK IL2P+CRC | `bpsk1200` | ✅ bench-proven |
+| 11 | 2400 QPSK IL2P+CRC | `qpsk2400` | ✅ bench-proven |
+| 12 | 300 AFSK AX.25 | `afsk300` | ✅ bench-proven |
+| 13 | 300 AFSK IL2P | `afsk300-il2p` | ✅ bench-proven |
+| 14 | 300 AFSK IL2P+CRC | `afsk300-il2pc` | ✅ bench-proven |
+| 15 | Set from KISS | n/a | — |
+
+**The gap is C4FSK** (modes 1 and 3) — coherent 4-level FSK, added in firmware 3/4.42,
+carrying 19200 bps in 20 kHz OBW and 9600 bps in 10 kHz respectively (2079 Hz / 1039 Hz
+outer deviation). It is a genuinely different modem, not a reparameterisation of anything
+we have, and it is the one remaining piece of full NinoTNC mode coverage.
 
 DCD lags are `IModem.ChannelBusy` sampled every 2 ms against the capture envelope
 (>0.04 assert reference, <0.02 release reference); release lag is dominated by the
@@ -97,8 +138,45 @@ Fixed along the way (all found by this rig, none by loopback/WAV testing):
   trick) — at 5 samples/bit the quantised timing nudges cost ~12% of classic-HDLC
   frames (no FEC to hide the resulting bit errors; IL2P at the same baud was already
   100%). At 10 points/bit classic 9600 is 25/25 and DCD assert lag collapsed to ≤2 ms.
+- `AfskDemodulator` **discriminator clamp — the big one, and it was costing the proven
+  modes too.** Bringing up 300 AFSK (mode 12) it stuck at 3-6 of 8 frames while the FEC
+  modes on the same audio scored better — the clue that the bits were marginal, not the
+  signal. Recording the link and decoding it offline showed every burst was in fact
+  *perfect* (1-4 bit errors, all in the closing flag my expectation had wrong) when a
+  **fresh** demodulator saw it, and lossy when a **long-running** one did: accumulated
+  state. Logging the envelope trackers found it. With no signal the power normalisation
+  divides noise by ~zero and emits full-scale garbage; the trackers learn it, so a burst
+  opens with its peaks pinned and its slice point up to ±0.037 off centre against a
+  ±0.105 signal — a third of the eye. The clamp that was supposed to bound that garbage
+  was a fixed ±1: only ~2x the legitimate ±0.5 at Bell 202's ±500 Hz shift, but **10x**
+  the ±0.105 of the ±100 Hz HF modes. It now tracks the mode's own full deviation.
+  **Measured on WA8LMF Track 2 @12 kHz, single decoder: 269 → 426 frames** (and the
+  multi-bank 972 → 983, vs direwolf atest's 970) — a fixed clamp had been quietly costing
+  real off-air frames for the whole project.
+- Also tried and rejected, recorded here and in the code so it is not re-attempted: a
+  **silence squelch** (zero the discriminator below an absolute power floor). Intuitive,
+  and worthless once the clamp is right — Track 2 scored 269 unclamped, 426 clamped, 270
+  squelched-only, 427 both. An earlier *relative* gate (power vs a tracked peak) was worse
+  than useless: it collapsed Track 2 to 65, because one loud frame parks the tracker and
+  squelches every quieter frame after it — exactly what that track exists to test.
+- `AfskDemodulator` envelope rates are now per-bit rather than per-sample. The trackers'
+  attack/decay were tuned at 1200 baud's 10 samples/bit; at 300 baud's 40 they decayed ~4x
+  too fast between transitions. (No-op at 1200 baud/12 kHz, so the benchmark above is
+  unaffected by it.)
+- `PacketDcd`: added a quiet-symbol drop. Transition scoring can only drop DCD when it
+  *sees* badly-timed transitions, so it depended on receiver noise to notice a signal had
+  ended — on a truly quiet channel (a squelched radio, this wired loop, or our own newly
+  squelching demodulator) DCD latched on for ever. A run of 24 transition-free symbols now
+  drops it on its own. This is what tightened DCD release from a ragged 60-300 ms to a
+  consistent 60-91 ms on the 300 baud modes.
 
 Known behaviours (NinoTNC-side, not ours):
+
+- **Our own transmissions come back on our own input.** The widget passes OUT→IN with
+  enough level to decode (bench: all 8 of our mode-12 bursts decode off our own capture,
+  ~20 dB below the NinoTNC's). Harmless here — the bench scores each direction by the
+  *other* end's report — but it means this rig cannot be used to measure our RX in
+  isolation while transmitting, and a real installation relies on PTT muting.
 
 - **QPSK from cold wants ≥500 ms TXDELAY**: the very first QPSK burst after a mode
   change at 300 ms TXDELAY sometimes misses (its demod locking from cold); once warm,

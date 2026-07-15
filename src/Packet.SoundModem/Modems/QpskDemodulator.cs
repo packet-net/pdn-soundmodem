@@ -53,7 +53,7 @@ public sealed class QpskDemodulator
         _dpll = new BitDpll(
             baud, sampleRate,
             quadrant => dibitSink((QuadrantToDibit[quadrant] >> 1) & 1, QuadrantToDibit[quadrant] & 1),
-            transitionObserver: _packetDcd.OnTransition);
+            transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
     }
 
     private static readonly int[] QuadrantToDibit = [0b11, 0b10, 0b00, 0b01]; // 0°,90°,180°,270°

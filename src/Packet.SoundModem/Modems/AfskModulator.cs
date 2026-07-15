@@ -3,26 +3,33 @@ using Packet.SoundModem.Hdlc;
 namespace Packet.SoundModem.Modems;
 
 /// <summary>
-/// Bell 202 AFSK modulator: NRZI-encodes the logical HDLC bit stream and synthesises
-/// phase-continuous mark/space tones (1200/2200 Hz at 1200 baud). Phase continuity across
+/// AFSK modulator: synthesises phase-continuous mark/space tones. Phase continuity across
 /// tone changes is what keeps the spectrum tight; there is no per-bit phase reset.
+/// Defaults are Bell 202 (1200 baud, 1200/2200 Hz — NinoTNC modes 6/7); Nino's HF modes
+/// (12/13/14) are 300 baud on 1600/1800 Hz.
 /// </summary>
-public sealed class Afsk1200Modulator
+public sealed class AfskModulator
 {
     private readonly int _sampleRate;
     private readonly double _markStep;
     private readonly double _spaceStep;
     private readonly double _samplesPerBit;
 
-    /// <summary>Creates a modulator for the given sample rate (mark 1200 Hz, space 2200 Hz,
-    /// 1200 baud).</summary>
-    public Afsk1200Modulator(int sampleRate = 12000)
+    /// <summary>Creates a modulator.</summary>
+    /// <param name="sampleRate">Output sample rate.</param>
+    /// <param name="baud">Bit rate: 1200 (Bell 202) or 300 (HF).</param>
+    /// <param name="markFrequency">Tone for a mark (line level 1).</param>
+    /// <param name="spaceFrequency">Tone for a space (line level 0).</param>
+    public AfskModulator(
+        int sampleRate = 12000, int baud = 1200,
+        double markFrequency = 1200, double spaceFrequency = 2200)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(sampleRate, 8000);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
         _sampleRate = sampleRate;
-        _markStep = 2 * Math.PI * 1200 / sampleRate;
-        _spaceStep = 2 * Math.PI * 2200 / sampleRate;
-        _samplesPerBit = (double)sampleRate / 1200;
+        _markStep = 2 * Math.PI * markFrequency / sampleRate;
+        _spaceStep = 2 * Math.PI * spaceFrequency / sampleRate;
+        _samplesPerBit = (double)sampleRate / baud;
     }
 
     /// <summary>The configured sample rate.</summary>

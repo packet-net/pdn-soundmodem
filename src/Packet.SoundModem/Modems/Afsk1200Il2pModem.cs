@@ -14,8 +14,8 @@ public sealed class Afsk1200Il2pModem : IModem
 {
     private const int Baud = 1200;
 
-    private readonly Afsk1200Demodulator _demodulator;
-    private readonly Afsk1200Modulator _modulator;
+    private readonly AfskDemodulator _demodulator;
+    private readonly AfskModulator _modulator;
     private readonly bool _crc;
 
     /// <summary>Creates the modem.</summary>
@@ -31,8 +31,8 @@ public sealed class Afsk1200Il2pModem : IModem
         ArgumentNullException.ThrowIfNull(frameReceived);
         _crc = crc;
         var deframer = new Il2pDeframer((frame, _) => frameReceived(frame), crcMode: crc);
-        _demodulator = new Afsk1200Demodulator(sampleRate, deframer.PushBit, centerFrequency);
-        _modulator = new Afsk1200Modulator(sampleRate);
+        _demodulator = new AfskDemodulator(sampleRate, deframer.PushBit, centerFrequency);
+        _modulator = new AfskModulator(sampleRate);
     }
 
     /// <inheritdoc />

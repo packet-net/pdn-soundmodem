@@ -13,6 +13,7 @@ public sealed class BitDpll
     private readonly double _inertia;
     private readonly Action<int> _bitSink;
     private readonly Action<double>? _transitionObserver;
+    private readonly Action? _symbolObserver;
     private double _phase; // −0.5 … +0.5, wrap = sampling instant
     private int _lastLevel;
 
@@ -25,9 +26,12 @@ public sealed class BitDpll
     /// when locked; lower values acquire faster but jitter more.</param>
     /// <param name="transitionObserver">Called with the pre-nudge phase of every observed
     /// transition — the timing-quality signal <see cref="PacketDcd"/> scores.</param>
+    /// <param name="symbolObserver">Called once per recovered symbol, alongside
+    /// <paramref name="bitSink"/>. <see cref="PacketDcd"/> uses it to notice the absence
+    /// of transitions, which <paramref name="transitionObserver"/> can never report.</param>
     public BitDpll(
         int baud, int sampleRate, Action<int> bitSink, double inertia = 0.74,
-        Action<double>? transitionObserver = null)
+        Action<double>? transitionObserver = null, Action? symbolObserver = null)
     {
         ArgumentNullException.ThrowIfNull(bitSink);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
@@ -36,6 +40,7 @@ public sealed class BitDpll
         _inertia = inertia;
         _bitSink = bitSink;
         _transitionObserver = transitionObserver;
+        _symbolObserver = symbolObserver;
     }
 
     /// <summary>Advances the clock by one sample of sliced level (0/1).</summary>
@@ -56,6 +61,7 @@ public sealed class BitDpll
         {
             _phase -= 1.0;
             _bitSink(level);
+            _symbolObserver?.Invoke();
         }
 
         if (level != _lastLevel)

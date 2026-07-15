@@ -19,17 +19,17 @@ public class MultiDecoderTests
     private static float[] OffTuneAudio(byte[] frame, double centerOffsetHz)
     {
         // Synthesise mark/space shifted by the offset — an off-tuned transmitter.
-        var modulator = new Afsk1200Modulator(SampleRate);
+        var modulator = new AfskModulator(SampleRate);
         byte[] bits = HdlcFramer.FrameBits(frame, openingFlags: 30, closingFlags: 2);
         float[] audio = modulator.Modulate(bits);
 
         // Frequency-shift via complex heterodyne (single-sideband-ish is overkill here;
         // remodulating with shifted tones is simpler and exact for FSK):
-        var shifted = new Afsk1200ModulatorShifted(SampleRate, centerOffsetHz);
+        var shifted = new AfskModulatorShifted(SampleRate, centerOffsetHz);
         return shifted.Modulate(bits);
     }
 
-    private sealed class Afsk1200ModulatorShifted(int sampleRate, double shiftHz)
+    private sealed class AfskModulatorShifted(int sampleRate, double shiftHz)
     {
         public float[] Modulate(ReadOnlySpan<byte> hdlcBits)
         {
@@ -76,7 +76,7 @@ public class MultiDecoderTests
     public void An_On_Frequency_Signal_Is_Emitted_Exactly_Once()
     {
         byte[] frame = SampleFrame();
-        var modulator = new Afsk1200Modulator(SampleRate);
+        var modulator = new AfskModulator(SampleRate);
         float[] audio = modulator.Modulate(HdlcFramer.FrameBits(frame, openingFlags: 30, closingFlags: 2));
         var padded = new float[audio.Length + 2 * (SampleRate / 5)];
         audio.CopyTo(padded, SampleRate / 5);
@@ -92,7 +92,7 @@ public class MultiDecoderTests
     public void Identical_Content_Later_Is_Not_Deduplicated()
     {
         byte[] frame = SampleFrame();
-        var modulator = new Afsk1200Modulator(SampleRate);
+        var modulator = new AfskModulator(SampleRate);
         float[] one = modulator.Modulate(HdlcFramer.FrameBits(frame, openingFlags: 30, closingFlags: 2));
 
         // Same frame content transmitted twice, 4 seconds apart — both must be delivered.

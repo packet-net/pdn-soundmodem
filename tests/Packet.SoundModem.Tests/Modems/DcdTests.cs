@@ -26,7 +26,7 @@ public class DcdTests
         byte[] header = [0x96, 0x82, 0x64, 0x88, 0x8A, 0xAE, 0xE4, 0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6F, 0x03, 0xF0];
         header.CopyTo(frame, 0);
         new Random(1).NextBytes(frame.AsSpan(16));
-        return new Afsk1200Modulator(SampleRate).Modulate(
+        return new AfskModulator(SampleRate).Modulate(
             HdlcFramer.FrameBits(frame, openingFlags: 30, closingFlags: 2));
     }
 
@@ -43,7 +43,7 @@ public class DcdTests
             audio[lead + i] += burst[i];
         }
 
-        var demodulator = new Afsk1200Demodulator(SampleRate, _ => { });
+        var demodulator = new AfskDemodulator(SampleRate, _ => { });
 
         // Feed in blocks, recording the busy state timeline.
         var busyAt = new List<bool>();
@@ -78,7 +78,7 @@ public class DcdTests
         var audio = new float[SampleRate / 2 + burst.Length];
         burst.CopyTo(audio, SampleRate / 2);
 
-        var demodulator = new Afsk1200Demodulator(SampleRate, _ => { });
+        var demodulator = new AfskDemodulator(SampleRate, _ => { });
         demodulator.Process(audio);
 
         demodulator.CarrierDetect.Should().BeTrue("a packet signal was in progress at end of audio");
@@ -97,7 +97,7 @@ public class DcdTests
             audio[i] += 0.5f * (float)Math.Sin(2 * Math.PI * 1700 * i / SampleRate);
         }
 
-        var demodulator = new Afsk1200Demodulator(SampleRate, _ => { });
+        var demodulator = new AfskDemodulator(SampleRate, _ => { });
         demodulator.Process(audio);
 
         demodulator.ChannelBusy.Should().BeTrue("a strong in-band carrier is busy");
@@ -107,7 +107,7 @@ public class DcdTests
     [Fact]
     public void Noise_Alone_Is_Not_Busy()
     {
-        var demodulator = new Afsk1200Demodulator(SampleRate, _ => { });
+        var demodulator = new AfskDemodulator(SampleRate, _ => { });
         demodulator.Process(Noise(3 * SampleRate, 0.05f, new Random(4)));
 
         demodulator.ChannelBusy.Should().BeFalse();
@@ -117,7 +117,7 @@ public class DcdTests
     [Fact]
     public void Reset_Clears_Carrier_State()
     {
-        var demodulator = new Afsk1200Demodulator(SampleRate, _ => { });
+        var demodulator = new AfskDemodulator(SampleRate, _ => { });
         demodulator.Process(PacketAudio());
         demodulator.ChannelBusy.Should().BeTrue();
 
@@ -153,5 +153,60 @@ public class DcdTests
 
         demodulator.Process(audio.AsSpan(SampleRate - 1200 + burst.Length));
         demodulator.ChannelBusy.Should().BeFalse("released after the burst");
+    }
+
+    [Fact]
+    public void Dcd_Releases_Into_Digital_Silence_Not_Just_Noise()
+    {
+        // Transition scoring alone can only drop DCD when it *sees* badly-timed
+        // transitions, i.e. it leans on receiver noise to notice a signal has stopped.
+        // Feed pure digital silence after the burst — a squelched radio, or a wired
+        // bench loop — and DCD must still release. It used to latch on for ever.
+        float[] burst = PacketAudio();
+        var audio = new float[burst.Length + 2 * SampleRate];
+        burst.CopyTo(audio, 0); // rest stays exactly 0.0
+
+        bool busyDuring = false;
+        var modem = new Afsk1200Modem(SampleRate, _ => { });
+        int block = SampleRate / 100;
+        for (int i = 0; i + block <= audio.Length; i += block)
+        {
+            modem.Process(audio.AsSpan(i, block));
+            if (i + block <= burst.Length)
+            {
+                busyDuring |= modem.CarrierDetect;
+            }
+        }
+
+        busyDuring.Should().BeTrue("the burst is a real packet signal");
+        modem.CarrierDetect.Should().BeFalse("DCD must release when the carrier stops, silence or not");
+    }
+
+    [Fact]
+    public void Silence_Does_Not_Deafen_The_Slicer_For_The_Next_Burst()
+    {
+        // With no signal the discriminator's power normalisation divides noise by ~zero
+        // power, and if that garbage reaches the envelope trackers they pin — so a burst
+        // arriving after silence opens with its slice point off centre. This is written
+        // against the 300 baud HF mode deliberately: its ±100 Hz shift puts the real
+        // signal 10x below a full-scale spike, where the effect is fatal, whereas Bell
+        // 202's ±500 Hz shift plus a long flag preamble absorbs it (a 1200 baud version
+        // of this test passes with the squelch removed, and would be false comfort).
+        var frame = new byte[24];
+        byte[] header = [0x96, 0x82, 0x64, 0x88, 0x8A, 0xAE, 0xE4, 0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6F, 0x03, 0xF0];
+        header.CopyTo(frame, 0);
+        new Random(3).NextBytes(frame.AsSpan(16));
+
+        int decoded = 0;
+        var modem = new Afsk300Modem(SampleRate, _ => decoded++, Afsk300Framing.Ax25);
+        float[] burst = modem.Modulate(frame, txDelayMilliseconds: 300);
+
+        // burst, a long digital silence, then the same burst again.
+        var audio = new float[burst.Length * 2 + 4 * SampleRate];
+        burst.CopyTo(audio, 0);
+        burst.CopyTo(audio, burst.Length + 3 * SampleRate);
+        modem.Process(audio);
+
+        decoded.Should().Be(2, "silence must not cost the burst that follows it");
     }
 }

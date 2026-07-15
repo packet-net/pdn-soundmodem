@@ -32,7 +32,7 @@ public class DirewolfCrossValidationTests
         var frames = new List<byte[]>();
         var deframer = new HdlcDeframer(frames.Add);
         var nrzi = new NrziDecoder();
-        var demodulator = new Afsk1200Demodulator(sampleRate, level => deframer.PushBit(nrzi.Decode(level)));
+        var demodulator = new AfskDemodulator(sampleRate, level => deframer.PushBit(nrzi.Decode(level)));
         demodulator.Process(WithFlushTail(samples, sampleRate));
 
         frames.Should().HaveCount(4);
@@ -51,7 +51,7 @@ public class DirewolfCrossValidationTests
         var frames = new List<byte[]>();
         // IL2P over AFSK carries raw bits (no NRZI, mark = '1'), per the spec symbol map.
         var deframer = new Il2pDeframer((frame, _) => frames.Add(frame), crcMode: false);
-        var demodulator = new Afsk1200Demodulator(sampleRate, deframer.PushBit);
+        var demodulator = new AfskDemodulator(sampleRate, deframer.PushBit);
         demodulator.Process(WithFlushTail(samples, sampleRate));
 
         frames.Should().HaveCount(4);
@@ -96,7 +96,7 @@ public class DirewolfCrossValidationTests
         var frames = new List<byte[]>();
         var deframer = new Packet.SoundModem.Fx25.Fx25Deframer((frame, _) => frames.Add(frame));
         var nrzi = new NrziDecoder();
-        var demodulator = new Afsk1200Demodulator(sampleRate, level => deframer.PushBit(nrzi.Decode(level)));
+        var demodulator = new AfskDemodulator(sampleRate, level => deframer.PushBit(nrzi.Decode(level)));
         demodulator.Process(WithFlushTail(samples, sampleRate));
 
         frames.Should().HaveCount(4);

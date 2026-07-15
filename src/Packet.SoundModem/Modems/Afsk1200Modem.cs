@@ -21,8 +21,8 @@ public enum Fx25Mode
 /// <see cref="IModem"/>, with optional FX.25 forward error correction.</summary>
 public sealed class Afsk1200Modem : IModem
 {
-    private readonly Afsk1200Demodulator _demodulator;
-    private readonly Afsk1200Modulator _modulator;
+    private readonly AfskDemodulator _demodulator;
+    private readonly AfskModulator _modulator;
     private readonly Fx25Mode _fx25;
     private readonly int _fx25CheckBytes;
     private long _samplesProcessed;
@@ -63,7 +63,7 @@ public sealed class Afsk1200Modem : IModem
             ? new Fx25Deframer((frame, _) => deliver(frame))
             : null;
         var nrzi = new NrziDecoder();
-        _demodulator = new Afsk1200Demodulator(
+        _demodulator = new AfskDemodulator(
             sampleRate,
             level =>
             {
@@ -72,7 +72,7 @@ public sealed class Afsk1200Modem : IModem
                 fx25Deframer?.PushBit(bit);
             },
             centerFrequency);
-        _modulator = new Afsk1200Modulator(sampleRate);
+        _modulator = new AfskModulator(sampleRate);
     }
 
     /// <inheritdoc />

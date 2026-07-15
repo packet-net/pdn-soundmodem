@@ -85,7 +85,7 @@ public sealed class FskModem : IModem
         // it needs no interpolation.
         _upsample = sampleRate / baud < 8 ? 2 : 1;
         _dpll = new BitDpll(
-            baud, sampleRate * _upsample, bitSink, transitionObserver: _packetDcd.OnTransition);
+            baud, sampleRate * _upsample, bitSink, transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
     }
 
     /// <summary>Creates the 9600 baud mode — NinoTNC mode 0 (classic AX.25) or 2
