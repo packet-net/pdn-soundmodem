@@ -9,3 +9,4 @@ artifacts/
 *.snupkg
 appsettings.Local.json
 artifacts/
+corpus/
