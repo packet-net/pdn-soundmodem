@@ -74,6 +74,7 @@ foreach (string spec in modemSpecs)
     channel.AddModem(subChannel, sink => mode switch
     {
         "afsk1200" => new Afsk1200Modem(DspRate, sink, frequency ?? 1700),
+        "afsk1200-multi" => new Afsk1200MultiModem(DspRate, sink, offsetPairs: 3, centerFrequency: frequency ?? 1700),
         "bpsk300" => new Bpsk300Modem(DspRate, sink, crc: true, frequency ?? 1500),
         "bpsk300-nocrc" => new Bpsk300Modem(DspRate, sink, crc: false, frequency ?? 1500),
         "qpsk2400" => QpskModem.Qpsk2400(DspRate, sink),

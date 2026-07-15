@@ -59,6 +59,9 @@ switch (mode)
     case "afsk1200":
         new Afsk1200Demodulator(sampleRate, bitSink).Process(samples);
         break;
+    case "afsk1200-multi":
+        new Afsk1200MultiModem(sampleRate, OnFrame, offsetPairs: 3).Process(samples);
+        break;
     case "bpsk300":
         new Bpsk300Demodulator(sampleRate, bitSink).Process(samples);
         break;

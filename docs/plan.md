@@ -104,10 +104,15 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 - ⬜ PDN `IRigControl` PTT (packet.net side); over-air NinoTNC interop runs for every
   mode (hardware).
 
-### Phase 4 — breadth ⬜ (daemon shipped early in Phase 2)
-Multi-decoder offset bank (RCVR pairs), FX.25, daemon config file + .deb, CM108 PTT,
-DCD-over-KISS extension (aligned with whatever format the NinoTNC ecosystem agrees),
-Windows audio backend (deferred by decision 2026-07-15), extra decode-only listeners.
+### Phase 4 — breadth 🟡
+- ✅ Multi-decoder offset bank (2026-07-15): `Afsk1200MultiModem` — 2·pairs+1 branches at
+  30 Hz steps with content dedupe (daemon mode `afsk1200-multi`). On direwolf's 100-frame
+  noise battery: **38 = exact atest parity** (single decoder: 34). Off-tune-transmitter
+  and dedupe tests.
+- ✅ CM108 PTT (logged under Phase 3).
+- ⬜ FX.25; daemon config file + .deb; DCD-over-KISS extension (awaiting an agreed
+  NinoTNC-ecosystem format); Windows audio backend (deferred by decision 2026-07-15);
+  extra decode-only listeners; multi-decoder banks for the PSK modes.
 
 ## Amendment log
 
