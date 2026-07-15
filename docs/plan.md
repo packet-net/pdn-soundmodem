@@ -47,7 +47,15 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   increasing-noise battery: ours 34 vs atest 38 (single decoder vs multi-slicer — the
   Phase 4 multi-decoder bank is the path to parity+). `tools/Packet.SoundModem.Decode`
   (sm-decode) is our atest equivalent. (2026-07-14)
-- ⬜ Phase 0 hardware corpus validation (needs rig time).
+- 🟡 Real-corpus benchmark (2026-07-15, WA8LMF TNC Test CD Track 2 — 26 min of off-air
+  1200 AFSK APRS, kept locally in corpus/, redistribution TBC): **direwolf atest 983;
+  ours: single 228, multi-flat(7-branch) 267** — loopbacks and the synthetic battery
+  hid a large real-world gap (per-station level/twist diversity). Emphasis variants
+  (QtSM emph_all: ×3 branches) added to the multi bank; benchmark rerun pending.
+  Known further levers from the research: per-tone AGC (direwolf's twist killer),
+  dual-threshold slicing + Memory-ARQ (UZ7HO), slicer-level banks, searching/locked
+  DPLL inertia. This corpus number is now the honest Phase 1 AFSK exit gate.
+- ⬜ Phase 0 hardware corpus validation for the IL2P modes (needs rig time).
 - Exit: corpus decode rates ≥ QtSoundModem and ≥ NinoTNC on identical recordings
   (needs Phase 0 recordings — loopback tests alone do not demonstrate this).
 
