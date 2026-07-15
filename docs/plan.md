@@ -56,8 +56,9 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   whole gap. `afsk1200-multi` is therefore the recommended AFSK mode. Known issue: the
   single-decoder DPLL degrades at 10 samples/bit (60@12k vs 228@44.1k) — sub-sample
   transition interpolation is the future fix; further levers if ever needed: per-tone
-  AGC, dual-threshold + Memory-ARQ, slicer banks. 44.1 kHz full-bank run pending for
-  the apples-to-apples vs atest's 983.
+  AGC, dual-threshold + Memory-ARQ, slicer banks. 44.1 kHz full-bank final: **954 vs
+  atest's 983 (97%)** — the residual is tap-scaling at the non-native rate; 12 kHz (the
+  daemon's native rate) is at parity.
 - ⬜ Phase 0 hardware corpus validation for the IL2P modes (needs rig time).
 - Exit: corpus decode rates ≥ QtSoundModem and ≥ NinoTNC on identical recordings
   (needs Phase 0 recordings — loopback tests alone do not demonstrate this).
