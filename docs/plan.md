@@ -61,8 +61,15 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   both documented in BitDpll/Fsk9600Modem. 44.1 kHz full-bank: 955 with
   interpolation (954 before; atest 983) — at 36.75 samples/bit the quantisation jitter
   was already small, confirming the interpolation win is concentrated at the coarse
-  native 12 kHz rate and the residual 44.1 kHz gap is direwolf's multi-slicer margin,
-  not timing.
+  native 12 kHz rate.
+- ✅ **Ahead of the reference at BOTH rates** (2026-07-15, after the per-mode
+  discriminator clamp — see the §17 entry): **Track 2 @12 kHz 983 vs atest 970; @44.1 kHz
+  987 vs atest 983**. This supersedes the conclusion recorded above that the residual
+  44.1 kHz gap (955 vs 983) was "direwolf's multi-slicer margin, not timing" — it was
+  neither. It was our own fixed ±1 discriminator clamp letting silence pin the slicer's
+  envelope trackers; a mode-aware clamp took 44.1 kHz 955 → 987 and 12 kHz single-decoder
+  269 → 426. A conclusion that stopped at "the remaining gap is the other implementation's
+  margin" was the thing that kept it hidden.
 - ⬜ Phase 0 hardware corpus validation for the IL2P modes (needs rig time).
 - Exit: corpus decode rates ≥ QtSoundModem and ≥ NinoTNC on identical recordings
   (needs Phase 0 recordings — loopback tests alone do not demonstrate this).
@@ -231,9 +238,13 @@ learn it — so every burst opened with its peaks pinned and its slice point up 
 of the eye off centre. **The clamp meant to bound that garbage was a fixed ±1: ~2x the
 legitimate ±0.5 at Bell 202's ±500 Hz shift, but 10x the ±0.105 of the ±100 Hz HF modes.**
 It now tracks each mode's own full deviation. Result: 300 AFSK 8/8, **and the WA8LMF
-benchmark improved — Track 2 @12 kHz single decoder 269 → 426, multi-bank 972 → 983 (atest
-970).** A constant that was merely generous for one mode had been costing real off-air
-frames for the whole project.
+benchmark improved at every rate measured — Track 2 @12 kHz single decoder 269 → 426 and
+multi-bank 972 → 983 (atest 970); @44.1 kHz multi-bank 955 → 987 (atest 983), taking us
+ahead of the reference at both rates for the first time.** A constant that was merely
+generous for one mode had been costing real off-air frames for the whole project — and
+note what it cost us to have stopped earlier at "the residual 44.1 kHz gap is direwolf's
+multi-slicer margin, not timing": that conclusion was wrong, and comfortable enough to
+stop the search.
 
 That in turn exposed a latent `PacketDcd` bug: transition scoring can only drop DCD when
 it *sees* badly-timed transitions, so it relied on receiver noise to notice a signal had

@@ -173,9 +173,10 @@ Fixed along the way (all found by this rig, none by loopback/WAV testing):
   ±0.105 signal — a third of the eye. The clamp that was supposed to bound that garbage
   was a fixed ±1: only ~2x the legitimate ±0.5 at Bell 202's ±500 Hz shift, but **10x**
   the ±0.105 of the ±100 Hz HF modes. It now tracks the mode's own full deviation.
-  **Measured on WA8LMF Track 2 @12 kHz, single decoder: 269 → 426 frames** (and the
-  multi-bank 972 → 983, vs direwolf atest's 970) — a fixed clamp had been quietly costing
-  real off-air frames for the whole project.
+  **Measured on WA8LMF Track 2: @12 kHz single decoder 269 → 426, multi-bank 972 → 983
+  (direwolf atest: 970); @44.1 kHz multi-bank 955 → 987 (atest: 983)** — ahead of the
+  reference at both rates for the first time. A fixed clamp had been quietly costing real
+  off-air frames for the whole project.
 - Also tried and rejected, recorded here and in the code so it is not re-attempted: a
   **silence squelch** (zero the discriminator below an absolute power floor). Intuitive,
   and worthless once the clamp is right — Track 2 scored 269 unclamped, 426 clamped, 270
