@@ -1,0 +1,18 @@
+{
+  // pdn-soundmodem example configuration (JSON with comments allowed).
+  // Start with: pdn-soundmodem --config soundmodem.json
+  "device": "default",
+  "captureRate": 48000,
+  "kissPort": 8105,
+  "modems": [
+    { "subChannel": 0, "mode": "afsk1200-multi", "frequency": 1700 },
+    { "subChannel": 1, "mode": "bpsk300", "frequency": 1500 }
+  ],
+  "ptt": { "type": "cm108", "device": "/dev/hidraw0", "gpio": 3 },
+  "csma": {
+    "txDelayMilliseconds": 300,
+    "persistence": 63,
+    "slotTimeMilliseconds": 100,
+    "txTailMilliseconds": 20
+  }
+}

@@ -1,11 +1,13 @@
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
+using Packet.SoundModem.Daemon;
 using Packet.SoundModem.Dsp;
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.Modems;
 
 // pdn-soundmodem: headless soundcard packet modem daemon.
 //
+//   pdn-soundmodem [--config soundmodem.json]
 //   pdn-soundmodem [--device default] [--capture-rate 48000] [--kiss 8105]
 //                  [--modem N:MODE[:FREQ]]... [--ptt serial:/dev/ttyUSB0[:rts|:dtr]]
 //                  [--ptt cm108:/dev/hidraw0[:gpio]]
@@ -24,6 +26,7 @@ int kissPort = 8105;
 int txDelay = 300;
 string? wavPath = null;
 string? pttSpec = null;
+string? configPath = null;
 var modemSpecs = new List<string>();
 
 for (int i = 0; i < args.Length; i++)
@@ -33,6 +36,7 @@ for (int i = 0; i < args.Length; i++)
         : throw new ArgumentException($"{args[i - 1]} needs a value");
     switch (args[i])
     {
+        case "--config": configPath = Next(); break;
         case "--device": device = Next(); break;
         case "--capture-rate": captureRate = int.Parse(Next()); break;
         case "--kiss": kissPort = int.Parse(Next()); break;
@@ -49,12 +53,39 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 
-if (modemSpecs.Count == 0)
+var modems = new List<ModemConfig>();
+CsmaConfig csma = new() { TxDelayMilliseconds = txDelay };
+PttConfig? pttConfig = null;
+
+if (configPath is not null)
 {
-    modemSpecs.Add("0:afsk1200");
+    DaemonConfig config = DaemonConfig.Load(configPath);
+    device = config.Device;
+    captureRate = config.CaptureRate;
+    kissPort = config.KissPort;
+    modems = config.Modems;
+    csma = config.Csma;
+    pttConfig = config.Ptt;
+    Console.WriteLine($"config: {configPath}");
 }
 
-int DspRate = modemSpecs.Any(s => s.Contains("9600", StringComparison.Ordinal)) ? 48000 : 12000;
+foreach (string spec in modemSpecs)
+{
+    string[] specParts = spec.Split(':');
+    modems.Add(new ModemConfig
+    {
+        SubChannel = int.Parse(specParts[0]),
+        Mode = specParts.Length > 1 ? specParts[1] : "afsk1200",
+        Frequency = specParts.Length > 2 ? double.Parse(specParts[2]) : null,
+    });
+}
+
+if (modems.Count == 0)
+{
+    modems.Add(new ModemConfig());
+}
+
+int DspRate = modems.Any(m => m.Mode.Contains("9600", StringComparison.Ordinal)) ? 48000 : 12000;
 
 if (captureRate % DspRate != 0)
 {
@@ -63,14 +94,16 @@ if (captureRate % DspRate != 0)
 }
 
 var channel = new SoundModemChannel(DspRate);
-channel.Csma.TxDelayMilliseconds = txDelay;
+channel.Csma.TxDelayMilliseconds = csma.TxDelayMilliseconds;
+channel.Csma.Persistence = csma.Persistence;
+channel.Csma.SlotTimeMilliseconds = csma.SlotTimeMilliseconds;
+channel.Csma.TxTailMilliseconds = csma.TxTailMilliseconds;
 
-foreach (string spec in modemSpecs)
+foreach (ModemConfig modemConfig in modems)
 {
-    string[] parts = spec.Split(':');
-    int subChannel = int.Parse(parts[0]);
-    string mode = parts.Length > 1 ? parts[1] : "afsk1200";
-    double? frequency = parts.Length > 2 ? double.Parse(parts[2]) : null;
+    int subChannel = modemConfig.SubChannel;
+    string mode = modemConfig.Mode;
+    double? frequency = modemConfig.Frequency;
     channel.AddModem(subChannel, sink => mode switch
     {
         "afsk1200" => new Afsk1200Modem(DspRate, sink, frequency ?? 1700),
@@ -114,27 +147,44 @@ if (wavPath is not null)
     return 0;
 }
 
-IPttControl ptt = new NullPtt();
 if (pttSpec is not null)
 {
     string[] parts = pttSpec.Split(':');
-    if (parts is ["serial", _] or ["serial", _, "rts" or "dtr"])
+    if (parts.Length >= 2)
     {
-        string line = parts.Length > 2 ? parts[2] : "rts";
-        ptt = new SerialPtt(parts[1], useRts: line != "dtr", useDtr: line == "dtr");
-        Console.WriteLine($"ptt: serial {parts[1]} ({line})");
-    }
-    else if (parts is ["cm108", _] or ["cm108", _, _])
-    {
-        int gpio = parts.Length > 2 ? int.Parse(parts[2]) : 3;
-        ptt = new Cm108Ptt(parts[1], gpio);
-        Console.WriteLine($"ptt: cm108 {parts[1]} (gpio {gpio})");
+        pttConfig = new PttConfig
+        {
+            Type = parts[0],
+            Device = parts[1],
+            Line = parts[0] == "serial" && parts.Length > 2 ? parts[2] : null,
+            Gpio = parts[0] == "cm108" && parts.Length > 2 ? int.Parse(parts[2]) : null,
+        };
     }
     else
     {
         Console.Error.WriteLine("--ptt expects serial:<dev>[:rts|:dtr] or cm108:<hidraw>[:gpio]");
         return 2;
     }
+}
+
+IPttControl ptt = new NullPtt();
+switch (pttConfig?.Type)
+{
+    case null:
+        break;
+    case "serial":
+        string line = pttConfig.Line ?? "rts";
+        ptt = new SerialPtt(pttConfig.Device, useRts: line != "dtr", useDtr: line == "dtr");
+        Console.WriteLine($"ptt: serial {pttConfig.Device} ({line})");
+        break;
+    case "cm108":
+        int gpio = pttConfig.Gpio ?? 3;
+        ptt = new Cm108Ptt(pttConfig.Device, gpio);
+        Console.WriteLine($"ptt: cm108 {pttConfig.Device} (gpio {gpio})");
+        break;
+    default:
+        Console.Error.WriteLine($"unknown ptt type '{pttConfig.Type}'");
+        return 2;
 }
 
 using var cancellation = new CancellationTokenSource();

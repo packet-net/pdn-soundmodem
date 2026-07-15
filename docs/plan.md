@@ -110,7 +110,10 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   noise battery: **38 = exact atest parity** (single decoder: 34). Off-tune-transmitter
   and dedupe tests.
 - ✅ CM108 PTT (logged under Phase 3).
-- ⬜ FX.25; daemon config file + .deb; DCD-over-KISS extension (awaiting an agreed
+- ✅ Daemon config file (2026-07-15): `--config soundmodem.json` (comments + trailing
+  commas tolerated; `soundmodem.example.json` in repo root); CLI flags still work and
+  append.
+- ⬜ FX.25; .deb packaging; DCD-over-KISS extension (awaiting an agreed
   NinoTNC-ecosystem format); Windows audio backend (deferred by decision 2026-07-15);
   extra decode-only listeners; multi-decoder banks for the PSK modes.
 
