@@ -25,7 +25,7 @@ int frames = 10;
 int txDelayMs = 300;
 int payloadLength = 40;
 bool levelCheckOnly = false;
-double qpskRamp = 0.25;
+double qpskRollOff = QpskModulator.DefaultRollOff;
 string? recordPath = null;
 int settleMs = 1500;
 int? ourTxDelayMs = null;
@@ -42,7 +42,7 @@ for (int i = 0; i < args.Length; i++)
         case "--txdelay-ms": txDelayMs = int.Parse(Next()); break;
         case "--payload": payloadLength = int.Parse(Next()); break;
         case "--level-check": levelCheckOnly = true; break;
-        case "--qpsk-ramp": qpskRamp = double.Parse(Next()); break;
+        case "--qpsk-rolloff": qpskRollOff = double.Parse(Next()); break;
         case "--record": recordPath = Next(); break;
         case "--settle-ms": settleMs = int.Parse(Next()); break;
         // Our TX preamble, when it should differ from the NinoTNC's TXDELAY: the two
@@ -78,19 +78,14 @@ IModem modem = ourMode switch
     "afsk300-il2pc" => new Afsk300Modem(dspRate, OnFrame, Afsk300Framing.Il2pCrc),
     "bpsk300" => new BpskModem(dspRate, OnFrame, crc: true),
     "bpsk1200" => BpskModem.Bpsk1200(dspRate, OnFrame),
-    "qpsk600" => QpskModem.Qpsk600(dspRate, OnFrame),
-    "qpsk2400" => QpskModem.Qpsk2400(dspRate, OnFrame),
-    "qpsk3600" => QpskModem.Qpsk3600(dspRate, OnFrame),
+    "qpsk600" => QpskModem.Qpsk600(dspRate, OnFrame, true, qpskRollOff),
+    "qpsk2400" => QpskModem.Qpsk2400(dspRate, OnFrame, true, qpskRollOff),
+    "qpsk3600" => QpskModem.Qpsk3600(dspRate, OnFrame, true, qpskRollOff),
     "fsk9600" => FskModem.Fsk9600(dspRate, OnFrame, FskFraming.ClassicHdlc),
     "fsk9600-il2p" => new FskModem(dspRate, OnFrame, FskFraming.Il2pCrc),
     "fsk4800-il2p" => FskModem.Fsk4800(dspRate, OnFrame),
     _ => throw new ArgumentException($"unknown our-mode '{ourMode}'"),
 };
-
-if (modem is QpskModem qpsk)
-{
-    qpsk.TxRampFraction = qpskRamp;
-}
 
 void OnFrame(byte[] frame)
 {

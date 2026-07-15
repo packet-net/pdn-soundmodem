@@ -14,7 +14,8 @@ public sealed class QpskModem : IModem
     private readonly bool _crc;
 
     private QpskModem(
-        int sampleRate, int baud, double carrier, Action<byte[]> frameReceived, bool crc)
+        int sampleRate, int baud, double carrier, Action<byte[]> frameReceived, bool crc,
+        double rollOff = QpskModulator.DefaultRollOff)
     {
         _bitRate = baud * 2;
         _crc = crc;
@@ -27,21 +28,27 @@ public sealed class QpskModem : IModem
                 deframer.PushBit(second);
             },
             carrier);
-        _modulator = new QpskModulator(sampleRate, baud, carrier);
+        _modulator = new QpskModulator(sampleRate, baud, carrier, rollOff);
     }
 
     /// <summary>Creates the 600 bps mode (300 baud, 1500 Hz centre) — NinoTNC mode 9,
     /// an SSB-friendly 500 Hz-OBW mode sharing its symbol rate with 300 BPSK.</summary>
-    public static QpskModem Qpsk600(int sampleRate, Action<byte[]> frameReceived, bool crc = true) =>
-        new(sampleRate, 300, 1500, frameReceived, crc);
+    public static QpskModem Qpsk600(
+        int sampleRate, Action<byte[]> frameReceived, bool crc = true,
+        double rollOff = QpskModulator.DefaultRollOff) =>
+        new(sampleRate, 300, 1500, frameReceived, crc, rollOff);
 
     /// <summary>Creates the 2400 bps mode (1200 baud, 1500 Hz centre).</summary>
-    public static QpskModem Qpsk2400(int sampleRate, Action<byte[]> frameReceived, bool crc = true) =>
-        new(sampleRate, 1200, 1500, frameReceived, crc);
+    public static QpskModem Qpsk2400(
+        int sampleRate, Action<byte[]> frameReceived, bool crc = true,
+        double rollOff = QpskModulator.DefaultRollOff) =>
+        new(sampleRate, 1200, 1500, frameReceived, crc, rollOff);
 
     /// <summary>Creates the 3600 bps mode (1800 baud; the conventional 1650 Hz centre).</summary>
-    public static QpskModem Qpsk3600(int sampleRate, Action<byte[]> frameReceived, bool crc = true) =>
-        new(sampleRate, 1800, 1650, frameReceived, crc);
+    public static QpskModem Qpsk3600(
+        int sampleRate, Action<byte[]> frameReceived, bool crc = true,
+        double rollOff = QpskModulator.DefaultRollOff) =>
+        new(sampleRate, 1800, 1650, frameReceived, crc, rollOff);
 
     /// <inheritdoc />
     public string Mode => $"qpsk{_bitRate}{(_crc ? "-il2pc" : "-il2p")}";
@@ -55,10 +62,6 @@ public sealed class QpskModem : IModem
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples) => _demodulator.Process(samples);
 
-    /// <summary>Fraction of a symbol over which transmitted phase transitions are swept.
-    /// See <see cref="QpskModulator.Modulate"/>; bench-tuned against the NinoTNC.</summary>
-    public double TxRampFraction { get; set; } = 0.25;
-
     /// <inheritdoc />
     public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds)
     {
@@ -70,7 +73,7 @@ public sealed class QpskModem : IModem
         }
 
         byte[] bits = Il2pFramer.FrameBits(wire, preambleBits, Il2pFramer.PreambleStyle.Zeros);
-        return _modulator.Modulate(bits, rampFraction: TxRampFraction);
+        return _modulator.Modulate(bits);
     }
 
     /// <inheritdoc />

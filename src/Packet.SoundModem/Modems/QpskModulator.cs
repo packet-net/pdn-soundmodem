@@ -22,13 +22,15 @@ public sealed class QpskModulator
 {
     private static readonly int[] DibitToQuarterTurns = BuildDibitMap();
 
-    /// <summary>RRC roll-off. 0.35 puts 1200 sym/s at ~1620 Hz of occupied bandwidth,
-    /// inside Nino's 2400 Hz, while keeping the pulse tail short.</summary>
-    private const double RollOff = 0.35;
+    /// <summary>Default RRC roll-off. 0.35 puts 1200 sym/s at ~1400 Hz of measured
+    /// occupied bandwidth, well inside Nino's 2400 Hz, while keeping the pulse tail
+    /// short.</summary>
+    public const double DefaultRollOff = 0.35;
 
     /// <summary>Pulse truncation, in symbols either side of centre.</summary>
     private const int PulseSpan = 6;
 
+    private readonly double _rollOff;
     private readonly int _sampleRate;
     private readonly double _carrierStep;
     private readonly double _samplesPerSymbol;
@@ -39,10 +41,17 @@ public sealed class QpskModulator
     /// QPSK-3600.</param>
     /// <param name="carrierFrequency">Carrier centre (1500 Hz for 2400; the 3600 mode
     /// conventionally sits at 1650 Hz).</param>
-    public QpskModulator(int sampleRate, int baud, double carrierFrequency)
+    /// <param name="rollOff">RRC roll-off. Lower is narrower; higher is more tolerant of
+    /// symbol-timing error and closer to what the NinoTNC itself transmits (its mode-11
+    /// signal measures 1887 Hz to our 1400 Hz at 0.35).</param>
+    public QpskModulator(
+        int sampleRate, int baud, double carrierFrequency, double rollOff = DefaultRollOff)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(sampleRate, 8000);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
+        ArgumentOutOfRangeException.ThrowIfNegative(rollOff);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(rollOff, 1);
+        _rollOff = rollOff;
         _sampleRate = sampleRate;
         _carrierStep = 2 * Math.PI * carrierFrequency / sampleRate;
         _samplesPerSymbol = (double)sampleRate / baud;
@@ -51,11 +60,8 @@ public sealed class QpskModulator
     /// <summary>Modulates logical bits (even count; byte streams always are) to audio.</summary>
     /// <param name="bits">Logical bits, one per byte LSB.</param>
     /// <param name="amplitude">Peak amplitude of the shaped envelope.</param>
-    /// <param name="rampFraction">Ignored. Retained so callers that tuned the old
-    /// phase-ramp knob keep compiling; RRC shaping replaces what it was approximating.</param>
-    public float[] Modulate(ReadOnlySpan<byte> bits, float amplitude = 0.8f, double rampFraction = 0.25)
+    public float[] Modulate(ReadOnlySpan<byte> bits, float amplitude = 0.8f)
     {
-        _ = rampFraction;
         if (bits.Length % 2 != 0)
         {
             throw new ArgumentException("QPSK needs an even number of bits", nameof(bits));
@@ -89,7 +95,7 @@ public sealed class QpskModulator
             double i = 0, q = 0;
             for (int symbol = first; symbol <= last; symbol++)
             {
-                double pulse = FilterDesign.RootRaisedCosine(centre - symbol, RollOff);
+                double pulse = FilterDesign.RootRaisedCosine(centre - symbol, _rollOff);
                 i += inPhase[symbol] * pulse;
                 q += quadrature[symbol] * pulse;
             }

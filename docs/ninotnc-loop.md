@@ -131,9 +131,12 @@ not ours.
 
 Every transmitter is measured (99 % OBW, ITU definition, Welch-averaged) against the limit
 its mode publishes, and the measurement is CI-enforced —
-`tests/Packet.SoundModem.Tests/Dsp/OccupiedBandwidthTests.cs`. This exists because we
-shipped a splattering transmitter for months while every functional test passed: nothing
-in a loopback notices bandwidth.
+`tests/Packet.SoundModem.Tests/Dsp/OccupiedBandwidthTests.cs`. The rule the tests encode:
+**our transmission must never be wider than a NinoTNC's for the same mode.** They exist
+because nothing else here can see bandwidth — every loopback, the direwolf
+cross-validation and the WA8LMF benchmark all passed while the PSK modes were transmitting
+up to 4x their published width. This is a guard against regression, not a post-mortem: the
+modem was a day old when it was measured and fixed.
 
 | mode | before shaping | now | limit | source of limit |
 |---|---|---|---|---|
@@ -220,8 +223,7 @@ Fixed along the way (all found by this rig, none by loopback/WAV testing):
   the ±0.105 of the ±100 Hz HF modes. It now tracks the mode's own full deviation.
   **Measured on WA8LMF Track 2: @12 kHz single decoder 269 → 426, multi-bank 972 → 983
   (direwolf atest: 970); @44.1 kHz multi-bank 955 → 987 (atest: 983)** — ahead of the
-  reference at both rates for the first time. A fixed clamp had been quietly costing real
-  off-air frames for the whole project.
+  reference at both rates.
 - Also tried and rejected, recorded here and in the code so it is not re-attempted: a
   **silence squelch** (zero the discriminator below an absolute power floor). Intuitive,
   and worthless once the clamp is right — Track 2 scored 269 unclamped, 426 clamped, 270
