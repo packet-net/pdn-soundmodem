@@ -1,16 +1,33 @@
+using Packet.SoundModem.Dsp;
+
 namespace Packet.SoundModem.Modems;
 
 /// <summary>
 /// Differential QPSK modulator per the IL2P symbol map (spec draft v0.6): bits are taken
 /// as dibits (left bit first) and each dibit selects a carrier phase *change* —
 /// 11 → 0°, 10 → +90°, 01 → +270°, 00 → +180°. A zeros preamble therefore produces
-/// continuous reversals. Phase transitions are shaped with a quarter-symbol cosine ramp
-/// scaled to the step size. NinoTNC over-air compatibility is bench-gated (QtSM history
-/// shows QPSK phase maps were pairwise-negotiated); this implements the spec exactly.
+/// continuous reversals. The symbol map is bench-confirmed against a NinoTNC (QtSM history
+/// shows QPSK phase maps were pairwise-negotiated; ours interoperates as-is).
 /// </summary>
+/// <remarks>
+/// Symbols are root-raised-cosine pulse-shaped on I/Q rather than written as a phase
+/// trajectory. Direct phase synthesis at constant envelope is the intuitive construction
+/// and is what this modulator did first, but its transitions are far too fast: it measured
+/// 5344 Hz of 99 % occupied bandwidth at 1200 sym/s where a NinoTNC's own mode-11 signal
+/// measures 1887 Hz and Nino's published figure is 2400 Hz — i.e. it would have splattered
+/// a channel either side. Pulses are summed in continuous time so that fractional
+/// samples-per-symbol rates (1800 Bd at 12 kHz = 6⅔) need no resampling.
+/// </remarks>
 public sealed class QpskModulator
 {
     private static readonly int[] DibitToQuarterTurns = BuildDibitMap();
+
+    /// <summary>RRC roll-off. 0.35 puts 1200 sym/s at ~1620 Hz of occupied bandwidth,
+    /// inside Nino's 2400 Hz, while keeping the pulse tail short.</summary>
+    private const double RollOff = 0.35;
+
+    /// <summary>Pulse truncation, in symbols either side of centre.</summary>
+    private const int PulseSpan = 6;
 
     private readonly int _sampleRate;
     private readonly double _carrierStep;
@@ -33,54 +50,83 @@ public sealed class QpskModulator
 
     /// <summary>Modulates logical bits (even count; byte streams always are) to audio.</summary>
     /// <param name="bits">Logical bits, one per byte LSB.</param>
-    /// <param name="amplitude">Peak amplitude.</param>
-    /// <param name="rampFraction">Fraction of a symbol over which each phase transition
-    /// is swept (raised-cosine trajectory). Evaluated in continuous time, so fractional
-    /// samples-per-symbol rates (1800 baud at 12 kHz = 6⅔) neither jitter the symbol
-    /// boundaries nor collapse the ramp to a hard step — both mattered on the NinoTNC
-    /// bench loop, whose 3600 QPSK demodulator misses hard-stepped bursts.</param>
-    public float[] Modulate(ReadOnlySpan<byte> bits, float amplitude = 0.8f, double rampFraction = 0.5)
+    /// <param name="amplitude">Peak amplitude of the shaped envelope.</param>
+    /// <param name="rampFraction">Ignored. Retained so callers that tuned the old
+    /// phase-ramp knob keep compiling; RRC shaping replaces what it was approximating.</param>
+    public float[] Modulate(ReadOnlySpan<byte> bits, float amplitude = 0.8f, double rampFraction = 0.25)
     {
+        _ = rampFraction;
         if (bits.Length % 2 != 0)
         {
             throw new ArgumentException("QPSK needs an even number of bits", nameof(bits));
         }
 
-        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(rampFraction, 0);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(rampFraction, 1);
-
         int symbolCount = bits.Length / 2;
-        var samples = new float[(int)Math.Ceiling(symbolCount * _samplesPerSymbol)];
 
-        // Cumulative phase before each symbol boundary; phases[k] -> phases[k + 1] is
-        // the transition at boundary time k * samplesPerSymbol.
-        var phases = new double[symbolCount + 1];
+        // Differential map: cumulative phase, one entry per symbol.
+        var inPhase = new double[symbolCount];
+        var quadrature = new double[symbolCount];
+        double phase = 0;
         for (int symbol = 0; symbol < symbolCount; symbol++)
         {
             int dibit = ((bits[symbol * 2] & 1) << 1) | (bits[symbol * 2 + 1] & 1);
-            phases[symbol + 1] = phases[symbol] + DibitToQuarterTurns[dibit] * (Math.PI / 2);
+            phase += DibitToQuarterTurns[dibit] * (Math.PI / 2);
+            inPhase[symbol] = Math.Cos(phase);
+            quadrature[symbol] = Math.Sin(phase);
         }
 
-        double rampSamples = _samplesPerSymbol * rampFraction;
+        var samples = new float[(int)Math.Ceiling(symbolCount * _samplesPerSymbol)];
         double carrierPhase = 0;
+
+        // Sum the RRC pulses contributing to each sample. Only the symbols within
+        // PulseSpan of this instant matter, so the inner loop is bounded.
         for (int position = 0; position < samples.Length; position++)
         {
-            carrierPhase += _carrierStep;
+            double centre = position / _samplesPerSymbol;
+            int first = Math.Max(0, (int)Math.Ceiling(centre - PulseSpan));
+            int last = Math.Min(symbolCount - 1, (int)Math.Floor(centre + PulseSpan));
 
-            // The most recent boundary at or before this sample instant.
-            int boundary = Math.Min((int)(position / _samplesPerSymbol), symbolCount - 1);
-            double sinceBoundary = position - boundary * _samplesPerSymbol;
-            double phase = phases[boundary + 1];
-            if (sinceBoundary < rampSamples)
+            double i = 0, q = 0;
+            for (int symbol = first; symbol <= last; symbol++)
             {
-                double progress = 0.5 - 0.5 * Math.Cos(Math.PI * sinceBoundary / rampSamples);
-                phase = phases[boundary] + (phases[boundary + 1] - phases[boundary]) * progress;
+                double pulse = FilterDesign.RootRaisedCosine(centre - symbol, RollOff);
+                i += inPhase[symbol] * pulse;
+                q += quadrature[symbol] * pulse;
             }
 
-            samples[position] = amplitude * (float)Math.Sin(carrierPhase + phase);
+            carrierPhase += _carrierStep;
+
+            // Same convention as an unshaped sin(carrier + phase): with i = cos(phase)
+            // and q = sin(phase) at the symbol centre this is exactly that, so the
+            // demodulator sees the constellation it always did.
+            samples[position] = (float)((i * Math.Sin(carrierPhase)) + (q * Math.Cos(carrierPhase)));
         }
 
+        Normalise(samples, amplitude);
         return samples;
+    }
+
+    /// <summary>Scales to the requested peak. RRC shaping is not constant-envelope — the
+    /// peak depends on the symbol sequence — so normalise rather than let the level wander
+    /// with the payload.</summary>
+    private static void Normalise(float[] samples, float amplitude)
+    {
+        float peak = 0;
+        foreach (float s in samples)
+        {
+            peak = Math.Max(peak, Math.Abs(s));
+        }
+
+        if (peak <= 1e-9f)
+        {
+            return;
+        }
+
+        float gain = amplitude / peak;
+        for (int i = 0; i < samples.Length; i++)
+        {
+            samples[i] *= gain;
+        }
     }
 
     private static int[] BuildDibitMap()

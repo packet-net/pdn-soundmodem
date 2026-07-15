@@ -1,3 +1,4 @@
+using Packet.SoundModem.Dsp;
 using Packet.SoundModem.Hdlc;
 using Packet.SoundModem.Il2p;
 
@@ -43,9 +44,14 @@ public sealed class Afsk300Modem : IModem
     private const double LowPassCutoff = 400;
     private const double ToneShift = 100;
 
+    /// <summary>Nino's published occupied bandwidth for the SSB AFSK modes.</summary>
+    private const double ObwHz = 500;
+
     private readonly AfskDemodulator _demodulator;
     private readonly AfskModulator _modulator;
     private readonly Afsk300Framing _framing;
+    private readonly int _sampleRate;
+    private readonly double _centerFrequency;
 
     /// <summary>Creates the modem.</summary>
     /// <param name="sampleRate">Channel DSP rate (multiple of 300).</param>
@@ -58,6 +64,8 @@ public sealed class Afsk300Modem : IModem
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _framing = framing;
+        _sampleRate = sampleRate;
+        _centerFrequency = centerFrequency;
 
         Action<int> bitSink;
         if (framing == Afsk300Framing.Ax25)
@@ -103,13 +111,54 @@ public sealed class Afsk300Modem : IModem
         if (_framing == Afsk300Framing.Ax25)
         {
             int openingFlags = Math.Max(2, txDelayMilliseconds * Baud / (8 * 1000));
-            return _modulator.Modulate(HdlcFramer.FrameBits(ax25Frame, openingFlags, closingFlags: 2));
+            return BandLimit(_modulator.Modulate(
+                HdlcFramer.FrameBits(ax25Frame, openingFlags, closingFlags: 2)));
         }
 
         byte[] wire = Il2pCodec.Encode(ax25Frame, appendCrc: _framing == Afsk300Framing.Il2pCrc);
         int preambleBits = Math.Max(16, txDelayMilliseconds * Baud / 1000);
         byte[] bits = Il2pFramer.FrameBits(wire, preambleBits, Il2pFramer.PreambleStyle.Alternating);
-        return _modulator.ModulateLevels(bits);
+        return BandLimit(_modulator.ModulateLevels(bits));
+    }
+
+    /// <summary>
+    /// Band-limits the transmission to the mode's 500 Hz occupied bandwidth. Nino's notes
+    /// describe these modes as "filtered for 500 Hz occupied bandwidth" and his own
+    /// transmissions are visibly filtered — raw phase-continuous FSK on these tones
+    /// measures ~519 Hz, just over. Cheap to do and it keeps us inside a spec written for
+    /// crowded HF.
+    /// </summary>
+    private float[] BandLimit(float[] samples)
+    {
+        var filter = new FirFilter(FilterDesign.BandPass(
+            _centerFrequency - (ObwHz / 2), _centerFrequency + (ObwHz / 2),
+            _sampleRate, 256 * _sampleRate / 12000));
+
+        // Run the tail through too: the FIR's group delay would otherwise clip the
+        // closing flag off the end of the burst.
+        int taps = 256 * _sampleRate / 12000;
+        var output = new float[samples.Length + taps];
+        for (int i = 0; i < output.Length; i++)
+        {
+            output[i] = filter.Next(i < samples.Length ? samples[i] : 0f);
+        }
+
+        float peak = 0;
+        foreach (float v in output)
+        {
+            peak = Math.Max(peak, Math.Abs(v));
+        }
+
+        if (peak > 1e-9f)
+        {
+            float gain = 0.8f / peak;
+            for (int i = 0; i < output.Length; i++)
+            {
+                output[i] *= gain;
+            }
+        }
+
+        return output;
     }
 
     /// <inheritdoc />

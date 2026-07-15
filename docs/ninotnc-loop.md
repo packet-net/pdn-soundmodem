@@ -111,20 +111,50 @@ So **20 ms is enough for everything except the QPSK modes**, and our own demodul
 on ~20 ms in every mode tested. QPSK-2400 falls off a cliff between 75 ms (5/6) and 50 ms
 (0-1/6) — repeated with the mode verified, 2 runs each.
 
-**That cliff is our fault, not the NinoTNC's** (issue #1). Its receiver decodes its *own*
-47 ms-preamble bursts when they are recorded and replayed into it (3/4; control: its
-300 ms bursts 4/4), so it can acquire on 47 ms of a compliant signal. Ours is not
-compliant: our QPSK-2400 measures **4506 Hz** of 99% occupied bandwidth against Nino's
-**1992 Hz** and his published 2400 Hz spec, because `QpskModulator` shapes phase only and
-never pulse-shapes I/Q. His ~2400 Hz receive filter therefore sees a distorted signal and
-needs longer to lock. Expect QPSK to join the other modes at 20-50 ms once #1 lands — and
-note the same defect would splatter on air.
+**The cliff is not the NinoTNC's fault.** Its receiver decodes its *own* 47 ms-preamble
+bursts recorded and replayed into it (3/4; control: its 300 ms bursts 4/4), so it acquires
+fine on 47 ms of a compliant signal. Ours was not compliant — every PSK mode was
+transmitting far wider than its published OBW (§ Occupied bandwidth below). RRC pulse
+shaping fixed the spectrum and **partly** improved the cliff (50 ms went 0-1/6 → 1-4/6)
+but did not remove it: 20 ms is still 0-1/6, so the wide spectrum was *a* cause, not the
+only one. Remaining suspect, untested: Nino's mode-11 signal measures 1887 Hz to our
+1400 Hz, i.e. his roll-off is higher, so his matched filter is not matched to our pulse.
+Tracked in issue #1.
 
 **Retraction:** an earlier note here claimed "QPSK from cold wants ≥500 ms TXDELAY". That
 was wrong on both halves. The failures that produced it were the QPSK *modulator* bug
 (integer-boundary phase synthesis, fixed above) plus unreliable first frames after a mode
 change — not preamble length. 100 ms is enough, and even that ceiling is the NinoTNC's,
 not ours.
+
+## Occupied bandwidth
+
+Every transmitter is measured (99 % OBW, ITU definition, Welch-averaged) against the limit
+its mode publishes, and the measurement is CI-enforced —
+`tests/Packet.SoundModem.Tests/Dsp/OccupiedBandwidthTests.cs`. This exists because we
+shipped a splattering transmitter for months while every functional test passed: nothing
+in a loopback notices bandwidth.
+
+| mode | before shaping | now | limit | source of limit |
+|---|---|---|---|---|
+| afsk300 (12/13/14) | 519 Hz | **337 Hz** | 500 | Nino: "filtered for 500 Hz OBW" |
+| bpsk300 (8) | 1245 Hz | **352 Hz** | 500 | Nino: 300 sym/s, 500 Hz OBW |
+| qpsk600 (9) | 2013 Hz | **352 Hz** | 500 | Nino: 300 sym/s, 500 Hz OBW |
+| bpsk1200 (10) | 3504 Hz | **1400 Hz** | 2400 | Nino: 1200 sym/s, 2400 Hz OBW |
+| qpsk2400 (11) | 5344 Hz | **1400 Hz** | 2400 | Nino: 1200 sym/s, 2400 Hz OBW |
+| qpsk3600 (5) | 5663 Hz | **2101 Hz** | 3000 | none published — the voice channel it rides |
+| afsk1200 (6/7) | 2379 Hz | 2379 Hz | 3000 | none published — the voice channel it rides |
+
+Reference point, same meter, same rig: **a real NinoTNC's mode 11 measures 1887 Hz**
+against its own 2400 Hz spec. We were at 5344 Hz. We are now at 1400 Hz — narrower than
+the NinoTNC itself.
+
+The fix was root-raised-cosine pulse shaping (β 0.35) on I/Q for `QpskModulator` and
+`BpskModulator`, replacing direct phase synthesis at constant envelope; and an explicit
+500 Hz band-limit on the 300 AFSK transmit path, which Nino's notes describe his own modes
+as having. The direct-FSK modes (0/2/4) are excluded from the published-limit table on
+purpose: their 10/20 kHz figures are *RF* bandwidth after FM modulation, not the audio
+baseband we generate, so they are pinned against their own shaping filter instead.
 
 ## Coverage
 

@@ -47,4 +47,44 @@ public static class FilterDesign
 
         return result;
     }
+
+    /// <summary>
+    /// Root-raised-cosine pulse, evaluated in symbol units (<paramref name="t"/> = 0 is
+    /// the symbol centre, ±1 the neighbouring symbols).
+    /// </summary>
+    /// <remarks>
+    /// This is the shaping a band-limited PSK transmitter needs. Synthesising phase
+    /// directly at constant envelope — which is the intuitive way to build PSK, and what
+    /// this project did first — produces sidebands roughly twice as wide as the symbol
+    /// rate warrants: measured 5344 Hz of 99 % OBW on 1200 sym/s QPSK against a NinoTNC's
+    /// 1887 Hz for the same mode. An RRC-shaped signal occupies about
+    /// symbolRate·(1 + <paramref name="beta"/>).
+    /// </remarks>
+    /// <param name="t">Time in symbol periods from the pulse centre.</param>
+    /// <param name="beta">Roll-off, 0…1. 0.35 is the usual compromise between occupied
+    /// bandwidth and time-domain tail length.</param>
+    public static double RootRaisedCosine(double t, double beta)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(beta);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(beta, 1);
+
+        // Both closed-form singularities are removable; evaluate the limits directly
+        // rather than let 0/0 through.
+        if (Math.Abs(t) < 1e-8)
+        {
+            return 1 - beta + (4 * beta / Math.PI);
+        }
+
+        if (beta > 0 && Math.Abs(Math.Abs(t) - (1 / (4 * beta))) < 1e-8)
+        {
+            return beta / Math.Sqrt(2) *
+                (((1 + (2 / Math.PI)) * Math.Sin(Math.PI / (4 * beta))) +
+                 ((1 - (2 / Math.PI)) * Math.Cos(Math.PI / (4 * beta))));
+        }
+
+        double numerator = Math.Sin(Math.PI * t * (1 - beta)) +
+                           (4 * beta * t * Math.Cos(Math.PI * t * (1 + beta)));
+        double denominator = Math.PI * t * (1 - (16 * beta * beta * t * t));
+        return numerator / denominator;
+    }
 }
