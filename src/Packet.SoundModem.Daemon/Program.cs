@@ -8,6 +8,7 @@ using Packet.SoundModem.Modems;
 //
 //   pdn-soundmodem [--device default] [--capture-rate 48000] [--kiss 8105]
 //                  [--modem N:MODE[:FREQ]]... [--ptt serial:/dev/ttyUSB0[:rts|:dtr]]
+//                  [--ptt cm108:/dev/hidraw0[:gpio]]
 //                  [--txdelay MS] [--wav FILE]
 //
 // Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, qpsk2400, qpsk3600 (both IL2P+CRC),
@@ -116,15 +117,23 @@ IPttControl ptt = new NullPtt();
 if (pttSpec is not null)
 {
     string[] parts = pttSpec.Split(':');
-    if (parts.Length < 2 || parts[0] != "serial")
+    if (parts is ["serial", _] or ["serial", _, "rts" or "dtr"])
     {
-        Console.Error.WriteLine("--ptt expects serial:<device>[:rts|:dtr]");
+        string line = parts.Length > 2 ? parts[2] : "rts";
+        ptt = new SerialPtt(parts[1], useRts: line != "dtr", useDtr: line == "dtr");
+        Console.WriteLine($"ptt: serial {parts[1]} ({line})");
+    }
+    else if (parts is ["cm108", _] or ["cm108", _, _])
+    {
+        int gpio = parts.Length > 2 ? int.Parse(parts[2]) : 3;
+        ptt = new Cm108Ptt(parts[1], gpio);
+        Console.WriteLine($"ptt: cm108 {parts[1]} (gpio {gpio})");
+    }
+    else
+    {
+        Console.Error.WriteLine("--ptt expects serial:<dev>[:rts|:dtr] or cm108:<hidraw>[:gpio]");
         return 2;
     }
-
-    string line = parts.Length > 2 ? parts[2] : "rts";
-    ptt = new SerialPtt(parts[1], useRts: line != "dtr", useDtr: line == "dtr");
-    Console.WriteLine($"ptt: {parts[1]} ({line})");
 }
 
 using var cancellation = new CancellationTokenSource();

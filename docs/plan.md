@@ -99,8 +99,10 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   not decode!). `Il2pCodec.Encode` now defaults `legacyMaxFecBit: true` for interop
   (spec-exact output remains available; our RX ignores the bit). Bench must confirm
   NinoTNC behaviour.
-- ⬜ CM108 hidraw PTT; PDN `IRigControl` PTT (packet.net side); over-air NinoTNC interop
-  runs for every mode (hardware).
+- ✅ CM108 hidraw PTT (`--ptt cm108:/dev/hidraw0[:gpio]`, direwolf/QtSM-compatible
+  5-byte report; 2026-07-15).
+- ⬜ PDN `IRigControl` PTT (packet.net side); over-air NinoTNC interop runs for every
+  mode (hardware).
 
 ### Phase 4 — breadth ⬜ (daemon shipped early in Phase 2)
 Multi-decoder offset bank (RCVR pairs), FX.25, daemon config file + .deb, CM108 PTT,
