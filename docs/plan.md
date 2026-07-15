@@ -58,8 +58,11 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   per-tone AGC, dual-threshold + Memory-ARQ. Negative results banked in code comments:
   searching/locked inertia switching regressed badly (268→31), and crossing
   interpolation on the 9600 baseband chases ISI jitter into the eye at 5 samples/bit —
-  both documented in BitDpll/Fsk9600Modem. 44.1 kHz full-bank (pre-interpolation): 954
-  vs atest 983.
+  both documented in BitDpll/Fsk9600Modem. 44.1 kHz full-bank: 955 with
+  interpolation (954 before; atest 983) — at 36.75 samples/bit the quantisation jitter
+  was already small, confirming the interpolation win is concentrated at the coarse
+  native 12 kHz rate and the residual 44.1 kHz gap is direwolf's multi-slicer margin,
+  not timing.
 - ⬜ Phase 0 hardware corpus validation for the IL2P modes (needs rig time).
 - Exit: corpus decode rates ≥ QtSoundModem and ≥ NinoTNC on identical recordings
   (needs Phase 0 recordings — loopback tests alone do not demonstrate this).
