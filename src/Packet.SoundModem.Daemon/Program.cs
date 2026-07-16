@@ -11,7 +11,7 @@ using Packet.SoundModem.Modems;
 //   pdn-soundmodem [--device default] [--capture-rate 48000] [--kiss 8105]
 //                  [--modem N:MODE[:FREQ]]... [--ptt serial:/dev/ttyUSB0[:rts|:dtr]]
 //                  [--ptt cm108:/dev/hidraw0[:gpio]]
-//                  [--txdelay MS] [--wav FILE]
+//                  [--txdelay MS] [--wav FILE] [--quality-frames]
 //
 // Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, qpsk2400, qpsk3600 (both IL2P+CRC),
 // fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC). Multiple --modem options share the
@@ -27,6 +27,7 @@ int txDelay = 300;
 string? wavPath = null;
 string? pttSpec = null;
 string? configPath = null;
+bool qualityFrames = false;
 var modemSpecs = new List<string>();
 
 for (int i = 0; i < args.Length; i++)
@@ -44,6 +45,7 @@ for (int i = 0; i < args.Length; i++)
         case "--ptt": pttSpec = Next(); break;
         case "--txdelay": txDelay = int.Parse(Next()); break;
         case "--wav": wavPath = Next(); break;
+        case "--quality-frames": qualityFrames = true; break;
         case "--help":
             Console.WriteLine("see source header for usage");
             return 0;
@@ -205,7 +207,12 @@ Console.CancelKeyPress += (_, e) =>
 };
 
 await using var server = new KissTcpServer(channel, kissPort);
+server.EmitQualityFrames = qualityFrames;
 server.Start();
+if (qualityFrames)
+{
+    Console.WriteLine("rx-quality frames: on (KISS command 0x07, JSON payload)");
+}
 Console.WriteLine($"kiss tcp: 127.0.0.1:{server.LocalPort}");
 
 // Transmit side: modulate at the DSP rate; play at the card-native capture rate through

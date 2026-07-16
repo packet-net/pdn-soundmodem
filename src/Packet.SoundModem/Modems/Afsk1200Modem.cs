@@ -45,22 +45,32 @@ public sealed class Afsk1200Modem : IModem
         _fx25 = fx25;
         _fx25CheckBytes = fx25CheckBytes;
 
-        Action<byte[]> deliver = frameReceived;
+        // Quality rides with whichever decode the deduper lets through: a clean FX.25
+        // block also decodes as plain HDLC, and the consumer should see one frame with
+        // the diagnostics of the path that delivered it.
+        Action<byte[], FrameQuality> deliver = (frame, quality) =>
+        {
+            frameReceived(frame);
+            FrameDecoded?.Invoke(frame, quality);
+        };
         if (fx25 != Fx25Mode.None)
         {
             var deduper = new FrameDeduper(3L * sampleRate);
-            deliver = frame =>
+            Action<byte[], FrameQuality> inner = deliver;
+            deliver = (frame, quality) =>
             {
                 if (deduper.ShouldEmit(frame, _samplesProcessed))
                 {
-                    frameReceived(frame);
+                    inner(frame, quality);
                 }
             };
         }
 
-        var deframer = new HdlcDeframer(deliver);
+        var deframer = new HdlcDeframer(frame =>
+            deliver(frame, new FrameQuality(Mode, frame.Length, null, null)));
         var fx25Deframer = fx25 != Fx25Mode.None
-            ? new Fx25Deframer((frame, _) => deliver(frame))
+            ? new Fx25Deframer((frame, correctedBytes) =>
+                deliver(frame, new FrameQuality(Mode, frame.Length, correctedBytes, null)))
             : null;
         var nrzi = new NrziDecoder();
         _demodulator = new AfskDemodulator(
@@ -74,6 +84,9 @@ public sealed class Afsk1200Modem : IModem
             centerFrequency);
         _modulator = new AfskModulator(sampleRate);
     }
+
+    /// <inheritdoc />
+    public event Action<byte[], FrameQuality>? FrameDecoded;
 
     /// <inheritdoc />
     public string Mode => _fx25 switch

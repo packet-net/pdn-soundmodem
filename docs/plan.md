@@ -189,6 +189,36 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still) — per-frame receive quality: FrameQuality surfaced end to end
+
+Tom asked whether we get BER from the modems. Answer: the deframers have always computed
+the honest version of it and every modem discarded it — `Il2pDecodeInfo` (RS corrected
+symbols + CRC state) and the FX.25 corrected-byte count died in `(frame, _) =>` lambdas at
+seven call sites. Now surfaced as `FrameQuality` (mode/branch, frame length,
+CorrectedBytes, CrcValid, winning multi-decoder offset + emphasis), deliberately NOT named
+"BER": true bit-error rate is unobservable from a receiver (errors inside a corrected byte
+are invisible; frames beyond the correction budget never report). CorrectedBytes over
+frame length is a floor on channel byte-error rate — zero on a clean link, persistently
+non-zero = a link consuming its error budget before it starts dropping frames.
+
+Plumbing: `IModem.FrameDecoded` event (all seven modems), `SoundModemChannel.
+FrameReceivedWithQuality` (with sub-channel), and — for the standalone daemon — an
+**opt-in** KISS extension: `--quality-frames` emits command **0x07 RxQuality** after each
+data frame, same port nibble, compact JSON payload. A distinct command rather than a
+synthetic data frame, deliberately: the NinoTNC's own habit of sending diagnostics as fake
+`TNC>USB` data frames means every host needs a special case to avoid parsing phantom
+traffic, and we're not exporting that problem. Off by default so unaware hosts never see
+it. HDLC framings report CorrectedBytes = null — an FCS pass proves zero residual errors,
+not an error count.
+
+Found while testing: on a clean signal the multi-decoder bank's "winning branch" is
+first-past-the-post among many successful branches, so its offset/emphasis is only
+directionally meaningful for marginal signals — documented in the test.
+
+PDN-side leg (attach FrameQuality to the node's per-frame metadata via
+SoundModemFrameTransport, UI surfacing) needs the next package release; tracked in
+packet.net.
+
 ### 2026-07-16 (later) — performance criteria as tests: parity floors + aspiration scoreboard
 
 Tom proposed expressing the performance criteria as failing unit tests. Implemented as two

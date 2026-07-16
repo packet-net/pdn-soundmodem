@@ -30,7 +30,14 @@ public sealed class BpskModem : IModem
         ArgumentNullException.ThrowIfNull(frameReceived);
         _crc = crc;
         _baud = baud;
-        var deframer = new Il2pDeframer((frame, _) => frameReceived(frame), crc);
+        var deframer = new Il2pDeframer(
+            (frame, info) =>
+            {
+                frameReceived(frame);
+                FrameDecoded?.Invoke(frame, new FrameQuality(
+                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
+            },
+            crc);
         _demodulator = new BpskDemodulator(sampleRate, deframer.PushBit, carrierFrequency, baud);
         _modulator = new BpskModulator(sampleRate, baud, carrierFrequency, rollOff);
     }
@@ -46,6 +53,9 @@ public sealed class BpskModem : IModem
     /// sharing its 1200 sym/s and 2400 Hz OBW with 2400 QPSK.</summary>
     public static BpskModem Bpsk1200(int sampleRate, Action<byte[]> frameReceived, bool crc = true) =>
         new(sampleRate, frameReceived, crc, 1500, 1200);
+
+    /// <inheritdoc />
+    public event Action<byte[], FrameQuality>? FrameDecoded;
 
     /// <inheritdoc />
     public string Mode => $"bpsk{_baud}{(_crc ? "-il2pc" : "-il2p")}";

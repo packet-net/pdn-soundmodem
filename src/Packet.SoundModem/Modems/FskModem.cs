@@ -66,7 +66,13 @@ public sealed class FskModem : IModem
         Action<int> bitSink;
         if (framing == FskFraming.ClassicHdlc)
         {
-            var deframer = new HdlcDeframer(frameReceived);
+            var deframer = new HdlcDeframer(frame =>
+            {
+                frameReceived(frame);
+                // HDLC has no FEC: an FCS pass proves zero residual errors, not how many
+                // the channel had — CorrectedBytes is honestly null.
+                FrameDecoded?.Invoke(frame, new FrameQuality(Mode, frame.Length, null, null));
+            });
             var descrambler = new G3ruhScrambler();
             var nrzi = new NrziDecoder();
             bitSink = level => deframer.PushBit(nrzi.Decode(descrambler.Descramble(level)));
@@ -74,7 +80,13 @@ public sealed class FskModem : IModem
         else
         {
             var deframer = new Il2pDeframer(
-                (frame, _) => frameReceived(frame), crcMode: framing == FskFraming.Il2pCrc);
+                (frame, info) =>
+                {
+                    frameReceived(frame);
+                    FrameDecoded?.Invoke(frame, new FrameQuality(
+                        Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
+                },
+                crcMode: framing == FskFraming.Il2pCrc);
             bitSink = deframer.PushBit;
         }
 
@@ -97,6 +109,9 @@ public sealed class FskModem : IModem
     public static FskModem Fsk4800(
         int sampleRate, Action<byte[]> frameReceived, FskFraming framing = FskFraming.Il2pCrc) =>
         new(sampleRate, frameReceived, framing, 4800);
+
+    /// <inheritdoc />
+    public event Action<byte[], FrameQuality>? FrameDecoded;
 
     /// <inheritdoc />
     public string Mode => _framing switch

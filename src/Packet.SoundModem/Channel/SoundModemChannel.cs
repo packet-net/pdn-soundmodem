@@ -69,6 +69,11 @@ public sealed class SoundModemChannel
     /// Called from the receive-processing thread.</summary>
     public event Action<int, byte[]>? FrameReceived;
 
+    /// <summary>Per-frame receive diagnostics (sub-channel, frame, quality), raised
+    /// alongside <see cref="FrameReceived"/> for every decoded frame — FEC corrections,
+    /// CRC state, winning decoder branch. See <see cref="Modems.FrameQuality"/>.</summary>
+    public event Action<int, byte[], Modems.FrameQuality>? FrameReceivedWithQuality;
+
     /// <summary>True while any modem sees packet or energy busy, or we are transmitting.</summary>
     public bool ChannelBusy => _transmitting || _modems.Values.Any(m => m.ChannelBusy);
 
@@ -83,7 +88,10 @@ public sealed class SoundModemChannel
     {
         ArgumentOutOfRangeException.ThrowIfNegative(subChannel);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(subChannel, 15);
-        _modems.Add(subChannel, factory(frame => FrameReceived?.Invoke(subChannel, frame)));
+        IModem modem = factory(frame => FrameReceived?.Invoke(subChannel, frame));
+        modem.FrameDecoded += (frame, quality) =>
+            FrameReceivedWithQuality?.Invoke(subChannel, frame, quality);
+        _modems.Add(subChannel, modem);
     }
 
     /// <summary>Feeds received audio to every modem and the spectrum source. Skipped

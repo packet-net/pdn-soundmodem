@@ -10,6 +10,12 @@ public interface IModem
     /// <summary>Human-readable mode name (e.g. "afsk1200", "bpsk300-il2pc").</summary>
     string Mode { get; }
 
+    /// <summary>Raised for every decoded frame with its receive diagnostics — FEC
+    /// corrections, CRC state, winning decoder branch. Fires in addition to (and after
+    /// the same decode as) the constructor's frame sink; subscribe when per-frame
+    /// quality matters, ignore when it does not.</summary>
+    event Action<byte[], FrameQuality>? FrameDecoded;
+
     /// <summary>True while the demodulator sees a coherent packet signal.</summary>
     bool CarrierDetect { get; }
 

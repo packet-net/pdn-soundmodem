@@ -30,7 +30,16 @@ public sealed class KissTcpServer : IAsyncDisposable
         _channel = channel;
         _listener = new TcpListener(bind ?? IPAddress.Loopback, port);
         _channel.FrameReceived += OnFrameReceived;
+        _channel.FrameReceivedWithQuality += OnFrameQuality;
     }
+
+    /// <summary>
+    /// When true, each received data frame is followed by a <see cref="KissCommand.RxQuality"/>
+    /// frame on the same port nibble carrying its decode diagnostics as UTF-8 JSON, e.g.
+    /// <c>{"mode":"qpsk2400-il2pc","len":56,"corrected":2,"crc":true}</c>. OFF by default:
+    /// only hosts that know the extension should ever see it.
+    /// </summary>
+    public bool EmitQualityFrames { get; set; }
 
     /// <summary>The bound port (useful when constructed with port 0).</summary>
     public int LocalPort => ((IPEndPoint)_listener.LocalEndpoint).Port;
@@ -139,6 +148,46 @@ public sealed class KissTcpServer : IAsyncDisposable
     private void OnFrameReceived(int subChannel, byte[] frame)
     {
         byte[] encoded = KissCodec.Encode(new KissFrame(subChannel, KissCommand.Data, frame));
+        foreach (TcpClient client in _clients.Values)
+        {
+            Send(client, encoded);
+        }
+    }
+
+    private void OnFrameQuality(int subChannel, byte[] frame, Modems.FrameQuality quality)
+    {
+        if (!EmitQualityFrames)
+        {
+            return;
+        }
+
+        // Compact JSON, absent-means-null. Sent after the data frame it describes (the
+        // channel raises quality from the same synchronous decode, so ordering holds).
+        var json = new System.Text.StringBuilder(96);
+        json.Append("{\"mode\":\"").Append(quality.Mode).Append("\",\"len\":").Append(quality.FrameBytes);
+        if (quality.CorrectedBytes is { } corrected)
+        {
+            json.Append(",\"corrected\":").Append(corrected);
+        }
+
+        if (quality.CrcValid is { } crc)
+        {
+            json.Append(",\"crc\":").Append(crc ? "true" : "false");
+        }
+
+        if (quality.FrequencyOffsetHz is { } off)
+        {
+            json.Append(",\"offsetHz\":").Append(off.ToString("F0", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        if (quality.EmphasisDb is { } emph)
+        {
+            json.Append(",\"emphasisDb\":").Append(emph);
+        }
+
+        json.Append('}');
+        byte[] encoded = KissCodec.Encode(new KissFrame(
+            subChannel, KissCommand.RxQuality, System.Text.Encoding.UTF8.GetBytes(json.ToString())));
         foreach (TcpClient client in _clients.Values)
         {
             Send(client, encoded);

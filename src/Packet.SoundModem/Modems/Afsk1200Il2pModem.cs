@@ -30,10 +30,20 @@ public sealed class Afsk1200Il2pModem : IModem
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _crc = crc;
-        var deframer = new Il2pDeframer((frame, _) => frameReceived(frame), crcMode: crc);
+        var deframer = new Il2pDeframer(
+            (frame, info) =>
+            {
+                frameReceived(frame);
+                FrameDecoded?.Invoke(frame, new FrameQuality(
+                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
+            },
+            crcMode: crc);
         _demodulator = new AfskDemodulator(sampleRate, deframer.PushBit, centerFrequency);
         _modulator = new AfskModulator(sampleRate);
     }
+
+    /// <inheritdoc />
+    public event Action<byte[], FrameQuality>? FrameDecoded;
 
     /// <inheritdoc />
     public string Mode => _crc ? "afsk1200-il2pc" : "afsk1200-il2p";

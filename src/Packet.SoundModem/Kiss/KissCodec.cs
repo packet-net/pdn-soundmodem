@@ -33,6 +33,17 @@ public enum KissCommand
     /// <summary>ACKMODE data frame (BPQ extension: first two payload bytes are an id the
     /// TNC echoes back when the frame has been transmitted).</summary>
     AckModeData = 12,
+
+    /// <summary>
+    /// Receive-quality report (this daemon's extension, TNC→host only, OFF by default):
+    /// emitted after a data frame when the host opts in, carrying that frame's decode
+    /// diagnostics as UTF-8 JSON on the same port nibble. A distinct command — never a
+    /// synthetic data frame — so hosts that have not opted in ignore it as an unknown
+    /// KISS command instead of parsing phantom traffic. (The NinoTNC's own habit of
+    /// sending diagnostics as fake <c>TNC&gt;USB</c> data frames is the cautionary tale:
+    /// every host needs a special case to avoid treating them as channel traffic.)
+    /// </summary>
+    RxQuality = 7,
 }
 
 /// <summary>

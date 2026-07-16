@@ -78,14 +78,24 @@ public sealed class Afsk300Modem : IModem
         Action<int> bitSink;
         if (framing == Afsk300Framing.Ax25)
         {
-            var deframer = new HdlcDeframer(frameReceived);
+            var deframer = new HdlcDeframer(frame =>
+            {
+                frameReceived(frame);
+                FrameDecoded?.Invoke(frame, new FrameQuality(Mode, frame.Length, null, null));
+            });
             var nrzi = new NrziDecoder();
             bitSink = level => deframer.PushBit(nrzi.Decode(level));
         }
         else
         {
             var deframer = new Il2pDeframer(
-                (frame, _) => frameReceived(frame), crcMode: framing == Afsk300Framing.Il2pCrc);
+                (frame, info) =>
+                {
+                    frameReceived(frame);
+                    FrameDecoded?.Invoke(frame, new FrameQuality(
+                        Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
+                },
+                crcMode: framing == Afsk300Framing.Il2pCrc);
             bitSink = deframer.PushBit;
         }
 
@@ -95,6 +105,9 @@ public sealed class Afsk300Modem : IModem
         _modulator = new AfskModulator(
             sampleRate, Baud, centerFrequency - ToneShift, centerFrequency + ToneShift);
     }
+
+    /// <inheritdoc />
+    public event Action<byte[], FrameQuality>? FrameDecoded;
 
     /// <inheritdoc />
     public string Mode => _framing switch

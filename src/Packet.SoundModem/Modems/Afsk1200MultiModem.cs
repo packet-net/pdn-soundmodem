@@ -56,7 +56,9 @@ public sealed class Afsk1200MultiModem : IModem
         for (int i = 0; i < _demodulators.Length; i++)
         {
             int step = (i % frequencyCount) - offsetPairs;
-            var deframer = new HdlcDeframer(OnFrame);
+            double offset = step * offsetHz;
+            int emphasisDb = (i / frequencyCount) * 6;   // EmphasisFilter variants: 0/+6/+12 dB/oct
+            var deframer = new HdlcDeframer(frame => OnFrame(frame, offset, emphasisDb));
             var nrzi = new NrziDecoder();
             _demodulators[i] = new AfskDemodulator(
                 sampleRate,
@@ -65,6 +67,9 @@ public sealed class Afsk1200MultiModem : IModem
             _preFilters[i] = new EmphasisFilter(i / frequencyCount);
         }
     }
+
+    /// <inheritdoc />
+    public event Action<byte[], FrameQuality>? FrameDecoded;
 
     /// <inheritdoc />
     public string Mode => $"afsk1200-multi{_demodulators.Length}";
@@ -150,13 +155,16 @@ public sealed class Afsk1200MultiModem : IModem
         }
     }
 
-    private void OnFrame(byte[] frame)
+    private void OnFrame(byte[] frame, double offsetHz, int emphasisDb)
     {
         // Several branches usually decode the same transmission within a frame-time of
         // each other; emit the first and drop content-identical repeats in the window.
         if (_deduper.ShouldEmit(frame, _samplesProcessed))
         {
             _frameReceived(frame);
+            FrameDecoded?.Invoke(frame, new FrameQuality(
+                Mode, frame.Length, CorrectedBytes: null, CrcValid: null,
+                FrequencyOffsetHz: offsetHz, EmphasisDb: emphasisDb));
         }
     }
 }

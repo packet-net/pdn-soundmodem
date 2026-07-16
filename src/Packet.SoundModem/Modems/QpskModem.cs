@@ -19,7 +19,14 @@ public sealed class QpskModem : IModem
     {
         _bitRate = baud * 2;
         _crc = crc;
-        var deframer = new Il2pDeframer((frame, _) => frameReceived(frame), crc);
+        var deframer = new Il2pDeframer(
+            (frame, info) =>
+            {
+                frameReceived(frame);
+                FrameDecoded?.Invoke(frame, new FrameQuality(
+                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
+            },
+            crc);
         _demodulator = new QpskDemodulator(
             sampleRate, baud,
             (first, second) =>
@@ -74,6 +81,9 @@ public sealed class QpskModem : IModem
     public static QpskModem Qpsk3600(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true, double rollOff = 0.25) =>
         new(sampleRate, 1800, 1650, frameReceived, crc, rollOff);
+
+    /// <inheritdoc />
+    public event Action<byte[], FrameQuality>? FrameDecoded;
 
     /// <inheritdoc />
     public string Mode => $"qpsk{_bitRate}{(_crc ? "-il2pc" : "-il2p")}";
