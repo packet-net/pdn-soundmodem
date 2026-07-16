@@ -45,6 +45,7 @@ CLAUDE.md § Licence rules).
 | `Modems/Bpsk300*`, `Modems/Qpsk*` | Symbol maps directly from the IL2P spec; differential detection is generic DSP; per-mode filter numbers follow QtSM's tables; the fractional one-symbol delay is original. |
 | `Modems/Fsk9600Modem`, `G3ruhScrambler` | G3RUH scrambler expressions bit-exact from Dire Wolf (`gen_tone.c`/`hdlc_rec.c`), NRZI→scramble ordering confirmed from their source and by bidirectional audio validation. Receive chain outline is `demod_9600` lineage with this project's envelope slicer; the TX pulse shaping deliberately differs from Dire Wolf's phase-pinning synthesis (compatibility proven empirically). |
 | `Fx25/*` | Correlation-tag table, block formats and the 8-bit match tolerance verbatim from Dire Wolf's `fx25_init.c` (protocol constants originating in the Stensat draft); wire behaviour (flag fill, LSB-first, NRZI placement, accumulator direction) from reading their send/receive paths; fresh implementation with an added miscorrection guard. |
+| `Modems/C4fskModem` | Wire format from **MMDVM-TNC** (Jonathan Naylor G4KLX, GPL-2.0-or-later): the 0x77 preamble byte, the 4-byte outer-only sync 0x5D57DF7F, the dibit→level map and the "Mode 2 = IL2P bytes on 4-PAM" structure are its `Mode2Defines.h`/`Mode2TX.cpp`/`IL2PRX.cpp` constants and layout, which the NinoTNC C4FSK modes inherit. Established empirically first (symbol analysis of NinoTNC recordings, one error in 316 symbols against a known frame), then confirmed against the MMDVM-TNC source. The receive chain (adaptive outer-envelope 4-level slicer, sign-crossing-only symbol clock, energy-gated bit stream) is this project's own — MMDVM's matched-filter/fixed-clock receiver was read but not ported. TX pulse shaping is a windowed-sinc low-pass approximating their Gaussian BT 0.6 pulse, validated on hardware rather than copied. |
 | `Kiss/*`, `Channel/SoundModemChannel` (CSMA) | KISS specification (framing, commands, the BPQ ACKMODE extension) and AX.25 §6.4 classic p-persistence. Implemented from the specs — deliberately no dependency on packet.net's AGPL `Packet.Kiss`. |
 | `Audio/*`, `Dsp/*` (ALSA, WAV, FIR/design, decimator, upsampler, FFT, spectrum) | Standard APIs and textbook DSP (windowed-sinc design, polyphase-style rate change, radix-2 FFT). The runtime filter-design *choice* mirrors QtSM's approach. |
 | `Channel/Cm108Ptt` | The de-facto CM108 HID report convention (5-byte output report, GPIO3) as documented and used by Dire Wolf and QtSoundModem. |
@@ -59,8 +60,8 @@ slicer, dedup, busy detector) or recorded the lever as future work in `docs/plan
 
 ## Licence consequence
 
-Components above carry material derived from Dire Wolf (GPL-2.0-or-later, upgradeable)
-and UZ7HO/QtSoundModem (GPLv3+). Beyond that, everything here was written with both GPL
+Components above carry material derived from Dire Wolf (GPL-2.0-or-later, upgradeable),
+UZ7HO/QtSoundModem (GPLv3+) and MMDVM-TNC (GPL-2.0-or-later, upgradeable). Beyond that, everything here was written with both GPL
 trees having been read, so the conservative and honest licence for the whole is
 **GPL-3.0-or-later** — chosen deliberately at the project's founding (packet.net
 `docs/research/headless-soundmodem.md` §4 and §Decisions, 2026-07-14) rather than

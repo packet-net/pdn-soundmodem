@@ -47,6 +47,9 @@ prior art and stays GPL:
 - **IL2P** is by Nino Carrillo (KK4HEJ) — [spec draft v0.6](https://tarpn.net/t/il2p/il2p-specification_draft_v0-6.pdf);
   the IL2P implementation here is written from that spec and validated against its example
   packets (provided by Jon Naylor, G4KLX).
+- **MMDVM-TNC** (Jonathan Naylor, G4KLX) — GPL-2.0-or-later — the "Mode 2" C4FSK wire
+  format (preamble, sync, symbol mapping) that the NinoTNC's C4FSK modes inherit and that
+  `C4fskModem` implements.
 
 The sibling [packet.net](https://github.com/packet-net/packet.net) repo is AGPL-3.0; the two
 combine under GPLv3 §13 / AGPLv3 §13. Nothing MIT-licensed may depend on this package.
