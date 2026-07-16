@@ -198,6 +198,21 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still¹⁰) — MIL-STD-188-110D App D tables: dual-transcribed, zero conflicts
+
+PR #24: the image-only interop-critical tables of 110D Appendix D (the public counterpart of
+the RESTRICTED STANAG 5069 — task #7) land in docs/ms110d/, transcribed **twice independently**
+(branches ms110d-tables-a/-b, agents forbidden from cross-consulting, per the verified
+scoping's demand) and diffed: six of ten files byte-identical (incl. all four constellation
+tables), four differing only in formatting — **zero value conflicts**, plus machine self-checks
+(constellation symmetry/lattice, puncture ones-counts reproducing code rates, the scrambler
+regenerating the printed sequence exactly). Source PDF SHA-256 + method in the README; the -a
+branch retained as the independent record. Structural findings: D-VII…D-X are the
+16/32/64/256-QAM coordinate tables (PSK uses transcoding tables D-III…D-VI); puncture patterns
+are the separate Table D-L. Spec oddities recorded (length-68 mini-probe; a 40 kHz interleaver
+table with no 40 kHz bandwidth; "Not yet standardized." acquisition section). Next for task #7:
+the App D design doc on these verified values; build sequenced after ARDOP.
+
 ### 2026-07-16 (later still⁹) — ARDOP design/scoping lands
 
 PR #23: [ardop-design.md](ardop-design.md) — the FreeDV-style de-risking pass for the open
