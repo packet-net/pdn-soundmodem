@@ -189,6 +189,21 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later) — issue tracker cleared: #1-#4 closed on evidence
+
+All four open issues resolved and closed. #2's fix is the structural one: the
+never-wider-than-a-NinoTNC test now measures its reference **from the checked-in
+recordings at test time** — whole burst, identical frame content, explicit sample rates
+(a first attempt inferred rate from burst length and mis-measured 48 k as 12 k; the same
+error class the test polices). All 9 modes pass including qpsk3600, whose "9 % wider"
+reading died with the window mismatch (fairly: ours 1808 Hz vs its 1887 Hz). #1 closed —
+shaping fixed + enforced, idle-gap behaviour characterised as the TNC's, mode-5 matched
+RX filter demoted to optimisation-without-a-driver. #3 closed: modem floors measured and
+parity-enforced; the daemon's 300 ms documented as a radio PTT-to-RF allowance with a
+guidance table in ninotnc-loop.md. #4 closed: root causes fixed earlier; the one-word
+flag-fill residual priced as an explicit trade (I/Q LPF 750 Hz → 10/10 on that case but
+WA8LMF 472 → 410; default stays 650, ctor parameter for ports that know their peer).
+
 ### 2026-07-16 (night) — C4FSK lands: 15 of 15 NinoTNC modes
 
 The last coverage gap closed. `C4fskModem` implements NinoTNC modes 1 (19200) and 3
