@@ -5,16 +5,24 @@ using Packet.SoundModem.Modems;
 // sm-samples: one reference WAV per mode, for sharing and for regression material.
 //
 //   sm-samples <outputDir> [--txdelay 50] [--gap-ms 1000] [--source Q0AAA] [--dest TEST]
+//                          [--only <mode>] [--native-rate]
 //
 // Each file holds 10 UI frames of increasing payload (10..200 bytes) separated by silence,
 // rendered at 48 kHz mono — the card rate we actually transmit at, so the file is what
 // goes on the wire, not an idealised version of it.
+//
+// --only <mode> renders just one mode; --native-rate writes at the modem's DSP rate (no
+// upsample) — e.g. 12 kHz for the audio-band PSK/AFSK modes, for the QtSM snd-aloop rig
+// (docs/qtsm-loop.md), whose PSK modems run at 12 kHz. The default set (48 kHz, all modes)
+// is unchanged so samples/pdn regenerates byte-for-byte.
 
 string outDir = args.Length > 0 && !args[0].StartsWith("--", StringComparison.Ordinal)
     ? args[0]
     : "samples";
 int txDelayMs = 50, gapMs = 1000;
 string source = "Q0AAA", dest = "TEST";
+string? only = null;
+bool nativeRate = false;
 for (int i = 0; i < args.Length; i++)
 {
     string Next() => ++i < args.Length ? args[i] : throw new ArgumentException($"{args[i - 1]} needs a value");
@@ -24,6 +32,8 @@ for (int i = 0; i < args.Length; i++)
         case "--gap-ms": gapMs = int.Parse(Next()); break;
         case "--source": source = Next(); break;
         case "--dest": dest = Next(); break;
+        case "--only": only = Next(); break;
+        case "--native-rate": nativeRate = true; break;
     }
 }
 
@@ -87,6 +97,11 @@ Console.WriteLine("file                                        mode  duration   
 
 foreach (var (name, ninoMode, rate, make) in modes)
 {
+    if (only is not null && name != only)
+    {
+        continue;
+    }
+
     IModem modem = make(rate);
     var samples = new List<float>();
     int gap = rate * gapMs / 1000;
@@ -98,7 +113,8 @@ foreach (var (name, ninoMode, rate, make) in modes)
     }
 
     float[] audio = samples.ToArray();
-    if (rate != CardRate)
+    int outRate = nativeRate ? rate : CardRate;
+    if (!nativeRate && rate != CardRate)
     {
         // Render at the card rate through the same upsampler the daemon transmits with.
         var up = new Upsampler(CardRate, CardRate / rate);
@@ -107,7 +123,7 @@ foreach (var (name, ninoMode, rate, make) in modes)
         audio = rendered;
     }
 
-    string file = Path.Combine(outDir, $"pdn-mode{ninoMode:D2}-{name}-{txDelayMs}ms-48k.wav");
-    WavFile.WriteMono(file, audio, CardRate);
-    Console.WriteLine($"{Path.GetFileName(file),-43} {ninoMode,4}  {audio.Length / (double)CardRate,7:F1}s  {payloadLengths.Length,6}");
+    string file = Path.Combine(outDir, $"pdn-mode{ninoMode:D2}-{name}-{txDelayMs}ms-{outRate / 1000}k.wav");
+    WavFile.WriteMono(file, audio, outRate);
+    Console.WriteLine($"{Path.GetFileName(file),-43} {ninoMode,4}  {audio.Length / (double)outRate,7:F1}s  {payloadLengths.Length,6}");
 }

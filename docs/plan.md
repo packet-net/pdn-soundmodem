@@ -198,6 +198,51 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still²) — QtSM matrix re-measured under coherent; #6/#10/#11 resolved on evidence
+
+The coherent detector default (#5) invalidated the **qtsm→ours** half of the QtSoundModem
+matrix (docs/qtsm-loop.md), which PR #8 had measured under differential detection. Re-stood
+the snd-aloop rig (QtSM 0.0.0.76) and re-measured, capturing QtSM's per-mode TX off the cable
+into `samples/qtsm/*.wav` and decoding with our modems on the coherent default. **Every
+qtsm→ours PSK leg is now 10/10** (afsk1200, bpsk300, bpsk1200, qpsk600, qpsk2400, qpsk3600).
+ours→QtSM is receiver-in-QtSM, so coherent-independent; re-confirmed the changed cells + a
+control on the artifact-free continuous-WAV method. **Nine of ten pairings interoperate both
+ways**; the lone marginal leg is qpsk600 ours→QtSM.
+
+The three open interop issues, resolved on the fresh data (evidence-based comments posted; not
+closed unilaterally, per Tom):
+
+- **#11 (qpsk600 marginal)** — *half-resolved.* The qtsm→ours leg is **10/10 under coherent**
+  (the differential-era 9/10 was live-path variance — a clean deterministic WAV decode reads
+  10/10 on both detectors). The residual is **ours→QtSM 8/10**: QtSM's narrow V26A-600 receiver
+  loses a frame or two of our TX. That is receiver-side in QtSM — our `qpsk600` TX is
+  NinoTNC-proven (mode 9, 10/10) and stays exactly as-is (widening it to suit QtSM would trade
+  away NinoTNC OBW compliance). Characterised, not our defect.
+- **#10 (fsk4800-il2p one-way)** — *resolved: the 0/10 did not reproduce.* Under current code
+  QtSM's Dire-Wolf RUH-4800 receiver decodes our 4800 GFSK TX **10/10** (reproduced twice —
+  committed `samples/pdn` mode-04 and a fresh WAV — with QtSM's own RUH-4800 TX decoding in the
+  same setup as a control; QtSM headless-RUH `using48000` patch applied). Timeline rules out a
+  stale sample (the FskModem tail-flush acquisition fix landed ~4 h *before* the original 0/10
+  measurement). **No change to our 4800 modem** — it is NinoTNC-derived and stays so; it simply
+  also cross-validates against QtSM's RUH-4800 now. So 4800 GFSK is bidirectional both with the
+  NinoTNC and with Dire-Wolf/QtSM RUH.
+- **#6 (qpsk2400 vs QtSM's 2400 maps)** — *confirmed characterisation under coherent.* Our
+  V.26A `qpsk2400` decodes QtSM's V26A/DW2400 (type 12) **8/8** and its legacy "QPSK AX.25
+  2400bd" (type 10) **0/8** — different phase maps, not a defect. Coherent does not change it.
+
+Per Tom's mid-task directive, every mode is now **compatibility-labelled** (which peer it
+interoperates with — universal / NinoTNC+QtSM-V26A / NinoTNC+DW-RUH / NinoTNC+MMDVM) in
+docs/qtsm-loop.md § Results, README.md and samples/README.md; NinoTNC interop is never traded
+for QtSM interop.
+
+Landed alongside: **`QtsmInteropTests` (`Category=Interop`, 7 cases)** — decodes the checked-in
+`samples/qtsm/` WAVs with our modems and asserts the frames (mirrors the NinoTNC/Dire-Wolf
+reference-WAV tests); the live headless QtSM rig stays manual. Five new QtSM reference WAVs
+checked in (trimmed). Tool reproducibility helpers (no wire/behaviour change, no modem touched,
+so no PROVENANCE update, no ax25-ts leg): `sm-decode` gains `bpsk1200`/`qpsk600`/`fsk4800`/
+`fsk4800-il2p` (and qpsk3600's loop bandwidth now matches its factory); `sm-samples` gains
+`--only <mode>` and `--native-rate` (12 kHz TX for the QtSM rig). Suite 218 → 218 + 7 Interop.
+
 ### 2026-07-16 (later still) — coherent (Costas) detection is the PSK default (#5)
 
 Flipped the BPSK/QPSK default from differential to **coherent** detection, matching the

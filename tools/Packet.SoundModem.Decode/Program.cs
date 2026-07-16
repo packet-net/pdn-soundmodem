@@ -7,11 +7,13 @@ using Packet.SoundModem.Modems;
 // sm-decode: offline WAV decoder — this project's equivalent of direwolf's `atest`,
 // for corpus benchmarking and cross-validation against other modems.
 //
-//   sm-decode <file.wav> [afsk1200|bpsk300|qpsk2400|qpsk3600|fsk9600|fsk9600-il2p] [--il2p] [--crc] [--quiet]
+//   sm-decode <file.wav> [afsk1200|bpsk300|bpsk1200|qpsk600|qpsk2400|qpsk3600|
+//                         fsk9600|fsk9600-il2p|fsk4800|fsk4800-il2p] [--il2p] [--crc] [--quiet]
 //
 // afsk1200 (default): classic AX.25 (NRZI + HDLC), or IL2P-over-AFSK with --il2p
 // (per the IL2P symbol map AFSK carries raw bits — no NRZI — mark = '1').
-// bpsk300 implies IL2P. Prints one line per decoded frame and a final count.
+// The bpsk/qpsk modes imply IL2P; pass --crc for the IL2P+CRC (NinoTNC) variants.
+// Prints one line per decoded frame and a final count.
 
 if (args.Length < 1)
 {
@@ -21,7 +23,9 @@ if (args.Length < 1)
 
 string path = args[0];
 string mode = args.Skip(1).FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal)) ?? "afsk1200";
-bool il2p = args.Contains("--il2p") || mode is "bpsk300" or "qpsk2400" or "qpsk3600" or "fsk9600-il2p";
+bool il2p = args.Contains("--il2p")
+    || mode is "bpsk300" or "bpsk1200" or "qpsk600" or "qpsk2400" or "qpsk3600"
+        or "fsk9600-il2p" or "fsk4800-il2p";
 bool crc = args.Contains("--crc");
 bool fx25 = args.Contains("--fx25");
 bool quiet = args.Contains("--quiet");
@@ -81,18 +85,29 @@ switch (mode)
     case "bpsk300":
         new BpskDemodulator(sampleRate, bitSink).Process(samples);
         break;
+    case "bpsk1200":
+        new BpskDemodulator(sampleRate, bitSink, 1500, 1200).Process(samples);
+        break;
+    case "qpsk600":
+        new QpskDemodulator(sampleRate, 300, (a, b) => { bitSink(a); bitSink(b); }, 1500).Process(samples);
+        break;
     case "qpsk2400":
         new QpskDemodulator(sampleRate, 1200, (a, b) => { bitSink(a); bitSink(b); }, 1500).Process(samples);
         break;
     case "qpsk3600":
-        new QpskDemodulator(sampleRate, 1800, (a, b) => { bitSink(a); bitSink(b); }, 1650).Process(samples);
+        // Match QpskModem.Qpsk3600's narrower loop (1800*0.03): at 6⅔ samples/symbol the
+        // 6% default tracks noise instead of carrier (issue #5).
+        new QpskDemodulator(sampleRate, 1800, (a, b) => { bitSink(a); bitSink(b); }, 1650,
+            loopBandwidthHz: 1800 * 0.03).Process(samples);
         break;
-    case "fsk9600" or "fsk9600-il2p":
+    case "fsk9600" or "fsk9600-il2p" or "fsk4800" or "fsk4800-il2p":
     {
-        var framing = mode == "fsk9600"
+        int baud = mode.StartsWith("fsk4800", StringComparison.Ordinal) ? 4800 : 9600;
+        bool classic = mode is "fsk9600" or "fsk4800";
+        var framing = classic
             ? FskFraming.ClassicHdlc
             : (crc ? FskFraming.Il2pCrc : FskFraming.Il2p);
-        var modem = new FskModem(sampleRate, OnFrame, framing);
+        var modem = new FskModem(sampleRate, OnFrame, framing, baud);
         modem.Process(samples);
         break;
     }

@@ -89,26 +89,37 @@ dotnet run --project tools/Packet.SoundModem.Samples -- <outdir> \
 
 ---
 
-# qtsm/ — QtSoundModem transmissions (QPSK phase-map evidence)
+# qtsm/ — QtSoundModem transmissions (interop cross-validation corpus)
 
 Recorded off the snd-aloop rig (docs/qtsm-loop.md) from **QtSoundModem 0.0.0.76**, mono
-12 kHz. These document that our `qpsk2400` (the NinoTNC/IL2P V.26A symbol map) pairs with
-QtSM's **V26A/DW2400** QPSK, not its legacy "QPSK AX.25 2400bd":
+(12 kHz audio-band modes, 48 kHz RUH). These are the **qtsm→ours** half of the interop
+matrix — QtSM's transmission decoded by our modems — and the checked-in `Category=Interop`
+corpus (`tests/.../QtsmInteropTests`). Each `qtsm-<mode>.wav` carries 10 UI frames with
+`QTSM-<mode>-NN` payloads; the two `qpsk2400` WAVs and `qtsm-ruh4800` (earlier session) carry
+their own content.
 
-| file | QtSM mode | our receiver |
+| file | QtSM mode | our receiver (coherent) |
 |---|---|---|
-| `qtsm-qpsk2400-legacy.wav` | type 10 · QPSK AX.25 2400bd (legacy UZ7HO map) | **0/8** |
-| `qtsm-qpsk2400-v26a.wav` | type 12 · QPSK V26A 2400bps (`SPEED_DW2400`) | **8/8** |
-| `qtsm-ruh4800.wav` | type 18 · RUH 4800(DW) — 48 kHz | **decodes** (10/10 live) |
+| `qtsm-afsk1200.wav` | type 1 · AFSK 1200 | **10/10** |
+| `qtsm-bpsk300.wav` | type 6 · BPSK 300 IL2P+CRC | **10/10** |
+| `qtsm-bpsk1200.wav` | type 4 · BPSK 1200 IL2P+CRC | **10/10** |
+| `qtsm-qpsk600.wav` | type 16 · QPSK V26A 600 IL2P+CRC | **10/10** |
+| `qtsm-qpsk3600.wav` | type 9 · QPSK 3600 IL2P+CRC | **10/10** |
+| `qtsm-qpsk2400-legacy.wav` | type 10 · QPSK AX.25 2400bd (legacy UZ7HO map) | **0/8** (#6) |
+| `qtsm-qpsk2400-v26a.wav` | type 12 · QPSK V26A 2400bps (`SPEED_DW2400`) | **8/8** (#6) |
+| `qtsm-ruh4800.wav` | type 18 · RUH 4800(DW) — 48 kHz | **decodes** (#10) |
 
-`qtsm-ruh4800.wav` is the `fsk4800-il2p` one-way finding: our receiver decodes QtSM's RUH-4800
-transmission, but QtSM's RUH-4800 receiver decodes **none** of *our* 4800 TX (`pdn/` mode 04,
-which a NinoTNC decodes). See docs/qtsm-loop.md § Findings.
+The two 2400 WAVs document that our `qpsk2400` (NinoTNC/IL2P V.26A map) pairs with QtSM's
+**V26A/DW2400**, not its legacy "QPSK AX.25 2400bd" (#6). `qtsm-ruh4800.wav` is the 4800
+GFSK cross-check: our receiver decodes QtSM's RUH-4800, and (verified live on the rig, 2026-07-16)
+QtSM's RUH-4800 receiver now decodes *our* 4800 TX 10/10 too — the earlier one-way finding
+(#10) did not reproduce.
 
 ```sh
 sm-decode samples/qtsm/qtsm-qpsk2400-legacy.wav qpsk2400 --crc   # → 0 frames
 sm-decode samples/qtsm/qtsm-qpsk2400-v26a.wav   qpsk2400 --crc   # → 8 frames
+sm-decode samples/qtsm/qtsm-qpsk600.wav         qpsk600  --crc   # → 10 frames
 ```
 
 Not reproducible without the rig + that QtSM build, so checked in. See docs/qtsm-loop.md
-§ "QPSK 2400 needs QtSM's V26A/DW2400 mode".
+§ Results and § Samples.
