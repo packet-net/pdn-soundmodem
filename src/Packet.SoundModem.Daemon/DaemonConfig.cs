@@ -33,6 +33,21 @@ public sealed class PttConfig
     public int? Gpio { get; set; }
 }
 
+/// <summary>POCSAG paging endpoint (DAPNET/POCSAG-compatible waveform; local paging
+/// API, pdn) — see PagingTcpServer for the line grammar.</summary>
+public sealed class PagingConfig
+{
+    /// <summary>Paging TCP listen port.</summary>
+    public int Port { get; set; } = 8106;
+
+    /// <summary>POCSAG bit rate: 512, 1200 (DAPNET, default) or 2400.</summary>
+    public int Baud { get; set; } = 1200;
+
+    /// <summary>Invert the TX baseband polarity (for radios whose data path inverts;
+    /// the spec convention '0' = high frequency is the default).</summary>
+    public bool InvertPolarity { get; set; }
+}
+
 /// <summary>Channel-access tunables (KISS clients can override at runtime).</summary>
 public sealed class CsmaConfig
 {
@@ -67,6 +82,9 @@ public sealed class DaemonConfig
 
     /// <summary>PTT control; null = VOX / none.</summary>
     public PttConfig? Ptt { get; set; }
+
+    /// <summary>POCSAG paging endpoint; null = disabled.</summary>
+    public PagingConfig? Paging { get; set; }
 
     /// <summary>Channel-access parameters.</summary>
     public CsmaConfig Csma { get; set; } = new();

@@ -21,6 +21,10 @@ public sealed class CsmaParameters
     public int TxTailMilliseconds { get; set; } = 20;
 }
 
+/// <summary>Receives the same audio the channel's modems see (see
+/// <see cref="SoundModemChannel.AddReceiveTap"/>).</summary>
+public delegate void ReceiveTap(ReadOnlySpan<float> samples);
+
 /// <summary>
 /// One audio channel hosting up to 16 logical modems (the QtSoundModem multiplex model,
 /// addressed by KISS sub-channel): fans received audio into every modem plus the spectrum
@@ -31,8 +35,9 @@ public sealed class CsmaParameters
 public sealed class SoundModemChannel
 {
     private readonly Dictionary<int, IModem> _modems = [];
-    private readonly Channel<(int SubChannel, byte[] Frame, TaskCompletionSource Done)> _txQueue =
-        System.Threading.Channels.Channel.CreateUnbounded<(int, byte[], TaskCompletionSource)>();
+    private readonly List<ReceiveTap> _receiveTaps = [];
+    private readonly Channel<(Func<int, float[]> Modulate, TaskCompletionSource Done, Action<Exception>? Rejected)> _txQueue =
+        System.Threading.Channels.Channel.CreateUnbounded<(Func<int, float[]>, TaskCompletionSource, Action<Exception>?)>();
     private readonly TimeProvider _time;
     private readonly Random _random;
     private readonly SpectrumSource? _spectrum;
@@ -83,8 +88,8 @@ public sealed class SoundModemChannel
 
     /// <summary>Raised when a queued frame is dropped because its modem refused to
     /// modulate it (sub-channel, frame, reason) — e.g. a frame beyond the mode's size
-    /// bound. The frame's <see cref="EnqueueTransmit"/> task faults with the same
-    /// exception; the transmitter keeps running.</summary>
+    /// bound. The frame's <see cref="EnqueueTransmit(int, byte[])"/> task faults with
+    /// the same exception; the transmitter keeps running.</summary>
     public event Action<int, byte[], Exception>? TransmitRejected;
 
     /// <summary>True while any modem sees packet or energy busy, or we are transmitting.</summary>
@@ -113,6 +118,15 @@ public sealed class SoundModemChannel
         _modems.Add(subChannel, modem);
     }
 
+    /// <summary>Adds a non-KISS receive listener — a service decoder (e.g. POCSAG
+    /// paging) that shares the channel's audio without occupying a KISS sub-channel.
+    /// Called with the same half-duplex-gated samples the modems get.</summary>
+    public void AddReceiveTap(ReceiveTap tap)
+    {
+        ArgumentNullException.ThrowIfNull(tap);
+        _receiveTaps.Add(tap);
+    }
+
     /// <summary>Feeds received audio to every modem and the spectrum source. Skipped
     /// while transmitting (half duplex).</summary>
     public void ProcessReceive(ReadOnlySpan<float> samples)
@@ -127,19 +141,40 @@ public sealed class SoundModemChannel
         {
             modem.Process(samples);
         }
+
+        foreach (ReceiveTap tap in _receiveTaps)
+        {
+            tap(samples);
+        }
     }
 
     /// <summary>Queues a frame for transmission on a sub-channel. The returned task
     /// completes when the frame's audio has fully left the device (ACKMODE's answer).</summary>
     public Task EnqueueTransmit(int subChannel, byte[] frame)
     {
-        if (!_modems.ContainsKey(subChannel))
+        if (!_modems.TryGetValue(subChannel, out IModem? modem))
         {
             return Task.FromException(new ArgumentException($"no modem on sub-channel {subChannel}"));
         }
 
+        return EnqueueTransmit(
+            txDelay => modem.Modulate(frame, txDelay),
+            rejection => TransmitRejected?.Invoke(subChannel, frame, rejection));
+    }
+
+    /// <summary>Queues an arbitrary transmission — the channel-access path (CSMA, PTT,
+    /// pacing, TX-complete) for service transmitters that are not KISS-addressed modems
+    /// (e.g. POCSAG paging). The delegate receives the TXDELAY budget in milliseconds
+    /// (full on the keyup's first transmission, a token 30 ms after) and returns the
+    /// audio at the channel rate.</summary>
+    /// <param name="modulate">Renders the transmission; an <see cref="ArgumentException"/>
+    /// thrown here drops the item and faults the returned task, as for frames.</param>
+    /// <param name="rejected">Optional observer for such a rejection.</param>
+    public Task EnqueueTransmit(Func<int, float[]> modulate, Action<Exception>? rejected = null)
+    {
+        ArgumentNullException.ThrowIfNull(modulate);
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_txQueue.Writer.TryWrite((subChannel, frame, done)))
+        if (!_txQueue.Writer.TryWrite((modulate, done, rejected)))
         {
             done.SetException(new InvalidOperationException("transmit queue closed"));
         }
@@ -190,13 +225,12 @@ public sealed class SoundModemChannel
                 bool first = true;
                 while (reader.TryRead(out var item))
                 {
-                    IModem modem = _modems[item.SubChannel];
                     // Subsequent frames in one keyup need only a token preamble.
                     int txDelay = first ? Csma.TxDelayMilliseconds : 30;
                     float[] samples;
                     try
                     {
-                        samples = modem.Modulate(item.Frame, txDelay);
+                        samples = item.Modulate(txDelay);
                     }
                     catch (ArgumentException rejection)
                     {
@@ -204,7 +238,7 @@ public sealed class SoundModemChannel
                         // dropped — it must not kill the transmitter loop. The enqueuer's
                         // task faults so ACKMODE hosts see the loss.
                         item.Done.TrySetException(rejection);
-                        TransmitRejected?.Invoke(item.SubChannel, item.Frame, rejection);
+                        item.Rejected?.Invoke(rejection);
                         continue;
                     }
 

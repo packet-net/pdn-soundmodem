@@ -43,6 +43,18 @@ interoperates with, and NinoTNC compatibility is never given up to suit another 
   framing at the raw-data layer (FreeDATA layers its own ARQ there instead). Frames span
   packet boundaries within a burst, so even datac14's 3-byte packets carry full AX.25
   frames. Runs on the 48 kHz DSP path (the engine is native 8 kHz; 48000 = 6·8000).
+- **DAPNET / POCSAG pagers** — `pocsag1200` (plus 512/2400): the paging waveform (CCIR
+  Radiopaging Code No. 1, 2-FSK NRZ + BCH(31,21)), implemented spec-first and
+  cross-validated against multimon-ng (every page byte-exact; `samples/pocsag/`).
+  1200 bd is the DAPNET amateur paging network's rate (439.9875 MHz). This is a *paging*
+  feature beside the packet modes — pages, not AX.25 frames — so it is not a KISS port:
+  the library ships `PocsagEncoder`/`PocsagDecoder`, the `sm-pocsag` CLI encodes/decodes
+  WAVs, and the daemon's `--paging <port>` endpoint takes
+  `PAGE <ric> <function> ALPHA|NUMERIC|TONE [text]` over TCP (one UTF-8 line per
+  command, `OK <id>`/`ERR <reason>` replies), transmits through the same CSMA/PTT
+  channel-access path as everything else, and broadcasts every page heard on channel to
+  its clients as `HEARD …` lines — a local paging API (pdn). Speaking the DAPNET-core
+  transmitter protocol is a possible future follow-up.
 
 The QtSoundModem cross-validation matrix (which QtSM `ModemType` each of our modes pairs
 with, both directions) is in [docs/qtsm-loop.md](docs/qtsm-loop.md) § Results.
