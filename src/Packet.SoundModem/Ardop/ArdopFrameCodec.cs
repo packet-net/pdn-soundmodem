@@ -94,18 +94,19 @@ public static class ArdopFrameCodec
     }
 
     /// <summary>
-    /// Encodes a 4FSK data frame (<c>EncodeFSKData</c>, ARDOPC.c:1199).
+    /// Encodes a data frame of any modulation family (<c>EncodeFSKData</c>,
+    /// ARDOPC.c:1199; <c>EncodePSKData</c>, :1106 — identical per-block layout).
     /// <paramref name="data"/> may be shorter than the frame capacity (the count byte
-    /// carries the true length; unused bytes are zero-filled) but not longer.
-    /// The 600 Bd long frame (0x7A/0x7B) is built as three sequential
-    /// 200-data + 50-RS blocks.
+    /// carries the true length; unused bytes are zero-filled) but not longer. One block
+    /// per carrier for the PSK/16QAM multi-carrier modes; the 600 Bd long frame
+    /// (0x7A/0x7B) is built as three sequential 200-data + 50-RS blocks.
     /// </summary>
     public static byte[] EncodeDataFrame(byte type, ReadOnlySpan<byte> data, byte sessionId)
     {
         var info = ArdopFrameInfo.Get(type);
-        if (info.Modulation != ArdopModulation.Fsk4 || info.DataLength == 0)
+        if (!ArdopFrameType.IsData(type) || info.DataLength == 0)
         {
-            throw new ArgumentException($"0x{type:X2} ({info.Name}) is not a 4FSK data frame", nameof(type));
+            throw new ArgumentException($"0x{type:X2} ({info.Name}) is not a data frame", nameof(type));
         }
 
         int capacity = info.DataLength * info.CarrierCount;
@@ -116,7 +117,7 @@ public static class ArdopFrameCodec
         }
 
         // The 600 Bd long frame splits its 600-byte field into three RS blocks; every
-        // other 4FSK frame is one block per carrier (all are single-carrier).
+        // other data frame is one block per carrier.
         (int blocks, int blockDataLen, int blockRsLen) = type is 0x7A or 0x7B
             ? (3, info.DataLength / 3, info.RsLength / 3)
             : (info.CarrierCount, info.DataLength, info.RsLength);
@@ -330,9 +331,20 @@ public static class ArdopFrameCodec
     /// <paramref name="payloadLength"/> is the count byte's value and the payload sits
     /// at <c>rawBlock[1..1+payloadLength]</c>.
     /// </summary>
-    public static bool TryCorrectDataBlock(Span<byte> rawBlock, int dataLength, int rsLength, byte frameType, out int payloadLength)
+    public static bool TryCorrectDataBlock(Span<byte> rawBlock, int dataLength, int rsLength, byte frameType, out int payloadLength) =>
+        TryCorrectDataBlock(rawBlock, dataLength, rsLength, frameType, out payloadLength, out _);
+
+    /// <summary>
+    /// As <see cref="TryCorrectDataBlock(Span{byte}, int, int, byte, out int)"/>, also
+    /// reporting the number of RS byte corrections made on success
+    /// (<c>totalRSErrors</c> accounting — feeds the received-quality floor,
+    /// SoundInput.c:3801).
+    /// </summary>
+    public static bool TryCorrectDataBlock(
+        Span<byte> rawBlock, int dataLength, int rsLength, byte frameType, out int payloadLength, out int rsCorrections)
     {
         payloadLength = 0;
+        rsCorrections = 0;
         if (rawBlock.Length != dataLength + 3 + rsLength)
         {
             throw new ArgumentException("block must be count + data + CRC16 + RS", nameof(rawBlock));
@@ -341,7 +353,8 @@ public static class ArdopFrameCodec
         // Always run RS before the CRC check: ardopcf saw a corrupted block pass the
         // CRC yet be repairable by RS, so the CRC verdict is only trusted on the
         // RS-corrected bytes (comment at SoundInput.c:724).
-        if (RsCorrect(rawBlock, rsLength) < 0)
+        int corrections = RsCorrect(rawBlock, rsLength);
+        if (corrections < 0)
         {
             return false;
         }
@@ -352,6 +365,7 @@ public static class ArdopFrameCodec
         }
 
         payloadLength = rawBlock[0];
+        rsCorrections = corrections;
         return true;
     }
 

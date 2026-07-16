@@ -1148,18 +1148,12 @@ public sealed class ArdopArqEngine
             byte typeToSend = _gearshift.NextTypeToSend(_lastDataFrameAcked);
             _lastDataFrameSent = typeToSend;
             var info = ArdopFrameInfo.Get(typeToSend);
-            if (info.Modulation != ArdopModulation.Fsk4)
-            {
-                throw new NotSupportedException(
-                    $"{info.Name}: PSK/QAM data transmission is Phase C — run both ends FSKONLY for Phase B sessions");
-            }
-
             int length = Math.Min(ArdopDataLadder.FrameCapacity(typeToSend), _outbound.Count);
             _dataInProcessLength = length;
             _lastFrameSentData = true;
 
             // Repeat interval lengthens with carrier count to give the remote decoder
-            // time (ARQ.c:876; all Phase B FSK modes are single-carrier except none).
+            // time (ARQ.c:876).
             _repeatIntervalMs = info.CarrierCount switch
             {
                 1 => ComputeInterFrameInterval(1500),

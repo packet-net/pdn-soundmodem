@@ -42,6 +42,32 @@ public class ArdopLoopbackTests
     [InlineData(0x7B, 450)] // 4FSK.2000.600.O — last block partial
     [InlineData(0x7C, 200)] // 4FSK.2000.600S.E
     [InlineData(0x7D, 128)] // 4FSK.2000.600S.O
+    [InlineData(0x40, 64)]   // 4PSK.200.100.E
+    [InlineData(0x41, 33)]   // 4PSK.200.100.O — partial frame
+    [InlineData(0x42, 16)]   // 4PSK.200.100S.E
+    [InlineData(0x43, 1)]    // 4PSK.200.100S.O — minimum payload
+    [InlineData(0x44, 108)]  // 8PSK.200.100.E
+    [InlineData(0x45, 55)]   // 8PSK.200.100.O
+    [InlineData(0x46, 128)]  // 16QAM.200.100.E
+    [InlineData(0x47, 64)]   // 16QAM.200.100.O
+    [InlineData(0x50, 128)]  // 4PSK.500.100.E — 2 carriers
+    [InlineData(0x51, 65)]   // 4PSK.500.100.O — second carrier partial
+    [InlineData(0x52, 216)]  // 8PSK.500.100.E
+    [InlineData(0x53, 100)]  // 8PSK.500.100.O
+    [InlineData(0x54, 256)]  // 16QAM.500.100.E
+    [InlineData(0x55, 129)]  // 16QAM.500.100.O
+    [InlineData(0x60, 256)]  // 4PSK.1000.100.E — 4 carriers
+    [InlineData(0x61, 65)]   // 4PSK.1000.100.O — trailing carriers empty
+    [InlineData(0x62, 432)]  // 8PSK.1000.100.E
+    [InlineData(0x63, 217)]  // 8PSK.1000.100.O
+    [InlineData(0x64, 512)]  // 16QAM.1000.100.E
+    [InlineData(0x65, 300)]  // 16QAM.1000.100.O
+    [InlineData(0x70, 512)]  // 4PSK.2000.100.E — 8 carriers
+    [InlineData(0x71, 300)]  // 4PSK.2000.100.O
+    [InlineData(0x72, 864)]  // 8PSK.2000.100.E
+    [InlineData(0x73, 500)]  // 8PSK.2000.100.O
+    [InlineData(0x74, 1024)] // 16QAM.2000.100.E
+    [InlineData(0x75, 700)]  // 16QAM.2000.100.O
     public void Data_Frames_Round_Trip_Payload_Exact(byte type, int payloadLength)
     {
         byte[] payload = Payload(payloadLength);
@@ -189,11 +215,17 @@ public class ArdopLoopbackTests
         frames[0].Data.Should().Equal(payload);
     }
 
-    [Fact]
-    public void Frequency_Offset_Within_Tuning_Range_Is_Captured()
+    [Theory]
+    [InlineData(0x4A, 64)]   // 4FSK.500.100
+    [InlineData(0x40, 64)]   // 4PSK.200.100
+    [InlineData(0x44, 108)]  // 8PSK.200.100
+    [InlineData(0x46, 128)]  // 16QAM.200.100
+    [InlineData(0x60, 256)]  // 4PSK.1000.100 — 4 carriers
+    [InlineData(0x74, 1024)] // 16QAM.2000.100 — 8 carriers
+    public void Frequency_Offset_Within_Tuning_Range_Is_Captured(byte type, int payloadLength)
     {
-        byte[] payload = Payload(64);
-        byte[] encoded = ArdopFrameCodec.EncodeDataFrame(0x4A, payload, 0xFF);
+        byte[] payload = Payload(payloadLength);
+        byte[] encoded = ArdopFrameCodec.EncodeDataFrame(type, payload, 0xFF);
         short[] audio = new ArdopModulator().Modulate(encoded);
 
         foreach (double offsetHz in new[] { -80.0, +80.0 })
@@ -205,6 +237,55 @@ public class ArdopLoopbackTests
             frames[0].Ok.Should().BeTrue();
             frames[0].Data.Should().Equal(payload);
         }
+    }
+
+    [Theory]
+    [InlineData(0x72, 864, 3, 1500)]  // 8PSK.2000.100 — 8 carriers, SavePSKSamples path
+    [InlineData(0x54, 256, 2, 4200)]  // 16QAM.500.100 — 2 carriers, SaveQAMSamples path
+    public void Memory_Arq_Recovers_A_Psk_Frame_No_Single_Copy_Decodes(byte type, int payloadLength, int seed, int noiseRms)
+    {
+        // Two repeats of the same frame, each with enough independent Gaussian noise
+        // that the first doesn't decode alone; the weighted-angle phase averaging
+        // (SavePSKSamples — plus magnitude averaging for 16QAM, SaveQAMSamples)
+        // recovers the frame from the pair. Noise levels calibrated per mode: deep
+        // enough to kill single-copy decode for this seed with margin either side,
+        // shallow enough that the average comes back. (The single-carrier PSK modes
+        // are too robust to fail before leader acquisition does — a multi-carrier
+        // mode is the honest exercise of this path.)
+        byte[] payload = Payload(payloadLength, seed);
+        short[] audio = new ArdopModulator().Modulate(ArdopFrameCodec.EncodeDataFrame(type, payload, 0xFF));
+
+        var random = new Random(seed);
+        short[] Noisy()
+        {
+            var noisy = (short[])audio.Clone();
+            for (int i = 0; i < noisy.Length; i++)
+            {
+                double gauss = Math.Sqrt(-2 * Math.Log(1 - random.NextDouble()))
+                    * Math.Cos(2 * Math.PI * random.NextDouble());
+                noisy[i] = (short)Math.Clamp(noisy[i] + gauss * noiseRms, short.MinValue, short.MaxValue);
+            }
+
+            return noisy;
+        }
+
+        var demod = new ArdopDemodulator();
+        var frames = new List<ArdopDecodedFrame>();
+        demod.FrameDecoded += frames.Add;
+
+        demod.ProcessSamples(new short[2400]);
+        demod.ProcessSamples(Noisy());
+        demod.ProcessSamples(new short[4800]);
+        frames.Should().ContainSingle();
+        frames[0].Ok.Should().BeFalse("the first copy must fail alone for this test to bite");
+        frames[0].Data.Should().HaveCount(payloadLength,
+            "a failed frame still passes its raw payload fields (the FEC ERR path)");
+
+        demod.ProcessSamples(Noisy());
+        demod.ProcessSamples(new short[4800]);
+        frames.Should().HaveCount(2);
+        frames[1].Ok.Should().BeTrue("Memory-ARQ phase averaging must assemble the pair");
+        frames[1].Data.Should().Equal(payload);
     }
 
     /// <summary>Frequency-shifts audio via the analytic signal (FFT → zero negative

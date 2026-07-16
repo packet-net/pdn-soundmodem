@@ -1,23 +1,37 @@
 namespace Packet.SoundModem.Ardop;
 
 /// <summary>
-/// ARDOP 4FSK transmitter: two-tone leader + sync, the 10-symbol 50 Bd frame type with
-/// parity, template-driven data symbols and the 1500 Hz trailer, all run through
-/// ardopcf's frequency-sampling TX filter. Ported from ardopcf (git a7c9228, MIT,
-/// © 2014-2024 Rick Muething, John Wiseman, Peter LaRue): <c>GetTwoToneLeaderWithSync</c>
-/// / <c>SendLeaderAndSYNC</c> Modulate.c:39-118, <c>Mod4FSKDataAndPlay</c> :121,
-/// <c>Mod4FSK600BdDataAndPlay</c> :262, <c>AddTrailer</c> :595, and the
+/// ARDOP transmitter: two-tone leader + sync, the 10-symbol 50 Bd frame type with
+/// parity, template-driven data symbols — 4FSK at 50/100/600 Bd and differential
+/// 4PSK/8PSK/16QAM on 1/2/4/8 parallel 100 Bd carriers — and the 1500 Hz trailer, all
+/// run through ardopcf's frequency-sampling TX filter. Ported from ardopcf
+/// (git a7c9228, MIT, © 2014-2024 Rick Muething, John Wiseman, Peter LaRue):
+/// <c>GetTwoToneLeaderWithSync</c> / <c>SendLeaderAndSYNC</c> Modulate.c:39-118,
+/// <c>Mod4FSKDataAndPlay</c> :121, <c>Mod4FSK600BdDataAndPlay</c> :262,
+/// <c>SoftClip</c> :337, <c>Calc1CarPSKSymbols</c> :361, <c>PlayPSKSymbols</c> :413,
+/// <c>ModPSKDataAndPlay</c> :471, <c>AddTrailer</c> :595, and the
 /// <c>initFilter</c>/<c>SampleSink</c> comb-resonator filter :676-905. Output is 12 kHz
 /// 16-bit samples, sample-comparable with ardopcf's <c>--writetxwav</c> audio.
 /// See PROVENANCE.md and docs/ardop-design.md §3.1-3.2.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Sign conventions carried from the reference: leader symbols alternate polarity with
 /// the final (sync) symbol repeating the polarity the <i>next</i> symbol would have
 /// had; frame-type and 50/100 Bd data symbols flip polarity every symbol so there is
 /// no phase discontinuity at symbol boundaries; 600 Bd symbols play their templates
 /// unflipped. The filter drops its first 60 output samples (half the 120-tap comb),
 /// exactly as <c>SampleSink</c> does.
+/// </para>
+/// <para>
+/// The PSK/QAM path sums independent per-carrier tone templates in the time domain
+/// (parallel tones, not IFFT OFDM): each carrier starts with one full-scale phase-0
+/// reference symbol, then differential phase steps (SymSet 2 for 4PSK so the full
+/// 8-phase circle is used, 1 for 8PSK/16QAM) with 16QAM's amplitude bit halving the
+/// template via an arithmetic shift. The per-carrier-count scaling factors and the
+/// soft clip above ±30000 are ardopcf's empirically-chosen crest-factor controls
+/// (Modulate.c:493-526) — kept verbatim.
+/// </para>
 /// </remarks>
 public sealed class ArdopModulator
 {
@@ -52,8 +66,7 @@ public sealed class ArdopModulator
         var info = ArdopFrameInfo.Get(encodedFrame[0]);
         if (info.Modulation != ArdopModulation.Fsk4)
         {
-            throw new NotSupportedException(
-                $"{info.Name}: only the 4FSK modes are modulated in Phase A (PSK/QAM are Phase C)");
+            return ModulatePsk(info, encodedFrame, leaderLengthMs, trailerLengthMs);
         }
 
         // Mod4FSKDataAndPlay: 50 Bd → 200 Hz filter; 100 Bd → 500 Hz;
@@ -61,41 +74,7 @@ public sealed class ArdopModulator
         int filterWidth = info.Baud switch { 50 => 200, 100 => 500, _ => 2000 };
         var filter = new TxFilter(filterWidth, 1500, _driveLevel);
 
-        // Leader + sync (GetTwoToneLeaderWithSync).
-        int leaderSymbols = leaderLengthMs / 20;
-        int sign = (leaderSymbols & 1) == 1 ? -1 : 1;
-        for (int i = 0; i < leaderSymbols; i++)
-        {
-            int symbolSign = i == leaderSymbols - 1 ? -sign : sign;
-            foreach (short sample in ArdopTxTemplates.Leader50Bd)
-            {
-                filter.Sink((short)(symbolSign * sample));
-            }
-
-            sign = -sign;
-        }
-
-        // Frame type: 2 bytes as 10 × 50 Bd symbols — 4 data dibits + 1 parity symbol
-        // per byte, both parity symbols computed from the plain type byte
-        // (SendLeaderAndSYNC, Modulate.c:90).
-        for (int j = 0; j < 2; j++)
-        {
-            byte mask = 0xC0;
-            for (int k = 0; k < 5; k++)
-            {
-                byte symbol = k < 4
-                    ? (byte)((mask & encodedFrame[j]) >> (2 * (3 - k)))
-                    : ArdopFrameType.TypeParity(encodedFrame[0]);
-                short[] template = ArdopTxTemplates.Fsk50Bd[symbol];
-                bool positive = ((5 * j + k) & 1) == 0;
-                foreach (short sample in template)
-                {
-                    filter.Sink(positive ? sample : (short)-sample);
-                }
-
-                mask >>= 2;
-            }
-        }
+        SendLeaderAndSync(filter, encodedFrame, leaderLengthMs);
 
         // Data symbols.
         short[][] templates = info.Baud switch
@@ -132,7 +111,53 @@ public sealed class ArdopModulator
             }
         }
 
-        // Trailer: 1 + trailerMs/10 symbols of the 1500 Hz reference tone (AddTrailer).
+        AddTrailer(filter, trailerLengthMs);
+        return filter.Drain();
+    }
+
+    // GetTwoToneLeaderWithSync + SendLeaderAndSYNC (Modulate.c:39-118): the two-tone
+    // leader with the phase-reversal sync symbol, then the frame type as 10 × 50 Bd
+    // 4FSK symbols — 4 data dibits + 1 parity symbol per byte, both parity symbols
+    // computed from the plain type byte.
+    private static void SendLeaderAndSync(TxFilter filter, ReadOnlySpan<byte> encodedFrame, int leaderLengthMs)
+    {
+        int leaderSymbols = leaderLengthMs / 20;
+        int sign = (leaderSymbols & 1) == 1 ? -1 : 1;
+        for (int i = 0; i < leaderSymbols; i++)
+        {
+            int symbolSign = i == leaderSymbols - 1 ? -sign : sign;
+            foreach (short sample in ArdopTxTemplates.Leader50Bd)
+            {
+                filter.Sink((short)(symbolSign * sample));
+            }
+
+            sign = -sign;
+        }
+
+        for (int j = 0; j < 2; j++)
+        {
+            byte mask = 0xC0;
+            for (int k = 0; k < 5; k++)
+            {
+                byte symbol = k < 4
+                    ? (byte)((mask & encodedFrame[j]) >> (2 * (3 - k)))
+                    : ArdopFrameType.TypeParity(encodedFrame[0]);
+                short[] template = ArdopTxTemplates.Fsk50Bd[symbol];
+                bool positive = ((5 * j + k) & 1) == 0;
+                foreach (short sample in template)
+                {
+                    filter.Sink(positive ? sample : (short)-sample);
+                }
+
+                mask >>= 2;
+            }
+        }
+    }
+
+    // AddTrailer (Modulate.c:595): 1 + trailerMs/10 symbols of the 1500 Hz phase-0
+    // template.
+    private static void AddTrailer(TxFilter filter, int trailerLengthMs)
+    {
         int trailerSymbols = 1 + trailerLengthMs / 10;
         for (int i = 0; i < trailerSymbols; i++)
         {
@@ -141,8 +166,148 @@ public sealed class ArdopModulator
                 filter.Sink(sample);
             }
         }
+    }
 
+    // ModPSKDataAndPlay (Modulate.c:471): differential PSK/16QAM on 1/2/4/8 parallel
+    // 100 Bd carriers.
+    private short[] ModulatePsk(ArdopFrameInfo info, ReadOnlySpan<byte> encodedFrame, int leaderLengthMs, int trailerLengthMs)
+    {
+        // Per-carrier-count crest-factor scaling (Modulate.c:493-526).
+        double carScalingFactor = info.CarrierCount switch
+        {
+            1 => 1.2,
+            2 => info.Modulation == ArdopModulation.Qam16 ? 0.67 : 0.65,
+            4 => 0.4,
+            _ => info.Modulation == ArdopModulation.Qam16 ? 0.27 : 0.25,
+        };
+
+        int filterWidth = info.CarrierCount switch { 1 => 200, 2 => 500, 4 => 1000, _ => 2000 };
+        var filter = new TxFilter(filterWidth, 1500, _driveLevel);
+
+        SendLeaderAndSync(filter, encodedFrame, leaderLengthMs);
+
+        // One full-scale phase-0 reference symbol per carrier, then the differential
+        // data symbols.
+        int bytesPerCarrier = info.DataLength + info.RsLength + 3;
+        int expected = 2 + bytesPerCarrier * info.CarrierCount;
+        if (encodedFrame.Length != expected)
+        {
+            throw new ArgumentException(
+                $"{info.Name}: encoded frame must be {expected} bytes, got {encodedFrame.Length}", nameof(encodedFrame));
+        }
+
+        var reference = new byte[info.CarrierCount][];
+        var symbols = new byte[info.CarrierCount][];
+        for (int car = 0; car < info.CarrierCount; car++)
+        {
+            reference[car] = [0];
+            symbols[car] = CalcCarrierPskSymbols(
+                info.Modulation, encodedFrame.Slice(2 + car * bytesPerCarrier, bytesPerCarrier));
+        }
+
+        PlayPskSymbols(filter, reference, info.CarrierCount, 1, carScalingFactor);
+        PlayPskSymbols(filter, symbols, info.CarrierCount, symbols[0].Length, carScalingFactor);
+
+        AddTrailer(filter, trailerLengthMs);
         return filter.Drain();
+    }
+
+    // Calc1CarPSKSymbols (Modulate.c:361): each output value's low 3 bits are the
+    // absolute phase index (0-7 = 0°-315°, accumulated differentially from the phase-0
+    // reference; SymSet 2 for 4PSK), bit 3 the 16QAM half-magnitude flag (absolute,
+    // from the raw symbol — not accumulated).
+    private static byte[] CalcCarrierPskSymbols(ArdopModulation modulation, ReadOnlySpan<byte> source)
+    {
+        int bitsPerSymbol = modulation switch
+        {
+            ArdopModulation.Psk4 => 2,
+            ArdopModulation.Psk8 => 3,
+            _ => 4,
+        };
+        int symSet = modulation == ArdopModulation.Psk4 ? 2 : 1;
+
+        var symbols = new byte[source.Length * 8 / bitsPerSymbol];
+        ushort dataBuf = 0;
+        int bitsBuffered = 0;
+        int sourcePtr = 0;
+        for (int symNum = 0; symNum < symbols.Length; symNum++)
+        {
+            if (bitsBuffered < bitsPerSymbol)
+            {
+                dataBuf += (ushort)(source[sourcePtr++] << (8 - bitsBuffered));
+                bitsBuffered += 8;
+            }
+
+            byte rawSym = (byte)(dataBuf >> (16 - bitsPerSymbol));
+            dataBuf <<= bitsPerSymbol;
+            bitsBuffered -= bitsPerSymbol;
+
+            byte prior = symNum == 0 ? (byte)0 : symbols[symNum - 1];
+            symbols[symNum] = (byte)(((prior + rawSym * symSet) & 7) + (rawSym & 0x08));
+        }
+
+        return symbols;
+    }
+
+    // PlayPSKSymbols (Modulate.c:413): sum the per-carrier templates in the time
+    // domain, scale, soft-clip, sink. Phases 4-7 are the negatives of 0-3; the QAM
+    // half-magnitude bit becomes a per-sample arithmetic right shift. Kept int-exact
+    // with the reference (including the int truncation of the scaled sum).
+    private static void PlayPskSymbols(
+        TxFilter filter, byte[][] symbols, int numCars, int symbolCount, double carScalingFactor)
+    {
+        // Carrier 4 (1500 Hz) is single-carrier only; multi-carrier modes straddle it
+        // (2 → 1400/1600, 4 → 1200-1800, 8 → 800-2200 skipping 1500).
+        int carStartIndex = numCars switch { 1 => 4, 2 => 3, 4 => 2, _ => 0 };
+
+        for (int m = 0; m < symbolCount; m++)
+        {
+            for (int n = 0; n < 120; n++)
+            {
+                int sample = 0;
+                int carIndex = carStartIndex;
+                for (int i = 0; i < numCars; i++)
+                {
+                    byte symbol = symbols[i][m];
+                    int phase = symbol & 0x07;
+                    int shift = symbol >> 3;
+                    if (phase < 4)
+                    {
+                        sample += ArdopTxTemplates.Psk100Bd[carIndex][phase][n] >> shift;
+                    }
+                    else
+                    {
+                        sample -= ArdopTxTemplates.Psk100Bd[carIndex][phase - 4][n] >> shift;
+                    }
+
+                    carIndex++;
+                    if (carIndex == 4)
+                    {
+                        carIndex++; // multi-carrier modes skip 1500 Hz
+                    }
+                }
+
+                sample = (int)(sample * carScalingFactor);
+                filter.Sink((short)SoftClip(sample));
+            }
+        }
+    }
+
+    // SoftClip (Modulate.c:337): compress the summed waveform above ±30000. The
+    // arithmetic stays in double until the final int truncation, as in the reference.
+    private static int SoftClip(int input)
+    {
+        if (input > 30000)
+        {
+            return (int)Math.Min(32700.0, 30000 + 20 * Math.Sqrt(input - 30000));
+        }
+
+        if (input < -30000)
+        {
+            return (int)Math.Max(-32700.0, -30000 - 20 * Math.Sqrt(-(input + 30000)));
+        }
+
+        return input;
     }
 
     /// <summary>

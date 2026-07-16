@@ -64,6 +64,29 @@ for name, code, full, partial in [
     data = payload(partial)
     jobs.append((f"{name}.O", f"{name}.O {data} 0xFF", f"{code + 1:02X}", "FF", data))
 
+# PSK/16QAM data frames (Phase C): full-capacity even types, partial-fill odd types.
+# Appended after the 4FSK block so the PRNG stream (and the Phase A fixtures it
+# feeds) stays byte-stable.
+for name, code, full, partial in [
+    ("4PSK.200.100", 0x40, 64, 40),
+    ("4PSK.200.100S", 0x42, 16, 9),
+    ("8PSK.200.100", 0x44, 108, 60),
+    ("16QAM.200.100", 0x46, 128, 77),
+    ("4PSK.500.100", 0x50, 128, 80),
+    ("8PSK.500.100", 0x52, 216, 130),
+    ("16QAM.500.100", 0x54, 256, 150),
+    ("4PSK.1000.100", 0x60, 256, 129),
+    ("8PSK.1000.100", 0x62, 432, 216),
+    ("16QAM.1000.100", 0x64, 512, 300),
+    ("4PSK.2000.100", 0x70, 512, 257),
+    ("8PSK.2000.100", 0x72, 864, 500),
+    ("16QAM.2000.100", 0x74, 1024, 600),
+]:
+    data = payload(full)
+    jobs.append((f"{name}.E", f"{name}.E {data} 0xFF", f"{code:02X}", "FF", data))
+    data = payload(partial)
+    jobs.append((f"{name}.O", f"{name}.O {data} 0xFF", f"{code + 1:02X}", "FF", data))
+
 here = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(here, "txframe-manifest.txt"), "w") as manifest:
     manifest.write("# name frametype sessionid payload-hex-or-dash extra\n")

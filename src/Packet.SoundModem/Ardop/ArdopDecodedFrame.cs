@@ -19,8 +19,10 @@ public sealed record ArdopDecodedFrame
     /// when <see cref="Ok"/> is false); empty for control frames.</summary>
     public required byte[] Data { get; init; }
 
-    /// <summary>Frame quality 0-100 (<c>Update4FSKConstellation</c>): for ACK/NAK types
-    /// this reflects the type symbols; for data frames the whole frame.</summary>
+    /// <summary>Frame quality 0-100 (<c>Update4FSKConstellation</c> for FSK,
+    /// <c>UpdatePhaseConstellation</c> for PSK/16QAM, with the RS-corrections floor of
+    /// 80 for cleanly decoded data frames): for ACK/NAK types this reflects the type
+    /// symbols; for data frames the whole frame.</summary>
     public required int Quality { get; init; }
 
     /// <summary>Caller station for ConReq/Ping, the station for ID frames.</summary>

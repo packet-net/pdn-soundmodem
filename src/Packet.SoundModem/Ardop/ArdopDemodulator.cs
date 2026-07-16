@@ -1,11 +1,13 @@
 namespace Packet.SoundModem.Ardop;
 
 /// <summary>
-/// ARDOP 4FSK receiver: two-tone leader acquisition (±<c>TuningRange</c> Hz capture
+/// ARDOP receiver: two-tone leader acquisition (±<c>TuningRange</c> Hz capture
 /// honed to ~1 Hz), NCO mix to a reversed-sideband 1500 Hz passband, envelope-correlator
 /// symbol framing, phase-reversal frame sync, minimal-distance frame-type decode, per-
-/// symbol Goertzel 4FSK data demodulation at 50/100/600 Bd, RS + CRC block correction
-/// and Memory-ARQ tone-magnitude averaging across repeats. Ported from ardopcf
+/// symbol Goertzel 4FSK data demodulation at 50/100/600 Bd, differential 4PSK/8PSK and
+/// 16QAM demodulation on 1/2/4/8 parallel 100 Bd carriers, RS + CRC block correction
+/// and Memory-ARQ averaging across repeats (tone magnitudes for FSK, phase/magnitude
+/// vectors for PSK/QAM). Ported from ardopcf
 /// (git a7c9228, MIT, © 2014-2024 Rick Muething, John Wiseman, Peter LaRue),
 /// <c>SoundInput.c</c>: <c>ProcessNewSamples</c> :810, <c>SearchFor2ToneLeader3</c>
 /// :1604, <c>MixNCOFilter</c>/<c>FSMixFilter2000Hz</c> :423-650, <c>Filter75Hz</c> /
@@ -13,7 +15,12 @@ namespace Packet.SoundModem.Ardop;
 /// <c>AcquireFrameSyncRSB</c> :1971, <c>DemodFrameType4FSK</c> /
 /// <c>MinimalDistanceFrameType</c> / <c>Acquire4FSKFrameType</c> :2052-2429,
 /// <c>Demod1Car4FSK(Char)</c> :2431-2739, <c>Demod1Car4FSK600(Char)</c> :2741-2852,
-/// <c>Update4FSKConstellation</c> :3823, <c>SaveFSKSamples</c> :4975,
+/// <c>Update4FSKConstellation</c> :3823, <c>UpdatePhaseConstellation</c> :3921,
+/// <c>Decode1CarPSK</c> :4132, <c>ComputeAng1_Ang2</c> :4317,
+/// <c>CorrectPhaseForTuningOffset</c> :4336, <c>Decode1CarQAM</c> :4436,
+/// <c>InitDemodPSK</c>/<c>DemodPSK</c>/<c>Demod1CarPSKChar</c> :4508-4846,
+/// <c>InitDemodQAM</c>/<c>DemodQAM</c>/<c>Demod1CarQAMChar</c> :4848-5282,
+/// <c>WeightedAngleAvg</c> :4896, <c>Save{FSK,PSK,QAM}Samples</c> :4910-5032,
 /// <c>Decode1Car4FSK</c> :4097, <c>DecodeFrame</c> :3349. Goertzel decoder only —
 /// ardopcf's default; the opt-in SDFT decoder is a later robustness item
 /// (docs/ardop-design.md §3.4). See PROVENANCE.md.
@@ -93,13 +100,29 @@ public sealed class ArdopDemodulator
     private int _toneMagsIndex;
     private int _toneMagsLength;
 
-    // Memory ARQ (FSK): per-part running averages across repeats of the same type.
+    // PSK/QAM demod state (InitDemodPSK/InitDemodQAM, SoundInput.c:4508,4848):
+    // per-carrier differential phases (milliradians, ±3142) and magnitudes per symbol.
+    private const int MaxPhases = 520;
+    private readonly short[][] _phases = NewPerCarrier();
+    private readonly short[][] _mags = NewPerCarrier();
+    private readonly short[] _pskPhaseLast = new short[8];   // intPSKPhase_1
+    private readonly short[] _carMagThreshold = new short[8]; // intCarMagThreshold
+    private readonly byte[][] _carrierData = [.. Enumerable.Range(0, 8).Select(_ => new byte[256])];
+    private int _phasesLen;
+    private bool _pskInitDone;
+
+    // Memory ARQ: per-part/per-carrier running averages across repeats of the same
+    // type — tone magnitudes for FSK, phase (+ magnitude for QAM) vectors for PSK/QAM.
     private readonly bool[] _carrierOk = new bool[8];
     private readonly int[] _sumCounts = new int[8];
     private readonly int[][] _toneMagsAvg = [new int[16 * 253], new int[16 * 253], new int[16 * 253]];
-    private readonly byte[]?[] _goodPartData = new byte[3][];
+    private readonly short[][] _carPhaseAvg = NewPerCarrier();
+    private readonly short[][] _carMagAvg = NewPerCarrier();
+    private readonly byte[]?[] _goodPartData = new byte[8][];
     private long _memarqTimeMs;
     private int _lastDataFrameType = -1;
+
+    private static short[][] NewPerCarrier() => [.. Enumerable.Range(0, 8).Select(_ => new short[MaxPhases])];
 
     /// <summary>Creates a demodulator. <paramref name="squelch"/> is the leader-detect
     /// squelch 0-10 (ardopcf default 5); <paramref name="tuningRangeHz"/> the leader
@@ -275,6 +298,8 @@ public sealed class ArdopDemodulator
             _toneMagsLength = 16 * _bytesLeft;
             _toneMagsIndex = 0;
             _charIndex = 0;
+            _pskInitDone = false;
+            _phasesLen = 0;
 
             if (_lastDataFrameType != info.Type)
             {
@@ -287,13 +312,26 @@ public sealed class ArdopDemodulator
 
         if (_state == RxState.AcquireFrame)
         {
-            DemodulateFrameBytes();
-            if (_state == RxState.AcquireFrame)
+            if (_frame!.Modulation == ArdopModulation.Fsk4)
             {
-                return; // wait for more samples
-            }
+                DemodulateFrameBytes();
+                if (_state == RxState.AcquireFrame)
+                {
+                    return; // wait for more samples
+                }
 
-            DecodeCompletedFrame();
+                DecodeCompletedFrame();
+            }
+            else
+            {
+                DemodulatePskFrame();
+                if (_state == RxState.AcquireFrame)
+                {
+                    return; // wait for more samples
+                }
+
+                DecodeCompletedPskFrame();
+            }
         }
     }
 
@@ -370,6 +408,36 @@ public sealed class ArdopDemodulator
         for (int i = 0; i <= n; i++)
         {
             w = i == n ? z1 * coeff - z2 : samples[ptr] * _hammingWindow[i] + z1 * coeff - z2;
+            z2 = z1;
+            z1 = w;
+            ptr++;
+        }
+
+        real = 2 * (w - MathF.Cos(TwoPi * m / n) * z2) / n;
+        imag = 2 * (MathF.Sin(TwoPi * m / n) * z2) / n;
+    }
+
+    private float[] _hanningWindow = [];
+
+    // GoertzelRealImagHanning (SoundInput.c:1483) — the window the PSK/QAM symbol
+    // probes use.
+    private void GoertzelHanning(ReadOnlySpan<short> samples, int ptr, int n, float m, out float real, out float imag)
+    {
+        if (_hanningWindow.Length != n)
+        {
+            _hanningWindow = new float[n];
+            float ang = TwoPi / (n - 1);
+            for (int i = 0; i < n; i++)
+            {
+                _hanningWindow[i] = 0.5f - 0.5f * MathF.Cos(i * ang);
+            }
+        }
+
+        float z1 = 0, z2 = 0, w = 0;
+        float coeff = 2 * MathF.Cos(TwoPi * m / n);
+        for (int i = 0; i <= n; i++)
+        {
+            w = i == n ? z1 * coeff - z2 : samples[ptr] * _hanningWindow[i] + z1 * coeff - z2;
             z2 = z1;
             z1 = w;
             ptr++;
@@ -1161,6 +1229,534 @@ public sealed class ArdopDemodulator
         }
     }
 
+    // ------------------------------------------------------- PSK/QAM data demod
+
+    // The audio carrier probed for a given carrier slot: single-carrier modes sit on
+    // 1500 Hz; multi-carrier modes start at 1400 + (numCar/2)·200 and step down 200 Hz
+    // per carrier — the highest audio frequency is the lowest transmitted carrier
+    // because the mix reverses the sideband (InitDemodPSK, SoundInput.c:4527).
+    private static int CarrierFrequency(int carrier, int carrierCount) =>
+        carrierCount == 1 ? 1500 : 1400 + carrierCount / 2 * 200 - 200 * carrier;
+
+    // InitDemodPSK / InitDemodQAM (SoundInput.c:4508,4848): read each carrier's
+    // full-scale phase-0 reference symbol for the differential starting phase and the
+    // 16QAM amplitude threshold (0.75 × reference magnitude, short-truncated as the
+    // reference's short[] stores it).
+    private void InitDemodPsk(int carrierCount)
+    {
+        _phasesLen = 0;
+        _pskInitDone = true;
+
+        for (int car = 0; car < carrierCount; car++)
+        {
+            float bin = CarrierFrequency(car, carrierCount) / 100f;
+            GoertzelHanning(_filtered, 0, 120, bin, out float re, out float im);
+            _pskPhaseLast[car] = (short)(1000 * MathF.Atan2(im, re));
+            _carMagThreshold[car] = (short)((short)MathF.Sqrt(re * re + im * im) * 0.75f);
+        }
+    }
+
+    // DemodPSK / DemodQAM (SoundInput.c:4577,5034): consume symbols as they arrive,
+    // one byte-group per pass across all carriers. PSK demodulates intPSKMode symbols
+    // per pass (1 byte for 4PSK, 3 bytes for 8PSK); QAM demodulates 2 symbols (1 byte).
+    private void DemodulatePskFrame()
+    {
+        var info = _frame!;
+        bool qam = info.Modulation == ArdopModulation.Qam16;
+        int mode = info.Modulation == ArdopModulation.Psk4 ? 4 : 8;
+        int symbolsPerPass = qam ? 2 : mode;
+        int bytesPerPass = info.Modulation == ArdopModulation.Psk8 ? 3 : 1;
+        int minSamples = qam ? 8 * 120 + 10 : (int)(1.5f * mode * 120);
+        int initSamples = qam ? 9 * 120 + 10 : (int)(2.5f * mode * 120);
+        int start = 0;
+
+        while (_state == RxState.AcquireFrame)
+        {
+            if (_filteredLength < minSamples || (!_pskInitDone && _filteredLength < initSamples))
+            {
+                if (_filteredLength > 0 && start > 0)
+                {
+                    Array.Copy(_filtered, start, _filtered, 0, _filteredLength);
+                }
+
+                return; // wait for more samples
+            }
+
+            if (!_pskInitDone)
+            {
+                InitDemodPsk(info.CarrierCount);
+                _filteredLength -= 120;
+                start += 120; // consume the reference symbol
+            }
+
+            int used = 0;
+            for (int car = 0; car < info.CarrierCount; car++)
+            {
+                if (car > 0)
+                {
+                    _phasesLen -= symbolsPerPass; // each carrier writes the same slots
+                }
+
+                used = DemodCarrierPskSymbols(start, car, symbolsPerPass, info.CarrierCount);
+            }
+
+            _bytesLeft -= bytesPerPass;
+            start += used;
+            _filteredLength -= used;
+
+            if (_bytesLeft <= 0)
+            {
+                _state = RxState.SearchingForLeader;
+            }
+        }
+    }
+
+    // Demod1CarPSKChar / Demod1CarQAMChar (SoundInput.c:4786,5227): Hanning Goertzel
+    // per symbol; the stored phase is the negated difference from the previous symbol
+    // (negated because the mix reversed the sideband). A carrier already recovered by
+    // Memory ARQ skips the work but keeps the bookkeeping.
+    private int DemodCarrierPskSymbols(int start, int carrier, int numSymbols, int carrierCount)
+    {
+        if (_carrierOk[carrier])
+        {
+            _phasesLen += numSymbols;
+            return 120 * numSymbols;
+        }
+
+        float bin = CarrierFrequency(carrier, carrierCount) / 100f;
+        int origStart = start;
+        for (int i = 0; i < numSymbols; i++)
+        {
+            GoertzelHanning(_filtered, start, 120, bin, out float re, out float im);
+            _mags[carrier][_phasesLen] = (short)MathF.Sqrt(re * re + im * im);
+            short phase = (short)(1000 * MathF.Atan2(im, re));
+            _phases[carrier][_phasesLen] = (short)(-AngleDifference(phase, _pskPhaseLast[carrier]));
+            _pskPhaseLast[carrier] = phase;
+            _phasesLen++;
+            start += 120;
+        }
+
+        return start - origStart;
+    }
+
+    // ComputeAng1_Ang2 (SoundInput.c:4317): angle subtraction in milliradians,
+    // bounded ±3142.
+    private static int AngleDifference(int angle1, int angle2)
+    {
+        int diff = angle1 - angle2;
+        if (diff < -3142)
+        {
+            return diff + 6284;
+        }
+
+        return diff > 3142 ? diff - 6284 : diff;
+    }
+
+    // Decode1CarPSK (SoundInput.c:4132): hard phase decisions in milliradians —
+    // 4PSK boundaries at ±π/4, ±3π/4; 8PSK at odd multiples of π/8.
+    private void DecodeCarrierPsk(byte[] decoded, int carrier, int mode)
+    {
+        short[] phases = _phases[carrier];
+        int charIndex = 0;
+        int pskStart = 0;
+        int len = _phasesLen;
+
+        while (len > 0)
+        {
+            if (mode == 4)
+            {
+                byte raw = 0;
+                for (int k = 0; k < 4; k++)
+                {
+                    raw <<= 2;
+                    short phase = phases[pskStart];
+                    if (phase is < 786 and > -786)
+                    {
+                        // zero
+                    }
+                    else if (phase is >= 786 and < 2356)
+                    {
+                        raw += 1;
+                    }
+                    else if (phase is >= 2356 or <= -2356)
+                    {
+                        raw += 2;
+                    }
+                    else
+                    {
+                        raw += 3;
+                    }
+
+                    pskStart++;
+                }
+
+                decoded[charIndex++] = raw;
+                len -= 4;
+            }
+            else
+            {
+                uint bits24 = 0;
+                for (int k = 0; k < 8; k++)
+                {
+                    bits24 = (bits24 << 3) + Psk8Decision(phases[pskStart]);
+                    pskStart++;
+                }
+
+                decoded[charIndex++] = (byte)(bits24 >> 16);
+                decoded[charIndex++] = (byte)(bits24 >> 8);
+                decoded[charIndex++] = (byte)bits24;
+                len -= 8;
+            }
+        }
+    }
+
+    private static uint Psk8Decision(short phase) => phase switch
+    {
+        < 393 and > -393 => 0,
+        >= 393 and < 1179 => 1,
+        >= 1179 and < 1965 => 2,
+        >= 1965 and < 2751 => 3,
+        >= 2751 or < -2751 => 4,
+        >= -2751 and < -1965 => 5,
+        >= -1965 and <= -1179 => 6,
+        _ => 7,
+    };
+
+    // Decode1CarQAM (SoundInput.c:4436): the 8PSK phase decision plus the absolute
+    // amplitude bit against a rolling per-carrier threshold seeded from the reference
+    // symbol (alpha 0.9/0.15 inner, 0.9/0.075 outer — ~1 dB decode gain on WGN per the
+    // reference comment).
+    private void DecodeCarrierQam(byte[] decoded, int carrier)
+    {
+        short[] phases = _phases[carrier];
+        short[] mags = _mags[carrier];
+        int threshold = _carMagThreshold[carrier];
+        int charIndex = 0;
+        int pskStart = 0;
+        int len = _phasesLen;
+
+        while (len > 0)
+        {
+            uint data = 0;
+            for (int k = 0; k < 2; k++)
+            {
+                data = (data << 4) + Psk8Decision(phases[pskStart]);
+                if (mags[pskStart] < threshold)
+                {
+                    data += 8; // inner-circle symbol
+                    threshold = (threshold * 900 + mags[pskStart] * 150) / 1000;
+                }
+                else
+                {
+                    threshold = (threshold * 900 + mags[pskStart] * 75) / 1000;
+                }
+
+                _carMagThreshold[carrier] = (short)threshold;
+                pskStart++;
+            }
+
+            decoded[charIndex++] = (byte)data;
+            len -= 2;
+        }
+    }
+
+    // CorrectPhaseForTuningOffset (SoundInput.c:4336): remove the average phase
+    // rotation (a residual tuning error of 1 Hz rotates ~64 mrad/symbol), using only
+    // phases within ±(160°/mode) of a nominal point; a beginning→end ramp when both
+    // quarter-sections have enough contributors, otherwise a constant shift.
+    private static void CorrectPhaseForTuningOffset(short[] phases, int length, bool psk4)
+    {
+        int mode = psk4 ? 4 : 8;
+        int margin = 2793 / mode;
+        int increment = 6284 / mode;
+
+        int accCount = 0, accCountBeginning = 0, accCountEnd = 0;
+        int acc = 0, accBeginning = 0, accEnd = 0;
+        for (int i = 0; i < length; i++)
+        {
+            int offset = phases[i] - phases[i] / increment * increment;
+            if (offset >= -margin && offset <= margin)
+            {
+                accCount++;
+                acc += offset;
+                if (i <= length / 4)
+                {
+                    accCountBeginning++;
+                    accBeginning += offset;
+                }
+                else if (i >= 3 * length / 4)
+                {
+                    accCountEnd++;
+                    accEnd += offset;
+                }
+            }
+        }
+
+        if (accCountBeginning > length / 8 && accCountEnd > length / 8)
+        {
+            int avgBeginning = accBeginning / accCountBeginning;
+            int avgEnd = accEnd / accCountEnd;
+            for (int i = 0; i < length; i++)
+            {
+                phases[i] = BoundMilliradians(
+                    phases[i] - (avgBeginning * (length - i) / length + avgEnd * i / length));
+            }
+        }
+        else if (accCount > length / 2)
+        {
+            int avg = acc / accCount;
+            for (int i = 0; i < length; i++)
+            {
+                phases[i] = BoundMilliradians(phases[i] - avg);
+            }
+        }
+    }
+
+    private static short BoundMilliradians(int value)
+    {
+        if (value > 3142)
+        {
+            return (short)(value - 6284);
+        }
+
+        return value < -3142 ? (short)(value + 6284) : (short)value;
+    }
+
+    // UpdatePhaseConstellation (SoundInput.c:3921), sans plot: phase-error quality for
+    // PSK; phase × two-ring radius-error quality for 16QAM. Index 0 is skipped as the
+    // reference slot, as in the original.
+    private int PhaseConstellationQuality(short[] phases, short[] mags, int mode, bool qam)
+    {
+        float phaseStep = TwoPi / (qam ? 8 : mode);
+        float phaseErrorSum = 0;
+
+        float avgRadInner = 0, avgRadOuter = 0;
+        int countInner = 0, countOuter = 0;
+        if (qam)
+        {
+            float magMax = 0;
+            for (int j = 1; j < _phasesLen; j++)
+            {
+                magMax = MathF.Max(magMax, mags[j]);
+            }
+
+            for (int k = 1; k < _phasesLen; k++)
+            {
+                if (mags[k] < 0.75f * magMax)
+                {
+                    avgRadInner += mags[k];
+                    countInner++;
+                }
+                else
+                {
+                    avgRadOuter += mags[k];
+                    countOuter++;
+                }
+            }
+
+            avgRadInner = countInner > 0 ? avgRadInner / countInner : 0;
+            avgRadOuter = countOuter > 0 ? avgRadOuter / countOuter : 0;
+        }
+
+        float radErrorInner = 0, radErrorOuter = 0;
+        for (int i = 1; i < _phasesLen; i++)
+        {
+            int nearest = (int)MathF.Round(0.001f * phases[i] / phaseStep);
+            if (mags[i] > (avgRadInner + avgRadOuter) / 2)
+            {
+                radErrorOuter += MathF.Abs(avgRadOuter - mags[i]);
+            }
+            else
+            {
+                radErrorInner += MathF.Abs(avgRadInner - mags[i]);
+            }
+
+            phaseErrorSum += MathF.Abs(0.001f * phases[i] - nearest * phaseStep);
+        }
+
+        if (!qam)
+        {
+            return Math.Max(0, (int)(100 - 200 * (phaseErrorSum / _phasesLen) / phaseStep));
+        }
+
+        // (Guard the empty-ring divisions the reference would NaN on — quality only.)
+        float radiusPenalty =
+            (countInner > 0 && avgRadInner > 0 ? radErrorInner / (countInner * avgRadInner) : 0)
+            + (countOuter > 0 && avgRadOuter > 0 ? radErrorOuter / (countOuter * avgRadOuter) : 0);
+        return Math.Max(0, (int)((1 - radiusPenalty) * (100 - 200 * (phaseErrorSum / _phasesLen) / phaseStep)));
+    }
+
+    // The decode tail of DemodPSK/DemodQAM (SoundInput.c:4686-4781, 5122-5215) plus
+    // the data-frame arm of DecodeFrame: tuning-offset correction (carrier 0, QAM
+    // only — as the reference ships), constellation quality from the last carrier,
+    // per-carrier RS + CRC, Memory-ARQ phase averaging and retry, payload assembly.
+    private void DecodeCompletedPskFrame()
+    {
+        var info = _frame!;
+        _frame = null;
+        Reset();
+
+        bool qam = info.Modulation == ArdopModulation.Qam16;
+        int mode = info.Modulation == ArdopModulation.Psk4 ? 4 : 8;
+
+        if (qam)
+        {
+            CorrectPhaseForTuningOffset(_phases[0], _phasesLen, psk4: false);
+        }
+
+        int quality = PhaseConstellationQuality(
+            _phases[info.CarrierCount - 1], _mags[info.CarrierCount - 1], mode, qam);
+
+        int blockLength = info.DataLength + info.RsLength + 3;
+        int totalRsErrors = 0;
+
+        for (int car = 0; car < info.CarrierCount; car++)
+        {
+            if (_carrierOk[car])
+            {
+                continue;
+            }
+
+            DecodeCarrier(info, car, qam, mode);
+            if (TryCorrectCarrier(info, car, blockLength, ref totalRsErrors))
+            {
+                continue;
+            }
+
+            // Memory ARQ: fold this repeat's phases (and magnitudes for QAM) into the
+            // running weighted-angle average and retry from the averaged vectors.
+            if (qam)
+            {
+                SaveQamSamples(car);
+            }
+            else
+            {
+                SavePskSamples(car);
+            }
+
+            if (_sumCounts[car] > 1)
+            {
+                DecodeCarrier(info, car, qam, mode);
+                TryCorrectCarrier(info, car, blockLength, ref totalRsErrors);
+            }
+        }
+
+        var data = new List<byte>();
+        bool okAll = true;
+        for (int car = 0; car < info.CarrierCount; car++)
+        {
+            if (_carrierOk[car])
+            {
+                data.AddRange(_goodPartData[car]!);
+            }
+            else
+            {
+                okAll = false;
+                // Failed carrier: pass the raw payload field (CorrectRawDataWithRS's
+                // returnBad path) so the FEC layer can hand it to the host as ERR.
+                data.AddRange(_carrierData[car].AsSpan(1, info.DataLength));
+            }
+        }
+
+        quality = AdjustDataFrameQuality(okAll, quality, totalRsErrors, info);
+
+        Emit(new ArdopDecodedFrame
+        {
+            Type = info.Type,
+            Ok = okAll,
+            Data = [.. data],
+            Quality = quality,
+        });
+    }
+
+    private void DecodeCarrier(ArdopFrameInfo info, int carrier, bool qam, int mode)
+    {
+        if (qam)
+        {
+            DecodeCarrierQam(_carrierData[carrier], carrier);
+        }
+        else
+        {
+            DecodeCarrierPsk(_carrierData[carrier], carrier, mode);
+        }
+    }
+
+    private bool TryCorrectCarrier(ArdopFrameInfo info, int carrier, int blockLength, ref int totalRsErrors)
+    {
+        var block = _carrierData[carrier].AsSpan(0, blockLength);
+        if (!ArdopFrameCodec.TryCorrectDataBlock(
+            block, info.DataLength, info.RsLength, info.Type, out int netLength, out int rsCorrections))
+        {
+            return false;
+        }
+
+        totalRsErrors += rsCorrections;
+        _carrierOk[carrier] = true;
+        _goodPartData[carrier] = block.Slice(1, netLength).ToArray();
+        MemoryArqUpdated();
+        return true;
+    }
+
+    // The received-quality floor of DecodeFrame (SoundInput.c:3801): a data frame that
+    // decoded with few RS corrections is at least quality 80, whatever the
+    // constellation said.
+    private static int AdjustDataFrameQuality(bool ok, int quality, int totalRsErrors, ArdopFrameInfo info) =>
+        ok && totalRsErrors / info.CarrierCount < info.RsLength / 4 && quality < 80 ? 80 : quality;
+
+    // WeightedAngleAvg (SoundInput.c:4896): vector average of two milliradian angles.
+    private static short WeightedAngleAvg(short angle1, short angle2)
+    {
+        float sumX = MathF.Cos(angle1 / 1000f) + MathF.Cos(angle2 / 1000f);
+        float sumY = MathF.Sin(angle1 / 1000f) + MathF.Sin(angle2 / 1000f);
+        return (short)(1000 * MathF.Atan2(sumY, sumX));
+    }
+
+    // SavePSKSamples (SoundInput.c:4939): accumulate the running phase average for a
+    // failed carrier and write it back so the retry decodes from the average.
+    private void SavePskSamples(int carrier)
+    {
+        if (_sumCounts[carrier] == 0)
+        {
+            Array.Copy(_phases[carrier], _carPhaseAvg[carrier], _phasesLen);
+        }
+        else
+        {
+            for (int m = 0; m < _phasesLen; m++)
+            {
+                _carPhaseAvg[carrier][m] = WeightedAngleAvg(_carPhaseAvg[carrier][m], _phases[carrier][m]);
+                _phases[carrier][m] = _carPhaseAvg[carrier][m];
+            }
+        }
+
+        _sumCounts[carrier]++;
+        MemoryArqUpdated();
+    }
+
+    // SaveQAMSamples (SoundInput.c:4910): as PSK plus a simple weighted average of the
+    // magnitudes (the amplitude bit needs them).
+    private void SaveQamSamples(int carrier)
+    {
+        if (_sumCounts[carrier] == 0)
+        {
+            Array.Copy(_phases[carrier], _carPhaseAvg[carrier], _phasesLen);
+            Array.Copy(_mags[carrier], _carMagAvg[carrier], _phasesLen);
+        }
+        else
+        {
+            for (int m = 0; m < _phasesLen; m++)
+            {
+                _carPhaseAvg[carrier][m] = WeightedAngleAvg(_carPhaseAvg[carrier][m], _phases[carrier][m]);
+                _phases[carrier][m] = _carPhaseAvg[carrier][m];
+                _carMagAvg[carrier][m] =
+                    (short)((_carMagAvg[carrier][m] * _sumCounts[carrier] + _mags[carrier][m]) / (_sumCounts[carrier] + 1));
+                _mags[carrier][m] = _carMagAvg[carrier][m];
+            }
+        }
+
+        _sumCounts[carrier]++;
+        MemoryArqUpdated();
+    }
+
     // Update4FSKConstellation's quality computation (SoundInput.c:3823), sans plot.
     private int FskQuality(ReadOnlySpan<int> toneMags, int length)
     {
@@ -1299,6 +1895,7 @@ public sealed class ArdopDemodulator
             : (1, info.DataLength, info.RsLength);
         int partRawLen = partDataLen + partRsLen + 3;
         int partTonesLen = partRawLen * 16;
+        int totalRsErrors = 0;
 
         var data = new List<byte>();
         for (int part = 0; part < parts; part++)
@@ -1306,10 +1903,11 @@ public sealed class ArdopDemodulator
             var rawPart = _frameData.AsSpan(part * partRawLen, partRawLen);
 
             if (!_carrierOk[part]
-                && ArdopFrameCodec.TryCorrectDataBlock(rawPart, partDataLen, partRsLen, info.Type, out int netLen))
+                && ArdopFrameCodec.TryCorrectDataBlock(rawPart, partDataLen, partRsLen, info.Type, out int netLen, out int corrections))
             {
                 _carrierOk[part] = true;
                 _goodPartData[part] = rawPart.Slice(1, netLen).ToArray();
+                totalRsErrors += corrections;
                 MemoryArqUpdated();
             }
 
@@ -1321,10 +1919,11 @@ public sealed class ArdopDemodulator
                 if (_sumCounts[part] > 1)
                 {
                     DecodeFromMagnitudes(rawPart, _toneMagsAvg[part].AsSpan(0, partTonesLen));
-                    if (ArdopFrameCodec.TryCorrectDataBlock(rawPart, partDataLen, partRsLen, info.Type, out netLen))
+                    if (ArdopFrameCodec.TryCorrectDataBlock(rawPart, partDataLen, partRsLen, info.Type, out netLen, out corrections))
                     {
                         _carrierOk[part] = true;
                         _goodPartData[part] = rawPart.Slice(1, netLen).ToArray();
+                        totalRsErrors += corrections;
                         MemoryArqUpdated();
                     }
                 }
@@ -1357,7 +1956,7 @@ public sealed class ArdopDemodulator
             Type = info.Type,
             Ok = okAll,
             Data = [.. data],
-            Quality = quality,
+            Quality = AdjustDataFrameQuality(okAll, quality, totalRsErrors, info),
         });
     }
 
@@ -1404,6 +2003,16 @@ public sealed class ArdopDemodulator
         Array.Clear(_sumCounts);
         Array.Clear(_goodPartData);
         foreach (int[] avg in _toneMagsAvg)
+        {
+            Array.Clear(avg);
+        }
+
+        foreach (short[] avg in _carPhaseAvg)
+        {
+            Array.Clear(avg);
+        }
+
+        foreach (short[] avg in _carMagAvg)
         {
             Array.Clear(avg);
         }
