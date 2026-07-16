@@ -51,6 +51,22 @@ public class DatacDemodTests
     }
 
     [Fact]
+    public void Decodes_Codec2_Datac3_Clean_Stream()
+    {
+        // datac3 exercises the same code path with different geometry (Nc=9, Np=29, 126-byte
+        // payload, the H_1024_2048_4f LDPC) — proving the demod is mode-generic, not datac0-special.
+        short[] samples = ReadS16("datac3_clean.s16");
+        byte[] expected = File.ReadAllBytes(Path.Combine(SamplesDir(), "datac3_clean.frame"));
+
+        var rx = new DatacReceiver(OfdmMode.Datac3);
+        IReadOnlyList<DatacRxResult> results = rx.Process(samples);
+        _out.WriteLine($"datac3 clean: decoded {results.Count} packets, {results.Count(r => r.CrcOk)} CRC-OK");
+
+        results.Should().HaveCount(4, "every packet in the 4-packet datac3 stream must decode");
+        results.Should().OnlyContain(r => r.CrcOk && r.Bytes.SequenceEqual(expected));
+    }
+
+    [Fact]
     public void Decodes_Codec2_Datac0_Clean_Stream()
     {
         IReadOnlyList<DatacRxResult> results = Decode(ReadS16("datac0_clean.s16"));
