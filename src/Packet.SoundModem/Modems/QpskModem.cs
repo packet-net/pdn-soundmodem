@@ -15,7 +15,8 @@ public sealed class QpskModem : IModem, IConstellationSource
 
     private QpskModem(
         int sampleRate, int baud, double carrier, Action<byte[]> frameReceived, bool crc,
-        double rollOff = QpskModulator.DefaultRollOff)
+        double rollOff = QpskModulator.DefaultRollOff,
+        PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null)
     {
         _bitRate = baud * 2;
         _crc = crc;
@@ -34,7 +35,7 @@ public sealed class QpskModem : IModem, IConstellationSource
                 deframer.PushBit(first);
                 deframer.PushBit(second);
             },
-            carrier);
+            carrier, detector, loopBandwidthHz);
         _modulator = new QpskModulator(sampleRate, baud, carrier, rollOff);
         _demodulator.SymbolPlotted = (i, q) => SymbolPlotted?.Invoke(new ConstellationPoint(i, q));
     }
@@ -48,8 +49,9 @@ public sealed class QpskModem : IModem, IConstellationSource
     /// the 328 Hz a NinoTNC's own mode-9 transmission measures on the bench. The rule is
     /// that we are never wider than the TNC we share a channel with.</remarks>
     public static QpskModem Qpsk600(
-        int sampleRate, Action<byte[]> frameReceived, bool crc = true, double rollOff = 0.20) =>
-        new(sampleRate, 300, 1500, frameReceived, crc, rollOff);
+        int sampleRate, Action<byte[]> frameReceived, bool crc = true, double rollOff = 0.20,
+        PskDetector detector = PskDetector.Coherent) =>
+        new(sampleRate, 300, 1500, frameReceived, crc, rollOff, detector);
 
     /// <summary>Creates the 2400 bps mode (1200 baud, 1500 Hz centre).</summary>
     /// <remarks>
@@ -61,8 +63,9 @@ public sealed class QpskModem : IModem, IConstellationSource
     /// </remarks>
     public static QpskModem Qpsk2400(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
-        double rollOff = QpskModulator.DefaultRollOff) =>
-        new(sampleRate, 1200, 1500, frameReceived, crc, rollOff);
+        double rollOff = QpskModulator.DefaultRollOff,
+        PskDetector detector = PskDetector.Coherent) =>
+        new(sampleRate, 1200, 1500, frameReceived, crc, rollOff, detector);
 
     /// <summary>Creates the 3600 bps mode (1800 baud; the conventional 1650 Hz centre).</summary>
     /// <remarks>
@@ -84,8 +87,13 @@ public sealed class QpskModem : IModem, IConstellationSource
     /// </para>
     /// </remarks>
     public static QpskModem Qpsk3600(
-        int sampleRate, Action<byte[]> frameReceived, bool crc = true, double rollOff = 0.25) =>
-        new(sampleRate, 1800, 1650, frameReceived, crc, rollOff);
+        int sampleRate, Action<byte[]> frameReceived, bool crc = true, double rollOff = 0.25,
+        PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null) =>
+        // The Costas loop is narrower here than the 6 % default: at 6⅔ samples/symbol and
+        // the 0.25 roll-off, the wider loop tracks noise instead of carrier and loses even
+        // at low SNR (bench: 0.06×baud scored 25/40 at σ0.08 where 0.03×baud scored 40/40).
+        // 54 Hz keeps the coherent noise win and still pulls in a ~5 Hz offset.
+        new(sampleRate, 1800, 1650, frameReceived, crc, rollOff, detector, loopBandwidthHz ?? 1800 * 0.03);
 
     /// <inheritdoc />
     public event Action<byte[], FrameQuality>? FrameDecoded;

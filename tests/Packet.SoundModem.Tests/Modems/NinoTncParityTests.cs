@@ -52,29 +52,31 @@ public class NinoTncParityTests
         return [.. Addr("TEST", false, 1), .. Addr("Q0AAA", true, 0), 0x03, 0xF0, .. payload];
     }
 
-    internal static IModem Create(string mode, int rate, Action<byte[]> sink) => mode switch
+    internal static IModem Create(
+        string mode, int rate, Action<byte[]> sink, PskDetector psk = PskDetector.Coherent) => mode switch
     {
         "fsk9600" => FskModem.Fsk9600(rate, sink, FskFraming.ClassicHdlc),
         "fsk9600-il2p" => FskModem.Fsk9600(rate, sink, FskFraming.Il2pCrc),
         "fsk4800-il2p" => FskModem.Fsk4800(rate, sink),
         "c4fsk9600" => C4fskModem.C4fsk9600(rate, sink),
         "c4fsk19200" => C4fskModem.C4fsk19200(rate, sink),
-        "qpsk3600" => QpskModem.Qpsk3600(rate, sink),
+        "qpsk3600" => QpskModem.Qpsk3600(rate, sink, detector: psk),
         "afsk1200" => new Afsk1200Modem(rate, sink),
         "afsk1200-il2p" => new Afsk1200Il2pModem(rate, sink),
-        "bpsk300" => BpskModem.Bpsk300(rate, sink),
-        "qpsk600" => QpskModem.Qpsk600(rate, sink),
-        "bpsk1200" => BpskModem.Bpsk1200(rate, sink),
-        "qpsk2400" => QpskModem.Qpsk2400(rate, sink),
+        "bpsk300" => BpskModem.Bpsk300(rate, sink, detector: psk),
+        "qpsk600" => QpskModem.Qpsk600(rate, sink, detector: psk),
+        "bpsk1200" => BpskModem.Bpsk1200(rate, sink, detector: psk),
+        "qpsk2400" => QpskModem.Qpsk2400(rate, sink, detector: psk),
         "afsk300" => new Afsk300Modem(rate, sink, Afsk300Framing.Ax25),
         "afsk300-il2p" => new Afsk300Modem(rate, sink, Afsk300Framing.Il2p),
         "afsk300-il2pc" => new Afsk300Modem(rate, sink, Afsk300Framing.Il2pCrc),
         _ => throw new ArgumentException($"unknown mode '{mode}'", nameof(mode)),
     };
 
-    private static int Decoded(string mode, int rate, int txDelayMs)
+    private static int Decoded(
+        string mode, int rate, int txDelayMs, PskDetector psk = PskDetector.Coherent)
     {
-        IModem tx = Create(mode, rate, _ => { });
+        IModem tx = Create(mode, rate, _ => { }, psk);
         var audio = new List<float>();
         audio.AddRange(new float[rate / 2]);
         for (int i = 0; i < Frames; i++)
@@ -84,7 +86,7 @@ public class NinoTncParityTests
         }
 
         int decoded = 0;
-        IModem rx = Create(mode, rate, _ => decoded++);
+        IModem rx = Create(mode, rate, _ => decoded++, psk);
         rx.Process(audio.ToArray());
         return decoded;
     }
@@ -92,21 +94,19 @@ public class NinoTncParityTests
     /// <summary>
     /// Modes where the NinoTNC's receiver acquires from its firmware-floor preamble
     /// (one 16-bit word). Ours must decode every frame at TXDELAY 0 — cold receiver,
-    /// no traffic history — to claim parity. qpsk2400 is here deliberately: the
-    /// NinoTNC needs ~100 ms for that mode, so passing at 0 ms is the "or better".
+    /// no traffic history — to claim parity. The PSK modes are NOT here: their coherent
+    /// (Costas) default needs preamble to pull the loop in after idle, exactly like the
+    /// NinoTNC — see <see cref="Coherent_Psk_Acquires_After_Idle_Within_Ninotnc_Preamble"/>
+    /// for the coherent criterion and <see cref="Differential_Psk_Acquires_At_Txdelay_Zero"/>
+    /// for the differential opt-in that keeps the 0 ms property.
     /// </summary>
     [Theory]
     [InlineData("fsk9600-il2p", 48000)]
     [InlineData("fsk4800-il2p", 48000)]
     [InlineData("c4fsk9600", 48000)]
     [InlineData("c4fsk19200", 48000)]
-    [InlineData("qpsk3600", 12000)]
     [InlineData("afsk1200", 12000)]
     [InlineData("afsk1200-il2p", 12000)]
-    [InlineData("bpsk300", 12000)]
-    [InlineData("qpsk600", 12000)]
-    [InlineData("bpsk1200", 12000)]
-    [InlineData("qpsk2400", 12000)]
     [InlineData("afsk300", 12000)]
     [InlineData("afsk300-il2p", 12000)]
     [InlineData("afsk300-il2pc", 12000)]
@@ -115,6 +115,45 @@ public class NinoTncParityTests
         Decoded(mode, rate, txDelayMs: 0).Should().Be(
             Frames,
             "a NinoTNC's receiver acquires mode '{0}' from one 16-bit word of preamble", mode);
+    }
+
+    /// <summary>
+    /// The differential detector — the opt-in for short-preamble links (#5) — keeps the
+    /// "decode at TXDELAY 0, cold" property for every PSK mode: no carrier recovery to pull
+    /// in, so it acquires from the phase change directly. This is the trade the coherent
+    /// default gives up (a ~1–2 dB noise cost) to match the NinoTNC's margin; the opt-in
+    /// buys the instant acquisition back where a link needs it.
+    /// </summary>
+    [Theory]
+    [InlineData("bpsk300")]
+    [InlineData("bpsk1200")]
+    [InlineData("qpsk600")]
+    [InlineData("qpsk2400")]
+    [InlineData("qpsk3600")]
+    public void Differential_Psk_Acquires_At_Txdelay_Zero(string mode)
+    {
+        Decoded(mode, 12000, txDelayMs: 0, psk: PskDetector.Differential).Should().Be(
+            Frames, "the differential opt-in acquires mode '{0}' with no preamble", mode);
+    }
+
+    /// <summary>
+    /// The coherent (Costas) default — matching the NinoTNC's detection method and its noise
+    /// margin — acquires each PSK mode within the NinoTNC's own preamble (~100 ms for QPSK)
+    /// even from a cold receiver between idle gaps. Measured floors (10-frame survey, 0.5 s
+    /// gaps): qpsk2400 full by 50 ms, qpsk3600 by 80 ms, the 300-baud and BPSK modes at 0 ms;
+    /// 100 ms clears them all. This is the deliberate, accepted trade of #5 — match the
+    /// NinoTNC, do not beat it on the acquisition axis that carries no operational value.
+    /// </summary>
+    [Theory]
+    [InlineData("bpsk300")]
+    [InlineData("bpsk1200")]
+    [InlineData("qpsk600")]
+    [InlineData("qpsk2400")]
+    [InlineData("qpsk3600")]
+    public void Coherent_Psk_Acquires_After_Idle_Within_Ninotnc_Preamble(string mode)
+    {
+        Decoded(mode, 12000, txDelayMs: 100).Should().Be(
+            Frames, "coherent detection acquires mode '{0}' within a NinoTNC-length preamble", mode);
     }
 
     /// <summary>
@@ -131,20 +170,21 @@ public class NinoTncParityTests
     /// <summary>
     /// The mode-11 idle-gap acquisition we measured on the NinoTNC (2/10 at a 20 ms
     /// preamble after 4 s of silence) is a bar we should hold OURSELVES to from the
-    /// other side: our receiver, gone quiet for 4 s, must still acquire a short-preamble
-    /// qpsk2400 burst, with channel noise at ~20 dB SNR present throughout. Written as an
-    /// aspiration on 2026-07-16 and found to pass the same day — graduated here per the
-    /// aspiration-suite discipline, so it is now a floor: red means the receiver got
-    /// worse at the thing the reference hardware is worst at.
+    /// other side: a receiver, gone quiet for 4 s, must still acquire a short-preamble
+    /// qpsk2400 burst, with channel noise at ~20 dB SNR present throughout. This is the
+    /// <b>differential opt-in's</b> defining strength (#5): with no carrier loop to pull in,
+    /// it acquires from the phase change at a 20 ms preamble the coherent default would need
+    /// ~100 ms for. Red here means the short-preamble opt-in got worse at the thing it exists
+    /// to be good at.
     /// </summary>
     [Fact]
-    public void Qpsk2400_Acquires_A_Short_Preamble_After_Idle_With_Noise()
+    public void Qpsk2400_Differential_Acquires_A_Short_Preamble_After_Idle_With_Noise()
     {
         const int Rate = 12000;
         const int Frames = 10;
         var random = new Random(11);
 
-        IModem tx = QpskModem.Qpsk2400(Rate, _ => { });
+        IModem tx = QpskModem.Qpsk2400(Rate, _ => { }, detector: PskDetector.Differential);
         var audio = new List<float>();
         audio.AddRange(new float[Rate * 4]);          // 4 s idle
         for (int i = 0; i < Frames; i++)
@@ -170,7 +210,7 @@ public class NinoTncParityTests
         }
 
         int decoded = 0;
-        IModem rx = QpskModem.Qpsk2400(Rate, _ => decoded++);
+        IModem rx = QpskModem.Qpsk2400(Rate, _ => decoded++, detector: PskDetector.Differential);
         rx.Process(samples);
 
         decoded.Should().Be(Frames, "an idle noisy channel is the normal case, not the special one");

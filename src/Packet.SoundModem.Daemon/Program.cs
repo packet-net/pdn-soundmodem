@@ -12,11 +12,15 @@ using Packet.SoundModem.Modems;
 //                  [--modem N:MODE[:FREQ]]... [--ptt serial:/dev/ttyUSB0[:rts|:dtr]]
 //                  [--ptt cm108:/dev/hidraw0[:gpio]]
 //                  [--txdelay MS] [--wav FILE] [--quality-frames]
+//                  [--psk-detector coherent|differential]
 //
 // Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, qpsk2400, qpsk3600 (both IL2P+CRC),
 // fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC). Multiple --modem options share the
 // audio channel and are addressed by the KISS port nibble (QtSoundModem multiplex model).
 // --wav decodes a file instead of live audio (testing/corpus runs) and exits.
+// --psk-detector selects the BPSK/QPSK detection method: coherent (default, matches the
+// NinoTNC's Costas loop and noise margin) or differential (opt-in, acquires at zero preamble
+// at a ~1-2 dB noise cost — for short-preamble links). See issue #5.
 
 // 9600-family modems need 48 kHz; everything else runs at 12 kHz.
 
@@ -34,6 +38,10 @@ string? wavPath = null;
 string? pttSpec = null;
 string? configPath = null;
 bool qualityFrames = false;
+// PSK detection method for the BPSK/QPSK modes. Coherent (Costas) is the default — it
+// matches the NinoTNC and its noise margin. Differential is the opt-in for short-preamble
+// links: it acquires with no preamble at a ~1–2 dB noise cost (issue #5).
+PskDetector pskDetector = PskDetector.Coherent;
 var modemSpecs = new List<string>();
 
 for (int i = 0; i < args.Length; i++)
@@ -52,6 +60,7 @@ for (int i = 0; i < args.Length; i++)
         case "--txdelay": txDelay = int.Parse(Next()); break;
         case "--wav": wavPath = Next(); break;
         case "--quality-frames": qualityFrames = true; break;
+        case "--psk-detector": pskDetector = Enum.Parse<PskDetector>(Next(), ignoreCase: true); break;
         case "--help":
             Console.WriteLine("see source header for usage");
             return 0;
@@ -125,12 +134,12 @@ foreach (ModemConfig modemConfig in modems)
         "afsk300" => new Afsk300Modem(DspRate, sink, Afsk300Framing.Ax25, frequency ?? 1700),
         "afsk300-il2p" => new Afsk300Modem(DspRate, sink, Afsk300Framing.Il2p, frequency ?? 1700),
         "afsk300-il2pc" => new Afsk300Modem(DspRate, sink, Afsk300Framing.Il2pCrc, frequency ?? 1700),
-        "bpsk300" => new BpskModem(DspRate, sink, crc: true, frequency ?? 1500),
-        "bpsk300-nocrc" => new BpskModem(DspRate, sink, crc: false, frequency ?? 1500),
-        "bpsk1200" => BpskModem.Bpsk1200(DspRate, sink),
-        "qpsk600" => QpskModem.Qpsk600(DspRate, sink),
-        "qpsk2400" => QpskModem.Qpsk2400(DspRate, sink),
-        "qpsk3600" => QpskModem.Qpsk3600(DspRate, sink),
+        "bpsk300" => new BpskModem(DspRate, sink, crc: true, frequency ?? 1500, detector: pskDetector),
+        "bpsk300-nocrc" => new BpskModem(DspRate, sink, crc: false, frequency ?? 1500, detector: pskDetector),
+        "bpsk1200" => BpskModem.Bpsk1200(DspRate, sink, detector: pskDetector),
+        "qpsk600" => QpskModem.Qpsk600(DspRate, sink, detector: pskDetector),
+        "qpsk2400" => QpskModem.Qpsk2400(DspRate, sink, detector: pskDetector),
+        "qpsk3600" => QpskModem.Qpsk3600(DspRate, sink, detector: pskDetector),
         "fsk9600" => FskModem.Fsk9600(DspRate, sink, FskFraming.ClassicHdlc),
         "fsk9600-il2p" => new FskModem(DspRate, sink, FskFraming.Il2pCrc),
         "fsk4800-il2p" => FskModem.Fsk4800(DspRate, sink),
@@ -139,6 +148,12 @@ foreach (ModemConfig modemConfig in modems)
         _ => throw new ArgumentException($"unknown mode '{mode}'"),
     });
     Console.WriteLine($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");
+}
+
+if (modems.Any(m => m.Mode.StartsWith("bpsk", StringComparison.Ordinal)
+    || m.Mode.StartsWith("qpsk", StringComparison.Ordinal)))
+{
+    Console.WriteLine($"psk detector: {pskDetector.ToString().ToLowerInvariant()}");
 }
 
 channel.FrameReceived += (subChannel, frame) =>

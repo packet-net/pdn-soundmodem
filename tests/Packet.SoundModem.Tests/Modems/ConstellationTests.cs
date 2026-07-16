@@ -34,19 +34,26 @@ public class ConstellationTests
         return all.Where(p => Math.Sqrt(p.I * p.I + p.Q * p.Q) >= 0.6 * peak).ToList();
     }
 
+    // Both detectors produce a four-cluster QPSK constellation, so #9 is validated for each.
+    // The differential product plots phase *changes* landing on exact multiples of 90° and so
+    // clusters tightest (>0.94); the coherent detector plots the recovered *absolute*
+    // constellation, whose four diagonal points carry the Costas loop's residual phase jitter
+    // and so cluster a little looser (~0.87–0.91) — both far above the ~0.05 of phase noise.
     [Theory]
-    [InlineData(2400)]
-    [InlineData(3600)]
-    public void Qpsk_Symbols_Cluster_At_Four_Phases(int bitRate)
+    [InlineData(2400, PskDetector.Differential, 0.90)]
+    [InlineData(3600, PskDetector.Differential, 0.90)]
+    [InlineData(2400, PskDetector.Coherent, 0.80)]
+    [InlineData(3600, PskDetector.Coherent, 0.80)]
+    public void Qpsk_Symbols_Cluster_At_Four_Phases(int bitRate, PskDetector detector, double minCoherence)
     {
         byte[] ax25 = Convert.FromHexString("968264888AAEE4969668908A9465B8CF303132333435363738");
         QpskModem tx = bitRate == 2400
-            ? QpskModem.Qpsk2400(SampleRate, _ => { })
-            : QpskModem.Qpsk3600(SampleRate, _ => { });
+            ? QpskModem.Qpsk2400(SampleRate, _ => { }, detector: detector)
+            : QpskModem.Qpsk3600(SampleRate, _ => { }, detector: detector);
         var frames = new List<byte[]>();
         QpskModem rx = bitRate == 2400
-            ? QpskModem.Qpsk2400(SampleRate, frames.Add)
-            : QpskModem.Qpsk3600(SampleRate, frames.Add);
+            ? QpskModem.Qpsk2400(SampleRate, frames.Add, detector: detector)
+            : QpskModem.Qpsk3600(SampleRate, frames.Add, detector: detector);
 
         var points = new List<ConstellationPoint>();
         ((IConstellationSource)rx).SymbolPlotted += points.Add;
@@ -59,8 +66,7 @@ public class ConstellationTests
         // Offset-invariant 4-fold phase coherence: raising each symbol's angle to the 4th
         // multiple collapses four clusters 90° apart onto one direction whatever their
         // absolute orientation, so the mean unit vector's length is ~1 for a tight
-        // constellation and ~0 for phase noise. (The differential detector plots phase
-        // *changes*, of which DQPSK has exactly four.)
+        // constellation and ~0 for phase noise.
         double sumRe = 0, sumIm = 0;
         foreach (ConstellationPoint p in strong)
         {
@@ -70,7 +76,7 @@ public class ConstellationTests
         }
 
         double coherence = Math.Sqrt(sumRe * sumRe + sumIm * sumIm) / strong.Count;
-        coherence.Should().BeGreaterThan(0.9);
+        coherence.Should().BeGreaterThan(minCoherence);
     }
 
     [Fact]

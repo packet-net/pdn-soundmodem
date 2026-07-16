@@ -127,6 +127,17 @@ was wrong on both halves. The failures that produced it were the QPSK *modulator
 change — not preamble length. 100 ms is enough, and even that ceiling is the NinoTNC's,
 not ours.
 
+**Detector-default note (2026-07-16, issue #5).** The "our demod locking @ ~20 ms" figures
+in the table were measured with **differential** detection, which was the PSK default then.
+The default is now **coherent** (a Costas loop, matching the NinoTNC's own detection), which
+recovers ~1–2 dB of noise margin but — like the NinoTNC — needs preamble to pull the carrier
+loop in after idle: offline, ~50 ms (qpsk2400) to ~80 ms (qpsk3600), 0 ms for the 300-baud
+and BPSK modes; 100 ms clears them all. That brings *our* PSK acquisition into line with the
+`us → NinoTNC` column above (its Costas also needs ~100 ms for qpsk2400) rather than beating
+it. The 20 ms-cold behaviour the table records is still available as the `--psk-detector
+differential` opt-in for short-preamble links. Re-measure this row on the bench under the
+coherent default when the rig is next up.
+
 ## Occupied bandwidth
 
 Every transmitter is measured (99 % OBW, ITU definition, Welch-averaged) against the limit
