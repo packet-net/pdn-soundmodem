@@ -482,6 +482,17 @@ Already dual-verified in `tables/` (not debt): D-I, D-II, D-VII…D-X, D-XX widP
 
 ## 10. Open questions for Tom
 
+> **Resolved (Tom, 2026-07-16):**
+> **Q1** — do the latter: Phase A *measures* the Poor-channel masks but gates only on
+> AWGN/static; Poor-channel gating becomes binding in Phase B with the RLS equalizer.
+> **Q2** — no reachable WBHF hardware or off-air source; **expect pdn↔pdn interop only**.
+> Rung 3 is parked (not owed). Validation = the D-LXIV/LXV masks in simulation +
+> pdn↔pdn self-consistency.
+> **Q3** — agreed: fixedPN wrap-around as TX default, the alternative reading behind a
+> documented internal switch. (pdn↔pdn-only makes the ambiguity non-fatal: both ends
+> share the choice.)
+
+
 1. **Phase-A acceptance policy for the Poor channel** (§6): the design downgrades Poor to measured-not-gated in Phase A (RLS lands in B). If you'd rather hold Phase A until Poor passes at mask+2 dB, RLS moves into A and A gets ~2 weeks heavier. Default if no answer: as written.
 2. **Rung 3 hardware**: do you have (or can you borrow) any WBHF-capable modem/radio for a bench capture, or a contact with off-air WBHF recordings? Even one capture converts "spec-faithful" into a permanent interop fixture. Default: proceed without; label modes accordingly.
 3. **O-1 (fixedPN 288-vs-256 wrap)**: if any reference signal source emerges from (2), resolving O-1 is the first thing to check against it; otherwise we ship wrap-around as default with the restart variant behind an internal switch — confirm you're happy shipping TX with that interpretation documented.
