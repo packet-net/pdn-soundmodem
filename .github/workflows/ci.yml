@@ -13,4 +13,7 @@ jobs:
       - name: Build
         run: dotnet build --configuration Release
       - name: Test
-        run: dotnet test --configuration Release --no-build
+        run: dotnet test --configuration Release --no-build --filter "Category!=Aspiration"
+      - name: Aspiration scoreboard (non-blocking — red here is a to-do, not a break)
+        continue-on-error: true
+        run: dotnet test --configuration Release --no-build --filter "Category=Aspiration"

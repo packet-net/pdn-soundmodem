@@ -189,6 +189,27 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later) — performance criteria as tests: parity floors + aspiration scoreboard
+
+Tom proposed expressing the performance criteria as failing unit tests. Implemented as two
+tiers rather than a permanently-red suite (red that never goes green trains people to
+ignore red):
+
+- **`NinoTncParityTests`** — criteria already met, asserted forever: every mode acquires
+  at TXDELAY 0 from a cold receiver (10/10), fsk9600 classic at 10 ms (the NinoTNC's own
+  floor for that mode), and qpsk2400 short-preamble acquisition after 4 s idle with 20 dB
+  SNR noise. Red here = regression below reference hardware. The reference numbers are
+  from the 2026-07-16 TNC↔TNC survey and cited in the test docs.
+- **`NinoTncAspirationTests`** (`Category=Aspiration`) — criteria not yet met, expected
+  red: currently the two C4FSK modes (1/3) lacking modems. CI runs the category in a
+  separate `continue-on-error` step, so it is a visible scoreboard, not a broken build.
+  Discipline in the class doc: a passing aspiration graduates to the parity suite; a
+  stale one gets deleted with its reasoning recorded.
+
+The discipline proved itself immediately: the idle-noise qpsk2400 criterion was written
+as an aspiration and passed on first run — graduated to parity the same hour, and is now
+a floor. Blocking suite: 186 green. Aspiration scoreboard: 2 red (C4FSK), by design.
+
 ### 2026-07-16 — RX acquisition: NinoTNC-floor parity (goal: match or better NinoTNC)
 
 Tom set the goal after the NinoTNC↔NinoTNC TXDELAY sweep showed the reference hardware
