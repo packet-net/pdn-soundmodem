@@ -26,6 +26,11 @@ public sealed class BpskDemodulator
     private double _oscillatorPhase;
     private int _delayPosition;
     private float _previousDecision;
+    private float _lastDecision;
+
+    /// <summary>Raised once per recovered symbol with the decision variable as (I,0) — the
+    /// 1-D BPSK constellation point. Null-safe; wire from the modem.</summary>
+    public Action<float, float>? SymbolPlotted { get; set; }
 
     /// <summary>Creates a demodulator delivering logical bits to <paramref name="bitSink"/>
     /// once per symbol.</summary>
@@ -56,7 +61,14 @@ public sealed class BpskDemodulator
         int samplesPerSymbol = sampleRate / baud;
         _delayI = new float[samplesPerSymbol];
         _delayQ = new float[samplesPerSymbol];
-        _dpll = new BitDpll(baud, sampleRate, bitSink, transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
+        _dpll = new BitDpll(
+            baud, sampleRate,
+            level =>
+            {
+                SymbolPlotted?.Invoke(_lastDecision, 0f);
+                bitSink(level);
+            },
+            transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
         _energyBusy = new EnergyBusyDetector(sampleRate);
     }
 
@@ -109,6 +121,7 @@ public sealed class BpskDemodulator
             }
 
             _previousDecision = decision;
+            _lastDecision = decision;   // held for the constellation tap (see QpskDemodulator)
             _dpll.Sample(decision > 0 ? 1 : 0, crossing);
         }
     }

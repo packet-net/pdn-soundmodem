@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Modems;
 /// 1200 baud) mode family, both phase-modulating a 1500 Hz tone — as an
 /// <see cref="IModem"/>. Symbol rates and carrier are Nino's, per the v3/4.43
 /// mode-switch mapping in flashtnc's release-notes.txt.</summary>
-public sealed class BpskModem : IModem
+public sealed class BpskModem : IModem, IConstellationSource
 {
     private readonly BpskDemodulator _demodulator;
     private readonly BpskModulator _modulator;
@@ -39,8 +39,12 @@ public sealed class BpskModem : IModem
             },
             crc);
         _demodulator = new BpskDemodulator(sampleRate, deframer.PushBit, carrierFrequency, baud);
+        _demodulator.SymbolPlotted = (i, q) => SymbolPlotted?.Invoke(new ConstellationPoint(i, q));
         _modulator = new BpskModulator(sampleRate, baud, carrierFrequency, rollOff);
     }
+
+    /// <inheritdoc />
+    public event Action<ConstellationPoint>? SymbolPlotted;
 
     /// <summary>Creates the 300 bps mode (300 baud, 1500 Hz centre) — NinoTNC mode 8.</summary>
     /// <remarks>Roll-off 0.20, matching the 328 Hz a NinoTNC's own mode-8 transmission

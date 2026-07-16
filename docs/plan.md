@@ -83,6 +83,11 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   steady-carrier-is-busy-but-not-DCD case headless QtSM cannot see.
 - ✅ Spectrum feed groundwork (2026-07-14): native radix-2 `Fft` + `SpectrumSource`
   (Hann, 4096-pt, dB-scaled u8 bins ≈2 kB/line ~3/s per channel).
+- ✅ Constellation side channel (2026-07-16, issue #9): `ConstellationSource` — the PSK
+  demodulators' per-symbol decision point (the differential product they already compute)
+  tapped via `IConstellationSource`, batched into auto-ranged scope frames (256 pts, 2
+  signed bytes/pt ≈5/s at qpsk2400). Wired per-modem on `SoundModemChannel`, for the PSK
+  modes only. Diagnostic-only (no wire/interop impact); the debugging surface #5 builds on.
 - ✅ ALSA layer (2026-07-14): `AlsaPcm` (libasound P/Invoke, capture+playback, xrun
   recovery, `Drain` for sample-domain PTT release) + `Decimator` (real anti-aliased
   48 k→12 k ÷4; aliasing-suppression test). Hardware smoke tests are SkippableFact —
@@ -101,8 +106,10 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   clients, ACKMODE echo ordering, param plumbing. Not yet: config file, CM108 PTT,
   spectrum-over-TCP, stereo second channel, live-audio soak (hardware).
 - ⬜ packet.net side: `kind: soundmodem` transport + `transport is ICarrierSense` probe at
-  PortSupervisor (seam mapped in the research doc §5), spectrum SSE endpoint + waterfall
-  UI (PdnPortTuningApi is the template; add to the SSE token allowlist; node-api.yaml).
+  PortSupervisor (seam mapped in the research doc §5), spectrum + constellation SSE
+  endpoints + waterfall/constellation UI (PdnPortTuningApi is the template; add to the SSE
+  token allowlist; node-api.yaml). The `constellationSink` on `SoundModemChannel` is the
+  node-side seam, mirroring `spectrumSink`.
 - ✅ Live RX soak (2026-07-15): 60 s daemon run on this box's real HDA codec via the
   fresh audio group — 48 kHz capture → decimator → 21-branch multi bank, KISS TCP up,
   clean exit. Found+fixed on first contact: consumer cards refuse direct 12 kHz
@@ -188,6 +195,31 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   committed corpora don't yet).
 
 ## Amendment log
+
+### 2026-07-16 (later) — constellation side channel: the per-symbol PSK diagnostic (#9)
+
+Landed issue #9 — the per-symbol constellation / eye feed for the PSK modes, sequenced (by
+Tom) immediately before #5 because it is #5's debugging surface. The PSK demodulators already
+compute, at each symbol instant, the differential product they reduce to a decision and
+discard (`re = i·delayedI + q·delayedQ`, `im = q·delayedI − i·delayedQ` for QPSK; the 1-D
+`decision` for BPSK). That product **is** a constellation of phase-*changes* — exactly the
+right artifact for a differential detector, clustering at the four dibit phases (QPSK) or the
+two rails (BPSK). Exposed via a small `IConstellationSource { SymbolPlotted }` on `QpskModem`
+and `BpskModem`; `ConstellationSource` mirrors `SpectrumSource` — batches points into
+fixed-size scope frames (default 256 points, two signed bytes each, auto-ranged to the
+frame's peak so cluster geometry reads independent of level; silent frames emit zeros). Wired
+on `SoundModemChannel` via a new optional `constellationSink` (sub-channel, frame), attached
+only to modems implementing the interface — the node-side seam, mirroring `spectrumSink`; no
+daemon flag (spectrum has none either — the node consumes both over SSE).
+
+Diagnostic-only: no wire format, no interop surface, no named parse flag, so no ax25-ts leg.
+Seven tests (all green, suite 194→201): offset-invariant 4-fold phase coherence >0.9 on clean
+qpsk2400/qpsk3600 loopbacks (measured 0.94/0.98 gating symbols within 60 % of burst peak —
+the low-amplitude symbols carry real per-symbol phase noise and belong to the smear the
+diagnostic reveals, so the "is the core tight?" assertion looks at the strong symbols),
+BPSK's 1-D/bimodal geometry, the frame batching/auto-range/silence-floor encoding, and that
+the channel wires PSK modems but leaves AFSK unwired. PROVENANCE updated (`ConstellationSource`
+is original; the tap reuses existing demod arithmetic). Next: #5 (coherent detection).
 
 ### 2026-07-16 (night) — QtSoundModem matrix extended: 10 mode/pairings, 9 interoperate
 

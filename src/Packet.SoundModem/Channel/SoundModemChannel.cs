@@ -36,6 +36,7 @@ public sealed class SoundModemChannel
     private readonly TimeProvider _time;
     private readonly Random _random;
     private readonly SpectrumSource? _spectrum;
+    private readonly Action<int, ReadOnlyMemory<byte>>? _constellationSink;
     private volatile bool _transmitting;
 
     /// <summary>Creates a channel.</summary>
@@ -43,11 +44,15 @@ public sealed class SoundModemChannel
     /// <param name="time">Clock for CSMA waits (injectable per repo discipline).</param>
     /// <param name="spectrumSink">Optional waterfall line sink (see
     /// <see cref="SpectrumSource"/>).</param>
+    /// <param name="constellationSink">Optional per-symbol constellation-frame sink
+    /// (sub-channel, frame). Wired to any PSK modem added to the channel — see
+    /// <see cref="ConstellationSource"/>; a no-op for the non-PSK modes.</param>
     /// <param name="randomSeed">Seed for the p-persistence roll (tests); null = random.</param>
     public SoundModemChannel(
         int sampleRate,
         TimeProvider? time = null,
         Action<ReadOnlyMemory<byte>>? spectrumSink = null,
+        Action<int, ReadOnlyMemory<byte>>? constellationSink = null,
         int? randomSeed = null)
     {
         SampleRate = sampleRate;
@@ -57,6 +62,8 @@ public sealed class SoundModemChannel
         {
             _spectrum = new SpectrumSource(sampleRate, spectrumSink);
         }
+
+        _constellationSink = constellationSink;
     }
 
     /// <summary>The channel's DSP sample rate.</summary>
@@ -91,6 +98,12 @@ public sealed class SoundModemChannel
         IModem modem = factory(frame => FrameReceived?.Invoke(subChannel, frame));
         modem.FrameDecoded += (frame, quality) =>
             FrameReceivedWithQuality?.Invoke(subChannel, frame, quality);
+        if (_constellationSink is { } sink && modem is IConstellationSource psk)
+        {
+            var constellation = new ConstellationSource(frame => sink(subChannel, frame));
+            constellation.Attach(psk);
+        }
+
         _modems.Add(subChannel, modem);
     }
 

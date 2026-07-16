@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Modems;
 /// 1500 Hz) and 3600 (1800 baud, 1650 Hz) mode family — as an <see cref="IModem"/>.
 /// Symbol rates and carriers are Nino's, per the v3/4.43 mode-switch mapping in
 /// flashtnc's release-notes.txt.</summary>
-public sealed class QpskModem : IModem
+public sealed class QpskModem : IModem, IConstellationSource
 {
     private readonly QpskDemodulator _demodulator;
     private readonly QpskModulator _modulator;
@@ -36,7 +36,11 @@ public sealed class QpskModem : IModem
             },
             carrier);
         _modulator = new QpskModulator(sampleRate, baud, carrier, rollOff);
+        _demodulator.SymbolPlotted = (i, q) => SymbolPlotted?.Invoke(new ConstellationPoint(i, q));
     }
+
+    /// <inheritdoc />
+    public event Action<ConstellationPoint>? SymbolPlotted;
 
     /// <summary>Creates the 600 bps mode (300 baud, 1500 Hz centre) — NinoTNC mode 9,
     /// an SSB-friendly 500 Hz-OBW mode sharing its symbol rate with 300 BPSK.</summary>

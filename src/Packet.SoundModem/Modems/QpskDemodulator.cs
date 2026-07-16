@@ -24,6 +24,12 @@ public sealed class QpskDemodulator
     private readonly double _oscillatorStep;
     private double _oscillatorPhase;
     private int _delayPosition;
+    private float _lastRe;
+    private float _lastIm;
+
+    /// <summary>Raised once per recovered symbol with the differential product (I,Q) at
+    /// the symbol instant — the constellation point. Null-safe; wire from the modem.</summary>
+    public Action<float, float>? SymbolPlotted { get; set; }
 
     /// <summary>Creates a demodulator delivering dibits (left bit first) to
     /// <paramref name="dibitSink"/> once per symbol.</summary>
@@ -52,7 +58,11 @@ public sealed class QpskDemodulator
 
         _dpll = new BitDpll(
             baud, sampleRate,
-            quadrant => dibitSink((QuadrantToDibit[quadrant] >> 1) & 1, QuadrantToDibit[quadrant] & 1),
+            quadrant =>
+            {
+                SymbolPlotted?.Invoke(_lastRe, _lastIm);
+                dibitSink((QuadrantToDibit[quadrant] >> 1) & 1, QuadrantToDibit[quadrant] & 1);
+            },
             transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
     }
 
@@ -107,6 +117,10 @@ public sealed class QpskDemodulator
             double angle = Math.Atan2(im, re);
             int quadrant = ((int)Math.Round(angle / (Math.PI / 2)) + 4) & 3;
 
+            // Held for the constellation tap: the DPLL fires its symbol sink synchronously
+            // inside Sample() on wrap samples, so these are the wrap-instant values.
+            _lastRe = re;
+            _lastIm = im;
             _dpll.Sample(quadrant);
         }
     }
