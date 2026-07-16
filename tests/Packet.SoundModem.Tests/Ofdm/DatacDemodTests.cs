@@ -83,11 +83,24 @@ public class DatacDemodTests
     public void Decodes_Datac0_With_Carrier_Frequency_Offset()
     {
         // +45 Hz needs coarse grid (40) + fine (~5) — exercises the full acquisition freq range.
-        IReadOnlyList<DatacRxResult> results = Decode(ReadS16("datac0_foff.s16"));
-        _out.WriteLine($"foff+45: decoded {results.Count} packets, {results.Count(r => r.CrcOk)} CRC-OK");
+        var rx = new DatacReceiver(OfdmMode.Datac0);
+        IReadOnlyList<DatacRxResult> results = rx.Process(ReadS16("datac0_foff.s16"));
+        _out.WriteLine($"foff+45: decoded {results.Count} packets, {results.Count(r => r.CrcOk)} CRC-OK, foffEst={rx.Demod.FoffEstHz:F2} Hz");
 
         results.Should().HaveCount(10, "a +45 Hz offset is within the ±60 Hz acquisition range");
         results.Should().OnlyContain(r => r.CrcOk && r.Bytes.SequenceEqual(ExpectedFrame()));
+
+        // Sub-block check: the coarse (±40 grid) + fine (±20) + tracking estimate must lock onto
+        // the injected offset, not merely decode.
+        rx.Demod.FoffEstHz.Should().BeApproximately(45.0f, 2.0f, "the frequency estimator must converge on the offset");
+    }
+
+    [Fact]
+    public void Frequency_Estimator_Reads_Zero_On_A_Clean_Stream()
+    {
+        var rx = new DatacReceiver(OfdmMode.Datac0);
+        rx.Process(ReadS16("datac0_clean.s16"));
+        rx.Demod.FoffEstHz.Should().BeApproximately(0.0f, 1.0f, "no offset was injected");
     }
 
     [Theory]
