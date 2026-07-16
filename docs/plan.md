@@ -198,6 +198,26 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still⁶) — FreeDV datac as KISS modes: IL2P+CRC on the FreeDV waveform
+
+PR #20: `freedv-datac0/1/3` land as daemon KISS modes on the 48 kHz DSP path (integer ÷6/×6
+bridge to the modem's native 8 kHz). **Framing (Tom's call, two iterations): the datac payloads
+carry the family-standard IL2P+CRC bit stream** — no invented wrapper (a 2-byte length prefix
+and HDLC-in-payload were both considered and rejected; AX.25 itself has no length field, and
+the family already solves variable-length-in-fixed-container with IL2P's sync word + byte
+count). Frames span packet boundaries, so datac0's 14-byte packets carry full AX.25 frames and
+datac1 has no hard cap; `FrameQuality` is the family's real RS/CRC one; the RS layer is largely
+dormant today (the datac transport delivers clean-or-missing) but enables a future
+salvage-from-CRC-failed-packets path. Waveform untouched — the OBW rule (never wider than
+FreeDV's own, PR #18) stays CI-green. Measured: exact IModem round-trips datac0 30/60 B,
+datac3 60/124 B, **datac1 60/508/1000 B (first datac1 end-to-end validation; 13.1 s of audio
+demodulated in 877 ms)**; back-to-back bursts 2/2; daemon `--wav` smoke green. One opt-in
+(default-off) pdn extension for variable-length KISS bursts (`EndOfBurstUwDrop` + CRC
+backstop). Suite → 355. Remaining for task #4: real HF-loop validation (burst DCD is ~1 frame
+late — EnergyBusyDetector is the CSMA source; datac1's short UW leaves ~10 %/burst odds of a
+~4 s phantom-DCD tail; CSMA/coexistence unmeasured on air). Phase 2 (datac4/13/14 RX BPF)
+unchanged.
+
 ### 2026-07-16 (later still⁵) — burst acquisition: the real-world FreeDV interop loop closes
 
 Burst-mode acquisition lands (PR #19), on top of the Phase-1 modem (PR #17) and the OBW rule
