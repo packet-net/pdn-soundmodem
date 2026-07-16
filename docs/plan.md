@@ -198,6 +198,20 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still¹²) — ARDOP Phase B: the ARQ engine, live sessions vs ardopcf
+
+PR #27: the ISS/IRS ARQ session engine (the design's named riskiest block), ported
+behaviourally from ardopcf with a virtual-clock architecture (no wall time in the engine →
+hermetic sessions ~100× real time; the live path is the same code on the audio clock).
+**Live ARDOP sessions ours↔ardopcf over snd-aloop, both roles, green twice** — byte-exact
+transfers, orderly teardown (ardopcf's END-session-ID quirk live-confirmed and ported as-is).
+Hermetic: exactly-once data with **measured ≥775 ms ACK margin** in the 1500 ms window;
+NAK/repeat; Memory-ARQ recovering from two individually-undecodable copies; gearshift;
+AUTOBREAK; timeouts — real counts throughout, + 42 pure-logic tests. Suite 557→610 hermetic
+(618 with the env-gated oracle/aloop legs), 0 failures. Remaining: Phase C (PSK/16QAM
+RX-first, Tom's all-in 16QAM bar), Phase D (8515/8516 host protocol + Pat + the GB7RDG/40m
+on-air acceptance per task #6 notes).
+
 ### 2026-07-16 (later still¹¹) — ARDOP Phase A: 4FSK codec + FEC mode, 33/33 vs ardopcf
 
 PR #26: the ARDOP 4FSK layer lands (design §6 Phase A, ported from ardopcf with provenance;
