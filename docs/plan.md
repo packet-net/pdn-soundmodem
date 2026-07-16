@@ -198,6 +198,35 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still⁴) — FreeDV OFDM Phase-1: FEC + engine ported, validated vs codec2
+
+The FreeDV datac OFDM modem built on branch `freedv-ofdm-phase1` as a pure-managed C# port of
+codec2 1.2.0 (git 310777b, LGPL-2.1), validated against libcodec2 as a **test-only oracle** (no
+runtime native dependency; reference vectors checked into `samples/freedv/`). Design:
+[ofdm-design.md](ofdm-design.md); provenance: PROVENANCE.md `Fec/Ldpc` + `Ofdm` rows; R-1
+(licence review) is a roadmap task.
+
+- **FEC layer — bit-exact.** LDPC matrices transliterated (`tools/gen-ldpc-tables/gen.py`); the
+  phi0 table, RA encoder and sum-product decoder reproduce codec2's **own built-in decode
+  vectors bit-for-bit** (all 4 codes that ship one); the frame codec (shortening) round-trips
+  all six datac modes. Golden-prime interleaver + CRC-16 (pinned to 0x29B1) alongside.
+- **Modulator** (parallel sub-agent, `freedv-ofdm-modulator`) — direct IDFT + CP (not an FFT —
+  datac14's M=144 forbids it), symbol assembly, pilots/UW, the Hilbert-clipper/BPF chain, LCG
+  preamble. Vs codec2: **xcorr = 1.0 (8 d.p.) all six modes**, ≤1.5 LSB, datac14 preamble
+  bit-for-bit; the residual is codec2's own float→int16 truncation.
+- **Demodulator + streaming sync** (parallel sub-agent, `freedv-ofdm-demod`) — timing/frequency
+  acquisition, pilot channel estimation, LLR demap, sync state machine. Decodes codec2's own
+  datac0 TX: **10/10 clean, 10/10 at +45 Hz offset, 10/10 at ±600 ppm sample-clock, 19/20 AWGN**
+  (matching codec2); datac3 4/4 (mode-generic).
+- Both halves **merged** (reconciled the shared `Cf` complex type); build clean, **suite 218→319
+  green**. The two big DSP halves were built by parallel background sub-agents in isolated
+  worktrees, each validated against codec2 independently (context-preservation + parallelism).
+
+Remaining for Phase 1: the our-TX→our-RX datac0 round-trip (first-light), the burst/preamble
+acquisition path (needed for the standard FreeDV CLI tools, which force burst mode), and datac1
+end-to-end. Phase 2: datac4/13/14 (RX BPF + LDPC puncturing). Phase 3 (task #4): IModem/KISS +
+the 12k/48k→8k rate bridge.
+
 ### 2026-07-16 (later still³) — next-wave modem roadmap + FreeDV OFDM Phase-1 design
 
 Two planning docs land ahead of the next build wave. [waveform-roadmap.md](waveform-roadmap.md)
