@@ -198,6 +198,22 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still⁵) — burst acquisition: the real-world FreeDV interop loop closes
+
+Burst-mode acquisition lands (PR #19), on top of the Phase-1 modem (PR #17) and the OBW rule
+(PR #18 — **our datac TX must never exceed FreeDV's own OBW**, CI-enforced like-for-like against
+codec2's checked-in transmissions; standing directive). The standard FreeDV CLI tools and
+FreeDATA force burst mode, so this is the path real deployments use: the known-sequence
+preamble/postamble correlator (`est_timing_and_freq`), `ofdm_sync_search_burst` with postamble
+packet-rewind, and the data-burst state machine — the validated demod core reused untouched.
+Measured: codec2 CLI TX → our RX datac0 **5/5 clean and 5/5 at +22 Hz / ~4.6 dB SNR**; **our TX →
+codec2's own `freedv_data_raw_rx` 5/5** (the full CLI loop, kept as a Category=Interop test);
+round-trips 10/10; the noise knee matches codec2 (19/20 = 19/20 on identical audio); the one
+found corner (fully-blanked preamble, single-packet burst) is unrecoverable in codec2 too (0/49
+on their own RX) — parity, not a defect. Suite 329→338. The pure-managed datac0/datac3 modem now
+interoperates with stock FreeDV tooling in both directions. Remaining: datac1 end-to-end burst,
+Phase 2 modes (RX BPF), IModem/KISS (task #4).
+
 ### 2026-07-16 (later still⁴) — FreeDV OFDM Phase-1: FEC + engine ported, validated vs codec2
 
 The FreeDV datac OFDM modem built on branch `freedv-ofdm-phase1` as a pure-managed C# port of
