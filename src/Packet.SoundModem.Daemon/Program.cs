@@ -15,8 +15,8 @@ using Packet.SoundModem.Modems;
 //                  [--psk-detector coherent|differential]
 //
 // Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, qpsk2400, qpsk3600 (both IL2P+CRC),
-// fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC), freedv-datac0/1/3 (FreeDV datac OFDM
-// waveform; payloads carry the family-standard IL2P+CRC bit stream — a pdn convention,
+// fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC), freedv-datac0/1/3/4/13/14 (FreeDV datac
+// OFDM waveform; payloads carry the family-standard IL2P+CRC bit stream — a pdn convention,
 // FreeDV defines no framing at the raw-data layer). Multiple --modem options share the
 // audio channel and are addressed by the KISS port nibble (QtSoundModem multiplex model).
 // --wav decodes a file instead of live audio (testing/corpus runs) and exits.
@@ -152,6 +152,9 @@ foreach (ModemConfig modemConfig in modems)
         "freedv-datac0" => FreeDvDatacModem.Datac0(DspRate, sink),
         "freedv-datac1" => FreeDvDatacModem.Datac1(DspRate, sink),
         "freedv-datac3" => FreeDvDatacModem.Datac3(DspRate, sink),
+        "freedv-datac4" => FreeDvDatacModem.Datac4(DspRate, sink),
+        "freedv-datac13" => FreeDvDatacModem.Datac13(DspRate, sink),
+        "freedv-datac14" => FreeDvDatacModem.Datac14(DspRate, sink),
         _ => throw new ArgumentException($"unknown mode '{mode}'"),
     });
     Console.WriteLine($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");

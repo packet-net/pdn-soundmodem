@@ -7,7 +7,7 @@ without libcodec2 present. See the repo `PROVENANCE.md` and `docs/ofdm-design.md
 
 ## What each file is
 
-Per mode (`datac0`, `datac1`, `datac3`, `datac14`):
+Per mode (all six: `datac0`, `datac1`, `datac3`, `datac4`, `datac13`, `datac14`):
 
 | File | Content |
 |---|---|

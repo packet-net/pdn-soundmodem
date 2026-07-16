@@ -112,7 +112,7 @@ static void run_mode(const char *mode, const char *outdir) {
 
 int main(int argc, char **argv) {
   const char *outdir = argc > 1 ? argv[1] : ".";
-  const char *modes[] = {"datac0", "datac1", "datac3", "datac14"};
-  for (int i = 0; i < 4; i++) run_mode(modes[i], outdir);
+  const char *modes[] = {"datac0", "datac1", "datac3", "datac4", "datac13", "datac14"};
+  for (int i = 0; i < 6; i++) run_mode(modes[i], outdir);
   return 0;
 }

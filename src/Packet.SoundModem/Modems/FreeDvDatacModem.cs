@@ -5,7 +5,7 @@ using Packet.SoundModem.Ofdm;
 namespace Packet.SoundModem.Modems;
 
 /// <summary>
-/// FreeDV datac OFDM (datac0/1/3) as an <see cref="IModem"/> — the codec2 burst waveform
+/// FreeDV datac OFDM (all six datac modes) as an <see cref="IModem"/> — the codec2 burst waveform
 /// carrying IL2P+CRC-framed AX.25. Each <see cref="Modulate"/> call emits one burst,
 /// <c>[TXDELAY silence][preamble][packet × N][postamble][guard silence]</c>, exactly as
 /// codec2's <c>freedv_data_raw_tx</c> frames a transmission; receive runs
@@ -15,9 +15,10 @@ namespace Packet.SoundModem.Modems;
 /// <remarks>
 /// <para>
 /// <b>Payload content — IL2P+CRC (the family-standard framing; a pdn convention at this
-/// layer).</b> The datac payload is FIXED-size (datac0 14 B, datac1 510 B, datac3 126 B
-/// per packet) and FreeDV defines NO framing at the raw-data layer — FreeDATA layers its
-/// own ARQ protocol on top. Rather than invent one, this modem fills the payloads with
+/// layer).</b> The datac payload is FIXED-size (datac0 14 B, datac1 510 B, datac3 126 B,
+/// datac4 54 B, datac13 14 B, datac14 3 B per packet) and FreeDV defines NO framing at the
+/// raw-data layer — FreeDATA layers its own ARQ protocol on top. Rather than invent one,
+/// this modem fills the payloads with
 /// exactly what every NinoTNC-lineage mode in this library puts on the wire:
 /// <see cref="Il2pCodec"/> IL2P+CRC (<c>Encode(frame, appendCrc: true)</c>) behind the
 /// 24-bit IL2P sync word (<see cref="Il2pFramer"/> with <c>preambleBits: 0</c> — the
@@ -95,18 +96,11 @@ public sealed class FreeDvDatacModem : IModem
     /// <param name="sampleRate">Channel DSP rate; must be an integer multiple of 8000
     /// (48000 on the daemon's 48 kHz path; 8000 runs the engine natively).</param>
     /// <param name="frameReceived">Receives each decoded AX.25 frame.</param>
-    /// <param name="mode">datac0, datac1 or datac3 — the validated no-RX-BPF set.</param>
+    /// <param name="mode">Any of the six datac modes (datac0/1/3/4/13/14).</param>
     public FreeDvDatacModem(int sampleRate, Action<byte[]> frameReceived, OfdmMode mode)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         ArgumentNullException.ThrowIfNull(mode);
-        if (mode.Name is not ("datac0" or "datac1" or "datac3"))
-        {
-            throw new ArgumentException(
-                $"mode {mode.Name} is not supported — datac0/1/3 are the validated set " +
-                "(datac4/13/14 need the RX band-pass filter, which is not ported)", nameof(mode));
-        }
-
         if (sampleRate < NativeRate || sampleRate % NativeRate != 0)
         {
             throw new ArgumentException(
@@ -167,6 +161,21 @@ public sealed class FreeDvDatacModem : IModem
     /// <summary>Creates the datac3 mode — 500 Hz OBW, 126-byte packets, low-SNR.</summary>
     public static FreeDvDatacModem Datac3(int sampleRate, Action<byte[]> frameReceived) =>
         new(sampleRate, frameReceived, OfdmMode.Datac3);
+
+    /// <summary>Creates the datac4 mode — 250 Hz OBW, 54-byte packets, very low SNR
+    /// (RX band-pass filtered).</summary>
+    public static FreeDvDatacModem Datac4(int sampleRate, Action<byte[]> frameReceived) =>
+        new(sampleRate, frameReceived, OfdmMode.Datac4);
+
+    /// <summary>Creates the datac13 mode — 200 Hz OBW, 14-byte packets, the narrowest mode
+    /// (RX band-pass filtered).</summary>
+    public static FreeDvDatacModem Datac13(int sampleRate, Action<byte[]> frameReceived) =>
+        new(sampleRate, frameReceived, OfdmMode.Datac13);
+
+    /// <summary>Creates the datac14 mode — 250 Hz OBW, 3-byte packets, short-burst signalling
+    /// (RX band-pass filtered; every AX.25 frame spans many packets).</summary>
+    public static FreeDvDatacModem Datac14(int sampleRate, Action<byte[]> frameReceived) =>
+        new(sampleRate, frameReceived, OfdmMode.Datac14);
 
     /// <inheritdoc />
     public event Action<byte[], FrameQuality>? FrameDecoded;

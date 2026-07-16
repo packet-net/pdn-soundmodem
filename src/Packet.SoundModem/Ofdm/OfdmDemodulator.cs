@@ -38,8 +38,13 @@ public enum SyncState
 /// use (<c>freedv_set_frames_per_burst</c>, <c>freedv_api.c:1418</c>).
 /// </para>
 /// <para>
-/// The RX band-pass filter used by datac4/13/14 (codec2 <c>quisk_ccfFilter</c>) is not ported;
-/// those modes are therefore not validated here. datac0/1/3 (no RX BPF) are the supported set.
+/// datac4/13/14 additionally run the freshly-arrived samples through the persistent RX band-pass
+/// filter (codec2 <c>rx_bpf</c>: the 100-tap <c>filtP200S400</c> prototype tuned to the mode's
+/// mean carrier frequency via <c>quisk_cfTune</c>/<c>quisk_ccfFilter</c> — the same
+/// <see cref="ComplexBandpassFir"/> the TX side uses) before any timing/frequency estimation, in
+/// both the search and demod paths (<c>ofdm.c:1467-1471, 1535-1539</c>). Its state carries across
+/// calls for the life of the demodulator, exactly as codec2's single <c>ofdm-&gt;rx_bpf</c> does —
+/// including across burst resets, which clear the sample history but never the filter.
 /// </para>
 /// </remarks>
 public sealed class OfdmDemodulator
@@ -47,6 +52,7 @@ public sealed class OfdmDemodulator
     private readonly OfdmDemodConfig _c;
 
     private readonly Cf[] _rxbuf;
+    private readonly ComplexBandpassFir? _rxBpf;   // datac4/13/14 only; persistent (ofdm->rx_bpf)
     private int _rxbufst;
     private int _nin;
 
@@ -99,6 +105,14 @@ public sealed class OfdmDemodulator
         _rxbuf = new Cf[config.NrxBuf];
         _rxbufst = config.NrxBufHistory;
         _nin = config.SamplesPerFrame;
+
+        // The narrow modes' RX band-pass (allocate_rx_bpf, ofdm.c:577-596): the filtP200S400
+        // prototype heterodyned to the mean carrier frequency, history zero-initialised.
+        if (config.RxBpfEnable)
+        {
+            _rxBpf = new ComplexBandpassFir(
+                OfdmTxBpfPrototypes.filtP200S400, config.CarrierCentreHz / (float)config.Fs);
+        }
 
         _rxSym = new Cf[config.Ns + 3][];
         for (int i = 0; i < config.Ns + 3; i++)
@@ -257,6 +271,18 @@ public sealed class OfdmDemodulator
             for (int j = 0, i = n - _nin; i < n; j++, i++)
             {
                 _rxbuf[i] = input[j];
+            }
+
+            // datac4/13/14: band-pass the freshly-arrived samples in place BEFORE any
+            // timing/frequency estimation sees them — codec2 runs quisk_ccfFilter over
+            // &rxbuf[nrxbuf-nin] at the top of both ofdm_sync_search_core (ofdm.c:1467-1471)
+            // and ofdm_demod_core (ofdm.c:1535-1539). The filter is stateful across calls, so
+            // the group delay carries through the whole reception; older rxbuf history was
+            // already filtered when it arrived and is never re-filtered.
+            if (_rxBpf is not null)
+            {
+                Span<Cf> fresh = _rxbuf.AsSpan(n - _nin, _nin);
+                _rxBpf.Filter(fresh, fresh);
             }
         }
     }

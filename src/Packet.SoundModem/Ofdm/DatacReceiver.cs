@@ -30,8 +30,10 @@ public readonly record struct DatacRxResult(
 /// PROVENANCE.md.
 /// </summary>
 /// <remarks>
-/// This is the demodulator's validation harness and the substrate for a future <c>IModem</c>
-/// (Phase 3). Supported/validated modes are datac0/1/3 (no RX band-pass filter). Not thread-safe.
+/// This is the demodulator's validation harness and the substrate for
+/// <see cref="Packet.SoundModem.Modems.FreeDvDatacModem"/>. All six datac modes are supported:
+/// datac0/1/3, and the narrow datac4/13/14 (RX band-pass filter + LDPC code shortening).
+/// Not thread-safe.
 /// </remarks>
 public sealed class DatacReceiver
 {
@@ -47,7 +49,7 @@ public sealed class DatacReceiver
     private readonly bool _endOfBurstDetection;
     private Cf[]? _processFrame;
 
-    /// <summary>Creates a receiver for <paramref name="mode"/> (datac0/1/3 supported).</summary>
+    /// <summary>Creates a receiver for <paramref name="mode"/> (all six datac modes).</summary>
     /// <param name="mode">The datac mode to receive.</param>
     /// <param name="packetsPerBurst">0 (default) selects streaming mode. ≥&#160;1 selects burst
     /// mode with that many packets expected per burst, mirroring codec2's

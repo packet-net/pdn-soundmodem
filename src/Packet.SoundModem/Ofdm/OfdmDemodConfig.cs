@@ -73,6 +73,14 @@ public sealed class OfdmDemodConfig
     /// <summary>Whether the mode uses an RX band-pass filter (datac4/13/14).</summary>
     public bool RxBpfEnable { get; }
 
+    /// <summary>Mean carrier frequency in Hz (codec2 <c>find_carrier_centre</c>,
+    /// <c>ofdm.c:570-575</c>) — the RX band-pass tuning centre for the narrow modes:
+    /// datac4 1468.75, datac13 1500, datac14 ≈&#160;1472.22. Computed as codec2 does — a float
+    /// summation over the occupied bins, not the algebraically-equal closed form — so the tuned
+    /// filter coefficients match in the low bits (docs/ofdm-design.md §3.7/§4.9). The even-Nc
+    /// modes sit half a carrier below the nominal 1500&#160;Hz by design.</summary>
+    public float CarrierCentreHz { get; }
+
     // --- derived sizes (mirrors of ofdm_create, kept here so the demod reads one object) ---
 
     /// <summary>Sample rate (Hz).</summary>
@@ -214,6 +222,16 @@ public sealed class OfdmDemodConfig
 
         int symsperframe = mode.BitsPerFrame / bps;
         Nuwframes = (int)MathF.Ceiling((UwIndSym[nuwsyms - 1] + 1) / (float)symsperframe);
+
+        // Mean carrier frequency (find_carrier_centre, ofdm.c:570-575) — ported as the float
+        // summation loop, matching codec2's rounding sequence exactly.
+        float centreAcc = 0.0f;
+        for (int c = 0; c < mode.Nc + 2; c++)
+        {
+            centreAcc += (RxNlower + c) * Doc;
+        }
+
+        CarrierCentreHz = (float)((mode.Fs / (2.0 * Math.PI)) * centreAcc / (mode.Nc + 2));
 
         // Buffer model (ofdm.c:311-318); data_mode is always non-empty (streaming) for datac.
         NrxBufHistory = (mode.Np + 2) * mode.SamplesPerFrame;
