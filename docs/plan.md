@@ -215,7 +215,9 @@ demodulated in 877 ms)**; back-to-back bursts 2/2; daemon `--wav` smoke green. O
 (default-off) pdn extension for variable-length KISS bursts (`EndOfBurstUwDrop` + CRC
 backstop). Suite → 355. Remaining for task #4: real HF-loop validation (burst DCD is ~1 frame
 late — EnergyBusyDetector is the CSMA source; datac1's short UW leaves ~10 %/burst odds of a
-~4 s phantom-DCD tail; CSMA/coexistence unmeasured on air). Phase 2 (datac4/13/14 RX BPF)
+~4 s phantom-DCD tail; CSMA interaction unmeasured on air — coexistence with regular
+FreeDV voice is a NON-goal per Tom: data and voice never share a channel in practice).
+Phase 2 (datac4/13/14 RX BPF)
 unchanged.
 
 ### 2026-07-16 (later still⁵) — burst acquisition: the real-world FreeDV interop loop closes
