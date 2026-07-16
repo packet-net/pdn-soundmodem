@@ -185,6 +185,23 @@ The direct-FSK modes (0/2/4) are excluded on purpose: their 10/20 kHz figures ar
 bandwidth after FM modulation, not the audio baseband we generate, so they are pinned
 against their own shaping filter instead.
 
+### Resolved guidance (issue #3)
+
+The modem floors above are what the MODEMS need. An operational TXDELAY must additionally
+cover the transmitter's PTT-to-RF settling, which this wired rig cannot measure and which
+dominates on real FM gear. Hence:
+
+| link type | TXDELAY guidance |
+|---|---|
+| wired / bench / data-port radio, any mode except qpsk2400 | **20 ms** |
+| qpsk2400 facing a NinoTNC | **150 ms** (its demod's settling, not ours) |
+| real FM radio via mic/speaker or PTT keying | **the radio's keyup time + 20 ms** — typically 100-300 ms; the daemon defaults to 300 as the safe allowance |
+| bare-HDLC AFSK peer known to send one-word fills | consider `lowPassCutoff: 750` on the port (see AfskDemodulator) — trades weak-signal margin for fast acquisition |
+
+The daemon's 300 ms default is therefore a *radio* allowance, documented as such — the
+earlier state where it masqueraded as a modem requirement (and was once even attributed
+to nonexistent external advice) is what issue #3 existed to fix.
+
 ## Coverage
 
 Against Nino's v44 mode table ([v44-op-modes.png](https://github.com/ninocarrillo/flashtnc/blob/master/v44-op-modes.png)

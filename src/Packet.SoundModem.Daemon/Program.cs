@@ -23,6 +23,12 @@ using Packet.SoundModem.Modems;
 string device = "default";
 int captureRate = 48000;
 int kissPort = 8105;
+// 300 ms is a RADIO allowance, not a modem requirement — the modems themselves acquire
+// from 0-20 ms TXDELAY in every mode (150 ms for qpsk2400 facing a NinoTNC), measured and
+// CI-enforced (NinoTncParityTests; docs/ninotnc-loop.md § How short can TXDELAY be?).
+// The default budgets for a real transmitter's PTT-to-RF settling, which the wired bench
+// cannot see and which routinely needs 100-300 ms on FM gear. Wired links, data-port
+// radios and bench rigs should configure this down; issue #3 has the full derivation.
 int txDelay = 300;
 string? wavPath = null;
 string? pttSpec = null;

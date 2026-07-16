@@ -63,19 +63,20 @@ public sealed class QpskModem : IModem
     /// <summary>Creates the 3600 bps mode (1800 baud; the conventional 1650 Hz centre).</summary>
     /// <remarks>
     /// <para>
-    /// Roll-off 0.25 — tighter than the other modes, chasing the NinoTNC's own mode-5
-    /// signal, which measures 1828 Hz for 1800 sym/s: within a whisker of the Nyquist
-    /// floor a symbol rate can occupy at all, and how the mode fits 3600 bps through a
-    /// voice channel. We reach 1995 Hz, still ~9 % wider than the TNC.
+    /// Roll-off 0.25 — tighter than the other modes, matching the NinoTNC's own mode-5
+    /// signal, which sits near the Nyquist floor for 1800 sym/s (how 3600 bps fits a
+    /// voice channel). Measured like-for-like (whole burst, same frame — issue #2 fixed
+    /// an earlier window mismatch that mis-read this mode as "9 % wider"), we transmit
+    /// 1808 Hz against the TNC's 1887 Hz: narrower, and CI-enforced against the
+    /// checked-in reference recording.
     /// </para>
     /// <para>
-    /// 0.25 is a receiver limit, not a choice. Copying his width needs ~0.10, which our
-    /// own demodulator cannot decode at this rate — bench-swept, 0.10 fails even a clean
-    /// loopback and 0.15/0.20 fail under noise or on multi-block frames, because 1800 Bd
-    /// at 12 kHz leaves only 6⅔ samples per symbol and a near-Nyquist pulse needs symbol
-    /// timing finer than that. The fixes are a matched RRC receive filter, or running this
-    /// mode at a higher DSP rate; until one lands, 0.25 is the tightest shaping we can
-    /// both transmit and hear. Tracked in issue #1.
+    /// 0.25 remains a receiver limit rather than a free choice: ~0.10 shaping is
+    /// decodable by the NinoTNC (bench: 10/10) but not by our own demodulator at 6⅔
+    /// samples per symbol — bench-swept, 0.10 fails a clean loopback, 0.15/0.20 fail
+    /// under noise. A matched receive filter or a higher DSP rate for this mode would
+    /// buy margin, but with our TX already narrower than the reference hardware there is
+    /// no compliance need.
     /// </para>
     /// </remarks>
     public static QpskModem Qpsk3600(

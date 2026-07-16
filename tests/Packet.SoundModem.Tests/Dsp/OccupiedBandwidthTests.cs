@@ -115,45 +115,124 @@ public class OccupiedBandwidthTests
     }
 
     /// <summary>
-    /// 99 % OBW of a real NinoTNC's own transmission per mode, measured on the bench loop
-    /// (firmware 3.44, 2026-07-15). The assertion allows 10 %, sized to the scatter the
-    /// references themselves demonstrate: his 300 AFSK modulator measures 305 Hz on mode
-    /// 12 and 328 Hz on mode 14 — the same transmitter, ~7 % apart on payload statistics
-    /// alone. Asserting tighter than that would be measuring noise, not compliance.
+    /// The modes and NinoTNC reference recordings for the never-wider rule. The reference
+    /// is MEASURED FROM THE CHECKED-IN RECORDING AT TEST TIME (samples/ninotnc/, firmware
+    /// 3.44 on the CM108 loop) rather than pinned as a constant — and, critically, both
+    /// sides are measured the same way: whole burst, same 40-byte bench frame the
+    /// recording carries, same TXDELAY. The first version of this table compared our
+    /// data-section spectrum against the highest-energy window of his short frames (mostly
+    /// preamble, which is narrower than data) and mis-read qpsk3600 as "9 % wider than the
+    /// TNC"; like-for-like it is narrower (issue #2).
     /// </summary>
-    /// <remarks>
-    /// The recordings these came from are checked in at <c>samples/ninotnc/</c> — they
-    /// cannot be regenerated without that rig, TNC and firmware, so a number here can
-    /// always be traced back to a signal. See issue #2: the numbers are currently derived
-    /// over a different window from our own signal and need re-deriving; the recordings
-    /// themselves are sound.
-    /// </remarks>
-    public static TheoryData<string, double> NinoTncMeasured => new()
+    public static TheoryData<string, string> NinoTncReferenceRecordings => new()
     {
-        { "afsk300", 305 },
-        { "afsk300-il2pc", 328 },
-        { "bpsk300", 328 },
-        { "qpsk600", 328 },
-        { "bpsk1200", 1828 },
-        { "qpsk2400", 1852 },
-        { "afsk1200", 2414 },
-        { "afsk1200-il2p", 2355 },
-
-        // qpsk3600 is deliberately absent. The NinoTNC's own mode 5 measures 1828 Hz —
-        // essentially the Nyquist floor for 1800 sym/s — and we cannot match it: copying
-        // that shaping needs roll-off ~0.10, which our own demodulator cannot decode at
-        // 6⅔ samples per symbol (bench-swept: 0.10 fails a clean loopback, 0.15/0.20 fail
-        // under noise). We transmit 1995 Hz, ~9 % wider. Add the row once a matched RRC
-        // receive filter or a higher DSP rate for this mode lands — issue #1.
+        { "afsk1200", "afsk1200.wav" },
+        { "afsk1200-il2p", "afsk1200-il2p.wav" },
+        { "afsk300", "afsk300.wav" },
+        { "afsk300-il2pc", "afsk300-il2pc.wav" },
+        { "bpsk300", "bpsk300.wav" },
+        { "qpsk600", "qpsk600.wav" },
+        { "bpsk1200", "bpsk1200.wav" },
+        { "qpsk2400", "qpsk2400.wav" },
+        { "qpsk3600", "qpsk3600.wav" },
     };
 
     [Theory]
-    [MemberData(nameof(NinoTncMeasured))]
-    public void Transmitters_Are_Never_Wider_Than_A_NinoTNC_In_The_Same_Mode(string mode, double ninoHz)
+    [MemberData(nameof(NinoTncReferenceRecordings))]
+    public void Transmitters_Are_Never_Wider_Than_A_NinoTNC_In_The_Same_Mode(string mode, string recording)
     {
-        MeasureObw(Create(mode)).Should().BeLessThanOrEqualTo(
-            ninoHz * 1.10,
-            "a real NinoTNC transmits mode '{0}' in {1} Hz and we share its channel", mode, ninoHz);
+        string path = Path.Combine(FindRepoRoot(), "samples", "ninotnc", recording);
+        double reference = WholeBurstObw(LoadFirstBurst(path), 48000);
+
+        IModem tx = Create(mode);
+        float[] audio = tx.Modulate(BenchFrame(mode), txDelayMilliseconds: 300);
+        double ours = WholeBurstObw(Trim(audio), SampleRate);
+
+        // 10 % tolerance, sized to the scatter the references themselves demonstrate
+        // (the same NinoTNC modulator measures 305-328 Hz across its two 300 AFSK modes).
+        ours.Should().BeLessThanOrEqualTo(
+            reference * 1.10,
+            "a real NinoTNC transmits mode '{0}' in {1:F0} Hz (measured from {2}) and we share its channel",
+            mode, reference, recording);
+    }
+
+    private static byte[] BenchFrame(string mode)
+    {
+        // The exact frame shape the reference recordings carry (nino-bench MakeFrame).
+        var payload = new byte[40];
+        byte[] tag = System.Text.Encoding.UTF8.GetBytes($"BENCH {mode} #0000 ");
+        for (int i = 0; i < payload.Length; i++)
+        {
+            payload[i] = i < tag.Length ? tag[i] : (byte)('A' + (i % 26));
+        }
+
+        byte[] header = [0x9C, 0x92, 0x9C, 0x9E, 0x40, 0x40, 0xE0, 0x84, 0x8A, 0x9C, 0x86, 0x90, 0x40, 0x63, 0x03, 0xF0];
+        return [.. header, .. payload];
+    }
+
+    private static float[] LoadFirstBurst(string path)
+    {
+        var (raw, rate) = Packet.SoundModem.Audio.WavFile.ReadMono(path);
+        rate.Should().Be(48000, "the reference recordings are 48 kHz rig captures");
+        int window = rate / 100, start = -1;
+        for (int i = 0; i + window < raw.Length; i += window)
+        {
+            float peak = 0;
+            for (int k = i; k < i + window; k++)
+            {
+                peak = Math.Max(peak, Math.Abs(raw[k]));
+            }
+
+            if (peak > 0.03f && start < 0)
+            {
+                start = i;
+            }
+
+            if (peak <= 0.03f && start >= 0)
+            {
+                if (i - start > rate / 10)
+                {
+                    return raw[start..i];
+                }
+
+                start = -1;
+            }
+        }
+
+        throw new InvalidOperationException($"no burst found in {path}");
+    }
+
+    private static float[] Trim(float[] audio)
+    {
+        int a = 0, b = audio.Length - 1;
+        while (a < audio.Length && Math.Abs(audio[a]) < 0.02f)
+        {
+            a++;
+        }
+
+        while (b > a && Math.Abs(audio[b]) < 0.02f)
+        {
+            b--;
+        }
+
+        return audio[a..(b + 1)];
+    }
+
+    /// <summary>Whole-burst 99 % OBW. The FFT size scales with the rate so both sides
+    /// are measured at the same ~12 Hz bin resolution — comparing spectra measured at
+    /// different resolutions is the same class of error this test exists to prevent.</summary>
+    private static double WholeBurstObw(float[] burst, int rate) =>
+        OccupiedBandwidth.Measure(burst, rate, fftSize: rate == 48000 ? 4096 : 1024).WidthHz;
+
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "pdn-soundmodem.slnx")))
+        {
+            dir = dir.Parent;
+        }
+
+        return dir?.FullName ?? throw new InvalidOperationException("repo root not found");
     }
 
     [Fact]

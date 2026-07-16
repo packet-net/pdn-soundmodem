@@ -52,7 +52,13 @@ public sealed class AfskDemodulator
     /// for the same reason. 700 Hz is UZ7HOStuff.h's MODEM_1200 value; 250 Hz matches the
     /// 500 Hz OBW Nino filters the HF modes to.</param>
     /// <param name="lowPassCutoff">I/Q low-pass cutoff: must pass the tones (±shift) plus
-    /// the modulation, and nothing else. 650 Hz is MODEM_1200's.</param>
+    /// the modulation, and nothing else. 650 Hz is MODEM_1200's, and it embodies a real
+    /// trade measured on both sides: a wider 750 Hz filter settles faster and takes a
+    /// NinoTNC's shortest flag fill (TXDELAY 20, one word) from 6/10 to 10/10 — but costs
+    /// weak-signal margin, dropping WA8LMF Track 2 from 472 to 410. The default backs the
+    /// weak-signal case: short-fill peers are a rare configuration (fills of ≥100 ms
+    /// decode 10/10 either way), weak signals are the daily reality. A port that knows its
+    /// peer runs a one-word fill can pass 750 here and accept the noise cost.</param>
     /// <param name="bandPassTaps">Band-pass length at 12 kHz (scaled with the rate). A FIR
     /// this long has a transition width of roughly 3.3·rate/taps, so a narrow filter needs
     /// a long one: 256 suits the wide Bell 202 band-pass, the 300 baud modes want ~4x
