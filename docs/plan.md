@@ -198,6 +198,23 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still⁹) — ARDOP design/scoping lands
+
+PR #23: [ardop-design.md](ardop-design.md) — the FreeDV-style de-risking pass for the open
+Winlink path, grounded in ardopcf (@a7c92289, v1.0.4.1.3, MIT — verified; port-from-ardopcf
+recommended over clean-room, the spec lacking implementation detail e.g. the nonstandard CRC).
+Headlines: exactly one interoperable ARDOP (spec Rev 2.0, 2017; G8BPQ "ARDOP 2" is
+OTA-incompatible, out of scope); 18 data modes + ~15 control frames over 200/500/1000/2000 Hz —
+4FSK / differential 4-8PSK / 16QAM on 1-8 parallel 100 Bd tone carriers (NOT IFFT OFDM); FEC =
+RS + repeats + Memory-ARQ (our ReedSolomon is a direct hit — FX.25's GF config); ≈6-8 k lines
+C#. Riskiest: the ARQ timing machine (ACK on-air inside the ISS's 1.5-2.1 s window) and
+PSK/16QAM demod robustness. Host interface: byte-compatible ardopcf TCP (8515/8516) so Pat
+works unmodified. ardopcf proven as a fully-offline oracle on this box (--decodewav + null-dev
+TX vectors, both measured). Phasing: A) 4FSK codec + FEC mode → B) ARQ (both-ends-FSKONLY) →
+C) PSK/16QAM RX-first → D) host interface + Pat + bench. OBW: never-wider-than-ardopcf per
+bandwidth class. §10 holds the open questions for Tom (bench/gateway logistics, 16QAM bar,
+600 Bd FM / RXO scope).
+
 ### 2026-07-16 (later still⁸) — POCSAG lands: spec-first paging + the daemon paging endpoint
 
 PR #22: POCSAG (roadmap easy win) implemented spec-first from CCIR RPC No.1 — layout proven by
