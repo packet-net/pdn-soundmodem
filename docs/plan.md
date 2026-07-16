@@ -198,6 +198,22 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still⁸) — POCSAG lands: spec-first paging + the daemon paging endpoint
+
+PR #22: POCSAG (roadmap easy win) implemented spec-first from CCIR RPC No.1 — layout proven by
+reproducing the published sync/idle constants from their own data bits; BCH(31,21) exhaustively
+verified (all 1/2-bit patterns corrected, all 4960 3-bit patterns rejected). Cross-validated
+against multimon-ng: 9/9 pages exact across RIC edge cases, functions, charsets and all three
+bauds; polarity pinned to the spec convention. **Interface (Tom's call): no KISS** (pages are
+not AX.25 frames; one-way medium) — instead a daemon `--paging <port>` TCP line protocol
+(`PAGE <ric> <func> ALPHA|NUMERIC|TONE [text]` → CSMA/PTT TX) with heard pages broadcast as
+`HEARD …` on the same socket; a DAPNET-core transmitter client is an explicit non-goal for now.
+Internal plumbing added two clean channel seams (a generalised audio TX queue entry +
+an RX tap) rather than abusing IModem/KISS. Found + recorded an upstream bug: DAPNET
+UniPager's crc() off-by-one cannot reproduce the sync word (PROVENANCE.md). OBW pinned by
+absolute bounds (~691 Hz baseband at 1200 bd; no reference recording exists). Suite → 419.
+Follow-ups noted: first off-air 439.9875 MHz capture when taken; DAPNET client if ever wanted.
+
 ### 2026-07-16 (later still⁷) — Phase 2: all six datac modes complete
 
 PR #21: RX for the narrow modes (datac4/13/14) — the RX band-pass filter
