@@ -14,7 +14,7 @@ public enum SyncState
 }
 
 /// <summary>
-/// The FreeDV datac OFDM demodulator and streaming sync state machine — a port of codec2's
+/// The FreeDV datac OFDM demodulator and sync state machines — a port of codec2's
 /// <c>ofdm_sync_search_stream</c>, <c>ofdm_demod_core</c> and
 /// <c>ofdm_sync_state_machine_data_streaming</c> (codec2 1.2.0, git 310777b, <c>ofdm.c</c>;
 /// LGPL-2.1 — see PROVENANCE.md). It consumes a stream of 8&#160;kHz real audio (fed as
@@ -28,6 +28,14 @@ public enum SyncState
 /// Single-precision throughout to track the reference bit-for-bit on clean inputs and
 /// statistically (CRC-valid / packet-error-rate) on noisy ones. The design is transcribed in
 /// docs/ofdm-design.md §4 and the demodulator design note. Not thread-safe.
+/// </para>
+/// <para>
+/// Two acquisition modes, matching codec2's <c>data_mode</c>: <b>streaming</b> (the default —
+/// pilot-correlation acquisition, never loses sync) and <b>burst</b> (selected via
+/// <see cref="SetPacketsPerBurst"/>, codec2 <c>ofdm_set_packets_per_burst</c>, <c>ofdm.c:1165</c>
+/// — acquisition correlates against the known preamble/postamble waveforms, and sync is dropped
+/// after each burst). Burst mode is what codec2's <c>freedv_data_raw_tx/rx</c> tools and FreeDATA
+/// use (<c>freedv_set_frames_per_burst</c>, <c>freedv_api.c:1418</c>).
 /// </para>
 /// <para>
 /// The RX band-pass filter used by datac4/13/14 (codec2 <c>quisk_ccfFilter</c>) is not ported;
@@ -69,6 +77,18 @@ public sealed class OfdmDemodulator
     private int _syncCounter;
     private int _packetCount;
     private int _uwErrors;
+
+    // burst data mode (codec2 data_mode == "burst"; ofdm_set_packets_per_burst, ofdm.c:1165)
+    private bool _burstMode;
+    private int _packetsPerBurst;
+    private bool _postambleDetectorEn;
+    private Cf[]? _txPreamble;
+    private Cf[]? _txPostamble;
+    private Cf[]? _mvec;                    // known-sequence correlator scratch (samplesperframe)
+
+    // burst acquisition frequency search range (codec2 ofdm->fmin/fmax defaults, ofdm.c:427-428)
+    private const float FminHz = -50.0f;
+    private const float FmaxHz = 50.0f;
 
     /// <summary>Creates a demodulator for <paramref name="config"/>.</summary>
     public OfdmDemodulator(OfdmDemodConfig config)
@@ -152,6 +172,51 @@ public sealed class OfdmDemodulator
     /// <summary>The demod config in use.</summary>
     public OfdmDemodConfig Config => _c;
 
+    /// <summary>Whether burst data mode is selected (see <see cref="SetPacketsPerBurst"/>).</summary>
+    public bool BurstMode => _burstMode;
+
+    /// <summary>Bursts acquired via the preamble detector (codec2 <c>ofdm->pre</c>).</summary>
+    public int PreambleDetections { get; private set; }
+
+    /// <summary>Bursts acquired via the postamble detector (codec2 <c>ofdm->post</c>).</summary>
+    public int PostambleDetections { get; private set; }
+
+    /// <summary>Trial syncs abandoned on a bad unique word (codec2 <c>ofdm->uw_fails</c>).</summary>
+    public int UwFails { get; private set; }
+
+    /// <summary>
+    /// Selects <b>burst</b> data mode and sets the packets-per-burst limit — a port of codec2's
+    /// <c>ofdm_set_packets_per_burst</c> (<c>ofdm.c:1165-1169</c>), which
+    /// <c>freedv_set_frames_per_burst</c> calls (<c>freedv_api.c:1418</c>; FreeDATA and
+    /// <c>freedv_data_raw_rx</c> both use 1). Acquisition switches from pilot search to the
+    /// known-sequence preamble/postamble correlator, and after <paramref name="packetsPerBurst"/>
+    /// decoded packets sync drops back to search with the sample history cleared. The postamble
+    /// detector is always enabled in burst mode.
+    /// </summary>
+    /// <param name="packetsPerBurst">Packets expected per burst (≥ 1); 0 keeps sync forever once
+    /// acquired, as codec2 does.</param>
+    /// <param name="txPreamble">The known raw preamble frame (<c>ofdm->tx_preamble</c>, LCG seed 2,
+    /// amp_scale 1, no clip/BPF — <see cref="OfdmModulator.PreambleRaw"/>), SamplesPerFrame long.</param>
+    /// <param name="txPostamble">The known raw postamble frame (<c>ofdm->tx_postamble</c>, LCG
+    /// seed 3 — <see cref="OfdmModulator.PostambleRaw"/>), SamplesPerFrame long.</param>
+    public void SetPacketsPerBurst(int packetsPerBurst, ReadOnlySpan<Cf> txPreamble, ReadOnlySpan<Cf> txPostamble)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(packetsPerBurst);
+        if (txPreamble.Length != _c.SamplesPerFrame || txPostamble.Length != _c.SamplesPerFrame)
+        {
+            throw new ArgumentException(
+                $"preamble/postamble must be one modem frame ({_c.SamplesPerFrame} samples), " +
+                $"got {txPreamble.Length}/{txPostamble.Length}");
+        }
+
+        _burstMode = true;
+        _packetsPerBurst = packetsPerBurst;
+        _postambleDetectorEn = true;   // ofdm.c:1168
+        _txPreamble = txPreamble.ToArray();
+        _txPostamble = txPostamble.ToArray();
+        _mvec = new Cf[_c.SamplesPerFrame];
+    }
+
     // -----------------------------------------------------------------------------------------
     // Buffer feed (codec2 ofdm_sync_search / ofdm_demod: memmove left by nin, append nin).
     // -----------------------------------------------------------------------------------------
@@ -173,14 +238,15 @@ public sealed class OfdmDemodulator
         }
     }
 
-    /// <summary>Streaming acquisition (codec2 <c>ofdm_sync_search_stream</c>, <c>ofdm.c:1394</c>).
-    /// Slides in <see cref="Nin"/> new samples and searches for the pilot correlation peak over
-    /// coarse frequency offsets {−40, 0, +40}&#160;Hz. Returns whether a valid timing peak was
-    /// found.</summary>
+    /// <summary>Acquisition (codec2 <c>ofdm_sync_search</c> → <c>ofdm_sync_search_core</c>,
+    /// <c>ofdm.c:1466-1474</c>). Slides in <see cref="Nin"/> new samples, then dispatches on data
+    /// mode: streaming searches for the pilot correlation peak over coarse frequency offsets
+    /// {−40, 0, +40}&#160;Hz; burst runs the known preamble/postamble correlator. Returns whether
+    /// a valid timing peak was found.</summary>
     public bool SyncSearch(ReadOnlySpan<Cf> input)
     {
         FeedShiftAppend(input);
-        return SyncSearchStream();
+        return _burstMode ? SyncSearchBurst() : SyncSearchStream();
     }
 
     private bool SyncSearchStream()
@@ -222,6 +288,149 @@ public sealed class OfdmDemodulator
         }
 
         _timingMx = timingMx;
+        return timingValid;
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Burst acquisition (codec2 ofdm.c:1251-1381) — known-sequence correlation against the
+    // deterministic preamble/postamble instead of the pilot waveform.
+    // -----------------------------------------------------------------------------------------
+
+    /// <summary>Joint estimation of timing and frequency offset for burst data acquisition
+    /// (codec2 <c>est_timing_and_freq</c>, <c>ofdm.c:1253-1295</c>): for each candidate frequency
+    /// offset, correlate the de-rotated known sequence against every <paramref name="tstep"/>-th
+    /// lag of <paramref name="rx"/> and keep the global magnitude peak. Returns the normalised
+    /// timing metric <c>max_corr²/(mag1·mag2)</c>.</summary>
+    private float EstTimingAndFreq(
+        out int tEst, out float foffEst, ReadOnlySpan<Cf> rx, int nrx,
+        ReadOnlySpan<Cf> knownSamples, int npsam, int tstep, float fmin, float fmax, float fstep)
+    {
+        int ncorr = nrx - npsam + 1;
+        float maxCorr = 0.0f;
+        tEst = 0;
+        foffEst = 0.0f;
+        Span<Cf> mvec = _mvec.AsSpan(0, npsam);   // non-null once burst mode is selected
+
+        for (float afcoarse = fmin; afcoarse <= fmax; afcoarse += fstep)
+        {
+            float w = MathF.Tau * afcoarse / (float)_c.Fs;
+            for (int i = 0; i < npsam; i++)
+            {
+                mvec[i] = (knownSamples[i] * Cf.Cmplx(w * i)).Conj();
+            }
+
+            for (int t = 0; t < ncorr; t += tstep)
+            {
+                Cf corr = DotNoConj(rx[t..], mvec, npsam);
+                float mag = corr.Abs();
+                if (mag > maxCorr)
+                {
+                    maxCorr = mag;
+                    tEst = t;
+                    foffEst = afcoarse;
+                }
+            }
+        }
+
+        // normalised real timing metric (ofdm.c:1281-1287)
+        float mag1 = 0.0f;
+        float mag2 = 0.0f;
+        for (int i = 0; i < npsam; i++)
+        {
+            mag1 += knownSamples[i].Cnorm();
+            mag2 += rx[i + tEst].Cnorm();
+        }
+
+        return maxCorr * maxCorr / ((mag1 * mag2) + 1e-12f);
+    }
+
+    /// <summary>Two-stage burst acquisition (codec2 <c>burst_acquisition_detector</c>,
+    /// <c>ofdm.c:1299-1323</c>): a coarse grid (every 4th lag, 5&#160;Hz steps over
+    /// [fmin,&#160;fmax]) over two frames of rxbuf starting at <paramref name="n"/>, then a fine
+    /// refinement (every lag, 1&#160;Hz steps, ±3&#160;Hz / ±2 lags around the coarse peak).
+    /// <paramref name="ctEst"/> is returned relative to <paramref name="n"/>.</summary>
+    private float BurstAcquisitionDetector(int n, ReadOnlySpan<Cf> knownSequence, out int ctEst, out float foffEst)
+    {
+        int spf = _c.SamplesPerFrame;
+
+        // initial search over coarse grid
+        int tstep = 4;
+        float fstep = 5.0f;
+        EstTimingAndFreq(out ctEst, out foffEst, _rxbuf.AsSpan(n, 2 * spf), 2 * spf,
+                         knownSequence, spf, tstep, FminHz, FmaxHz, fstep);
+
+        // refine estimate over finer grid
+        float fmin = foffEst - MathF.Ceiling(fstep / 2.0f);
+        float fmax = foffEst + MathF.Ceiling(fstep / 2.0f);
+        int fineSt = n + ctEst - (tstep / 2);
+        float timingMx = EstTimingAndFreq(out ctEst, out foffEst, _rxbuf.AsSpan(fineSt, spf + tstep), spf + tstep,
+                                          knownSequence, spf, 1, fmin, fmax, 1.0f);
+
+        // refer ct_est to nominal start of frame rxbuf[n]
+        ctEst += fineSt - n;
+        return timingMx;
+    }
+
+    /// <summary>Burst acquisition search (codec2 <c>ofdm_sync_search_burst</c>,
+    /// <c>ofdm.c:1325-1381</c>): run the detector against the known preamble and (in burst mode)
+    /// postamble; on a preamble hit skip <c>nin</c> past it to the first modem frame, on a
+    /// postamble hit rewind <c>rxbufst</c> one packet into the buffered history so the packet is
+    /// demodulated from samples already received (and set <c>nin&#160;=&#160;0</c>).</summary>
+    private bool SyncSearchBurst()
+    {
+        int st = _rxbufst + _c.M + _c.Ncp + _c.SamplesPerFrame;
+
+        float preTimingMx = BurstAcquisitionDetector(st, _txPreamble, out int preCtEst, out float preFoffEst);
+
+        int postCtEst = 0;
+        float postFoffEst = 0.0f;
+        float postTimingMx = 0.0f;
+        if (_postambleDetectorEn)
+        {
+            postTimingMx = BurstAcquisitionDetector(st, _txPostamble, out postCtEst, out postFoffEst);
+        }
+
+        bool isPost;
+        int ctEst;
+        float foffEst;
+        float timingMx;
+        if (!_postambleDetectorEn || preTimingMx > postTimingMx)
+        {
+            (timingMx, ctEst, foffEst, isPost) = (preTimingMx, preCtEst, preFoffEst, false);
+        }
+        else
+        {
+            (timingMx, ctEst, foffEst, isPost) = (postTimingMx, postCtEst, postFoffEst, true);
+        }
+
+        bool timingValid = timingMx > _c.TimingMxThresh;
+        if (timingValid)
+        {
+            if (isPost)
+            {
+                PostambleDetections++;
+                // we won't need any new samples for a while: back up to the first modem frame of
+                // the packet preceding the postamble (ofdm.c:1358-1364)
+                _nin = 0;
+                _rxbufst -= _c.Np * _c.SamplesPerFrame;
+                _rxbufst += ctEst;
+            }
+            else
+            {
+                PreambleDetections++;
+                // ct_est is the start of the preamble, so advance past it to the start of the
+                // first modem frame (ofdm.c:1366-1369)
+                _nin = _c.SamplesPerFrame + ctEst - 1;
+            }
+        }
+        else
+        {
+            _nin = _c.SamplesPerFrame;
+        }
+
+        _foffEstHz = foffEst;
+        _timingMx = timingMx;
+        _timingValid = timingValid;
         return timingValid;
     }
 
@@ -373,10 +582,24 @@ public sealed class OfdmDemodulator
         }
     }
 
-    /// <summary>Runs the streaming sync state machine (codec2
-    /// <c>ofdm_sync_state_machine_data_streaming</c>, <c>ofdm.c:2101</c>) with the unique-word
+    /// <summary>Runs the data sync state machine for the selected data mode (codec2
+    /// <c>ofdm_sync_state_machine</c> dispatcher, <c>ofdm.c:2269-2280</c>) with the unique-word
     /// bits extracted from the packet buffer this frame.</summary>
     public void SyncStateMachine(ReadOnlySpan<byte> rxUw)
+    {
+        if (_burstMode)
+        {
+            SyncStateMachineDataBurst(rxUw);
+        }
+        else
+        {
+            SyncStateMachineDataStreaming(rxUw);
+        }
+    }
+
+    /// <summary>The streaming-data sync state machine (codec2
+    /// <c>ofdm_sync_state_machine_data_streaming</c>, <c>ofdm.c:2101</c>).</summary>
+    private void SyncStateMachineDataStreaming(ReadOnlySpan<byte> rxUw)
     {
         SyncState nextState = State;
         SyncStart = false;
@@ -425,6 +648,80 @@ public sealed class OfdmDemodulator
 
         LastSyncState = State;
         State = nextState;
+    }
+
+    /// <summary>The burst-data sync state machine (codec2
+    /// <c>ofdm_sync_state_machine_data_burst</c>, <c>ofdm.c:2156-2215</c>). The pre/postamble told
+    /// us where the packet starts, so trial waits exactly <c>nuwframes</c> frames then accepts or
+    /// abandons on the unique word; after <c>packetsperburst</c> packets sync drops back to search.
+    /// Both search transitions clear rxbuf so a postamble is never correlated twice against the
+    /// same samples (the de-dupe that prevents double-decoding a burst).</summary>
+    private void SyncStateMachineDataBurst(ReadOnlySpan<byte> rxUw)
+    {
+        SyncState nextState = State;
+        SyncStart = false;
+
+        if (State == SyncState.Search && _timingValid)
+        {
+            SyncStart = true;
+            _syncCounter = 0;
+            nextState = SyncState.Trial;
+        }
+
+        _uwErrors = 0;
+        for (int i = 0; i < _c.Nuwbits; i++)
+        {
+            _uwErrors += _c.TxUw[i] ^ rxUw[i];
+        }
+
+        // The pre or postamble has told us this is the start of the packet. Confirm we have a
+        // valid frame by checking the UW after the modem frames containing the UW have arrived.
+        if (State == SyncState.Trial)
+        {
+            _syncCounter++;
+            if (_syncCounter == _c.Nuwframes)
+            {
+                if (_uwErrors < _c.BadUwErrors)
+                {
+                    nextState = SyncState.Synced;
+                    _packetCount = 0;
+                    _modemFrame = _c.Nuwframes;
+                }
+                else
+                {
+                    nextState = SyncState.Search;
+                    ResetRxBufToSearch();   // ofdm.c:2186-2190
+                    UwFails++;
+                }
+            }
+        }
+
+        if (State == SyncState.Synced)
+        {
+            _modemFrame++;
+            if (_modemFrame >= _c.Np)
+            {
+                _modemFrame = 0;
+                _packetCount++;
+                if (_packetsPerBurst > 0 && _packetCount >= _packetsPerBurst)
+                {
+                    nextState = SyncState.Search;
+                    ResetRxBufToSearch();   // ofdm.c:2202-2207
+                }
+            }
+        }
+
+        LastSyncState = State;
+        State = nextState;
+    }
+
+    /// <summary>Resets the rx buffer window and zeroes the buffered history so a burst's
+    /// postamble is only ever correlated once against the same samples (codec2
+    /// <c>ofdm_sync_state_machine_data_burst</c>, <c>ofdm.c:2186-2190</c>).</summary>
+    private void ResetRxBufToSearch()
+    {
+        _rxbufst = _c.NrxBufHistory;
+        Array.Clear(_rxbuf);
     }
 
     // -----------------------------------------------------------------------------------------

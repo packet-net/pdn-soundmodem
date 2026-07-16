@@ -16,12 +16,13 @@ namespace Packet.SoundModem.Ofdm;
 /// <see cref="OfdmModulator.ModulatePacket"/> (idft+CP + Hilbert clipper/BPF, <c>ofdm_txframe</c>).
 /// </summary>
 /// <remarks>
-/// This is the streaming path — successive <see cref="ModulatePacket"/> calls form a continuous
-/// modem-packet stream (as codec2's <c>freedv_rawdatacomptx</c> loop does on one reused struct),
-/// with the modulator's persistent TX band-pass filter carrying across packets. No preamble /
-/// postamble is emitted; the streaming RX acquires by pilot correlation. The burst/preamble path
-/// (for the FreeDV CLI tools) is a separate concern. Supported modes are datac0/1/3 (matching the
-/// validated <see cref="DatacReceiver"/>). Not thread-safe.
+/// Two emission shapes: successive <see cref="ModulatePacket"/> calls form a continuous
+/// <b>streaming</b> transmission (as codec2's <c>freedv_rawdatacomptx</c> loop does on one reused
+/// struct — no preamble/postamble; the streaming RX acquires by pilot correlation), while
+/// <see cref="ModulateBurst"/> emits the <b>burst</b> framing
+/// <c>[preamble][packets…][postamble]</c> that the FreeDV CLI tools and FreeDATA exchange. The
+/// modulator's persistent TX band-pass filter carries across calls in both shapes. Supported
+/// modes are datac0/1/3 (matching the validated <see cref="DatacReceiver"/>). Not thread-safe.
 /// </remarks>
 public sealed class DatacTransmitter
 {
@@ -87,6 +88,15 @@ public sealed class DatacTransmitter
     /// repeated calls on one instance build a continuous streaming transmission.</summary>
     public Cf[] ModulatePacket(ReadOnlySpan<byte> payload)
     {
+        // idft+CP + Hilbert clipper/BPF (ofdm_txframe), persistent BPF for streaming.
+        return _mod.ModulatePacket(AssembleModemPacket(payload));
+    }
+
+    /// <summary>Encodes one payload up to the assembled modem-packet symbols (steps 1-6 of the TX
+    /// chain — everything before the waveform): CRC append, unpack, LDPC encode, QPSK map,
+    /// golden-prime interleave, unique-word insertion.</summary>
+    private Cf[] AssembleModemPacket(ReadOnlySpan<byte> payload)
+    {
         if (payload.Length != PayloadBytes)
         {
             throw new ArgumentException(
@@ -121,10 +131,34 @@ public sealed class DatacTransmitter
         //    symbols and amplitudes with the inverse permutation.
         GpInterleaver.Interleave<Cf>(_payload, _interleaved, _payloadSyms);
 
-        // 6. insert the unique-word symbols (ofdm_assemble_qpsk_modem_packet_symbols) and
-        //    7. idft+CP + Hilbert clipper/BPF (ofdm_txframe), persistent BPF for streaming.
-        Cf[] modemPacket = _mod.AssembleModemPacket(_interleaved);
-        return _mod.ModulatePacket(modemPacket);
+        // 6. insert the unique-word symbols (ofdm_assemble_qpsk_modem_packet_symbols).
+        return _mod.AssembleModemPacket(_interleaved);
+    }
+
+    /// <summary>Modulates one <b>burst</b>: <c>[preamble][packet]×N[postamble]</c>, the framing
+    /// codec2's <c>freedv_data_raw_tx</c> emits (one <c>freedv_rawdatapreambletx</c>, the data
+    /// packets, one <c>freedv_rawdatapostambletx</c>) and that <see cref="DatacReceiver"/> in
+    /// burst mode acquires. Each payload becomes one packet, so send
+    /// <c>payloads.Count&#160;==&#160;packetsPerBurst</c> of the receiving side. The persistent TX
+    /// band-pass filter runs across the whole burst and carries into the next call, matching one
+    /// long-lived codec2 process sending successive bursts (silence between bursts bypasses the
+    /// modem there, so the filter state persists). No silence is appended — codec2's tool follows
+    /// each burst with ≈ two packets of it, which the burst/IModem layer owns.</summary>
+    public Cf[] ModulateBurst(IReadOnlyList<byte[]> payloads)
+    {
+        ArgumentNullException.ThrowIfNull(payloads);
+        if (payloads.Count == 0)
+        {
+            throw new ArgumentException("a burst needs at least one payload", nameof(payloads));
+        }
+
+        var packets = new List<Cf[]>(payloads.Count);
+        foreach (byte[] payload in payloads)
+        {
+            packets.Add(AssembleModemPacket(payload));
+        }
+
+        return _mod.EmitBurst(packets, resetFilter: false);
     }
 
     /// <summary>Modulates one packet and converts it to real signed-16-bit PCM at 8&#160;kHz — the

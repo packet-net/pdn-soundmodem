@@ -19,8 +19,11 @@ public readonly record struct DatacRxResult(byte[] Bytes, bool CrcOk, int Iterat
 /// <see cref="OfdmDemodulator"/> + <see cref="OfdmPacketAssembler"/> exactly as codec2's reference
 /// RX loop does (<c>ofdm_demod.c</c>: sync-search while searching, demod while trial/synced,
 /// accumulate a packet, extract the UW, and at the last frame of a packet de-interleave →
-/// <c>symbols_to_llrs</c> → LDPC decode → CRC check), then advances the streaming sync state
-/// machine. codec2 1.2.0 (git 310777b), LGPL-2.1 — see PROVENANCE.md.
+/// <c>symbols_to_llrs</c> → LDPC decode → CRC check), then advances the sync state machine.
+/// Streaming by default; pass <c>packetsPerBurst&#160;≥&#160;1</c> for <b>burst</b> mode — the
+/// preamble/postamble acquisition that codec2's <c>freedv_data_raw_tx/rx</c> tools and FreeDATA
+/// use (<c>freedv_set_frames_per_burst</c>). codec2 1.2.0 (git 310777b), LGPL-2.1 — see
+/// PROVENANCE.md.
 /// </summary>
 /// <remarks>
 /// This is the demodulator's validation harness and the substrate for a future <c>IModem</c>
@@ -36,11 +39,17 @@ public sealed class DatacReceiver
     private readonly byte[] _dataBits;
     private readonly byte[] _rxUw;
     private readonly int _frameBytes;
+    private readonly int _maxNin;
 
     /// <summary>Creates a receiver for <paramref name="mode"/> (datac0/1/3 supported).</summary>
-    public DatacReceiver(OfdmMode mode)
+    /// <param name="mode">The datac mode to receive.</param>
+    /// <param name="packetsPerBurst">0 (default) selects streaming mode. ≥&#160;1 selects burst
+    /// mode with that many packets expected per burst, mirroring codec2's
+    /// <c>freedv_set_frames_per_burst</c> (the standard CLI tools and FreeDATA use 1).</param>
+    public DatacReceiver(OfdmMode mode, int packetsPerBurst = 0)
     {
         ArgumentNullException.ThrowIfNull(mode);
+        ArgumentOutOfRangeException.ThrowIfNegative(packetsPerBurst);
         _cfg = new OfdmDemodConfig(mode);
         _demod = new OfdmDemodulator(_cfg);
         _assembler = new OfdmPacketAssembler(_cfg);
@@ -56,6 +65,21 @@ public sealed class DatacReceiver
         _dataBits = new byte[_ldpc.DataBits];
         _rxUw = new byte[_cfg.Nuwbits];
         _frameBytes = _ldpc.DataBits / 8;
+
+        if (packetsPerBurst > 0)
+        {
+            // The known sequences burst acquisition correlates against are the TX side's raw
+            // preamble/postamble frames (ofdm_create generates ofdm->tx_preamble/tx_postamble via
+            // the modulator, ofdm.c:531-538).
+            var modulator = new OfdmModulator(mode);
+            _demod.SetPacketsPerBurst(packetsPerBurst, modulator.PreambleRaw.Span, modulator.PostambleRaw.Span);
+        }
+
+        // Burst preamble detection can skip nin ahead by up to two frames (codec2
+        // max_samplesperframe, ofdm.c:304-310); streaming moves at most ±SamplesPerSymbol/4.
+        _maxNin = packetsPerBurst > 0
+            ? (2 * _cfg.SamplesPerFrame) + 2
+            : _cfg.SamplesPerFrame + (_cfg.SamplesPerSymbol / 4) + 1;
     }
 
     /// <summary>The demodulator (for inspecting sync state / intermediate values in tests).</summary>
@@ -80,7 +104,7 @@ public sealed class DatacReceiver
     public IReadOnlyList<DatacRxResult> Process(ReadOnlySpan<short> samples)
     {
         var results = new List<DatacRxResult>();
-        var frame = new Cf[_cfg.SamplesPerFrame + (_cfg.SamplesPerSymbol / 4) + 1];   // max nin
+        var frame = new Cf[_maxNin];
 
         int pos = 0;
         int nin = _demod.Nin;
