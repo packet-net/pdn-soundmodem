@@ -198,6 +198,25 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still³) — next-wave modem roadmap + FreeDV OFDM Phase-1 design
+
+Two planning docs land ahead of the next build wave. [waveform-roadmap.md](waveform-roadmap.md)
+ranks the candidate modems after two research sweeps (FreeDV/Codec2 OFDM internals + a full
+landscape survey) and a verified scoping of MIL-STD-188-110D App D: build order **FreeDV OFDM
+datac → POCSAG → ARDOP → MIL-STD-188-110D App D (3 kHz) → own FM OFDM → own HF OFDM**, with the
+cannot-implement (VARA/PACTOR/P25/…) and label-only (APRS, CubeSat 9k6) sets, M17 parked, and the
+compatibility-labelling rule up front. [ofdm-design.md](ofdm-design.md) is the implementation-ready
+Phase-1 design for the lead item: a **pure-managed C# port of the FreeDV datac OFDM modes validated
+bit-for-bit against `libcodec2` as a test-only oracle** (not a P/Invoke wrap — the port builds the
+shared OFDM sync engine our own FM/HF modes reuse). Six QPSK modes @ 8 kHz/1500 Hz; phasing
+datac0→datac1→datac3; OBW CI-enforced per mode; the sync/channel-estimation state machine + the
+sample-clock and datac4/13-shortening bit-exactness are the flagged risks. The MIL-STD-188-110D App
+D redirect (of the RESTRICTED STANAG 5069 that G4KLX advocated) is public/verified-downloadable but
+gated on its no-oracle validation risk and sequenced after FreeDV. Design docs produced by a
+research/design workflow; the final synthesis was assembled by hand (multi-agent synthesis failed on
+prompt size — the six component designs are preserved verbatim). No code yet — next is the Phase-1
+build.
+
 ### 2026-07-16 (later still²) — QtSM matrix re-measured under coherent; #6/#10/#11 resolved on evidence
 
 The coherent detector default (#5) invalidated the **qtsm→ours** half of the QtSoundModem
