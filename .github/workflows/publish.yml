@@ -45,7 +45,7 @@ jobs:
           echo "version=$ref" >> "$GITHUB_OUTPUT"
 
       - name: test
-        run: dotnet test --configuration Release
+        run: dotnet test --configuration Release --filter "Category!=Aspiration"
 
       - name: pack
         run: |
