@@ -81,6 +81,12 @@ public sealed class SoundModemChannel
     /// CRC state, winning decoder branch. See <see cref="Modems.FrameQuality"/>.</summary>
     public event Action<int, byte[], Modems.FrameQuality>? FrameReceivedWithQuality;
 
+    /// <summary>Raised when a queued frame is dropped because its modem refused to
+    /// modulate it (sub-channel, frame, reason) — e.g. a frame beyond the mode's size
+    /// bound. The frame's <see cref="EnqueueTransmit"/> task faults with the same
+    /// exception; the transmitter keeps running.</summary>
+    public event Action<int, byte[], Exception>? TransmitRejected;
+
     /// <summary>True while any modem sees packet or energy busy, or we are transmitting.</summary>
     public bool ChannelBusy => _transmitting || _modems.Values.Any(m => m.ChannelBusy);
 
@@ -187,8 +193,22 @@ public sealed class SoundModemChannel
                     IModem modem = _modems[item.SubChannel];
                     // Subsequent frames in one keyup need only a token preamble.
                     int txDelay = first ? Csma.TxDelayMilliseconds : 30;
+                    float[] samples;
+                    try
+                    {
+                        samples = modem.Modulate(item.Frame, txDelay);
+                    }
+                    catch (ArgumentException rejection)
+                    {
+                        // A frame the modem refuses (oversize for the mode, empty) is
+                        // dropped — it must not kill the transmitter loop. The enqueuer's
+                        // task faults so ACKMODE hosts see the loss.
+                        item.Done.TrySetException(rejection);
+                        TransmitRejected?.Invoke(item.SubChannel, item.Frame, rejection);
+                        continue;
+                    }
+
                     first = false;
-                    float[] samples = modem.Modulate(item.Frame, txDelay);
                     output.Write(samples);
                     output.Drain();
                     item.Done.TrySetResult();

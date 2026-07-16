@@ -160,4 +160,10 @@ public sealed class Il2pDeframer
         _state = State.Hunting;
         _syncShift = 0;
     }
+
+    /// <summary>Abandons any frame in progress and returns to hunting for a sync word. For
+    /// receive paths with hard stream boundaries (e.g. one IL2P stream per FreeDV burst):
+    /// without a reset, a frame truncated by the end of one stream would silently consume
+    /// the head of the next as its missing body.</summary>
+    public void Reset() => ReturnToHunt();
 }

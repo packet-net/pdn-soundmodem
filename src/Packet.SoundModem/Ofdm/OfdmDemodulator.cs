@@ -160,6 +160,10 @@ public sealed class OfdmDemodulator
     /// <summary>Modem-frame counter within the current packet (0 … Np−1).</summary>
     public int ModemFrame => _modemFrame;
 
+    /// <summary>Packets completed since sync was acquired — while synced, the 0-based index
+    /// of the packet currently being assembled (burst mode: its index within the burst).</summary>
+    public int PacketCount => _packetCount;
+
     /// <summary>How many modem frames the UW spans (from the config).</summary>
     public int Nuwframes => _c.Nuwframes;
 
@@ -183,6 +187,25 @@ public sealed class OfdmDemodulator
 
     /// <summary>Trial syncs abandoned on a bad unique word (codec2 <c>ofdm->uw_fails</c>).</summary>
     public int UwFails { get; private set; }
+
+    /// <summary>
+    /// Opt-in <b>pdn extension</b> to the burst sync state machine — NOT codec2 behaviour;
+    /// default false keeps the CLI-validated port exact. While synced, when a new packet's
+    /// unique-word rows are complete (<c>modemFrame == Nuwframes</c>, the same instant the
+    /// trial state checks) and the UW fails the same <c>BadUwErrors</c> test, sync drops
+    /// back to search with the history cleared. codec2 holds sync for exactly
+    /// <c>packetsPerBurst</c> packets because its tools configure both ends with the burst
+    /// length; a KISS modem's bursts are variable-length, so the receiver sets
+    /// <c>packetsPerBurst</c> to the mode's maximum and relies on this check to end the
+    /// burst when the postamble/silence (garbage at the UW positions) follows the last real
+    /// packet. A real mid-burst packet re-presents the transmitted UW, so at working SNR
+    /// this re-runs a check acquisition already passed; the cost is that a burst whose
+    /// mid-burst UW is corrupted is abandoned where codec2 would have held on.
+    /// </summary>
+    public bool EndOfBurstUwDrop { get; set; }
+
+    /// <summary>Sync drops triggered by <see cref="EndOfBurstUwDrop"/> (diagnostics).</summary>
+    public int EndOfBurstDrops { get; private set; }
 
     /// <summary>
     /// Selects <b>burst</b> data mode and sets the packets-per-burst limit — a port of codec2's
@@ -699,7 +722,22 @@ public sealed class OfdmDemodulator
         if (State == SyncState.Synced)
         {
             _modemFrame++;
-            if (_modemFrame >= _c.Np)
+
+            // pdn extension (see EndOfBurstUwDrop): a packet whose freshly-arrived UW rows
+            // fail the trial-state test is not a packet — it is the postamble/silence after
+            // a variable-length burst. End the burst here instead of waiting for the
+            // packetsPerBurst count. Never fires on the acquisition packet: the trial
+            // accept sets modemFrame to Nuwframes, so the first check lands at packet 2+.
+            if (EndOfBurstUwDrop && _modemFrame == _c.Nuwframes && _uwErrors >= _c.BadUwErrors)
+            {
+                nextState = SyncState.Search;
+                ResetRxBufToSearch();
+                EndOfBurstDrops++;
+                // A stale modemFrame == Np−1 (datac0's Nuwframes) would make the receiver
+                // decode garbage during the next burst's trial frames.
+                _modemFrame = 0;
+            }
+            else if (_modemFrame >= _c.Np)
             {
                 _modemFrame = 0;
                 _packetCount++;
@@ -713,6 +751,23 @@ public sealed class OfdmDemodulator
 
         LastSyncState = State;
         State = nextState;
+    }
+
+    /// <summary>
+    /// Forces the burst state machine back to search with the history cleared — the
+    /// receive-side companion of <see cref="EndOfBurstUwDrop"/> for the case the UW check
+    /// misses (a fluke UW match on noise, ~10&#160;% for datac1's 16-bit UW): the phantom
+    /// packet then completes and fails its CRC, and the receiver calls this to end the
+    /// burst rather than accumulate another phantom. pdn extension, not codec2.
+    /// </summary>
+    internal void ForceSearch()
+    {
+        _timingValid = false;   // a stale timing peak must not instantly re-trial
+        _modemFrame = 0;        // a stale Np−1 would decode garbage during the next trial
+        LastSyncState = State;
+        State = SyncState.Search;
+        ResetRxBufToSearch();
+        EndOfBurstDrops++;
     }
 
     /// <summary>Resets the rx buffer window and zeroes the buffered history so a burst's

@@ -222,6 +222,49 @@ public class DatacBurstTests(ITestOutputHelper output)
     }
 
     // ---------------------------------------------------------------------------------------
+    // The pdn end-of-burst extension: variable-length bursts against a max packets-per-burst.
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public void Variable_Length_Bursts_Decode_With_End_Of_Burst_Detection()
+    {
+        // The FreeDvDatacModem shape: the receiver does not know each burst's packet count,
+        // so it sets packetsPerBurst to a ceiling and ends each burst via the UW check on
+        // the frames after the last real packet (EndOfBurstUwDrop) with the CRC backstop.
+        // Bursts of 2, 1 and 3 packets separated by only Nuwframes+1 frames of silence (the
+        // modem's guard budget) — far less than codec2's two packets — must all decode, each
+        // burst acquired by its own preamble.
+        var mode = OfdmMode.Datac0;
+        var tx = new DatacTransmitter(mode);
+        var bursts = new List<byte[][]>
+        {
+            new[] { Payload(14, 0), Payload(14, 1) },
+            new[] { Payload(14, 2) },
+            new[] { Payload(14, 3), Payload(14, 4), Payload(14, 5) },
+        };
+
+        var rx = new DatacReceiver(mode, packetsPerBurst: 32, endOfBurstDetection: true);
+        int gap = (rx.Demod.Nuwframes + 1) * mode.SamplesPerFrame;
+        var audio = new List<Cf>(new Cf[gap]);
+        foreach (byte[][] burst in bursts)
+        {
+            audio.AddRange(tx.ModulateBurst(burst));
+            audio.AddRange(new Cf[gap]);
+        }
+
+        audio.AddRange(new Cf[2 * mode.SamplesPerPacket]);   // trailing drain
+        IReadOnlyList<DatacRxResult> results = rx.Process(DatacTransmitter.ToPcm16(audio.ToArray()));
+        output.WriteLine(
+            $"datac0 2+1+3 variable bursts: decoded {results.Count}, {results.Count(r => r.CrcOk)} CRC-OK, " +
+            $"pre={rx.Demod.PreambleDetections} eobDrops={rx.Demod.EndOfBurstDrops} uwFails={rx.Demod.UwFails}");
+
+        var sent = Enumerable.Range(0, 6).Select(p => Payload(14, p)).ToList();
+        AssertAllPayloadsRecovered(sent, results);
+        rx.Demod.PreambleDetections.Should().Be(3, "each burst must be acquired via its own preamble");
+        results.Select(r => r.PacketInBurst).Should().Equal(0, 1, 0, 0, 1, 2);
+    }
+
+    // ---------------------------------------------------------------------------------------
     // The postamble path: acquiring a packet whose preamble the search never saw.
     // ---------------------------------------------------------------------------------------
 
