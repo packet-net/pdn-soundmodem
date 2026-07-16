@@ -198,6 +198,19 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still¹¹) — ARDOP Phase A: 4FSK codec + FEC mode, 33/33 vs ardopcf
+
+PR #26: the ARDOP 4FSK layer lands (design §6 Phase A, ported from ardopcf with provenance;
+600 Bd FM modes folded in per Tom). Cross-validated both directions against ardopcf itself:
+**ardopcf→us 33/33** fixtures (payload-exact incl. ±40/±80 Hz and noise variants), **us→ardopcf
+33/33** via --decodewav (hex-exact data). CRC-16/CRC-8/RS byte-exact against vectors from
+ardopcf's compiled sources; **OBW equal to ardopcf's to the FFT bin** per bandwidth class
+(never-wider rule). One design-doc correction found by implementation: ARDOP's RS wire layout
+is byte-reversed vs FX.25's (same field/generator) — mapped and proven, documented. Memory-ARQ
+averaging included. Suite 419→557. Also landed this cycle: the ARDOP spec as self-contained
+Markdown (PR #25, docs/refs/ardop-spec-rev2.md — 15 internal spec inconsistencies flagged).
+Next: Phase B, the ARQ engine (both-ends-FSKONLY), the design's named riskiest block.
+
 ### 2026-07-16 (later still¹⁰) — MIL-STD-188-110D App D tables: dual-transcribed, zero conflicts
 
 PR #24: the image-only interop-critical tables of 110D Appendix D (the public counterpart of
