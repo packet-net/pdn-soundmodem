@@ -36,8 +36,9 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 - ✅ HDLC bit layer (flags, stuffing, abort, NRZI, FCS) + streaming IL2P deframer
   (±1-bit sync tolerance). (2026-07-14)
 - ✅ WAV 16-bit PCM read/write offline harness. (2026-07-14)
-- ✅ 300 BPSK modulator + demodulator (differential detection per the IL2P symbol map;
-  QtSM P300 filter plan) — clean/noisy/offset/multi-block loopbacks green. (2026-07-14)
+- ✅ 300 BPSK modulator + demodulator (coherent Costas detection default, differential
+  opt-in; IL2P symbol map; QtSM P300 filter plan) — clean/noisy/offset/multi-block
+  loopbacks green. (2026-07-14; coherent default 2026-07-16, issue #5)
 - ✅ 1200 AFSK modulator + demodulator (UZ7HO Mux3 chain: BPF → mix → I/Q LPF →
   cross-multiply discriminator, power-normalised, envelope slicer, direwolf-style DPLL) —
   clean/noisy/quiet/back-to-back loopbacks green. (2026-07-14)
@@ -123,8 +124,9 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 - ✅ TX for AFSK 1200 / BPSK 300 / QPSK 2400 / QPSK 3600 / 9600 (classic + IL2P), with
   modem-side p-persistent CSMA, serial RTS/DTR PTT, sample-domain TX-complete (drain) and
   TX tail — all in SoundModemChannel + the daemon (2026-07-15).
-- ✅ QPSK 2400/3600 modem pair (spec QPSK symbol map, differential detection, fractional
-  one-symbol delay for 1800 Bd at 12 kHz); loopbacks incl. noise/offset/multi-block.
+- ✅ QPSK 2400/3600 modem pair (spec QPSK symbol map, coherent Costas detection default +
+  differential opt-in, fractional one-symbol delay for 1800 Bd at 12 kHz); loopbacks incl.
+  noise/offset/multi-block.
 - ✅ 9600 baseband modem, both framings, cross-validated BOTH WAYS vs Dire Wolf:
   classic G3RUH (NRZI→scramble TX order confirmed empirically; 4/4 their audio, 3/3 ours
   in atest) and IL2P (4/4 their audio via the new polarity-agnostic sync hunt; 3/3 ours
@@ -195,6 +197,46 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   committed corpora don't yet).
 
 ## Amendment log
+
+### 2026-07-16 (later still) — coherent (Costas) detection is the PSK default (#5)
+
+Flipped the BPSK/QPSK default from differential to **coherent** detection, matching the
+NinoTNC — a `CostasLoop` recovers the carrier's absolute phase and the recovered absolute
+symbols are differentially decoded (the wire format is differential and untouched: only the
+receiver changes). The differential detector stays as a named opt-in (`PskDetector`
+enum on both modems + factories; `--psk-detector coherent|differential` on the daemon).
+
+Done under #5's explicit discipline — **measure, don't merge on theory.** Built coherent as
+a selectable path with differential still default, then ran before/after noise + acquisition
+sweeps; only after the numbers confirmed the gate did the default flip. Measured (our-TX to
+our-RX, 40 trials/point): coherent beats differential on noise for **every** mode — decode
+counts, e.g. qpsk2400 σ0.25 8→18, qpsk3600 σ0.15 11→25, bpsk1200 σ0.35 20→35, qpsk600 σ0.40
+22→34, bpsk300 σ0.60 27→35 — the ~1–2 dB the theory predicts. Acquisition: coherent pulls in
+within ~50–80 ms after idle (qpsk2400 50, qpsk3600 80, the rest 0), well inside the NinoTNC's
+~100 ms; on a clean cold channel it acquires at 0 ms. The accepted trade (per #5): the
+differential detector's 0 ms-after-idle acquisition and its wider frequency-offset tolerance.
+
+Two measurement-driven tuning findings. (1) **Loop bandwidth is per-mode.** A single fraction
+does not fit: bpsk300's carrier-offset pull-in needs ≥0.06×baud (its noise is flat, being
+heavily oversampled), while qpsk3600 at 0.06×baud (108 Hz, 6⅔ samples/symbol, 0.25 roll-off)
+tracks noise and loses even at low SNR (25/40 at σ0.08 where 0.03×baud scores 40/40). Default
+is 0.06×baud; qpsk3600 overrides to 0.03×baud. (2) **The QPSK Costas detector nulls at the
+diagonals**, so the recovered constellation locks to 45/135/225/315° — the quadrant decision
+must index by 90° sector (floor), not nearest multiple, or the symbols sit on a decision
+boundary and nothing decodes; the constant 45° lock offset washes out of the differential
+decode. (First-light bug: caught and fixed by measurement, not reasoning.)
+
+Tests migrated per #5's stated consequence — the acquisition parity tests changed meaning:
+`Acquires_At_Txdelay_Zero_Like_A_NinoTNC` now covers only the non-PSK modes;
+`Differential_Psk_Acquires_At_Txdelay_Zero` guards the opt-in's 0 ms property;
+`Coherent_Psk_Acquires_After_Idle_Within_Ninotnc_Preamble` (100 ms) is the coherent "match
+the NinoTNC" criterion; the idle-noise test moved to the differential opt-in. New
+`CoherentDetectionTests` bake the noise-margin gate as a deterministic regression test. The
+#9 constellation test now covers both detectors (differential product clusters tightest,
+coherent absolute a little looser under loop jitter — both far above phase noise). Suite
+201→218. Diagnostic/receiver-only change: no wire format, no named parse flag → no ax25-ts
+leg. PROVENANCE updated (`CostasLoop` is a textbook loop implemented fresh; margins measured
+in-project). Issue #5 closed on the evidence.
 
 ### 2026-07-16 (later) — constellation side channel: the per-symbol PSK diagnostic (#9)
 

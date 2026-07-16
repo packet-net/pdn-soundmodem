@@ -22,10 +22,12 @@ public sealed class BpskModem : IModem, IConstellationSource
     /// <param name="baud">Symbol rate — also the bit rate, BPSK carrying one bit per
     /// symbol.</param>
     /// <param name="rollOff">RRC roll-off.</param>
+    /// <param name="detector">Coherent or differential detection.</param>
     public BpskModem(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
         double carrierFrequency = 1500, int baud = 300,
-        double rollOff = BpskModulator.DefaultRollOff)
+        double rollOff = BpskModulator.DefaultRollOff,
+        PskDetector detector = PskDetector.Coherent)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _crc = crc;
@@ -38,7 +40,7 @@ public sealed class BpskModem : IModem, IConstellationSource
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
             },
             crc);
-        _demodulator = new BpskDemodulator(sampleRate, deframer.PushBit, carrierFrequency, baud);
+        _demodulator = new BpskDemodulator(sampleRate, deframer.PushBit, carrierFrequency, baud, detector);
         _demodulator.SymbolPlotted = (i, q) => SymbolPlotted?.Invoke(new ConstellationPoint(i, q));
         _modulator = new BpskModulator(sampleRate, baud, carrierFrequency, rollOff);
     }
@@ -50,13 +52,17 @@ public sealed class BpskModem : IModem, IConstellationSource
     /// <remarks>Roll-off 0.20, matching the 328 Hz a NinoTNC's own mode-8 transmission
     /// measures; the 0.35 default put us at 352 Hz, wider than the TNC we share the
     /// channel with.</remarks>
-    public static BpskModem Bpsk300(int sampleRate, Action<byte[]> frameReceived, bool crc = true) =>
-        new(sampleRate, frameReceived, crc, 1500, 300, 0.20);
+    public static BpskModem Bpsk300(
+        int sampleRate, Action<byte[]> frameReceived, bool crc = true,
+        PskDetector detector = PskDetector.Coherent) =>
+        new(sampleRate, frameReceived, crc, 1500, 300, 0.20, detector);
 
     /// <summary>Creates the 1200 bps mode (1200 baud, 1500 Hz centre) — NinoTNC mode 10,
     /// sharing its 1200 sym/s and 2400 Hz OBW with 2400 QPSK.</summary>
-    public static BpskModem Bpsk1200(int sampleRate, Action<byte[]> frameReceived, bool crc = true) =>
-        new(sampleRate, frameReceived, crc, 1500, 1200);
+    public static BpskModem Bpsk1200(
+        int sampleRate, Action<byte[]> frameReceived, bool crc = true,
+        PskDetector detector = PskDetector.Coherent) =>
+        new(sampleRate, frameReceived, crc, 1500, 1200, BpskModulator.DefaultRollOff, detector);
 
     /// <inheritdoc />
     public event Action<byte[], FrameQuality>? FrameDecoded;
