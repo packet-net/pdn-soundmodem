@@ -9,7 +9,13 @@ implementation: a single misread cell breaks interop silently.
 
 - MIL-STD-188-110D, 29 December 2017, Distribution Statement A (approved for public release).
 - Downloaded 2026-07-16 from everyspec.com (MIL-STD-188-110D_55856).
-- SHA-256 of the source PDF: `c12ec2f6a4b9daf79e4bdcea1b618ba0c745f07ec24633c048702d0fe9847bc0`
+- SHA-256 of the transcription-time download: `c12ec2f6a4b9daf79e4bdcea1b618ba0c745f07ec24633c048702d0fe9847bc0`.
+  **Caveat (2026-07-16, design assembly):** this raw hash is *per-download* — everyspec's
+  `download.php` stamps a fresh random second half into the PDF trailer `/ID` on every
+  download (verified by byte-diffing two downloads: 12,884,037 bytes each, exactly 30
+  differing bytes, all inside the second `/ID` hex string). Canonical identity instead:
+  permanent PDF ID `DB10F99E7B75A24BD5A10223B8A98086` + stamp-invariant SHA-256 (second
+  `/ID` zeroed): `6e177fa6c2a6985189160f00c8ad0e809e27872f3ba3d10d9426c66292eddf3d`.
 - Page mapping: document page = PDF page − 5 throughout Appendix D.
 
 ## Verification: two independent transcriptions, diffed
