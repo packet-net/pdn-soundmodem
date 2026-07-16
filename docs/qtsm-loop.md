@@ -178,7 +178,7 @@ payloads. Measured 2026-07-16.
 | `afsk1200-il2p` | 1 · AFSK AX.25 1200 · IL2P+CRC | 12k | **10/10** | **9/10** | ✅ both ways |
 | `bpsk300` | 6 · BPSK AX.25 300 · IL2P+CRC | 12k | **10/10** | **10/10** | ✅ both ways |
 | `bpsk1200` | 4 · BPSK AX.25 1200 · IL2P+CRC | 12k | **10/10** | **10/10** | ✅ both ways |
-| `qpsk600` | 16 · QPSK V26A 600bps (`SPEED_Q300`) · IL2P+CRC | 12k | **9/10** | **6/10** | ✅ both ways |
+| `qpsk600` | 16 · QPSK V26A 600bps (`SPEED_Q300`) · IL2P+CRC | 12k | **9/10** | **6/10** | ⚠️ marginal both ways (#11) |
 | `qpsk2400` | **12 · QPSK V26A 2400bps (`SPEED_DW2400`) · IL2P+CRC** | 12k | **10/10** | **10/10** | ✅ both ways |
 | `qpsk3600` | 9 · QPSK AX.25 3600bd · IL2P+CRC | 12k | **10/10** | **10/10** | ✅ both ways |
 | `fsk9600` | 19 · RUH 9600(DW) · HDLC | 48k | **10/10** | **10/10** | ✅ both ways |
@@ -193,8 +193,9 @@ loses frames; playing the clean generated WAV does not). A separate live `ours�
 depressed 0–10× run-to-run by the aloop capture-starvation artifact (below) and is not the
 measure of record — it is shown in the git history of this file, not here.
 
-**Nine of ten mode/pairings interoperate cleanly both ways.** The exception is `fsk4800-il2p`,
-which decodes one way only (finding below). The two rate classes both work: 12 kHz audio-band
+**Eight of ten mode/pairings interoperate cleanly both ways.** `qpsk600` interoperates but
+marginally (9/10 & 6/10 with the correct V26A pairing — finding below, #11), and `fsk4800-il2p`
+decodes one way only (#10). The two rate classes both work: 12 kHz audio-band
 modes and 48 kHz RUH modes, over the same aloop cable.
 
 ### QPSK 2400 needs QtSM's V26A/DW2400 mode — not the legacy "QPSK AX.25 2400bd"
@@ -238,9 +239,11 @@ continuously, so our capture stays fed — hence its live figures are already cl
 
 1. **QPSK phase-map pairing** (above). Our V.26A QPSK matches QtSM's V26A modes, not its legacy
    ones: `qpsk2400` = **V26A/DW2400 (type 12)** not legacy type 10; `qpsk600` = **V26A
-   (type 16, `SPEED_Q300`)** — 9/10 & 6/10. `qpsk3600` matches QtSM's legacy type 9 (QtSM has no
-   V26 at 3600). Evidence in `samples/qtsm/`. A *characterisation*, not a defect in ours — our
-   map is V.26A, matching NinoTNC and Dire Wolf. Filed as a tracking issue.
+   (type 16, `SPEED_Q300`)** but only marginally — 9/10 & 6/10, versus qpsk2400's clean 10/10
+   on the same V26A family. `qpsk3600` matches QtSM's legacy type 9 (QtSM has no V26 at 3600).
+   Evidence in `samples/qtsm/`. The *pairing* is a characterisation, not a defect (our map is
+   V.26A, matching NinoTNC and Dire Wolf); the qpsk600 *marginality* on top of the correct
+   pairing is a separate open question — filed as #11.
 2. **`fsk4800-il2p` interoperates one way only** — qtsm→ours **10/10** (QtSM's RUH 4800(DW) TX
    decodes on our receiver), but ours→QtSM **0/10**: QtSM's Dire-Wolf RUH-4800 receiver does not
    decode our transmission, even from the clean pre-generated sample at 300 ms preamble (a
