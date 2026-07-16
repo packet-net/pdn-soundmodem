@@ -15,14 +15,17 @@ using Packet.SoundModem.Modems;
 //                  [--psk-detector coherent|differential]
 //
 // Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, qpsk2400, qpsk3600 (both IL2P+CRC),
-// fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC). Multiple --modem options share the
+// fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC), freedv-datac0/1/3 (FreeDV datac OFDM
+// waveform; payloads carry the family-standard IL2P+CRC bit stream — a pdn convention,
+// FreeDV defines no framing at the raw-data layer). Multiple --modem options share the
 // audio channel and are addressed by the KISS port nibble (QtSoundModem multiplex model).
 // --wav decodes a file instead of live audio (testing/corpus runs) and exits.
 // --psk-detector selects the BPSK/QPSK detection method: coherent (default, matches the
 // NinoTNC's Costas loop and noise margin) or differential (opt-in, acquires at zero preamble
 // at a ~1-2 dB noise cost — for short-preamble links). See issue #5.
 
-// 9600-family modems need 48 kHz; everything else runs at 12 kHz.
+// 9600-family and freedv-* modems need 48 kHz DSP (the FreeDV engine is native 8 kHz, and
+// 48000 = 6·8000 while 12000 has no integer ratio); everything else runs at 12 kHz.
 
 string device = "default";
 int captureRate = 48000;
@@ -104,7 +107,8 @@ if (modems.Count == 0)
 
 int DspRate = modems.Any(m => m.Mode.Contains("9600", StringComparison.Ordinal)
     || m.Mode.StartsWith("fsk", StringComparison.Ordinal)
-    || m.Mode.StartsWith("c4fsk", StringComparison.Ordinal)) ? 48000 : 12000;
+    || m.Mode.StartsWith("c4fsk", StringComparison.Ordinal)
+    || m.Mode.StartsWith("freedv-", StringComparison.Ordinal)) ? 48000 : 12000;
 
 if (captureRate % DspRate != 0)
 {
@@ -145,6 +149,9 @@ foreach (ModemConfig modemConfig in modems)
         "fsk4800-il2p" => FskModem.Fsk4800(DspRate, sink),
         "c4fsk9600" => C4fskModem.C4fsk9600(DspRate, sink),
         "c4fsk19200" => C4fskModem.C4fsk19200(DspRate, sink),
+        "freedv-datac0" => FreeDvDatacModem.Datac0(DspRate, sink),
+        "freedv-datac1" => FreeDvDatacModem.Datac1(DspRate, sink),
+        "freedv-datac3" => FreeDvDatacModem.Datac3(DspRate, sink),
         _ => throw new ArgumentException($"unknown mode '{mode}'"),
     });
     Console.WriteLine($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");
@@ -158,6 +165,8 @@ if (modems.Any(m => m.Mode.StartsWith("bpsk", StringComparison.Ordinal)
 
 channel.FrameReceived += (subChannel, frame) =>
     Console.WriteLine($"rx[{subChannel}] {frame.Length} bytes");
+channel.TransmitRejected += (subChannel, frame, reason) =>
+    Console.Error.WriteLine($"tx[{subChannel}] dropped {frame.Length} bytes: {reason.Message}");
 
 if (wavPath is not null)
 {

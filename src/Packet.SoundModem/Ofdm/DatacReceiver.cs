@@ -8,7 +8,11 @@ namespace Packet.SoundModem.Ofdm;
 /// <param name="CrcOk">Whether the trailing CRC-16 matches the payload.</param>
 /// <param name="Iterations">LDPC decoder iterations used.</param>
 /// <param name="ParityChecks">LDPC parity checks satisfied at termination.</param>
-public readonly record struct DatacRxResult(byte[] Bytes, bool CrcOk, int Iterations, int ParityChecks)
+/// <param name="PacketInBurst">0-based index of this packet within its sync run — in burst
+/// mode, its position in the burst (0 = the packet that opened the burst). Streaming mode
+/// counts up from acquisition without resetting.</param>
+public readonly record struct DatacRxResult(
+    byte[] Bytes, bool CrcOk, int Iterations, int ParityChecks, int PacketInBurst = 0)
 {
     /// <summary>The payload bytes (everything but the trailing 2-byte CRC).</summary>
     public ReadOnlySpan<byte> Payload => Bytes.AsSpan(0, Bytes.Length - 2);
@@ -40,16 +44,32 @@ public sealed class DatacReceiver
     private readonly byte[] _rxUw;
     private readonly int _frameBytes;
     private readonly int _maxNin;
+    private readonly bool _endOfBurstDetection;
+    private Cf[]? _processFrame;
 
     /// <summary>Creates a receiver for <paramref name="mode"/> (datac0/1/3 supported).</summary>
     /// <param name="mode">The datac mode to receive.</param>
     /// <param name="packetsPerBurst">0 (default) selects streaming mode. ≥&#160;1 selects burst
     /// mode with that many packets expected per burst, mirroring codec2's
     /// <c>freedv_set_frames_per_burst</c> (the standard CLI tools and FreeDATA use 1).</param>
-    public DatacReceiver(OfdmMode mode, int packetsPerBurst = 0)
+    /// <param name="endOfBurstDetection">Opt-in <b>pdn extension</b> for variable-length
+    /// bursts (burst mode only): treat <paramref name="packetsPerBurst"/> as a maximum and
+    /// end each burst early when the frames after the last real packet fail the unique-word
+    /// test (<see cref="OfdmDemodulator.EndOfBurstUwDrop"/>) — with a CRC backstop: if a
+    /// fluke UW match lets a phantom packet complete, its failed CRC forces search. Default
+    /// false preserves the codec2-validated fixed-count behaviour.</param>
+    public DatacReceiver(OfdmMode mode, int packetsPerBurst = 0, bool endOfBurstDetection = false)
     {
         ArgumentNullException.ThrowIfNull(mode);
         ArgumentOutOfRangeException.ThrowIfNegative(packetsPerBurst);
+        if (endOfBurstDetection && packetsPerBurst == 0)
+        {
+            throw new ArgumentException(
+                "end-of-burst detection is a burst-mode option (packetsPerBurst ≥ 1)",
+                nameof(endOfBurstDetection));
+        }
+
+        _endOfBurstDetection = endOfBurstDetection;
         _cfg = new OfdmDemodConfig(mode);
         _demod = new OfdmDemodulator(_cfg);
         _assembler = new OfdmPacketAssembler(_cfg);
@@ -73,6 +93,7 @@ public sealed class DatacReceiver
             // the modulator, ofdm.c:531-538).
             var modulator = new OfdmModulator(mode);
             _demod.SetPacketsPerBurst(packetsPerBurst, modulator.PreambleRaw.Span, modulator.PostambleRaw.Span);
+            _demod.EndOfBurstUwDrop = endOfBurstDetection;
         }
 
         // Burst preamble detection can skip nin ahead by up to two frames (codec2
@@ -104,7 +125,7 @@ public sealed class DatacReceiver
     public IReadOnlyList<DatacRxResult> Process(ReadOnlySpan<short> samples)
     {
         var results = new List<DatacRxResult>();
-        var frame = new Cf[_maxNin];
+        Cf[] frame = _processFrame ??= new Cf[_maxNin];
 
         int pos = 0;
         int nin = _demod.Nin;
@@ -129,7 +150,17 @@ public sealed class DatacReceiver
 
                 if (_demod.ModemFrame == _cfg.Np - 1)
                 {
-                    results.Add(DecodePacket());
+                    DatacRxResult result = DecodePacket();
+                    results.Add(result);
+
+                    // pdn end-of-burst backstop: a completed packet that fails its CRC after
+                    // the UW check let it through is the phantom after a variable-length
+                    // burst (or a corrupted packet, whose burst is dead either way) — end
+                    // the burst now instead of accumulating another packet of nothing.
+                    if (_endOfBurstDetection && !result.CrcOk)
+                    {
+                        _demod.ForceSearch();
+                    }
                 }
             }
 
@@ -157,6 +188,6 @@ public sealed class DatacReceiver
 
         ushort crc = FreedvCrc16.Compute(bytes.AsSpan(0, _frameBytes - 2));
         bool crcOk = bytes[_frameBytes - 2] == (byte)(crc >> 8) && bytes[_frameBytes - 1] == (byte)(crc & 0xff);
-        return new DatacRxResult(bytes, crcOk, iter, parityChecks);
+        return new DatacRxResult(bytes, crcOk, iter, parityChecks, _demod.PacketCount);
     }
 }

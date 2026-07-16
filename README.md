@@ -35,6 +35,13 @@ interoperates with, and NinoTNC compatibility is never given up to suit another 
 - **NinoTNC + Dire-Wolf RUH** — 4800 GFSK IL2P+CRC: NinoTNC-derived, and cross-validated
   both ways against QtSoundModem's Dire-Wolf RUH-4800.
 - **NinoTNC / MMDVM-TNC** — C4FSK (once implemented): the MMDVM-TNC "Mode 2" wire format.
+- **FreeDV datac (waveform) / pdn (payload)** — `freedv-datac0/1/3`: HF OFDM burst modes
+  whose *waveform* is codec2/FreeDV-compatible (validated in both directions against
+  codec2 1.2.0's own `freedv_data_raw_tx`/`rx`), while the *payload content* is the
+  family-standard IL2P+CRC bit stream — a pdn↔pdn convention, since FreeDV defines no
+  framing at the raw-data layer (FreeDATA layers its own ARQ there instead). Frames span
+  packet boundaries within a burst, so even datac0's 14-byte packets carry full AX.25
+  frames. Runs on the 48 kHz DSP path (the engine is native 8 kHz; 48000 = 6·8000).
 
 The QtSoundModem cross-validation matrix (which QtSM `ModemType` each of our modes pairs
 with, both directions) is in [docs/qtsm-loop.md](docs/qtsm-loop.md) § Results.
