@@ -189,6 +189,44 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 — RX acquisition: NinoTNC-floor parity (goal: match or better NinoTNC)
+
+Tom set the goal after the NinoTNC↔NinoTNC TXDELAY sweep showed the reference hardware
+acquiring from ONE 16-bit word of preamble in 13 of 15 modes, while our receiver needed
+100-300 ms in several. Three root causes, found by instrumenting rather than theorising
+(a diagnostic tap on the real demodulator; every claim below was observed, and two
+plausible fixes that did nothing were removed again):
+
+1. **TX truncated the pulse-shaping filter's tail** (FskModem): output stopped at
+   bits×samplesPerBit, chopping the final ~5 bits — the IL2P CRC trailer — off the air.
+   Whether the Hamming-coded trailer survived depended on payload, so it presented as the
+   receiver deterministically dropping *specific contents* (4/10 at any TXDELAY) while a
+   NinoTNC decoded the same audio 10/10. Same bug class as the Afsk300 BandLimit flush.
+2. **The discriminator's power-normalisation floor (1e-12) manufactured full-scale garbage
+   during the filter-fill transient** (~19 bits of near-zero power at every burst start),
+   and the envelope trackers trained on it — slice midpoint measured at 0.65 against a
+   real eye of [0.2, 0.65]. Floor raised to 1e-5 (-50 dB below nominal in-band power):
+   sub-signal input now yields sub-eye output. This also fixed real off-air decoding:
+   WA8LMF Track 2 single 426 → 472, multi-bank 983 → 986 (direwolf: 970).
+3. **An all-flags TXDELAY fill trains a cold receiver poorly** (87.5 % one tone; the
+   opposite tone appears as 1-bit excursions that barely emerge from the receive LPF —
+   observed as periodic errors on every flag boundary for the first ~40 bits). Classic
+   HDLC AFSK modes now precede the two opening flags with an NRZI-zeros training run
+   (level change every bit), which is what the IL2P framer already did and why those
+   modes never suffered. Pre-flag zeros cannot alias to a flag; NinoTNC interop with our
+   flag preamble was already proven, re-verification of the new fill is pending hardware.
+
+Negative result recorded in code: a cold-start envelope "warm-up" (both legs at attack
+rate) converts the min/max tracker into a mean-follower and loses all discrimination
+during flag runs — tried, measured harmful, removed.
+
+Offline sweep after (10×40-byte frames, 1 s gaps, cold): **all 13 modes 10/10 at
+TXDELAY 0** except fsk9600 classic at 10 ms — identical to the NinoTNC's own floor
+(both bounded by the x^17 scrambler needing >16 bits), and **better than it on
+qpsk2400** (ours acquires at 0 where its demodulator needs ~100 ms). samples/pdn
+regenerated (the committed set embodied bug 1). Hardware re-validation against a real
+NinoTNC pending — the bench TNCs are currently paired for the TXDELAY survey.
+
 ### 2026-07-15 (night) — TXDELAY: 20 ms is enough (and the 500 ms claim was wrong)
 
 Tom challenged the "QPSK needs ≥500 ms TXDELAY" note — suspecting it conflated *preamble

@@ -174,8 +174,17 @@ public sealed class FskModem : IModem
 
         // ±1 NRZ pulse train through the pulse-shaping low-pass ('1' = positive deviation).
         int samplesPerBit = _sampleRate / _baud;
-        var shaper = new FirFilter(FilterDesign.LowPass(0.55 * _baud, _sampleRate, 48 * _sampleRate / 48000));
-        var samples = new float[wireBits.Length * samplesPerBit];
+        int taps = 48 * _sampleRate / 48000;
+        var shaper = new FirFilter(FilterDesign.LowPass(0.55 * _baud, _sampleRate, taps));
+
+        // The shaper delays the signal by ~taps/2 samples, so the burst must run past the
+        // last bit to flush it — truncating at bits×samplesPerBit chops the final ~5 bits
+        // of energy off the air. For IL2P that is the Hamming-coded CRC trailer, and
+        // whether the mangled trailer is still correctable depends on frame content: the
+        // bug presented as our receiver deterministically dropping *specific payloads*
+        // (4/10 at any TXDELAY) while a NinoTNC decoded the same audio 10/10. Classic
+        // HDLC escapes by luck — its closing flags sit after the FCS as slack.
+        var samples = new float[(wireBits.Length * samplesPerBit) + taps];
         int position = 0;
         foreach (byte bit in wireBits)
         {
@@ -184,6 +193,11 @@ public sealed class FskModem : IModem
             {
                 samples[position++] = shaper.Next(level);
             }
+        }
+
+        while (position < samples.Length)
+        {
+            samples[position++] = shaper.Next(0f);
         }
 
         return samples;

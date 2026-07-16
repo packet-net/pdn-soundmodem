@@ -118,9 +118,9 @@ public sealed class Afsk300Modem : IModem
     {
         if (_framing == Afsk300Framing.Ax25)
         {
-            int openingFlags = Math.Max(2, txDelayMilliseconds * Baud / (8 * 1000));
-            return BandLimit(_modulator.Modulate(
-                HdlcFramer.FrameBits(ax25Frame, openingFlags, closingFlags: 2)));
+            return BandLimit(_modulator.Modulate(TrainingPreamble.Prepend(
+                HdlcFramer.FrameBits(ax25Frame, openingFlags: 2, closingFlags: 2),
+                txDelayMilliseconds, Baud)));
         }
 
         byte[] wire = Il2pCodec.Encode(ax25Frame, appendCrc: _framing == Afsk300Framing.Il2pCrc);

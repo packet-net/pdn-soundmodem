@@ -31,6 +31,9 @@ public sealed class AfskDemodulator
     private float _q0, _q1, _q2;
     private readonly float _envelopeAttack;
     private readonly float _envelopeDecay;
+    /// <summary>Diagnostic tap for bench tooling: (discriminator, peakHigh, peakLow,
+    /// power) per sample point. Not for production paths.</summary>
+    internal Action<float, float, float, float>? DiagnosticTap { get; set; }
     private readonly float _discriminatorLimit;
     private float _peakHigh;
     private float _peakLow;
@@ -131,7 +134,20 @@ public sealed class AfskDemodulator
             // output scales with amplitude², and band-edge attenuation of the 1200 Hz mark
             // tone skews the slicer duty cycle badly.
             float power = _i1 * _i1 + _q1 * _q1;
-            float discriminator = ((_i0 - _i2) * _q1 - (_q0 - _q2) * _i1) / (power + 1e-12f);
+
+            // The normalisation floor is NOT a numerical nicety — it sets what happens
+            // when there is no signal. With a 1e-12 floor, the leading edge of a burst
+            // (the ~19 bits it takes the 256+128-tap filters to fill) divides near-zero
+            // by near-zero and emits full-scale garbage that the envelope trackers then
+            // train on: observed slice midpoint 0.65 against a real eye of [0.2, 0.65],
+            // which is why bare-HDLC AFSK needed ~100 ms of preamble while IL2P (which
+            // sync-hunts past the damage) ran at 16 bits. At 1e-5 — about -50 dB below
+            // nominal in-band power (~0.15 here) — sub-signal inputs produce sub-eye
+            // output instead: attenuated, honest, and ignorable. Real signal is barely
+            // touched (>= 90 % of full output from -40 dBFS up), and channel noise on
+            // real captures (WA8LMF floor) sits far above it, so steady-state behaviour
+            // is unchanged.
+            float discriminator = ((_i0 - _i2) * _q1 - (_q0 - _q2) * _i1) / (power + 1e-5f);
 
             // Clamp to what this mode can physically produce: full deviation puts the
             // discriminator at sin(2·2π·shift/rate), and no real frequency it carries goes
@@ -154,6 +170,15 @@ public sealed class AfskDemodulator
             // mark and space extremes. A mean tracker fails here: an HDLC flag preamble is
             // 87.5 % mark (seven hold bits per flag), which drags a mean far off centre —
             // QtSoundModem's adaptive min/max thresholds exist for the same reason.
+            //
+            // NEGATIVE RESULT — do not add a cold-start "warm-up" that runs both legs at
+            // attack speed. It was tried for fast acquisition and it converts this min/max
+            // tracker into a mean-follower: during a flag's six-mark run both peaks chase
+            // the mark level and the midpoint loses all discrimination — the exact failure
+            // the asymmetric rates exist to avoid. With the normalisation floor above
+            // keeping filter-fill garbage out of the trackers, cold start needs no help:
+            // from zero, the midpoint sits at half the first tone's level, which the
+            // ±full-swing eye clears comfortably.
             _peakHigh += (discriminator - _peakHigh)
                 * (discriminator > _peakHigh ? _envelopeAttack : _envelopeDecay);
             _peakLow += (discriminator - _peakLow)
@@ -170,6 +195,7 @@ public sealed class AfskDemodulator
             }
 
             _previousExcess = excess;
+            DiagnosticTap?.Invoke(discriminator, _peakHigh, _peakLow, power);
             _dpll.Sample(level, crossing);
         }
     }

@@ -99,11 +99,14 @@ public sealed class Afsk1200Modem : IModem
     /// <inheritdoc />
     public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds)
     {
-        int openingFlags = Math.Max(2, (int)(txDelayMilliseconds * 1200L / (8 * 1000)));
         if (_fx25 != Fx25Mode.TransmitReceive)
         {
-            return _modulator.Modulate(HdlcFramer.FrameBits(ax25Frame, openingFlags, closingFlags: 2));
+            return _modulator.Modulate(TrainingPreamble.Prepend(
+                HdlcFramer.FrameBits(ax25Frame, openingFlags: 2, closingFlags: 2),
+                txDelayMilliseconds, 1200));
         }
+
+        int openingFlags = Math.Max(2, (int)(txDelayMilliseconds * 1200L / (8 * 1000)));
 
         // FX.25: flag-pattern preamble (TXDELAY), then the tagged, RS-protected block.
         byte[] block = Fx25Codec.EncodeBits(ax25Frame, _fx25CheckBytes);
