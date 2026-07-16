@@ -1,0 +1,33 @@
+table,Waveform Number / WID,AWGN Channel SNR (dB),"""Poor"" Channel SNR (dB)",Exceptions (for specific bandwidths),Bandwidth,Multipath Channel Delays (ms)
+D-LXIV,0,-6,-1,9 kHz Poor channel only: allow +1 dB,,
+D-LXIV,1,-3,3,,,
+D-LXIV,2,0,5,,,
+D-LXIV,3,3,7,9 kHz: allow extra 1 dB (both channels),,
+D-LXIV,4,5,10,this waveform not available in 9 or 18 kHz,,
+D-LXIV,5,6,11,,,
+D-LXIV,6,9,14,,,
+D-LXIV,7,13,19,,,
+D-LXIV,8,16,23,,,
+D-LXIV,9,19,27,,,
+D-LXIV,10,21,31,24 kHz Poor channel only: test for BER <= 1.0E-4 and allow 33 dB,,
+D-LXIV,11,24,-,,,
+D-LXIV,12,30,-,,,
+D-LXIV,13,6,11,this waveform available in 3 kHz only,,
+D-LXV,2,,,,3 KHz,"3-Path (0.0, 3.0, 9.0)"
+D-LXV,10,,,,3 KHz,"3-Path (0.0, 2.0, 4.5)"
+D-LXV,12,,,,3 KHz,"2-Path (0.0, 1.5)"
+D-LXV,2,,,,6 KHz,"3-Path (0.0, 2.0, 9.0)"
+D-LXV,10,,,,6 KHz,"4-Path (0.0, 1.5, 3.0, 5.0)"
+D-LXV,12,,,,6 KHz,"2-Path (0.0, 1.5)"
+D-LXV,3,,,,9 KHz,"3-Path (0.0, 3.0, 8.0)"
+D-LXV,10,,,,9 KHz,"3-Path (0.0, 2.0, 4.5)"
+D-LXV,12,,,,9 KHz,"2-Path (0.0, 1.5)"
+D-LXV,2,,,,12 KHz,"3-Path (0.0, 2.5, 8.5)"
+D-LXV,10,,,,12 KHz,"4-Path (0.0, 1.5, 3.0, 5.0)"
+D-LXV,12,,,,12 KHz,"2-Path (0.0, 1.5)"
+D-LXV,5,,,,24 KHz,"3-Path (0.0, 2.5, 5.5)"
+D-LXV,10,,,,24 KHz,"4-Path (0.0, 1.5, 3.0, 5.0)"
+D-LXV,12,,,,24 KHz,"2-Path (0.0, 1.5)"
+D-LXV,5,,,,48 KHz,"3-Path (0.0, 2.5, 4.0)"
+D-LXV,10,,,,48 KHz,"4-Path (0.0, 1.5, 3.0, 4.0)"
+D-LXV,12,,,,48 KHz,"2-Path (0.0, 1.5)"
