@@ -42,6 +42,9 @@ public class FreeDvDatacModemTests(ITestOutputHelper output)
         "freedv-datac0" => FreeDvDatacModem.Datac0(rate, sink),
         "freedv-datac1" => FreeDvDatacModem.Datac1(rate, sink),
         "freedv-datac3" => FreeDvDatacModem.Datac3(rate, sink),
+        "freedv-datac4" => FreeDvDatacModem.Datac4(rate, sink),
+        "freedv-datac13" => FreeDvDatacModem.Datac13(rate, sink),
+        "freedv-datac14" => FreeDvDatacModem.Datac14(rate, sink),
         _ => throw new ArgumentException(mode),
     };
 
@@ -69,6 +72,9 @@ public class FreeDvDatacModemTests(ITestOutputHelper output)
     [InlineData("freedv-datac1", 60)]    // single 510-byte packet
     [InlineData("freedv-datac1", 508)]   // spans 2 packets — datac1's first end-to-end burst
     [InlineData("freedv-datac1", 1000)]  // spans 3 packets — no hard frame cap below IL2P's own
+    [InlineData("freedv-datac4", 60)]    // narrow RX-BPF mode, spans 2 of datac4's 54-byte packets
+    [InlineData("freedv-datac13", 60)]   // narrowest mode (200 Hz), spans 6 of its 14-byte packets
+    [InlineData("freedv-datac14", 60)]   // 3-byte packets — the extreme spanning case (~28 packets)
     public void Round_Trips_A_Frame_Through_The_IModem_Surface_At_48k(string mode, int frameBytes)
     {
         byte[] frame = SampleFrame(frameBytes);

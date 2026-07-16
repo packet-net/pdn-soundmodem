@@ -29,6 +29,8 @@ public class OfdmModulatorOracleTests(ITestOutputHelper output)
     [InlineData("datac0")]
     [InlineData("datac1")]
     [InlineData("datac3")]
+    [InlineData("datac4")]
+    [InlineData("datac13")]
     [InlineData("datac14")]
     public void Modulator_Matches_Codec2_Reference(string mode)
     {

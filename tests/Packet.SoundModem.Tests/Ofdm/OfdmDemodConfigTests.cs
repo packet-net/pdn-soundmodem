@@ -29,6 +29,41 @@ public class OfdmDemodConfigTests
         c.TxUw[16..].Should().OnlyContain(b => b == 0);
     }
 
+    /// <summary>The narrow modes' RX-only scalars and the <c>find_carrier_centre</c> port
+    /// (codec2 <c>ofdm_mode.c</c> datac4/13/14 blocks + <c>ofdm.c:570-596</c>): the RX BPF is
+    /// enabled and tuned to the mean carrier frequency — the even-Nc modes (datac4/14) sit half
+    /// a carrier below the nominal 1500&#160;Hz, datac13 (odd Nc) exactly on it.</summary>
+    [Theory]
+    [InlineData("datac4", 21, 12, 0.50f, 1468.75f)]
+    [InlineData("datac13", 22, 18, 0.45f, 1500.0f)]
+    [InlineData("datac14", 24, 12, 0.45f, 1472.2222f)]
+    public void Narrow_Mode_Rx_Scalars_And_Carrier_Centre_Match_Codec2(
+        string name, int rxNlower, int badUwErrors, float timingMxThresh, float centreHz)
+    {
+        var c = new OfdmDemodConfig(OfdmMode.ForName(name));
+
+        c.RxNlower.Should().Be(rxNlower);
+        c.BadUwErrors.Should().Be(badUwErrors);
+        c.TimingMxThresh.Should().Be(timingMxThresh);
+        c.RxBpfEnable.Should().BeTrue("datac4/13/14 all run the filtP200S400 RX band-pass");
+        c.CarrierCentreHz.Should().BeApproximately(centreHz, 0.01f);
+
+        // datac3/4/13/14 assemble the UW as two copies of the 24-bit seed, the second ending at
+        // nuwbits (deliberately overlapping for the 32-bit modes).
+        c.TxUw.Should().HaveCount(c.Nuwbits);
+        c.TxUw[^24..].Should().Equal(1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0);
+    }
+
+    [Fact]
+    public void Wide_Modes_Do_Not_Enable_The_Rx_Bpf()
+    {
+        foreach (string name in new[] { "datac0", "datac1", "datac3" })
+        {
+            new OfdmDemodConfig(OfdmMode.ForName(name)).RxBpfEnable
+                .Should().BeFalse("{0} has rx_bpf_en=false in codec2", name);
+        }
+    }
+
     [Fact]
     public void Idft_Then_Dft_Round_Trips_The_Pilots()
     {

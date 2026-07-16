@@ -110,6 +110,58 @@ public class DatacBurstTests(ITestOutputHelper output)
     }
 
     // ---------------------------------------------------------------------------------------
+    // The narrow RX-BPF modes (datac4/13/14): codec2's own freedv_data_raw_tx audio → our RX.
+    // These are the Phase-2 decisive vectors — every one was verified byte-exactly decodable
+    // by codec2's own freedv_data_raw_rx before check-in (PROVENANCE: samples/freedv/README.md).
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>Clean codec2 bursts through the RX band-pass path — datac4/13/14 exercise the
+    /// <c>filtP200S400</c> RX BPF (tuned to 1468.75 / 1500 / 1472.22&#160;Hz), the shortened
+    /// LDPC codes, and datac14's non-power-of-two geometry (M&#160;=&#160;144). codec2's own RX
+    /// decodes each stream exactly; a faithful port must match.</summary>
+    [Theory]
+    [InlineData("datac4", 54, 2)]
+    [InlineData("datac13", 14, 2)]
+    [InlineData("datac14", 3, 5)]
+    public void Decodes_Codec2_Freedv_Data_Raw_Tx_Narrow_Mode_Bursts(string modeName, int payloadBytes, int bursts)
+    {
+        short[] samples = ReadS16($"{modeName}_burst.s16");
+        var sent = Enumerable.Range(0, bursts).Select(p => Payload(payloadBytes, p)).ToList();
+
+        var rx = new DatacReceiver(OfdmMode.ForName(modeName), packetsPerBurst: 1);
+        IReadOnlyList<DatacRxResult> results = rx.Process(samples);
+        output.WriteLine(
+            $"{modeName} burst clean: decoded {results.Count}, {results.Count(r => r.CrcOk)} CRC-OK, " +
+            $"pre={rx.Demod.PreambleDetections} post={rx.Demod.PostambleDetections} uwFails={rx.Demod.UwFails}");
+
+        AssertAllPayloadsRecovered(sent, results);
+        rx.Demod.PreambleDetections.Should().Be(bursts, "every burst must be acquired via its preamble");
+    }
+
+    /// <summary>The same codec2 bursts through its <c>ch</c> channel simulator (+22&#160;Hz
+    /// carrier offset, AWGN at SNR3k ≈ 5.4-5.8&#160;dB). codec2's own RX decodes each stream
+    /// exactly at this operating point; so must we — the RX BPF is in the acquisition path, so
+    /// an offset landing off the 5&#160;Hz coarse grid proves the filtered timing/frequency
+    /// estimation, not just the clean centre.</summary>
+    [Theory]
+    [InlineData("datac4", 54, 2)]
+    [InlineData("datac13", 14, 2)]
+    [InlineData("datac14", 3, 5)]
+    public void Decodes_Codec2_Narrow_Mode_Bursts_Through_Noisy_Offset_Channel(string modeName, int payloadBytes, int bursts)
+    {
+        short[] samples = ReadS16($"{modeName}_burst_ch.s16");
+        var sent = Enumerable.Range(0, bursts).Select(p => Payload(payloadBytes, p)).ToList();
+
+        var rx = new DatacReceiver(OfdmMode.ForName(modeName), packetsPerBurst: 1);
+        IReadOnlyList<DatacRxResult> results = rx.Process(samples);
+        output.WriteLine(
+            $"{modeName} burst ch(+22Hz, ~5.5dB SNR3k): decoded {results.Count}, {results.Count(r => r.CrcOk)} CRC-OK, " +
+            $"pre={rx.Demod.PreambleDetections} post={rx.Demod.PostambleDetections} uwFails={rx.Demod.UwFails}");
+
+        AssertAllPayloadsRecovered(sent, results);
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Our TX → our RX round trips.
     // ---------------------------------------------------------------------------------------
 
@@ -193,6 +245,31 @@ public class DatacBurstTests(ITestOutputHelper output)
         IReadOnlyList<DatacRxResult> results = rx.Process(stream);
         output.WriteLine(
             $"datac3 3×1 bursts: decoded {results.Count}, {results.Count(r => r.CrcOk)} CRC-OK");
+
+        AssertAllPayloadsRecovered(payloads, results);
+    }
+
+    /// <summary>Self round trips for the narrow RX-BPF modes, clean and with a carrier offset
+    /// off the coarse acquisition grid — our TX's persistent BPF chain against our RX's
+    /// persistent RX BPF, per mode.</summary>
+    [Theory]
+    [InlineData("datac4", 54, 3, 0.0)]
+    [InlineData("datac4", 54, 3, 33.0)]
+    [InlineData("datac13", 14, 3, 0.0)]
+    [InlineData("datac13", 14, 3, 33.0)]
+    [InlineData("datac14", 3, 5, 0.0)]
+    [InlineData("datac14", 3, 5, 33.0)]
+    public void RoundTrips_Narrow_Mode_Single_Packet_Bursts(string modeName, int payloadBytes, int n, double foffHz)
+    {
+        var mode = OfdmMode.ForName(modeName);
+        var payloads = Enumerable.Range(0, n).Select(p => Payload(payloadBytes, p)).ToList();
+        short[] stream = BuildBurstStream(mode, payloads.Select(p => new[] { p }).ToList(), foffHz);
+
+        var rx = new DatacReceiver(mode, packetsPerBurst: 1);
+        IReadOnlyList<DatacRxResult> results = rx.Process(stream);
+        output.WriteLine(
+            $"{modeName} {n}×1 bursts foff={foffHz:+0;-0;0} Hz: decoded {results.Count}, " +
+            $"{results.Count(r => r.CrcOk)} CRC-OK, pre={rx.Demod.PreambleDetections} uwFails={rx.Demod.UwFails}");
 
         AssertAllPayloadsRecovered(payloads, results);
     }

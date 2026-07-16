@@ -21,8 +21,9 @@ namespace Packet.SoundModem.Ofdm;
 /// struct — no preamble/postamble; the streaming RX acquires by pilot correlation), while
 /// <see cref="ModulateBurst"/> emits the <b>burst</b> framing
 /// <c>[preamble][packets…][postamble]</c> that the FreeDV CLI tools and FreeDATA exchange. The
-/// modulator's persistent TX band-pass filter carries across calls in both shapes. Supported
-/// modes are datac0/1/3 (matching the validated <see cref="DatacReceiver"/>). Not thread-safe.
+/// modulator's persistent TX band-pass filter carries across calls in both shapes. All six datac
+/// modes are supported (matching <see cref="DatacReceiver"/>); the narrow datac4/13/14 shorten
+/// their LDPC codes inside <see cref="LdpcFrameCodec"/>. Not thread-safe.
 /// </remarks>
 public sealed class DatacTransmitter
 {
@@ -36,7 +37,7 @@ public sealed class DatacTransmitter
     private readonly Cf[] _payload;         // payloadSyms QPSK symbols (codeword order)
     private readonly Cf[] _interleaved;     // payloadSyms QPSK symbols (grid order)
 
-    /// <summary>Creates a transmitter for <paramref name="mode"/> (datac0/1/3 supported).</summary>
+    /// <summary>Creates a transmitter for <paramref name="mode"/> (all six datac modes).</summary>
     public DatacTransmitter(OfdmMode mode)
     {
         ArgumentNullException.ThrowIfNull(mode);

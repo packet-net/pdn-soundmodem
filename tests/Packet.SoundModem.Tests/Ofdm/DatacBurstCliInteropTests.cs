@@ -35,12 +35,15 @@ public class DatacBurstCliInteropTests(ITestOutputHelper output)
     [SkippableTheory]
     [InlineData("datac0", 14, 5)]
     [InlineData("datac3", 126, 2)]
+    [InlineData("datac4", 54, 2)]
+    [InlineData("datac13", 14, 2)]
+    [InlineData("datac14", 3, 5)]
     public void Our_Burst_Transmission_Decodes_On_Codec2_Freedv_Data_Raw_Rx(string modeName, int payloadBytes, int bursts)
     {
         string? buildSrc = Codec2BuildSrc();
         Skip.If(buildSrc is null, "CODEC2_BUILD_SRC not set / freedv_data_raw_rx not found");
 
-        OfdmMode mode = modeName == "datac0" ? OfdmMode.Datac0 : OfdmMode.Datac3;
+        OfdmMode mode = OfdmMode.ForName(modeName);
         var payloads = Enumerable.Range(0, bursts).Select(p => Payload(payloadBytes, p)).ToList();
 
         // One burst per payload, framed exactly as freedv_data_raw_tx does: initial silence, then
