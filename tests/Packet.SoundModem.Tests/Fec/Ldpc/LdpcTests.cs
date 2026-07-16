@@ -81,4 +81,41 @@ public class LdpcTests
 
         decoded[..code.NumberRowsHcols].Should().Equal(data, "a clean-channel codeword decodes back to its data");
     }
+
+    [Theory]
+    [InlineData(DatacMode.Datac0, 128, 256)]     // (data bits, coded bits = data + parity)
+    [InlineData(DatacMode.Datac1, 4096, 8192)]
+    [InlineData(DatacMode.Datac3, 1024, 2048)]
+    [InlineData(DatacMode.Datac4, 448, 1472)]    // shortened: 576 stuffed knowns
+    [InlineData(DatacMode.Datac13, 128, 384)]    // shortened: 128 stuffed knowns
+    [InlineData(DatacMode.Datac14, 40, 96)]      // shortened: 16 stuffed knowns
+    public void FrameCodec_RoundTrips_Every_Datac_Mode(DatacMode mode, int dataBits, int codedBits)
+    {
+        LdpcFrameCodec codec = DatacLdpc.Create(mode);
+        codec.DataBits.Should().Be(dataBits);
+        codec.CodedBits.Should().Be(codedBits);
+
+        var random = new Random((int)mode + 1);
+        var data = new byte[dataBits];
+        for (int i = 0; i < dataBits; i++)
+        {
+            data[i] = (byte)random.Next(2);
+        }
+
+        var codeword = new byte[codedBits];
+        codec.Encode(data, codeword);
+
+        // Clean channel: strong LLRs, positive ⇒ bit 0. The shortened modes exercise the
+        // known-bit stuffing (encode) and the −100 / parity-reindex expansion (decode).
+        var llr = new float[codedBits];
+        for (int i = 0; i < codedBits; i++)
+        {
+            llr[i] = codeword[i] == 0 ? 10f : -10f;
+        }
+
+        var outData = new byte[dataBits];
+        codec.Decode(llr, outData, out _);
+
+        outData.Should().Equal(data, "{0} clean round-trip recovers the payload", mode);
+    }
 }
