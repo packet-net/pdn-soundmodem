@@ -87,7 +87,9 @@ if (modems.Count == 0)
     modems.Add(new ModemConfig());
 }
 
-int DspRate = modems.Any(m => m.Mode.Contains("9600", StringComparison.Ordinal)) ? 48000 : 12000;
+int DspRate = modems.Any(m => m.Mode.Contains("9600", StringComparison.Ordinal)
+    || m.Mode.StartsWith("fsk", StringComparison.Ordinal)
+    || m.Mode.StartsWith("c4fsk", StringComparison.Ordinal)) ? 48000 : 12000;
 
 if (captureRate % DspRate != 0)
 {
@@ -126,6 +128,8 @@ foreach (ModemConfig modemConfig in modems)
         "fsk9600" => FskModem.Fsk9600(DspRate, sink, FskFraming.ClassicHdlc),
         "fsk9600-il2p" => new FskModem(DspRate, sink, FskFraming.Il2pCrc),
         "fsk4800-il2p" => FskModem.Fsk4800(DspRate, sink),
+        "c4fsk9600" => C4fskModem.C4fsk9600(DspRate, sink),
+        "c4fsk19200" => C4fskModem.C4fsk19200(DspRate, sink),
         _ => throw new ArgumentException($"unknown mode '{mode}'"),
     });
     Console.WriteLine($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");

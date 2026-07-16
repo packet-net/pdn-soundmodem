@@ -189,6 +189,29 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (night) — C4FSK lands: 15 of 15 NinoTNC modes
+
+The last coverage gap closed. `C4fskModem` implements NinoTNC modes 1 (19200) and 3
+(9600) — which turn out to be **MMDVM-TNC "Mode 2"** (G4KLX; Tom's pointer), inherited
+wholesale: 0x77 preamble, outer-only 4-byte sync 0x5D57DF7F (deframer sync now
+parameterised), then standard IL2P bytes on shaped 4-PAM (dibits 01/00/10/11 →
++3/+1/−1/−3). The format was cracked against ground-truth recordings captured on the rig
+(known frames sent via serial, transmitted by the TNC, one symbol error in 316 at fixed
+phase) before any implementation — and MMDVM-TNC's Mode2Defines.h then confirmed every
+constant. Three 4-level lessons are recorded in docs/ninotnc-loop.md (the 0.55× RX filter
+kills the eye; clock only from sign crossings; gate bits on energy or a 1-heavy sync
+false-locks ~12k times per recording of silence). Live: us→NinoTNC 8/8 both modes at
+first attempt, NinoTNC→us 6-7/8 (headroom tracked via parity tests). The C4FSK
+aspiration criteria graduated to the parity suite the same day they became meetable —
+the scoreboard is empty. Daemon + bench wired; packet.net transport follows with the
+0.4.0 pin bump.
+
+Same day, other threads: #635 delivered by subagent (FrameQuality → node metrics/API/log,
+PR #636); hardware validation of the acquisition work (us→NinoTNC 20 ms everywhere, new
+training preamble confirmed; nino→us at ITS 20 ms flag fill remains marginal on bare-HDLC
+modes — on #4); Opus-period audit clean (five stale worktrees from the July 8-12 arc
+removed, one already-merged branch confirmed landed via PR 588).
+
 ### 2026-07-16 (later still) — per-frame receive quality: FrameQuality surfaced end to end
 
 Tom asked whether we get BER from the modems. Answer: the deframers have always computed

@@ -194,9 +194,9 @@ where the per-mode symbol rates, carriers and OBW figures below come from):
 | DIP | NinoTNC mode | our modem | state |
 |---|---|---|---|
 | 0 | 9600 GFSK AX.25 | `fsk9600` | ✅ bench-proven |
-| 1 | 19200 C4FSK IL2P+CRC | — | ❌ no C4FSK modem |
+| 1 | 19200 C4FSK IL2P+CRC | `c4fsk19200` | ✅ bench-proven |
 | 2 | 9600 GFSK IL2P+CRC | `fsk9600-il2p` | ✅ bench-proven |
-| 3 | 9600 C4FSK IL2P+CRC | — | ❌ no C4FSK modem |
+| 3 | 9600 C4FSK IL2P+CRC | `c4fsk9600` | ✅ bench-proven |
 | 4 | 4800 GFSK IL2P+CRC | `fsk4800-il2p` | ✅ bench-proven |
 | 5 | 3600 QPSK IL2P+CRC | `qpsk3600` | ✅ bench-proven |
 | 6 | 1200 AFSK AX.25 | `afsk1200` | ✅ bench-proven |
@@ -210,10 +210,29 @@ where the per-mode symbol rates, carriers and OBW figures below come from):
 | 14 | 300 AFSK IL2P+CRC | `afsk300-il2pc` | ✅ bench-proven |
 | 15 | Set from KISS | n/a | — |
 
-**The gap is C4FSK** (modes 1 and 3) — coherent 4-level FSK, added in firmware 3/4.42,
-carrying 19200 bps in 20 kHz OBW and 9600 bps in 10 kHz respectively (2079 Hz / 1039 Hz
-outer deviation). It is a genuinely different modem, not a reparameterisation of anything
-we have, and it is the one remaining piece of full NinoTNC mode coverage.
+**Coverage is complete: 15 of 15 DIP positions.** The last two — the C4FSK modes — landed
+2026-07-16 (`C4fskModem`). The wire format turned out to be **MMDVM-TNC "Mode 2"**
+(G4KLX), which the NinoTNC inherits: `0x77` preamble bytes (outer-symbol alternation), a
+4-byte outer-only sync `0x5D 57 DF 7F` (NOT IL2P's 0xF15E48 — the deframer's sync word is
+parameterised for this), then standard IL2P bytes; dibits map 01→+3, 00→+1, 10→−1, 11→−3
+on a shaped 4-PAM baseband. Established from Nino's own transmissions (one symbol error in
+316 against a known frame at fixed phase) with MMDVM-TNC's `Mode2Defines.h` confirming.
+
+Three lessons the 4-level eye taught, all measured on real recordings:
+
+- **The binary modes' 0.55×baud receive low-pass destroys it** (0/8 → 7-8/8 at ≥1.0×):
+  a 4-level eye is three times tighter, and extra ISI on the already-Gaussian signal
+  collapses the inner levels. TX shaping likewise runs at 1.0× symbol rate.
+- **You cannot clock 4-PAM off every threshold crossing** — outer-to-outer transitions
+  sweep through the inner thresholds mid-symbol (free-running clock 1/8, sign-only
+  nudges 8/8). Only the middle threshold's crossings land at symbol boundaries.
+- **Silence is poison to a 1-heavy sync**: the collapsed-envelope slicer rails to outer
+  levels between bursts, and this sync is 18/24 ones — ~12,000 false near-locks per
+  recording until the bit stream is gated on the energy detector ("no signal, no bits").
+
+Live bench (firmware 3.44): us→NinoTNC **8/8 both modes** (one unreproduced 0/8 run on
+mode 3 is on record); NinoTNC→us 6-7/8 — RX tuning headroom remains, tracked with the
+per-mode acquisition criteria in the parity suite.
 
 DCD lags are `IModem.ChannelBusy` sampled every 2 ms against the capture envelope
 (>0.04 assert reference, <0.02 release reference); release lag is dominated by the

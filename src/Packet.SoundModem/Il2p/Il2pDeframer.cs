@@ -20,6 +20,7 @@ public sealed class Il2pDeframer
     }
 
     private readonly bool _crcMode;
+    private readonly int _syncWord;
     private readonly Action<byte[], Il2pDecodeInfo> _frameReceived;
     private readonly byte[] _buffer;
 
@@ -38,8 +39,18 @@ public sealed class Il2pDeframer
     /// <param name="crcMode">True when the link uses IL2P+CRC (both stations must agree).
     /// CRC-invalid frames are dropped and counted, per NinoTNC "check CRC" semantics.</param>
     public Il2pDeframer(Action<byte[], Il2pDecodeInfo> frameReceived, bool crcMode)
+        : this(frameReceived, crcMode, Il2pCodec.SyncWord)
+    {
+    }
+
+    /// <summary>Creates a deframer hunting a non-standard 24-bit sync word. The MMDVM-TNC
+    /// "Mode 2" C4FSK framing is IL2P in every respect except its sync (0x5D57DF7F's low
+    /// 24 bits — chosen to be outer-symbol-only in the 4-level constellation); the NinoTNC
+    /// C4FSK modes inherit it.</summary>
+    public Il2pDeframer(Action<byte[], Il2pDecodeInfo> frameReceived, bool crcMode, int syncWord)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
+        _syncWord = syncWord & 0xFFFFFF;
         _frameReceived = frameReceived;
         _crcMode = crcMode;
 
@@ -65,9 +76,9 @@ public sealed class Il2pDeframer
             // Hunt the sync word and its complement: the spec's FSK symbol maps note some
             // radios invert the signal and recommend checking for inverted data. A
             // complemented match latches inversion for the rest of that frame.
-            bool direct = BitOperations.PopCount((uint)(_syncShift ^ Il2pCodec.SyncWord)) <= 1;
+            bool direct = BitOperations.PopCount((uint)(_syncShift ^ _syncWord)) <= 1;
             bool inverted = BitOperations.PopCount(
-                (uint)((~_syncShift & 0xFFFFFF) ^ Il2pCodec.SyncWord)) <= 1;
+                (uint)((~_syncShift & 0xFFFFFF) ^ _syncWord)) <= 1;
             if (direct || inverted)
             {
                 _invert = inverted ? 1 : 0;

@@ -187,15 +187,19 @@ public class OccupiedBandwidthTests
         // and Nino's 20 kHz / 10 kHz figures are the RF bandwidth after FM modulation, so
         // they are not comparable with the numbers above. What is worth pinning is that
         // our baseband stays inside the 0.55·baud pulse-shaping filter it is built with.
-        foreach ((string label, IModem modem, int baud) in new (string, IModem, int)[]
+        foreach ((string label, IModem modem, int baud, double bound) in new (string, IModem, int, double)[]
         {
-            ("fsk9600", FskModem.Fsk9600(48000, _ => { }, FskFraming.ClassicHdlc), 9600),
-            ("fsk4800", FskModem.Fsk4800(48000, _ => { }), 4800),
+            ("fsk9600", FskModem.Fsk9600(48000, _ => { }, FskFraming.ClassicHdlc), 9600, 0.75),
+            ("fsk4800", FskModem.Fsk4800(48000, _ => { }), 4800, 0.75),
+            // C4FSK is shaped at 1.0x its SYMBOL rate (a 4-level eye cannot take the
+            // 0.55x squeeze — measured 0/8 vs 8/8), so its bound is per symbol rate.
+            ("c4fsk9600", C4fskModem.C4fsk9600(48000, _ => { }), 4800, 1.4),
+            ("c4fsk19200", C4fskModem.C4fsk19200(48000, _ => { }), 9600, 1.4),
         })
         {
             float[] audio = modem.Modulate(Frame(), txDelayMilliseconds: 300);
             var (_, hi, _, _) = OccupiedBandwidth.Measure(audio.AsSpan(audio.Length / 3), 48000);
-            hi.Should().BeLessThan(baud * 0.75, "{0}'s baseband is shaped at 0.55x baud", label);
+            hi.Should().BeLessThan(baud * bound, "{0}'s baseband is shaped per its symbol rate", label);
         }
     }
 }

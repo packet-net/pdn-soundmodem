@@ -57,6 +57,8 @@ public class NinoTncParityTests
         "fsk9600" => FskModem.Fsk9600(rate, sink, FskFraming.ClassicHdlc),
         "fsk9600-il2p" => FskModem.Fsk9600(rate, sink, FskFraming.Il2pCrc),
         "fsk4800-il2p" => FskModem.Fsk4800(rate, sink),
+        "c4fsk9600" => C4fskModem.C4fsk9600(rate, sink),
+        "c4fsk19200" => C4fskModem.C4fsk19200(rate, sink),
         "qpsk3600" => QpskModem.Qpsk3600(rate, sink),
         "afsk1200" => new Afsk1200Modem(rate, sink),
         "afsk1200-il2p" => new Afsk1200Il2pModem(rate, sink),
@@ -96,6 +98,8 @@ public class NinoTncParityTests
     [Theory]
     [InlineData("fsk9600-il2p", 48000)]
     [InlineData("fsk4800-il2p", 48000)]
+    [InlineData("c4fsk9600", 48000)]
+    [InlineData("c4fsk19200", 48000)]
     [InlineData("qpsk3600", 12000)]
     [InlineData("afsk1200", 12000)]
     [InlineData("afsk1200-il2p", 12000)]

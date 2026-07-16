@@ -1,5 +1,3 @@
-using Packet.SoundModem.Modems;
-
 namespace Packet.SoundModem.Tests.Modems;
 
 /// <summary>
@@ -19,27 +17,14 @@ namespace Packet.SoundModem.Tests.Modems;
 public class NinoTncAspirationTests
 {
     /// <summary>
-    /// Full NinoTNC mode coverage (issue #1 scope, plan §Coverage). The catalog has 15
-    /// operating modes; we implement 13. The gap is C4FSK — coherent 4-level FSK, modes
-    /// 1 (19200) and 3 (9600, 10 kHz OBW) — a genuinely new modem, not a
-    /// reparameterisation of anything here.
+    /// The scoreboard is currently EMPTY. Graduated so far: the idle-noise qpsk2400
+    /// acquisition criterion (2026-07-16, passed on first run) and the C4FSK coverage
+    /// criterion for NinoTNC modes 1/3 (2026-07-16, when <c>C4fskModem</c> landed —
+    /// bench-proven 8/8 us→NinoTNC on both modes at first live attempt). This placeholder
+    /// keeps the category discoverable; add the next unmet criterion here.
     /// </summary>
-    [Theory]
-    [InlineData(1, "19200 C4FSK IL2P+CRC")]
-    [InlineData(3, "9600 C4FSK IL2P+CRC")]
-    public void Every_NinoTnc_Mode_Has_A_Modem(byte ninoMode, string name)
+    [Fact]
+    public void Scoreboard_Is_Empty()
     {
-        TryCreate(ninoMode).Should().BeTrue(
-            "NinoTNC mode {0} ({1}) should have a wire-compatible modem here", ninoMode, name);
-    }
-
-    private static bool TryCreate(byte ninoMode)
-    {
-        // Wire this up as modems land; the switch is the to-do list.
-        return ninoMode switch
-        {
-            1 or 3 => false,   // C4FSK: no modem yet
-            _ => true,
-        };
     }
 }

@@ -62,7 +62,8 @@ if (serialDevice.Length == 0)
 string[] pairParts = pair.Split(':');
 string ourMode = pairParts[0];
 byte ninoMode = byte.Parse(pairParts[1]);
-int dspRate = ourMode.StartsWith("fsk", StringComparison.Ordinal) ? 48000 : 12000;
+int dspRate = ourMode.StartsWith("fsk", StringComparison.Ordinal)
+    || ourMode.StartsWith("c4fsk", StringComparison.Ordinal) ? 48000 : 12000;
 const int CaptureRate = 48000;
 
 // ---- our modem ----
@@ -84,6 +85,8 @@ IModem modem = ourMode switch
     "fsk9600" => FskModem.Fsk9600(dspRate, OnFrame, FskFraming.ClassicHdlc),
     "fsk9600-il2p" => new FskModem(dspRate, OnFrame, FskFraming.Il2pCrc),
     "fsk4800-il2p" => FskModem.Fsk4800(dspRate, OnFrame),
+    "c4fsk9600" => C4fskModem.C4fsk9600(dspRate, OnFrame),
+    "c4fsk19200" => C4fskModem.C4fsk19200(dspRate, OnFrame),
     _ => throw new ArgumentException($"unknown our-mode '{ourMode}'"),
 };
 
@@ -366,7 +369,8 @@ double AirtimeSeconds(int frameBytes)
         "bpsk300" or "afsk300" or "afsk300-il2p" or "afsk300-il2pc" => 300,
         "qpsk600" => 600, "bpsk1200" => 1200,
         "qpsk2400" => 2400, "qpsk3600" => 3600,
-        "fsk9600" or "fsk9600-il2p" => 9600, "fsk4800-il2p" => 4800, _ => 1200,
+        "fsk9600" or "fsk9600-il2p" or "c4fsk9600" => 9600,
+        "fsk4800-il2p" => 4800, "c4fsk19200" => 19200, _ => 1200,
     };
     // Generous: IL2P/HDLC overhead + preamble + margin.
     return (txDelayMs / 1000.0) + (frameBytes + 80) * 8.0 / bitRate + 0.5;
