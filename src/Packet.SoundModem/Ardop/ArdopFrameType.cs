@@ -218,7 +218,38 @@ public static class ArdopFrameType
     /// the control/special frames, all data frames and all ACKs.</summary>
     public static ReadOnlySpan<byte> ValidTypesAll => ValidTypesAllArray;
 
+    /// <summary>The candidate set searched while the protocol state is ISS
+    /// (<c>bytValidFrameTypesISS</c>, ARDOPC.c:248): the frames an ISS can legally
+    /// receive — NAKs, BREAK, DISC, END, ConRej, ConReq/ConAck and ACKs, but no IDLE,
+    /// ID, Ping or data frames.</summary>
+    public static ReadOnlySpan<byte> ValidTypesIss => ValidTypesIssArray;
+
     private static readonly byte[] ValidTypesAllArray = BuildValidTypesAll();
+
+    private static readonly byte[] ValidTypesIssArray = BuildValidTypesIss();
+
+    private static byte[] BuildValidTypesIss()
+    {
+        var types = new List<byte>();
+        for (byte t = DataNakMin; t <= DataNakMax; t++)
+        {
+            types.Add(t);
+        }
+
+        types.AddRange([Break, Disc, End, ConRejBusy, ConRejBw]);
+        for (byte t = ConReqMin; t <= ConReqMax; t++)
+        {
+            types.Add(t);
+        }
+
+        types.AddRange([ConAck200, ConAck500, ConAck1000, ConAck2000]);
+        for (int t = DataAckMin; t <= 0xFF; t++)
+        {
+            types.Add((byte)t);
+        }
+
+        return [.. types];
+    }
 
     private static byte[] BuildValidTypesAll()
     {

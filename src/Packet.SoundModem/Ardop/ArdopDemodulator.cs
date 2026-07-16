@@ -118,8 +118,13 @@ public sealed class ArdopDemodulator
 
     /// <summary>When set, frame-type decoding uses the connected-session acceptance
     /// rules with this session ID; when null (default) the unconnected/FEC rules with
-    /// session ID 0xFF apply.</summary>
+    /// session ID 0xFF apply. Superseded by <see cref="Scope"/> when that is set.</summary>
     public byte? ConnectedSessionId { get; set; }
+
+    /// <summary>Full session-identity scope for the frame-type decoder (candidate set +
+    /// pending/connected session IDs). The ARQ engine keeps it in step; when null the
+    /// legacy <see cref="ConnectedSessionId"/>/unconnected rules apply.</summary>
+    public ArdopRxScope? Scope { get; set; }
 
     /// <summary>Memory-ARQ staleness timeout, ms of received audio
     /// (<c>FECMemarqTimeout</c>, SoundInput.c:181 — just longer than the longest data
@@ -300,7 +305,15 @@ public sealed class ArdopDemodulator
         _rawLength = 0;
     }
 
-    private void Emit(ArdopDecodedFrame frame) => FrameDecoded?.Invoke(frame);
+    private int _rmtLeaderMeasureMs;
+
+    // Every emitted frame carries the timing the ARQ layer needs: the measured leader
+    // (intLeaderRcvdMs) and the leader-detect→type-decode duration (intRmtLeaderMeasure).
+    private void Emit(ArdopDecodedFrame frame) => FrameDecoded?.Invoke(frame with
+    {
+        LeaderReceivedMs = _leaderReceivedMs,
+        RemoteLeaderMeasureMs = _rmtLeaderMeasureMs,
+    });
 
     private void InitializeMixedSamples()
     {
@@ -878,6 +891,9 @@ public sealed class ArdopDemodulator
             ptr += 240;
         }
 
+        // intRmtLeaderMeasure (SoundInput.c:2388): leader detect → type decode.
+        _rmtLeaderMeasureMs = (int)(_nowMs - _lastLeaderDetectMs);
+
         int newType = MinimalDistanceFrameType();
         _readPtr += 240 * 10;
         return newType;
@@ -912,20 +928,38 @@ public sealed class ArdopDemodulator
         return distance / 5;
     }
 
-    // MinimalDistanceFrameType (SoundInput.c:2137), unconnected (0xFF) and connected
-    // branches. The pending-connection branch is Phase B.
+    // MinimalDistanceFrameType (SoundInput.c:2137) — the full reference port:
+    // unconnected/monitoring (0xFF), pending-connect and connected branches, with the
+    // ISS candidate-set restriction. Session identity comes from Scope when the ARQ
+    // engine drives it, otherwise from the legacy ConnectedSessionId property.
     private int MinimalDistanceFrameType()
     {
-        byte sessionId = ConnectedSessionId ?? 0xFF;
+        bool pending = Scope?.Pending ?? false;
+        bool connected = Scope?.Connected ?? (ConnectedSessionId is not null);
+
+        // Acquire4FSKFrameType (SoundInput.c:2392): the session ID searched against.
+        byte sessionId = pending
+            ? Scope!.PendingSessionId
+            : connected
+                ? Scope?.SessionId ?? ConnectedSessionId!.Value
+                : (byte)0xFF;
+
+        // The third distance answers ConReq repeats while pending, and DISC replays
+        // from the previous session otherwise (SoundInput.c:2165).
+        byte d3SessionId = pending ? (byte)0xFF : Scope?.LastSessionId ?? 0xFF;
+
+        ReadOnlySpan<byte> candidates = Scope?.UseIssCandidates == true
+            ? ArdopFrameType.ValidTypesIss
+            : ArdopFrameType.ValidTypesAll;
 
         float minDistance1 = 5, minDistance2 = 5, minDistance3 = 5;
         int iAtMin1 = 0, iAtMin2 = 0, iAtMin3 = 0;
 
-        foreach (byte candidate in ArdopFrameType.ValidTypesAll)
+        foreach (byte candidate in candidates)
         {
             float d1 = DecodeDistance(0, candidate, 0);
             float d2 = DecodeDistance(20, candidate, sessionId);
-            float d3 = DecodeDistance(20, candidate, 0xFF); // bytLastARQSessionID (0xFF unconnected)
+            float d3 = DecodeDistance(20, candidate, d3SessionId);
 
             if (d1 < minDistance1)
             {
@@ -948,7 +982,7 @@ public sealed class ArdopDemodulator
 
         if (sessionId == 0xFF)
         {
-            // DISC from a prior session whose END we missed (protocol rule 1.5).
+            // DISC from a prior session whose END we missed (protocol rule 1.6).
             if (iAtMin1 == ArdopFrameType.Disc && iAtMin3 == ArdopFrameType.Disc
                 && (minDistance1 < 0.3 || minDistance3 < 0.3))
             {
@@ -976,7 +1010,39 @@ public sealed class ArdopDemodulator
             return -1;
         }
 
-        // Connected session (blnARQConnected branch).
+        if (pending)
+        {
+            // Expecting a ConAck; both type bytes agreeing under the pending ID
+            // (SoundInput.c:2253).
+            if (iAtMin1 == iAtMin2)
+            {
+                if (minDistance1 < 0.3 || minDistance2 < 0.3)
+                {
+                    _lastGoodFrameTypeDecodeMs = _nowMs;
+                    return iAtMin1;
+                }
+
+                return -1;
+            }
+
+            // A repeated ConReq under 0xFF — the ISS missed our ConAck
+            // (SoundInput.c:2275).
+            if (iAtMin1 == iAtMin3)
+            {
+                if (iAtMin1 >= ArdopFrameType.ConReqMin && iAtMin1 <= ArdopFrameType.ConReqMax
+                    && (minDistance1 < 0.3 || minDistance3 < 0.3))
+                {
+                    _lastGoodFrameTypeDecodeMs = _nowMs;
+                    return iAtMin1;
+                }
+
+                return -1;
+            }
+
+            return -1;
+        }
+
+        // Connected session (blnARQConnected branch, SoundInput.c:2294).
         if (iAtMin1 != iAtMin2)
         {
             return -1;
@@ -1213,6 +1279,7 @@ public sealed class ArdopDemodulator
                     Quality = quality,
                     Caller = ok ? caller.ToString() : null,
                     Target = ok ? target!.ToString() : null,
+                    SnDb = Compute4FskSn(),
                 });
                 return;
             }
@@ -1292,6 +1359,38 @@ public sealed class ArdopDemodulator
             Data = [.. data],
             Quality = quality,
         });
+    }
+
+    // Compute4FSKSN (SoundInput.c:2929): per-symbol dominant tone vs the average of
+    // the other three, in dB referenced to a 3 kHz noise bandwidth (−17.8 dB converts
+    // from the nominal 50 Hz bin). Used for ConReq/Ping S:N reporting (PingAck).
+    private int Compute4FskSn()
+    {
+        int numSymbols = _toneMagsLength / 4;
+        if (numSymbols == 0)
+        {
+            return 0;
+        }
+
+        float avgSnDb = 0;
+        for (int i = 0; i < numSymbols; i++)
+        {
+            int nonDominantSum = 10;  // protect divide by zero
+            int dominant = 0;
+            for (int j = 0; j < 4; j++)
+            {
+                dominant = Math.Max(dominant, _toneMags[4 * i + j]);
+                nonDominantSum += _toneMags[4 * i + j];
+            }
+
+            float avgNonDominant = (nonDominantSum - dominant) / 3.0f;
+            float ratio = (dominant - avgNonDominant) / avgNonDominant;
+            // Floor at −30 dB/symbol: the reference would produce −inf on a
+            // pathological all-equal symbol (numeric guard, not behaviour).
+            avgSnDb += ratio <= 0.001f ? -30.0f : MathF.Min(50.0f, 10.0f * MathF.Log10(ratio));
+        }
+
+        return (int)(avgSnDb / numSymbols - 17.8f);
     }
 
     // ------------------------------------------------------------- Memory ARQ

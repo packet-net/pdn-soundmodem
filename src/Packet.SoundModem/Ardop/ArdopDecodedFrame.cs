@@ -40,4 +40,18 @@ public sealed record ArdopDecodedFrame
 
     /// <summary>Reported quality for PingAck frames (30-100).</summary>
     public int? PingAckQuality { get; init; }
+
+    /// <summary>Measured leader length of this frame in ms (<c>intLeaderRcvdMs</c>) —
+    /// what a ConAck reply reports back in ARQ.</summary>
+    public int LeaderReceivedMs { get; init; }
+
+    /// <summary>Leader-detect → frame-type-decode duration in ms
+    /// (<c>intRmtLeaderMeasure</c>, SoundInput.c:2388) — feeds the ISS's repeat
+    /// interval (<c>ComputeInterFrameInterval</c>).</summary>
+    public int RemoteLeaderMeasureMs { get; init; }
+
+    /// <summary>Measured S:N in dB referenced to 3 kHz noise bandwidth, computed for
+    /// Ping frames only (<c>Compute4FSKSN</c>, SoundInput.c:2930) — echoed in the
+    /// PingAck reply.</summary>
+    public int SnDb { get; init; }
 }
