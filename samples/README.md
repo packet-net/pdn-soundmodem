@@ -7,6 +7,7 @@ Two sets, kept for different reasons.
 | `pdn/` | our transmission, one WAV per mode | **yes** — `sm-samples` regenerates them byte-for-byte |
 | `ninotnc/` | a real NinoTNC's transmission, one WAV per mode | **no** — recordings of physical hardware |
 | `qtsm/` | a real QtSoundModem's transmission, QPSK phase-map evidence | **no** — recordings off the snd-aloop rig |
+| `pocsag/` | our POCSAG paging transmission, one WAV per rate (see [pocsag/README.md](pocsag/README.md)) | **yes** — `sm-pocsag encode` regenerates them byte-for-byte |
 
 `ninotnc/` is the valuable half. Those are recordings of a NinoTNC (firmware 3.44) off pin 1
 over the CM108 bench loop (docs/ninotnc-loop.md), and they are the source of the per-mode

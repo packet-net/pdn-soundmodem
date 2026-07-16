@@ -9,6 +9,9 @@
     { "subChannel": 1, "mode": "bpsk300", "frequency": 1500 }
   ],
   "ptt": { "type": "cm108", "device": "/dev/hidraw0", "gpio": 3 },
+  // POCSAG paging endpoint (optional; DAPNET/POCSAG-compatible waveform, local paging
+  // API — line-based TCP: "PAGE <ric> <function> ALPHA|NUMERIC|TONE [text]").
+  // "paging": { "port": 8106, "baud": 1200, "invertPolarity": false },
   "csma": {
     "txDelayMilliseconds": 300,
     "persistence": 63,

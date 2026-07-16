@@ -13,6 +13,7 @@ using Packet.SoundModem.Modems;
 //                  [--ptt cm108:/dev/hidraw0[:gpio]]
 //                  [--txdelay MS] [--wav FILE] [--quality-frames]
 //                  [--psk-detector coherent|differential]
+//                  [--paging PORT[:BAUD]]
 //
 // Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, qpsk2400, qpsk3600 (both IL2P+CRC),
 // fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC), freedv-datac0/1/3/4/13/14 (FreeDV datac
@@ -23,6 +24,20 @@ using Packet.SoundModem.Modems;
 // --psk-detector selects the BPSK/QPSK detection method: coherent (default, matches the
 // NinoTNC's Costas loop and noise margin) or differential (opt-in, acquires at zero preamble
 // at a ~1-2 dB noise cost — for short-preamble links). See issue #5.
+//
+// --paging starts the POCSAG paging endpoint (DAPNET/POCSAG-compatible waveform; local
+// paging API, pdn). Pages are not AX.25 frames, so they get a line-based TCP service of
+// their own instead of a KISS port — one UTF-8 command per line:
+//
+//   PAGE <ric> <function> ALPHA <text…>     → OK <id> | ERR <reason>
+//   PAGE <ric> <function> NUMERIC <text…>
+//   PAGE <ric> <function> TONE
+//
+// Transmissions share the channel-access path (CSMA, PTT, TXDELAY) with the packet
+// modems. Every page the POCSAG decoder hears on channel is broadcast to all paging
+// clients as "HEARD <ric> <function> ALPHA|NUMERIC|TONE [text]". BAUD defaults to 1200
+// (DAPNET); 512 and 2400 are also valid. See PagingTcpServer for the full grammar.
+// (Speaking the DAPNET-core transmitter protocol is a possible future follow-up.)
 
 // 9600-family and freedv-* modems need 48 kHz DSP (the FreeDV engine is native 8 kHz, and
 // 48000 = 6·8000 while 12000 has no integer ratio); everything else runs at 12 kHz.
@@ -45,6 +60,7 @@ bool qualityFrames = false;
 // matches the NinoTNC and its noise margin. Differential is the opt-in for short-preamble
 // links: it acquires with no preamble at a ~1–2 dB noise cost (issue #5).
 PskDetector pskDetector = PskDetector.Coherent;
+string? pagingSpec = null;
 var modemSpecs = new List<string>();
 
 for (int i = 0; i < args.Length; i++)
@@ -64,6 +80,7 @@ for (int i = 0; i < args.Length; i++)
         case "--wav": wavPath = Next(); break;
         case "--quality-frames": qualityFrames = true; break;
         case "--psk-detector": pskDetector = Enum.Parse<PskDetector>(Next(), ignoreCase: true); break;
+        case "--paging": pagingSpec = Next(); break;
         case "--help":
             Console.WriteLine("see source header for usage");
             return 0;
@@ -76,6 +93,7 @@ for (int i = 0; i < args.Length; i++)
 var modems = new List<ModemConfig>();
 CsmaConfig csma = new() { TxDelayMilliseconds = txDelay };
 PttConfig? pttConfig = null;
+PagingConfig? paging = null;
 
 if (configPath is not null)
 {
@@ -86,7 +104,18 @@ if (configPath is not null)
     modems = config.Modems;
     csma = config.Csma;
     pttConfig = config.Ptt;
+    paging = config.Paging;
     Console.WriteLine($"config: {configPath}");
+}
+
+if (pagingSpec is not null)
+{
+    string[] pagingParts = pagingSpec.Split(':');
+    paging = new PagingConfig
+    {
+        Port = int.Parse(pagingParts[0]),
+        Baud = pagingParts.Length > 1 ? int.Parse(pagingParts[1]) : 1200,
+    };
 }
 
 foreach (string spec in modemSpecs)
@@ -251,6 +280,18 @@ if (qualityFrames)
     Console.WriteLine("rx-quality frames: on (KISS command 0x07, JSON payload)");
 }
 Console.WriteLine($"kiss tcp: 127.0.0.1:{server.LocalPort}");
+
+Packet.SoundModem.Pocsag.PagingTcpServer? pagingServer = null;
+if (paging is not null)
+{
+    var polarity = paging.InvertPolarity
+        ? Packet.SoundModem.Pocsag.PocsagPolarity.Inverted
+        : Packet.SoundModem.Pocsag.PocsagPolarity.Normal;
+    pagingServer = new Packet.SoundModem.Pocsag.PagingTcpServer(channel, paging.Port, paging.Baud, polarity);
+    pagingServer.Start();
+    Console.WriteLine($"paging tcp: 127.0.0.1:{pagingServer.LocalPort} ({pagingServer.Mode}, DAPNET/POCSAG-compatible)");
+}
+await using var pagingLifetime = pagingServer;
 
 // Transmit side: modulate at the DSP rate; play at the card-native capture rate through
 // the image-rejecting upsampler (cards commonly refuse to open 12 kHz playback directly).
