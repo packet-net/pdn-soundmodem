@@ -340,6 +340,49 @@ public class ArdopArqSessionTests(ITestOutputHelper output)
             $"duration: {air.NowMs / 1000.0:F1} s virtual");
     }
 
+    [Theory]
+    [InlineData(ArdopBandwidth.B500Max, 0x54, 1536)]   // ladder {48,42,40,50,52,54} → 16QAM.500.100
+    [InlineData(ArdopBandwidth.B1000Max, 0x64, 4096)]  // ladder {4C,4A,50,60,62,64} → 16QAM.1000.100
+    [InlineData(ArdopBandwidth.B2000Max, 0x70, 6144)]  // ladder {4C,4A,50,60,70,72,74} → 4PSK.2000.100
+    public void Full_Ladder_Climbs_The_Psk_Qam_Rungs_On_A_Clean_Cable(ArdopBandwidth bandwidth, byte topRung, int payloadLength)
+    {
+        // Phase C exit shape (hermetic leg): both ends unrestricted, the gearshift
+        // must climb the FSK→PSK→QAM ladder to the highest reachable rung on clean
+        // audio and deliver byte-exact. At 500/1000 Hz that is the 16QAM top rung.
+        // At 2000 Hz the reachable top is 4PSK.2000.100 — ardopcf-parity, not a gap:
+        // the 4PSK.2000→8PSK.2000 shift threshold is 85 (GetShiftUpThresholds,
+        // ARQ.c:682) while a clean 4PSK constellation measures quality 84 in
+        // ardopcf's own decoder (UpdatePhaseConstellation's floor for the mode), so
+        // neither implementation climbs that rung on reported quality alone.
+        var air = Connect(
+            tuneA: c => { c.ArqBandwidth = bandwidth; c.FskOnly = false; },
+            tuneB: c => { c.ArqBandwidth = bandwidth; c.FskOnly = false; });
+        byte[] payload = Payload(payloadLength, seed: 21);
+
+        var dataTypesOnAir = new List<byte>();
+        air.A.FrameTransmitted += (request, _) =>
+        {
+            if (ArdopFrameType.IsData(request.Type))
+            {
+                dataTypesOnAir.Add(request.Type);
+            }
+        };
+
+        air.A.Engine.EnqueueData(payload);
+        air.RunUntil(() => air.ReceivedAtB.Count == payload.Length, 600000)
+            .Should().BeTrue("the whole payload must arrive");
+
+        air.ReceivedAtB.Should().Equal(payload);
+        dataTypesOnAir.Should().Contain(t => (t & 0xFE) == topRung,
+            "a clean cable must climb to {0}", ArdopFrameType.Name(topRung));
+        air.B.Engine.Stats.NaksSent.Should().Be(0, "nothing should fail on a clean cable");
+        air.A.Engine.Stats.RepeatsSent.Should().Be(0);
+
+        output.WriteLine(
+            $"data frames on air: {string.Join(", ", dataTypesOnAir.Select(ArdopFrameType.Name))}; " +
+            $"shift ups: {air.A.Engine.Gearshift.ShiftUps}, duration: {air.NowMs / 1000.0:F1} s virtual");
+    }
+
     // --------------------------------------------------------------- turnover
 
     [Fact]

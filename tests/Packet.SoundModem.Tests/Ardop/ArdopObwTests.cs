@@ -19,6 +19,18 @@ public class ArdopObwTests
     [InlineData("txframe_4FSK.500.100S.E.wav", 0x4C)]  // 500 Hz class, short
     [InlineData("txframe_4FSK.2000.600.E.wav", 0x7A)]  // 2000 Hz class (600 Bd FM)
     [InlineData("txframe_4FSK.2000.600S.E.wav", 0x7C)] // 2000 Hz class, short
+    [InlineData("txframe_4PSK.200.100.E.wav", 0x40)]   // 200 Hz class, 1-carrier PSK
+    [InlineData("txframe_8PSK.200.100.E.wav", 0x44)]
+    [InlineData("txframe_16QAM.200.100.E.wav", 0x46)]
+    [InlineData("txframe_4PSK.500.100.E.wav", 0x50)]   // 500 Hz class, 2 carriers
+    [InlineData("txframe_8PSK.500.100.E.wav", 0x52)]
+    [InlineData("txframe_16QAM.500.100.E.wav", 0x54)]
+    [InlineData("txframe_4PSK.1000.100.E.wav", 0x60)]  // 1000 Hz class, 4 carriers
+    [InlineData("txframe_8PSK.1000.100.E.wav", 0x62)]
+    [InlineData("txframe_16QAM.1000.100.E.wav", 0x64)]
+    [InlineData("txframe_4PSK.2000.100.E.wav", 0x70)]  // 2000 Hz class, 8 carriers
+    [InlineData("txframe_8PSK.2000.100.E.wav", 0x72)]
+    [InlineData("txframe_16QAM.2000.100.E.wav", 0x74)]
     public void Our_Transmit_Is_Never_Wider_Than_Ardopcf(string referenceWav, byte type)
     {
         // The reference: ardopcf's transmission of this exact frame (payload from the

@@ -9,12 +9,14 @@ using Xunit.Abstractions;
 namespace Packet.SoundModem.Tests.Ardop;
 
 /// <summary>
-/// The decisive Phase B test: full ARQ sessions between our engine and a live ardopcf
-/// (git a7c9228) over the snd-aloop virtual audio cable, both roles, both ends FSKONLY
-/// (docs/ardop-design.md §6.2 rung 3 / §7 Phase B exit). ardopcf runs its own ALSA on
-/// loopback device 0 and is driven over its TCP host interface; our side is the same
-/// <see cref="ArdopArqStation"/> the hermetic tests use, pumped by a real 20 ms ALSA
-/// duplex loop on device 1 — the audio clock, not the virtual one.
+/// The decisive live tests: full ARQ sessions between our engine and a live ardopcf
+/// (git a7c9228) over the snd-aloop virtual audio cable, both roles — both ends
+/// FSKONLY (the Phase B exit, docs/ardop-design.md §6.2 rung 3 / §7) and unrestricted
+/// mixed-mode where the gearshift must climb into the PSK/QAM rungs (the Phase C
+/// exit). ardopcf runs its own ALSA on loopback device 0 and is driven over its TCP
+/// host interface; our side is the same <see cref="ArdopArqStation"/> the hermetic
+/// tests use, pumped by a real 20 ms ALSA duplex loop on device 1 — the audio clock,
+/// not the virtual one.
 /// </summary>
 /// <remarks>
 /// Gated on two environment variables so CI stays hermetic: <c>ARDOPCF</c> (path to the
@@ -388,12 +390,17 @@ public class ArdopArdopcfLiveSessionTests(ITestOutputHelper output)
         }
     }
 
-    private static ArdopArqConfig OurConfig() => new()
+    private static ArdopArqConfig OurConfig(bool fskOnly = true, string bandwidth = "500") => new()
     {
         MyCall = Station("M0AAA"),
         GridSquare = "IO81VK",
-        ArqBandwidth = ArdopBandwidth.B500Max,
-        FskOnly = true,
+        ArqBandwidth = bandwidth switch
+        {
+            "500" => ArdopBandwidth.B500Max,
+            "1000" => ArdopBandwidth.B1000Max,
+            _ => ArdopBandwidth.B2000Max,
+        },
+        FskOnly = fskOnly,
         ArqTimeoutSeconds = 60,
     };
 
@@ -403,14 +410,14 @@ public class ArdopArdopcfLiveSessionTests(ITestOutputHelper output)
         return id;
     }
 
-    private static void ConfigureArdopcf(ArdopcfHost cf)
+    private static void ConfigureArdopcf(ArdopcfHost cf, bool fskOnly = true, string bandwidth = "500")
     {
         cf.Command("INITIALIZE");
         cf.Command("MYCALL G8BBB");
         cf.Command("GRIDSQUARE IO92XX");
         cf.Command("PROTOCOLMODE ARQ");
-        cf.Command("ARQBW 500MAX");
-        cf.Command("FSKONLY TRUE");
+        cf.Command($"ARQBW {bandwidth}MAX");
+        cf.Command($"FSKONLY {(fskOnly ? "TRUE" : "FALSE")}");
         cf.Command("ARQTIMEOUT 60");
         cf.Command("ENABLEPINGACK TRUE");
         cf.Command("LISTEN TRUE");
@@ -517,5 +524,139 @@ public class ArdopArdopcfLiveSessionTests(ITestOutputHelper output)
             $"ardopcf→ours: connected, {payload.Length} bytes received byte-exact, clean teardown; " +
             $"our stats: naksSent={us.WithStation(s => s.Engine.Stats.NaksSent)}, " +
             $"captureReopens={us.CaptureReopens}, xruns={us.CaptureXruns}");
+    }
+
+    // ------------------------------------------------- Phase C: mixed-mode sessions
+
+    private static bool IsPskOrQamData(byte type) =>
+        ArdopFrameType.IsData(type) && ArdopFrameInfo.Get(type).Modulation != ArdopModulation.Fsk4;
+
+    [SkippableFact]
+    public void Mixed_Mode_Session_Ours_As_Iss_Climbs_To_Psk_Qam_Rungs()
+    {
+        var rig = Rig();
+        Skip.If(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
+
+        byte[] payload = new byte[4096];
+        new Random(55).NextBytes(payload);
+
+        using var cf = new ArdopcfHost(rig!.Value.Binary, rig.Value.Card);
+        ConfigureArdopcf(cf, fskOnly: false, bandwidth: "2000");
+        using var us = new LiveStation(rig.Value.Card, OurConfig(fskOnly: false, bandwidth: "2000"));
+
+        var dataFramesOnAir = new List<byte>();
+        us.WithStation(s => s.FrameTransmitted += (request, _) =>
+        {
+            if (ArdopFrameType.IsData(request.Type))
+            {
+                lock (dataFramesOnAir)
+                {
+                    dataFramesOnAir.Add(request.Type);
+                }
+            }
+        });
+
+        us.WithStation(s => s.Engine.EnqueueData(payload));
+        us.WithStation(s => s.Engine.ConnectRequest(Station("G8BBB"), s.NowMs).Should().BeTrue());
+
+        us.WaitFor(s => s.Engine.IsConnected, 60_000).Should().BeTrue("our ConReq must be answered");
+        cf.WaitFor(n => n.Any(x => x.StartsWith("CONNECTED M0AAA 2000")), 30_000)
+            .Should().BeTrue("ardopcf must report the 2000 Hz session");
+
+        cf.WaitForData(payload.Length, 300_000).Should().BeTrue("all data must reach ardopcf's host");
+        cf.ArqData.Should().Equal(payload);
+
+        lock (dataFramesOnAir)
+        {
+            dataFramesOnAir.Should().Contain(t => IsPskOrQamData(t),
+                "the gearshift must climb off the FSK rungs on a clean cable");
+        }
+
+        us.WithStation(s => s.Engine.Disconnect(s.NowMs));
+        cf.WaitFor(n => n.Contains("DISCONNECTED"), 60_000).Should().BeTrue();
+        us.WaitFor(s => s.Engine.State == ArdopProtocolState.Disc, 60_000).Should().BeTrue();
+
+        lock (dataFramesOnAir)
+        {
+            output.WriteLine(
+                $"ours→ardopcf mixed-mode: {payload.Length} bytes byte-exact over 2000 Hz; " +
+                $"data frames on air: {string.Join(", ", dataFramesOnAir.Select(ArdopFrameType.Name))}; " +
+                $"shiftUps={us.WithStation(s => s.Engine.Gearshift.ShiftUps)}, " +
+                $"acks={us.WithStation(s => s.Engine.Stats.DataAcksReceived)}, " +
+                $"naks={us.WithStation(s => s.Engine.Stats.NaksReceived)}, " +
+                $"repeats={us.WithStation(s => s.Engine.Stats.RepeatsSent)}, " +
+                $"captureReopens={us.CaptureReopens}, xruns={us.CaptureXruns}");
+        }
+    }
+
+    [SkippableFact]
+    public void Mixed_Mode_Session_Ardopcf_As_Iss_Sends_Us_Psk_Qam_Frames()
+    {
+        var rig = Rig();
+        Skip.If(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
+
+        byte[] payload = new byte[4096];
+        new Random(66).NextBytes(payload);
+
+        using var cf = new ArdopcfHost(rig!.Value.Binary, rig.Value.Card);
+        ConfigureArdopcf(cf, fskOnly: false, bandwidth: "2000");
+        using var us = new LiveStation(rig.Value.Card, OurConfig(fskOnly: false, bandwidth: "2000"));
+
+        var dataFramesDecoded = new List<byte>();
+        us.WithStation(s => s.FrameDecoded += (frame, _) =>
+        {
+            if (frame.Ok && ArdopFrameType.IsData(frame.Type))
+            {
+                lock (dataFramesDecoded)
+                {
+                    dataFramesDecoded.Add(frame.Type);
+                }
+            }
+        });
+
+        cf.SendData(payload);
+        cf.Command("ARQCALL M0AAA 5");
+
+        us.WaitFor(s => s.Engine.IsConnected, 60_000)
+            .Should().BeTrue("we must answer ardopcf's ConReq and connect");
+        cf.WaitFor(n => n.Any(x => x.StartsWith("CONNECTED M0AAA 2000")), 30_000).Should().BeTrue();
+
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < 300_000)
+        {
+            lock (us.Received)
+            {
+                if (us.Received.Count >= payload.Length)
+                {
+                    break;
+                }
+            }
+
+            Thread.Sleep(100);
+        }
+
+        lock (us.Received)
+        {
+            us.Received.Should().Equal(payload, "ardopcf's data must arrive byte-exact");
+        }
+
+        lock (dataFramesDecoded)
+        {
+            dataFramesDecoded.Should().Contain(t => IsPskOrQamData(t),
+                "ardopcf's gearshift must have picked PSK/QAM rungs and we must have decoded them");
+        }
+
+        cf.Command("DISCONNECT");
+        us.WaitFor(s => s.Engine.State == ArdopProtocolState.Disc, 60_000).Should().BeTrue();
+        cf.WaitFor(n => n.Contains("DISCONNECTED"), 60_000).Should().BeTrue();
+
+        lock (dataFramesDecoded)
+        {
+            output.WriteLine(
+                $"ardopcf→ours mixed-mode: {payload.Length} bytes byte-exact over 2000 Hz; " +
+                $"data frames decoded: {string.Join(", ", dataFramesDecoded.Select(ArdopFrameType.Name))}; " +
+                $"naksSent={us.WithStation(s => s.Engine.Stats.NaksSent)}, " +
+                $"captureReopens={us.CaptureReopens}, xruns={us.CaptureXruns}");
+        }
     }
 }

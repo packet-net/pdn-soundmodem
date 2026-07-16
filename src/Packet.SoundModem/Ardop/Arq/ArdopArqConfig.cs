@@ -58,8 +58,7 @@ public sealed class ArdopArqConfig
     public bool EnablePingAck { get; set; } = true;
 
     /// <summary>Restrict the data-mode ladders to 4FSK modes (FSKONLY, default false;
-    /// ARDOPC.c:118). The Phase B interop configuration — PSK/QAM rungs are
-    /// Phase C.</summary>
+    /// ARDOPC.c:118).</summary>
     public bool FskOnly { get; set; } = false;
 
     /// <summary>Start the gearshift midway up the ladder rather than at the most

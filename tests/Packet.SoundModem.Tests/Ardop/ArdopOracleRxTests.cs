@@ -139,6 +139,25 @@ public class ArdopOracleRxTests
     [InlineData("txframe_4FSK.500.100.E.wav", +80.0)]
     [InlineData("txframe_4FSK.500.100S.O.wav", -40.0)]
     [InlineData("txframe_IDFrame.wav", +40.0)]
+    [InlineData("txframe_4PSK.200.100.E.wav", -80.0)]
+    [InlineData("txframe_4PSK.200.100.E.wav", +80.0)]
+    [InlineData("txframe_4PSK.200.100S.O.wav", -40.0)]
+    [InlineData("txframe_8PSK.200.100.E.wav", -80.0)]
+    [InlineData("txframe_8PSK.200.100.E.wav", +80.0)]
+    [InlineData("txframe_16QAM.200.100.E.wav", -80.0)]
+    [InlineData("txframe_16QAM.200.100.E.wav", +80.0)]
+    [InlineData("txframe_16QAM.200.100.O.wav", +40.0)]
+    [InlineData("txframe_4PSK.500.100.E.wav", -80.0)]
+    [InlineData("txframe_8PSK.500.100.E.wav", +80.0)]
+    [InlineData("txframe_16QAM.500.100.E.wav", -40.0)]
+    [InlineData("txframe_16QAM.500.100.E.wav", +40.0)]
+    [InlineData("txframe_4PSK.1000.100.E.wav", -80.0)]
+    [InlineData("txframe_8PSK.1000.100.E.wav", +80.0)]
+    [InlineData("txframe_16QAM.1000.100.E.wav", -40.0)]
+    [InlineData("txframe_4PSK.2000.100.E.wav", +80.0)]
+    [InlineData("txframe_8PSK.2000.100.E.wav", -40.0)]
+    [InlineData("txframe_16QAM.2000.100.E.wav", +40.0)]
+    [InlineData("txframe_16QAM.2000.100.E.wav", -40.0)]
     public void Ardopcf_Audio_Decodes_With_Frequency_Offset(string wavName, double offsetHz)
     {
         var fixture = Manifest[wavName];
@@ -155,12 +174,26 @@ public class ArdopOracleRxTests
     [InlineData("txframe_4FSK.500.100.E.wav", 1500, 13)]
     [InlineData("txframe_4FSK.500.100S.E.wav", 2000, 17)]
     [InlineData("txframe_BREAK.wav", 2000, 19)]
+    [InlineData("txframe_4PSK.200.100.E.wav", 1500, 23)]
+    [InlineData("txframe_8PSK.200.100.E.wav", 1500, 29)]
+    [InlineData("txframe_16QAM.200.100.E.wav", 1200, 31)]
+    [InlineData("txframe_4PSK.500.100.E.wav", 1000, 37)]
+    [InlineData("txframe_8PSK.500.100.E.wav", 1000, 41)]
+    [InlineData("txframe_16QAM.500.100.E.wav", 800, 43)]
+    [InlineData("txframe_4PSK.1000.100.E.wav", 800, 47)]
+    [InlineData("txframe_8PSK.1000.100.E.wav", 700, 53)]
+    [InlineData("txframe_16QAM.1000.100.E.wav", 600, 59)]
+    [InlineData("txframe_4PSK.2000.100.E.wav", 600, 61)]
+    [InlineData("txframe_8PSK.2000.100.E.wav", 500, 67)]
+    [InlineData("txframe_16QAM.2000.100.E.wav", 400, 71)]
     public void Ardopcf_Audio_Decodes_Through_Additive_Noise(string wavName, int noiseRms, int seed)
     {
         // ardopcf's own INPUTNOISE degradation is Gaussian noise added to input audio;
         // this is the same operation applied deterministically. The TX peak is ~26000,
         // so RMS 1500-2000 is roughly 14-17 dB SNR on the strongest tone — comfortably
-        // decodable, still a real perturbation of every DSP stage.
+        // decodable, still a real perturbation of every DSP stage. The PSK/QAM rows
+        // scale the noise down with carrier count (per-carrier power falls as the
+        // carrier-count scaling factors shrink) and with constellation density.
         var fixture = Manifest[wavName];
         var random = new Random(seed);
         var frames = DecodeWav(wavName, samples =>
