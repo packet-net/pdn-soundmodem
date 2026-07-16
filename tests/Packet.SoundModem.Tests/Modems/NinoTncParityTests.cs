@@ -152,7 +152,14 @@ public class NinoTncParityTests
         float[] samples = audio.ToArray();
         for (int i = 0; i < samples.Length; i++)
         {
-            // Gaussian noise ~20 dB below the 0.8 peak signal.
+            // Gaussian noise ~20 dB below the 0.8 peak signal. Determinism note: the only
+            // stochastic input is this seeded sequence, and .NET reserves the right to
+            // change Random's algorithm across major versions — so the margin matters
+            // more than the seed. Measured 2026-07-16: the decode cliff is at sigma ~0.20
+            // (9-6/10 across seeds 11/7/42/1/99; every seed 10/10 at <= 0.15), so this
+            // assertion runs 4x amplitude (12 dB) inside it. Neither a different noise
+            // sequence nor last-ulp transcendental differences between architectures can
+            // cross that. If this test ever flakes, something real moved.
             double u1 = 1.0 - random.NextDouble();
             double u2 = random.NextDouble();
             samples[i] += 0.05f * (float)(Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2));
