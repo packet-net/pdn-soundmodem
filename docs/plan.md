@@ -198,6 +198,21 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still¹³) — 110D App D design doc: implementation-ready, critique-folded
+
+PR #28: docs/ms110d/design.md (52 k chars) — the App D 3 kHz waveform design on the
+dual-verified tables, produced by a 3-section → adversarial-critique → assemble workflow run
+in parallel with ARDOP Phase C (Tom: "the box isn't that busy"). All 12 critique findings
+folded, none deferred; the provenance BLOCKER resolved with real forensics (everyspec stamps
+each download's PDF trailer /ID — the doc pins the permanent PDF ID + a stamp-invariant
+SHA-256; README corrected). K=9 polys corroborated against the published (561,753)
+max-free-distance code; the interleaver direction pinned by a wire-side worked-example test;
+a 13-row transcription-debt ledger gates encoder code on formally-transcribed figures; the
+no-oracle validation ladder gets a loopback-blind checklist (L1–L12) + a statistical budget
+vs the transcribed D-LXIV/LXV masks. Native rate 9600 Hz; phasing A (Walsh/BPSK/QPSK + LMS
+DFE) / B (8PSK/16QAM + RLS) / C (high QAM, groundwave-gated). §10 = three open questions for
+Tom. Build remains sequenced after ARDOP.
+
 ### 2026-07-16 (later still¹²) — ARDOP Phase B: the ARQ engine, live sessions vs ardopcf
 
 PR #27: the ISS/IRS ARQ session engine (the design's named riskiest block), ported
