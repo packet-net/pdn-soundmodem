@@ -25,6 +25,20 @@ wired CM108 loop — 9600 GFSK (AX.25 + IL2P+CRC), 4800 GFSK, 3600/2400/600 QPSK
 FX.25 on 1200 AFSK. The gap is C4FSK (modes 1/3). See
 [docs/ninotnc-loop.md](docs/ninotnc-loop.md) § Coverage.
 
+**Interop is per-mode and explicit — never traded away.** Every mode states which peers it
+interoperates with, and NinoTNC compatibility is never given up to suit another modem:
+
+- **Universal** — 1200/300 AFSK (Bell 202) and 9600 GFSK (G3RUH): interoperate with NinoTNC,
+  Dire Wolf and QtSoundModem alike.
+- **NinoTNC / QtSM V26A** — the BPSK/QPSK IL2P modes use the V.26A phase map, so they pair
+  with a NinoTNC and with QtSoundModem's **V26A** modes (not its legacy UZ7HO QPSK maps).
+- **NinoTNC + Dire-Wolf RUH** — 4800 GFSK IL2P+CRC: NinoTNC-derived, and cross-validated
+  both ways against QtSoundModem's Dire-Wolf RUH-4800.
+- **NinoTNC / MMDVM-TNC** — C4FSK (once implemented): the MMDVM-TNC "Mode 2" wire format.
+
+The QtSoundModem cross-validation matrix (which QtSM `ModemType` each of our modes pairs
+with, both directions) is in [docs/qtsm-loop.md](docs/qtsm-loop.md) § Results.
+
 The research that scoped this project lives in
 [packet.net `docs/research/headless-soundmodem.md`](https://github.com/packet-net/packet.net/blob/main/docs/research/headless-soundmodem.md).
 
