@@ -1,0 +1,7 @@
+mode datac14
+bits_per_packet 128
+samples_per_packet 3680
+samples_per_frame 920
+tx_nlower 24
+nuwbits 32
+uw_ind_sym 2 5 7 10 12 15 17 20 22 25 27 30 32 35 37 40
