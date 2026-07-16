@@ -198,6 +198,20 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still¹⁴) — ARDOP Phase C: PSK/16QAM at ardopcf parity, 0 dB knee delta
+
+PR #29: differential 4PSK/8PSK + 16QAM TX+RX on 1/2/4/8 parallel carriers; FSK-only ARQ guard
+removed — full gearshift ladders. Tom's all-in bar met and exceeded: **noise knees
+trial-identical to ardopcf at every swept point (0 dB delta; bar was ~1 dB)**; 59/59
+payload-exact both directions across every PSK/QAM type/bandwidth (+offset+noise rows); TX
+within 2 LSB of ardopcf's own --writetxwav; **live mixed-mode ARQ both roles, 4 KB byte-exact
+each way, 0 NAKs**, ladders climbing to 4PSK/8PSK.2000; OBW never wider (17/17 rows). Honest
+corners recorded: the 2000 Hz quality-85 top-out is ardopcf-parity (verified in their decoder);
+16QAM.2000 proven by fixtures/knees/OBW, not live sessions (same on both implementations);
+knees AWGN-only per the design. Hermetic suite 610→723 (715 verifier-env), env-enabled 795/0.
+Remaining: Phase D — the 8515/8516 host protocol + daemon integration + Pat, then the
+GB7RDG/40m on-air acceptance.
+
 ### 2026-07-16 (later still¹³) — 110D App D design doc: implementation-ready, critique-folded
 
 PR #28: docs/ms110d/design.md (52 k chars) — the App D 3 kHz waveform design on the
