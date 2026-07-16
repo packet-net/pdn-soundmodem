@@ -189,6 +189,33 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still) — QtSoundModem interop: cross-validated against the ancestor
+
+Built **QtSoundModem** (G8BPQ, UZ7HO lineage — the modem ours descends from) from source and
+cross-validated the two over an **snd-aloop** virtual cable — no sound card, no radios. QtSM
+runs headless via its genuine `nogui` switch (`QCoreApplication`, `main.cpp:49`). Full recipe,
+device strings and results in **docs/qtsm-loop.md**; committed driver
+`tools/Packet.SoundModem.QtsmBench` (`qtsm-bench`, a pure KISS-TCP client that frames-in /
+counts-out on both modems); QtSM's QPSK transmissions checked in under `samples/qtsm/`.
+
+**Every mode tested interoperates both ways** (qtsm→ours live + ours→QtSM continuous-WAV, both
+artifact-free): afsk1200, afsk1200-il2p, bpsk300, qpsk2400, qpsk3600 all 9–10/10 each way.
+
+The headline finding — the QpskModulator doc-comment's "pairwise-negotiated phase map" caveat
+made concrete: **our `qpsk2400` pairs with QtSM's V26A/DW2400 (ModemType 12), NOT its legacy
+"QPSK AX.25 2400bd" (type 10) or V26B (type 14)** — ours is the V.26A map (as NinoTNC and Dire
+Wolf use). `qpsk3600` matches QtSM's legacy type-9 (QtSM has no V26 at 3600). Proven offline:
+`sm-decode` reads QtSM's type-12 QPSK 8/8 and its type-10 0/8 (samples/qtsm/). Raised as a
+tracking issue.
+
+Two rig lessons worth keeping (both in docs/qtsm-loop.md): QtSM's `soundChannel[ch]=0` means
+**channel disabled** (it then neither TX nor RX while looking alive — the bring-up time-sink);
+and every audio process here must run under **`sg audio`** (this login shell isn't in the
+audio process-group despite `/etc/group`). A real daemon defect surfaced and was **fixed**:
+`--capture-rate 12000` (DSP-rate == capture-rate) crashed on a factor-1 `Decimator`; the RX
+loop now feeds captured samples straight through when the rates match (Program.cs). This is
+what lets the daemon run at the aloop's native 12 kHz. Filed as an issue for the record.
+
 ### 2026-07-16 (later) — issue tracker cleared: #1-#4 closed on evidence
 
 All four open issues resolved and closed. #2's fix is the structural one: the

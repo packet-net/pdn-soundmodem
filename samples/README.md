@@ -6,6 +6,7 @@ Two sets, kept for different reasons.
 |---|---|---|
 | `pdn/` | our transmission, one WAV per mode | **yes** — `sm-samples` regenerates them byte-for-byte |
 | `ninotnc/` | a real NinoTNC's transmission, one WAV per mode | **no** — recordings of physical hardware |
+| `qtsm/` | a real QtSoundModem's transmission, QPSK phase-map evidence | **no** — recordings off the snd-aloop rig |
 
 `ninotnc/` is the valuable half. Those are recordings of a NinoTNC (firmware 3.44) off pin 1
 over the CM108 bench loop (docs/ninotnc-loop.md), and they are the source of the per-mode
@@ -85,3 +86,24 @@ in pdn-soundmodem issue #4.
 dotnet run --project tools/Packet.SoundModem.Samples -- <outdir> \
     [--txdelay 50] [--gap-ms 1000] [--source Q0AAA] [--dest TEST]
 ```
+
+---
+
+# qtsm/ — QtSoundModem transmissions (QPSK phase-map evidence)
+
+Recorded off the snd-aloop rig (docs/qtsm-loop.md) from **QtSoundModem 0.0.0.76**, mono
+12 kHz. These document that our `qpsk2400` (the NinoTNC/IL2P V.26A symbol map) pairs with
+QtSM's **V26A/DW2400** QPSK, not its legacy "QPSK AX.25 2400bd":
+
+| file | QtSM mode | our `qpsk2400` decoder |
+|---|---|---|
+| `qtsm-qpsk2400-legacy.wav` | type 10 · QPSK AX.25 2400bd (legacy UZ7HO map) | **0/8** |
+| `qtsm-qpsk2400-v26a.wav` | type 12 · QPSK V26A 2400bps (`SPEED_DW2400`) | **8/8** |
+
+```sh
+sm-decode samples/qtsm/qtsm-qpsk2400-legacy.wav qpsk2400 --crc   # → 0 frames
+sm-decode samples/qtsm/qtsm-qpsk2400-v26a.wav   qpsk2400 --crc   # → 8 frames
+```
+
+Not reproducible without the rig + that QtSM build, so checked in. See docs/qtsm-loop.md
+§ "QPSK 2400 needs QtSM's V26A/DW2400 mode".
