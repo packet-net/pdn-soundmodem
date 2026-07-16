@@ -232,14 +232,17 @@ IAudioOutput playback = captureRate == DspRate
     : new UpsamplingAudioOutput(new AlsaAudioOutput(device, captureRate), DspRate);
 Task transmitter = channel.RunTransmitterAsync(playback, ptt, cancellation.Token);
 
-// Receive side: capture at the card-native rate, decimate to the DSP rate.
+// Receive side: capture at the card-native rate, decimate to the DSP rate. When the card
+// is opened at the DSP rate directly (--capture-rate 12000 for the audio-band modes, or a
+// virtual device such as snd-aloop that runs at 12 kHz), there is nothing to decimate — a
+// Decimator with factor 1 is invalid, so feed the captured samples straight through.
 using var capture = AlsaPcm.Open(device, AlsaPcm.Direction.Capture, channels: 1, sampleRate: captureRate);
-var rxDecimator = new Decimator(captureRate, captureRate / DspRate);
+var rxDecimator = captureRate == DspRate ? null : new Decimator(captureRate, captureRate / DspRate);
 Console.WriteLine($"audio: {device} capture {captureRate} Hz → {DspRate} Hz");
 
 var pcmBuffer = new short[captureRate / 10]; // 100 ms blocks
 var floatBuffer = new float[pcmBuffer.Length];
-var dspBuffer = new float[rxDecimator.MaxOutput(pcmBuffer.Length)];
+var dspBuffer = new float[rxDecimator?.MaxOutput(pcmBuffer.Length) ?? pcmBuffer.Length];
 while (!cancellation.IsCancellationRequested)
 {
     int got = capture.Read(pcmBuffer);
@@ -248,8 +251,15 @@ while (!cancellation.IsCancellationRequested)
         floatBuffer[i] = pcmBuffer[i] / 32768f;
     }
 
-    int produced = rxDecimator.Process(floatBuffer.AsSpan(0, got), dspBuffer);
-    channel.ProcessReceive(dspBuffer.AsSpan(0, produced));
+    if (rxDecimator is null)
+    {
+        channel.ProcessReceive(floatBuffer.AsSpan(0, got));
+    }
+    else
+    {
+        int produced = rxDecimator.Process(floatBuffer.AsSpan(0, got), dspBuffer);
+        channel.ProcessReceive(dspBuffer.AsSpan(0, produced));
+    }
 }
 
 await transmitter.ContinueWith(_ => { }, TaskScheduler.Default);

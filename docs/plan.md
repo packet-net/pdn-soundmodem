@@ -189,6 +189,54 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (night) — QtSoundModem matrix extended: 10 mode/pairings, 9 interoperate
+
+Extended the QtSM cross-validation (docs/qtsm-loop.md) to five more shared modes, both
+directions, reusing `qtsm-bench` + the rig recipe. New: **bpsk1200** (QtSM type 4, 10/10 both
+ways), **qpsk600** (QtSM type 16 QPSK V26A 600bps — the V26A map again, 9/10 & 6/10),
+**fsk9600** (QtSM type 19 RUH 9600(DW), 10/10 both ways), **fsk9600-il2p** (type 19 + IL2P,
+10/10 both ways). **Nine of ten pairings interoperate cleanly both ways** across both rate
+classes (12 kHz audio-band + 48 kHz RUH).
+
+Two findings. (1) **`fsk4800-il2p` is one-way**: qtsm→ours 10/10 but ours→QtSM **0/10** — QtSM's
+Dire-Wolf RUH-4800 receiver rejects our 4800 GFSK TX (which a NinoTNC decodes), even from the
+clean 300 ms-preamble sample; our 4800 descends from the NinoTNC and, unlike our 9600, was never
+Dire-Wolf-cross-validated. Evidence `samples/qtsm/qtsm-ruh4800.wav` + `samples/pdn` mode 04.
+Raised as an issue; no change to our modem. (2) **QtSM's RUH modes don't run headless** without
+a patch — its `using48000` flag (which opens the card at 48 kHz for RUH) is set only in the GUI
+init path, so `nogui` RUH opened at 12 kHz and fed its 48 kHz demod garbage. A three-line patch
+to QtSM's nogui worker (set `using48000` from the configured speeds before `InitSound`) fixes
+it; applied to the local build, documented in docs/qtsm-loop.md § Rates. The RUH `ours→QtSM`
+figures come from playing our pre-generated `samples/pdn` TX WAVs into QtSM, because the 48 kHz
+aloop record-then-replay path is too lossy (documented).
+
+### 2026-07-16 (later still) — QtSoundModem interop: cross-validated against the ancestor
+
+Built **QtSoundModem** (G8BPQ, UZ7HO lineage — the modem ours descends from) from source and
+cross-validated the two over an **snd-aloop** virtual cable — no sound card, no radios. QtSM
+runs headless via its genuine `nogui` switch (`QCoreApplication`, `main.cpp:49`). Full recipe,
+device strings and results in **docs/qtsm-loop.md**; committed driver
+`tools/Packet.SoundModem.QtsmBench` (`qtsm-bench`, a pure KISS-TCP client that frames-in /
+counts-out on both modems); QtSM's QPSK transmissions checked in under `samples/qtsm/`.
+
+**Every mode tested interoperates both ways** (qtsm→ours live + ours→QtSM continuous-WAV, both
+artifact-free): afsk1200, afsk1200-il2p, bpsk300, qpsk2400, qpsk3600 all 9–10/10 each way.
+
+The headline finding — the QpskModulator doc-comment's "pairwise-negotiated phase map" caveat
+made concrete: **our `qpsk2400` pairs with QtSM's V26A/DW2400 (ModemType 12), NOT its legacy
+"QPSK AX.25 2400bd" (type 10) or V26B (type 14)** — ours is the V.26A map (as NinoTNC and Dire
+Wolf use). `qpsk3600` matches QtSM's legacy type-9 (QtSM has no V26 at 3600). Proven offline:
+`sm-decode` reads QtSM's type-12 QPSK 8/8 and its type-10 0/8 (samples/qtsm/). Raised as a
+tracking issue.
+
+Two rig lessons worth keeping (both in docs/qtsm-loop.md): QtSM's `soundChannel[ch]=0` means
+**channel disabled** (it then neither TX nor RX while looking alive — the bring-up time-sink);
+and every audio process here must run under **`sg audio`** (this login shell isn't in the
+audio process-group despite `/etc/group`). A real daemon defect surfaced and was **fixed**:
+`--capture-rate 12000` (DSP-rate == capture-rate) crashed on a factor-1 `Decimator`; the RX
+loop now feeds captured samples straight through when the rates match (Program.cs). This is
+what lets the daemon run at the aloop's native 12 kHz. Filed as an issue for the record.
+
 ### 2026-07-16 (later) — issue tracker cleared: #1-#4 closed on evidence
 
 All four open issues resolved and closed. #2's fix is the structural one: the
