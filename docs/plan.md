@@ -198,6 +198,21 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-16 (later still⁷) — Phase 2: all six datac modes complete
+
+PR #21: RX for the narrow modes (datac4/13/14) — the RX band-pass filter
+(`find_carrier_centre` float-summation centres 1468.75/1500/1472.22 Hz; the existing
+`quisk_ccfFilter` port applied per nin-batch at the rxbuf tail, state persistent across burst
+resets) plus mode wiring; the LDPC shortening path already existed. Measured byte-exact both
+directions vs stock codec2 tooling (codec2→ours 2/2, 2/2, 5/5 clean and through +22 Hz /
+~5.5 dB; ours→codec2 12/12 interop tests), round-trips and IModem green, TX oracle extended to
+all six modes (xcorr 1.0). **The OBW rule now covers all six modes** — datac4 (300.8 Hz) and
+datac13 (265.6 Hz) measure exactly equal to FreeDV's own vectors. Suite → 378. The FreeDV datac
+family is code-complete: six modes, TX+RX, KISS-integrated (`freedv-datac0/1/3/4/13/14`),
+CI-guarded OBW, stock-tooling interop in both directions. Remaining: the HF radio loop
+(task #4's proven-reliable gate — needs the bench), streaming-mode acquisition for the narrow
+modes (unneeded for the burst-mode deployments), low-SNR/multipath characterisation.
+
 ### 2026-07-16 (later still⁶) — FreeDV datac as KISS modes: IL2P+CRC on the FreeDV waveform
 
 PR #20: `freedv-datac0/1/3` land as daemon KISS modes on the 48 kHz DSP path (integer ÷6/×6
