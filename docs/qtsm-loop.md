@@ -76,11 +76,25 @@ speaker-test -D plughw:4,0,0 -c 2 -r 12000 -t sine -f 1000
 
 ### Rates
 
-QtSM runs its DSP at 12 kHz and opens the aloop at 12 kHz. The daemon must present the aloop
-the **same** hw rate — snd-aloop copies frames 1:1, so a cable's two ends must agree. Run the
-daemon **`--capture-rate 12000`** for the audio-band modes so capture *and* playback are 12 kHz
-native (no resampling anywhere). Fixing the factor-1 decimator crash (below) is what makes this
-possible.
+QtSM runs the audio-band DSP at 12 kHz and opens the aloop at 12 kHz. The daemon must present
+the aloop the **same** hw rate — snd-aloop copies frames 1:1, so a cable's two ends must agree.
+Run the daemon **`--capture-rate 12000`** for the audio-band modes so capture *and* playback are
+12 kHz native (no resampling anywhere). Fixing the factor-1 decimator crash (below) is what
+makes this possible.
+
+**The RUH (9600/4800) modes run at 48 kHz** — QtSM's `init_RUH96`/`init_RUH48` configure the
+Dire Wolf demod for a 48 kHz sample rate, and our daemon runs the 9600-family at 48 kHz too, so
+the aloop cable is opened at 48 kHz on both ends (`--capture-rate 48000`, the daemon default).
+The aloop bridges 48 kHz fine.
+
+**Headless QtSM does not switch to 48 kHz on its own** — a QtSM bug this rig had to patch. The
+`using48000` flag (which makes `InitSound` open the card at 48 kHz when a RUH modem is active)
+is set **only in the GUI init path** (`QtSoundModem.cpp`); the `nogui` worker
+(`tcpCode.cpp`, before `InitSound`) never set it, so headless RUH opened the card at 12 kHz and
+fed the 48 kHz-configured demod garbage → 0/10. The fix is three lines in the worker: set
+`using48000` from the configured `speed[]`/`soundChannel[]` before `InitSound`. Filed against
+QtSM's headless mode; applied to the local build for these measurements (a rig change, not a
+change to either modem).
 
 ## QtSoundModem.ini (per mode)
 
@@ -158,18 +172,30 @@ Two measurements per mode, because the live half-duplex path has a rig artifact 
 Rig: card 4 aloop, QtSM 0.0.0.76, daemon at 12 kHz native, 10 frames/direction, 40-byte
 payloads. Measured 2026-07-16.
 
-| our mode | QtSM pairing (`ModemType` · name · framing) | qtsm→ours (live) | ours→QtSM (WAV) | ours→QtSM (live) | verdict |
+| our mode | QtSM pairing (`ModemType` · name · framing) | rate | qtsm→ours | ours→QtSM | verdict |
 |---|---|---|---|---|---|
-| `afsk1200` | 1 · AFSK AX.25 1200 · HDLC | **10/10** | **10/10** | 5/10 | ✅ both ways |
-| `afsk1200-il2p` | 1 · AFSK AX.25 1200 · IL2P+CRC | **10/10** | **9/10** | 0/10 | ✅ both ways |
-| `bpsk300` | 6 · BPSK AX.25 300 · IL2P+CRC | **10/10** | **10/10** | 0/10 | ✅ both ways |
-| `qpsk2400` | **12 · QPSK V26A 2400bps (SPEED_DW2400) · IL2P+CRC** | **10/10** | **10/10** | 10/10 | ✅ both ways |
-| `qpsk3600` | 9 · QPSK AX.25 3600bd · IL2P+CRC | **10/10** | **10/10** | 0/10 | ✅ both ways |
+| `afsk1200` | 1 · AFSK AX.25 1200 · HDLC | 12k | **10/10** | **10/10** | ✅ both ways |
+| `afsk1200-il2p` | 1 · AFSK AX.25 1200 · IL2P+CRC | 12k | **10/10** | **9/10** | ✅ both ways |
+| `bpsk300` | 6 · BPSK AX.25 300 · IL2P+CRC | 12k | **10/10** | **10/10** | ✅ both ways |
+| `bpsk1200` | 4 · BPSK AX.25 1200 · IL2P+CRC | 12k | **10/10** | **10/10** | ✅ both ways |
+| `qpsk600` | 16 · QPSK V26A 600bps (`SPEED_Q300`) · IL2P+CRC | 12k | **9/10** | **6/10** | ✅ both ways |
+| `qpsk2400` | **12 · QPSK V26A 2400bps (`SPEED_DW2400`) · IL2P+CRC** | 12k | **10/10** | **10/10** | ✅ both ways |
+| `qpsk3600` | 9 · QPSK AX.25 3600bd · IL2P+CRC | 12k | **10/10** | **10/10** | ✅ both ways |
+| `fsk9600` | 19 · RUH 9600(DW) · HDLC | 48k | **10/10** | **10/10** | ✅ both ways |
+| `fsk9600-il2p` | 19 · RUH 9600(DW) · IL2P+CRC | 48k | **10/10** | **10/10** | ✅ both ways |
+| `fsk4800-il2p` | 18 · RUH 4800(DW) · IL2P+CRC | 48k | **10/10** | **0/10** | ⚠️ qtsm→ours only |
 
-**Every mode tested interoperates cleanly in both directions**, given the correct QtSM
-pairing. The `qtsm→ours` and `ours→QtSM (WAV)` columns are the artifact-free measurements;
-`ours→QtSM (live)` is shown to expose the aloop artifact (below) — it is 0–10/10 and varies
-run to run, while the same frames always cross when clocked continuously.
+`qtsm→ours` is always the live cross-decode (KISS both ends). `ours→QtSM` is the artifact-free
+figure: at 12 kHz it is the continuous-WAV playback into QtSM; at 48 kHz (the RUH modes) it is
+QtSM decoding our **pre-generated** `samples/pdn` TX WAV played straight in (the 48 kHz aloop
+*record-then-replay* path is too lossy — see below — so recording our own TX and replaying it
+loses frames; playing the clean generated WAV does not). A separate live `ours→QtSM` figure is
+depressed 0–10× run-to-run by the aloop capture-starvation artifact (below) and is not the
+measure of record — it is shown in the git history of this file, not here.
+
+**Nine of ten mode/pairings interoperate cleanly both ways.** The exception is `fsk4800-il2p`,
+which decodes one way only (finding below). The two rate classes both work: 12 kHz audio-band
+modes and 48 kHz RUH modes, over the same aloop cable.
 
 ### QPSK 2400 needs QtSM's V26A/DW2400 mode — not the legacy "QPSK AX.25 2400bd"
 
@@ -210,13 +236,26 @@ continuously, so our capture stays fed — hence its live figures are already cl
 
 ## Findings / discrepancies
 
-1. **QPSK 2400 phase-map pairing** (above). Our `qpsk2400` = QtSM **V26A/DW2400 (type 12)**,
-   not the legacy type 10; `qpsk3600` = QtSM legacy type 9. Evidence in `samples/qtsm/`.
-   Filed as a tracking issue; this is a *characterisation*, not a defect in ours — our map is
-   V.26A, matching NinoTNC and Dire Wolf.
-2. **Daemon `--capture-rate == DSP-rate` crash** — fixed in this branch (see below). Filed
-   as an issue for the record.
-3. **The soundChannel-0 disable** and **`sg audio` requirement** cost the most bring-up time;
+1. **QPSK phase-map pairing** (above). Our V.26A QPSK matches QtSM's V26A modes, not its legacy
+   ones: `qpsk2400` = **V26A/DW2400 (type 12)** not legacy type 10; `qpsk600` = **V26A
+   (type 16, `SPEED_Q300`)** — 9/10 & 6/10. `qpsk3600` matches QtSM's legacy type 9 (QtSM has no
+   V26 at 3600). Evidence in `samples/qtsm/`. A *characterisation*, not a defect in ours — our
+   map is V.26A, matching NinoTNC and Dire Wolf. Filed as a tracking issue.
+2. **`fsk4800-il2p` interoperates one way only** — qtsm→ours **10/10** (QtSM's RUH 4800(DW) TX
+   decodes on our receiver), but ours→QtSM **0/10**: QtSM's Dire-Wolf RUH-4800 receiver does not
+   decode our transmission, even from the clean pre-generated sample at 300 ms preamble (a
+   NinoTNC decodes that same sample — `samples/pdn` mode 04). QtSM's `init_RUH48` is genuinely
+   4800 baud/48 kHz, so it is not a rate/baud mismatch; our 4800 GFSK descends from the NinoTNC
+   (mode 4) and was never cross-validated against Dire Wolf (unlike our 9600, which *is* — and
+   interoperates both ways here, 10/10). The asymmetry points at the 4800 TX (scrambler/shaping)
+   differing from Dire Wolf's. Evidence: `samples/qtsm/qtsm-ruh4800.wav` (QtSM's 4800 TX our RX
+   decodes) vs `samples/pdn` mode 04 (our 4800 TX QtSM rejects). Filed as a finding; not fixed
+   — no change to our modem.
+3. **Headless RUH needs the `using48000` patch** (§ Rates) — a QtSM-side bug: the flag that
+   opens the card at 48 kHz for RUH is set only in the GUI path, so `nogui` RUH ran at 12 kHz.
+   Without the patch all three RUH modes read 0/10 for the wrong reason.
+4. **Daemon `--capture-rate == DSP-rate` crash** — fixed in this branch (see below).
+5. **The soundChannel-0 disable** and **`sg audio` requirement** cost the most bring-up time;
    both are documented above so the next person does not rediscover them.
 
 ### Non-findings (checked, not real problems)
@@ -238,6 +277,7 @@ clocked by a silence keepalive so it would key). Not reproducible without this r
 |---|---|
 | `qtsm-qpsk2400-legacy.wav` | QtSM type-10 "QPSK AX.25 2400bd" — our `qpsk2400` decodes **0/8** |
 | `qtsm-qpsk2400-v26a.wav` | QtSM type-12 "QPSK V26A 2400bps" — our `qpsk2400` decodes **8/8** |
+| `qtsm-ruh4800.wav` | QtSM type-18 "RUH 4800(DW)" — our RX decodes it 10/10, yet QtSM's RUH-4800 RX decodes **0/10** of *our* 4800 TX (the `fsk4800-il2p` one-way finding) |
 
 ## A daemon fix this rig required
 

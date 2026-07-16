@@ -95,10 +95,15 @@ Recorded off the snd-aloop rig (docs/qtsm-loop.md) from **QtSoundModem 0.0.0.76*
 12 kHz. These document that our `qpsk2400` (the NinoTNC/IL2P V.26A symbol map) pairs with
 QtSM's **V26A/DW2400** QPSK, not its legacy "QPSK AX.25 2400bd":
 
-| file | QtSM mode | our `qpsk2400` decoder |
+| file | QtSM mode | our receiver |
 |---|---|---|
 | `qtsm-qpsk2400-legacy.wav` | type 10 · QPSK AX.25 2400bd (legacy UZ7HO map) | **0/8** |
 | `qtsm-qpsk2400-v26a.wav` | type 12 · QPSK V26A 2400bps (`SPEED_DW2400`) | **8/8** |
+| `qtsm-ruh4800.wav` | type 18 · RUH 4800(DW) — 48 kHz | **decodes** (10/10 live) |
+
+`qtsm-ruh4800.wav` is the `fsk4800-il2p` one-way finding: our receiver decodes QtSM's RUH-4800
+transmission, but QtSM's RUH-4800 receiver decodes **none** of *our* 4800 TX (`pdn/` mode 04,
+which a NinoTNC decodes). See docs/qtsm-loop.md § Findings.
 
 ```sh
 sm-decode samples/qtsm/qtsm-qpsk2400-legacy.wav qpsk2400 --crc   # → 0 frames
