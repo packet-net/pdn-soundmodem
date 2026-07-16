@@ -222,10 +222,18 @@ runtime native dependency; reference vectors checked into `samples/freedv/`). De
   green**. The two big DSP halves were built by parallel background sub-agents in isolated
   worktrees, each validated against codec2 independently (context-preservation + parallelism).
 
-Remaining for Phase 1: the our-TX→our-RX datac0 round-trip (first-light), the burst/preamble
-acquisition path (needed for the standard FreeDV CLI tools, which force burst mode), and datac1
-end-to-end. Phase 2: datac4/13/14 (RX BPF + LDPC puncturing). Phase 3 (task #4): IModem/KISS +
-the 12k/48k→8k rate bridge.
+**datac0 first-light ACHIEVED.** `DatacTransmitter` ports the full TX chain
+(`freedv_rawdatacomptx`→`ofdm_ldpc_interleave_tx`: payload → CRC → LDPC encode → QPSK-map →
+interleave → assemble UW → modulate); the our-TX→our-RX round-trip decodes datac0 **10/10 clean,
+10/10 at +25 Hz offset, 10/10 at ±600 ppm sample-clock**, datac3 3/3 (mode-generic) — and the
+transmitter output matches codec2's own datac0 TX to **0.75 LSB / xcorr = 1.0**, the 16-byte
+frame **byte-identical**. No TX↔RX boundary fix was needed (the two independently-built halves
+agreed first pass). Suite **319→325**. So the pure-managed datac0 modem is proven equivalent to
+codec2 on both TX and RX and interoperates end-to-end.
+
+Remaining for Phase 1: the burst/preamble acquisition path (needed for the standard FreeDV CLI
+tools, which force burst mode) and datac1 end-to-end. Phase 2: datac4/13/14 (RX BPF + LDPC
+puncturing). Phase 3 (task #4): IModem/KISS + the 12k/48k→8k rate bridge.
 
 ### 2026-07-16 (later still³) — next-wave modem roadmap + FreeDV OFDM Phase-1 design
 
