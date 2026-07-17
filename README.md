@@ -71,9 +71,30 @@ interoperates with, and NinoTNC compatibility is never given up to suit another 
   channel-access path as everything else, and broadcasts every page heard on channel to
   its clients as `HEARD …` lines — a local paging API (pdn). Speaking the DAPNET-core
   transmitter protocol is a possible future follow-up.
+- **MIL-STD-188-110D App D (waveform) / pdn (payload)** — `ms110d-wn0/1/2/3/4/5/6/13`: the
+  public 3 kHz serial-tone HF waveform of MIL-STD-188-110D Appendix D (the Distribution-A
+  counterpart of NATO STANAG 5069) — single-carrier 1800 Hz / 2400 Bd, SRRC-shaped, an
+  autobaud preamble, a probe-trained decision-feedback (DFE) equaliser for HF multipath,
+  tail-biting convolutional FEC + interleaving, from a Walsh-orthogonal 75 bps floor up
+  through BPSK/QPSK. **Phase A** (the robust Walsh/BPSK/QPSK rungs, WN 0–6/13) is implemented
+  and gated in simulation against the standard's own Table D-LXIV performance masks — every
+  gated point 0 errors at full statistical budget (3 M bits). 8PSK/16QAM (Phase B, with an
+  RLS equaliser for fading) and the high-order QAM (Phase C) are still to come. No open App-D
+  receiver existed before this one, so there is no external oracle: the interop-critical spec
+  tables were transcribed twice independently and diffed to zero value conflicts, and a
+  from-scratch Watterson/CCIR channel simulator plus the spec masks stand in for one. Like
+  the FreeDV modes it carries the family-standard IL2P+CRC payload (a pdn↔pdn convention —
+  App D defines no data-link framing; STANAG 5066 is that layer and is not implemented), so
+  it is a robust HF *bit pipe*, not a connected-ARQ port (ARDOP is the connected one). Runs
+  on the 48 kHz DSP path (native 9600 Hz). Design + verified tables: [docs/ms110d/](docs/ms110d/).
 
 The QtSoundModem cross-validation matrix (which QtSM `ModemType` each of our modes pairs
 with, both directions) is in [docs/qtsm-loop.md](docs/qtsm-loop.md) § Results.
+
+**Hear it:** [samples/demo/](samples/demo/) holds one representative WAV per mode family —
+each produced by the real transmit path, carrying a genuine frame, and decoded back to its
+payload with the reference tool a ham would use (multimon-ng, codec2 `freedv_data_raw_rx`,
+ardopcf `--decodewav`) where one exists, or our own receiver where none does.
 
 The research that scoped this project lives in
 [packet.net `docs/research/headless-soundmodem.md`](https://github.com/packet-net/packet.net/blob/main/docs/research/headless-soundmodem.md).
