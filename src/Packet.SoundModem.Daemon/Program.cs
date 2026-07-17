@@ -343,7 +343,13 @@ Task transmitter = channel.RunTransmitterAsync(playback, ptt, cancellation.Token
 // is opened at the DSP rate directly (--capture-rate 12000 for the audio-band modes, or a
 // virtual device such as snd-aloop that runs at 12 kHz), there is nothing to decimate — a
 // Decimator with factor 1 is invalid, so feed the captured samples straight through.
-using var capture = AlsaPcm.Open(device, AlsaPcm.Direction.Capture, channels: 1, sampleRate: captureRate);
+// ARDOP mode buffers capture more deeply (500 ms vs the 120 ms default): steady-state
+// latency stays at the read cadence either way (the loop drains as data arrives), but
+// the deep buffer rides out device hiccups — e.g. snd-aloop pipes re-locking around a
+// peer's playback open/close — that would otherwise drop samples mid-frame.
+using var capture = AlsaPcm.Open(
+    device, AlsaPcm.Direction.Capture, channels: 1, sampleRate: captureRate,
+    latencyMicroseconds: ardopPort is null ? 120_000 : 500_000);
 var rxDecimator = captureRate == DspRate ? null : new Decimator(captureRate, captureRate / DspRate);
 Console.WriteLine($"audio: {device} capture {captureRate} Hz → {DspRate} Hz");
 

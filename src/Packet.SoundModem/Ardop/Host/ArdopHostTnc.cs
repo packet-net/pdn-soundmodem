@@ -87,7 +87,10 @@ public sealed class ArdopHostTnc : IAsyncDisposable
     private ArdopFecReceiver _fecReceiver = null!;
     private readonly ArdopRxScope _scope = new();
     private ArdopModulator _modulator;
-    private ArdopHostProtocolMode _mode = ArdopHostProtocolMode.Fec; // ardopcf boots in FEC (ARDOPC.c:200)
+    // ardopcf's ProtocolMode variable initializer says FEC (ARDOPC.c:200) but
+    // ardopmain() immediately sets ARQ (ARDOPC.c:675) — ARQ is the operative boot
+    // mode, confirmed against the live transcript.
+    private ArdopHostProtocolMode _mode = ArdopHostProtocolMode.Arq;
     private Task? _fecSendTask;
     private bool _fecAbort;
     private bool _fecSending;

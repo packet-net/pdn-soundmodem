@@ -110,7 +110,9 @@ public class ArdopHostTncTests
     {
         await using var host = new Host();
         host.Exchange("STATE").Should().Equal("STATE DISC");
-        host.Exchange("PROTOCOLMODE").Should().Equal("PROTOCOLMODE FEC");
+        // ARQ, not the FEC of ardopcf's variable initializer — ardopmain() sets ARQ
+        // at startup (confirmed against the live transcript).
+        host.Exchange("PROTOCOLMODE").Should().Equal("PROTOCOLMODE ARQ");
         host.Exchange("ARQBW").Should().Equal("ARQBW 2000MAX");
         host.Exchange("CALLBW").Should().Equal("CALLBW UNDEFINED");
         host.Exchange("ARQTIMEOUT").Should().Equal("ARQTIMEOUT 120");
@@ -208,6 +210,7 @@ public class ArdopHostTncTests
     {
         await using var host = new Host();
         host.Exchange("MYCALL M0AAA").Should().Equal("MYCALL now M0AAA");
+        host.Exchange("PROTOCOLMODE FEC").Should().Equal("PROTOCOLMODE now FEC");
         host.Exchange("ARQCALL G8BBB 5").Should().Equal("FAULT Not from mode FEC");
         host.Exchange("PROTOCOLMODE RXO").Should().Equal("PROTOCOLMODE now RXO");
         host.Exchange("ARQCALL G8BBB 5").Should().Equal("FAULT Not from mode RXO");
