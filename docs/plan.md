@@ -198,6 +198,23 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-17 (later still) — FlexRadio client lifted out into the M0LTE.Flex NuGet package
+
+The whole FlexRadio client (session/discovery/VITA-49/DAX/station/PTT + mock) was extracted
+from this repo into its own standalone repo and package — **`M0LTE.Flex`** (AGPL-3.0-or-later,
+github.com/M0LTE/M0LTE.Flex), published **0.1.0** to nuget.org via Trusted Publishing, with a
+build-time public-API lock and a SemVer policy. It was clean to lift: the code was MIT-derived
+(KC2G nDAX/nCAT/flexclient, HB9FXQ flexlib-go) with near-zero coupling — only the tiny
+audio/PTT seams. This repo now **consumes the package** instead of carrying the code:
+`src/Packet.SoundModem/FlexRadio/` keeps only the daemon glue (`FlexDevice` — the `flex:`
+device-string parse + bring-up) plus three thin adapters (`FlexAudioAdapters.cs`) that
+re-present the package's `M0LTE.Flex.IAudioInput/IAudioOutput/IPttControl` through this modem's
+`Packet.SoundModem.Channel` seams. The 9 client files + 7 client tests were deleted; the 3
+glue/loop tests stay. **Licence note:** M0LTE.Flex is AGPL-3.0; adding it to the GPL-3.0 core
+is permitted by GPLv3 §13, which carries AGPL §13 (network-source) onto the combined work —
+Tom signed off. Full suite green (913 pass / 97 skip). Behaviour unchanged; `flex:mock` and the
+byte-exact modem-loop-through-mock both still pass through the package.
+
 ### 2026-07-17 (later) — FlexRadio client: offline Phases 0–2 land (session/DAX/PTT + mock)
 
 PR #37: the pure-managed FlexRadio 6000-series client (design PR #32, Route A) — `--device

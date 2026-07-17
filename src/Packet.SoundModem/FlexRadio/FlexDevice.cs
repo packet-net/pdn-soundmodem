@@ -1,4 +1,4 @@
-using Packet.SoundModem.Channel;
+using M0LTE.Flex;
 
 namespace Packet.SoundModem.FlexRadio;
 
@@ -8,7 +8,8 @@ namespace Packet.SoundModem.FlexRadio;
 public sealed class FlexRuntime : IAsyncDisposable
 {
     internal FlexRuntime(
-        MockFlexRadio? mock, FlexStation station, IAudioInput input, IAudioOutput output, IPttControl ptt)
+        MockFlexRadio? mock, FlexStation station,
+        Channel.IAudioInput input, Channel.IAudioOutput output, Channel.IPttControl ptt)
     {
         Mock = mock;
         Station = station;
@@ -24,13 +25,13 @@ public sealed class FlexRuntime : IAsyncDisposable
     public FlexStation Station { get; }
 
     /// <summary>The DAX-RX audio source (at the DAX rate).</summary>
-    public IAudioInput Input { get; }
+    public Channel.IAudioInput Input { get; }
 
     /// <summary>The DAX-TX audio sink (at the DSP rate — upsampled internally when needed).</summary>
-    public IAudioOutput Output { get; }
+    public Channel.IAudioOutput Output { get; }
 
     /// <summary>The slice PTT.</summary>
-    public IPttControl Ptt { get; }
+    public Channel.IPttControl Ptt { get; }
 
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
@@ -71,8 +72,8 @@ public sealed record FlexTuning
 /// <summary>
 /// Parses <c>--device flex:&lt;radio&gt;[:slice][@station]</c> and opens the Flex triplet: a
 /// shared <see cref="FlexClient"/> feeding a <see cref="FlexAudioInput"/>, a
-/// <see cref="FlexAudioOutput"/> (wrapped in an <see cref="UpsamplingAudioOutput"/> for the
-/// 12 kHz modes) and a <see cref="FlexPtt"/>. <c>radio</c> is <c>discover</c>, an IP
+/// <see cref="FlexAudioOutput"/> (wrapped in an <see cref="Channel.UpsamplingAudioOutput"/>
+/// for the 12 kHz modes) and a <see cref="FlexPtt"/>. <c>radio</c> is <c>discover</c>, an IP
 /// (<c>host[:port]</c>), a discovery spec (<c>serial=…</c>/<c>name=…</c>), or <c>mock</c>
 /// (an in-process fake). <b>Selection policy:</b> with no <c>@station</c> the daemon owns the
 /// radio and brings it up <b>headless</b> (register as a GUI client, create its own slice —
@@ -185,12 +186,12 @@ public static class FlexDevice
             ? await FlexStation.SetUpHeadlessAsync(client, format, options, cancellation).ConfigureAwait(false)
             : await FlexStation.SetUpAsync(client, format, options, cancellation).ConfigureAwait(false);
 
-        IAudioInput input = station.CreateAudioInput(packetBuffer);
-        FlexAudioOutput flexOutput = station.CreateAudioOutput(paceRealTime: true);
-        IAudioOutput output = format.SampleRate == dspRate
+        Channel.IAudioInput input = new FlexAudioInputAdapter(station.CreateAudioInput(packetBuffer));
+        var flexOutput = new FlexAudioOutputAdapter(station.CreateAudioOutput(paceRealTime: true));
+        Channel.IAudioOutput output = format.SampleRate == dspRate
             ? flexOutput
-            : new UpsamplingAudioOutput(flexOutput, dspRate);
-        IPttControl ptt = station.CreatePtt();
+            : new Channel.UpsamplingAudioOutput(flexOutput, dspRate);
+        Channel.IPttControl ptt = new FlexPttAdapter(station.CreatePtt());
 
         return new FlexRuntime(mock, station, input, output, ptt);
     }

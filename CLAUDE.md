@@ -19,7 +19,10 @@ A headless (no GUI) soundcard packet modem in C#/.NET 10, serving both the PDN n
   comment naming the source file/function. FEC/protocol layers are implemented from the
   published specs (IL2P v0.6, FX.25) with the spec's test vectors; reference C sources are
   used to pin constants the spec leaves in figures — say so in comments when you do.
-- New dependencies must be GPL-compatible (MIT/Apache-2.0/BSD/LGPL are fine).
+- New dependencies must be GPL-compatible (MIT/Apache-2.0/BSD/LGPL are fine). AGPL-3.0 is
+  also permitted (GPLv3 §13 allows the combination), but pulls AGPL §13's network-source
+  requirement onto the combined work — so weigh it before adding one. The `M0LTE.Flex`
+  package (the extracted FlexRadio client) is one such AGPL-3.0 dependency, Tom-approved.
 
 ## Interop ground truth
 

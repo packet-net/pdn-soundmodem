@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <PackageReference Include="System.IO.Ports" />
+    <!-- FlexRadio 6000-series client, lifted out of this repo into its own package. -->
+    <PackageReference Include="M0LTE.Flex" />
   </ItemGroup>
 
   <ItemGroup>
