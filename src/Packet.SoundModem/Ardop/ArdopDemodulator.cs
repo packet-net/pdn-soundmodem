@@ -149,6 +149,19 @@ public sealed class ArdopDemodulator
     /// legacy <see cref="ConnectedSessionId"/>/unconnected rules apply.</summary>
     public ArdopRxScope? Scope { get; set; }
 
+    /// <summary>RXO (receive-only monitor) frame-type decoding: the session ID of a
+    /// third-party session is unknown, so the type decode ignores the ID-XORed tones
+    /// and the likely session ID is decoded separately into
+    /// <see cref="RxoSessionId"/> (<c>RxoMinimalDistanceFrameType</c>, ardopcf
+    /// RXO.c:116). Overrides <see cref="Scope"/>/<see cref="ConnectedSessionId"/>
+    /// while true.</summary>
+    public bool RxoMode { get; set; }
+
+    /// <summary>The most recently decoded session ID in RXO mode
+    /// (<c>bytSessionID</c> as maintained by <c>RxoDecodeSessionID</c>; 0xFF until a
+    /// frame updates it). Indicates which session decoded frames belong to.</summary>
+    public byte RxoSessionId { get; private set; } = 0xFF;
+
     /// <summary>Memory-ARQ staleness timeout, ms of received audio
     /// (<c>FECMemarqTimeout</c>, SoundInput.c:181 — just longer than the longest data
     /// frame times its maximum repeats).</summary>
@@ -996,12 +1009,113 @@ public sealed class ArdopDemodulator
         return distance / 5;
     }
 
+    // RxoComputeDecodeDistance (RXO.c:27): both parity symbols (tones 0-4 and 9) are
+    // used but the session-ID-XORed copy (tones 5-8) is ignored — in RXO mode the
+    // session ID is unknown, so those tones carry no usable type information.
+    private float RxoDecodeDistance(byte frameType)
+    {
+        float distance = 0;
+        byte mask = 0xC0;
+
+        for (int j = 0; j < 10; j++)
+        {
+            if (j > 4 && j != 9)
+            {
+                continue;
+            }
+
+            int toneSum = 0;
+            for (int k = 0; k <= 3; k++)
+            {
+                toneSum += _toneMags[4 * j + k];
+            }
+
+            if (toneSum == 0)
+            {
+                toneSum = 1;
+            }
+
+            int toneIndex = j < 4
+                ? (frameType & mask) >> (6 - 2 * j)
+                : ArdopFrameType.TypeParity(frameType);
+            distance += 1.0f - (1.0f * _toneMags[4 * j + toneIndex] / toneSum);
+            mask >>= 2;
+        }
+
+        return distance / 6;
+    }
+
+    // RxoDecodeSessionID (RXO.c:64): direct decode of tones 5-8 (type XOR ID); the ID
+    // updates only when its decode distance is nearly as good as the frame type's.
+    private void RxoDecodeSessionId(byte frameType, float maxDistance)
+    {
+        byte id = 0;
+        float distance = 1.0f;
+
+        for (int j = 20; j < 36; j += 4)
+        {
+            int toneSum = 0;
+            int maxToneMag = 0;
+            byte tone = 0;
+            for (int k = 0; k <= 3; k++)
+            {
+                toneSum += _toneMags[j + k];
+                if (_toneMags[j + k] > maxToneMag)
+                {
+                    tone = (byte)k;
+                    maxToneMag = _toneMags[j + k];
+                }
+            }
+
+            id = (byte)((id << 2) + tone);
+            distance -= 0.25f * maxToneMag / Math.Max(1, toneSum);
+        }
+
+        id ^= frameType;
+        if (distance <= maxDistance)
+        {
+            RxoSessionId = id;
+        }
+    }
+
+    // RxoMinimalDistanceFrameType (RXO.c:116): search every valid type by the
+    // ID-independent distance; accept below 0.3 and opportunistically refresh the
+    // decoded session ID.
+    private int RxoMinimalDistanceFrameType()
+    {
+        float minDistance = 5;
+        byte atMin = 0;
+
+        foreach (byte candidate in ArdopFrameType.ValidTypesAll)
+        {
+            float distance = RxoDecodeDistance(candidate);
+            if (distance < minDistance)
+            {
+                minDistance = distance;
+                atMin = candidate;
+            }
+        }
+
+        if (minDistance < 0.3)
+        {
+            RxoDecodeSessionId(atMin, minDistance + 0.02f);
+            return atMin;
+        }
+
+        return -1;
+    }
+
     // MinimalDistanceFrameType (SoundInput.c:2137) — the full reference port:
     // unconnected/monitoring (0xFF), pending-connect and connected branches, with the
     // ISS candidate-set restriction. Session identity comes from Scope when the ARQ
     // engine drives it, otherwise from the legacy ConnectedSessionId property.
     private int MinimalDistanceFrameType()
     {
+        if (RxoMode)
+        {
+            return RxoMinimalDistanceFrameType();
+        }
+
         bool pending = Scope?.Pending ?? false;
         bool connected = Scope?.Connected ?? (ConnectedSessionId is not null);
 

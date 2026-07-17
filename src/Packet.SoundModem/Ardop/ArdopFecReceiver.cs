@@ -34,13 +34,20 @@ public sealed class ArdopFecReceiver
     private byte[] _failedData = [];
     private int _lastFailedFrameType = -1;
 
-    /// <summary>Creates a receiver bound to <paramref name="demodulator"/>, subscribing
-    /// to its decoded frames and staleness events.</summary>
-    public ArdopFecReceiver(ArdopDemodulator demodulator)
+    /// <summary>Creates a receiver bound to <paramref name="demodulator"/>. When
+    /// <paramref name="attach"/> is true (default) it subscribes to the demodulator's
+    /// decoded frames directly; pass false when a host interface routes frames by
+    /// protocol mode and feeds <see cref="ProcessFrame"/> itself (staleness delivery
+    /// of held ERR data stays subscribed either way).</summary>
+    public ArdopFecReceiver(ArdopDemodulator demodulator, bool attach = true)
     {
         ArgumentNullException.ThrowIfNull(demodulator);
         _demodulator = demodulator;
-        demodulator.FrameDecoded += OnFrame;
+        if (attach)
+        {
+            demodulator.FrameDecoded += ProcessFrame;
+        }
+
         demodulator.MemoryArqStale += PassFailedDataToHost;
     }
 
@@ -48,7 +55,10 @@ public sealed class ArdopFecReceiver
     /// good data, errored data the sender abandoned, and ID frame text.</summary>
     public event Action<ArdopFecTag, byte[]>? DataReceived;
 
-    private void OnFrame(ArdopDecodedFrame frame)
+    /// <summary>Runs one decoded frame through the FEC receive rules — the entry point
+    /// for hosts that construct with <c>attach: false</c> and route frames per
+    /// protocol mode.</summary>
+    public void ProcessFrame(ArdopDecodedFrame frame)
     {
         if (frame.Type == ArdopFrameType.IdFrame)
         {
