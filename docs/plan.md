@@ -198,6 +198,24 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-17 (later) — MIL-STD-188-110D App D Phase A lands: 3 kHz waveform, mask-gated
+
+PR #34: the App D 3 kHz serial-tone waveform (Walsh-75/BPSK/QPSK) — pure-managed C#, built on
+the dual-verified tables and critique-folded design. No open App D implementation exists, so a
+from-scratch Watterson/CCIR channel simulator gated against the spec's D-LXIV SNR masks is the
+acceptance instrument. **Independently re-verified at full budget (3M bits/point): all 12 gated
+points 0 errors** — AWGN WN0–6+13 at their mask SNRs, Doppler ±75 Hz, Static WID2 0/3/9 ms @
++9 dB. Two late failures were root-caused (off-cursor DFE taps fitting noise in the K=48 class;
+MMSE-ridge fix scoped so the eight green modes stay byte-identical) not fudged — and an earlier
+CFO-trim sign error was caught by the masks after passing hermetically (the discipline earning
+its keep). The Static WID2 5 dB figure was a house bar (spec's static SNR untranscribed, D.6.3
+"Not yet standardized"), honestly restated to +9 dB with the remaining margin assigned to Phase
+B RLS. OBW ~2.89 kHz about 1800 Hz. Built across a Fable→Opus handoff (Fable's spend limit hit
+mid-build; Opus picked up the checkpointed branch with no loss). Suite 733→878; the one flaky
+failure is the pre-existing ARDOP TCP race (issue #33). Phase A = a 110D waveform that
+previously ran only on RapidM/Rockwell hardware now decoding on a soundcard. Next: Phase B
+(8PSK/16QAM + RLS DFE) or another roadmap thread per Tom.
+
 ### 2026-07-17 (later) — 110D ledger cleared: every constant dual-verified; Phase A unblocked
 
 PR #31: the design's 13-row transcription-debt ledger is cleared — all remaining Appendix D
