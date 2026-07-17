@@ -1,3 +1,4 @@
+using M0LTE.Radio.Audio;
 using System.Diagnostics;
 using System.IO.Ports;
 using Packet.SoundModem.Audio;

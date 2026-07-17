@@ -1,5 +1,5 @@
 using Packet.SoundModem.Dsp;
-using Packet.SoundModem.Il2p;
+using M0LTE.Il2p;
 
 namespace Packet.SoundModem.Modems;
 

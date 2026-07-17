@@ -131,9 +131,9 @@ public class DcdTests
     public void Bpsk_Channel_Busy_Tracks_A_Burst_Too()
     {
         byte[] ax25 = Convert.FromHexString("968264888AAEE4969668908A946F81");
-        byte[] wire = Packet.SoundModem.Il2p.Il2pCodec.Encode(ax25, appendCrc: true);
-        byte[] bits = Packet.SoundModem.Il2p.Il2pFramer.FrameBits(
-            wire, 96, Packet.SoundModem.Il2p.Il2pFramer.PreambleStyle.Zeros);
+        byte[] wire = M0LTE.Il2p.Il2pCodec.Encode(ax25, appendCrc: true);
+        byte[] bits = M0LTE.Il2p.Il2pFramer.FrameBits(
+            wire, 96, M0LTE.Il2p.Il2pFramer.PreambleStyle.Zeros);
         float[] burst = new BpskModulator(SampleRate).Modulate(bits);
 
         var random = new Random(5);

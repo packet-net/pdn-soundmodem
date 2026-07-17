@@ -1,3 +1,4 @@
+using M0LTE.Radio.Audio;
 using System.Net.Sockets;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Kiss;

@@ -1,30 +1,7 @@
 using System.IO.Ports;
+using M0LTE.Radio.Audio;
 
 namespace Packet.SoundModem.Channel;
-
-/// <summary>Keys and unkeys the transmitter.</summary>
-public interface IPttControl
-{
-    /// <summary>Asserts PTT.</summary>
-    void Key();
-
-    /// <summary>Releases PTT.</summary>
-    void Unkey();
-}
-
-/// <summary>No-op PTT for VOX-operated interfaces and tests.</summary>
-public sealed class NullPtt : IPttControl
-{
-    /// <inheritdoc />
-    public void Key()
-    {
-    }
-
-    /// <inheritdoc />
-    public void Unkey()
-    {
-    }
-}
 
 /// <summary>PTT via a serial control line (RTS and/or DTR) — the classic homebrew
 /// interface and half of the CM108-alternative story (CM108 HID PTT follows).</summary>

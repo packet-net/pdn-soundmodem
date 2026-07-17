@@ -11,7 +11,7 @@ namespace Packet.SoundModem.Modems;
 /// the <b>differential</b> path multiplies by the conjugate of the one-symbol-delayed
 /// baseband, whose real part is positive on a phase repeat and negative on a reversal,
 /// tolerant of small frequency offsets and acquiring instantly. Emits logical bits once per
-/// symbol — feed straight into <see cref="Il2p.Il2pDeframer"/>. Covers the NinoTNC 300
+/// symbol — feed straight into <see cref="M0LTE.Il2p.Il2pDeframer"/>. Covers the NinoTNC 300
 /// (mode 8) and 1200 (mode 10) BPSK symbol rates.
 /// </summary>
 public sealed class BpskDemodulator

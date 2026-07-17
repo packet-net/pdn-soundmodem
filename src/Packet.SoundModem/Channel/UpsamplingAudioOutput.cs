@@ -1,3 +1,4 @@
+using M0LTE.Radio.Audio;
 using Packet.SoundModem.Dsp;
 
 namespace Packet.SoundModem.Channel;

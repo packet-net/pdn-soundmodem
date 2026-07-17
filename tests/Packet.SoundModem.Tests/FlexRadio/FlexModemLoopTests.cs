@@ -1,3 +1,4 @@
+using M0LTE.Radio.Audio;
 using M0LTE.Flex;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Dsp;
@@ -85,11 +86,11 @@ public sealed class FlexModemLoopTests
         txChannel.Csma.Persistence = 255; // transmit on the first clear roll
         txChannel.AddModem(0, modemFactory);
 
-        var flexOutput = new FlexAudioOutputAdapter(station.CreateAudioOutput(paceRealTime: false));
-        global::Packet.SoundModem.Channel.IAudioOutput output = format.SampleRate == dspRate
+        FlexAudioOutput flexOutput = station.CreateAudioOutput(paceRealTime: false);
+        IAudioOutput output = format.SampleRate == dspRate
             ? flexOutput
             : new UpsamplingAudioOutput(flexOutput, dspRate);
-        var ptt = new FlexPttAdapter(station.CreatePtt());
+        FlexPtt ptt = station.CreatePtt();
 
         using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
         {

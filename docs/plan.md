@@ -198,6 +198,31 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-17 (later still²) — consume the M0LTE.* packages; drop the duplicated source
+
+Extended the extraction: **Fec** (core RS/CRC/Hamming/interleaver), **Il2p** and **Ardop**
+were each lifted into their own repos/packages alongside Flex, plus a shared
+**M0LTE.Radio.Audio** package holding the `IAudioInput`/`IAudioOutput`/`IPttControl`/`NullPtt`
+seam. This repo now **consumes all of them** instead of carrying the code:
+
+- Deleted `Fec/{Crc16X25,FreedvCrc16,GpInterleaver,Hamming74,ReedSolomon}` (kept `Fec/Ldpc`,
+  which is codec2/LGPL and stays), all of `Il2p/` and all of `Ardop/`, and the moved unit
+  tests. Added `PackageReference`s to M0LTE.Fec/Il2p/Ardop/Radio.Audio (all 0.1.0) and bumped
+  M0LTE.Flex to 0.2.0 (it now consumes Radio.Audio too).
+- The `Packet.SoundModem.Channel` audio/PTT **interfaces moved to M0LTE.Radio.Audio**; the
+  ALSA/serial/CM108 impls and `SoundModemChannel` now implement the package's interfaces
+  (`Channel/IAudioInput.cs` etc. → `AlsaAudioInput.cs`/`AlsaAudioOutput.cs`/`SerialPtt.cs`).
+  With Flex 0.2.0's types implementing the same seam, the Flex adapters were deleted and
+  `FlexDevice` uses the Flex audio directly.
+- The daemon's `ArdopHostServer.ForChannel` (removed from the package as soundmodem-specific)
+  is now inline glue over the package's public `ArdopHostTnc`/`ForAudio` seam.
+- Kept in-repo: `Fec/Ldpc`, the `Ofdm`/`Ms110d` modems (LGPL/spec, not extracted), and the
+  Ardop OBW + ardopcf-live tests (they use this repo's `Fft`/`OccupiedBandwidth` + external
+  ardopcf). Licences unchanged (this repo stays GPL-3.0; see the earlier entry re AGPL §13).
+
+Suite 550 pass / 31 skip (the ~360 moved unit tests now live and pass in the package repos).
+On branch `flex-to-nuget-package`.
+
 ### 2026-07-17 (later still) — FlexRadio client lifted out into the M0LTE.Flex NuGet package
 
 The whole FlexRadio client (session/discovery/VITA-49/DAX/station/PTT + mock) was extracted

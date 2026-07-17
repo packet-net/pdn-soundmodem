@@ -1,3 +1,4 @@
+using M0LTE.Radio.Audio;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
@@ -350,14 +351,36 @@ if (ardopPort is null)
 }
 await using var kissLifetime = server;
 
-Packet.SoundModem.Ardop.Host.ArdopHostServer? ardopServer = null;
+M0LTE.Ardop.Host.ArdopHostServer? ardopServer = null;
 if (ardopPort is not null)
 {
     // ARDOP does its own channel discipline; the daemon's p-persistence roll must
     // never delay its bursts (docs/ardop-design.md §2.2 — dedicated channel).
     channel.Csma.Persistence = 255;
-    ardopServer = Packet.SoundModem.Ardop.Host.ArdopHostServer.ForChannel(
-        channel, ardopPort.Value, audioDevice: device);
+    if (channel.SampleRate != M0LTE.Ardop.ArdopModulator.SampleRate)
+    {
+        throw new ArgumentException(
+            $"ARDOP needs a {M0LTE.Ardop.ArdopModulator.SampleRate} Hz channel, got {channel.SampleRate}");
+    }
+
+    // Bind the M0LTE.Ardop TNC to this daemon's channel: transmit bursts through the
+    // channel-access path, receive audio via a channel tap (the old ForChannel glue,
+    // now that the package is audio-device-agnostic).
+    var ardopTnc = new M0LTE.Ardop.Host.ArdopHostTnc(captureDevice: device, playbackDevice: device)
+    {
+        Transmitter = audio => channel.EnqueueTransmit(_ =>
+        {
+            var floats = new float[audio.Length];
+            for (int i = 0; i < audio.Length; i++)
+            {
+                floats[i] = audio[i] / 32768f;
+            }
+
+            return floats;
+        }),
+    };
+    channel.AddReceiveTap(ardopTnc.ProcessReceive);
+    ardopServer = new M0LTE.Ardop.Host.ArdopHostServer(ardopTnc, ardopPort.Value, ownsTnc: true);
     ardopServer.Start();
     Console.WriteLine(
         $"ardop host tcp: 127.0.0.1:{ardopServer.LocalCommandPort} (data {ardopServer.LocalDataPort}, " +

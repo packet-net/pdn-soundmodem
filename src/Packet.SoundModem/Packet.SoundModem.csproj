@@ -12,6 +12,10 @@
     <PackageReference Include="System.IO.Ports" />
     <!-- FlexRadio 6000-series client, lifted out of this repo into its own package. -->
     <PackageReference Include="M0LTE.Flex" />
+    <PackageReference Include="M0LTE.Radio.Audio" />
+    <PackageReference Include="M0LTE.Fec" />
+    <PackageReference Include="M0LTE.Il2p" />
+    <PackageReference Include="M0LTE.Ardop" />
   </ItemGroup>
 
   <ItemGroup>
