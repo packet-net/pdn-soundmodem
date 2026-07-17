@@ -198,6 +198,21 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-17 (later) — FlexRadio client: offline Phases 0–2 land (session/DAX/PTT + mock)
+
+PR #37: the pure-managed FlexRadio 6000-series client (design PR #32, Route A) — `--device
+flex:<radio>[:slice]` makes a Flex the daemon's sound-card + PTT over the LAN, all modes via
+the shared channel path, no PulseAudio/FlexLib (MIT Go refs, provenance headers). Phase 0
+session/discovery/VITA-49 with byte-exact vectors; Phase 1 the `IAudioInput` refactor +
+Flex RX/TX/PTT + `--device flex:` + a mock radio (`flex:mock` runs the whole daemon
+hardware-free); Phase 2 the decisive byte-exact modem-loop-through-mock (afsk1200 reduced-bw +
+freedv-datac3 full-bw). A datac3 loop flaky under real UDP loopback loss was caught by
+independent re-verification and fixed with a lossless in-process mock transport (real
+audio/reorder/rate-bridge code + byte-exact assertion untouched; reorder-ring tests added);
+independent 10× isolation 10/10 green. Suite 878→925. Real-DAX UDP loss is a Phase-3 hardware
+measurement. **Remaining: Phase 3 hardware smoke on Tom's 6500 into a dummy load** (discover →
+DAX stream → PTT/interlock → latency/txdelay floor), then the HF-loop Flex variant.
+
 ### 2026-07-17 (later) — MIL-STD-188-110D App D Phase A lands: 3 kHz waveform, mask-gated
 
 PR #34: the App D 3 kHz serial-tone waveform (Walsh-75/BPSK/QPSK) — pure-managed C#, built on
