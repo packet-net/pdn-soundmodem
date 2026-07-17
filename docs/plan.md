@@ -198,6 +198,21 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-17 — ARDOP Phase D: host interface + Pat — the ARDOP stack is software-complete
+
+PR #30: the ardopcf-compatible virtual-TNC host interface (command/reply/notification formats
+byte-for-byte, quirks preserved), command+data sockets, RXO monitor mode, and daemon
+integration (`--ardop`, dedicated-channel policy). Validation: a 107-command conformance
+script **byte-identical** vs live ardopcf (VERSION excluded by design); **real Pat v1.0.0
+delivered a full B2F message through our daemon** to ardopcf; scripted full-stack sessions
+both roles byte-exact (sequences pinned from wl2k-go's transport source); live RXO monitored a
+third-party ardopcf↔ardopcf session (25 frames, all data + ACKs). Hermetic suite 723→741
+(verifier 733/0); five live legs green in one run. With Phases A–D merged the ARDOP stack is
+**software-complete at ardopcf parity** (waveforms 0 dB knee delta, ARQ live both roles, host
+interface Pat-proven); the only remaining item is the on-air acceptance from GB7RDG's HF port
+on the 40m UK packet channel (task #6). Next build thread: MIL-STD-188-110D App D Phase A on
+the landed design (ledger figures to dual-transcribe first).
+
 ### 2026-07-16 (later still¹⁴) — ARDOP Phase C: PSK/16QAM at ardopcf parity, 0 dB knee delta
 
 PR #29: differential 4PSK/8PSK + 16QAM TX+RX on 1/2/4/8 parallel carriers; FSK-only ARQ guard
