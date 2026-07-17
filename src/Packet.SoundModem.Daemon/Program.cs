@@ -2,6 +2,7 @@ using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
 using Packet.SoundModem.Dsp;
+using Packet.SoundModem.FlexRadio;
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Ms110d;
@@ -52,6 +53,13 @@ using Packet.SoundModem.Ms110d;
 // channel discipline (ARQ timing budgets, negotiated leaders), which the daemon's
 // p-persistence roll must never delay. PTT keying and sample-domain TX-complete are
 // the channel's, exactly as for the packet modes.
+
+// --device flex:<radio>[:slice] uses a FlexRadio 6000-series over the LAN as the sound
+// card + PTT: <radio> is `discover` (broadcast), an IP (host[:port]), a discovery spec
+// (serial=…/name=…), or `mock` (an in-process fake, for offline testing). <slice> is a
+// letter A–H (default A). The DAX transport is auto-picked from the DSP rate (24 kHz s16
+// for the 12 kHz modes, 48 kHz float32 for the 48 kHz modes). The radio keys itself, so
+// --ptt is rejected alongside flex:. See docs/flex-integration.md.
 
 // 9600-family and freedv-* modems need 48 kHz DSP (the FreeDV engine is native 8 kHz, and
 // 48000 = 6·8000 while 12000 has no integer ratio); everything else runs at 12 kHz.
@@ -163,7 +171,11 @@ int DspRate = modems.Any(m => m.Mode.Contains("9600", StringComparison.Ordinal)
     || m.Mode.StartsWith("freedv-", StringComparison.Ordinal)
     || m.Mode.StartsWith("ms110d-", StringComparison.Ordinal)) ? 48000 : 12000;
 
-if (captureRate % DspRate != 0)
+// A FlexRadio provides its own DAX sample clock (24/48 kHz auto-picked from the DSP rate),
+// so --capture-rate (an ALSA concept) does not apply.
+bool deviceIsFlex = FlexDevice.IsFlex(device);
+
+if (!deviceIsFlex && captureRate % DspRate != 0)
 {
     Console.Error.WriteLine($"--capture-rate must be a multiple of {DspRate}");
     return 2;
@@ -253,6 +265,15 @@ if (wavPath is not null)
     return 0;
 }
 
+// The Flex owns keying (the slice PTT is an API command), so a conflicting --ptt /
+// configured PTT is rejected — matching how --device flex: implicitly keys the radio.
+if (deviceIsFlex && (pttSpec is not null || pttConfig is not null))
+{
+    Console.Error.WriteLine(
+        "--device flex: keys the radio itself; remove the conflicting --ptt (serial:/cm108:)");
+    return 2;
+}
+
 if (pttSpec is not null)
 {
     string[] parts = pttSpec.Split(':');
@@ -271,26 +292,6 @@ if (pttSpec is not null)
         Console.Error.WriteLine("--ptt expects serial:<dev>[:rts|:dtr] or cm108:<hidraw>[:gpio]");
         return 2;
     }
-}
-
-IPttControl ptt = new NullPtt();
-switch (pttConfig?.Type)
-{
-    case null:
-        break;
-    case "serial":
-        string line = pttConfig.Line ?? "rts";
-        ptt = new SerialPtt(pttConfig.Device, useRts: line != "dtr", useDtr: line == "dtr");
-        Console.WriteLine($"ptt: serial {pttConfig.Device} ({line})");
-        break;
-    case "cm108":
-        int gpio = pttConfig.Gpio ?? 3;
-        ptt = new Cm108Ptt(pttConfig.Device, gpio);
-        Console.WriteLine($"ptt: cm108 {pttConfig.Device} (gpio {gpio})");
-        break;
-    default:
-        Console.Error.WriteLine($"unknown ptt type '{pttConfig.Type}'");
-        return 2;
 }
 
 using var cancellation = new CancellationTokenSource();
@@ -341,38 +342,79 @@ if (paging is not null)
 }
 await using var pagingLifetime = pagingServer;
 
-// Transmit side: modulate at the DSP rate; play at the card-native capture rate through
-// the image-rejecting upsampler (cards commonly refuse to open 12 kHz playback directly).
-IAudioOutput playback = captureRate == DspRate
-    ? new AlsaAudioOutput(device, DspRate)
-    : new UpsamplingAudioOutput(new AlsaAudioOutput(device, captureRate), DspRate);
+// Audio + PTT: a FlexRadio DAX triplet (--device flex:…) or an ALSA card. The Flex
+// surfaces its DAX stream through the same IAudioInput/IAudioOutput/IPttControl the channel
+// already speaks, so KISS packet, POCSAG paging and ARDOP all get Flex support for free.
+int flexPacketBuffer = ardopPort is null ? 3 : 6;
+FlexRuntime? flex = null;
+IPttControl ptt;
+IAudioOutput playback;
+IAudioInput input;
+
+if (deviceIsFlex)
+{
+    flex = await FlexDevice.OpenAsync(device, DspRate, flexPacketBuffer, cancellation.Token);
+    ptt = flex.Ptt;
+    playback = flex.Output;
+    input = flex.Input;
+    Console.WriteLine(
+        $"audio: {device} DAX {input.SampleRate} Hz → {DspRate} Hz (slice {FlexDevice.Parse(device).SliceLetter})");
+}
+else
+{
+    ptt = new NullPtt();
+    switch (pttConfig?.Type)
+    {
+        case null:
+            break;
+        case "serial":
+            string serialLine = pttConfig.Line ?? "rts";
+            ptt = new SerialPtt(pttConfig.Device, useRts: serialLine != "dtr", useDtr: serialLine == "dtr");
+            Console.WriteLine($"ptt: serial {pttConfig.Device} ({serialLine})");
+            break;
+        case "cm108":
+            int gpio = pttConfig.Gpio ?? 3;
+            ptt = new Cm108Ptt(pttConfig.Device, gpio);
+            Console.WriteLine($"ptt: cm108 {pttConfig.Device} (gpio {gpio})");
+            break;
+        default:
+            Console.Error.WriteLine($"unknown ptt type '{pttConfig.Type}'");
+            return 2;
+    }
+
+    // Transmit: modulate at the DSP rate; play at the card-native capture rate through the
+    // image-rejecting upsampler (cards commonly refuse to open 12 kHz playback directly).
+    playback = captureRate == DspRate
+        ? new AlsaAudioOutput(device, DspRate)
+        : new UpsamplingAudioOutput(new AlsaAudioOutput(device, captureRate), DspRate);
+    // Receive: capture at the card-native rate; ARDOP buffers more deeply (500 ms vs the
+    // 120 ms default) to ride out device hiccups (snd-aloop re-locking mid-frame).
+    input = new AlsaAudioInput(device, captureRate, ardopPort is null ? 120_000 : 500_000);
+    Console.WriteLine($"audio: {device} capture {captureRate} Hz → {DspRate} Hz");
+}
+
+await using var flexLifetime = flex;
+
 Task transmitter = channel.RunTransmitterAsync(playback, ptt, cancellation.Token);
 
-// Receive side: capture at the card-native rate, decimate to the DSP rate. When the card
-// is opened at the DSP rate directly (--capture-rate 12000 for the audio-band modes, or a
-// virtual device such as snd-aloop that runs at 12 kHz), there is nothing to decimate — a
-// Decimator with factor 1 is invalid, so feed the captured samples straight through.
-// ARDOP mode buffers capture more deeply (500 ms vs the 120 ms default): steady-state
-// latency stays at the read cadence either way (the loop drains as data arrives), but
-// the deep buffer rides out device hiccups — e.g. snd-aloop pipes re-locking around a
-// peer's playback open/close — that would otherwise drop samples mid-frame.
-using var capture = AlsaPcm.Open(
-    device, AlsaPcm.Direction.Capture, channels: 1, sampleRate: captureRate,
-    latencyMicroseconds: ardopPort is null ? 120_000 : 500_000);
-var rxDecimator = captureRate == DspRate ? null : new Decimator(captureRate, captureRate / DspRate);
-Console.WriteLine($"audio: {device} capture {captureRate} Hz → {DspRate} Hz");
+// Decimate the source to the DSP rate. When it already runs at the DSP rate (a 48 kHz
+// mode's full-bandwidth DAX, --capture-rate 12000, or a 12 kHz virtual card) there is
+// nothing to decimate — a Decimator with factor 1 is invalid, so feed samples straight
+// through.
+int inputRate = input.SampleRate;
+var rxDecimator = inputRate == DspRate ? null : new Decimator(inputRate, inputRate / DspRate);
 
-// 100 ms capture blocks for the packet modes; 20 ms when ARDOP runs — its ARQ
-// timing budgets (IRS ACK inside the ISS repeat window) want RX latency low.
-var pcmBuffer = new short[ardopPort is null ? captureRate / 10 : captureRate / 50];
-var floatBuffer = new float[pcmBuffer.Length];
-var dspBuffer = new float[rxDecimator?.MaxOutput(pcmBuffer.Length) ?? pcmBuffer.Length];
+// 100 ms RX blocks for the packet modes; 20 ms when ARDOP runs — its ARQ timing budgets
+// (IRS ACK inside the ISS repeat window) want RX latency low.
+int blockSamples = ardopPort is null ? inputRate / 10 : inputRate / 50;
+var floatBuffer = new float[blockSamples];
+var dspBuffer = new float[rxDecimator?.MaxOutput(blockSamples) ?? blockSamples];
 while (!cancellation.IsCancellationRequested)
 {
-    int got = capture.Read(pcmBuffer);
-    for (int i = 0; i < got; i++)
+    int got = input.Read(floatBuffer);
+    if (got == 0)
     {
-        floatBuffer[i] = pcmBuffer[i] / 32768f;
+        continue;
     }
 
     if (rxDecimator is null)
@@ -387,6 +429,11 @@ while (!cancellation.IsCancellationRequested)
 }
 
 await transmitter.ContinueWith(_ => { }, TaskScheduler.Default);
-(ptt as IDisposable)?.Dispose();
-(playback as IDisposable)?.Dispose();
+if (!deviceIsFlex)
+{
+    (ptt as IDisposable)?.Dispose();
+    (playback as IDisposable)?.Dispose();
+    (input as IDisposable)?.Dispose();
+}
+
 return 0;
