@@ -198,6 +198,21 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-17 (later) — 110D ledger cleared: every constant dual-verified; Phase A unblocked
+
+PR #31: the design's 13-row transcription-debt ledger is cleared — all remaining Appendix D
+figures/tables (K7/K9 encoder figures, PSK transcoding, U/K geometry, preamble tables, both
+256-digit PN arrays, probe bases, the 3 kHz interleaver set, the worked example) transcribed
+twice independently and value-diffed with **zero conflicts**, including full agreement on all
+512 PN digits (which have no structural oracle — the dual read IS their verification). Ledger
+errata applied (D-XXV numbering, Walsh-prose location, D-XIV settled 10→0044/11→0440, L8
+correction). Operational note: the first transcriber-A run was killed after an hour of
+in-context triple-reading with nothing written (32 MB transcript, zero files — a digit-fidelity
+risk under compaction); the fresh run under write-immediately/checkpoint discipline finished in
+18 minutes — the discipline is now part of the standing sub-agent policy. **No 110D constant
+remains provisional; the Phase A build starts now** (3 kHz framing + Walsh-75/BPSK/QPSK + LMS
+DFE per design §6, Tom's §10 decisions folded).
+
 ### 2026-07-17 — ARDOP Phase D: host interface + Pat — the ARDOP stack is software-complete
 
 PR #30: the ardopcf-compatible virtual-TNC host interface (command/reply/notification formats
