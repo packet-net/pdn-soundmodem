@@ -690,6 +690,16 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
         string home = Path.Combine(scratch, name);
         string configDir = Path.Combine(home, ".config/pat");
         Directory.CreateDirectory(configDir);
+
+        // Pat gates connects on a Winlink CMS account check (promptUnconfirmedAccount,
+        // app/connect.go:46) — for a P2P bench session there is no Winlink account, so
+        // pre-seed the rate-limit state file the check consults
+        // (DoIfElapsed, app/winlink_api.go:23) to mark the account recently confirmed.
+        string stateDir = Path.Combine(home, ".local/state/pat");
+        Directory.CreateDirectory(stateDir);
+        File.WriteAllText(
+            Path.Combine(stateDir, $".account-confirmed_{mycall}.json"),
+            $"\"{DateTime.UtcNow:yyyy-MM-dd'T'HH:mm:ss'Z'}\"");
         File.WriteAllText(Path.Combine(configDir, "config.json"), $$"""
             {
               "mycall": "{{mycall}}",
