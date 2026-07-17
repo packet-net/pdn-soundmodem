@@ -12,6 +12,11 @@
   // POCSAG paging endpoint (optional; DAPNET/POCSAG-compatible waveform, local paging
   // API — line-based TCP: "PAGE <ric> <function> ALPHA|NUMERIC|TONE [text]").
   // "paging": { "port": 8106, "baud": 1200, "invertPolarity": false },
+  // ARDOP virtual TNC (optional; ardopcf-compatible TCP host interface — Pat and
+  // other Winlink hosts connect unmodified; data port is always port+1). The ARDOP
+  // channel is dedicated: "ardop" is exclusive with "modems"/"paging", and the
+  // channel must run at 12 kHz ("captureRate": 12000 recommended on aloop/bench).
+  // "ardop": { "port": 8515 },
   "csma": {
     "txDelayMilliseconds": 300,
     "persistence": 63,

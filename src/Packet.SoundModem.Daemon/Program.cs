@@ -14,6 +14,7 @@ using Packet.SoundModem.Modems;
 //                  [--txdelay MS] [--wav FILE] [--quality-frames]
 //                  [--psk-detector coherent|differential]
 //                  [--paging PORT[:BAUD]]
+//                  [--ardop PORT]
 //
 // Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, qpsk2400, qpsk3600 (both IL2P+CRC),
 // fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC), freedv-datac0/1/3/4/13/14 (FreeDV datac
@@ -38,6 +39,15 @@ using Packet.SoundModem.Modems;
 // clients as "HEARD <ric> <function> ALPHA|NUMERIC|TONE [text]". BAUD defaults to 1200
 // (DAPNET); 512 and 2400 are also valid. See PagingTcpServer for the full grammar.
 // (Speaking the DAPNET-core transmitter protocol is a possible future follow-up.)
+//
+// --ardop starts the ARDOP virtual TNC: the ardopcf-compatible TCP host interface
+// (command port PORT, data port PORT+1 — Pat and other Winlink hosts connect
+// unmodified). Per the dedicated-channel policy (docs/ardop-design.md §2.2) the ARDOP
+// channel carries only ARDOP: --ardop is exclusive with --modem/--paging, the KISS
+// server is not started, and CSMA persistence is forced to 255 — ARDOP runs its own
+// channel discipline (ARQ timing budgets, negotiated leaders), which the daemon's
+// p-persistence roll must never delay. PTT keying and sample-domain TX-complete are
+// the channel's, exactly as for the packet modes.
 
 // 9600-family and freedv-* modems need 48 kHz DSP (the FreeDV engine is native 8 kHz, and
 // 48000 = 6·8000 while 12000 has no integer ratio); everything else runs at 12 kHz.
@@ -61,6 +71,7 @@ bool qualityFrames = false;
 // links: it acquires with no preamble at a ~1–2 dB noise cost (issue #5).
 PskDetector pskDetector = PskDetector.Coherent;
 string? pagingSpec = null;
+int? ardopPort = null;
 var modemSpecs = new List<string>();
 
 for (int i = 0; i < args.Length; i++)
@@ -81,6 +92,7 @@ for (int i = 0; i < args.Length; i++)
         case "--quality-frames": qualityFrames = true; break;
         case "--psk-detector": pskDetector = Enum.Parse<PskDetector>(Next(), ignoreCase: true); break;
         case "--paging": pagingSpec = Next(); break;
+        case "--ardop": ardopPort = int.Parse(Next()); break;
         case "--help":
             Console.WriteLine("see source header for usage");
             return 0;
@@ -105,6 +117,7 @@ if (configPath is not null)
     csma = config.Csma;
     pttConfig = config.Ptt;
     paging = config.Paging;
+    ardopPort ??= config.Ardop?.Port;
     Console.WriteLine($"config: {configPath}");
 }
 
@@ -129,7 +142,13 @@ foreach (string spec in modemSpecs)
     });
 }
 
-if (modems.Count == 0)
+if (ardopPort is not null && (modems.Count > 0 || paging is not null))
+{
+    Console.Error.WriteLine("--ardop is exclusive with --modem/--paging (the ARDOP channel is dedicated)");
+    return 2;
+}
+
+if (modems.Count == 0 && ardopPort is null)
 {
     modems.Add(new ModemConfig());
 }
@@ -272,14 +291,34 @@ Console.CancelKeyPress += (_, e) =>
     cancellation.Cancel();
 };
 
-await using var server = new KissTcpServer(channel, kissPort);
-server.EmitQualityFrames = qualityFrames;
-server.Start();
-if (qualityFrames)
+KissTcpServer? server = null;
+if (ardopPort is null)
 {
-    Console.WriteLine("rx-quality frames: on (KISS command 0x07, JSON payload)");
+    server = new KissTcpServer(channel, kissPort);
+    server.EmitQualityFrames = qualityFrames;
+    server.Start();
+    if (qualityFrames)
+    {
+        Console.WriteLine("rx-quality frames: on (KISS command 0x07, JSON payload)");
+    }
+    Console.WriteLine($"kiss tcp: 127.0.0.1:{server.LocalPort}");
 }
-Console.WriteLine($"kiss tcp: 127.0.0.1:{server.LocalPort}");
+await using var kissLifetime = server;
+
+Packet.SoundModem.Ardop.Host.ArdopHostServer? ardopServer = null;
+if (ardopPort is not null)
+{
+    // ARDOP does its own channel discipline; the daemon's p-persistence roll must
+    // never delay its bursts (docs/ardop-design.md §2.2 — dedicated channel).
+    channel.Csma.Persistence = 255;
+    ardopServer = Packet.SoundModem.Ardop.Host.ArdopHostServer.ForChannel(
+        channel, ardopPort.Value, audioDevice: device);
+    ardopServer.Start();
+    Console.WriteLine(
+        $"ardop host tcp: 127.0.0.1:{ardopServer.LocalCommandPort} (data {ardopServer.LocalDataPort}, " +
+        "ardopcf-compatible virtual TNC)");
+}
+await using var ardopLifetime = ardopServer;
 
 Packet.SoundModem.Pocsag.PagingTcpServer? pagingServer = null;
 if (paging is not null)
@@ -304,11 +343,19 @@ Task transmitter = channel.RunTransmitterAsync(playback, ptt, cancellation.Token
 // is opened at the DSP rate directly (--capture-rate 12000 for the audio-band modes, or a
 // virtual device such as snd-aloop that runs at 12 kHz), there is nothing to decimate — a
 // Decimator with factor 1 is invalid, so feed the captured samples straight through.
-using var capture = AlsaPcm.Open(device, AlsaPcm.Direction.Capture, channels: 1, sampleRate: captureRate);
+// ARDOP mode buffers capture more deeply (500 ms vs the 120 ms default): steady-state
+// latency stays at the read cadence either way (the loop drains as data arrives), but
+// the deep buffer rides out device hiccups — e.g. snd-aloop pipes re-locking around a
+// peer's playback open/close — that would otherwise drop samples mid-frame.
+using var capture = AlsaPcm.Open(
+    device, AlsaPcm.Direction.Capture, channels: 1, sampleRate: captureRate,
+    latencyMicroseconds: ardopPort is null ? 120_000 : 500_000);
 var rxDecimator = captureRate == DspRate ? null : new Decimator(captureRate, captureRate / DspRate);
 Console.WriteLine($"audio: {device} capture {captureRate} Hz → {DspRate} Hz");
 
-var pcmBuffer = new short[captureRate / 10]; // 100 ms blocks
+// 100 ms capture blocks for the packet modes; 20 ms when ARDOP runs — its ARQ
+// timing budgets (IRS ACK inside the ISS repeat window) want RX latency low.
+var pcmBuffer = new short[ardopPort is null ? captureRate / 10 : captureRate / 50];
 var floatBuffer = new float[pcmBuffer.Length];
 var dspBuffer = new float[rxDecimator?.MaxOutput(pcmBuffer.Length) ?? pcmBuffer.Length];
 while (!cancellation.IsCancellationRequested)

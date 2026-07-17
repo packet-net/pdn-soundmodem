@@ -48,6 +48,16 @@ public sealed class PagingConfig
     public bool InvertPolarity { get; set; }
 }
 
+/// <summary>ARDOP virtual TNC (ardopcf-compatible TCP host interface; Winlink/Pat).
+/// Per the dedicated-channel policy the ARDOP channel hosts no packet modems or
+/// paging — configuring this alongside Modems/Paging is rejected.</summary>
+public sealed class ArdopConfig
+{
+    /// <summary>Host-interface command port (ardopcf convention 8515); the data port
+    /// always listens on the next port up.</summary>
+    public int Port { get; set; } = 8515;
+}
+
 /// <summary>Channel-access tunables (KISS clients can override at runtime).</summary>
 public sealed class CsmaConfig
 {
@@ -86,6 +96,10 @@ public sealed class DaemonConfig
     /// <summary>POCSAG paging endpoint; null = disabled.</summary>
     public PagingConfig? Paging { get; set; }
 
+    /// <summary>ARDOP virtual TNC; null = disabled. Exclusive with Modems/Paging
+    /// (the ARDOP channel is dedicated; docs/ardop-design.md §2.2).</summary>
+    public ArdopConfig? Ardop { get; set; }
+
     /// <summary>Channel-access parameters.</summary>
     public CsmaConfig Csma { get; set; } = new();
 
@@ -102,7 +116,13 @@ public sealed class DaemonConfig
     {
         var config = JsonSerializer.Deserialize<DaemonConfig>(File.ReadAllText(path), Options)
             ?? throw new InvalidDataException("empty configuration");
-        if (config.Modems.Count == 0)
+        if (config.Ardop is not null && (config.Modems.Count > 0 || config.Paging is not null))
+        {
+            throw new InvalidDataException(
+                "Ardop is exclusive with Modems/Paging — the ARDOP channel is dedicated");
+        }
+
+        if (config.Modems.Count == 0 && config.Ardop is null)
         {
             config.Modems.Add(new ModemConfig());
         }

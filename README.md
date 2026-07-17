@@ -43,6 +43,22 @@ interoperates with, and NinoTNC compatibility is never given up to suit another 
   framing at the raw-data layer (FreeDATA layers its own ARQ there instead). Frames span
   packet boundaries within a burst, so even datac14's 3-byte packets carry full AX.25
   frames. Runs on the 48 kHz DSP path (the engine is native 8 kHz; 48000 = 6·8000).
+- **ARDOP (Winlink) — ardopcf-compatible virtual TNC** — `--ardop <port>`: a complete
+  ARDOP 1 implementation (4FSK/4PSK/8PSK/16QAM at 200–2000 Hz, FEC + full ARQ with
+  bandwidth negotiation and gearshift) behind a byte-compatible clone of
+  [ardopcf](https://github.com/pflarue/ardop)'s TCP host interface (command port +
+  data port = port+1), so **Pat, Winlink Express, ARIM/gARIM and hamChat connect
+  unmodified** — validated by a real Pat↔Pat message exchange (our modem one side,
+  ardopcf the other), a 107-command host-transcript diff against a live ardopcf
+  (byte-identical), full-stack ARQ sessions against ardopcf in both roles, and an
+  RXO (receive-only monitor) leg decoding a third-party ardopcf↔ardopcf session.
+  PROTOCOLMODE ARQ, FEC and RXO are all supported. The ARDOP channel is dedicated
+  (`--ardop` is exclusive with `--modem`/`--paging`): ARDOP runs its own channel
+  discipline, and the daemon's CSMA is bypassed (persistence forced to 255) while
+  PTT keying and sample-domain TX-complete still come from the shared channel path.
+  Documented divergences from ardopcf: no busy detector (BUSY TRUE/FALSE never sent;
+  BUSYDET/BUSYBLOCK accepted but inert), log-level and CWID commands accepted but
+  inert, TXFRAME (dev command) unimplemented, VERSION reports `pdn-soundmodem`.
 - **DAPNET / POCSAG pagers** — `pocsag1200` (plus 512/2400): the paging waveform (CCIR
   Radiopaging Code No. 1, 2-FSK NRZ + BCH(31,21)), implemented spec-first and
   cross-validated against multimon-ng (every page byte-exact; `samples/pocsag/`).

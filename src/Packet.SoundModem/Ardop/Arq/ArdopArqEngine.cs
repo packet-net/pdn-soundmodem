@@ -1475,7 +1475,10 @@ public sealed class ArdopArqEngine
                 break;
         }
 
-        Notify($"NEWSTATE {StateName(value)}");
+        // ardopcf's NEWSTATE carries a trailing space (SetARDOPProtocolState,
+        // ARQ.c:338 — "NEWSTATE %s ") which hosts like Pat explicitly work around;
+        // reproduced for byte-compatibility on the host command socket.
+        Notify($"NEWSTATE {StateName(value)} ");
     }
 
     // InitializeConnection (ARQ.c:1060).

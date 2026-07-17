@@ -115,6 +115,28 @@ public sealed class ArdopModulator
         return filter.Drain();
     }
 
+    /// <summary>The 5-second two-tone (1450/1550 Hz) drive-level test burst
+    /// (<c>Send5SecTwoTone</c>, ardopcf ARDOPC.c:1630: 250 leader symbols through the
+    /// 200 Hz TX filter, including the closing phase-reversal sync symbol).</summary>
+    public short[] TwoToneTest()
+    {
+        var filter = new TxFilter(200, 1500, _driveLevel);
+        const int LeaderSymbols = 250;
+        int sign = (LeaderSymbols & 1) == 1 ? -1 : 1;
+        for (int i = 0; i < LeaderSymbols; i++)
+        {
+            int symbolSign = i == LeaderSymbols - 1 ? -sign : sign;
+            foreach (short sample in ArdopTxTemplates.Leader50Bd)
+            {
+                filter.Sink((short)(symbolSign * sample));
+            }
+
+            sign = -sign;
+        }
+
+        return filter.Drain();
+    }
+
     // GetTwoToneLeaderWithSync + SendLeaderAndSYNC (Modulate.c:39-118): the two-tone
     // leader with the phase-reversal sync symbol, then the frame type as 10 × 50 Bd
     // 4FSK symbols — 4 data dibits + 1 parity symbol per byte, both parity symbols
