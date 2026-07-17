@@ -1,7 +1,7 @@
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Fx25;
 using Packet.SoundModem.Hdlc;
-using Packet.SoundModem.Il2p;
+using M0LTE.Il2p;
 using Packet.SoundModem.Modems;
 
 // sm-decode: offline WAV decoder — this project's equivalent of direwolf's `atest`,

@@ -1,22 +1,7 @@
+using M0LTE.Radio.Audio;
 using Packet.SoundModem.Audio;
 
 namespace Packet.SoundModem.Channel;
-
-/// <summary>
-/// Blocking, device-paced audio source for receive — the capture-side mirror of
-/// <see cref="IAudioOutput"/>. The daemon reads from one of these and decimates to the DSP
-/// rate, so an ALSA card and a FlexRadio DAX stream present the same shape.
-/// </summary>
-public interface IAudioInput
-{
-    /// <summary>Source sample rate; the daemon decimates from here to the DSP rate.</summary>
-    int SampleRate { get; }
-
-    /// <summary>Reads up to <paramref name="destination"/>.Length samples as normalised
-    /// floats (−1..1). Blocks until at least one sample is available; returns the count
-    /// written (0 only when the source is closing).</summary>
-    int Read(Span<float> destination);
-}
 
 /// <summary>ALSA-backed <see cref="IAudioInput"/> — a thin float-converting wrapper over an
 /// <see cref="AlsaPcm"/> capture stream (the daemon previously opened <see cref="AlsaPcm"/>

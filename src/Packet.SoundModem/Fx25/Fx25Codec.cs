@@ -1,4 +1,4 @@
-using Packet.SoundModem.Fec;
+using M0LTE.Fec;
 using Packet.SoundModem.Hdlc;
 
 namespace Packet.SoundModem.Fx25;

@@ -8,7 +8,7 @@ namespace Packet.SoundModem.Modems;
 /// channel centre → I/Q low-pass → differentiate-and-cross-multiply FM discriminator →
 /// DC-tracking slicer → DPLL bit clock. Emits line levels once per bit; chain through
 /// <see cref="Hdlc.NrziDecoder"/> + <see cref="Hdlc.HdlcDeframer"/> for AX.25, or
-/// straight into <see cref="Il2p.Il2pDeframer"/> for IL2P.
+/// straight into <see cref="M0LTE.Il2p.Il2pDeframer"/> for IL2P.
 /// </summary>
 /// <remarks>
 /// The discriminator is plain quadrature FM, so it does not care what the tone shift is —

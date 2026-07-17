@@ -1,4 +1,5 @@
-using Packet.SoundModem.Channel;
+using M0LTE.Flex;
+using M0LTE.Radio.Audio;
 
 namespace Packet.SoundModem.FlexRadio;
 
@@ -8,7 +9,8 @@ namespace Packet.SoundModem.FlexRadio;
 public sealed class FlexRuntime : IAsyncDisposable
 {
     internal FlexRuntime(
-        MockFlexRadio? mock, FlexStation station, IAudioInput input, IAudioOutput output, IPttControl ptt)
+        MockFlexRadio? mock, FlexStation station,
+        IAudioInput input, IAudioOutput output, IPttControl ptt)
     {
         Mock = mock;
         Station = station;
@@ -71,8 +73,8 @@ public sealed record FlexTuning
 /// <summary>
 /// Parses <c>--device flex:&lt;radio&gt;[:slice][@station]</c> and opens the Flex triplet: a
 /// shared <see cref="FlexClient"/> feeding a <see cref="FlexAudioInput"/>, a
-/// <see cref="FlexAudioOutput"/> (wrapped in an <see cref="UpsamplingAudioOutput"/> for the
-/// 12 kHz modes) and a <see cref="FlexPtt"/>. <c>radio</c> is <c>discover</c>, an IP
+/// <see cref="FlexAudioOutput"/> (wrapped in an <see cref="Channel.UpsamplingAudioOutput"/>
+/// for the 12 kHz modes) and a <see cref="FlexPtt"/>. <c>radio</c> is <c>discover</c>, an IP
 /// (<c>host[:port]</c>), a discovery spec (<c>serial=…</c>/<c>name=…</c>), or <c>mock</c>
 /// (an in-process fake). <b>Selection policy:</b> with no <c>@station</c> the daemon owns the
 /// radio and brings it up <b>headless</b> (register as a GUI client, create its own slice —
@@ -185,11 +187,13 @@ public static class FlexDevice
             ? await FlexStation.SetUpHeadlessAsync(client, format, options, cancellation).ConfigureAwait(false)
             : await FlexStation.SetUpAsync(client, format, options, cancellation).ConfigureAwait(false);
 
+        // Flex's audio/PTT types implement the M0LTE.Radio.Audio seams directly (Flex 0.2.0),
+        // which is this modem's seam too — no adapter needed.
         IAudioInput input = station.CreateAudioInput(packetBuffer);
         FlexAudioOutput flexOutput = station.CreateAudioOutput(paceRealTime: true);
         IAudioOutput output = format.SampleRate == dspRate
             ? flexOutput
-            : new UpsamplingAudioOutput(flexOutput, dspRate);
+            : new Channel.UpsamplingAudioOutput(flexOutput, dspRate);
         IPttControl ptt = station.CreatePtt();
 
         return new FlexRuntime(mock, station, input, output, ptt);

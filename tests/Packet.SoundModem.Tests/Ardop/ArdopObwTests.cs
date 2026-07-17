@@ -1,4 +1,4 @@
-using Packet.SoundModem.Ardop;
+using M0LTE.Ardop;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Tests.Dsp;
 
@@ -36,11 +36,11 @@ public class ArdopObwTests
         // The reference: ardopcf's transmission of this exact frame (payload from the
         // fixture manifest), so both signals carry identical symbol statistics.
         (float[] reference, int rate) = WavFile.ReadMono(
-            Path.Combine(ArdopReferenceVectorTests.SamplesDir(), referenceWav));
+            Path.Combine(SamplesDir(), referenceWav));
         rate.Should().Be(ArdopModulator.SampleRate);
 
         string manifestLine = File.ReadAllLines(
-                Path.Combine(ArdopReferenceVectorTests.SamplesDir(), "txframe-manifest.txt"))
+                Path.Combine(SamplesDir(), "txframe-manifest.txt"))
             .Single(line => line.StartsWith(referenceWav + " ", StringComparison.Ordinal));
         byte[] payload = Convert.FromHexString(manifestLine.Split(' ')[3]);
 
@@ -60,5 +60,18 @@ public class ArdopObwTests
         double binHz = 12000.0 / 4096;
         oursObw.WidthHz.Should().BeLessThanOrEqualTo(referenceObw.WidthHz + binHz,
             "our TX must never occupy more bandwidth than ardopcf's for the same frame");
+    }
+
+    // The ardopcf reference fixtures live in the repo's samples/ardop.
+    private static string SamplesDir()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "pdn-soundmodem.slnx")))
+        {
+            dir = dir.Parent;
+        }
+
+        string root = dir?.FullName ?? throw new InvalidOperationException("repo root not found");
+        return Path.Combine(root, "samples", "ardop");
     }
 }

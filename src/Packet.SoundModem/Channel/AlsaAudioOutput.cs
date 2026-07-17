@@ -1,20 +1,7 @@
+using M0LTE.Radio.Audio;
 using Packet.SoundModem.Audio;
 
 namespace Packet.SoundModem.Channel;
-
-/// <summary>Blocking, device-paced audio sink for transmit.</summary>
-public interface IAudioOutput
-{
-    /// <summary>Sink sample rate; must match the samples written.</summary>
-    int SampleRate { get; }
-
-    /// <summary>Writes samples; blocks while the device consumes them.</summary>
-    void Write(ReadOnlySpan<float> samples);
-
-    /// <summary>Blocks until everything written has actually left the device — the
-    /// sample-domain part of PTT release.</summary>
-    void Drain();
-}
 
 /// <summary>ALSA-backed <see cref="IAudioOutput"/>.</summary>
 public sealed class AlsaAudioOutput : IAudioOutput, IDisposable

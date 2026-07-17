@@ -1,4 +1,4 @@
-using Packet.SoundModem.Fec;
+using M0LTE.Fec;
 using Packet.SoundModem.Fec.Ldpc;
 
 namespace Packet.SoundModem.Ofdm;

@@ -1,3 +1,5 @@
+using M0LTE.Radio.Audio;
+using M0LTE.Flex;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Dsp;
 using Packet.SoundModem.FlexRadio;

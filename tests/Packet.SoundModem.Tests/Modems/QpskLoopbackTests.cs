@@ -69,9 +69,9 @@ public class QpskLoopbackTests
     {
         byte[] ax25 = Convert.FromHexString("86A24040404060969668908A94FF03F0");
         var modulator = new QpskModulator(SampleRate, 1200, carrierFrequency: 1504);
-        byte[] wire = Packet.SoundModem.Il2p.Il2pCodec.Encode(ax25, appendCrc: true);
-        byte[] bits = Packet.SoundModem.Il2p.Il2pFramer.FrameBits(
-            wire, 240, Packet.SoundModem.Il2p.Il2pFramer.PreambleStyle.Zeros);
+        byte[] wire = M0LTE.Il2p.Il2pCodec.Encode(ax25, appendCrc: true);
+        byte[] bits = M0LTE.Il2p.Il2pFramer.FrameBits(
+            wire, 240, M0LTE.Il2p.Il2pFramer.PreambleStyle.Zeros);
 
         var frames = new List<byte[]>();
         QpskModem rx = QpskModem.Qpsk2400(SampleRate, frames.Add);

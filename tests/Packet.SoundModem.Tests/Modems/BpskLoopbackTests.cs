@@ -1,4 +1,4 @@
-using Packet.SoundModem.Il2p;
+using M0LTE.Il2p;
 using Packet.SoundModem.Modems;
 
 namespace Packet.SoundModem.Tests.Modems;

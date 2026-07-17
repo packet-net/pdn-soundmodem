@@ -52,7 +52,7 @@ public sealed class BpskModulator
     /// <summary>The configured sample rate.</summary>
     public int SampleRate => _sampleRate;
 
-    /// <summary>Modulates logical bits (from <see cref="Il2p.Il2pFramer.FrameBits"/> with
+    /// <summary>Modulates logical bits (from <see cref="M0LTE.Il2p.Il2pFramer.FrameBits"/> with
     /// the zeros preamble style) to audio samples.</summary>
     public float[] Modulate(ReadOnlySpan<byte> bits, float amplitude = 0.8f)
     {

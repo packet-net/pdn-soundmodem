@@ -192,7 +192,7 @@ public class DatacRoundTripTests(ITestOutputHelper output)
 
         // Sanity: our appended CRC must equal codec2's — the whole 16-byte datac0_clean.frame.
         byte[] refFrame = File.ReadAllBytes(Sample("datac0_clean.frame"));
-        ushort crc = Packet.SoundModem.Fec.FreedvCrc16.Compute(payload);
+        ushort crc = M0LTE.Fec.FreedvCrc16.Compute(payload);
         byte[] mineFrame = [.. payload, (byte)(crc >> 8), (byte)(crc & 0xff)];
         mineFrame.Should().Equal(refFrame, "our payload+CRC frame must match codec2's transmitted frame");
 
