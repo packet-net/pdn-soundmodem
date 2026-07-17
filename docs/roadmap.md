@@ -106,13 +106,31 @@ through the Flex's DAX audio, no sound card in path.
 
 ---
 
-## Hardware Tom can supply (validation gates)
+## Needs Tom + a radio (the specific actions)
 
-- **HF radio loop** — closes #4 (FreeDV), #6 (ARDOP on-air at GB7RDG/40m), and eventually the
-  110D real-channel check. A **Flex 6500** path now exists (#11).
-- **FM radio loop** — required for #8 (own FM OFDM).
-- **GB7RDG RF access** — the on-air acceptance venue for #6; also the live off-air RX source that
-  produced #39/#40/#42.
+These are the concrete steps that can't be done in software alone. None is blocking; each is
+self-contained and can be picked up standalone. Operate as **M0LTE**.
+
+1. **Flex daemon live confirmation** (#11) — *~2 min, radio already on the bench.* Run the
+   shipped daemon against the 6500 and push one real frame into the ANT1 dummy load:
+   `pdn-soundmodem --device flex:10.45.0.76 --flex-freq <MHz> --flex-ant ANT1 --modem 0:freedv-datac3 --kiss 8105`
+   (or `--ardop 8515` for ARDOP). Success = `interlock=TRANSMITTING`, RF on the dummy load, no
+   setup errors. Closes the last Flex item.
+2. **FreeDV datac HF-loop validation** (#4) — *needs an HF rig, or the Flex path.* Follow
+   [`docs/freedv-hf-loop.md`](freedv-hf-loop.md) (rig recipe, the 8 radio-only unknowns, drive
+   commands, pass criteria). Record results back into that doc + `plan.md` §17. Closes #4.
+3. **ARDOP on-air acceptance** (#6) — *needs GB7RDG's HF port on 40m.* Peer-to-peer ARDOP with
+   the stations already on the UK 40m packet channel; Winlink/Pat gateway session optional. Write
+   the on-air bench doc first (à la the FreeDV one). Closes #6.
+4. **Own FM OFDM — an FM radio loop** (#8) — *later, when the #8 build starts.* Required to
+   validate PAPR / pre-emphasis / deviation, which simulation can't fully capture.
+5. **GB7RDG traffic on request** — *optional, opportunistic.* Once the #42 coherent+differential
+   fix lands, capture more live NinoTNC BPSK300 off-air through the Flex to confirm the fix on
+   real signals (this is how #39/#40/#42 were found). A long carrier tone + a frame is the ideal
+   calibration transmission.
+
+**Hardware available:** a Flex 6500 (10.45.0.76, on the bench with an ANT1 dummy load; GB7RDG's
+transceiver couples into it), an HF rig / GB7RDG's HF port, and an FM radio loop.
 
 ## Parked / non-goals
 
