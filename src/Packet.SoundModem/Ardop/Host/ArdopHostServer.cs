@@ -51,6 +51,10 @@ public sealed class ArdopHostServer : IAsyncDisposable
         IPAddress address = bind ?? IPAddress.Loopback;
         _commandListener = new TcpListener(address, commandPort);
         _dataListener = new TcpListener(address, commandPort == 0 ? 0 : commandPort + 1);
+        // SO_REUSEADDR as in ardopcf (OpenSocket4, TCPHostInterface.c:505): a
+        // restarted TNC must be able to rebind its well-known ports immediately.
+        _commandListener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        _dataListener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
         tnc.CommandToHost += SendCommandLine;
         tnc.DataToHost += SendTaggedData;
     }
