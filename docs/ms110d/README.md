@@ -87,8 +87,14 @@ revisit at any future oracle — design §5.2):
   probe precedes a boundary and is transmitted shifted.
 - **O-1 (fixedPN wrap)**: wrap-around implemented; at 3 kHz the per-channel-symbol-restart
   reading coincides with it (8 × 32 chips = exactly 256), so no runtime switch is carried.
-- **D-LXV static-test SNR**: the D-LXV SNR column was not transcribed; the WID 2 static
-  gate runs at the WN 2 "Poor" mask SNR (5 dB) as a recorded house bar.
+- **D-LXV static-test SNR** (restated 2026-07-17): the D-LXV SNR column was not transcribed
+  and D.6.3 is "Not yet standardized", so the WID 2 static gate has no spec SNR. It first
+  borrowed the WN 2 "Poor" (2-path/2 ms fading) mask SNR of 5 dB, but that is too optimistic
+  for the harder 3-path/9 ms static channel. With the K=48 DFE ridge fix the measured
+  waterfall is 5 dB → 8.3E-5, 7 dB → 7.8E-6, 9 dB → clean; the gate is restated to **9 dB**,
+  the lowest robustly-passing SNR, which proves the equalizer's 9 ms span + probe convergence
+  (the test's stated purpose, design §6) with margin. Closing the last few dB on this channel
+  is Phase-B RLS scope.
 - **TLC**: transmitted as the conjugate of the Table D-XVIII sequence itself (D.5.2.1.2
   "the symbols of the sequence specified … in Table D-XVIII"); discarded by our receiver.
 

@@ -73,6 +73,8 @@ public sealed class Ms110dDemodulator
     // Tracking state (WN ≥ 1).
     private Dfe? _dfe;
     private int _ffLead;
+    private float _initRidge;      // initial LS ridge (MMSE-scaled per mini-probe class)
+    private float _trackRidge;     // per-probe re-solve ridge
     private Cf[] _known = [];
     private Cf[] _decisions = [];  // ring of past FbTaps decisions, newest at [0]
     private readonly Ms110dScrambler _scrambler = new();
@@ -638,14 +640,25 @@ public sealed class Ms110dDemodulator
         // than the locked one stays equalizable — on the fading Poor channel the lock can
         // land on the later path while the earlier one is faded, and its return puts a
         // −2 ms (−9.6 T/2) pre-cursor into the window.
-        (int ff, int fb, int lead) = _mode!.K switch
+        (int ff, int fb, int lead, float initRidge, float trackRidge) = _mode!.K switch
         {
-            48 => (32, 22, 16),
-            24 => (16, 6, 8),
-            _ => (24, 12, 13),
+            // K=48 (WN1/2, rate 1/8 & 1/4, run at the −3/0 dB and 5 dB static gates) has the
+            // widest DFE — 32 FF + 22 FB = 54 complex taps — yet the FEWEST data symbols per
+            // frame (U=48) to excite them, at the LOWEST SNR of the ladder. A weak ridge lets
+            // the off-cursor feed-forward taps fit noise (measured: WN1 AWGN 4.5E-5 vs the
+            // 1E-5 gate; a shrunk 12-tap FF cleared AWGN but starved the static echo). The MMSE
+            // ridge at −3 dB is order-1×trace (noise ≈ signal), so K=48 uses a strong ridge
+            // toward zero (initial) / toward the current taps (per-probe): off-cursor taps
+            // collapse on flat AWGN while the static rig's echo-excited taps, carrying real
+            // signal, survive it. K=32/24 keep their original (already-green) light ridge.
+            48 => (32, 22, 16, 1.0f, 1.0f),
+            24 => (16, 6, 8, 1e-3f, 0.15f),
+            _ => (24, 12, 13, 1e-3f, 0.15f),
         };
         _dfe = new Dfe(ff, fb);
         _ffLead = lead;
+        _initRidge = initRidge;
+        _trackRidge = trackRidge;
 
         // Known symbols for chips [dataStart−576, dataStart+K): the final super-frame
         // (count = 0) plus the preamble-ending probe (design §2.4).
@@ -679,7 +692,7 @@ public sealed class Ms110dDemodulator
             _dfe.AddTrainingRow(window, past, _known[n]);
         }
 
-        _dfe.SolveTraining();
+        _dfe.SolveTraining(regularization: _initRidge);
 
         // Seed the decision history with the probe tail and measure the training MSE.
         _decisions = new Cf[fb];
@@ -762,7 +775,7 @@ public sealed class Ms110dDemodulator
             dfe.AddTrainingRow(window, probePast, probe[i], weight: 6f);
         }
 
-        dfe.SolveTraining(regularization: 0.15f, anchorToCurrentTaps: true);
+        dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true);
         Cf[] endTaps = dfe.SnapshotTaps();
 
         // Residual-CFO trim from the mean tap rotation between consecutive probe solves:
