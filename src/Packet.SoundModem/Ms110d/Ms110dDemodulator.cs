@@ -62,6 +62,7 @@ public sealed class Ms110dDemodulator
     private double _chip0;        // absolute T/2 position of chip 0 of the matched super-frame
     private double _tau;          // slow timing correction, T/2 units
     private double _omega;        // carrier phase increment per T/2 sample (residual CFO)
+    private double _omegaAcquired; // ω at data start — the tracking loop's clamp centre
     private double _thetaBase;    // carrier phase at _chip0
     private Ms110dLockInfo? _lock;
     private Ms110dMode? _mode;
@@ -77,7 +78,6 @@ public sealed class Ms110dDemodulator
     private readonly Ms110dScrambler _scrambler = new();
     private long _frameChip;
     private int _frameInBlock;
-    private float _ddMu;
     private int _badProbes;
     private double _probeMse;
     private double _probeGainRef;
@@ -129,6 +129,9 @@ public sealed class Ms110dDemodulator
             _mfReference[b] = reference;
         }
     }
+
+    /// <summary>Debug-only: fires per equalized, descrambled data symbol.</summary>
+    public event Action<Cf>? DataSymbolEqualized;
 
     /// <summary>Fires for every decoded input-data block.</summary>
     public event Action<Ms110dRxBlock>? BlockDecoded;
@@ -398,6 +401,14 @@ public sealed class Ms110dDemodulator
         _state = Ms110dRxState.Tracking;
     }
 
+    /// <summary>How many trailing preamble super-frames the carrier re-fit may use: all
+    /// the super-frames we know exist (from the matched one to data start), capped at 4
+    /// (~1 s — enough baseline to average Rayleigh phase drift out of the CFO fit).</summary>
+    private int TailRefineSuperframes()
+    {
+        return (int)Math.Clamp(_dataStartChip / ChipsSuperframe, 1, 4);
+    }
+
     private static bool IsSupported(int wn)
     {
         return wn is >= 0 and <= 6 or 13;
@@ -433,6 +444,19 @@ public sealed class Ms110dDemodulator
         return bestDibit;
     }
 
+    /// <summary>Known chips of the last <paramref name="superframes"/> preamble
+    /// super-frames before data start (downcounts n−1 … 0).</summary>
+    private static byte[] TailSuperframeChips(int superframes, int wn, Ms110dInterleaverKind il, int k)
+    {
+        var chips = new byte[superframes * ChipsSuperframe];
+        for (int i = 0; i < superframes; i++)
+        {
+            SuperframeChips(superframes - 1 - i, wn, il, k).CopyTo(chips, i * ChipsSuperframe);
+        }
+
+        return chips;
+    }
+
     private static byte[] SuperframeChips(int count, int wn, Ms110dInterleaverKind il, int k)
     {
         byte[] known = new byte[ChipsSuperframe];
@@ -442,15 +466,20 @@ public sealed class Ms110dDemodulator
         return known;
     }
 
-    /// <summary>Least-squares fits the residual carrier phase/frequency over one fully
-    /// known super-frame at <paramref name="baseChip"/> (240 ms baseline) and re-tunes the
-    /// carrier model anchored inside the measurement window.</summary>
+    /// <summary>Least-squares fits the residual carrier phase/frequency over fully known
+    /// preamble chips at <paramref name="baseChip"/> and re-tunes the carrier model
+    /// anchored inside the measurement window. Longer windows (several super-frames)
+    /// matter on fading channels: a single 240 ms super-frame reads Rayleigh phase drift
+    /// as CFO — a ~1 s baseline averages it out.</summary>
     private void RefineCarrier(long baseChip, byte[] knownChips)
     {
-        Span<double> phases = stackalloc double[18];
-        Span<double> weights = stackalloc double[18];
+        int count = knownChips.Length / 32;
+        Span<double> phases = count <= 72 ? stackalloc double[72] : new double[count];
+        Span<double> weights = count <= 72 ? stackalloc double[72] : new double[count];
+        phases = phases[..count];
+        weights = weights[..count];
         double previous = 0;
-        for (int j = 0; j < 18; j++)
+        for (int j = 0; j < count; j++)
         {
             var c = Cf.Zero;
             for (int i = 0; i < 32; i++)
@@ -477,7 +506,7 @@ public sealed class Ms110dDemodulator
 
         // Weighted linear regression of phase vs. symbol index.
         double sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
-        for (int j = 0; j < 18; j++)
+        for (int j = 0; j < count; j++)
         {
             double w = weights[j];
             sw += w;
@@ -496,9 +525,9 @@ public sealed class Ms110dDemodulator
         double slope = ((sw * sxy) - (sx * sy)) / det;      // rad per channel symbol
         double intercept = ((sxx * sy) - (sx * sxy)) / det; // rad at symbol index 0
 
-        // Anchor the correction at the window midpoint (symbol 8.5; symbol j's phase sits
-        // at its centre, chip 32j+16); slope converts to rad per T/2 sample by ÷64.
-        const double mid = 8.5;
+        // Anchor the correction at the window midpoint (symbol j's phase sits at its
+        // centre, chip 32j+16); slope converts to rad per T/2 sample by ÷64.
+        double mid = (count - 1) / 2.0;
         double href = (2.0 * (baseChip + 16 + (32 * mid))) + _tau;
         RetuneCarrier(href, intercept + (slope * mid), slope / 64.0);
         _lock = _lock! with { CfoHz = _lock.CfoHz + (slope / 64.0 * 2.0 * Ms110dTables.SymbolRate / (2.0 * Math.PI)) };
@@ -596,25 +625,27 @@ public sealed class Ms110dDemodulator
     private void InitializeDfe()
     {
         // Same stale-extrapolation concern as the WN0 path: re-fit the carrier over the
-        // final super-frame before training (see TrackWalsh).
+        // final super-frames before training (see TrackWalsh).
+        int tail = TailRefineSuperframes();
         RefineCarrier(
-            _dataStartChip - ChipsSuperframe,
-            SuperframeChips(0, _lock!.WaveformNumber, _lock.Interleaver, _lock.ConstraintLength));
+            _dataStartChip - (tail * ChipsSuperframe),
+            TailSuperframeChips(tail, _lock!.WaveformNumber, _lock.Interleaver, _lock.ConstraintLength));
+        _omegaAcquired = _omega;
 
-        // Tap counts per design §2.5. The K=48 lead reaches +8 symbols so the feed-forward
-        // window collects the 3 ms echo's energy on the D-LXV WID 2 static channel
-        // (equal-power paths — the cursor alone carries only a third of the power).
+        // Tap counts per design §2.5. Leads are sized so the feed-forward window spans
+        // roughly ±2 ms around the cursor: forward to collect echo energy (the 3 ms path
+        // of the WID 2 static rig at K=48), and BACKWARD far enough that a path earlier
+        // than the locked one stays equalizable — on the fading Poor channel the lock can
+        // land on the later path while the earlier one is faded, and its return puts a
+        // −2 ms (−9.6 T/2) pre-cursor into the window.
         (int ff, int fb, int lead) = _mode!.K switch
         {
             48 => (32, 22, 16),
-            24 => (16, 6, 4),
-            _ => (24, 12, 6),
+            24 => (16, 6, 8),
+            _ => (24, 12, 13),
         };
         _dfe = new Dfe(ff, fb);
         _ffLead = lead;
-        _ddMu = _options.DecisionDirectedMu >= 0
-            ? _options.DecisionDirectedMu
-            : _mode.Wn switch { 1 or 2 => 0f, 3 or 4 => 0.005f, _ => 0.01f };
 
         // Known symbols for chips [dataStart−576, dataStart+K): the final super-frame
         // (count = 0) plus the preamble-ending probe (design §2.4).
@@ -679,6 +710,10 @@ public sealed class Ms110dDemodulator
         _badProbes = 0;
         _frameChip = _dataStartChip + k;
         _frameInBlock = 0;
+
+        // Open the first tracking accumulation (each frame's data rows + the following
+        // probe's rows feed the solve at that probe — see ProcessFrame).
+        _dfe.BeginTraining();
     }
 
     private void FillWindow(double symbolChip, Span<Cf> window)
@@ -695,11 +730,77 @@ public sealed class Ms110dDemodulator
         Ms110dMode mode = _mode!;
         Dfe dfe = _dfe!;
         Span<Cf> window = stackalloc Cf[dfe.FfTaps];
+        Span<Cf> probePast = stackalloc Cf[dfe.FbTaps];
 
-        // Data symbols.
+        // The frame's OWN mini-probe is processed first: its trailing rows are
+        // self-contained (all feedback references lie inside the probe), so the taps at
+        // the frame's END can be solved before the data block is demodulated — the block
+        // is then equalized with taps linearly interpolated between the two bracketing
+        // probe solutions. On the Poor channel (~300 ms coherence vs the 120 ms probe
+        // cadence) static-across-the-block taps are stale for most of the block;
+        // interpolation is what makes probe-trained equalization track it (the geometry
+        // design §2.5 describes — probes bracket every data block for exactly this).
+        bool boundary = (_frameInBlock + 2) % _il!.Frames == 0;
+        Cf[] probe = MiniProbe.Get(mode.K, boundary);
+        long probeChip = _frameChip + mode.U;
+        Cf[] startTaps = dfe.SnapshotTaps();
+        var probePhase = Cf.Zero;
+        double mse = 0;
+        int statRows = 0;
+        for (int i = dfe.FbTaps; i < mode.K; i++)
+        {
+            FillWindow(probeChip + i, window);
+            for (int j = 0; j < dfe.FbTaps; j++)
+            {
+                probePast[j] = probe[i - 1 - j];
+            }
+
+            Cf y = dfe.Equalize(window, probePast);
+            probePhase += y * probe[i].Conj();
+            mse += (y - probe[i]).Cnorm();
+            statRows++;
+            dfe.AddTrainingRow(window, probePast, probe[i], weight: 6f);
+        }
+
+        dfe.SolveTraining(regularization: 0.15f, anchorToCurrentTaps: true);
+        Cf[] endTaps = dfe.SnapshotTaps();
+
+        // Residual-CFO trim from the mean tap rotation between consecutive probe solves:
+        // fading rotates the taps with zero mean, so a slow integrator on the per-frame
+        // rotation converges on the true frequency error without ingesting Rayleigh phase
+        // (the mistake of feeding the ABSOLUTE probe phase error into ω). Clamped ±3 Hz
+        // about the acquisition estimate.
+        var tapRotation = Cf.Zero;
+        for (int i = 0; i < endTaps.Length; i++)
+        {
+            tapRotation += endTaps[i] * startTaps[i].Conj();
+        }
+
+        if (tapRotation.Cnorm() > 1e-12)
+        {
+            int frameT2 = 2 * (mode.U + mode.K);
+            double deltaOmega = 0.1 * tapRotation.Arg() / frameT2;
+            double window3Hz = 2.0 * Math.PI * 3.0 / (2.0 * Ms110dTables.SymbolRate);
+            deltaOmega = Math.Clamp(
+                deltaOmega, (_omegaAcquired - window3Hz) - _omega, (_omegaAcquired + window3Hz) - _omega);
+            RetuneCarrier((2.0 * (probeChip + (mode.K / 2))) + _tau, 0, deltaOmega);
+        }
+
+        // Start accumulating rows for the NEXT solve: the data block's confidence-gated
+        // decision-directed rows join the next probe's rows. This is load-bearing on
+        // selective fading channels — the mini-probe is a cyclically REPEATED base
+        // sequence, so probe-only regressors are near-periodic and rank-deficient (≤16
+        // distinct patterns for 30+ taps): they cannot observe the whole tap space, and
+        // the unobserved subspace goes stale as the channel moves. Scrambled data is
+        // white and completes the excitation.
+        dfe.BeginTraining();
+
+        // Data block with the interpolated tap trajectory; feedback runs causally on
+        // decisions.
         _scrambler.Reset();
         for (int u = 0; u < mode.U; u++)
         {
+            dfe.LoadInterpolatedTaps(startTaps, endTaps, (u + 0.5f) / mode.U);
             FillWindow(_frameChip + u, window);
             // NextPsk(0) returns the raw scramble value; the receiver descrambles by
             // rotating with its conjugate (D.5.1.3 modulo-8 addition on the TX side).
@@ -707,40 +808,30 @@ public sealed class Ms110dDemodulator
             Cf y = dfe.Equalize(window, _decisions);
             Cf descrambled = y * rotor.Conj();
             Cf clean = Slice(descrambled, mode.Modulation);
-            if (_ddMu > 0)
+            DataSymbolEqualized?.Invoke(descrambled);
+            PushLlrs(descrambled, mode.Modulation);
+            if ((descrambled - clean).Cnorm() < 0.4f)
             {
-                dfe.Nlms(window, _decisions, clean * rotor, _ddMu);
+                dfe.AddTrainingRow(window, _decisions, clean * rotor, weight: 0.25f);
             }
 
-            PushLlrs(descrambled, mode.Modulation);
-            PhaseNudge(descrambled, clean, 0.01, 0.0);
             PushDecision(clean * rotor);
         }
 
-        // Mini-probe: known symbols → NLMS refresh, phase/frequency/timing update.
-        bool boundary = (_frameInBlock + 2) % _il!.Frames == 0;
-        Cf[] probe = MiniProbe.Get(mode.K, boundary);
-        long probeChip = _frameChip + mode.U;
-        var probePhase = Cf.Zero;
-        double mse = 0;
+        dfe.LoadTaps(endTaps);
         for (int i = 0; i < mode.K; i++)
         {
-            FillWindow(probeChip + i, window);
-            Cf y = dfe.Nlms(window, _decisions, probe[i], 0.05f);
-            probePhase += y * probe[i].Conj();
-            Cf err = y - probe[i];
-            mse += err.Cnorm();
-            PushDecision(probe[i]);
+            PushDecision(probe[i]); // next frame's first data symbols reference these
         }
 
-        _probeMse = (0.7 * _probeMse) + (0.3 * (mse / mode.K));
-        double phaseError = probePhase.Arg();
-        int frameT2 = 2 * (mode.U + mode.K);
-        RetuneCarrier(
-            (2.0 * (probeChip + (mode.K / 2))) + _tau,
-            0.4 * phaseError,
-            0.05 * phaseError / frameT2);
+        _probeMse = (0.7 * _probeMse) + (0.3 * (mse / statRows));
 
+        // Carrier: FROZEN during tracking — the per-probe tap solves are the single
+        // owner of phase. A θ jump here double-corrects against the taps (they re-fit
+        // phase every probe), and a frequency integrator driven by the probe phase error
+        // ingests the channel's own Rayleigh phase random walk — both were measured
+        // garbling fading bursts wholesale. The residual-CFO burden this leaves on the
+        // taps is kept small by the multi-super-frame carrier fit at data start.
         TrackProbeTiming(probeChip, probe);
 
         // Signal-lost discriminator: the coherent probe gain |Σ y·conj(d)|/K of an MMSE-
@@ -748,9 +839,20 @@ public sealed class Ms110dDemodulator
         // — so the test is relative to the gain measured at training (slow-tracked so slow
         // fades adjust the reference, with a floor against tracking into pure noise).
         double probeGain = probePhase.Abs() / mode.K;
+        if (Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1")
+        {
+            Console.Error.WriteLine(
+                $"frame@{_frameChip}: gain={probeGain:F3} ref={_probeGainRef:F3} mse={mse / mode.K:F3} " +
+                $"tau={_tau:F3} omega={_omega:E2} bad={_badProbes}");
+        }
+
         if (probeGain < Math.Max(0.10, 0.45 * _probeGainRef))
         {
-            if (++_badProbes >= 5)
+            // Long horizon deliberately: on the Poor channel a deep composite fade
+            // (both Rayleigh paths down) lasts up to ~1 s and is exactly what the
+            // interleaver + FEC ride through — only a persistent collapse means the
+            // transmission actually ended.
+            if (++_badProbes >= 25)
             {
                 CompleteBurst(Ms110dBurstEndReason.SignalLost);
                 return;
@@ -795,19 +897,6 @@ public sealed class Ms110dDemodulator
         // Slow slew only — real clock skew is ppm-scale; anything faster is estimator noise.
         double delta = 0.5 * (magnitudes[0] - magnitudes[2]) / denom * 0.5;
         _tau += Math.Clamp(0.1 * delta, -0.03, 0.03);
-    }
-
-    private void PhaseNudge(Cf descrambled, Cf clean, double gainTheta, double gainOmega)
-    {
-        Cf product = descrambled * clean.Conj();
-        if (product.Cnorm() < 1e-12)
-        {
-            return;
-        }
-
-        double err = product.Arg();
-        _thetaBase += gainTheta * err;
-        _omega += gainOmega * err;
     }
 
     /// <summary>Applies a phase/frequency correction with the phase model re-anchored at
@@ -874,11 +963,12 @@ public sealed class Ms110dDemodulator
                 return;
             }
 
-            // Re-estimate the carrier over the final super-frame: the matched super-frame
+            // Re-estimate the carrier over the final super-frames: the matched super-frame
             // can be many seconds back (M up to 32) and the extrapolated phase stale.
+            int tail = TailRefineSuperframes();
             RefineCarrier(
-                _dataStartChip - ChipsSuperframe,
-                SuperframeChips(0, _lock!.WaveformNumber, _lock.Interleaver, _lock.ConstraintLength));
+                _dataStartChip - (tail * ChipsSuperframe),
+                TailSuperframeChips(tail, _lock!.WaveformNumber, _lock.Interleaver, _lock.ConstraintLength));
 
             _walsh = new Wid0WalshModem();
             _walsh.Reset();
@@ -930,7 +1020,9 @@ public sealed class Ms110dDemodulator
 
             if (correlation.Abs() < 0.35 * sumMag)
             {
-                if (++_weakSymbols >= 12)
+                // ~1.2 s — long enough to ride a deep Poor-channel fade (see the DFE
+                // path's discriminator for the rationale).
+                if (++_weakSymbols >= 90)
                 {
                     CompleteBurst(Ms110dBurstEndReason.SignalLost);
                     return;

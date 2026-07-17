@@ -62,9 +62,4 @@ public sealed record Ms110dDemodOptions
     /// <summary>Normalized matched-filter threshold for preamble detection (house number,
     /// characterized by the acquisition tests).</summary>
     public double SyncThreshold { get; init; } = 0.32;
-
-    /// <summary>Decision-directed NLMS step for tap tracking across data blocks; −1 selects
-    /// a per-mode default (0 for WN 1/2 whose symbol SNR makes DD updates counter-productive,
-    /// 0.005 for WN 3/4, 0.01 for WN 5/6/13 — house numbers, design §2.5).</summary>
-    public float DecisionDirectedMu { get; init; } = -1f;
 }

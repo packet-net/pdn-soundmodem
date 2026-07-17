@@ -89,6 +89,39 @@ public sealed class Dfe
         return y;
     }
 
+    /// <summary>Copies the current taps (FF then FB) into a new array.</summary>
+    public Cf[] SnapshotTaps()
+    {
+        var taps = new Cf[_ff.Length + _fb.Length];
+        _ff.CopyTo(taps, 0);
+        _fb.CopyTo(taps, _ff.Length);
+        return taps;
+    }
+
+    /// <summary>Installs taps from a <see cref="SnapshotTaps"/> array.</summary>
+    public void LoadTaps(ReadOnlySpan<Cf> taps)
+    {
+        taps[.._ff.Length].CopyTo(_ff);
+        taps[_ff.Length..].CopyTo(_fb);
+    }
+
+    /// <summary>Installs the linear interpolation (1−α)·a + α·b of two snapshots — the
+    /// per-symbol tap trajectory across a data block bracketed by two solved probes.</summary>
+    public void LoadInterpolatedTaps(ReadOnlySpan<Cf> a, ReadOnlySpan<Cf> b, float alpha)
+    {
+        float inverse = 1 - alpha;
+        for (int i = 0; i < _ff.Length; i++)
+        {
+            _ff[i] = (a[i] * inverse) + (b[i] * alpha);
+        }
+
+        for (int j = 0; j < _fb.Length; j++)
+        {
+            int i = _ff.Length + j;
+            _fb[j] = (a[i] * inverse) + (b[i] * alpha);
+        }
+    }
+
     /// <summary>Starts accumulating least-squares training rows (clears any previous
     /// accumulation).</summary>
     public void BeginTraining()
@@ -100,8 +133,11 @@ public sealed class Dfe
     }
 
     /// <summary>Adds one training row: the FF window and known past symbols observed when
-    /// the known symbol <paramref name="desired"/> was current.</summary>
-    public void AddTrainingRow(ReadOnlySpan<Cf> window, ReadOnlySpan<Cf> past, Cf desired)
+    /// the known symbol <paramref name="desired"/> was current. <paramref name="weight"/>
+    /// scales the row's least-squares influence — known probe symbols get authoritative
+    /// weight, decision-directed rows advisory weight (wrong decisions under a rotated
+    /// constellation are self-confirming and must never outvote the probes).</summary>
+    public void AddTrainingRow(ReadOnlySpan<Cf> window, ReadOnlySpan<Cf> past, Cf desired, float weight = 1f)
     {
         if (_gram is null || _rhs is null)
         {
@@ -122,7 +158,7 @@ public sealed class Dfe
 
         for (int i = 0; i < n; i++)
         {
-            Cf ci = row[i].Conj();
+            Cf ci = row[i].Conj() * weight;
             for (int j = i; j < n; j++)
             {
                 _gram[i, j] += ci * row[j];
@@ -135,11 +171,19 @@ public sealed class Dfe
     }
 
     /// <summary>Solves the accumulated regularized normal equations and installs the taps.
-    /// Returns false (leaving taps unchanged) if the system was degenerate.</summary>
-    public bool SolveTraining(float regularization = 1e-3f)
+    /// Returns false (leaving taps unchanged) if the system was degenerate.
+    /// With <paramref name="anchorToCurrentTaps"/> the ridge pulls toward the CURRENT taps
+    /// instead of zero — the per-probe tracking update on fading channels (a Kalman-style
+    /// prior: K fresh rows dominate the directions the probe observed, the anchor carries
+    /// everything else).</summary>
+    public bool SolveTraining(float regularization = 1e-3f, bool anchorToCurrentTaps = false)
     {
-        if (_gram is null || _rhs is null || _trainingRows < _ff.Length + _fb.Length)
+        if (_gram is null || _rhs is null ||
+            (!anchorToCurrentTaps && _trainingRows < _ff.Length + _fb.Length) ||
+            _trainingRows == 0)
         {
+            _gram = null;
+            _rhs = null;
             return false;
         }
 
@@ -154,6 +198,12 @@ public sealed class Dfe
         for (int i = 0; i < n; i++)
         {
             _gram[i, i] += new Cf(lambda, 0);
+            if (anchorToCurrentTaps)
+            {
+                Cf current = i < _ff.Length ? _ff[i] : _fb[i - _ff.Length];
+                _rhs[i] += current * lambda;
+            }
+
             for (int j = 0; j < i; j++)
             {
                 _gram[i, j] = _gram[j, i].Conj(); // fill the lower triangle
