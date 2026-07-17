@@ -35,11 +35,12 @@ public sealed class WattersonChannel
     private readonly WattersonPath[] _paths;
     private readonly Random _random;
 
-    /// <summary>Creates the channel. No paths = a single clean direct path (AWGN-only).</summary>
+    /// <summary>Creates the channel. No paths = the ideal direct path (AWGN-only, passband
+    /// passthrough — the D-LXIV AWGN channel).</summary>
     public WattersonChannel(int sampleRate, int seed, params WattersonPath[] paths)
     {
         _sampleRate = sampleRate;
-        _paths = paths.Length == 0 ? [new WattersonPath(0)] : paths;
+        _paths = paths;
         _random = new Random(seed);
     }
 
@@ -64,14 +65,24 @@ public sealed class WattersonChannel
         int leadOutSamples = 0,
         double frequencyOffsetHz = 0)
     {
+        if (_paths.Length == 0 && frequencyOffsetHz == 0)
+        {
+            // Ideal path: passband passthrough plus calibrated noise.
+            var direct = new float[leadInSamples + input.Length + leadOutSamples];
+            input.CopyTo(direct.AsSpan(leadInSamples));
+            AddNoise(direct, input, snrDb, noiseBandwidthHz);
+            return direct;
+        }
+
         // Analytic/complex envelope about the 1800 Hz sub-carrier.
         Cf[] envelope = ToEnvelope(input);
 
         // Tapped delay line with per-tap gains; equal-power normalization.
         int n = envelope.Length;
         var summed = new Cf[n];
-        float pathScale = (float)(1.0 / Math.Sqrt(_paths.Length));
-        foreach (WattersonPath path in _paths)
+        WattersonPath[] paths = _paths.Length == 0 ? [new WattersonPath(0)] : _paths;
+        float pathScale = (float)(1.0 / Math.Sqrt(paths.Length));
+        foreach (WattersonPath path in paths)
         {
             Cf[] delayed = FractionalDelay(envelope, path.DelayMs * _sampleRate / 1000.0);
             if (path.DopplerShiftHz != 0)
@@ -116,26 +127,32 @@ public sealed class WattersonChannel
                 (float)((summed[i].Re * Math.Cos(theta)) - (summed[i].Im * Math.Sin(theta)));
         }
 
-        // Noise calibrated against the mean power of the clean input burst.
-        if (!double.IsPositiveInfinity(snrDb))
-        {
-            double signalPower = 0;
-            foreach (float s in input)
-            {
-                signalPower += (double)s * s;
-            }
+        AddNoise(output, input, snrDb, noiseBandwidthHz);
+        return output;
+    }
 
-            signalPower /= input.Length;
-            double snr = Math.Pow(10, snrDb / 10.0);
-            double noisePower = signalPower / snr * (_sampleRate / 2.0) / noiseBandwidthHz;
-            double sigma = Math.Sqrt(noisePower);
-            for (int i = 0; i < output.Length; i++)
-            {
-                output[i] += (float)(sigma * Gaussian());
-            }
+    private void AddNoise(float[] output, ReadOnlySpan<float> input, double snrDb, double noiseBandwidthHz)
+    {
+        // Noise calibrated against the mean power of the clean input burst.
+        if (double.IsPositiveInfinity(snrDb))
+        {
+            return;
         }
 
-        return output;
+        double signalPower = 0;
+        foreach (float s in input)
+        {
+            signalPower += (double)s * s;
+        }
+
+        signalPower /= input.Length;
+        double snr = Math.Pow(10, snrDb / 10.0);
+        double noisePower = signalPower / snr * (_sampleRate / 2.0) / noiseBandwidthHz;
+        double sigma = Math.Sqrt(noisePower);
+        for (int i = 0; i < output.Length; i++)
+        {
+            output[i] += (float)(sigma * Gaussian());
+        }
     }
 
     /// <summary>Generates a fading-gain sequence (unit mean-square, Gaussian Doppler

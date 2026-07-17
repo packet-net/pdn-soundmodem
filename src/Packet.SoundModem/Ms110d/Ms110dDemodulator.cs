@@ -74,12 +74,15 @@ public sealed class Ms110dDemodulator
     private float _ddMu;
     private int _badProbes;
     private double _probeMse;
+    private double _probeGainRef;
 
     // Tracking state (WN 0).
     private Wid0WalshModem? _walsh;
     private long _symbolChip;
     private int _symbolInBlock;
     private int _weakSymbols;
+    private Cf _walshPhaseAcc;
+    private int _walshPhaseCount;
 
     // Block/burst assembly.
     private TailBitingViterbiDecoder? _viterbi;
@@ -345,7 +348,7 @@ public sealed class Ms110dDemodulator
             return;
         }
 
-        RefineCarrier(count, wn, il, k);
+        RefineCarrier(0, SuperframeChips(count, wn, il, k));
         _lock = new Ms110dLockInfo(wn, il, k, _lock!.CfoHz);
         _mode = Ms110dMode.Mode3k(wn);
         _il = Ms110dInterleaverParams.Get3k(wn, il);
@@ -397,15 +400,20 @@ public sealed class Ms110dDemodulator
         return bestDibit;
     }
 
-    private void RefineCarrier(int count, int wn, Ms110dInterleaverKind il, int k)
+    private static byte[] SuperframeChips(int count, int wn, Ms110dInterleaverKind il, int k)
     {
-        // All 18 channel symbols of the matched super-frame are now known — least-squares
-        // fit the residual phase slope over their per-symbol correlations (240 ms baseline).
         byte[] known = new byte[ChipsSuperframe];
         new PreambleGenerator(0, 2).FixedSectionChips().CopyTo(known, 0);
         PreambleGenerator.CountSectionChips(count).CopyTo(known, ChipsFixed);
         PreambleGenerator.WidSectionChips(wn, il, k).CopyTo(known, ChipsFixed + 128);
+        return known;
+    }
 
+    /// <summary>Least-squares fits the residual carrier phase/frequency over one fully
+    /// known super-frame at <paramref name="baseChip"/> (240 ms baseline) and re-tunes the
+    /// carrier model anchored inside the measurement window.</summary>
+    private void RefineCarrier(long baseChip, byte[] knownChips)
+    {
         Span<double> phases = stackalloc double[18];
         Span<double> weights = stackalloc double[18];
         double previous = 0;
@@ -415,7 +423,7 @@ public sealed class Ms110dDemodulator
             for (int i = 0; i < 32; i++)
             {
                 int chip = (32 * j) + i;
-                c += ReadChip(chip) * Ms110dTables.Psk8[known[chip]].Conj();
+                c += ReadChip(baseChip + chip) * Ms110dTables.Psk8[knownChips[chip]].Conj();
             }
 
             double phi = c.Arg();
@@ -455,11 +463,11 @@ public sealed class Ms110dDemodulator
         double slope = ((sw * sxy) - (sx * sy)) / det;      // rad per channel symbol
         double intercept = ((sxx * sy) - (sx * sxy)) / det; // rad at symbol index 0
 
-        // Symbol j's correlation phase sits at its centre (chip 32j+16 = half-index 64j+32),
-        // so the residual at the chip-0 anchor is intercept − slope/2; the slope converts to
-        // rad per T/2 sample by ÷64.
-        _omega += slope / 64.0;
-        _thetaBase += intercept - (0.5 * slope);
+        // Anchor the correction at the window midpoint (symbol 8.5; symbol j's phase sits
+        // at its centre, chip 32j+16); slope converts to rad per T/2 sample by ÷64.
+        const double mid = 8.5;
+        double href = (2.0 * (baseChip + 16 + (32 * mid))) + _tau;
+        RetuneCarrier(href, intercept + (slope * mid), slope / 64.0);
         _lock = _lock! with { CfoHz = _lock.CfoHz + (slope / 64.0 * 2.0 * Ms110dTables.SymbolRate / (2.0 * Math.PI)) };
     }
 
@@ -554,6 +562,12 @@ public sealed class Ms110dDemodulator
 
     private void InitializeDfe()
     {
+        // Same stale-extrapolation concern as the WN0 path: re-fit the carrier over the
+        // final super-frame before training (see TrackWalsh).
+        RefineCarrier(
+            _dataStartChip - ChipsSuperframe,
+            SuperframeChips(0, _lock!.WaveformNumber, _lock.Interleaver, _lock.ConstraintLength));
+
         (int ff, int fb, int lead) = _mode!.K switch
         {
             48 => (32, 22, 10),
@@ -608,6 +622,7 @@ public sealed class Ms110dDemodulator
         }
 
         double mse = 0;
+        var gain = Cf.Zero;
         for (int i = 0; i < k; i++)
         {
             int n = ChipsSuperframe + i;
@@ -617,11 +632,14 @@ public sealed class Ms110dDemodulator
                 past[j] = _known[n - 1 - j];
             }
 
-            Cf err = _dfe.Equalize(window, past) - _known[n];
+            Cf y = _dfe.Equalize(window, past);
+            gain += y * _known[n].Conj();
+            Cf err = y - _known[n];
             mse += err.Cnorm();
         }
 
         _probeMse = mse / k;
+        _probeGainRef = gain.Abs() / k;
         _badProbes = 0;
         _frameChip = _dataStartChip + k;
         _frameInBlock = 0;
@@ -685,13 +703,18 @@ public sealed class Ms110dDemodulator
         RetuneCarrier(
             (2.0 * (probeChip + (mode.K / 2))) + _tau,
             0.4 * phaseError,
-            0.15 * phaseError / frameT2);
+            0.05 * phaseError / frameT2);
 
         TrackProbeTiming(probeChip, probe);
 
-        if (mse / mode.K > 1.0)
+        // Signal-lost discriminator: the coherent probe gain |Σ y·conj(d)|/K of an MMSE-
+        // trained DFE sits near SNR/(1+SNR) — well below 1 at the low-SNR waveform numbers
+        // — so the test is relative to the gain measured at training (slow-tracked so slow
+        // fades adjust the reference, with a floor against tracking into pure noise).
+        double probeGain = probePhase.Abs() / mode.K;
+        if (probeGain < Math.Max(0.10, 0.45 * _probeGainRef))
         {
-            if (++_badProbes >= 3)
+            if (++_badProbes >= 5)
             {
                 CompleteBurst(Ms110dBurstEndReason.SignalLost);
                 return;
@@ -700,6 +723,7 @@ public sealed class Ms110dDemodulator
         else
         {
             _badProbes = 0;
+            _probeGainRef = (0.95 * _probeGainRef) + (0.05 * probeGain);
         }
 
         _frameChip += mode.U + mode.K;
@@ -732,8 +756,9 @@ public sealed class Ms110dDemodulator
             return;
         }
 
+        // Slow slew only — real clock skew is ppm-scale; anything faster is estimator noise.
         double delta = 0.5 * (magnitudes[0] - magnitudes[2]) / denom * 0.5;
-        _tau += Math.Clamp(0.2 * delta, -0.1, 0.1);
+        _tau += Math.Clamp(0.1 * delta, -0.03, 0.03);
     }
 
     private void PhaseNudge(Cf descrambled, Cf clean, double gainTheta, double gainOmega)
@@ -808,11 +833,24 @@ public sealed class Ms110dDemodulator
     {
         if (!_trackingInitialized)
         {
+            if (!HaveSamplesForChip(_dataStartChip + 2))
+            {
+                return;
+            }
+
+            // Re-estimate the carrier over the final super-frame: the matched super-frame
+            // can be many seconds back (M up to 32) and the extrapolated phase stale.
+            RefineCarrier(
+                _dataStartChip - ChipsSuperframe,
+                SuperframeChips(0, _lock!.WaveformNumber, _lock.Interleaver, _lock.ConstraintLength));
+
             _walsh = new Wid0WalshModem();
             _walsh.Reset();
             _symbolChip = _dataStartChip;
             _symbolInBlock = 0;
             _weakSymbols = 0;
+            _walshPhaseAcc = Cf.Zero;
+            _walshPhaseCount = 0;
             _trackingInitialized = true;
         }
 
@@ -829,23 +867,34 @@ public sealed class Ms110dDemodulator
             AddLlr(llrs[0]);
             AddLlr(llrs[1]);
 
-            // Decision-directed carrier: the winning Walsh correlation should be real
-            // and positive after descrambling.
-            if (correlation.Cnorm() > 1e-12)
+            // Decision-directed carrier: the winning Walsh correlation should be real and
+            // positive after descrambling. Average over 8 channel symbols before applying
+            // the correction — the per-symbol phase estimate at the −6 dB operating point
+            // is too noisy to drive the frequency integrator directly.
+            _walshPhaseAcc += correlation;
+            if (++_walshPhaseCount == 8)
             {
-                double err = correlation.Arg();
-                RetuneCarrier((2.0 * (_symbolChip + 16)) + _tau, 0.15 * err, 0.02 * err / 64.0);
+                if (_walshPhaseAcc.Cnorm() > 1e-12)
+                {
+                    double err = _walshPhaseAcc.Arg();
+                    RetuneCarrier((2.0 * (_symbolChip + 16)) + _tau, 0.4 * err, 0.06 * err / 512.0);
+                }
+
+                _walshPhaseAcc = Cf.Zero;
+                _walshPhaseCount = 0;
             }
 
+            // Signal-lost discriminator (WN 0): the winning-correlation-to-chip-energy
+            // ratio ≈ 0.5 at the −6 dB mask point but ≈ 0.23 on noise alone.
             double sumMag = 0;
             for (int i = 0; i < 32; i++)
             {
                 sumMag += chips[i].Abs();
             }
 
-            if (correlation.Abs() < 0.15 * sumMag)
+            if (correlation.Abs() < 0.35 * sumMag)
             {
-                if (++_weakSymbols >= 30)
+                if (++_weakSymbols >= 12)
                 {
                     CompleteBurst(Ms110dBurstEndReason.SignalLost);
                     return;

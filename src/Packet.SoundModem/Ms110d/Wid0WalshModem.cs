@@ -81,10 +81,13 @@ public sealed class Wid0WalshModem
             corr[s] = acc;
         }
 
+        // Candidate selection is non-coherent (magnitude): it stays reliable while the
+        // carrier loop is still pulling in, and the winner's argument is then exactly the
+        // phase-error observable the loop needs. The LLRs below stay coherent (Re).
         bestDibit = 0;
         for (int s = 1; s < 4; s++)
         {
-            if (corr[s].Re > corr[bestDibit].Re)
+            if (corr[s].Cnorm() > corr[bestDibit].Cnorm())
             {
                 bestDibit = s;
             }
