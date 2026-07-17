@@ -437,6 +437,17 @@ Rationale for the resolved A-gate: gating A on Poor while deferring RLS to B was
 
 ## 8. Transcription-debt ledger (canonical — the only such list)
 
+> **LEDGER CLEARED (2026-07-17).** All 13 rows dual-transcribed (branches
+> `ms110d-ledger-a`/`-b`), value-diffed with **zero conflicts** — see
+> `docs/ms110d/README.md` § Ledger clearance and `tables/ledger-transcription-notes-{a,b}.md`.
+> Errata applied against this ledger's own text: (1) the probe tables are
+> D-XXIII=base-16, D-XXIV=base-19, **D-XXV=base-25** (this ledger's "D-XXIV base-25" row was
+> misnumbered); (2) the WID-0 Walsh data prose is the final paragraph of **D.5.2 (doc
+> p. 163)**, not D.5.1.2.1; (3) Table D-XIV is settled: **10→0044, 11→0440** (the provisional
+> swap is resolved); (4) checklist L8's "no text layer" claim is wrong for the D.5.2.1.3.x
+> page (PDF 172 has one). No constant remains gated; Phase A may freeze all ledger values.
+
+
 Every value read from an image-embedded page (no text layer), its current confidence, and the gate it blocks. "2nd read" = independently re-read from a fresh page render during assembly (2026-07-16) — corroboration, **not** a substitute for the dual-transcription discipline (PR #24 pattern: two independent transcribers, diffed, plus a machine self-check).
 
 | Item | Spec loc (doc p.) | Status | Blocks |

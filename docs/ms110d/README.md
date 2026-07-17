@@ -49,3 +49,17 @@ doubling pattern) cross-validates against D-XLIX's 2/7 rate.
 These tables feed the App D design doc (task #7); the build phases per the verified scoping:
 Phase A = 3 kHz framing + Walsh-75/BPSK/QPSK + basic DFE; Phase B = 16-QAM+ (gated on a
 validation oracle — no open App D implementation exists).
+
+## Ledger clearance (2026-07-17)
+
+The design doc's §8 transcription-debt ledger (13 rows) was cleared by the same
+dual-independent method: branches `ms110d-ledger-a` (fresh-run, checkpointed) and
+`ms110d-ledger-b`, transcribed from the PDF only, then value-diffed. **Every load-bearing
+value agrees** — 14 of 20 paired files numerically identical outright; the six formatting
+differences carry identical values (verified per-pair: both 256-digit PN arrays identical in
+full; encoder polynomials 0o133/0o171 and 0o561/0o753 agree; the interleaver worked-example
+sequence byte-identical; d15/d16 differ only as "0 0" vs "00"). Ledger errata found by BOTH
+agents independently: the document's D-XXIII/D-XXIV/D-XXV are base-16/base-19/base-25 (the
+ledger's "D-XXIV base-25" was wrong); the WID-0 Walsh data prose lives in D.5.2 (doc p. 163),
+not D.5.1.2.1; Table D-XIV resolves 10→0044 / 11→0440 (the design's provisional swap is
+settled). The w1-lsb spec contradiction is confirmed verbatim on both sides.
