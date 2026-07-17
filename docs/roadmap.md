@@ -77,10 +77,10 @@ Pure-managed client: discovery + TCP session + VITA-49 DAX RX/TX → `IAudioInpu
 **Hardware proven on M0LTE's 6500**: discovery, session, headless GUI-client + slice, DAX RX
 (0 loss) / TX, PTT (139 ms settle). **Live off-air RX proven** — decoded GB7RDG's NinoTNC BPSK300
 through the Flex's DAX audio, no sound card in path.
-- **In flight:** branch `flex-headless-tune` — the band-persistence tune fix (a headless slice
-  otherwise stays on the wrong band) + `--flex-daxch` DAX-channel coexistence + mock modeling +
-  docs. Verify + merge.
-- **Then:** shipped-daemon final hardware confirmation (a FreeDV-datac / ARDOP frame into the
+- **Software-complete (PR #44 merged):** headless setup + the band-persistence tune fix
+  (`EnsureTunedAsync` — a headless slice otherwise stays on the wrong band) + `--flex-daxch`
+  DAX-channel coexistence, mock-validated (949/0). The tune fix is HW-proven on the 6500.
+- **Remaining:** shipped-daemon final hardware confirmation (a FreeDV-datac / ARDOP frame into the
   dummy load), and a **Flex variant of the HF-loop** (folds into #4/#6). OBW self-capture is NOT
   viable on the 6500's public API (panadapter TX trace is leakage) — bench/second-RX stays the
   OBW path.
