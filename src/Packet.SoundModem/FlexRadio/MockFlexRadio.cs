@@ -17,6 +17,22 @@ public enum MockRxMode
     Loopback,
 }
 
+/// <summary>Which bring-up path the mock radio models — it changes the pre-existing state a
+/// <see cref="FlexStation"/> discovers (docs/flex-integration.md §8).</summary>
+public enum MockSetupMode
+{
+    /// <summary>No SmartSDR: no pre-existing client or slice. <c>client gui</c> registers us
+    /// (returns a uuid), <c>slice create</c> makes a slice owned by our handle, the redundant
+    /// <c>client bind</c> is rejected (0x5000003E), and <c>client set station</c> is rejected
+    /// (0x50000000) — exactly as M0LTE's FLEX-6500 behaved. The default.</summary>
+    Headless,
+
+    /// <summary>SmartSDR is running: a pre-existing <c>client</c> (with a station name) and a
+    /// pre-existing <c>slice</c> appear on subscription, and <c>client bind</c> succeeds — the
+    /// coexistence/attach path.</summary>
+    Attach,
+}
+
 /// <summary>
 /// An in-process fake FlexRadio 6000-series radio for offline testing: a real TCP+UDP
 /// server on 127.0.0.1 that a <see cref="FlexClient"/> connects to exactly like a real
@@ -32,8 +48,12 @@ public sealed class MockFlexRadio : IAsyncDisposable
     private const uint RxStreamId = 0x04000000;
     private const uint TxStreamId = 0x08000000;
 
+    private const uint RejectedError = 0x50000000;
+    private const uint AlreadyBoundError = 0x5000003E;
+
     private readonly DaxStreamFormat _format;
     private readonly MockRxMode _mode;
+    private readonly MockSetupMode _setupMode;
     private readonly string _station;
     private readonly string _sliceLetter;
     private readonly TcpListener _listener;
@@ -52,15 +72,18 @@ public sealed class MockFlexRadio : IAsyncDisposable
     /// <summary>Creates a mock radio serving <paramref name="format"/>.</summary>
     /// <param name="format">The DAX transport the client will use.</param>
     /// <param name="mode">How RX audio is produced (default loopback).</param>
-    /// <param name="station">The station name the client binds to.</param>
-    /// <param name="sliceLetter">The slice letter the client attaches to.</param>
+    /// <param name="setupMode">Which bring-up path to model (default headless — no SmartSDR).</param>
+    /// <param name="station">The station name the client binds to (attach mode).</param>
+    /// <param name="sliceLetter">The slice letter the client attaches to / the created slice's letter.</param>
     public MockFlexRadio(
         DaxStreamFormat format, MockRxMode mode = MockRxMode.Loopback,
+        MockSetupMode setupMode = MockSetupMode.Headless,
         string station = "Flex", string sliceLetter = "A")
     {
         ArgumentNullException.ThrowIfNull(format);
         _format = format;
         _mode = mode;
+        _setupMode = setupMode;
         _station = station;
         _sliceLetter = sliceLetter;
         _listener = new TcpListener(IPAddress.Loopback, 0);
@@ -217,19 +240,58 @@ public sealed class MockFlexRadio : IAsyncDisposable
         string seq = commandLine[1..pipe].TrimStart('D');
         string cmd = commandLine[(pipe + 1)..];
 
-        if (cmd == "sub client all")
+        if (cmd == "client gui")
+        {
+            // Register us as a GUI client — the headless bring-up's first step. The result
+            // message carries our client_id (uuid), just as the real radio returns it.
+            await WriteLineAsync($"R{seq}|0|mock-uuid-1").ConfigureAwait(false);
+        }
+        else if (cmd == "sub client all")
         {
             await WriteLineAsync($"R{seq}|0|").ConfigureAwait(false);
-            await WriteLineAsync(
-                $"S{HandleHex}|client 0x{HandleHex} station={_station} client_id=mock-uuid-1")
-                .ConfigureAwait(false);
+            if (_setupMode == MockSetupMode.Attach)
+            {
+                // Only a running SmartSDR presents a pre-existing named client to attach to.
+                await WriteLineAsync(
+                    $"S{HandleHex}|client 0x{HandleHex} station={_station} client_id=mock-uuid-1")
+                    .ConfigureAwait(false);
+            }
         }
         else if (cmd == "sub slice all")
         {
             await WriteLineAsync($"R{seq}|0|").ConfigureAwait(false);
+            if (_setupMode == MockSetupMode.Attach)
+            {
+                // Attach mode: SmartSDR has already created the slice. Headless mode has none
+                // until `slice create` runs (below).
+                await WriteLineAsync(
+                    $"S{HandleHex}|slice 0 index_letter={_sliceLetter} client_handle=0x{HandleHex} "
+                    + "in_use=1 mode=DIGU RF_frequency=14.100000").ConfigureAwait(false);
+            }
+        }
+        else if (cmd.StartsWith("slice create", StringComparison.Ordinal))
+        {
+            // Headless bring-up: create our own slice, owned by our handle. The radio assigns
+            // index_letter (A here) and reports mode back as USB even for a DIGU request — both
+            // are fine for the DAX data path (docs/flex-integration.md §8).
+            string freq = ParseArg(cmd, "freq") ?? "14.100000";
+            await WriteLineAsync($"R{seq}|0|0").ConfigureAwait(false);
             await WriteLineAsync(
                 $"S{HandleHex}|slice 0 index_letter={_sliceLetter} client_handle=0x{HandleHex} "
-                + "in_use=1 mode=DIGU RF_frequency=14.100000").ConfigureAwait(false);
+                + $"in_use=1 mode=USB RF_frequency={freq}").ConfigureAwait(false);
+        }
+        else if (cmd.StartsWith("client bind ", StringComparison.Ordinal))
+        {
+            // Attach binds to another (SmartSDR) client and succeeds; a headless client is
+            // already the owning GUI client, so the radio rejects the redundant re-bind.
+            uint error = _setupMode == MockSetupMode.Attach ? 0 : AlreadyBoundError;
+            await WriteLineAsync($"R{seq}|{error:X8}|").ConfigureAwait(false);
+        }
+        else if (cmd.StartsWith("client set station", StringComparison.Ordinal))
+        {
+            // The real radio rejects this in the headless flow; the headless path never sends
+            // it (we own our slice, not a named station's), but model the rejection faithfully.
+            await WriteLineAsync($"R{seq}|{RejectedError:X8}|").ConfigureAwait(false);
         }
         else if (cmd.StartsWith("client udpport ", StringComparison.Ordinal))
         {
@@ -274,6 +336,20 @@ public sealed class MockFlexRadio : IAsyncDisposable
             // keepalive enable, ping — all succeed with an empty message.
             await WriteLineAsync($"R{seq}|0|").ConfigureAwait(false);
         }
+    }
+
+    private static string? ParseArg(string command, string key)
+    {
+        foreach (string token in command.Split(' '))
+        {
+            int eq = token.IndexOf('=', StringComparison.Ordinal);
+            if (eq > 0 && token[..eq] == key)
+            {
+                return token[(eq + 1)..];
+            }
+        }
+
+        return null;
     }
 
     private async Task UdpLoopAsync()

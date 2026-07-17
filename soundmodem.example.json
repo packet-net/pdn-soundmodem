@@ -2,6 +2,14 @@
   // pdn-soundmodem example configuration (JSON with comments allowed).
   // Start with: pdn-soundmodem --config soundmodem.json
   "device": "default",
+  // A FlexRadio over the LAN is a device too: "flex:<radio>[:slice][@station]" — <radio> is
+  // `discover`, an IP (host[:port]), a discovery spec (serial=…/name=…) or `mock`. With no
+  // @station the daemon OWNS the radio and brings it up headless (creates its own slice — the
+  // "flex" section below sets its frequency/antenna/mode). A trailing @station attaches to a
+  // running SmartSDR's slice instead. The Flex keys itself, so omit "ptt". e.g.:
+  //   "device": "flex:10.45.0.76",            // headless, slice A, 14.100000 MHz / ANT1 / DIGU
+  //   "device": "flex:10.45.0.76:A@Flex",     // attach to SmartSDR station "Flex", slice A
+  // "flex": { "frequency": "14.100000", "antenna": "ANT1", "mode": "DIGU" },
   "captureRate": 48000,
   "kissPort": 8105,
   "modems": [

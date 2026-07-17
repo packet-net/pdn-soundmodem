@@ -9,9 +9,11 @@ namespace Packet.SoundModem.Tests.FlexRadio;
 /// The decisive offline proof: a real modem's audio out through the Flex TX path
 /// (<see cref="FlexAudioOutput"/> → mock DAX-TX capture), replayed back in as DAX-RX
 /// (<see cref="FlexAudioInput"/>), through the demodulator — byte-exact frame recovery,
-/// with no hardware. Exercises the whole path end to end: the <c>IAudioInput</c> refactor,
-/// the VITA packetize/depacketize, and the sample-rate bridge (12 kHz ↔ reduced-bw 24 kHz
-/// s16; 48 kHz ↔ full-bw 48 kHz float32). See docs/flex-integration.md §5.
+/// with no hardware, driven through the <b>headless</b> bring-up (the default
+/// <c>--device flex:</c> deployment: GUI-register + create-slice, no SmartSDR). Exercises the
+/// whole path end to end: the headless setup, the <c>IAudioInput</c> refactor, the VITA
+/// packetize/depacketize, and the sample-rate bridge (12 kHz ↔ reduced-bw 24 kHz s16; 48 kHz ↔
+/// full-bw 48 kHz float32). See docs/flex-integration.md §5/§8.
 /// </summary>
 public sealed class FlexModemLoopTests
 {
@@ -58,12 +60,14 @@ public sealed class FlexModemLoopTests
         int dspRate, Func<Action<byte[]>, IModem> modemFactory, byte[] frame)
     {
         DaxStreamFormat format = DaxStreamFormat.ForDspRate(dspRate);
-        var mock = new MockFlexRadio(format, MockRxMode.Silence);
+        // Headless mock (no SmartSDR) — the default deployment. MockSetupMode.Headless is the
+        // constructor default; spelled out here for clarity.
+        var mock = new MockFlexRadio(format, MockRxMode.Silence, MockSetupMode.Headless);
         mock.Start();
         await using var mockLifetime = mock;
 
         FlexClient client = await FlexClient.ConnectAsync("127.0.0.1", mock.TcpPort, mock.UdpPort);
-        await using FlexStation station = await FlexStation.SetUpAsync(
+        await using FlexStation station = await FlexStation.SetUpHeadlessAsync(
             client, format, new FlexStationOptions { Keepalive = false });
 
         // Deterministic offline transport: deliver the DAX VITA packets in-process (lossless)

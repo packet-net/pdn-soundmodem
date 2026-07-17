@@ -13,10 +13,10 @@ public sealed class FlexAudioInputReorderTests
 
     private static async Task<(MockFlexRadio Mock, FlexStation Station)> SetUpAsync()
     {
-        var mock = new MockFlexRadio(Format, MockRxMode.Silence);
+        var mock = new MockFlexRadio(Format, MockRxMode.Silence, MockSetupMode.Headless);
         mock.Start();
         FlexClient client = await FlexClient.ConnectAsync("127.0.0.1", mock.TcpPort, mock.UdpPort);
-        FlexStation station = await FlexStation.SetUpAsync(
+        FlexStation station = await FlexStation.SetUpHeadlessAsync(
             client, Format, new FlexStationOptions { Keepalive = false });
         return (mock, station);
     }

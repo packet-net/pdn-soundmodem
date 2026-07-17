@@ -2,15 +2,17 @@ using Packet.SoundModem.FlexRadio;
 
 namespace Packet.SoundModem.Tests.FlexRadio;
 
-/// <summary>Phase-1 integration against the in-process <see cref="MockFlexRadio"/>: the DAX
-/// enable sequence, the DAX-RX audio path (replay → <see cref="FlexAudioInput"/>), the
-/// DAX-TX audio path (<see cref="FlexAudioOutput"/> → mock capture) and slice PTT.</summary>
+/// <summary>Phase-1 integration against the in-process <see cref="MockFlexRadio"/> in
+/// <b>attach</b> mode (coexisting with a running SmartSDR): the DAX enable sequence, the
+/// DAX-RX audio path (replay → <see cref="FlexAudioInput"/>), the DAX-TX audio path
+/// (<see cref="FlexAudioOutput"/> → mock capture) and slice PTT. The headless bring-up has
+/// its own coverage in <see cref="FlexHeadlessSetupTests"/>.</summary>
 public sealed class FlexMockRadioTests
 {
     private static async Task<(MockFlexRadio Mock, FlexStation Station)> SetUpAsync(
         DaxStreamFormat format, MockRxMode mode)
     {
-        var mock = new MockFlexRadio(format, mode);
+        var mock = new MockFlexRadio(format, mode, MockSetupMode.Attach);
         mock.Start();
         FlexClient client = await FlexClient.ConnectAsync("127.0.0.1", mock.TcpPort, mock.UdpPort);
         FlexStation station = await FlexStation.SetUpAsync(

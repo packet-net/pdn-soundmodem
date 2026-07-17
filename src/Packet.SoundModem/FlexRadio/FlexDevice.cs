@@ -45,13 +45,32 @@ public sealed class FlexRuntime : IAsyncDisposable
     }
 }
 
+/// <summary>Headless slice-creation parameters (the working frequency, antenna and mode the
+/// daemon tunes its own slice to). Ignored in attach mode. Defaults match
+/// docs/flex-integration.md §8 (14.100000 MHz / ANT1 / DIGU).</summary>
+public sealed record FlexTuning
+{
+    /// <summary>Slice frequency (MHz, six-decimal Flex form). Default "14.100000".</summary>
+    public string Frequency { get; init; } = "14.100000";
+
+    /// <summary>RX/TX antenna. Default "ANT1".</summary>
+    public string Antenna { get; init; } = "ANT1";
+
+    /// <summary>Slice demod mode. Default "DIGU" (a data mode).</summary>
+    public string Mode { get; init; } = "DIGU";
+}
+
 /// <summary>
-/// Parses <c>--device flex:&lt;radio&gt;[:slice]</c> and opens the Flex triplet: a shared
-/// <see cref="FlexClient"/> feeding a <see cref="FlexAudioInput"/>, a
+/// Parses <c>--device flex:&lt;radio&gt;[:slice][@station]</c> and opens the Flex triplet: a
+/// shared <see cref="FlexClient"/> feeding a <see cref="FlexAudioInput"/>, a
 /// <see cref="FlexAudioOutput"/> (wrapped in an <see cref="UpsamplingAudioOutput"/> for the
 /// 12 kHz modes) and a <see cref="FlexPtt"/>. <c>radio</c> is <c>discover</c>, an IP
 /// (<c>host[:port]</c>), a discovery spec (<c>serial=…</c>/<c>name=…</c>), or <c>mock</c>
-/// (an in-process fake). See docs/flex-integration.md §4.
+/// (an in-process fake). <b>Selection policy:</b> with no <c>@station</c> the daemon owns the
+/// radio and brings it up <b>headless</b> (register as a GUI client, create its own slice —
+/// the "pdn at the radio, no SmartSDR" deployment, the default). A trailing <c>@station</c>
+/// selects <b>attach</b> mode: coexist with a running SmartSDR by binding that station's
+/// existing slice. See docs/flex-integration.md §4/§8.
 /// </summary>
 public static class FlexDevice
 {
@@ -61,37 +80,65 @@ public static class FlexDevice
     public static bool IsFlex(string device) =>
         device.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>The parsed radio spec and slice letter.</summary>
+    /// <summary>The parsed radio spec, slice letter and (attach-only) station.</summary>
     /// <param name="RadioSpec">The radio portion (<c>discover</c>/IP/<c>serial=…</c>/<c>mock</c>).</param>
     /// <param name="SliceLetter">The slice letter (default "A").</param>
-    public readonly record struct FlexSpec(string RadioSpec, string SliceLetter);
+    /// <param name="Station">The SmartSDR station to attach to (from a <c>@station</c> suffix),
+    /// or null for the headless default.</param>
+    public readonly record struct FlexSpec(string RadioSpec, string SliceLetter, string? Station)
+    {
+        /// <summary>True when no <c>@station</c> was given — the daemon owns the radio and
+        /// brings it up headless.</summary>
+        public bool Headless => Station is null;
+    }
 
-    /// <summary>Splits a <c>flex:</c> device string into its radio and slice parts. A
-    /// trailing single letter A–H is the slice; everything else is the radio.</summary>
+    /// <summary>Splits a <c>flex:</c> device string into its radio, slice and station parts. A
+    /// trailing <c>@station</c> (anywhere after the radio) selects attach mode and names the
+    /// SmartSDR station; a trailing single letter A–H is the slice; everything else is the
+    /// radio.</summary>
     public static FlexSpec Parse(string device)
     {
         string rest = device[Prefix.Length..];
+
+        string? station = null;
+        int at = rest.IndexOf('@', StringComparison.Ordinal);
+        if (at >= 0)
+        {
+            station = rest[(at + 1)..];
+            rest = rest[..at];
+        }
+
         string[] segments = rest.Split(':');
         if (segments.Length >= 2 && IsSliceLetter(segments[^1]))
         {
-            return new FlexSpec(string.Join(':', segments[..^1]), segments[^1].ToUpperInvariant());
+            return new FlexSpec(string.Join(':', segments[..^1]), segments[^1].ToUpperInvariant(), station);
         }
 
-        return new FlexSpec(rest, "A");
+        return new FlexSpec(rest, "A", station);
     }
 
     /// <summary>Opens the Flex triplet for the given device string and DSP rate.</summary>
+    /// <param name="device">The <c>flex:…</c> device string.</param>
+    /// <param name="dspRate">The channel DSP rate (picks the DAX transport).</param>
+    /// <param name="packetBuffer">DAX-RX reorder-ring depth.</param>
+    /// <param name="tuning">Headless slice params (frequency/antenna/mode); null = defaults.
+    /// Ignored in attach mode.</param>
+    /// <param name="cancellation">Cancels the connect + bring-up.</param>
     public static async Task<FlexRuntime> OpenAsync(
-        string device, int dspRate, int packetBuffer, CancellationToken cancellation)
+        string device, int dspRate, int packetBuffer, FlexTuning? tuning, CancellationToken cancellation)
     {
         FlexSpec spec = Parse(device);
         DaxStreamFormat format = DaxStreamFormat.ForDspRate(dspRate);
+        tuning ??= new FlexTuning();
 
         MockFlexRadio? mock = null;
         FlexClient client;
         if (spec.RadioSpec.Equals("mock", StringComparison.OrdinalIgnoreCase))
         {
-            mock = new MockFlexRadio(format, MockRxMode.Loopback, sliceLetter: spec.SliceLetter);
+            mock = new MockFlexRadio(
+                format, MockRxMode.Loopback,
+                spec.Headless ? MockSetupMode.Headless : MockSetupMode.Attach,
+                station: spec.Station ?? "Flex", sliceLetter: spec.SliceLetter);
             mock.Start();
             client = await FlexClient.ConnectAsync("127.0.0.1", mock.TcpPort, mock.UdpPort, cancellation)
                 .ConfigureAwait(false);
@@ -117,9 +164,17 @@ public static class FlexDevice
                 .ConfigureAwait(false);
         }
 
-        var options = new FlexStationOptions { SliceLetter = spec.SliceLetter };
-        FlexStation station = await FlexStation.SetUpAsync(client, format, options, cancellation)
-            .ConfigureAwait(false);
+        var options = new FlexStationOptions
+        {
+            SliceLetter = spec.SliceLetter,
+            Station = spec.Station ?? "Flex",
+            Frequency = tuning.Frequency,
+            Antenna = tuning.Antenna,
+            SliceMode = tuning.Mode,
+        };
+        FlexStation station = spec.Headless
+            ? await FlexStation.SetUpHeadlessAsync(client, format, options, cancellation).ConfigureAwait(false)
+            : await FlexStation.SetUpAsync(client, format, options, cancellation).ConfigureAwait(false);
 
         IAudioInput input = station.CreateAudioInput(packetBuffer);
         FlexAudioOutput flexOutput = station.CreateAudioOutput(paceRealTime: true);

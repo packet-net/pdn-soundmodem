@@ -58,6 +58,22 @@ public sealed class ArdopConfig
     public int Port { get; set; } = 8515;
 }
 
+/// <summary>Headless FlexRadio slice-creation params (used when Device is
+/// <c>flex:&lt;radio&gt;</c> with no <c>@station</c> — the daemon owns the radio and creates
+/// its own slice). Ignored in attach mode (a <c>@station</c> device string). Defaults match
+/// docs/flex-integration.md §8.</summary>
+public sealed class FlexConfig
+{
+    /// <summary>Slice frequency (MHz, six-decimal Flex form). Default "14.100000".</summary>
+    public string Frequency { get; set; } = "14.100000";
+
+    /// <summary>RX/TX antenna. Default "ANT1".</summary>
+    public string Antenna { get; set; } = "ANT1";
+
+    /// <summary>Slice demod mode. Default "DIGU".</summary>
+    public string Mode { get; set; } = "DIGU";
+}
+
 /// <summary>Channel-access tunables (KISS clients can override at runtime).</summary>
 public sealed class CsmaConfig
 {
@@ -99,6 +115,10 @@ public sealed class DaemonConfig
     /// <summary>ARDOP virtual TNC; null = disabled. Exclusive with Modems/Paging
     /// (the ARDOP channel is dedicated; docs/ardop-design.md §2.2).</summary>
     public ArdopConfig? Ardop { get; set; }
+
+    /// <summary>Headless FlexRadio slice params (Device <c>flex:</c> with no <c>@station</c>);
+    /// null = defaults. Ignored for ALSA devices and attach-mode Flex.</summary>
+    public FlexConfig? Flex { get; set; }
 
     /// <summary>Channel-access parameters.</summary>
     public CsmaConfig Csma { get; set; } = new();
