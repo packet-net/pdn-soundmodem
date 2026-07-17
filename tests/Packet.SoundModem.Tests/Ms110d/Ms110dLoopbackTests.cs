@@ -1,0 +1,231 @@
+using Packet.SoundModem.Ms110d;
+using Packet.SoundModem.Tests.Channel;
+
+namespace Packet.SoundModem.Tests.Ms110d;
+
+/// <summary>
+/// Rung 1 (design §5.1): hermetic TX→RX loopback at native 9600 Hz. Bit-exact payload, EOM
+/// detection, autobaud from cold start, adversarial CFO. Statistical mask runs live in
+/// <see cref="Ms110dMaskTests"/> (environment-gated).
+/// </summary>
+public class Ms110dLoopbackTests
+{
+    private static byte[] RandomBits(int count, int seed)
+    {
+        var random = new Random(seed);
+        var bits = new byte[count];
+        for (int i = 0; i < bits.Length; i++)
+        {
+            bits[i] = (byte)random.Next(2);
+        }
+
+        return bits;
+    }
+
+    private static (Ms110dBurst? Burst, Ms110dDemodulator Demod) RunLoopback(
+        float[] audio, Ms110dDemodOptions? options = null, int silence = 1500)
+    {
+        var demod = new Ms110dDemodulator(options);
+        Ms110dBurst? burst = null;
+        demod.BurstCompleted += b => burst ??= b;
+        demod.Process(new float[silence]);
+        demod.Process(audio);
+        demod.Process(new float[6000]);
+        return (burst, demod);
+    }
+
+    private static void AssertExact(Ms110dBurst? burst, byte[] payload)
+    {
+        burst.Should().NotBeNull();
+        burst!.Reason.Should().Be(Ms110dBurstEndReason.Eom);
+        burst.PayloadBits.Should().Equal(payload);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(13)]
+    public void Every_Phase_A_Waveform_Loops_Back_Bit_Exact(int wn)
+    {
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = wn });
+        byte[] payload = RandomBits(400, 1000 + wn);
+        (Ms110dBurst? burst, Ms110dDemodulator demod) = RunLoopback(tx.Modulate(payload));
+
+        AssertExact(burst, payload);
+        demod.State.Should().Be(Ms110dRxState.Searching, "the receiver returns to acquisition after EOM");
+    }
+
+    [Theory]
+    [InlineData(6, Ms110dInterleaverKind.UltraShort, 7)]
+    [InlineData(6, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(6, Ms110dInterleaverKind.Long, 7)]
+    [InlineData(2, Ms110dInterleaverKind.UltraShort, 9)]
+    [InlineData(5, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(0, Ms110dInterleaverKind.Medium, 9)]
+    [InlineData(1, Ms110dInterleaverKind.Long, 7)]
+    public void Interleaver_And_Constraint_Length_Variants_Loop_Back(
+        int wn, Ms110dInterleaverKind interleaver, int k)
+    {
+        var tx = new Ms110dModulator(new Ms110dTxSettings
+        {
+            WaveformNumber = wn,
+            Interleaver = interleaver,
+            ConstraintLength = k,
+        });
+        int bits = wn == 1 && interleaver == Ms110dInterleaverKind.Long ? 1500 : 400;
+        byte[] payload = RandomBits(bits, 2000 + wn + ((int)interleaver * 17) + k);
+        (Ms110dBurst? burst, _) = RunLoopback(tx.Modulate(payload));
+
+        AssertExact(burst, payload);
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(8)]
+    [InlineData(20)]
+    public void Preamble_Superframe_Counts_All_Acquire(int m)
+    {
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = 6, PreambleSuperframes = m });
+        byte[] payload = RandomBits(400, 3000 + m);
+        (Ms110dBurst? burst, _) = RunLoopback(tx.Modulate(payload));
+
+        AssertExact(burst, payload);
+    }
+
+    [Theory]
+    [InlineData(0.30)]  // into superframe 0
+    [InlineData(1.60)]  // into superframe 1
+    [InlineData(2.75)]  // into superframe 2
+    public void Cold_Start_Mid_Preamble_Still_Acquires(double superframesMissed)
+    {
+        // Late entry into the repeated preamble: chop whole+fractional super-frames off the
+        // front — the receiver must lock on a later repeat and count down correctly.
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = 6, PreambleSuperframes = 5 });
+        byte[] payload = RandomBits(400, 40);
+        float[] audio = tx.Modulate(payload);
+        int skip = (int)(superframesMissed * 576 * 4);
+        (Ms110dBurst? burst, _) = RunLoopback(audio.Skip(skip).ToArray());
+
+        AssertExact(burst, payload);
+    }
+
+    [Theory]
+    [InlineData(-60)]
+    [InlineData(25)]
+    [InlineData(60)]
+    public void Carrier_Frequency_Offset_Within_The_Grid_Is_Acquired(double cfoHz)
+    {
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = 6, PreambleSuperframes = 4 });
+        byte[] payload = RandomBits(400, 50 + (int)cfoHz);
+        var channel = new WattersonChannel(9600, seed: 9);
+        float[] audio = channel.Apply(
+            tx.Modulate(payload), snrDb: 25, leadInSamples: 1500, leadOutSamples: 4000,
+            frequencyOffsetHz: cfoHz);
+
+        var demod = new Ms110dDemodulator();
+        Ms110dBurst? burst = null;
+        Ms110dLockInfo? seen = null;
+        demod.BurstCompleted += b => burst ??= b;
+        demod.BlockDecoded += _ => seen ??= demod.Lock;
+        demod.Process(audio);
+
+        AssertExact(burst, payload);
+        seen.Should().NotBeNull();
+        seen!.CfoHz.Should().BeApproximately(cfoHz, 3.0, "the refined CFO estimate tracks the offset");
+    }
+
+    [Fact]
+    public void Moderate_Awgn_Well_Above_Mask_Decodes_Cleanly()
+    {
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = 6, PreambleSuperframes = 3 });
+        byte[] payload = RandomBits(800, 60);
+        var channel = new WattersonChannel(9600, seed: 10);
+        float[] audio = channel.Apply(
+            tx.Modulate(payload), snrDb: 15, leadInSamples: 2000, leadOutSamples: 4000);
+
+        (Ms110dBurst? burst, _) = RunLoopback(audio, silence: 0);
+        AssertExact(burst, payload);
+    }
+
+    [Fact]
+    public void Max_Input_Data_Blocks_Limit_Ends_The_Burst()
+    {
+        // WN6 Short = 1536 info bits per block: a 4000-bit payload spans 3 blocks; a 1-block
+        // limit must end the burst after the first (D.5.4.5.3).
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = 6 });
+        byte[] payload = RandomBits(4000, 70);
+        (Ms110dBurst? burst, _) = RunLoopback(
+            tx.Modulate(payload), new Ms110dDemodOptions { MaxInputDataBlocks = 1 });
+
+        burst.Should().NotBeNull();
+        burst!.Reason.Should().Be(Ms110dBurstEndReason.MaxInputDataBlocks);
+        burst.Blocks.Should().Be(1);
+        burst.PayloadBits.Should().Equal(payload.Take(1536));
+    }
+
+    [Fact]
+    public void Terminate_Command_Ends_The_Burst()
+    {
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = 6 });
+        byte[] payload = RandomBits(4000, 80);
+        float[] audio = tx.Modulate(payload);
+
+        var demod = new Ms110dDemodulator();
+        Ms110dBurst? burst = null;
+        demod.BurstCompleted += b => burst ??= b;
+        demod.BlockDecoded += _ => demod.Terminate();
+        demod.Process(audio);
+        demod.Process(new float[4000]);
+
+        burst.Should().NotBeNull();
+        burst!.Reason.Should().Be(Ms110dBurstEndReason.Terminated);
+    }
+
+    [Fact]
+    public void Truncated_Transmission_Does_Not_Produce_A_False_Payload()
+    {
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = 6 });
+        byte[] payload = RandomBits(400, 90);
+        float[] audio = tx.Modulate(payload);
+        float[] truncated = audio.Take(audio.Length - 2500).ToArray();
+
+        (Ms110dBurst? burst, _) = RunLoopback(truncated, silence: 0);
+        (burst?.Reason == Ms110dBurstEndReason.Eom).Should().BeFalse(
+            "the EOM block was cut off — a clean EOM burst would be a false decode");
+    }
+
+    [Fact]
+    public void Eot_Disabled_Still_Decodes()
+    {
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = 5, AppendEot = false });
+        byte[] payload = RandomBits(600, 91);
+        (Ms110dBurst? burst, _) = RunLoopback(tx.Modulate(payload));
+        AssertExact(burst, payload);
+    }
+
+    [Fact]
+    public void Back_To_Back_Bursts_Both_Decode()
+    {
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = 6 });
+        byte[] first = RandomBits(300, 92);
+        byte[] second = RandomBits(500, 93);
+
+        var demod = new Ms110dDemodulator();
+        var bursts = new List<Ms110dBurst>();
+        demod.BurstCompleted += bursts.Add;
+        demod.Process(new float[1000]);
+        demod.Process(tx.Modulate(first));
+        demod.Process(new float[3000]);
+        demod.Process(tx.Modulate(second));
+        demod.Process(new float[6000]);
+
+        bursts.Should().HaveCount(2);
+        bursts[0].PayloadBits.Should().Equal(first);
+        bursts[1].PayloadBits.Should().Equal(second);
+    }
+}
