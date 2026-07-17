@@ -103,12 +103,28 @@ public sealed class MockFlexRadio : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// An optional in-process delivery hook for the DAX-RX path (radio→client). When set
+    /// (wired to the client's <see cref="FlexClient.DeliverVitaPacket"/>), RX packets — the
+    /// loopback echo and <see cref="ReplayRxAsync"/> — are handed over in-process instead of
+    /// sent over UDP, so an offline modem loop is lossless and deterministic regardless of
+    /// kernel UDP buffering. Left null, RX goes over real UDP (a real radio's transport).
+    /// </summary>
+    public Action<byte[]>? RxDelivery { get; set; }
+
+    /// <summary>Delivers a client DAX-TX packet in-process (paired with the client's
+    /// <see cref="FlexClient.VitaSendHook"/>), bypassing UDP.</summary>
+    public void DeliverTxPacket(byte[] packet) => HandleTxPacket(packet);
+
     /// <summary>Replays a buffer of samples to the client as DAX-RX packets (the last
     /// packet zero-padded). Used to feed captured TX audio or a WAV back in as RX.</summary>
     public async Task ReplayRxAsync(ReadOnlyMemory<float> samples, CancellationToken cancellation = default)
     {
-        IPEndPoint? destination = _clientVita
-            ?? throw new InvalidOperationException("client udpport not registered yet");
+        if (RxDelivery is null && _clientVita is null)
+        {
+            throw new InvalidOperationException("client udpport not registered yet");
+        }
+
         int spp = _format.SamplesPerPacket;
         var packetBuffer = new float[spp];
         for (int offset = 0; offset < samples.Length; offset += spp)
@@ -122,9 +138,21 @@ public sealed class MockFlexRadio : IAsyncDisposable
 
             byte[] packet = _format.BuildPacket(RxStreamId, _rxCount, packetBuffer);
             _rxCount = (_rxCount + 1) & 0x0F;
-            _udp.SendTo(packet, SocketFlags.None, destination);
+            DeliverRx(packet);
             await Task.Yield();
             cancellation.ThrowIfCancellationRequested();
+        }
+    }
+
+    private void DeliverRx(byte[] packet)
+    {
+        if (RxDelivery is Action<byte[]> sink)
+        {
+            sink(packet);
+        }
+        else if (_clientVita is not null)
+        {
+            _udp.SendTo(packet, SocketFlags.None, _clientVita);
         }
     }
 
@@ -257,23 +285,9 @@ public sealed class MockFlexRadio : IAsyncDisposable
             {
                 int received = await _udp.ReceiveAsync(buffer, SocketFlags.None, _lifetime.Token)
                     .ConfigureAwait(false);
-                if (received <= 0
-                    || !Vita49.TryParsePreamble(buffer.AsSpan(0, received), out VitaPreamble preamble)
-                    || preamble.StreamId != TxStreamId)
+                if (received > 0)
                 {
-                    continue;
-                }
-
-                ReadOnlySpan<byte> payload = buffer.AsSpan(preamble.PayloadOffset, preamble.PayloadLength);
-                CaptureTx(payload);
-
-                if (_mode == MockRxMode.Loopback && _clientVita is not null)
-                {
-                    // Byte-exact echo: same payload, RX stream id, rolling RX count.
-                    byte[] echo = Vita49.BuildDaxAudioPacket(
-                        _format.StreamClass, RxStreamId, _rxCount, payload);
-                    _rxCount = (_rxCount + 1) & 0x0F;
-                    _udp.SendTo(echo, SocketFlags.None, _clientVita);
+                    HandleTxPacket(buffer.AsSpan(0, received));
                 }
             }
         }
@@ -284,6 +298,26 @@ public sealed class MockFlexRadio : IAsyncDisposable
         catch (SocketException)
         {
             // Socket closed.
+        }
+    }
+
+    private void HandleTxPacket(ReadOnlySpan<byte> packet)
+    {
+        if (!Vita49.TryParsePreamble(packet, out VitaPreamble preamble)
+            || preamble.StreamId != TxStreamId)
+        {
+            return;
+        }
+
+        ReadOnlySpan<byte> payload = packet.Slice(preamble.PayloadOffset, preamble.PayloadLength);
+        CaptureTx(payload);
+
+        if (_mode == MockRxMode.Loopback)
+        {
+            // Byte-exact echo: same payload, RX stream id, rolling RX count.
+            byte[] echo = Vita49.BuildDaxAudioPacket(_format.StreamClass, RxStreamId, _rxCount, payload);
+            _rxCount = (_rxCount + 1) & 0x0F;
+            DeliverRx(echo);
         }
     }
 

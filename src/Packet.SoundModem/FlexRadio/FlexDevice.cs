@@ -95,6 +95,10 @@ public static class FlexDevice
             mock.Start();
             client = await FlexClient.ConnectAsync("127.0.0.1", mock.TcpPort, mock.UdpPort, cancellation)
                 .ConfigureAwait(false);
+            // The mock is a hardware-free fake; deliver its DAX audio in-process (lossless)
+            // rather than self-looping over UDP, so flex:mock is deterministic on a loaded box.
+            mock.RxDelivery = client.DeliverVitaPacket;
+            client.VitaSendHook = mock.DeliverTxPacket;
         }
         else if (spec.RadioSpec.Equals("discover", StringComparison.OrdinalIgnoreCase))
         {

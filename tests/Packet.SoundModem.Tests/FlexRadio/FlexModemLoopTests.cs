@@ -66,6 +66,15 @@ public sealed class FlexModemLoopTests
         await using FlexStation station = await FlexStation.SetUpAsync(
             client, format, new FlexStationOptions { Keepalive = false });
 
+        // Deterministic offline transport: deliver the DAX VITA packets in-process (lossless)
+        // rather than over real loopback UDP. A full OFDM burst is hundreds of DAX packets and
+        // FreeDV has no per-packet retransmit, so one dropped datagram would break byte-exact
+        // decode (~1-in-5 flake). The point under test is that the packetize/depacketize +
+        // rate-bridge is byte-correct — not that UDP is lossless — and the real
+        // FlexAudioOutput/FlexAudioInput code (reorder ring included) is still exercised.
+        mock.RxDelivery = client.DeliverVitaPacket;
+        client.VitaSendHook = mock.DeliverTxPacket;
+
         // --- Transmit: modulate the frame through the real channel → Flex DAX TX. ---
         var txChannel = new SoundModemChannel(dspRate, randomSeed: 1);
         txChannel.Csma.Persistence = 255; // transmit on the first clear roll

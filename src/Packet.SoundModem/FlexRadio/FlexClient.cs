@@ -179,9 +179,25 @@ public sealed class FlexClient : IAsyncDisposable
         await SendCommandExpectOkAsync($"client udpport {LocalUdpPort}", cancellation).ConfigureAwait(false);
     }
 
-    /// <summary>Sends a VITA-49 packet to the radio's stream socket.</summary>
+    /// <summary>
+    /// An optional in-process delivery hook for the VITA send path. When set,
+    /// <see cref="SendVita"/> hands the packet to this instead of the UDP socket — a
+    /// lossless transport used by the mock radio so an offline modem loop does not depend on
+    /// kernel UDP buffering (a full OFDM burst is hundreds of DAX packets; one dropped
+    /// loopback datagram breaks byte-exact decode). Real radios leave this null (real UDP).
+    /// </summary>
+    public Action<byte[]>? VitaSendHook { get; set; }
+
+    /// <summary>Sends a VITA-49 packet to the radio's stream socket (or the in-process
+    /// <see cref="VitaSendHook"/> when set).</summary>
     public void SendVita(ReadOnlySpan<byte> packet)
     {
+        if (VitaSendHook is Action<byte[]> hook)
+        {
+            hook(packet.ToArray());
+            return;
+        }
+
         if (_udp is null || _radioVitaEndpoint is null)
         {
             throw new InvalidOperationException("InitUdpAsync must be called before SendVita");
@@ -189,6 +205,12 @@ public sealed class FlexClient : IAsyncDisposable
 
         _udp.SendTo(packet, SocketFlags.None, _radioVitaEndpoint);
     }
+
+    /// <summary>Delivers a VITA-49 packet as if received on the stream socket, bypassing
+    /// UDP — the receive counterpart of <see cref="VitaSendHook"/> for an in-process
+    /// transport. Runs the same depacketize/dispatch as the UDP receive loop, so
+    /// <see cref="FlexAudioInput"/>'s reorder ring and event plumbing are still exercised.</summary>
+    public void DeliverVitaPacket(byte[] packet) => DispatchVitaPacket(packet);
 
     /// <summary>Enables the radio keepalive and pings once per <paramref name="interval"/>
     /// so a wedged radio is detected (15 s of silence disconnects). Optional; for a
@@ -474,16 +496,9 @@ public sealed class FlexClient : IAsyncDisposable
             {
                 int received = await udp.ReceiveAsync(buffer, SocketFlags.None, _lifetime.Token)
                     .ConfigureAwait(false);
-                if (received <= 0 || !Vita49.TryParsePreamble(buffer.AsSpan(0, received), out VitaPreamble preamble))
+                if (received > 0)
                 {
-                    continue;
-                }
-
-                Action<VitaPreamble, byte[]>? handler = VitaPacketReceived;
-                if (handler is not null)
-                {
-                    byte[] payload = buffer.AsSpan(preamble.PayloadOffset, preamble.PayloadLength).ToArray();
-                    handler(preamble, payload);
+                    DispatchVitaPacket(buffer.AsSpan(0, received));
                 }
             }
         }
@@ -494,6 +509,21 @@ public sealed class FlexClient : IAsyncDisposable
         catch (SocketException)
         {
             // Socket closed.
+        }
+    }
+
+    private void DispatchVitaPacket(ReadOnlySpan<byte> packet)
+    {
+        if (!Vita49.TryParsePreamble(packet, out VitaPreamble preamble))
+        {
+            return;
+        }
+
+        Action<VitaPreamble, byte[]>? handler = VitaPacketReceived;
+        if (handler is not null)
+        {
+            byte[] payload = packet.Slice(preamble.PayloadOffset, preamble.PayloadLength).ToArray();
+            handler(preamble, payload);
         }
     }
 
