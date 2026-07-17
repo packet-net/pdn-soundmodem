@@ -93,7 +93,8 @@ revisit at any future oracle — design §5.2):
   "the symbols of the sequence specified … in Table D-XVIII"); discarded by our receiver.
 
 Phase A receiver limits, stated: acquisition needs M ≥ 2 super-frames (the M = 1
-single-Walsh-symbol preamble is transmitted but not acquired); clock-skew tolerance is the
-slow per-probe timing tracker only (WN 0 has none); 8PSK/QAM waveform numbers land in
-Phases B/C. Validation status: **spec-faithful + mask-passing, not interop-proven** — no
+single-Walsh-symbol preamble is transmitted but not acquired); mid-data broadcast late
+entry off the rotated boundary probe (known-WID-a-priori) is transmitted but not received —
+late entry works via the repeated preamble; clock-skew tolerance is the slow per-probe
+timing tracker only (WN 0 has none); 8PSK/QAM waveform numbers land in Phases B/C. Validation status: **spec-faithful + mask-passing, not interop-proven** — no
 open App D implementation or off-air recording exists (pdn↔pdn only, design Q2).

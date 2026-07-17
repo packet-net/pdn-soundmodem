@@ -42,10 +42,16 @@ public sealed class Ms110dDemodulator
     private bool _decimateToggle;
     private readonly double[] _combEnergy = new double[2];
 
-    // Search state.
+    // Search state. The metric ring keeps recent per-candidate metrics so the accepted
+    // peak can be moved back to the EARLIEST multipath arrival (design §2.6): on the
+    // D-LXV static channels the equalizer geometry only works cursor-first — echoes are
+    // post-cursor for the feedback taps; locking a later path puts them outside the
+    // feed-forward span.
     private double _bestMetric;
     private long _bestStart = -1;
     private int _bestBin;
+    private readonly double[] _metricRing = new double[256];
+    private readonly byte[] _metricBinRing = new byte[256];
 
     /// <summary>Highest matched-filter metric seen since construction/reset — an
     /// acquisition diagnostic (normalized 0…1).</summary>
@@ -191,13 +197,20 @@ public sealed class Ms110dDemodulator
         _ring[p & (RingSize - 1)] = sample;
         _written = p + 1;
 
-        if (_terminate && _state == Ms110dRxState.Tracking)
+        if (_terminate)
         {
-            CompleteBurst(Ms110dBurstEndReason.Terminated);
-            return;
-        }
+            _terminate = false;
+            if (_state == Ms110dRxState.Tracking)
+            {
+                CompleteBurst(Ms110dBurstEndReason.Terminated);
+                return;
+            }
 
-        _terminate = false;
+            if (_state == Ms110dRxState.ReadingPreamble)
+            {
+                BackToSearch();
+            }
+        }
 
         switch (_state)
         {
@@ -241,6 +254,9 @@ public sealed class Ms110dDemodulator
                 bestBin = b;
             }
         }
+
+        _metricRing[s & 255] = best;
+        _metricBinRing[s & 255] = (byte)bestBin;
 
         if (best > PeakSearchMetric)
         {
@@ -288,6 +304,23 @@ public sealed class Ms110dDemodulator
     {
         long s = _bestStart;
         int bin = _bestBin;
+
+        // Earliest-arrival selection: walk back up to 9 ms (the widest D-LXV spread,
+        // 21.6 symbols = 44 T/2 samples) and take the first candidate within −4.4 dB of
+        // the best — on equal-power multipath every arrival correlates comparably, and
+        // the DFE needs the cursor on the FIRST one. On a clean channel the matched-filter
+        // response collapses within ±1 sample, so this is a no-op there.
+        double floor = Math.Max(_options.SyncThreshold, 0.6 * _bestMetric);
+        for (long candidate = Math.Max(574, s - 44); candidate < s; candidate++)
+        {
+            if (_metricRing[candidate & 255] >= floor)
+            {
+                s = candidate;
+                bin = _metricBinRing[candidate & 255];
+                break;
+            }
+        }
+
         double energy = _combEnergy[(int)(s & 1)];
 
         // Sub-sample timing from a parabolic fit through the metric at s−1, s, s+1.
@@ -568,9 +601,12 @@ public sealed class Ms110dDemodulator
             _dataStartChip - ChipsSuperframe,
             SuperframeChips(0, _lock!.WaveformNumber, _lock.Interleaver, _lock.ConstraintLength));
 
+        // Tap counts per design §2.5. The K=48 lead reaches +8 symbols so the feed-forward
+        // window collects the 3 ms echo's energy on the D-LXV WID 2 static channel
+        // (equal-power paths — the cursor alone carries only a third of the power).
         (int ff, int fb, int lead) = _mode!.K switch
         {
-            48 => (32, 22, 10),
+            48 => (32, 22, 16),
             24 => (16, 6, 4),
             _ => (24, 12, 6),
         };
