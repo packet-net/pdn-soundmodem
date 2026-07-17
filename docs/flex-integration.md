@@ -446,3 +446,47 @@ repo, not `packet.net`.)
 8. **OBW:** given §3 (self-capture isn't spec-accurate on the 6500), is the panadapter/DAX-IQ
    self-view worth even a research spike, or do we leave OBW entirely to the bench/second-receiver
    path?
+
+---
+
+## 8. Phase 3 — hardware bring-up results (2026-07-17, M0LTE's FLEX-6500)
+
+First contact with a real radio. Radio: **FLEX-6500**, serial 1916-5312-6500-6692, firmware
+**4.1.5.39794** (SmartSDR v4.x — confirms 6000-series DAX, *not* 8000/Aurora DAXv2), callsign
+M0LTE, 10.45.0.76, 4 slices / 4 panadapters. Dummy load on ANT1, no SmartSDR running. Driven by
+a staged smoke harness against the shipped `FlexRadio/` client library.
+
+**Everything works end-to-end:**
+
+| Step | Result |
+|---|---|
+| Discovery (UDP :4992 broadcast) | radio found; all fields parsed (model/serial/version/callsign/ip) |
+| TCP session + status subscription | prologue, `sub`, `S…` status objects (`radio`/`interlock`/`slice`) all parsed correctly |
+| Headless GUI-client register (`client gui`) | **OK** — returns our client UUID |
+| `slice create freq=14.1 ant=ANT1 mode=DIGU` | **OK** — slice A created, owned by our client_handle |
+| DAX-RX audio | **571 packets in 3 s, 0 lost**, 48 kHz float32, peak 0.10 (dummy-load noise floor) |
+| DAX-TX audio | streamed 0.5 s while `TRANSMITTING` |
+| PTT (`xmit 1`/`0`) | RECEIVE → **TRANSMITTING (settle 139 ms)** → READY → RECEIVE; clean |
+
+**The 139 ms PTT→TRANSMITTING settle** is the Flex analogue of PTT-to-RF delay — comfortably
+inside ARDOP's ~1.5–2.1 s ACK window; a good `--txdelay` starting point.
+
+**Design finding — a headless setup path is needed (the one Phase-3 code change).**
+`FlexStation.SetUpAsync` assumes SmartSDR's model: it searches for a **client by station name**
+and a **pre-existing slice**. With no SmartSDR neither exists, so it times out. The proven
+headless sequence is: `client gui` (become a GUI client, get our own client_id) → `slice create`
+(own our slice) → the DAX enable. Two quirks, both handled:
+- `client set station=<name>` is **rejected** (err `0x50000000`) — but unneeded; we bind our own
+  slice, not a named station's.
+- `client bind client_id=<uuid>` **errors** (`0x5000003E`) yet DAX works regardless — we are
+  already the owning GUI client, so the explicit bind is redundant and should be skipped (or made
+  non-fatal) in the headless path.
+So: add `FlexStation` headless bring-up (GUI-register + create-slice, tolerate the redundant
+bind, don't require a station match); `FlexDevice`'s `--device flex:` selects it when the radio
+has no SmartSDR station. Then re-run on hardware to push a full modem (FreeDV datac / ARDOP)
+through the radio into the dummy load.
+
+**Open questions from §7 now answered:** firmware 4.1.5 (6000-series DAX ✓); full-bw 48 kHz
+float32 DAX works ✓; same-segment discovery works ✓; exclusive use ✓; HF-first (48 kHz) ✓.
+Remaining for the HF-loop phase: real DAX-RX UDP loss/reorder on a busy box, and the round-trip
+latency for ARDOP (the 139 ms is the PTT half only).
