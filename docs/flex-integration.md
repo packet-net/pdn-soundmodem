@@ -300,11 +300,20 @@ the main loop. So the single required refactor is:
   `short` to match ALSA and convert in the loop; `float` is cleaner for Flex's float32 mode).
 - Wrap the current ALSA capture as `AlsaAudioInput : IAudioInput` (thin — it already exists as
   `AlsaPcm`), and add `FlexAudioInput : IAudioInput`.
-- Parse `--device`: `flex:<radio>[:slice]` (radio = `discover`, an IP, or a `serial=`/`name=`
-  discovery spec; slice defaults to `A`) selects the Flex triplet
+- Parse `--device`: `flex:<radio>[:slice][@station]` (radio = `discover`, an IP, or a
+  `serial=`/`name=` discovery spec, or `mock`; slice defaults to `A`) selects the Flex triplet
   (`FlexAudioInput`/`FlexAudioOutput`/`FlexPtt` all sharing one `FlexClient`); anything else stays
   ALSA. When `--device flex:` is set, `--ptt` is implicitly the Flex (reject a conflicting
   `--ptt serial:/cm108:`), matching how the Flex owns keying.
+- **Selection policy (headless vs attach) — implemented, §8.** With no `@station` the daemon
+  **owns the radio** and brings it up **headless** (register as a GUI client, create its own
+  slice) — the "pdn at the radio, no SmartSDR" deployment, and the **default**. The created
+  slice's frequency/antenna/mode come from `--flex-freq`/`--flex-ant`/`--flex-mode` (or a config
+  `Flex` section), defaulting to `14.100000` MHz / `ANT1` / `DIGU`. A trailing `@station`
+  (`flex:<radio>[:slice]@<station>`) selects **attach** mode: coexist with a running SmartSDR by
+  binding that station's existing slice (the slice params are then ignored). `FlexStation` exposes
+  the two paths as `SetUpHeadlessAsync` (default) and `SetUpAsync` (attach); `FlexDevice.OpenAsync`
+  picks between them from the parsed `@station`.
 
 This is a small, self-contained change that also tidies the capture path (symmetry with the output
 interface) independent of Flex.
@@ -471,7 +480,7 @@ a staged smoke harness against the shipped `FlexRadio/` client library.
 **The 139 ms PTT→TRANSMITTING settle** is the Flex analogue of PTT-to-RF delay — comfortably
 inside ARDOP's ~1.5–2.1 s ACK window; a good `--txdelay` starting point.
 
-**Design finding — a headless setup path is needed (the one Phase-3 code change).**
+**Design finding — a headless setup path is needed (the one Phase-3 code change). — DONE.**
 `FlexStation.SetUpAsync` assumes SmartSDR's model: it searches for a **client by station name**
 and a **pre-existing slice**. With no SmartSDR neither exists, so it times out. The proven
 headless sequence is: `client gui` (become a GUI client, get our own client_id) → `slice create`
@@ -481,12 +490,125 @@ headless sequence is: `client gui` (become a GUI client, get our own client_id) 
 - `client bind client_id=<uuid>` **errors** (`0x5000003E`) yet DAX works regardless — we are
   already the owning GUI client, so the explicit bind is redundant and should be skipped (or made
   non-fatal) in the headless path.
-So: add `FlexStation` headless bring-up (GUI-register + create-slice, tolerate the redundant
-bind, don't require a station match); `FlexDevice`'s `--device flex:` selects it when the radio
-has no SmartSDR station. Then re-run on hardware to push a full modem (FreeDV datac / ARDOP)
-through the radio into the dummy load.
+
+### Headless setup (implemented)
+
+`FlexStation.SetUpHeadlessAsync` implements the proven sequence and is the **default** for
+`--device flex:` (attach — `SetUpAsync` — is preserved for the coexistence case, selected by a
+`@station` suffix). The bring-up, in order:
+
+1. `InitUdpAsync()` (register the client's UDP port).
+2. `client gui` → err=0; parse our **client_id (uuid)** from the result message.
+3. `slice create freq=<f> ant=<ant> mode=<m> rxant=<ant>` (from `FlexStationOptions.Frequency`/
+   `Antenna`/`SliceMode`; defaults `14.100000`/`ANT1`/`DIGU`) → err=0, then **find OUR slice by
+   `client_handle == FlexClient.Handle`** (handles compared with any `0x` prefix normalised away —
+   the prologue `H` line carries none, slice status carries the `0x` form; matching on the handle,
+   not a station name or a hardcoded `index_letter`, is the robust rule).
+4. **Force the slice on-frequency** (`FlexStation.EnsureTunedAsync`) — the band-persistence fix
+   below. `radio set band_persistence_enabled=0` (best-effort) → `slice set <idx> active=1`
+   (best-effort) → `slice t <idx> <freq>` (the flexclient `SliceTune` form, `%.6f`; err=0) →
+   re-read the slice's `RF_frequency` (bounded poll, never hangs) and, if it still doesn't match
+   the request within ~2 Hz, surface `FlexStation.TuneWarning` (setup does **not** throw — the
+   `slice t` succeeded).
+5. **Best-effort** `client bind client_id=<uuid>` — swallow the `0x5000003E` rejection (surfaced on
+   `FlexStation.HeadlessBindResult` for observability; a `Debug` line notes it), never fail setup.
+   We never send `client set station` (it's rejected and unneeded).
+6. `EnableDaxAsync` **unchanged** — the eight-step DAX enable shared with the attach path
+   (§2.4): `slice set <idx> dax=<ch>` → `dax audio set <ch> slice=<idx> tx=1` →
+   `stream create type=dax_rx` → `audio stream … gain` → `stream create type=dax_tx`. `<ch>` is
+   `FlexStationOptions.DaxChannel` (default `1`, `--flex-daxch`) — see the coexistence note below.
+
+Provenance: the DAX enable and PTT are the nDAX/nCAT port (MIT, KC2G). The **headless sequence
+itself is pdn's own** — nDAX is attach-only (it binds a station SmartSDR already created).
+
+### Band persistence — the headless tune fix (2026-07-17, live on the 6500)
+
+**The bug.** On a real 6500 with `band_persistence_enabled=1` (the firmware default), `slice
+create freq=<f> …` returns `err=0` **but the radio ignores the create `freq` and snaps the new
+slice back to the last-used band.** The slice comes up on the wrong QRG — its `RF_frequency`
+status reports the *persisted* band, not the requested one — and DAX then streams audio from the
+wrong frequency (silent / wrong band). The `slice create` alone is not enough to place a headless
+slice on-frequency.
+
+**The fix (proven live, in order):**
+
+1. `radio set band_persistence_enabled=0` — best-effort; this is the cause.
+2. `slice set <idx> active=1` — best-effort.
+3. `slice t <idx> <freq>` — the explicit tune (flexclient `SliceTune`, `%.6f`); returns `err=0`.
+4. Verify: re-read the slice's `RF_frequency`; it now matches `<freq>`.
+
+After this the slice is correctly on-frequency and DAX-RX carries real audio — verified by
+decoding a live off-air BPSK300 signal from GB7RDG through it. `EnsureTunedAsync` runs this between
+the slice create and the DAX enable in the headless path (only — the attach path leaves tuning to
+SmartSDR). Steps 1–2 are best-effort (some firmwares may not expose the setting; DAX still works
+if it's already off); step 3 is load-bearing; step 4 is observability — a residual mismatch sets
+`FlexStation.TuneWarning` (the daemon prints it to stderr) rather than failing setup or hanging.
+
+The `MockFlexRadio` headless mode models this faithfully so it's actually tested, not bypassed:
+`slice create` reports the slice on the **persisted band** (`14.100000`, ignoring the create
+`freq`), and `slice t <idx> <freq>` updates and re-emits `RF_frequency`. A headless setup that
+requests e.g. `7.050100` therefore only ends on `7.050100` **because `EnsureTunedAsync` ran** — the
+regression test (`FlexHeadlessSetupTests`, `FlexDeviceOpenTests`) asserts exactly that, plus the
+presence and ordering of `band_persistence_enabled=0` and `slice t` in the mock command log.
+
+### DAX channel — coexisting with a running SmartSDR (2026-07-17 live finding)
+
+A running SmartSDR **grabs DAX channel 1**, so a headless pdn client sharing the same box must
+claim a *different* DAX channel or the two contend. `FlexStationOptions.DaxChannel` (default `1`)
+is now configurable end-to-end: `--flex-daxch <n>` on the CLI, `"daxChannel"` in the config's
+`flex` section, threaded through `FlexTuning`/`FlexDevice` into the DAX enable (`slice set … dax=<n>`,
+`dax audio set <n> …`, `stream create type=dax_rx dax_channel=<n>`). It applies to **both** the
+headless and attach paths (it's the DAX channel the client claims, not a slice param). Guidance:
+**a headless client alongside SmartSDR should pick a free DAX channel** (SmartSDR is on 1), **or
+use attach mode** (`@station`) to share the slice SmartSDR already owns.
+
+**Offline validation:** `MockFlexRadio` gained a `MockSetupMode.Headless` that models the real
+6500's behaviour — answers `client gui` (returns a uuid), `slice create` (emits a `slice` status
+with `client_handle` = the caller's handle, `index_letter` = A), returns the **same `0x5000003E`**
+for the redundant `client bind`, and **rejects** `client set station` with `0x50000000`. The full
+headless bring-up + DAX RX/TX + PTT run against `flex:mock`, and the byte-exact modem loop
+(`FlexModemLoopTests`: AFSK1200 through reduced-bw 24 kHz s16; FreeDV datac3 through full-bw
+48 kHz float32) now runs **through the headless path** — recovered frames byte-identical, no
+hardware.
+
+**Remaining:** a ~2-minute hardware confirmation on the 6500 — push a real FreeDV-datac / ARDOP
+frame into the dummy load through the shipped `--device flex:` daemon (see the checklist below).
 
 **Open questions from §7 now answered:** firmware 4.1.5 (6000-series DAX ✓); full-bw 48 kHz
 float32 DAX works ✓; same-segment discovery works ✓; exclusive use ✓; HF-first (48 kHz) ✓.
 Remaining for the HF-loop phase: real DAX-RX UDP loss/reorder on a busy box, and the round-trip
 latency for ARDOP (the 139 ms is the PTT half only).
+
+### Final hardware-confirmation checklist (~2 min, radio + dummy load on ANT1)
+
+The headless path ships in the product; confirm it drives the real 6500 end-to-end. Run the
+**shipped daemon** (not the smoke harness) against M0LTE's 6500 (10.45.0.76), dummy load on ANT1:
+
+1. **FreeDV datac3 into the dummy load (headless default):**
+
+   ```sh
+   pdn-soundmodem --device flex:10.45.0.76 \
+                  --flex-freq 14.100000 --flex-ant ANT1 --flex-mode DIGU \
+                  --modem 0:freedv-datac3 --txdelay 200 --kiss 8105
+   ```
+
+   Expect on stdout: `audio: flex:10.45.0.76 DAX 48000 Hz → 48000 Hz (slice A, headless 14.100000 MHz ANT1 DIGU)`
+   and `kiss tcp: 127.0.0.1:8105`. Then push a frame — e.g. `nc 127.0.0.1 8105` and send a KISS
+   data frame, or point axcall/BPQ at 8105. Watch the Flex: `interlock` → `TRANSMITTING`, DAX-TX
+   meter moves, RF into the dummy load. (Discovery works too: `--device flex:discover`.)
+
+2. **ARDOP frame into the dummy load (headless):**
+
+   ```sh
+   pdn-soundmodem --device flex:10.45.0.76 --flex-freq 14.100000 --ardop 8515 --txdelay 200
+   ```
+
+   Connect Pat/ardopcf to `127.0.0.1:8515` (data 8516) and start an ARQ call or send an FEC
+   frame; confirm keying + RF as above. This is the round-trip-latency measurement point ARDOP
+   cares about (the 139 ms PTT settle is the TX half only).
+
+3. **Coexistence sanity (optional, if SmartSDR is running):** `--device flex:10.45.0.76:A@Flex`
+   should attach to the SmartSDR "Flex" station's slice A instead of creating one.
+
+Success = keys the radio, `interlock=TRANSMITTING`, RF on the dummy load, no setup errors
+(the `client bind` rejection is expected and silently tolerated).

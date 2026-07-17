@@ -54,12 +54,23 @@ using Packet.SoundModem.Ms110d;
 // p-persistence roll must never delay. PTT keying and sample-domain TX-complete are
 // the channel's, exactly as for the packet modes.
 
-// --device flex:<radio>[:slice] uses a FlexRadio 6000-series over the LAN as the sound
-// card + PTT: <radio> is `discover` (broadcast), an IP (host[:port]), a discovery spec
+// --device flex:<radio>[:slice][@station] uses a FlexRadio 6000-series over the LAN as the
+// sound card + PTT: <radio> is `discover` (broadcast), an IP (host[:port]), a discovery spec
 // (serial=…/name=…), or `mock` (an in-process fake, for offline testing). <slice> is a
 // letter A–H (default A). The DAX transport is auto-picked from the DSP rate (24 kHz s16
 // for the 12 kHz modes, 48 kHz float32 for the 48 kHz modes). The radio keys itself, so
-// --ptt is rejected alongside flex:. See docs/flex-integration.md.
+// --ptt is rejected alongside flex:.
+//
+// Selection policy: with no @station the daemon OWNS the radio and brings it up HEADLESS
+// (registers as a GUI client, creates its own slice — the "pdn at the radio, no SmartSDR"
+// deployment; the default). --flex-freq/--flex-ant/--flex-mode set the created slice's
+// working frequency (default 14.100000 MHz), antenna (ANT1) and mode (DIGU); the headless path
+// also disables band persistence and explicitly tunes the slice, so it lands on the requested
+// QRG regardless of the radio's last-used band. A trailing @station selects ATTACH mode:
+// coexist with a running SmartSDR by binding that station's existing slice (the slice params
+// are then ignored — SmartSDR configures it). --flex-daxch sets the DAX channel to claim
+// (default 1) for BOTH paths; a headless client sharing a box with SmartSDR must pick a channel
+// SmartSDR is not using (it grabs DAX 1). See docs/flex-integration.md §4/§8.
 
 // 9600-family and freedv-* modems need 48 kHz DSP (the FreeDV engine is native 8 kHz, and
 // 48000 = 6·8000 while 12000 has no integer ratio); everything else runs at 12 kHz.
@@ -85,6 +96,13 @@ PskDetector pskDetector = PskDetector.Coherent;
 string? pagingSpec = null;
 int? ardopPort = null;
 var modemSpecs = new List<string>();
+// Headless FlexRadio slice params (--device flex: with no @station). Null = unset here;
+// resolved against the config's Flex section, then FlexTuning defaults. --flex-daxch applies
+// to both paths (headless and attach) — the DAX channel to claim.
+string? flexFreq = null;
+string? flexAnt = null;
+string? flexMode = null;
+string? flexDaxCh = null;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -105,6 +123,10 @@ for (int i = 0; i < args.Length; i++)
         case "--psk-detector": pskDetector = Enum.Parse<PskDetector>(Next(), ignoreCase: true); break;
         case "--paging": pagingSpec = Next(); break;
         case "--ardop": ardopPort = int.Parse(Next()); break;
+        case "--flex-freq": flexFreq = Next(); break;
+        case "--flex-ant": flexAnt = Next(); break;
+        case "--flex-mode": flexMode = Next(); break;
+        case "--flex-daxch": flexDaxCh = Next(); break;
         case "--help":
             Console.WriteLine("see source header for usage");
             return 0;
@@ -118,6 +140,7 @@ var modems = new List<ModemConfig>();
 CsmaConfig csma = new() { TxDelayMilliseconds = txDelay };
 PttConfig? pttConfig = null;
 PagingConfig? paging = null;
+FlexConfig? flexConfig = null;
 
 if (configPath is not null)
 {
@@ -129,9 +152,21 @@ if (configPath is not null)
     csma = config.Csma;
     pttConfig = config.Ptt;
     paging = config.Paging;
+    flexConfig = config.Flex;
     ardopPort ??= config.Ardop?.Port;
     Console.WriteLine($"config: {configPath}");
 }
+
+// Headless FlexRadio slice params: CLI flags override the config's Flex section, which
+// overrides FlexTuning's defaults (14.100000 MHz / ANT1 / DIGU / DAX 1). --flex-daxch applies
+// to both headless and attach.
+var flexTuning = new FlexTuning
+{
+    Frequency = flexFreq ?? flexConfig?.Frequency ?? "14.100000",
+    Antenna = flexAnt ?? flexConfig?.Antenna ?? "ANT1",
+    Mode = flexMode ?? flexConfig?.Mode ?? "DIGU",
+    DaxChannel = flexDaxCh ?? flexConfig?.DaxChannel ?? "1",
+};
 
 if (pagingSpec is not null)
 {
@@ -353,12 +388,21 @@ IAudioInput input;
 
 if (deviceIsFlex)
 {
-    flex = await FlexDevice.OpenAsync(device, DspRate, flexPacketBuffer, cancellation.Token);
+    flex = await FlexDevice.OpenAsync(device, DspRate, flexPacketBuffer, flexTuning, cancellation.Token);
     ptt = flex.Ptt;
     playback = flex.Output;
     input = flex.Input;
+    FlexDevice.FlexSpec flexSpec = FlexDevice.Parse(device);
+    string flexModeDesc = flexSpec.Headless
+        ? $"headless {flexTuning.Frequency} MHz {flexTuning.Antenna} {flexTuning.Mode}"
+        : $"attach station '{flexSpec.Station}'";
     Console.WriteLine(
-        $"audio: {device} DAX {input.SampleRate} Hz → {DspRate} Hz (slice {FlexDevice.Parse(device).SliceLetter})");
+        $"audio: {device} DAX {input.SampleRate} Hz → {DspRate} Hz "
+        + $"(slice {flexSpec.SliceLetter}, dax {flexTuning.DaxChannel}, {flexModeDesc})");
+    if (flex.Station.TuneWarning is string tuneWarning)
+    {
+        Console.Error.WriteLine($"flex: {tuneWarning}");
+    }
 }
 else
 {
