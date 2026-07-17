@@ -4,6 +4,7 @@ using Packet.SoundModem.Daemon;
 using Packet.SoundModem.Dsp;
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.Modems;
+using Packet.SoundModem.Ms110d;
 
 // pdn-soundmodem: headless soundcard packet modem daemon.
 //
@@ -19,7 +20,10 @@ using Packet.SoundModem.Modems;
 // Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, qpsk2400, qpsk3600 (both IL2P+CRC),
 // fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC), freedv-datac0/1/3/4/13/14 (FreeDV datac
 // OFDM waveform; payloads carry the family-standard IL2P+CRC bit stream — a pdn convention,
-// FreeDV defines no framing at the raw-data layer). Multiple --modem options share the
+// FreeDV defines no framing at the raw-data layer), ms110d-wn0/1/2/3/4/5/6/13
+// (MIL-STD-188-110D App D 3 kHz serial-tone, 75–3200 bps; same IL2P+CRC payload
+// convention; RX is autobaud — the wnN suffix selects the transmit waveform only).
+// Multiple --modem options share the
 // audio channel and are addressed by the KISS port nibble (QtSoundModem multiplex model).
 // --wav decodes a file instead of live audio (testing/corpus runs) and exits.
 // --psk-detector selects the BPSK/QPSK detection method: coherent (default, matches the
@@ -156,7 +160,8 @@ if (modems.Count == 0 && ardopPort is null)
 int DspRate = modems.Any(m => m.Mode.Contains("9600", StringComparison.Ordinal)
     || m.Mode.StartsWith("fsk", StringComparison.Ordinal)
     || m.Mode.StartsWith("c4fsk", StringComparison.Ordinal)
-    || m.Mode.StartsWith("freedv-", StringComparison.Ordinal)) ? 48000 : 12000;
+    || m.Mode.StartsWith("freedv-", StringComparison.Ordinal)
+    || m.Mode.StartsWith("ms110d-", StringComparison.Ordinal)) ? 48000 : 12000;
 
 if (captureRate % DspRate != 0)
 {
@@ -203,6 +208,10 @@ foreach (ModemConfig modemConfig in modems)
         "freedv-datac4" => FreeDvDatacModem.Datac4(DspRate, sink),
         "freedv-datac13" => FreeDvDatacModem.Datac13(DspRate, sink),
         "freedv-datac14" => FreeDvDatacModem.Datac14(DspRate, sink),
+        "ms110d-wn0" or "ms110d-wn1" or "ms110d-wn2" or "ms110d-wn3" or "ms110d-wn4"
+            or "ms110d-wn5" or "ms110d-wn6" or "ms110d-wn13" => new Ms110dModem(
+                DspRate, sink,
+                new Ms110dTxSettings { WaveformNumber = int.Parse(mode["ms110d-wn".Length..]) }),
         _ => throw new ArgumentException($"unknown mode '{mode}'"),
     });
     Console.WriteLine($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");

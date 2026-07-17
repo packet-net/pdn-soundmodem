@@ -63,3 +63,37 @@ agents independently: the document's D-XXIII/D-XXIV/D-XXV are base-16/base-19/ba
 ledger's "D-XXIV base-25" was wrong); the WID-0 Walsh data prose lives in D.5.2 (doc p. 163),
 not D.5.1.2.1; Table D-XIV resolves 10→0044 / 11→0440 (the design's provisional swap is
 settled). The w1-lsb spec contradiction is confirmed verbatim on both sides.
+
+## Phase A implementation (2026-07-17)
+
+The tables above are consumed by the Phase A implementation in
+`src/Packet.SoundModem/Ms110d/` (branch `ms110d-phase-a`): the K7/K9 tail-biting FEC chain
+with soft wrap-extension Viterbi, Table D-L puncturing, the 3 kHz interleavers, both
+scramblers, the autobaud preamble, mini-probes, the probe-trained T/2 NLMS DFE, the WN 0
+Walsh modem, the `IModem`/daemon surface (`ms110d-wn0…wn13` modes, IL2P+CRC payload
+convention), and the Watterson/App-E channel simulator + statistical mask harness in
+`tests/Packet.SoundModem.Tests/` (`Ms110dMaskTests`, env-gated). Every constant in code cites
+its file in this directory; nothing was re-transcribed.
+
+Interpretation choices this implementation records (loopback-consistent both ends,
+revisit at any future oracle — design §5.2):
+
+- **L6** — WN 0 data di-bit order: first fetched bit = di-bit MSB (the QPSK
+  leftmost-is-older rule, D.5.1.2.1.2).
+- **Mini-probe boundary shift direction**: the shifted probe starts `shift` symbols into
+  the base sequence (`probe[i] = base[(i + shift) mod N]`).
+- **Boundary-probe position with one frame per interleaver block** (WN 5/6/13 UltraShort):
+  "after the second-to-last data block of each interleaver frame" degenerates — every
+  probe precedes a boundary and is transmitted shifted.
+- **O-1 (fixedPN wrap)**: wrap-around implemented; at 3 kHz the per-channel-symbol-restart
+  reading coincides with it (8 × 32 chips = exactly 256), so no runtime switch is carried.
+- **D-LXV static-test SNR**: the D-LXV SNR column was not transcribed; the WID 2 static
+  gate runs at the WN 2 "Poor" mask SNR (5 dB) as a recorded house bar.
+- **TLC**: transmitted as the conjugate of the Table D-XVIII sequence itself (D.5.2.1.2
+  "the symbols of the sequence specified … in Table D-XVIII"); discarded by our receiver.
+
+Phase A receiver limits, stated: acquisition needs M ≥ 2 super-frames (the M = 1
+single-Walsh-symbol preamble is transmitted but not acquired); clock-skew tolerance is the
+slow per-probe timing tracker only (WN 0 has none); 8PSK/QAM waveform numbers land in
+Phases B/C. Validation status: **spec-faithful + mask-passing, not interop-proven** — no
+open App D implementation or off-air recording exists (pdn↔pdn only, design Q2).
