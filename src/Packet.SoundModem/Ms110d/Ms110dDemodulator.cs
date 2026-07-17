@@ -778,8 +778,13 @@ public sealed class Ms110dDemodulator
 
         if (tapRotation.Cnorm() > 1e-12)
         {
+            // SIGN: taps rotate to COMPENSATE the input — a +Δω read-rotation error makes
+            // consecutive solves rotate by +Δω·T, so the correction must SUBTRACT the
+            // measured rotation. Adding it is positive feedback with loop gain 1.1/frame
+            // (measured: ω doubling every ~8 frames to the clamp, wrecking long bursts on
+            // clean channels).
             int frameT2 = 2 * (mode.U + mode.K);
-            double deltaOmega = 0.1 * tapRotation.Arg() / frameT2;
+            double deltaOmega = -0.1 * tapRotation.Arg() / frameT2;
             double window3Hz = 2.0 * Math.PI * 3.0 / (2.0 * Ms110dTables.SymbolRate);
             deltaOmega = Math.Clamp(
                 deltaOmega, (_omegaAcquired - window3Hz) - _omega, (_omegaAcquired + window3Hz) - _omega);
