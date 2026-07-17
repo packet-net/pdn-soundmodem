@@ -22,9 +22,11 @@ public enum MockRxMode
 public enum MockSetupMode
 {
     /// <summary>No SmartSDR: no pre-existing client or slice. <c>client gui</c> registers us
-    /// (returns a uuid), <c>slice create</c> makes a slice owned by our handle, the redundant
-    /// <c>client bind</c> is rejected (0x5000003E), and <c>client set station</c> is rejected
-    /// (0x50000000) — exactly as M0LTE's FLEX-6500 behaved. The default.</summary>
+    /// (returns a uuid), <c>slice create</c> makes a slice owned by our handle but — modelling
+    /// band persistence — reports it on the PERSISTED band (ignoring the create <c>freq</c>),
+    /// <c>slice t</c> re-tunes and re-emits <c>RF_frequency</c>, the redundant <c>client bind</c>
+    /// is rejected (0x5000003E), and <c>client set station</c> is rejected (0x50000000) — exactly
+    /// as M0LTE's FLEX-6500 behaved. The default.</summary>
     Headless,
 
     /// <summary>SmartSDR is running: a pre-existing <c>client</c> (with a station name) and a
@@ -51,6 +53,12 @@ public sealed class MockFlexRadio : IAsyncDisposable
     private const uint RejectedError = 0x50000000;
     private const uint AlreadyBoundError = 0x5000003E;
 
+    /// <summary>The band a fresh headless slice snaps to under <c>band_persistence_enabled=1</c>
+    /// — the "last-used band". <c>slice create</c> reports this regardless of the requested
+    /// <c>freq</c>; only an explicit <c>slice t</c> moves the slice off it (the real 6500's
+    /// behaviour that <see cref="FlexStation.EnsureTunedAsync"/> works around).</summary>
+    private const string PersistedBandFrequency = "14.100000";
+
     private readonly DaxStreamFormat _format;
     private readonly MockRxMode _mode;
     private readonly MockSetupMode _setupMode;
@@ -62,12 +70,18 @@ public sealed class MockFlexRadio : IAsyncDisposable
     private readonly SemaphoreSlim _tcpWrite = new(1, 1);
     private readonly List<float> _capturedTx = [];
     private readonly object _captureLock = new();
+    private readonly List<string> _commandLog = [];
+    private readonly object _commandLogLock = new();
 
     private NetworkStream? _tcp;
     private IPEndPoint? _clientVita;
     private Task? _acceptLoop;
     private Task? _udpLoop;
     private int _rxCount;
+
+    // The modelled slice frequency. Starts on the persisted band and, headless, IGNORES the
+    // `slice create freq=…` request (band persistence); only `slice t` moves it.
+    private string _sliceFrequency = PersistedBandFrequency;
 
     /// <summary>Creates a mock radio serving <paramref name="format"/>.</summary>
     /// <param name="format">The DAX transport the client will use.</param>
@@ -96,6 +110,20 @@ public sealed class MockFlexRadio : IAsyncDisposable
 
     /// <summary>The radio's UDP VITA port (pass as the client's <c>radioVitaPort</c>).</summary>
     public int UdpPort => ((IPEndPoint)_udp.LocalEndPoint!).Port;
+
+    /// <summary>Every command (the text after the <c>C&lt;seq&gt;|</c> prefix) the client has
+    /// sent so far, in order — for tests that assert the bring-up sequence (e.g. that the
+    /// headless tune fix issued <c>band_persistence_enabled=0</c> and <c>slice t</c>).</summary>
+    public IReadOnlyList<string> CommandLog
+    {
+        get
+        {
+            lock (_commandLogLock)
+            {
+                return _commandLog.ToArray();
+            }
+        }
+    }
 
     /// <summary>All DAX-TX samples captured from the client so far (at the DAX rate).</summary>
     public IReadOnlyList<float> CapturedTxSamples
@@ -240,6 +268,11 @@ public sealed class MockFlexRadio : IAsyncDisposable
         string seq = commandLine[1..pipe].TrimStart('D');
         string cmd = commandLine[(pipe + 1)..];
 
+        lock (_commandLogLock)
+        {
+            _commandLog.Add(cmd);
+        }
+
         if (cmd == "client gui")
         {
             // Register us as a GUI client — the headless bring-up's first step. The result
@@ -274,11 +307,34 @@ public sealed class MockFlexRadio : IAsyncDisposable
             // Headless bring-up: create our own slice, owned by our handle. The radio assigns
             // index_letter (A here) and reports mode back as USB even for a DIGU request — both
             // are fine for the DAX data path (docs/flex-integration.md §8).
-            string freq = ParseArg(cmd, "freq") ?? "14.100000";
+            //
+            // Band persistence (default-on on a real 6500) makes the radio IGNORE the create
+            // `freq` and snap the new slice to the last-used band. Model that faithfully in
+            // headless mode: the slice comes up on the PERSISTED band, not the requested freq —
+            // so a headless setup only lands on the requested QRG because EnsureTunedAsync then
+            // runs `slice t`. Attach mode has no create in its flow, but honour any freq there.
+            _sliceFrequency = _setupMode == MockSetupMode.Headless
+                ? PersistedBandFrequency
+                : ParseArg(cmd, "freq") ?? _sliceFrequency;
             await WriteLineAsync($"R{seq}|0|0").ConfigureAwait(false);
             await WriteLineAsync(
                 $"S{HandleHex}|slice 0 index_letter={_sliceLetter} client_handle=0x{HandleHex} "
-                + $"in_use=1 mode=USB RF_frequency={freq}").ConfigureAwait(false);
+                + $"in_use=1 mode=USB RF_frequency={_sliceFrequency}").ConfigureAwait(false);
+        }
+        else if (cmd.StartsWith("slice t ", StringComparison.Ordinal))
+        {
+            // Explicit tune (flexclient SliceTune form: `slice t <idx> <freq>`). The real radio
+            // honours this even with band persistence on — it's the headless tune fix. Update the
+            // modelled slice frequency and re-emit RF_frequency so the client's verify sees it.
+            string[] tuneParts = cmd.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (tuneParts.Length >= 4)
+            {
+                _sliceFrequency = tuneParts[3];
+            }
+
+            await WriteLineAsync($"R{seq}|0|").ConfigureAwait(false);
+            await WriteLineAsync($"S{HandleHex}|slice 0 RF_frequency={_sliceFrequency}")
+                .ConfigureAwait(false);
         }
         else if (cmd.StartsWith("client bind ", StringComparison.Ordinal))
         {

@@ -45,19 +45,27 @@ public sealed class FlexRuntime : IAsyncDisposable
     }
 }
 
-/// <summary>Headless slice-creation parameters (the working frequency, antenna and mode the
-/// daemon tunes its own slice to). Ignored in attach mode. Defaults match
-/// docs/flex-integration.md §8 (14.100000 MHz / ANT1 / DIGU).</summary>
+/// <summary>Flex slice/DAX parameters the daemon passes to the bring-up. The
+/// frequency/antenna/mode configure the <b>headless</b> slice the daemon creates (ignored in
+/// attach mode — SmartSDR owns the slice there); <see cref="DaxChannel"/> applies to
+/// <b>both</b> paths (the DAX channel the client claims). Defaults match
+/// docs/flex-integration.md §8 (14.100000 MHz / ANT1 / DIGU / DAX 1).</summary>
 public sealed record FlexTuning
 {
-    /// <summary>Slice frequency (MHz, six-decimal Flex form). Default "14.100000".</summary>
+    /// <summary>Slice frequency (MHz, six-decimal Flex form). Default "14.100000".
+    /// Headless only.</summary>
     public string Frequency { get; init; } = "14.100000";
 
-    /// <summary>RX/TX antenna. Default "ANT1".</summary>
+    /// <summary>RX/TX antenna. Default "ANT1". Headless only.</summary>
     public string Antenna { get; init; } = "ANT1";
 
-    /// <summary>Slice demod mode. Default "DIGU" (a data mode).</summary>
+    /// <summary>Slice demod mode. Default "DIGU" (a data mode). Headless only.</summary>
     public string Mode { get; init; } = "DIGU";
+
+    /// <summary>The DAX channel the client claims (both headless and attach). Default "1". A
+    /// headless client sharing a box with a running SmartSDR must pick a channel SmartSDR is not
+    /// using (SmartSDR grabs DAX 1) — see docs/flex-integration.md §8.</summary>
+    public string DaxChannel { get; init; } = "1";
 }
 
 /// <summary>
@@ -171,6 +179,7 @@ public static class FlexDevice
             Frequency = tuning.Frequency,
             Antenna = tuning.Antenna,
             SliceMode = tuning.Mode,
+            DaxChannel = tuning.DaxChannel,
         };
         FlexStation station = spec.Headless
             ? await FlexStation.SetUpHeadlessAsync(client, format, options, cancellation).ConfigureAwait(false)

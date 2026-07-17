@@ -9,7 +9,11 @@
   // running SmartSDR's slice instead. The Flex keys itself, so omit "ptt". e.g.:
   //   "device": "flex:10.45.0.76",            // headless, slice A, 14.100000 MHz / ANT1 / DIGU
   //   "device": "flex:10.45.0.76:A@Flex",     // attach to SmartSDR station "Flex", slice A
-  // "flex": { "frequency": "14.100000", "antenna": "ANT1", "mode": "DIGU" },
+  // The headless path disables band persistence and explicitly tunes the created slice, so it
+  // lands on "frequency" regardless of the radio's last-used band. "daxChannel" (default "1")
+  // applies to both paths; sharing a box with a running SmartSDR (which grabs DAX 1) needs a
+  // different channel here (or use attach mode). See docs/flex-integration.md §8.
+  // "flex": { "frequency": "14.100000", "antenna": "ANT1", "mode": "DIGU", "daxChannel": "1" },
   "captureRate": 48000,
   "kissPort": 8105,
   "modems": [

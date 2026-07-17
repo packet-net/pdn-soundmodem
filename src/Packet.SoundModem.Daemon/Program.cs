@@ -64,10 +64,13 @@ using Packet.SoundModem.Ms110d;
 // Selection policy: with no @station the daemon OWNS the radio and brings it up HEADLESS
 // (registers as a GUI client, creates its own slice — the "pdn at the radio, no SmartSDR"
 // deployment; the default). --flex-freq/--flex-ant/--flex-mode set the created slice's
-// working frequency (default 14.100000 MHz), antenna (ANT1) and mode (DIGU). A trailing
-// @station selects ATTACH mode: coexist with a running SmartSDR by binding that station's
-// existing slice (the slice params are then ignored — SmartSDR configures it).
-// See docs/flex-integration.md §4/§8.
+// working frequency (default 14.100000 MHz), antenna (ANT1) and mode (DIGU); the headless path
+// also disables band persistence and explicitly tunes the slice, so it lands on the requested
+// QRG regardless of the radio's last-used band. A trailing @station selects ATTACH mode:
+// coexist with a running SmartSDR by binding that station's existing slice (the slice params
+// are then ignored — SmartSDR configures it). --flex-daxch sets the DAX channel to claim
+// (default 1) for BOTH paths; a headless client sharing a box with SmartSDR must pick a channel
+// SmartSDR is not using (it grabs DAX 1). See docs/flex-integration.md §4/§8.
 
 // 9600-family and freedv-* modems need 48 kHz DSP (the FreeDV engine is native 8 kHz, and
 // 48000 = 6·8000 while 12000 has no integer ratio); everything else runs at 12 kHz.
@@ -94,10 +97,12 @@ string? pagingSpec = null;
 int? ardopPort = null;
 var modemSpecs = new List<string>();
 // Headless FlexRadio slice params (--device flex: with no @station). Null = unset here;
-// resolved against the config's Flex section, then FlexTuning defaults.
+// resolved against the config's Flex section, then FlexTuning defaults. --flex-daxch applies
+// to both paths (headless and attach) — the DAX channel to claim.
 string? flexFreq = null;
 string? flexAnt = null;
 string? flexMode = null;
+string? flexDaxCh = null;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -121,6 +126,7 @@ for (int i = 0; i < args.Length; i++)
         case "--flex-freq": flexFreq = Next(); break;
         case "--flex-ant": flexAnt = Next(); break;
         case "--flex-mode": flexMode = Next(); break;
+        case "--flex-daxch": flexDaxCh = Next(); break;
         case "--help":
             Console.WriteLine("see source header for usage");
             return 0;
@@ -152,12 +158,14 @@ if (configPath is not null)
 }
 
 // Headless FlexRadio slice params: CLI flags override the config's Flex section, which
-// overrides FlexTuning's defaults (14.100000 MHz / ANT1 / DIGU).
+// overrides FlexTuning's defaults (14.100000 MHz / ANT1 / DIGU / DAX 1). --flex-daxch applies
+// to both headless and attach.
 var flexTuning = new FlexTuning
 {
     Frequency = flexFreq ?? flexConfig?.Frequency ?? "14.100000",
     Antenna = flexAnt ?? flexConfig?.Antenna ?? "ANT1",
     Mode = flexMode ?? flexConfig?.Mode ?? "DIGU",
+    DaxChannel = flexDaxCh ?? flexConfig?.DaxChannel ?? "1",
 };
 
 if (pagingSpec is not null)
@@ -389,7 +397,12 @@ if (deviceIsFlex)
         ? $"headless {flexTuning.Frequency} MHz {flexTuning.Antenna} {flexTuning.Mode}"
         : $"attach station '{flexSpec.Station}'";
     Console.WriteLine(
-        $"audio: {device} DAX {input.SampleRate} Hz → {DspRate} Hz (slice {flexSpec.SliceLetter}, {flexModeDesc})");
+        $"audio: {device} DAX {input.SampleRate} Hz → {DspRate} Hz "
+        + $"(slice {flexSpec.SliceLetter}, dax {flexTuning.DaxChannel}, {flexModeDesc})");
+    if (flex.Station.TuneWarning is string tuneWarning)
+    {
+        Console.Error.WriteLine($"flex: {tuneWarning}");
+    }
 }
 else
 {

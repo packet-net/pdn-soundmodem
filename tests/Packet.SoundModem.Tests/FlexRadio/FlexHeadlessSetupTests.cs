@@ -54,6 +54,50 @@ public sealed class FlexHeadlessSetupTests
     }
 
     [Fact]
+    public async Task Headless_setup_tunes_the_slice_off_the_persisted_band_to_the_requested_freq()
+    {
+        // The mock models band persistence: `slice create` reports the PERSISTED band
+        // (14.100000), ignoring the requested 7.050100. Only EnsureTunedAsync's `slice t` moves
+        // the slice — so a slice that ends up on 7.050100 proves the tune fix ran.
+        (MockFlexRadio mock, FlexClient client) = await ConnectAsync(DaxStreamFormat.FullBandwidth);
+        await using var _ = mock;
+        await using FlexStation station = await FlexStation.SetUpHeadlessAsync(
+            client, DaxStreamFormat.FullBandwidth,
+            new FlexStationOptions { Keepalive = false, Frequency = "7.050100" });
+
+        station.Client.TryGetObject("slice " + station.SliceIndex,
+            out IReadOnlyDictionary<string, string> slice).Should().BeTrue();
+        slice.GetValueOrDefault("RF_frequency").Should().Be("7.050100");
+        station.TuneWarning.Should().BeNull(); // verified on-frequency
+    }
+
+    [Fact]
+    public async Task Headless_setup_issues_band_persistence_disable_and_explicit_tune()
+    {
+        // Assert the proven live sequence via the mock's command log: disable band persistence,
+        // then `slice t <idx> <freq>` (%.6f). The redundant `radio set`/`slice set active` are
+        // best-effort; the `slice t` is the load-bearing fix.
+        (MockFlexRadio mock, FlexClient client) = await ConnectAsync(DaxStreamFormat.FullBandwidth);
+        await using var _ = mock;
+        await using FlexStation station = await FlexStation.SetUpHeadlessAsync(
+            client, DaxStreamFormat.FullBandwidth,
+            new FlexStationOptions { Keepalive = false, Frequency = "7.050100" });
+
+        IReadOnlyList<string> log = mock.CommandLog;
+        log.Should().Contain("radio set band_persistence_enabled=0");
+        log.Should().Contain($"slice set {station.SliceIndex} active=1");
+        log.Should().Contain($"slice t {station.SliceIndex} 7.050100");
+
+        // Order: the tune fix runs AFTER slice create and BEFORE the DAX enable (dax set/stream).
+        int create = IndexOfPrefix(log, "slice create");
+        int tune = IndexOfPrefix(log, $"slice t {station.SliceIndex} 7.050100");
+        int daxEnable = IndexOfPrefix(log, $"slice set {station.SliceIndex} dax=");
+        create.Should().BeGreaterThanOrEqualTo(0);
+        tune.Should().BeGreaterThan(create);
+        daxEnable.Should().BeGreaterThan(tune);
+    }
+
+    [Fact]
     public async Task Headless_setup_uses_the_requested_slice_letter()
     {
         (MockFlexRadio mock, FlexClient client) = await ConnectAsync(
@@ -110,6 +154,19 @@ public sealed class FlexHeadlessSetupTests
         ptt.Unkey();
         await WaitForAsync(() => InterlockState(station) == "RECEIVE");
         InterlockState(station).Should().Be("RECEIVE");
+    }
+
+    private static int IndexOfPrefix(IReadOnlyList<string> log, string prefix)
+    {
+        for (int i = 0; i < log.Count; i++)
+        {
+            if (log[i].StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private static string InterlockState(FlexStation station) =>

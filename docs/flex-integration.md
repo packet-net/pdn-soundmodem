@@ -504,15 +504,63 @@ headless sequence is: `client gui` (become a GUI client, get our own client_id) 
    `client_handle == FlexClient.Handle`** (handles compared with any `0x` prefix normalised away —
    the prologue `H` line carries none, slice status carries the `0x` form; matching on the handle,
    not a station name or a hardcoded `index_letter`, is the robust rule).
-4. **Best-effort** `client bind client_id=<uuid>` — swallow the `0x5000003E` rejection (surfaced on
+4. **Force the slice on-frequency** (`FlexStation.EnsureTunedAsync`) — the band-persistence fix
+   below. `radio set band_persistence_enabled=0` (best-effort) → `slice set <idx> active=1`
+   (best-effort) → `slice t <idx> <freq>` (the flexclient `SliceTune` form, `%.6f`; err=0) →
+   re-read the slice's `RF_frequency` (bounded poll, never hangs) and, if it still doesn't match
+   the request within ~2 Hz, surface `FlexStation.TuneWarning` (setup does **not** throw — the
+   `slice t` succeeded).
+5. **Best-effort** `client bind client_id=<uuid>` — swallow the `0x5000003E` rejection (surfaced on
    `FlexStation.HeadlessBindResult` for observability; a `Debug` line notes it), never fail setup.
    We never send `client set station` (it's rejected and unneeded).
-5. `EnableDaxAsync` **unchanged** — the eight-step DAX enable shared with the attach path
+6. `EnableDaxAsync` **unchanged** — the eight-step DAX enable shared with the attach path
    (§2.4): `slice set <idx> dax=<ch>` → `dax audio set <ch> slice=<idx> tx=1` →
-   `stream create type=dax_rx` → `audio stream … gain` → `stream create type=dax_tx`.
+   `stream create type=dax_rx` → `audio stream … gain` → `stream create type=dax_tx`. `<ch>` is
+   `FlexStationOptions.DaxChannel` (default `1`, `--flex-daxch`) — see the coexistence note below.
 
 Provenance: the DAX enable and PTT are the nDAX/nCAT port (MIT, KC2G). The **headless sequence
 itself is pdn's own** — nDAX is attach-only (it binds a station SmartSDR already created).
+
+### Band persistence — the headless tune fix (2026-07-17, live on the 6500)
+
+**The bug.** On a real 6500 with `band_persistence_enabled=1` (the firmware default), `slice
+create freq=<f> …` returns `err=0` **but the radio ignores the create `freq` and snaps the new
+slice back to the last-used band.** The slice comes up on the wrong QRG — its `RF_frequency`
+status reports the *persisted* band, not the requested one — and DAX then streams audio from the
+wrong frequency (silent / wrong band). The `slice create` alone is not enough to place a headless
+slice on-frequency.
+
+**The fix (proven live, in order):**
+
+1. `radio set band_persistence_enabled=0` — best-effort; this is the cause.
+2. `slice set <idx> active=1` — best-effort.
+3. `slice t <idx> <freq>` — the explicit tune (flexclient `SliceTune`, `%.6f`); returns `err=0`.
+4. Verify: re-read the slice's `RF_frequency`; it now matches `<freq>`.
+
+After this the slice is correctly on-frequency and DAX-RX carries real audio — verified by
+decoding a live off-air BPSK300 signal from GB7RDG through it. `EnsureTunedAsync` runs this between
+the slice create and the DAX enable in the headless path (only — the attach path leaves tuning to
+SmartSDR). Steps 1–2 are best-effort (some firmwares may not expose the setting; DAX still works
+if it's already off); step 3 is load-bearing; step 4 is observability — a residual mismatch sets
+`FlexStation.TuneWarning` (the daemon prints it to stderr) rather than failing setup or hanging.
+
+The `MockFlexRadio` headless mode models this faithfully so it's actually tested, not bypassed:
+`slice create` reports the slice on the **persisted band** (`14.100000`, ignoring the create
+`freq`), and `slice t <idx> <freq>` updates and re-emits `RF_frequency`. A headless setup that
+requests e.g. `7.050100` therefore only ends on `7.050100` **because `EnsureTunedAsync` ran** — the
+regression test (`FlexHeadlessSetupTests`, `FlexDeviceOpenTests`) asserts exactly that, plus the
+presence and ordering of `band_persistence_enabled=0` and `slice t` in the mock command log.
+
+### DAX channel — coexisting with a running SmartSDR (2026-07-17 live finding)
+
+A running SmartSDR **grabs DAX channel 1**, so a headless pdn client sharing the same box must
+claim a *different* DAX channel or the two contend. `FlexStationOptions.DaxChannel` (default `1`)
+is now configurable end-to-end: `--flex-daxch <n>` on the CLI, `"daxChannel"` in the config's
+`flex` section, threaded through `FlexTuning`/`FlexDevice` into the DAX enable (`slice set … dax=<n>`,
+`dax audio set <n> …`, `stream create type=dax_rx dax_channel=<n>`). It applies to **both** the
+headless and attach paths (it's the DAX channel the client claims, not a slice param). Guidance:
+**a headless client alongside SmartSDR should pick a free DAX channel** (SmartSDR is on 1), **or
+use attach mode** (`@station`) to share the slice SmartSDR already owns.
 
 **Offline validation:** `MockFlexRadio` gained a `MockSetupMode.Headless` that models the real
 6500's behaviour — answers `client gui` (returns a uuid), `slice create` (emits a `slice` status

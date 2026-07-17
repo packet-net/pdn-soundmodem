@@ -114,6 +114,16 @@ public sealed class FlexStation : IAsyncDisposable
     /// is surfaced for observability but never fails setup. Null in attach mode.</summary>
     public FlexResult? HeadlessBindResult { get; private set; }
 
+    /// <summary>Headless mode only: a human-readable warning when the created slice could not be
+    /// verified on the requested frequency after the explicit tune (<see cref="EnsureTunedAsync"/>).
+    /// A real 6500 with <c>band_persistence_enabled=1</c> (the default) ignores <c>slice create</c>'s
+    /// <c>freq</c> and snaps the slice to the last-used band; the headless path disables persistence
+    /// and re-tunes with <c>slice t</c>, then re-reads <c>RF_frequency</c>. If it still doesn't match
+    /// <see cref="FlexStationOptions.Frequency"/> within tolerance, that mismatch is surfaced here
+    /// (setup does NOT throw — the <c>slice t</c> command itself returned err=0). Null when the tune
+    /// verified OK, and null in attach mode (SmartSDR owns tuning there).</summary>
+    public string? TuneWarning { get; private set; }
+
     /// <summary>Attach path: connects the session (init UDP), binds to the running SmartSDR
     /// station's client, finds its slice by letter, and runs the DAX enable sequence. Use
     /// this only to coexist with a running SmartSDR; the default deployment is
@@ -164,11 +174,18 @@ public sealed class FlexStation : IAsyncDisposable
         //    client_handle == this session's handle — not a station name).
         await station.CreateSliceAsync(options, cancellation).ConfigureAwait(false);
 
-        // 3. Best-effort re-bind. We are already the owning GUI client, so the radio rejects
+        // 3. Force the slice onto the requested frequency. band_persistence (default-on on a real
+        //    6500) makes `slice create freq=…` snap the slice back to the last-used band, so the
+        //    create alone leaves us on the wrong QRG — DAX then streams silence / the wrong band.
+        //    Proven live on M0LTE's 6500 (docs/flex-integration.md §8). Attach mode skips this
+        //    (SmartSDR owns tuning).
+        await station.EnsureTunedAsync(options, cancellation).ConfigureAwait(false);
+
+        // 4. Best-effort re-bind. We are already the owning GUI client, so the radio rejects
         //    this (0x5000003E) and DAX works regardless — never fail setup on it.
         await station.TryBindSelfAsync(clientId, cancellation).ConfigureAwait(false);
 
-        // 4. The eight-step DAX enable, shared unchanged with the attach path.
+        // 5. The eight-step DAX enable, shared unchanged with the attach path.
         await station.EnableDaxAsync(options, cancellation).ConfigureAwait(false);
 
         await station.FinishAsync(options, cancellation).ConfigureAwait(false);
@@ -249,6 +266,113 @@ public sealed class FlexStation : IAsyncDisposable
             options.SetupTimeout,
             cancellation).ConfigureAwait(false);
         SliceIndex = sliceObject["slice ".Length..];
+    }
+
+    /// <summary>~2 Hz. A slice tunes in 1 Hz steps, so the reported <c>RF_frequency</c> should
+    /// equal the requested MHz to the six-decimal place; allow a couple of Hz for rounding.</summary>
+    private const double FrequencyToleranceMhz = 0.000002;
+
+    private async Task EnsureTunedAsync(FlexStationOptions options, CancellationToken cancellation)
+    {
+        // The requested frequency is a six-decimal MHz string; parse it so we can format the
+        // `slice t` argument (%.6f, the flexclient SliceTune form) and verify convergence.
+        if (!double.TryParse(
+                options.Frequency, NumberStyles.Float, CultureInfo.InvariantCulture, out double wantMhz))
+        {
+            // Not a numeric frequency — we can neither tune nor verify. Leave the created slice
+            // as-is rather than send a malformed `slice t`.
+            TuneWarning = $"headless tune skipped: '{options.Frequency}' is not a numeric MHz value";
+            return;
+        }
+
+        // 1. Disable band persistence — the cause. Best-effort: some firmwares may not expose the
+        //    setting, and DAX still works if it's already off, so never fail setup on its result.
+        await TryBestEffortAsync("radio set band_persistence_enabled=0", cancellation).ConfigureAwait(false);
+
+        // 2. Activate the slice so the tune takes. Best-effort for the same reason.
+        await TryBestEffortAsync($"slice set {SliceIndex} active=1", cancellation).ConfigureAwait(false);
+
+        // 3. The explicit tune — this is the actual fix; the radio returns err=0. Format %.6f so
+        //    the argument matches the six-decimal MHz form the radio expects.
+        string tuneFreq = wantMhz.ToString("F6", CultureInfo.InvariantCulture);
+        await _client.SendCommandExpectOkAsync($"slice t {SliceIndex} {tuneFreq}", cancellation)
+            .ConfigureAwait(false);
+
+        // 4. Verify. `slice t` re-emits the slice's RF_frequency status; poll (bounded — never
+        //    hang) until it converges on the request. If it never does, surface a warning rather
+        //    than throw: the tune command succeeded, so a mismatch is an observability signal
+        //    (band persistence still on? unexpected firmware?), not a fatal setup error.
+        string? got = await WaitForSliceFrequencyAsync(
+            wantMhz, options.SetupTimeout, cancellation).ConfigureAwait(false);
+        if (got is null)
+        {
+            TuneWarning =
+                $"headless tune unverified: slice {SliceIndex} reported no RF_frequency after 'slice t {tuneFreq}'";
+        }
+        else if (!double.TryParse(got, NumberStyles.Float, CultureInfo.InvariantCulture, out double gotMhz)
+            || Math.Abs(gotMhz - wantMhz) > FrequencyToleranceMhz)
+        {
+            TuneWarning =
+                $"headless tune mismatch: slice {SliceIndex} is on {got} MHz, requested {tuneFreq} MHz "
+                + "(band persistence still enabled?)";
+        }
+
+        if (TuneWarning is not null)
+        {
+            Debug.WriteLine($"flex: {TuneWarning}");
+        }
+    }
+
+    /// <summary>Sends a command and swallows any non-fatal failure (a non-zero radio error or a
+    /// protocol fault) — for the best-effort steps that must never fail headless setup.
+    /// Cancellation propagates.</summary>
+    private async Task TryBestEffortAsync(string command, CancellationToken cancellation)
+    {
+        try
+        {
+            FlexResult result = await _client.SendCommandAsync(command, cancellation).ConfigureAwait(false);
+            if (!result.IsOk)
+            {
+                Debug.WriteLine($"flex: best-effort '{command}' returned 0x{result.Error:X8}; continuing");
+            }
+        }
+        catch (FlexProtocolException ex)
+        {
+            Debug.WriteLine($"flex: best-effort '{command}' faulted ({ex.Message}); continuing");
+        }
+    }
+
+    /// <summary>Polls the created slice's <c>RF_frequency</c> until it lands within tolerance of
+    /// <paramref name="wantMhz"/> or the timeout elapses. Returns the last <c>RF_frequency</c>
+    /// seen (the converged value on success; a mismatching value, or null if the slice never
+    /// reported one, on timeout). Never throws on timeout — the caller decides how to surface a
+    /// miss.</summary>
+    private async Task<string?> WaitForSliceFrequencyAsync(
+        double wantMhz, TimeSpan timeout, CancellationToken cancellation)
+    {
+        string sliceObject = "slice " + SliceIndex;
+        long deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
+        string? last = null;
+        while (true)
+        {
+            if (_client.TryGetObject(sliceObject, out IReadOnlyDictionary<string, string> state)
+                && state.TryGetValue("RF_frequency", out string? rf))
+            {
+                last = rf;
+                if (double.TryParse(rf, NumberStyles.Float, CultureInfo.InvariantCulture, out double gotMhz)
+                    && Math.Abs(gotMhz - wantMhz) <= FrequencyToleranceMhz)
+                {
+                    return rf;
+                }
+            }
+
+            if (Environment.TickCount64 > deadline)
+            {
+                return last;
+            }
+
+            await Task.Delay(20, cancellation).ConfigureAwait(false);
+        }
     }
 
     private async Task TryBindSelfAsync(string clientId, CancellationToken cancellation)

@@ -72,6 +72,11 @@ public sealed class FlexConfig
 
     /// <summary>Slice demod mode. Default "DIGU".</summary>
     public string Mode { get; set; } = "DIGU";
+
+    /// <summary>The DAX channel the client claims (both headless and attach). Default "1". Set a
+    /// different channel to coexist with a running SmartSDR (which grabs DAX 1) — see
+    /// docs/flex-integration.md §8.</summary>
+    public string DaxChannel { get; set; } = "1";
 }
 
 /// <summary>Channel-access tunables (KISS clients can override at runtime).</summary>
