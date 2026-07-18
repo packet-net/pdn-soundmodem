@@ -15,6 +15,10 @@ namespace Packet.SoundModem.Modems;
 /// </summary>
 public sealed class Afsk1200MultiModem : IModem
 {
+    /// <summary>Bell 202 deviation of each tone from the centre (mark = centre − 500,
+    /// space = centre + 500); the demodulators' default shift.</summary>
+    private const double Bell202ToneShift = 500;
+
     private readonly AfskDemodulator[] _demodulators;
     private readonly EmphasisFilter[] _preFilters;
     private readonly AfskModulator _modulator;
@@ -47,7 +51,8 @@ public sealed class Afsk1200MultiModem : IModem
         _frameReceived = frameReceived;
         _deduper = new FrameDeduper(3L * sampleRate);
         _dedupeChunk = sampleRate / 10;
-        _modulator = new AfskModulator(sampleRate);
+        _modulator = new AfskModulator(
+            sampleRate, 1200, centerFrequency - Bell202ToneShift, centerFrequency + Bell202ToneShift);
 
         int emphasisCount = emphasisVariants ? 3 : 1;
         int frequencyCount = 2 * offsetPairs + 1;

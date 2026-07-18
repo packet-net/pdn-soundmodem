@@ -21,6 +21,10 @@ public enum Fx25Mode
 /// <see cref="IModem"/>, with optional FX.25 forward error correction.</summary>
 public sealed class Afsk1200Modem : IModem
 {
+    /// <summary>Bell 202 deviation of each tone from the centre (mark = centre − 500,
+    /// space = centre + 500); the demodulator's default shift.</summary>
+    private const double Bell202ToneShift = 500;
+
     private readonly AfskDemodulator _demodulator;
     private readonly AfskModulator _modulator;
     private readonly Fx25Mode _fx25;
@@ -82,7 +86,8 @@ public sealed class Afsk1200Modem : IModem
                 fx25Deframer?.PushBit(bit);
             },
             centerFrequency);
-        _modulator = new AfskModulator(sampleRate);
+        _modulator = new AfskModulator(
+            sampleRate, 1200, centerFrequency - Bell202ToneShift, centerFrequency + Bell202ToneShift);
     }
 
     /// <inheritdoc />

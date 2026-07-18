@@ -198,6 +198,34 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-18 (later²) — settable audio centre for the narrow modes (issue #39)
+
+The narrow modes' audio centre is now **variable per modem**, QtSoundModem-style, on both TX and
+RX — `--modem N:MODE:FREQ` (already the CLI shape) and config `"frequency"` now reach every
+variable-centre mode. Covers the AFSK tone-pair modes (afsk*, centre = mark/space midpoint,
+default 1700) and the BPSK/QPSK carrier modes (bpsk*/qpsk*, default 1500; 1650 for qpsk3600). The
+GB7RDG signal that sat ~41 Hz off our fixed 1500 (the finding behind #39/#40) is now correctable in
+the field.
+
+- **Real bug found completing the plumbing:** all three AFSK1200 modems (`Afsk1200Modem`,
+  `Afsk1200Il2pModem`, `Afsk1200MultiModem`) constructed their `AfskModulator` with the hardcoded
+  Bell-202 1200/2200 tones, so **TX ignored `centerFrequency`** (only the demodulator honoured it) —
+  a mistuned own-transmission at any non-default centre. Fixed to `centre ± 500` so both sides move
+  together (`Afsk300Modem` was already correct — it was the reference). Identical output at the
+  1700 default; only the previously-broken off-centre path changes.
+- The PSK factories `BpskModem.Bpsk300/Bpsk1200` and `QpskModem.Qpsk600/2400/3600` gained an
+  appended `carrierFrequency` param (append-only — the private ctor always took the carrier; the
+  positional NinoBench callers are undisturbed). `Program.cs` passes `frequency ?? default` through.
+- **Fixed-centre modes now reject a `:FREQ` at start-up** rather than silently ignoring it: the
+  baseband FSK families (fsk*/c4fsk*, DC-to-Nyquist, no audio centre) and the spec-fixed waveforms
+  (freedv-*/ms110d-*, POCSAG, ARDOP). Guard covers both the CLI and config paths.
+- `Modems/CentreFrequencyTests.cs` (14 cases): every variable-centre mode round-trips a frame at a
+  shifted centre; the PSK carrier modes additionally must NOT decode at the default centre (proving
+  the override genuinely moves the signal — the AFSK tone modes are deliberately offset-tolerant, so
+  that stricter check is PSK-only). Verified end-to-end on the real NinoTNC bpsk300 recording:
+  `--modem 0:bpsk300:1500` → 4 frames, `:1200` → 0. README / soundmodem.example.json / DaemonConfig
+  document the coverage. roadmap #39 marked RESOLVED.
+
 ### 2026-07-18 (later) — POCSAG codec lifted into M0LTE.Pocsag; consume it
 
 The POCSAG paging **codec** (`PocsagCodeword/Encoder/Decoder/Message/Page`, + a bundled copy

@@ -27,6 +27,15 @@ using Packet.SoundModem.Ms110d;
 // convention; RX is autobaud — the wnN suffix selects the transmit waveform only).
 // Multiple --modem options share the
 // audio channel and are addressed by the KISS port nibble (QtSoundModem multiplex model).
+//
+// The optional N:MODE:FREQ third field sets the modem's audio centre in Hz (both TX and
+// RX), QtSoundModem-style — e.g. --modem 0:bpsk300:1459 places 300 BPSK at 1459 Hz to
+// meet a peer that sits off the usual centre. It applies to the AFSK tone-pair modes
+// (afsk*, centre = mark/space midpoint, default 1700) and the BPSK/QPSK carrier modes
+// (bpsk*/qpsk*, default 1500, 1650 for qpsk3600). The baseband FSK families (fsk*/c4fsk*)
+// occupy DC-to-Nyquist and have no audio centre; the spec-fixed waveforms (freedv-*,
+// ms110d-*) are pinned by their standards — a :FREQ on any of these is an error, not
+// silently ignored.
 // --wav decodes a file instead of live audio (testing/corpus runs) and exits.
 // --psk-detector selects the BPSK/QPSK detection method: coherent (default, matches the
 // NinoTNC's Costas loop and noise margin) or differential (opt-in, acquires at zero preamble
@@ -223,11 +232,28 @@ channel.Csma.Persistence = csma.Persistence;
 channel.Csma.SlotTimeMilliseconds = csma.SlotTimeMilliseconds;
 channel.Csma.TxTailMilliseconds = csma.TxTailMilliseconds;
 
+// Only the variable-centre modes (AFSK tone-pair, BPSK/QPSK carrier) honour a :FREQ
+// override; the baseband FSK families (fsk*/c4fsk*, DC-to-Nyquist) and the spec-fixed
+// waveforms (freedv-*/ms110d-*) have no settable audio centre. Reject an explicit
+// frequency on those rather than silently ignoring it (issue #39).
+static bool SupportsVariableCentre(string mode) =>
+    mode.StartsWith("afsk", StringComparison.Ordinal)
+    || mode.StartsWith("bpsk", StringComparison.Ordinal)
+    || mode.StartsWith("qpsk", StringComparison.Ordinal);
+
 foreach (ModemConfig modemConfig in modems)
 {
     int subChannel = modemConfig.SubChannel;
     string mode = modemConfig.Mode;
     double? frequency = modemConfig.Frequency;
+    if (frequency is not null && !SupportsVariableCentre(mode))
+    {
+        Console.Error.WriteLine(
+            $"modem {subChannel}: mode '{mode}' has a fixed centre frequency — drop the " +
+            "frequency override (only the afsk*/bpsk*/qpsk* modes accept one)");
+        return 2;
+    }
+
     channel.AddModem(subChannel, sink => mode switch
     {
         "afsk1200" => new Afsk1200Modem(DspRate, sink, frequency ?? 1700),
@@ -241,10 +267,10 @@ foreach (ModemConfig modemConfig in modems)
         "afsk300-il2pc" => new Afsk300Modem(DspRate, sink, Afsk300Framing.Il2pCrc, frequency ?? 1700),
         "bpsk300" => new BpskModem(DspRate, sink, crc: true, frequency ?? 1500, detector: pskDetector),
         "bpsk300-nocrc" => new BpskModem(DspRate, sink, crc: false, frequency ?? 1500, detector: pskDetector),
-        "bpsk1200" => BpskModem.Bpsk1200(DspRate, sink, detector: pskDetector),
-        "qpsk600" => QpskModem.Qpsk600(DspRate, sink, detector: pskDetector),
-        "qpsk2400" => QpskModem.Qpsk2400(DspRate, sink, detector: pskDetector),
-        "qpsk3600" => QpskModem.Qpsk3600(DspRate, sink, detector: pskDetector),
+        "bpsk1200" => BpskModem.Bpsk1200(DspRate, sink, detector: pskDetector, carrierFrequency: frequency ?? 1500),
+        "qpsk600" => QpskModem.Qpsk600(DspRate, sink, detector: pskDetector, carrierFrequency: frequency ?? 1500),
+        "qpsk2400" => QpskModem.Qpsk2400(DspRate, sink, detector: pskDetector, carrierFrequency: frequency ?? 1500),
+        "qpsk3600" => QpskModem.Qpsk3600(DspRate, sink, detector: pskDetector, carrierFrequency: frequency ?? 1650),
         "fsk9600" => FskModem.Fsk9600(DspRate, sink, FskFraming.ClassicHdlc),
         "fsk9600-il2p" => new FskModem(DspRate, sink, FskFraming.Il2pCrc),
         "fsk4800-il2p" => FskModem.Fsk4800(DspRate, sink),
