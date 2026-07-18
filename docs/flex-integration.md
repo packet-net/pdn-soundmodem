@@ -612,3 +612,186 @@ The headless path ships in the product; confirm it drives the real 6500 end-to-e
 
 Success = keys the radio, `interlock=TRANSMITTING`, RF on the dummy load, no setup errors
 (the `client bind` rejection is expected and silently tolerated).
+
+---
+
+## 9. IQ interfaces — RX via DAX-IQ, TX via the Waveform API (2026-07-17)
+
+The DAX path above (§2–§8) gives the modem an *audio* pipe through a ~3 kHz slice — proven, shipped.
+This section is the separate **IQ** story: wideband complex baseband, for (a) multi-channel RX and
+(b) our own >3 kHz waveforms. Two very different mechanisms, one per direction.
+
+### 9.1 RX — DAX-IQ (receive only)
+
+`stream create type=dax_iq daxiq_channel=<n>` (wiki:TCPIP-stream) + `dax iq set <ch> pan=<p>
+rate=<24|48|96|192>` (wiki:TCPIP-dax) streams **wideband complex baseband** (VITA wide classes
+`0x02E3/E4/E5/E6`, up to 192 kSPS, 4 streams on a 6500 — §2.3/§3) *from* the radio, before the SSB
+filter and AGC. This is a clean fit for **multi-channel monitoring** (one slice → a digital-
+downconversion front-end → N of our real-baseband demodulators) and for feeding a wide own-mode RX.
+It rides the same VITA/UDP transport the DAX client already speaks; the only new DSP is an NCO-mix +
+decimate DDC to land signals at a modem's real baseband.
+
+**DAX-IQ receive verified on the 6500** (2026-07-18, spike harness). Bring-up: `client gui` →
+`display pan c freq=<f> ant=<A>` (GUI-client only; returns `<panId>,<waterfallId>`) → `display pan
+s <panId> daxiq_channel=<ch>` → `dax iq set <ch> pan=<panId> rate=<24|48|96|192>` → `stream create
+type=dax_iq daxiq_channel=<ch>` (returns the stream id) → `stream set <id> daxiq_rate=<r>`. The
+radio then streams wide VITA to our `client udpport`. **Payload format — the load-bearing gotcha:
+DAX-IQ is little-endian float32 interleaved I/Q (host order), NOT big-endian like DAX audio (§2.4).**
+At 96 kSPS each packet is class `0x534C02E5`, 4100 payload bytes = **512 complex samples + a 4-byte
+trailer word** (strip it). Confirmed by decoding a clean noise-floor spectrum into the dummy load.
+
+**Implemented + hardware-validated (2026-07-18).** `FlexRadio/FlexDaxIqSource.cs` implements the
+`Iq/IIqSource` seam over the `M0LTE.Flex` `FlexClient` — it runs the bring-up above, subscribes to
+`FlexClient.VitaPacketReceived` (an `Action<VitaPreamble, byte[]>`), routes packets matching its
+stream id into `FlexRadio/DaxIqStreamBuffer.cs` (LE-float32 depacketize → bounded reorder ring →
+blocking `Read`, with VITA-4-bit packet-loss counting). Smoke on M0LTE's 6500: DAX-IQ open, **238k
+complex samples / 2 s, 0 lost**, sane levels — feeds straight into `MultiChannelReceiver`. One
+package quirk handled: for these packets `VitaPreamble.PayloadLength` can exceed
+`bytes.Length − PayloadOffset`, so the source **clamps to the bytes present** rather than trusting
+the reported length (the buffer consumes only whole 8-byte pairs, so the trailing tail is harmless).
+Unit-tested offline in `tests/…/FlexRadio/DaxIqStreamBufferTests.cs` (byte-format, loss, blocking
+Read, and a tone round-trip through the depacketize + DDC). **Remaining:** daemon/CLI wiring to
+select multi-channel RX and place the per-channel offsets (a config-shape decision).
+
+**DAX-IQ is receive-only.** There is *no* path to push IQ *into* the radio for transmit through DAX.
+Ground truth: Doug **K3TZR** (author of xLib6000/xLib6001, the fullest clean-room Flex API libs),
+FlexRadio Community thread 7789005: *"I'm not aware of any ability to send IQ samples to the radio
+for transmission."* DAX-IQ streams IQ from the radio; `TXAudio` carries audio only. The wiki's
+`stream set <id> tx=1 daxiq_rate=…` line is **not** a wideband-IQ injection path.
+
+### 9.2 TX — the Waveform API (the only IQ-TX door — PROVEN on the 6500)
+
+Arbitrary TX-IQ on a Flex goes through the **Waveform API** (wiki:TCPIP-waveform). Contrary to the
+earlier assumption that this is a Windows/proprietary/on-radio-only path, three facts hold:
+
+- **It is GPL-3.0, not proprietary.** FlexRadio's own SDK — `flexradio/smartsdr-codec2` and the
+  maintained fork `n5ac/smartsdr-dsp` (the FreeDV/Codec2 waveform) — is GPL-3.0: *"open under GPL3
+  … third party access to an otherwise 'closed' software defined radio."* Licence-compatible with
+  this repo; we **port the protocol** (as we did DAX from the MIT Go refs), we don't depend on it.
+- **The modem can run OFF the radio, on a network host.** SDK README: the MODEM *"can be located
+  inside a separate process inside the radio, on a separate processor attached to the network, or
+  in a separate PC."* FlexRadio's developer page confirms "run both outside and inside the radio"
+  and names **FLEX-6000 or FLEX-8000**. So it fits the headless-Linux daemon model.
+- **Registration is the same ASCII TCP session we already speak** (`waveform create` / `waveform
+  set` / `sub slice all`), not a hidden loader. The one coupling: it registers a **mode** on the
+  radio (the flavour of §7's "Flex-native mode" — but there is no other way to put arbitrary IQ on
+  air; audio TX is clamped to the mode's ~3 kHz SSB filter).
+
+**Proven end-to-end on M0LTE's FLEX-6500** (API `V1.4.0.0`, 10.45.0.76, headless, dummy load on
+ANT1, `rfpower=10`), by a from-scratch raw-socket C# harness that speaks *none* of the SDK code —
+just the reverse-engineered wire protocol:
+
+| Step | Result |
+|---|---|
+| `waveform create name=… mode=PDN underlying_mode=USB version=…` (ad-hoc, over TCP) | **err=0** — a custom waveform registers headlessly, no SmartSDR, no installed `.ssdr_waveform` |
+| `slice set <n> mode=PDN` on our own headless slice | **accepted** — status confirms `mode=PDN` |
+| Radio pushes IF-data buffers to our UDP port | RX: 1303 buffers / 3 s; **stream direction = stream_id LSB** (even=RX, odd=TX) |
+| `xmit 1` | `interlock` RECEIVE → **PTT_REQUESTED → TRANSMITTING** — RF into the dummy load |
+| Radio pulls TX-IQ from our waveform | **224 TX buffers in 1.2 s; we supplied a complex sample for every one (0 drops)** — cadence 187.5 pkt/s = **24 kHz, 128 complex samples/packet** |
+| `xmit 0` | UNKEY_REQUESTED → READY → RECEIVE — clean |
+
+So: **IQ TX via the Waveform API works, headless, driven entirely from our own code.** The radio
+asked our process for transmit IQ and keyed the PA.
+
+**Implemented in the `M0LTE.Flex` package (0.3.0), 2026-07-18** — it belongs there next to
+`FlexStation`/`FlexPtt`, not in this consumer. `FlexWaveform.SetUpHeadlessAsync` registers the
+waveform + a slice in that mode + the band-persistence tune; `FlexWaveformIqOutput` is the
+reflection-driven IQ sink (`Write` a burst of interleaved I/Q, `Drain`, unkey) — on each radio
+TX-buffer request (full-bw IF-data class `0x03E3`, odd stream id) it reflects the next buffered IQ
+via `DaxStreamFormat.FullBandwidth.BuildPacket`. `FlexWaveformOptions.UnderlyingMode` defaults to
+`RAW` (§9.5). The mock models the waveform TX loop for offline tests; hardware-proven on M0LTE's
+6500 (RAW 3 kHz tone → 189 TX buffers reflected into the dummy load). pdn-soundmodem consumes it
+once 0.3.0 is published.
+
+### 9.3 Waveform TX-IQ packet (byte-exact, from smartsdr-dsp `vita_output.c`)
+
+Same 28-byte VITA header as the DAX-TX packet (§2.4) — the only deltas are the **class** and that the
+payload is **stereo float32 = interleaved I/Q** (2 words/sample):
+
+```
+byte 0    : 0x18                         // IFDataWithStream, class-id present
+byte 1    : 0xD0 | (packet_count & 0x0F) // TSI=Other, TSF=SampleCount, 4-bit count
+u16be     : 7 + samples*2                // length in 32-bit words (7 hdr + 2/complex-sample)
+u32be     : <stream id>                  // the id the radio pushed us (reflect the SAME id)
+u32be     : 0x001C2D                     // class_id_h = FlexRadio OUI
+u32be     : 0x534C03E3                   // class_id_l = SL stereo-float32 (I/Q) — full-bw class
+u32be     : 0                            // timestamp int
+u64be     : 0                            // timestamp frac
+<payload> : samples × { float32be I, float32be Q }
+```
+
+Sent over UDP to **radio:4991**. Direction/keying is status-driven: on `interlock
+state=PTT_REQUESTED` the radio streams TX buffers (odd stream_id) at our `udpport`; we reflect IQ;
+`UNKEY_REQUESTED` ends it. Provenance: `smartsdr-dsp` GPL-3.0 (N5AC/KE9H) — protocol pinned from
+`vita_output.c`, `sched_waveform.c`, `status_processor.c`, `FreeDV.cfg`.
+
+### 9.4 Registration + bring-up sequence (headless, no SmartSDR)
+
+`sub slice all` → `client udpport <p>` → `client gui` → `waveform create name=<n> mode=<M>
+underlying_mode=USB version=…` → `waveform set <n> tx=1` → `waveform set <n> {rx,tx}_filter
+low_cut=/high_cut=` (one param per command) → `waveform set <n> udpport=<p>` → own a headless slice
+(§8: `slice create` + `slice t` band-persistence tune) → `slice set <idx> mode=<M>` (activates the
+waveform) → `slice set <idx> tx=1` → `transmit set rfpower=<low>` → key with `xmit 1/0`.
+
+Firmware syntax notes (V1.4.0.0): filter params are **one per command**; `{rx,tx}_filter depth=`
+is **rejected** (`0x50000016`) though `low_cut`/`high_cut` work; `sub interlock all` is invalid
+(`0x500000A3`) but interlock status arrives to a GUI client anyway.
+
+### 9.5 Open question — achievable TX bandwidth (the crux for our own >3 kHz modes)
+
+The waveform runs at **24 kHz complex**, but `underlying_mode=USB` routes it through the SSB
+modulator + `tx_filter`. FreeDV uses USB with a 600–2400 Hz TX filter and even duplicates its real
+audio into I=Q — i.e. it is *not* demonstrating wideband arbitrary IQ→RF. A no-TX command probe on
+the 6500 shows the surface is **not** SSB-capped: `underlying_mode` accepts `USB/LSB/DIGU/DIGL/AM/
+FM/NFM/DFM/CW/RTTY/DATA/RAW/IQ` (note **RAW** and **IQ**), and `tx_filter high_cut` accepts up to
+**24000 Hz** with no clamp. That strongly *hints* true wideband/complex TX is reachable — but
+command acceptance ≠ on-air behaviour.
+
+**Self-capture via a second-slice DAX-IQ — attempted 2026-07-18, CONFIRMED NON-VIABLE on the 6500.**
+The obvious cheap check (a panadapter + DAX-IQ at the TX frequency, capturing while we transmit a
+comb of tones at ±2/5/8/11 kHz) does **not** work: during TX the receiver is blanked, so the DAX-IQ
+stream keeps flowing but carries only the muted noise floor — the transmitted comb is nowhere in the
+captured spectrum (comb bins sit within ~6 dB of the noise median, i.e. absent; mean magnitude is
+actually *lower* during TX than during RX). This upgrades §3's "not spec-accurate" to "sees nothing":
+DAX-IQ self-capture cannot measure our own TX. The TX path itself was fine (interlock TRANSMITTING,
+radio pulled the TX-IQ buffers) — we simply can't observe it from the same radio.
+
+**MEASURED with an external receiver — 2026-07-18, via M0LTE's UberSDR (`ka9q_ubersdr`, RX888 on an
+active loop) hearing the dummy-load leakage.** We TX a comb of complex tone-pairs (±3/±7 kHz) under
+each `underlying_mode` and capture the RF on UberSDR's `iq96` stream (a spectrogram makes it
+unambiguous — automated peak-picking is defeated by stronger on-air background carriers):
+
+- **`underlying_mode=RAW` → TRUE WIDEBAND COMPLEX IQ→RF.** All four comb tones reproduce, symmetric
+  about the carrier (±3 and ±7 kHz), i.e. **both sidebands** — a clean ~14 kHz-wide complex signal,
+  far beyond SSB. **This is the answer: the Waveform API DOES unlock wideband complex TX.**
+- **`underlying_mode=USB` and `=IQ` → SSB-limited.** Only the +3 kHz tone survives (~single
+  sideband, ~3 kHz) — as expected for USB; notably plain `IQ` behaves like USB here, **`RAW` is the
+  wideband one**.
+- **Ceiling = the waveform's 24 kHz complex rate (±12 kHz).** Pushing the comb to ±10 kHz brings in
+  imaging/aliasing near the Nyquist edge, so the clean usable width is ~±7–10 kHz (~14–20 kHz). Fine
+  for HF (2.7 kHz channels) and modest VHF; whether a higher waveform sample rate exists on the 6000
+  is unconfirmed. Evidence: `docs/img` spectrogram in the session, harness `scratchpad/wfspike`
+  (`rf <mode> comb …`) + `scratchpad/uberiq` (UberSDR iq96 capture).
+
+**UberSDR API notes (for reuse):** `POST /connection` (must send a **User-Agent** header — the
+server maps `user_session_id`→UA and rejects the WS without it) then
+`ws://…/ws?frequency=&mode=iq96&user_session_id=&version=2`; a bypassed (LAN/whitelisted) IP is
+required for the wide IQ modes. Binary frames are **zstd-compressed**; inside, per
+`clients/iq-recorder/pcm_decoder.go`: magic `0x5043`"PC" full header → samples at [29:] (sampleRate
+at [20:24]) or `0x504D`"PM" minimal → samples at [13:]; PCM is **big-endian int16, interleaved I/Q**.
+
+**Not viable for this**, confirmed earlier the same day: a second-slice DAX-IQ self-capture (RX
+blanked during TX). The external-RX route above is the one that works.
+
+### 9.6 What this means for the roadmap
+
+- **Multi-channel RX (own #2 interest):** unblocked, low-risk — DAX-IQ RX + a DDC front-end, no TX
+  story, no Waveform API, no licence question. The near-term IQ win.
+- **Wideband own-modes (#8/#9):** RX via DAX-IQ; **TX via the Waveform API is proven feasible,
+  licence-clean, AND wideband** (GPL-3.0 port, headless, 6000-supported; §9.5 confirms
+  `underlying_mode=RAW` carries true complex both-sideband IQ, ~14–20 kHz usable, capped by the
+  24 kHz waveform rate). The §9.5 gate is **cleared**: the Waveform API is a real wideband-TX path,
+  not an SSB dead-end. Building it effectively makes an own-mode a Flex *waveform* for the transmit
+  half — accepted, since there is no other IQ-TX door on a Flex. The ~24 kHz ceiling suits HF and
+  modest-VHF own-modes; a VARA-FM-class ~25 kbps signal would sit near the edge (confirm the
+  waveform max rate before committing to that).
