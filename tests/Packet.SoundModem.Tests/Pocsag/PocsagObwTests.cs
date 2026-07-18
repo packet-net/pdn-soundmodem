@@ -1,5 +1,5 @@
 using Packet.SoundModem.Pocsag;
-using Packet.SoundModem.Tests.Dsp;
+using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Tests.Pocsag;
 

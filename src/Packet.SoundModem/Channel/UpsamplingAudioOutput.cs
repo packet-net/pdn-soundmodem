@@ -1,5 +1,5 @@
 using M0LTE.Radio.Audio;
-using Packet.SoundModem.Dsp;
+using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Channel;
 

@@ -12,6 +12,13 @@
     <PackageVersion Include="M0LTE.Il2p" Version="0.1.0" />
     <PackageVersion Include="M0LTE.Ardop" Version="0.1.0" />
 
+    <!-- DSP primitives (FFT/FIR/decimator/upsampler/spectrum/occupied-bandwidth), the OFDM
+         modem (Cf/OfdmModulator/OfdmDemodulator/Datac*), and the LDPC codec — each lifted out
+         of this repo into its own package. -->
+    <PackageVersion Include="M0LTE.Dsp" Version="0.1.0" />
+    <PackageVersion Include="M0LTE.FecLdpc" Version="0.1.0" />
+    <PackageVersion Include="M0LTE.Ofdm" Version="0.1.0" />
+
     <!-- Testing (versions track packet.net's Directory.Packages.props) -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="xunit" Version="2.9.3" />

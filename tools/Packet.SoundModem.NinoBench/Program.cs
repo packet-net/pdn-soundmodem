@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.IO.Ports;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
-using Packet.SoundModem.Dsp;
+using M0LTE.Dsp;
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.Modems;
 

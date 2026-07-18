@@ -1,4 +1,4 @@
-using Packet.SoundModem.Dsp;
+using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Pocsag;
 

@@ -198,6 +198,36 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-18 — consume M0LTE.Dsp / M0LTE.FecLdpc / M0LTE.Ofdm; drop the duplicated source
+
+Third extraction flip (after Flex, then Fec/Il2p/Ardop): the **DSP primitives**, the **LDPC
+codec** and the whole **OFDM modem** were each lifted into their own repos/packages —
+**M0LTE.Dsp**, **M0LTE.FecLdpc**, **M0LTE.Ofdm** (all published **0.1.0** to nuget.org). This
+repo now **consumes all three** instead of carrying the code:
+
+- Deleted `Dsp/{Fft,FirFilter,FilterDesign,Decimator,Upsampler,SpectrumSource}` (**kept
+  `Dsp/ConstellationSource.cs`** — it depends on `Modems.IConstellationSource`, so it stayed
+  out of the package; it now takes `using M0LTE.Dsp;` for `Fft`), all of `Fec/Ldpc/` (7 files
+  — this supersedes the previous entry's "kept `Fec/Ldpc` in-repo": it is now the
+  `M0LTE.FecLdpc` package), and all of `Ofdm/` (12 files, including `Cf.cs` — `Cf` now lives in
+  `M0LTE.Ofdm`). Added `PackageReference`s to M0LTE.Dsp/FecLdpc/Ofdm (all 0.1.0).
+- Swapped `using Packet.SoundModem.{Dsp,Ofdm,Fec.Ldpc}` and `Packet.SoundModem.Tests.Dsp`
+  (where the `OccupiedBandwidth` helper lived) to the `M0LTE.{Dsp,Ofdm,FecLdpc}` equivalents
+  across src/tests/tools; `Ms110d/*` + `Modems/FreeDvDatacModem` (the `Cf` consumers) and the
+  `Modems`/`Channel`/`Pocsag` FFT/filter users came along. `SoundModemChannel` keeps both
+  `using M0LTE.Dsp;` (`SpectrumSource`) and `using Packet.SoundModem.Dsp;` (`ConstellationSource`).
+- Deleted the moved unit tests (`Dsp/{DecimatorTests,SpectrumTests}` + the `OccupiedBandwidth`
+  helper, all of `Fec/Ldpc/`, all of `Ofdm/` — pure tests of the moved types, now living and
+  passing in the package repos). **Kept + reused** the tests that exercise types that stayed:
+  `Dsp/{UpsamplerTests,OccupiedBandwidthTests}` (modem + NinoTNC-fixture + `WavFile` cases),
+  the OBW tests (`Pocsag`/`Ms110d`/`Ardop`, which use the package's `Fft`/`OccupiedBandwidth`),
+  the Watterson-channel helper and `ConstellationTests`.
+- Licences unchanged (this repo stays GPL-3.0). Out-of-solution generators `tools/oracle` and
+  `tools/gen-ldpc-tables` were left as-is (not in `pdn-soundmodem.slnx`; the LDPC-table
+  generator is now the `M0LTE.FecLdpc` repo's concern).
+
+Suite 407 pass / 31 skip. On branch `dsp-fecldpc-ofdm-to-nuget`.
+
 ### 2026-07-17 (later still²) — consume the M0LTE.* packages; drop the duplicated source
 
 Extended the extraction: **Fec** (core RS/CRC/Hamming/interleaver), **Il2p** and **Ardop**

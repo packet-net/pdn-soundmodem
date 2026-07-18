@@ -3,7 +3,7 @@ namespace Packet.SoundModem.Ms110d.Fec;
 /// <summary>
 /// Soft-decision Viterbi decoder for the Appendix D tail-biting mother codes
 /// (design §3.3). LLR convention: <b>positive ⇒ bit 0</b>, matching
-/// <see cref="Packet.SoundModem.Fec.Ldpc.LdpcDecoder"/>. Branch metrics are max-log
+/// <see cref="M0LTE.FecLdpc.LdpcDecoder"/>. Branch metrics are max-log
 /// (±LLR sums), so punctured positions carry LLR 0 and contribute nothing — depuncturing
 /// needs no special-casing here.
 /// </summary>
