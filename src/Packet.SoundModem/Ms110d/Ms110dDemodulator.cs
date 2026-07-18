@@ -1,3 +1,4 @@
+using M0LTE.Fec;
 using M0LTE.Dsp;
 using Packet.SoundModem.Ms110d.Fec;
 using M0LTE.Ofdm;
