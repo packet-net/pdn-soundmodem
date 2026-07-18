@@ -51,18 +51,21 @@ public sealed class BpskModem : IModem, IConstellationSource
     /// <summary>Creates the 300 bps mode (300 baud, 1500 Hz centre) — NinoTNC mode 8.</summary>
     /// <remarks>Roll-off 0.20, matching the 328 Hz a NinoTNC's own mode-8 transmission
     /// measures; the 0.35 default put us at 352 Hz, wider than the TNC we share the
-    /// channel with.</remarks>
+    /// channel with. <paramref name="carrierFrequency"/> (1500 Hz convention) moves the
+    /// modem within the audio passband, QtSoundModem-style.</remarks>
     public static BpskModem Bpsk300(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
-        PskDetector detector = PskDetector.Coherent) =>
-        new(sampleRate, frameReceived, crc, 1500, 300, 0.20, detector);
+        PskDetector detector = PskDetector.Coherent, double carrierFrequency = 1500) =>
+        new(sampleRate, frameReceived, crc, carrierFrequency, 300, 0.20, detector);
 
     /// <summary>Creates the 1200 bps mode (1200 baud, 1500 Hz centre) — NinoTNC mode 10,
     /// sharing its 1200 sym/s and 2400 Hz OBW with 2400 QPSK.</summary>
+    /// <remarks><paramref name="carrierFrequency"/> (1500 Hz convention) moves the modem
+    /// within the audio passband, QtSoundModem-style.</remarks>
     public static BpskModem Bpsk1200(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
-        PskDetector detector = PskDetector.Coherent) =>
-        new(sampleRate, frameReceived, crc, 1500, 1200, BpskModulator.DefaultRollOff, detector);
+        PskDetector detector = PskDetector.Coherent, double carrierFrequency = 1500) =>
+        new(sampleRate, frameReceived, crc, carrierFrequency, 1200, BpskModulator.DefaultRollOff, detector);
 
     /// <inheritdoc />
     public event Action<byte[], FrameQuality>? FrameDecoded;

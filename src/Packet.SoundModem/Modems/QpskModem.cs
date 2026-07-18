@@ -47,11 +47,13 @@ public sealed class QpskModem : IModem, IConstellationSource
     /// an SSB-friendly 500 Hz-OBW mode sharing its symbol rate with 300 BPSK.</summary>
     /// <remarks>Roll-off 0.20 rather than the default: it puts us at 322 Hz, just inside
     /// the 328 Hz a NinoTNC's own mode-9 transmission measures on the bench. The rule is
-    /// that we are never wider than the TNC we share a channel with.</remarks>
+    /// that we are never wider than the TNC we share a channel with.
+    /// <paramref name="carrierFrequency"/> (1500 Hz convention) moves the modem within the
+    /// audio passband, QtSoundModem-style.</remarks>
     public static QpskModem Qpsk600(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true, double rollOff = 0.20,
-        PskDetector detector = PskDetector.Coherent) =>
-        new(sampleRate, 300, 1500, frameReceived, crc, rollOff, detector);
+        PskDetector detector = PskDetector.Coherent, double carrierFrequency = 1500) =>
+        new(sampleRate, 300, carrierFrequency, frameReceived, crc, rollOff, detector);
 
     /// <summary>Creates the 2400 bps mode (1200 baud, 1500 Hz centre).</summary>
     /// <remarks>
@@ -59,13 +61,14 @@ public sealed class QpskModem : IModem, IConstellationSource
     /// signal measures 1852 Hz where ours is 1400 Hz, so matching it would mean widening
     /// for no gain. Bench evidence agrees — sweeping our roll-off up toward its width made
     /// its decode of us worse, not better (0.35 → 4/6, 0.6 → 0/6, 0.9 → 0/6 at a short
-    /// preamble).
+    /// preamble). <paramref name="carrierFrequency"/> (1500 Hz convention) moves the modem
+    /// within the audio passband, QtSoundModem-style.
     /// </remarks>
     public static QpskModem Qpsk2400(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
         double rollOff = QpskModulator.DefaultRollOff,
-        PskDetector detector = PskDetector.Coherent) =>
-        new(sampleRate, 1200, 1500, frameReceived, crc, rollOff, detector);
+        PskDetector detector = PskDetector.Coherent, double carrierFrequency = 1500) =>
+        new(sampleRate, 1200, carrierFrequency, frameReceived, crc, rollOff, detector);
 
     /// <summary>Creates the 3600 bps mode (1800 baud; the conventional 1650 Hz centre).</summary>
     /// <remarks>
@@ -85,15 +88,20 @@ public sealed class QpskModem : IModem, IConstellationSource
     /// buy margin, but with our TX already narrower than the reference hardware there is
     /// no compliance need.
     /// </para>
+    /// <para>
+    /// <paramref name="carrierFrequency"/> (the 1650 Hz mode-5 convention) moves the modem
+    /// within the audio passband, QtSoundModem-style.
+    /// </para>
     /// </remarks>
     public static QpskModem Qpsk3600(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true, double rollOff = 0.25,
-        PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null) =>
+        PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null,
+        double carrierFrequency = 1650) =>
         // The Costas loop is narrower here than the 6 % default: at 6⅔ samples/symbol and
         // the 0.25 roll-off, the wider loop tracks noise instead of carrier and loses even
         // at low SNR (bench: 0.06×baud scored 25/40 at σ0.08 where 0.03×baud scored 40/40).
         // 54 Hz keeps the coherent noise win and still pulls in a ~5 Hz offset.
-        new(sampleRate, 1800, 1650, frameReceived, crc, rollOff, detector, loopBandwidthHz ?? 1800 * 0.03);
+        new(sampleRate, 1800, carrierFrequency, frameReceived, crc, rollOff, detector, loopBandwidthHz ?? 1800 * 0.03);
 
     /// <inheritdoc />
     public event Action<byte[], FrameQuality>? FrameDecoded;

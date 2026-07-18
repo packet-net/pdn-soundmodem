@@ -16,6 +16,12 @@
   // "flex": { "frequency": "14.100000", "antenna": "ANT1", "mode": "DIGU", "daxChannel": "1" },
   "captureRate": 48000,
   "kissPort": 8105,
+  // "frequency" (optional) sets a modem's audio centre in Hz, QtSoundModem-style, on both
+  // TX and RX — e.g. move 300 BPSK to 1459 to meet a peer sitting off the usual centre.
+  // It applies to the AFSK tone-pair modes (afsk*, default 1700) and the BPSK/QPSK carrier
+  // modes (bpsk*/qpsk*, default 1500; 1650 for qpsk3600). The baseband FSK families
+  // (fsk*/c4fsk*) and the spec-fixed waveforms (freedv-*/ms110d-*) have no settable centre —
+  // a "frequency" on those is rejected at start-up. Omit the field to use the mode default.
   "modems": [
     { "subChannel": 0, "mode": "afsk1200-multi", "frequency": 1700 },
     { "subChannel": 1, "mode": "bpsk300", "frequency": 1500 }

@@ -14,6 +14,10 @@ public sealed class Afsk1200Il2pModem : IModem
 {
     private const int Baud = 1200;
 
+    /// <summary>Bell 202 deviation of each tone from the centre (mark = centre − 500,
+    /// space = centre + 500); the demodulator's default shift.</summary>
+    private const double Bell202ToneShift = 500;
+
     private readonly AfskDemodulator _demodulator;
     private readonly AfskModulator _modulator;
     private readonly bool _crc;
@@ -39,7 +43,8 @@ public sealed class Afsk1200Il2pModem : IModem
             },
             crcMode: crc);
         _demodulator = new AfskDemodulator(sampleRate, deframer.PushBit, centerFrequency);
-        _modulator = new AfskModulator(sampleRate);
+        _modulator = new AfskModulator(
+            sampleRate, Baud, centerFrequency - Bell202ToneShift, centerFrequency + Bell202ToneShift);
     }
 
     /// <inheritdoc />

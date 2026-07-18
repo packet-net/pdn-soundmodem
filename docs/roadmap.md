@@ -115,9 +115,17 @@ through the Flex's DAX audio, no sound card in path.
   loop), or default HF BPSK to Differential; re-examine the #5 bench result. Highest-value modem
   fix in the queue — it's a real NinoTNC-interop gap. Fixture committed.
 - **#40** — the general coherent-vs-differential off-air finding (now explained by #42).
-- **#39** — make the modem tone/carrier centre variable per-mode (QtSoundModem-style); the GB7RDG
-  signal sat ~41 Hz off our fixed 1500 Hz. Partially plumbed (`--modem N:MODE:FREQ`); complete +
-  document coverage; spec-fixed waveforms (FreeDV/ARDOP/110D/POCSAG) stay fixed.
+- **#39 — RESOLVED** (2026-07-18): the narrow modem tone/carrier centre is now variable per-mode
+  (QtSoundModem-style), on both TX and RX, via `--modem N:MODE:FREQ` / config `"frequency"`. Covers
+  the AFSK tone-pair modes (afsk*, default 1700) and the BPSK/QPSK carrier modes (bpsk*/qpsk*,
+  default 1500; 1650 for qpsk3600). Completing the plumbing exposed + fixed a real bug: all three
+  AFSK1200 modems' modulators were hardcoded to the Bell-202 1200/2200 tones, so their TX ignored
+  the centre (the demod already honoured it) — now both sides shift together. The PSK factories
+  (Bpsk1200/Qpsk600/2400/3600) gained a `carrierFrequency` param. Baseband FSK (fsk*/c4fsk*, no
+  audio centre) and the spec-fixed waveforms (freedv-*/ms110d-*/POCSAG/ARDOP) stay fixed — a
+  `:FREQ` on any of those is now rejected at start-up, not silently ignored. `CentreFrequencyTests`
+  locks in the round-trip-at-a-shifted-centre behaviour; README/config/DaemonConfig document the
+  coverage. The GB7RDG-was-~41-Hz-off case (#40) is now correctable in the field.
 - **#33** — flaky ARDOP host TCP test under full-suite load (races on port bind); harden the test.
 
 ---

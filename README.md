@@ -88,6 +88,16 @@ interoperates with, and NinoTNC compatibility is never given up to suit another 
   it is a robust HF *bit pipe*, not a connected-ARQ port (ARDOP is the connected one). Runs
   on the 48 kHz DSP path (native 9600 Hz). Design + verified tables: [docs/ms110d/](docs/ms110d/).
 
+**Per-modem audio centre (QtSoundModem-style).** Each narrow modem's audio centre is
+settable with the third field of `--modem N:MODE:FREQ` (or `"frequency"` in the config), on
+both transmit and receive — e.g. `--modem 0:bpsk300:1459` places 300 BPSK at 1459 Hz to meet
+a peer that sits off the usual centre, exactly as QtSoundModem's per-modem *Freq* does. It
+applies to the AFSK tone-pair modes (`afsk*`, centre = the mark/space midpoint, default
+1700 Hz) and the BPSK/QPSK carrier modes (`bpsk*`/`qpsk*`, default 1500 Hz; 1650 for
+`qpsk3600`). The baseband FSK families (`fsk*`/`c4fsk*`) fill DC-to-Nyquist and have no
+audio centre, and the spec-fixed waveforms (`freedv-*`, `ms110d-*`, POCSAG, ARDOP) are
+pinned by their standards — a `:FREQ` on any of those is rejected, not silently ignored.
+
 The QtSoundModem cross-validation matrix (which QtSM `ModemType` each of our modes pairs
 with, both directions) is in [docs/qtsm-loop.md](docs/qtsm-loop.md) § Results.
 
