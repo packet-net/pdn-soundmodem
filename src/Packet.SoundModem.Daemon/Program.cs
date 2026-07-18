@@ -392,8 +392,8 @@ Packet.SoundModem.Pocsag.PagingTcpServer? pagingServer = null;
 if (paging is not null)
 {
     var polarity = paging.InvertPolarity
-        ? Packet.SoundModem.Pocsag.PocsagPolarity.Inverted
-        : Packet.SoundModem.Pocsag.PocsagPolarity.Normal;
+        ? M0LTE.Pocsag.PocsagPolarity.Inverted
+        : M0LTE.Pocsag.PocsagPolarity.Normal;
     pagingServer = new Packet.SoundModem.Pocsag.PagingTcpServer(channel, paging.Port, paging.Baud, polarity);
     pagingServer.Start();
     Console.WriteLine($"paging tcp: 127.0.0.1:{pagingServer.LocalPort} ({pagingServer.Mode}, DAPNET/POCSAG-compatible)");

@@ -1,3 +1,4 @@
+using M0LTE.Pocsag;
 using System.Net.Sockets;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Pocsag;
@@ -175,7 +176,7 @@ public class PagingTcpServerTests : IAsyncLifetime
     [SkippableFact]
     public async Task The_Endpoint_Transmission_Satisfies_Multimon()
     {
-        Skip.If(PocsagMultimonTests.MultimonMissing, "multimon-ng is not installed");
+        Skip.If(MultimonNg.MultimonMissing, "multimon-ng is not installed");
 
         var (client, reader) = await ConnectAsync();
         using (client)
@@ -184,7 +185,7 @@ public class PagingTcpServerTests : IAsyncLifetime
                 .Should().StartWith("OK ");
 
             float[] transmitted = await CaptureTransmissionAsync();
-            string[] lines = PocsagMultimonTests.RunMultimonRaw(transmitted, "POCSAG1200");
+            string[] lines = MultimonNg.RunMultimonRaw(transmitted, "POCSAG1200");
             lines.Should().ContainSingle()
                 .Which.Should().Be(
                     "POCSAG1200: Address:  133703  Function: 3  Alpha:   Endpoint to multimon");

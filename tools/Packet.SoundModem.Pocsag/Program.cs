@@ -1,3 +1,4 @@
+using M0LTE.Pocsag;
 using System.Globalization;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Pocsag;
