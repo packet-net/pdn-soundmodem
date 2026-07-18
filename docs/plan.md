@@ -198,6 +198,17 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-18 (later) — POCSAG codec lifted into M0LTE.Pocsag; consume it
+
+The POCSAG paging **codec** (`PocsagCodeword/Encoder/Decoder/Message/Page`, + a bundled copy
+of the own-code `BitDpll`) was extracted into the standalone **M0LTE.Pocsag** package (AGPL,
+spec-first CCIR RPC No.1; depends on M0LTE.Dsp). This repo now consumes it and keeps only the
+daemon glue: `Pocsag/PagingTcpServer.cs` (bound to `SoundModemChannel`) and its integration
+test, both switched to `using M0LTE.Pocsag;` — as did `Program.cs` and the `sm-pocsag` tool.
+The moved codec source + unit tests were deleted; the multimon-ng runner the paging test
+needs was split out into `tests/…/Pocsag/MultimonNg.cs`. `Modems/BitDpll.cs` stays (the
+modems use it). Build clean, 371 pass / 31 skip.
+
 ### 2026-07-18 — consume M0LTE.Dsp / M0LTE.FecLdpc / M0LTE.Ofdm; drop the duplicated source
 
 Third extraction flip (after Flex, then Fec/Il2p/Ardop): the **DSP primitives**, the **LDPC

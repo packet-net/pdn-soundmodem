@@ -16,6 +16,7 @@
     <PackageReference Include="M0LTE.Fec" />
     <PackageReference Include="M0LTE.Il2p" />
     <PackageReference Include="M0LTE.Ardop" />
+    <PackageReference Include="M0LTE.Pocsag" />
     <!-- DSP primitives, OFDM modem and LDPC codec, each lifted out into its own package. -->
     <PackageReference Include="M0LTE.Dsp" />
     <PackageReference Include="M0LTE.FecLdpc" />

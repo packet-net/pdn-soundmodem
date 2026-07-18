@@ -1,3 +1,4 @@
+using M0LTE.Pocsag;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
