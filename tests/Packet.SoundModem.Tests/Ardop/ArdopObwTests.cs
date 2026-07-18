@@ -1,6 +1,6 @@
 using M0LTE.Ardop;
 using Packet.SoundModem.Audio;
-using Packet.SoundModem.Tests.Dsp;
+using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Tests.Ardop;
 

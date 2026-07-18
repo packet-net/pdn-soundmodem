@@ -1,5 +1,5 @@
 using Packet.SoundModem.Channel;
-using Packet.SoundModem.Dsp;
+using M0LTE.Dsp;
 using Packet.SoundModem.Modems;
 
 namespace Packet.SoundModem.Tests.Dsp;

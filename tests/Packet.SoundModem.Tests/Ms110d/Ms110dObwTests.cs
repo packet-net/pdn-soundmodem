@@ -1,6 +1,5 @@
-using Packet.SoundModem.Dsp;
+using M0LTE.Dsp;
 using Packet.SoundModem.Ms110d;
-using Packet.SoundModem.Tests.Dsp;
 
 namespace Packet.SoundModem.Tests.Ms110d;
 

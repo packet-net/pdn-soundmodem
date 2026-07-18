@@ -1,4 +1,4 @@
-using Packet.SoundModem.Ofdm;
+using M0LTE.Ofdm;
 
 namespace Packet.SoundModem.Tests.Channel;
 

@@ -1,5 +1,5 @@
 using Packet.SoundModem.Audio;
-using Packet.SoundModem.Dsp;
+using M0LTE.Dsp;
 using Packet.SoundModem.Modems;
 
 // sm-samples: one reference WAV per mode, for sharing and for regression material.

@@ -1,6 +1,6 @@
-using Packet.SoundModem.Dsp;
+using M0LTE.Dsp;
 using M0LTE.Il2p;
-using Packet.SoundModem.Ofdm;
+using M0LTE.Ofdm;
 
 namespace Packet.SoundModem.Modems;
 

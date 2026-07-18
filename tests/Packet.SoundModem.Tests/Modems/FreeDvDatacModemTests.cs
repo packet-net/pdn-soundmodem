@@ -1,9 +1,9 @@
 using System.Diagnostics;
 using Packet.SoundModem.Channel;
-using Packet.SoundModem.Dsp;
+using M0LTE.Dsp;
 using M0LTE.Il2p;
 using Packet.SoundModem.Modems;
-using Packet.SoundModem.Ofdm;
+using M0LTE.Ofdm;
 using Packet.SoundModem.Tests.Channel;
 using Xunit.Abstractions;
 

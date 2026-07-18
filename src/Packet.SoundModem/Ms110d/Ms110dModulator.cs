@@ -1,6 +1,6 @@
-using Packet.SoundModem.Dsp;
+using M0LTE.Dsp;
 using Packet.SoundModem.Ms110d.Fec;
-using Packet.SoundModem.Ofdm;
+using M0LTE.Ofdm;
 
 namespace Packet.SoundModem.Ms110d;
 
