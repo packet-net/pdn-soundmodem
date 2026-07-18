@@ -22,12 +22,12 @@ public sealed class BpskModem : IModem, IConstellationSource
     /// <param name="baud">Symbol rate — also the bit rate, BPSK carrying one bit per
     /// symbol.</param>
     /// <param name="rollOff">RRC roll-off.</param>
-    /// <param name="detector">Coherent or differential detection.</param>
+    /// <param name="detector">Differential (default) or coherent detection.</param>
     public BpskModem(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
         double carrierFrequency = 1500, int baud = 300,
         double rollOff = BpskModulator.DefaultRollOff,
-        PskDetector detector = PskDetector.Coherent)
+        PskDetector detector = PskDetector.Differential)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _crc = crc;
@@ -55,7 +55,7 @@ public sealed class BpskModem : IModem, IConstellationSource
     /// modem within the audio passband, QtSoundModem-style.</remarks>
     public static BpskModem Bpsk300(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
-        PskDetector detector = PskDetector.Coherent, double carrierFrequency = 1500) =>
+        PskDetector detector = PskDetector.Differential, double carrierFrequency = 1500) =>
         new(sampleRate, frameReceived, crc, carrierFrequency, 300, 0.20, detector);
 
     /// <summary>Creates the 1200 bps mode (1200 baud, 1500 Hz centre) — NinoTNC mode 10,
@@ -64,7 +64,7 @@ public sealed class BpskModem : IModem, IConstellationSource
     /// within the audio passband, QtSoundModem-style.</remarks>
     public static BpskModem Bpsk1200(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
-        PskDetector detector = PskDetector.Coherent, double carrierFrequency = 1500) =>
+        PskDetector detector = PskDetector.Differential, double carrierFrequency = 1500) =>
         new(sampleRate, frameReceived, crc, carrierFrequency, 1200, BpskModulator.DefaultRollOff, detector);
 
     /// <inheritdoc />

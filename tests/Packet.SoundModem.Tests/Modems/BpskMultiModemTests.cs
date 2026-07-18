@@ -72,19 +72,23 @@ public class BpskMultiModemTests
     }
 
     [Fact]
-    public void The_Step_And_Pairs_Tuneables_Set_The_Coverage()
+    public void The_Step_And_Pairs_Tuneables_Set_The_Coherent_Coverage()
     {
-        // A +26 Hz signal is outside a narrow bank (1 pair × 8 Hz = ±8 Hz) but inside a wide one
-        // (4 pairs × 10 Hz = ±40 Hz) — the exposed tuneables must actually change coverage.
+        // The step/pairs tuneables exist for the COHERENT path, whose narrow loop only acquires a
+        // carrier near a branch. A +26 Hz signal is outside a narrow bank (1 pair × 8 Hz = ±8 Hz)
+        // but inside a wide one (4 pairs × 10 Hz = ±40 Hz). (Differential tolerates ±baud/4 on a
+        // single branch, so coverage is a coherent-only concern — hence the explicit detector.)
         float[] audio = OffTune(26);
 
         var narrow = new List<byte[]>();
-        new BpskMultiModem(SampleRate, narrow.Add, offsetPairs: 1, offsetHz: 8).Process(audio);
-        narrow.Should().BeEmpty("±8 Hz coverage cannot reach +26 Hz");
+        new BpskMultiModem(SampleRate, narrow.Add, offsetPairs: 1, offsetHz: 8,
+            detector: PskDetector.Coherent).Process(audio);
+        narrow.Should().BeEmpty("±8 Hz coherent coverage cannot reach +26 Hz");
 
         var wide = new List<byte[]>();
-        new BpskMultiModem(SampleRate, wide.Add, offsetPairs: 4, offsetHz: 10).Process(audio);
-        wide.Should().ContainSingle("±40 Hz coverage reaches +26 Hz").Which.Should().Equal(Frame);
+        new BpskMultiModem(SampleRate, wide.Add, offsetPairs: 4, offsetHz: 10,
+            detector: PskDetector.Coherent).Process(audio);
+        wide.Should().ContainSingle("±40 Hz coherent coverage reaches +26 Hz").Which.Should().Equal(Frame);
     }
 
     [Fact]
