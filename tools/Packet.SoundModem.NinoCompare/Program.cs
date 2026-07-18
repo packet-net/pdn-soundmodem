@@ -252,6 +252,8 @@ static int Analyse(Dictionary<string, string> opts)
 
     // Pass 1: decode every chunk into our frame set, stamped with wall-clock time.
     var ours = new List<FrameRecord>();
+    double windowStart = chunks[0].Start;
+    double windowEnd = chunks[0].Start;
     foreach ((string path, double start) in chunks)
     {
         double elapsed = 0;
@@ -266,7 +268,20 @@ static int Analyse(Dictionary<string, string> opts)
             modem.Process(samples.AsSpan(pos, length));
             elapsed += length / (double)dspRate;
         }
+
+        // LoadDecimated appends a dspRate/2 flush tail; the real audio ends before it.
+        windowEnd = Math.Max(windowEnd, start + (samples.Length - dspRate / 2) / (double)dspRate);
     }
+
+    // Only compare against NinoTNC frames that fall within the analysed audio's time span — a
+    // live nino.jsonl keeps growing, and frames received after the last chunk's audio ends (or
+    // before the first begins) have no audio here and would be counted as false misses. A small
+    // guard absorbs MQTT-vs-audio timestamp skew.
+    const double guard = 15;
+    int ninoTotal = nino.Count;
+    nino = nino.Where(n => n.TimeSeconds is null
+        || (n.TimeSeconds >= windowStart - guard && n.TimeSeconds <= windowEnd + guard)).ToList();
+    int outOfWindow = ninoTotal - nino.Count;
 
     // Diff on content; a NinoTNC frame with no counterpart of ours is a miss.
     var oursByHex = ours.GroupBy(r => r.Hex).ToDictionary(g => g.Key, g => new Queue<FrameRecord>(g));
@@ -285,6 +300,8 @@ static int Analyse(Dictionary<string, string> opts)
         }
     }
 
+    Console.WriteLine($"window {Iso(windowStart)} .. {Iso(windowEnd)} " +
+        $"({(windowEnd - windowStart) / 60:F0} min){(outOfWindow > 0 ? $"; {outOfWindow} nino frame(s) outside it excluded" : string.Empty)}");
     Console.WriteLine($"chunks {chunks.Count} | NinoTNC {nino.Count} | ours {ours.Count} | " +
         $"matched {matched} | MISSED {missed.Count} | extra {oursByHex.Values.Sum(q => q.Count)}");
     Console.WriteLine($"copy of NinoTNC: {(nino.Count == 0 ? 0 : 100.0 * matched / nino.Count):F1}%");
