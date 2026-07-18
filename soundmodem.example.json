@@ -23,14 +23,16 @@
   // (fsk*/c4fsk*) and the spec-fixed waveforms (freedv-*/ms110d-*) have no settable centre —
   // a "frequency" on those is rejected at start-up. Omit the field to use the mode default.
   //
-  // The frequency-diversity BPSK banks (bpsk300-multi / bpsk1200-multi) run parallel decoder
-  // branches at stepped centres to catch off-frequency HF carriers a single narrow coherent
-  // loop cannot acquire. "offsetPairs" (branches either side of centre) and "offsetStepHz"
-  // (Hz between branches) tune the coverage — ±offsetPairs·offsetStepHz. Omit for the mode
-  // defaults (4 pairs, baud/40 step). Ignored by non-bank modes.
+  // bpsk300/bpsk1200 default to a differential frequency-diversity bank — parallel decoder
+  // branches at stepped centres (differential detection matches/beats coherent on real off-air
+  // HF, benchmarked against a NinoTNC). "offsetPairs" (branches either side of centre) and
+  // "offsetStepHz" (Hz between branches) tune coverage — ±offsetPairs·offsetStepHz; omit for
+  // the defaults (4 pairs, baud/40 step). offsetPairs:0 gives a plain single modem.
+  // --psk-detector coherent forces coherent (QPSK stays coherent regardless). bpsk300-multi /
+  // bpsk1200-multi are aliases of bpsk300 / bpsk1200.
   "modems": [
     { "subChannel": 0, "mode": "afsk1200-multi", "frequency": 1700 },
-    { "subChannel": 1, "mode": "bpsk300-multi", "frequency": 1500, "offsetPairs": 4, "offsetStepHz": 7.5 }
+    { "subChannel": 1, "mode": "bpsk300", "frequency": 1500, "offsetPairs": 4, "offsetStepHz": 7.5 }
   ],
   "ptt": { "type": "cm108", "device": "/dev/hidraw0", "gpio": 3 },
   // POCSAG paging endpoint (optional; DAPNET/POCSAG-compatible waveform, local paging

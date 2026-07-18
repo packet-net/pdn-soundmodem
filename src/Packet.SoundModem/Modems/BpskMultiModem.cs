@@ -4,18 +4,20 @@ namespace Packet.SoundModem.Modems;
 /// Frequency-diversity BPSK: 2·<c>offsetPairs</c>+1 parallel <see cref="BpskModem"/> branches
 /// spaced <c>offsetHz</c> apart around the channel centre, with content-based deduplication
 /// across the bank — the QtSoundModem/UZ7HO multi-decoder model (see
-/// <see cref="Afsk1200MultiModem"/>) applied to the coherent PSK modes.
+/// <see cref="Afsk1200MultiModem"/>) applied to the PSK modes.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Coherent (Costas) detection carries a real ~1–2 dB noise-margin advantage over differential
-/// detection, but its narrow tracking loop — the bandwidth that earns that margin and keeps the
-/// QtSM interop clean — only pulls in a few Hz of carrier offset within a short (~150 ms on-air)
-/// preamble. Real HF carriers arrive tens of Hz off (dial resolution, TX tone tolerance, drift).
-/// Rather than widen the loop (which forfeits the margin and the interop), this runs a bank of
-/// ordinary narrow-loop branches at stepped centres: whichever branch sits within a few Hz of the
-/// signal acquires and decodes it, and the branch's step reports the offset. Transmit uses the
-/// centre branch only.
+/// A bank of stepped branches helps both detectors on real HF. For <b>coherent</b>, the narrow
+/// Costas tracking loop only pulls a few Hz of carrier offset in within a short (~150 ms on-air)
+/// preamble, yet real carriers arrive tens of Hz off (dial resolution, TX tone tolerance, drift);
+/// a branch near the carrier acquires it without widening the loop (which would forfeit coherent's
+/// margin). For <b>differential</b> (the default detector), which already tolerates wide offset on
+/// one branch, the diversity still helps in multi-signal conditions — measured live on the GB7RDG
+/// 40 m channel, a single differential modem matched 116/117 NinoTNC frames while the bank matched
+/// 117/117 and decoded 2 more the NinoTNC missed (the extra frame was a beacon overlapping other
+/// traffic that an offset branch resolved). The branch's step reports the carrier offset. Transmit
+/// uses the centre branch only.
 /// </para>
 /// <para>
 /// The step is sized to the single-branch offset tolerance, which scales with the symbol rate:
@@ -46,12 +48,11 @@ public sealed class BpskMultiModem : IModem
     /// i.e. a plain <see cref="BpskModem"/>).</param>
     /// <param name="offsetHz">Frequency step between adjacent branches; defaults to baud/40,
     /// sized to the single-branch offset tolerance.</param>
-    /// <param name="detector">Coherent (default) or differential detection. The bank exists for
-    /// the coherent path; differential already tolerates the full ±baud/4 on one branch.</param>
+    /// <param name="detector">Differential (default) or coherent detection.</param>
     public BpskMultiModem(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
         double centreFrequency = 1500, int baud = 300, int offsetPairs = 4,
-        double? offsetHz = null, PskDetector detector = PskDetector.Coherent)
+        double? offsetHz = null, PskDetector detector = PskDetector.Differential)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         ArgumentOutOfRangeException.ThrowIfNegative(offsetPairs);
@@ -83,14 +84,14 @@ public sealed class BpskMultiModem : IModem
     /// <summary>Creates the 300 bps bank (NinoTNC mode 8) around <paramref name="carrierFrequency"/>.</summary>
     public static BpskMultiModem Bpsk300(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
-        PskDetector detector = PskDetector.Coherent, double carrierFrequency = 1500,
+        PskDetector detector = PskDetector.Differential, double carrierFrequency = 1500,
         int offsetPairs = 4) =>
         new(sampleRate, frameReceived, crc, carrierFrequency, 300, offsetPairs, detector: detector);
 
     /// <summary>Creates the 1200 bps bank (NinoTNC mode 10) around <paramref name="carrierFrequency"/>.</summary>
     public static BpskMultiModem Bpsk1200(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
-        PskDetector detector = PskDetector.Coherent, double carrierFrequency = 1500,
+        PskDetector detector = PskDetector.Differential, double carrierFrequency = 1500,
         int offsetPairs = 4) =>
         new(sampleRate, frameReceived, crc, carrierFrequency, 1200, offsetPairs, detector: detector);
 

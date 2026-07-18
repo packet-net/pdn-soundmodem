@@ -46,12 +46,12 @@ public sealed class BpskDemodulator
     /// <param name="bitSink">Receives each decided bit (1 = phase repeat, 0 = reversal).</param>
     /// <param name="carrierFrequency">Carrier centre, 1500 Hz by convention.</param>
     /// <param name="baud">Symbol rate: 300 (mode 8) or 1200 (mode 10).</param>
-    /// <param name="detector">Coherent (default) or differential detection.</param>
+    /// <param name="detector">Differential (default) or coherent detection.</param>
     /// <param name="loopBandwidthHz">Costas loop bandwidth (coherent only); defaults to 6 %
     /// of the symbol rate, tuned against measurement.</param>
     public BpskDemodulator(
         int sampleRate, Action<int> bitSink, double carrierFrequency = 1500, int baud = 300,
-        PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null)
+        PskDetector detector = PskDetector.Differential, double? loopBandwidthHz = null)
     {
         ArgumentNullException.ThrowIfNull(bitSink);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);

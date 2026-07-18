@@ -68,6 +68,27 @@ public class BpskLoopbackTests
     }
 
     [Fact]
+    public void The_Default_Detector_Tolerates_A_Large_Carrier_Offset()
+    {
+        // Locks the default detector to Differential (the #5 reversal): a 40 Hz TX offset with a
+        // short preamble decodes only because the default is differential — a narrow coherent
+        // loop could not acquire it in time. If the default silently reverts to coherent, this
+        // single-modem decode fails.
+        byte[] ax25 = Convert.FromHexString("86A24040404060969668908A94FF03F0");
+        byte[] wire = Il2pCodec.Encode(ax25, appendCrc: true);
+        byte[] bits = Il2pFramer.FrameBits(wire, 96, Il2pFramer.PreambleStyle.Zeros);
+        float[] audio = new BpskModulator(SampleRate, carrierFrequency: 1540).Modulate(bits);
+
+        var frames = new List<byte[]>();
+        var deframer = new Il2pDeframer((frame, _) => frames.Add(frame), crcMode: true);
+        // No detector argument — exercises the library default.
+        var modem = new BpskDemodulator(SampleRate, deframer.PushBit, carrierFrequency: 1500);
+        modem.Process(WithPadding(audio));
+
+        frames.Should().ContainSingle().Which.Should().Equal(ax25);
+    }
+
+    [Fact]
     public void A_Small_Carrier_Offset_Is_Tolerated()
     {
         // TX at 1505 Hz, RX expecting 1500: differential detection rotates 6°/symbol.

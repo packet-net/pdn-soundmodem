@@ -36,9 +36,12 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 - ✅ HDLC bit layer (flags, stuffing, abort, NRZI, FCS) + streaming IL2P deframer
   (±1-bit sync tolerance). (2026-07-14)
 - ✅ WAV 16-bit PCM read/write offline harness. (2026-07-14)
-- ✅ 300 BPSK modulator + demodulator (coherent Costas detection default, differential
-  opt-in; IL2P symbol map; QtSM P300 filter plan) — clean/noisy/offset/multi-block
-  loopbacks green. (2026-07-14; coherent default 2026-07-16, issue #5)
+- ✅ 300 BPSK modulator + demodulator (IL2P symbol map; QtSM P300 filter plan) —
+  clean/noisy/offset/multi-block loopbacks green. (2026-07-14; coherent default 2026-07-16
+  per #5, **reverted to differential default 2026-07-18 per #40/#42** — on real off-air HF
+  benchmarked against a NinoTNC, differential + the frequency-diversity bank matches/beats
+  coherent because real carriers arrive off-frequency with short preambles. Coherent stays a
+  detector option; QPSK keeps its coherent default.)
 - ✅ 1200 AFSK modulator + demodulator (UZ7HO Mux3 chain: BPF → mix → I/Q LPF →
   cross-multiply discriminator, power-normalised, envelope slicer, direwolf-style DPLL) —
   clean/noisy/quiet/back-to-back loopbacks green. (2026-07-14)
@@ -212,6 +215,24 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   committed corpora don't yet).
 
 ## Amendment log
+
+### 2026-07-18 (later⁴) — differential + frequency-diversity bank is the BPSK default (reverses #5, per #40/#42)
+
+Benchmarked our BPSK decode against GB7RDG's NinoTNC on the live 40 m channel (same off-air
+audio; the NinoTNC's frames off MQTT as ground truth; `tools/Packet.SoundModem.NinoCompare`).
+Over a busy 2-hour, 3-node window: a single differential modem copied **116/117** NinoTNC
+frames; the **differential frequency-diversity bank (`BpskMultiModem`, pairs=4) copied 117/117
+and decoded 2 more the NinoTNC missed** — 100 %, matching and slightly beating the reference.
+Root finding (correcting #42): coherent's narrow Costas loop can't acquire the tens-of-Hz
+offset real carriers arrive with inside a short (~150 ms) preamble; the bank sidesteps that,
+and the diversity helps differential too in multi-signal conditions (a deep-dived beacon the
+single modem missed decoded on an offset branch). So the library BPSK default flips
+**coherent → differential** (`BpskModem`/`BpskDemodulator`/`BpskMultiModem`), and the daemon's
+`bpsk300`/`bpsk1200` become the differential bank (offsetPairs/offsetStepHz tuneable;
+offsetPairs:0 = single modem). Coherent stays a `--psk-detector` option; **QPSK keeps its
+coherent default** (V.26A interop validated coherent, #5/#6). QtSM + loopback suites stay green
+under the new default; a guard test locks it. The frequency shift for the ARDOP slot-2 bench
+lives in **M0LTE.Dsp 0.1.1** (`FrequencyShifter`). Released as pdn-soundmodem 0.5.0.
 
 ### 2026-07-18 (later³) — the general convolutional codec folds into M0LTE.Fec 0.2.0
 
