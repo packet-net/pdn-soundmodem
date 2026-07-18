@@ -1,0 +1,18 @@
+[Unit]
+Description=GB7RDG 40m off-air audio capture (15-min UTC chunks)
+After=sound.target
+
+[Service]
+Type=simple
+User=tf
+Environment=TZ=UTC
+ExecStartPre=/bin/mkdir -p /home/tf/gb7rdg-capture/audio
+# tf is in the audio group, so no sudo. %% escapes % for systemd; arecord's strftime sees %Y…
+ExecStart=/usr/bin/arecord -D plughw:CARD=Device,DEV=0 -f S16_LE -c 1 -r 48000 \
+  --use-strftime --max-file-time 900 \
+  /home/tf/gb7rdg-capture/audio/gb7rdg-40m-%%Y%%m%%dT%%H%%M%%SZ.wav
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

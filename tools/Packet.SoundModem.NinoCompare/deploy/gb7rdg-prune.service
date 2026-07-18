@@ -1,0 +1,8 @@
+[Unit]
+Description=Prune GB7RDG audio ring buffer (keep ~24h)
+
+[Service]
+Type=oneshot
+User=tf
+# Delete chunks older than 24h (1440 min). The active chunk (mtime now) is never matched.
+ExecStart=/usr/bin/find /home/tf/gb7rdg-capture/audio -name *.wav -mmin +1440 -delete

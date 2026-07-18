@@ -35,6 +35,7 @@ static async Task<int> Dispatch(string[] args)
             "compare" => Compare(Options(args)),
             "analyse" => Analyse(Options(args)),
             "shift" => Shift(Options(args)),
+            "station-offsets" => StationOffsets(Options(args)),
             _ => Usage(),
         };
     }
@@ -66,6 +67,11 @@ static int Usage()
               SSB-translate a slot's audio centre (M0LTE.Dsp.FrequencyShifter) and resample —
               e.g. --from 850 --to 1500 lifts slot-2 ARDOP to ardopcf's fixed 1500 Hz centre,
               since we cannot retune the receiver (slot-3's NinoTNC has a fixed tone centre).
+          station-offsets --chunks DIR [--centre 1500] [--baud 300] [--pairs 4] [--step]
+                          [--out CSV]
+              For every unique station heard across the timestamped chunks, measure the fine
+              carrier offset of each transmission and aggregate per callsign (mean / spread /
+              drift over time). Writes a (station,unixtime,offsetHz,confidence) CSV for plotting.
         """);
     return 1;
 }
@@ -439,6 +445,136 @@ static int Compare(Dictionary<string, string> opts)
     }
 
     return 0;
+}
+
+// --- station-offsets --------------------------------------------------------------------------
+
+static int StationOffsets(Dictionary<string, string> opts)
+{
+    const int dspRate = 12000;
+    string chunkDir = Required(opts, "chunks");
+    double centre = Number(opts, "centre", 1500);
+    int baud = (int)Number(opts, "baud", 300);
+    int pairs = (int)Number(opts, "pairs", 4);
+    double? step = opts.ContainsKey("step") ? Number(opts, "step", 0) : null;
+
+    var chunks = Directory.EnumerateFiles(chunkDir, "*.wav")
+        .Select(path => (Path: path, Start: ChunkStartUnix(path)))
+        .Where(c => c.Start is not null)
+        .Select(c => (c.Path, Start: c.Start!.Value))
+        .OrderBy(c => c.Start)
+        .ToList();
+    if (chunks.Count == 0)
+    {
+        Console.Error.WriteLine($"no timestamped chunks in {chunkDir}");
+        return 2;
+    }
+
+    // (unixTime, offsetHz, confidence) per station callsign.
+    var perStation = new Dictionary<string, List<(double Time, double OffsetHz, double Confidence)>>(StringComparer.Ordinal);
+
+    foreach ((string path, double start) in chunks)
+    {
+        // The live capture service is writing the newest chunk as we read; skip any chunk whose
+        // WAV header/data isn't complete yet (or is otherwise unreadable) rather than aborting.
+        float[] samples;
+        try
+        {
+            samples = LoadDecimated(path, dspRate);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or ArgumentException)
+        {
+            Console.Error.WriteLine($"skip {Path.GetFileName(path)}: {ex.Message}");
+            continue;
+        }
+
+        // Pass 1: decode, capturing each frame's decode position, sender, and length.
+        var events = new List<(double Elapsed, string From, int Bytes)>();
+        double elapsed = 0;
+        var modem = new BpskMultiModem(dspRate, static _ => { }, crc: true, centre, baud, pairs, step);
+        modem.FrameDecoded += (frame, _) =>
+            events.Add((elapsed, Ax25Text.Describe(frame).From ?? "?", frame.Length));
+        int block = dspRate / 10;
+        for (int pos = 0; pos < samples.Length; pos += block)
+        {
+            int length = Math.Min(block, samples.Length - pos);
+            modem.Process(samples.AsSpan(pos, length));
+            elapsed += length / (double)dspRate;
+        }
+
+        // Pass 2: for each frame, measure the fine carrier offset over the audio window it
+        // occupies (peak coherence locks to that transmission's carrier). The estimator's
+        // ±baud/4 range covers any realistic offset, so it reads the absolute offset directly.
+        foreach ((double frameElapsed, string from, int bytes) in events)
+        {
+            double frameSeconds = (bytes * 8 + 48) / (double)baud;        // payload + ~preamble
+            int end = Math.Min(samples.Length, (int)((frameElapsed + 0.5) * dspRate));
+            int begin = Math.Max(0, end - (int)((frameSeconds + 2.0) * dspRate));
+            if (end - begin < dspRate / 2)
+            {
+                continue;
+            }
+
+            var estimator = new BpskCarrierOffsetEstimator(dspRate, centre, baud);
+            estimator.Process(samples.AsSpan(begin, end - begin));
+            if (!estimator.HasEstimate)
+            {
+                continue;
+            }
+
+            if (!perStation.TryGetValue(from, out var list))
+            {
+                perStation[from] = list = [];
+            }
+
+            list.Add((start + frameElapsed, estimator.OffsetHz, estimator.Confidence));
+        }
+    }
+
+    if (perStation.Count == 0)
+    {
+        Console.Error.WriteLine("no stations decoded across the chunks");
+        return 0;
+    }
+
+    // Report, most-heard first.
+    Console.WriteLine($"{"station",-12} {"n",4}  {"mean",7} {"min",6} {"max",6} {"spread",6}  drift");
+    foreach ((string station, var samplesList) in perStation.OrderByDescending(kv => kv.Value.Count))
+    {
+        var offs = samplesList.Select(s => s.OffsetHz).ToList();
+        double mean = offs.Average();
+        double min = offs.Min();
+        double max = offs.Max();
+        double sd = Math.Sqrt(offs.Select(o => (o - mean) * (o - mean)).Average());
+        // "Drift" if the spread across time exceeds a few Hz beyond per-frame measurement jitter.
+        string drift = max - min > 6 ? $"yes (±{(max - min) / 2:F0} Hz over {Span(samplesList)})" : "steady";
+        Console.WriteLine($"{station,-12} {samplesList.Count,4}  {mean,6:+0.0;-0.0} {min,6:+0.0;-0.0} "
+            + $"{max,6:+0.0;-0.0} {sd,6:F1}  {drift}");
+    }
+
+    if (opts.TryGetValue("out", out string? csv))
+    {
+        using var w = new StreamWriter(csv);
+        w.WriteLine("station,unixtime,iso,offsetHz,confidence");
+        foreach ((string station, var list) in perStation)
+        {
+            foreach ((double time, double off, double conf) in list.OrderBy(s => s.Time))
+            {
+                w.WriteLine($"{station},{time:F1},{Iso(time)},{off:F1},{conf:F2}");
+            }
+        }
+
+        Console.Error.WriteLine($"wrote per-transmission CSV → {csv}");
+    }
+
+    return 0;
+}
+
+// Human span of a station's observation window.
+static string Span(List<(double Time, double OffsetHz, double Confidence)> s)
+{
+    double minutes = (s.Max(x => x.Time) - s.Min(x => x.Time)) / 60;
+    return minutes < 90 ? $"{minutes:F0} min" : $"{minutes / 60:F1} h";
 }
 
 // --- shift ------------------------------------------------------------------------------------

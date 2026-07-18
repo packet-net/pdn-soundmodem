@@ -1,0 +1,15 @@
+[Unit]
+Description=GB7RDG NinoTNC MQTT frame capture (slot-3 reference)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tf
+Environment=DOTNET_ROOT=/usr/lib/dotnet
+ExecStart=/home/tf/src/pdn-soundmodem/tools/Packet.SoundModem.NinoCompare/bin/Release/net10.0/nino-compare mqtt-capture --broker mqtt.lan --topic kissproxy/gb7rdg-node/40m/fromModem/unframed/port0/DataFrameKissCmd --out /home/tf/gb7rdg-capture/nino.jsonl
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -42,6 +42,31 @@ Uses packet.net's `Packet.Ax25` codec to parse frames and `MQTTnet` to consume t
    regression test (see `OffAirBpskTests` / `BpskMultiModemTests`), repeat until we match or beat
    the NinoTNC.
 
+## Per-station carrier offset
+
+```sh
+nino-compare station-offsets --chunks audio/ --out station-offsets.csv
+```
+
+For every unique station heard across the timestamped chunks, it decodes the traffic, measures the
+**fine carrier offset of each transmission** (`BpskCarrierOffsetEstimator` over that frame's audio
+window), and aggregates per callsign — count, mean, min/max, spread, and a drift flag — plus a
+`(station, unixtime, iso, offsetHz, confidence)` CSV for plotting the time evolution. Defaults to a
+single differential modem (`--pairs 0`, fast and finds essentially every station); the fine offset
+comes from the estimator, not the bank.
+
+Observed on GB7RDG 40 m: each station has a **distinct, stable** offset fingerprint (e.g. GB7WEM
+≈ −2 Hz, EI0RSI ≈ +5 Hz, PD4R-12 ≈ −16 Hz), and the same physical station on different SSIDs reads
+the same offset (a nice self-check). The ±~20 Hz spread across stations is what sizes the coherent
+bank's step/span.
+
+## Durable capture rig
+
+`deploy/` holds the systemd units for an unattended rig (adjust paths/device/topic for your host):
+`gb7rdg-audio.service` (15-min UTC chunks), `gb7rdg-mqtt.service` (NinoTNC reference feed),
+`gb7rdg-prune.timer` (24 h audio ring buffer), and `gb7rdg-offsets.timer` (refreshes the
+per-station offset survey every 3 h). All run as an unprivileged user in the `audio` group.
+
 ## Frame files (JSONL)
 
 One JSON object per line: `{ "t": <seconds>, "hex": "<AX.25 bytes>", "from": ..., "to": ...,
