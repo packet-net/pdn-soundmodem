@@ -1,0 +1,13 @@
+[Unit]
+Description=GB7RDG per-station carrier-offset survey over the audio ring buffer
+
+[Service]
+Type=oneshot
+User=tf
+Environment=DOTNET_ROOT=/usr/lib/dotnet
+# Single differential modem (pairs 0) — fast, finds essentially every station; the fine offset
+# comes from the estimator, not the bank. Overwrites the report + CSV each run (reflects the
+# current 24h ring buffer, with each station's transmissions time-stamped for drift analysis).
+ExecStart=/home/tf/src/pdn-soundmodem/tools/Packet.SoundModem.NinoCompare/bin/Release/net10.0/nino-compare station-offsets --chunks /home/tf/gb7rdg-capture/audio --pairs 0 --out /home/tf/gb7rdg-capture/analysis/station-offsets.csv
+StandardOutput=truncate:/home/tf/gb7rdg-capture/analysis/station-offsets.txt
+StandardError=journal
