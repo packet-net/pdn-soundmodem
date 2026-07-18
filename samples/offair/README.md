@@ -10,17 +10,27 @@ vectors elsewhere in `samples/`, these are **live RF**, so they carry real-world
 2026-07-17 through a **FlexRadio 6500** — RF → near-field coupling into an ANT1 dummy load →
 Flex demodulates USB → DAX network audio → `WavFile`. **16-bit mono PCM, 48 kHz, ~20 s.**
 
-- Dial 7050.100 kHz USB; the signal's carrier tone measured at **1541 Hz** in the audio (the
-  RF tone centre is ~7051.64 kHz, ~41 Hz above the nominal 7051.60 — see #39, variable centre).
-- Contains a **steady carrier tone** (78 dB over the noise median — strong) followed by a
-  connected-mode frame.
-- **Decodes to `GB7RDG-2>EI0RSI-1`** (CRC-valid IL2P) with `BpskModem` at 300 baud —
-  **but only with `PskDetector.Differential`; `PskDetector.Coherent` (the current default)
-  recovers 0 frames even at the matched 1541 Hz centre with the signal strong.**
+- Dial 7050.100 kHz USB. The **connected-mode frame** in this file sits ~**8 Hz** off the 1500 Hz
+  audio centre (tone ≈1508 Hz, measured by a symbol-spaced squaring estimate over the burst; SNR
+  ≈16 dB — not a weak signal).
+- Opens with a long **steady carrier** — that is the NinoTNC test button held down during the
+  capture, *not* something that appears in normal on-air traffic; ignore it. Real transmissions
+  lead with a short (~150 ms) preamble only.
+- **Decodes to `GB7RDG-2>EI0RSI-1`** (CRC-valid IL2P, 15 bytes:
+  `8A9260A4A692E28E846EA4888E6571`) with `BpskModem` at 300 baud using
+  `PskDetector.Differential`. Guarded by `OffAirBpskTests`.
 
-This is the evidence for the coherent-detector interop gap: the NinoTNC BPSK modes use a
-(modified) Costas loop for **coherent demodulation with differential encoding** to resolve the
-Costas 180° phase ambiguity; our coherent mode does the carrier recovery but omits the
-differential-decode step, so it can't resolve the ambiguity. See the tracking issue and #40 /
-the #5 default-detector decision. Decode it with the flex-smoke `wavdecode` sweep or a
-`BpskModem` unit test to reproduce.
+**Why coherent doesn't decode _this_ capture (#40/#42, corrected diagnosis).** The original theory
+— that our coherent path omits the differential-decode step — is wrong: it *does* differentially
+decode the recovered absolute symbols (`BpskDemodulator.ProcessCoherent` + the DPLL sink), exactly
+as the NinoTNC does. The real cause is **acquisition**: the coherent Costas loop runs a narrow
+tracking bandwidth (the bandwidth that earns coherent's ~1–2 dB noise margin and keeps the QtSM
+interop clean), and that loop cannot pull an offset carrier onto frequency within a short (~150 ms)
+preamble. This captured frame's preamble is too short for the narrow loop to lock even on-frequency;
+only a wide loop gets it, and a wide loop forfeits the margin and breaks the QtSM corpus.
+
+The **general** off-frequency case (normal ~150 ms preamble, tens-of-Hz offset) is handled by
+`BpskMultiModem` — a bank of ordinary narrow-loop branches at stepped centres (the QtSoundModem
+`afsk1200-multi` model applied to PSK); whichever branch sits within a few Hz of the signal
+acquires it. See `BpskMultiModemTests`. Reproduce this file with a `BpskModem`/`BpskMultiModem`
+unit test decimating 48 kHz → 12 kHz.

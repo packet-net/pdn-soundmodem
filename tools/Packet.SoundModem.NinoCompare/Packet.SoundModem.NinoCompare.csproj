@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>nino-compare</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="M0LTE.Dsp" />
+    <PackageReference Include="MQTTnet" />
+    <PackageReference Include="Packet.Ax25" />
+    <PackageReference Include="Packet.Core" />
+  </ItemGroup>
+
+</Project>

@@ -20,6 +20,12 @@
     <PackageVersion Include="M0LTE.FecLdpc" Version="0.1.0" />
     <PackageVersion Include="M0LTE.Ofdm" Version="0.1.0" />
 
+    <!-- Dev tooling only (tools/Packet.SoundModem.NinoCompare) — the NinoTNC comparison harness.
+         All MIT-licensed; not referenced by the shipped pdn-soundmodem package. -->
+    <PackageVersion Include="MQTTnet" Version="5.2.0.1603" />
+    <PackageVersion Include="Packet.Ax25" Version="0.23.0" />
+    <PackageVersion Include="Packet.Core" Version="0.23.0" />
+
     <!-- Testing (versions track packet.net's Directory.Packages.props) -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="xunit" Version="2.9.3" />

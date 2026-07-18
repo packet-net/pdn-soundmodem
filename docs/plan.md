@@ -160,6 +160,21 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   30 Hz steps with content dedupe (daemon mode `afsk1200-multi`). On direwolf's 100-frame
   noise battery: **38 = exact atest parity** (single decoder: 34). Off-tune-transmitter
   and dedupe tests.
+- ✅ BPSK frequency-diversity bank (2026-07-18, #40/#42): `BpskMultiModem` — the same
+  stepped-centre model for the coherent PSK modes (daemon `bpsk300-multi`/`bpsk1200-multi`).
+  Coherent's narrow tracking loop can't pull a tens-of-Hz offset carrier onto frequency
+  within a ~150 ms preamble without forfeiting its noise margin / QtSM interop, so a bank of
+  ordinary branches (step ≈ baud/40) covers the offset range instead — a single centred
+  coherent modem misses ±12–24 Hz, the bank decodes it. Corrected the #42 diagnosis: the
+  coherent path already differential-decodes (it was never the missing step); the real gap is
+  short-preamble acquisition of an offset carrier. The committed GB7RDG off-air frame (~8 Hz
+  offset, 16 dB, but a preamble too short for the narrow loop even on-frequency) decodes via
+  `PskDetector.Differential` — guarded by `OffAirBpskTests`. Bank step/span are tuneable
+  (`offsetPairs`/`offsetStepHz` in the daemon modem config). `BpskCarrierOffsetEstimator`
+  (symbol-spaced squaring, measured the fixture at +8 Hz / 0.98 confidence) characterises
+  per-station offset to size the default step. `tools/Packet.SoundModem.NinoCompare` is the
+  benchmark harness: capture a NinoTNC's decodes off MQTT, decode the same audio with the bank,
+  diff (matched / we-missed / we-extra) to drive tuning + regression tests to NinoTNC parity.
 - ✅ CM108 PTT (logged under Phase 3).
 - ✅ Daemon config file (2026-07-15): `--config soundmodem.json` (comments + trailing
   commas tolerated; `soundmodem.example.json` in repo root); CLI flags still work and

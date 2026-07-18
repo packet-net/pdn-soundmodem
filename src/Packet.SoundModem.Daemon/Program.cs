@@ -19,7 +19,10 @@ using Packet.SoundModem.Ms110d;
 //                  [--paging PORT[:BAUD]]
 //                  [--ardop PORT]
 //
-// Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, qpsk2400, qpsk3600 (both IL2P+CRC),
+// Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, bpsk300-multi/bpsk1200-multi
+// (frequency-diversity banks — parallel branches at stepped centres, for coherent decode of
+// off-frequency HF carriers a single narrow loop cannot acquire), qpsk2400, qpsk3600 (both
+// IL2P+CRC),
 // fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC), freedv-datac0/1/3/4/13/14 (FreeDV datac
 // OFDM waveform; payloads carry the family-standard IL2P+CRC bit stream — a pdn convention,
 // FreeDV defines no framing at the raw-data layer), ms110d-wn0/1/2/3/4/5/6/13
@@ -267,7 +270,11 @@ foreach (ModemConfig modemConfig in modems)
         "afsk300-il2pc" => new Afsk300Modem(DspRate, sink, Afsk300Framing.Il2pCrc, frequency ?? 1700),
         "bpsk300" => new BpskModem(DspRate, sink, crc: true, frequency ?? 1500, detector: pskDetector),
         "bpsk300-nocrc" => new BpskModem(DspRate, sink, crc: false, frequency ?? 1500, detector: pskDetector),
+        "bpsk300-multi" => new BpskMultiModem(DspRate, sink, crc: true, frequency ?? 1500, baud: 300,
+            offsetPairs: modemConfig.OffsetPairs ?? 4, offsetHz: modemConfig.OffsetStepHz, detector: pskDetector),
         "bpsk1200" => BpskModem.Bpsk1200(DspRate, sink, detector: pskDetector, carrierFrequency: frequency ?? 1500),
+        "bpsk1200-multi" => new BpskMultiModem(DspRate, sink, crc: true, frequency ?? 1500, baud: 1200,
+            offsetPairs: modemConfig.OffsetPairs ?? 4, offsetHz: modemConfig.OffsetStepHz, detector: pskDetector),
         "qpsk600" => QpskModem.Qpsk600(DspRate, sink, detector: pskDetector, carrierFrequency: frequency ?? 1500),
         "qpsk2400" => QpskModem.Qpsk2400(DspRate, sink, detector: pskDetector, carrierFrequency: frequency ?? 1500),
         "qpsk3600" => QpskModem.Qpsk3600(DspRate, sink, detector: pskDetector, carrierFrequency: frequency ?? 1650),

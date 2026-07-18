@@ -20,6 +20,18 @@ public sealed class ModemConfig
     /// FSK families (fsk*/c4fsk*) and the spec-fixed waveforms (freedv-*/ms110d-*) have no
     /// settable centre; setting one on those is rejected at start-up, not ignored.</summary>
     public double? Frequency { get; set; }
+
+    /// <summary>Frequency-diversity banks (<c>bpsk*-multi</c>) only: extra decoder branches
+    /// either side of centre (0 = a single centred modem). Null uses the mode default (4).
+    /// More branches widen off-frequency coverage at a linear CPU cost. Ignored by non-bank
+    /// modes.</summary>
+    public int? OffsetPairs { get; set; }
+
+    /// <summary>Frequency-diversity banks (<c>bpsk*-multi</c>) only: the Hz step between
+    /// adjacent branches. Null uses the mode default (baud/40), sized to the single-branch
+    /// offset tolerance. Coverage spans ±<see cref="OffsetPairs"/>·this. Ignored by non-bank
+    /// modes.</summary>
+    public double? OffsetStepHz { get; set; }
 }
 
 /// <summary>PTT configuration.</summary>
