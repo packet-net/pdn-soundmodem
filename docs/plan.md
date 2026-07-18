@@ -213,6 +213,16 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-18 (later³) — the general convolutional codec folds into M0LTE.Fec 0.2.0
+
+`Ms110d/Fec` was a mix: a general rate-1/2 tail-biting convolutional codec
+(`ConvolutionalCode` / `TailBitingEncoder` / `TailBitingViterbiDecoder`) and the
+MIL-STD-188-110D-specific puncture/interleaver tables. The general codec moved into
+**M0LTE.Fec 0.2.0** (it belongs next to the block codes there); the 110D tables
+(`Ms110dPuncture`, `Ms110dInterleaver`) stay in `Ms110d/Fec`. This repo bumps M0LTE.Fec to
+0.2.0 and the Ms110d modulator/demodulator/framing/puncture (+ its test) now `using M0LTE.Fec;`
+for the codec. Build clean, 397 pass / 31 skip.
+
 ### 2026-07-18 (later²) — settable audio centre for the narrow modes (issue #39)
 
 The narrow modes' audio centre is now **variable per modem**, QtSoundModem-style, on both TX and

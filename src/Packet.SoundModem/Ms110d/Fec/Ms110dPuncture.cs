@@ -1,3 +1,4 @@
+using M0LTE.Fec;
 namespace Packet.SoundModem.Ms110d.Fec;
 
 /// <summary>
