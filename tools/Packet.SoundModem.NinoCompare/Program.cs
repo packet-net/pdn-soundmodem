@@ -34,6 +34,7 @@ static async Task<int> Dispatch(string[] args)
             "decode" => Decode(Options(args)),
             "compare" => Compare(Options(args)),
             "analyse" => Analyse(Options(args)),
+            "shift" => Shift(Options(args)),
             _ => Usage(),
         };
     }
@@ -61,6 +62,10 @@ static int Usage()
                   [--detector] [--preroll 6] [--window 9]
               Decode every timestamped audio chunk, diff against the NinoTNC feed, and extract a
               WAV snippet around each frame the NinoTNC decoded but we missed (for deep-dive).
+          shift --wav FILE --out FILE --from HZ --to HZ [--outrate 12000]
+              SSB-translate a slot's audio centre (M0LTE.Dsp.FrequencyShifter) and resample —
+              e.g. --from 850 --to 1500 lifts slot-2 ARDOP to ardopcf's fixed 1500 Hz centre,
+              since we cannot retune the receiver (slot-3's NinoTNC has a fixed tone centre).
         """);
     return 1;
 }
@@ -416,6 +421,45 @@ static int Compare(Dictionary<string, string> opts)
         }
     }
 
+    return 0;
+}
+
+// --- shift ------------------------------------------------------------------------------------
+
+static int Shift(Dictionary<string, string> opts)
+{
+    string wav = Required(opts, "wav");
+    string outPath = Required(opts, "out");
+    double from = Number(opts, "from", 0);
+    double to = Number(opts, "to", 0);
+    int outRate = (int)Number(opts, "outrate", 12000);
+
+    var (samples, rate) = WavFile.ReadMono(wav);
+
+    // SSB-translate at the capture rate (most headroom, Hilbert nulls at DC/Nyquist are far off).
+    var shifter = new FrequencyShifter(rate, to - from);
+    var shifted = new float[samples.Length];
+    shifter.Process(samples, shifted);
+
+    // Resample to the reference decoder's rate (ardopcf/QtSM run at 12 kHz).
+    float[] output = shifted;
+    if (rate != outRate)
+    {
+        if (rate % outRate != 0)
+        {
+            throw new ArgumentException($"WAV rate {rate} is not a multiple of --outrate {outRate}");
+        }
+
+        var decimator = new Decimator(rate, rate / outRate);
+        output = new float[decimator.MaxOutput(shifted.Length)];
+        int produced = decimator.Process(shifted, output);
+        Array.Resize(ref output, produced);
+    }
+
+    WavFile.WriteMono(outPath, output, outRate);
+    Console.Error.WriteLine(
+        $"shifted {wav} by {to - from:+0;-0} Hz ({from}->{to}), {rate}->{outRate} Hz -> {outPath} "
+        + $"({output.Length / (double)outRate:F1}s)");
     return 0;
 }
 
