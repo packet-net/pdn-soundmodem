@@ -84,8 +84,24 @@ through the Flex's DAX audio, no sound card in path.
   dummy load), and a **Flex variant of the HF-loop** (folds into #4/#6). OBW self-capture is NOT
   viable on the 6500's public API (panadapter TX trace is leakage) — bench/second-RX stays the
   OBW path.
-- **Later possibility (Tom's prompt):** DAX-IQ + the SmartSDR Waveform API — running our modems
-  from raw IQ (no SSB filter/AGC) or as a Flex-native "mode". Noted for own-FM/HF (#8/#9).
+- **IQ interfaces (Tom's prompt) — researched + TX proven, 2026-07-17** (see
+  [flex-integration.md §9](flex-integration.md)): **RX** = DAX-IQ, wideband complex baseband, but
+  **receive-only** (K3TZR: no IQ-TX via DAX). Good for multi-channel monitoring + wide own-mode RX.
+  **TX** = the SmartSDR **Waveform API** — the *only* IQ-TX door on a Flex, and it is **GPL-3.0**
+  (port, don't depend), **runs off-radio on a network host** (headless-friendly), and is **proven
+  end-to-end on the 6500**: a from-scratch client registered a custom waveform over TCP, owned a
+  headless slice in that mode, keyed, and the radio pulled 224 TX-IQ packets from us
+  (`interlock=TRANSMITTING`, dummy load, 24 kHz/128-complex). Open gate for wideband own-modes
+  (#8/#9): achievable on-air TX **bandwidth** (24 kHz-rate but USB-routed; `underlying_mode=RAW/IQ`
+  and wide `tx_filter` accepted). Bandwidth **MEASURED on air 2026-07-18** (via M0LTE's UberSDR
+  hearing the dummy-load leakage): **`underlying_mode=RAW` gives true wideband complex IQ→RF**
+  (both sidebands, ~14–20 kHz, capped by the 24 kHz waveform rate); USB/IQ are SSB-limited. So the
+  Waveform API is a genuine wideband-TX path for own-modes (#8/#9), not an SSB dead-end. (Second-
+  slice DAX-IQ self-capture was confirmed non-viable — RX blanked during TX.) Multi-channel RX
+  (DAX-IQ + DDC) is the low-risk near-term win — **front-end built** (`src/Packet.SoundModem/Iq/`,
+  concurrent 2-channel AFSK decode) **and the real DAX-IQ transport now landed + hardware-validated**
+  (`FlexRadio/FlexDaxIqSource.cs` over the M0LTE.Flex `VitaPacketReceived` event; 238k IQ samples/2s,
+  0 loss on the 6500). Remaining: daemon/CLI wiring to select channels and place their offsets.
 
 ---
 

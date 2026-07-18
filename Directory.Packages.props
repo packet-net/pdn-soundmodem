@@ -6,7 +6,7 @@
     <!-- FlexRadio 6000-series client (lifted out of this repo; AGPL-3.0-or-later). Adding it
          to the GPL-3.0 core is permitted by GPLv3 §13, which pulls AGPL §13 onto the combined
          work — see docs/plan.md and PROVENANCE.md. -->
-    <PackageVersion Include="M0LTE.Flex" Version="0.2.0" />
+    <PackageVersion Include="M0LTE.Flex" Version="0.3.0" />
     <PackageVersion Include="M0LTE.Radio.Audio" Version="0.1.0" />
     <PackageVersion Include="M0LTE.Fec" Version="0.1.0" />
     <PackageVersion Include="M0LTE.Il2p" Version="0.1.0" />
