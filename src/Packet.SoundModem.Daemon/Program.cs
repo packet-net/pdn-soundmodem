@@ -215,11 +215,7 @@ if (modems.Count == 0 && ardopPort is null)
     modems.Add(new ModemConfig());
 }
 
-int DspRate = modems.Any(m => m.Mode.Contains("9600", StringComparison.Ordinal)
-    || m.Mode.StartsWith("fsk", StringComparison.Ordinal)
-    || m.Mode.StartsWith("c4fsk", StringComparison.Ordinal)
-    || m.Mode.StartsWith("freedv-", StringComparison.Ordinal)
-    || m.Mode.StartsWith("ms110d-", StringComparison.Ordinal)) ? 48000 : 12000;
+int DspRate = modems.Any(m => ModemCatalog.DspRateFor(m.Mode) == 48000) ? 48000 : 12000;
 
 // A FlexRadio provides its own DAX sample clock (24/48 kHz auto-picked from the DSP rate),
 // so --capture-rate (an ALSA concept) does not apply.
@@ -237,26 +233,17 @@ channel.Csma.Persistence = csma.Persistence;
 channel.Csma.SlotTimeMilliseconds = csma.SlotTimeMilliseconds;
 channel.Csma.TxTailMilliseconds = csma.TxTailMilliseconds;
 
-// Only the variable-centre modes (AFSK tone-pair, BPSK/QPSK carrier) honour a :FREQ
-// override; the baseband FSK families (fsk*/c4fsk*, DC-to-Nyquist) and the spec-fixed
-// waveforms (freedv-*/ms110d-*) have no settable audio centre. Reject an explicit
-// frequency on those rather than silently ignoring it (issue #39).
-static bool SupportsVariableCentre(string mode) =>
-    mode.StartsWith("afsk", StringComparison.Ordinal)
-    || mode.StartsWith("bpsk", StringComparison.Ordinal)
-    || mode.StartsWith("qpsk", StringComparison.Ordinal);
-
-// Per-family PSK detector: --psk-detector overrides both; unset, BPSK defaults to Differential
-// (measured best on real off-air HF) and QPSK to Coherent (V.26A interop validated coherent).
-PskDetector bpskDetector = pskDetectorOverride ?? PskDetector.Differential;
-PskDetector qpskDetector = pskDetectorOverride ?? PskDetector.Coherent;
+// Per-family PSK detector, for the informational print below: --psk-detector overrides both;
+// unset, the catalogue's per-family defaults apply (BPSK differential, QPSK coherent).
+PskDetector bpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFor("bpsk");
+PskDetector qpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFor("qpsk");
 
 foreach (ModemConfig modemConfig in modems)
 {
     int subChannel = modemConfig.SubChannel;
     string mode = modemConfig.Mode;
     double? frequency = modemConfig.Frequency;
-    if (frequency is not null && !SupportsVariableCentre(mode))
+    if (frequency is not null && !ModemCatalog.AcceptsCentreFrequency(mode))
     {
         Console.Error.WriteLine(
             $"modem {subChannel}: mode '{mode}' has a fixed centre frequency — drop the " +
@@ -264,48 +251,12 @@ foreach (ModemConfig modemConfig in modems)
         return 2;
     }
 
-    channel.AddModem(subChannel, sink => mode switch
-    {
-        "afsk1200" => new Afsk1200Modem(DspRate, sink, frequency ?? 1700),
-        "afsk1200-fx25" => new Afsk1200Modem(DspRate, sink, frequency ?? 1700, Fx25Mode.TransmitReceive),
-        "afsk1200-fx25rx" => new Afsk1200Modem(DspRate, sink, frequency ?? 1700, Fx25Mode.Receive),
-        "afsk1200-multi" => new Afsk1200MultiModem(DspRate, sink, offsetPairs: 3, centerFrequency: frequency ?? 1700),
-        "afsk1200-il2p" => new Afsk1200Il2pModem(DspRate, sink, crc: true, frequency ?? 1700),
-        "afsk1200-il2p-nocrc" => new Afsk1200Il2pModem(DspRate, sink, crc: false, frequency ?? 1700),
-        "afsk300" => new Afsk300Modem(DspRate, sink, Afsk300Framing.Ax25, frequency ?? 1700),
-        "afsk300-il2p" => new Afsk300Modem(DspRate, sink, Afsk300Framing.Il2p, frequency ?? 1700),
-        "afsk300-il2pc" => new Afsk300Modem(DspRate, sink, Afsk300Framing.Il2pCrc, frequency ?? 1700),
-        // BPSK defaults to the differential frequency-diversity bank — the config's
-        // offsetPairs/offsetStepHz tune it (offsetPairs:0 gives a plain single modem).
-        "bpsk300" or "bpsk300-multi" => new BpskMultiModem(DspRate, sink, crc: true, frequency ?? 1500,
-            baud: 300, offsetPairs: modemConfig.OffsetPairs ?? 4, offsetHz: modemConfig.OffsetStepHz,
-            detector: bpskDetector),
-        "bpsk300-nocrc" => new BpskMultiModem(DspRate, sink, crc: false, frequency ?? 1500,
-            baud: 300, offsetPairs: modemConfig.OffsetPairs ?? 4, offsetHz: modemConfig.OffsetStepHz,
-            detector: bpskDetector),
-        "bpsk1200" or "bpsk1200-multi" => new BpskMultiModem(DspRate, sink, crc: true, frequency ?? 1500,
-            baud: 1200, offsetPairs: modemConfig.OffsetPairs ?? 4, offsetHz: modemConfig.OffsetStepHz,
-            detector: bpskDetector),
-        "qpsk600" => QpskModem.Qpsk600(DspRate, sink, detector: qpskDetector, carrierFrequency: frequency ?? 1500),
-        "qpsk2400" => QpskModem.Qpsk2400(DspRate, sink, detector: qpskDetector, carrierFrequency: frequency ?? 1500),
-        "qpsk3600" => QpskModem.Qpsk3600(DspRate, sink, detector: qpskDetector, carrierFrequency: frequency ?? 1650),
-        "fsk9600" => FskModem.Fsk9600(DspRate, sink, FskFraming.ClassicHdlc),
-        "fsk9600-il2p" => new FskModem(DspRate, sink, FskFraming.Il2pCrc),
-        "fsk4800-il2p" => FskModem.Fsk4800(DspRate, sink),
-        "c4fsk9600" => C4fskModem.C4fsk9600(DspRate, sink),
-        "c4fsk19200" => C4fskModem.C4fsk19200(DspRate, sink),
-        "freedv-datac0" => FreeDvDatacModem.Datac0(DspRate, sink),
-        "freedv-datac1" => FreeDvDatacModem.Datac1(DspRate, sink),
-        "freedv-datac3" => FreeDvDatacModem.Datac3(DspRate, sink),
-        "freedv-datac4" => FreeDvDatacModem.Datac4(DspRate, sink),
-        "freedv-datac13" => FreeDvDatacModem.Datac13(DspRate, sink),
-        "freedv-datac14" => FreeDvDatacModem.Datac14(DspRate, sink),
-        "ms110d-wn0" or "ms110d-wn1" or "ms110d-wn2" or "ms110d-wn3" or "ms110d-wn4"
-            or "ms110d-wn5" or "ms110d-wn6" or "ms110d-wn13" => new Ms110dModem(
-                DspRate, sink,
-                new Ms110dTxSettings { WaveformNumber = int.Parse(mode["ms110d-wn".Length..]) }),
-        _ => throw new ArgumentException($"unknown mode '{mode}'"),
-    });
+    channel.AddModem(subChannel, sink => ModemCatalog.Create(mode, DspRate, sink,
+        new ModemOptions(
+            CentreFrequencyHz: frequency,
+            OffsetPairs: modemConfig.OffsetPairs,
+            OffsetStepHz: modemConfig.OffsetStepHz,
+            Detector: pskDetectorOverride)));
     Console.WriteLine($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");
 }
 
