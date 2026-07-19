@@ -95,6 +95,33 @@ public static class Ms110dTables
         new(0.707107f, -0.707107f),
     ];
 
+    /// <summary>Table D-V 8PSK transcoding (<c>d05-transcoding-8psk.csv</c>): tribit →
+    /// 8PSK ring symbol number. Index = tribit value (MSB-first), value = symbol.</summary>
+    public static ReadOnlySpan<byte> Transcode8Psk => [1, 0, 2, 3, 6, 7, 5, 4];
+
+    /// <summary>16-QAM constellation, Table D-VII (<c>d07-constellation-16qam.csv</c>):
+    /// 12 outer-ring points at radius 1.0 (30° spacing) + 4 inner-ring points at
+    /// radius ≈0.366 (45° spacing). Printed I/Q values used verbatim.</summary>
+    public static readonly Cf[] Qam16 =
+    [
+        new(0.866025f, 0.500000f),
+        new(0.500000f, 0.866025f),
+        new(1.000000f, 0.000000f),
+        new(0.258819f, 0.258819f),
+        new(-0.500000f, 0.866025f),
+        new(0.000000f, 1.000000f),
+        new(-0.866025f, 0.500000f),
+        new(-0.258819f, 0.258819f),
+        new(0.500000f, -0.866025f),
+        new(0.000000f, -1.000000f),
+        new(0.866025f, -0.500000f),
+        new(0.258819f, -0.258819f),
+        new(-0.866025f, -0.500000f),
+        new(-0.500000f, -0.866025f),
+        new(-1.000000f, 0.000000f),
+        new(-0.258819f, -0.258819f),
+    ];
+
     /// <summary>Table D-XXII(a): 13-symbol mini-probe base sequence (Barker-13, real BPSK,
     /// <c>d22a-base13-miniprobe.csv</c>).</summary>
     public static readonly Cf[] Base13 =

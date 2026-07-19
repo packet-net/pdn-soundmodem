@@ -27,7 +27,7 @@ public static class ModemCatalog
         "freedv-datac0", "freedv-datac1", "freedv-datac3", "freedv-datac4",
         "freedv-datac13", "freedv-datac14",
         "ms110d-wn0", "ms110d-wn1", "ms110d-wn2", "ms110d-wn3", "ms110d-wn4",
-        "ms110d-wn5", "ms110d-wn6", "ms110d-wn13",
+        "ms110d-wn5", "ms110d-wn6", "ms110d-wn7", "ms110d-wn8", "ms110d-wn13",
     };
 
     private static readonly HashSet<string> _knownSet = new(_knownModes, StringComparer.Ordinal);
@@ -127,7 +127,8 @@ public static class ModemCatalog
             "freedv-datac13" => FreeDvDatacModem.Datac13(dspRate, frameReceived),
             "freedv-datac14" => FreeDvDatacModem.Datac14(dspRate, frameReceived),
             "ms110d-wn0" or "ms110d-wn1" or "ms110d-wn2" or "ms110d-wn3" or "ms110d-wn4"
-                or "ms110d-wn5" or "ms110d-wn6" or "ms110d-wn13" => new Ms110dModem(
+                or "ms110d-wn5" or "ms110d-wn6" or "ms110d-wn7" or "ms110d-wn8"
+                or "ms110d-wn13" => new Ms110dModem(
                     dspRate, frameReceived,
                     new Ms110dTxSettings { WaveformNumber = int.Parse(mode["ms110d-wn".Length..]) }),
             _ => throw new ArgumentException($"unknown mode '{mode}'", nameof(mode)),

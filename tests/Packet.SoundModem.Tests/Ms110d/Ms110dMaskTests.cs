@@ -5,14 +5,13 @@ using Xunit.Abstractions;
 namespace Packet.SoundModem.Tests.Ms110d;
 
 /// <summary>
-/// The design §5.3/§6 statistical mask runs — environment-gated (<c>MS110D_MASKS=1</c> for
-/// the AWGN/static Phase A gates, <c>MS110D_MASKS_POOR=1</c> for the measured-not-gated Poor
-/// channel), because a full point runs minutes of simulated signal and the suite hours; per
-/// §5.3 these are nightly/rotating runs, not per-PR CI. Conditions per D.6.1: coded BER ≤
-/// 1.0E-5, Long interleaver, 20-super-frame preamble; SNR in 3 kHz noise bandwidth.
-/// Budget per point: ≥ 3×10⁶ payload bits AND (≥ 30 errors observed, or a 95 % Poisson upper
-/// confidence bound below 1e-5). Override the bit budget with <c>MS110D_MASK_BITS</c> for
-/// smoke runs (results below the real budget are labelled as such).
+/// The design §5.3/§6 statistical mask runs — environment-gated (<c>MS110D_MASKS=1</c>),
+/// because a full point runs minutes of simulated signal and the suite hours; per §5.3 these
+/// are nightly/rotating runs, not per-PR CI. Conditions per D.6.1: coded BER ≤ 1.0E-5, Long
+/// interleaver, 20-super-frame preamble; SNR in 3 kHz noise bandwidth. Budget per point:
+/// ≥ 3×10⁶ payload bits AND (≥ 30 errors observed, or a 95 % Poisson upper confidence bound
+/// below 1e-5). Phase B: AWGN + Poor are both hard gates (WN0–8+13). Override the bit budget
+/// with <c>MS110D_MASK_BITS</c> for smoke runs.
 /// </summary>
 public class Ms110dMaskTests(ITestOutputHelper output)
 {
@@ -27,12 +26,14 @@ public class Ms110dMaskTests(ITestOutputHelper output)
     // Table D-LXIV 3 kHz rows (docs/ms110d/tables/d6x-ber-masks.csv): WN → (AWGN, Poor) SNR dB.
     public static TheoryData<int, double> AwgnMasks() => new()
     {
-        { 0, -6 }, { 1, -3 }, { 2, 0 }, { 3, 3 }, { 4, 5 }, { 5, 6 }, { 6, 9 }, { 13, 6 },
+        { 0, -6 }, { 1, -3 }, { 2, 0 }, { 3, 3 }, { 4, 5 }, { 5, 6 }, { 6, 9 },
+        { 7, 13 }, { 8, 16 }, { 13, 6 },
     };
 
     public static TheoryData<int, double> PoorMasks() => new()
     {
-        { 0, -1 }, { 1, 3 }, { 2, 5 }, { 3, 7 }, { 4, 10 }, { 5, 11 }, { 6, 14 }, { 13, 11 },
+        { 0, -1 }, { 1, 3 }, { 2, 5 }, { 3, 7 }, { 4, 10 }, { 5, 11 }, { 6, 14 },
+        { 7, 19 }, { 8, 23 }, { 13, 11 },
     };
 
     [SkippableTheory]
@@ -95,18 +96,14 @@ public class Ms110dMaskTests(ITestOutputHelper output)
 
     [SkippableTheory]
     [MemberData(nameof(PoorMasks))]
-    public void Poor_Channel_Measured(int wn, double snrDb)
+    public void Poor_Mask_Gate(int wn, double snrDb)
     {
-        Skip.If(Environment.GetEnvironmentVariable("MS110D_MASKS_POOR") != "1",
-            "set MS110D_MASKS_POOR=1 for the measured (non-gated) Poor-channel runs");
+        Skip.If(Environment.GetEnvironmentVariable("MS110D_MASKS") != "1",
+            "set MS110D_MASKS=1 for the statistical mask runs");
 
-        // Phase A measures the Poor channel and banks the numbers; the at-mask gate is
-        // Phase B scope with the RLS equalizer (design §6, Q1). ≥10 min of simulated
-        // fading per §5.3; the full 3e6-bit budget is not owed here.
-        long bits = Math.Min(TargetBits(), 200_000);
-        MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, bits, seed: 500 + wn, minSimSeconds: 600);
-        Report($"POOR (measured, non-gated) WN{wn} @ {snrDb:+0;-0;0} dB", run);
-        run.Bits.Should().BeGreaterThan(0);
+        MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, TargetBits(), seed: 500 + wn, minSimSeconds: 600);
+        Report($"POOR WN{wn} @ {snrDb:+0;-0;0} dB", run);
+        AssertMask(run);
     }
 
     private static long TargetBits()

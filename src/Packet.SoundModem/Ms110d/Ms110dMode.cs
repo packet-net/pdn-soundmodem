@@ -11,6 +11,12 @@ public enum Ms110dModulation
 
     /// <summary>WN 6 and 13: quaternary PSK (transcoding Table D-IV).</summary>
     Qpsk,
+
+    /// <summary>WN 7: 8-ary PSK (transcoding Table D-V).</summary>
+    Psk8,
+
+    /// <summary>WN 8: 16-QAM (constellation Table D-VII, XOR scrambler).</summary>
+    Qam16,
 }
 
 /// <summary>Interleaver length option, signalled by WID bits d5d4 (Table D-XVI).</summary>
@@ -45,8 +51,8 @@ public enum Ms110dInterleaverKind
 public sealed record Ms110dMode(
     int Wn, Ms110dModulation Modulation, int BitsPerSymbol, int U, int K, string CodeRate, int Bps)
 {
-    /// <summary>3 kHz mode table for the Phase A waveform numbers (0–6 and 13).
-    /// 8PSK/QAM (WN 7–12) land in later phases.</summary>
+    /// <summary>3 kHz mode table for Phase A+B waveform numbers (0–8 and 13).
+    /// Higher-order QAM (WN 9–12) lands in Phase C.</summary>
     public static Ms110dMode Mode3k(int wn)
     {
         return wn switch
@@ -58,9 +64,11 @@ public sealed record Ms110dMode(
             4 => new(4, Ms110dModulation.Bpsk, 1, 96, 32, "2/3", 1200),
             5 => new(5, Ms110dModulation.Bpsk, 1, 256, 32, "3/4", 1600),
             6 => new(6, Ms110dModulation.Qpsk, 2, 256, 32, "3/4", 3200),
+            7 => new(7, Ms110dModulation.Psk8, 3, 256, 32, "3/4", 4800),
+            8 => new(8, Ms110dModulation.Qam16, 4, 256, 32, "3/4", 6400),
             13 => new(13, Ms110dModulation.Qpsk, 2, 256, 32, "9/16", 2400),
             _ => throw new ArgumentOutOfRangeException(
-                nameof(wn), wn, "Phase A implements 3 kHz waveform numbers 0–6 and 13"),
+                nameof(wn), wn, "Phase A/B implements 3 kHz waveform numbers 0–8 and 13"),
         };
     }
 }
@@ -89,9 +97,11 @@ public sealed record Ms110dInterleaverParams(int Frames, int SizeBits, int Input
             4 => (new[] { 2, 8, 32, 128 }, new[] { 192, 768, 3072, 12288 }, new[] { 128, 512, 2048, 8192 }, new[] { 25, 97, 385, 1549 }),
             5 => (new[] { 1, 4, 16, 64 }, new[] { 256, 1024, 4096, 16384 }, new[] { 192, 768, 3072, 12288 }, new[] { 33, 129, 513, 2081 }),
             6 => (new[] { 1, 4, 16, 64 }, new[] { 512, 2048, 8192, 32768 }, new[] { 384, 1536, 6144, 24576 }, new[] { 65, 257, 1025, 4161 }),
+            7 => (new[] { 1, 4, 16, 64 }, new[] { 768, 3072, 12288, 49152 }, new[] { 576, 2304, 9216, 36864 }, new[] { 97, 385, 1537, 6241 }),
+            8 => (new[] { 1, 4, 16, 64 }, new[] { 1024, 4096, 16384, 65536 }, new[] { 768, 3072, 12288, 49152 }, new[] { 129, 513, 2049, 8321 }),
             13 => (new[] { 1, 4, 16, 64 }, new[] { 512, 2048, 8192, 32768 }, new[] { 288, 1152, 4608, 18432 }, new[] { 65, 257, 1025, 4161 }),
             _ => throw new ArgumentOutOfRangeException(
-                nameof(wn), wn, "Phase A implements 3 kHz waveform numbers 0–6 and 13"),
+                nameof(wn), wn, "Phase A/B implements 3 kHz waveform numbers 0–8 and 13"),
         };
 
         if (size[i] == 0)
