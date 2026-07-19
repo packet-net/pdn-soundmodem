@@ -38,6 +38,7 @@ public sealed class C4fskModem : IModem
     private readonly double _clockIncrement;
     private double _clockPhase;
     private int _lastSign;
+    private bool _previousEnergyBusy;
     private float _peakHigh;
     private float _peakLow;
     private float _previousFiltered;
@@ -141,8 +142,19 @@ public sealed class C4fskModem : IModem
             // through the tail of a burst, so nothing real is lost.
             if (!_energyBusy.Busy)
             {
+                // Reset the deframer on the energy-gate falling edge: if it was
+                // mid-collection when the carrier stopped, abandon the phantom frame so
+                // the next burst's sync word is not consumed as payload.
+                if (_previousEnergyBusy)
+                {
+                    _deframer.Reset();
+                }
+
+                _previousEnergyBusy = false;
                 continue;
             }
+
+            _previousEnergyBusy = true;
 
             for (int point = 1; point <= _upsample; point++)
             {

@@ -28,14 +28,28 @@ public sealed class QpskModem : IModem, IConstellationSource
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
             },
             crc);
-        _demodulator = new QpskDemodulator(
+
+        // Reset the deframer on the DCD falling edge — same rationale as BpskModem: a
+        // carrier that drops mid-collection leaves the deframer consuming the next
+        // transmission's preamble and sync word as phantom payload.
+        bool previousDcd = false;
+        QpskDemodulator? demodulator = null;
+        demodulator = new QpskDemodulator(
             sampleRate, baud,
             (first, second) =>
             {
+                bool dcd = demodulator!.CarrierDetect;
+                if (previousDcd && !dcd)
+                {
+                    deframer.Reset();
+                }
+
+                previousDcd = dcd;
                 deframer.PushBit(first);
                 deframer.PushBit(second);
             },
             carrier, detector, loopBandwidthHz);
+        _demodulator = demodulator;
         _modulator = new QpskModulator(sampleRate, baud, carrier, rollOff);
         _demodulator.SymbolPlotted = (i, q) => SymbolPlotted?.Invoke(new ConstellationPoint(i, q));
     }

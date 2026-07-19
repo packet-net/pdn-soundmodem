@@ -87,7 +87,21 @@ public sealed class FskModem : IModem
                         Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
                 },
                 crcMode: framing == FskFraming.Il2pCrc);
-            bitSink = deframer.PushBit;
+            // Reset the deframer on the DCD falling edge — same rationale as BpskModem:
+            // a carrier that drops mid-collection leaves the deframer consuming the next
+            // transmission's sync word as phantom payload.
+            bool previousDcd = false;
+            bitSink = bit =>
+            {
+                bool dcd = _packetDcd.Asserted;
+                if (previousDcd && !dcd)
+                {
+                    deframer.Reset();
+                }
+
+                previousDcd = dcd;
+                deframer.PushBit(bit);
+            };
         }
 
         // At 48 kHz there are only 5 samples per bit at 9600 — each quantised DPLL nudge

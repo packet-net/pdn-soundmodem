@@ -40,7 +40,32 @@ public sealed class BpskModem : IModem, IConstellationSource
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
             },
             crc);
-        _demodulator = new BpskDemodulator(sampleRate, deframer.PushBit, carrierFrequency, baud, detector);
+
+        // Reset the deframer on the DCD falling edge. Without this, a frame whose carrier
+        // drops mid-collection (the preceding transmission ends, a collision corrupts the
+        // tail, or the signal fades) leaves the deframer blindly consuming the expected
+        // payload bytes from whatever follows — including the next transmission's preamble
+        // and sync word. The deframer then fails RS on the phantom frame and returns to
+        // hunting, but the real frame's sync word has already been swallowed. This is the
+        // continuous-decode robustness gap: 37 of 74 missed frames in the GB7RDG 24 h
+        // benchmark decoded perfectly from isolated audio but were lost in-stream because
+        // a preceding signal's collection state masked the new preamble. DCD drops within
+        // 24 symbol times (80 ms at 300 Bd) of the carrier stopping — well before the next
+        // transmission's sync word arrives — so the reset is always in time.
+        bool previousDcd = false;
+        BpskDemodulator? demodulator = null;
+        demodulator = new BpskDemodulator(sampleRate, bit =>
+        {
+            bool dcd = demodulator!.CarrierDetect;
+            if (previousDcd && !dcd)
+            {
+                deframer.Reset();
+            }
+
+            previousDcd = dcd;
+            deframer.PushBit(bit);
+        }, carrierFrequency, baud, detector);
+        _demodulator = demodulator;
         _demodulator.SymbolPlotted = (i, q) => SymbolPlotted?.Invoke(new ConstellationPoint(i, q));
         _modulator = new BpskModulator(sampleRate, baud, carrierFrequency, rollOff);
     }
