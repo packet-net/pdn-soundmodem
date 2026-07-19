@@ -17,11 +17,13 @@ namespace Packet.SoundModem.Tests.Modems;
 public class NinoTncAspirationTests
 {
     /// <summary>
-    /// The scoreboard is currently EMPTY. Graduated so far: the idle-noise qpsk2400
-    /// acquisition criterion (2026-07-16, passed on first run) and the C4FSK coverage
-    /// criterion for NinoTNC modes 1/3 (2026-07-16, when <c>C4fskModem</c> landed —
-    /// bench-proven 8/8 us→NinoTNC on both modes at first live attempt). This placeholder
-    /// keeps the category discoverable; add the next unmet criterion here.
+    /// This class's own scoreboard is EMPTY; the live aspiration corpus now lives in
+    /// <see cref="NinoTncMissCorpusAspirationTests"/> — real off-air BPSK300 frames from the
+    /// 2026-07-18/19 GB7RDG 40 m benchmark that we do not yet copy. Graduated so far: the
+    /// idle-noise qpsk2400 acquisition criterion (2026-07-16, passed on first run) and the C4FSK
+    /// coverage criterion for NinoTNC modes 1/3 (2026-07-16, when <c>C4fskModem</c> landed —
+    /// bench-proven 8/8 us→NinoTNC on both modes at first live attempt). This placeholder keeps
+    /// the category discoverable; add the next unmet single-criterion aspiration here.
     /// </summary>
     [Fact]
     public void Scoreboard_Is_Empty()
