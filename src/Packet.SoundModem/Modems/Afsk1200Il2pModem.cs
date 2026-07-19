@@ -42,7 +42,23 @@ public sealed class Afsk1200Il2pModem : IModem
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
             },
             crcMode: crc);
-        _demodulator = new AfskDemodulator(sampleRate, deframer.PushBit, centerFrequency);
+        // Reset the deframer on the DCD falling edge — same rationale as BpskModem:
+        // a carrier that drops mid-collection leaves the deframer consuming the next
+        // transmission's sync word as phantom payload.
+        bool previousDcd = false;
+        AfskDemodulator? demodulator = null;
+        demodulator = new AfskDemodulator(sampleRate, bit =>
+        {
+            bool dcd = demodulator!.CarrierDetect;
+            if (previousDcd && !dcd)
+            {
+                deframer.Reset();
+            }
+
+            previousDcd = dcd;
+            deframer.PushBit(bit);
+        }, centerFrequency);
+        _demodulator = demodulator;
         _modulator = new AfskModulator(
             sampleRate, Baud, centerFrequency - Bell202ToneShift, centerFrequency + Bell202ToneShift);
     }

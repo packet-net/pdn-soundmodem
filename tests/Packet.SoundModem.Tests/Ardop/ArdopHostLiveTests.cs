@@ -448,7 +448,7 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
         {
             Transmitter = _ => Task.CompletedTask,
         };
-        await using var ours = new ArdopHostServer(tnc, commandPort: BasePort + 2, ownsTnc: true);
+        await using var ours = new ArdopHostServer(tnc, commandPort: 0, ownsTnc: true);
         ours.Start();
         using var ourHost = new HostClient(ours.LocalCommandPort);
 
