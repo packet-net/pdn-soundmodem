@@ -18,6 +18,23 @@ implementation: a single misread cell breaks interop silently.
   `/ID` zeroed): `6e177fa6c2a6985189160f00c8ad0e809e27872f3ba3d10d9426c66292eddf3d`.
 - Page mapping: document page = PDF page − 5 throughout Appendix D.
 
+## Vendored copy (2026-07-19)
+
+The PDF itself is now checked in at `docs/ms110d/spec/MIL-STD-188-110D.pdf`, re-downloaded
+from the same everyspec URL used for the original transcription. It's public-release
+(Distribution Statement A, confirmed present on the document's page 1) so there's no
+licensing barrier to vendoring it; this makes the transcription reproducible/re-checkable
+without depending on everyspec staying up or serving the same file.
+
+Verified against this README before committing:
+- File size: 12,884,037 bytes — matches the transcription-time download exactly.
+- Permanent PDF ID `DB10F99E7B75A24BD5A10223B8A98086` — present in all three `/ID` trailer
+  entries in this download.
+- Page 1 text layer reads "MIL-STD-188-110D, 29 December 2017 ... DISTRIBUTION STATEMENT A:
+  Approved for public release; distribution unlimited."
+- Raw SHA-256 of this download differs from the transcription-time raw hash (expected —
+  per the caveat above, everyspec stamps a fresh random second `/ID` half per download).
+
 ## Verification: two independent transcriptions, diffed
 
 Transcribed **twice, independently** (branches `ms110d-tables-a` and `ms110d-tables-b`,
