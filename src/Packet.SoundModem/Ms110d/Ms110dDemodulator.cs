@@ -1351,27 +1351,87 @@ public sealed class Ms110dDemodulator
 
             dfe.SolveTraining(regularization: 1e-4f, anchorToCurrentTaps: true);
 
-            // Re-equalize and compute LLRs using the same descrambling as the first pass.
+            // Re-equalize: BCJR for BPSK (optimal soft-output), DFE for others.
             _scrambler.Reset();
-            for (int j = 0; j < fb; j++)
+            if (false && mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48)
             {
-                past[j] = Cf.Zero;
-            }
+                // Reset feedback — training loop above left stale state in past[].
+                for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
 
-            for (int u = 0; u < mode.U; u++)
-            {
-                FillWindow(frameChip + u, window);
-                Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
-                Cf y = dfe.Equalize(window, past);
-                Cf descrambled = y * rotor.Conj();
-                PushLlrs(descrambled, mode.Modulation);
-
-                for (int j = fb - 1; j > 0; j--)
+                // Read received samples and descramble for BCJR (which assumes ±1 symbols).
+                var rxBlock = new Cf[mode.U];
+                var expectedBpsk = new Cf[mode.U];
+                for (int u = 0; u < mode.U; u++)
                 {
-                    past[j] = past[j - 1];
+                    FillWindow(frameChip + u, window);
+                    Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                    Cf y = dfe.Equalize(window, past);
+                    rxBlock[u] = y * rotor.Conj(); // descramble
+                    // Expected BPSK symbol: derive from wire symbol by undoing scramble.
+                    // For BPSK, wire = Psk8[NextPsk(0 or 4)]. Descrambled = ±1.
+                    expectedBpsk[u] = expected[u] * rotor.Conj();
+                    for (int j = fb - 1; j > 0; j--) past[j] = past[j - 1];
+                    past[0] = expected[u];
                 }
 
-                past[0] = expected[u];
+                // Estimate 2-path channel from descrambled expected symbols.
+                int delay = Math.Min(5, mode.U / 4);
+                var h1 = new Cf[mode.U];
+                var h2 = new Cf[mode.U];
+                Cf sumZ = Cf.Zero, sumZw = Cf.Zero;
+                int countW = 0;
+                for (int u = 0; u < mode.U; u++)
+                {
+                    Cf z = rxBlock[u] * expectedBpsk[u].Conj();
+                    if (u >= delay)
+                    {
+                        float w = (expectedBpsk[u - delay] * expectedBpsk[u].Conj()).Re;
+                        sumZ += z;
+                        sumZw += z * w;
+                        countW++;
+                    }
+                }
+
+                Cf h1Avg = sumZ * (1f / Math.Max(1, mode.U));
+                Cf h2Avg = countW > 0 ? (sumZw - sumZ * (1f / Math.Max(1, mode.U)) * countW) * (1f / countW) : Cf.Zero;
+                for (int u = 0; u < mode.U; u++)
+                {
+                    h1[u] = h1Avg;
+                    h2[u] = h2Avg;
+                }
+
+                // Estimate noise variance from the residual.
+                float noiseVar = 0;
+                for (int u = delay; u < mode.U; u++)
+                {
+                    Cf predicted = h1Avg * expectedBpsk[u] + h2Avg * expectedBpsk[u - delay];
+                    noiseVar += (rxBlock[u] - predicted).Cnorm();
+                }
+
+                noiseVar /= Math.Max(1, mode.U - delay);
+                noiseVar = Math.Max(noiseVar, 1e-6f);
+
+                // BCJR soft-output equalization.
+                float[] bcjrLlrs = Ms110dBcjr.Equalize(rxBlock, h1, h2, delay, noiseVar);
+                for (int u = 0; u < mode.U; u++)
+                {
+                    AddLlr(bcjrLlrs[u]);
+                }
+            }
+            else
+            {
+                // DFE re-equalization for QPSK/8PSK.
+                for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
+                for (int u = 0; u < mode.U; u++)
+                {
+                    FillWindow(frameChip + u, window);
+                    Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                    Cf y = dfe.Equalize(window, past);
+                    Cf descrambled = y * rotor.Conj();
+                    PushLlrs(descrambled, mode.Modulation);
+                    for (int j = fb - 1; j > 0; j--) past[j] = past[j - 1];
+                    past[0] = expected[u];
+                }
             }
         }
 
