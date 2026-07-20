@@ -1355,7 +1355,7 @@ public sealed class Ms110dDemodulator
             _scrambler.Reset();
             if (mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48)
             {
-                // Reset feedback — training loop above left stale state in past[].
+                // Use FF-only (no feedback) to leave residual ISI for the BCJR to exploit.
                 for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
 
                 // Read received samples and descramble for BCJR (which assumes ±1 symbols).
@@ -1368,8 +1368,6 @@ public sealed class Ms110dDemodulator
                     Cf y = dfe.Equalize(window, past);
                     rxBlock[u] = y * rotor.Conj(); // descramble
                     expectedBpsk[u] = expected[u] * rotor.Conj();
-                    for (int j = fb - 1; j > 0; j--) past[j] = past[j - 1];
-                    past[0] = expected[u];
                 }
 
                 // Estimate 2-path channel from descrambled expected symbols.
