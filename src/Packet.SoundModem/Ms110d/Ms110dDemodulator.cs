@@ -1229,10 +1229,21 @@ public sealed class Ms110dDemodulator
             _mode.Modulation is not Ms110dModulation.Qam16 &&
             _blockFrameChips.Count == _il.Frames)
         {
-            TurboReequalize(info);
-            if (_blockLlrCount == _il.SizeBits)
+            var prevInfo = new byte[info.Length];
+            for (int iter = 0; iter < 3; iter++)
             {
+                TurboReequalize(info);
+                if (_blockLlrCount != _il.SizeBits)
+                {
+                    break;
+                }
+
+                Array.Copy(info, prevInfo, info.Length);
                 Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
+                if (info.AsSpan().SequenceEqual(prevInfo))
+                {
+                    break;
+                }
             }
         }
 
