@@ -795,14 +795,13 @@ public sealed class Ms110dDemodulator
         // to complete the excitation (the probe alone is rank-deficient).
         dfe.BeginTraining();
 
-        // Data block: interpolation provides the tap trajectory; RLS refines per-symbol
-        // on gate-passing decisions for PSK modes. QAM16 uses scale-10 max-log LLRs
-        // (the constellation's small minimum distance needs stronger soft information).
+        // Data block: RLS tracks per-symbol from endTaps (probe-solved taps, the most
+        // recent channel estimate). Weight 1.0 on all symbols maximizes tracking bandwidth.
+        // The per-probe P-reset bounds null-space growth; LoadTaps(endTaps) resets for next frame.
         _scrambler.Reset();
         float ddGate = DdGateRadius(mode.Modulation);
         for (int u = 0; u < mode.U; u++)
         {
-            dfe.LoadInterpolatedTaps(startTaps, endTaps, (u + 0.5f) / mode.U);
             FillWindow(_frameChip + u, window);
             if (mode.Modulation == Ms110dModulation.Qam16)
             {
@@ -811,6 +810,7 @@ public sealed class Ms110dDemodulator
                 Cf clean = Slice(y, mode.Modulation);
                 DataSymbolEqualized?.Invoke(y);
                 PushMaxLogLlrs(y, Ms110dTables.Qam16, null, 4, 10.0f, scrambleNibble);
+                dfe.RlsUpdate(window, _decisions, clean, weight: 1.0f);
                 if ((y - clean).Cnorm() < ddGate)
                 {
                     dfe.AddTrainingRow(window, _decisions, clean, weight: 0.25f);
@@ -826,9 +826,9 @@ public sealed class Ms110dDemodulator
                 Cf clean = Slice(descrambled, mode.Modulation);
                 DataSymbolEqualized?.Invoke(descrambled);
                 PushLlrs(descrambled, mode.Modulation);
+                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: 1.0f);
                 if ((descrambled - clean).Cnorm() < ddGate)
                 {
-                    dfe.RlsUpdate(window, _decisions, clean * rotor, weight: 1.0f);
                     dfe.AddTrainingRow(window, _decisions, clean * rotor, weight: 0.25f);
                 }
 
