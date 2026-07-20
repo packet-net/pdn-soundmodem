@@ -1416,14 +1416,38 @@ public sealed class Ms110dDemodulator
                         Console.Error.WriteLine($"[bcjr] u={u}: rx=({rxBlock[u].Re:F4},{rxBlock[u].Im:F4}) exp=({expectedBpsk[u].Re:F4},{expectedBpsk[u].Im:F4})");
                 }
 
-                // BCJR soft-output equalization.
+                // BCJR pass 1: initial soft-output equalization.
                 float[] bcjrLlrs = Ms110dBcjr.Equalize(rxBlock, h1, h2, delay, noiseVar);
 
-                if (Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1" && f == 0)
+                // Refine channel estimate using soft symbols from pass 1.
+                for (int u = 0; u < mode.U; u++)
                 {
-                    for (int u = 0; u < 5; u++)
-                        Console.Error.WriteLine($"[bcjr] llr[{u}]={bcjrLlrs[u]:F3}");
+                    float soft = (float)Math.Tanh(bcjrLlrs[u] * 0.5);
+                    expectedBpsk[u] = new Cf(soft, 0);
                 }
+
+                // Re-estimate channel from soft symbols.
+                Cf sumZ2 = Cf.Zero, sumZw2 = Cf.Zero;
+                int cnt2 = 0;
+                for (int u = delay; u < mode.U; u++)
+                {
+                    Cf z = rxBlock[u] * expectedBpsk[u].Conj();
+                    float w = (expectedBpsk[u - delay] * expectedBpsk[u].Conj()).Re;
+                    sumZ2 += z;
+                    sumZw2 += z * w;
+                    cnt2++;
+                }
+
+                Cf h1Ref = cnt2 > 0 ? sumZ2 * (1f / cnt2) : h1[0];
+                Cf h2Ref = cnt2 > 0 ? sumZw2 * (1f / cnt2) : h2[0];
+                for (int u = 0; u < mode.U; u++)
+                {
+                    h1[u] = h1Ref;
+                    h2[u] = h2Ref;
+                }
+
+                // BCJR pass 2: refined equalization with soft-estimated channel.
+                bcjrLlrs = Ms110dBcjr.Equalize(rxBlock, h1, h2, delay, noiseVar);
 
                 for (int u = 0; u < mode.U; u++)
                 {
