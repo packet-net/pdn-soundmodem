@@ -1324,7 +1324,7 @@ public sealed class Ms110dDemodulator
                     : Ms110dTables.Psk8[wireIndex];
             }
 
-            // Batch-LS solve using expected symbols as known training.
+            // Batch-LS solve: FF-only (no feedback) for BPSK BCJR path.
             dfe.BeginTraining();
             for (int j = 0; j < fb; j++)
             {
@@ -1341,12 +1341,6 @@ public sealed class Ms110dDemodulator
 
                 FillWindow(frameChip + u, window);
                 dfe.AddTrainingRow(window, past, expected[u], weight: 1.0f);
-                for (int j = fb - 1; j > 0; j--)
-                {
-                    past[j] = past[j - 1];
-                }
-
-                past[0] = expected[u];
             }
 
             dfe.SolveTraining(regularization: 1e-4f, anchorToCurrentTaps: true);
