@@ -795,16 +795,16 @@ public sealed class Ms110dDemodulator
         // to complete the excitation (the probe alone is rank-deficient).
         dfe.BeginTraining();
 
-        // Data block: RLS tracks per-symbol from endTaps (probe-solved taps, the most
-        // recent channel estimate). Weight 1.0 on all symbols maximizes tracking bandwidth.
-        // The per-probe P-reset bounds null-space growth; LoadTaps(endTaps) resets for next frame.
+        // Data block: bidirectional RLS for short PSK blocks (U≤96), single-pass for
+        // longer blocks and QAM16. Bidirectional averaging eliminates the transient at
+        // both block ends; for U=256 the second pass's accumulated errors outweigh the benefit.
         _scrambler.Reset();
         float ddGate = DdGateRadius(mode.Modulation);
-        for (int u = 0; u < mode.U; u++)
+        if (mode.Modulation == Ms110dModulation.Qam16)
         {
-            FillWindow(_frameChip + u, window);
-            if (mode.Modulation == Ms110dModulation.Qam16)
+            for (int u = 0; u < mode.U; u++)
             {
+                FillWindow(_frameChip + u, window);
                 int scrambleNibble = _scrambler.NextQam(0, 4);
                 Cf y = dfe.Equalize(window, _decisions);
                 Cf clean = Slice(y, mode.Modulation);
@@ -818,8 +818,50 @@ public sealed class Ms110dDemodulator
 
                 PushDecision(clean);
             }
-            else
+        }
+        else if (mode.U <= 96)
+        {
+            // Bidirectional: pass 1 from endTaps, pass 2 from startTaps, average outputs.
+            Span<Cf> fwd = stackalloc Cf[mode.U];
+            for (int u = 0; u < mode.U; u++)
             {
+                FillWindow(_frameChip + u, window);
+                Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                Cf y = dfe.Equalize(window, _decisions);
+                Cf descrambled = y * rotor.Conj();
+                Cf clean = Slice(descrambled, mode.Modulation);
+                fwd[u] = descrambled;
+                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: 1.0f);
+                if ((descrambled - clean).Cnorm() < ddGate)
+                {
+                    dfe.AddTrainingRow(window, _decisions, clean * rotor, weight: 0.25f);
+                }
+
+                PushDecision(clean * rotor);
+            }
+
+            dfe.LoadTaps(startTaps);
+            _scrambler.Reset();
+            for (int u = 0; u < mode.U; u++)
+            {
+                FillWindow(_frameChip + u, window);
+                Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                Cf y = dfe.Equalize(window, _decisions);
+                Cf descrambled = y * rotor.Conj();
+                Cf clean = Slice(descrambled, mode.Modulation);
+                Cf averaged = (fwd[u] + descrambled) * 0.5f;
+                DataSymbolEqualized?.Invoke(averaged);
+                PushLlrs(averaged, mode.Modulation);
+                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: 1.0f);
+                PushDecision(clean * rotor);
+            }
+        }
+        else
+        {
+            // Single-pass RLS from endTaps for long blocks (U=256).
+            for (int u = 0; u < mode.U; u++)
+            {
+                FillWindow(_frameChip + u, window);
                 Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
                 Cf y = dfe.Equalize(window, _decisions);
                 Cf descrambled = y * rotor.Conj();
