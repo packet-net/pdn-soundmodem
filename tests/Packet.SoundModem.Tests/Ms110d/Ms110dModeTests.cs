@@ -11,6 +11,8 @@ public class Ms110dModeTests
     [InlineData(4)]
     [InlineData(5)]
     [InlineData(6)]
+    [InlineData(7)]
+    [InlineData(8)]
     [InlineData(13)]
     public void Bps_Arithmetic_Reproduces_Table_DII(int wn)
     {
@@ -38,6 +40,8 @@ public class Ms110dModeTests
     [InlineData(4)]
     [InlineData(5)]
     [InlineData(6)]
+    [InlineData(7)]
+    [InlineData(8)]
     [InlineData(13)]
     public void Interleaver_Geometry_Is_Self_Consistent(int wn)
     {

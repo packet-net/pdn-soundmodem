@@ -414,7 +414,7 @@ public sealed class Ms110dDemodulator
 
     private static bool IsSupported(int wn)
     {
-        return wn is >= 0 and <= 6 or 13;
+        return wn is >= 0 and <= 8 or 13;
     }
 
     private byte ReadWalshSymbol(int startChip, ReadOnlySpan<byte> pn, int pnOffset)
@@ -694,6 +694,7 @@ public sealed class Ms110dDemodulator
         }
 
         _dfe.SolveTraining(regularization: _initRidge);
+        _dfe.BeginTraining();
 
         // Seed the decision history with the probe tail and measure the training MSE.
         _decisions = new Cf[fb];
@@ -724,10 +725,6 @@ public sealed class Ms110dDemodulator
         _badProbes = 0;
         _frameChip = _dataStartChip + k;
         _frameInBlock = 0;
-
-        // Open the first tracking accumulation (each frame's data rows + the following
-        // probe's rows feed the solve at that probe — see ProcessFrame).
-        _dfe.BeginTraining();
     }
 
     private void FillWindow(double symbolChip, Span<Cf> window)
@@ -746,14 +743,9 @@ public sealed class Ms110dDemodulator
         Span<Cf> window = stackalloc Cf[dfe.FfTaps];
         Span<Cf> probePast = stackalloc Cf[dfe.FbTaps];
 
-        // The frame's OWN mini-probe is processed first: its trailing rows are
-        // self-contained (all feedback references lie inside the probe), so the taps at
-        // the frame's END can be solved before the data block is demodulated — the block
-        // is then equalized with taps linearly interpolated between the two bracketing
-        // probe solutions. On the Poor channel (~300 ms coherence vs the 120 ms probe
-        // cadence) static-across-the-block taps are stale for most of the block;
-        // interpolation is what makes probe-trained equalization track it (the geometry
-        // design §2.5 describes — probes bracket every data block for exactly this).
+        // Probe-directed batch-LS: known symbols accumulate into the Gram with
+        // authoritative weight; the ridge-regularized solve (anchored to current taps)
+        // handles the probe's rank deficiency (≤16 distinct patterns for 36+ taps).
         bool boundary = (_frameInBlock + 2) % _il!.Frames == 0;
         Cf[] probe = MiniProbe.Get(mode.K, boundary);
         long probeChip = _frameChip + mode.U;
@@ -779,11 +771,7 @@ public sealed class Ms110dDemodulator
         dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true);
         Cf[] endTaps = dfe.SnapshotTaps();
 
-        // Residual-CFO trim from the mean tap rotation between consecutive probe solves:
-        // fading rotates the taps with zero mean, so a slow integrator on the per-frame
-        // rotation converges on the true frequency error without ingesting Rayleigh phase
-        // (the mistake of feeding the ABSOLUTE probe phase error into ω). Clamped ±3 Hz
-        // about the acquisition estimate.
+        // Residual-CFO trim from the mean tap rotation between consecutive probe solves.
         var tapRotation = Cf.Zero;
         for (int i = 0; i < endTaps.Length; i++)
         {
@@ -792,11 +780,6 @@ public sealed class Ms110dDemodulator
 
         if (tapRotation.Cnorm() > 1e-12)
         {
-            // SIGN: taps rotate to COMPENSATE the input — a +Δω read-rotation error makes
-            // consecutive solves rotate by +Δω·T, so the correction must SUBTRACT the
-            // measured rotation. Adding it is positive feedback with loop gain 1.1/frame
-            // (measured: ω doubling every ~8 frames to the clamp, wrecking long bursts on
-            // clean channels).
             int frameT2 = 2 * (mode.U + mode.K);
             double deltaOmega = -0.1 * tapRotation.Arg() / frameT2;
             double window3Hz = 2.0 * Math.PI * 3.0 / (2.0 * Ms110dTables.SymbolRate);
@@ -805,58 +788,58 @@ public sealed class Ms110dDemodulator
             RetuneCarrier((2.0 * (probeChip + (mode.K / 2))) + _tau, 0, deltaOmega);
         }
 
-        // Start accumulating rows for the NEXT solve: the data block's confidence-gated
-        // decision-directed rows join the next probe's rows. This is load-bearing on
-        // selective fading channels — the mini-probe is a cyclically REPEATED base
-        // sequence, so probe-only regressors are near-periodic and rank-deficient (≤16
-        // distinct patterns for 30+ taps): they cannot observe the whole tap space, and
-        // the unobserved subspace goes stale as the channel moves. Scrambled data is
-        // white and completes the excitation.
+        // Start accumulating rows for the NEXT solve: DD rows join the next probe's rows
+        // to complete the excitation (the probe alone is rank-deficient).
         dfe.BeginTraining();
 
-        // Data block with the interpolated tap trajectory; feedback runs causally on
-        // decisions.
+        // Data block with interpolated tap trajectory; feedback runs causally on decisions.
         _scrambler.Reset();
+        float ddGate = DdGateRadius(mode.Modulation);
         for (int u = 0; u < mode.U; u++)
         {
             dfe.LoadInterpolatedTaps(startTaps, endTaps, (u + 0.5f) / mode.U);
             FillWindow(_frameChip + u, window);
-            // NextPsk(0) returns the raw scramble value; the receiver descrambles by
-            // rotating with its conjugate (D.5.1.3 modulo-8 addition on the TX side).
-            Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
-            Cf y = dfe.Equalize(window, _decisions);
-            Cf descrambled = y * rotor.Conj();
-            Cf clean = Slice(descrambled, mode.Modulation);
-            DataSymbolEqualized?.Invoke(descrambled);
-            PushLlrs(descrambled, mode.Modulation);
-            if ((descrambled - clean).Cnorm() < 0.4f)
+            if (mode.Modulation == Ms110dModulation.Qam16)
             {
-                dfe.AddTrainingRow(window, _decisions, clean * rotor, weight: 0.25f);
-            }
+                int scrambleNibble = _scrambler.NextQam(0, 4);
+                Cf y = dfe.Equalize(window, _decisions);
+                Cf clean = Slice(y, mode.Modulation);
+                DataSymbolEqualized?.Invoke(y);
+                PushLlrs(y, mode.Modulation, scrambleNibble);
+                if ((y - clean).Cnorm() < ddGate)
+                {
+                    dfe.AddTrainingRow(window, _decisions, clean, weight: 0.25f);
+                }
 
-            PushDecision(clean * rotor);
+                PushDecision(clean);
+            }
+            else
+            {
+                Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                Cf y = dfe.Equalize(window, _decisions);
+                Cf descrambled = y * rotor.Conj();
+                Cf clean = Slice(descrambled, mode.Modulation);
+                DataSymbolEqualized?.Invoke(descrambled);
+                PushLlrs(descrambled, mode.Modulation);
+                if ((descrambled - clean).Cnorm() < ddGate)
+                {
+                    dfe.AddTrainingRow(window, _decisions, clean * rotor, weight: 0.25f);
+                }
+
+                PushDecision(clean * rotor);
+            }
         }
 
         dfe.LoadTaps(endTaps);
         for (int i = 0; i < mode.K; i++)
         {
-            PushDecision(probe[i]); // next frame's first data symbols reference these
+            PushDecision(probe[i]);
         }
 
         _probeMse = (0.7 * _probeMse) + (0.3 * (mse / statRows));
 
-        // Carrier: FROZEN during tracking — the per-probe tap solves are the single
-        // owner of phase. A θ jump here double-corrects against the taps (they re-fit
-        // phase every probe), and a frequency integrator driven by the probe phase error
-        // ingests the channel's own Rayleigh phase random walk — both were measured
-        // garbling fading bursts wholesale. The residual-CFO burden this leaves on the
-        // taps is kept small by the multi-super-frame carrier fit at data start.
         TrackProbeTiming(probeChip, probe);
 
-        // Signal-lost discriminator: the coherent probe gain |Σ y·conj(d)|/K of an MMSE-
-        // trained DFE sits near SNR/(1+SNR) — well below 1 at the low-SNR waveform numbers
-        // — so the test is relative to the gain measured at training (slow-tracked so slow
-        // fades adjust the reference, with a floor against tracking into pure noise).
         double probeGain = probePhase.Abs() / mode.K;
         if (Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1")
         {
@@ -867,10 +850,6 @@ public sealed class Ms110dDemodulator
 
         if (probeGain < Math.Max(0.10, 0.45 * _probeGainRef))
         {
-            // Long horizon deliberately: on the Poor channel a deep composite fade
-            // (both Rayleigh paths down) lasts up to ~1 s and is exactly what the
-            // interleaver + FEC ride through — only a persistent collapse means the
-            // transmission actually ended.
             if (++_badProbes >= 25)
             {
                 CompleteBurst(Ms110dBurstEndReason.SignalLost);
@@ -890,6 +869,19 @@ public sealed class Ms110dDemodulator
             _frameInBlock = 0;
             FinishBlock();
         }
+    }
+
+    /// <summary>Per-modulation DD confidence gate (squared radius). PSK family keeps the
+    /// proven 0.4; QAM16 inner-ring min distance is 0.366 so the gate must be tighter to
+    /// avoid accepting wrong decisions that self-confirm via feedback.</summary>
+    private static float DdGateRadius(Ms110dModulation modulation)
+    {
+        return modulation switch
+        {
+            Ms110dModulation.Qam16 => 0.0225f, // (0.15)², ≈0.4× inner-ring min distance 0.366
+            Ms110dModulation.Psk8 => 0.16f,    // (0.4)², min distance 0.765 → generous
+            _ => 0.4f,                         // BPSK/QPSK proven value
+        };
     }
 
     private void TrackProbeTiming(long probeChip, Cf[] probe)
@@ -934,13 +926,40 @@ public sealed class Ms110dDemodulator
             return descrambled.Re >= 0 ? new Cf(1, 0) : new Cf(-1, 0);
         }
 
+        if (modulation == Ms110dModulation.Psk8)
+        {
+            return NearestPoint(descrambled, Ms110dTables.Psk8);
+        }
+
+        if (modulation == Ms110dModulation.Qam16)
+        {
+            return NearestPoint(descrambled, Ms110dTables.Qam16);
+        }
+
         // QPSK points sit on the axes (Table D-IV → 8PSK symbols 0/2/4/6).
         return Math.Abs(descrambled.Re) >= Math.Abs(descrambled.Im)
             ? new Cf(Math.Sign(descrambled.Re) >= 0 ? 1 : -1, 0)
             : new Cf(0, Math.Sign(descrambled.Im) >= 0 ? 1 : -1);
     }
 
-    private void PushLlrs(Cf descrambled, Ms110dModulation modulation)
+    private static Cf NearestPoint(Cf y, Cf[] constellation)
+    {
+        float best = float.MaxValue;
+        Cf result = constellation[0];
+        for (int s = 0; s < constellation.Length; s++)
+        {
+            float d = (y - constellation[s]).Cnorm();
+            if (d < best)
+            {
+                best = d;
+                result = constellation[s];
+            }
+        }
+
+        return result;
+    }
+
+    private void PushLlrs(Cf descrambled, Ms110dModulation modulation, int scramble = 0)
     {
         if (modulation == Ms110dModulation.Bpsk)
         {
@@ -948,9 +967,61 @@ public sealed class Ms110dDemodulator
             return;
         }
 
+        if (modulation == Ms110dModulation.Psk8)
+        {
+            // Max-log over 8 points. Bit label of ring symbol s = tribit t where
+            // Transcode8Psk[t] == s (inverse map precomputed below).
+            PushMaxLogLlrs(descrambled, Ms110dTables.Psk8, SymbolToTribit8, 3, 2.0f, 0);
+            return;
+        }
+
+        if (modulation == Ms110dModulation.Qam16)
+        {
+            // Max-log over 16 points. Wire symbol s carries bits (s ^ scramble).
+            PushMaxLogLlrs(descrambled, Ms110dTables.Qam16, null, 4, 2.0f, scramble);
+            return;
+        }
+
         // Table D-IV Gray map: MSB=0 ⇔ {+1, +j}, LSB=0 ⇔ {+1, −j}.
         AddLlr(2f * (descrambled.Re + descrambled.Im));
         AddLlr(2f * (descrambled.Re - descrambled.Im));
+    }
+
+    /// <summary>Ring symbol → tribit inverse map for 8PSK LLR bit labels.</summary>
+    private static readonly byte[] SymbolToTribit8 = BuildInverseTranscode();
+
+    private static byte[] BuildInverseTranscode()
+    {
+        var inv = new byte[8];
+        for (int t = 0; t < 8; t++)
+        {
+            inv[Ms110dTables.Transcode8Psk[t]] = (byte)t;
+        }
+
+        return inv;
+    }
+
+    private void PushMaxLogLlrs(Cf y, Cf[] constellation, byte[]? bitLabels, int bits, float scale, int scramble)
+    {
+        for (int b = 0; b < bits; b++)
+        {
+            float min0 = float.MaxValue, min1 = float.MaxValue;
+            for (int s = 0; s < constellation.Length; s++)
+            {
+                int label = bitLabels != null ? bitLabels[s] : (s ^ scramble);
+                float d = (y - constellation[s]).Cnorm();
+                if (((label >> (bits - 1 - b)) & 1) == 0)
+                {
+                    if (d < min0) min0 = d;
+                }
+                else
+                {
+                    if (d < min1) min1 = d;
+                }
+            }
+
+            AddLlr(scale * (min1 - min0));
+        }
     }
 
     private void AddLlr(float llr)

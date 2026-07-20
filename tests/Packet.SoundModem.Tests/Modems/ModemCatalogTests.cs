@@ -15,7 +15,7 @@ public class ModemCatalogTests
         ModemCatalog.KnownModes.Should().OnlyHaveUniqueItems();
         ModemCatalog.KnownModes.Should().OnlyContain(m => ModemCatalog.IsKnown(m));
         // Guards against an arm being added to Create() but forgotten in KnownModes (or vice-versa).
-        ModemCatalog.KnownModes.Should().HaveCount(36);
+        ModemCatalog.KnownModes.Should().HaveCount(38);
     }
 
     [Theory]

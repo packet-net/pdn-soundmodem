@@ -49,8 +49,10 @@ public class Ms110dLoopbackTests
     [InlineData(4)]
     [InlineData(5)]
     [InlineData(6)]
+    [InlineData(7)]
+    [InlineData(8)]
     [InlineData(13)]
-    public void Every_Phase_A_Waveform_Loops_Back_Bit_Exact(int wn)
+    public void Every_Waveform_Loops_Back_Bit_Exact(int wn)
     {
         var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = wn });
         byte[] payload = RandomBits(400, 1000 + wn);
@@ -68,6 +70,10 @@ public class Ms110dLoopbackTests
     [InlineData(5, Ms110dInterleaverKind.Short, 9)]
     [InlineData(0, Ms110dInterleaverKind.Medium, 9)]
     [InlineData(1, Ms110dInterleaverKind.Long, 7)]
+    [InlineData(7, Ms110dInterleaverKind.UltraShort, 7)]
+    [InlineData(7, Ms110dInterleaverKind.Long, 9)]
+    [InlineData(8, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(8, Ms110dInterleaverKind.Short, 9)]
     public void Interleaver_And_Constraint_Length_Variants_Loop_Back(
         int wn, Ms110dInterleaverKind interleaver, int k)
     {
@@ -137,6 +143,24 @@ public class Ms110dLoopbackTests
         AssertExact(burst, payload);
         seen.Should().NotBeNull();
         seen!.CfoHz.Should().BeApproximately(cfoHz, 3.0, "the refined CFO estimate tracks the offset");
+    }
+
+    [Theory]
+    [InlineData(7, -60)]
+    [InlineData(7, 60)]
+    [InlineData(8, -60)]
+    [InlineData(8, 60)]
+    public void Carrier_Frequency_Offset_Phase_B_Waveforms(int wn, double cfoHz)
+    {
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = wn, PreambleSuperframes = 4 });
+        byte[] payload = RandomBits(400, 100 + wn + (int)cfoHz);
+        var channel = new WattersonChannel(9600, seed: 11);
+        float[] audio = channel.Apply(
+            tx.Modulate(payload), snrDb: 25, leadInSamples: 1500, leadOutSamples: 4000,
+            frequencyOffsetHz: cfoHz);
+
+        (Ms110dBurst? burst, _) = RunLoopback(audio, silence: 0);
+        AssertExact(burst, payload);
     }
 
     [Fact]

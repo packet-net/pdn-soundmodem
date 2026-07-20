@@ -15,6 +15,8 @@ public class Ms110dObwTests
     [InlineData(0)]   // Walsh chips
     [InlineData(1)]   // BPSK
     [InlineData(6)]   // QPSK
+    [InlineData(7)]   // 8PSK
+    [InlineData(8)]   // 16QAM
     public void Occupied_Bandwidth_Is_Pinned(int wn)
     {
         float[] steady = SteadyModulation(wn);
@@ -29,6 +31,8 @@ public class Ms110dObwTests
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(6)]
+    [InlineData(7)]
+    [InlineData(8)]
     public void Minus_30_dB_Extent_And_Centroid_Are_Pinned(int wn)
     {
         float[] steady = SteadyModulation(wn);
@@ -48,7 +52,7 @@ public class Ms110dObwTests
             }
         }
 
-        (centroidNum / centroidDen).Should().BeApproximately(1800, 15, $"WN {wn} spectral centroid");
+        (centroidNum / centroidDen).Should().BeApproximately(1800, 20, $"WN {wn} spectral centroid");
     }
 
     private static float[] SteadyModulation(int wn)

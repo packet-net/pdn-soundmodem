@@ -107,8 +107,16 @@ public sealed class Ms110dModulator
                 scrambler.Reset(); // "initialized to 1 at the start of each data frame"
                 for (int u = 0; u < _mode.U; u++)
                 {
-                    int transcoded = Transcode(fetched, ref bit);
-                    symbols.Add(Ms110dTables.Psk8[scrambler.NextPsk(transcoded)]);
+                    if (_mode.Modulation == Ms110dModulation.Qam16)
+                    {
+                        int symbolNumber = Transcode(fetched, ref bit);
+                        symbols.Add(Ms110dTables.Qam16[scrambler.NextQam(symbolNumber, 4)]);
+                    }
+                    else
+                    {
+                        int transcoded = Transcode(fetched, ref bit);
+                        symbols.Add(Ms110dTables.Psk8[scrambler.NextPsk(transcoded)]);
+                    }
                 }
 
                 // The probe after the second-to-last data block of each interleaver block
@@ -142,6 +150,19 @@ public sealed class Ms110dModulator
         if (_mode.Modulation == Ms110dModulation.Bpsk)
         {
             return fetched[bit++] == 0 ? 0 : 4; // Table D-III
+        }
+
+        if (_mode.Modulation == Ms110dModulation.Psk8)
+        {
+            // Table D-V: 3 fetched bits MSB-first → tribit → 8PSK ring symbol.
+            int tribit = (fetched[bit++] << 2) | (fetched[bit++] << 1) | fetched[bit++];
+            return Ms110dTables.Transcode8Psk[tribit];
+        }
+
+        if (_mode.Modulation == Ms110dModulation.Qam16)
+        {
+            // No transcode table for QAM: 4 fetched bits MSB-first ARE the symbol number.
+            return (fetched[bit++] << 3) | (fetched[bit++] << 2) | (fetched[bit++] << 1) | fetched[bit++];
         }
 
         // Table D-IV, first fetched bit = MSB (D.5.1.2.1.2 / D.5.3.1): 00→0, 01→2, 11→4, 10→6.

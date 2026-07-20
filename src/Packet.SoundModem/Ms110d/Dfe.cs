@@ -283,4 +283,185 @@ public sealed class Dfe
 
         return true;
     }
+
+    // ------------------------------------------------------------------ RLS tracking (Phase B)
+
+    private Cf[,]? _p;
+    private float _lambda;
+    private readonly Cf[] _pxScratch = new Cf[64];
+    private readonly Cf[] _utpScratch = new Cf[64];
+
+    /// <summary>Initializes the RLS inverse-correlation matrix P as a scaled identity.
+    /// Called after the acquisition batch-LS solve seeds the taps.</summary>
+    public void BeginRls(float lambda, float pInit = 1.0f)
+    {
+        int n = _ff.Length + _fb.Length;
+        _p = new Cf[n, n];
+        for (int i = 0; i < n; i++)
+        {
+            _p[i, i] = new Cf(pInit, 0);
+        }
+
+        _lambda = lambda;
+    }
+
+    /// <summary>Seeds P from the inverse of the accumulated training Gram (MMSE-calibrated
+    /// initialization — design §2.5: "RLS subsumes the MMSE-init"). Falls back to scaled
+    /// identity if the Gram is degenerate.</summary>
+    public void SeedRlsFromTraining(float regularization, float pFallback = 1.0f)
+    {
+        if (_gram is null || _p is null)
+        {
+            return;
+        }
+
+        int n = _ff.Length + _fb.Length;
+        double trace = 0;
+        for (int i = 0; i < n; i++)
+        {
+            trace += _gram[i, i].Re;
+        }
+
+        float ridge = (float)(regularization * trace / n) + 1e-9f;
+        var gram = new Cf[n, n];
+        Array.Copy(_gram, gram, _gram.Length);
+        for (int i = 0; i < n; i++)
+        {
+            gram[i, i] += new Cf(ridge, 0);
+            for (int j = 0; j < i; j++)
+            {
+                gram[i, j] = gram[j, i].Conj();
+            }
+        }
+
+        // Invert by solving against each identity column.
+        bool ok = true;
+        for (int col = 0; col < n && ok; col++)
+        {
+            var e = new Cf[n];
+            e[col] = new Cf(1, 0);
+            var x = new Cf[n];
+            ok = CholeskySolve(gram, e, x);
+            if (ok)
+            {
+                for (int row = 0; row < n; row++)
+                {
+                    _p[row, col] = x[row];
+                }
+            }
+        }
+
+        if (!ok)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                for (int j = 0; j < n; j++)
+                {
+                    _p[i, j] = i == j ? new Cf(pFallback, 0) : Cf.Zero;
+                }
+            }
+        }
+    }
+
+    /// <summary>One recursive-least-squares update toward <paramref name="desired"/>;
+    /// returns the pre-update equalizer output. <paramref name="weight"/> scales the tap
+    /// update (probe rows authoritative, DD rows advisory).</summary>
+    public Cf RlsUpdate(ReadOnlySpan<Cf> window, ReadOnlySpan<Cf> past, Cf desired, float weight = 1f)
+    {
+        Cf y = Equalize(window, past);
+        if (_p is null)
+        {
+            return y;
+        }
+
+        int n = _ff.Length + _fb.Length;
+        Span<Cf> u = stackalloc Cf[n];
+        for (int i = 0; i < _ff.Length; i++)
+        {
+            u[i] = window[i];
+        }
+
+        for (int j = 0; j < _fb.Length; j++)
+        {
+            u[_ff.Length + j] = past[j];
+        }
+
+        // px = P · u*
+        for (int i = 0; i < n; i++)
+        {
+            var acc = Cf.Zero;
+            for (int j = 0; j < n; j++)
+            {
+                acc += _p[i, j] * u[j].Conj();
+            }
+
+            _pxScratch[i] = acc;
+        }
+
+        // denom = λ + u^T · px (real-positive for Hermitian P)
+        var denom = new Cf(_lambda, 0);
+        for (int j = 0; j < n; j++)
+        {
+            denom += u[j] * _pxScratch[j];
+        }
+
+        if (denom.Re <= 1e-12f)
+        {
+            return y;
+        }
+
+        float invDenom = 1f / denom.Re;
+
+        // Tap update: w += weight · e · k, where k = px / denom
+        Cf error = desired - y;
+        Cf scaledError = error * (weight * invDenom);
+        for (int i = 0; i < _ff.Length; i++)
+        {
+            _ff[i] += _pxScratch[i] * scaledError;
+        }
+
+        for (int j = 0; j < _fb.Length; j++)
+        {
+            _fb[j] += _pxScratch[_ff.Length + j] * scaledError;
+        }
+
+        // P update: P = λ⁻¹(P − k · pxᴴ), standard RLS (independent of weight — P
+        // tracks the input correlation structure, not confidence in the desired signal).
+        float invLambda = 1f / _lambda;
+        for (int i = 0; i < n; i++)
+        {
+            Cf ki = _pxScratch[i] * invDenom;
+            for (int j = 0; j < n; j++)
+            {
+                _p[i, j] = (_p[i, j] - (ki * _pxScratch[j].Conj())) * invLambda;
+            }
+        }
+
+        return y;
+    }
+
+    /// <summary>Enforces Hermitian symmetry on P and caps the diagonal to prevent
+    /// null-space divergence (the probe is rank-deficient — ≤16 distinct patterns for
+    /// 36+ taps — so P grows without bound in the unobserved subspace over long bursts).
+    /// Call once per frame.</summary>
+    public void SymmetrizeP(float pMax = 10f)
+    {
+        if (_p is null)
+        {
+            return;
+        }
+
+        int n = _ff.Length + _fb.Length;
+        for (int i = 0; i < n; i++)
+        {
+            float diag = Math.Min(_p[i, i].Re, pMax);
+            _p[i, i] = new Cf(diag, 0);
+            for (int j = i + 1; j < n; j++)
+            {
+                Cf avg = (_p[i, j] + _p[j, i].Conj()) * 0.5f;
+                _p[i, j] = avg;
+                _p[j, i] = avg.Conj();
+            }
+        }
+    }
 }
