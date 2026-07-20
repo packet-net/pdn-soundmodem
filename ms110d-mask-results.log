@@ -1,0 +1,605 @@
+Build started 07/19/2026 21:37:23.
+     1>Project "/root/pdn-soundmodem/pdn-soundmodem.slnx" on node 1 (VSTest target(s)).
+     1>ValidateSolutionConfiguration:
+         Building solution configuration "Debug|Any CPU".
+     1>Project "/root/pdn-soundmodem/pdn-soundmodem.slnx" (1) is building "/root/pdn-soundmodem/tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj" (8) on node 7 (VSTest target(s)).
+     8>BuildProject:
+         Build started, please wait...
+     8>Project "/root/pdn-soundmodem/tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj" (8) is building "/root/pdn-soundmodem/tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj" (8:2) on node 7 (default targets).
+   8:2>Project "/root/pdn-soundmodem/tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj" (8:2) is building "/root/pdn-soundmodem/src/Packet.SoundModem/Packet.SoundModem.csproj" (6:3) on node 3 (default targets).
+     6>GenerateTargetFrameworkMonikerAttribute:
+       Skipping target "GenerateTargetFrameworkMonikerAttribute" because all output files are up-to-date with respect to the input files.
+       CoreGenerateAssemblyInfo:
+       Skipping target "CoreGenerateAssemblyInfo" because all output files are up-to-date with respect to the input files.
+       _GenerateSourceLinkFile:
+         Source Link file 'obj/Debug/net10.0/Packet.SoundModem.sourcelink.json' is up-to-date.
+       CoreCompile:
+       Skipping target "CoreCompile" because all output files are up-to-date with respect to the input files.
+       GenerateBuildDependencyFile:
+       Skipping target "GenerateBuildDependencyFile" because all output files are up-to-date with respect to the input files.
+       CopyFilesToOutputDirectory:
+         Packet.SoundModem -> /root/pdn-soundmodem/src/Packet.SoundModem/bin/Debug/net10.0/Packet.SoundModem.dll
+     6>Done Building Project "/root/pdn-soundmodem/src/Packet.SoundModem/Packet.SoundModem.csproj" (default targets).
+     8>GenerateTargetFrameworkMonikerAttribute:
+       Skipping target "GenerateTargetFrameworkMonikerAttribute" because all output files are up-to-date with respect to the input files.
+       CoreGenerateAssemblyInfo:
+       Skipping target "CoreGenerateAssemblyInfo" because all output files are up-to-date with respect to the input files.
+       _GenerateSourceLinkFile:
+         Source Link file 'obj/Debug/net10.0/Packet.SoundModem.Tests.sourcelink.json' is up-to-date.
+       CoreCompile:
+       Skipping target "CoreCompile" because all output files are up-to-date with respect to the input files.
+       _CopyOutOfDateSourceItemsToOutputDirectory:
+       Skipping target "_CopyOutOfDateSourceItemsToOutputDirectory" because all output files are up-to-date with respect to the input files.
+       GenerateBuildDependencyFile:
+       Skipping target "GenerateBuildDependencyFile" because all output files are up-to-date with respect to the input files.
+       GenerateBuildRuntimeConfigurationFiles:
+       Skipping target "GenerateBuildRuntimeConfigurationFiles" because all output files are up-to-date with respect to the input files.
+       CopyFilesToOutputDirectory:
+         Packet.SoundModem.Tests -> /root/pdn-soundmodem/tests/Packet.SoundModem.Tests/bin/Debug/net10.0/Packet.SoundModem.Tests.dll
+     8>Done Building Project "/root/pdn-soundmodem/tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj" (default targets).
+     8>BuildProject:
+         Build completed.
+         
+Test run for /root/pdn-soundmodem/tests/Packet.SoundModem.Tests/bin/Debug/net10.0/Packet.SoundModem.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.10)
+[xUnit.net 00:00:00.05]   Discovering: Packet.SoundModem.Tests
+[xUnit.net 00:00:00.15]   Discovered:  Packet.SoundModem.Tests
+[xUnit.net 00:00:00.17]   Starting:    Packet.SoundModem.Tests
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Awgn_Mask_Gate(wn: 0, snrDb: -6) [17 m 31 s]
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Awgn_Mask_Gate(wn: 5, snrDb: 6) [1 m 39 s]
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Awgn_Mask_Gate(wn: 1, snrDb: -3) [25 m 18 s]
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Awgn_Mask_Gate(wn: 3, snrDb: 3) [3 m 51 s]
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Awgn_Mask_Gate(wn: 8, snrDb: 16) [25 s]
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Awgn_Mask_Gate(wn: 4, snrDb: 5) [2 m 7 s]
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Awgn_Mask_Gate(wn: 2, snrDb: 0) [13 m 16 s]
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Awgn_Mask_Gate(wn: 6, snrDb: 9) [56 s]
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Awgn_Mask_Gate(wn: 7, snrDb: 13) [38 s]
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Awgn_Mask_Gate(wn: 13, snrDb: 6) [1 m 5 s]
+[xUnit.net 01:26:11.22]     Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 2, snrDb: 5) [FAIL]
+[xUnit.net 01:26:11.22]       Expected value to be 0 because every burst must acquire (≤3 attempts rule, house-tightened to 1), but found 1 (difference of 1).
+[xUnit.net 01:26:11.22]       Stack Trace:
+[xUnit.net 01:26:11.22]            at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+[xUnit.net 01:26:11.22]            at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+[xUnit.net 01:26:11.22]            at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+[xUnit.net 01:26:11.22]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 01:26:11.22]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 01:26:11.22]            at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+[xUnit.net 01:26:11.22]            at AwesomeAssertions.Numeric.NumericAssertionsBase`3.Be(T expected, String because, Object[] becauseArgs)
+[xUnit.net 01:26:11.22]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+[xUnit.net 01:26:11.22]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+[xUnit.net 01:26:11.22]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+[xUnit.net 01:26:11.22]            at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+[xUnit.net 01:26:11.22]       Output:
+[xUnit.net 01:26:11.22]           … 10 bursts, 245,440 bits, 5841 errors, 868 s simulated
+[xUnit.net 01:26:11.22]           … 20 bursts, 490,880 bits, 12321 errors, 1735 s simulated
+[xUnit.net 01:26:11.22]           … 30 bursts, 736,320 bits, 17540 errors, 2603 s simulated
+[xUnit.net 01:26:11.22]           … 40 bursts, 981,760 bits, 46557 errors, 3470 s simulated
+[xUnit.net 01:26:11.22]           … 50 bursts, 1,227,200 bits, 59398 errors, 4338 s simulated
+[xUnit.net 01:26:11.22]           … 60 bursts, 1,472,640 bits, 66187 errors, 5206 s simulated
+[xUnit.net 01:26:11.22]           … 70 bursts, 1,718,080 bits, 73940 errors, 6073 s simulated
+[xUnit.net 01:26:11.22]           … 80 bursts, 1,963,520 bits, 79601 errors, 6941 s simulated
+[xUnit.net 01:26:11.22]           … 90 bursts, 2,208,960 bits, 98758 errors, 7808 s simulated
+[xUnit.net 01:26:11.22]           … 100 bursts, 2,454,400 bits, 116533 errors, 8676 s simulated
+[xUnit.net 01:26:11.22]           … 110 bursts, 2,699,840 bits, 130682 errors, 9544 s simulated
+[xUnit.net 01:26:11.22]           … 120 bursts, 2,945,280 bits, 135665 errors, 10411 s simulated
+[xUnit.net 01:26:11.22]         [mask] POOR WN2 @ +5 dB: 3,018,912 bits, 137349 errors, 123 bursts (1 acquisition failures), 10671 s simulated — BER 4.55E-002 (direct, ≥30 errors)
+  Failed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 2, snrDb: 5) [19 m 20 s]
+  Error Message:
+   Expected value to be 0 because every burst must acquire (≤3 attempts rule, house-tightened to 1), but found 1 (difference of 1).
+  Stack Trace:
+     at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+   at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+   at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+   at AwesomeAssertions.Numeric.NumericAssertionsBase`3.Be(T expected, String because, Object[] becauseArgs)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+  Standard Output Messages:
+   … 10 bursts, 245,440 bits, 5841 errors, 868 s simulated
+   … 20 bursts, 490,880 bits, 12321 errors, 1735 s simulated
+   … 30 bursts, 736,320 bits, 17540 errors, 2603 s simulated
+   … 40 bursts, 981,760 bits, 46557 errors, 3470 s simulated
+   … 50 bursts, 1,227,200 bits, 59398 errors, 4338 s simulated
+   … 60 bursts, 1,472,640 bits, 66187 errors, 5206 s simulated
+   … 70 bursts, 1,718,080 bits, 73940 errors, 6073 s simulated
+   … 80 bursts, 1,963,520 bits, 79601 errors, 6941 s simulated
+   … 90 bursts, 2,208,960 bits, 98758 errors, 7808 s simulated
+   … 100 bursts, 2,454,400 bits, 116533 errors, 8676 s simulated
+   … 110 bursts, 2,699,840 bits, 130682 errors, 9544 s simulated
+   … 120 bursts, 2,945,280 bits, 135665 errors, 10411 s simulated
+ [mask] POOR WN2 @ +5 dB: 3,018,912 bits, 137349 errors, 123 bursts (1 acquisition failures), 10671 s simulated — BER 4.55E-002 (direct, ≥30 errors)
+
+
+[xUnit.net 01:29:43.82]     Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 4, snrDb: 10) [FAIL]
+[xUnit.net 01:29:43.82]       Expected value to be less than or equal to 1E-05, but found 0.028970453344112433 (difference of 0.028960453344112434).
+[xUnit.net 01:29:43.82]       Stack Trace:
+[xUnit.net 01:29:43.82]            at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+[xUnit.net 01:29:43.82]            at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+[xUnit.net 01:29:43.82]            at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+[xUnit.net 01:29:43.82]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 01:29:43.82]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 01:29:43.82]            at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+[xUnit.net 01:29:43.82]            at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+[xUnit.net 01:29:43.82]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+[xUnit.net 01:29:43.82]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+[xUnit.net 01:29:43.82]            at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+[xUnit.net 01:29:43.82]            at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 01:29:43.82]       Output:
+[xUnit.net 01:29:43.82]           … 10 bursts, 1,064,640 bits, 26409 errors, 936 s simulated
+[xUnit.net 01:29:43.82]           … 20 bursts, 2,129,280 bits, 59900 errors, 1872 s simulated
+[xUnit.net 01:29:43.82]         [mask] POOR WN4 @ +10 dB: 3,087,456 bits, 89445 errors, 29 bursts (0 acquisition failures), 2714 s simulated — BER 2.90E-002 (direct, ≥30 errors)
+  Failed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 4, snrDb: 10) [3 m 32 s]
+  Error Message:
+   Expected value to be less than or equal to 1E-05, but found 0.028970453344112433 (difference of 0.028960453344112434).
+  Stack Trace:
+     at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+   at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+   at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+   at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+   at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithFewArgs(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Standard Output Messages:
+   … 10 bursts, 1,064,640 bits, 26409 errors, 936 s simulated
+   … 20 bursts, 2,129,280 bits, 59900 errors, 1872 s simulated
+ [mask] POOR WN4 @ +10 dB: 3,087,456 bits, 89445 errors, 29 bursts (0 acquisition failures), 2714 s simulated — BER 2.90E-002 (direct, ≥30 errors)
+
+
+[xUnit.net 01:30:37.67]     Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 7, snrDb: 19) [FAIL]
+[xUnit.net 01:30:37.67]       Expected value to be less than or equal to 1E-05, but found 0.49412783126825033 (difference of 0.4941178312682503).
+[xUnit.net 01:30:37.67]       Stack Trace:
+[xUnit.net 01:30:37.67]            at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+[xUnit.net 01:30:37.67]            at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+[xUnit.net 01:30:37.67]            at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+[xUnit.net 01:30:37.67]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 01:30:37.67]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 01:30:37.67]            at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+[xUnit.net 01:30:37.67]            at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+[xUnit.net 01:30:37.67]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+[xUnit.net 01:30:37.67]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+[xUnit.net 01:30:37.67]            at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+[xUnit.net 01:30:37.67]            at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 01:30:37.67]       Output:
+[xUnit.net 01:30:37.67]         [mask] POOR WN7 @ +19 dB: 3,243,776 bits, 1602840 errors, 8 bursts (0 acquisition failures), 715 s simulated — BER 4.94E-001 (direct, ≥30 errors)
+  Failed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 7, snrDb: 19) [53 s]
+  Error Message:
+   Expected value to be less than or equal to 1E-05, but found 0.49412783126825033 (difference of 0.4941178312682503).
+  Stack Trace:
+     at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+   at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+   at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+   at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+   at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Standard Output Messages:
+ [mask] POOR WN7 @ +19 dB: 3,243,776 bits, 1602840 errors, 8 bursts (0 acquisition failures), 715 s simulated — BER 4.94E-001 (direct, ≥30 errors)
+
+
+[xUnit.net 01:37:25.00]     Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 3, snrDb: 7) [FAIL]
+[xUnit.net 01:37:25.00]       Expected value to be less than or equal to 1E-05, but found 0.008845446825120529 (difference of 0.00883544682512053).
+[xUnit.net 01:37:25.00]       Stack Trace:
+[xUnit.net 01:37:25.00]            at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+[xUnit.net 01:37:25.00]            at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+[xUnit.net 01:37:25.00]            at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+[xUnit.net 01:37:25.00]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 01:37:25.00]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 01:37:25.00]            at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+[xUnit.net 01:37:25.00]            at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+[xUnit.net 01:37:25.00]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+[xUnit.net 01:37:25.00]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+[xUnit.net 01:37:25.00]            at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+[xUnit.net 01:37:25.00]            at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 01:37:25.00]       Output:
+[xUnit.net 01:37:25.00]           … 10 bursts, 532,160 bits, 67 errors, 936 s simulated
+[xUnit.net 01:37:25.00]           … 20 bursts, 1,064,320 bits, 97 errors, 1872 s simulated
+[xUnit.net 01:37:25.00]           … 30 bursts, 1,596,480 bits, 26693 errors, 2807 s simulated
+[xUnit.net 01:37:25.00]           … 40 bursts, 2,128,640 bits, 26750 errors, 3743 s simulated
+[xUnit.net 01:37:25.00]           … 50 bursts, 2,660,800 bits, 26794 errors, 4679 s simulated
+[xUnit.net 01:37:25.00]         [mask] POOR WN3 @ +7 dB: 3,033,312 bits, 26831 errors, 57 bursts (0 acquisition failures), 5334 s simulated — BER 8.85E-003 (direct, ≥30 errors)
+  Failed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 3, snrDb: 7) [6 m 47 s]
+  Error Message:
+   Expected value to be less than or equal to 1E-05, but found 0.008845446825120529 (difference of 0.00883544682512053).
+  Stack Trace:
+     at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+   at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+   at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+   at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+   at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Standard Output Messages:
+   … 10 bursts, 532,160 bits, 67 errors, 936 s simulated
+   … 20 bursts, 1,064,320 bits, 97 errors, 1872 s simulated
+   … 30 bursts, 1,596,480 bits, 26693 errors, 2807 s simulated
+   … 40 bursts, 2,128,640 bits, 26750 errors, 3743 s simulated
+   … 50 bursts, 2,660,800 bits, 26794 errors, 4679 s simulated
+ [mask] POOR WN3 @ +7 dB: 3,033,312 bits, 26831 errors, 57 bursts (0 acquisition failures), 5334 s simulated — BER 8.85E-003 (direct, ≥30 errors)
+
+
+[xUnit.net 01:39:58.14]     Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 5, snrDb: 11) [FAIL]
+[xUnit.net 01:39:58.14]       Expected value to be less than or equal to 1E-05, but found 0.15320861946483544 (difference of 0.15319861946483543).
+[xUnit.net 01:39:58.14]       Stack Trace:
+[xUnit.net 01:39:58.14]            at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+[xUnit.net 01:39:58.14]            at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+[xUnit.net 01:39:58.14]            at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+[xUnit.net 01:39:58.14]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 01:39:58.14]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 01:39:58.14]            at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+[xUnit.net 01:39:58.14]            at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+[xUnit.net 01:39:58.14]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+[xUnit.net 01:39:58.14]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+[xUnit.net 01:39:58.14]            at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+[xUnit.net 01:39:58.14]            at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 01:39:58.14]       Output:
+[xUnit.net 01:39:58.14]           … 10 bursts, 1,351,360 bits, 246673 errors, 893 s simulated
+[xUnit.net 01:39:58.14]           … 20 bursts, 2,702,720 bits, 426799 errors, 1786 s simulated
+[xUnit.net 01:39:58.14]         [mask] POOR WN5 @ +11 dB: 3,108,128 bits, 476192 errors, 23 bursts (0 acquisition failures), 2054 s simulated — BER 1.53E-001 (direct, ≥30 errors)
+  Failed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 5, snrDb: 11) [2 m 33 s]
+  Error Message:
+   Expected value to be less than or equal to 1E-05, but found 0.15320861946483544 (difference of 0.15319861946483543).
+  Stack Trace:
+     at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+   at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+   at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+   at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+   at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Standard Output Messages:
+   … 10 bursts, 1,351,360 bits, 246673 errors, 893 s simulated
+   … 20 bursts, 2,702,720 bits, 426799 errors, 1786 s simulated
+ [mask] POOR WN5 @ +11 dB: 3,108,128 bits, 476192 errors, 23 bursts (0 acquisition failures), 2054 s simulated — BER 1.53E-001 (direct, ≥30 errors)
+
+
+[xUnit.net 02:17:49.74]     Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 1, snrDb: 3) [FAIL]
+[xUnit.net 02:17:49.74]       Expected value to be 0 because every burst must acquire (≤3 attempts rule, house-tightened to 1), but found 1 (difference of 1).
+[xUnit.net 02:17:49.74]       Stack Trace:
+[xUnit.net 02:17:49.74]            at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+[xUnit.net 02:17:49.74]            at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+[xUnit.net 02:17:49.74]            at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+[xUnit.net 02:17:49.74]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 02:17:49.74]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 02:17:49.74]            at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+[xUnit.net 02:17:49.74]            at AwesomeAssertions.Numeric.NumericAssertionsBase`3.Be(T expected, String because, Object[] becauseArgs)
+[xUnit.net 02:17:49.74]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+[xUnit.net 02:17:49.74]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+[xUnit.net 02:17:49.74]            at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+[xUnit.net 02:17:49.74]            at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 02:17:49.74]       Output:
+[xUnit.net 02:17:49.74]           … 10 bursts, 122,560 bits, 13728 errors, 868 s simulated
+[xUnit.net 02:17:49.74]           … 20 bursts, 245,120 bits, 13728 errors, 1735 s simulated
+[xUnit.net 02:17:49.74]           … 30 bursts, 367,680 bits, 15243 errors, 2603 s simulated
+[xUnit.net 02:17:49.74]           … 40 bursts, 490,240 bits, 15268 errors, 3470 s simulated
+[xUnit.net 02:17:49.74]           … 50 bursts, 612,800 bits, 19857 errors, 4338 s simulated
+[xUnit.net 02:17:49.74]           … 60 bursts, 735,360 bits, 19857 errors, 5206 s simulated
+[xUnit.net 02:17:49.74]           … 70 bursts, 857,920 bits, 32126 errors, 6073 s simulated
+[xUnit.net 02:17:49.74]           … 80 bursts, 980,480 bits, 38253 errors, 6941 s simulated
+[xUnit.net 02:17:49.74]           … 90 bursts, 1,103,040 bits, 39771 errors, 7808 s simulated
+[xUnit.net 02:17:49.74]           … 100 bursts, 1,225,600 bits, 39775 errors, 8676 s simulated
+[xUnit.net 02:17:49.74]           … 110 bursts, 1,348,160 bits, 44362 errors, 9544 s simulated
+[xUnit.net 02:17:49.74]           … 120 bursts, 1,470,720 bits, 55096 errors, 10411 s simulated
+[xUnit.net 02:17:49.74]           … 130 bursts, 1,593,280 bits, 55101 errors, 11279 s simulated
+[xUnit.net 02:17:49.74]           … 140 bursts, 1,715,840 bits, 55101 errors, 12146 s simulated
+[xUnit.net 02:17:49.74]           … 150 bursts, 1,838,400 bits, 55109 errors, 13014 s simulated
+[xUnit.net 02:17:49.74]           … 160 bursts, 1,960,960 bits, 62725 errors, 13882 s simulated
+[xUnit.net 02:17:49.74]           … 170 bursts, 2,083,520 bits, 62746 errors, 14749 s simulated
+[xUnit.net 02:17:49.74]           … 180 bursts, 2,206,080 bits, 62746 errors, 15617 s simulated
+[xUnit.net 02:17:49.74]           … 190 bursts, 2,328,640 bits, 70498 errors, 16484 s simulated
+[xUnit.net 02:17:49.74]           … 200 bursts, 2,451,200 bits, 73555 errors, 17352 s simulated
+[xUnit.net 02:17:49.74]           … 210 bursts, 2,573,760 bits, 73560 errors, 18220 s simulated
+[xUnit.net 02:17:49.74]           … 220 bursts, 2,696,320 bits, 73571 errors, 19087 s simulated
+[xUnit.net 02:17:49.74]           … 230 bursts, 2,818,880 bits, 85799 errors, 19955 s simulated
+[xUnit.net 02:17:49.74]           … 240 bursts, 2,941,440 bits, 85839 errors, 20822 s simulated
+[xUnit.net 02:17:49.74]         [mask] POOR WN1 @ +3 dB: 3,002,720 bits, 85842 errors, 245 bursts (1 acquisition failures), 21256 s simulated — BER 2.86E-002 (direct, ≥30 errors)
+  Failed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 1, snrDb: 3) [37 m 51 s]
+  Error Message:
+   Expected value to be 0 because every burst must acquire (≤3 attempts rule, house-tightened to 1), but found 1 (difference of 1).
+  Stack Trace:
+     at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+   at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+   at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+   at AwesomeAssertions.Numeric.NumericAssertionsBase`3.Be(T expected, String because, Object[] becauseArgs)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+   at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Standard Output Messages:
+   … 10 bursts, 122,560 bits, 13728 errors, 868 s simulated
+   … 20 bursts, 245,120 bits, 13728 errors, 1735 s simulated
+   … 30 bursts, 367,680 bits, 15243 errors, 2603 s simulated
+   … 40 bursts, 490,240 bits, 15268 errors, 3470 s simulated
+   … 50 bursts, 612,800 bits, 19857 errors, 4338 s simulated
+   … 60 bursts, 735,360 bits, 19857 errors, 5206 s simulated
+   … 70 bursts, 857,920 bits, 32126 errors, 6073 s simulated
+   … 80 bursts, 980,480 bits, 38253 errors, 6941 s simulated
+   … 90 bursts, 1,103,040 bits, 39771 errors, 7808 s simulated
+   … 100 bursts, 1,225,600 bits, 39775 errors, 8676 s simulated
+   … 110 bursts, 1,348,160 bits, 44362 errors, 9544 s simulated
+   … 120 bursts, 1,470,720 bits, 55096 errors, 10411 s simulated
+   … 130 bursts, 1,593,280 bits, 55101 errors, 11279 s simulated
+   … 140 bursts, 1,715,840 bits, 55101 errors, 12146 s simulated
+   … 150 bursts, 1,838,400 bits, 55109 errors, 13014 s simulated
+   … 160 bursts, 1,960,960 bits, 62725 errors, 13882 s simulated
+   … 170 bursts, 2,083,520 bits, 62746 errors, 14749 s simulated
+   … 180 bursts, 2,206,080 bits, 62746 errors, 15617 s simulated
+   … 190 bursts, 2,328,640 bits, 70498 errors, 16484 s simulated
+   … 200 bursts, 2,451,200 bits, 73555 errors, 17352 s simulated
+   … 210 bursts, 2,573,760 bits, 73560 errors, 18220 s simulated
+   … 220 bursts, 2,696,320 bits, 73571 errors, 19087 s simulated
+   … 230 bursts, 2,818,880 bits, 85799 errors, 19955 s simulated
+   … 240 bursts, 2,941,440 bits, 85839 errors, 20822 s simulated
+ [mask] POOR WN1 @ +3 dB: 3,002,720 bits, 85842 errors, 245 bursts (1 acquisition failures), 21256 s simulated — BER 2.86E-002 (direct, ≥30 errors)
+
+
+[xUnit.net 02:55:51.09]     Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 0, snrDb: -1) [FAIL]
+[xUnit.net 02:55:51.09]       System.ArgumentException : WN 0 has no UltraShort interleaver (Table D-XXXVII) (Parameter 'kind')
+[xUnit.net 02:55:51.09]       Stack Trace:
+[xUnit.net 02:55:51.10]            at Packet.SoundModem.Ms110d.Ms110dInterleaverParams.Get3k(Int32 wn, Ms110dInterleaverKind kind)
+[xUnit.net 02:55:51.10]            at Packet.SoundModem.Ms110d.Ms110dDemodulator.TryReadPreamble()
+[xUnit.net 02:55:51.10]            at Packet.SoundModem.Ms110d.Ms110dDemodulator.PushT2(Cf sample)
+[xUnit.net 02:55:51.10]            at Packet.SoundModem.Ms110d.Ms110dDemodulator.Process(ReadOnlySpan`1 samples)
+[xUnit.net 02:55:51.10]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.RunPoint(Int32 wn, Double snrDb, WattersonPath[] paths, Int64 targetBits, Int32 seed, Double minSimSeconds, Double frequencyOffsetHz)
+[xUnit.net 02:55:51.10]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+[xUnit.net 02:55:51.10]            at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+[xUnit.net 02:55:51.10]            at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 02:55:51.10]       Output:
+[xUnit.net 02:55:51.10]           … 10 bursts, 63,040 bits, 4322 errors, 893 s simulated
+[xUnit.net 02:55:51.10]           … 20 bursts, 126,080 bits, 9035 errors, 1786 s simulated
+[xUnit.net 02:55:51.10]           … 30 bursts, 189,120 bits, 14297 errors, 2679 s simulated
+[xUnit.net 02:55:51.10]           … 40 bursts, 252,160 bits, 19745 errors, 3571 s simulated
+[xUnit.net 02:55:51.10]           … 50 bursts, 315,200 bits, 22560 errors, 4464 s simulated
+[xUnit.net 02:55:51.10]           … 60 bursts, 378,240 bits, 29026 errors, 5357 s simulated
+[xUnit.net 02:55:51.10]           … 70 bursts, 441,280 bits, 33724 errors, 6250 s simulated
+[xUnit.net 02:55:51.10]           … 80 bursts, 504,320 bits, 39178 errors, 7143 s simulated
+[xUnit.net 02:55:51.10]           … 90 bursts, 567,360 bits, 44143 errors, 8036 s simulated
+[xUnit.net 02:55:51.10]           … 100 bursts, 630,400 bits, 48638 errors, 8929 s simulated
+[xUnit.net 02:55:51.10]           … 110 bursts, 693,440 bits, 52869 errors, 9822 s simulated
+[xUnit.net 02:55:51.10]           … 120 bursts, 756,480 bits, 57750 errors, 10714 s simulated
+[xUnit.net 02:55:51.10]           … 130 bursts, 819,520 bits, 62237 errors, 11607 s simulated
+[xUnit.net 02:55:51.10]           … 140 bursts, 882,560 bits, 68625 errors, 12500 s simulated
+[xUnit.net 02:55:51.10]           … 150 bursts, 945,600 bits, 74384 errors, 13393 s simulated
+[xUnit.net 02:55:51.10]           … 160 bursts, 1,008,640 bits, 79757 errors, 14286 s simulated
+[xUnit.net 02:55:51.10]           … 170 bursts, 1,071,680 bits, 84022 errors, 15179 s simulated
+[xUnit.net 02:55:51.10]           … 180 bursts, 1,134,720 bits, 87741 errors, 16072 s simulated
+[xUnit.net 02:55:51.10]           … 190 bursts, 1,197,760 bits, 91831 errors, 16964 s simulated
+[xUnit.net 02:55:51.10]           … 200 bursts, 1,260,800 bits, 97285 errors, 17857 s simulated
+[xUnit.net 02:55:51.10]           … 210 bursts, 1,323,840 bits, 102071 errors, 18750 s simulated
+[xUnit.net 02:55:51.10]           … 220 bursts, 1,386,880 bits, 106965 errors, 19643 s simulated
+[xUnit.net 02:55:51.10]           … 230 bursts, 1,449,920 bits, 112765 errors, 20536 s simulated
+[xUnit.net 02:55:51.10]           … 240 bursts, 1,512,960 bits, 116920 errors, 21429 s simulated
+[xUnit.net 02:55:51.10]           … 250 bursts, 1,576,000 bits, 122017 errors, 22322 s simulated
+[xUnit.net 02:55:51.10]           … 260 bursts, 1,639,040 bits, 126453 errors, 23215 s simulated
+[xUnit.net 02:55:51.10]           … 270 bursts, 1,702,080 bits, 131865 errors, 24107 s simulated
+[xUnit.net 02:55:51.10]           … 280 bursts, 1,765,120 bits, 136546 errors, 25000 s simulated
+[xUnit.net 02:55:51.10]           … 290 bursts, 1,828,160 bits, 140925 errors, 25893 s simulated
+[xUnit.net 02:55:51.10]           … 300 bursts, 1,891,200 bits, 145708 errors, 26786 s simulated
+[xUnit.net 02:55:51.10]           … 310 bursts, 1,954,240 bits, 151228 errors, 27679 s simulated
+[xUnit.net 02:55:51.10]           … 320 bursts, 2,017,280 bits, 154683 errors, 28572 s simulated
+[xUnit.net 02:55:51.10]           … 330 bursts, 2,080,320 bits, 158814 errors, 29465 s simulated
+[xUnit.net 02:55:51.10]           … 340 bursts, 2,143,360 bits, 163478 errors, 30358 s simulated
+[xUnit.net 02:55:51.10]           … 350 bursts, 2,206,400 bits, 168046 errors, 31250 s simulated
+[xUnit.net 02:55:51.10]           … 360 bursts, 2,269,440 bits, 173117 errors, 32143 s simulated
+[xUnit.net 02:55:51.10]           … 370 bursts, 2,332,480 bits, 177437 errors, 33036 s simulated
+[xUnit.net 02:55:51.10]           … 380 bursts, 2,395,520 bits, 181134 errors, 33929 s simulated
+[xUnit.net 02:55:51.10]           … 390 bursts, 2,458,560 bits, 186447 errors, 34822 s simulated
+[xUnit.net 02:55:51.10]           … 400 bursts, 2,521,600 bits, 190928 errors, 35715 s simulated
+[xUnit.net 02:55:51.10]           … 410 bursts, 2,584,640 bits, 197422 errors, 36608 s simulated
+[xUnit.net 02:55:51.10]           … 420 bursts, 2,647,680 bits, 202077 errors, 37500 s simulated
+[xUnit.net 02:55:51.10]           … 430 bursts, 2,710,720 bits, 207820 errors, 38393 s simulated
+[xUnit.net 02:55:51.10]           … 440 bursts, 2,773,760 bits, 212251 errors, 39286 s simulated
+[xUnit.net 02:55:51.10]           … 450 bursts, 2,836,800 bits, 217157 errors, 40179 s simulated
+  Failed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 0, snrDb: -1) [38 m 1 s]
+  Error Message:
+   System.ArgumentException : WN 0 has no UltraShort interleaver (Table D-XXXVII) (Parameter 'kind')
+  Stack Trace:
+     at Packet.SoundModem.Ms110d.Ms110dInterleaverParams.Get3k(Int32 wn, Ms110dInterleaverKind kind)
+   at Packet.SoundModem.Ms110d.Ms110dDemodulator.TryReadPreamble()
+   at Packet.SoundModem.Ms110d.Ms110dDemodulator.PushT2(Cf sample)
+   at Packet.SoundModem.Ms110d.Ms110dDemodulator.Process(ReadOnlySpan`1 samples)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.RunPoint(Int32 wn, Double snrDb, WattersonPath[] paths, Int64 targetBits, Int32 seed, Double minSimSeconds, Double frequencyOffsetHz)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+   at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Standard Output Messages:
+   … 10 bursts, 63,040 bits, 4322 errors, 893 s simulated
+   … 20 bursts, 126,080 bits, 9035 errors, 1786 s simulated
+   … 30 bursts, 189,120 bits, 14297 errors, 2679 s simulated
+   … 40 bursts, 252,160 bits, 19745 errors, 3571 s simulated
+   … 50 bursts, 315,200 bits, 22560 errors, 4464 s simulated
+   … 60 bursts, 378,240 bits, 29026 errors, 5357 s simulated
+   … 70 bursts, 441,280 bits, 33724 errors, 6250 s simulated
+   … 80 bursts, 504,320 bits, 39178 errors, 7143 s simulated
+   … 90 bursts, 567,360 bits, 44143 errors, 8036 s simulated
+   … 100 bursts, 630,400 bits, 48638 errors, 8929 s simulated
+   … 110 bursts, 693,440 bits, 52869 errors, 9822 s simulated
+   … 120 bursts, 756,480 bits, 57750 errors, 10714 s simulated
+   … 130 bursts, 819,520 bits, 62237 errors, 11607 s simulated
+   … 140 bursts, 882,560 bits, 68625 errors, 12500 s simulated
+   … 150 bursts, 945,600 bits, 74384 errors, 13393 s simulated
+   … 160 bursts, 1,008,640 bits, 79757 errors, 14286 s simulated
+   … 170 bursts, 1,071,680 bits, 84022 errors, 15179 s simulated
+   … 180 bursts, 1,134,720 bits, 87741 errors, 16072 s simulated
+   … 190 bursts, 1,197,760 bits, 91831 errors, 16964 s simulated
+   … 200 bursts, 1,260,800 bits, 97285 errors, 17857 s simulated
+   … 210 bursts, 1,323,840 bits, 102071 errors, 18750 s simulated
+   … 220 bursts, 1,386,880 bits, 106965 errors, 19643 s simulated
+   … 230 bursts, 1,449,920 bits, 112765 errors, 20536 s simulated
+   … 240 bursts, 1,512,960 bits, 116920 errors, 21429 s simulated
+   … 250 bursts, 1,576,000 bits, 122017 errors, 22322 s simulated
+   … 260 bursts, 1,639,040 bits, 126453 errors, 23215 s simulated
+   … 270 bursts, 1,702,080 bits, 131865 errors, 24107 s simulated
+   … 280 bursts, 1,765,120 bits, 136546 errors, 25000 s simulated
+   … 290 bursts, 1,828,160 bits, 140925 errors, 25893 s simulated
+   … 300 bursts, 1,891,200 bits, 145708 errors, 26786 s simulated
+   … 310 bursts, 1,954,240 bits, 151228 errors, 27679 s simulated
+   … 320 bursts, 2,017,280 bits, 154683 errors, 28572 s simulated
+   … 330 bursts, 2,080,320 bits, 158814 errors, 29465 s simulated
+   … 340 bursts, 2,143,360 bits, 163478 errors, 30358 s simulated
+   … 350 bursts, 2,206,400 bits, 168046 errors, 31250 s simulated
+   … 360 bursts, 2,269,440 bits, 173117 errors, 32143 s simulated
+   … 370 bursts, 2,332,480 bits, 177437 errors, 33036 s simulated
+   … 380 bursts, 2,395,520 bits, 181134 errors, 33929 s simulated
+   … 390 bursts, 2,458,560 bits, 186447 errors, 34822 s simulated
+   … 400 bursts, 2,521,600 bits, 190928 errors, 35715 s simulated
+   … 410 bursts, 2,584,640 bits, 197422 errors, 36608 s simulated
+   … 420 bursts, 2,647,680 bits, 202077 errors, 37500 s simulated
+   … 430 bursts, 2,710,720 bits, 207820 errors, 38393 s simulated
+   … 440 bursts, 2,773,760 bits, 212251 errors, 39286 s simulated
+   … 450 bursts, 2,836,800 bits, 217157 errors, 40179 s simulated
+
+
+[xUnit.net 02:57:33.77]     Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 13, snrDb: 11) [FAIL]
+[xUnit.net 02:57:33.77]       Expected value to be less than or equal to 1E-05, but found 0.2970780715601158 (difference of 0.2970680715601158).
+[xUnit.net 02:57:33.77]       Stack Trace:
+[xUnit.net 02:57:33.77]            at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+[xUnit.net 02:57:33.77]            at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+[xUnit.net 02:57:33.77]            at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+[xUnit.net 02:57:33.77]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 02:57:33.77]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 02:57:33.77]            at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+[xUnit.net 02:57:33.77]            at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+[xUnit.net 02:57:33.77]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+[xUnit.net 02:57:33.77]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+[xUnit.net 02:57:33.77]            at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+[xUnit.net 02:57:33.77]            at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 02:57:33.77]       Output:
+[xUnit.net 02:57:33.77]           … 10 bursts, 2,027,200 bits, 619418 errors, 893 s simulated
+[xUnit.net 02:57:33.77]         [mask] POOR WN13 @ +11 dB: 3,040,800 bits, 903355 errors, 15 bursts (0 acquisition failures), 1340 s simulated — BER 2.97E-001 (direct, ≥30 errors)
+  Failed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 13, snrDb: 11) [1 m 42 s]
+  Error Message:
+   Expected value to be less than or equal to 1E-05, but found 0.2970780715601158 (difference of 0.2970680715601158).
+  Stack Trace:
+     at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+   at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+   at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+   at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+   at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Standard Output Messages:
+   … 10 bursts, 2,027,200 bits, 619418 errors, 893 s simulated
+ [mask] POOR WN13 @ +11 dB: 3,040,800 bits, 903355 errors, 15 bursts (0 acquisition failures), 1340 s simulated — BER 2.97E-001 (direct, ≥30 errors)
+
+
+[xUnit.net 02:58:15.85]     Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 8, snrDb: 23) [FAIL]
+[xUnit.net 02:58:15.85]       Expected value to be less than or equal to 1E-05, but found 0.49938538451782016 (difference of 0.49937538451782015).
+[xUnit.net 02:58:15.85]       Stack Trace:
+[xUnit.net 02:58:15.85]            at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+[xUnit.net 02:58:15.85]            at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+[xUnit.net 02:58:15.85]            at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+[xUnit.net 02:58:15.85]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 02:58:15.85]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 02:58:15.85]            at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+[xUnit.net 02:58:15.85]            at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+[xUnit.net 02:58:15.85]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+[xUnit.net 02:58:15.85]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+[xUnit.net 02:58:15.85]            at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+[xUnit.net 02:58:15.85]            at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 02:58:15.85]       Output:
+[xUnit.net 02:58:15.85]         [mask] POOR WN8 @ +23 dB: 3,784,480 bits, 1889914 errors, 7 bursts (0 acquisition failures), 625 s simulated — BER 4.99E-001 (direct, ≥30 errors)
+  Failed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 8, snrDb: 23) [42 s]
+  Error Message:
+   Expected value to be less than or equal to 1E-05, but found 0.49938538451782016 (difference of 0.49937538451782015).
+  Stack Trace:
+     at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+   at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+   at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+   at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+   at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Standard Output Messages:
+ [mask] POOR WN8 @ +23 dB: 3,784,480 bits, 1889914 errors, 7 bursts (0 acquisition failures), 625 s simulated — BER 4.99E-001 (direct, ≥30 errors)
+
+
+[xUnit.net 02:59:38.18]     Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 6, snrDb: 14) [FAIL]
+[xUnit.net 02:59:38.18]       Expected value to be less than or equal to 1E-05, but found 0.44132532259973956 (difference of 0.44131532259973955).
+[xUnit.net 02:59:38.18]       Stack Trace:
+[xUnit.net 02:59:38.18]            at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+[xUnit.net 02:59:38.18]            at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+[xUnit.net 02:59:38.18]            at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+[xUnit.net 02:59:38.18]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 02:59:38.18]            at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+[xUnit.net 02:59:38.18]            at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+[xUnit.net 02:59:38.18]            at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+[xUnit.net 02:59:38.18]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+[xUnit.net 02:59:38.18]            at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+[xUnit.net 02:59:38.18]            at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+[xUnit.net 02:59:38.18]            at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 02:59:38.18]       Output:
+[xUnit.net 02:59:38.18]           … 10 bursts, 2,703,040 bits, 1202369 errors, 893 s simulated
+[xUnit.net 02:59:38.18]         [mask] POOR WN6 @ +14 dB: 3,243,648 bits, 1431504 errors, 12 bursts (0 acquisition failures), 1072 s simulated — BER 4.41E-001 (direct, ≥30 errors)
+  Failed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(wn: 6, snrDb: 14) [1 m 22 s]
+  Error Message:
+   Expected value to be less than or equal to 1E-05, but found 0.44132532259973956 (difference of 0.44131532259973955).
+  Stack Trace:
+     at AwesomeAssertions.Execution.LateBoundTestFramework.Throw(String message)
+   at AwesomeAssertions.Execution.DefaultAssertionStrategy.HandleFailure(String message)
+   at AwesomeAssertions.Execution.AssertionScope.AddPreFormattedFailure(String formattedFailureMessage)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(Func`1 getFailureReason)
+   at AwesomeAssertions.Execution.AssertionChain.FailWith(String message, Object[] args)
+   at AwesomeAssertions.Numeric.NumericAssertionsBase`3.BeLessThanOrEqualTo(T expected, String because, Object[] becauseArgs)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.AssertMask(MaskRun run)
+   at Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Poor_Mask_Gate(Int32 wn, Double snrDb)
+   at InvokeStub_Ms110dMaskTests.Poor_Mask_Gate(Object, Span`1)
+   at System.Reflection.RuntimeMethodInfo.Invoke(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Standard Output Messages:
+   … 10 bursts, 2,703,040 bits, 1202369 errors, 893 s simulated
+ [mask] POOR WN6 @ +14 dB: 3,243,648 bits, 1431504 errors, 12 bursts (0 acquisition failures), 1072 s simulated — BER 4.41E-001 (direct, ≥30 errors)
+
+
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Doppler_Offset_Engineering_Check(wn: 6, offsetHz: 75) [6 s]
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Doppler_Offset_Engineering_Check(wn: 2, offsetHz: -75) [1 m 28 s]
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Doppler_Offset_Engineering_Check(wn: 2, offsetHz: 75) [1 m 28 s]
+[xUnit.net 03:24:00.23]   Finished:    Packet.SoundModem.Tests
+  Passed Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests.Static_Wid2_Gate [21 m 18 s]
+
+Test Run Failed.
+Total tests: 24
+     Passed: 14
+     Failed: 10
+ Total time: 3.4001 Hours
+       _VSTestConsole:
+         MSB4181: The "VSTestTask" task returned false but did not log an error.
+     8>Done Building Project "/root/pdn-soundmodem/tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj" (VSTest target(s)) -- FAILED.
+     1>Done Building Project "/root/pdn-soundmodem/pdn-soundmodem.slnx" (VSTest target(s)) -- FAILED.
+
+Build FAILED.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 03:24:01.59

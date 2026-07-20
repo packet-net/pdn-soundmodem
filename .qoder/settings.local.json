@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /root/pdn-soundmodem && MS110D_MASKS=1 dotnet test --filter Ms110dMask --no-restore --verbosity normal 2>&1 | tail -80)",
+      "Bash(tail:*)"
+    ]
+  }
+}

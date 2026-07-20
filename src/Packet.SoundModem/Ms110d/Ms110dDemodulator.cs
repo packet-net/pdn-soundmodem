@@ -97,10 +97,12 @@ public sealed class Ms110dDemodulator
     private TailBitingViterbiDecoder? _viterbi;
     private PunctureSpec? _puncture;
     private Ms110dInterleaver? _interleaver;
+    private ConvolutionalCode? _code;
     private float[] _blockLlrs = [];
     private int _blockLlrCount;
     private int _blockIndex;
     private readonly List<byte> _burstBits = [];
+    private readonly List<long> _blockFrameChips = [];
     private bool _terminate;
 
     /// <summary>Creates the receiver.</summary>
@@ -392,6 +394,7 @@ public sealed class Ms110dDemodulator
         _mode = Ms110dMode.Mode3k(wn);
         _il = Ms110dInterleaverParams.Get3k(wn, il);
         ConvolutionalCode code = k == 9 ? ConvolutionalCode.K9 : ConvolutionalCode.K7;
+        _code = code;
         _viterbi = new TailBitingViterbiDecoder(code);
         _puncture = Ms110dPuncture.Get(code, _mode.CodeRate);
         _interleaver = new Ms110dInterleaver(_il.SizeBits, _il.Increment);
@@ -934,12 +937,14 @@ public sealed class Ms110dDemodulator
             _probeGainRef = (0.95 * _probeGainRef) + (0.05 * probeGain);
         }
 
+        _blockFrameChips.Add(_frameChip);
         _frameChip += mode.U + mode.K;
         _frameInBlock++;
         if (_frameInBlock == _il.Frames)
         {
             _frameInBlock = 0;
             FinishBlock();
+            _blockFrameChips.Clear();
         }
     }
 
@@ -1217,6 +1222,17 @@ public sealed class Ms110dDemodulator
 
         var info = new byte[_il.InputBits];
         Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
+
+        // Turbo re-equalization: re-encode decoded info, use as known training,
+        // re-equalize, and decode again. Only for PSK modes with DFE available.
+        if (false && _dfe is not null && _mode is not null &&
+            _mode.Modulation is not Ms110dModulation.Qam16 &&
+            _blockFrameChips.Count == _il.Frames)
+        {
+            TurboReequalize(info);
+            Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
+        }
+
         _blockLlrCount = 0;
 
         int searchFrom = Math.Max(0, _burstBits.Count - 31);
@@ -1237,6 +1253,116 @@ public sealed class Ms110dDemodulator
         {
             CompleteBurst(Ms110dBurstEndReason.MaxInputDataBlocks);
         }
+    }
+
+    private void TurboReequalize(byte[] info)
+    {
+        var mode = _mode!;
+        var dfe = _dfe!;
+
+        // Save DFE state — turbo must not corrupt tracking for future blocks.
+        Cf[] savedTaps = dfe.SnapshotTaps();
+
+        // Re-encode decoded info → fetched (wire-order) bits.
+        byte[] fetched = Ms110dFraming.EncodeBlock(_code!, _puncture!, _interleaver!, info);
+
+        // Map fetched bits to expected wire symbols per frame.
+        int bitsPerSymbol = mode.Modulation switch
+        {
+            Ms110dModulation.Bpsk => 1,
+            Ms110dModulation.Qpsk => 2,
+            Ms110dModulation.Psk8 => 3,
+            _ => 4,
+        };
+
+        int fb = dfe.FbTaps;
+        Span<Cf> window = stackalloc Cf[dfe.FfTaps];
+        Span<Cf> past = stackalloc Cf[fb];
+        _blockLlrCount = 0;
+        int bit = 0;
+
+        for (int f = 0; f < _il!.Frames; f++)
+        {
+            long frameChip = _blockFrameChips[f];
+            _scrambler.Reset();
+
+            // Build expected symbols for this frame's data block.
+            var expected = new Cf[mode.U];
+            for (int u = 0; u < mode.U; u++)
+            {
+                int symbolNumber = 0;
+                for (int b = 0; b < bitsPerSymbol; b++)
+                {
+                    symbolNumber = (symbolNumber << 1) | (bit < fetched.Length ? fetched[bit++] : 0);
+                }
+
+                int wireIndex = mode.Modulation switch
+                {
+                    Ms110dModulation.Bpsk => _scrambler.NextPsk(symbolNumber == 0 ? 0 : 4),
+                    Ms110dModulation.Qpsk => _scrambler.NextPsk(
+                        symbolNumber switch { 0 => 0, 1 => 2, 3 => 4, _ => 6 }),
+                    Ms110dModulation.Psk8 => _scrambler.NextPsk(
+                        Ms110dTables.Transcode8Psk[symbolNumber & 7]),
+                    _ => _scrambler.NextQam(symbolNumber & 15, 4),
+                };
+                expected[u] = mode.Modulation == Ms110dModulation.Qam16
+                    ? Ms110dTables.Qam16[wireIndex]
+                    : Ms110dTables.Psk8[wireIndex];
+            }
+
+            // Batch-LS solve using expected symbols as known training.
+            dfe.BeginTraining();
+            for (int j = 0; j < fb; j++)
+            {
+                past[j] = Cf.Zero;
+            }
+
+            for (int u = 0; u < mode.U; u++)
+            {
+                if (!HaveSamplesForChip(frameChip + u + 2))
+                {
+                    dfe.LoadTaps(savedTaps);
+                    return;
+                }
+
+                FillWindow(frameChip + u, window);
+                dfe.AddTrainingRow(window, past, expected[u], weight: 1.0f);
+                for (int j = fb - 1; j > 0; j--)
+                {
+                    past[j] = past[j - 1];
+                }
+
+                past[0] = expected[u];
+            }
+
+            dfe.SolveTraining(regularization: _trackRidge);
+
+            // Re-equalize and compute LLRs using the same descrambling as the first pass.
+            _scrambler.Reset();
+            for (int j = 0; j < fb; j++)
+            {
+                past[j] = Cf.Zero;
+            }
+
+            for (int u = 0; u < mode.U; u++)
+            {
+                FillWindow(frameChip + u, window);
+                Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                Cf y = dfe.Equalize(window, past);
+                Cf descrambled = y * rotor.Conj();
+                PushLlrs(descrambled, mode.Modulation);
+
+                for (int j = fb - 1; j > 0; j--)
+                {
+                    past[j] = past[j - 1];
+                }
+
+                past[0] = expected[u];
+            }
+        }
+
+        // Restore DFE state.
+        dfe.LoadTaps(savedTaps);
     }
 
     private void CompleteBurst(Ms110dBurstEndReason reason)
