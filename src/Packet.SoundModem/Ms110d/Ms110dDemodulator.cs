@@ -795,9 +795,11 @@ public sealed class Ms110dDemodulator
         // to complete the excitation (the probe alone is rank-deficient).
         dfe.BeginTraining();
 
-        // Data block: bidirectional RLS for short PSK blocks (U≤96), single-pass for
-        // longer blocks and QAM16. Bidirectional averaging eliminates the transient at
-        // both block ends; for U=256 the second pass's accumulated errors outweigh the benefit.
+        // RLS weight: 1.0 on fading channels (full tracking), 0.1 on static/AWGN
+        // (minimal noise accumulation while still providing some adaptation).
+        bool fading = tapRotation.Cnorm() > 1e-12 && Math.Abs(tapRotation.Arg()) > 0.005;
+        float rlsWeight = fading ? 1.0f : 0.1f;
+
         _scrambler.Reset();
         float ddGate = DdGateRadius(mode.Modulation);
         if (mode.Modulation == Ms110dModulation.Qam16)
@@ -810,7 +812,7 @@ public sealed class Ms110dDemodulator
                 Cf clean = Slice(y, mode.Modulation);
                 DataSymbolEqualized?.Invoke(y);
                 PushMaxLogLlrs(y, Ms110dTables.Qam16, null, 4, 10.0f, scrambleNibble);
-                dfe.RlsUpdate(window, _decisions, clean, weight: 1.0f);
+                dfe.RlsUpdate(window, _decisions, clean, weight: rlsWeight);
                 if ((y - clean).Cnorm() < ddGate)
                 {
                     dfe.AddTrainingRow(window, _decisions, clean, weight: 0.25f);
@@ -821,8 +823,7 @@ public sealed class Ms110dDemodulator
         }
         else if (mode.U <= 96)
         {
-            // 3-pass: from endTaps, startTaps, and midpoint. Average all three outputs.
-            // Each pass has at most U/2 transient; averaging reduces residual errors.
+            // 3-pass bidirectional: endTaps, startTaps, midpoint. Average outputs.
             Span<Cf> pass1 = stackalloc Cf[mode.U];
             Span<Cf> pass2 = stackalloc Cf[mode.U];
             for (int u = 0; u < mode.U; u++)
@@ -833,7 +834,7 @@ public sealed class Ms110dDemodulator
                 Cf descrambled = y * rotor.Conj();
                 Cf clean = Slice(descrambled, mode.Modulation);
                 pass1[u] = descrambled;
-                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: 1.0f);
+                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: rlsWeight);
                 if ((descrambled - clean).Cnorm() < ddGate)
                 {
                     dfe.AddTrainingRow(window, _decisions, clean * rotor, weight: 0.25f);
@@ -852,11 +853,10 @@ public sealed class Ms110dDemodulator
                 Cf descrambled = y * rotor.Conj();
                 Cf clean = Slice(descrambled, mode.Modulation);
                 pass2[u] = descrambled;
-                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: 1.0f);
+                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: rlsWeight);
                 PushDecision(clean * rotor);
             }
 
-            // Pass 3 from midpoint taps.
             Cf[] midTaps = new Cf[endTaps.Length];
             for (int i = 0; i < midTaps.Length; i++)
             {
@@ -875,13 +875,13 @@ public sealed class Ms110dDemodulator
                 Cf averaged = (pass1[u] + pass2[u] + descrambled) * (1f / 3f);
                 DataSymbolEqualized?.Invoke(averaged);
                 PushLlrs(averaged, mode.Modulation);
-                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: 1.0f);
+                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: rlsWeight);
                 PushDecision(clean * rotor);
             }
         }
         else
         {
-            // Single-pass RLS from endTaps for long blocks (U=256).
+            // Long PSK (U=256): single-pass RLS from endTaps.
             for (int u = 0; u < mode.U; u++)
             {
                 FillWindow(_frameChip + u, window);
@@ -891,7 +891,7 @@ public sealed class Ms110dDemodulator
                 Cf clean = Slice(descrambled, mode.Modulation);
                 DataSymbolEqualized?.Invoke(descrambled);
                 PushLlrs(descrambled, mode.Modulation);
-                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: 1.0f);
+                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: rlsWeight);
                 if ((descrambled - clean).Cnorm() < ddGate)
                 {
                     dfe.AddTrainingRow(window, _decisions, clean * rotor, weight: 0.25f);
