@@ -693,7 +693,7 @@ public sealed class Ms110dDemodulator
             _dfe.AddTrainingRow(window, past, _known[n]);
         }
 
-        _dfe.BeginRls(0.995f, pInit: 1.0f);
+        _dfe.BeginRls((float)(1.0 - Math.Log(10.0) / _mode.U), pInit: 1.0f);
         _dfe.SeedRlsFromTraining(_initRidge, pFallback: 1.0f);
         _dfe.SolveTraining(regularization: _initRidge);
         _dfe.BeginTraining();
