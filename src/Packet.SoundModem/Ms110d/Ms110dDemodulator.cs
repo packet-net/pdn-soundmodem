@@ -693,6 +693,8 @@ public sealed class Ms110dDemodulator
             _dfe.AddTrainingRow(window, past, _known[n]);
         }
 
+        _dfe.BeginRls(0.995f, pInit: 1.0f);
+        _dfe.SeedRlsFromTraining(_initRidge, pFallback: 1.0f);
         _dfe.SolveTraining(regularization: _initRidge);
         _dfe.BeginTraining();
 
@@ -768,6 +770,7 @@ public sealed class Ms110dDemodulator
             dfe.AddTrainingRow(window, probePast, probe[i], weight: 6f);
         }
 
+        dfe.SeedRlsFromTraining(_trackRidge, pFallback: 1.0f);
         dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true);
         Cf[] endTaps = dfe.SnapshotTaps();
 
@@ -792,7 +795,9 @@ public sealed class Ms110dDemodulator
         // to complete the excitation (the probe alone is rank-deficient).
         dfe.BeginTraining();
 
-        // Data block with interpolated tap trajectory; feedback runs causally on decisions.
+        // Data block: interpolation provides the tap trajectory; RLS refines per-symbol
+        // on gate-passing decisions for PSK modes. QAM16 uses scale-10 max-log LLRs
+        // (the constellation's small minimum distance needs stronger soft information).
         _scrambler.Reset();
         float ddGate = DdGateRadius(mode.Modulation);
         for (int u = 0; u < mode.U; u++)
@@ -805,7 +810,7 @@ public sealed class Ms110dDemodulator
                 Cf y = dfe.Equalize(window, _decisions);
                 Cf clean = Slice(y, mode.Modulation);
                 DataSymbolEqualized?.Invoke(y);
-                PushLlrs(y, mode.Modulation, scrambleNibble);
+                PushMaxLogLlrs(y, Ms110dTables.Qam16, null, 4, 10.0f, scrambleNibble);
                 if ((y - clean).Cnorm() < ddGate)
                 {
                     dfe.AddTrainingRow(window, _decisions, clean, weight: 0.25f);
@@ -823,6 +828,7 @@ public sealed class Ms110dDemodulator
                 PushLlrs(descrambled, mode.Modulation);
                 if ((descrambled - clean).Cnorm() < ddGate)
                 {
+                    dfe.RlsUpdate(window, _decisions, clean * rotor, weight: 1.0f);
                     dfe.AddTrainingRow(window, _decisions, clean * rotor, weight: 0.25f);
                 }
 
@@ -830,6 +836,7 @@ public sealed class Ms110dDemodulator
             }
         }
 
+        dfe.SymmetrizeP(pMax: 10f);
         dfe.LoadTaps(endTaps);
         for (int i = 0; i < mode.K; i++)
         {

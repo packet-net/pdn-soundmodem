@@ -97,17 +97,51 @@ public class Ms110dMaskTests(ITestOutputHelper output)
 
     [SkippableTheory]
     [MemberData(nameof(PoorMasks))]
-    public void Poor_Channel_Measured(int wn, double snrDb)
+    public void Poor_Channel_Mask_Gate(int wn, double snrDb)
     {
         Skip.If(Environment.GetEnvironmentVariable("MS110D_MASKS_POOR") != "1",
-            "set MS110D_MASKS_POOR=1 for the measured (non-gated) Poor-channel runs");
+            "set MS110D_MASKS_POOR=1 for the Poor-channel mask runs");
 
-        // The Poor-channel at-mask gate requires the RLS equalizer (design §6, Q1);
-        // until then we measure and bank the numbers without asserting BER ≤ 1E-5.
-        long bits = Math.Min(TargetBits(), 200_000);
-        MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, bits, seed: 500 + wn, minSimSeconds: 600);
-        Report($"POOR (measured, non-gated) WN{wn} @ {snrDb:+0;-0;0} dB", run);
-        run.Bits.Should().BeGreaterThan(0);
+        MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, TargetBits(), seed: 500 + wn);
+        Report($"POOR WN{wn} @ {snrDb:+0;-0;0} dB", run);
+        AssertMask(run);
+    }
+
+    [SkippableTheory]
+    [InlineData(4, 10)]
+    [InlineData(6, 14)]
+    [InlineData(8, 23)]
+    public void Poor_Channel_Smoke(int wn, double snrDb)
+    {
+        Skip.If(Environment.GetEnvironmentVariable("MS110D_MASKS_POOR") != "1",
+            "set MS110D_MASKS_POOR=1 for the Poor-channel mask runs");
+
+        long bits = long.TryParse(
+            Environment.GetEnvironmentVariable("MS110D_MASK_BITS"), out long b) ? b : 100_000;
+        MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, bits, seed: 500 + wn);
+        Report($"POOR (smoke) WN{wn} @ {snrDb:+0;-0;0} dB", run);
+        AssertMask(run);
+    }
+
+    [SkippableTheory]
+    [InlineData(4, 10)]
+    [InlineData(6, 14)]
+    [InlineData(8, 23)]
+    public void Static_2Path_Diagnostic(int wn, double snrDb)
+    {
+        Skip.If(Environment.GetEnvironmentVariable("MS110D_MASKS_POOR") != "1",
+            "set MS110D_MASKS_POOR=1");
+
+        // Same geometry as Poor (0ms, 2ms) but no fading — isolates multipath from fading.
+        WattersonPath[] staticPoor =
+        [
+            new(0, Fading: false),
+            new(2, Fading: false),
+        ];
+        MaskRun run = RunPoint(wn, snrDb, staticPoor, 100_000, seed: 500 + wn);
+        Report($"STATIC-2PATH WN{wn} @ {snrDb:+0;-0;0} dB", run);
+        run.AcquisitionFailures.Should().Be(0);
+        run.Ber.Should().BeLessThanOrEqualTo(1e-5);
     }
 
     private static long TargetBits()
