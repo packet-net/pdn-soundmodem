@@ -1353,7 +1353,7 @@ public sealed class Ms110dDemodulator
 
             // Re-equalize: BCJR for BPSK (optimal soft-output), DFE for others.
             _scrambler.Reset();
-            if (false && mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48)
+            if (mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48)
             {
                 // Reset feedback — training loop above left stale state in past[].
                 for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
@@ -1367,8 +1367,6 @@ public sealed class Ms110dDemodulator
                     Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
                     Cf y = dfe.Equalize(window, past);
                     rxBlock[u] = y * rotor.Conj(); // descramble
-                    // Expected BPSK symbol: derive from wire symbol by undoing scramble.
-                    // For BPSK, wire = Psk8[NextPsk(0 or 4)]. Descrambled = ±1.
                     expectedBpsk[u] = expected[u] * rotor.Conj();
                     for (int j = fb - 1; j > 0; j--) past[j] = past[j - 1];
                     past[0] = expected[u];
@@ -1392,8 +1390,8 @@ public sealed class Ms110dDemodulator
                     }
                 }
 
-                Cf h1Avg = sumZ * (1f / Math.Max(1, mode.U));
-                Cf h2Avg = countW > 0 ? (sumZw - sumZ * (1f / Math.Max(1, mode.U)) * countW) * (1f / countW) : Cf.Zero;
+                Cf h1Avg = sumZ * (1f / Math.Max(1, countW));
+                Cf h2Avg = sumZw * (1f / Math.Max(1, countW));
                 for (int u = 0; u < mode.U; u++)
                 {
                     h1[u] = h1Avg;
@@ -1411,8 +1409,22 @@ public sealed class Ms110dDemodulator
                 noiseVar /= Math.Max(1, mode.U - delay);
                 noiseVar = Math.Max(noiseVar, 1e-6f);
 
+                if (Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1" && f == 0)
+                {
+                    Console.Error.WriteLine($"[bcjr] h1=({h1Avg.Re:F4},{h1Avg.Im:F4}) h2=({h2Avg.Re:F4},{h2Avg.Im:F4}) noiseVar={noiseVar:E3}");
+                    for (int u = 0; u < 5; u++)
+                        Console.Error.WriteLine($"[bcjr] u={u}: rx=({rxBlock[u].Re:F4},{rxBlock[u].Im:F4}) exp=({expectedBpsk[u].Re:F4},{expectedBpsk[u].Im:F4})");
+                }
+
                 // BCJR soft-output equalization.
                 float[] bcjrLlrs = Ms110dBcjr.Equalize(rxBlock, h1, h2, delay, noiseVar);
+
+                if (Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1" && f == 0)
+                {
+                    for (int u = 0; u < 5; u++)
+                        Console.Error.WriteLine($"[bcjr] llr[{u}]={bcjrLlrs[u]:F3}");
+                }
+
                 for (int u = 0; u < mode.U; u++)
                 {
                     AddLlr(bcjrLlrs[u]);
