@@ -821,8 +821,10 @@ public sealed class Ms110dDemodulator
         }
         else if (mode.U <= 96)
         {
-            // Bidirectional: pass 1 from endTaps, pass 2 from startTaps, average outputs.
-            Span<Cf> fwd = stackalloc Cf[mode.U];
+            // 3-pass: from endTaps, startTaps, and midpoint. Average all three outputs.
+            // Each pass has at most U/2 transient; averaging reduces residual errors.
+            Span<Cf> pass1 = stackalloc Cf[mode.U];
+            Span<Cf> pass2 = stackalloc Cf[mode.U];
             for (int u = 0; u < mode.U; u++)
             {
                 FillWindow(_frameChip + u, window);
@@ -830,7 +832,7 @@ public sealed class Ms110dDemodulator
                 Cf y = dfe.Equalize(window, _decisions);
                 Cf descrambled = y * rotor.Conj();
                 Cf clean = Slice(descrambled, mode.Modulation);
-                fwd[u] = descrambled;
+                pass1[u] = descrambled;
                 dfe.RlsUpdate(window, _decisions, clean * rotor, weight: 1.0f);
                 if ((descrambled - clean).Cnorm() < ddGate)
                 {
@@ -849,7 +851,28 @@ public sealed class Ms110dDemodulator
                 Cf y = dfe.Equalize(window, _decisions);
                 Cf descrambled = y * rotor.Conj();
                 Cf clean = Slice(descrambled, mode.Modulation);
-                Cf averaged = (fwd[u] + descrambled) * 0.5f;
+                pass2[u] = descrambled;
+                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: 1.0f);
+                PushDecision(clean * rotor);
+            }
+
+            // Pass 3 from midpoint taps.
+            Cf[] midTaps = new Cf[endTaps.Length];
+            for (int i = 0; i < midTaps.Length; i++)
+            {
+                midTaps[i] = (startTaps[i] + endTaps[i]) * 0.5f;
+            }
+
+            dfe.LoadTaps(midTaps);
+            _scrambler.Reset();
+            for (int u = 0; u < mode.U; u++)
+            {
+                FillWindow(_frameChip + u, window);
+                Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                Cf y = dfe.Equalize(window, _decisions);
+                Cf descrambled = y * rotor.Conj();
+                Cf clean = Slice(descrambled, mode.Modulation);
+                Cf averaged = (pass1[u] + pass2[u] + descrambled) * (1f / 3f);
                 DataSymbolEqualized?.Invoke(averaged);
                 PushLlrs(averaged, mode.Modulation);
                 dfe.RlsUpdate(window, _decisions, clean * rotor, weight: 1.0f);
