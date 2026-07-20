@@ -1230,7 +1230,7 @@ public sealed class Ms110dDemodulator
             _blockFrameChips.Count == _il.Frames)
         {
             var prevInfo = new byte[info.Length];
-            for (int iter = 0; iter < 3; iter++)
+            for (int iter = 0; iter < 5; iter++)
             {
                 TurboReequalize(info);
                 if (_blockLlrCount != _il.SizeBits)
