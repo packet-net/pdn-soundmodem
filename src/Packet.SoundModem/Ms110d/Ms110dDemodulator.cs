@@ -1225,12 +1225,15 @@ public sealed class Ms110dDemodulator
 
         // Turbo re-equalization: re-encode decoded info, use as known training,
         // re-equalize, and decode again. Only for PSK modes with DFE available.
-        if (false && _dfe is not null && _mode is not null &&
+        if (_dfe is not null && _mode is not null &&
             _mode.Modulation is not Ms110dModulation.Qam16 &&
             _blockFrameChips.Count == _il.Frames)
         {
             TurboReequalize(info);
-            Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
+            if (_blockLlrCount == _il.SizeBits)
+            {
+                Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
+            }
         }
 
         _blockLlrCount = 0;
@@ -1335,7 +1338,7 @@ public sealed class Ms110dDemodulator
                 past[0] = expected[u];
             }
 
-            dfe.SolveTraining(regularization: _trackRidge);
+            dfe.SolveTraining(regularization: 1e-4f, anchorToCurrentTaps: true);
 
             // Re-equalize and compute LLRs using the same descrambling as the first pass.
             _scrambler.Reset();
@@ -1361,8 +1364,9 @@ public sealed class Ms110dDemodulator
             }
         }
 
-        // Restore DFE state.
+        // Restore DFE state and leave a clean Gram for the next frame.
         dfe.LoadTaps(savedTaps);
+        dfe.BeginTraining();
     }
 
     private void CompleteBurst(Ms110dBurstEndReason reason)
