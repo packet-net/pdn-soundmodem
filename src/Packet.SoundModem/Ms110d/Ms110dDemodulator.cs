@@ -1223,17 +1223,17 @@ public sealed class Ms110dDemodulator
         var info = new byte[_il.InputBits];
         Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
 
-        // Turbo re-equalization: re-encode decoded info, use as known training,
-        // re-equalize, and decode again. Only for PSK modes with DFE available.
-        // Skip on AWGN (high LLR confidence means first decode is already optimal).
-        float avgAbsLlr = 0;
-        for (int i = 0; i < _blockLlrCount; i++) avgAbsLlr += Math.Abs(_blockLlrs[i]);
-        avgAbsLlr /= Math.Max(1, _blockLlrCount);
+        // Turbo re-equalization: run turbo, but revert to first-pass if it degrades.
+        // On AWGN, turbo degrades LLR confidence → revert. On Poor, turbo improves → keep.
+        float firstAvgAbs = 0;
+        for (int i = 0; i < _blockLlrCount; i++) firstAvgAbs += Math.Abs(_blockLlrs[i]);
+        firstAvgAbs /= Math.Max(1, _blockLlrCount);
+        var firstPassLlrs = new float[_blockLlrCount];
+        Array.Copy(_blockLlrs, firstPassLlrs, _blockLlrCount);
 
         if (_dfe is not null && _mode is not null &&
             _mode.Modulation is not Ms110dModulation.Qam16 &&
-            _blockFrameChips.Count == _il.Frames &&
-            avgAbsLlr < 3.5f) // skip turbo on AWGN (high confidence)
+            _blockFrameChips.Count == _il.Frames)
         {
             var prevInfo = new byte[info.Length];
             for (int iter = 0; iter < 5; iter++)
@@ -1250,6 +1250,17 @@ public sealed class Ms110dDemodulator
                 {
                     break;
                 }
+            }
+
+            // If turbo degraded LLR confidence, revert to first-pass decode.
+            float turboAvgAbs = 0;
+            for (int i = 0; i < _blockLlrCount; i++) turboAvgAbs += Math.Abs(_blockLlrs[i]);
+            turboAvgAbs /= Math.Max(1, _blockLlrCount);
+            if (turboAvgAbs < firstAvgAbs)
+            {
+                Array.Copy(firstPassLlrs, _blockLlrs, firstPassLlrs.Length);
+                _blockLlrCount = firstPassLlrs.Length;
+                Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
             }
         }
 
