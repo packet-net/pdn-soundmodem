@@ -11,18 +11,18 @@ designed to serve two masters from one core:
 
 ## Status
 
-Early — Phase 1 (see [docs/plan.md](docs/plan.md)). What exists today:
+All planned modem families are implemented and bench-proven. What exists today:
 
 - **IL2P codec** (spec draft v0.6, including IL2P+CRC): full frame encode/decode — Type 0/1
   headers, packet-synchronous scrambling, Reed-Solomon FEC (GF(2⁸) 0x11D), payload block
   segmentation, Hamming-protected trailing CRC. Byte-exact against all three example packets
   in the spec, with error-correction and fuzz roundtrip coverage.
 
-Modem coverage tracks the NinoTNC mode table: 13 of its 15 DIP-selectable modes are
+Modem coverage completes the NinoTNC mode table: all 15 of its DIP-selectable modes are
 implemented and bench-proven bidirectionally against a real NinoTNC (firmware 3.44) over a
 wired CM108 loop — 9600 GFSK (AX.25 + IL2P+CRC), 4800 GFSK, 3600/2400/600 QPSK,
 1200/300 BPSK, 1200 AFSK (AX.25 + IL2P+CRC) and 300 HF AFSK (AX.25/IL2P/IL2P+CRC), plus
-FX.25 on 1200 AFSK. The gap is C4FSK (modes 1/3). See
+FX.25 on 1200 AFSK and C4FSK (modes 1/3, 9600 + 19200). See
 [docs/ninotnc-loop.md](docs/ninotnc-loop.md) § Coverage.
 
 **Interop is per-mode and explicit — never traded away.** Every mode states which peers it
@@ -34,7 +34,8 @@ interoperates with, and NinoTNC compatibility is never given up to suit another 
   with a NinoTNC and with QtSoundModem's **V26A** modes (not its legacy UZ7HO QPSK maps).
 - **NinoTNC + Dire-Wolf RUH** — 4800 GFSK IL2P+CRC: NinoTNC-derived, and cross-validated
   both ways against QtSoundModem's Dire-Wolf RUH-4800.
-- **NinoTNC / MMDVM-TNC** — C4FSK (once implemented): the MMDVM-TNC "Mode 2" wire format.
+- **NinoTNC / MMDVM-TNC** — C4FSK 9600 + 19200 (modes 1/3): the MMDVM-TNC "Mode 2" wire
+  format, bench-proven 8/8 bidirectionally against a NinoTNC at first live attempt.
 - **FreeDV datac (waveform) / pdn (payload)** — `freedv-datac0/1/3/4/13/14` (all six
   datac modes; datac4/13/14 are the narrow RX-band-pass-filtered set): HF OFDM burst modes
   whose *waveform* is codec2/FreeDV-compatible (validated in both directions against
@@ -71,15 +72,21 @@ interoperates with, and NinoTNC compatibility is never given up to suit another 
   channel-access path as everything else, and broadcasts every page heard on channel to
   its clients as `HEARD …` lines — a local paging API (pdn). Speaking the DAPNET-core
   transmitter protocol is a possible future follow-up.
-- **MIL-STD-188-110D App D (waveform) / pdn (payload)** — `ms110d-wn0/1/2/3/4/5/6/13`: the
-  public 3 kHz serial-tone HF waveform of MIL-STD-188-110D Appendix D (the Distribution-A
-  counterpart of NATO STANAG 5069) — single-carrier 1800 Hz / 2400 Bd, SRRC-shaped, an
-  autobaud preamble, a probe-trained decision-feedback (DFE) equaliser for HF multipath,
-  tail-biting convolutional FEC + interleaving, from a Walsh-orthogonal 75 bps floor up
-  through BPSK/QPSK. **Phase A** (the robust Walsh/BPSK/QPSK rungs, WN 0–6/13) is implemented
-  and gated in simulation against the standard's own Table D-LXIV performance masks — every
-  gated point 0 errors at full statistical budget (3 M bits). 8PSK/16QAM (Phase B, with an
-  RLS equaliser for fading) and the high-order QAM (Phase C) are still to come. No open App-D
+- **MIL-STD-188-110D App D (waveform) / pdn (payload)** — `ms110d-wn0/1/2/3/4/5/6/7/8/13`:
+  the public 3 kHz serial-tone HF waveform of MIL-STD-188-110D Appendix D (the
+  Distribution-A counterpart of NATO STANAG 5069) — single-carrier 1800 Hz / 2400 Bd,
+  SRRC-shaped, an autobaud preamble, tail-biting convolutional FEC + interleaving, from a
+  Walsh-orthogonal 75 bps floor up through BPSK/QPSK/8PSK/16-QAM (6400 bps). **Phase A**
+  (Walsh/BPSK/QPSK, WN 0–6/13) and **Phase B** (8PSK WN 7, 16-QAM WN 8) are implemented;
+  all 10 waveform numbers pass the standard's Table D-LXIV AWGN performance masks at full
+  statistical budget (3 M bits, 0 errors). The equalizer stack is probe-trained with a
+  fractionally-spaced (T/2) decision-feedback (DFE) equaliser — batch regularized
+  least-squares training, NLMS adaptation, and RLS tracking for fading channels — augmented
+  by iterative turbo re-equalization (decode → re-encode → re-equalize, up to 5 passes with
+  early exit) and a BCJR (MAP) equalizer for frequency-selective fading on BPSK, gated by
+  block-level fading detection from residual variance so that AWGN channels take the cheaper
+  DFE path. The Poor-channel (Watterson 2-path Rayleigh) masks are the current research
+  frontier. **Phase C** (higher-order QAM, WN 9–12) is still to come. No open App-D
   receiver existed before this one, so there is no external oracle: the interop-critical spec
   tables were transcribed twice independently and diffed to zero value conflicts, and a
   from-scratch Watterson/CCIR channel simulator plus the spec masks stand in for one. Like
@@ -122,7 +129,7 @@ dotnet test
 prior art and stays GPL:
 
 - **UZ7HO SoundModem** (Andrei Kopanchuk, UZ7HO) via **QtSoundModem** (John Wiseman, G8BPQ) —
-  GPLv3+ — the reference for the demodulator family this project will port.
+  GPLv3+ — the reference for the demodulator family this project ports.
 - **Dire Wolf** (John Langner, WB2OSZ) — GPL-2.0-or-later — reference for the IL2P wire
   behaviour, the 9600 RUH modem design, and the DPLL DCD algorithm.
 - **IL2P** is by Nino Carrillo (KK4HEJ) — [spec draft v0.6](https://tarpn.net/t/il2p/il2p-specification_draft_v0-6.pdf);
