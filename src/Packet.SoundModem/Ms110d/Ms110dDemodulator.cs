@@ -1233,7 +1233,7 @@ public sealed class Ms110dDemodulator
         if (_dfe is not null && _mode is not null &&
             _mode.Modulation is not Ms110dModulation.Qam16 &&
             _blockFrameChips.Count == _il.Frames &&
-            avgAbsLlr < 6.0f) // skip turbo on AWGN (high confidence)
+            avgAbsLlr < 3.5f) // skip turbo on AWGN (high confidence)
         {
             var prevInfo = new byte[info.Length];
             for (int iter = 0; iter < 5; iter++)
