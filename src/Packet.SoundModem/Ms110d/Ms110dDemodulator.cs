@@ -1343,7 +1343,7 @@ public sealed class Ms110dDemodulator
                 dfe.AddTrainingRow(window, past, expected[u], weight: 1.0f);
             }
 
-            dfe.SolveTraining(regularization: 0.05f, anchorToCurrentTaps: true);
+            dfe.SolveTraining(regularization: 0.2f, anchorToCurrentTaps: true);
 
             // Re-equalize: BCJR for BPSK (optimal soft-output), DFE for others.
             _scrambler.Reset();
