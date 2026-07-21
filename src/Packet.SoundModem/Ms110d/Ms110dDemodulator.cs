@@ -1362,9 +1362,9 @@ public sealed class Ms110dDemodulator
 
             dfe.SolveTraining(regularization: useHighReg ? 1.0f : 1e-4f, anchorToCurrentTaps: true);
 
-            // Re-equalize: BCJR for BPSK (optimal soft-output), DFE for others.
+            // Re-equalize: BCJR for BPSK on fading channels, DFE for others/AWGN.
             _scrambler.Reset();
-            if (mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48)
+            if (useHighReg && mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48)
             {
                 // Use FF-only (no feedback) to leave residual ISI for the BCJR to exploit.
                 for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
