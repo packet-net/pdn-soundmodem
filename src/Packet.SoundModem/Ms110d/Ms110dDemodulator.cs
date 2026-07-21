@@ -1294,6 +1294,7 @@ public sealed class Ms110dDemodulator
         Span<Cf> past = stackalloc Cf[fb];
         _blockLlrCount = 0;
         int bit = 0;
+        bool useHighReg = false;
 
         for (int f = 0; f < _il!.Frames; f++)
         {
@@ -1343,12 +1344,10 @@ public sealed class Ms110dDemodulator
                 dfe.AddTrainingRow(window, past, expected[u], weight: 1.0f);
             }
 
-            // Adaptive regularization: solve with low reg first, then re-solve with
-            // high reg if the channel shows multipath/fading (high residual variance).
-            dfe.SolveTraining(regularization: 1e-4f, anchorToCurrentTaps: true);
-            if (mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48)
+            // Block-level reg decision: on first frame, detect multipath/fading.
+            if (f == 0 && mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48)
             {
-                // Quick check: estimate residual variance with current taps.
+                dfe.SolveTraining(regularization: 1e-4f, anchorToCurrentTaps: true);
                 for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
                 float quickVar = 0;
                 int qn = Math.Min(mode.U, 20);
@@ -1358,12 +1357,10 @@ public sealed class Ms110dDemodulator
                     Cf y = dfe.Equalize(window, past);
                     quickVar += (y - expected[u]).Cnorm();
                 }
-                quickVar /= qn;
-                if (quickVar > 0.2f)
-                {
-                    dfe.SolveTraining(regularization: 0.2f, anchorToCurrentTaps: true);
-                }
+                useHighReg = quickVar / qn > 0.15f;
             }
+
+            dfe.SolveTraining(regularization: useHighReg ? 1.0f : 1e-4f, anchorToCurrentTaps: true);
 
             // Re-equalize: BCJR for BPSK (optimal soft-output), DFE for others.
             _scrambler.Reset();
