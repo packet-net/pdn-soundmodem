@@ -1360,7 +1360,9 @@ public sealed class Ms110dDemodulator
                 useHighReg = quickVar / qn > 0.15f;
             }
 
-            dfe.SolveTraining(regularization: useHighReg ? 1.0f : 1e-4f, anchorToCurrentTaps: true);
+            dfe.SolveTraining(
+                regularization: (useHighReg && mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48) ? 1.0f : _trackRidge,
+                anchorToCurrentTaps: true);
 
             // Re-equalize: BCJR for BPSK on fading channels, DFE for others/AWGN.
             _scrambler.Reset();
