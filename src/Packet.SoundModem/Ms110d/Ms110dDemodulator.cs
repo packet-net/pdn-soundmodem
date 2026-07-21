@@ -103,7 +103,6 @@ public sealed class Ms110dDemodulator
     private int _blockIndex;
     private readonly List<byte> _burstBits = [];
     private readonly List<long> _blockFrameChips = [];
-    private readonly List<float> _blockTap0Mag = [];
     private bool _terminate;
 
     /// <summary>Creates the receiver.</summary>
@@ -939,7 +938,6 @@ public sealed class Ms110dDemodulator
         }
 
         _blockFrameChips.Add(_frameChip);
-        _blockTap0Mag.Add(endTaps[0].Abs());
         _frameChip += mode.U + mode.K;
         _frameInBlock++;
         if (_frameInBlock == _il.Frames)
@@ -947,7 +945,6 @@ public sealed class Ms110dDemodulator
             _frameInBlock = 0;
             FinishBlock();
             _blockFrameChips.Clear();
-            _blockTap0Mag.Clear();
         }
     }
 
@@ -1228,13 +1225,9 @@ public sealed class Ms110dDemodulator
 
         // Turbo re-equalization: re-encode decoded info, use as known training,
         // re-equalize with BCJR, and decode again.
-        // Skip on flat channels: low variance of |tap[0]| across frames indicates
-        // AWGN where the first-pass decode is already optimal and the turbo's
-        // re-solve only perturbs the LLRs, degrading Viterbi performance.
         if (_dfe is not null && _mode is not null &&
             _mode.Modulation is not Ms110dModulation.Qam16 &&
-            _blockFrameChips.Count == _il.Frames &&
-            !IsFlatChannel())
+            _blockFrameChips.Count == _il.Frames)
         {
             var prevInfo = new byte[info.Length];
             for (int iter = 0; iter < 5; iter++)
@@ -1274,32 +1267,6 @@ public sealed class Ms110dDemodulator
         {
             CompleteBurst(Ms110dBurstEndReason.MaxInputDataBlocks);
         }
-    }
-
-    private bool IsFlatChannel()
-    {
-        if (_blockTap0Mag.Count < 4)
-        {
-            return false;
-        }
-
-        float mean = 0;
-        for (int i = 0; i < _blockTap0Mag.Count; i++)
-        {
-            mean += _blockTap0Mag[i];
-        }
-
-        mean /= _blockTap0Mag.Count;
-
-        float variance = 0;
-        for (int i = 0; i < _blockTap0Mag.Count; i++)
-        {
-            float d = _blockTap0Mag[i] - mean;
-            variance += d * d;
-        }
-
-        variance /= _blockTap0Mag.Count;
-        return variance < 0.004f;
     }
 
     private void TurboReequalize(byte[] info)
