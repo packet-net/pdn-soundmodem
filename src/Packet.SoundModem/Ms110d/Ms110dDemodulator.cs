@@ -1225,9 +1225,15 @@ public sealed class Ms110dDemodulator
 
         // Turbo re-equalization: re-encode decoded info, use as known training,
         // re-equalize, and decode again. Only for PSK modes with DFE available.
+        // Skip on AWGN (high LLR confidence means first decode is already optimal).
+        float avgAbsLlr = 0;
+        for (int i = 0; i < _blockLlrCount; i++) avgAbsLlr += Math.Abs(_blockLlrs[i]);
+        avgAbsLlr /= Math.Max(1, _blockLlrCount);
+
         if (_dfe is not null && _mode is not null &&
             _mode.Modulation is not Ms110dModulation.Qam16 &&
-            _blockFrameChips.Count == _il.Frames)
+            _blockFrameChips.Count == _il.Frames &&
+            avgAbsLlr < 6.0f) // skip turbo on AWGN (high confidence)
         {
             var prevInfo = new byte[info.Length];
             for (int iter = 0; iter < 5; iter++)
