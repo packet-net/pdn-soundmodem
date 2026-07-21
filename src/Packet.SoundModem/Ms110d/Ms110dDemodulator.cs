@@ -1294,7 +1294,6 @@ public sealed class Ms110dDemodulator
         Span<Cf> past = stackalloc Cf[fb];
         _blockLlrCount = 0;
         int bit = 0;
-        bool useHighReg = false;
 
         for (int f = 0; f < _il!.Frames; f++)
         {
@@ -1344,29 +1343,16 @@ public sealed class Ms110dDemodulator
                 dfe.AddTrainingRow(window, past, expected[u], weight: 1.0f);
             }
 
-            // Block-level reg decision: on first frame, detect multipath/fading.
-            if (f == 0 && mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48)
-            {
-                dfe.SolveTraining(regularization: 1e-4f, anchorToCurrentTaps: true);
-                for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
-                float quickVar = 0;
-                int qn = Math.Min(mode.U, 20);
-                for (int u = 0; u < qn; u++)
-                {
-                    FillWindow(frameChip + u, window);
-                    Cf y = dfe.Equalize(window, past);
-                    quickVar += (y - expected[u]).Cnorm();
-                }
-                useHighReg = quickVar / qn > 0.15f;
-            }
-
+            // BPSK U>48 uses high reg (1.0) for stable BCJR channel estimates.
+            // Other modes use _trackRidge (original behavior).
+            bool useBcjr = mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48;
             dfe.SolveTraining(
-                regularization: (useHighReg && mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48) ? 1.0f : _trackRidge,
+                regularization: useBcjr ? 1.0f : _trackRidge,
                 anchorToCurrentTaps: true);
 
-            // Re-equalize: BCJR for BPSK on fading channels, DFE for others/AWGN.
+            // Re-equalize: BCJR for BPSK U>48, DFE for others.
             _scrambler.Reset();
-            if (useHighReg && mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48)
+            if (useBcjr)
             {
                 // Use FF-only (no feedback) to leave residual ISI for the BCJR to exploit.
                 for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
