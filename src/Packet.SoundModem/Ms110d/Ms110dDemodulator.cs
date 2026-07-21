@@ -1422,7 +1422,7 @@ public sealed class Ms110dDemodulator
 
             if (!useBcjr)
             {
-                // DFE re-equalization with feedback.
+                // DFE re-equalization: FF-only (no feedback) to avoid error propagation.
                 _scrambler.Reset();
                 for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
                 for (int u = 0; u < mode.U; u++)
@@ -1432,8 +1432,6 @@ public sealed class Ms110dDemodulator
                     Cf y = dfe.Equalize(window, past);
                     Cf descrambled = y * rotor.Conj();
                     PushLlrs(descrambled, mode.Modulation);
-                    for (int j = fb - 1; j > 0; j--) past[j] = past[j - 1];
-                    past[0] = expected[u];
                 }
             }
         }
