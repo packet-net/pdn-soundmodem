@@ -1359,7 +1359,7 @@ public sealed class Ms110dDemodulator
                     quickVar += (y - expected[u]).Cnorm();
                 }
                 quickVar /= qn;
-                if (quickVar > 0.01f)
+                if (quickVar > 0.2f)
                 {
                     dfe.SolveTraining(regularization: 0.2f, anchorToCurrentTaps: true);
                 }
