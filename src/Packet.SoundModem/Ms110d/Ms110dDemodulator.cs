@@ -1343,8 +1343,27 @@ public sealed class Ms110dDemodulator
                 dfe.AddTrainingRow(window, past, expected[u], weight: 1.0f);
             }
 
-            float turboReg = (mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48) ? 0.2f : 1e-4f;
-            dfe.SolveTraining(regularization: turboReg, anchorToCurrentTaps: true);
+            // Adaptive regularization: solve with low reg first, then re-solve with
+            // high reg if the channel shows multipath/fading (high residual variance).
+            dfe.SolveTraining(regularization: 1e-4f, anchorToCurrentTaps: true);
+            if (mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48)
+            {
+                // Quick check: estimate residual variance with current taps.
+                for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
+                float quickVar = 0;
+                int qn = Math.Min(mode.U, 20);
+                for (int u = 0; u < qn; u++)
+                {
+                    FillWindow(frameChip + u, window);
+                    Cf y = dfe.Equalize(window, past);
+                    quickVar += (y - expected[u]).Cnorm();
+                }
+                quickVar /= qn;
+                if (quickVar > 0.01f)
+                {
+                    dfe.SolveTraining(regularization: 0.2f, anchorToCurrentTaps: true);
+                }
+            }
 
             // Re-equalize: BCJR for BPSK (optimal soft-output), DFE for others.
             _scrambler.Reset();
