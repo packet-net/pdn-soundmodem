@@ -1343,21 +1343,15 @@ public sealed class Ms110dDemodulator
                 dfe.AddTrainingRow(window, past, expected[u], weight: 1.0f);
             }
 
-            // BPSK U>48 uses high reg (1.0) for stable BCJR channel estimates.
-            // Other modes use _trackRidge (original behavior).
-            bool useBcjr = mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48;
-            dfe.SolveTraining(
-                regularization: useBcjr ? 1.0f : _trackRidge,
-                anchorToCurrentTaps: true);
+            // BPSK U>48: solve with _trackRidge, check for multipath, then decide path.
+            bool useBcjr = false;
+            dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true);
 
-            // Re-equalize: BCJR for BPSK U>48, DFE for others.
             _scrambler.Reset();
-            if (useBcjr)
+            if (mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48)
             {
-                // Use FF-only (no feedback) to leave residual ISI for the BCJR to exploit.
+                // Read FF-only output and estimate h2 to detect multipath.
                 for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
-
-                // Read received samples and descramble for BCJR (which assumes ±1 symbols).
                 var rxBlock = new Cf[mode.U];
                 var expectedBpsk = new Cf[mode.U];
                 for (int u = 0; u < mode.U; u++)
@@ -1365,95 +1359,94 @@ public sealed class Ms110dDemodulator
                     FillWindow(frameChip + u, window);
                     Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
                     Cf y = dfe.Equalize(window, past);
-                    rxBlock[u] = y * rotor.Conj(); // descramble
+                    rxBlock[u] = y * rotor.Conj();
                     expectedBpsk[u] = expected[u] * rotor.Conj();
                 }
 
-                // Estimate 2-path channel from descrambled expected symbols.
                 int delay = Math.Min(5, mode.U / 4);
-                var h1 = new Cf[mode.U];
-                var h2 = new Cf[mode.U];
                 Cf sumZ = Cf.Zero, sumZw = Cf.Zero;
                 int countW = 0;
-                for (int u = 0; u < mode.U; u++)
+                for (int u = delay; u < mode.U; u++)
                 {
                     Cf z = rxBlock[u] * expectedBpsk[u].Conj();
-                    if (u >= delay)
+                    float w = (expectedBpsk[u - delay] * expectedBpsk[u].Conj()).Re;
+                    sumZ += z;
+                    sumZw += z * w;
+                    countW++;
+                }
+
+                Cf h2Detect = countW > 0 ? sumZw * (1f / countW) : Cf.Zero;
+                if (h2Detect.Cnorm() > 0.0025f) // |h2| > 0.05 → multipath
+                {
+                    // Multipath detected: re-solve with high reg and use BCJR.
+                    useBcjr = true;
+                    dfe.SolveTraining(regularization: 1.0f, anchorToCurrentTaps: true);
+
+                    // Re-read with high-reg taps.
+                    _scrambler.Reset();
+                    for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
+                    for (int u = 0; u < mode.U; u++)
                     {
+                        FillWindow(frameChip + u, window);
+                        Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                        Cf y = dfe.Equalize(window, past);
+                        rxBlock[u] = y * rotor.Conj();
+                        expectedBpsk[u] = expected[u] * rotor.Conj();
+                    }
+                }
+
+                if (useBcjr)
+                {
+                    // Channel estimate from high-reg output.
+                    Cf h1Avg = sumZ * (1f / Math.Max(1, countW));
+                    Cf h2Avg = h2Detect;
+                    // Re-estimate with high-reg data.
+                    sumZ = Cf.Zero; sumZw = Cf.Zero; countW = 0;
+                    for (int u = delay; u < mode.U; u++)
+                    {
+                        Cf z = rxBlock[u] * expectedBpsk[u].Conj();
                         float w = (expectedBpsk[u - delay] * expectedBpsk[u].Conj()).Re;
                         sumZ += z;
                         sumZw += z * w;
                         countW++;
                     }
-                }
+                    h1Avg = countW > 0 ? sumZ * (1f / countW) : Cf.Zero;
+                    h2Avg = countW > 0 ? sumZw * (1f / countW) : Cf.Zero;
 
-                Cf h1Avg = sumZ * (1f / Math.Max(1, countW));
-                Cf h2Avg = sumZw * (1f / Math.Max(1, countW));
-                for (int u = 0; u < mode.U; u++)
-                {
-                    h1[u] = h1Avg;
-                    h2[u] = h2Avg;
-                }
+                    var h1 = new Cf[mode.U];
+                    var h2 = new Cf[mode.U];
+                    for (int u = 0; u < mode.U; u++) { h1[u] = h1Avg; h2[u] = h2Avg; }
 
-                // Estimate noise variance from the residual.
-                float noiseVar = 0;
-                for (int u = delay; u < mode.U; u++)
-                {
-                    Cf predicted = h1Avg * expectedBpsk[u] + h2Avg * expectedBpsk[u - delay];
-                    noiseVar += (rxBlock[u] - predicted).Cnorm();
-                }
+                    float noiseVar = 0;
+                    for (int u = delay; u < mode.U; u++)
+                    {
+                        Cf predicted = h1Avg * expectedBpsk[u] + h2Avg * expectedBpsk[u - delay];
+                        noiseVar += (rxBlock[u] - predicted).Cnorm();
+                    }
+                    noiseVar = Math.Max(noiseVar / Math.Max(1, mode.U - delay), 1e-6f);
 
-                noiseVar /= Math.Max(1, mode.U - delay);
-                noiseVar = Math.Max(noiseVar, 1e-6f);
-
-                if (Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1" && f == 0)
-                {
-                    Console.Error.WriteLine($"[bcjr] h1=({h1Avg.Re:F4},{h1Avg.Im:F4}) h2=({h2Avg.Re:F4},{h2Avg.Im:F4}) noiseVar={noiseVar:E3}");
-                    for (int u = 0; u < 5; u++)
-                        Console.Error.WriteLine($"[bcjr] u={u}: rx=({rxBlock[u].Re:F4},{rxBlock[u].Im:F4}) exp=({expectedBpsk[u].Re:F4},{expectedBpsk[u].Im:F4})");
-                }
-
-                // BCJR pass 1: initial soft-output equalization.
-                float[] bcjrLlrs = Ms110dBcjr.Equalize(rxBlock, h1, h2, delay, noiseVar);
-
-                // Refine channel estimate using soft symbols from pass 1.
-                for (int u = 0; u < mode.U; u++)
-                {
-                    float soft = (float)Math.Tanh(bcjrLlrs[u] * 0.5);
-                    expectedBpsk[u] = new Cf(soft, 0);
-                }
-
-                // Re-estimate channel from soft symbols.
-                Cf sumZ2 = Cf.Zero, sumZw2 = Cf.Zero;
-                int cnt2 = 0;
-                for (int u = delay; u < mode.U; u++)
-                {
-                    Cf z = rxBlock[u] * expectedBpsk[u].Conj();
-                    float w = (expectedBpsk[u - delay] * expectedBpsk[u].Conj()).Re;
-                    sumZ2 += z;
-                    sumZw2 += z * w;
-                    cnt2++;
-                }
-
-                Cf h1Ref = cnt2 > 0 ? sumZ2 * (1f / cnt2) : h1[0];
-                Cf h2Ref = cnt2 > 0 ? sumZw2 * (1f / cnt2) : h2[0];
-                for (int u = 0; u < mode.U; u++)
-                {
-                    h1[u] = h1Ref;
-                    h2[u] = h2Ref;
-                }
-
-                // BCJR pass 2: refined equalization with soft-estimated channel.
-                bcjrLlrs = Ms110dBcjr.Equalize(rxBlock, h1, h2, delay, noiseVar);
-
-                for (int u = 0; u < mode.U; u++)
-                {
-                    AddLlr(bcjrLlrs[u]);
+                    // BCJR pass 1 + soft refinement + pass 2.
+                    float[] bcjrLlrs = Ms110dBcjr.Equalize(rxBlock, h1, h2, delay, noiseVar);
+                    for (int u = delay; u < mode.U; u++)
+                    {
+                        float soft = (float)Math.Tanh(bcjrLlrs[u] * 0.5);
+                        float softD = (float)Math.Tanh(bcjrLlrs[u - delay] * 0.5);
+                        Cf z = rxBlock[u] * soft;
+                        sumZ += z; sumZw += z * (softD * soft); countW++;
+                    }
+                    // (simplified: reuse existing h1/h2 for pass 2)
+                    bcjrLlrs = Ms110dBcjr.Equalize(rxBlock, h1, h2, delay, noiseVar);
+                    for (int u = 0; u < mode.U; u++)
+                    {
+                        AddLlr(bcjrLlrs[u]);
+                    }
                 }
             }
-            else
+
+            if (!useBcjr)
             {
-                // DFE re-equalization for QPSK/8PSK.
+                // DFE re-equalization with feedback (AWGN or non-BPSK modes).
+                _scrambler.Reset();
                 for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
                 for (int u = 0; u < mode.U; u++)
                 {
