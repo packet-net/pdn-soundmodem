@@ -232,8 +232,10 @@ public class Ms110dMaskTests(ITestOutputHelper output)
 
             if (bursts % 10 == 0)
             {
-                output.WriteLine(
-                    $"  … {bursts} bursts, {bits:N0} bits, {errors} errors, {simSeconds:F0} s simulated");
+                string progress =
+                    $"  … {bursts} bursts, {bits:N0} bits, {errors} errors, {simSeconds:F0} s simulated";
+                output.WriteLine(progress);
+                Console.Error.WriteLine(progress);
             }
         }
 
