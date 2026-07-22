@@ -43,6 +43,9 @@ public class Ms110dMaskTests(ITestOutputHelper output)
     {
         Skip.If(Environment.GetEnvironmentVariable("MS110D_MASKS") != "1",
             "set MS110D_MASKS=1 for the statistical mask runs");
+        string? wnFilter = Environment.GetEnvironmentVariable("MS110D_MASK_WN");
+        Skip.If(wnFilter is not null && wnFilter != wn.ToString(),
+            $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
 
         MaskRun run = RunPoint(wn, snrDb, [], TargetBits(), seed: 100 + wn);
         Report($"AWGN WN{wn} @ {snrDb:+0;-0;0} dB", run);
@@ -101,6 +104,9 @@ public class Ms110dMaskTests(ITestOutputHelper output)
     {
         Skip.If(Environment.GetEnvironmentVariable("MS110D_MASKS_POOR") != "1",
             "set MS110D_MASKS_POOR=1 for the Poor-channel mask runs");
+        string? wnFilter = Environment.GetEnvironmentVariable("MS110D_MASK_WN");
+        Skip.If(wnFilter is not null && wnFilter != wn.ToString(),
+            $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
 
         MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, TargetBits(), seed: 500 + wn);
         Report($"POOR WN{wn} @ {snrDb:+0;-0;0} dB", run);

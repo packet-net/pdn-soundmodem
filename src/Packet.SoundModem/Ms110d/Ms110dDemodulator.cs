@@ -103,6 +103,7 @@ public sealed class Ms110dDemodulator
     private int _blockIndex;
     private readonly List<byte> _burstBits = [];
     private readonly List<long> _blockFrameChips = [];
+    private readonly List<float> _blockTap0Mag = [];
     private bool _terminate;
 
     /// <summary>Creates the receiver.</summary>
@@ -824,9 +825,11 @@ public sealed class Ms110dDemodulator
                 PushDecision(clean);
             }
         }
-        else if (mode.U <= 96)
+        else
         {
             // 3-pass bidirectional: endTaps, startTaps, midpoint. Average outputs.
+            // Provides ~4.8 dB diversity gain that overcomes DFE noise enhancement
+            // on flat channels (critical for WN5 rate-3/4 at the 6 dB AWGN mask).
             Span<Cf> pass1 = stackalloc Cf[mode.U];
             Span<Cf> pass2 = stackalloc Cf[mode.U];
             for (int u = 0; u < mode.U; u++)
@@ -882,27 +885,6 @@ public sealed class Ms110dDemodulator
                 PushDecision(clean * rotor);
             }
         }
-        else
-        {
-            // Long PSK (U=256): single-pass RLS from endTaps.
-            for (int u = 0; u < mode.U; u++)
-            {
-                FillWindow(_frameChip + u, window);
-                Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
-                Cf y = dfe.Equalize(window, _decisions);
-                Cf descrambled = y * rotor.Conj();
-                Cf clean = Slice(descrambled, mode.Modulation);
-                DataSymbolEqualized?.Invoke(descrambled);
-                PushLlrs(descrambled, mode.Modulation);
-                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: rlsWeight);
-                if ((descrambled - clean).Cnorm() < ddGate)
-                {
-                    dfe.AddTrainingRow(window, _decisions, clean * rotor, weight: 0.25f);
-                }
-
-                PushDecision(clean * rotor);
-            }
-        }
 
         dfe.SymmetrizeP(pMax: 10f);
         dfe.LoadTaps(endTaps);
@@ -938,6 +920,7 @@ public sealed class Ms110dDemodulator
         }
 
         _blockFrameChips.Add(_frameChip);
+        _blockTap0Mag.Add(endTaps[0].Abs());
         _frameChip += mode.U + mode.K;
         _frameInBlock++;
         if (_frameInBlock == _il.Frames)
@@ -945,6 +928,7 @@ public sealed class Ms110dDemodulator
             _frameInBlock = 0;
             FinishBlock();
             _blockFrameChips.Clear();
+            _blockTap0Mag.Clear();
         }
     }
 
@@ -1225,9 +1209,15 @@ public sealed class Ms110dDemodulator
 
         // Turbo re-equalization: re-encode decoded info, use as known training,
         // re-equalize with BCJR, and decode again.
+        // Skip on flat channels (AWGN) where the turbo's DFE re-solve perturbs LLRs,
+        // EXCEPT for BPSK U>48 (WN5) where the BCJR path provides needed LLR refinement.
+        bool flatChannel = IsFlatChannel();
+        bool turboBcjrCandidate = _mode is not null &&
+            _mode.Modulation == Ms110dModulation.Bpsk && _mode.U > 48;
         if (_dfe is not null && _mode is not null &&
             _mode.Modulation is not Ms110dModulation.Qam16 &&
-            _blockFrameChips.Count == _il.Frames)
+            _blockFrameChips.Count == _il.Frames &&
+            (!flatChannel || turboBcjrCandidate))
         {
             var prevInfo = new byte[info.Length];
             for (int iter = 0; iter < 5; iter++)
@@ -1267,6 +1257,32 @@ public sealed class Ms110dDemodulator
         {
             CompleteBurst(Ms110dBurstEndReason.MaxInputDataBlocks);
         }
+    }
+
+    private bool IsFlatChannel()
+    {
+        if (_blockTap0Mag.Count < 4)
+        {
+            return false;
+        }
+
+        float mean = 0;
+        for (int i = 0; i < _blockTap0Mag.Count; i++)
+        {
+            mean += _blockTap0Mag[i];
+        }
+
+        mean /= _blockTap0Mag.Count;
+
+        float variance = 0;
+        for (int i = 0; i < _blockTap0Mag.Count; i++)
+        {
+            float d = _blockTap0Mag[i] - mean;
+            variance += d * d;
+        }
+
+        variance /= _blockTap0Mag.Count;
+        return variance < 0.004f;
     }
 
     private void TurboReequalize(byte[] info)
@@ -1378,8 +1394,8 @@ public sealed class Ms110dDemodulator
                 Cf h1Avg = countW > 0 ? sumZ * (1f / countW) : Cf.Zero;
                 Cf h2Avg = countW > 0 ? sumZw * (1f / countW) : Cf.Zero;
 
-                // Only use BCJR if multipath is significant (|h2|² > 0.04).
-                if (h2Avg.Cnorm() > 0.04f)
+                // Always use BCJR for BPSK U>48: on flat channels (h2≈0) it acts as
+                // a soft-output matched filter with better LLR calibration than DFE fallback.
                 {
                     useBcjr = true;
                     var h1 = new Cf[mode.U];
