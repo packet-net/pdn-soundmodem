@@ -15,9 +15,31 @@ namespace Packet.SoundModem.Ms110d;
 /// </remarks>
 public static class MiniProbe
 {
+    // Deterministic per (k, boundary); built once under the CLR type-initializer lock so
+    // concurrent demodulators share them safely.
+    private static readonly Cf[][] BaseProbes =
+        [Build(24, boundary: false), Build(32, boundary: false), Build(36, boundary: false), Build(48, boundary: false)];
+
+    private static readonly Cf[][] BoundaryProbes =
+        [Build(24, boundary: true), Build(32, boundary: true), Build(36, boundary: true), Build(48, boundary: true)];
+
     /// <summary>Returns the K-symbol probe (base, or boundary-shifted). 3 kHz lengths:
-    /// 24 → base 13 shift 6, 32 → base 16 shift 8, 48 → base 25 shift 12.</summary>
+    /// 24 → base 13 shift 6, 32 → base 16 shift 8, 48 → base 25 shift 12.
+    /// The returned array is cached and shared — callers must not mutate it.</summary>
     public static Cf[] Get(int k, bool boundary)
+    {
+        Cf[][] probes = boundary ? BoundaryProbes : BaseProbes;
+        return k switch
+        {
+            24 => probes[0],
+            32 => probes[1],
+            36 => probes[2],
+            48 => probes[3],
+            _ => Build(k, boundary), // unsupported k throws the Sequence() range error
+        };
+    }
+
+    private static Cf[] Build(int k, bool boundary)
     {
         (Cf[] baseSeq, int shift) = Sequence(k);
         var probe = new Cf[k];
