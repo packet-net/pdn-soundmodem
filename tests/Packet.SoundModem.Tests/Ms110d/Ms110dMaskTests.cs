@@ -182,6 +182,21 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         return overrideBits is null ? 3_000_000 : long.Parse(overrideBits);
     }
 
+    // Intra-point parallelism: bursts are statistically independent (fresh demodulator,
+    // fresh per-burst channel/noise realization), so a point's bit budget can split
+    // across MS110D_MASK_WORKERS workers on disjoint seed subspaces (+1e6 per worker —
+    // far beyond the per-burst stride of 1000) and the counts summed; the fading
+    // sim-time floor divides likewise (the statistical intent is ~600 independent fades
+    // TOTAL, which N disjoint realizations of 600/N s each provide). Point wall-clock
+    // scales ~1/N — this is what keeps the low-rate points (WN0/1/2: 10–40 ks of
+    // simulated audio per 3M bits) from dominating a sweep on an otherwise idle box.
+    private static int Workers()
+    {
+        return int.TryParse(
+            Environment.GetEnvironmentVariable("MS110D_MASK_WORKERS"), out int w)
+            ? Math.Max(1, w) : 1;
+    }
+
     private MaskRun RunPoint(
         int wn,
         double snrDb,
@@ -190,6 +205,47 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         int seed,
         double minSimSeconds = 0,
         double frequencyOffsetHz = 0)
+    {
+        int workers = Workers();
+        if (workers <= 1)
+        {
+            return RunPointWorker(wn, snrDb, paths, targetBits, seed, minSimSeconds, frequencyOffsetHz, 0);
+        }
+
+        long bitsPerWorker = (targetBits + workers - 1) / workers;
+        double simPerWorker = minSimSeconds / workers;
+        var runs = new MaskRun[workers];
+        Parallel.For(0, workers, w =>
+        {
+            runs[w] = RunPointWorker(
+                wn, snrDb, paths, bitsPerWorker, seed + (w * 1_000_000),
+                simPerWorker, frequencyOffsetHz, w);
+        });
+
+        long bits = 0, errors = 0;
+        int bursts = 0, acquisitionFailures = 0;
+        double simSeconds = 0;
+        foreach (MaskRun r in runs)
+        {
+            bits += r.Bits;
+            errors += r.Errors;
+            bursts += r.Bursts;
+            acquisitionFailures += r.AcquisitionFailures;
+            simSeconds += r.SimSeconds;
+        }
+
+        return new MaskRun(bits, errors, bursts, acquisitionFailures, simSeconds);
+    }
+
+    private MaskRun RunPointWorker(
+        int wn,
+        double snrDb,
+        WattersonPath[] paths,
+        long targetBits,
+        int seed,
+        double minSimSeconds,
+        double frequencyOffsetHz,
+        int worker)
     {
         var settings = new Ms110dTxSettings
         {
@@ -259,7 +315,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             if (bursts % 10 == 0)
             {
                 string progress =
-                    $"  … {bursts} bursts, {bits:N0} bits, {errors} errors, {simSeconds:F0} s simulated";
+                    $"  … [w{worker}] {bursts} bursts, {bits:N0} bits, {errors} errors, {simSeconds:F0} s simulated";
                 output.WriteLine(progress);
                 Console.Error.WriteLine(progress);
             }
@@ -280,9 +336,10 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         string verdict = run.Errors >= 30
             ? $"BER {run.Ber:E2} (direct, ≥30 errors)"
             : $"BER {run.Ber:E2}, 97.5 % upper bound {upper:E2}";
+        string workersTag = Workers() > 1 ? $", {Workers()} workers" : "";
         string line =
             $"[mask] {label}: {run.Bits:N0} bits, {run.Errors} errors, {run.Bursts} bursts " +
-            $"({run.AcquisitionFailures} acquisition failures), {run.SimSeconds:F0} s simulated — {verdict}";
+            $"({run.AcquisitionFailures} acquisition failures), {run.SimSeconds:F0} s simulated{workersTag} — {verdict}";
         if (run.Bits < 3_000_000)
         {
             line += " [SMOKE — below the §5.3 budget; not gate evidence]";

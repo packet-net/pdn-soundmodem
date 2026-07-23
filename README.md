@@ -83,10 +83,14 @@ interoperates with, and NinoTNC compatibility is never given up to suit another 
   fractionally-spaced (T/2) decision-feedback (DFE) equaliser — batch regularized
   least-squares training, NLMS adaptation, and RLS tracking for fading channels — augmented
   by iterative turbo re-equalization (decode → re-encode → re-equalize, up to 5 passes with
-  early exit) and a BCJR (MAP) equalizer for frequency-selective fading on BPSK, gated by
-  block-level fading detection from residual variance so that AWGN channels take the cheaper
-  DFE path. The Poor-channel (Watterson 2-path Rayleigh) masks are the current research
-  frontier. **Phase C** (higher-order QAM, WN 9–12) is still to come. No open App-D
+  a fixed-point convergence check and first-pass revert) and a max-log BCJR equalizer with a
+  searched echo delay for frequency-selective fading on BPSK. Channel-state decisions
+  (bidirectional vs single-pass equalization, turbo gating) come from a CFO-immune fading
+  detector: the fractional probe-to-probe tap change beyond the common rotation, classified
+  by recurring excursions over a min-tracking noise floor. The Poor-channel (Watterson
+  2-path Rayleigh) masks are the current research frontier — banked measured-not-gated in
+  Phase A, at-mask gated in Phase B (see docs/ms110d/phase-a-closeout.md and issues #64/#65).
+  **Phase C** (higher-order QAM, WN 9–12) is still to come. No open App-D
   receiver existed before this one, so there is no external oracle: the interop-critical spec
   tables were transcribed twice independently and diffed to zero value conflicts, and a
   from-scratch Watterson/CCIR channel simulator plus the spec masks stand in for one. Like

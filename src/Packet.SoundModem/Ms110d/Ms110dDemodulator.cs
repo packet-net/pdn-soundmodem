@@ -16,9 +16,11 @@ namespace Packet.SoundModem.Ms110d;
 /// <remarks>
 /// Phase A limitations, stated: acquisition requires the 9-Walsh-symbol Fixed subsection,
 /// i.e. transmissions with M ≥ 2 super-frames (the M = 1 single-symbol preamble is generated
-/// on TX but not yet acquired); clock-skew tolerance is limited to the slow per-probe timing
-/// tracker (±ppm-scale, not the ±50 ppm adversarial case); WN 0 has no timing tracker at all
-/// (chip clock assumed nominal, as in loopback and the D.6 simulation rigs).
+/// on TX but not yet acquired); clock skew is followed by the slow per-probe timing tracker —
+/// measured (Ms110dClockSkewTests, 2026-07-23): ±50 ppm decodes bit-exact with wide margin
+/// (breaking points ±700 ppm on ~4 s bursts, ±300–400 ppm on ~11 s — tolerance is
+/// burst-duration-dependent; longer transmissions unmeasured); WN 0 has no timing tracker at
+/// all (chip clock assumed nominal, as in loopback and the D.6 simulation rigs).
 /// </remarks>
 public sealed class Ms110dDemodulator
 {

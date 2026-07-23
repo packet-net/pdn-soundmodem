@@ -31,6 +31,13 @@ BITS="${2:-}"
 BITS_ENV=""
 [[ -n "$BITS" ]] && BITS_ENV="MS110D_MASK_BITS=$BITS"
 
+# Intra-point workers (see Ms110dMaskTests.RunPoint): each point splits its bit budget
+# across disjoint-seed workers. Early in a sweep this oversubscribes the box (deliberate
+# — compute-bound threads time-slice fine); the payoff is the tail, where the low-rate
+# points (WN0/1/2 = 10-40 ks of simulated audio each) would otherwise run single-threaded
+# on an idle box for hours. Override with MS110D_MASK_WORKERS=1 for strictly serial points.
+WORKERS="${MS110D_MASK_WORKERS:-4}"
+
 WNS="0 1 2 3 4 5 6 7 8 13"
 PIDS=""
 
@@ -47,6 +54,7 @@ for suite in $SUITES; do
                 log="$RESULTS_DIR/awgn-wn${wn}.log"
                 echo "[START] AWGN WN$wn → $log"
                 env MS110D_MASKS=1 MS110D_MASK_WN=$wn $BITS_ENV \
+                    MS110D_MASK_WORKERS=$WORKERS \
                     MS110D_MASK_LOG="$RESULTS_DIR/awgn-wn${wn}.mask" \
                     dotnet test --no-build -- \
                     --filter-method "*.Awgn_Mask_Gate" \
@@ -59,6 +67,7 @@ for suite in $SUITES; do
                 log="$RESULTS_DIR/poor-wn${wn}.log"
                 echo "[START] Poor WN$wn → $log"
                 env MS110D_MASKS_POOR=1 MS110D_MASK_WN=$wn $BITS_ENV \
+                    MS110D_MASK_WORKERS=$WORKERS \
                     MS110D_MASK_LOG="$RESULTS_DIR/poor-wn${wn}.mask" \
                     dotnet test --no-build -- \
                     --filter-method "*.Poor_Channel_Mask_Gate" \
@@ -70,6 +79,7 @@ for suite in $SUITES; do
             log="$RESULTS_DIR/static.log"
             echo "[START] Static WID2 → $log"
             env MS110D_MASKS=1 $BITS_ENV \
+                MS110D_MASK_WORKERS=$WORKERS \
                 MS110D_MASK_LOG="$RESULTS_DIR/static.mask" \
                 dotnet test --no-build -- \
                 --filter-method "*.Static_Wid2_Gate" \
