@@ -89,6 +89,13 @@ for suite in $SUITES; do
     esac
 done
 
+# Mark the fleet as preferred OOM victims: a killed point is rerunnable, the
+# session that launched the sweep is not. (Negative adj on the session is not
+# possible in an unprivileged container; raising ours is.)
+for pid in $PIDS; do
+    choom -n 500 -p "$pid" 2>/dev/null || true
+done
+
 echo ""
 echo "Launched $(echo $PIDS | wc -w) processes. Waiting..."
 failed=0

@@ -107,7 +107,23 @@ public sealed class Ms110dDemodulator
     private int _blockIndex;
     private readonly List<byte> _burstBits = [];
     private readonly List<long> _blockFrameChips = [];
-    private readonly List<float> _blockTap0Mag = [];
+
+    // Fading detector state (see ProcessFrame). The per-frame statistic (CFO-immune
+    // fractional tap change) has heavily overlapping LEVEL distributions between AWGN at
+    // mask SNR and Poor between fades (measured WN4: AWGN median 0.045/max 0.12; Poor
+    // median 0.033/max 0.33) — the discriminator is temporal structure: fading recurs as
+    // excursions above a min-tracking noise floor (the EnergyBusyDetector pattern), AWGN
+    // stays in a tight band. Enter on 2 excursions ≤ 24 frames apart (one 1 Hz fade event
+    // spans several frames), exit after 32 excursion-free frames.
+    private const float FadeExcursionRatio = 3.5f;
+    private const int FadeEnterWindowFrames = 24;
+    private const int FadeExitFrames = 32;
+    private double _fadeFloor;
+    private bool _fadeFloorSeeded;
+    private int _framesSinceExcursion = int.MaxValue / 2;
+    private bool _fading;
+    private static readonly bool DebugTrace =
+        Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1";
     private bool _terminate;
 
     /// <summary>Creates the receiver.</summary>
@@ -804,9 +820,55 @@ public sealed class Ms110dDemodulator
         // to complete the excitation (the probe alone is rank-deficient).
         dfe.BeginTraining();
 
+        // Fading statistic: fractional tap change per frame BEYOND the common rotation.
+        // Pure residual CFO rotates all taps together — after removing the common rotation
+        // the change is ≈ solve noise — while fading reshapes the tap vector. (The previous
+        // detector thresholded the rotation ANGLE itself, i.e. it was a residual-CFO
+        // detector that happened to separate the two simulation rigs — issue #64.)
+        // EWMA'd so one noisy solve cannot flip the mode, with hysteresis so per-frame
+        // chatter cannot mix bidirectional and single-pass LLR statistics in one block.
+        double startNorm = 0, changeNorm = 0;
+        if (tapRotation.Cnorm() > 1e-12)
+        {
+            Cf rot = tapRotation * (float)(1.0 / tapRotation.Abs());
+            for (int i = 0; i < endTaps.Length; i++)
+            {
+                startNorm += startTaps[i].Cnorm();
+                changeNorm += (endTaps[i] - (rot * startTaps[i])).Cnorm();
+            }
+        }
+
+        double tapChange = startNorm > 1e-12 ? changeNorm / startNorm : 0;
+        if (!_fadeFloorSeeded)
+        {
+            _fadeFloor = tapChange;
+            _fadeFloorSeeded = true;
+        }
+        else
+        {
+            // Min-tracking floor: drops instantly, recovers 5 %/frame — so a fade's own
+            // excursions cannot drag the floor up to meet them.
+            _fadeFloor = Math.Min(tapChange, (_fadeFloor * 1.05) + 1e-4);
+        }
+
+        bool excursion = tapChange > FadeExcursionRatio * _fadeFloor;
+        if (excursion)
+        {
+            if (_framesSinceExcursion <= FadeEnterWindowFrames)
+            {
+                _fading = true;
+            }
+
+            _framesSinceExcursion = 0;
+        }
+        else if (++_framesSinceExcursion > FadeExitFrames)
+        {
+            _fading = false;
+        }
+
         // RLS weight: 1.0 on fading channels (full tracking), 0.1 on static/AWGN
         // (minimal noise accumulation while still providing some adaptation).
-        bool fading = tapRotation.Cnorm() > 1e-12 && Math.Abs(tapRotation.Arg()) > 0.005;
+        bool fading = _fading;
         float rlsWeight = fading ? 1.0f : 0.1f;
 
         _scrambler.Reset();
@@ -832,11 +894,18 @@ public sealed class Ms110dDemodulator
         }
         else if (mode.U <= 96 || !fading)
         {
-            // 3-pass bidirectional: endTaps, startTaps, midpoint. Average outputs.
-            // Provides ~4.8 dB diversity gain that overcomes DFE noise enhancement
-            // on flat channels (critical for WN5 rate-3/4 at the 6 dB AWGN mask).
+            // 3-pass equalization from three tap seeds (end, start, midpoint of the
+            // probe-to-probe trajectory), outputs averaged. The passes share the frame's
+            // noise, so this is non-causal smoothing of the tap estimate rather than
+            // diversity; it buys the WN5 rate-3/4 point its margin at the 6 dB AWGN mask.
+            // Every pass must start from the frame's true decision history (the previous
+            // probe's tail): passes 2/3 previously inherited the PREVIOUS pass's
+            // end-of-frame decisions, feeding the frame's head through feedback taps
+            // filled with its own tail (issue #64).
             Span<Cf> pass1 = stackalloc Cf[mode.U];
             Span<Cf> pass2 = stackalloc Cf[mode.U];
+            Span<Cf> frameStartDecisions = stackalloc Cf[_decisions.Length];
+            _decisions.CopyTo(frameStartDecisions);
             for (int u = 0; u < mode.U; u++)
             {
                 FillWindow(_frameChip + u, window);
@@ -855,6 +924,7 @@ public sealed class Ms110dDemodulator
             }
 
             dfe.LoadTaps(startTaps);
+            frameStartDecisions.CopyTo(_decisions);
             _scrambler.Reset();
             for (int u = 0; u < mode.U; u++)
             {
@@ -875,6 +945,7 @@ public sealed class Ms110dDemodulator
             }
 
             dfe.LoadTaps(midTaps);
+            frameStartDecisions.CopyTo(_decisions);
             _scrambler.Reset();
             for (int u = 0; u < mode.U; u++)
             {
@@ -926,11 +997,12 @@ public sealed class Ms110dDemodulator
         TrackProbeTiming(probeChip, probe);
 
         double probeGain = probePhase.Abs() / mode.K;
-        if (Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1")
+        if (DebugTrace)
         {
             Console.Error.WriteLine(
                 $"frame@{_frameChip}: gain={probeGain:F3} ref={_probeGainRef:F3} mse={mse / mode.K:F3} " +
-                $"tau={_tau:F3} omega={_omega:E2} bad={_badProbes}");
+                $"tau={_tau:F3} omega={_omega:E2} bad={_badProbes} " +
+                $"tapChange={tapChange:F4} floor={_fadeFloor:F4} fading={_fading}");
         }
 
         if (probeGain < Math.Max(0.10, 0.45 * _probeGainRef))
@@ -948,7 +1020,6 @@ public sealed class Ms110dDemodulator
         }
 
         _blockFrameChips.Add(_frameChip);
-        _blockTap0Mag.Add(endTaps[0].Abs());
         _frameChip += mode.U + mode.K;
         _frameInBlock++;
         if (_frameInBlock == _il.Frames)
@@ -956,7 +1027,6 @@ public sealed class Ms110dDemodulator
             _frameInBlock = 0;
             FinishBlock();
             _blockFrameChips.Clear();
-            _blockTap0Mag.Clear();
         }
     }
 
@@ -1066,9 +1136,10 @@ public sealed class Ms110dDemodulator
 
         if (modulation == Ms110dModulation.Qam16)
         {
-            // Max-log over 16 points. Wire symbol s carries bits (s ^ scramble).
-            PushMaxLogLlrs(descrambled, Ms110dTables.Qam16, null, 4, 2.0f, scramble);
-            return;
+            // QAM16 LLRs come from the first-pass PushMaxLogLlrs call with the live 10.0
+            // scale; routing QAM16 through here (historically scale 2.0) would silently
+            // drop LLR magnitudes 5× — refuse rather than mis-scale.
+            throw new InvalidOperationException("QAM16 LLRs must use the first-pass PushMaxLogLlrs path");
         }
 
         // Table D-IV Gray map: MSB=0 ⇔ {+1, +j}, LSB=0 ⇔ {+1, −j}.
@@ -1249,12 +1320,17 @@ public sealed class Ms110dDemodulator
             BlockSamplesResident() &&
             (!flatChannel || turboBcjrCandidate))
         {
+            var firstPass = new byte[info.Length];
+            Array.Copy(info, firstPass, info.Length);
             var prevInfo = new byte[info.Length];
+            bool converged = false;
+            bool aborted = false;
             for (int iter = 0; iter < 5; iter++)
             {
                 TurboReequalize(info);
                 if (_blockLlrCount != _il.SizeBits)
                 {
+                    aborted = true; // partial re-equalization; the current decode stands
                     break;
                 }
 
@@ -1262,8 +1338,17 @@ public sealed class Ms110dDemodulator
                 Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
                 if (info.AsSpan().SequenceEqual(prevInfo))
                 {
+                    converged = true;
                     break;
                 }
+            }
+
+            if (!converged && !aborted)
+            {
+                // Five decode→re-equalize→decode rounds without a fixed point: the loop
+                // is oscillating, and a self-trained iterate with no fixed point is not
+                // evidence (issue #65). Keep the first-pass decode.
+                Array.Copy(firstPass, info, info.Length);
             }
         }
 
@@ -1301,28 +1386,11 @@ public sealed class Ms110dDemodulator
 
     private bool IsFlatChannel()
     {
-        if (_blockTap0Mag.Count < 4)
-        {
-            return false;
-        }
-
-        float mean = 0;
-        for (int i = 0; i < _blockTap0Mag.Count; i++)
-        {
-            mean += _blockTap0Mag[i];
-        }
-
-        mean /= _blockTap0Mag.Count;
-
-        float variance = 0;
-        for (int i = 0; i < _blockTap0Mag.Count; i++)
-        {
-            float d = _blockTap0Mag[i] - mean;
-            variance += d * d;
-        }
-
-        variance /= _blockTap0Mag.Count;
-        return variance < 0.004f;
+        // The fading detector spans block boundaries, so this classifies from the first
+        // frame of a burst — the previous per-block variance of a single FF-edge tap
+        // could never return true for interleavers with fewer than 4 frames per block,
+        // which silently re-enabled turbo on AWGN for every UltraShort mode (issue #64).
+        return _fadeFloorSeeded && !_fading;
     }
 
     private void TurboReequalize(byte[] info)
@@ -1373,11 +1441,10 @@ public sealed class Ms110dDemodulator
                         symbolNumber switch { 0 => 0, 1 => 2, 3 => 4, _ => 6 }),
                     Ms110dModulation.Psk8 => _scrambler.NextPsk(
                         Ms110dTables.Transcode8Psk[symbolNumber & 7]),
-                    _ => _scrambler.NextQam(symbolNumber & 15, 4),
+                    // The FinishBlock gate excludes QAM16 from turbo.
+                    _ => throw new InvalidOperationException("turbo re-equalization excludes QAM16"),
                 };
-                expected[u] = mode.Modulation == Ms110dModulation.Qam16
-                    ? Ms110dTables.Qam16[wireIndex]
-                    : Ms110dTables.Psk8[wireIndex];
+                expected[u] = Ms110dTables.Psk8[wireIndex];
             }
 
             // Batch-LS solve: FF-only (no feedback) for the BPSK BCJR path.
@@ -1391,7 +1458,10 @@ public sealed class Ms110dDemodulator
             {
                 if (!HaveSamplesForChip(frameChip + u + 2))
                 {
+                    // Abort mid-block: restore taps AND leave a clean training
+                    // accumulator — a half-filled Gram would poison the next probe solve.
                     dfe.LoadTaps(savedTaps);
+                    dfe.BeginTraining();
                     return;
                 }
 
@@ -1421,20 +1491,50 @@ public sealed class Ms110dDemodulator
                     expectedBpsk[u] = expected[u] * rotor.Conj();
                 }
 
-                int delay = Math.Min(5, mode.U / 4);
+                // h1 from the full block, then an echo-delay search: estimate the residual
+                // echo tap at each candidate lag and model the strongest. The previous
+                // code hard-coded lag 5 = 2.083 ms, exactly the D.6.1 Poor rig's path
+                // spacing — on any other channel geometry it modelled a nonexistent echo
+                // (issue #64). The search caps at lag 8 (3.3 ms): the trellis carries
+                // 2^delay states, so lag 8 = 256 states ≈ the affordable ceiling — longer
+                // echoes (the D-LXV 9 ms static spread) are beyond this 2-tap model and
+                // remain the DFE feedback span's job.
                 Cf sumZ = Cf.Zero, sumZw = Cf.Zero;
                 int countW = 0;
-                for (int u = delay; u < mode.U; u++)
+                for (int u = 0; u < mode.U; u++)
                 {
-                    Cf z = rxBlock[u] * expectedBpsk[u].Conj();
-                    float w = (expectedBpsk[u - delay] * expectedBpsk[u].Conj()).Re;
-                    sumZ += z;
-                    sumZw += z * w;
-                    countW++;
+                    sumZ += rxBlock[u] * expectedBpsk[u].Conj();
                 }
 
-                Cf h1Avg = countW > 0 ? sumZ * (1f / countW) : Cf.Zero;
-                Cf h2Avg = countW > 0 ? sumZw * (1f / countW) : Cf.Zero;
+                Cf h1Avg = sumZ * (1f / mode.U);
+                int delay = 1;
+                Cf h2Avg = Cf.Zero;
+                int maxLag = Math.Min(8, mode.U / 4);
+                for (int lag = 1; lag <= maxLag; lag++)
+                {
+                    Cf acc = Cf.Zero;
+                    for (int u = lag; u < mode.U; u++)
+                    {
+                        acc += (rxBlock[u] - (h1Avg * expectedBpsk[u])) * expectedBpsk[u - lag].Conj();
+                    }
+
+                    Cf h2 = acc * (1f / (mode.U - lag));
+                    if (h2.Cnorm() > h2Avg.Cnorm())
+                    {
+                        h2Avg = h2;
+                        delay = lag;
+                    }
+                }
+
+                // Significance floor: each noise-only lag estimate has variance ≈ σ²/U, so
+                // the max over ≤24 lags sits near 2·ln24·σ²/U — at the worst gated point
+                // (WN3, U=96, ~4 dB Es/N0) that is ≈ 0.027·|h1|². Below 0.04·|h1|² the
+                // "echo" is a noise pick: run the trellis echo-free (matched-filter mode).
+                if (h2Avg.Cnorm() < 0.04f * h1Avg.Cnorm())
+                {
+                    h2Avg = Cf.Zero;
+                    delay = 1;
+                }
 
                 // Always use BCJR for BPSK U>48: on flat channels (h2≈0) it acts as
                 // a soft-output matched filter with better LLR calibration than DFE fallback.
@@ -1450,7 +1550,11 @@ public sealed class Ms110dDemodulator
                         Cf predicted = h1Avg * expectedBpsk[u] + h2Avg * expectedBpsk[u - delay];
                         noiseVar += (rxBlock[u] - predicted).Cnorm();
                     }
-                    noiseVar = Math.Max(noiseVar / Math.Max(1, mode.U - delay), 1e-6f);
+
+                    // Ms110dBcjr documents noiseVar per complex dimension; Cnorm() sums
+                    // both dimensions, so halve — passing the total made every LLR ~2×
+                    // under-confident, damping the tanh soft-symbol refinement (issue #65).
+                    noiseVar = Math.Max(0.5f * noiseVar / Math.Max(1, mode.U - delay), 1e-6f);
 
                     // BCJR pass 1 + soft refinement + pass 2.
                     float[] bcjrLlrs = Ms110dBcjr.Equalize(rxBlock, h1, h2, delay, noiseVar);
@@ -1524,10 +1628,13 @@ public sealed class Ms110dDemodulator
         _blockIndex = 0;
         _burstBits.Clear();
         // A burst ending mid-block (SignalLost/Terminate/EOM) must not leak this
-        // block's frame positions or tap history into the next burst's turbo gate
+        // block's frame positions or fading state into the next burst's turbo gate
         // and flat-channel classification.
         _blockFrameChips.Clear();
-        _blockTap0Mag.Clear();
+        _fadeFloor = 0;
+        _fadeFloorSeeded = false;
+        _framesSinceExcursion = int.MaxValue / 2;
+        _fading = false;
         _bestMetric = 0;
         _bestStart = -1;
         _terminate = false;
