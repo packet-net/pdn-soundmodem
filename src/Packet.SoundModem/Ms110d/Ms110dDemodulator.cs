@@ -22,8 +22,12 @@ namespace Packet.SoundModem.Ms110d;
 /// </remarks>
 public sealed class Ms110dDemodulator
 {
-    private const int RingBits = 15;
-    private const int RingSize = 1 << RingBits;   // 32768 T/2 samples ≈ 6.8 s
+    private const int RingBits = 16;
+    // 65536 T/2 samples ≈ 13.7 s. Must exceed the longest 3 kHz Long-interleaver block
+    // (WN 1/2: 256 frames × 96 symbols = 10.24 s on air) plus tail: TurboReequalize
+    // re-reads the whole block from the ring at FinishBlock time, and Interpolate cannot
+    // detect overwritten slots (BlockSamplesResident is the backstop).
+    private const int RingSize = 1 << RingBits;
     private const int ChipsFixed = 288;           // 9 × 32 (M ≥ 2)
     private const int ChipsSuperframe = 576;
     private const int InterpHalf = 4;             // 8-tap interpolator
@@ -1233,13 +1237,15 @@ public sealed class Ms110dDemodulator
         // Turbo re-equalization: re-encode decoded info, use as known training,
         // re-equalize with BCJR, and decode again.
         // Skip on flat channels (AWGN) where the turbo's DFE re-solve perturbs LLRs,
-        // EXCEPT for BPSK U>48 (WN5) where the BCJR path provides needed LLR refinement.
+        // EXCEPT for BPSK U>48 (WN 3/4/5 — the predicate admits U=96 too) where the
+        // BCJR path provides needed LLR refinement.
         bool flatChannel = IsFlatChannel();
         bool turboBcjrCandidate = _mode is not null &&
             _mode.Modulation == Ms110dModulation.Bpsk && _mode.U > 48;
         if (_dfe is not null && _mode is not null &&
             _mode.Modulation is not Ms110dModulation.Qam16 &&
             _blockFrameChips.Count == _il.Frames &&
+            BlockSamplesResident() &&
             (!flatChannel || turboBcjrCandidate))
         {
             var prevInfo = new byte[info.Length];
@@ -1280,6 +1286,16 @@ public sealed class Ms110dDemodulator
         {
             CompleteBurst(Ms110dBurstEndReason.MaxInputDataBlocks);
         }
+    }
+
+    private bool BlockSamplesResident()
+    {
+        // Turbo re-reads the whole block; a block that has outlived the ring would
+        // silently train against overwritten samples (the head frames degrade to LLR
+        // erasures the outer code must then bridge). Never trips for the 3 kHz set
+        // with RingBits = 16 — this is the backstop for wider future configs.
+        double oldest = PositionOfChip(_blockFrameChips[0]) - _dfe!.FfTaps - InterpHalf;
+        return oldest > _written - RingSize;
     }
 
     private bool IsFlatChannel()
@@ -1363,7 +1379,7 @@ public sealed class Ms110dDemodulator
                     : Ms110dTables.Psk8[wireIndex];
             }
 
-            // Batch-LS solve: FF-only (no feedback) for BPSK BCJR path.
+            // Batch-LS solve: FF-only (no feedback) for the BPSK BCJR path.
             dfe.BeginTraining();
             for (int j = 0; j < fb; j++)
             {
@@ -1385,7 +1401,9 @@ public sealed class Ms110dDemodulator
             // Solve with _trackRidge for all modes.
             dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true);
 
-            // BCJR for BPSK U>48 with significant multipath, DFE for others.
+            // BPSK U>48 always takes the BCJR path (on flat channels h2≈0 degrades it
+            // to a soft-output matched filter with better-calibrated LLRs than the DFE
+            // fallback); other modulations use the DFE re-solve below.
             bool useBcjr = false;
             _scrambler.Reset();
             if (mode.Modulation == Ms110dModulation.Bpsk && mode.U > 48)
