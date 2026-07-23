@@ -66,9 +66,11 @@ public class Ms110dInterleaverTests
     }
 
     [Fact]
-    public void Every_Phase_A_Increment_Is_A_Permutation()
+    public void Every_Implemented_Increment_Is_A_Permutation()
     {
-        foreach (int wn in new[] { 0, 1, 2, 3, 4, 5, 6, 13 })
+        // WN 7/8 (Phase B, PR #60) included since issue #67 — the Table D-LI rows for
+        // 8PSK/16QAM must be permutations exactly like the Phase A rows.
+        foreach (int wn in new[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 13 })
         {
             foreach (Ms110dInterleaverKind kind in Enum.GetValues<Ms110dInterleaverKind>())
             {
