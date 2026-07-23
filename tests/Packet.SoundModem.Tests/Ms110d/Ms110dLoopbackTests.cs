@@ -163,6 +163,31 @@ public class Ms110dLoopbackTests
         AssertExact(burst, payload);
     }
 
+    [Theory]
+    [InlineData(2, -75)]
+    [InlineData(2, 75)]
+    [InlineData(6, -75)]
+    [InlineData(6, 75)]
+    [InlineData(7, -75)]
+    [InlineData(7, 75)]
+    [InlineData(8, -75)]
+    [InlineData(8, 75)]
+    public void Carrier_Frequency_Offset_At_The_Grid_Edge_Is_Acquired(int wn, double cfoHz)
+    {
+        // ±75 Hz is the D.6.4 Doppler figure and the outermost acquisition search bin;
+        // the shipped suite previously stopped at ±60 Hz (restated §5.1, issue #67).
+        // One WN per modulation family: WN2 BPSK, WN6 QPSK, WN7 8PSK, WN8 16QAM.
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = wn, PreambleSuperframes = 4 });
+        byte[] payload = RandomBits(400, 150 + wn + (int)cfoHz);
+        var channel = new WattersonChannel(9600, seed: 13);
+        float[] audio = channel.Apply(
+            tx.Modulate(payload), snrDb: 25, leadInSamples: 1500, leadOutSamples: 4000,
+            frequencyOffsetHz: cfoHz);
+
+        (Ms110dBurst? burst, _) = RunLoopback(audio, silence: 0);
+        AssertExact(burst, payload);
+    }
+
     [Fact]
     public void Moderate_Awgn_Well_Above_Mask_Decodes_Cleanly()
     {
