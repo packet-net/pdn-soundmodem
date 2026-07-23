@@ -407,8 +407,14 @@ public sealed class Ms110dDemodulator
 
         if (!PreambleGenerator.TryDecodeCount(countDibits, out int count) ||
             !PreambleGenerator.TryDecodeWid(widDibits, out int wn, out Ms110dInterleaverKind il, out int k) ||
-            !IsSupported(wn))
+            !IsSupported(wn) ||
+            !Ms110dInterleaverParams.Has3k(wn, il))
         {
+            // Has3k: at low SNR a corrupted WID can pass its checksum yet name a
+            // (waveform, interleaver) pair Table D-XXXVII does not define — e.g.
+            // (WN 0, UltraShort). That is a failed acquisition candidate, not a
+            // crash: Get3k throwing here killed the receiver mid-burst (found by
+            // the Poor WN0 mask run at −1 dB, seed 500, ~2.8M bits in).
             BackToSearch();
             return;
         }

@@ -111,4 +111,14 @@ public sealed record Ms110dInterleaverParams(int Frames, int SizeBits, int Input
 
         return new Ms110dInterleaverParams(frames[i], size[i], input[i], inc[i]);
     }
+
+    /// <summary>Whether Table D-XXXVII defines this (waveform, interleaver) combination —
+    /// WN 0 has no UltraShort row. A noise-corrupted WID can survive its checksum and
+    /// decode to an undefined combination, so acquisition must pre-validate with this
+    /// rather than let <see cref="Get3k"/> throw out of the receive path.</summary>
+    public static bool Has3k(int wn, Ms110dInterleaverKind kind)
+    {
+        return wn is (>= 0 and <= 8) or 13
+            && !(wn == 0 && kind == Ms110dInterleaverKind.UltraShort);
+    }
 }
