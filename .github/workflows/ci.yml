@@ -10,10 +10,18 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
+      # The xUnit v3 / MTP test apphosts (OutputType=Exe) resolve the runtime via
+      # DOTNET_ROOT; the runner's distro dotnet lives outside the apphost's default
+      # search paths (/usr/share/dotnet, /etc/dotnet/install_location), so register
+      # it explicitly or every test invocation dies with "You must install .NET".
+      - name: Register .NET root for MTP apphosts
+        run: echo "DOTNET_ROOT=$(dirname "$(readlink -f "$(which dotnet)")")" >> "$GITHUB_ENV"
       - name: Build
         run: dotnet build --configuration Release
       - name: Test
-        run: dotnet test --configuration Release --no-build --filter "Category!=Aspiration"
+        run: dotnet test --configuration Release --no-build -- --filter-not-trait "Category=Aspiration"
       - name: Aspiration scoreboard (non-blocking — red here is a to-do, not a break)
         continue-on-error: true
-        run: dotnet test --configuration Release --no-build --filter "Category=Aspiration"
+        env:
+          NINOTNC_ASPIRATION: "1"
+        run: dotnet test --configuration Release --no-build -- --filter-trait "Category=Aspiration"
