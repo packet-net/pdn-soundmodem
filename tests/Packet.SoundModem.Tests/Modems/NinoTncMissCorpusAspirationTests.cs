@@ -38,6 +38,9 @@ public class NinoTncMissCorpusAspirationTests
     [MemberData(nameof(Misses))]
     public void Missed_Frame_Should_Copy(string wav, string expectedHex, string label)
     {
+        Assert.SkipWhen(Environment.GetEnvironmentVariable("NINOTNC_ASPIRATION") != "1",
+            "set NINOTNC_ASPIRATION=1 for the non-blocking aspiration scoreboard");
+
         float[] audio = Load(Path.Combine(CorpusDir(), wav));
 
         var frames = new List<byte[]>();
