@@ -1,6 +1,6 @@
 using Packet.SoundModem.Ms110d;
 using Packet.SoundModem.Tests.Channel;
-using Xunit.Abstractions;
+
 
 namespace Packet.SoundModem.Tests.Ms110d;
 
@@ -37,14 +37,14 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         { 7, 19 }, { 8, 23 }, { 13, 11 },
     };
 
-    [SkippableTheory]
+    [Theory]
     [MemberData(nameof(AwgnMasks))]
     public void Awgn_Mask_Gate(int wn, double snrDb)
     {
-        Skip.If(Environment.GetEnvironmentVariable("MS110D_MASKS") != "1",
+        Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_MASKS") != "1",
             "set MS110D_MASKS=1 for the statistical mask runs");
         string? wnFilter = Environment.GetEnvironmentVariable("MS110D_MASK_WN");
-        Skip.If(wnFilter is not null && wnFilter != wn.ToString(),
+        Assert.SkipWhen(wnFilter is not null && wnFilter != wn.ToString(),
             $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
 
         MaskRun run = RunPoint(wn, snrDb, [], TargetBits(), seed: 100 + wn);
@@ -52,10 +52,10 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         AssertMask(run);
     }
 
-    [SkippableFact]
+    [Fact]
     public void Static_Wid2_Gate()
     {
-        Skip.If(Environment.GetEnvironmentVariable("MS110D_MASKS") != "1",
+        Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_MASKS") != "1",
             "set MS110D_MASKS=1 for the statistical mask runs");
 
         // Table D-LXV, 3 kHz: WID 2 → 3-path static (0.0, 3.0, 9.0 ms), equal power — the rig
@@ -81,13 +81,13 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         AssertMask(run);
     }
 
-    [SkippableTheory]
+    [Theory]
     [InlineData(2, -75)]
     [InlineData(2, 75)]
     [InlineData(6, 75)]
     public void Doppler_Offset_Engineering_Check(int wn, double offsetHz)
     {
-        Skip.If(Environment.GetEnvironmentVariable("MS110D_MASKS") != "1",
+        Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_MASKS") != "1",
             "set MS110D_MASKS=1 for the statistical mask runs");
 
         // D.6.4 specifies ±75 Hz at 24 dB for WID 10 (a Phase C gate); run it at the Phase A
@@ -98,14 +98,14 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         run.Errors.Should().Be(0);
     }
 
-    [SkippableTheory]
+    [Theory]
     [MemberData(nameof(PoorMasks))]
     public void Poor_Channel_Mask_Gate(int wn, double snrDb)
     {
-        Skip.If(Environment.GetEnvironmentVariable("MS110D_MASKS_POOR") != "1",
+        Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_MASKS_POOR") != "1",
             "set MS110D_MASKS_POOR=1 for the Poor-channel mask runs");
         string? wnFilter = Environment.GetEnvironmentVariable("MS110D_MASK_WN");
-        Skip.If(wnFilter is not null && wnFilter != wn.ToString(),
+        Assert.SkipWhen(wnFilter is not null && wnFilter != wn.ToString(),
             $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
 
         MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, TargetBits(), seed: 500 + wn);
@@ -113,13 +113,13 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         AssertMask(run);
     }
 
-    [SkippableTheory]
+    [Theory]
     [InlineData(4, 10)]
     [InlineData(6, 14)]
     [InlineData(8, 23)]
     public void Poor_Channel_Smoke(int wn, double snrDb)
     {
-        Skip.If(Environment.GetEnvironmentVariable("MS110D_MASKS_POOR") != "1",
+        Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_MASKS_POOR") != "1",
             "set MS110D_MASKS_POOR=1 for the Poor-channel mask runs");
 
         long bits = long.TryParse(
@@ -129,13 +129,13 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         AssertMask(run);
     }
 
-    [SkippableTheory]
+    [Theory]
     [InlineData(4, 10)]
     [InlineData(6, 14)]
     [InlineData(8, 23)]
     public void Static_2Path_Diagnostic(int wn, double snrDb)
     {
-        Skip.If(Environment.GetEnvironmentVariable("MS110D_MASKS_POOR") != "1",
+        Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_MASKS_POOR") != "1",
             "set MS110D_MASKS_POOR=1");
 
         // Same geometry as Poor (0ms, 2ms) but no fading — isolates multipath from fading.

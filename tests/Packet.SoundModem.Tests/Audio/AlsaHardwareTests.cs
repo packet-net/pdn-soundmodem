@@ -13,13 +13,13 @@ public class AlsaHardwareTests
         OperatingSystem.IsLinux() && Directory.Exists("/dev/snd")
         && Directory.EnumerateFiles("/dev/snd", "pcmC*c").Any();
 
-    [SkippableFact]
+    [Fact]
     public void Capture_Delivers_Frames()
     {
-        Skip.IfNot(HasAudio, "no ALSA capture device on this machine");
+        Assert.SkipUnless(HasAudio, "no ALSA capture device on this machine");
 
         using var pcm = TryOpen(AlsaPcm.Direction.Capture);
-        Skip.If(pcm is null, "default capture device would not open (busy or access denied)");
+        Assert.SkipWhen(pcm is null, "default capture device would not open (busy or access denied)");
 
         var buffer = new short[4800]; // 0.1 s mono at 48 kHz
         int frames = pcm!.Read(buffer);
@@ -27,13 +27,13 @@ public class AlsaHardwareTests
         frames.Should().Be(4800);
     }
 
-    [SkippableFact]
+    [Fact]
     public void Playback_Accepts_And_Drains_Silence()
     {
-        Skip.IfNot(HasAudio, "no ALSA device on this machine");
+        Assert.SkipUnless(HasAudio, "no ALSA device on this machine");
 
         using var pcm = TryOpen(AlsaPcm.Direction.Playback);
-        Skip.If(pcm is null, "default playback device would not open (busy or access denied)");
+        Assert.SkipWhen(pcm is null, "default playback device would not open (busy or access denied)");
 
         pcm!.Write(new short[4800]);
         pcm.Drain();

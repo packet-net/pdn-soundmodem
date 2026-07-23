@@ -4,7 +4,7 @@ using System.Text;
 using M0LTE.Ardop;
 using M0LTE.Ardop.Arq;
 using Packet.SoundModem.Audio;
-using Xunit.Abstractions;
+
 
 namespace Packet.SoundModem.Tests.Ardop;
 
@@ -425,11 +425,11 @@ public class ArdopArdopcfLiveSessionTests(ITestOutputHelper output)
             "ardopcf must acknowledge the setup commands");
     }
 
-    [SkippableFact]
+    [Fact]
     public void Our_Station_Calls_Ardopcf_And_Transfers_Data()
     {
         var rig = Rig();
-        Skip.If(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
+        Assert.SkipWhen(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
 
         byte[] payload = new byte[64];
         new Random(99).NextBytes(payload);
@@ -475,11 +475,11 @@ public class ArdopArdopcfLiveSessionTests(ITestOutputHelper output)
         }
     }
 
-    [SkippableFact]
+    [Fact]
     public void Ardopcf_Calls_Our_Station_And_Transfers_Data()
     {
         var rig = Rig();
-        Skip.If(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
+        Assert.SkipWhen(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
 
         byte[] payload = new byte[48];
         new Random(77).NextBytes(payload);
@@ -531,11 +531,11 @@ public class ArdopArdopcfLiveSessionTests(ITestOutputHelper output)
     private static bool IsPskOrQamData(byte type) =>
         ArdopFrameType.IsData(type) && ArdopFrameInfo.Get(type).Modulation != ArdopModulation.Fsk4;
 
-    [SkippableFact]
+    [Fact]
     public void Mixed_Mode_Session_Ours_As_Iss_Climbs_To_Psk_Qam_Rungs()
     {
         var rig = Rig();
-        Skip.If(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
+        Assert.SkipWhen(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
 
         byte[] payload = new byte[4096];
         new Random(55).NextBytes(payload);
@@ -589,11 +589,11 @@ public class ArdopArdopcfLiveSessionTests(ITestOutputHelper output)
         }
     }
 
-    [SkippableFact]
+    [Fact]
     public void Mixed_Mode_Session_Ardopcf_As_Iss_Sends_Us_Psk_Qam_Frames()
     {
         var rig = Rig();
-        Skip.If(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
+        Assert.SkipWhen(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
 
         byte[] payload = new byte[4096];
         new Random(66).NextBytes(payload);

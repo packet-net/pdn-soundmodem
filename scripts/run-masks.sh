@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Parallel mask test runner — fans out one process per WN point.
-# Uses `dotnet vstest` directly (no MSBuild overhead per process).
+# Uses MTP (Microsoft Testing Platform) via dotnet test — no testhost, no teardown hang.
 #
 # Usage:
 #   ./scripts/run-masks.sh awgn         # AWGN (10 parallel processes)
@@ -18,8 +18,6 @@ RESULTS_DIR="/tmp/mask-results"
 mkdir -p "$RESULTS_DIR"
 rm -f "$RESULTS_DIR"/*.log
 
-TEST_DLL="tests/Packet.SoundModem.Tests/bin/Debug/net10.0/Packet.SoundModem.Tests.dll"
-VSTEST_ARGS="--BlameHangTimeout:10m"
 SUITES="${1:-awgn}"
 BITS="${2:-}"
 [[ "$SUITES" == "all" ]] && SUITES="awgn poor static doppler"
@@ -42,8 +40,9 @@ for suite in $SUITES; do
                 log="$RESULTS_DIR/awgn-wn${wn}.log"
                 echo "[START] AWGN WN$wn → $log"
                 env MS110D_MASKS=1 MS110D_MASK_WN=$wn $BITS_ENV \
-                    dotnet vstest "$TEST_DLL" $VSTEST_ARGS --TestCaseFilter:"FullyQualifiedName~Awgn_Mask_Gate" \
-                    --logger:"console;verbosity=normal" > "$log" 2>&1 &
+                    dotnet test --no-build -- \
+                    --filter-class "Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests" \
+                    > "$log" 2>&1 &
                 PIDS="$PIDS $!"
             done
             ;;
@@ -52,8 +51,9 @@ for suite in $SUITES; do
                 log="$RESULTS_DIR/poor-wn${wn}.log"
                 echo "[START] Poor WN$wn → $log"
                 env MS110D_MASKS_POOR=1 MS110D_MASK_WN=$wn $BITS_ENV \
-                    dotnet vstest "$TEST_DLL" $VSTEST_ARGS --TestCaseFilter:"FullyQualifiedName~Poor_Channel_Mask_Gate" \
-                    --logger:"console;verbosity=normal" > "$log" 2>&1 &
+                    dotnet test --no-build -- \
+                    --filter-class "Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests" \
+                    > "$log" 2>&1 &
                 PIDS="$PIDS $!"
             done
             ;;
@@ -61,16 +61,18 @@ for suite in $SUITES; do
             log="$RESULTS_DIR/static.log"
             echo "[START] Static WID2 → $log"
             env MS110D_MASKS=1 $BITS_ENV \
-                dotnet vstest "$TEST_DLL" $VSTEST_ARGS --TestCaseFilter:"FullyQualifiedName~Static_Wid2" \
-                --logger:"console;verbosity=normal" > "$log" 2>&1 &
+                dotnet test --no-build -- \
+                --filter-class "Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests" \
+                > "$log" 2>&1 &
             PIDS="$PIDS $!"
             ;;
         doppler)
             log="$RESULTS_DIR/doppler.log"
             echo "[START] Doppler → $log"
             env MS110D_MASKS=1 $BITS_ENV \
-                dotnet vstest "$TEST_DLL" $VSTEST_ARGS --TestCaseFilter:"FullyQualifiedName~Doppler_Offset" \
-                --logger:"console;verbosity=normal" > "$log" 2>&1 &
+                dotnet test --no-build -- \
+                --filter-class "Packet.SoundModem.Tests.Ms110d.Ms110dMaskTests" \
+                > "$log" 2>&1 &
             PIDS="$PIDS $!"
             ;;
     esac
@@ -93,7 +95,7 @@ for log in "$RESULTS_DIR"/*.log; do
     [[ -f "$log" ]] || continue
     name=$(basename "$log" .log)
     mask_line=$(grep "\[mask\]" "$log" 2>/dev/null | tail -1)
-    if grep -q "Passed:.*1\|Test Run Successful" "$log" 2>/dev/null; then
+    if grep -q "Passed!" "$log" 2>/dev/null; then
         echo "  PASS: $name"
     elif [[ -n "$mask_line" ]]; then
         ber=$(echo "$mask_line" | grep -oP 'BER \S+' || echo '?')

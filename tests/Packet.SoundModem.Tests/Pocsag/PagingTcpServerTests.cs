@@ -31,14 +31,14 @@ public class PagingTcpServerTests : IAsyncLifetime
         _server = new PagingTcpServer(_channel, port: 0);
     }
 
-    public Task InitializeAsync()
+    public ValueTask InitializeAsync()
     {
         _server.Start();
         _transmitter = _channel.RunTransmitterAsync(_output, _ptt, _cancellation.Token);
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _cancellation.CancelAsync();
         try
@@ -173,10 +173,10 @@ public class PagingTcpServerTests : IAsyncLifetime
         }
     }
 
-    [SkippableFact]
+    [Fact]
     public async Task The_Endpoint_Transmission_Satisfies_Multimon()
     {
-        Skip.If(MultimonNg.MultimonMissing, "multimon-ng is not installed");
+        Assert.SkipWhen(MultimonNg.MultimonMissing, "multimon-ng is not installed");
 
         var (client, reader) = await ConnectAsync();
         using (client)

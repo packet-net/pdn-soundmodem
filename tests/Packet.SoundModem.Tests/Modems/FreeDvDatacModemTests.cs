@@ -5,7 +5,7 @@ using M0LTE.Il2p;
 using Packet.SoundModem.Modems;
 using M0LTE.Ofdm;
 using Packet.SoundModem.Tests.Channel;
-using Xunit.Abstractions;
+
 
 namespace Packet.SoundModem.Tests.Modems;
 

@@ -4,7 +4,7 @@ using System.Text;
 using M0LTE.Ardop;
 using M0LTE.Ardop.Host;
 using Packet.SoundModem.Audio;
-using Xunit.Abstractions;
+
 
 namespace Packet.SoundModem.Tests.Ardop;
 
@@ -435,11 +435,11 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
         || line.StartsWith("INPUTPEAKS", StringComparison.Ordinal)
         || line.StartsWith("BUSY ", StringComparison.Ordinal);
 
-    [SkippableFact]
+    [Fact]
     public async Task Host_Command_Transcript_Matches_Ardopcf_Byte_For_Byte()
     {
         var rig = Rig();
-        Skip.If(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
+        Assert.SkipWhen(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
 
         using var cf = StartArdopcf(rig!.Value.Binary, BasePort, $"plughw:{rig.Value.Card},0", $"plughw:{rig.Value.Card},0");
         using var cfHost = new HostClient(BasePort);
@@ -506,11 +506,11 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
         }
     }
 
-    [SkippableFact]
+    [Fact]
     public void Scripted_Pat_Host_Session_Our_Daemon_Calls_Ardopcf()
     {
         var rig = Rig();
-        Skip.If(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
+        Assert.SkipWhen(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
 
         int cfPort = BasePort;
         int ourPort = BasePort + 2;
@@ -562,11 +562,11 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
             string.Join(" | ", pat.Lines.TakeLast(6)));
     }
 
-    [SkippableFact]
+    [Fact]
     public void Scripted_Pat_Host_Session_Ardopcf_Calls_Our_Daemon()
     {
         var rig = Rig();
-        Skip.If(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
+        Assert.SkipWhen(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
 
         int cfPort = BasePort;
         int ourPort = BasePort + 2;
@@ -615,13 +615,13 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
 
     // ============================================================== 3. real Pat
 
-    [SkippableFact]
+    [Fact]
     public void Pat_Exchanges_A_Message_Through_Our_Modem_And_Ardopcf()
     {
         var rig = Rig();
-        Skip.If(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
+        Assert.SkipWhen(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
         string? pat = Environment.GetEnvironmentVariable("PAT");
-        Skip.If(pat is null || !File.Exists(pat), "set PAT to a Pat binary for the real-Pat leg");
+        Assert.SkipWhen(pat is null || !File.Exists(pat), "set PAT to a Pat binary for the real-Pat leg");
 
         int cfPort = BasePort;
         int ourPort = BasePort + 2;
@@ -796,11 +796,11 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
         return "/usr/share/alsa/alsa.conf:" + path;
     }
 
-    [SkippableFact]
+    [Fact]
     public void Rxo_Monitors_A_Live_Third_Party_Ardopcf_Session()
     {
         var rig = Rig();
-        Skip.If(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
+        Assert.SkipWhen(rig is null, "set ARDOPCF and ARDOP_ALOOP_CARD (run under sg audio) for the live leg");
         int card = rig!.Value.Card;
 
         string alsaConfig = SharedChannelAlsaConfig(card);

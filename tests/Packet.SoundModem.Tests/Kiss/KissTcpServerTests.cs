@@ -26,14 +26,14 @@ public class KissTcpServerTests : IAsyncLifetime
         _server = new KissTcpServer(_channel, port: 0);
     }
 
-    public Task InitializeAsync()
+    public ValueTask InitializeAsync()
     {
         _server.Start();
         _transmitter = _channel.RunTransmitterAsync(_output, new NullPtt(), _cancellation.Token);
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _cancellation.CancelAsync();
         try
