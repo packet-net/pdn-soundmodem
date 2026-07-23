@@ -9,10 +9,13 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// the AWGN gates, <c>MS110D_MASKS_POOR=1</c> for the measured-not-gated Poor channel),
 /// because a full point runs minutes of simulated signal and the suite hours; per §5.3 these
 /// are nightly/rotating runs, not per-PR CI. Conditions per D.6.1: coded BER ≤ 1.0E-5, Long
-/// interleaver, 20-super-frame preamble; SNR in 3 kHz noise bandwidth. Budget per point:
-/// ≥ 3×10⁶ payload bits AND (≥ 30 errors observed, or a 95 % Poisson upper confidence bound
-/// below 1e-5). The Poor-channel at-mask gate is deferred until the RLS equalizer lands
-/// (design §6, Q1). Override the bit budget with <c>MS110D_MASK_BITS</c> for smoke runs.
+/// interleaver, 20-super-frame preamble; SNR in 3 kHz noise bandwidth. Accept rule per point
+/// (the implemented form of design §5.3, restated 2026-07-23): a fixed sample of ≥ 3×10⁶
+/// payload bits (fading gate points additionally ≥ 600 s simulated per D-LXV duration logic);
+/// with ≥ 30 errors the direct BER must be ≤ 1e-5, else the 97.5 % Poisson upper bound must
+/// clear 1e-5. Poor-channel points are measured-not-gated in Phase A (design §6, Q1) —
+/// <c>MS110D_POOR_GATED=1</c> arms the Phase B at-mask hard gate. Override the bit budget with
+/// <c>MS110D_MASK_BITS</c> for smoke runs (reports are then labelled SMOKE, not gate evidence).
 /// </summary>
 public class Ms110dMaskTests(ITestOutputHelper output)
 {
@@ -108,9 +111,20 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         Assert.SkipWhen(wnFilter is not null && wnFilter != wn.ToString(),
             $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
 
-        MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, TargetBits(), seed: 500 + wn);
+        MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, TargetBits(), seed: 500 + wn,
+            minSimSeconds: 600);
         Report($"POOR WN{wn} @ {snrDb:+0;-0;0} dB", run);
-        AssertMask(run);
+
+        // Phase A: measured, not gated (design §6, Q1) — the number is banked via Report /
+        // MS110D_MASK_LOG. MS110D_POOR_GATED=1 arms the Phase B at-mask hard gate.
+        if (Environment.GetEnvironmentVariable("MS110D_POOR_GATED") == "1")
+        {
+            AssertMask(run);
+        }
+        else
+        {
+            run.Bits.Should().BeGreaterThan(0);
+        }
     }
 
     [Theory]
@@ -126,7 +140,10 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             Environment.GetEnvironmentVariable("MS110D_MASK_BITS"), out long b) ? b : 100_000;
         MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, bits, seed: 500 + wn);
         Report($"POOR (smoke) WN{wn} @ {snrDb:+0;-0;0} dB", run);
-        AssertMask(run);
+        // Smoke = quick indicative number, not a gate: the default 100k bits cannot clear
+        // the 97.5 % Poisson bound even at zero errors (3.7/1e5 > 1e-5), so AssertMask here
+        // would be unpassable by construction. Report + acquisition sanity only.
+        run.AcquisitionFailures.Should().Be(0);
     }
 
     [Theory]
@@ -251,6 +268,11 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         string line =
             $"[mask] {label}: {run.Bits:N0} bits, {run.Errors} errors, {run.Bursts} bursts " +
             $"({run.AcquisitionFailures} acquisition failures), {run.SimSeconds:F0} s simulated — {verdict}";
+        if (run.Bits < 3_000_000)
+        {
+            line += " [SMOKE — below the §5.3 budget; not gate evidence]";
+        }
+
         output.WriteLine(line);
 
         string? log = Environment.GetEnvironmentVariable("MS110D_MASK_LOG");
