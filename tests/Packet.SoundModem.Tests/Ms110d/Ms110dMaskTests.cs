@@ -50,8 +50,8 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         Assert.SkipWhen(wnFilter is not null && wnFilter != wn.ToString(),
             $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
 
-        MaskRun run = RunPoint(wn, snrDb, [], TargetBits(), seed: 100 + wn);
-        Report($"AWGN WN{wn} @ {snrDb:+0;-0;0} dB", run);
+        MaskRun run = RunPoint(wn, snrDb, [], TargetBits(), seed: 100 + wn + SeedOffset());
+        Report($"AWGN WN{wn} @ {snrDb:+0;-0;0} dB{SeedTag()}", run);
         AssertMask(run);
     }
 
@@ -79,7 +79,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         WattersonPath[] paths = [new(0), new(3.0), new(9.0)];
         double snrDb = double.TryParse(
             Environment.GetEnvironmentVariable("MS110D_STATIC_SNR"), out double s) ? s : 9;
-        MaskRun run = RunPoint(2, snrDb, paths, TargetBits(), seed: 900);
+        MaskRun run = RunPoint(2, snrDb, paths, TargetBits(), seed: 900 + SeedOffset());
         Report($"Static WID2 (0/3/9 ms) @ {snrDb:+0;-0;0} dB (restated house bar)", run);
         AssertMask(run);
     }
@@ -111,9 +111,9 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         Assert.SkipWhen(wnFilter is not null && wnFilter != wn.ToString(),
             $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
 
-        MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, TargetBits(), seed: 500 + wn,
+        MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, TargetBits(), seed: 500 + wn + SeedOffset(),
             minSimSeconds: 600);
-        Report($"POOR WN{wn} @ {snrDb:+0;-0;0} dB", run);
+        Report($"POOR WN{wn} @ {snrDb:+0;-0;0} dB{SeedTag()}", run);
 
         // Phase A: measured, not gated (design §6, Q1) — the number is banked via Report /
         // MS110D_MASK_LOG. MS110D_POOR_GATED=1 arms the Phase B at-mask hard gate.
@@ -165,6 +165,15 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         Report($"STATIC-2PATH WN{wn} @ {snrDb:+0;-0;0} dB", run);
         run.AcquisitionFailures.Should().Be(0);
         run.Ber.Should().BeLessThanOrEqualTo(1e-5);
+    }
+
+    // Disjoint-seed verification (issue #67): the equalizer thresholds were iterated
+    // against the default seeds, so gate claims can be cross-checked on a disjoint
+    // realization set with MS110D_MASK_SEED_OFFSET (reports carry the offset).
+    private static int SeedOffset()
+    {
+        return int.TryParse(
+            Environment.GetEnvironmentVariable("MS110D_MASK_SEED_OFFSET"), out int o) ? o : 0;
     }
 
     private static long TargetBits()
@@ -257,6 +266,12 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         }
 
         return new MaskRun(bits, errors, bursts, acquisitionFailures, simSeconds);
+    }
+
+    private static string SeedTag()
+    {
+        int o = SeedOffset();
+        return o == 0 ? "" : $" (seed+{o})";
     }
 
     private void Report(string label, MaskRun run)
