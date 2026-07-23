@@ -1,3 +1,4 @@
+using System.Buffers;
 using M0LTE.Ofdm;
 
 namespace Packet.SoundModem.Ms110d;
@@ -28,9 +29,11 @@ internal static class Ms110dBcjr
         int nStates = 1 << l;
         float invTwoSigma2 = 1f / (2f * noiseVar);
 
-        // Forward recursion (log domain)
-        var logAlpha = new float[(n + 1) * nStates];
-        Array.Fill(logAlpha, NegInf);
+        // Forward recursion (log domain). Trellis scratch comes from the shared pool
+        // (rented arrays may be oversized — all indexing stays within [0, total)).
+        int total = (n + 1) * nStates;
+        float[] logAlpha = ArrayPool<float>.Shared.Rent(total);
+        Array.Fill(logAlpha, NegInf, 0, total);
         logAlpha[0] = 0f; // start in state 0
 
         for (int t = 0; t < n; t++)
@@ -58,8 +61,8 @@ internal static class Ms110dBcjr
         }
 
         // Backward recursion (log domain)
-        var logBeta = new float[(n + 1) * nStates];
-        Array.Fill(logBeta, NegInf);
+        float[] logBeta = ArrayPool<float>.Shared.Rent(total);
+        Array.Fill(logBeta, NegInf, 0, total);
         for (int s = 0; s < nStates; s++)
             logBeta[n * nStates + s] = 0f;
 
@@ -123,6 +126,8 @@ internal static class Ms110dBcjr
             llrs[t] = logP0 - logP1;
         }
 
+        ArrayPool<float>.Shared.Return(logAlpha);
+        ArrayPool<float>.Shared.Return(logBeta);
         return llrs;
     }
 
