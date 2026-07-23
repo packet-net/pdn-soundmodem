@@ -825,7 +825,7 @@ public sealed class Ms110dDemodulator
                 PushDecision(clean);
             }
         }
-        else
+        else if (mode.U <= 96 || !fading)
         {
             // 3-pass bidirectional: endTaps, startTaps, midpoint. Average outputs.
             // Provides ~4.8 dB diversity gain that overcomes DFE noise enhancement
@@ -882,6 +882,29 @@ public sealed class Ms110dDemodulator
                 DataSymbolEqualized?.Invoke(averaged);
                 PushLlrs(averaged, mode.Modulation);
                 dfe.RlsUpdate(window, _decisions, clean * rotor, weight: rlsWeight);
+                PushDecision(clean * rotor);
+            }
+        }
+        else
+        {
+            // Fading channel: single-pass RLS from endTaps.
+            // Tracks the channel within one pass — bidirectional averaging would
+            // mix different fading states and degrade performance.
+            for (int u = 0; u < mode.U; u++)
+            {
+                FillWindow(_frameChip + u, window);
+                Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                Cf y = dfe.Equalize(window, _decisions);
+                Cf descrambled = y * rotor.Conj();
+                Cf clean = Slice(descrambled, mode.Modulation);
+                DataSymbolEqualized?.Invoke(descrambled);
+                PushLlrs(descrambled, mode.Modulation);
+                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: rlsWeight);
+                if ((descrambled - clean).Cnorm() < ddGate)
+                {
+                    dfe.AddTrainingRow(window, _decisions, clean * rotor, weight: 0.25f);
+                }
+
                 PushDecision(clean * rotor);
             }
         }

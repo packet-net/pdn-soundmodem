@@ -19,6 +19,7 @@ mkdir -p "$RESULTS_DIR"
 rm -f "$RESULTS_DIR"/*.log
 
 TEST_DLL="tests/Packet.SoundModem.Tests/bin/Debug/net10.0/Packet.SoundModem.Tests.dll"
+VSTEST_ARGS="--BlameHangTimeout:10m"
 SUITES="${1:-awgn}"
 BITS="${2:-}"
 [[ "$SUITES" == "all" ]] && SUITES="awgn poor static doppler"
@@ -41,7 +42,7 @@ for suite in $SUITES; do
                 log="$RESULTS_DIR/awgn-wn${wn}.log"
                 echo "[START] AWGN WN$wn → $log"
                 env MS110D_MASKS=1 MS110D_MASK_WN=$wn $BITS_ENV \
-                    dotnet vstest "$TEST_DLL" --TestCaseFilter:"FullyQualifiedName~Awgn_Mask_Gate" \
+                    dotnet vstest "$TEST_DLL" $VSTEST_ARGS --TestCaseFilter:"FullyQualifiedName~Awgn_Mask_Gate" \
                     --logger:"console;verbosity=normal" > "$log" 2>&1 &
                 PIDS="$PIDS $!"
             done
@@ -51,7 +52,7 @@ for suite in $SUITES; do
                 log="$RESULTS_DIR/poor-wn${wn}.log"
                 echo "[START] Poor WN$wn → $log"
                 env MS110D_MASKS_POOR=1 MS110D_MASK_WN=$wn $BITS_ENV \
-                    dotnet vstest "$TEST_DLL" --TestCaseFilter:"FullyQualifiedName~Poor_Channel_Mask_Gate" \
+                    dotnet vstest "$TEST_DLL" $VSTEST_ARGS --TestCaseFilter:"FullyQualifiedName~Poor_Channel_Mask_Gate" \
                     --logger:"console;verbosity=normal" > "$log" 2>&1 &
                 PIDS="$PIDS $!"
             done
@@ -60,7 +61,7 @@ for suite in $SUITES; do
             log="$RESULTS_DIR/static.log"
             echo "[START] Static WID2 → $log"
             env MS110D_MASKS=1 $BITS_ENV \
-                dotnet vstest "$TEST_DLL" --TestCaseFilter:"FullyQualifiedName~Static_Wid2" \
+                dotnet vstest "$TEST_DLL" $VSTEST_ARGS --TestCaseFilter:"FullyQualifiedName~Static_Wid2" \
                 --logger:"console;verbosity=normal" > "$log" 2>&1 &
             PIDS="$PIDS $!"
             ;;
@@ -68,7 +69,7 @@ for suite in $SUITES; do
             log="$RESULTS_DIR/doppler.log"
             echo "[START] Doppler → $log"
             env MS110D_MASKS=1 $BITS_ENV \
-                dotnet vstest "$TEST_DLL" --TestCaseFilter:"FullyQualifiedName~Doppler_Offset" \
+                dotnet vstest "$TEST_DLL" $VSTEST_ARGS --TestCaseFilter:"FullyQualifiedName~Doppler_Offset" \
                 --logger:"console;verbosity=normal" > "$log" 2>&1 &
             PIDS="$PIDS $!"
             ;;
