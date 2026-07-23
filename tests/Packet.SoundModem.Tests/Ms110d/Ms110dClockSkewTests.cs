@@ -9,13 +9,14 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// (<see cref="Ms110dDemodulator"/> remarks; WN 0 has none, so it is out of scope here).
 /// </summary>
 /// <remarks>
-/// Calibration, 2026-07-23, on exactly this rig (clean channel, ~3.6–4 s bursts, default
-/// Short/K=7): WN2/WN5/WN6 all decode bit-exact at ±2, ±5, ±10, ±20, ±50, ±75, ±150,
-/// ±300 and ±500 ppm; the first failure is WN6 at +700 ppm (WN2/WN5 still solid at
-/// ±700); everything fails by ±1000 ppm. Tolerance is duration-dependent — on 4× longer
-/// bursts (~11 s) all three WNs pass ±200 ppm and fail ±400 ppm. The pinned ±50 ppm is
-/// the §5.1 adversarial figure (the issue #67 aspiration — met), with ~12× margin to the
-/// breaking point on this geometry and ≥4× against the long-burst breaking point.
+/// Calibration, 2026-07-23 on the Phase A closeout equalizer (ff1d832), on exactly this
+/// rig (clean channel, ~3.6–4 s bursts, default Short/K=7): WN2/WN5/WN6 all decode
+/// bit-exact at ±2, ±5, ±10, ±20, ±50, ±150, ±300 and ±500 ppm; the first failures are
+/// WN5/WN6 at +700 ppm (both still pass −700, WN2 solid through ±700); everything fails
+/// by ±1000 ppm. Tolerance is duration-dependent — on 4× longer bursts (~11 s) all three
+/// WNs pass ±200 ppm and fail from +300/±400 ppm. The pinned ±50 ppm is the §5.1
+/// adversarial figure (the issue #67 aspiration — met), with ~14× margin to the breaking
+/// point on this geometry and ≥4× against the long-burst breaking point.
 /// </remarks>
 public class Ms110dClockSkewTests
 {
