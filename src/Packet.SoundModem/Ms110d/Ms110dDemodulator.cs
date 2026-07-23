@@ -175,6 +175,7 @@ public sealed class Ms110dDemodulator
         Array.Clear(_ring);
         _rxFilterRe = new FirFilter(_rxPulse);
         _rxFilterIm = new FirFilter(_rxPulse);
+        PeakSearchMetric = 0; // documented as "since construction/reset"
         EndBurst();
     }
 
@@ -1522,6 +1523,11 @@ public sealed class Ms110dDemodulator
         _blockLlrCount = 0;
         _blockIndex = 0;
         _burstBits.Clear();
+        // A burst ending mid-block (SignalLost/Terminate/EOM) must not leak this
+        // block's frame positions or tap history into the next burst's turbo gate
+        // and flat-channel classification.
+        _blockFrameChips.Clear();
+        _blockTap0Mag.Clear();
         _bestMetric = 0;
         _bestStart = -1;
         _terminate = false;
