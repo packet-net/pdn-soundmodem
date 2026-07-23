@@ -74,6 +74,41 @@ public class Ms110dLoopbackTests
     [InlineData(7, Ms110dInterleaverKind.Long, 9)]
     [InlineData(8, Ms110dInterleaverKind.Medium, 7)]
     [InlineData(8, Ms110dInterleaverKind.Short, 9)]
+    // Issue #67 matrix fill-in (restated §5.1): with the defaults covered by
+    // Every_Waveform_Loops_Back_Bit_Exact and the rows above, the rows below take every
+    // (frame geometry × interleaver kind × size/increment) cell to a decode. Five combos
+    // are left out purely for runtime, each differing from a covered row only in code
+    // rate or constraint length: (1,US,7)/(2,US,7) [≡ (2,US,9) geometry], (1,M,7)
+    // [≡ (2,M,7)], (2,L,7) [≡ (1,L,7)], (7,L,7) [≡ (7,L,9)]. All 31 missing combos were
+    // verified decoding bit-exact during calibration on 2026-07-23.
+    [InlineData(0, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(0, Ms110dInterleaverKind.Long, 7)]
+    [InlineData(2, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(3, Ms110dInterleaverKind.UltraShort, 7)]
+    [InlineData(3, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(3, Ms110dInterleaverKind.Long, 7)]
+    [InlineData(4, Ms110dInterleaverKind.UltraShort, 7)]
+    [InlineData(4, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(4, Ms110dInterleaverKind.Long, 7)]
+    [InlineData(5, Ms110dInterleaverKind.UltraShort, 7)]
+    [InlineData(5, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(5, Ms110dInterleaverKind.Long, 7)]
+    [InlineData(7, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(8, Ms110dInterleaverKind.UltraShort, 7)]
+    [InlineData(8, Ms110dInterleaverKind.Long, 7)]
+    [InlineData(13, Ms110dInterleaverKind.UltraShort, 7)]
+    [InlineData(13, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(13, Ms110dInterleaverKind.Long, 7)]
+    // Every WN at K=9 with its default (Short) interleaver — WN13's 9/16 puncture with
+    // K=9 especially. (5,S,9) and (8,S,9) already sit in the hand-picked rows above.
+    [InlineData(0, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(1, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(2, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(3, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(4, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(6, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(7, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(13, Ms110dInterleaverKind.Short, 9)]
     public void Interleaver_And_Constraint_Length_Variants_Loop_Back(
         int wn, Ms110dInterleaverKind interleaver, int k)
     {
