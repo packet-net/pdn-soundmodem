@@ -31,6 +31,9 @@ public sealed class Dfe
     private Cf[,]? _gram;
     private Cf[]? _rhs;
     private int _trainingRows;
+    private Cf[,]? _savedGram;
+    private Cf[]? _savedRhs;
+    private int _savedTrainingRows;
 
     /// <summary>Creates a DFE with the given tap counts.</summary>
     public Dfe(int ffTaps, int fbTaps)
@@ -146,6 +149,34 @@ public sealed class Dfe
         _gram = _gramStore;
         _rhs = _rhsStore;
         _trainingRows = 0;
+    }
+
+    /// <summary>Saves the in-progress training accumulation (Gram/RHS/row count) so a
+    /// nested re-training pass (turbo re-equalization) can run without destroying the
+    /// rows accumulated for the NEXT probe solve. Restore with
+    /// <see cref="RestoreTraining"/>.</summary>
+    public void SnapshotTraining()
+    {
+        _savedGram ??= new Cf[_gramStore.GetLength(0), _gramStore.GetLength(1)];
+        _savedRhs ??= new Cf[_rhsStore.Length];
+        Array.Copy(_gramStore, _savedGram, _gramStore.Length);
+        Array.Copy(_rhsStore, _savedRhs, _rhsStore.Length);
+        _savedTrainingRows = _trainingRows;
+    }
+
+    /// <summary>Restores the accumulation saved by <see cref="SnapshotTraining"/>.</summary>
+    public void RestoreTraining()
+    {
+        if (_savedGram is null || _savedRhs is null)
+        {
+            throw new InvalidOperationException("RestoreTraining without SnapshotTraining");
+        }
+
+        Array.Copy(_savedGram, _gramStore, _gramStore.Length);
+        Array.Copy(_savedRhs, _rhsStore, _rhsStore.Length);
+        _gram = _gramStore;
+        _rhs = _rhsStore;
+        _trainingRows = _savedTrainingRows;
     }
 
     /// <summary>Adds one training row: the FF window and known past symbols observed when

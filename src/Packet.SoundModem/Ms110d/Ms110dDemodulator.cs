@@ -1320,6 +1320,11 @@ public sealed class Ms110dDemodulator
             BlockSamplesResident() &&
             (!flatChannel || turboBcjrCandidate))
         {
+            // The DD rows accumulated since the last probe solve belong to the NEXT probe's
+            // solve ("join the next probe's rows to complete the excitation"); the turbo
+            // pass re-trains repeatedly on the same Dfe and used to destroy them, leaving
+            // the first post-block probe solve probe-only and rank-deficient (issue #65).
+            _dfe.SnapshotTraining();
             var firstPass = new byte[info.Length];
             Array.Copy(info, firstPass, info.Length);
             var prevInfo = new byte[info.Length];
@@ -1350,6 +1355,8 @@ public sealed class Ms110dDemodulator
                 // evidence (issue #65). Keep the first-pass decode.
                 Array.Copy(firstPass, info, info.Length);
             }
+
+            _dfe.RestoreTraining();
         }
 
         _blockLlrCount = 0;
