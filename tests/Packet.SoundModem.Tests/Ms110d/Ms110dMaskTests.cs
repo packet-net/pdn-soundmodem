@@ -357,8 +357,24 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         // detector (phase-b-plan §B0). Always labelled, never performance evidence.
         bool genie = GenieMode();
 
+        // §B3 tail-autopsy census (MS110D_MASK_BURST_LOG=prefix): one CSV line per burst,
+        // one file per (wn, worker). The B3-entry re-baseline showed the sub-8PSK points
+        // are tail-dominated — a minority of bursts hold essentially all the errors — so
+        // the first job is localizing WHICH bursts die. Every line carries the burst's
+        // channel seed: with the worker seed and burst index the exact corpse is
+        // reproducible in the autopsy rig (payload = sequential draws of Random(seed)).
+        string? burstLogPrefix = Environment.GetEnvironmentVariable("MS110D_MASK_BURST_LOG");
+        using StreamWriter? burstLog = burstLogPrefix is null
+            ? null
+            : new StreamWriter($"{burstLogPrefix}-wn{wn}-w{worker}.csv") { AutoFlush = true };
+        burstLog?.WriteLine(
+            "burst,channelSeed,bits,decoded,errors,firstErr,lastErr,collapses," +
+            "uncodedErrs,deepFadeErrs,turboC,turboR,turboA,turboS,reason");
+
         while (bits < targetBits || simSeconds < minSimSeconds)
         {
+            long uncodedErrsBefore = uncodedErrors;
+            long deepFadeErrsBefore = deepFadeErrors;
             var payload = new byte[payloadBitsPerBurst];
             for (int i = 0; i < payload.Length; i++)
             {
@@ -393,6 +409,8 @@ public class Ms110dMaskTests(ITestOutputHelper output)
                 Environment.GetEnvironmentVariable("MS110D_MASK_RLS_LAMBDA"), out float lam)
                 ? lam : null;
             var demod = new Ms110dDemodulator(new Ms110dDemodOptions { RlsForgettingFactor = rlsLambda });
+            Ms110dBurstEndReason? endReason = null;
+            demod.BurstCompleted += bu => endReason = bu.Reason;
             demod.BlockDecoded += b => decoded.AddRange(b.Bits);
             demod.FirstPassBlockLlrs += (blockIndex, llrs) =>
             {
@@ -458,10 +476,13 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             }
 
             long burstErrors = 0;
+            long firstErr = -1, lastErr = -1;
             if (decoded.Count == 0)
             {
                 acquisitionFailures++;
                 burstErrors = payload.Length;
+                firstErr = 0;
+                lastErr = payload.Length - 1;
             }
             else
             {
@@ -471,14 +492,37 @@ public class Ms110dMaskTests(ITestOutputHelper output)
                     if (decoded[i] != payload[i])
                     {
                         burstErrors++;
+                        if (firstErr < 0)
+                        {
+                            firstErr = i;
+                        }
+
+                        lastErr = i;
                     }
                 }
 
                 burstErrors += payload.Length - compared; // truncated decode counts as errors
+                if (compared < payload.Length)
+                {
+                    if (firstErr < 0)
+                    {
+                        firstErr = compared;
+                    }
+
+                    lastErr = payload.Length - 1;
+                }
+
                 // Decode beyond the whole TX stream (payload + EOM + fill) means post-EOM
                 // false blocks — previously free, now errors (#67).
                 burstErrors += Math.Max(0, decoded.Count - txBits.Length);
             }
+
+            burstLog?.WriteLine(
+                $"{bursts},{seed + (1000 * bursts) + 1},{payload.Length},{decoded.Count}," +
+                $"{burstErrors},{firstErr},{lastErr},{demod.CollapseResolves}," +
+                $"{uncodedErrors - uncodedErrsBefore},{deepFadeErrors - deepFadeErrsBefore}," +
+                $"{demod.TurboConverged},{demod.TurboReverted},{demod.TurboAborted}," +
+                $"{demod.TurboSkipped},{endReason}");
 
             bits += payload.Length;
             errors += burstErrors;
