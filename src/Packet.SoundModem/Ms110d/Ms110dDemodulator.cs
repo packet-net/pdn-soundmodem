@@ -116,6 +116,7 @@ public sealed class Ms110dDemodulator
     private double _probeGainRef;
     private double _probeEnergyRef;
     private int _collapsedProbes;
+    private bool _collapseArmed;
 
     // Tracking state (WN 0).
     private Wid0WalshModem? _walsh;
@@ -922,6 +923,7 @@ public sealed class Ms110dDemodulator
         _probeEnergyRef = energy / k;
         _badProbes = 0;
         _collapsedProbes = 0;
+        _collapseArmed = true;
         _frameChip = _dataStartChip + k;
         _frameInBlock = 0;
     }
@@ -999,10 +1001,16 @@ public sealed class Ms110dDemodulator
         //    threshold): signal is PRESENT, so this is a collapse, not a fade. During a
         //    fade, coasting on the anchor is right and a fresh solve would fit noise;
         //    a bad probe WITHOUT energy stays the fade/signal-lost path's business.
+        //  - ARMED: one fresh solve per unhealthy episode. Re-arming requires an observed
+        //    healthy probe first — without this, a fresh solve whose ridge-shrunk solution
+        //    starts below the health line (K=48: ridge 1.0 over 26 rows for 54 taps)
+        //    re-fires two frames later, the taps never rebuild, and the spiral rode
+        //    straight into SignalLost (WN2 Poor measured BER 0.73 with 4 dead bursts).
         double preMse = mse / statRows;
         double probeEnergyMean = probeEnergy / statRows;
         double probeGain = probePhase.Abs() / mode.K;
-        bool collapsed = probeGain < Math.Max(0.10, 0.45 * _probeGainRef) &&
+        bool collapsed = _collapseArmed &&
+            probeGain < Math.Max(0.10, 0.45 * _probeGainRef) &&
             probeEnergyMean >= 0.25 * _probeEnergyRef;
         _collapsedProbes = collapsed ? _collapsedProbes + 1 : 0;
         bool freshSolve = _collapsedProbes >= 2;
@@ -1029,6 +1037,7 @@ public sealed class Ms110dDemodulator
             dfe.LoadTaps(zeroTaps);
             CollapseResolves++;
             _collapsedProbes = 0;
+            _collapseArmed = false;
         }
 
         dfe.SeedRlsFromTraining(_trackRidge, pFallback: 1.0f, ffNoisePower: GenieNoisePower());
@@ -1397,8 +1406,10 @@ public sealed class Ms110dDemodulator
             _probeGainRef = (0.95 * _probeGainRef) + (0.05 * probeGain);
             // The energy reference tracks HEALTHY probes only: a long fade must not drag
             // it down (fade-vs-collapse discrimination depends on it), and during a
-            // collapse it must stay pinned at the pre-collapse level.
+            // collapse it must stay pinned at the pre-collapse level. A healthy probe
+            // also re-arms collapse recovery for the next unhealthy episode.
             _probeEnergyRef = (0.95 * _probeEnergyRef) + (0.05 * probeEnergyMean);
+            _collapseArmed = true;
         }
 
         _blockFrameChips.Add(_frameChip);
