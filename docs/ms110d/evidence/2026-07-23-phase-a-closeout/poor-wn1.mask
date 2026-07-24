@@ -1,0 +1,1 @@
+2026-07-24T01:32:42.4562579Z [mask] POOR WN1 @ +3 dB: 3,002,720 bits, 85712 errors, 245 bursts (1 acquisition failures), 21256 s simulated — BER 2.85E-002 (direct, ≥30 errors)

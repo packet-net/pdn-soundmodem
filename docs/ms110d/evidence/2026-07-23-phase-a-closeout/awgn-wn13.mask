@@ -1,0 +1,1 @@
+2026-07-23T20:31:44.9157626Z [mask] AWGN WN13 @ +6 dB: 3,040,800 bits, 0 errors, 15 bursts (0 acquisition failures), 1340 s simulated — BER 0.00E+000, 97.5 % upper bound 1.21E-006

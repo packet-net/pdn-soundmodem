@@ -1,6 +1,6 @@
 # MS110D Phase A — formal closeout (2026-07-23)
 
-**Phase A is closed.** Every hard gate in design §6 passes, measured on the closeout commit after the defects below were found and fixed. The Poor-channel numbers are banked measured-not-gated per §6; the deferred review findings are tracked as issues #64–#67 and define the Phase B entry work.
+**Phase A is closed.** Every hard gate in design §6 passes, measured on the closeout commit after the defects below were found and fixed. The Poor-channel numbers are banked measured-not-gated per §6; the review findings were fixed on this branch where fixable (see below); the remainders in issues #64/#65/#67 define the Phase B entry work.
 
 ## What the closeout audit found (and why the old numbers were retired)
 
@@ -16,30 +16,63 @@ Also fixed from the same review: burst-state leak across bursts (`_blockFrameChi
 
 Accept rule per point (§5.3 as restated): ≥3×10⁶ payload bits, zero acquisition failures; ≥30 errors → direct BER ≤ 1E-5, else 97.5 % Poisson upper bound ≤ 1E-5. Fading gate points additionally ≥600 s simulated.
 
-<!-- AWGN-TABLE -->
+**D-LXIV AWGN masks — 10/10 pass, every point ≥3×10⁶ bits with ZERO errors** (run 2026-07-23/24, commits `ae3998c⁻`; the per-point 97.5 % Poisson upper bounds sit at ~1.2E-6, an 8× margin under the 1E-5 mask):
+
+| WN | SNR | Bits | Errors | Result |
+|----|-----|------|--------|--------|
+| 0 | -6 dB | 3,000,704 | 0 | BER 0.00E+000, 97.5 % upper bound 1.22E-006 |
+| 1 | -3 dB | 3,002,720 | 0 | BER 0.00E+000, 97.5 % upper bound 1.22E-006 |
+| 2 | 0 dB | 3,018,912 | 0 | BER 0.00E+000, 97.5 % upper bound 1.22E-006 |
+| 3 | +3 dB | 3,033,312 | 0 | BER 0.00E+000, 97.5 % upper bound 1.21E-006 |
+| 4 | +5 dB | 3,087,456 | 0 | BER 0.00E+000, 97.5 % upper bound 1.19E-006 |
+| 5 | +6 dB | 3,108,128 | 0 | BER 0.00E+000, 97.5 % upper bound 1.18E-006 |
+| 6 | +9 dB | 3,243,648 | 0 | BER 0.00E+000, 97.5 % upper bound 1.13E-006 |
+| 7 | +13 dB | 3,243,776 | 0 | BER 0.00E+000, 97.5 % upper bound 1.13E-006 |
+| 8 | +16 dB | 3,243,840 | 0 | BER 0.00E+000, 97.5 % upper bound 1.13E-006 |
+| 13 | +6 dB | 3,040,800 | 0 | BER 0.00E+000, 97.5 % upper bound 1.21E-006 |
+
+**Disjoint-seed cross-checks (seed+10000, issue #67):** AWGN WN4/WN5 both 0 errors at full budget on fresh realizations; Poor WN4 1.33E-5 (41 errors) vs the canonical seed's 2.36E-5 — statistically consistent. Neither the gate nor the baseline is a seed artifact. Raw evidence: [evidence/2026-07-23-phase-a-closeout/](evidence/2026-07-23-phase-a-closeout/).
 
 | Gate | Result |
 |------|--------|
-| Rung 0+1 hermetic suite | green locally (see below); CI repaired on this branch, verified on merge |
+| Rung 0+1 hermetic suite | **green** — 541 passed / 0 failed / 42 env-gated skips (2026-07-24, closeout tree); CI repaired on this branch, first green run on merge |
 | OBW (§5.4 pinned bounds) | green (hermetic suite) |
-| Static WID2 0/3/9 ms @ 9 dB (restated house bar) | <!-- STATIC --> |
-| Doppler ±75 Hz engineering checks | <!-- DOPPLER --> |
+| Static WID2 0/3/9 ms @ 9 dB (restated house bar) | **PASS** — 3,018,912 bits, 0 errors, 123 bursts, 0 acquisition failures |
+| Doppler ±75 Hz engineering checks | **3/3 clean** — WN2 ±75 Hz, WN6 +75 Hz, 0 errors, 0 acquisition failures |
 | §8 transcription ledger | cleared 2026-07-17 (dual-transcribed, zero conflicts) |
 
 ## Poor channel (measured, not gated — design §6 Q1)
 
-Banked per the §5.3 ledger discipline; these are the Phase B baseline, not Phase A acceptance. Caveat that applies to every Poor number: the turbo BCJR's echo model is currently matched to the D.6.1 rig's 2 ms spacing (issue #64), so these are best-case for this specific channel geometry.
+Banked per the §5.3 ledger discipline; these are the Phase B baseline, not Phase A acceptance. Standing caveat: the turbo BCJR models one echo at a searched lag ≤ 3.3 ms (the 2^delay-state trellis ceiling — issue #64), so longer-spread real channels lean entirely on the DFE feedback span.
 
-<!-- POOR-TABLE -->
+| WN | SNR | Bits | Errors | Result |
+|----|-----|------|--------|--------|
+| 0 | -1 dB | 3,000,704 | 244102 | BER 8.13E-002 (direct, ≥30 errors) |
+| 1 | +3 dB | 3,002,720 | 85712 | BER 2.85E-002 (direct, ≥30 errors) |
+| 2 | +5 dB | 3,018,912 | 110785 | BER 3.67E-002 (direct, ≥30 errors) |
+| 3 | +7 dB | 3,033,312 | 26340 | BER 8.68E-003 (direct, ≥30 errors) |
+| 4 | +10 dB | 3,087,456 | 73 | BER 2.36E-005 (direct, ≥30 errors) |
+| 5 | +11 dB | 3,108,128 | 67718 | BER 2.18E-002 (direct, ≥30 errors) |
+| 6 | +14 dB | 3,243,648 | 419899 | BER 1.29E-001 (direct, ≥30 errors) |
+| 7 | +19 dB | 3,243,776 | 1512547 | BER 4.66E-001 (direct, ≥30 errors) |
+| 8 | +23 dB | 3,784,480 | 1876604 | BER 4.96E-001 (direct, ≥30 errors) |
+| 13 | +11 dB | 3,040,800 | 1874 | BER 6.16E-004 (direct, ≥30 errors) |
+
+Notes on this table: it is the **first complete Poor baseline ever banked** — WN0/1/2 had never finished a run (WN0 crashed the receiver every time via the corrupt-WID bug below; WN1/2 died to the teardown hang, then to OOM). WN1 and WN2 each logged one acquisition failure in ~250/125 bursts, honestly counted as full-burst errors. WN4's 2.36E-5 vs the campaign's claimed 7.04E-6 (and 1.88E-5 measured pre-de-rig on the same seed) is the price of removing the rig-fitted heuristics — principally the BCJR echo delay no longer being hard-wired to this rig's exact 2 ms spacing. That claimed 7.04E-6 was also measured through the ring-wrap bug and the old evidence chain, so it was never a trustworthy number.
+
+**Found by this evidence run — a receiver-killing acquisition bug (fixed, `ae3998c`):** at −1 dB on fading, a noise-corrupted WID can pass its 3-dibit checksum yet decode to (WN 0, UltraShort), a combination Table D-XXXVII does not define; `TryReadPreamble` let `Get3k`'s ArgumentException escape the receive path — on air, a daemon crash from unlucky noise, and the actual cause of every historically "stuck" Poor WN0 run. Acquisition now pre-validates with `Has3k` and rejects the candidate. Proven against the deterministic reproducer: the exact seed-500 stream that crashed at 2.84M bits now completes (BER 7.73E-2, landing on the historic figure).
 
 WN6/7/8 (QPSK/8PSK/16QAM on fading) remain catastrophic as previously documented — QPSK/8PSK BCJR extension and 16QAM carrier recovery are Phase B scope (issues #64/#65; `wn6-poor-catastrophic-handover.md` has the investigation trail).
 
-## Deferred findings → issues
+## Review findings: fixed here vs deferred
 
-- **#64** — equalizer heuristics fitted to the Poor rig (BCJR delay hard-coded to 2 ms, flat/fading detectors, bidirectional decision history, RLS λ deviation).
-- **#65** — turbo robustness (no divergence protection, DD-row destruction at block close, BCJR LLR conventions, dead QAM16 paths with inconsistent scale).
-- **#66** — steady-state allocation in the per-frame RX hot path (CLAUDE.md rule).
-- **#67** — test coverage vs restated §5.1 + disjoint-seed mask verification.
+Fixed on this branch (see the issue comment trails for detail):
+- **#64 (mostly fixed):** fading detection replaced with the CFO-immune tap-change statistic classified by recurring excursions over a min-tracking floor (validated: 0/1664 false-positive frames on AWGN, 0/4096 on static including the convergence transient, 152/256 detecting on Poor); IsFlatChannel is the same detector (UltraShort interleavers now classify from frame 1); bidirectional passes re-seed the frame-start decision history; the BCJR echo delay is searched (lags 1–8 + significance floor) instead of hard-coded. Remaining: RLS λ deviation, RlsUpdate weight/P asymmetry, and the structural 2-tap-trellis ceiling (2^delay states → echoes beyond ~3.3 ms stay the DFE feedback span's job).
+- **#65 (mostly fixed):** turbo reverts to the first-pass decode on non-convergence; DD training rows survive the turbo pass (Dfe.Snapshot/RestoreTraining); noiseVar per complex dimension; dead QAM16 paths are explicit throws. Remaining: per-position h1[] time-invariance.
+- **#66 (closed):** DFE solver scratch preallocated, the O(n⁴) RLS seed made O(n³), BCJR trellis pooled, probes cached — bit-identical numerics proven by three before/after evidence pairs including a 13-error static run.
+- **#67 (mostly fixed):** clock-skew rig added — **±50 ppm passes bit-exact with ~14× margin** (breaking points ±700 ppm at ~4 s bursts, ±300–400 ppm at ~11 s), so the design figure is met; hermetic ±75 Hz CFO green for all four modulation families; the WN×interleaver×K matrix filled (23 pinned rows, all 31 missing combos verified); WN7/8 in the permutation check; disjoint-seed verification via `MS110D_MASK_SEED_OFFSET`. Remaining: data-phase late entry, positive EOT-assisted termination, every-offset cold start, two weak asserts.
+
+Also from the closeout: intra-point mask parallelism (`MS110D_MASK_WORKERS` — disjoint-seed workers per point, counts summed, validated serial-vs-parallel; the low-rate poles drop ~N×) and the corrupt-WID acquisition crash fix above.
 
 ## Phase B entry
 
