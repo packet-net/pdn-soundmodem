@@ -529,14 +529,55 @@ public sealed class Ms110dDemodulator
             countDibits[j] = ReadWalshSymbol(ChipsFixed + (32 * j), Ms110dTables.CntPn, 32 * j);
         }
 
+        if (!PreambleGenerator.TryDecodeCount(countDibits, out int count))
+        {
+            BackToSearch();
+            return;
+        }
+
+        // §B3 WID vote (issue #69): the WID section repeats identically in every
+        // remaining preamble super-frame, all of which arrive BEFORE data start — so
+        // soft-combining it across super-frames costs zero latency and rides out a
+        // fade over any one of them. Read from a single super-frame, a −15 dB fade
+        // corrupted the dibits AND beat the checksum twice in the WN1 Poor census:
+        // lock=K9/tx=K7 and lock=Medium/tx=Long, each decoding its whole burst to
+        // ~50% garbage while the wire-order telemetry stayed healthy (Class D).
+        int votes = Math.Min(count + 1, 5);
+        if (_written < (long)Math.Ceiling(
+                _chip0 + (2.0 * ChipsSuperframe * votes)) + (2 * InterpHalf) + 2)
+        {
+            return; // wait for the vote span — still entirely pre-data
+        }
+
+        Span<double> widMags = stackalloc double[5 * 4];
+        widMags.Clear();
+        for (int v = 0; v < votes; v++)
+        {
+            for (int j = 0; j < 5; j++)
+            {
+                AccumulateWalshMags(
+                    (v * ChipsSuperframe) + ChipsFixed + 128 + (32 * j),
+                    Ms110dTables.WidPn, 32 * j, widMags.Slice(j * 4, 4));
+            }
+        }
+
         Span<byte> widDibits = stackalloc byte[5];
         for (int j = 0; j < 5; j++)
         {
-            widDibits[j] = ReadWalshSymbol(ChipsFixed + 128 + (32 * j), Ms110dTables.WidPn, 32 * j);
+            ReadOnlySpan<double> mags = widMags.Slice(j * 4, 4);
+            byte bestDibit = 0;
+            for (byte s = 1; s < 4; s++)
+            {
+                if (mags[s] > mags[bestDibit])
+                {
+                    bestDibit = s;
+                }
+            }
+
+            widDibits[j] = bestDibit;
         }
 
-        if (!PreambleGenerator.TryDecodeCount(countDibits, out int count) ||
-            !PreambleGenerator.TryDecodeWid(widDibits, out int wn, out Ms110dInterleaverKind il, out int k) ||
+        if (!PreambleGenerator.TryDecodeWid(widDibits, out int wn, out Ms110dInterleaverKind il, out int k) ||
             !IsSupported(wn) ||
             !Ms110dInterleaverParams.Has3k(wn, il))
         {
@@ -608,6 +649,30 @@ public sealed class Ms110dDemodulator
         }
 
         return bestDibit;
+    }
+
+    /// <summary>Adds the four Walsh-hypothesis correlation magnitudes for one preamble
+    /// dibit into <paramref name="mags"/> — the soft accumulator for the §B3 WID vote
+    /// (magnitudes, not phasors: superframes a Rayleigh fade apart are not coherent).</summary>
+    private void AccumulateWalshMags(int startChip, ReadOnlySpan<byte> pn, int pnOffset, Span<double> mags)
+    {
+        Span<Cf> corr = stackalloc Cf[4];
+        byte[] w1 = Ms110dTables.Walsh[1];
+        byte[] w2 = Ms110dTables.Walsh[2];
+        byte[] w3 = Ms110dTables.Walsh[3];
+        for (int i = 0; i < 32; i++)
+        {
+            Cf r = ReadChip(startChip + i) * Ms110dTables.Psk8[pn[pnOffset + i]].Conj();
+            corr[0] += r;
+            corr[1] = w1[i & 3] == 0 ? corr[1] + r : corr[1] - r;
+            corr[2] = w2[i & 3] == 0 ? corr[2] + r : corr[2] - r;
+            corr[3] = w3[i & 3] == 0 ? corr[3] + r : corr[3] - r;
+        }
+
+        for (int s = 0; s < 4; s++)
+        {
+            mags[s] += corr[s].Abs();
+        }
     }
 
     /// <summary>Known chips of the last <paramref name="superframes"/> preamble
