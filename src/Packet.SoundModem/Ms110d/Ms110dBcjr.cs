@@ -4,9 +4,12 @@ using M0LTE.Ofdm;
 namespace Packet.SoundModem.Ms110d;
 
 /// <summary>
-/// BCJR (MAP) equalizer for a 2-path frequency-selective fading channel.
-/// Computes exact posterior LLRs by the forward-backward algorithm on a
-/// 2^L-state trellis, where L is the channel delay spread in symbols.
+/// Max-log BCJR equalizer for a 2-path frequency-selective fading channel: the
+/// forward-backward recursions on a 2^L-state trellis (L = echo delay in symbols), with
+/// max in place of log-sum-exp throughout — the standard max-log approximation, NOT exact
+/// MAP (an earlier version of this header claimed exact posteriors; issue #65). LLRs are
+/// best-path metric differences: well calibrated when <c>noiseVar</c> is honest, slightly
+/// over-confident where competing paths run close.
 /// </summary>
 internal static class Ms110dBcjr
 {

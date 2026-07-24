@@ -267,6 +267,8 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         long bits = 0, errors = 0;
         int bursts = 0, acquisitionFailures = 0;
         double simSeconds = 0;
+        // MS110D_DEBUG moved host-side: the library fires FrameDiagnostics, the harness prints.
+        bool debugTrace = Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1";
 
         while (bits < targetBits || simSeconds < minSimSeconds)
         {
@@ -285,6 +287,11 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             var decoded = new List<byte>(payload.Length + 64);
             var demod = new Ms110dDemodulator();
             demod.BlockDecoded += b => decoded.AddRange(b.Bits);
+            if (debugTrace)
+            {
+                demod.FrameDiagnostics += line => Console.Error.WriteLine(line);
+            }
+
             demod.Process(rx);
 
             long burstErrors = 0;

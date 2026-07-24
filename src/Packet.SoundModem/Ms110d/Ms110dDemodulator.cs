@@ -124,8 +124,6 @@ public sealed class Ms110dDemodulator
     private bool _fadeFloorSeeded;
     private int _framesSinceExcursion = int.MaxValue / 2;
     private bool _fading;
-    private static readonly bool DebugTrace =
-        Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1";
     private bool _terminate;
 
     /// <summary>Creates the receiver.</summary>
@@ -160,6 +158,12 @@ public sealed class Ms110dDemodulator
 
     /// <summary>Debug-only: fires per equalized, descrambled data symbol.</summary>
     public event Action<Cf>? DataSymbolEqualized;
+
+    /// <summary>Diagnostic: one formatted line per processed frame (probe gain/MSE,
+    /// timing, carrier, fading state). Formatted only when subscribed — the library
+    /// itself writes no console output (issue #65); hosts that want the old
+    /// <c>MS110D_DEBUG</c> stderr behaviour subscribe and print.</summary>
+    public event Action<string>? FrameDiagnostics;
 
     /// <summary>Fires for every decoded input-data block.</summary>
     public event Action<Ms110dRxBlock>? BlockDecoded;
@@ -726,6 +730,15 @@ public sealed class Ms110dDemodulator
             _dfe.AddTrainingRow(window, past, _known[n]);
         }
 
+        // RLS forgetting policy — a DOCUMENTED DEVIATION from design §2.5 (issue #64):
+        // λ = 1 − ln10/U ties the exponential window to the frame (memory U/ln10 ≈ 0.43·U
+        // symbols, i.e. a 10× down-weight per data span), so the per-probe anchored batch
+        // solve, not the RLS recursion, owns cross-frame memory. §2.5 specified a fixed
+        // λ = 0.995 (≈200-symbol/83 ms memory, set by the 1 Hz coherence time); for U=48
+        // the frame-tied window is only ~21 symbols ≈ 8.7 ms — far shorter than the physics
+        // needs, noisier than it has to be. Which policy wins is a measurement question:
+        // the Phase B RLS-vs-NLMS A/B (phase-b-plan §B2.4) settles it; until then this is
+        // the measured-baseline value, kept so evidence stays comparable.
         _dfe.BeginRls((float)(1.0 - Math.Log(10.0) / _mode.U), pInit: 1.0f);
         _dfe.SeedRlsFromTraining(_initRidge, pFallback: 1.0f);
         _dfe.SolveTraining(regularization: _initRidge);
@@ -1005,13 +1018,10 @@ public sealed class Ms110dDemodulator
         TrackProbeTiming(probeChip, probe);
 
         double probeGain = probePhase.Abs() / mode.K;
-        if (DebugTrace)
-        {
-            Console.Error.WriteLine(
-                $"frame@{_frameChip}: gain={probeGain:F3} ref={_probeGainRef:F3} mse={mse / mode.K:F3} " +
-                $"tau={_tau:F3} omega={_omega:E2} bad={_badProbes} " +
-                $"tapChange={tapChange:F4} floor={_fadeFloor:F4} fading={_fading}");
-        }
+        FrameDiagnostics?.Invoke(
+            $"frame@{_frameChip}: gain={probeGain:F3} ref={_probeGainRef:F3} mse={mse / mode.K:F3} " +
+            $"tau={_tau:F3} omega={_omega:E2} bad={_badProbes} " +
+            $"tapChange={tapChange:F4} floor={_fadeFloor:F4} fading={_fading}");
 
         if (probeGain < Math.Max(0.10, 0.45 * _probeGainRef))
         {
