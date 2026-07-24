@@ -189,8 +189,10 @@ public class Ms110dMaskTests(ITestOutputHelper output)
     }
 
     [Theory]
+    [InlineData(0, -1)]
     [InlineData(4, 10)]
     [InlineData(6, 14)]
+    [InlineData(7, 19)]
     [InlineData(8, 23)]
     public void Static_2Path_Diagnostic(int wn, double snrDb)
     {
@@ -207,6 +209,24 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         Report($"STATIC-2PATH WN{wn} @ {snrDb:+0;-0;0} dB", run);
         run.AcquisitionFailures.Should().Be(0);
         run.Ber.Should().BeLessThanOrEqualTo(1e-5);
+    }
+
+    // The complement of Static_2Path_Diagnostic: ONE Rayleigh path, no echo — isolates
+    // fade/carrier tracking from ISI (B1 autopsy instrument; measured, not gated: the
+    // whole point is reading the number for broken-tier points).
+    [Theory]
+    [InlineData(0, -1)]
+    [InlineData(7, 19)]
+    public void Flat_Rayleigh_Diagnostic(int wn, double snrDb)
+    {
+        Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_MASKS_POOR") != "1",
+            "set MS110D_MASKS_POOR=1");
+
+        WattersonPath[] flatFading = [new(0, Fading: true, DopplerSpreadHz: 1)];
+        MaskRun run = RunPoint(wn, snrDb, flatFading, 100_000, seed: 500 + wn);
+        Report($"FLAT-RAYLEIGH WN{wn} @ {snrDb:+0;-0;0} dB", run);
+        run.AcquisitionFailures.Should().Be(0);
+        run.Bits.Should().BeGreaterThan(0); // measured, never gated
     }
 
     // Disjoint-seed verification (issue #67): the equalizer thresholds were iterated
