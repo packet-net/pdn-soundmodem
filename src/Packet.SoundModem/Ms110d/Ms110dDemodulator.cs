@@ -208,8 +208,9 @@ public sealed class Ms110dDemodulator
     /// <summary>Turbo blocks aborted mid-re-equalization (samples no longer available).</summary>
     public int TurboAborted { get; private set; }
 
-    /// <summary>Blocks where the turbo gate declined to run (flat channel without a BCJR
-    /// candidate, QAM16, non-resident samples, or the WN 0 path).</summary>
+    /// <summary>Blocks where the turbo gate declined to run (QAM16, non-resident samples,
+    /// or the WN 0 path — the flat-channel skip retired with the DFE-re-solve fallback,
+    /// §B2.3).</summary>
     public int TurboSkipped { get; private set; }
 
     /// <summary>Fresh non-anchored probe re-solves after tracking collapse (phase-b-plan
@@ -1149,8 +1150,7 @@ public sealed class Ms110dDemodulator
         // min-tracking floor never sees a quiet stretch to settle on — measured 40/130
         // WN7 Poor frames misclassified flat, running the 3-pass path mid-collapse). A
         // collapse latches too: two consecutive uncorrelated probes with signal present
-        // cannot happen on a flat channel. The unlatched _fading keeps driving
-        // IsFlatChannel's turbo-gate hysteresis.
+        // cannot happen on a flat channel.
         _fadingLatched |= _fading || freshSolve;
         bool fading = _fadingLatched;
         float rlsWeight = fading ? 1.0f : 0.1f;
@@ -1731,18 +1731,17 @@ public sealed class Ms110dDemodulator
         Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
 
         // Turbo re-equalization: re-encode decoded info, use as known training,
-        // re-equalize with BCJR, and decode again.
-        // Skip on flat channels (AWGN) where the turbo's DFE re-solve perturbs LLRs,
-        // EXCEPT for BPSK U>48 (WN 3/4/5 — the predicate admits U=96 too) where the
-        // BCJR path provides needed LLR refinement.
-        bool flatChannel = IsFlatChannel();
-        bool turboBcjrCandidate = _mode is not null &&
-            _mode.Modulation == Ms110dModulation.Bpsk && _mode.U > 48;
+        // re-equalize with the chain BCJR, and decode again — for every DFE mode except
+        // QAM16 (the 5×-LLR-scale trap remains a throw). The flat-channel skip retired
+        // with the DFE-re-solve fallback that motivated it (§B2.3): on a flat channel the
+        // chain BCJR degenerates to an exact soft-output matched filter — the reason BPSK
+        // U>48 was always allowed through — while the WN2 Poor λ A/B caught the skip
+        // misclassifying short-frame fading bursts as flat (turbo 2c/158s, 7× BER cost):
+        // the excursion statistic is weakest exactly where probes are densest.
         if (_dfe is not null && _mode is not null &&
             _mode.Modulation is not Ms110dModulation.Qam16 &&
             _blockFrameChips.Count == _il.Frames &&
-            BlockSamplesResident() &&
-            (!flatChannel || turboBcjrCandidate))
+            BlockSamplesResident())
         {
             // The DD rows accumulated since the last probe solve belong to the NEXT probe's
             // solve ("join the next probe's rows to complete the excitation"); the turbo
@@ -1836,17 +1835,6 @@ public sealed class Ms110dDemodulator
         return _genieRing is null || _genieNoiseCount == 0
             ? 0f
             : (float)(_genieNoiseSum / _genieNoiseCount);
-    }
-
-    private bool IsFlatChannel()
-    {
-        // The fading detector spans block boundaries, so this classifies from the first
-        // frame of a burst — the previous per-block variance of a single FF-edge tap
-        // could never return true for interleavers with fewer than 4 frames per block,
-        // which silently re-enabled turbo on AWGN for every UltraShort mode (issue #64).
-        // The per-burst latch (§B2.1) counts: a burst that has faded or collapsed is not
-        // flat for the rest of its life, even between excursions.
-        return _fadeFloorSeeded && !_fading && !_fadingLatched;
     }
 
     private void TurboReequalize(byte[] info)
