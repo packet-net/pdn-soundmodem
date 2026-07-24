@@ -562,6 +562,7 @@ public sealed class Ms110dDemodulator
         }
 
         Span<byte> widDibits = stackalloc byte[5];
+        double marginSum = 0;
         for (int j = 0; j < 5; j++)
         {
             ReadOnlySpan<double> mags = widMags.Slice(j * 4, 4);
@@ -574,7 +575,34 @@ public sealed class Ms110dDemodulator
                 }
             }
 
+            double second = 0;
+            for (int s = 0; s < 4; s++)
+            {
+                if (s != bestDibit && mags[s] > second)
+                {
+                    second = mags[s];
+                }
+            }
+
+            marginSum += (mags[bestDibit] - second) / (mags[bestDibit] + 1e-9);
             widDibits[j] = bestDibit;
+        }
+
+        // Vote-confidence gate: a wrong acquisition (e.g. a −18 Hz CFO-bin miss, WN1
+        // census burst w1/b28) turns every Walsh correlation to mush, and an argmax
+        // over summed noise beats the weak WID checksum ~1-in-8 — where the OLD
+        // single-read path failed the checksum per super-frame and fell back to
+        // re-search, eventually re-acquiring the true peak. Keep that safety valve:
+        // a mushy vote (mean winner-vs-runner-up margin below the floor) is a failed
+        // acquisition candidate, not a lock. A genuine lock with one faded
+        // super-frame still clears the floor easily (the healthy super-frames
+        // dominate the sums).
+        double voteMargin = marginSum / 5;
+        FrameDiagnostics?.Invoke($"wid@{_chip0}: votes={votes} margin={voteMargin:F3}");
+        if (voteMargin < 0.20)
+        {
+            BackToSearch();
+            return;
         }
 
         if (!PreambleGenerator.TryDecodeWid(widDibits, out int wn, out Ms110dInterleaverKind il, out int k) ||
