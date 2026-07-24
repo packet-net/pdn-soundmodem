@@ -140,7 +140,10 @@ public class Ms110dTailAutopsy
         long uncodedErrors = 0, uncodedBits = 0;
         var decoded = new List<byte>(payload.Length + 64);
         Ms110dBurstEndReason? endReason = null;
-        var demod = new Ms110dDemodulator();
+        var demod = new Ms110dDemodulator(new Ms110dDemodOptions
+        {
+            DisableTurbo = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_NOTURBO") == "1",
+        });
         demod.BurstCompleted += bu => endReason = bu.Reason;
         demod.BlockDecoded += b => decoded.AddRange(b.Bits);
         demod.DataSymbolEqualized += y =>
@@ -222,6 +225,10 @@ public class Ms110dTailAutopsy
             }
         }
 
+        File.WriteAllText(
+            Path.Combine(outDir, $"autopsy-decoded-{tag}.txt"),
+            string.Concat(decoded.Select(b => b.ToString())) + "\n" +
+            string.Concat(payload.Select(b => b.ToString())) + "\n");
         File.WriteAllText(
             Path.Combine(outDir, $"autopsy-summary-{tag}.txt"),
             $"WN{wn} @ {snrDb} dB baseSeed {baseSeed} worker {worker} burst {burst} " +

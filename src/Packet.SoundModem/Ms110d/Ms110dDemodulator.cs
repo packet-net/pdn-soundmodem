@@ -479,6 +479,10 @@ public sealed class Ms110dDemodulator
             }
         }
 
+        FrameDiagnostics?.Invoke(
+            $"accept@{s}: best={_bestStart} metric={_bestMetric:F3} " +
+            $"walkback={_bestStart - s} bin={bin}");
+
         double energy = _combEnergy[(int)(s & 1)];
 
         // Sub-sample timing from a parabolic fit through the metric at s−1, s, s+1.
@@ -1819,6 +1823,7 @@ public sealed class Ms110dDemodulator
         // misclassifying short-frame fading bursts as flat (turbo 2c/158s, 7× BER cost):
         // the excursion statistic is weakest exactly where probes are densest.
         if (_dfe is not null && _mode is not null &&
+            !_options.DisableTurbo &&
             _mode.Modulation is not Ms110dModulation.Qam16 &&
             _blockFrameChips.Count == _il.Frames &&
             BlockSamplesResident())

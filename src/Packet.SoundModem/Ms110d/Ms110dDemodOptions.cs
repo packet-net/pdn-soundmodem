@@ -70,4 +70,10 @@ public sealed record Ms110dDemodOptions
     /// A/B (phase-b-plan §B2.4) measures both through this knob and the report decides
     /// which becomes the default.</summary>
     public float? RlsForgettingFactor { get; init; }
+
+    /// <summary>Skip the chain-BCJR turbo re-equalization pass (§B2.3), decoding from
+    /// first-pass LLRs alone. An equalizer-complexity control in the D.5.4.6 spirit, and
+    /// the §B3 instrument for attributing decode damage to the turbo pass (the first-pass
+    /// telemetry is pre-turbo, so a poisoned turbo is invisible to it — issue #69).</summary>
+    public bool DisableTurbo { get; init; }
 }
