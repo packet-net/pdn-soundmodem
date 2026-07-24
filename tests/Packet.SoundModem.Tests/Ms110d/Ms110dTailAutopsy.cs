@@ -238,7 +238,9 @@ public class Ms110dTailAutopsy
             $"(first {firstErr}, last {lastErr}), uncoded {uncodedErrors}/{uncodedBits}, " +
             $"collapses {demod.CollapseResolves}, turbo {demod.TurboConverged}c/" +
             $"{demod.TurboReverted}r/{demod.TurboAborted}a/{demod.TurboSkipped}s, " +
-            $"end={endReason}, {symbolIndex} symbols dumped\n");
+            $"end={endReason}, {symbolIndex} symbols dumped, " +
+            $"lock={demod.Lock?.WaveformNumber}/{demod.Lock?.Interleaver}/K{demod.Lock?.ConstraintLength}" +
+            $"@{demod.Lock?.CfoHz:F2}Hz (tx K{settings.ConstraintLength})\n");
         decoded.Count.Should().BeGreaterThan(0,
             "the corpse must at least acquire for the dump to mean anything");
     }
