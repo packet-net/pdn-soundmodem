@@ -176,6 +176,11 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             Environment.GetEnvironmentVariable("MS110D_MASK_SEED_OFFSET"), out int o) ? o : 0;
     }
 
+    private static bool GenieMode()
+    {
+        return Environment.GetEnvironmentVariable("MS110D_MASK_GENIE") == "1";
+    }
+
     private static long TargetBits()
     {
         string? overrideBits = Environment.GetEnvironmentVariable("MS110D_MASK_BITS");
@@ -269,6 +274,12 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         double simSeconds = 0;
         // MS110D_DEBUG moved host-side: the library fires FrameDiagnostics, the harness prints.
         bool debugTrace = Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1";
+        // MS110D_MASK_GENIE=1: feed the demodulator the SAME channel realization noise-free
+        // (identical seed at SNR = ∞ — the rig draws fading gains before noise, so the
+        // realization is reproduced exactly). Estimation then runs on channel truth while
+        // detection stays noisy: the perfect-channel-observation bound of the current
+        // detector (phase-b-plan §B0). Always labelled, never performance evidence.
+        bool genie = GenieMode();
 
         while (bits < targetBits || simSeconds < minSimSeconds)
         {
@@ -292,7 +303,24 @@ public class Ms110dMaskTests(ITestOutputHelper output)
                 demod.FrameDiagnostics += line => Console.Error.WriteLine(line);
             }
 
-            demod.Process(rx);
+            if (genie)
+            {
+                float[] clean = new WattersonChannel(9600, seed + (1000 * bursts) + 1, paths).Apply(
+                    audio, double.PositiveInfinity, leadInSamples: 2400, leadOutSamples: 2400,
+                    frequencyOffsetHz: frequencyOffsetHz);
+                // Interleaved chunks: the genie must stay ahead of every read but never
+                // far enough ahead to wrap the ~13.7 s ring (WriteGenie contract).
+                for (int i = 0; i < rx.Length; i += 4800)
+                {
+                    int length = Math.Min(4800, rx.Length - i);
+                    demod.WriteGenie(clean.AsSpan(i, length));
+                    demod.Process(rx.AsSpan(i, length));
+                }
+            }
+            else
+            {
+                demod.Process(rx);
+            }
 
             long burstErrors = 0;
             if (decoded.Count == 0)
@@ -350,6 +378,11 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         if (run.Bits < 3_000_000)
         {
             line += " [SMOKE — below the §5.3 budget; not gate evidence]";
+        }
+
+        if (GenieMode())
+        {
+            line += " [GENIE — perfect-channel-observation bound; never performance evidence]";
         }
 
         output.WriteLine(line);

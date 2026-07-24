@@ -31,9 +31,22 @@ public sealed class WattersonChannel
     private const double CentreHz = 1800;
     private const int GainRate = 96; // fading-gain sample rate, Hz (9600 / 100)
 
+    /// <summary>Sample rate of the recorded <see cref="LastPathGains"/> trajectories.</summary>
+    public const int GainSampleRateHz = GainRate;
+
     private readonly int _sampleRate;
     private readonly WattersonPath[] _paths;
     private readonly Random _random;
+
+    /// <summary>When set before <see cref="Apply"/>, the per-path tap-gain trajectory of
+    /// the run is kept in <see cref="LastPathGains"/> — the fade envelope for
+    /// error-correlation telemetry and the channel-truth genie (phase-b-plan §B0).</summary>
+    public bool RecordGains { get; set; }
+
+    /// <summary>Per-path gain trajectory of the last <see cref="Apply"/> when
+    /// <see cref="RecordGains"/> was set: fading paths at <see cref="GainSampleRateHz"/>
+    /// (aligned to the channel span, lead-in excluded), static paths a single constant.</summary>
+    public IReadOnlyList<Cf[]>? LastPathGains { get; private set; }
 
     /// <summary>Creates the channel. No paths = the ideal direct path (AWGN-only, passband
     /// passthrough — the D-LXIV AWGN channel).</summary>
@@ -68,6 +81,7 @@ public sealed class WattersonChannel
         if (_paths.Length == 0 && frequencyOffsetHz == 0)
         {
             // Ideal path: passband passthrough plus calibrated noise.
+            LastPathGains = RecordGains ? [] : null;
             var direct = new float[leadInSamples + input.Length + leadOutSamples];
             input.CopyTo(direct.AsSpan(leadInSamples));
             AddNoise(direct, input, snrDb, noiseBandwidthHz);
@@ -82,6 +96,7 @@ public sealed class WattersonChannel
         var summed = new Cf[n];
         WattersonPath[] paths = _paths.Length == 0 ? [new WattersonPath(0)] : _paths;
         float pathScale = (float)(1.0 / Math.Sqrt(paths.Length));
+        List<Cf[]>? recorded = RecordGains ? new List<Cf[]>(paths.Length) : null;
         foreach (WattersonPath path in paths)
         {
             Cf[] delayed = FractionalDelay(envelope, path.DelayMs * _sampleRate / 1000.0);
@@ -98,6 +113,20 @@ public sealed class WattersonChannel
             if (path.Fading)
             {
                 Cf[] gains = FadingGains(n, path.DopplerSpreadHz / 2.0);
+                if (recorded is not null)
+                {
+                    // Every decimation-th full-rate gain is an exact low-rate process
+                    // sample (the interpolation fraction is zero there).
+                    int decimation = _sampleRate / GainRate;
+                    var trajectory = new Cf[((n - 1) / decimation) + 1];
+                    for (int i = 0; i < trajectory.Length; i++)
+                    {
+                        trajectory[i] = gains[i * decimation];
+                    }
+
+                    recorded.Add(trajectory);
+                }
+
                 for (int i = 0; i < n; i++)
                 {
                     summed[i] += delayed[i] * gains[i] * pathScale;
@@ -106,12 +135,15 @@ public sealed class WattersonChannel
             else
             {
                 var phase = Cf.Cmplx((float)(_random.NextDouble() * 2 * Math.PI));
+                recorded?.Add([phase]);
                 for (int i = 0; i < n; i++)
                 {
                     summed[i] += delayed[i] * phase * pathScale;
                 }
             }
         }
+
+        LastPathGains = recorded;
 
         if (frequencyOffsetHz != 0)
         {
