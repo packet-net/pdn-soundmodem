@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
+    <!-- Dev tool under test: the ka9q_ubersdr IQ capture decoder (UberSdrPcmDecoderTests). -->
+    <ProjectReference Include="../../tools/Packet.SoundModem.UberSdr/Packet.SoundModem.UberSdr.csproj" />
   </ItemGroup>
 
 </Project>
