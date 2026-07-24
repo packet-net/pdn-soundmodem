@@ -449,6 +449,9 @@ public class Ms110dMaskTests(ITestOutputHelper output)
                 }
 
                 burstErrors += payload.Length - compared; // truncated decode counts as errors
+                // Decode beyond the whole TX stream (payload + EOM + fill) means post-EOM
+                // false blocks — previously free, now errors (#67).
+                burstErrors += Math.Max(0, decoded.Count - txBits.Length);
             }
 
             bits += payload.Length;

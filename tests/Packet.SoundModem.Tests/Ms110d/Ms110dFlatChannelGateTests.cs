@@ -88,8 +88,27 @@ public class Ms110dFlatChannelGateTests
         demod.BlockDecoded += b => decoded.AddRange(b.Bits);
         demod.Process(audio);
 
-        // On Poor, we just need successful decode (turbo helps but isn't required for 2 blocks)
+        // #67: the test asserts what its name claims — the Poor channel classifies as
+        // fading and the turbo path actually runs — and that the decode is correct,
+        // not merely present (fixed seeds make this deterministic).
+        (demod.TurboConverged + demod.TurboReverted + demod.TurboAborted).Should().BeGreaterThan(0,
+            $"WN{wn} on Poor must take the turbo path (fading classification)");
         decoded.Count.Should().BeGreaterThanOrEqualTo(payloadBits,
             $"WN{wn} must decode at least 2 blocks at {snrDb} dB Poor");
+        int errors = 0;
+        for (int i = 0; i < payloadBits; i++)
+        {
+            if (decoded[i] != payload[i])
+            {
+                errors++;
+            }
+        }
+
+        // Measured on this fixed realization: 229/8192 (2.8 %) — a deep fade this short
+        // two-block burst cannot interleave over, the exact gap Phase B closes (WN4 Poor
+        // baseline 2.36E-5 vs the 1E-5 mask). The bound asserts "degraded, not broken";
+        // tighten to 0 when B3 lands WN4 at mask.
+        ((double)errors / payloadBits).Should().BeLessThan(0.05,
+            $"WN{wn} at {snrDb} dB Poor must not be catastrophic (measured 2.8 % on this realization)");
     }
 }
