@@ -422,8 +422,10 @@ public sealed class Dfe
     }
 
     /// <summary>One recursive-least-squares update toward <paramref name="desired"/>;
-    /// returns the pre-update equalizer output. <paramref name="weight"/> scales the tap
-    /// update (probe rows authoritative, DD rows advisory).</summary>
+    /// returns the pre-update equalizer output. <paramref name="weight"/> is the row's
+    /// least-squares influence (probe rows authoritative, DD rows advisory) and enters the
+    /// recursion consistently — gain denominator AND P update — as weighted RLS requires;
+    /// see the derivation comment in the body.</summary>
     public Cf RlsUpdate(ReadOnlySpan<Cf> window, ReadOnlySpan<Cf> past, Cf desired, float weight = 1f)
     {
         Cf y = Equalize(window, past);
@@ -456,21 +458,30 @@ public sealed class Dfe
             _pxScratch[i] = acc;
         }
 
-        // denom = λ + u^T · px (real-positive for Hermitian P)
-        var denom = new Cf(_lambda, 0);
+        // Weighted RLS. A row of weight w enters the exponentially-forgotten LS cost as
+        // w·|d − uᵀθ|², i.e. an effective regressor √w·u — so w must scale BOTH the gain
+        // denominator and the P (inverse-correlation) update:
+        //   denom = λ + w·uᵀPu*,  θ += w·e·Pu*/denom,  P ← λ⁻¹(P − w·(Pu*)(Pu*)ᴴ/denom).
+        // The previous code scaled only the tap step and always applied the FULL P update,
+        // so every advisory (w = 0.1) row shrank P as if a full-confidence row had arrived
+        // and long static/AWGN spans progressively froze adaptation (issue #64). A
+        // consequence of the correct form: uniform weights cancel — all-0.1 rows adapt
+        // exactly like all-1.0 rows once the P0 prior washes out, as scale invariance of
+        // least squares demands. w = 1 reduces bit-identically to textbook RLS.
+        var uPx = Cf.Zero;
         for (int j = 0; j < n; j++)
         {
-            denom += u[j] * _pxScratch[j];
+            uPx += u[j] * _pxScratch[j]; // uᵀPu*: real-positive for Hermitian P
         }
 
-        if (denom.Re <= 1e-12f)
+        float denom = _lambda + (weight * uPx.Re);
+        if (denom <= 1e-12f)
         {
             return y;
         }
 
-        float invDenom = 1f / denom.Re;
+        float invDenom = 1f / denom;
 
-        // Tap update: w += weight · e · k, where k = px / denom
         Cf error = desired - y;
         Cf scaledError = error * (weight * invDenom);
         for (int i = 0; i < _ff.Length; i++)
@@ -483,12 +494,11 @@ public sealed class Dfe
             _fb[j] += _pxScratch[_ff.Length + j] * scaledError;
         }
 
-        // P update: P = λ⁻¹(P − k · pxᴴ), standard RLS (independent of weight — P
-        // tracks the input correlation structure, not confidence in the desired signal).
         float invLambda = 1f / _lambda;
+        float kScale = weight * invDenom;
         for (int i = 0; i < n; i++)
         {
-            Cf ki = _pxScratch[i] * invDenom;
+            Cf ki = _pxScratch[i] * kScale;
             for (int j = 0; j < n; j++)
             {
                 _p[i, j] = (_p[i, j] - (ki * _pxScratch[j].Conj())) * invLambda;
