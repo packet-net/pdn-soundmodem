@@ -65,6 +65,13 @@ public sealed class Ms110dDemodulator
     private int _genieMixPhase;
     private bool _genieDecimateToggle;
     private long _genieWritten;
+    // Measured per-T/2-sample additive-noise power: mean |noisy − clean|² between the two
+    // rings. Genie LS solves add σ²·Σweight to the FF Gram diagonal — the term the noisy
+    // rows contribute implicitly — so the genie computes the true-channel MMSE equalizer,
+    // not the zero-forcing one (first WN4 Poor genie run: ZF inverted the fading notches
+    // and came out 30× WORSE than the baseline it is meant to bound).
+    private double _genieNoiseSum;
+    private long _genieNoiseCount;
 
     // Search state. The metric ring keeps recent per-candidate metrics so the accepted
     // peak can be moved back to the EARLIEST multipath arrival (design §2.6): on the
@@ -222,6 +229,8 @@ public sealed class Ms110dDemodulator
             _genieMixPhase = 0;
             _genieDecimateToggle = false;
             _genieWritten = 0;
+            _genieNoiseSum = 0;
+            _genieNoiseCount = 0;
         }
 
         PeakSearchMetric = 0; // documented as "since construction/reset"
@@ -303,6 +312,12 @@ public sealed class Ms110dDemodulator
         }
 
         _ring[p & (RingSize - 1)] = sample;
+        if (_genieRing is not null && p < _genieWritten)
+        {
+            _genieNoiseSum += (sample - _genieRing[p & (RingSize - 1)]).Cnorm();
+            _genieNoiseCount++;
+        }
+
         _written = p + 1;
 
         if (_terminate)
@@ -837,8 +852,8 @@ public sealed class Ms110dDemodulator
         // the Phase B RLS-vs-NLMS A/B (phase-b-plan §B2.4) settles it; until then this is
         // the measured-baseline value, kept so evidence stays comparable.
         _dfe.BeginRls((float)(1.0 - Math.Log(10.0) / _mode.U), pInit: 1.0f);
-        _dfe.SeedRlsFromTraining(_initRidge, pFallback: 1.0f);
-        _dfe.SolveTraining(regularization: _initRidge);
+        _dfe.SeedRlsFromTraining(_initRidge, pFallback: 1.0f, ffNoisePower: GenieNoisePower());
+        _dfe.SolveTraining(regularization: _initRidge, ffNoisePower: GenieNoisePower());
         _dfe.BeginTraining();
 
         // Seed the decision history with the probe tail and measure the training MSE.
@@ -929,8 +944,8 @@ public sealed class Ms110dDemodulator
             dfe.AddTrainingRow(window, probePast, probe[i], weight: 6f);
         }
 
-        dfe.SeedRlsFromTraining(_trackRidge, pFallback: 1.0f);
-        dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true);
+        dfe.SeedRlsFromTraining(_trackRidge, pFallback: 1.0f, ffNoisePower: GenieNoisePower());
+        dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true, ffNoisePower: GenieNoisePower());
         Cf[] endTaps = dfe.SnapshotTaps();
 
         // Residual-CFO trim from the mean tap rotation between consecutive probe solves.
@@ -1558,6 +1573,16 @@ public sealed class Ms110dDemodulator
         return oldest > _written - RingSize;
     }
 
+    /// <summary>Measured additive-noise power per complex T/2 sample (genie mode only:
+    /// mean |noisy − clean|² between the rings; 0 when the genie is off, leaving every
+    /// solve bit-identical to the normal path).</summary>
+    private float GenieNoisePower()
+    {
+        return _genieRing is null || _genieNoiseCount == 0
+            ? 0f
+            : (float)(_genieNoiseSum / _genieNoiseCount);
+    }
+
     private bool IsFlatChannel()
     {
         // The fading detector spans block boundaries, so this classifies from the first
@@ -1654,7 +1679,7 @@ public sealed class Ms110dDemodulator
             }
 
             // Solve with _trackRidge for all modes.
-            dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true);
+            dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true, ffNoisePower: GenieNoisePower());
 
             // BPSK U>48 always takes the BCJR path (on flat channels h2≈0 degrades it
             // to a soft-output matched filter with better-calibrated LLRs than the DFE

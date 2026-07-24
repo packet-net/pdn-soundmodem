@@ -31,9 +31,11 @@ public sealed class Dfe
     private Cf[,]? _gram;
     private Cf[]? _rhs;
     private int _trainingRows;
+    private float _trainingWeightSum;
     private Cf[,]? _savedGram;
     private Cf[]? _savedRhs;
     private int _savedTrainingRows;
+    private float _savedTrainingWeightSum;
 
     /// <summary>Creates a DFE with the given tap counts.</summary>
     public Dfe(int ffTaps, int fbTaps)
@@ -149,6 +151,7 @@ public sealed class Dfe
         _gram = _gramStore;
         _rhs = _rhsStore;
         _trainingRows = 0;
+        _trainingWeightSum = 0;
     }
 
     /// <summary>Saves the in-progress training accumulation (Gram/RHS/row count) so a
@@ -162,6 +165,7 @@ public sealed class Dfe
         Array.Copy(_gramStore, _savedGram, _gramStore.Length);
         Array.Copy(_rhsStore, _savedRhs, _rhsStore.Length);
         _savedTrainingRows = _trainingRows;
+        _savedTrainingWeightSum = _trainingWeightSum;
     }
 
     /// <summary>Restores the accumulation saved by <see cref="SnapshotTraining"/>.</summary>
@@ -177,6 +181,7 @@ public sealed class Dfe
         _gram = _gramStore;
         _rhs = _rhsStore;
         _trainingRows = _savedTrainingRows;
+        _trainingWeightSum = _savedTrainingWeightSum;
     }
 
     /// <summary>Adds one training row: the FF window and known past symbols observed when
@@ -215,6 +220,7 @@ public sealed class Dfe
         }
 
         _trainingRows++;
+        _trainingWeightSum += weight;
     }
 
     /// <summary>Solves the accumulated regularized normal equations and installs the taps.
@@ -222,8 +228,11 @@ public sealed class Dfe
     /// With <paramref name="anchorToCurrentTaps"/> the ridge pulls toward the CURRENT taps
     /// instead of zero — the per-probe tracking update on fading channels (a Kalman-style
     /// prior: K fresh rows dominate the directions the probe observed, the anchor carries
-    /// everything else).</summary>
-    public bool SolveTraining(float regularization = 1e-3f, bool anchorToCurrentTaps = false)
+    /// everything else). <paramref name="ffNoisePower"/> (channel-truth genie only) adds
+    /// σ²·Σweight to the feed-forward Gram diagonal — the term noisy rows contribute
+    /// implicitly — so a solve over noise-free rows still yields the MMSE equalizer rather
+    /// than the zero-forcing one (feedback regressors are decisions, noise-free either way).</summary>
+    public bool SolveTraining(float regularization = 1e-3f, bool anchorToCurrentTaps = false, float ffNoisePower = 0f)
     {
         if (_gram is null || _rhs is null ||
             (!anchorToCurrentTaps && _trainingRows < _ff.Length + _fb.Length) ||
@@ -235,6 +244,15 @@ public sealed class Dfe
         }
 
         int n = _ff.Length + _fb.Length;
+        if (ffNoisePower > 0)
+        {
+            float noiseDiag = ffNoisePower * _trainingWeightSum;
+            for (int i = 0; i < _ff.Length; i++)
+            {
+                _gram[i, i] += new Cf(noiseDiag, 0);
+            }
+        }
+
         double trace = 0;
         for (int i = 0; i < n; i++)
         {
@@ -361,8 +379,9 @@ public sealed class Dfe
 
     /// <summary>Seeds P from the inverse of the accumulated training Gram (MMSE-calibrated
     /// initialization — design §2.5: "RLS subsumes the MMSE-init"). Falls back to scaled
-    /// identity if the Gram is degenerate.</summary>
-    public void SeedRlsFromTraining(float regularization, float pFallback = 1.0f)
+    /// identity if the Gram is degenerate. <paramref name="ffNoisePower"/> as in
+    /// <see cref="SolveTraining"/> (channel-truth genie only).</summary>
+    public void SeedRlsFromTraining(float regularization, float pFallback = 1.0f, float ffNoisePower = 0f)
     {
         if (_gram is null || _p is null)
         {
@@ -370,15 +389,24 @@ public sealed class Dfe
         }
 
         int n = _ff.Length + _fb.Length;
+        Cf[,] gram = _seedGram;
+        Array.Copy(_gram, gram, _gram.Length);
+        if (ffNoisePower > 0)
+        {
+            float noiseDiag = ffNoisePower * _trainingWeightSum;
+            for (int i = 0; i < _ff.Length; i++)
+            {
+                gram[i, i] += new Cf(noiseDiag, 0);
+            }
+        }
+
         double trace = 0;
         for (int i = 0; i < n; i++)
         {
-            trace += _gram[i, i].Re;
+            trace += gram[i, i].Re;
         }
 
         float ridge = (float)(regularization * trace / n) + 1e-9f;
-        Cf[,] gram = _seedGram;
-        Array.Copy(_gram, gram, _gram.Length);
         for (int i = 0; i < n; i++)
         {
             gram[i, i] += new Cf(ridge, 0);

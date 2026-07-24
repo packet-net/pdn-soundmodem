@@ -127,6 +127,43 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         }
     }
 
+    // Off-rig discipline harness (phase-b-plan §B0): fading geometries the D.6.1 Poor rig
+    // does NOT use, run at the Poor mask SNRs as direction checks — measured, never gated —
+    // so no tuned constant can quietly encode the rig's exact 2 ms / 1 Hz numbers again
+    // (the BCJR delay-5 lesson from the Phase A audit).
+    public static TheoryData<string, double, double, int, double> OffRigPoints()
+    {
+        var data = new TheoryData<string, double, double, int, double>();
+        foreach ((int wn, double snr) in new (int, double)[]
+                 { (0, -1), (1, 3), (2, 5), (3, 7), (4, 10), (5, 11), (6, 14), (7, 19), (8, 23), (13, 11) })
+        {
+            data.Add("1ms-0.5Hz", 1.0, 0.5, wn, snr);
+            data.Add("3ms-2Hz", 3.0, 2.0, wn, snr);
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(OffRigPoints))]
+    public void OffRig_Direction_Check(string label, double delayMs, double dopplerHz, int wn, double snrDb)
+    {
+        Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_MASKS_OFFRIG") != "1",
+            "set MS110D_MASKS_OFFRIG=1 for the off-rig direction checks");
+        string? wnFilter = Environment.GetEnvironmentVariable("MS110D_MASK_WN");
+        Assert.SkipWhen(wnFilter is not null && wnFilter != wn.ToString(),
+            $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
+
+        WattersonPath[] paths =
+        [
+            new(0, Fading: true, DopplerSpreadHz: dopplerHz),
+            new(delayMs, Fading: true, DopplerSpreadHz: dopplerHz),
+        ];
+        MaskRun run = RunPoint(wn, snrDb, paths, TargetBits(), seed: 800 + wn + SeedOffset());
+        Report($"OFFRIG[{label}] WN{wn} @ {snrDb:+0;-0;0} dB{SeedTag()}", run);
+        run.Bits.Should().BeGreaterThan(0); // direction check: measured, never gated
+    }
+
     [Theory]
     [InlineData(4, 10)]
     [InlineData(6, 14)]
