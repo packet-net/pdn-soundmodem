@@ -189,6 +189,26 @@ public sealed class Ms110dDemodulator
     /// <c>MS110D_DEBUG</c> stderr behaviour subscribe and print.</summary>
     public event Action<string>? FrameDiagnostics;
 
+    /// <summary>Diagnostic: fires once per interleaver block BEFORE the first decode, with
+    /// the block index and the first-pass wire-order LLRs (fetch order, pre-deinterleave,
+    /// pre-turbo). The buffer is reused per block — receivers must copy what they keep.
+    /// Comparing sign(LLR) against the re-encoded transmitted stream gives the uncoded
+    /// channel-bit error rate, the §5.3 uncoded-vs-coded split (phase-b-plan §B0).</summary>
+    public event Action<int, float[]>? FirstPassBlockLlrs;
+
+    /// <summary>Turbo blocks that reached a decode fixed point (since construction/Reset).</summary>
+    public int TurboConverged { get; private set; }
+
+    /// <summary>Turbo blocks reverted to the first-pass decode (no fixed point in 5 iterations).</summary>
+    public int TurboReverted { get; private set; }
+
+    /// <summary>Turbo blocks aborted mid-re-equalization (samples no longer available).</summary>
+    public int TurboAborted { get; private set; }
+
+    /// <summary>Blocks where the turbo gate declined to run (flat channel without a BCJR
+    /// candidate, QAM16, non-resident samples, or the WN 0 path).</summary>
+    public int TurboSkipped { get; private set; }
+
     /// <summary>Fires for every decoded input-data block.</summary>
     public event Action<Ms110dRxBlock>? BlockDecoded;
 
@@ -234,6 +254,10 @@ public sealed class Ms110dDemodulator
         }
 
         PeakSearchMetric = 0; // documented as "since construction/reset"
+        TurboConverged = 0;
+        TurboReverted = 0;
+        TurboAborted = 0;
+        TurboSkipped = 0;
         EndBurst();
     }
 
@@ -1485,6 +1509,8 @@ public sealed class Ms110dDemodulator
             throw new InvalidOperationException("interleaver block LLR accounting error");
         }
 
+        FirstPassBlockLlrs?.Invoke(_blockIndex, _blockLlrs);
+
         var info = new byte[_il.InputBits];
         Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
 
@@ -1530,15 +1556,28 @@ public sealed class Ms110dDemodulator
                 }
             }
 
-            if (!converged && !aborted)
+            if (converged)
+            {
+                TurboConverged++;
+            }
+            else if (aborted)
+            {
+                TurboAborted++;
+            }
+            else
             {
                 // Five decode→re-equalize→decode rounds without a fixed point: the loop
                 // is oscillating, and a self-trained iterate with no fixed point is not
                 // evidence (issue #65). Keep the first-pass decode.
+                TurboReverted++;
                 Array.Copy(firstPass, info, info.Length);
             }
 
             _dfe.RestoreTraining();
+        }
+        else
+        {
+            TurboSkipped++;
         }
 
         _blockLlrCount = 0;
