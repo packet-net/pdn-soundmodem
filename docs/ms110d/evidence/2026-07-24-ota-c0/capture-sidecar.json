@@ -1,0 +1,283 @@
+{
+  "addons": [
+    "sstv",
+    "navtex",
+    "wefax",
+    "doppler",
+    "packet",
+    "lightning",
+    "dxcluster"
+  ],
+  "ant_switch": {
+    "active_labels": [
+      "Long Wire"
+    ],
+    "enabled": true,
+    "grounded": false,
+    "selected": [
+      1
+    ]
+  },
+  "available_clients": 19,
+  "bypassed_users_only": false,
+  "chat_enabled": true,
+  "chat_users": 0,
+  "cors_enabled": false,
+  "cw_skimmer": true,
+  "cw_skimmer_callsign": "MM9PSY",
+  "cw_skimmer_callsign_lookup": true,
+  "cw_skimmer_rbn_spots": false,
+  "default_frequency": 7100000,
+  "default_mode": "lsb",
+  "description": "Welcome! This SDR is running \u003ca href=\"https://github.com/madpsy/ka9q_ubersdr\" target=\"_blank\"\u003eUberSDR\u003c/a\u003e",
+  "digital_decodes": true,
+  "digital_modes": [
+    "WSPR"
+  ],
+  "dsp": {
+    "enabled": true,
+    "filters": [
+      "nr2",
+      "rn2",
+      "nr4",
+      "dfnr"
+    ],
+    "max_users": 25
+  },
+  "enabled_widgets": [
+    {
+      "widget_id": "0d4c10ce-e885-428d-8310-cd72fb25a7ae",
+      "name": "Callsign Lookup",
+      "is_public": true
+    },
+    {
+      "widget_id": "176edd37-a01f-421c-9b92-a913968881f4",
+      "name": "Audio Visualiser",
+      "is_public": true
+    },
+    {
+      "widget_id": "237cd7b4-948d-401a-890d-3dfe6f084149",
+      "name": "SSTV Latest Image",
+      "is_public": true
+    },
+    {
+      "widget_id": "799964e0-3d8b-4853-bc6d-40034337871a",
+      "name": "Voice Activity",
+      "is_public": true
+    },
+    {
+      "widget_id": "917604ec-54e1-42ac-8b14-a9bae4ff5ba2",
+      "name": "Little Fun Games",
+      "is_public": true
+    },
+    {
+      "widget_id": "a3a4b8c0-7cf2-42a6-affc-292b7a40e91f",
+      "name": "Graphic Equaliser",
+      "is_public": true
+    },
+    {
+      "widget_id": "b754b85f-f881-411c-bc7e-af778cd087b0",
+      "name": "DX Cluster",
+      "is_public": true
+    },
+    {
+      "widget_id": "e5937fbf-eee3-408b-b7c5-00b22964e073",
+      "name": "Marker Name",
+      "is_public": true
+    }
+  ],
+  "frequency_reference": {
+    "detected_frequency": 25000000,
+    "enabled": true,
+    "expected_frequency": 25000000,
+    "frequency_offset": 0,
+    "noise_floor": -151,
+    "signal_strength": -96.5,
+    "snr": 54.4
+  },
+  "frontend": {
+    "if_power": -26.5,
+    "input_power_dbm": -59.1
+  },
+  "gpsdo": {
+    "antenna_ok": true,
+    "enabled": true,
+    "fix": "GPS",
+    "fix_mode": "3D",
+    "frequency_hz": 27000000,
+    "glo_in_view": 0,
+    "gps_in_view": 4,
+    "gps_lock": true,
+    "hdop": 1.22,
+    "mode": "PLL",
+    "output1_enabled": true,
+    "pdop": 2.02,
+    "pll_lock": true,
+    "sats_used": 8,
+    "utc": "2026-07-24T15:39:56Z",
+    "vdop": 1.61
+  },
+  "lookup_service": true,
+  "max_clients": 20,
+  "max_session_time": 10800,
+  "noise_floor": true,
+  "pskreporter_rank": {
+    "last_updated": "2026-07-24T15:00:08.614182486Z",
+    "reporter_callsign": "M9PSY",
+    "reports": {
+      "10m": {
+        "rank": 34,
+        "day": 2669,
+        "week": 19034
+      },
+      "12m": {
+        "rank": 13,
+        "day": 1542,
+        "week": 11195
+      },
+      "15m": {
+        "rank": 25,
+        "day": 6029,
+        "week": 68871
+      },
+      "160m": {
+        "rank": 1,
+        "day": 660,
+        "week": 4463
+      },
+      "17m": {
+        "rank": 29,
+        "day": 5964,
+        "week": 70432
+      },
+      "20m": {
+        "rank": 21,
+        "day": 17955,
+        "week": 185062
+      },
+      "2200m": {
+        "rank": 13,
+        "day": 6,
+        "week": 69
+      },
+      "30m": {
+        "rank": 11,
+        "day": 7987,
+        "week": 71529
+      },
+      "40m": {
+        "rank": 3,
+        "day": 14552,
+        "week": 108668
+      },
+      "600m": {
+        "rank": 30,
+        "day": 58,
+        "week": 119
+      },
+      "60m": {
+        "rank": 4,
+        "day": 1170,
+        "week": 8225
+      },
+      "80m": {
+        "rank": 4,
+        "day": 3571,
+        "week": 23470
+      },
+      "All": {
+        "rank": 11,
+        "day": 62163,
+        "week": 571246
+      }
+    },
+    "countries": {
+      "160m": {
+        "rank": 4,
+        "day": 29,
+        "week": 52
+      },
+      "17m": {
+        "rank": 39,
+        "day": 106,
+        "week": 161
+      },
+      "20m": {
+        "rank": 5,
+        "day": 144,
+        "week": 200
+      },
+      "2200m": {
+        "rank": 4,
+        "day": 2,
+        "week": 3
+      },
+      "30m": {
+        "rank": 16,
+        "day": 104,
+        "week": 154
+      },
+      "40m": {
+        "rank": 5,
+        "day": 114,
+        "week": 157
+      },
+      "600m": {
+        "rank": 18,
+        "day": 4,
+        "week": 4
+      },
+      "60m": {
+        "rank": 1,
+        "day": 53,
+        "week": 77
+      },
+      "80m": {
+        "rank": 3,
+        "day": 71,
+        "week": 102
+      },
+      "All": {
+        "rank": 6,
+        "day": 171,
+        "week": 221
+      }
+    }
+  },
+  "public_iq_modes": [
+    "iq48",
+    "iq96"
+  ],
+  "public_uuid": "4907ba0a-32e6-40bb-a4ca-47f823331728",
+  "receiver": {
+    "antenna": "Multi-band",
+    "asl": 30,
+    "callsign": "M9PSY",
+    "gps": {
+      "gps_enabled": false,
+      "lat": 56.0403,
+      "lon": -3.3554,
+      "maidenhead": "IO86ha",
+      "tdoa_enabled": false
+    },
+    "location": "Dalgety Bay, Scotland, UK",
+    "name": "RX888 with end-fed long wire (GPSDO)",
+    "public_url": "https://m9psy.tunnel.ubersdr.org/",
+    "snr_0_30_mhz": 17,
+    "snr_1_8_30_mhz": 16,
+    "timezone": "Europe/London",
+    "timezone_offset": 60
+  },
+  "rotator": {
+    "azimuth": 155,
+    "connected": true,
+    "enabled": true
+  },
+  "server_time": "2026-07-24T15:39:56.221568846Z",
+  "server_time_sync": true,
+  "space_weather": true,
+  "spectrogram": true,
+  "spectrum_poll_period": 100,
+  "speech_to_text": true,
+  "version": "0.1.58"
+}

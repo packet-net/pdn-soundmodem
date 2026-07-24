@@ -20,6 +20,11 @@
     <PackageVersion Include="M0LTE.FecLdpc" Version="0.1.0" />
     <PackageVersion Include="M0LTE.Ofdm" Version="0.1.0" />
 
+    <!-- Dev tooling only (tools/Packet.SoundModem.UberSdr) — pure-managed zstd port for the
+         ka9q_ubersdr IQ capture path (pcm-zstd WebSocket frames). MIT; not referenced by the
+         shipped pdn-soundmodem package. -->
+    <PackageVersion Include="ZstdSharp.Port" Version="0.8.8" />
+
     <!-- Dev tooling only (tools/Packet.SoundModem.NinoCompare) — the NinoTNC comparison harness.
          All MIT-licensed; not referenced by the shipped pdn-soundmodem package. -->
     <PackageVersion Include="MQTTnet" Version="5.2.0.1603" />
