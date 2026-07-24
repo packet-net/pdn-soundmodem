@@ -1,4 +1,7 @@
+using M0LTE.Fec;
+using M0LTE.Ofdm;
 using Packet.SoundModem.Ms110d;
+using Packet.SoundModem.Ms110d.Fec;
 using Packet.SoundModem.Tests.Channel;
 
 
@@ -22,7 +25,9 @@ public class Ms110dMaskTests(ITestOutputHelper output)
     private const double TargetBer = 1e-5;
 
     private sealed record MaskRun(
-        long Bits, long Errors, int Bursts, int AcquisitionFailures, double SimSeconds)
+        long Bits, long Errors, int Bursts, int AcquisitionFailures, double SimSeconds,
+        long UncodedBits = 0, long UncodedErrors = 0, long DeepFadeBits = 0, long DeepFadeErrors = 0,
+        int TurboConverged = 0, int TurboReverted = 0, int TurboAborted = 0, int TurboSkipped = 0)
     {
         public double Ber => Bits == 0 ? double.NaN : (double)Errors / Bits;
     }
@@ -127,6 +132,43 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         }
     }
 
+    // Off-rig discipline harness (phase-b-plan §B0): fading geometries the D.6.1 Poor rig
+    // does NOT use, run at the Poor mask SNRs as direction checks — measured, never gated —
+    // so no tuned constant can quietly encode the rig's exact 2 ms / 1 Hz numbers again
+    // (the BCJR delay-5 lesson from the Phase A audit).
+    public static TheoryData<string, double, double, int, double> OffRigPoints()
+    {
+        var data = new TheoryData<string, double, double, int, double>();
+        foreach ((int wn, double snr) in new (int, double)[]
+                 { (0, -1), (1, 3), (2, 5), (3, 7), (4, 10), (5, 11), (6, 14), (7, 19), (8, 23), (13, 11) })
+        {
+            data.Add("1ms-0.5Hz", 1.0, 0.5, wn, snr);
+            data.Add("3ms-2Hz", 3.0, 2.0, wn, snr);
+        }
+
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(OffRigPoints))]
+    public void OffRig_Direction_Check(string label, double delayMs, double dopplerHz, int wn, double snrDb)
+    {
+        Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_MASKS_OFFRIG") != "1",
+            "set MS110D_MASKS_OFFRIG=1 for the off-rig direction checks");
+        string? wnFilter = Environment.GetEnvironmentVariable("MS110D_MASK_WN");
+        Assert.SkipWhen(wnFilter is not null && wnFilter != wn.ToString(),
+            $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
+
+        WattersonPath[] paths =
+        [
+            new(0, Fading: true, DopplerSpreadHz: dopplerHz),
+            new(delayMs, Fading: true, DopplerSpreadHz: dopplerHz),
+        ];
+        MaskRun run = RunPoint(wn, snrDb, paths, TargetBits(), seed: 800 + wn + SeedOffset());
+        Report($"OFFRIG[{label}] WN{wn} @ {snrDb:+0;-0;0} dB{SeedTag()}", run);
+        run.Bits.Should().BeGreaterThan(0); // direction check: measured, never gated
+    }
+
     [Theory]
     [InlineData(4, 10)]
     [InlineData(6, 14)]
@@ -176,6 +218,11 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             Environment.GetEnvironmentVariable("MS110D_MASK_SEED_OFFSET"), out int o) ? o : 0;
     }
 
+    private static bool GenieMode()
+    {
+        return Environment.GetEnvironmentVariable("MS110D_MASK_GENIE") == "1";
+    }
+
     private static long TargetBits()
     {
         string? overrideBits = Environment.GetEnvironmentVariable("MS110D_MASK_BITS");
@@ -222,19 +269,19 @@ public class Ms110dMaskTests(ITestOutputHelper output)
                 simPerWorker, frequencyOffsetHz, w);
         });
 
-        long bits = 0, errors = 0;
-        int bursts = 0, acquisitionFailures = 0;
-        double simSeconds = 0;
+        MaskRun total = new(0, 0, 0, 0, 0);
         foreach (MaskRun r in runs)
         {
-            bits += r.Bits;
-            errors += r.Errors;
-            bursts += r.Bursts;
-            acquisitionFailures += r.AcquisitionFailures;
-            simSeconds += r.SimSeconds;
+            total = new MaskRun(
+                total.Bits + r.Bits, total.Errors + r.Errors, total.Bursts + r.Bursts,
+                total.AcquisitionFailures + r.AcquisitionFailures, total.SimSeconds + r.SimSeconds,
+                total.UncodedBits + r.UncodedBits, total.UncodedErrors + r.UncodedErrors,
+                total.DeepFadeBits + r.DeepFadeBits, total.DeepFadeErrors + r.DeepFadeErrors,
+                total.TurboConverged + r.TurboConverged, total.TurboReverted + r.TurboReverted,
+                total.TurboAborted + r.TurboAborted, total.TurboSkipped + r.TurboSkipped);
         }
 
-        return new MaskRun(bits, errors, bursts, acquisitionFailures, simSeconds);
+        return total;
     }
 
     private MaskRun RunPointWorker(
@@ -257,6 +304,18 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         var tx = new Ms110dModulator(settings);
         Ms110dInterleaverParams il = Ms110dInterleaverParams.Get3k(wn, Ms110dInterleaverKind.Long);
 
+        // Uncoded-vs-coded telemetry (§5.3, phase-b-plan §B0): re-encode the known TX
+        // stream per block and compare against sign(first-pass LLR) in wire order — the
+        // uncoded channel-bit error rate. Wire positions map to air time, so with the
+        // rig's recorded gain trajectory each uncoded error is classified against the
+        // composite channel power at its own air time (deep fade = composite < −6 dB).
+        ConvolutionalCode telemetryCode = ConvolutionalCode.K7;
+        PunctureSpec telemetryPuncture = Ms110dPuncture.Get(telemetryCode, tx.Mode.CodeRate);
+        var telemetryInterleaver = new Ms110dInterleaver(il.SizeBits, il.Increment);
+        int preambleChips = settings.PreambleSuperframes * 18 * 32; // TlcBlocks = 0, M > 1
+        int bitsPerSymbol = tx.Mode.BitsPerSymbol;
+        bool fadingPaths = paths.Any(p => p.Fading);
+
         double blockSeconds = wn == 0
             ? il.Frames * 32.0 / 2400
             : il.Frames * (tx.Mode.U + tx.Mode.K) / 2400.0;
@@ -267,6 +326,16 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         long bits = 0, errors = 0;
         int bursts = 0, acquisitionFailures = 0;
         double simSeconds = 0;
+        long uncodedBits = 0, uncodedErrors = 0, deepFadeBits = 0, deepFadeErrors = 0;
+        int turboConverged = 0, turboReverted = 0, turboAborted = 0, turboSkipped = 0;
+        // MS110D_DEBUG moved host-side: the library fires FrameDiagnostics, the harness prints.
+        bool debugTrace = Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1";
+        // MS110D_MASK_GENIE=1: feed the demodulator the SAME channel realization noise-free
+        // (identical seed at SNR = ∞ — the rig draws fading gains before noise, so the
+        // realization is reproduced exactly). Estimation then runs on channel truth while
+        // detection stays noisy: the perfect-channel-observation bound of the current
+        // detector (phase-b-plan §B0). Always labelled, never performance evidence.
+        bool genie = GenieMode();
 
         while (bits < targetBits || simSeconds < minSimSeconds)
         {
@@ -277,15 +346,90 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             }
 
             float[] audio = tx.Modulate(payload);
-            var channel = new WattersonChannel(9600, seed + (1000 * bursts) + 1, paths);
+            var channel = new WattersonChannel(9600, seed + (1000 * bursts) + 1, paths)
+            {
+                RecordGains = fadingPaths,
+            };
             float[] rx = channel.Apply(
                 audio, snrDb, leadInSamples: 2400, leadOutSamples: 2400,
                 frequencyOffsetHz: frequencyOffsetHz);
+            IReadOnlyList<Cf[]>? gains = channel.LastPathGains;
+
+            byte[] txBits = Ms110dFraming.BuildTxBits(payload, appendEom: true, il.InputBits);
+            int txBlocks = txBits.Length / il.InputBits;
+            var fetchedBlocks = new byte[txBlocks][];
+            for (int b = 0; b < txBlocks; b++)
+            {
+                fetchedBlocks[b] = Ms110dFraming.EncodeBlock(
+                    telemetryCode, telemetryPuncture, telemetryInterleaver,
+                    txBits.AsSpan(b * il.InputBits, il.InputBits));
+            }
 
             var decoded = new List<byte>(payload.Length + 64);
             var demod = new Ms110dDemodulator();
             demod.BlockDecoded += b => decoded.AddRange(b.Bits);
-            demod.Process(rx);
+            demod.FirstPassBlockLlrs += (blockIndex, llrs) =>
+            {
+                if (blockIndex >= txBlocks)
+                {
+                    return; // surplus block (post-EOM noise decode) — no TX reference
+                }
+
+                byte[] fetched = fetchedBlocks[blockIndex];
+                int compareBits = Math.Min(llrs.Length, fetched.Length);
+                uncodedBits += compareBits;
+                for (int i = 0; i < compareBits; i++)
+                {
+                    bool bitError = (llrs[i] > 0 ? 0 : 1) != fetched[i];
+                    if (bitError)
+                    {
+                        uncodedErrors++;
+                    }
+
+                    if (gains is null || gains.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    long symbol = i / bitsPerSymbol;
+                    long chip = wn == 0
+                        ? (((long)blockIndex * (il.SizeBits / 2)) + symbol) * 32
+                        : ((((long)blockIndex * il.Frames) + (symbol / tx.Mode.U)) * (tx.Mode.U + tx.Mode.K))
+                            + (symbol % tx.Mode.U);
+                    int gainIndex = (int)((preambleChips + chip) * 4 / 100);
+                    if (CompositeGain(gains, gainIndex) < 0.25)
+                    {
+                        deepFadeBits++;
+                        if (bitError)
+                        {
+                            deepFadeErrors++;
+                        }
+                    }
+                }
+            };
+            if (debugTrace)
+            {
+                demod.FrameDiagnostics += line => Console.Error.WriteLine(line);
+            }
+
+            if (genie)
+            {
+                float[] clean = new WattersonChannel(9600, seed + (1000 * bursts) + 1, paths).Apply(
+                    audio, double.PositiveInfinity, leadInSamples: 2400, leadOutSamples: 2400,
+                    frequencyOffsetHz: frequencyOffsetHz);
+                // Interleaved chunks: the genie must stay ahead of every read but never
+                // far enough ahead to wrap the ~13.7 s ring (WriteGenie contract).
+                for (int i = 0; i < rx.Length; i += 4800)
+                {
+                    int length = Math.Min(4800, rx.Length - i);
+                    demod.WriteGenie(clean.AsSpan(i, length));
+                    demod.Process(rx.AsSpan(i, length));
+                }
+            }
+            else
+            {
+                demod.Process(rx);
+            }
 
             long burstErrors = 0;
             if (decoded.Count == 0)
@@ -305,12 +449,19 @@ public class Ms110dMaskTests(ITestOutputHelper output)
                 }
 
                 burstErrors += payload.Length - compared; // truncated decode counts as errors
+                // Decode beyond the whole TX stream (payload + EOM + fill) means post-EOM
+                // false blocks — previously free, now errors (#67).
+                burstErrors += Math.Max(0, decoded.Count - txBits.Length);
             }
 
             bits += payload.Length;
             errors += burstErrors;
             bursts++;
             simSeconds += audio.Length / 9600.0;
+            turboConverged += demod.TurboConverged;
+            turboReverted += demod.TurboReverted;
+            turboAborted += demod.TurboAborted;
+            turboSkipped += demod.TurboSkipped;
 
             if (bursts % 10 == 0)
             {
@@ -321,7 +472,23 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             }
         }
 
-        return new MaskRun(bits, errors, bursts, acquisitionFailures, simSeconds);
+        return new MaskRun(
+            bits, errors, bursts, acquisitionFailures, simSeconds,
+            uncodedBits, uncodedErrors, deepFadeBits, deepFadeErrors,
+            turboConverged, turboReverted, turboAborted, turboSkipped);
+    }
+
+    /// <summary>Composite channel power (equal-power-normalized) at a gain-trajectory
+    /// index; static paths contribute their constant unit gain.</summary>
+    private static double CompositeGain(IReadOnlyList<Cf[]> gains, int index)
+    {
+        double sum = 0;
+        foreach (Cf[] path in gains)
+        {
+            sum += path[Math.Min(index, path.Length - 1)].Cnorm();
+        }
+
+        return sum / gains.Count;
     }
 
     private static string SeedTag()
@@ -340,9 +507,26 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         string line =
             $"[mask] {label}: {run.Bits:N0} bits, {run.Errors} errors, {run.Bursts} bursts " +
             $"({run.AcquisitionFailures} acquisition failures), {run.SimSeconds:F0} s simulated{workersTag} — {verdict}";
+        if (run.UncodedBits > 0)
+        {
+            line += $" | uncoded {(double)run.UncodedErrors / run.UncodedBits:E2}";
+            if (run.DeepFadeBits > 0 && run.UncodedErrors > 0)
+            {
+                line += $", deep-fade(<-6 dB) holds {100.0 * run.DeepFadeErrors / run.UncodedErrors:F0}% of " +
+                    $"uncoded errors in {100.0 * run.DeepFadeBits / run.UncodedBits:F0}% of bits";
+            }
+
+            line += $", turbo {run.TurboConverged}c/{run.TurboReverted}r/{run.TurboAborted}a/{run.TurboSkipped}s";
+        }
+
         if (run.Bits < 3_000_000)
         {
             line += " [SMOKE — below the §5.3 budget; not gate evidence]";
+        }
+
+        if (GenieMode())
+        {
+            line += " [GENIE — perfect-channel-observation bound; never performance evidence]";
         }
 
         output.WriteLine(line);

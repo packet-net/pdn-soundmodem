@@ -49,6 +49,30 @@ public sealed class Ms110dDemodulator
     private bool _decimateToggle;
     private readonly double[] _combEnergy = new double[2];
 
+    // Channel-truth genie (diagnostic instrument, phase-b-plan §B0). A noise-free copy of
+    // the SAME channel realization runs through an identical front end (its own
+    // filter/mixer state; the shared carrier/timing model applies to both), and the
+    // ESTIMATION reads — training rows, carrier refinement, probe timing, turbo channel
+    // estimation — come from this ring while DETECTION stays on the noisy one. A genie run
+    // is the achievability bound of the current detector under perfect channel
+    // observation: genie ≪ measured says tracking/estimation is the deficit, genie ≈
+    // measured says detection is. Acquisition and the WN 0 Walsh path take no estimation
+    // reads and are unaffected. Genie numbers are a diagnostic bound, never performance
+    // evidence.
+    private Cf[]? _genieRing;
+    private FirFilter? _genieFilterRe;
+    private FirFilter? _genieFilterIm;
+    private int _genieMixPhase;
+    private bool _genieDecimateToggle;
+    private long _genieWritten;
+    // Measured per-T/2-sample additive-noise power: mean |noisy − clean|² between the two
+    // rings. Genie LS solves add σ²·Σweight to the FF Gram diagonal — the term the noisy
+    // rows contribute implicitly — so the genie computes the true-channel MMSE equalizer,
+    // not the zero-forcing one (first WN4 Poor genie run: ZF inverted the fading notches
+    // and came out 30× WORSE than the baseline it is meant to bound).
+    private double _genieNoiseSum;
+    private long _genieNoiseCount;
+
     // Search state. The metric ring keeps recent per-candidate metrics so the accepted
     // peak can be moved back to the EARLIEST multipath arrival (design §2.6): on the
     // D-LXV static channels the equalizer geometry only works cursor-first — echoes are
@@ -124,8 +148,6 @@ public sealed class Ms110dDemodulator
     private bool _fadeFloorSeeded;
     private int _framesSinceExcursion = int.MaxValue / 2;
     private bool _fading;
-    private static readonly bool DebugTrace =
-        Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1";
     private bool _terminate;
 
     /// <summary>Creates the receiver.</summary>
@@ -161,6 +183,32 @@ public sealed class Ms110dDemodulator
     /// <summary>Debug-only: fires per equalized, descrambled data symbol.</summary>
     public event Action<Cf>? DataSymbolEqualized;
 
+    /// <summary>Diagnostic: one formatted line per processed frame (probe gain/MSE,
+    /// timing, carrier, fading state). Formatted only when subscribed — the library
+    /// itself writes no console output (issue #65); hosts that want the old
+    /// <c>MS110D_DEBUG</c> stderr behaviour subscribe and print.</summary>
+    public event Action<string>? FrameDiagnostics;
+
+    /// <summary>Diagnostic: fires once per interleaver block BEFORE the first decode, with
+    /// the block index and the first-pass wire-order LLRs (fetch order, pre-deinterleave,
+    /// pre-turbo). The buffer is reused per block — receivers must copy what they keep.
+    /// Comparing sign(LLR) against the re-encoded transmitted stream gives the uncoded
+    /// channel-bit error rate, the §5.3 uncoded-vs-coded split (phase-b-plan §B0).</summary>
+    public event Action<int, float[]>? FirstPassBlockLlrs;
+
+    /// <summary>Turbo blocks that reached a decode fixed point (since construction/Reset).</summary>
+    public int TurboConverged { get; private set; }
+
+    /// <summary>Turbo blocks reverted to the first-pass decode (no fixed point in 5 iterations).</summary>
+    public int TurboReverted { get; private set; }
+
+    /// <summary>Turbo blocks aborted mid-re-equalization (samples no longer available).</summary>
+    public int TurboAborted { get; private set; }
+
+    /// <summary>Blocks where the turbo gate declined to run (flat channel without a BCJR
+    /// candidate, QAM16, non-resident samples, or the WN 0 path).</summary>
+    public int TurboSkipped { get; private set; }
+
     /// <summary>Fires for every decoded input-data block.</summary>
     public event Action<Ms110dRxBlock>? BlockDecoded;
 
@@ -193,13 +241,74 @@ public sealed class Ms110dDemodulator
         Array.Clear(_ring);
         _rxFilterRe = new FirFilter(_rxPulse);
         _rxFilterIm = new FirFilter(_rxPulse);
+        if (_genieRing is not null)
+        {
+            Array.Clear(_genieRing);
+            _genieFilterRe = new FirFilter(_rxPulse);
+            _genieFilterIm = new FirFilter(_rxPulse);
+            _genieMixPhase = 0;
+            _genieDecimateToggle = false;
+            _genieWritten = 0;
+            _genieNoiseSum = 0;
+            _genieNoiseCount = 0;
+        }
+
         PeakSearchMetric = 0; // documented as "since construction/reset"
+        TurboConverged = 0;
+        TurboReverted = 0;
+        TurboAborted = 0;
+        TurboSkipped = 0;
         EndBurst();
+    }
+
+    /// <summary>Channel-truth genie seam (diagnostic): feeds the noise-free copy of the
+    /// same channel realization. Feed in bounded chunks interleaved with
+    /// <see cref="Process"/> — genie ahead of every read, but never more than ~1.7 s ahead
+    /// of the noisy stream (the rings are ~13.7 s circles and turbo re-reads whole
+    /// interleaver blocks, so running far ahead would overwrite history both streams still
+    /// need; this throws rather than silently wrap). While enabled, estimation reads use
+    /// this stream and detection keeps the noisy one — see the field comment.</summary>
+    public void WriteGenie(ReadOnlySpan<float> samples)
+    {
+        if (_genieRing is null)
+        {
+            _genieRing = new Cf[RingSize];
+            _genieFilterRe = new FirFilter(_rxPulse);
+            _genieFilterIm = new FirFilter(_rxPulse);
+        }
+
+        if (_genieWritten + (samples.Length / 2) - _written > 8192)
+        {
+            throw new InvalidOperationException(
+                "genie stream too far ahead of the noisy stream: interleave WriteGenie/Process in chunks");
+        }
+
+        foreach (float sample in samples)
+        {
+            Cf mixed = _mixTable[_genieMixPhase] * sample;
+            _genieMixPhase = (_genieMixPhase + 3) & 15;
+            float re = _genieFilterRe!.Next(mixed.Re);
+            float im = _genieFilterIm!.Next(mixed.Im);
+            _genieDecimateToggle = !_genieDecimateToggle;
+            if (_genieDecimateToggle)
+            {
+                continue;
+            }
+
+            _genieRing[_genieWritten & (RingSize - 1)] = new Cf(re, im);
+            _genieWritten++;
+        }
     }
 
     /// <summary>Feeds received audio at 9600 Hz.</summary>
     public void Process(ReadOnlySpan<float> samples)
     {
+        if (_genieRing is not null && _genieWritten < _written + (samples.Length / 2))
+        {
+            throw new InvalidOperationException(
+                "genie stream behind the noisy stream: call WriteGenie with the covering span before Process");
+        }
+
         foreach (float sample in samples)
         {
             Cf mixed = _mixTable[_mixPhase] * sample;
@@ -227,6 +336,12 @@ public sealed class Ms110dDemodulator
         }
 
         _ring[p & (RingSize - 1)] = sample;
+        if (_genieRing is not null && p < _genieWritten)
+        {
+            _genieNoiseSum += (sample - _genieRing[p & (RingSize - 1)]).Cnorm();
+            _genieNoiseCount++;
+        }
+
         _written = p + 1;
 
         if (_terminate)
@@ -521,7 +636,8 @@ public sealed class Ms110dDemodulator
             for (int i = 0; i < 32; i++)
             {
                 int chip = (32 * j) + i;
-                c += ReadChip(baseChip + chip) * Ms110dTables.Psk8[knownChips[chip]].Conj();
+                // Estimation read: the carrier fit is channel estimation (genie-eligible).
+                c += ReadChipEst(baseChip + chip) * Ms110dTables.Psk8[knownChips[chip]].Conj();
             }
 
             double phi = c.Arg();
@@ -587,7 +703,26 @@ public sealed class Ms110dDemodulator
     private Cf ReadT2(double halfChips)
     {
         double pos = _chip0 + halfChips + _tau;
-        var value = Interpolate(pos);
+        var value = Interpolate(pos, _ring, _written);
+        double theta = _thetaBase + (_omega * (pos - _chip0));
+        return value * Cf.CmplxConj((float)theta);
+    }
+
+    /// <summary>Estimation-side read: the genie ring when the genie is enabled, otherwise
+    /// the normal noisy read. Same carrier/timing model either way — the genie replaces
+    /// the DATA under the estimators, not the receiver's own state.</summary>
+    private Cf ReadT2Est(double halfChips)
+    {
+        if (_genieRing is null)
+        {
+            return ReadT2(halfChips);
+        }
+
+        double pos = _chip0 + halfChips + _tau;
+        // Bound by the NOISY stream's availability: the genie replaces sample values, not
+        // the receiver's causality — the interpolator's head truncation must be identical
+        // in both rings or a genie run differs even when fed the noisy stream itself.
+        var value = Interpolate(pos, _genieRing, Math.Min(_genieWritten, _written));
         double theta = _thetaBase + (_omega * (pos - _chip0));
         return value * Cf.CmplxConj((float)theta);
     }
@@ -597,7 +732,12 @@ public sealed class Ms110dDemodulator
         return ReadT2(2.0 * chip);
     }
 
-    private Cf Interpolate(double pos)
+    private Cf ReadChipEst(double chip)
+    {
+        return ReadT2Est(2.0 * chip);
+    }
+
+    private Cf Interpolate(double pos, Cf[] ring, long written)
     {
         long i0 = (long)Math.Floor(pos);
         double frac = pos - i0;
@@ -616,9 +756,9 @@ public sealed class Ms110dDemodulator
             }
 
             long idx = i0 + j;
-            if (idx >= 0 && idx < _written)
+            if (idx >= 0 && idx < written)
             {
-                acc += _ring[idx & (RingSize - 1)] * (float)w;
+                acc += ring[idx & (RingSize - 1)] * (float)w;
             }
         }
 
@@ -717,7 +857,7 @@ public sealed class Ms110dDemodulator
         Span<Cf> past = stackalloc Cf[fb];
         for (int n = ChipsFixed; n < ChipsSuperframe + k; n++)
         {
-            FillWindow(baseChip + n, window);
+            FillWindowEst(baseChip + n, window);
             for (int j = 0; j < fb; j++)
             {
                 past[j] = _known[n - 1 - j];
@@ -726,9 +866,18 @@ public sealed class Ms110dDemodulator
             _dfe.AddTrainingRow(window, past, _known[n]);
         }
 
+        // RLS forgetting policy — a DOCUMENTED DEVIATION from design §2.5 (issue #64):
+        // λ = 1 − ln10/U ties the exponential window to the frame (memory U/ln10 ≈ 0.43·U
+        // symbols, i.e. a 10× down-weight per data span), so the per-probe anchored batch
+        // solve, not the RLS recursion, owns cross-frame memory. §2.5 specified a fixed
+        // λ = 0.995 (≈200-symbol/83 ms memory, set by the 1 Hz coherence time); for U=48
+        // the frame-tied window is only ~21 symbols ≈ 8.7 ms — far shorter than the physics
+        // needs, noisier than it has to be. Which policy wins is a measurement question:
+        // the Phase B RLS-vs-NLMS A/B (phase-b-plan §B2.4) settles it; until then this is
+        // the measured-baseline value, kept so evidence stays comparable.
         _dfe.BeginRls((float)(1.0 - Math.Log(10.0) / _mode.U), pInit: 1.0f);
-        _dfe.SeedRlsFromTraining(_initRidge, pFallback: 1.0f);
-        _dfe.SolveTraining(regularization: _initRidge);
+        _dfe.SeedRlsFromTraining(_initRidge, pFallback: 1.0f, ffNoisePower: GenieNoisePower());
+        _dfe.SolveTraining(regularization: _initRidge, ffNoisePower: GenieNoisePower());
         _dfe.BeginTraining();
 
         // Seed the decision history with the probe tail and measure the training MSE.
@@ -743,7 +892,7 @@ public sealed class Ms110dDemodulator
         for (int i = 0; i < k; i++)
         {
             int n = ChipsSuperframe + i;
-            FillWindow(baseChip + n, window);
+            FillWindowEst(baseChip + n, window);
             for (int j = 0; j < fb; j++)
             {
                 past[j] = _known[n - 1 - j];
@@ -771,12 +920,27 @@ public sealed class Ms110dDemodulator
         }
     }
 
+    /// <summary>Estimation-side window fill (training rows, channel estimation): genie ring
+    /// when enabled, otherwise identical to <see cref="FillWindow"/>.</summary>
+    private void FillWindowEst(double symbolChip, Span<Cf> window)
+    {
+        double h = 2.0 * symbolChip;
+        for (int i = 0; i < window.Length; i++)
+        {
+            window[i] = ReadT2Est(h + _ffLead - i);
+        }
+    }
+
     private void ProcessFrame()
     {
         Ms110dMode mode = _mode!;
         Dfe dfe = _dfe!;
         Span<Cf> window = stackalloc Cf[dfe.FfTaps];
         Span<Cf> probePast = stackalloc Cf[dfe.FbTaps];
+        // Genie mode fills a second, estimation-side window per symbol: detection reads
+        // stay noisy, adaptation rows read the clean stream (see the genie field comment).
+        bool genie = _genieRing is not null;
+        Span<Cf> estWindow = stackalloc Cf[dfe.FfTaps];
 
         // Probe-directed batch-LS: known symbols accumulate into the Gram with
         // authoritative weight; the ridge-regularized solve (anchored to current taps)
@@ -790,7 +954,8 @@ public sealed class Ms110dDemodulator
         int statRows = 0;
         for (int i = dfe.FbTaps; i < mode.K; i++)
         {
-            FillWindow(probeChip + i, window);
+            // Estimation reads: the probe solve and its gain/MSE discriminators.
+            FillWindowEst(probeChip + i, window);
             for (int j = 0; j < dfe.FbTaps; j++)
             {
                 probePast[j] = probe[i - 1 - j];
@@ -803,8 +968,8 @@ public sealed class Ms110dDemodulator
             dfe.AddTrainingRow(window, probePast, probe[i], weight: 6f);
         }
 
-        dfe.SeedRlsFromTraining(_trackRidge, pFallback: 1.0f);
-        dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true);
+        dfe.SeedRlsFromTraining(_trackRidge, pFallback: 1.0f, ffNoisePower: GenieNoisePower());
+        dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true, ffNoisePower: GenieNoisePower());
         Cf[] endTaps = dfe.SnapshotTaps();
 
         // Residual-CFO trim from the mean tap rotation between consecutive probe solves.
@@ -891,10 +1056,17 @@ public sealed class Ms110dDemodulator
                 Cf clean = Slice(y, mode.Modulation);
                 DataSymbolEqualized?.Invoke(y);
                 PushMaxLogLlrs(y, Ms110dTables.Qam16, null, 4, 10.0f, scrambleNibble);
-                dfe.RlsUpdate(window, _decisions, clean, weight: rlsWeight);
+                Span<Cf> row = window;
+                if (genie)
+                {
+                    FillWindowEst(_frameChip + u, estWindow);
+                    row = estWindow;
+                }
+
+                dfe.RlsUpdate(row, _decisions, clean, weight: rlsWeight);
                 if ((y - clean).Cnorm() < ddGate)
                 {
-                    dfe.AddTrainingRow(window, _decisions, clean, weight: 0.25f);
+                    dfe.AddTrainingRow(row, _decisions, clean, weight: 0.25f);
                 }
 
                 PushDecision(clean);
@@ -922,10 +1094,17 @@ public sealed class Ms110dDemodulator
                 Cf descrambled = y * rotor.Conj();
                 Cf clean = Slice(descrambled, mode.Modulation);
                 pass1[u] = descrambled;
-                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: rlsWeight);
+                Span<Cf> row = window;
+                if (genie)
+                {
+                    FillWindowEst(_frameChip + u, estWindow);
+                    row = estWindow;
+                }
+
+                dfe.RlsUpdate(row, _decisions, clean * rotor, weight: rlsWeight);
                 if ((descrambled - clean).Cnorm() < ddGate)
                 {
-                    dfe.AddTrainingRow(window, _decisions, clean * rotor, weight: 0.25f);
+                    dfe.AddTrainingRow(row, _decisions, clean * rotor, weight: 0.25f);
                 }
 
                 PushDecision(clean * rotor);
@@ -942,7 +1121,14 @@ public sealed class Ms110dDemodulator
                 Cf descrambled = y * rotor.Conj();
                 Cf clean = Slice(descrambled, mode.Modulation);
                 pass2[u] = descrambled;
-                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: rlsWeight);
+                Span<Cf> row = window;
+                if (genie)
+                {
+                    FillWindowEst(_frameChip + u, estWindow);
+                    row = estWindow;
+                }
+
+                dfe.RlsUpdate(row, _decisions, clean * rotor, weight: rlsWeight);
                 PushDecision(clean * rotor);
             }
 
@@ -965,7 +1151,14 @@ public sealed class Ms110dDemodulator
                 Cf averaged = (pass1[u] + pass2[u] + descrambled) * (1f / 3f);
                 DataSymbolEqualized?.Invoke(averaged);
                 PushLlrs(averaged, mode.Modulation);
-                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: rlsWeight);
+                Span<Cf> row = window;
+                if (genie)
+                {
+                    FillWindowEst(_frameChip + u, estWindow);
+                    row = estWindow;
+                }
+
+                dfe.RlsUpdate(row, _decisions, clean * rotor, weight: rlsWeight);
                 PushDecision(clean * rotor);
             }
         }
@@ -983,10 +1176,17 @@ public sealed class Ms110dDemodulator
                 Cf clean = Slice(descrambled, mode.Modulation);
                 DataSymbolEqualized?.Invoke(descrambled);
                 PushLlrs(descrambled, mode.Modulation);
-                dfe.RlsUpdate(window, _decisions, clean * rotor, weight: rlsWeight);
+                Span<Cf> row = window;
+                if (genie)
+                {
+                    FillWindowEst(_frameChip + u, estWindow);
+                    row = estWindow;
+                }
+
+                dfe.RlsUpdate(row, _decisions, clean * rotor, weight: rlsWeight);
                 if ((descrambled - clean).Cnorm() < ddGate)
                 {
-                    dfe.AddTrainingRow(window, _decisions, clean * rotor, weight: 0.25f);
+                    dfe.AddTrainingRow(row, _decisions, clean * rotor, weight: 0.25f);
                 }
 
                 PushDecision(clean * rotor);
@@ -1005,13 +1205,10 @@ public sealed class Ms110dDemodulator
         TrackProbeTiming(probeChip, probe);
 
         double probeGain = probePhase.Abs() / mode.K;
-        if (DebugTrace)
-        {
-            Console.Error.WriteLine(
-                $"frame@{_frameChip}: gain={probeGain:F3} ref={_probeGainRef:F3} mse={mse / mode.K:F3} " +
-                $"tau={_tau:F3} omega={_omega:E2} bad={_badProbes} " +
-                $"tapChange={tapChange:F4} floor={_fadeFloor:F4} fading={_fading}");
-        }
+        FrameDiagnostics?.Invoke(
+            $"frame@{_frameChip}: gain={probeGain:F3} ref={_probeGainRef:F3} mse={mse / mode.K:F3} " +
+            $"tau={_tau:F3} omega={_omega:E2} bad={_badProbes} " +
+            $"tapChange={tapChange:F4} floor={_fadeFloor:F4} fading={_fading}");
 
         if (probeGain < Math.Max(0.10, 0.45 * _probeGainRef))
         {
@@ -1060,7 +1257,8 @@ public sealed class Ms110dDemodulator
             var c = Cf.Zero;
             for (int i = 0; i < probe.Length; i++)
             {
-                c += ReadT2((2.0 * (probeChip + i)) + offset) * probe[i].Conj();
+                // Estimation read: probe-peak timing is channel estimation (genie-eligible).
+                c += ReadT2Est((2.0 * (probeChip + i)) + offset) * probe[i].Conj();
             }
 
             magnitudes[d] = c.Abs();
@@ -1311,6 +1509,8 @@ public sealed class Ms110dDemodulator
             throw new InvalidOperationException("interleaver block LLR accounting error");
         }
 
+        FirstPassBlockLlrs?.Invoke(_blockIndex, _blockLlrs);
+
         var info = new byte[_il.InputBits];
         Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
 
@@ -1356,15 +1556,28 @@ public sealed class Ms110dDemodulator
                 }
             }
 
-            if (!converged && !aborted)
+            if (converged)
+            {
+                TurboConverged++;
+            }
+            else if (aborted)
+            {
+                TurboAborted++;
+            }
+            else
             {
                 // Five decode→re-equalize→decode rounds without a fixed point: the loop
                 // is oscillating, and a self-trained iterate with no fixed point is not
                 // evidence (issue #65). Keep the first-pass decode.
+                TurboReverted++;
                 Array.Copy(firstPass, info, info.Length);
             }
 
             _dfe.RestoreTraining();
+        }
+        else
+        {
+            TurboSkipped++;
         }
 
         _blockLlrCount = 0;
@@ -1399,6 +1612,16 @@ public sealed class Ms110dDemodulator
         return oldest > _written - RingSize;
     }
 
+    /// <summary>Measured additive-noise power per complex T/2 sample (genie mode only:
+    /// mean |noisy − clean|² between the rings; 0 when the genie is off, leaving every
+    /// solve bit-identical to the normal path).</summary>
+    private float GenieNoisePower()
+    {
+        return _genieRing is null || _genieNoiseCount == 0
+            ? 0f
+            : (float)(_genieNoiseSum / _genieNoiseCount);
+    }
+
     private bool IsFlatChannel()
     {
         // The fading detector spans block boundaries, so this classifies from the first
@@ -1431,6 +1654,8 @@ public sealed class Ms110dDemodulator
         int fb = dfe.FbTaps;
         Span<Cf> window = stackalloc Cf[dfe.FfTaps];
         Span<Cf> past = stackalloc Cf[fb];
+        bool genie = _genieRing is not null;
+        Span<Cf> estWindow = stackalloc Cf[dfe.FfTaps];
         _blockLlrCount = 0;
         int bit = 0;
 
@@ -1480,12 +1705,20 @@ public sealed class Ms110dDemodulator
                     return;
                 }
 
-                FillWindow(frameChip + u, window);
+                if (genie)
+                {
+                    FillWindowEst(frameChip + u, window); // training row: estimation read
+                }
+                else
+                {
+                    FillWindow(frameChip + u, window);
+                }
+
                 dfe.AddTrainingRow(window, past, expected[u], weight: 1.0f);
             }
 
             // Solve with _trackRidge for all modes.
-            dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true);
+            dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true, ffNoisePower: GenieNoisePower());
 
             // BPSK U>48 always takes the BCJR path (on flat channels h2≈0 degrades it
             // to a soft-output matched filter with better-calibrated LLRs than the DFE
@@ -1497,12 +1730,22 @@ public sealed class Ms110dDemodulator
                 for (int j = 0; j < fb; j++) past[j] = Cf.Zero;
                 var rxBlock = new Cf[mode.U];
                 var expectedBpsk = new Cf[mode.U];
+                // Genie: the h1/h2 channel estimates read the clean stream through the
+                // SAME re-solved taps; detection (the BCJR input and its noise floor)
+                // stays on the noisy block.
+                Cf[] estBlock = genie ? new Cf[mode.U] : rxBlock;
                 for (int u = 0; u < mode.U; u++)
                 {
                     FillWindow(frameChip + u, window);
                     Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
                     Cf y = dfe.Equalize(window, past);
                     rxBlock[u] = y * rotor.Conj();
+                    if (genie)
+                    {
+                        FillWindowEst(frameChip + u, estWindow);
+                        estBlock[u] = dfe.Equalize(estWindow, past) * rotor.Conj();
+                    }
+
                     expectedBpsk[u] = expected[u] * rotor.Conj();
                 }
 
@@ -1518,7 +1761,7 @@ public sealed class Ms110dDemodulator
                 int countW = 0;
                 for (int u = 0; u < mode.U; u++)
                 {
-                    sumZ += rxBlock[u] * expectedBpsk[u].Conj();
+                    sumZ += estBlock[u] * expectedBpsk[u].Conj();
                 }
 
                 Cf h1Avg = sumZ * (1f / mode.U);
@@ -1530,7 +1773,7 @@ public sealed class Ms110dDemodulator
                     Cf acc = Cf.Zero;
                     for (int u = lag; u < mode.U; u++)
                     {
-                        acc += (rxBlock[u] - (h1Avg * expectedBpsk[u])) * expectedBpsk[u - lag].Conj();
+                        acc += (estBlock[u] - (h1Avg * expectedBpsk[u])) * expectedBpsk[u - lag].Conj();
                     }
 
                     Cf h2 = acc * (1f / (mode.U - lag));
@@ -1578,7 +1821,7 @@ public sealed class Ms110dDemodulator
                     {
                         float soft = (float)Math.Tanh(bcjrLlrs[u] * 0.5);
                         float softD = (float)Math.Tanh(bcjrLlrs[u - delay] * 0.5);
-                        Cf z = rxBlock[u] * soft;
+                        Cf z = estBlock[u] * soft; // soft decisions stay noisy-derived; the channel read is est-side
                         sumZ += z;
                         sumZw += z * (softD * soft);
                         countW++;

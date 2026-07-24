@@ -8,6 +8,11 @@
 #   ./scripts/run-masks.sh "awgn poor"   # both sweeps in one invocation
 #   ./scripts/run-masks.sh awgn 500000   # AWGN smoke (500k bits — logs labelled SMOKE)
 #   ./scripts/run-masks.sh all           # AWGN + Poor + Static + Doppler
+#   ./scripts/run-masks.sh offrig 500000 # off-rig direction checks (never in "all" — deliberate runs)
+#
+# Environment passthrough: MS110D_MASK_WORKERS, MS110D_MASK_SEED_OFFSET and
+# MS110D_MASK_GENIE=1 (perfect-channel-observation bound; evidence lines get [GENIE])
+# propagate to every point process.
 #
 # Each process runs ONLY its own point (method-level filter + MS110D_MASK_WN), and writes
 # its [mask] evidence line via the MS110D_MASK_LOG ledger hook (MTP does not relay test
@@ -75,6 +80,19 @@ for suite in $SUITES; do
                 PIDS="$PIDS $!"
             done
             ;;
+        offrig)
+            for wn in $WNS; do
+                log="$RESULTS_DIR/offrig-wn${wn}.log"
+                echo "[START] OffRig WN$wn → $log"
+                env MS110D_MASKS_OFFRIG=1 MS110D_MASK_WN=$wn $BITS_ENV \
+                    MS110D_MASK_WORKERS=$WORKERS \
+                    MS110D_MASK_LOG="$RESULTS_DIR/offrig-wn${wn}.mask" \
+                    dotnet test --no-build -- \
+                    --filter-method "*.OffRig_Direction_Check" \
+                    > "$log" 2>&1 &
+                PIDS="$PIDS $!"
+            done
+            ;;
         static)
             log="$RESULTS_DIR/static.log"
             echo "[START] Static WID2 → $log"
@@ -126,6 +144,7 @@ for log in "$RESULTS_DIR"/*.log; do
     case "$name" in
         awgn-wn*) want="[mask] AWGN WN${wn} " ;;
         poor-wn*) want="[mask] POOR WN${wn} " ;;
+        offrig-wn*) want="] WN${wn} @" ;;
         static)   want="[mask] Static WID2" ;;
         doppler)  want="[mask] Doppler offset" ;;
         *)        want="[mask]" ;;

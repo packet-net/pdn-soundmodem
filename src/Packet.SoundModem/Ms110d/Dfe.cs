@@ -31,9 +31,11 @@ public sealed class Dfe
     private Cf[,]? _gram;
     private Cf[]? _rhs;
     private int _trainingRows;
+    private float _trainingWeightSum;
     private Cf[,]? _savedGram;
     private Cf[]? _savedRhs;
     private int _savedTrainingRows;
+    private float _savedTrainingWeightSum;
 
     /// <summary>Creates a DFE with the given tap counts.</summary>
     public Dfe(int ffTaps, int fbTaps)
@@ -149,6 +151,7 @@ public sealed class Dfe
         _gram = _gramStore;
         _rhs = _rhsStore;
         _trainingRows = 0;
+        _trainingWeightSum = 0;
     }
 
     /// <summary>Saves the in-progress training accumulation (Gram/RHS/row count) so a
@@ -162,6 +165,7 @@ public sealed class Dfe
         Array.Copy(_gramStore, _savedGram, _gramStore.Length);
         Array.Copy(_rhsStore, _savedRhs, _rhsStore.Length);
         _savedTrainingRows = _trainingRows;
+        _savedTrainingWeightSum = _trainingWeightSum;
     }
 
     /// <summary>Restores the accumulation saved by <see cref="SnapshotTraining"/>.</summary>
@@ -177,6 +181,7 @@ public sealed class Dfe
         _gram = _gramStore;
         _rhs = _rhsStore;
         _trainingRows = _savedTrainingRows;
+        _trainingWeightSum = _savedTrainingWeightSum;
     }
 
     /// <summary>Adds one training row: the FF window and known past symbols observed when
@@ -215,6 +220,7 @@ public sealed class Dfe
         }
 
         _trainingRows++;
+        _trainingWeightSum += weight;
     }
 
     /// <summary>Solves the accumulated regularized normal equations and installs the taps.
@@ -222,8 +228,11 @@ public sealed class Dfe
     /// With <paramref name="anchorToCurrentTaps"/> the ridge pulls toward the CURRENT taps
     /// instead of zero — the per-probe tracking update on fading channels (a Kalman-style
     /// prior: K fresh rows dominate the directions the probe observed, the anchor carries
-    /// everything else).</summary>
-    public bool SolveTraining(float regularization = 1e-3f, bool anchorToCurrentTaps = false)
+    /// everything else). <paramref name="ffNoisePower"/> (channel-truth genie only) adds
+    /// σ²·Σweight to the feed-forward Gram diagonal — the term noisy rows contribute
+    /// implicitly — so a solve over noise-free rows still yields the MMSE equalizer rather
+    /// than the zero-forcing one (feedback regressors are decisions, noise-free either way).</summary>
+    public bool SolveTraining(float regularization = 1e-3f, bool anchorToCurrentTaps = false, float ffNoisePower = 0f)
     {
         if (_gram is null || _rhs is null ||
             (!anchorToCurrentTaps && _trainingRows < _ff.Length + _fb.Length) ||
@@ -235,6 +244,15 @@ public sealed class Dfe
         }
 
         int n = _ff.Length + _fb.Length;
+        if (ffNoisePower > 0)
+        {
+            float noiseDiag = ffNoisePower * _trainingWeightSum;
+            for (int i = 0; i < _ff.Length; i++)
+            {
+                _gram[i, i] += new Cf(noiseDiag, 0);
+            }
+        }
+
         double trace = 0;
         for (int i = 0; i < n; i++)
         {
@@ -361,8 +379,9 @@ public sealed class Dfe
 
     /// <summary>Seeds P from the inverse of the accumulated training Gram (MMSE-calibrated
     /// initialization — design §2.5: "RLS subsumes the MMSE-init"). Falls back to scaled
-    /// identity if the Gram is degenerate.</summary>
-    public void SeedRlsFromTraining(float regularization, float pFallback = 1.0f)
+    /// identity if the Gram is degenerate. <paramref name="ffNoisePower"/> as in
+    /// <see cref="SolveTraining"/> (channel-truth genie only).</summary>
+    public void SeedRlsFromTraining(float regularization, float pFallback = 1.0f, float ffNoisePower = 0f)
     {
         if (_gram is null || _p is null)
         {
@@ -370,15 +389,24 @@ public sealed class Dfe
         }
 
         int n = _ff.Length + _fb.Length;
+        Cf[,] gram = _seedGram;
+        Array.Copy(_gram, gram, _gram.Length);
+        if (ffNoisePower > 0)
+        {
+            float noiseDiag = ffNoisePower * _trainingWeightSum;
+            for (int i = 0; i < _ff.Length; i++)
+            {
+                gram[i, i] += new Cf(noiseDiag, 0);
+            }
+        }
+
         double trace = 0;
         for (int i = 0; i < n; i++)
         {
-            trace += _gram[i, i].Re;
+            trace += gram[i, i].Re;
         }
 
         float ridge = (float)(regularization * trace / n) + 1e-9f;
-        Cf[,] gram = _seedGram;
-        Array.Copy(_gram, gram, _gram.Length);
         for (int i = 0; i < n; i++)
         {
             gram[i, i] += new Cf(ridge, 0);
@@ -422,8 +450,10 @@ public sealed class Dfe
     }
 
     /// <summary>One recursive-least-squares update toward <paramref name="desired"/>;
-    /// returns the pre-update equalizer output. <paramref name="weight"/> scales the tap
-    /// update (probe rows authoritative, DD rows advisory).</summary>
+    /// returns the pre-update equalizer output. <paramref name="weight"/> is the row's
+    /// least-squares influence (probe rows authoritative, DD rows advisory) and enters the
+    /// recursion consistently — gain denominator AND P update — as weighted RLS requires;
+    /// see the derivation comment in the body.</summary>
     public Cf RlsUpdate(ReadOnlySpan<Cf> window, ReadOnlySpan<Cf> past, Cf desired, float weight = 1f)
     {
         Cf y = Equalize(window, past);
@@ -456,21 +486,30 @@ public sealed class Dfe
             _pxScratch[i] = acc;
         }
 
-        // denom = λ + u^T · px (real-positive for Hermitian P)
-        var denom = new Cf(_lambda, 0);
+        // Weighted RLS. A row of weight w enters the exponentially-forgotten LS cost as
+        // w·|d − uᵀθ|², i.e. an effective regressor √w·u — so w must scale BOTH the gain
+        // denominator and the P (inverse-correlation) update:
+        //   denom = λ + w·uᵀPu*,  θ += w·e·Pu*/denom,  P ← λ⁻¹(P − w·(Pu*)(Pu*)ᴴ/denom).
+        // The previous code scaled only the tap step and always applied the FULL P update,
+        // so every advisory (w = 0.1) row shrank P as if a full-confidence row had arrived
+        // and long static/AWGN spans progressively froze adaptation (issue #64). A
+        // consequence of the correct form: uniform weights cancel — all-0.1 rows adapt
+        // exactly like all-1.0 rows once the P0 prior washes out, as scale invariance of
+        // least squares demands. w = 1 reduces bit-identically to textbook RLS.
+        var uPx = Cf.Zero;
         for (int j = 0; j < n; j++)
         {
-            denom += u[j] * _pxScratch[j];
+            uPx += u[j] * _pxScratch[j]; // uᵀPu*: real-positive for Hermitian P
         }
 
-        if (denom.Re <= 1e-12f)
+        float denom = _lambda + (weight * uPx.Re);
+        if (denom <= 1e-12f)
         {
             return y;
         }
 
-        float invDenom = 1f / denom.Re;
+        float invDenom = 1f / denom;
 
-        // Tap update: w += weight · e · k, where k = px / denom
         Cf error = desired - y;
         Cf scaledError = error * (weight * invDenom);
         for (int i = 0; i < _ff.Length; i++)
@@ -483,12 +522,11 @@ public sealed class Dfe
             _fb[j] += _pxScratch[_ff.Length + j] * scaledError;
         }
 
-        // P update: P = λ⁻¹(P − k · pxᴴ), standard RLS (independent of weight — P
-        // tracks the input correlation structure, not confidence in the desired signal).
         float invLambda = 1f / _lambda;
+        float kScale = weight * invDenom;
         for (int i = 0; i < n; i++)
         {
-            Cf ki = _pxScratch[i] * invDenom;
+            Cf ki = _pxScratch[i] * kScale;
             for (int j = 0; j < n; j++)
             {
                 _p[i, j] = (_p[i, j] - (ki * _pxScratch[j].Conj())) * invLambda;
