@@ -62,4 +62,12 @@ public sealed record Ms110dDemodOptions
     /// <summary>Normalized matched-filter threshold for preamble detection (house number,
     /// characterized by the acquisition tests).</summary>
     public double SyncThreshold { get; init; } = 0.32;
+
+    /// <summary>RLS forgetting factor λ override. Null (the default) keeps the measured
+    /// frame-tied policy λ = 1 − ln10/U — a DOCUMENTED DEVIATION from design §2.5's fixed
+    /// 0.995 (see the comment at the BeginRls call, issue #64). The §2.5 value ties RLS
+    /// memory to the 1 Hz coherence time instead of the frame; the Phase B RLS-vs-NLMS
+    /// A/B (phase-b-plan §B2.4) measures both through this knob and the report decides
+    /// which becomes the default.</summary>
+    public float? RlsForgettingFactor { get; init; }
 }

@@ -386,7 +386,13 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             }
 
             var decoded = new List<byte>(payload.Length + 64);
-            var demod = new Ms110dDemodulator();
+            // §B2.4 RLS λ A/B knob: MS110D_MASK_RLS_LAMBDA=0.995 runs the design-§2.5
+            // coherence-set memory instead of the frame-tied default. Evidence lines from
+            // such runs are for the RLS-vs-NLMS report, never the gate table.
+            float? rlsLambda = float.TryParse(
+                Environment.GetEnvironmentVariable("MS110D_MASK_RLS_LAMBDA"), out float lam)
+                ? lam : null;
+            var demod = new Ms110dDemodulator(new Ms110dDemodOptions { RlsForgettingFactor = rlsLambda });
             demod.BlockDecoded += b => decoded.AddRange(b.Bits);
             demod.FirstPassBlockLlrs += (blockIndex, llrs) =>
             {
@@ -547,6 +553,12 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         if (GenieMode())
         {
             line += " [GENIE — perfect-channel-observation bound; never performance evidence]";
+        }
+
+        string? lambda = Environment.GetEnvironmentVariable("MS110D_MASK_RLS_LAMBDA");
+        if (lambda is not null)
+        {
+            line += $" [RLS λ={lambda} — §B2.4 A/B run; report evidence only, never the gate table]";
         }
 
         output.WriteLine(line);

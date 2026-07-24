@@ -884,7 +884,8 @@ public sealed class Ms110dDemodulator
         // needs, noisier than it has to be. Which policy wins is a measurement question:
         // the Phase B RLS-vs-NLMS A/B (phase-b-plan §B2.4) settles it; until then this is
         // the measured-baseline value, kept so evidence stays comparable.
-        _dfe.BeginRls((float)(1.0 - Math.Log(10.0) / _mode.U), pInit: 1.0f);
+        _dfe.BeginRls(
+            _options.RlsForgettingFactor ?? (float)(1.0 - Math.Log(10.0) / _mode.U), pInit: 1.0f);
         _dfe.SeedRlsFromTraining(_initRidge, pFallback: 1.0f, ffNoisePower: GenieNoisePower());
         _dfe.SolveTraining(regularization: _initRidge, ffNoisePower: GenieNoisePower());
         _dfe.BeginTraining();
@@ -985,16 +986,22 @@ public sealed class Ms110dDemodulator
 
         // Collapse detection (phase-b-plan §B2.1c; WN7 autopsy: once decision-directed
         // tracking collapses it PERSISTS, because the next probe solve is anchored to the
-        // collapsed taps). Two physics-set discriminators, two consecutive probes:
+        // collapsed taps). Three physics-set discriminators, two consecutive probes:
         //  - pre-solve probe MSE ≥ 1.0: with |p| = 1, E|y−p|² = E|y|² + 1 − 2·Re E[y·p̄],
         //    so an MSE below 1 requires genuine correlation with the probe — at ≥ 1 the
         //    equalizer output carries none (outputting zero would score the same).
+        //  - AND ≥ 3× the burst's own healthy MSE floor: at low SNR the noise floor alone
+        //    exceeds 1 (WN1 AWGN at −3 dB runs ~2 when perfectly locked — the absolute
+        //    test misfired there, latched fading, and cost the AWGN gate), so collapse
+        //    must also stand far outside the burst's own locked level. 3× is beyond the
+        //    ±25 % fluctuation of a mean-of-K MSE estimate.
         //  - probe-window energy ≥ ¼ of its healthy reference (−6 dB, the deep-fade
         //    threshold): signal is PRESENT, so this is a collapse, not a fade. During a
         //    fade, coasting on the anchor is right and a fresh solve would fit noise.
         double preMse = mse / statRows;
         double probeEnergyMean = probeEnergy / statRows;
-        bool collapsed = preMse >= 1.0 && probeEnergyMean >= 0.25 * _probeEnergyRef;
+        bool collapsed = preMse >= Math.Max(1.0, 3.0 * _probeMse) &&
+            probeEnergyMean >= 0.25 * _probeEnergyRef;
         _collapsedProbes = collapsed ? _collapsedProbes + 1 : 0;
         bool freshSolve = _collapsedProbes >= 2;
         if (freshSolve)
@@ -1365,7 +1372,13 @@ public sealed class Ms110dDemodulator
             PushDecision(probe[i]);
         }
 
-        _probeMse = (0.7 * _probeMse) + (0.3 * (mse / statRows));
+        // The MSE reference freezes on collapsed frames: mixing the collapsed level into
+        // the EWMA would inflate the 3× collapse threshold within ~5 frames and blind the
+        // detector against exactly the sustained collapse it exists to catch.
+        if (!collapsed)
+        {
+            _probeMse = (0.7 * _probeMse) + (0.3 * preMse);
+        }
 
         TrackProbeTiming(probeChip, probe);
 
