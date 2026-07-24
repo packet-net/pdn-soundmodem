@@ -10,3 +10,4 @@ artifacts/
 appsettings.Local.json
 artifacts/
 corpus/
+.claude/

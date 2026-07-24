@@ -1,0 +1,3 @@
+# Phase A closeout evidence run — 2026-07-23/24
+
+The §5.3 dated-run ledger for every gate claim in [phase-a-closeout.md](../../phase-a-closeout.md). One `.mask` file per point, written by the test's `MS110D_MASK_LOG` hook (timestamps UTC). `*-seedoff.mask` are the disjoint-seed (seed+10000) cross-checks; `poor-wn0-crash-regression.mask` is the deterministic seed-500 serial stream that crashed the receiver before `ae3998c` and completes after it. Code under test: branch `ms110d-phase-a-closeout` at the commits recorded in the closeout doc; the corrupt-WID fix (`ae3998c`) landed mid-run and invalidates none of the completed points (it only changes the path that previously threw).

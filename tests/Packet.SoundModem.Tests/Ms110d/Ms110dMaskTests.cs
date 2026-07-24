@@ -9,10 +9,13 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// the AWGN gates, <c>MS110D_MASKS_POOR=1</c> for the measured-not-gated Poor channel),
 /// because a full point runs minutes of simulated signal and the suite hours; per §5.3 these
 /// are nightly/rotating runs, not per-PR CI. Conditions per D.6.1: coded BER ≤ 1.0E-5, Long
-/// interleaver, 20-super-frame preamble; SNR in 3 kHz noise bandwidth. Budget per point:
-/// ≥ 3×10⁶ payload bits AND (≥ 30 errors observed, or a 95 % Poisson upper confidence bound
-/// below 1e-5). The Poor-channel at-mask gate is deferred until the RLS equalizer lands
-/// (design §6, Q1). Override the bit budget with <c>MS110D_MASK_BITS</c> for smoke runs.
+/// interleaver, 20-super-frame preamble; SNR in 3 kHz noise bandwidth. Accept rule per point
+/// (the implemented form of design §5.3, restated 2026-07-23): a fixed sample of ≥ 3×10⁶
+/// payload bits (fading gate points additionally ≥ 600 s simulated per D-LXV duration logic);
+/// with ≥ 30 errors the direct BER must be ≤ 1e-5, else the 97.5 % Poisson upper bound must
+/// clear 1e-5. Poor-channel points are measured-not-gated in Phase A (design §6, Q1) —
+/// <c>MS110D_POOR_GATED=1</c> arms the Phase B at-mask hard gate. Override the bit budget with
+/// <c>MS110D_MASK_BITS</c> for smoke runs (reports are then labelled SMOKE, not gate evidence).
 /// </summary>
 public class Ms110dMaskTests(ITestOutputHelper output)
 {
@@ -47,8 +50,8 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         Assert.SkipWhen(wnFilter is not null && wnFilter != wn.ToString(),
             $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
 
-        MaskRun run = RunPoint(wn, snrDb, [], TargetBits(), seed: 100 + wn);
-        Report($"AWGN WN{wn} @ {snrDb:+0;-0;0} dB", run);
+        MaskRun run = RunPoint(wn, snrDb, [], TargetBits(), seed: 100 + wn + SeedOffset());
+        Report($"AWGN WN{wn} @ {snrDb:+0;-0;0} dB{SeedTag()}", run);
         AssertMask(run);
     }
 
@@ -76,7 +79,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         WattersonPath[] paths = [new(0), new(3.0), new(9.0)];
         double snrDb = double.TryParse(
             Environment.GetEnvironmentVariable("MS110D_STATIC_SNR"), out double s) ? s : 9;
-        MaskRun run = RunPoint(2, snrDb, paths, TargetBits(), seed: 900);
+        MaskRun run = RunPoint(2, snrDb, paths, TargetBits(), seed: 900 + SeedOffset());
         Report($"Static WID2 (0/3/9 ms) @ {snrDb:+0;-0;0} dB (restated house bar)", run);
         AssertMask(run);
     }
@@ -108,9 +111,20 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         Assert.SkipWhen(wnFilter is not null && wnFilter != wn.ToString(),
             $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
 
-        MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, TargetBits(), seed: 500 + wn);
-        Report($"POOR WN{wn} @ {snrDb:+0;-0;0} dB", run);
-        AssertMask(run);
+        MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, TargetBits(), seed: 500 + wn + SeedOffset(),
+            minSimSeconds: 600);
+        Report($"POOR WN{wn} @ {snrDb:+0;-0;0} dB{SeedTag()}", run);
+
+        // Phase A: measured, not gated (design §6, Q1) — the number is banked via Report /
+        // MS110D_MASK_LOG. MS110D_POOR_GATED=1 arms the Phase B at-mask hard gate.
+        if (Environment.GetEnvironmentVariable("MS110D_POOR_GATED") == "1")
+        {
+            AssertMask(run);
+        }
+        else
+        {
+            run.Bits.Should().BeGreaterThan(0);
+        }
     }
 
     [Theory]
@@ -126,7 +140,10 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             Environment.GetEnvironmentVariable("MS110D_MASK_BITS"), out long b) ? b : 100_000;
         MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, bits, seed: 500 + wn);
         Report($"POOR (smoke) WN{wn} @ {snrDb:+0;-0;0} dB", run);
-        AssertMask(run);
+        // Smoke = quick indicative number, not a gate: the default 100k bits cannot clear
+        // the 97.5 % Poisson bound even at zero errors (3.7/1e5 > 1e-5), so AssertMask here
+        // would be unpassable by construction. Report + acquisition sanity only.
+        run.AcquisitionFailures.Should().Be(0);
     }
 
     [Theory]
@@ -150,10 +167,34 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         run.Ber.Should().BeLessThanOrEqualTo(1e-5);
     }
 
+    // Disjoint-seed verification (issue #67): the equalizer thresholds were iterated
+    // against the default seeds, so gate claims can be cross-checked on a disjoint
+    // realization set with MS110D_MASK_SEED_OFFSET (reports carry the offset).
+    private static int SeedOffset()
+    {
+        return int.TryParse(
+            Environment.GetEnvironmentVariable("MS110D_MASK_SEED_OFFSET"), out int o) ? o : 0;
+    }
+
     private static long TargetBits()
     {
         string? overrideBits = Environment.GetEnvironmentVariable("MS110D_MASK_BITS");
         return overrideBits is null ? 3_000_000 : long.Parse(overrideBits);
+    }
+
+    // Intra-point parallelism: bursts are statistically independent (fresh demodulator,
+    // fresh per-burst channel/noise realization), so a point's bit budget can split
+    // across MS110D_MASK_WORKERS workers on disjoint seed subspaces (+1e6 per worker —
+    // far beyond the per-burst stride of 1000) and the counts summed; the fading
+    // sim-time floor divides likewise (the statistical intent is ~600 independent fades
+    // TOTAL, which N disjoint realizations of 600/N s each provide). Point wall-clock
+    // scales ~1/N — this is what keeps the low-rate points (WN0/1/2: 10–40 ks of
+    // simulated audio per 3M bits) from dominating a sweep on an otherwise idle box.
+    private static int Workers()
+    {
+        return int.TryParse(
+            Environment.GetEnvironmentVariable("MS110D_MASK_WORKERS"), out int w)
+            ? Math.Max(1, w) : 1;
     }
 
     private MaskRun RunPoint(
@@ -164,6 +205,47 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         int seed,
         double minSimSeconds = 0,
         double frequencyOffsetHz = 0)
+    {
+        int workers = Workers();
+        if (workers <= 1)
+        {
+            return RunPointWorker(wn, snrDb, paths, targetBits, seed, minSimSeconds, frequencyOffsetHz, 0);
+        }
+
+        long bitsPerWorker = (targetBits + workers - 1) / workers;
+        double simPerWorker = minSimSeconds / workers;
+        var runs = new MaskRun[workers];
+        Parallel.For(0, workers, w =>
+        {
+            runs[w] = RunPointWorker(
+                wn, snrDb, paths, bitsPerWorker, seed + (w * 1_000_000),
+                simPerWorker, frequencyOffsetHz, w);
+        });
+
+        long bits = 0, errors = 0;
+        int bursts = 0, acquisitionFailures = 0;
+        double simSeconds = 0;
+        foreach (MaskRun r in runs)
+        {
+            bits += r.Bits;
+            errors += r.Errors;
+            bursts += r.Bursts;
+            acquisitionFailures += r.AcquisitionFailures;
+            simSeconds += r.SimSeconds;
+        }
+
+        return new MaskRun(bits, errors, bursts, acquisitionFailures, simSeconds);
+    }
+
+    private MaskRun RunPointWorker(
+        int wn,
+        double snrDb,
+        WattersonPath[] paths,
+        long targetBits,
+        int seed,
+        double minSimSeconds,
+        double frequencyOffsetHz,
+        int worker)
     {
         var settings = new Ms110dTxSettings
         {
@@ -233,7 +315,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             if (bursts % 10 == 0)
             {
                 string progress =
-                    $"  … {bursts} bursts, {bits:N0} bits, {errors} errors, {simSeconds:F0} s simulated";
+                    $"  … [w{worker}] {bursts} bursts, {bits:N0} bits, {errors} errors, {simSeconds:F0} s simulated";
                 output.WriteLine(progress);
                 Console.Error.WriteLine(progress);
             }
@@ -242,15 +324,27 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         return new MaskRun(bits, errors, bursts, acquisitionFailures, simSeconds);
     }
 
+    private static string SeedTag()
+    {
+        int o = SeedOffset();
+        return o == 0 ? "" : $" (seed+{o})";
+    }
+
     private void Report(string label, MaskRun run)
     {
         double upper = PoissonUpper975(run.Errors) / run.Bits;
         string verdict = run.Errors >= 30
             ? $"BER {run.Ber:E2} (direct, ≥30 errors)"
             : $"BER {run.Ber:E2}, 97.5 % upper bound {upper:E2}";
+        string workersTag = Workers() > 1 ? $", {Workers()} workers" : "";
         string line =
             $"[mask] {label}: {run.Bits:N0} bits, {run.Errors} errors, {run.Bursts} bursts " +
-            $"({run.AcquisitionFailures} acquisition failures), {run.SimSeconds:F0} s simulated — {verdict}";
+            $"({run.AcquisitionFailures} acquisition failures), {run.SimSeconds:F0} s simulated{workersTag} — {verdict}";
+        if (run.Bits < 3_000_000)
+        {
+            line += " [SMOKE — below the §5.3 budget; not gate evidence]";
+        }
+
         output.WriteLine(line);
 
         string? log = Environment.GetEnvironmentVariable("MS110D_MASK_LOG");

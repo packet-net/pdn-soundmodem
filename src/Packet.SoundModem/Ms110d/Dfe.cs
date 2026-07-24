@@ -21,9 +21,19 @@ public sealed class Dfe
 {
     private readonly Cf[] _ff;
     private readonly Cf[] _fb;
+    private readonly Cf[,] _gramStore;
+    private readonly Cf[] _rhsStore;
+    private readonly Cf[,] _cholL;
+    private readonly Cf[] _cholY;
+    private readonly Cf[] _solution;
+    private readonly Cf[,] _seedGram;
+    private readonly Cf[] _seedColumn;
     private Cf[,]? _gram;
     private Cf[]? _rhs;
     private int _trainingRows;
+    private Cf[,]? _savedGram;
+    private Cf[]? _savedRhs;
+    private int _savedTrainingRows;
 
     /// <summary>Creates a DFE with the given tap counts.</summary>
     public Dfe(int ffTaps, int fbTaps)
@@ -32,6 +42,14 @@ public sealed class Dfe
         ArgumentOutOfRangeException.ThrowIfNegative(fbTaps);
         _ff = new Cf[ffTaps];
         _fb = new Cf[fbTaps];
+        int n = ffTaps + fbTaps;
+        _gramStore = new Cf[n, n];
+        _rhsStore = new Cf[n];
+        _cholL = new Cf[n, n];
+        _cholY = new Cf[n];
+        _solution = new Cf[n];
+        _seedGram = new Cf[n, n];
+        _seedColumn = new Cf[n];
     }
 
     /// <summary>Feed-forward (T/2) tap count.</summary>
@@ -126,10 +144,39 @@ public sealed class Dfe
     /// accumulation).</summary>
     public void BeginTraining()
     {
-        int n = _ff.Length + _fb.Length;
-        _gram = new Cf[n, n];
-        _rhs = new Cf[n];
+        Array.Clear(_gramStore);
+        Array.Clear(_rhsStore);
+        _gram = _gramStore;
+        _rhs = _rhsStore;
         _trainingRows = 0;
+    }
+
+    /// <summary>Saves the in-progress training accumulation (Gram/RHS/row count) so a
+    /// nested re-training pass (turbo re-equalization) can run without destroying the
+    /// rows accumulated for the NEXT probe solve. Restore with
+    /// <see cref="RestoreTraining"/>.</summary>
+    public void SnapshotTraining()
+    {
+        _savedGram ??= new Cf[_gramStore.GetLength(0), _gramStore.GetLength(1)];
+        _savedRhs ??= new Cf[_rhsStore.Length];
+        Array.Copy(_gramStore, _savedGram, _gramStore.Length);
+        Array.Copy(_rhsStore, _savedRhs, _rhsStore.Length);
+        _savedTrainingRows = _trainingRows;
+    }
+
+    /// <summary>Restores the accumulation saved by <see cref="SnapshotTraining"/>.</summary>
+    public void RestoreTraining()
+    {
+        if (_savedGram is null || _savedRhs is null)
+        {
+            throw new InvalidOperationException("RestoreTraining without SnapshotTraining");
+        }
+
+        Array.Copy(_savedGram, _gramStore, _gramStore.Length);
+        Array.Copy(_savedRhs, _rhsStore, _rhsStore.Length);
+        _gram = _gramStore;
+        _rhs = _rhsStore;
+        _trainingRows = _savedTrainingRows;
     }
 
     /// <summary>Adds one training row: the FF window and known past symbols observed when
@@ -210,26 +257,28 @@ public sealed class Dfe
             }
         }
 
-        var solution = new Cf[n];
-        if (!CholeskySolve(_gram, _rhs, solution))
+        if (!CholeskyFactor(_gram))
         {
             _gram = null;
             _rhs = null;
             return false;
         }
 
-        Array.Copy(solution, 0, _ff, 0, _ff.Length);
-        Array.Copy(solution, _ff.Length, _fb, 0, _fb.Length);
+        CholeskySubstitute(_rhs, _solution);
+        Array.Copy(_solution, 0, _ff, 0, _ff.Length);
+        Array.Copy(_solution, _ff.Length, _fb, 0, _fb.Length);
         _gram = null;
         _rhs = null;
         return true;
     }
 
-    /// <summary>Hermitian positive-definite solve via complex Cholesky (in place on copies).</summary>
-    private static bool CholeskySolve(Cf[,] a, Cf[] b, Cf[] x)
+    /// <summary>Cholesky-factorizes the Hermitian positive-definite matrix into the
+    /// preallocated lower-triangle scratch; returns false if not positive-definite.
+    /// Every scratch entry is written before it is read, so no clearing between calls.</summary>
+    private bool CholeskyFactor(Cf[,] a)
     {
-        int n = b.Length;
-        var l = new Cf[n, n];
+        int n = _cholY.Length;
+        Cf[,] l = _cholL;
         for (int i = 0; i < n; i++)
         {
             for (int j = 0; j <= i; j++)
@@ -257,8 +306,16 @@ public sealed class Dfe
             }
         }
 
-        // Forward substitution L y = b, then backward Lᴴ x = y.
-        var y = new Cf[n];
+        return true;
+    }
+
+    /// <summary>Solves L·Lᴴ·x = b against the factor left by <see cref="CholeskyFactor"/>:
+    /// forward substitution L y = b, then backward Lᴴ x = y.</summary>
+    private void CholeskySubstitute(Cf[] b, Cf[] x)
+    {
+        int n = b.Length;
+        Cf[,] l = _cholL;
+        Cf[] y = _cholY;
         for (int i = 0; i < n; i++)
         {
             Cf sum = b[i];
@@ -280,8 +337,6 @@ public sealed class Dfe
 
             x[i] = sum * (1f / l[i, i].Re);
         }
-
-        return true;
     }
 
     // ------------------------------------------------------------------ RLS tracking (Phase B)
@@ -289,7 +344,6 @@ public sealed class Dfe
     private Cf[,]? _p;
     private float _lambda;
     private readonly Cf[] _pxScratch = new Cf[64];
-    private readonly Cf[] _utpScratch = new Cf[64];
 
     /// <summary>Initializes the RLS inverse-correlation matrix P as a scaled identity.
     /// Called after the acquisition batch-LS solve seeds the taps.</summary>
@@ -323,7 +377,7 @@ public sealed class Dfe
         }
 
         float ridge = (float)(regularization * trace / n) + 1e-9f;
-        var gram = new Cf[n, n];
+        Cf[,] gram = _seedGram;
         Array.Copy(_gram, gram, _gram.Length);
         for (int i = 0; i < n; i++)
         {
@@ -334,20 +388,24 @@ public sealed class Dfe
             }
         }
 
-        // Invert by solving against each identity column.
-        bool ok = true;
-        for (int col = 0; col < n && ok; col++)
+        // Invert by solving each identity column against a single factorization — the
+        // factor depends only on the matrix, so reusing it across columns is bit-identical
+        // to refactorizing per column.
+        bool ok = CholeskyFactor(gram);
+        if (ok)
         {
-            var e = new Cf[n];
-            e[col] = new Cf(1, 0);
-            var x = new Cf[n];
-            ok = CholeskySolve(gram, e, x);
-            if (ok)
+            Cf[] e = _seedColumn;
+            Array.Clear(e);
+            for (int col = 0; col < n; col++)
             {
+                e[col] = new Cf(1, 0);
+                CholeskySubstitute(e, _solution);
                 for (int row = 0; row < n; row++)
                 {
-                    _p[row, col] = x[row];
+                    _p[row, col] = _solution[row];
                 }
+
+                e[col] = Cf.Zero;
             }
         }
 

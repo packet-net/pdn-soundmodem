@@ -74,6 +74,43 @@ public class Ms110dLoopbackTests
     [InlineData(7, Ms110dInterleaverKind.Long, 9)]
     [InlineData(8, Ms110dInterleaverKind.Medium, 7)]
     [InlineData(8, Ms110dInterleaverKind.Short, 9)]
+    // Issue #67 matrix fill-in (restated §5.1): with the defaults covered by
+    // Every_Waveform_Loops_Back_Bit_Exact and the rows above, the rows below take every
+    // distinct (interleaver size, increment) cell of Tables D-XXXVII/D-LI to a decode,
+    // WN3/WN4/WN13 at every non-default interleaver, and every WN but 1 at K=9 with its
+    // default interleaver. Eight combos are left out purely for runtime, each adding only
+    // a code-rate or constraint-length pairing to a covered cell: (1,US,7)/(2,US,7)
+    // [≡ (2,US,9)], (1,M,7)/(2,M,7) [≡ (3,M,7)/(4,M,7)], (2,L,7) [≡ (1,L,7)], (7,L,7)
+    // [≡ (7,L,9)], (8,US,7) [≡ (5,S,7)], and (1,S,9) [K=9 at this geometry ≡ (2,US,9);
+    // the rate-1/8 repeat stage is K-independent and covered by (1,S,7)/(1,L,7)]. All 31
+    // missing combos were verified decoding bit-exact during calibration on 2026-07-23
+    // against the Phase A closeout equalizer (ff1d832).
+    [InlineData(0, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(0, Ms110dInterleaverKind.Long, 7)]
+    [InlineData(3, Ms110dInterleaverKind.UltraShort, 7)]
+    [InlineData(3, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(3, Ms110dInterleaverKind.Long, 7)]
+    [InlineData(4, Ms110dInterleaverKind.UltraShort, 7)]
+    [InlineData(4, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(4, Ms110dInterleaverKind.Long, 7)]
+    [InlineData(5, Ms110dInterleaverKind.UltraShort, 7)]
+    [InlineData(5, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(5, Ms110dInterleaverKind.Long, 7)]
+    [InlineData(7, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(8, Ms110dInterleaverKind.Long, 7)]
+    [InlineData(13, Ms110dInterleaverKind.UltraShort, 7)]
+    [InlineData(13, Ms110dInterleaverKind.Medium, 7)]
+    [InlineData(13, Ms110dInterleaverKind.Long, 7)]
+    // K=9 at the default (Short) interleaver — WN13's 9/16 puncture with K=9 especially.
+    // (5,S,9) and (8,S,9) already sit in the hand-picked rows above; WN2's K=9 default
+    // slot is carried by (2,US,9) plus (2,S,9) here.
+    [InlineData(0, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(2, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(3, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(4, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(6, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(7, Ms110dInterleaverKind.Short, 9)]
+    [InlineData(13, Ms110dInterleaverKind.Short, 9)]
     public void Interleaver_And_Constraint_Length_Variants_Loop_Back(
         int wn, Ms110dInterleaverKind interleaver, int k)
     {
@@ -155,6 +192,31 @@ public class Ms110dLoopbackTests
         var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = wn, PreambleSuperframes = 4 });
         byte[] payload = RandomBits(400, 100 + wn + (int)cfoHz);
         var channel = new WattersonChannel(9600, seed: 11);
+        float[] audio = channel.Apply(
+            tx.Modulate(payload), snrDb: 25, leadInSamples: 1500, leadOutSamples: 4000,
+            frequencyOffsetHz: cfoHz);
+
+        (Ms110dBurst? burst, _) = RunLoopback(audio, silence: 0);
+        AssertExact(burst, payload);
+    }
+
+    [Theory]
+    [InlineData(2, -75)]
+    [InlineData(2, 75)]
+    [InlineData(6, -75)]
+    [InlineData(6, 75)]
+    [InlineData(7, -75)]
+    [InlineData(7, 75)]
+    [InlineData(8, -75)]
+    [InlineData(8, 75)]
+    public void Carrier_Frequency_Offset_At_The_Grid_Edge_Is_Acquired(int wn, double cfoHz)
+    {
+        // ±75 Hz is the D.6.4 Doppler figure and the outermost acquisition search bin;
+        // the shipped suite previously stopped at ±60 Hz (restated §5.1, issue #67).
+        // One WN per modulation family: WN2 BPSK, WN6 QPSK, WN7 8PSK, WN8 16QAM.
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = wn, PreambleSuperframes = 4 });
+        byte[] payload = RandomBits(400, 150 + wn + (int)cfoHz);
+        var channel = new WattersonChannel(9600, seed: 13);
         float[] audio = channel.Apply(
             tx.Modulate(payload), snrDb: 25, leadInSamples: 1500, leadOutSamples: 4000,
             frequencyOffsetHz: cfoHz);

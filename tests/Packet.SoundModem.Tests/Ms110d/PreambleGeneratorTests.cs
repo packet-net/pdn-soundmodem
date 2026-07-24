@@ -166,4 +166,25 @@ public class PreambleGeneratorTests
             fixedSection[i].Should().Be((byte)expected);
         }
     }
+
+    [Fact]
+    public void Has3k_Rejects_Combinations_Table_Dxxxvii_Does_Not_Define()
+    {
+        // A noise-corrupted WID can pass its 3-dibit checksum yet name (WN 0, UltraShort),
+        // which has no Table D-XXXVII row; acquisition pre-validates with Has3k instead of
+        // letting Get3k throw out of the receive path — the un-validated combination
+        // crashed the receiver mid-burst on the Poor WN0 mask run (−1 dB, seed 500).
+        Ms110dInterleaverParams.Has3k(0, Ms110dInterleaverKind.UltraShort).Should().BeFalse();
+        Ms110dInterleaverParams.Has3k(9, Ms110dInterleaverKind.Long).Should().BeFalse();
+        Ms110dInterleaverParams.Has3k(0, Ms110dInterleaverKind.Short).Should().BeTrue();
+        Ms110dInterleaverParams.Has3k(0, Ms110dInterleaverKind.Long).Should().BeTrue();
+        foreach (int wn in new[] { 1, 2, 3, 4, 5, 6, 7, 8, 13 })
+        {
+            foreach (Ms110dInterleaverKind kind in Enum.GetValues<Ms110dInterleaverKind>())
+            {
+                Ms110dInterleaverParams.Has3k(wn, kind).Should().BeTrue(
+                    $"WN {wn} has all four Table D-XXXVII rows");
+            }
+        }
+    }
 }

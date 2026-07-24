@@ -1,0 +1,1 @@
+2026-07-23T20:26:27.8446579Z [mask] POOR WN13 @ +11 dB: 3,040,800 bits, 1874 errors, 15 bursts (0 acquisition failures), 1340 s simulated — BER 6.16E-004 (direct, ≥30 errors)

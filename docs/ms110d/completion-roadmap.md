@@ -1,5 +1,10 @@
 # MS110D Modem Completion Roadmap
 
+> **Superseded (2026-07-23):** Phase A is formally closed — see
+> [phase-a-closeout.md](phase-a-closeout.md). The priorities below are now tracked as
+> GitHub issues #64–#67 (equalizer realism, turbo robustness, hot-path allocation, test
+> coverage); this file is kept as the pre-closeout planning record.
+
 ## Current State (2026-07-21)
 
 ### What Works
