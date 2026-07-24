@@ -142,6 +142,42 @@ public sealed class Dfe
         }
     }
 
+    /// <summary>Advances the taps along an interpolated base trajectory: adds
+    /// (<paramref name="to"/> − <paramref name="from"/>) to the current taps, so a
+    /// deviation the RLS recursion has accumulated on top of the previous base carries
+    /// over to the new one unchanged (phase-b-plan §B2.1: the base carries the
+    /// probe-anchored channel trajectory, RLS tracks only the residual).</summary>
+    public void TranslateTaps(ReadOnlySpan<Cf> from, ReadOnlySpan<Cf> to)
+    {
+        for (int i = 0; i < _ff.Length; i++)
+        {
+            _ff[i] += to[i] - from[i];
+        }
+
+        for (int j = 0; j < _fb.Length; j++)
+        {
+            int i = _ff.Length + j;
+            _fb[j] += to[i] - from[i];
+        }
+    }
+
+    /// <summary>Rotates every tap by <paramref name="rotor"/> (a unit phasor): the §B2.1
+    /// per-probe phase re-anchor. The channel's common rotation moves the feed-forward
+    /// response AND the post-cursor ISI the feedback taps cancel, so the full tap vector
+    /// rotates together.</summary>
+    public void RotateTaps(Cf rotor)
+    {
+        for (int i = 0; i < _ff.Length; i++)
+        {
+            _ff[i] *= rotor;
+        }
+
+        for (int j = 0; j < _fb.Length; j++)
+        {
+            _fb[j] *= rotor;
+        }
+    }
+
     /// <summary>Starts accumulating least-squares training rows (clears any previous
     /// accumulation).</summary>
     public void BeginTraining()

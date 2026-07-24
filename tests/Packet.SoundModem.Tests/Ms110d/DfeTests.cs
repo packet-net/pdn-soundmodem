@@ -90,6 +90,63 @@ public class DfeTests
     }
 
     [Fact]
+    public void Translate_Taps_Carries_A_Deviation_Across_A_Base_Change()
+    {
+        // §B2.1a contract: the interpolated base trajectory advances underneath the RLS
+        // deviation. taps = base + deviation before the translate must give
+        // taps = base' + THE SAME deviation after it.
+        var dfe = new Dfe(ffTaps: 2, fbTaps: 1);
+        Cf[] baseA = [new(1f, 0.5f), new(-0.25f, 0f), new(0f, -1f)];
+        Cf[] baseB = [new(0.5f, 0.75f), new(0.25f, -0.5f), new(1f, 1f)];
+        Cf[] deviation = [new(0.1f, -0.2f), new(0f, 0.05f), new(-0.3f, 0f)];
+
+        var withDeviation = new Cf[3];
+        for (int i = 0; i < 3; i++)
+        {
+            withDeviation[i] = baseA[i] + deviation[i];
+        }
+
+        dfe.LoadTaps(withDeviation);
+        dfe.TranslateTaps(baseA, baseB);
+
+        Cf[] result = dfe.SnapshotTaps();
+        for (int i = 0; i < 3; i++)
+        {
+            (result[i] - (baseB[i] + deviation[i])).Abs().Should().BeLessThan(1e-6f,
+                $"tap {i}: the deviation must ride the base change unchanged");
+        }
+    }
+
+    [Fact]
+    public void Tap_Trajectory_Preserves_Magnitude_Under_Pure_Rotation()
+    {
+        // §B2.1a: when the end anchor is the start anchor rotated by φ, the trajectory
+        // must rotate at constant magnitude. Chord (plain linear) interpolation dips to
+        // cos(φ/2) at midspan — 6 % low at the 40°/frame rotations of the WN7 autopsy,
+        // far worse through fade swings — which is exactly why the phase ramp exists.
+        Cf[] start = [new(1f, 0f), new(0.3f, -0.7f)];
+        const float phi = 1.2f; // ~69°, a fade-swing-scale rotation
+        Cf rotor = Cf.Cmplx(phi);
+        // The caller hands TapTrajectory the END taps DE-rotated by φ — for a pure
+        // rotation that is the start taps again.
+        var trajectory = new Cf[2];
+        Ms110dDemodulator.TapTrajectory(start, start, phi, 0.5f, trajectory);
+        for (int i = 0; i < 2; i++)
+        {
+            trajectory[i].Abs().Should().BeApproximately(start[i].Abs(), 1e-6f,
+                $"tap {i}: magnitude must be preserved through the rotation");
+            trajectory[i].Arg().Should().BeApproximately(start[i].Arg() + (phi * 0.5f), 1e-5f,
+                $"tap {i}: phase must ramp linearly");
+        }
+
+        // Endpoint exactness: f = 0 is the start anchor, f = 1 the end anchor.
+        Ms110dDemodulator.TapTrajectory(start, start, phi, 0f, trajectory);
+        (trajectory[0] - start[0]).Abs().Should().BeLessThan(1e-6f);
+        Ms110dDemodulator.TapTrajectory(start, start, phi, 1f, trajectory);
+        (trajectory[0] - (start[0] * rotor)).Abs().Should().BeLessThan(1e-6f);
+    }
+
+    [Fact]
     public void Rls_Converges_On_The_Identity_Channel()
     {
         var dfe = new Dfe(ffTaps: 2, fbTaps: 0);

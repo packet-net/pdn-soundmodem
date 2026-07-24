@@ -114,6 +114,8 @@ public sealed class Ms110dDemodulator
     private int _badProbes;
     private double _probeMse;
     private double _probeGainRef;
+    private double _probeEnergyRef;
+    private int _collapsedProbes;
 
     // Tracking state (WN 0).
     private Wid0WalshModem? _walsh;
@@ -148,6 +150,7 @@ public sealed class Ms110dDemodulator
     private bool _fadeFloorSeeded;
     private int _framesSinceExcursion = int.MaxValue / 2;
     private bool _fading;
+    private bool _fadingLatched;
     private bool _terminate;
 
     /// <summary>Creates the receiver.</summary>
@@ -209,6 +212,11 @@ public sealed class Ms110dDemodulator
     /// candidate, QAM16, non-resident samples, or the WN 0 path).</summary>
     public int TurboSkipped { get; private set; }
 
+    /// <summary>Fresh non-anchored probe re-solves after tracking collapse (phase-b-plan
+    /// §B2.1c; since construction/Reset). Zero on healthy runs — a nonzero count says
+    /// decision-directed tracking collapsed and was restarted from the probe alone.</summary>
+    public int CollapseResolves { get; private set; }
+
     /// <summary>Fires for every decoded input-data block.</summary>
     public event Action<Ms110dRxBlock>? BlockDecoded;
 
@@ -258,6 +266,7 @@ public sealed class Ms110dDemodulator
         TurboReverted = 0;
         TurboAborted = 0;
         TurboSkipped = 0;
+        CollapseResolves = 0;
         EndBurst();
     }
 
@@ -888,6 +897,7 @@ public sealed class Ms110dDemodulator
         }
 
         double mse = 0;
+        double energy = 0;
         var gain = Cf.Zero;
         for (int i = 0; i < k; i++)
         {
@@ -902,11 +912,14 @@ public sealed class Ms110dDemodulator
             gain += y * _known[n].Conj();
             Cf err = y - _known[n];
             mse += err.Cnorm();
+            energy += window[_ffLead].Cnorm();
         }
 
         _probeMse = mse / k;
         _probeGainRef = gain.Abs() / k;
+        _probeEnergyRef = energy / k;
         _badProbes = 0;
+        _collapsedProbes = 0;
         _frameChip = _dataStartChip + k;
         _frameInBlock = 0;
     }
@@ -951,6 +964,7 @@ public sealed class Ms110dDemodulator
         Cf[] startTaps = dfe.SnapshotTaps();
         var probePhase = Cf.Zero;
         double mse = 0;
+        double probeEnergy = 0;
         int statRows = 0;
         for (int i = dfe.FbTaps; i < mode.K; i++)
         {
@@ -964,13 +978,87 @@ public sealed class Ms110dDemodulator
             Cf y = dfe.Equalize(window, probePast);
             probePhase += y * probe[i].Conj();
             mse += (y - probe[i]).Cnorm();
+            probeEnergy += window[_ffLead].Cnorm();
             statRows++;
             dfe.AddTrainingRow(window, probePast, probe[i], weight: 6f);
         }
 
+        // Collapse detection (phase-b-plan §B2.1c; WN7 autopsy: once decision-directed
+        // tracking collapses it PERSISTS, because the next probe solve is anchored to the
+        // collapsed taps). Two physics-set discriminators, two consecutive probes:
+        //  - pre-solve probe MSE ≥ 1.0: with |p| = 1, E|y−p|² = E|y|² + 1 − 2·Re E[y·p̄],
+        //    so an MSE below 1 requires genuine correlation with the probe — at ≥ 1 the
+        //    equalizer output carries none (outputting zero would score the same).
+        //  - probe-window energy ≥ ¼ of its healthy reference (−6 dB, the deep-fade
+        //    threshold): signal is PRESENT, so this is a collapse, not a fade. During a
+        //    fade, coasting on the anchor is right and a fresh solve would fit noise.
+        double preMse = mse / statRows;
+        double probeEnergyMean = probeEnergy / statRows;
+        bool collapsed = preMse >= 1.0 && probeEnergyMean >= 0.25 * _probeEnergyRef;
+        _collapsedProbes = collapsed ? _collapsedProbes + 1 : 0;
+        bool freshSolve = _collapsedProbes >= 2;
+        if (freshSolve)
+        {
+            // Fresh non-anchored re-solve: discard the accumulator (the collapsed frame's
+            // DD rows are poison), rebuild the probe-only rows, and zero the taps so the
+            // anchored ridge degenerates to a plain ridge toward zero. The probe alone is
+            // rank-deficient; the ridge sends the unobserved directions to zero — a cold
+            // restart of tracking on the spot, with P re-seeded from the fresh Gram.
+            dfe.BeginTraining();
+            for (int i = dfe.FbTaps; i < mode.K; i++)
+            {
+                FillWindowEst(probeChip + i, window);
+                for (int j = 0; j < dfe.FbTaps; j++)
+                {
+                    probePast[j] = probe[i - 1 - j];
+                }
+
+                dfe.AddTrainingRow(window, probePast, probe[i], weight: 6f);
+            }
+
+            Span<Cf> zeroTaps = stackalloc Cf[startTaps.Length];
+            dfe.LoadTaps(zeroTaps);
+            CollapseResolves++;
+            _collapsedProbes = 0;
+        }
+
         dfe.SeedRlsFromTraining(_trackRidge, pFallback: 1.0f, ffNoisePower: GenieNoisePower());
         dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true, ffNoisePower: GenieNoisePower());
+
+        // §B2.1 per-probe phase re-anchor. The anchored ridge solve corrects the tap
+        // SHAPE only fractionally per probe — correct for slow shape drift, but for the
+        // channel's common rotation it leaves a steady-state phase lag θ·(1−α)/α that
+        // scatter measurement showed parking WN7 in a half-locked limbo (probe gain ≈ 0.4,
+        // preMse ≈ 0.75). Phase is a single parameter with ~K known symbols to estimate
+        // it: re-equalize the probe with the post-solve taps and take out the residual
+        // common phase error at gain 1. Gated on the same 0.10 absolute correlation floor
+        // as the signal-lost discriminator — below it the probe carries no usable phase
+        // and rotating by its noise during a deep fade would break the coasting rule.
+        var postPhase = Cf.Zero;
+        for (int i = dfe.FbTaps; i < mode.K; i++)
+        {
+            FillWindowEst(probeChip + i, window);
+            for (int j = 0; j < dfe.FbTaps; j++)
+            {
+                probePast[j] = probe[i - 1 - j];
+            }
+
+            postPhase += dfe.Equalize(window, probePast) * probe[i].Conj();
+        }
+
+        if (postPhase.Abs() / statRows >= 0.10)
+        {
+            dfe.RotateTaps(Cf.CmplxConj((float)postPhase.Arg()));
+        }
+
         Cf[] endTaps = dfe.SnapshotTaps();
+        if (freshSolve)
+        {
+            // The old anchor is the collapsed solution — this frame's data span is
+            // equalized with the fresh solve held constant (no trajectory from garbage),
+            // and the tap-rotation CFO trim below sees zero rotation.
+            startTaps = endTaps;
+        }
 
         // Residual-CFO trim from the mean tap rotation between consecutive probe solves.
         var tapRotation = Cf.Zero;
@@ -1000,56 +1088,111 @@ public sealed class Ms110dDemodulator
         // detector that happened to separate the two simulation rigs — issue #64.)
         // EWMA'd so one noisy solve cannot flip the mode, with hysteresis so per-frame
         // chatter cannot mix bidirectional and single-pass LLR statistics in one block.
-        double startNorm = 0, changeNorm = 0;
-        if (tapRotation.Cnorm() > 1e-12)
+        // A fresh re-solve frame is excluded outright: startTaps was reassigned to the
+        // fresh solution, so its tapChange is identically zero — folding that into the
+        // min-tracking floor would collapse the floor and turn every later frame into an
+        // excursion.
+        double tapChange = 0;
+        if (!freshSolve)
         {
-            Cf rot = tapRotation * (float)(1.0 / tapRotation.Abs());
-            for (int i = 0; i < endTaps.Length; i++)
+            double startNorm = 0, changeNorm = 0;
+            if (tapRotation.Cnorm() > 1e-12)
             {
-                startNorm += startTaps[i].Cnorm();
-                changeNorm += (endTaps[i] - (rot * startTaps[i])).Cnorm();
-            }
-        }
-
-        double tapChange = startNorm > 1e-12 ? changeNorm / startNorm : 0;
-        if (!_fadeFloorSeeded)
-        {
-            _fadeFloor = tapChange;
-            _fadeFloorSeeded = true;
-        }
-        else
-        {
-            // Min-tracking floor: drops instantly, recovers 5 %/frame — so a fade's own
-            // excursions cannot drag the floor up to meet them.
-            _fadeFloor = Math.Min(tapChange, (_fadeFloor * 1.05) + 1e-4);
-        }
-
-        bool excursion = tapChange > FadeExcursionRatio * _fadeFloor;
-        if (excursion)
-        {
-            if (_framesSinceExcursion <= FadeEnterWindowFrames)
-            {
-                _fading = true;
+                Cf rot = tapRotation * (float)(1.0 / tapRotation.Abs());
+                for (int i = 0; i < endTaps.Length; i++)
+                {
+                    startNorm += startTaps[i].Cnorm();
+                    changeNorm += (endTaps[i] - (rot * startTaps[i])).Cnorm();
+                }
             }
 
-            _framesSinceExcursion = 0;
-        }
-        else if (++_framesSinceExcursion > FadeExitFrames)
-        {
-            _fading = false;
+            tapChange = startNorm > 1e-12 ? changeNorm / startNorm : 0;
+            if (!_fadeFloorSeeded)
+            {
+                _fadeFloor = tapChange;
+                _fadeFloorSeeded = true;
+            }
+            else
+            {
+                // Min-tracking floor: drops instantly, recovers 5 %/frame — so a fade's own
+                // excursions cannot drag the floor up to meet them.
+                _fadeFloor = Math.Min(tapChange, (_fadeFloor * 1.05) + 1e-4);
+            }
+
+            bool excursion = tapChange > FadeExcursionRatio * _fadeFloor;
+            if (excursion)
+            {
+                if (_framesSinceExcursion <= FadeEnterWindowFrames)
+                {
+                    _fading = true;
+                }
+
+                _framesSinceExcursion = 0;
+            }
+            else if (++_framesSinceExcursion > FadeExitFrames)
+            {
+                _fading = false;
+            }
         }
 
         // RLS weight: 1.0 on fading channels (full tracking), 0.1 on static/AWGN
         // (minimal noise accumulation while still providing some adaptation).
-        bool fading = _fading;
+        // Path selection LATCHES per burst (§B2.1): a channel that faded does not become
+        // AWGN mid-burst, but the excursion detector chatters on continuous fading (the
+        // min-tracking floor never sees a quiet stretch to settle on — measured 40/130
+        // WN7 Poor frames misclassified flat, running the 3-pass path mid-collapse). A
+        // collapse latches too: two consecutive uncorrelated probes with signal present
+        // cannot happen on a flat channel. The unlatched _fading keeps driving
+        // IsFlatChannel's turbo-gate hysteresis.
+        _fadingLatched |= _fading || freshSolve;
+        bool fading = _fadingLatched;
         float rlsWeight = fading ? 1.0f : 0.1f;
 
         _scrambler.Reset();
         float ddGate = DdGateRadius(mode.Modulation);
+
+        // §B2.1a: probe-anchored retrospective tap trajectory for fading frames. startTaps
+        // is anchored at the previous probe's centre (K/2 before the data span), endTaps at
+        // the following probe's centre (K/2 beyond it) — both known here, because the probe
+        // AFTER the span is solved before any data symbol is equalized (the block-buffered
+        // architecture's free non-causality). Fraction for data symbol u:
+        // f(u) = (u + K/2)/(U + K). The common rotation φ between the anchors is applied as
+        // a phase ramp over linearly-interpolated de-rotated taps — chord interpolation of
+        // a rotation understates amplitude (cos(φ/2) at midspan), and tens-of-degrees
+        // per-frame rotation on the 1 Hz Poor channel is exactly the WN7/WN8 autopsy
+        // mechanism, so the explicit phase ramp is the load-bearing part.
+        int nTaps = endTaps.Length;
+        Span<Cf> trajectoryEnd = stackalloc Cf[nTaps];
+        Span<Cf> tapsPrev = stackalloc Cf[nTaps];
+        Span<Cf> tapsCur = stackalloc Cf[nTaps];
+        double phi = 0;
+        if (fading)
+        {
+            phi = tapRotation.Cnorm() > 1e-12 ? tapRotation.Arg() : 0.0;
+            Cf derot = Cf.CmplxConj((float)phi);
+            for (int i = 0; i < nTaps; i++)
+            {
+                trajectoryEnd[i] = endTaps[i] * derot;
+            }
+        }
+
         if (mode.Modulation == Ms110dModulation.Qam16)
         {
+            if (fading)
+            {
+                TapTrajectory(startTaps, trajectoryEnd, phi, FrameFraction(mode, 0), tapsCur);
+                dfe.LoadTaps(tapsCur);
+            }
+
             for (int u = 0; u < mode.U; u++)
             {
+                if (fading && u > 0)
+                {
+                    tapsCur.CopyTo(tapsPrev);
+                    TapTrajectory(startTaps, trajectoryEnd, phi, FrameFraction(mode, u), tapsCur);
+                    dfe.TranslateTaps(tapsPrev, tapsCur);
+                }
+
                 FillWindow(_frameChip + u, window);
                 int scrambleNibble = _scrambler.NextQam(0, 4);
                 Cf y = dfe.Equalize(window, _decisions);
@@ -1063,16 +1206,19 @@ public sealed class Ms110dDemodulator
                     row = estWindow;
                 }
 
-                dfe.RlsUpdate(row, _decisions, clean, weight: rlsWeight);
+                // Same decision-confidence gate as the interpolated fading path below:
+                // QAM16's tight regions make ungated DD updates the fastest way to
+                // self-destruct (WN8 autopsy — phase AND amplitude).
                 if ((y - clean).Cnorm() < ddGate)
                 {
+                    dfe.RlsUpdate(row, _decisions, clean, weight: rlsWeight);
                     dfe.AddTrainingRow(row, _decisions, clean, weight: 0.25f);
                 }
 
                 PushDecision(clean);
             }
         }
-        else if (mode.U <= 96 || !fading)
+        else if (!fading)
         {
             // 3-pass equalization from three tap seeds (end, start, midpoint of the
             // probe-to-probe trajectory), outputs averaged. The passes share the frame's
@@ -1164,11 +1310,24 @@ public sealed class Ms110dDemodulator
         }
         else
         {
-            // Fading channel: single-pass RLS from endTaps.
-            // Tracks the channel within one pass — bidirectional averaging would
-            // mix different fading states and degrade performance.
+            // Fading channel (§B2.1a): single pass with the tap base interpolated between
+            // the bracketing probe solves and the RLS deviation riding on top
+            // (TranslateTaps tracks the residual only). Before Phase B2 this pass
+            // equalized the whole span from endTaps — the tail anchor applied statically
+            // to the head, the 107 ms staleness every U=256 mode pays and the WN7/WN8
+            // smear amplifier — and U≤96 fading frames took the 3-pass average, which
+            // mixes fading states.
+            TapTrajectory(startTaps, trajectoryEnd, phi, FrameFraction(mode, 0), tapsCur);
+            dfe.LoadTaps(tapsCur);
             for (int u = 0; u < mode.U; u++)
             {
+                if (u > 0)
+                {
+                    tapsCur.CopyTo(tapsPrev);
+                    TapTrajectory(startTaps, trajectoryEnd, phi, FrameFraction(mode, u), tapsCur);
+                    dfe.TranslateTaps(tapsPrev, tapsCur);
+                }
+
                 FillWindow(_frameChip + u, window);
                 Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
                 Cf y = dfe.Equalize(window, _decisions);
@@ -1183,9 +1342,15 @@ public sealed class Ms110dDemodulator
                     row = estWindow;
                 }
 
-                dfe.RlsUpdate(row, _decisions, clean * rotor, weight: rlsWeight);
+                // Decision-confidence gate on BOTH the RLS update and the training row: an
+                // ungated weight-1.0 update on a wrong decision is precisely the DD
+                // self-destruction mechanism of the WN7 autopsy — measured on the scatter
+                // rig, the §B2.1c fresh re-solve re-collapsed within ONE frame until the
+                // RLS update was gated. When decisions are unusable the interpolated base
+                // carries the channel; when they are trustworthy RLS tracks the residual.
                 if ((descrambled - clean).Cnorm() < ddGate)
                 {
+                    dfe.RlsUpdate(row, _decisions, clean * rotor, weight: rlsWeight);
                     dfe.AddTrainingRow(row, _decisions, clean * rotor, weight: 0.25f);
                 }
 
@@ -1208,7 +1373,8 @@ public sealed class Ms110dDemodulator
         FrameDiagnostics?.Invoke(
             $"frame@{_frameChip}: gain={probeGain:F3} ref={_probeGainRef:F3} mse={mse / mode.K:F3} " +
             $"tau={_tau:F3} omega={_omega:E2} bad={_badProbes} " +
-            $"tapChange={tapChange:F4} floor={_fadeFloor:F4} fading={_fading}");
+            $"tapChange={tapChange:F4} floor={_fadeFloor:F4} fading={_fading}/{fading} " +
+            $"preMse={preMse:F3} energy={probeEnergyMean:F3}/{_probeEnergyRef:F3} fresh={freshSolve}");
 
         if (probeGain < Math.Max(0.10, 0.45 * _probeGainRef))
         {
@@ -1222,6 +1388,10 @@ public sealed class Ms110dDemodulator
         {
             _badProbes = 0;
             _probeGainRef = (0.95 * _probeGainRef) + (0.05 * probeGain);
+            // The energy reference tracks HEALTHY probes only: a long fade must not drag
+            // it down (fade-vs-collapse discrimination depends on it), and during a
+            // collapse it must stay pinned at the pre-collapse level.
+            _probeEnergyRef = (0.95 * _probeEnergyRef) + (0.05 * probeEnergyMean);
         }
 
         _blockFrameChips.Add(_frameChip);
@@ -1232,6 +1402,31 @@ public sealed class Ms110dDemodulator
             _frameInBlock = 0;
             FinishBlock();
             _blockFrameChips.Clear();
+        }
+    }
+
+    /// <summary>Trajectory fraction of data symbol <paramref name="u"/> between the
+    /// bracketing probe-solve anchors: the previous probe's centre sits K/2 before the
+    /// data span and the following probe's centre K/2 beyond it (§B2.1a).</summary>
+    private static float FrameFraction(Ms110dMode mode, int u)
+    {
+        return (u + (0.5f * mode.K)) / (mode.U + mode.K);
+    }
+
+    /// <summary>Evaluates the §B2.1a probe-anchored tap trajectory at fraction
+    /// <paramref name="f"/> ∈ [0,1]: linear interpolation of the de-rotated taps with the
+    /// anchors' common rotation φ applied as a phase ramp e^{jφf}. At f = 0 this is
+    /// <paramref name="start"/> exactly; at f = 1 the end solve exactly
+    /// (<paramref name="endDerotated"/>·e^{jφ}). Internal for the unit test that pins the
+    /// magnitude-preserving property chord interpolation lacks.</summary>
+    internal static void TapTrajectory(
+        ReadOnlySpan<Cf> start, ReadOnlySpan<Cf> endDerotated, double phi, float f, Span<Cf> taps)
+    {
+        Cf ramp = Cf.Cmplx((float)(phi * f));
+        float g = 1f - f;
+        for (int i = 0; i < taps.Length; i++)
+        {
+            taps[i] = ((start[i] * g) + (endDerotated[i] * f)) * ramp;
         }
     }
 
@@ -1628,7 +1823,9 @@ public sealed class Ms110dDemodulator
         // frame of a burst — the previous per-block variance of a single FF-edge tap
         // could never return true for interleavers with fewer than 4 frames per block,
         // which silently re-enabled turbo on AWGN for every UltraShort mode (issue #64).
-        return _fadeFloorSeeded && !_fading;
+        // The per-burst latch (§B2.1) counts: a burst that has faded or collapsed is not
+        // flat for the rest of its life, even between excursions.
+        return _fadeFloorSeeded && !_fading && !_fadingLatched;
     }
 
     private void TurboReequalize(byte[] info)
@@ -1893,6 +2090,7 @@ public sealed class Ms110dDemodulator
         _fadeFloorSeeded = false;
         _framesSinceExcursion = int.MaxValue / 2;
         _fading = false;
+        _fadingLatched = false;
         _bestMetric = 0;
         _bestStart = -1;
         _terminate = false;
