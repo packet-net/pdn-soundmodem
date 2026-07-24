@@ -479,6 +479,10 @@ public sealed class Ms110dDemodulator
             }
         }
 
+        FrameDiagnostics?.Invoke(
+            $"accept@{s}: best={_bestStart} metric={_bestMetric:F3} " +
+            $"walkback={_bestStart - s} bin={bin}");
+
         double energy = _combEnergy[(int)(s & 1)];
 
         // Sub-sample timing from a parabolic fit through the metric at s−1, s, s+1.
@@ -628,19 +632,16 @@ public sealed class Ms110dDemodulator
         return known;
     }
 
-    /// <summary>Least-squares fits the residual carrier phase/frequency over fully known
-    /// preamble chips at <paramref name="baseChip"/> and re-tunes the carrier model
-    /// anchored inside the measurement window. Longer windows (several super-frames)
-    /// matter on fading channels: a single 240 ms super-frame reads Rayleigh phase drift
-    /// as CFO — a ~1 s baseline averages it out.</summary>
+    /// <summary>Fits the residual carrier phase/frequency over fully known preamble
+    /// chips at <paramref name="baseChip"/> and re-tunes the carrier model anchored
+    /// inside the measurement window. Longer windows (several super-frames) matter on
+    /// fading channels: a single 240 ms super-frame reads Rayleigh phase drift as CFO —
+    /// a ~1 s baseline averages it out.</summary>
     private void RefineCarrier(long baseChip, byte[] knownChips)
     {
         int count = knownChips.Length / 32;
-        Span<double> phases = count <= 72 ? stackalloc double[72] : new double[count];
-        Span<double> weights = count <= 72 ? stackalloc double[72] : new double[count];
-        phases = phases[..count];
-        weights = weights[..count];
-        double previous = 0;
+        Span<Cf> groups = count <= 72 ? stackalloc Cf[72] : new Cf[count];
+        groups = groups[..count];
         for (int j = 0; j < count; j++)
         {
             var c = Cf.Zero;
@@ -651,49 +652,112 @@ public sealed class Ms110dDemodulator
                 c += ReadChipEst(baseChip + chip) * Ms110dTables.Psk8[knownChips[chip]].Conj();
             }
 
-            double phi = c.Arg();
-            while (phi - previous > Math.PI)
-            {
-                phi -= 2 * Math.PI;
-            }
-
-            while (phi - previous < -Math.PI)
-            {
-                phi += 2 * Math.PI;
-            }
-
-            phases[j] = phi;
-            weights[j] = c.Abs();
-            previous = phi;
+            groups[j] = c;
         }
 
-        // Weighted linear regression of phase vs. symbol index.
-        double sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
-        for (int j = 0; j < count; j++)
-        {
-            double w = weights[j];
-            sw += w;
-            sx += w * j;
-            sy += w * phases[j];
-            sxx += w * j * j;
-            sxy += w * j * phases[j];
-        }
-
-        double det = (sw * sxx) - (sx * sx);
-        if (Math.Abs(det) < 1e-9 || sw < 1e-9)
+        if (!EstimateCarrierFit(groups, out double slope, out double intercept))
         {
             return;
         }
 
-        double slope = ((sw * sxy) - (sx * sy)) / det;      // rad per channel symbol
-        double intercept = ((sxx * sy) - (sx * sxy)) / det; // rad at symbol index 0
-
-        // Anchor the correction at the window midpoint (symbol j's phase sits at its
+        // Anchor the correction at the window midpoint (group j's phase sits at its
         // centre, chip 32j+16); slope converts to rad per T/2 sample by ÷64.
         double mid = (count - 1) / 2.0;
         double href = (2.0 * (baseChip + 16 + (32 * mid))) + _tau;
         RetuneCarrier(href, intercept + (slope * mid), slope / 64.0);
         _lock = _lock! with { CfoHz = _lock.CfoHz + (slope / 64.0 * 2.0 * Ms110dTables.SymbolRate / (2.0 * Math.PI)) };
+
+        if (FrameDiagnostics is not null)
+        {
+            // §B3 autopsy: the per-group correlation phases and magnitudes behind the fit.
+            var sb = new System.Text.StringBuilder((count * 12) + 64);
+            sb.Append($"refine@{baseChip}: groups={count} " +
+                $"slopeHz={slope / 64.0 * 2.0 * Ms110dTables.SymbolRate / (2.0 * Math.PI):F2} " +
+                $"intercept={intercept:F3} pw=");
+            for (int j = 0; j < count; j++)
+            {
+                sb.Append($"{groups[j].Arg():F2}/{groups[j].Abs():F1} ");
+            }
+
+            FrameDiagnostics.Invoke(sb.ToString());
+        }
+    }
+
+    /// <summary>
+    /// Carrier phase/frequency fit over per-group correlation phasors — the fade-robust
+    /// replacement for the weighted phase regression (§B3 tail autopsy, issue #69). The
+    /// regression's sequential phase UNWRAP was its undoing: groups inside a deep fade
+    /// carry pure noise phases, and although the regression downweighted them, they still
+    /// formed the unwrap chain — a &gt;200 ms fade let the chain random-walk several full
+    /// turns, the post-fade groups re-entered on the wrong branch with strong weights,
+    /// and the fit manufactured a multi-Hz CFO from a channel that had barely rotated
+    /// (WN5 Poor census, burst w0/b3: −4.86 Hz fitted, burst dead end-to-end at SER 0.55
+    /// while every probe statistic read healthy). Here the slope comes from weighted
+    /// lag products — arg Σ c[j+L]·c̄[j] — where a faded group self-suppresses
+    /// (the product magnitude vanishes) instead of poisoning its neighbours: lag 1 is
+    /// unambiguous to ±π per group (±37.5 Hz), then a longer-lag pass sharpens the
+    /// estimate with the lag-1 value resolving its branch. The intercept is the phase of
+    /// the coherent de-rotated sum — fade-robust for the same reason.
+    /// </summary>
+    /// <returns>False when the window carries no usable signal (keep the current
+    /// carrier rather than retune on noise).</returns>
+    internal static bool EstimateCarrierFit(
+        ReadOnlySpan<Cf> groups, out double slopeRadPerGroup, out double interceptRad)
+    {
+        slopeRadPerGroup = 0;
+        interceptRad = 0;
+        int count = groups.Length;
+        if (count < 2)
+        {
+            return false;
+        }
+
+        var lag1 = Cf.Zero;
+        for (int j = 0; j + 1 < count; j++)
+        {
+            lag1 += groups[j + 1] * groups[j].Conj();
+        }
+
+        if (lag1.Cnorm() < 1e-12)
+        {
+            return false;
+        }
+
+        double slope = lag1.Arg();
+
+        int lag = Math.Min(8, count - 1);
+        if (lag > 1)
+        {
+            var lagL = Cf.Zero;
+            for (int j = 0; j + lag < count; j++)
+            {
+                lagL += groups[j + lag] * groups[j].Conj();
+            }
+
+            if (lagL.Cnorm() > 1e-12)
+            {
+                // Resolve the lag-L phase onto the branch nearest the lag-1 estimate.
+                double expected = slope * lag;
+                double phiL = lagL.Arg();
+                phiL += 2.0 * Math.PI * Math.Round((expected - phiL) / (2.0 * Math.PI));
+                slope = phiL / lag;
+            }
+        }
+
+        var anchor = Cf.Zero;
+        for (int j = 0; j < count; j++)
+        {
+            anchor += groups[j] * Cf.Cmplx((float)(-slope * j));
+        }
+
+        if (anchor.Cnorm() < 1e-12)
+        {
+            return false;
+        }
+
+        slopeRadPerGroup = slope;
+        interceptRad = anchor.Arg();
+        return true;
     }
 
     private void BackToSearch()
@@ -1390,11 +1454,26 @@ public sealed class Ms110dDemodulator
             $"frame@{_frameChip}: gain={probeGain:F3} ref={_probeGainRef:F3} mse={mse / mode.K:F3} " +
             $"tau={_tau:F3} omega={_omega:E2} bad={_badProbes} " +
             $"tapChange={tapChange:F4} floor={_fadeFloor:F4} fading={_fading}/{fading} " +
-            $"preMse={preMse:F3} energy={probeEnergyMean:F3}/{_probeEnergyRef:F3} fresh={freshSolve}");
+            $"preMse={preMse:F3} energy={probeEnergyMean:F3}/{_probeEnergyRef:F3} fresh={freshSolve} " +
+            // §B3 autopsy fields: the pre-solve probe correlation PHASE (the incoming
+            // taps' rotation error — |Σy·p̄| alone is rotation-invariant, issue #69),
+            // the residual the re-anchor removed (or coasted on below the 0.10 floor),
+            // and the slerp's common rotation φ for the data span that follows.
+            $"phase={probePhase.Arg():F3} anchor={postPhase.Abs() / statRows:F3}@{postPhase.Arg():F3} " +
+            $"phi={(tapRotation.Cnorm() > 1e-12 ? tapRotation.Arg() : 0f):F3}");
 
         if (probeGain < Math.Max(0.10, 0.45 * _probeGainRef))
         {
-            if (++_badProbes >= 25)
+            // Signal-lost patience is WALL-CLOCK, not a probe count: a probe count
+            // scales the patience with frame length — 25 probes was 3 s at U=256
+            // (never false-fired) but only 1 s at U=48, and the §B3 census measured
+            // Poor-channel fades outliving it: WN1 abandoned 10/248 bursts and WN2
+            // 4/124 mid-fade, discarding the rest of each burst — 83% and 99% of those
+            // points' total errors. ~4 s covers the deep-fade tail at 1 Hz Doppler
+            // spread; a real carrier drop still exits, just uniformly across modes.
+            int badProbeLimit = (int)Math.Ceiling(
+                4.0 * Ms110dTables.SymbolRate / (mode.U + mode.K));
+            if (++_badProbes >= badProbeLimit)
             {
                 CompleteBurst(Ms110dBurstEndReason.SignalLost);
                 return;
@@ -1744,6 +1823,7 @@ public sealed class Ms110dDemodulator
         // misclassifying short-frame fading bursts as flat (turbo 2c/158s, 7× BER cost):
         // the excursion statistic is weakest exactly where probes are densest.
         if (_dfe is not null && _mode is not null &&
+            !_options.DisableTurbo &&
             _mode.Modulation is not Ms110dModulation.Qam16 &&
             _blockFrameChips.Count == _il.Frames &&
             BlockSamplesResident())
