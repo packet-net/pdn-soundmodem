@@ -191,6 +191,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
     [Theory]
     [InlineData(4, 10)]
     [InlineData(6, 14)]
+    [InlineData(7, 19)]
     [InlineData(8, 23)]
     public void Static_2Path_Diagnostic(int wn, double snrDb)
     {
