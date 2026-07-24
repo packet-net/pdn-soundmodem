@@ -987,21 +987,22 @@ public sealed class Ms110dDemodulator
 
         // Collapse detection (phase-b-plan §B2.1c; WN7 autopsy: once decision-directed
         // tracking collapses it PERSISTS, because the next probe solve is anchored to the
-        // collapsed taps). Three physics-set discriminators, two consecutive probes:
-        //  - pre-solve probe MSE ≥ 1.0: with |p| = 1, E|y−p|² = E|y|² + 1 − 2·Re E[y·p̄],
-        //    so an MSE below 1 requires genuine correlation with the probe — at ≥ 1 the
-        //    equalizer output carries none (outputting zero would score the same).
-        //  - AND ≥ 3× the burst's own healthy MSE floor: at low SNR the noise floor alone
-        //    exceeds 1 (WN1 AWGN at −3 dB runs ~2 when perfectly locked — the absolute
-        //    test misfired there, latched fading, and cost the AWGN gate), so collapse
-        //    must also stand far outside the burst's own locked level. 3× is beyond the
-        //    ±25 % fluctuation of a mean-of-K MSE estimate.
+        // collapsed taps). Collapse = the BAD-PROBE criterion with signal energy present,
+        // two consecutive probes:
+        //  - probe correlation below the Phase-A signal-lost discriminator's line
+        //    (< max(0.10, 0.45·healthy reference)): correlation normalizes by the burst's
+        //    own healthy level, so this is SNR-invariant — WN1's −3 dB AWGN probes are
+        //    noisy but correlated (an earlier absolute-MSE test misfired there and cost
+        //    the AWGN gate), while a hard collapse kills correlation at any SNR, however
+        //    early in the burst it strikes.
         //  - probe-window energy ≥ ¼ of its healthy reference (−6 dB, the deep-fade
         //    threshold): signal is PRESENT, so this is a collapse, not a fade. During a
-        //    fade, coasting on the anchor is right and a fresh solve would fit noise.
+        //    fade, coasting on the anchor is right and a fresh solve would fit noise;
+        //    a bad probe WITHOUT energy stays the fade/signal-lost path's business.
         double preMse = mse / statRows;
         double probeEnergyMean = probeEnergy / statRows;
-        bool collapsed = preMse >= Math.Max(1.0, 3.0 * _probeMse) &&
+        double probeGain = probePhase.Abs() / mode.K;
+        bool collapsed = probeGain < Math.Max(0.10, 0.45 * _probeGainRef) &&
             probeEnergyMean >= 0.25 * _probeEnergyRef;
         _collapsedProbes = collapsed ? _collapsedProbes + 1 : 0;
         bool freshSolve = _collapsedProbes >= 2;
@@ -1372,17 +1373,10 @@ public sealed class Ms110dDemodulator
             PushDecision(probe[i]);
         }
 
-        // The MSE reference freezes on collapsed frames: mixing the collapsed level into
-        // the EWMA would inflate the 3× collapse threshold within ~5 frames and blind the
-        // detector against exactly the sustained collapse it exists to catch.
-        if (!collapsed)
-        {
-            _probeMse = (0.7 * _probeMse) + (0.3 * preMse);
-        }
+        _probeMse = (0.7 * _probeMse) + (0.3 * preMse);
 
         TrackProbeTiming(probeChip, probe);
 
-        double probeGain = probePhase.Abs() / mode.K;
         FrameDiagnostics?.Invoke(
             $"frame@{_frameChip}: gain={probeGain:F3} ref={_probeGainRef:F3} mse={mse / mode.K:F3} " +
             $"tau={_tau:F3} omega={_omega:E2} bad={_badProbes} " +
