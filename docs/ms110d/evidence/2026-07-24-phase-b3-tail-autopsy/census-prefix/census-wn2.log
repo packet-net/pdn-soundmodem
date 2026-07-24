@@ -1,0 +1,1 @@
+2026-07-24T20:17:29.0313485Z [mask] POOR WN2 @ +5 dB: 3,043,456 bits, 40292 errors, 124 bursts (0 acquisition failures), 10758 s simulated, 4 workers — BER 1.32E-002 (direct, ≥30 errors) | uncoded 1.27E-001, deep-fade(<-6 dB) holds 20% of uncoded errors in 9% of bits, turbo 979c/0r/0a/0s
