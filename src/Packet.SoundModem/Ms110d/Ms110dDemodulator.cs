@@ -990,17 +990,28 @@ public sealed class Ms110dDemodulator
             // the off-cursor feed-forward taps fit noise (measured: WN1 AWGN 4.5E-5 vs the
             // 1E-5 gate; a shrunk 12-tap FF cleared AWGN but starved the static echo). The MMSE
             // ridge at −3 dB is order-1×trace (noise ≈ signal), so K=48 uses a strong ridge
-            // toward zero (initial) / toward the current taps (per-probe): off-cursor taps
-            // collapse on flat AWGN while the static rig's echo-excited taps, carrying real
-            // signal, survive it. K=32/24 keep their original (already-green) light ridge.
-            48 => (32, 22, 16, 1.0f, 1.0f),
+            // toward zero (initial). K=32/24 keep their original (already-green) light ridge.
+            //
+            // The per-probe TRACK ridge is stronger still (§B3.2, issue #69): the WN2 Poor
+            // genie pair measured a flat estimation-noise tax (+0.02 SER in healthy frames,
+            // uniform — NOT fade-edge lag), and the anchor ridge is the solve's cross-frame
+            // memory. The measured sweep (WN2 +5 dB smoke): ridge 0.5/1/2/4/8/16 →
+            // 43/42/20/5/1/23 coded errors — an optimum at 8, where the anchored equalizer
+            // coasts instead of chasing fades with noisy solves. Uncoded SER RISES (lag) but
+            // wrong-sign LLR mass drops 2.35×: where the channel deviates from the anchored
+            // estimate the output amplitude collapses, so errors self-report low confidence
+            // (soft erasures) instead of confident coin-flips. The 40 ms K=48 frame makes
+            // ~8-frame memory ≈ 300 ms, inside the 1 Hz coherence time; U=256's 120 ms
+            // frames forbid this (measured: WN13 at 4× its ridge → 4.9E-2), which is why
+            // the value is per-K, not global.
+            48 => (32, 22, 16, 1.0f, 8.0f),
             24 => (16, 6, 8, 1e-3f, 0.15f),
             _ => (24, 12, 13, 1e-3f, 0.15f),
         };
         _dfe = new Dfe(ff, fb);
         _ffLead = lead;
         _initRidge = initRidge;
-        _trackRidge = trackRidge;
+        _trackRidge = _options.TrackRidge ?? trackRidge;
 
         // Known symbols for chips [dataStart−576, dataStart+K): the final super-frame
         // (count = 0) plus the preamble-ending probe (design §2.4).

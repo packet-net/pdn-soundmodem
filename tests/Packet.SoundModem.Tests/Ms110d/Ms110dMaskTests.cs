@@ -408,7 +408,17 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             float? rlsLambda = float.TryParse(
                 Environment.GetEnvironmentVariable("MS110D_MASK_RLS_LAMBDA"), out float lam)
                 ? lam : null;
-            var demod = new Ms110dDemodulator(new Ms110dDemodOptions { RlsForgettingFactor = rlsLambda });
+            // §B3.2 anchored-ridge A/B knob: the anchor ridge is the solve's cross-frame
+            // memory; the WN2 genie pair measured a flat estimation-noise tax this knob
+            // probes. Same rule as the λ knob: report evidence only, never the gate table.
+            float? trackRidge = float.TryParse(
+                Environment.GetEnvironmentVariable("MS110D_MASK_TRACK_RIDGE"), out float tr)
+                ? tr : null;
+            var demod = new Ms110dDemodulator(new Ms110dDemodOptions
+            {
+                RlsForgettingFactor = rlsLambda,
+                TrackRidge = trackRidge,
+            });
             Ms110dBurstEndReason? endReason = null;
             demod.BurstCompleted += bu => endReason = bu.Reason;
             demod.BlockDecoded += b => decoded.AddRange(b.Bits);
@@ -603,6 +613,12 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         if (lambda is not null)
         {
             line += $" [RLS λ={lambda} — §B2.4 A/B run; report evidence only, never the gate table]";
+        }
+
+        string? trackRidgeLabel = Environment.GetEnvironmentVariable("MS110D_MASK_TRACK_RIDGE");
+        if (trackRidgeLabel is not null)
+        {
+            line += $" [track ridge={trackRidgeLabel} — §B3.2 A/B run; report evidence only, never the gate table]";
         }
 
         output.WriteLine(line);
