@@ -116,3 +116,32 @@ same build, same seeds):
 - Any marginal-block catastrophe (the #82 w3/b3 class) anywhere: revert.
 
 Unit suite already green (696/0); guards WN6/WN13sp corpses 0/0 (`corpse/`).
+
+## Amendment 3 (same day): WN2 canonical FAILS its hold bar — raw pricing regresses
+## flat-floor frames; the heteroscedasticity gate (derived 2× threshold)
+
+The battery caught it (`corpse/wn2-regressed.txt`): WN2 3M canonical 15 → 32 errors on
+paired seeds (1.05E-5 direct — above the line). Census: all four #83 clusters persist
+IDENTICALLY and five NEW thin clusters (2–6 errors, firstErr ≈ lastErr, every burst
+8c/0r) appear — the design note's pre-registered lucky-window risk, measured. Mechanism:
+WN2 at +5 dB is AWGN-dominated — the true within-frame floor is FLAT, so the 4×
+~64-symbol segment estimates carry χ² jitter (σ ≈ 12% relative at ~128 dof) with no real
+structure to track, and an occasionally-low segment floor inflates wrong-sign LLR
+magnitudes in converged blocks. The contrast with WN6 (both families improved 57 → 35 /
+57 → 39) isolates the regime split exactly: pricing helps where heteroscedasticity is
+REAL (fade-crossing frames, |h1| swinging 2–3×, residual ratios ≫ 2) and hurts where the
+floor is flat.
+
+The amended form — a DERIVED gate, not a tuned knob (same construction style as the
+0.04·|h1|² echo floor and the 4·ln(L) margins): per-segment pricing engages only when
+max(segNv)/min(segNv) > 2. The noise-only spread of 4 such estimates sits at ~1.3–1.4
+at the 99th percentile (χ² with ~128 dof per segment), so 2× carries the usual safety
+factor; the measured fade-frame swings sit well above it. Flat-floor frames take the
+frame-constant path BIT-IDENTICALLY to #83.
+
+Pre-registered acceptance for the amended form (before any re-measurement): on paired
+seeds, WN2 ×2 must show NO new error bursts beyond their #83 sets; WN6 6M both families
+must RETAIN the improvement (≤ 45 errors each — if the gate excludes the fade frames the
+ship case evaporates and the lever reverts); WN7 corpse oracle ≤ 15; guards 0/0; the
+full battery re-runs from scratch on the gated build and every remaining leg holds its
+#83 state.
