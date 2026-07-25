@@ -52,3 +52,28 @@ same calibration may now tip marginal wanderers.
    B3.4 per the roadmap.
 
 Files land here as the measurements run.
+
+---
+
+## Measured result (same day): FAILS acceptance — the lever returns to the bank, permanently
+
+`corpse/wn7-lever1-regressed.txt`: shipped **72,666 → 107,643 (5c/6r from 7c/4r)** —
+first decodes improve broadly (b0 7083 → 4728, b9 18,025 → 17,835), oracle holds at 15,
+b7's wander amplitude halves (1309 → 657 decode-changes at cap) — and **b1 and b6, both
+late convergers (i14), flip OUT of convergence** (1293 / 866 decode-changes at cap)
+while no wanderer converts. Pre-registered acceptance criterion 1 is failed on the "no
+lost convergences" clause; criterion 4 applies.
+
+This is the second independent measurement of the same mechanism on a different
+per-iteration map with different victims (the old map lost b9 the same way): calibrated
+first-pass LLRs reliably improve iteration-0 quality and reliably perturb marginal-block
+soft trajectories with net-negative outcomes. The verdict is no longer
+calculus-dependent — **start-side calibration is dead as a basin lever under this loop
+structure**, and the bank note changes from "if the contraction calculus changes" to
+"only if the loop itself changes shape (damping schedules, FD-turbo)". The working tree
+was reverted to main's state; nothing ships from this measurement.
+
+Fall-through per the pre-registration: the secondary registered structures from the
+fadecross note — per-segment (within-frame) BCJR noise pricing first (turbo-side, so it
+sharpens the per-iteration LLRs WITHOUT touching first-pass trajectories — the coupling
+that actually flipped blocks in #83), then the within-frame tail ramp — then B3.4.

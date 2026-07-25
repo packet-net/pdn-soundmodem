@@ -1,0 +1,4 @@
+WN7 @ 19 dB baseSeed 507 worker 0 burst 0 (channelSeed 508) genie=False
+payload 405472 bits in 11 blocks (16384 symbols/block), decoded 405504, coded errors 107643 (first 36864, last 405471), uncoded 89559/540672, collapses 14, turbo 5c/6r/0a/0s, end=, 180736 symbols dumped, lock=7/Long/K7@0.05Hz (tx K7)
+first-decode errors per block: b0:4728 b1:17663 b2:12932 b3:16777 b4:18120 b5:18321 b6:17668 b7:17739 b8:16343 b9:17835 b10:18149
+oracle coded errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:15 b6:0 b7:0 b8:0 b9:0 b10:0
