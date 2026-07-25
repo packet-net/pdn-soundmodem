@@ -2730,34 +2730,53 @@ public sealed class Ms110dDemodulator
             // channel spans — a frame-constant floor over-confidences exactly the spans
             // where the model is worst (measured: |h1| swings 2–3× inside fade-crossing
             // frames while one noiseVar priced the whole frame).
+            float nvMin = float.MaxValue;
+            float nvMax = 0f;
             for (int s = 0; s < Segments; s++)
             {
                 segNv[s] = segResidCount[s] > 0
                     ? Math.Max(0.5f * segResid[s] / segResidCount[s], 1e-6f)
                     : noiseVar;
+                nvMin = Math.Min(nvMin, segNv[s]);
+                nvMax = Math.Max(nvMax, segNv[s]);
             }
 
+            // Heteroscedasticity gate (segnoise note, Amendment 3 — a derived threshold,
+            // not a tuned knob): the noise-only spread of 4 segment estimates at ~2·segLen
+            // dof sits near 1.3–1.4× at the 99th percentile, so 2× carries the usual
+            // safety factor; measured fade-frame swings sit well above it. On flat-floor
+            // frames the segment estimates are pure χ² jitter — pricing them regressed
+            // WN2 (+5 dB, AWGN-dominated) with new thin clusters in converged blocks —
+            // so those frames keep the frame-constant floor bit-identically.
+            bool hetero = nvMax > 2f * nvMin;
             var nvSpan = new float[mode.U];
-            for (int u = 0; u < mode.U; u++)
+            if (!hetero)
             {
-                int s = Math.Min(Segments - 1, u / segLen);
-                if (u <= segCentre[0] || Segments == 1)
+                Array.Fill(nvSpan, noiseVar);
+            }
+            else
+            {
+                for (int u = 0; u < mode.U; u++)
                 {
-                    nvSpan[u] = segNv[0];
-                }
-                else if (u >= segCentre[Segments - 1])
-                {
-                    nvSpan[u] = segNv[Segments - 1];
-                }
-                else
-                {
-                    if (u < segCentre[s])
+                    int s = Math.Min(Segments - 1, u / segLen);
+                    if (u <= segCentre[0] || Segments == 1)
                     {
-                        s--;
+                        nvSpan[u] = segNv[0];
                     }
+                    else if (u >= segCentre[Segments - 1])
+                    {
+                        nvSpan[u] = segNv[Segments - 1];
+                    }
+                    else
+                    {
+                        if (u < segCentre[s])
+                        {
+                            s--;
+                        }
 
-                    float t = (u - segCentre[s]) / (segCentre[s + 1] - segCentre[s]);
-                    nvSpan[u] = (segNv[s] * (1f - t)) + (segNv[s + 1] * t);
+                        float t = (u - segCentre[s]) / (segCentre[s + 1] - segCentre[s]);
+                        nvSpan[u] = (segNv[s] * (1f - t)) + (segNv[s + 1] * t);
+                    }
                 }
             }
 
@@ -2765,7 +2784,7 @@ public sealed class Ms110dDemodulator
             {
                 var sb = new System.Text.StringBuilder(256);
                 sb.Append(FormattableString.Invariant(
-                    $"turbo-frame b{_blockIndex} f{f}: lag={delay} lag2={delay2} n={noiseVar:E3} nseg={segNv[0]:E2}|{segNv[1]:E2}|{segNv[2]:E2}|{segNv[3]:E2} ffE={dfe.FfEnergy:F3} sseN={tir.SseNull:F1} sseT={tir.SseTir:F1} h1="));
+                    $"turbo-frame b{_blockIndex} f{f}: lag={delay} lag2={delay2} n={noiseVar:E3} nhet={(hetero ? 1 : 0)} nseg={segNv[0]:E2}|{segNv[1]:E2}|{segNv[2]:E2}|{segNv[3]:E2} ffE={dfe.FfEnergy:F3} sseN={tir.SseNull:F1} sseT={tir.SseTir:F1} h1="));
                 for (int s = 0; s < Segments; s++)
                 {
                     if (s > 0) { sb.Append('|'); }
