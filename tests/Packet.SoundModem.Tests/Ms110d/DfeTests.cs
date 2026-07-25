@@ -250,6 +250,68 @@ public class DfeTests
         tir.Coefficient.Abs().Should().Be(0f);
     }
 
+    /// <summary>Rows for y[u] = x[u] + gₐ·x[u−5] + g_b·x[u−6] + n — a fractional-delay
+    /// echo's straddle pair on the symbol grid (§B3.3 two-adjacent-lag model).</summary>
+    private static void AccumulateStraddleEchoRows(
+        Dfe dfe, float gainMain, float gainAdjacent, float sigma, int noiseSeed)
+    {
+        const int N = 400;
+        Cf[] x = RandomPsk8(N, seed: 42);
+        var noise = new Random(noiseSeed);
+        var y = new Cf[N];
+        for (int u = 0; u < N; u++)
+        {
+            Cf echo = u >= 6 ? (x[u - 5] * gainMain) + (x[u - 6] * gainAdjacent) : Cf.Zero;
+            y[u] = x[u] + echo + Gauss(noise, sigma);
+        }
+
+        dfe.BeginTraining();
+        Span<Cf> window = stackalloc Cf[dfe.FfTaps];
+        Span<Cf> past = stackalloc Cf[dfe.FbTaps];
+        for (int u = 16; u < N; u++)
+        {
+            for (int i = 0; i < window.Length; i++)
+            {
+                window[i] = y[u - i];
+            }
+
+            for (int j = 0; j < past.Length; j++)
+            {
+                past[j] = x[u - 1 - j];
+            }
+
+            dfe.AddTrainingRow(window, past, x[u]);
+        }
+    }
+
+    [Fact]
+    public void Tir_Pair_Solve_Finds_Both_Straddle_Taps()
+    {
+        var dfe = new Dfe(ffTaps: 4, fbTaps: 8);
+        AccumulateStraddleEchoRows(dfe, gainMain: 0.7f, gainAdjacent: 0.35f, sigma: 0.05f, noiseSeed: 47);
+        Dfe.TirSolve tir = dfe.SolveTrainingTir(regularization: 1e-3f, ffNoisePower: 0f, maxLag: 8);
+
+        tir.Solved.Should().BeTrue();
+        tir.Lag.Should().Be(5, "the dominant tap wins the single-lag search");
+        tir.Lag2.Should().Be(6, "the straddle neighbour must be detected as the second tap");
+        Math.Sqrt(tir.Coefficient.Cnorm()).Should().BeApproximately(0.7, 0.05);
+        Math.Sqrt(tir.Coefficient2.Cnorm()).Should().BeApproximately(0.35, 0.05);
+    }
+
+    [Fact]
+    public void Tir_Pair_Is_Rejected_When_The_Echo_Is_A_Single_Lag()
+    {
+        // The extra parameter's noise-only gain must not clear the 4·SSE₀/rows margin —
+        // a clean single-lag echo keeps Lag2 = 0 and the cancellation path stays off.
+        var dfe = new Dfe(ffTaps: 4, fbTaps: 8);
+        AccumulateEchoRows(dfe, echoGain: 0.8f, sigma: 0.05f, noiseSeed: 43);
+        Dfe.TirSolve tir = dfe.SolveTrainingTir(regularization: 1e-3f, ffNoisePower: 0f, maxLag: 8);
+
+        tir.Lag.Should().Be(5);
+        tir.Lag2.Should().Be(0);
+        tir.Coefficient2.Abs().Should().Be(0f);
+    }
+
     [Fact]
     public void Tir_Null_Candidate_Matches_The_Plain_Training_Solve()
     {
