@@ -42,22 +42,48 @@ public static class SnrEstimator
     /// <param name="noise">Real audio from a guard interval — no signal.</param>
     /// <param name="sampleRate">Sample rate of both.</param>
     /// <param name="bandwidthHz">Reference bandwidth; the rig's default is 3 kHz.</param>
+    /// <param name="occupiedLowHz">Low edge of the band the recording actually contains signal
+    /// and noise in. 0 with <paramref name="occupiedHighHz"/> means the whole band.</param>
+    /// <param name="occupiedHighHz">High edge of that band.</param>
+    /// <remarks>
+    /// <b>Pass the occupied band for anything that came through an SSB filter.</b> A captured
+    /// pass has been through the receive converter's passband (150–3450 Hz by default), so its
+    /// noise occupies about 3.3 kHz of the 4.8 kHz the audio spans — and treating the empty
+    /// third as though it held noise breaks the estimate twice over. The median bin drifts
+    /// towards the stopband, and, worse, the noise subtracted from the burst is inflated by the
+    /// ratio of the two bandwidths. That error is negligible where the signal dominates and
+    /// severe where it does not: 0.2 dB at 10 dB SNR, 2.6 dB at 0 dB, which is precisely the
+    /// bottom of a §E2 ladder. Narrower still and the median lands in the stopband entirely, and
+    /// the estimator reports a noise floor of nothing and an SNR of everything.
+    /// </remarks>
     public static SnrEstimate Estimate(
         ReadOnlySpan<float> burst, ReadOnlySpan<float> noise, int sampleRate,
-        double bandwidthHz = ReferenceBandwidthHz)
+        double bandwidthHz = ReferenceBandwidthHz,
+        double occupiedLowHz = 0, double occupiedHighHz = 0)
     {
         if (burst.Length == 0 || noise.Length == 0)
         {
             throw new ArgumentException("burst and noise must both be non-empty");
         }
 
+        double nyquist = sampleRate / 2.0;
+        bool banded = occupiedHighHz > occupiedLowHz;
+        double low = banded ? Math.Max(0, occupiedLowHz) : 0;
+        double high = banded ? Math.Min(nyquist, occupiedHighHz) : nyquist;
+        double occupied = high - low;
+        if (occupied <= 0)
+        {
+            throw new ArgumentException("the occupied band must be inside 0..Nyquist");
+        }
+
         // Noise power per Hz, from the guard interval. Median-based so a stray carrier in the
-        // gap moves one bin rather than the estimate.
-        double noiseDensity = MedianPowerDensity(noise, sampleRate);
+        // gap moves one bin rather than the estimate — taken over the occupied band only.
+        double noiseDensity = MedianPowerDensity(noise, sampleRate, low, high);
         double noiseInBand = noiseDensity * bandwidthHz;
 
-        // Total power over the burst, then remove the noise riding on it. Both are measured
-        // over the same band, so the subtraction is like for like.
+        // Total power over the burst, then remove the noise riding on it. The noise removed is
+        // the noise the recording actually holds — density across the OCCUPIED band, not across
+        // the whole of Nyquist, which would over-subtract by the ratio of the two.
         double total = 0;
         for (int k = 0; k < burst.Length; k++)
         {
@@ -65,7 +91,7 @@ public static class SnrEstimator
         }
 
         double burstPower = total / burst.Length;
-        double noiseOverBurstBand = noiseDensity * (sampleRate / 2.0);
+        double noiseOverBurstBand = noiseDensity * occupied;
         double signal = Math.Max(burstPower - noiseOverBurstBand, 1e-30);
 
         return new SnrEstimate(
@@ -80,7 +106,8 @@ public static class SnrEstimator
     /// <see cref="IqSpectrum.NoiseVariance"/> uses, and for the same reason: applying the
     /// single-periodogram ln2 factor to an averaged spectrum biases the answer by up to
     /// 1.59 dB.</remarks>
-    private static double MedianPowerDensity(ReadOnlySpan<float> x, int sampleRate)
+    private static double MedianPowerDensity(
+        ReadOnlySpan<float> x, int sampleRate, double lowHz, double highHz)
     {
         int fftSize = 1024;
         while (fftSize > x.Length && fftSize > 64)
@@ -123,16 +150,21 @@ public static class SnrEstimator
             segments++;
         }
 
-        // Only the positive half carries independent information for a real signal.
+        // Only the positive half carries independent information for a real signal, and only
+        // the occupied part of that carries noise worth taking a median over.
         int half = fftSize / 2;
-        var bins = new double[half];
-        for (int k = 0; k < half; k++)
+        double binHz = sampleRate / (double)fftSize;
+        int firstBin = Math.Clamp((int)Math.Ceiling(lowHz / binHz), 0, half - 1);
+        int lastBin = Math.Clamp((int)Math.Floor(highHz / binHz), firstBin, half - 1);
+        int count = lastBin - firstBin + 1;
+        var bins = new double[count];
+        for (int k = 0; k < count; k++)
         {
-            bins[k] = power[k] / segments;
+            bins[k] = power[firstBin + k] / segments;
         }
 
         Array.Sort(bins);
-        double median = bins[half / 2];
+        double median = bins[count / 2];
 
         double dof = 2.0 * Math.Max(1, segments);
         double medianOverMean = Math.Pow(1.0 - (2.0 / (9.0 * dof)), 3);

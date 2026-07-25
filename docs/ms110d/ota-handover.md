@@ -12,7 +12,7 @@ Build against a local `M0LTE.Flex` checkout with `-p:FlexSourcePath=/home/tf/M0L
 dotnet test tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj -c Release \
     -p:FlexSourcePath=/home/tf/M0LTE.Flex/src/M0LTE.Flex/M0LTE.Flex.csproj
 ```
-742 tests green at handover.
+787 tests (682 pass, 105 skipped — mask suite, corpus and hardware gates) green at handover.
 
 ## State
 
@@ -26,10 +26,10 @@ dotnet test tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj -c Rele
 | §S3 SNR estimator + audit | **done** |
 | §S1 streaming converter | **done** — an hour converts in 13 s / 26 MB |
 | §S2 burst scorer / uncoded BER | **done** — `sm-ota score` |
-| §E2 hardware-in-the-loop | **not started** — the point of the exercise |
+| §E2 hardware-in-the-loop | **built and rehearsed offline** — needs the radio |
 | §E3 IQ vs SSB A/B, §E4 on air | not started |
 
-`sm-ota` subcommands: `tone`, `sweep`, `tune`, `burst`, `synth`, `meters`, `measure` (`--survey`, `--purity`), `radio`, `rawmeters`.
+`sm-ota` subcommands: `tone`, `sweep`, `tune`, `burst`, `synth`, `meters`, `measure` (`--survey`, `--purity`), `radio`, `rawmeters`, `score`, `ladder`.
 
 ## Environment — constants and quirks
 
@@ -57,7 +57,8 @@ dotnet test tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj -c Rele
 5. **The radio pulls waveform TX buffers continuously**, keyed or not, and never announces its return to RECEIVE. `FlexWaveformIqOutput` gates on the interlock because of this; before the fix, samples queued before keying were silently discarded and bursts came out truncated with a starve count of zero.
 6. **The demodulator clears `Lock` when a burst ends.** Read it inside `BlockDecoded`, not after `Process`, or a perfect decode reports "NO ACQUISITION".
 7. **Re-measure `--dial-correction` each session.** At 18 MHz the combined reference error exceeds the demodulator's ±75 Hz acquisition grid, so getting this wrong means nothing acquires and it looks like a demodulator fault.
-8. **Where an error lives is the diagnosis.** When two implementations of the same maths disagree, find the first and last differing sample before theorising: confined to the head is a startup convention, spread through the file is a wrong kernel, at the tail is the flush. The streaming converter's equivalence test prints all three because RMS alone cannot tell them apart.
+8. **On a fake clock, a delay nothing advances never completes.** `FlexIqTransmitter` takes a `TimeProvider` so the ten-minute identification rule and the ladder's pacing can be proved by advancing a clock. The first attempt at that test hung on a settle delay inside `EnsureIdentifiedAsync`. The fix was to separate the policy from the mechanism — `IdentificationDue` is the decision alone — not to pump the clock from the test.
+9. **Where an error lives is the diagnosis.** When two implementations of the same maths disagree, find the first and last differing sample before theorising: confined to the head is a startup convention, spread through the file is a wrong kernel, at the tail is the flush. The streaming converter's equivalence test prints all three because RMS alone cannot tell them apart.
 
 ## Remaining roadmap
 
@@ -92,11 +93,23 @@ A JSON schedule (WN, interleaver, seed, power, offset, repeats, gaps) and a per-
 
 `sm-ota monitor` — live capture → streaming convert → demodulate, printing decodes as they happen. Cheap now that §S1 and §S2 exist: it is `BurstScorer` fed from the capture client instead of a file.
 
-### 4. §E2 — the actual point
+### 4. §E2 — built and rehearsed; needs the radio
 
-Inject the Watterson rig and calibrated AWGN **at the transmitter**, using the mask suite's own seeds, and score the same points through real hardware. The differential against pure simulation at matched SNR is what this whole exercise exists to produce.
+`sm-ota ladder` injects the rig at the transmitter and scores the pass. `--dry-run` renders the whole thing to an IQ file with no radio involved, which is how it was proved: rendered, converted, scored, and the measured SNR tracked the requested SNR to 0.3 dB at every rung from 18 dB down to 3 dB, with coded BER holding at zero to 6 dB (WN6's gate is 9 dB). The only untested link is the hardware.
 
-`WattersonChannel` lives in the test project; link the source file into the tool rather than reimplementing it (`<Compile Include="…/WattersonChannel.cs" Link="…"/>`). Reimplementing a rig is the de-rigging failure this project has already paid for.
+```
+sm-ota ladder --wn 6 --snr 18,12,9,6,3 --repeats 4 --dry-run --out pass.wav   # rehearse
+sm-ota ladder --wn 6 --snr 18,12,9,6,3 --repeats 4 --rf-power 15 \
+              --capture-host ubersdr --dial-correction <re-measure!>          # for real
+```
+
+`WattersonChannel` is compiled into the tool from where it lives in the test project (see both csprojs) — one definition, still the mask suite's to edit. Three things about the design are load-bearing:
+
+- **Each point transmits its own noise lead-in**, so the receiver measures the SNR actually delivered instead of trusting the nominal one. This is what makes a rung's position on the comparison curve a measurement rather than a claim. `LeadInSeconds` must exceed the scorer's `NoiseLeadSeconds + NoiseWindowSeconds` with margin for the key-up ramp.
+- **One gain across the whole pass**, taken from the worst point. Peak-normalising per point would quieten the *signal* at low SNR, and since the leakage path adds noise at a fixed absolute level, that is a second uncalibrated dose of noise at the bottom of the ladder.
+- **Rungs are interleaved, not grouped**, so a pass cut short still covers the ladder.
+
+**How high the ladder can usefully go.** Two constraints bind, and both bind at the *top*: the path margin (~24–26 dB at 15 W) and the −27 dBc close-in artefact. At 5 dB the artefact is 22 dB below the injected noise and contributes nothing; at 23 dB it is 4 dB below and costs ~1.5 dB. Both put the ceiling near **15–16 dB**, which covers the whole AWGN mask except WN8's 16 dB point, and the Poor mask through WN6/WN13. WN7 (19 dB) and WN8 (23 dB) Poor need the real-antenna phase. *This refines the older note below, which warned about low-SNR behaviour — the arithmetic says the artefact is a high-SNR problem.*
 
 **Prerequisites before the numbers mean anything:**
 

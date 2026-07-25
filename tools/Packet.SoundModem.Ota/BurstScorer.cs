@@ -93,6 +93,18 @@ public sealed record BurstScorerOptions
 
     /// <summary>Demodulator options, so a scored pass can be run against a knob under test.</summary>
     public Ms110dDemodOptions? Demodulator { get; init; }
+
+    /// <summary>
+    /// The band the converted audio actually occupies — the receive converter's SSB passband.
+    /// </summary>
+    /// <remarks>Must match whatever <c>IqToAudioOptions.SsbLowHz</c>/<c>SsbHighHz</c> the capture
+    /// was converted with. The noise in a converted pass lives only inside that passband, and an
+    /// estimator that assumes it fills the whole audio band over-subtracts noise from the burst —
+    /// harmless at high SNR, 2.6 dB out at 0 dB. See <see cref="SnrEstimator.Estimate"/>.</remarks>
+    public double OccupiedLowHz { get; init; } = 150;
+
+    /// <summary>Upper edge of the occupied band.</summary>
+    public double OccupiedHighHz { get; init; } = 3450;
 }
 
 /// <summary>
@@ -263,7 +275,10 @@ public sealed class BurstScorer
             SnrEstimate? snr = null;
             if (burstNoise is { Length: >= 1024 } && burstFill >= 1024)
             {
-                snr = SnrEstimator.Estimate(burstAudio.AsSpan(0, burstFill), burstNoise, rate);
+                snr = SnrEstimator.Estimate(
+                    burstAudio.AsSpan(0, burstFill), burstNoise, rate,
+                    SnrEstimator.ReferenceBandwidthHz,
+                    _options.OccupiedLowHz, _options.OccupiedHighHz);
             }
 
             found.Add(new BurstScore(

@@ -180,14 +180,20 @@ internal static class ScoreCommand
         Console.WriteLine();
         Console.WriteLine($"scored {scored} burst(s); {score.Bursts.Count - scored} unscheduled; "
                           + $"{score.Missed.Count} MISSED");
+
+        // Pooled across every scored burst. That is the figure of merit for repeats at one
+        // operating point and NOT a meaningful number for a ladder, where the bursts were
+        // deliberately sent at different SNRs — say so rather than let the row be quoted.
         if (payloadBits > 0)
         {
-            Console.WriteLine($"coded   {payloadErrors}/{payloadBits} = {Rate(payloadErrors / (double)payloadBits)}");
+            Console.WriteLine($"coded   {payloadErrors}/{payloadBits} = {Rate(payloadErrors / (double)payloadBits)}"
+                              + (scored > 1 ? "   (pooled — per-burst rows above)" : ""));
         }
 
         if (uncodedBits > 0)
         {
-            Console.WriteLine($"uncoded {uncodedErrors}/{uncodedBits} = {Rate(uncodedErrors / (double)uncodedBits)}");
+            Console.WriteLine($"uncoded {uncodedErrors}/{uncodedBits} = {Rate(uncodedErrors / (double)uncodedBits)}"
+                              + (scored > 1 ? "   (pooled — per-burst rows above)" : ""));
         }
 
         // A missed burst is the headline, so it is said plainly rather than left to be inferred

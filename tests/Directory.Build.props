@@ -11,6 +11,9 @@
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="AwesomeAssertions" />
+    <!-- FakeTimeProvider: pacing and interval policy (the ladder's gaps, the 10-minute ID rule)
+         is verified by advancing a clock, not by sleeping through it. -->
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
   </ItemGroup>
 
   <ItemGroup>

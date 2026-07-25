@@ -1,4 +1,4 @@
-# Streaming conversion and burst scoring (§S1, §S2) — 2026-07-25
+# Streaming conversion, burst scoring and the E2 ladder (§S1, §S2, §E2) — 2026-07-25
 
 The offline half of the OTA harness, built after the [bring-up session](../2026-07-25-ota-bringup/README.md). Nothing here involves a radio: it is the piece that lets a campaign pass be scored at all, because a pass is an hour long by construction (the receiver's `max_session_time` is 3600 s) and the existing converter could not read one.
 
@@ -70,6 +70,42 @@ That is the sort of small discrepancy it would be easy to shrug at or to paper o
 So the test asserts the invariant rather than a count: **on a noiseless channel the demodulator may be unsure, but it must never be confidently wrong about a bit that was actually transmitted.** A tolerance of "≤ 3 errors" would have passed a genuinely misaligned re-encoder on a shorter block, and would have needed loosening every time a waveform was added.
 
 The WN2 behaviour itself is an observation for whoever owns the demodulator — recorded here, not acted on.
+
+## Then §E2 — the ladder, rehearsed with no radio in the loop
+
+`sm-ota ladder` injects the mask suite's channel at the transmitter and runs an SNR ladder through real hardware. `--dry-run` renders the whole pass to an IQ file without touching a radio, so the chain can be proved before any power is applied. Rendered, then scored, entirely offline:
+
+| requested | measured | coded BER | uncoded BER |
+|---|---|---|---|
+| 18 dB | 18.3 | 0 | 0 |
+| 12 dB | 12.1 | 0 | 0 |
+| 9 dB | 9.2 | 0 | 4.88E-04 |
+| 6 dB | 5.9 | 0 | 2.15E-02 |
+| 3 dB | 3.1 | 9.24E-02 | 7.76E-02 |
+
+Measured SNR tracks the request to 0.3 dB at every rung. Coded BER holds at zero down to 6 dB — WN6's AWGN mask gate is 9 dB — and breaks at 3 dB, while the uncoded rate degrades smoothly throughout. The only link in that chain not yet exercised is the radio.
+
+Three design decisions carry the result:
+
+**Each point transmits its own noise lead-in.** The scorer measures every burst's SNR from the quiet immediately before it; if that quiet were the band's own noise rather than the noise we injected, every rung would be scored at the path's SNR instead of the one under test. Transmitting the rig's lead-in makes the pass self-calibrating — the requested figure is the request, the scorer's figure is the measurement, and the table above is the two agreeing.
+
+**One gain for the whole pass, taken from the worst point.** Peak-normalising each point separately would quieten the *signal* at low SNR, where noise dominates the envelope. The leakage path contributes its own noise at a fixed absolute level, so a signal that shrinks at the bottom of the ladder collects a second, uncalibrated dose of noise exactly where the measurement is most delicate. Signal power is now identical at every rung and only the injected noise moves — which is what a ladder means.
+
+**Rungs are interleaved, not grouped.** Every SNR is visited once before any is visited twice, so a pass cut short by weather, a dropped connection or an operator still covers the ladder rather than the top of it.
+
+### A real error the ladder exposed in the SNR estimator
+
+The estimator took its noise density as a median over the whole audio band and converted it to power using the full bandwidth. A converted capture has been through the receive converter's SSB passband, so its noise occupies about 3.3 kHz of the 4.8 kHz the audio spans — and treating the empty third as though it held noise inflates the noise subtracted from the burst by the ratio of the two bandwidths.
+
+That error is negligible where the signal dominates and severe where it does not: **0.2 dB at 10 dB SNR, 2.6 dB at 0 dB** — precisely the bottom of a ladder, where the numbers matter most. Narrower still and the median lands in the stopband entirely, and the estimator reports a noise floor of nothing and an SNR of everything.
+
+`Estimate` now takes the occupied band and uses it for both the median and the subtraction; `BurstScorer` passes the converter's passband so the two cannot drift apart. The default is unchanged, so the existing rig audit still holds.
+
+### Time is injected now
+
+`FlexIqTransmitter` takes a `TimeProvider` (house rule: never `DateTime.Now`/`Stopwatch`). The ten-minute identification interval — a licence condition — is now proved by advancing a clock instead of waiting on one, including a two-hour pass, in milliseconds.
+
+Getting there turned up a trap worth recording: **on a fake clock, a delay nothing advances never completes.** The first version of the test hung on the settle inside `EnsureIdentifiedAsync`. The fix was not to pump the clock from the test but to separate the policy from the mechanism — `IdentificationDue` is now the decision on its own, assertable without keying anything. That is a better shape regardless: a ladder wants to see an identification coming so it can place it in a gap rather than discover it mid-pass.
 
 ## Also
 

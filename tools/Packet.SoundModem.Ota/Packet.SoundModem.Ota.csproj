@@ -12,6 +12,23 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The Watterson rig, compiled from where it lives in the test project rather than copied.
+         §E2 injects at the transmitter the SAME channel the mask suite simulates, and the entire
+         value of that comparison rests on it being the same rig: a second implementation would
+         measure the difference between two rigs and report it as the cost of real hardware. The
+         file does not move on disk, so it stays the mask suite's to edit and every change flows
+         through here; the test project stops compiling it (see its csproj) so there is exactly
+         one definition; its namespace is unchanged so no test source needs touching. -->
+    <Compile Include="../../tests/Packet.SoundModem.Tests/Channel/WattersonChannel.cs"
+             Link="Channel/WattersonChannel.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- WattersonChannelTests exercises the rig's internal FadingGains. -->
+    <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- M0LTE.Flex (the waveform IQ TX path) flows transitively; WavFile IO for `measure`. -->
     <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
     <!-- UberSdrIqClient, so `sm-ota tone` can bracket its own transmission with a capture

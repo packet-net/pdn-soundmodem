@@ -109,6 +109,16 @@ public sealed record FlexIqTransmitterOptions
     /// and without the interlock there is nothing at all watching a deaf transmitter. Offline
     /// tests against the mock (which has no meter surface) set it false.</summary>
     public bool RequireMeters { get; init; } = true;
+
+    /// <summary>
+    /// Clock for every interval this class enforces — the identification period, the inter-burst
+    /// settle, the post-transmit observation.
+    /// </summary>
+    /// <remarks>Injected so those policies can be verified by advancing a clock instead of
+    /// waiting on one: proving the ten-minute identification rule with the system clock costs
+    /// ten minutes of a test run, and a ladder pass paced in real time cannot be rehearsed at
+    /// all. House rule (CLAUDE.md): wall-clock via <see cref="TimeProvider"/> only.</remarks>
+    public TimeProvider Time { get; init; } = TimeProvider.System;
 }
 
 /// <summary>What one keyed transmission did.</summary>
@@ -189,6 +199,9 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
 
     private readonly bool _ownsClient;
 
+    /// <summary>Now, on the injected clock — never the system one directly.</summary>
+    private DateTime UtcNow => _options.Time.GetUtcNow().UtcDateTime;
+
     private FlexIqTransmitter(
         FlexIqTransmitterOptions options, FlexClient client, FlexWaveform waveform,
         FlexWaveformIqOutput iq, FlexPtt ptt, FlexMeters meters, Action<string> log, bool ownsClient)
@@ -246,10 +259,10 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
     /// </remarks>
     private async Task WaitForTransmitIdleAsync()
     {
-        TimeSpan since = DateTime.UtcNow - _lastUnkeyUtc;
+        TimeSpan since = UtcNow - _lastUnkeyUtc;
         if (since < _options.InterBurstSettle)
         {
-            await Task.Delay(_options.InterBurstSettle - since).ConfigureAwait(false);
+            await Task.Delay(_options.InterBurstSettle - since, _options.Time).ConfigureAwait(false);
         }
     }
 
@@ -276,7 +289,7 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
             {
                 lock (_faultGate)
                 {
-                    _stateLog.Add($"{DateTime.UtcNow:HH:mm:ss.fff} {update.Object}.{key}={value}");
+                    _stateLog.Add($"{UtcNow:HH:mm:ss.fff} {update.Object}.{key}={value}");
                 }
             }
         }
@@ -317,9 +330,20 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
         float[] iq = MorseGenerator.Complex(
             text, _options.IdToneHz, 0.9, _options.IdWpm, SampleRate);
         TransmitReport report = await TransmitAsync(iq, cancellation).ConfigureAwait(false);
-        LastIdentifiedUtc = DateTime.UtcNow;
+        LastIdentifiedUtc = UtcNow;
         return report;
     }
+
+    /// <summary>
+    /// Whether an identification is owed right now — the licence-condition decision by itself,
+    /// separated from the transmitting that follows it.
+    /// </summary>
+    /// <remarks>Exposed so the policy can be asserted against a clock without keying anything,
+    /// and so a ladder can see an identification coming and put it in a gap rather than
+    /// discovering it mid-pass.</remarks>
+    public bool IdentificationDue =>
+        _options.Identify
+        && (LastIdentifiedUtc is not DateTime last || UtcNow - last >= _options.IdentifyInterval);
 
     /// <summary>
     /// Identifies if the station has not done so yet, or if
@@ -329,19 +353,13 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
     /// time it is not is the time it would otherwise have been forgotten.</remarks>
     public async Task EnsureIdentifiedAsync(CancellationToken cancellation = default)
     {
-        if (!_options.Identify)
-        {
-            return;
-        }
-
-        if (LastIdentifiedUtc is DateTime last
-            && DateTime.UtcNow - last < _options.IdentifyInterval)
+        if (!IdentificationDue)
         {
             return;
         }
 
         await IdentifyAsync(cancellation).ConfigureAwait(false);
-        await Task.Delay(500, cancellation).ConfigureAwait(false);
+        await Task.Delay(TimeSpan.FromMilliseconds(500), _options.Time, cancellation).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -680,7 +698,7 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
             }
 
             await WaitForTransmitIdleAsync().ConfigureAwait(false);
-            keyUtc = DateTime.UtcNow;
+            keyUtc = UtcNow;
             _ptt.Key();
 
             // Chunked so the interlock can cut a transmission short mid-burst.
@@ -708,7 +726,7 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
             _meters.Updated -= OnMeter;
         }
 
-        DateTime unkeyUtc = DateTime.UtcNow;
+        DateTime unkeyUtc = UtcNow;
         _lastUnkeyUtc = unkeyUtc;
         string[] faults;
         lock (_faultGate)
@@ -773,7 +791,7 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
         long lastStarved = _iq.SamplesStarved;
         for (int t = 1; t <= (int)Math.Ceiling(seconds); t++)
         {
-            await Task.Delay(1000, cancellation).ConfigureAwait(false);
+            await Task.Delay(TimeSpan.FromSeconds(1), _options.Time, cancellation).ConfigureAwait(false);
             long now = _iq.PacketsReflected;
             long starvedNow = _iq.SamplesStarved;
             _log($"  +{t,2}s  buffers pulled this second: {now - last,5}   " +

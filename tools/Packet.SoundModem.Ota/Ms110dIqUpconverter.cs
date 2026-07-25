@@ -33,6 +33,19 @@ public sealed class Ms110dIqUpconverterOptions
     /// <summary>Peak magnitude of the emitted IQ. Kept near full scale so radiated power is
     /// set by the radio's <c>rfpower</c> rather than by drive level — the two multiply.</summary>
     public double Amplitude { get; init; } = 0.9;
+
+    /// <summary>
+    /// Scale the result so its peak is <see cref="Amplitude"/>. True for a single burst, where
+    /// the modem's own level is arbitrary and only the dynamic range matters.
+    /// </summary>
+    /// <remarks><b>Set false for a §E2 ladder.</b> Peak-normalising each point separately would
+    /// make the transmitted <em>signal</em> power vary with the injected noise — a low-SNR point
+    /// is mostly noise, so normalising its peak turns the signal down. The path contributes its
+    /// own noise at a fixed absolute level, so a signal that quietens at the bottom of the ladder
+    /// gets a second, uncalibrated dose of noise exactly where the measurement is most delicate.
+    /// The ladder therefore takes the natural scale here and applies one gain across the whole
+    /// pass, chosen from the worst point.</remarks>
+    public bool PeakNormalise { get; init; } = true;
 }
 
 /// <summary>
@@ -174,9 +187,10 @@ public sealed class Ms110dIqUpconverter
 
         // 4. Scale to the requested peak. The modem's own level is arbitrary and the
         //    demodulator equalises it, so the only thing that matters here is using the
-        //    waveform's dynamic range without clipping.
+        //    waveform's dynamic range without clipping. A ladder turns this off and scales the
+        //    whole pass by one gain instead — see PeakNormalise.
         peak = Math.Sqrt(peak);
-        if (peak > 1e-12)
+        if (_opt.PeakNormalise && peak > 1e-12)
         {
             float g = (float)(_opt.Amplitude / peak);
             for (int k = 0; k < iq.Length; k++)

@@ -33,6 +33,7 @@ try
         "meters" => await Commands.MetersAsync(args[1..]),
         "measure" => Commands.Measure(args[1..]),
         "score" => ScoreCommand.Run(args[1..]),
+        "ladder" => await LadderCommand.RunAsync(args[1..]),
         "-h" or "--help" or "help" => Usage(),
         _ => Unknown(args[0]),
     };
@@ -70,6 +71,8 @@ static int Usage()
         sm-ota measure  analyse an IQ capture WAV: levels, spectrum, tone, image, spurs, IMD.
         sm-ota score    convert a captured pass and score every burst in it — acquisition,
                         WID, CFO, SNR, coded and uncoded BER, and what was MISSED.
+        sm-ota ladder   §E2: inject the mask suite's own channel at the transmitter and run an
+                        SNR ladder through real hardware. --dry-run rehearses it with no radio.
 
         Run any command with --help for its options.
         """);
