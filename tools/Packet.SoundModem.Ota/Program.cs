@@ -155,7 +155,16 @@ internal static class Commands
         // Total capture window: pre-flight (~2 s + guards) + the tone + generous slack, so
         // the transmission is always well inside the recording.
         bool preflight = !a.Has("no-preflight");
-        int captureSeconds = (int)Math.Ceiling(seconds + (preflight ? 6 : 2) + 6);
+        // The capture has to span everything that will be keyed, not just the burst under
+        // test: the identification and each inter-burst settle are airtime too, and a capture
+        // that stops early reads the burst as several dB low rather than failing outright.
+        double idSeconds = options.Identify
+            ? MorseGenerator.DurationSeconds(
+                MorseGenerator.IdText(a.Str("id-call", "M0LTE"), a.Str("id-mode", "MS110D")), 30)
+              + options.InterBurstSettle.TotalSeconds
+            : 0;
+        int captureSeconds = (int)Math.Ceiling(
+            seconds + idSeconds + (preflight ? 6 : 2) + 8);
 
         await using FlexIqTransmitter tx = await FlexIqTransmitter.OpenAsync(options, Log);
 
