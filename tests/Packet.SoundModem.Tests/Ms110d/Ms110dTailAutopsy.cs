@@ -219,6 +219,30 @@ public class Ms110dTailAutopsy
 
         demod.FirstPassBlockLlrs += (blockIndex, llrs) => WriteLlrStats("first", blockIndex, llrs);
 
+        // §B3.3 basin instrument: the FIRST DECODE's per-block info errors — the quantity
+        // the basin boundary is measured in (llrstats `first` counts raw stream signs,
+        // which per-frame LLR weighting cannot change; the Viterbi decode is what it
+        // changes). Decoded rig-side so the demod's own pipeline is untouched.
+        var firstViterbi = new TailBitingViterbiDecoder(code);
+        var firstDecodeErrs = new List<string>();
+        demod.FirstPassBlockLlrs += (blockIndex, llrs) =>
+        {
+            if (blockIndex >= txBlocks)
+            {
+                return;
+            }
+
+            var dec = new byte[il.InputBits];
+            Ms110dFraming.DecodeBlock(firstViterbi, puncture, interleaver, llrs, dec);
+            int errs = 0;
+            for (int i = 0; i < dec.Length; i++)
+            {
+                errs += dec[i] != txBits[(blockIndex * il.InputBits) + i] ? 1 : 0;
+            }
+
+            firstDecodeErrs.Add($"b{blockIndex}:{errs}");
+        };
+
         // §B3.3 basin instrument: the stream the turbo settled on — the missing middle of
         // the first→final→oracle walk. On reverted blocks this is the wander state at the
         // cap, which is exactly the view the basin mechanism analysis needs.
@@ -309,6 +333,7 @@ public class Ms110dTailAutopsy
             $"end={endReason}, {symbolIndex} symbols dumped, " +
             $"lock={demod.Lock?.WaveformNumber}/{demod.Lock?.Interleaver}/K{demod.Lock?.ConstraintLength}" +
             $"@{demod.Lock?.CfoHz:F2}Hz (tx K{settings.ConstraintLength})\n" +
+            $"first-decode errors per block: {string.Join(" ", firstDecodeErrs)}\n" +
             (oracle ? $"oracle coded errors per block: {string.Join(" ", oracleBlockErrs)}\n" : ""));
         decoded.Count.Should().BeGreaterThan(0,
             "the corpse must at least acquire for the dump to mean anything");

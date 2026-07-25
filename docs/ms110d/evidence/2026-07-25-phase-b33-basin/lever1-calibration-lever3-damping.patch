@@ -1,0 +1,176 @@
+diff --git a/src/Packet.SoundModem/Ms110d/Ms110dDemodulator.cs b/src/Packet.SoundModem/Ms110d/Ms110dDemodulator.cs
+index 61d3907..5f46b9c 100644
+--- a/src/Packet.SoundModem/Ms110d/Ms110dDemodulator.cs
++++ b/src/Packet.SoundModem/Ms110d/Ms110dDemodulator.cs
+@@ -113,6 +113,13 @@ public sealed class Ms110dDemodulator
+     private int _frameInBlock;
+     private int _badProbes;
+     private double _probeMse;
++    // §B3.3 basin: the previous frame's PRE-solve probe residual — the data span's head
++    // anchor for the first-pass LLR noise calibration. Pre-solve, not post-solve: the
++    // post-solve residual is measured on rows the solve just fitted (weight-6 in the
++    // Gram) and its in-sample optimism made the calibrated LLRs over-confident against
++    // the measured data-span truth (corpse: span mean |y−ref|² 0.438 vs pre-solve probe
++    // MSE 0.460, ratio 0.95, r = 0.58 — the pre-solve measurement is the honest one).
++    private double _preMsePrev;
+     private double _probeGainRef;
+     private double _probeEnergyRef;
+     private int _collapsedProbes;
+@@ -1133,6 +1140,9 @@ public sealed class Ms110dDemodulator
+         }
+ 
+         _probeMse = mse / k;
++        // Seed the LLR-calibration head anchor: the first data span has no earlier
++        // probe, so it starts from the preamble's known-symbol residual.
++        _preMsePrev = _probeMse;
+         _probeGainRef = gain.Abs() / k;
+         _probeEnergyRef = energy / k;
+         _badProbes = 0;
+@@ -1292,6 +1302,15 @@ public sealed class Ms110dDemodulator
+             startTaps = endTaps;
+         }
+ 
++        // Noise-floor anchors for the data span's LLR scale: the previous probe's
++        // pre-solve residual at the head, this probe's at the tail — the same bracketing
++        // as the tap trajectory. A fresh re-solve invalidates the head anchor along with
++        // the taps (it was measured against the collapsed solution; the tail preMse was
++        // too, which under-weights the recovering span — conservative, and correct in
++        // direction while tracking rebuilds).
++        double spanMseStart = freshSolve ? preMse : _preMsePrev;
++        _preMsePrev = preMse;
++
+         // Residual-CFO trim from the mean tap rotation between consecutive probe solves.
+         var tapRotation = Cf.Zero;
+         for (int i = 0; i < endTaps.Length; i++)
+@@ -1527,7 +1546,12 @@ public sealed class Ms110dDemodulator
+                 Cf clean = Slice(descrambled, mode.Modulation);
+                 Cf averaged = (pass1[u] + pass2[u] + descrambled) * (1f / 3f);
+                 DataSymbolEqualized?.Invoke(averaged);
+-                PushLlrs(averaged, mode.Modulation);
++                // Non-fading: the true noise floor is frame-constant, so the EWMA'd
++                // pre-solve measurement (_probeMse) is the calibration — no per-probe χ²
++                // jitter reweighting. The 3-pass average claims no noise bonus: the
++                // passes share the frame's received samples, so their noise is
++                // correlated (see the design note).
++                PushLlrs(averaged, mode.Modulation, (float)_probeMse);
+                 Span<Cf> row = window;
+                 if (genie)
+                 {
+@@ -1565,7 +1589,13 @@ public sealed class Ms110dDemodulator
+                 Cf descrambled = y * rotor.Conj();
+                 Cf clean = Slice(descrambled, mode.Modulation);
+                 DataSymbolEqualized?.Invoke(descrambled);
+-                PushLlrs(descrambled, mode.Modulation);
++                // Fading: interpolate the noise floor between the bracketing probes'
++                // pre-solve residuals, the same anchors as the tap trajectory — a fade's
++                // corrupted symbols enter the Viterbi at the weight the channel earned,
++                // instead of the fixed design-floor scale (§B3.3 basin lever 1).
++                PushLlrs(
++                    descrambled, mode.Modulation,
++                    (float)(spanMseStart + ((preMse - spanMseStart) * FrameFraction(mode, u))));
+                 Span<Cf> row = window;
+                 if (genie)
+                 {
+@@ -1766,11 +1796,21 @@ public sealed class Ms110dDemodulator
+         return result;
+     }
+ 
+-    private void PushLlrs(Cf descrambled, Ms110dModulation modulation, int scramble = 0)
++    private void PushLlrs(Cf descrambled, Ms110dModulation modulation, float noisePower)
+     {
++        // Exact max-log for every PSK mode, scaled by the MEASURED post-equalizer noise
++        // (§B3.3 basin lever 1): LLR = (min1 − min0)/N̂0 with squared distances and N̂0
++        // the total complex noise power from the probe residuals. The former fixed scales
++        // (BPSK 4·Re, QPSK 2·(Re±Im), 8PSK 2.0·max-log) were these same metrics at an
++        // assumed design-floor N0 — 5–25× under-confident at high SNR and, worse,
++        // frame-invariant: the Viterbi is immune to a global scale but a fade-corrupted
++        // frame entering at clean-frame weight is what dragged the WN7 first decodes to
++        // 17–22% errBits. BPSK's 4·Re and QPSK's 2·(Re±Im) are recovered exactly at
++        // N̂0 = 1 (the axis-point QPSK max-log reduces to 2·(Re±Im) analytically).
++        float scale = 1f / MathF.Max(noisePower, 1e-6f);
+         if (modulation == Ms110dModulation.Bpsk)
+         {
+-            AddLlr(4f * descrambled.Re);
++            PushMaxLogLlrs(descrambled, TurboBpsk, null, 1, scale, 0);
+             return;
+         }
+ 
+@@ -1778,21 +1818,20 @@ public sealed class Ms110dDemodulator
+         {
+             // Max-log over 8 points. Bit label of ring symbol s = tribit t where
+             // Transcode8Psk[t] == s (inverse map precomputed below).
+-            PushMaxLogLlrs(descrambled, Ms110dTables.Psk8, SymbolToTribit8, 3, 2.0f, 0);
++            PushMaxLogLlrs(descrambled, Ms110dTables.Psk8, SymbolToTribit8, 3, scale, 0);
+             return;
+         }
+ 
+         if (modulation == Ms110dModulation.Qam16)
+         {
+             // QAM16 LLRs come from the first-pass PushMaxLogLlrs call with the live 10.0
+-            // scale; routing QAM16 through here (historically scale 2.0) would silently
+-            // drop LLR magnitudes 5× — refuse rather than mis-scale.
++            // scale; its calibration belongs to B3.4 with the rest of the QAM16 work —
++            // refuse rather than silently rescale.
+             throw new InvalidOperationException("QAM16 LLRs must use the first-pass PushMaxLogLlrs path");
+         }
+ 
+         // Table D-IV Gray map: MSB=0 ⇔ {+1, +j}, LSB=0 ⇔ {+1, −j}.
+-        AddLlr(2f * (descrambled.Re + descrambled.Im));
+-        AddLlr(2f * (descrambled.Re - descrambled.Im));
++        PushMaxLogLlrs(descrambled, TurboQpsk, TurboQpskLabels, 2, scale, 0);
+     }
+ 
+     /// <summary>Ring symbol → tribit inverse map for 8PSK LLR bit labels.</summary>
+@@ -1992,19 +2031,19 @@ public sealed class Ms110dDemodulator
+             for (int iter = 0; iter < 24; iter++)
+             {
+                 // Hybrid bootstrap (§B3.3): iteration 0 trains on hard re-encoded labels —
+-                // the first-pass LLR stream's fixed max-log scale is far too timid at high
+-                // SNR (measured WN6 corpse: mean |LLR| 1.6 where the calibrated chain-BCJR
+-                // output runs 12+), so a soft start spends three iterations rediscovering
+-                // confidence. The hard pass hands iteration 1 properly-scaled LLRs, and
+-                // the SISO soft iterations take over from there. The cap is generous
+-                // because the costs are asymmetric: a cap-limited revert throws away ~10k
+-                // repaired errors per block, extra iterations only cost wall-clock on the
+-                // rare non-converging blocks. Measured on the WN6 w2/b2 corpse: one dead
+-                // block reverted at cap 8 while still halving its decode-changes and
+-                // converged at 9; the other rode out a mid-loop excursion (1490 → 2428 →
+-                // 988 → 179 → 9 → 0) and converged at 15 — so the cap carries headroom
+-                // over the worst measured path. Healthy blocks still exit on the first
+-                // fixed point, almost always iteration 0 or 1.
++                // full |x| = 1 excitation — and the SISO soft iterations take over from
++                // iteration 1. The §B3.3 basin measurements pinned this down from both
++                // sides: an iteration-0 SISO soft start lost even the recoverable deep
++                // starts (b3's 46%-wrong first decode, recovered by the hard bootstrap) —
++                // beyond the code's threshold the SISO posterior is LESS calibrated than
++                // the channel LLRs it consumed — while agreement-weighting the hard rows
++                // by the calibrated channel LLRs perturbed iteration 0 without changing
++                // any block's outcome: the converge-or-wander split is decided by the
++                // soft-iteration attractors, not by iteration-0 estimation quality. The
++                // cap is generous because the costs are asymmetric: a cap-limited revert
++                // throws away ~10k repaired errors per block, extra iterations only cost
++                // wall-clock on the rare non-converging blocks. Healthy blocks still exit
++                // on the first fixed point, almost always iteration 0 or 1.
+                 if (iter == 0)
+                 {
+                     TurboReequalize(info);
+@@ -2210,9 +2249,18 @@ public sealed class Ms110dDemodulator
+         // (the SISO input) is consumed here; repeated copies (rates < 1/2) share their
+         // mother position's extrinsic, which excludes the sibling copies' channel LLRs
+         // too — conservative, and exact for the mask-only rates (repeat = 1).
++        //
++        // Damped by γ = 0.75 (§B3.3 basin lever 3, the turbo-equalization literature's
++        // standard value — a single pre-registered constant, not a tuned one): undamped,
++        // the prior loop is the wander attractor's engine — the WN7 `final`-pass llrstats
++        // measured reverted blocks holding first-pass-grade error counts at 3–12× the
++        // first pass's wrong-bit confidence, self-reinforced round after round. Damping
++        // keeps the channel evidence senior to the loop's own last-round beliefs. The
++        // subtraction back out of the detector output uses the same damped values
++        // (_softWireExt), so the extrinsic accounting stays exact.
+         for (int i = 0; i < _softMother.Length; i++)
+         {
+-            _softMother[i] = _softMotherPost[i] - _softMother[i];
++            _softMother[i] = 0.75f * (_softMotherPost[i] - _softMother[i]);
+         }
+ 
+         Ms110dPuncture.Apply(_puncture!, _softMother, _softPunctured);
