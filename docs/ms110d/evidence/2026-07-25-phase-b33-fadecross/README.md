@@ -95,6 +95,32 @@ the FF to invert the fade — the FF relaxes toward a matched filter for the com
 channel, the noise gain falls, and the chain BCJR (exact for h2 ≥ h1) collects the
 information from both paths in the trellis, where it belongs.
 
+## Amendment 1 (same day, before any corpse measurement): eigen candidates are
+## miscalibrated for selection — float the gain as a refit on the accepted lag set
+
+The unit test caught it immediately: with eigen solves used as the CANDIDATES, the
+echo-free channel test accepted a fake lag-1 echo. The margin argument above ("same
+free-parameter count, so the 4·ln(L) threshold carries over") is wrong for the eigen
+family: the target columns x[u] and x[u−d] have post-projection residuals that are
+MUTUALLY CORRELATED through the shared equalizer window, so the 2×2 R has an
+off-diagonal of order ρ·√(R₀₀R₁₁) even on echo-free noise, and λmin dips below
+min(R₀₀, R₁₁) by a FIRST-ORDER gauge gain |R₀₁| — not the second-order χ² noise fit
+the monic threshold was calibrated for. Recalibrating the margin for correlated
+residual Gram eigenvalues is analytically messy; instead the design becomes two-stage:
+
+- **Selection and acceptance stay monic and bit-identical to #82** — same candidates,
+  same SSEs, same thresholds, same label-trust pair gate. Echo-free frames and every
+  rejected frame keep today's solve exactly (the AWGN/static bit-identity promise now
+  holds trivially).
+- **The floating-gain eigen solve runs as a REFIT on the accepted lag set only**,
+  replacing the installed FF and the reported coefficients (c/g ratios) for frames
+  where the monic evidence already established the echo. The weak-cursor fix lives
+  exactly in the accepted-TIR population — which the corpse showed is where the
+  weak-cursor frames sit. If the refit degenerates numerically the monic solution
+  stands. `SseTir` continues to report the monic acceptance evidence.
+
+The pre-registered acceptance criteria below are unchanged.
+
 ## Pre-registered acceptance
 
 1. **WN7 corpse w0/b0**: oracle falls materially from 209 with the fall concentrated in
