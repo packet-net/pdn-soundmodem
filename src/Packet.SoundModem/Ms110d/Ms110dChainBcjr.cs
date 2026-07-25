@@ -44,6 +44,11 @@ internal static class Ms110dChainBcjr
     /// metric exactly once (forward AND backward), so the output LLRs are full posteriors —
     /// the caller subtracts the per-bit prior back out to hand the outer code detector
     /// extrinsics only.</param>
+    /// <param name="noiseVarPerSymbol">Optional per-position noise variance (per complex
+    /// dimension, length rx.Length) overriding <paramref name="noiseVar"/> — §B3.3
+    /// per-segment noise pricing: within fade-crossing frames the residual is
+    /// heteroscedastic, and a frame-constant floor over-confidences exactly the spans
+    /// where the model is worst. Empty broadcasts the scalar.</param>
     public static void Equalize(
         ReadOnlySpan<Cf> rx,
         ReadOnlySpan<Cf> h1,
@@ -55,12 +60,25 @@ internal static class Ms110dChainBcjr
         int bitsPerSymbol,
         ReadOnlySpan<Cf> preceding,
         Span<float> llrs,
-        ReadOnlySpan<float> symbolLogPriors = default)
+        ReadOnlySpan<float> symbolLogPriors = default,
+        ReadOnlySpan<float> noiseVarPerSymbol = default)
     {
         int n = rx.Length;
         int m = constellation.Length;
         bool hasPriors = symbolLogPriors.Length > 0;
-        float invTwoSigma2 = 1f / (2f * noiseVar);
+        float[] inv2Rented = ArrayPool<float>.Shared.Rent(Math.Max(1, n));
+        Span<float> inv2 = inv2Rented.AsSpan(0, Math.Max(1, n));
+        if (noiseVarPerSymbol.Length == n && n > 0)
+        {
+            for (int t = 0; t < n; t++)
+            {
+                inv2[t] = 1f / (2f * noiseVarPerSymbol[t]);
+            }
+        }
+        else
+        {
+            inv2.Fill(1f / (2f * noiseVar));
+        }
 
         // Scratch: α for the longest chain, one branch-metric column, one β ping-pong pair.
         int maxLen = ((n + delay) - 1) / delay;
@@ -84,7 +102,7 @@ internal static class Ms110dChainBcjr
                     if (k == 0)
                     {
                         Cf expected = preceding.Length > 0 ? main + (h2[t] * preceding[c]) : main;
-                        alpha[baseCur + s] = (-(rx[t] - expected).Cnorm() * invTwoSigma2) + prior;
+                        alpha[baseCur + s] = (-(rx[t] - expected).Cnorm() * inv2[t]) + prior;
                         continue;
                     }
 
@@ -93,7 +111,7 @@ internal static class Ms110dChainBcjr
                     for (int r = 0; r < m; r++)
                     {
                         Cf expected = main + (h2[t] * constellation[r]);
-                        float val = alpha[basePrev + r] - ((rx[t] - expected).Cnorm() * invTwoSigma2);
+                        float val = alpha[basePrev + r] - ((rx[t] - expected).Cnorm() * inv2[t]);
                         acc = LogSumExp(acc, val);
                     }
 
@@ -150,7 +168,7 @@ internal static class Ms110dChainBcjr
                     for (int s = 0; s < m; s++)
                     {
                         Cf expected = (h1[t] * constellation[s]) + echo;
-                        float val = beta[(cur * m) + s] - ((rx[t] - expected).Cnorm() * invTwoSigma2)
+                        float val = beta[(cur * m) + s] - ((rx[t] - expected).Cnorm() * inv2[t])
                             + (hasPriors ? symbolLogPriors[(t * m) + s] : 0f);
                         acc = LogSumExp(acc, val);
                     }
@@ -165,6 +183,7 @@ internal static class Ms110dChainBcjr
         ArrayPool<float>.Shared.Return(alpha);
         ArrayPool<float>.Shared.Return(beta);
         ArrayPool<float>.Shared.Return(post);
+        ArrayPool<float>.Shared.Return(inv2Rented);
     }
 
     private static float LogSumExp(float a, float b)
