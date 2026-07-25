@@ -2080,7 +2080,7 @@ public sealed class Ms110dDemodulator
             BlockSamplesResident())
         {
             _dfe.SnapshotTraining();
-            TurboReequalize(oracleInfo);
+            TurboReequalize(oracleInfo, trustedLabels: true);
             if (_blockLlrCount == _il.SizeBits)
             {
                 var oracleDecode = new byte[_il.InputBits];
@@ -2148,7 +2148,7 @@ public sealed class Ms110dDemodulator
     /// the core on the exact expected wire symbols. This is the §B3.3 oracle instrument's
     /// path (true info bits ⇒ the converged-soft-feedback ceiling) — the shipped turbo loop
     /// uses <see cref="TurboReequalizeSoft"/> instead.</summary>
-    private void TurboReequalize(byte[] info)
+    private void TurboReequalize(byte[] info, bool trustedLabels = false)
     {
         var mode = _mode!;
 
@@ -2181,7 +2181,7 @@ public sealed class Ms110dDemodulator
             }
         }
 
-        TurboCore(_turboExpected, null, null);
+        TurboCore(_turboExpected, null, null, allowPair: trustedLabels);
     }
 
     /// <summary>Soft-feedback turbo re-equalization (§B3.3): a SISO log-MAP pass over the
@@ -2280,7 +2280,7 @@ public sealed class Ms110dDemodulator
                 $"turbo-soft b{_blockIndex}: mean|llrIn|={meanIn / _il.SizeBits:F2} mean|llrPost|={meanPost / _il.SizeBits:F2} mean|E|={meanE / _softExpected.Length:F3} weak={weak}/{_softExpected.Length}"));
         }
 
-        TurboCore(_softExpected, _softVar, _softWireExt);
+        TurboCore(_softExpected, _softVar, _softWireExt, allowPair: true);
     }
 
     /// <summary>P(bit = 0) from an LLR under the positive-⇒-0 convention.</summary>
@@ -2308,7 +2308,7 @@ public sealed class Ms110dDemodulator
     /// position (frame-major); <paramref name="symbolVar"/> is the per-symbol prior variance
     /// 1−|E[x]|² for soft labels, or null for hard labels — null skips the variance terms
     /// entirely, keeping the hard/oracle path bit-identical to the pre-§B3.3 code.</summary>
-    private void TurboCore(Cf[] expectedAll, float[]? symbolVar, float[]? wireExtLlrs)
+    private void TurboCore(Cf[] expectedAll, float[]? symbolVar, float[]? wireExtLlrs, bool allowPair)
     {
         var mode = _mode!;
         var dfe = _dfe!;
@@ -2418,9 +2418,18 @@ public sealed class Ms110dDemodulator
 
             // Solve with _trackRidge for all modes; the TIR acceptance margin keeps
             // echo-free frames on the full-inversion (null) candidate exactly.
+            // Pair candidates only when the expected labels are trustworthy (§B3.3
+            // label-trust gate): the oracle path (truth) and the soft iterations (E[x]
+            // whose uncertainty the cancellation prices via the variance bump). The
+            // shipped hard iteration 0 re-encodes a first decode that is up to ~49%
+            // wrong on deep-start blocks, and cancelling the adjacent tap with those
+            // labels injects unpriced error into the very observation the chains
+            // equalize — measured flipping a marginal WN6 block out of convergence
+            // (11.4k errors in one block, 146× the point's BER) while the corpse and
+            // every trusted-label consumer improved.
             Dfe.TirSolve tir = dfe.SolveTrainingTir(
                 regularization: _trackRidge, ffNoisePower: GenieNoisePower(),
-                maxLag: Math.Min(fb, mode.U / 2));
+                maxLag: Math.Min(fb, mode.U / 2), allowPair: allowPair);
             if (tir.Lag > 0)
             {
                 tirFrames++;

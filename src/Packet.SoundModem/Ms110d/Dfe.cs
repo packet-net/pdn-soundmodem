@@ -384,7 +384,7 @@ public sealed class Dfe
     /// solve exactly. Ridge and anchor-to-current-taps semantics mirror
     /// <see cref="SolveTraining"/> with λ scaled by subset trace/size; the accumulation is
     /// consumed either way.</summary>
-    public TirSolve SolveTrainingTir(float regularization, float ffNoisePower, int maxLag)
+    public TirSolve SolveTrainingTir(float regularization, float ffNoisePower, int maxLag, bool allowPair = true)
     {
         if (_gram is null || _rhs is null || _trainingRows == 0)
         {
@@ -426,7 +426,15 @@ public sealed class Dfe
         bool accept = bestLag > 0 && bestSse < sseNull - threshold;
         int lag2 = 0;
         var bestB2 = Cf.Zero;
-        if (accept)
+        if (accept && !allowPair)
+        {
+            // Pair candidates suppressed (§B3.3: label-trust gate — the demod's hard
+            // iteration 0 cancels the adjacent tap with re-encoded labels that can be
+            // ~half wrong, injecting unpriced observation error; measured flipping a
+            // marginal WN6 block out of convergence at 146× the point's BER). The
+            // accepted single-lag solve stands unchanged.
+        }
+        else if (accept)
         {
             // §B3.3 straddle pair: a fractional-delay physical echo (the Poor channel's
             // 2 ms path ≈ 4.8 T) splits across the two lags bracketing it, so the two

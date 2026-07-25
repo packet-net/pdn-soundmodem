@@ -113,7 +113,29 @@ already-inverted stream; under TIR the pinned-echo model's h1/h2/h2b correlation
 the detection model itself, and 16-symbol windows are too noisy to carry it. The banked
 lever is retired as regime-specific, not composed.
 
-## Where the front stands after this leg
+## Battery incident — the label-trust gate (same day)
+
+The first battery run at mask scale caught what the single-burst corpses could not:
+**WN6 canonical 6M regressed to 1.78E-3** — 11,447 of 11,526 errors in ONE burst's final
+block (w3/b3 seed 3003507, 10c/1r), a marginal deep-start block that converged under #81
+flipping to non-convergence, exactly the b9-class chaos the basin campaign characterized.
+Meanwhile the same build's **WN6 disjoint 6M IMPROVED to 26 errors / 4.01E-6, 264c/0r**
+(#81: 51 / 7.86E-6 — the thin converged-residual class HALVED) and WN13 canonical was
+perfect (0/3.24M, 176c/0r) — the pair model genuinely helps where it converges.
+
+Mechanism of the flip: on the shipped hard iteration 0, the cancellation subtracts
+h2b·x̂ using re-encoded labels that are up to ~49% wrong on deep-start blocks — unpriced
+error injected into the very observation the chains equalize (the EM variance bump only
+exists on soft iterations). A worse start loses recoverable blocks — the basin campaign's
+2A result, reproduced at mask scale.
+
+Fix (no knobs): **pair candidates require trusted labels** — the oracle path (truth,
+cancellation exact) and the soft iterations (E[x], uncertainty priced by the variance
+bump). The shipped hard iteration 0 runs the #81 single-lag path bit-exactly; the
+converged fixed point still carries the pair model through the soft iterations.
+`SolveTrainingTir(..., allowPair)`, threaded through `TurboReequalize(trustedLabels)`.
+Acceptance: w3/b3 recovers; WN7 oracle stays 209; guards hold; the full battery re-runs
+from scratch.
 
 Composed ship state: pair TIR + per-segment h2b at 4 segments — **WN7 oracle 238 → 209
 (−12%)**, shipped unchanged, guards clean. The remaining oracle floor is the fade-frame
