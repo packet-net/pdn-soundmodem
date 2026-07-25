@@ -1,0 +1,2 @@
+WN7 @ 19 dB baseSeed 507 worker 0 burst 0 (channelSeed 508) genie=True
+payload 405472 bits in 11 blocks (16384 symbols/block), decoded 405504, coded errors 169644 (first 3997, last 405471), uncoded 86325/540672, collapses 13, turbo 1c/10r/0a/0s, end=, 180736 symbols dumped, lock=7/Long/K7@0.05Hz (tx K7)

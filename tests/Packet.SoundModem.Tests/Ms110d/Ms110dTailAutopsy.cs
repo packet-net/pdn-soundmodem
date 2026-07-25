@@ -128,7 +128,8 @@ public class Ms110dTailAutopsy
             }
         }
 
-        string tag = $"wn{wn}-w{worker}-b{burst}{(genie ? "-genie" : "")}";
+        bool oracle = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_ORACLE") == "1";
+        string tag = $"wn{wn}-w{worker}-b{burst}{(genie ? "-genie" : "")}{(oracle ? "-oracle" : "")}";
         using var symbols = new StreamWriter(Path.Combine(outDir, $"autopsy-symbols-{tag}.csv"));
         symbols.WriteLine("index,re,im,refIdx,refRe,refIm");
         using var frames = new StreamWriter(Path.Combine(outDir, $"autopsy-frames-{tag}.log"));
@@ -218,6 +219,30 @@ public class Ms110dTailAutopsy
 
         demod.FirstPassBlockLlrs += (blockIndex, llrs) => WriteLlrStats("first", blockIndex, llrs);
 
+        // §B3.3 oracle-labels ceiling (MS110D_AUTOPSY_ORACLE=1): the demod runs one
+        // extra chain-BCJR turbo pass per block trained on the TRUE info bits — the
+        // upper bound a converged soft-feedback turbo could reach with this channel
+        // model. Per-block oracle coded errors land in the summary; the oracle LLR
+        // stream lands in llrstats as pass "oracle".
+        var oracleBlockErrs = new List<string>();
+        if (oracle)
+        {
+            demod.OracleInfo = b => b < txBlocks
+                ? txBits.AsSpan(b * il.InputBits, il.InputBits).ToArray()
+                : null;
+            demod.OracleBlockLlrs += (blockIndex, llrs, dec) =>
+            {
+                WriteLlrStats("oracle", blockIndex, llrs);
+                int errs = 0;
+                for (int i = 0; i < dec.Length; i++)
+                {
+                    errs += dec[i] != txBits[(blockIndex * il.InputBits) + i] ? 1 : 0;
+                }
+
+                oracleBlockErrs.Add($"b{blockIndex}:{errs}");
+            };
+        }
+
         if (genie)
         {
             float[] clean = new WattersonChannel(9600, channelSeed, WattersonChannel.Poor).Apply(
@@ -278,7 +303,8 @@ public class Ms110dTailAutopsy
             $"{demod.TurboReverted}r/{demod.TurboAborted}a/{demod.TurboSkipped}s, " +
             $"end={endReason}, {symbolIndex} symbols dumped, " +
             $"lock={demod.Lock?.WaveformNumber}/{demod.Lock?.Interleaver}/K{demod.Lock?.ConstraintLength}" +
-            $"@{demod.Lock?.CfoHz:F2}Hz (tx K{settings.ConstraintLength})\n");
+            $"@{demod.Lock?.CfoHz:F2}Hz (tx K{settings.ConstraintLength})\n" +
+            (oracle ? $"oracle coded errors per block: {string.Join(" ", oracleBlockErrs)}\n" : ""));
         decoded.Count.Should().BeGreaterThan(0,
             "the corpse must at least acquire for the dump to mean anything");
     }
