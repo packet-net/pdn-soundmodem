@@ -134,6 +134,8 @@ public class Ms110dTailAutopsy
         using var frames = new StreamWriter(Path.Combine(outDir, $"autopsy-frames-{tag}.log"));
         using var bitErrs = new StreamWriter(Path.Combine(outDir, $"autopsy-biterrs-{tag}.csv"));
         bitErrs.WriteLine("block,symbolInBlock,bitInSymbol");
+        using var llrStats = new StreamWriter(Path.Combine(outDir, $"autopsy-llrstats-{tag}.csv"));
+        llrStats.WriteLine("pass,block,bits,errBits,sumAbsRight,sumAbsWrong");
 
         int symbolIndex = 0;
         int bitsPerSymbol = tx.Mode.BitsPerSymbol;
@@ -146,6 +148,9 @@ public class Ms110dTailAutopsy
             TrackRidge = float.TryParse(
                 Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TRACK_RIDGE"), out float tr)
                 ? tr : null,
+            TrajectorySmoothing = float.TryParse(
+                Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TRAJ_SMOOTH"), out float ts)
+                ? ts : null,
         });
         demod.BurstCompleted += bu => endReason = bu.Reason;
         demod.BlockDecoded += b => decoded.AddRange(b.Bits);
@@ -182,6 +187,40 @@ public class Ms110dTailAutopsy
                 }
             }
         };
+
+        // §B3.2b instrument: per-block uncoded SER and signed-LLR-mass stats for the
+        // first-pass and (when the smoothing pass runs) smoothed LLR streams — the
+        // error-CONFIDENCE view the WN2 anchor-ridge autopsy established (wrong-sign
+        // LLR mass is what the Viterbi actually pays).
+        void WriteLlrStats(string pass, int blockIndex, float[] llrs)
+        {
+            if (blockIndex >= txBlocks)
+            {
+                return;
+            }
+
+            byte[] fetched = fetchedBlocks[blockIndex];
+            int compareBits = Math.Min(llrs.Length, fetched.Length);
+            int errBits = 0;
+            double sumRight = 0, sumWrong = 0;
+            for (int i = 0; i < compareBits; i++)
+            {
+                if ((llrs[i] > 0 ? 0 : 1) != fetched[i])
+                {
+                    errBits++;
+                    sumWrong += Math.Abs(llrs[i]);
+                }
+                else
+                {
+                    sumRight += Math.Abs(llrs[i]);
+                }
+            }
+
+            llrStats.WriteLine($"{pass},{blockIndex},{compareBits},{errBits},{sumRight:F1},{sumWrong:F1}");
+        }
+
+        demod.FirstPassBlockLlrs += (blockIndex, llrs) => WriteLlrStats("first", blockIndex, llrs);
+        demod.SmoothedBlockLlrs += (blockIndex, llrs) => WriteLlrStats("smoothed", blockIndex, llrs);
 
         if (genie)
         {

@@ -137,6 +137,17 @@ public sealed class Ms110dDemodulator
     private readonly List<byte> _burstBits = [];
     private readonly List<long> _blockFrameChips = [];
 
+    // §B3.2b probe-anchor trajectory smoothing (issue #69). Recorded only when
+    // Options.TrajectorySmoothing is set; with the option null every field below stays
+    // empty and the demodulator is bit-identical to the unsmoothed one. Rows are
+    // allocated on first use and reused per block (zero steady-state allocation).
+    private Cf[]?[] _anchorEnd = [];       // per frame-in-block: the post-solve anchor
+    private Cf[]?[] _anchorSmoothed = [];  // scratch, frames+1 rows; [0] = pre-block anchor
+    private Cf[] _anchorBefore = [];       // anchor preceding the block's first data span
+    private bool[] _anchorFresh = [];      // fresh re-solve: no continuity with anchor k−1
+    private bool[] _anchorFading = [];     // frame ran the §B2.1a interpolated fading path
+    private (double Tau, double Omega, double ThetaBase)[] _anchorCarrier = [];
+
     // Fading detector state (see ProcessFrame). The per-frame statistic (CFO-immune
     // fractional tap change) has heavily overlapping LEVEL distributions between AWGN at
     // mask SNR and Poor between fades (measured WN4: AWGN median 0.045/max 0.12; Poor
@@ -199,6 +210,13 @@ public sealed class Ms110dDemodulator
     /// Comparing sign(LLR) against the re-encoded transmitted stream gives the uncoded
     /// channel-bit error rate, the §5.3 uncoded-vs-coded split (phase-b-plan §B0).</summary>
     public event Action<int, float[]>? FirstPassBlockLlrs;
+
+    /// <summary>Diagnostic: the block's LLRs after the §B3.2b smoothed-trajectory pass
+    /// replaced fading frames' slices — fired only when the pass ran, right before the
+    /// first decode. <see cref="FirstPassBlockLlrs"/> remains the pre-smoothing stream;
+    /// this pair is the instrument for measuring what the smoothing changed (issue
+    /// #69).</summary>
+    public event Action<int, float[]>? SmoothedBlockLlrs;
 
     /// <summary>Turbo blocks that reached a decode fixed point (since construction/Reset).</summary>
     public int TurboConverged { get; private set; }
@@ -630,6 +648,14 @@ public sealed class Ms110dDemodulator
         _blockLlrs = new float[_il.SizeBits];
         _blockLlrCount = 0;
         _blockIndex = 0;
+        if (_options.TrajectorySmoothing is not null)
+        {
+            _anchorEnd = new Cf[]?[_il.Frames];
+            _anchorSmoothed = new Cf[]?[_il.Frames + 1];
+            _anchorFresh = new bool[_il.Frames];
+            _anchorFading = new bool[_il.Frames];
+            _anchorCarrier = new (double, double, double)[_il.Frames];
+        }
         _burstBits.Clear();
         _dataStartChip = ChipsSuperframe * (long)(count + 1);
         _trackingInitialized = false;
@@ -1263,6 +1289,12 @@ public sealed class Ms110dDemodulator
             RetuneCarrier((2.0 * (probeChip + (mode.K / 2))) + _tau, 0, deltaOmega);
         }
 
+        // §B3.2b: the carrier/timing state the data span below is equalized under. The
+        // smoothed re-equalization pass restores it per frame so its FillWindow reads are
+        // bit-identical to this pass (TrackProbeTiming and later frames' retunes move
+        // _tau/_omega/_thetaBase before FinishBlock runs).
+        (double Tau, double Omega, double ThetaBase) dataCarrier = (_tau, _omega, _thetaBase);
+
         // Start accumulating rows for the NEXT solve: DD rows join the next probe's rows
         // to complete the excitation (the probe alone is rank-deficient).
         dfe.BeginTraining();
@@ -1595,6 +1627,11 @@ public sealed class Ms110dDemodulator
             _collapseArmed = true;
         }
 
+        if (_options.TrajectorySmoothing is not null)
+        {
+            RecordAnchor(startTaps, endTaps, freshSolve, fading, dataCarrier);
+        }
+
         _blockFrameChips.Add(_frameChip);
         _frameChip += mode.U + mode.K;
         _frameInBlock++;
@@ -1915,6 +1952,22 @@ public sealed class Ms110dDemodulator
 
         FirstPassBlockLlrs?.Invoke(_blockIndex, _blockLlrs);
 
+        // §B3.2b: replace fading frames' LLRs with a re-equalization down the smoothed
+        // anchor trajectory BEFORE the first decode (the dead-block class this targets
+        // decodes ~45% wrong, so the turbo pass below trains on garbage there — the fix
+        // must land in the first-pass LLRs). QAM16 is excluded like turbo (WN8 is
+        // measured detector-limited; B3.4 owns it).
+        if (_options.TrajectorySmoothing is float smoothWeight && smoothWeight > 0 &&
+            _dfe is not null && _mode is not null &&
+            _mode.Modulation is not Ms110dModulation.Qam16 &&
+            _fadingLatched &&
+            _blockFrameChips.Count == _il.Frames &&
+            BlockSamplesResident())
+        {
+            ReequalizeSmoothed(smoothWeight);
+            SmoothedBlockLlrs?.Invoke(_blockIndex, _blockLlrs);
+        }
+
         var info = new byte[_il.InputBits];
         Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
 
@@ -2014,6 +2067,209 @@ public sealed class Ms110dDemodulator
         // with RingBits = 16 — this is the backstop for wider future configs.
         double oldest = PositionOfChip(_blockFrameChips[0]) - _dfe!.FfTaps - InterpHalf;
         return oldest > _written - RingSize;
+    }
+
+    /// <summary>§B3.2b: bank this frame's per-probe anchor, its discontinuity/path flags,
+    /// and the carrier/timing state its data span was equalized under, for the smoothed
+    /// re-equalization pass at block end.</summary>
+    private void RecordAnchor(
+        Cf[] startTaps, Cf[] endTaps, bool freshSolve, bool fading,
+        (double Tau, double Omega, double ThetaBase) dataCarrier)
+    {
+        int k = _frameInBlock;
+        if (k == 0)
+        {
+            // The anchor bracketing the block's first data span from the left: the
+            // previous block's last solve (or the initial solve at burst start).
+            if (_anchorBefore.Length != startTaps.Length)
+            {
+                _anchorBefore = new Cf[startTaps.Length];
+            }
+
+            startTaps.CopyTo(_anchorBefore, 0);
+        }
+
+        Cf[] row = _anchorEnd[k] ??= new Cf[endTaps.Length];
+        endTaps.CopyTo(row, 0);
+        _anchorFresh[k] = freshSolve;
+        _anchorFading[k] = fading;
+        _anchorCarrier[k] = dataCarrier;
+    }
+
+    /// <summary>§B3.2b non-causal probe-anchor trajectory smoothing (issue #69). The
+    /// per-probe anchors are a time series with ≈0 dB estimation SNR at frame rate (the
+    /// WN13 fade-cluster corpse pair: tap movement per frame 0.0495 normal vs 0.0363
+    /// genie — solve noise comparable to the true channel movement), and the causal fix
+    /// (more anchor ridge) is forbidden lag at U=256. A symmetric ±1 average over
+    /// rotation-aligned neighbours cuts anchor noise ~√3 with zero group delay; fading
+    /// frames are then re-equalized down the smoothed trajectory as a PURE detection
+    /// pass — no solves, no RLS, no training rows, decision history re-seeded from the
+    /// preceding probe's known tail — and only their block-LLR slices are overwritten.
+    /// Frames that ran the non-fading 3-pass path keep their first-pass LLRs, and the
+    /// per-frame carrier snapshot makes every FillWindow read bit-identical to the first
+    /// pass. (DataSymbolEqualized stays a first-pass view — the autopsy symbol dump is
+    /// pre-smoothing by design.)</summary>
+    private void ReequalizeSmoothed(float w)
+    {
+        Ms110dMode mode = _mode!;
+        Dfe dfe = _dfe!;
+        int frames = _il!.Frames;
+        int nTaps = _anchorBefore.Length;
+        if (nTaps == 0)
+        {
+            return;
+        }
+
+        for (int k = 0; k < frames; k++)
+        {
+            if (_anchorEnd[k] is null)
+            {
+                return;
+            }
+        }
+
+        Cf[] savedTaps = dfe.SnapshotTaps();
+        (double Tau, double Omega, double ThetaBase) savedCarrier = (_tau, _omega, _thetaBase);
+
+        // Smoothed anchors ã[j] over the raw sequence a[−1..frames−1] (_anchorSmoothed
+        // index shifted by +1; a[−1] is the pre-block anchor). Each neighbour is
+        // phase-aligned to its centre before averaging — the anchors carry tens of
+        // degrees of common rotation per frame, and averaging without alignment
+        // destroys amplitude. A neighbour across a fresh-solve discontinuity, or with
+        // negligible alignment correlation, is excluded from the average.
+        for (int j = -1; j < frames; j++)
+        {
+            Cf[] centre = j < 0 ? _anchorBefore : _anchorEnd[j]!;
+            Cf[] outRow = _anchorSmoothed[j + 1] ??= new Cf[nTaps];
+            centre.CopyTo(outRow, 0);
+            float weightSum = 1f;
+            for (int side = -1; side <= 1; side += 2)
+            {
+                int nbIdx = j + side;
+                if (nbIdx < -1 || nbIdx >= frames)
+                {
+                    continue;
+                }
+
+                // _anchorFresh[k] marks the break between a[k−1] and a[k].
+                if (side < 0 ? _anchorFresh[j] : _anchorFresh[nbIdx])
+                {
+                    continue;
+                }
+
+                Cf[] nb = nbIdx < 0 ? _anchorBefore : _anchorEnd[nbIdx]!;
+                var align = Cf.Zero;
+                for (int i = 0; i < nTaps; i++)
+                {
+                    align += centre[i] * nb[i].Conj();
+                }
+
+                if (align.Cnorm() < 1e-12)
+                {
+                    continue;
+                }
+
+                Cf rot = align * (float)(1.0 / align.Abs());
+                for (int i = 0; i < nTaps; i++)
+                {
+                    outRow[i] += (rot * nb[i]) * w;
+                }
+
+                weightSum += w;
+            }
+
+            float norm = 1f / weightSum;
+            for (int i = 0; i < nTaps; i++)
+            {
+                outRow[i] *= norm;
+            }
+        }
+
+        int bitsPerSymbol = mode.Modulation switch
+        {
+            Ms110dModulation.Bpsk => 1,
+            Ms110dModulation.Qpsk => 2,
+            _ => 3, // PSK8 — QAM16 is excluded by the FinishBlock gate
+        };
+
+        Span<Cf> window = stackalloc Cf[dfe.FfTaps];
+        Span<Cf> past = stackalloc Cf[dfe.FbTaps];
+        Span<Cf> trajectoryEnd = stackalloc Cf[nTaps];
+        Span<Cf> tapsCur = stackalloc Cf[nTaps];
+        int savedLlrCount = _blockLlrCount;
+
+        for (int f = 0; f < frames; f++)
+        {
+            if (!_anchorFading[f])
+            {
+                continue;
+            }
+
+            Cf[] start = _anchorSmoothed[f]!;
+            Cf[] end = _anchorSmoothed[f + 1]!;
+            (_tau, _omega, _thetaBase) = _anchorCarrier[f];
+            long frameChip = _blockFrameChips[f];
+
+            // φ between the smoothed anchors, mirroring the first pass's derotation.
+            var rotation = Cf.Zero;
+            for (int i = 0; i < nTaps; i++)
+            {
+                rotation += end[i] * start[i].Conj();
+            }
+
+            double phi = rotation.Cnorm() > 1e-12 ? rotation.Arg() : 0.0;
+            Cf derot = Cf.CmplxConj((float)phi);
+            for (int i = 0; i < nTaps; i++)
+            {
+                trajectoryEnd[i] = end[i] * derot;
+            }
+
+            // Decision history at span start: the preceding probe's known tail. That
+            // probe was solved at frame-in-block f−1 (the previous block's last frame
+            // when f = 0 — same boundary result from this formula for every frames > 1 —
+            // and the preamble-ending probe for the burst's first frame, also
+            // boundary-false).
+            Cf[] probePrev = MiniProbe.Get(mode.K, boundary: ((f + 1) % frames) == 0);
+            for (int j = 0; j < past.Length; j++)
+            {
+                past[j] = probePrev[mode.K - 1 - j];
+            }
+
+            _scrambler.Reset();
+            _blockLlrCount = f * mode.U * bitsPerSymbol;
+            TapTrajectory(start, trajectoryEnd, phi, FrameFraction(mode, 0), tapsCur);
+            dfe.LoadTaps(tapsCur);
+            for (int u = 0; u < mode.U; u++)
+            {
+                if (u > 0)
+                {
+                    // No RLS deviation rides on the base in this pure detection pass,
+                    // so a plain load equals the first pass's TranslateTaps.
+                    TapTrajectory(start, trajectoryEnd, phi, FrameFraction(mode, u), tapsCur);
+                    dfe.LoadTaps(tapsCur);
+                }
+
+                FillWindow(frameChip + u, window);
+                Cf rotor = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                Cf y = dfe.Equalize(window, past);
+                Cf descrambled = y * rotor.Conj();
+                Cf clean = Slice(descrambled, mode.Modulation);
+                PushLlrs(descrambled, mode.Modulation);
+                for (int j = past.Length - 1; j > 0; j--)
+                {
+                    past[j] = past[j - 1];
+                }
+
+                if (past.Length > 0)
+                {
+                    past[0] = clean * rotor;
+                }
+            }
+        }
+
+        _blockLlrCount = savedLlrCount;
+        (_tau, _omega, _thetaBase) = savedCarrier;
+        dfe.LoadTaps(savedTaps);
     }
 
     /// <summary>Measured additive-noise power per complex T/2 sample (genie mode only:

@@ -414,10 +414,17 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             float? trackRidge = float.TryParse(
                 Environment.GetEnvironmentVariable("MS110D_MASK_TRACK_RIDGE"), out float tr)
                 ? tr : null;
+            // §B3.2b probe-anchor smoothing A/B knob: non-causal ±1 anchor averaging on
+            // the fading path's tap trajectory (the WN13 fade-cluster lever, where the
+            // ridge is forbidden by lag). Same rule: report evidence only.
+            float? trajSmooth = float.TryParse(
+                Environment.GetEnvironmentVariable("MS110D_MASK_TRAJ_SMOOTH"), out float ts)
+                ? ts : null;
             var demod = new Ms110dDemodulator(new Ms110dDemodOptions
             {
                 RlsForgettingFactor = rlsLambda,
                 TrackRidge = trackRidge,
+                TrajectorySmoothing = trajSmooth,
             });
             Ms110dBurstEndReason? endReason = null;
             demod.BurstCompleted += bu => endReason = bu.Reason;
@@ -619,6 +626,12 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         if (trackRidgeLabel is not null)
         {
             line += $" [track ridge={trackRidgeLabel} — §B3.2 A/B run; report evidence only, never the gate table]";
+        }
+
+        string? trajSmoothLabel = Environment.GetEnvironmentVariable("MS110D_MASK_TRAJ_SMOOTH");
+        if (trajSmoothLabel is not null)
+        {
+            line += $" [traj smooth={trajSmoothLabel} — §B3.2b A/B run; report evidence only, never the gate table]";
         }
 
         output.WriteLine(line);
