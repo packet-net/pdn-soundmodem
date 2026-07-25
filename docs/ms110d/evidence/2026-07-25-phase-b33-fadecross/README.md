@@ -173,4 +173,16 @@ turbo accounting and uncoded counts bit-identical to the #82 baselines
 (`wn6-eigen-guard.txt`, `wn13sp-eigen-guard.txt`). Echo-free/rejected frames never
 reach the refit by construction.
 
-The battery gates the merge.
+### Battery (full §5.3 budgets, canonical + disjoint; `battery.log`)
+
+All green. **WN6 6M canonical 57 errs = 8.79E-6 — a DIRECT formal pass** (stuck at
+79/1.22E-5 since #81) **and disjoint 57 = 8.79E-6** (equal totals a coincidence — the
+error-carrying bursts are entirely different; census CSVs here, the old canonical
+clusters incl. w2/b5's 31 are gone): WN6 moves from AT THE BOUNDARY to **AT MASK, both
+families**. WN13 0/3.24M + 0/6.49M, 352c/0r (the #82 disjoint 2-error residue also
+gone). WN7 shipped 2.44E-1 → **1.73E-1** canonical / 2.55E-1 → **1.90E-1** disjoint
+(57c/31r / 54c/34r from 44c/44r / 42c/46r) — the first shipped movement since the basin
+campaign closed. WN2 15/12 (bounds 8.13E-6/6.89E-6), WN1 0/0 (1984c/0r each), smokes
+WN5 6 / WN4 0 / WN3 0, AWGN zero across WN0 −6 dB / WN1 −3 dB / K=48 legs (first
+attempt SIGTERMed by a concurrent agent's process kill on the shared box; clean
+detached retry), static WID2 zero, Doppler 3/3 zero.
