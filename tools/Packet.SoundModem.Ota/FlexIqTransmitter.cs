@@ -731,6 +731,38 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
         return report;
     }
 
+    /// <summary>
+    /// Watches, after a transmission has ended, whether the radio is still asking for TX
+    /// buffers — and whether it ever stops.
+    /// </summary>
+    /// <remarks>
+    /// <para>A waveform is reflection-driven, so "has the transmission ended" is not a
+    /// question the client can answer from its own side: the only evidence is whether the
+    /// radio is still pulling.</para>
+    /// <para>This is the diagnostic that found the root cause of bursts being truncated, and
+    /// the answer was not what either transmit strategy assumed: <b>after any transmission the
+    /// radio keeps pulling TX buffers at the full 187.5/s indefinitely, with the interlock
+    /// parked in UNKEY_REQUESTED</b> — measured unchanged over 8 s following a 2 s burst. The
+    /// stream is therefore drained whether or not we are keyed, so samples written before the
+    /// PA comes up are silently discarded, and samples written after it are in a race with a
+    /// consumer that never pauses.</para>
+    /// </remarks>
+    public async Task ObserveAfterTransmitAsync(double seconds, CancellationToken cancellation = default)
+    {
+        long last = _iq.PacketsReflected;
+        long lastStarved = _iq.SamplesStarved;
+        for (int t = 1; t <= (int)Math.Ceiling(seconds); t++)
+        {
+            await Task.Delay(1000, cancellation).ConfigureAwait(false);
+            long now = _iq.PacketsReflected;
+            long starvedNow = _iq.SamplesStarved;
+            _log($"  +{t,2}s  buffers pulled this second: {now - last,5}   " +
+                 $"starved: {starvedNow - lastStarved,7}   interlock: {_interlockState}");
+            last = now;
+            lastStarved = starvedNow;
+        }
+    }
+
     /// <summary>Sets the radio's TX power (0–100) mid-session, for a linearity sweep.</summary>
     public async Task SetRfPowerAsync(int power, CancellationToken cancellation = default)
     {

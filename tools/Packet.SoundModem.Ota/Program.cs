@@ -127,6 +127,7 @@ internal static class Commands
             Callsign = a.Str("id-call", null),
             IdMode = a.Str("id-mode", "MS110D"),
             Identify = !a.Has("no-id"),
+            InterBurstSettle = TimeSpan.FromSeconds(a.Dbl("settle", 2)),
         };
 
         double toneHz = a.Dbl("tone-hz", 2000);
@@ -238,6 +239,12 @@ internal static class Commands
             TransmitReport report = await tx.TransmitAsync(tone);
             Report(report, tx);
             mainBurst = report;
+
+            if (a.Dbl("observe", 0) is var observe && observe > 0)
+            {
+                Log($"observing the radio for {observe:F0} s after unkey…");
+                await tx.ObserveAfterTransmitAsync(observe);
+            }
 
             lock (vitaGate)
             {
@@ -550,7 +557,7 @@ internal static class Commands
         var a = Args.Parse(argv);
         if (a is null || a.Has("help"))
         {
-            Console.Error.WriteLine("sm-ota radio --radio <ip|discover> [--filter <substring>]");
+            Console.Error.WriteLine("sm-ota radio --radio <ip|discover> [--filter <substring>] [--set <command>]");
             return a is null ? 2 : 0;
         }
 
@@ -570,11 +577,20 @@ internal static class Commands
                 }
             };
 
+            if (a.Str("set", null) is string setCommand)
+            {
+                M0LTE.Flex.FlexResult r = await client.SendCommandAsync(setCommand);
+                Console.WriteLine($"'{setCommand}' -> error 0x{r.Error:X8} {r.Message}");
+            }
+
             await client.SendCommandExpectOkAsync("sub radio all");
             client.SendCommandNoWait("sub tx all");
             await Task.Delay(2500);
 
-            foreach (string line in lines.Distinct().OrderBy(x => x, StringComparer.Ordinal))
+            // Arrival order, NOT sorted: a status dump that reorders its lines cannot show a
+            // value changing, and an ordinal sort put "-1497" before "0" and made a setting
+            // that had just been applied look like it had reverted.
+            foreach (string line in lines)
             {
                 if (filter is null || line.Contains(filter, StringComparison.OrdinalIgnoreCase))
                 {
