@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Tests.UberSdr;
 
 /// <summary>Verifies the streaming stereo WAV writer produces a valid 48 kHz 16-bit RIFF file
 /// with correct size fields, readable by the repo's own <see cref="WavFile"/> reader.</summary>
-public class StereoPcmWavWriterTests
+public class PcmWavWriterTests
 {
     private static byte[] StereoFrames((short I, short Q)[] frames)
     {
@@ -27,7 +27,7 @@ public class StereoPcmWavWriterTests
         string path = Path.Combine(Path.GetTempPath(), $"iqcap-{Guid.NewGuid():N}.wav");
         try
         {
-            using (var w = new StereoPcmWavWriter(path, 48000))
+            using (var w = new PcmWavWriter(path, 48000))
             {
                 w.Write(StereoFrames(frames));       // one bulk write
                 w.Write(StereoFrames([(7, -7)]));    // and an appended write

@@ -24,7 +24,7 @@ dotnet test tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj -c Rele
 | §I3 TX characterisation | linearity and levels **done**; **IMD not measured** (see below) |
 | §E1b first modem burst | **done** — WN2, WN6, WN13 all bit-exact |
 | §S3 SNR estimator + audit | **done** |
-| §S1 streaming converter | **not started** |
+| §S1 streaming converter | **done** — an hour converts in 13 s / 26 MB |
 | §S2 burst scorer / uncoded BER | **not started** |
 | §E2 hardware-in-the-loop | **not started** — the point of the exercise |
 | §E3 IQ vs SSB A/B, §E4 on air | not started |
@@ -57,24 +57,25 @@ dotnet test tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj -c Rele
 5. **The radio pulls waveform TX buffers continuously**, keyed or not, and never announces its return to RECEIVE. `FlexWaveformIqOutput` gates on the interlock because of this; before the fix, samples queued before keying were silently discarded and bursts came out truncated with a starve count of zero.
 6. **The demodulator clears `Lock` when a burst ends.** Read it inside `BlockDecoded`, not after `Process`, or a perfect decode reports "NO ACQUISITION".
 7. **Re-measure `--dial-correction` each session.** At 18 MHz the combined reference error exceeds the demodulator's ±75 Hz acquisition grid, so getting this wrong means nothing acquires and it looks like a demodulator fault.
+8. **Where an error lives is the diagnosis.** When two implementations of the same maths disagree, find the first and last differing sample before theorising: confined to the head is a startup convention, spread through the file is a wrong kernel, at the tail is the flush. The streaming converter's equivalence test prints all three because RMS alone cannot tell them apart.
 
 ## Remaining roadmap
 
-### 1. Streaming IQ→audio conversion (§S1) — blocking for anything long
+### 1. ~~Streaming IQ→audio conversion (§S1)~~ — done
 
-`IqToAudioConverter` is whole-file and O(n·taps) at the input rate. An hour of iq48 is 172.8 M complex samples and several 1.4 GB `double[]` allocations — it will OOM this box before it is slow, and `WavFile.ReadMono` is whole-file too.
+`StreamingIqToAudioConverter` + `PcmWavReader`. An hour of iq48 (691 MB, 172.8 M frames) converts in 13 s at 26.6 MB peak RSS, and the burst at 3590 s comes out bit-identical to the one at 10 s. Both acceptance criteria met: it agrees with the whole-file reference to ~1e-8 RMS, and the memory is flat.
 
-Build: a chunked stereo-int16 WAV reader; a streaming NCO → **polyphase decimating** complex bandpass computing only every 5th output (48 k → 9600 in one stage); and drop the whole-file `NormalisePeak`, which currently scales an entire capture to its loudest burst.
+`IqToAudioConverter` stays as the readable reference the streaming form is tested against — do not use it on a real capture. `--gain auto|<factor>` replaced the silent whole-file peak normalisation; pass a fixed number when levels must be comparable between files.
 
-Acceptance: output matches the existing whole-file path to ≤1e-6 RMS on a short capture, and an hour-long capture converts within memory.
+The sideband-inversion test gap is closed too — see [`evidence/2026-07-25-streaming-converter/`](evidence/2026-07-25-streaming-converter/README.md), which also records why the reference's low-pass now starts primed rather than cold.
 
-While there: **the receive converter's own tests cannot detect a sideband inversion** — they synthesise their input with the same convention they decode it with. Add an absolute-frequency assertion.
-
-### 2. Reference bits and uncoded BER (§S2)
+### 2. Reference bits and uncoded BER (§S2) — next
 
 Regenerate the transmitted bit stream from the manifest seed and compare against `FirstPassBlockLlrs` in wire order, exactly as `Ms110dMaskTests` does — `Ms110dFraming.BuildTxBits` + `EncodeBlock`, `Ms110dPuncture.Get`, `Ms110dInterleaver`. `Ms110dFraming` is `internal`, so add one `InternalsVisibleTo` line to `src/Packet.SoundModem/Packet.SoundModem.csproj` for the OTA tool (precedented — the test assembly already has one).
 
 Then a `BurstScorer` that streams a whole capture through **one** `Ms110dDemodulator` (verified: it returns to `Searching` after each burst and re-acquires), matching detected bursts to schedule entries by order plus a time window, and reporting per burst: acquisition, WID correctness, CFO, coded BER, uncoded BER/SER, turbo counters, end reason, and SNR from `SnrEstimator`.
+
+Feed it from `StreamingIqToAudioConverter` directly — block in, block out, no intermediate WAV and no normalisation. There is no offline "decode this capture" entry point yet; the scoring code in `sm-ota burst` is inline in the transmit path and whole-file, so it wants lifting out rather than copying.
 
 Do **not** use absolute time for burst extraction — acquisition finds them; time is a cross-check and the way a *missed* burst is identified, which is itself a headline metric.
 
@@ -125,6 +126,7 @@ Two-tone IMD is deferred here (Tom's call). Carry the caveat: **a fading path co
 ## Outstanding measurements
 
 - **Two-tone IMD** — never obtained. The earlier ≈ −28 dBc was a floor set by path SNR, proved by dropping drive 6.1 dB and seeing IMD3 move 1.1 dB where a genuine third-order product must move 12.2 dB. Needs a stable supply and better path SNR.
+- **The receiver's own 100 Hz floor** — the test that would settle §E2's prerequisite. A common-mode choke on the UberSDR's antenna feed, or its supply; measure a quiet stretch of band with nothing transmitting and look for the comb. See §E2 below for why three sources converging on −27 dBc points at the instrument.
 - **Image rejection and carrier leakage** were re-measured after the waveform gating fix (−43.7 and −27.1 dBc); the pre-fix figures in older text are superseded.
 
 ## Open questions for Tom

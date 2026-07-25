@@ -108,7 +108,7 @@ public sealed class UberSdrIqClient
         ulong firstPacketNs = 0;
         ulong sample0Ns = 0;
         ulong lastNs = 0;
-        StereoPcmWavWriter? wav = null;
+        PcmWavWriter? wav = null;
         string wavPath = "";
         int sampleRate = 48000;
         long targetFrames = opt.DurationSeconds > 0 ? (long)opt.DurationSeconds * sampleRate : long.MaxValue;
@@ -177,7 +177,7 @@ public sealed class UberSdrIqClient
                     string ts = UnixNanosToUtc(sample0Ns).ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
                     wavPath = Path.Combine(opt.OutputDir, $"{stem}_{opt.FrequencyHz}_{ts}.wav");
                     Directory.CreateDirectory(opt.OutputDir);
-                    wav = new StereoPcmWavWriter(wavPath, sampleRate);
+                    wav = new PcmWavWriter(wavPath, sampleRate);
                     _log?.Invoke($"recording from {UnixNanosToUtc(sample0Ns):HH:mm:ss.fff} UTC → {Path.GetFileName(wavPath)}");
                 }
 

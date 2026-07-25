@@ -42,8 +42,11 @@ catch (OperationCanceledException)
     return 130;
 }
 catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
-                               or IOException or FormatException or TimeoutException)
+                               or IOException or FormatException or TimeoutException
+                               or System.Net.Sockets.SocketException)
 {
+    // SocketException is not an IOException. The radio's network connection coming loose
+    // mid-session is a bench event, not a defect, and deserves a line rather than a stack trace.
     Console.Error.WriteLine($"error: {ex.Message}");
     return 1;
 }
@@ -972,7 +975,7 @@ internal static class Commands
             pcm[(2 * k) + 1] = (byte)((v >> 8) & 0xFF);
         }
 
-        using var writer = new StereoPcmWavWriter(path, rate);
+        using var writer = new PcmWavWriter(path, rate);
         writer.Write(pcm);
     }
 
@@ -1064,6 +1067,15 @@ internal static class Commands
                 carrierBinPower = spectrum.BinPower(k);
                 carrierBin = k;
             }
+        }
+
+        if (carrierBin < 0)
+        {
+            // No bin within ±500 Hz of where the carrier was said to be. Continuing would take
+            // FrequencyOfBin(-1) and report a purity figure referenced to nothing.
+            throw new ArgumentException(
+                $"no spectrum within ±500 Hz of {toneHz:F0} Hz — check --tone-hz against the "
+                + "capture's tune frequency, and that the window contains the transmission");
         }
 
         double carrierHz = spectrum.FrequencyOfBin(carrierBin);

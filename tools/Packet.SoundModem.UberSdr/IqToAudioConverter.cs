@@ -40,6 +40,13 @@ public sealed class IqToAudioOptions
 /// <para>Chain: shift by −DialHz (suppressed carrier → 0 Hz) → complex bandpass keeping only the
 /// upper sideband +[SsbLow,SsbHigh] (rejecting the LSB image / adjacents / noise on the negative
 /// side) → take the real part → decimate to the output rate.</para>
+///
+/// <para><b>This is the reference implementation, not the working one.</b> It holds the whole
+/// capture in memory several times over and runs its filters at the input rate, so a campaign
+/// pass (an hour, 691 MB) will exhaust memory before it finishes. Use
+/// <see cref="StreamingIqToAudioConverter"/> for anything real. This one stays because it is the
+/// obvious, auditable statement of what the conversion *is*, and the streaming converter is
+/// tested sample-for-sample against it.</para>
 /// </summary>
 public sealed class IqToAudioConverter
 {
@@ -120,13 +127,26 @@ public sealed class IqToAudioConverter
             him[m] = -proto[m] * Math.Sin(ph);
         }
 
+        // 3. Anti-alias low-pass then decimate to the output rate.
+        int factor = _opt.InputRate / _opt.OutputRate;
+        var lp = new FirFilter(FilterDesign.LowPass(0.45 * _opt.OutputRate, _opt.InputRate, 8 * factor + 1));
+
+        // The bandpass output is computed from k = −(lpTaps−1), not from 0, so that the low-pass
+        // starts with real history rather than cold. At those negative instants the bandpass
+        // window still overlaps the start of the capture, so its output is genuinely non-zero
+        // and dropping it would truncate the cascade. Priming makes the whole chain exactly the
+        // zero-padded convolution of the two filters, which is what lets
+        // StreamingIqToAudioConverter collapse them into one kernel and still agree
+        // sample-for-sample. Without it the two differ over the first few milliseconds.
+        int pre = 8 * factor; // the low-pass has 8*factor + 1 taps, so this is its memory
+
         // Convolve (complex), keep the real part only. Linear-phase filter → compensate its
         // group delay of `mid` samples so output aligns with input time.
-        var real = new double[n];
-        for (int k = 0; k < n; k++)
+        var real = new double[n + pre];
+        for (int r = 0; r < real.Length; r++)
         {
             double acc = 0.0; // real part of sum_m h[m] * x[k - mid + m]
-            int baseIdx = k - mid;
+            int baseIdx = r - pre - mid;
             int mLo = Math.Max(0, -baseIdx);
             int mHi = Math.Min(taps, n - baseIdx);
             for (int m = mLo; m < mHi; m++)
@@ -134,19 +154,17 @@ public sealed class IqToAudioConverter
                 int xi = baseIdx + m;
                 acc += hre[m] * reS[xi] - him[m] * imS[xi];
             }
-            real[k] = acc;
+            real[r] = acc;
         }
 
-        // 3. Anti-alias low-pass then decimate to the output rate.
-        int factor = _opt.InputRate / _opt.OutputRate;
-        var lp = new FirFilter(FilterDesign.LowPass(0.45 * _opt.OutputRate, _opt.InputRate, 8 * factor + 1));
         int outN = n / factor;
         var outp = new float[outN];
         int oi = 0;
-        for (int k = 0; k < n; k++)
+        for (int r = 0; r < real.Length; r++)
         {
-            float y = lp.Next((float)real[k]);
-            if (k % factor == 0 && oi < outN)
+            float y = lp.Next((float)real[r]);
+            int k = r - pre;
+            if (k >= 0 && k % factor == 0 && oi < outN)
             {
                 outp[oi++] = y;
             }
