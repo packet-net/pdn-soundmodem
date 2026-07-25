@@ -142,3 +142,35 @@ The pre-registered acceptance criteria below are unchanged.
 5. **Escalation unchanged**: FD-turbo if WN7 stalls at mask+2 dB after this lever.
 
 Files land here as the measurements run.
+
+---
+
+## Measured results (same day, on the amended two-stage design)
+
+### Unit tests
+
+All 12 DfeTests green: the restored monic selection keeps the echo-free rejection and
+the straddle-pair values; the new weak-cursor test (cursor 0.3, echo 1.0) recovers the
+3.33 echo-to-cursor ratio with FF energy < 3 (the monic solve would sit near 11). Full
+suite 696/0.
+
+### WN7 corpse w0/b0 — the floor collapses
+
+**Oracle 209 → 15 (−93%)**: b4 99→0, b5 60→15, b7 19→0, b10 19→0, b1 6→0, b6 6→0
+(`wn7-eigen-summary.txt`). **Shipped 107,938 → 72,666 with turbo 5c/6r → 7c/4r** — two
+wander blocks reached convergence, the predicted basin dividend (sharper per-iteration
+LLRs strengthening the contraction); first decodes bit-identical (the first pass is
+untouched). Instrument signature exactly as pre-registered
+(`wn7-eigen-ffe-quartiles.txt`): weakest-quartile median ffE 24.5 → 16.6 and loP0
+median 22.9 → 13.1 (into the pre-registered 10–13 band), weakest-quartile n
+0.0471 → 0.0254, and n/ffE now FLAT across quartiles (0.00137–0.00159, previously
+0.00085 → 0.00173) — the boosted-unmodeled-residual gradient is gone.
+
+### Guards
+
+WN6 corpse (w0/b0 @14 dB) and WN13 specimen (w3/b5 @11 dB): 0 shipped / 0 oracle,
+turbo accounting and uncoded counts bit-identical to the #82 baselines
+(`wn6-eigen-guard.txt`, `wn13sp-eigen-guard.txt`). Echo-free/rejected frames never
+reach the refit by construction.
+
+The battery gates the merge.
