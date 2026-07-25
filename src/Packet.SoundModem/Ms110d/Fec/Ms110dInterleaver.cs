@@ -50,6 +50,17 @@ public sealed class Ms110dInterleaver
         }
     }
 
+    /// <summary>Soft mirror of the byte <see cref="Interleave(ReadOnlySpan{byte}, Span{byte})"/>
+    /// for the §B3.3 soft-feedback turbo: punctured-order posterior LLRs → wire order.</summary>
+    public void Interleave(ReadOnlySpan<float> punctured, Span<float> fetched)
+    {
+        CheckLengths(punctured.Length, fetched.Length);
+        for (int n = 0; n < _perm.Length; n++)
+        {
+            fetched[_perm[n]] = punctured[n];
+        }
+    }
+
     /// <summary>RX: recovers punctured-order LLRs from wire-order LLRs.</summary>
     public void Deinterleave(ReadOnlySpan<float> rxLlrs, Span<float> llrs)
     {

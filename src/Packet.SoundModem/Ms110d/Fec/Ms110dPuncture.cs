@@ -102,6 +102,34 @@ public static class Ms110dPuncture
         return o;
     }
 
+    /// <summary>Soft mirror of <see cref="Apply(PunctureSpec, ReadOnlySpan{byte}, Span{byte})"/>
+    /// for the §B3.3 soft-feedback turbo: walks the mother-lattice posterior LLRs through the
+    /// same repeat/mask schedule, so each transmitted copy of a repeated bit carries the same
+    /// (block-wide) posterior. Returns the number of values written.</summary>
+    public static int Apply(PunctureSpec spec, ReadOnlySpan<float> mother, Span<float> punctured)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+        int pairs = mother.Length / 2 * spec.RepeatFactor;
+        int len = spec.KeepT1.Length;
+        int o = 0;
+        for (int p = 0; p < pairs; p++)
+        {
+            int n = p / spec.RepeatFactor;
+            int col = p % len;
+            if (spec.KeepT1[col] != 0)
+            {
+                punctured[o++] = mother[2 * n];
+            }
+
+            if (spec.KeepT2[col] != 0)
+            {
+                punctured[o++] = mother[(2 * n) + 1];
+            }
+        }
+
+        return o;
+    }
+
     /// <summary>RX: expands received LLRs back onto the 2N mother lattice. Punctured
     /// positions stay LLR 0 (erasure); repeated copies are <b>summed</b> (optimal combining
     /// of independent LLRs).</summary>

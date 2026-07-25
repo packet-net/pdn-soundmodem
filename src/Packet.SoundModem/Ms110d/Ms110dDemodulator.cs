@@ -133,6 +133,18 @@ public sealed class Ms110dDemodulator
     private ConvolutionalCode? _code;
     private float[] _blockLlrs = [];
     private int _blockLlrCount;
+
+    // §B3.3 soft-feedback turbo: SISO outer decoder + block-sized work buffers
+    // (allocated at lock; the FinishBlock cadence is not a per-sample hot path but the
+    // buffers are stable per burst regardless).
+    private TailBitingSisoDecoder? _siso;
+    private float[] _softPunctured = [];
+    private float[] _softMother = [];
+    private float[] _softMotherPost = [];
+    private float[] _softWireLlrs = [];
+    private Cf[] _softExpected = [];
+    private float[] _softVar = [];
+    private Cf[] _turboExpected = [];
     private int _blockIndex;
     private readonly List<byte> _burstBits = [];
     private readonly List<long> _blockFrameChips = [];
@@ -643,6 +655,15 @@ public sealed class Ms110dDemodulator
         _puncture = Ms110dPuncture.Get(code, _mode.CodeRate);
         _interleaver = new Ms110dInterleaver(_il.SizeBits, _il.Increment);
         _blockLlrs = new float[_il.SizeBits];
+        _siso = new TailBitingSisoDecoder(code);
+        _softPunctured = new float[_il.SizeBits];
+        _softMother = new float[2 * _il.InputBits];
+        _softMotherPost = new float[2 * _il.InputBits];
+        _softWireLlrs = new float[_il.SizeBits];
+        int blockSymbols = _il.Frames * _mode.U; // 0 for WN0 (Walsh) — turbo never runs there
+        _softExpected = new Cf[blockSymbols];
+        _softVar = new float[blockSymbols];
+        _turboExpected = new Cf[blockSymbols];
         _blockLlrCount = 0;
         _blockIndex = 0;
         _burstBits.Clear();
@@ -1933,8 +1954,9 @@ public sealed class Ms110dDemodulator
         var info = new byte[_il.InputBits];
         Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
 
-        // Turbo re-equalization: re-encode decoded info, use as known training,
-        // re-equalize with the chain BCJR, and decode again — for every DFE mode except
+        // Turbo re-equalization: SISO soft feedback (§B3.3) — a log-MAP pass over the
+        // outer code turns the current block LLRs into per-symbol soft expectations for
+        // the chain-BCJR re-estimation, then decode again — for every DFE mode except
         // QAM16 (the 5×-LLR-scale trap remains a throw). The flat-channel skip retired
         // with the DFE-re-solve fallback that motivated it (§B2.3): on a flat channel the
         // chain BCJR degenerates to an exact soft-output matched filter — the reason BPSK
@@ -1957,9 +1979,23 @@ public sealed class Ms110dDemodulator
             var prevInfo = new byte[info.Length];
             bool converged = false;
             bool aborted = false;
-            for (int iter = 0; iter < 5; iter++)
+            for (int iter = 0; iter < 8; iter++)
             {
-                TurboReequalize(info);
+                // Hybrid bootstrap (§B3.3): iteration 0 trains on hard re-encoded labels —
+                // the first-pass LLR stream's fixed max-log scale is far too timid at high
+                // SNR (measured WN6 corpse: mean |LLR| 1.6 where the calibrated chain-BCJR
+                // output runs 12+), so a soft start spends three iterations rediscovering
+                // confidence. The hard pass hands iteration 1 properly-scaled LLRs, and
+                // the SISO soft iterations take over from there.
+                if (iter == 0)
+                {
+                    TurboReequalize(info);
+                }
+                else
+                {
+                    TurboReequalizeSoft();
+                }
+
                 if (_blockLlrCount != _il.SizeBits)
                 {
                     aborted = true; // partial re-equalization; the current decode stands
@@ -1968,6 +2004,17 @@ public sealed class Ms110dDemodulator
 
                 Array.Copy(info, prevInfo, info.Length);
                 Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
+                if (FrameDiagnostics is not null)
+                {
+                    int diffs = 0;
+                    for (int i = 0; i < info.Length; i++)
+                    {
+                        diffs += info[i] != prevInfo[i] ? 1 : 0;
+                    }
+
+                    FrameDiagnostics.Invoke($"turbo-iter b{_blockIndex} i{iter} decode-changes={diffs}");
+                }
+
                 if (info.AsSpan().SequenceEqual(prevInfo))
                 {
                     converged = true;
@@ -2063,44 +2110,32 @@ public sealed class Ms110dDemodulator
             : (float)(_genieNoiseSum / _genieNoiseCount);
     }
 
-    private void TurboReequalize(byte[] info)
+    private static int TurboBitsPerSymbol(Ms110dModulation modulation)
     {
-        var mode = _mode!;
-        var dfe = _dfe!;
-
-        // Save DFE state — turbo must not corrupt tracking for future blocks.
-        Cf[] savedTaps = dfe.SnapshotTaps();
-
-        // Re-encode decoded info → fetched (wire-order) bits.
-        byte[] fetched = Ms110dFraming.EncodeBlock(_code!, _puncture!, _interleaver!, info);
-
-        // Map fetched bits to expected wire symbols per frame.
-        int bitsPerSymbol = mode.Modulation switch
+        return modulation switch
         {
             Ms110dModulation.Bpsk => 1,
             Ms110dModulation.Qpsk => 2,
             Ms110dModulation.Psk8 => 3,
             _ => 4,
         };
+    }
 
-        int fb = dfe.FbTaps;
-        Span<Cf> window = stackalloc Cf[dfe.FfTaps];
-        Span<Cf> past = stackalloc Cf[fb];
-        bool genie = _genieRing is not null;
-        Span<Cf> estWindow = stackalloc Cf[dfe.FfTaps];
-        const int Segments = 4;
-        Span<Cf> segH1 = stackalloc Cf[Segments];
-        Span<float> segCentre = stackalloc float[Segments];
-        _blockLlrCount = 0;
+    /// <summary>Hard-label turbo re-equalization: re-encode <paramref name="info"/> and run
+    /// the core on the exact expected wire symbols. This is the §B3.3 oracle instrument's
+    /// path (true info bits ⇒ the converged-soft-feedback ceiling) — the shipped turbo loop
+    /// uses <see cref="TurboReequalizeSoft"/> instead.</summary>
+    private void TurboReequalize(byte[] info)
+    {
+        var mode = _mode!;
+
+        // Re-encode decoded info → fetched (wire-order) bits → expected wire symbols.
+        byte[] fetched = Ms110dFraming.EncodeBlock(_code!, _puncture!, _interleaver!, info);
+        int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
         int bit = 0;
-
         for (int f = 0; f < _il!.Frames; f++)
         {
-            long frameChip = _blockFrameChips[f];
             _scrambler.Reset();
-
-            // Build expected symbols for this frame's data block.
-            var expected = new Cf[mode.U];
             for (int u = 0; u < mode.U; u++)
             {
                 int symbolNumber = 0;
@@ -2119,8 +2154,137 @@ public sealed class Ms110dDemodulator
                     // The FinishBlock gate excludes QAM16 from turbo.
                     _ => throw new InvalidOperationException("turbo re-equalization excludes QAM16"),
                 };
-                expected[u] = Ms110dTables.Psk8[wireIndex];
+                _turboExpected[(f * mode.U) + u] = Ms110dTables.Psk8[wireIndex];
             }
+        }
+
+        TurboCore(_turboExpected, null);
+    }
+
+    /// <summary>Soft-feedback turbo re-equalization (§B3.3): a SISO log-MAP pass over the
+    /// outer tail-biting code turns the CURRENT block LLRs (first-pass DFE output on
+    /// iteration 0, the previous chain-BCJR output afterwards) into per-coded-bit
+    /// posteriors, and the core trains on the resulting per-symbol expectations E[x]
+    /// instead of hard re-encoded decisions. Uncertain symbols shrink toward 0 — exactly
+    /// the EM E-step for every estimation consumer (rows, h1/h2 correlations keep their
+    /// /count normalizations because E[|x|²] = 1 on the PSK ring) — so mid-frame channel
+    /// information flows from the code without the 45%-garbage hard labels that stalled
+    /// the WN13 fade-cluster specimen (§B3.2/§B3.3).</summary>
+    private void TurboReequalizeSoft()
+    {
+        var mode = _mode!;
+
+        // Outer SISO decode → posterior LLR for every wire-order coded bit.
+        _interleaver!.Deinterleave(_blockLlrs, _softPunctured);
+        Ms110dPuncture.Depuncture(_puncture!, _softPunctured, _softMother);
+        _siso!.Decode(_softMother, _softMotherPost);
+        Ms110dPuncture.Apply(_puncture!, _softMotherPost, _softPunctured);
+        _interleaver.Interleave(_softPunctured, _softWireLlrs);
+
+        // Per-symbol soft expectations over the descrambled constellation, rotated onto
+        // the wire by the scrambler (Psk8[(s+r)&7] == Psk8[s]·Psk8[r] — NextPsk is an
+        // additive ring rotation). Variance 1−|E[x]|² feeds the core's noise estimate.
+        int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
+        int bit = 0;
+        Span<float> p0 = stackalloc float[4];
+        for (int f = 0; f < _il!.Frames; f++)
+        {
+            _scrambler.Reset();
+            for (int u = 0; u < mode.U; u++)
+            {
+                for (int b = 0; b < bitsPerSymbol; b++)
+                {
+                    p0[b] = Sigmoid(bit < _softWireLlrs.Length ? _softWireLlrs[bit++] : float.MaxValue);
+                }
+
+                Cf e = Cf.Zero;
+                for (int t = 0; t < 1 << bitsPerSymbol; t++)
+                {
+                    float pt = 1f;
+                    for (int b = 0; b < bitsPerSymbol; b++)
+                    {
+                        float pBitZero = p0[b];
+                        pt *= ((t >> (bitsPerSymbol - 1 - b)) & 1) == 0 ? pBitZero : 1f - pBitZero;
+                    }
+
+                    int ring = mode.Modulation switch
+                    {
+                        Ms110dModulation.Bpsk => t == 0 ? 0 : 4,
+                        Ms110dModulation.Qpsk => t switch { 0 => 0, 1 => 2, 3 => 4, _ => 6 },
+                        Ms110dModulation.Psk8 => Ms110dTables.Transcode8Psk[t & 7],
+                        _ => throw new InvalidOperationException("turbo re-equalization excludes QAM16"),
+                    };
+                    e += Ms110dTables.Psk8[ring] * pt;
+                }
+
+                int idx = (f * mode.U) + u;
+                _softExpected[idx] = e * Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                _softVar[idx] = Math.Max(0f, 1f - e.Cnorm());
+            }
+        }
+
+        if (FrameDiagnostics is not null)
+        {
+            double meanIn = 0, meanPost = 0, meanE = 0;
+            int weak = 0;
+            for (int i = 0; i < _il.SizeBits; i++)
+            {
+                meanIn += Math.Abs(_blockLlrs[i]);
+                meanPost += Math.Abs(_softWireLlrs[i]);
+            }
+
+            for (int i = 0; i < _softExpected.Length; i++)
+            {
+                meanE += Math.Sqrt(_softExpected[i].Cnorm());
+                weak += _softVar[i] > 0.25f ? 1 : 0;
+            }
+
+            FrameDiagnostics.Invoke(FormattableString.Invariant(
+                $"turbo-soft b{_blockIndex}: mean|llrIn|={meanIn / _il.SizeBits:F2} mean|llrPost|={meanPost / _il.SizeBits:F2} mean|E|={meanE / _softExpected.Length:F3} weak={weak}/{_softExpected.Length}"));
+        }
+
+        TurboCore(_softExpected, _softVar);
+    }
+
+    /// <summary>P(bit = 0) from an LLR under the positive-⇒-0 convention.</summary>
+    private static float Sigmoid(float llr)
+    {
+        return llr >= 0f
+            ? 1f / (1f + MathF.Exp(-llr))
+            : MathF.Exp(llr) / (1f + MathF.Exp(llr));
+    }
+
+    /// <summary>The turbo re-equalization machinery (§B2.3): per-frame FF batch-LS re-solve
+    /// on the expected symbols, per-segment h1, scrambler-exact single-lag echo, chain-BCJR
+    /// detection. <paramref name="expectedAll"/> holds one expected wire symbol per data
+    /// position (frame-major); <paramref name="symbolVar"/> is the per-symbol prior variance
+    /// 1−|E[x]|² for soft labels, or null for hard labels — null skips the variance terms
+    /// entirely, keeping the hard/oracle path bit-identical to the pre-§B3.3 code.</summary>
+    private void TurboCore(Cf[] expectedAll, float[]? symbolVar)
+    {
+        var mode = _mode!;
+        var dfe = _dfe!;
+
+        // Save DFE state — turbo must not corrupt tracking for future blocks.
+        Cf[] savedTaps = dfe.SnapshotTaps();
+
+        int fb = dfe.FbTaps;
+        Span<Cf> window = stackalloc Cf[dfe.FfTaps];
+        Span<Cf> past = stackalloc Cf[fb];
+        bool genie = _genieRing is not null;
+        Span<Cf> estWindow = stackalloc Cf[dfe.FfTaps];
+        const int Segments = 4;
+        Span<Cf> segH1 = stackalloc Cf[Segments];
+        Span<float> segCentre = stackalloc float[Segments];
+        int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
+        _blockLlrCount = 0;
+
+        for (int f = 0; f < _il!.Frames; f++)
+        {
+            long frameChip = _blockFrameChips[f];
+            ReadOnlySpan<Cf> expected = expectedAll.AsSpan(f * mode.U, mode.U);
+            ReadOnlySpan<float> expectedVar =
+                symbolVar is null ? default : symbolVar.AsSpan(f * mode.U, mode.U);
 
             // Batch-LS solve: FF-only (no feedback) for the BPSK BCJR path.
             dfe.BeginTraining();
@@ -2300,6 +2464,17 @@ public sealed class Ms110dDemodulator
                     : h2Avg * rotors[u].Conj();
                 Cf predicted = (h1u * expected[u]) + (h2Avg * echoWire);
                 residual += (rxWire[u] - predicted).Cnorm();
+                if (symbolVar is not null)
+                {
+                    // EM-consistent noise estimate for soft labels: E|z − h·x|² =
+                    // |z − h·E[x]|² + |h|²·(1 − |E[x]|²). The preceding-probe echo
+                    // sources (u < delay) are known exactly — variance 0.
+                    residual += h1u.Cnorm() * expectedVar[u];
+                    if (u >= delay)
+                    {
+                        residual += h2Avg.Cnorm() * expectedVar[u - delay];
+                    }
+                }
             }
 
             // Cnorm() sums both complex dimensions; the BCJR wants σ² per dimension, so
