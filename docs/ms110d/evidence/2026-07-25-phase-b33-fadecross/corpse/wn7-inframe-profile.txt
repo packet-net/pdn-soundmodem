@@ -1,0 +1,4 @@
+within-frame position histogram (16-symbol bins 0..15), all errors then top frames (err>=60):
+all:  604  622  622  633  629  680  640  675  618  699  733  762  756  825  885 1231
+top:  332  361  347  356  355  395  365  414  370  404  429  463  440  465  488  530
+edge share (outer 32+32 = 25% of symbols): all 29%  top 26%
