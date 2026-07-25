@@ -2341,12 +2341,6 @@ public sealed class Ms110dDemodulator
         Span<Cf> segH2 = stackalloc Cf[Segments];
         Span<Cf> segH2b = stackalloc Cf[Segments];
         Span<float> segCentre = stackalloc float[Segments];
-        // §B3.3 per-segment noise pricing: the assembly residual accumulated on the same
-        // u/segLen partition as the channel anchors, so the BCJR floor can follow the
-        // within-frame heteroscedasticity instead of over-confidencing the bad spans.
-        Span<float> segResid = stackalloc float[Segments];
-        Span<int> segResidCount = stackalloc int[Segments];
-        Span<float> segNv = stackalloc float[Segments];
         int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
         _blockLlrCount = 0;
         int tirFrames = 0;
@@ -2643,13 +2637,9 @@ public sealed class Ms110dDemodulator
             }
 
             float residual = 0f;
-            segResid.Clear();
-            segResidCount.Clear();
             for (int u = 0; u < mode.U; u++)
             {
-                int sn = Math.Min(Segments - 1, u / segLen);
-                float residBefore = residual;
-                int s = sn;
+                int s = Math.Min(Segments - 1, u / segLen);
                 int ia, ib;
                 float t;
                 if (u <= segCentre[0] || Segments == 1)
@@ -2716,56 +2706,17 @@ public sealed class Ms110dDemodulator
                         residual += h2b.Cnorm() * expectedVar[u - delay2];
                     }
                 }
-
-                segResid[sn] += residual - residBefore;
-                segResidCount[sn]++;
             }
 
             // Cnorm() sums both complex dimensions; the BCJR wants σ² per dimension, so
             // halve (the #65 2×-under-confidence lesson).
             float noiseVar = Math.Max(0.5f * residual / mode.U, 1e-6f);
 
-            // §B3.3 per-segment noise pricing: the BCJR floor follows the within-frame
-            // residual through the same piecewise-linear-through-centres scheme as the
-            // channel spans — a frame-constant floor over-confidences exactly the spans
-            // where the model is worst (measured: |h1| swings 2–3× inside fade-crossing
-            // frames while one noiseVar priced the whole frame).
-            for (int s = 0; s < Segments; s++)
-            {
-                segNv[s] = segResidCount[s] > 0
-                    ? Math.Max(0.5f * segResid[s] / segResidCount[s], 1e-6f)
-                    : noiseVar;
-            }
-
-            var nvSpan = new float[mode.U];
-            for (int u = 0; u < mode.U; u++)
-            {
-                int s = Math.Min(Segments - 1, u / segLen);
-                if (u <= segCentre[0] || Segments == 1)
-                {
-                    nvSpan[u] = segNv[0];
-                }
-                else if (u >= segCentre[Segments - 1])
-                {
-                    nvSpan[u] = segNv[Segments - 1];
-                }
-                else
-                {
-                    if (u < segCentre[s])
-                    {
-                        s--;
-                    }
-
-                    float t = (u - segCentre[s]) / (segCentre[s + 1] - segCentre[s]);
-                    nvSpan[u] = (segNv[s] * (1f - t)) + (segNv[s + 1] * t);
-                }
-            }
-
             if (_turboFrameDiag && FrameDiagnostics is not null)
             {
                 var sb = new System.Text.StringBuilder(256);
                 sb.Append(FormattableString.Invariant(
-                    $"turbo-frame b{_blockIndex} f{f}: lag={delay} lag2={delay2} n={noiseVar:E3} nseg={segNv[0]:E2}|{segNv[1]:E2}|{segNv[2]:E2}|{segNv[3]:E2} ffE={dfe.FfEnergy:F3} sseN={tir.SseNull:F1} sseT={tir.SseTir:F1} h1="));
+                    $"turbo-frame b{_blockIndex} f{f}: lag={delay} lag2={delay2} n={noiseVar:E3} ffE={dfe.FfEnergy:F3} sseN={tir.SseNull:F1} sseT={tir.SseTir:F1} h1="));
                 for (int s = 0; s < Segments; s++)
                 {
                     if (s > 0) { sb.Append('|'); }
@@ -2829,8 +2780,7 @@ public sealed class Ms110dDemodulator
             Ms110dChainBcjr.Equalize(
                 rxDesc, h1Span, h2Span, delay, noiseVar,
                 constellation, labels, bitsPerSymbol, preceding, frameLlrs,
-                logPriors is null ? default : logPriors,
-                noiseVarPerSymbol: nvSpan);
+                logPriors is null ? default : logPriors);
 
             // With priors in, the BCJR emits full posteriors; hand the outer code detector
             // EXTRINSICS only (posterior − prior) — feeding its own opinion back to the
