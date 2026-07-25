@@ -1,6 +1,7 @@
 using M0LTE.Flex;
 using System.Globalization;
 using Packet.SoundModem.Audio;
+using Packet.SoundModem.Ms110d;
 using Packet.SoundModem.Ota;
 using Packet.SoundModem.UberSdr;
 
@@ -27,6 +28,7 @@ try
         "sweep" => await Commands.SweepAsync(args[1..]),
         "rawmeters" => await Commands.RawMetersAsync(args[1..]),
         "radio" => await Commands.RadioStateAsync(args[1..]),
+        "synth" => Commands.Synth(args[1..]),
         "meters" => await Commands.MetersAsync(args[1..]),
         "measure" => Commands.Measure(args[1..]),
         "-h" or "--help" or "help" => Usage(),
@@ -697,6 +699,79 @@ internal static class Commands
                 : $"derived SWR (from FWDPWR/REFPWR): {derived:F2}");
         }
 
+        return 0;
+    }
+
+    /// <summary>
+    /// Modulates an MS110D burst, upconverts it, and writes the result as an IQ capture WAV —
+    /// a synthetic capture, with no radio and no receiver involved.
+    /// </summary>
+    /// <remarks>This is the offline gate the plan calls E0: the whole transmit chain and the
+    /// whole scoring chain, exercised against a signal whose contents are known exactly. It is
+    /// also the quickest way to look at what the upconverter actually emits, which is how the
+    /// band-placement bug was found — a bandpass selects, it does not translate.</remarks>
+    public static int Synth(string[] argv)
+    {
+        var a = Args.Parse(argv);
+        if (a is null || a.Has("help"))
+        {
+            Console.Error.WriteLine("""
+                sm-ota synth --out <iq.wav> [--wn 2] [--offset-hz 2000] [--payload-bits 0]
+                             [--rate 24000] [--seed 1] [--amplitude 0.9]
+
+                Writes an int16 stereo IQ WAV of one modulated, upconverted burst.
+                """);
+            return a is null ? 2 : 0;
+        }
+
+        int wn = a.Int("wn", 2);
+        double offset = a.Dbl("offset-hz", 2000);
+        int rate = a.Int("rate", 24000);
+        var interleaver = Ms110dInterleaverKind.Short;
+        int defaultBits = Ms110dInterleaverParams.Get3k(wn, interleaver).InputBits - 32;
+        int payloadBits = a.Int("payload-bits", 0) is var pb && pb > 0 ? pb : defaultBits;
+
+        var random = new Random(a.Int("seed", 1));
+        var payload = new byte[payloadBits];
+        for (int i = 0; i < payload.Length; i++)
+        {
+            payload[i] = (byte)random.Next(2);
+        }
+
+        float[] audio = new Ms110dModulator(new Ms110dTxSettings
+        {
+            WaveformNumber = wn,
+            Interleaver = interleaver,
+            ConstraintLength = 7,
+            PreambleSuperframes = 3,
+        }).Modulate(payload);
+
+        float[] iq = new Ms110dIqUpconverter(new Ms110dIqUpconverterOptions
+        {
+            OutputRate = rate,
+            OffsetHz = offset,
+            Amplitude = a.Dbl("amplitude", 0.9),
+        }).Convert(audio);
+
+        string outPath = a.Str("out", "synth-iq.wav");
+        var pcm = new byte[iq.Length * 2];
+        for (int k = 0; k < iq.Length; k++)
+        {
+            short v = (short)Math.Clamp(Math.Round(iq[k] * 32767.0), short.MinValue, short.MaxValue);
+            pcm[2 * k] = (byte)(v & 0xFF);
+            pcm[(2 * k) + 1] = (byte)((v >> 8) & 0xFF);
+        }
+
+        using (var writer = new StereoPcmWavWriter(outPath, rate))
+        {
+            writer.Write(pcm);
+        }
+
+        Console.Error.WriteLine(
+            $"wn{wn} {payloadBits} payload bits → {audio.Length} audio samples @ 9600 Hz → " +
+            $"{iq.Length / 2} complex @ {rate} Hz, offset {offset:F0} Hz, peak " +
+            $"{ToneGenerator.PeakMagnitude(iq):F3}");
+        Console.WriteLine(outPath);
         return 0;
     }
 

@@ -108,7 +108,16 @@ public sealed class IqToAudioConverter
         {
             double ph = 2.0 * Math.PI * centre * (m - mid) / _opt.InputRate;
             hre[m] = proto[m] * Math.Cos(ph);
-            him[m] = proto[m] * Math.Sin(ph);
+
+            // Negated: the convolution below is written y[k] = sum_m h[m]*x[k-mid+m], which
+            // reverses the kernel and so realises a response centred at MINUS the modulation
+            // frequency. Without this the filter selects the LOWER sideband while claiming to
+            // keep the upper one. It went unnoticed because the loopback test synthesised its
+            // input with the same convention, and the one real capture it was tried on was
+            // only checked for "energy in the SSB band" — which an inverted selection can
+            // still satisfy. The transmit-side upconverter, whose band placement is asserted
+            // against absolute frequencies, is what exposed it.
+            him[m] = -proto[m] * Math.Sin(ph);
         }
 
         // Convolve (complex), keep the real part only. Linear-phase filter → compensate its
