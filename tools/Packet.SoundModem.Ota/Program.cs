@@ -29,6 +29,7 @@ try
         "rawmeters" => await Commands.RawMetersAsync(args[1..]),
         "radio" => await Commands.RadioStateAsync(args[1..]),
         "synth" => Commands.Synth(args[1..]),
+        "burst" => await Commands.BurstAsync(args[1..]),
         "meters" => await Commands.MetersAsync(args[1..]),
         "measure" => Commands.Measure(args[1..]),
         "-h" or "--help" or "help" => Usage(),
@@ -773,6 +774,180 @@ internal static class Commands
             $"{ToneGenerator.PeakMagnitude(iq):F3}");
         Console.WriteLine(outPath);
         return 0;
+    }
+
+    /// <summary>
+    /// The whole chain in one command: modulate a seeded MS110D burst, upconvert it,
+    /// transmit it, capture it, convert it back to audio, demodulate it, and score the bits.
+    /// </summary>
+    /// <remarks>Every stage that precedes this has an oracle of its own, so a failure here is
+    /// attributable rather than mysterious — which is the entire reason the tone, the meters,
+    /// the calibration and the upconverter were built first.</remarks>
+    public static async Task<int> BurstAsync(string[] argv)
+    {
+        var a = Args.Parse(argv);
+        if (a is null || a.Has("help"))
+        {
+            Console.Error.WriteLine("""
+                sm-ota burst --capture-host <host> --rf-power <n> [options]
+
+                  --wn <n>            waveform number (default 2)
+                  --seed <n>          payload PRNG seed, recorded for exact scoring (default 1)
+                  --offset-hz <Hz>    modem offset from the waveform centre (default 2000)
+                  --dial-correction   Hz to add to the capture frequency for the measured
+                                      reference error (see `sm-ota measure` against RWM)
+                  --radio/--freq/--antenna/--capture-* as for `tone`
+                """);
+            return a is null ? 2 : 0;
+        }
+
+        int wn = a.Int("wn", 2);
+        int seed = a.Int("seed", 1);
+        double offset = a.Dbl("offset-hz", 2000);
+        var interleaver = Ms110dInterleaverKind.Short;
+
+        // Payload from a seeded PRNG: the seed is all that need be recorded for the decode to
+        // be scored bit-exact afterwards, however long afterwards that is.
+        int payloadBits = Ms110dInterleaverParams.Get3k(wn, interleaver).InputBits - 32;
+        var random = new Random(seed);
+        var payload = new byte[payloadBits];
+        for (int i = 0; i < payload.Length; i++)
+        {
+            payload[i] = (byte)random.Next(2);
+        }
+
+        var settings = new Ms110dTxSettings
+        {
+            WaveformNumber = wn,
+            Interleaver = interleaver,
+            ConstraintLength = 7,
+            PreambleSuperframes = 3,
+        };
+        float[] audio = new Ms110dModulator(settings).Modulate(payload);
+        float[] iq = new Ms110dIqUpconverter(new Ms110dIqUpconverterOptions
+        {
+            OffsetHz = offset,
+            Amplitude = a.Dbl("amplitude", 0.9),
+        }).Convert(audio);
+
+        double burstSeconds = (iq.Length / 2.0) / FlexIqTransmitter.SampleRate;
+        Log($"WN{wn} seed {seed}: {payloadBits} payload bits → {burstSeconds:F2} s, " +
+            $"offset {offset:F0} Hz, peak {ToneGenerator.PeakMagnitude(iq):F2}");
+
+        var options = new FlexIqTransmitterOptions
+        {
+            Radio = a.Str("radio", "10.45.0.76"),
+            FrequencyMHz = a.Str("freq", "18.106500"),
+            Antenna = a.Str("antenna", "ANT1"),
+            RfPower = a.Int("rf-power", -1) is var p && p >= 0
+                ? p
+                : throw new ArgumentException("--rf-power is required"),
+            MaxSwr = a.Dbl("max-swr", 1.5),
+            RfPowerCeiling = a.Int("rf-power-ceiling", 30),
+            Callsign = a.Str("id-call", null),
+            IdMode = a.Str("id-mode", $"MS110D WN{wn}"),
+            Identify = !a.Has("no-id"),
+            InterBurstSettle = TimeSpan.FromSeconds(a.Dbl("settle", 2)),
+        };
+
+        await using FlexIqTransmitter tx = await FlexIqTransmitter.OpenAsync(options, Log);
+
+        bool ssl = !a.Has("capture-no-ssl");
+        double centreHz = double.Parse(options.FrequencyMHz, CultureInfo.InvariantCulture) * 1e6;
+        // The capture is tuned to the waveform centre PLUS the measured reference error, so the
+        // residual carrier offset the demodulator sees is near zero. Without it the combined
+        // TX+RX error at 18 MHz exceeds the ±75 Hz acquisition grid and nothing acquires.
+        double correction = a.Dbl("dial-correction", 0);
+        double idSeconds = options.Identify
+            ? MorseGenerator.DurationSeconds(MorseGenerator.IdText("M0LTE", options.IdMode), 30)
+              + options.InterBurstSettle.TotalSeconds
+            : 0;
+        var capOpt = new UberSdrCaptureOptions
+        {
+            Host = a.Req("capture-host"),
+            Port = a.Int("capture-port", ssl ? 443 : 80),
+            Ssl = ssl,
+            FrequencyHz = (int)Math.Round(centreHz + correction),
+            Name = a.Str("capture-name", $"otaburst-wn{wn}"),
+            OutputDir = a.Str("out-dir", "."),
+            DurationSeconds = (int)Math.Ceiling(burstSeconds + idSeconds + 6 + 10),
+        };
+        Log($"capture: {capOpt.Host} at {capOpt.FrequencyHz} Hz for {capOpt.DurationSeconds} s");
+        using var cts = new CancellationTokenSource();
+        Task<CaptureResult> capture = new UberSdrIqClient(m => Log($"[rx] {m}")).CaptureAsync(capOpt, cts.Token);
+        await Task.Delay(TimeSpan.FromSeconds(3));
+
+        await tx.EnsureIdentifiedAsync();
+        await tx.PreflightAsync();
+        TransmitReport report = await tx.TransmitAsync(iq);
+        Report(report, tx);
+
+        CaptureResult result = await capture;
+        Log($"capture: {result.WavPath}");
+
+        // --- score ---------------------------------------------------------------------
+        (float[] iCh, int rate) = WavFile.ReadMono(result.WavPath, channel: 0);
+        (float[] qCh, _) = WavFile.ReadMono(result.WavPath, channel: 1);
+        var iD = Array.ConvertAll(iCh, v => (double)v);
+        var qD = Array.ConvertAll(qCh, v => (double)v);
+
+        float[] recovered = new IqToAudioConverter(new IqToAudioOptions
+        {
+            InputRate = rate,
+            OutputRate = 9600,
+            // The capture is already tuned to null the reference error, so the suppressed
+            // carrier sits at exactly the transmit offset in its baseband.
+            DialHz = offset,
+            NormalisePeak = 0.7f,
+        }).Convert(iD, qD);
+
+        var decoded = new List<byte>();
+        Ms110dLockInfo? locked = null;
+        Ms110dBurstEndReason? reason = null;
+        var demod = new Ms110dDemodulator();
+        // Take the lock details while the burst is live: EndBurst clears them, so reading
+        // demod.Lock after Process() returns null on a perfectly successful decode.
+        demod.BlockDecoded += b =>
+        {
+            locked ??= demod.Lock;
+            decoded.AddRange(b.Bits);
+        };
+        demod.BurstCompleted += b => reason = b.Reason;
+        demod.Process(recovered);
+
+        Console.WriteLine();
+        Console.WriteLine("=== decode ===");
+        if (locked is null)
+        {
+            Console.WriteLine("NO ACQUISITION — the demodulator never locked.");
+            Console.WriteLine($"peak search metric {demod.PeakSearchMetric:F3} (threshold 0.32)");
+        }
+        else
+        {
+            Console.WriteLine($"acquired: WN{locked.WaveformNumber} {locked.Interleaver} K{locked.ConstraintLength}, " +
+                              $"CFO {locked.CfoHz:+0.0;-0.0} Hz");
+            bool widOk = locked.WaveformNumber == wn && locked.Interleaver == interleaver;
+            Console.WriteLine(widOk ? "WID matches what was sent" : "*** WID MISMATCH ***");
+        }
+
+        int compare = Math.Min(decoded.Count, payload.Length);
+        int errors = 0;
+        for (int k = 0; k < compare; k++)
+        {
+            if (decoded[k] != payload[k])
+            {
+                errors++;
+            }
+        }
+
+        Console.WriteLine($"decoded {decoded.Count} bits, compared {compare} of {payload.Length}");
+        Console.WriteLine(compare == 0
+            ? "no payload bits recovered"
+            : $"bit errors {errors}  BER {(double)errors / compare:E2}" +
+              (errors == 0 ? "   *** BIT-EXACT ***" : ""));
+        Console.WriteLine($"burst end: {reason?.ToString() ?? "(none)"}");
+        Console.WriteLine(result.WavPath);
+        return errors == 0 && compare == payload.Length ? 0 : 1;
     }
 
     public static int Measure(string[] argv)
