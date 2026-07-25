@@ -35,7 +35,14 @@ The first WN6 mask run (cap 8) put 33k of its 34.7k errors in two bursts whose d
 - `cap/` — the w2/b2 cap-8 vs cap-16 pair that set the shipped cap.
 - `pure-soft/` — v1 summaries (the regression) + the WN6 cold-start trajectory that diagnosed it.
 
+## Mask runs (`battery.log`, final cap-24 binary, full §5.3 budgets)
+
+- **WN13 Poor @ +11**: canonical 6 errors / 3.24M — bound 4.03E-6, **at mask**; disjoint (seed+10000) run to 6.5M bits: 74 errors — **1.14E-5, marginally over**. The 6M census (`vcensus-wn13-6md-*.csv`) shows the residue: 14 bursts carrying 2–16-error clusters, every burst 11c/0r — no dead bursts, no reverts, no burst above the specimen's own 16. Combined families ≈ 8.2E-6: the converged-residual class sits AT the mask boundary and wobbles with seed luck.
+- **WN6 Poor @ +14**: 2,342 / 1,762 errors (7.22E-4 / 5.43E-4), **132c/0r both** — the dead-mass class is gone; what remains is the model tail the oracle ceiling already priced (75 errors ≈ 2.8E-4 on the corpse burst). WN6 formally joins WN7 on the model front.
+- **WN7 Poor @ +19** (full-budget "smoke"): 3.89E-1 with **16c/72r** — down from 4.59E-1 / 1c/87r; the longer soft loop converges 16 blocks even here. Model-limited as measured; rides the TIR front.
+- **Regressions unchanged**: WN2 18 canonical (number-for-number identical to the banked #79 battery) / 10 disjoint (was 12 — the soft iterations repaired two more errors); WN1 2/0; WN5/WN4 smokes 6/6; AWGN all ten waveforms zero; Static WID2 zero; Doppler ±75 zero. Healthy blocks exit at the hard iteration-0 fixed point, so the soft machinery never engages where the old turbo was already sufficient.
+
 ## Residue
 
-- WN13's 16 vs genie 12 vs oracle 0, WN6's 240 vs oracle 75: the remaining gap is iteration-0's hard bootstrap quality and the first-pass LLR scale — candidate knobs if the mask runs want more, but only if they do.
-- WN7 rides the B3.3 model front (TIR channel-shortening + time-varying h2), unchanged by this PR.
+- **WN13's converged-residual class** (2–16-bit clusters in self-consistent fixed points; disjoint family 1.14E-5): the open item for the pre-registered chain-BCJR-priors lever (SISO extrinsics as detector priors) and the model front — the specimen's own 16-vs-genie-12-vs-oracle-0 says labels can close it in principle.
+- WN6's ~6E-4 and WN7's 3.89E-1 are the B3.3 model front (TIR channel-shortening + time-varying h2).
