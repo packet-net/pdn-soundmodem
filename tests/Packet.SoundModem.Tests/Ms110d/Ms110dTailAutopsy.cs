@@ -143,6 +143,9 @@ public class Ms110dTailAutopsy
         var demod = new Ms110dDemodulator(new Ms110dDemodOptions
         {
             DisableTurbo = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_NOTURBO") == "1",
+            TrackRidge = float.TryParse(
+                Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TRACK_RIDGE"), out float tr)
+                ? tr : null,
         });
         demod.BurstCompleted += bu => endReason = bu.Reason;
         demod.BlockDecoded += b => decoded.AddRange(b.Bits);

@@ -76,4 +76,12 @@ public sealed record Ms110dDemodOptions
     /// the §B3 instrument for attributing decode damage to the turbo pass (the first-pass
     /// telemetry is pre-turbo, so a poisoned turbo is invisible to it — issue #69).</summary>
     public bool DisableTurbo { get; init; }
+
+    /// <summary>Per-probe anchored-solve ridge override (all modes). Null (the default)
+    /// keeps the measured per-K values. The anchor ridge IS the equalizer's cross-frame
+    /// memory (a Kalman-style prior toward the current taps), so this knob trades solve
+    /// noise against tracking lag — the §B3.2 A/B instrument for the flat estimation-noise
+    /// tax the WN2 genie pair measured (issue #69). Report evidence only, never a gate
+    /// default without a full-budget A/B.</summary>
+    public float? TrackRidge { get; init; }
 }
