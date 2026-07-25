@@ -26,6 +26,7 @@ try
         "tune" => await Commands.TuneAsync(args[1..]),
         "sweep" => await Commands.SweepAsync(args[1..]),
         "rawmeters" => await Commands.RawMetersAsync(args[1..]),
+        "radio" => await Commands.RadioStateAsync(args[1..]),
         "meters" => await Commands.MetersAsync(args[1..]),
         "measure" => Commands.Measure(args[1..]),
         "-h" or "--help" or "help" => Usage(),
@@ -93,6 +94,9 @@ internal static class Commands
                   --amplitude <0-1>         per-tone IQ amplitude (default 0.7 single tone)
                   --seconds <s>             tone length (default 5)
                   --no-preflight            skip the SWR check (not advised)
+                  --id-call <call>          Morse ID callsign (default: the radio's own)
+                  --id-mode <name>          sent after the callsign (default MS110D)
+                  --no-id                   suppress identification (dummy load only)
                   --allow-no-swr            proceed even if SWR could not be measured; only
                                             permitted at --rf-power 5 or below (diagnostic)
 
@@ -120,6 +124,9 @@ internal static class Commands
                 : throw new ArgumentException("--rf-power <0-100> is required (there is deliberately no default)"),
             MaxSwr = a.Dbl("max-swr", 1.5),
             RfPowerCeiling = a.Int("rf-power-ceiling", 30),
+            Callsign = a.Str("id-call", null),
+            IdMode = a.Str("id-mode", "MS110D"),
+            Identify = !a.Has("no-id"),
         };
 
         double toneHz = a.Dbl("tone-hz", 2000);
@@ -218,6 +225,8 @@ internal static class Commands
 
         try
         {
+            await tx.EnsureIdentifiedAsync();
+
             if (preflight)
             {
                 TransmitReport pre = await tx.PreflightAsync(
@@ -318,6 +327,9 @@ internal static class Commands
             RfPower = sweepAmplitude ? fixedPower : (int)steps[0],
             MaxSwr = a.Dbl("max-swr", 1.5),
             RfPowerCeiling = a.Int("rf-power-ceiling", 30),
+            Callsign = a.Str("id-call", null),
+            IdMode = a.Str("id-mode", "MS110D"),
+            Identify = !a.Has("no-id"),
         };
 
         await using FlexIqTransmitter tx = await FlexIqTransmitter.OpenAsync(options, Log);
@@ -346,6 +358,7 @@ internal static class Commands
         {
             int power = sweepAmplitude ? fixedPower : (int)step;
             double amplitude = sweepAmplitude ? step : fixedAmplitude;
+            await tx.EnsureIdentifiedAsync();
             await tx.SetRfPowerAsync(power);
             await Task.Delay(300);
 
@@ -527,6 +540,49 @@ internal static class Commands
         await RawMeterProbe.RunAsync(
             a.Req("radio"), a.Str("freq", "18.106500"), a.Str("antenna", "ANT1"),
             a.Int("rf-power", 10), a.Dbl("seconds", 3), Log);
+        return 0;
+    }
+
+    /// <summary>Dumps the radio-level status object — the radio's own account of its
+    /// settings, including any frequency-calibration offset.</summary>
+    public static async Task<int> RadioStateAsync(string[] argv)
+    {
+        var a = Args.Parse(argv);
+        if (a is null || a.Has("help"))
+        {
+            Console.Error.WriteLine("sm-ota radio --radio <ip|discover> [--filter <substring>]");
+            return a is null ? 2 : 0;
+        }
+
+        string radio = a.Str("radio", "10.45.0.76");
+        string? filter = a.Str("filter", null);
+        M0LTE.Flex.FlexClient client = string.Equals(radio, "discover", StringComparison.OrdinalIgnoreCase)
+            ? await M0LTE.Flex.FlexClient.DiscoverAndConnectAsync("", TimeSpan.FromSeconds(10))
+            : await M0LTE.Flex.FlexClient.ConnectAsync(radio);
+        await using (client)
+        {
+            var lines = new List<string>();
+            client.StatusUpdated += u =>
+            {
+                foreach ((string k, string v) in u.Updated)
+                {
+                    lines.Add($"{u.Object}.{k} = {v}");
+                }
+            };
+
+            await client.SendCommandExpectOkAsync("sub radio all");
+            client.SendCommandNoWait("sub tx all");
+            await Task.Delay(2500);
+
+            foreach (string line in lines.Distinct().OrderBy(x => x, StringComparer.Ordinal))
+            {
+                if (filter is null || line.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine(line);
+                }
+            }
+        }
+
         return 0;
     }
 

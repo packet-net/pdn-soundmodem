@@ -60,9 +60,49 @@ public sealed record FlexIqTransmitterOptions
     /// <summary>Silence written after the burst, before draining and unkeying.</summary>
     public double LeadOutSeconds { get; init; } = 0.1;
 
-    /// <summary>IQ ring depth. Must exceed lead-in + burst for the pre-fill to work
-    /// without back-pressure on short bursts.</summary>
-    public double BufferSeconds { get; init; } = 4.0;
+    /// <summary>
+    /// IQ ring depth, in seconds. Sized so an entire burst pre-fills before keying.
+    /// </summary>
+    /// <remarks>Anything longer than the ring has to be streamed while the radio drains it,
+    /// and a momentary scheduling delay then empties the ring and starves — which is a phase
+    /// discontinuity on the air. A 30 wpm identification is already ~6 s, so 4 s was not
+    /// enough; 12 s costs ~2 MB and removes the failure mode for every burst we send.</remarks>
+    public double BufferSeconds { get; init; } = 12.0;
+
+    /// <summary>
+    /// Station callsign for Morse identification. Null reads it from the radio
+    /// (<c>radio.callsign</c>), which is why identification is hard to forget: it happens
+    /// unless <see cref="Identify"/> is explicitly turned off.
+    /// </summary>
+    public string? Callsign { get; init; }
+
+    /// <summary>Mode name sent after the callsign, so a listener knows what the unfamiliar
+    /// signal they just heard was.</summary>
+    public string? IdMode { get; init; } = "MS110D";
+
+    /// <summary>Send a Morse identification at session start and at
+    /// <see cref="IdentifyInterval"/> thereafter. On by default.</summary>
+    public bool Identify { get; init; } = true;
+
+    /// <summary>
+    /// Longest gap between identifications. Ten minutes: often enough to satisfy the licence
+    /// condition comfortably, rare enough that the airtime cost (~3 s at 30 wpm) is nothing.
+    /// </summary>
+    public TimeSpan IdentifyInterval { get; init; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// Minimum gap between the end of one transmission and the key-up of the next.
+    /// </summary>
+    /// <remarks>Empirical, and load-bearing: keying too soon after a long transmission is
+    /// silently ignored by the radio. 1 s was observed to work between short bursts and 0.5 s
+    /// to fail after a 6 s one, so 2 s buys margin at negligible cost.</remarks>
+    public TimeSpan InterBurstSettle { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>Morse speed, words per minute.</summary>
+    public double IdWpm { get; init; } = 30;
+
+    /// <summary>Carrier offset for the identification, relative to the waveform centre.</summary>
+    public double IdToneHz { get; init; } = 1000;
 
     /// <summary>Fail bring-up if meter telemetry cannot be subscribed. <b>True by default and
     /// should stay true against a real radio</b> — without meters there is no SWR interlock,
@@ -181,8 +221,48 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
 
     private readonly List<string> _stateLog = [];
 
+    /// <summary>The interlock state last reported by the radio.</summary>
+    public string InterlockState => _interlockState;
+
+    private volatile string _interlockState = "";
+
+    /// <summary>
+    /// Blocks until the radio is out of its transmit cycle, so it will honour the next key.
+    /// </summary>
+    /// <remarks>
+    /// <para>Keying while the radio is still finishing the previous transmission is silently
+    /// ignored: it never re-enters TRANSMITTING, the burst goes out truncated, and the starve
+    /// counter reads a healthy zero because the radio simply stopped asking. Observed live —
+    /// a burst following an identification delivered 148 of 639 buffers with no error
+    /// anywhere.</para>
+    /// <para>This settles on elapsed time rather than on interlock state <b>because the
+    /// waveform path does not report the state we would need</b>: transitions up to
+    /// <c>UNKEY_REQUESTED</c> arrive, but the return to <c>RECEIVE</c> never does, so a
+    /// state-based wait times out every time even though the radio is demonstrably idle
+    /// (forward power zero, SWR back to 1.00). Waiting before keying rather than after
+    /// unkeying also keeps the settle out of the previous burst's telemetry — measuring it
+    /// there is what produced an 81792-sample "starve" that was purely an artefact of the
+    /// wait itself.</para>
+    /// </remarks>
+    private async Task WaitForTransmitIdleAsync()
+    {
+        TimeSpan since = DateTime.UtcNow - _lastUnkeyUtc;
+        if (since < _options.InterBurstSettle)
+        {
+            await Task.Delay(_options.InterBurstSettle - since).ConfigureAwait(false);
+        }
+    }
+
+    private DateTime _lastUnkeyUtc = DateTime.MinValue;
+
     private void OnStatus(FlexStatusUpdate update)
     {
+        if (update.Object.StartsWith("interlock", StringComparison.OrdinalIgnoreCase)
+            && update.Updated.TryGetValue("state", out string? interlock))
+        {
+            _interlockState = interlock;
+        }
+
         if (!update.Object.StartsWith("interlock", StringComparison.OrdinalIgnoreCase)
             && !update.Object.StartsWith("transmit", StringComparison.OrdinalIgnoreCase))
         {
@@ -204,6 +284,65 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
 
     /// <summary>Meter telemetry for this session.</summary>
     public FlexMeters Meters => _meters;
+
+    /// <summary>When the station last identified, or null if it has not yet.</summary>
+    public DateTime? LastIdentifiedUtc { get; private set; }
+
+    /// <summary>The callsign identification will use — the configured one, else the radio's own.</summary>
+    public string? ResolvedCallsign =>
+        _options.Callsign
+        ?? (_client.TryGetObject("radio", out IReadOnlyDictionary<string, string>? radio)
+            && radio.TryGetValue("callsign", out string? c) && !string.IsNullOrWhiteSpace(c)
+                ? c
+                : null);
+
+    /// <summary>
+    /// Sends a Morse station identification: callsign then mode, at
+    /// <see cref="FlexIqTransmitterOptions.IdWpm"/>.
+    /// </summary>
+    /// <remarks>A data waveform carries nothing a listener can read, so on a real antenna the
+    /// station has to say who it is in a form decodable without our software.</remarks>
+    public async Task<TransmitReport?> IdentifyAsync(CancellationToken cancellation = default)
+    {
+        string? call = ResolvedCallsign;
+        if (string.IsNullOrWhiteSpace(call))
+        {
+            throw new InvalidOperationException(
+                "no callsign to identify with: the radio reported none, so set Callsign explicitly");
+        }
+
+        string text = MorseGenerator.IdText(call, _options.IdMode);
+        _log($"identifying: \"{text}\" at {_options.IdWpm:F0} wpm " +
+             $"({MorseGenerator.DurationSeconds(text, _options.IdWpm):F1} s)");
+        float[] iq = MorseGenerator.Complex(
+            text, _options.IdToneHz, 0.9, _options.IdWpm, SampleRate);
+        TransmitReport report = await TransmitAsync(iq, cancellation).ConfigureAwait(false);
+        LastIdentifiedUtc = DateTime.UtcNow;
+        return report;
+    }
+
+    /// <summary>
+    /// Identifies if the station has not done so yet, or if
+    /// <see cref="FlexIqTransmitterOptions.IdentifyInterval"/> has elapsed since it last did.
+    /// </summary>
+    /// <remarks>Call this before every transmission. It is a no-op almost always, and the one
+    /// time it is not is the time it would otherwise have been forgotten.</remarks>
+    public async Task EnsureIdentifiedAsync(CancellationToken cancellation = default)
+    {
+        if (!_options.Identify)
+        {
+            return;
+        }
+
+        if (LastIdentifiedUtc is DateTime last
+            && DateTime.UtcNow - last < _options.IdentifyInterval)
+        {
+            return;
+        }
+
+        await IdentifyAsync(cancellation).ConfigureAwait(false);
+        await Task.Delay(500, cancellation).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// The radio's own view of the slice we are transmitting on — antenna, mode, frequency,
@@ -465,6 +604,20 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
                 return;
             }
 
+            // Only believe SWR at full output. Forward and reflected power are separate meter
+            // samples taken at slightly different instants, so during the key-up and key-down
+            // ramps they describe different moments of a changing envelope and their ratio is
+            // meaningless — it reads high. Taking a peak over the whole burst then reliably
+            // catches that artefact rather than the antenna: a load measuring a steady 1.31
+            // reported 1.56 purely because a ramp was included. Requiring the sample to sit
+            // within 3 dB of the burst's own peak forward power confines the measurement to
+            // the steady state.
+            if (!_meters.TryGet("FWDPWR", out FlexMeterReading fwdNow)
+                || peakFwd is null || fwdNow.Value < peakFwd - 3.0)
+            {
+                return;
+            }
+
             lock (gate)
             {
                 if (peakSwr is null || swr > peakSwr)
@@ -488,6 +641,8 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
         _meters.Updated += OnMeter;
         long reflectedBefore = _iq.PacketsReflected;
         long starvedBefore = _iq.SamplesStarved;
+        long reflected = 0;
+        long starved = 0;
         DateTime keyUtc;
         bool drained;
 
@@ -504,6 +659,7 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
                 _iq.Write(payload.AsSpan(0, prefill));
             }
 
+            await WaitForTransmitIdleAsync().ConfigureAwait(false);
             keyUtc = DateTime.UtcNow;
             _ptt.Key();
 
@@ -523,6 +679,8 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
 
             drained = abortReason is null
                 && _iq.Drain(TimeSpan.FromSeconds(seconds + 5));
+            reflected = _iq.PacketsReflected - reflectedBefore;
+            starved = _iq.SamplesStarved - starvedBefore;
         }
         finally
         {
@@ -531,6 +689,7 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
         }
 
         DateTime unkeyUtc = DateTime.UtcNow;
+        _lastUnkeyUtc = unkeyUtc;
         string[] faults;
         lock (_faultGate)
         {
@@ -544,8 +703,8 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
 
         var report = new TransmitReport(
             keyUtc, unkeyUtc, complexSamples,
-            _iq.PacketsReflected - reflectedBefore,
-            _iq.SamplesStarved - starvedBefore,
+            reflected,
+            starved,
             drained,
             collected,
             abortReason is not null,
