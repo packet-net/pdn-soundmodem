@@ -2311,6 +2311,7 @@ public sealed class Ms110dDemodulator
         Span<Cf> estWindow = stackalloc Cf[dfe.FfTaps];
         const int Segments = 4;
         Span<Cf> segH1 = stackalloc Cf[Segments];
+        Span<Cf> segH2 = stackalloc Cf[Segments];
         Span<float> segCentre = stackalloc float[Segments];
         int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
         _blockLlrCount = 0;
@@ -2464,6 +2465,7 @@ public sealed class Ms110dDemodulator
 
             int delay;
             Cf h2Avg;
+            bool segEcho = tir.Lag > 0;
             if (tir.Lag > 0)
             {
                 // TIR accepted: the FF was solved to LEAVE the echo at this lag, so the
@@ -2479,6 +2481,25 @@ public sealed class Ms110dDemodulator
                 }
 
                 h2Avg = acc * (1f / (mode.U - delay));
+
+                // Per-segment h2 on the same grid as h1 (§B2.1 applied to the echo path):
+                // under TIR the echo coefficient is a real fading path, and a
+                // frame-constant estimate misrepresents it exactly the way block-constant
+                // h1 did before per-segment anchors. Segments starting before `delay`
+                // (short U with a deep-lag echo) fall back to the frame estimate.
+                for (int s = 0; s < Segments; s++)
+                {
+                    var segAcc = Cf.Zero;
+                    int start = Math.Max(delay, s * segLen);
+                    int end = Math.Min(mode.U, (s * segLen) + segLen);
+                    int count = end - start;
+                    for (int u = start; u < end; u++)
+                    {
+                        segAcc += (estWire[u] - (h1Avg * expected[u])) * expected[u - delay].Conj();
+                    }
+
+                    segH2[s] = count > 0 ? segAcc * (1f / count) : h2Avg;
+                }
             }
             else
             {
@@ -2535,14 +2556,17 @@ public sealed class Ms110dDemodulator
             for (int u = 0; u < mode.U; u++)
             {
                 int s = Math.Min(Segments - 1, u / segLen);
-                Cf h1u;
+                int ia, ib;
+                float t;
                 if (u <= segCentre[0] || Segments == 1)
                 {
-                    h1u = segH1[0];
+                    ia = ib = 0;
+                    t = 0f;
                 }
                 else if (u >= segCentre[Segments - 1])
                 {
-                    h1u = segH1[Segments - 1];
+                    ia = ib = Segments - 1;
+                    t = 0f;
                 }
                 else
                 {
@@ -2551,17 +2575,23 @@ public sealed class Ms110dDemodulator
                         s--;
                     }
 
-                    float t = (u - segCentre[s]) / (segCentre[s + 1] - segCentre[s]);
-                    h1u = (segH1[s] * (1f - t)) + (segH1[s + 1] * t);
+                    ia = s;
+                    ib = s + 1;
+                    t = (u - segCentre[s]) / (segCentre[s + 1] - segCentre[s]);
                 }
+
+                Cf h1u = ia == ib ? segH1[ia] : (segH1[ia] * (1f - t)) + (segH1[ib] * t);
+                Cf h2u = segEcho
+                    ? (ia == ib ? segH2[ia] : (segH2[ia] * (1f - t)) + (segH2[ib] * t))
+                    : h2Avg;
 
                 h1Span[u] = h1u;
                 rxDesc[u] = rxWire[u] * rotors[u].Conj();
                 Cf echoWire = u >= delay ? expected[u - delay] : preceding[u];
                 h2Span[u] = u >= delay
-                    ? h2Avg * rotors[u - delay] * rotors[u].Conj()
-                    : h2Avg * rotors[u].Conj();
-                Cf predicted = (h1u * expected[u]) + (h2Avg * echoWire);
+                    ? h2u * rotors[u - delay] * rotors[u].Conj()
+                    : h2u * rotors[u].Conj();
+                Cf predicted = (h1u * expected[u]) + (h2u * echoWire);
                 residual += (rxWire[u] - predicted).Cnorm();
                 if (symbolVar is not null)
                 {
@@ -2571,7 +2601,7 @@ public sealed class Ms110dDemodulator
                     residual += h1u.Cnorm() * expectedVar[u];
                     if (u >= delay)
                     {
-                        residual += h2Avg.Cnorm() * expectedVar[u - delay];
+                        residual += h2u.Cnorm() * expectedVar[u - delay];
                     }
                 }
             }
