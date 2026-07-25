@@ -79,8 +79,7 @@ public class Ms110dTailAutopsy
             PreambleSuperframes = 20,
         };
         var tx = new Ms110dModulator(settings);
-        tx.Mode.Modulation.Should().NotBe(Ms110dModulation.Qam16,
-            "the tail autopsy targets the sub-8PSK points; QAM16 truth mapping is not wired");
+        bool qam16 = tx.Mode.Modulation == Ms110dModulation.Qam16;
         Ms110dInterleaverParams il = Ms110dInterleaverParams.Get3k(wn, Ms110dInterleaverKind.Long);
         double blockSeconds = wn == 0
             ? il.Frames * 32.0 / 2400
@@ -136,9 +135,31 @@ public class Ms110dTailAutopsy
                 code, puncture, interleaver, txBits.AsSpan(b * il.InputBits, il.InputBits));
             fetchedBlocks[b] = fetched;
             int bit = 0;
-            for (int sym = 0; sym < symbolsPerBlock; sym++)
+            if (qam16)
             {
-                refRing[(b * symbolsPerBlock) + sym] = RingIndex(fetched, ref bit, tx.Mode.Modulation);
+                // QAM16 truth lives in the WIRE domain (the demod emits wire-domain y —
+                // descrambling happens inside PushMaxLogLlrs via the XOR nibble): symbol
+                // number = 4 fetched bits MSB-first, wire index = number XOR the scramble
+                // nibble, register reset at each data frame start (D.5.1.3).
+                var truthScrambler = new Ms110dScrambler();
+                for (int f = 0; f < il.Frames; f++)
+                {
+                    truthScrambler.Reset();
+                    for (int u = 0; u < tx.Mode.U; u++)
+                    {
+                        int nibble = (fetched[bit++] << 3) | (fetched[bit++] << 2)
+                            | (fetched[bit++] << 1) | fetched[bit++];
+                        refRing[(b * symbolsPerBlock) + (f * tx.Mode.U) + u] =
+                            truthScrambler.NextQam(nibble, 4);
+                    }
+                }
+            }
+            else
+            {
+                for (int sym = 0; sym < symbolsPerBlock; sym++)
+                {
+                    refRing[(b * symbolsPerBlock) + sym] = RingIndex(fetched, ref bit, tx.Mode.Modulation);
+                }
             }
         }
 
@@ -174,7 +195,7 @@ public class Ms110dTailAutopsy
             int i = symbolIndex++;
             if (i < refRing.Length)
             {
-                Cf p = Ms110dTables.Psk8[refRing[i]];
+                Cf p = qam16 ? Ms110dTables.Qam16[refRing[i]] : Ms110dTables.Psk8[refRing[i]];
                 symbols.WriteLine($"{i},{y.Re:F5},{y.Im:F5},{refRing[i]},{p.Re:F5},{p.Im:F5}");
             }
             else
