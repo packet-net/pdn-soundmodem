@@ -725,9 +725,23 @@ internal static class Commands
             return a is null ? 2 : 0;
         }
 
+        int rate = a.Int("rate", 24000);
+
+        // --tone-hz emits the exact IQ the transmitter would send for a test tone, so the
+        // software can be cleared (or convicted) without involving a radio at all.
+        if (a.Has("tone-hz"))
+        {
+            float[] toneIq = ToneGenerator.Complex(
+                [a.Dbl("tone-hz", 2000)], a.Dbl("amplitude", 0.9), a.Dbl("seconds", 30), rate,
+                rampSeconds: 0.005);
+            WriteIqWav(a.Str("out", "synth-tone.wav"), toneIq, rate);
+            Console.Error.WriteLine($"tone {a.Dbl("tone-hz", 2000):F0} Hz, {toneIq.Length / 2} complex @ {rate} Hz");
+            Console.WriteLine(a.Str("out", "synth-tone.wav"));
+            return 0;
+        }
+
         int wn = a.Int("wn", 2);
         double offset = a.Dbl("offset-hz", 2000);
-        int rate = a.Int("rate", 24000);
         var interleaver = Ms110dInterleaverKind.Short;
         int defaultBits = Ms110dInterleaverParams.Get3k(wn, interleaver).InputBits - 32;
         int payloadBits = a.Int("payload-bits", 0) is var pb && pb > 0 ? pb : defaultBits;
@@ -755,18 +769,7 @@ internal static class Commands
         }).Convert(audio);
 
         string outPath = a.Str("out", "synth-iq.wav");
-        var pcm = new byte[iq.Length * 2];
-        for (int k = 0; k < iq.Length; k++)
-        {
-            short v = (short)Math.Clamp(Math.Round(iq[k] * 32767.0), short.MinValue, short.MaxValue);
-            pcm[2 * k] = (byte)(v & 0xFF);
-            pcm[(2 * k) + 1] = (byte)((v >> 8) & 0xFF);
-        }
-
-        using (var writer = new StereoPcmWavWriter(outPath, rate))
-        {
-            writer.Write(pcm);
-        }
+        WriteIqWav(outPath, iq, rate);
 
         Console.Error.WriteLine(
             $"wn{wn} {payloadBits} payload bits → {audio.Length} audio samples @ 9600 Hz → " +
@@ -950,6 +953,21 @@ internal static class Commands
         return errors == 0 && compare == payload.Length ? 0 : 1;
     }
 
+    /// <summary>Writes interleaved I,Q as an int16 stereo WAV, the capture format.</summary>
+    private static void WriteIqWav(string path, float[] iq, int rate)
+    {
+        var pcm = new byte[iq.Length * 2];
+        for (int k = 0; k < iq.Length; k++)
+        {
+            short v = (short)Math.Clamp(Math.Round(iq[k] * 32767.0), short.MinValue, short.MaxValue);
+            pcm[2 * k] = (byte)(v & 0xFF);
+            pcm[(2 * k) + 1] = (byte)((v >> 8) & 0xFF);
+        }
+
+        using var writer = new StereoPcmWavWriter(path, rate);
+        writer.Write(pcm);
+    }
+
     public static int Measure(string[] argv)
     {
         var a = Args.Parse(argv);
@@ -971,6 +989,13 @@ internal static class Commands
             return a is null ? 2 : 0;
         }
 
+        if (a.Has("purity"))
+        {
+            CarrierPurity(a.Req("in"), a.Dbl("tone-hz", 2000), a.Dbl("span-hz", 2000),
+                a.Int("fft", 32768));
+            return 0;
+        }
+
         if (a.Has("survey"))
         {
             SurveyBand(a.Req("in"), a.Dbl("slot-khz", 2.0), a.Dbl("centre-hz", 0), a.Int("fft", 8192));
@@ -981,6 +1006,67 @@ internal static class Commands
         double[] tones = a.Has("tone2-hz") ? [toneHz, a.Dbl("tone2-hz", 0)] : [toneHz];
         Analyse(a.Req("in"), tones, a.Dbl("offset-hz", toneHz), a.Int("fft", 8192));
         return 0;
+    }
+
+    /// <summary>
+    /// Lists the strongest components close to a carrier, masking only the carrier itself.
+    /// </summary>
+    /// <remarks>The ordinary spur search masks a guard band either side of the tone so that
+    /// the carrier's own skirt is not reported as a spur — which also makes it blind to
+    /// close-in sidebands, the very things that make a carrier sound rough. A human listening
+    /// to the transmission heard rasp that the spur figure did not show, so this exists to
+    /// look where that measurement deliberately does not.</remarks>
+    private static void CarrierPurity(string wavPath, double toneHz, double spanHz, int fftSize)
+    {
+        (float[] i, int rate) = WavFile.ReadMono(wavPath, channel: 0);
+        (float[] q, _) = WavFile.ReadMono(wavPath, channel: 1);
+        IqSpectrum spectrum = IqAnalysis.Welch(i, q, rate, fftSize);
+
+        // Reference against the carrier's own PEAK BIN, not a lobe-summed tone power: the
+        // components being listed are read as single bins, and mixing the two normalisations
+        // produces positive dBc, which is obvious nonsense.
+        int carrierBin = -1;
+        double carrierBinPower = 0;
+        for (int k = 0; k < spectrum.Length; k++)
+        {
+            double f = spectrum.FrequencyOfBin(k);
+            if (f < toneHz - 500 || f > toneHz + 500)
+            {
+                continue;
+            }
+
+            if (spectrum.BinPower(k) > carrierBinPower)
+            {
+                carrierBinPower = spectrum.BinPower(k);
+                carrierBin = k;
+            }
+        }
+
+        double carrierHz = spectrum.FrequencyOfBin(carrierBin);
+        double carrierPower = spectrum.TonePower(carrierHz);
+        Console.WriteLine();
+        Console.WriteLine($"=== carrier purity: {Path.GetFileName(wavPath)} ===");
+        Console.WriteLine($"carrier {carrierHz:F2} Hz, {IqAnalysis.Db(carrierPower):F1} dBFS, " +
+                          $"bin {spectrum.BinWidthHz:F3} Hz, {spectrum.Segments} segments");
+        Console.WriteLine($"{"offset Hz",12} {"dBc",8}   (masking only ±25 Hz of the carrier)");
+
+        var found = new List<(double Offset, double Dbc)>();
+        for (int k = 0; k < spectrum.Length; k++)
+        {
+            double f = spectrum.FrequencyOfBin(k);
+            double offset = f - carrierHz;
+            if (Math.Abs(offset) > spanHz || Math.Abs(offset) < 25)
+            {
+                continue;
+            }
+
+            found.Add((offset, IqAnalysis.Db(spectrum.BinPower(k)) - IqAnalysis.Db(carrierBinPower)));
+        }
+
+        foreach ((double offset, double dbc) in found.OrderByDescending(x => x.Dbc).Take(20))
+        {
+            Console.WriteLine($"{offset,12:F1} {dbc,8:F1}");
+        }
     }
 
     /// <summary>Band occupancy across the capture span, for choosing an operating frequency
