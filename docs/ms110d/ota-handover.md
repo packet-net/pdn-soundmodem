@@ -92,8 +92,16 @@ Inject the Watterson rig and calibrated AWGN **at the transmitter**, using the m
 
 **Prerequisites before the numbers mean anything:**
 
-- **Resolve the supply hum.** On mains the transmitter has a 100 Hz sideband comb at **−8 dBc**; on battery it is **−24 dBc**. At the low SNRs E2 operates at, −8 dBc of hum would contaminate every point and be very hard to separate from demodulator behaviour. Either run from a good battery, or filter/choke the mains feed and re-measure. `sm-ota measure --purity` gives the number.
-- **Characterise the receiver's own 100 Hz artefact.** A residual −24 dBc survives on battery and cannot be the radio's supply; RWM through the same receiver sits at ~−27 dBc. That is a floor on measurement quality through this receiver and needs to be known, not assumed.
+- **The 100 Hz hum is reduced but NOT fixed, and its source is NOT established.** On the mains PSU it was −8 dBc; after the supply change it is a stable **−20 dBc** (three repeats: −19.9, −20.3, −22.1). Tom's judgement, correctly, is that this is still unacceptable — close-in spurious on a clean carrier should be below −40 dBc.
+
+  **Attribution between transmitter and receiver is unresolved**, and four attempts at a control failed for the same reason: it needs a *clean unmodulated carrier* through the UberSDR, and the band does not offer one on demand. AM broadcasts and band data signals are modulated, FT8 is multi-tone, and RWM — the one true unmodulated carrier — only transmits carrier for part of its schedule, so a long capture spans its CW ID and timing pulses and their sidebands swamp the measurement.
+
+  What would actually settle it, in rough order of effort:
+  1. **Record our transmission on a second receiver.** Tom has one and can hear the signal; if it can be recorded, comparing its 100 Hz skirt against the UberSDR's separates the two immediately.
+  2. **Feed the UberSDR a known-clean carrier** — a signal generator, or the Flex transmitting into an attenuator straight into the receiver, bypassing the near-field coupling entirely.
+  3. **Catch RWM during its unmodulated minute** — its schedule is published; a capture timed to it is a valid control and costs nothing but timing.
+
+  Until this is settled, do not attribute low-SNR behaviour in E2 to the demodulator. A −20 dBc close-in artefact on every burst is a real impairment wherever it originates.
 - **Check path SNR margin.** The injected noise must dominate the path, so the leakage path needs ~25–30 dB of headroom above the highest test SNR. Measured ~24–26 dB at 15 W. That is tight; it may cap how high the ladder can go.
 
 ### 5. §E3 — IQ vs SSB A/B
