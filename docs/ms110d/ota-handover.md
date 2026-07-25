@@ -70,7 +70,7 @@ dotnet test tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj -c Rele
 
 The sideband-inversion test gap is closed too — see [`evidence/2026-07-25-streaming-converter/`](evidence/2026-07-25-streaming-converter/README.md), which also records why the reference's low-pass now starts primed rather than cold.
 
-### 2. Reference bits and uncoded BER (§S2) — next
+### 2. ~~Reference bits and uncoded BER (§S2)~~ — done
 
 `Ms110dReferenceBits` + `BurstScorer` + `sm-ota score`. A capture streams through the converter into **one** demodulator, and every burst comes back with acquisition, WID, CFO, SNR, coded BER, uncoded BER, turbo counters and end reason; a table on stdout and a CSV row per burst, missed bursts included as rows so a summary built by counting cannot lose them.
 
