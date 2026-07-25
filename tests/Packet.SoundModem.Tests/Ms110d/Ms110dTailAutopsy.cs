@@ -104,7 +104,21 @@ public class Ms110dTailAutopsy
         {
             RecordGains = true,
         };
-        float[] rx = channel.Apply(audio, snrDb, leadInSamples: 2400, leadOutSamples: 2400);
+
+        // MS110D_AUTOPSY_CLEAN=1: no channel at all — no fading, no noise, just the
+        // lead-in/out padding. Isolates systematic first-pass error (equalizer bias,
+        // probe/data geometry) from everything channel-induced.
+        bool clean = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_CLEAN") == "1";
+        float[] rx;
+        if (clean)
+        {
+            rx = new float[2400 + audio.Length + 2400];
+            audio.CopyTo(rx, 2400);
+        }
+        else
+        {
+            rx = channel.Apply(audio, snrDb, leadInSamples: 2400, leadOutSamples: 2400);
+        }
 
         // Per-symbol truth: re-encode the TX stream to wire bits per block (the same
         // telemetry path as the mask harness) and transcode to descrambled ring points.
@@ -129,7 +143,8 @@ public class Ms110dTailAutopsy
         }
 
         bool oracle = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_ORACLE") == "1";
-        string tag = $"wn{wn}-w{worker}-b{burst}{(genie ? "-genie" : "")}{(oracle ? "-oracle" : "")}";
+        string tag = $"wn{wn}-w{worker}-b{burst}{(clean ? "-clean" : "")}" +
+            $"{(genie ? "-genie" : "")}{(oracle ? "-oracle" : "")}";
         using var symbols = new StreamWriter(Path.Combine(outDir, $"autopsy-symbols-{tag}.csv"));
         symbols.WriteLine("index,re,im,refIdx,refRe,refIm");
         using var frames = new StreamWriter(Path.Combine(outDir, $"autopsy-frames-{tag}.log"));
@@ -288,12 +303,12 @@ public class Ms110dTailAutopsy
 
         if (genie)
         {
-            float[] clean = new WattersonChannel(9600, channelSeed, WattersonChannel.Poor).Apply(
+            float[] genieRef = new WattersonChannel(9600, channelSeed, WattersonChannel.Poor).Apply(
                 audio, double.PositiveInfinity, leadInSamples: 2400, leadOutSamples: 2400);
             for (int i = 0; i < rx.Length; i += 4800)
             {
                 int length = Math.Min(4800, rx.Length - i);
-                demod.WriteGenie(clean.AsSpan(i, length));
+                demod.WriteGenie(genieRef.AsSpan(i, length));
                 demod.Process(rx.AsSpan(i, length));
             }
         }
@@ -302,8 +317,9 @@ public class Ms110dTailAutopsy
             demod.Process(rx);
         }
 
-        using (var gainsOut = new StreamWriter(Path.Combine(outDir, $"autopsy-gains-{tag}.csv")))
+        if (!clean)
         {
+            using var gainsOut = new StreamWriter(Path.Combine(outDir, $"autopsy-gains-{tag}.csv"));
             gainsOut.WriteLine("index,p0re,p0im,p1re,p1im");
             IReadOnlyList<Cf[]> gains = channel.LastPathGains!;
             int count = Math.Max(gains[0].Length, gains[1].Length);
