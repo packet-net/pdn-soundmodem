@@ -1,0 +1,53 @@
+turbo-iter b0 i0 decode-changes=2580
+turbo-soft b0: mean|llrIn|=4.64 mean|llrPost|=18.85 mean|E|=0.999 weak=35/16384
+turbo-iter b0 i1 decode-changes=0
+turbo-iter b1 i0 decode-changes=1881
+turbo-soft b1: mean|llrIn|=5.90 mean|llrPost|=23.81 mean|E|=1.000 weak=0/16384
+turbo-iter b1 i1 decode-changes=0
+turbo-iter b2 i0 decode-changes=313
+turbo-soft b2: mean|llrIn|=11.86 mean|llrPost|=57.08 mean|E|=1.000 weak=0/16384
+turbo-iter b2 i1 decode-changes=0
+turbo-iter b3 i0 decode-changes=3505
+turbo-soft b3: mean|llrIn|=4.24 mean|llrPost|=15.48 mean|E|=0.997 weak=108/16384
+turbo-iter b3 i1 decode-changes=27
+turbo-soft b3: mean|llrIn|=10.54 mean|llrPost|=42.04 mean|E|=1.000 weak=0/16384
+turbo-iter b3 i2 decode-changes=0
+turbo-iter b4 i0 decode-changes=6336
+turbo-soft b4: mean|llrIn|=3.53 mean|llrPost|=7.96 mean|E|=0.948 weak=2302/16384
+turbo-iter b4 i1 decode-changes=687
+turbo-soft b4: mean|llrIn|=8.95 mean|llrPost|=30.96 mean|E|=1.000 weak=0/16384
+turbo-iter b4 i2 decode-changes=0
+turbo-iter b5 i0 decode-changes=7108
+turbo-soft b5: mean|llrIn|=2.97 mean|llrPost|=5.40 mean|E|=0.889 weak=5035/16384
+turbo-iter b5 i1 decode-changes=2249
+turbo-soft b5: mean|llrIn|=5.30 mean|llrPost|=18.23 mean|E|=0.997 weak=117/16384
+turbo-iter b5 i2 decode-changes=26
+turbo-soft b5: mean|llrIn|=9.15 mean|llrPost|=39.23 mean|E|=1.000 weak=0/16384
+turbo-iter b5 i3 decode-changes=0
+turbo-iter b6 i0 decode-changes=2057
+turbo-soft b6: mean|llrIn|=5.28 mean|llrPost|=22.85 mean|E|=1.000 weak=8/16384
+turbo-iter b6 i1 decode-changes=0
+turbo-iter b7 i0 decode-changes=1145
+turbo-soft b7: mean|llrIn|=7.81 mean|llrPost|=36.86 mean|E|=1.000 weak=0/16384
+turbo-iter b7 i1 decode-changes=0
+turbo-iter b8 i0 decode-changes=7656
+turbo-soft b8: mean|llrIn|=2.38 mean|llrPost|=2.87 mean|E|=0.751 weak=10609/16384
+turbo-iter b8 i1 decode-changes=3931
+turbo-soft b8: mean|llrIn|=2.79 mean|llrPost|=4.41 mean|E|=0.847 weak=6930/16384
+turbo-iter b8 i2 decode-changes=3350
+turbo-soft b8: mean|llrIn|=3.54 mean|llrPost|=8.80 mean|E|=0.954 weak=2119/16384
+turbo-iter b8 i3 decode-changes=1132
+turbo-soft b8: mean|llrIn|=5.06 mean|llrPost|=18.95 mean|E|=0.997 weak=134/16384
+turbo-iter b8 i4 decode-changes=61
+turbo-soft b8: mean|llrIn|=6.37 mean|llrPost|=25.55 mean|E|=0.999 weak=40/16384
+turbo-iter b8 i5 decode-changes=6
+turbo-soft b8: mean|llrIn|=6.43 mean|llrPost|=25.85 mean|E|=1.000 weak=20/16384
+turbo-iter b8 i6 decode-changes=0
+turbo-iter b9 i0 decode-changes=4221
+turbo-soft b9: mean|llrIn|=4.70 mean|llrPost|=15.75 mean|E|=0.997 weak=113/16384
+turbo-iter b9 i1 decode-changes=23
+turbo-soft b9: mean|llrIn|=11.11 mean|llrPost|=40.12 mean|E|=1.000 weak=0/16384
+turbo-iter b9 i2 decode-changes=0
+turbo-iter b10 i0 decode-changes=324
+turbo-soft b10: mean|llrIn|=9.06 mean|llrPost|=39.14 mean|E|=1.000 weak=0/16384
+turbo-iter b10 i1 decode-changes=0
