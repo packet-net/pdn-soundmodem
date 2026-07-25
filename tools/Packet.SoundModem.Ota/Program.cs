@@ -398,7 +398,10 @@ internal static class Commands
 
         Console.WriteLine();
         Console.WriteLine($"=== sweep: {(sweepAmplitude ? "drive amplitude" : "rf power")} ===");
-        Console.WriteLine($"{"step",6} {"fwd dBm",9} {"fwd W",8} {"SWR",6} {"rx dBFS",9} {"SNR/3k",8} {"starve",7}");
+        // Supply voltage is in the table because on a battery a sagging rail compresses the
+        // PA at high power and would read as non-linearity — the two must be separable.
+        Console.WriteLine($"{"step",6} {"fwd dBm",9} {"fwd W",8} {"SWR",6} {"volts",7} " +
+                          $"{"rx dBFS",9} {"SNR/3k",8} {"starve",7}");
 
         double? referenceStep = null;
         double? referenceRx = null;
@@ -421,9 +424,13 @@ internal static class Commands
                 referenceRx ??= rxDb;
             }
 
+            double? volts = r.Meters
+                .Where(m => m.Descriptor.Name.StartsWith("+13.8", StringComparison.Ordinal))
+                .Select(m => (double?)m.Value)
+                .LastOrDefault();
             Console.WriteLine($"{step,6:F2} {r.PeakForwardDbm,9:F1} " +
                               $"{FlexMeters.DbmToWatts(r.PeakForwardDbm ?? 0),8:F2} {r.PeakSwr,6:F2} " +
-                              $"{rx} {snrText} {r.SamplesStarved,7}");
+                              $"{volts,7:F2} {rx} {snrText} {r.SamplesStarved,7}");
         }
 
         Console.WriteLine();
