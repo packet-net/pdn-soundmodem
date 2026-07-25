@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>sm-ota</AssemblyName>
+    <RootNamespace>Packet.SoundModem.Ota</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="M0LTE.Dsp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- M0LTE.Flex (the waveform IQ TX path) flows transitively; WavFile IO for `measure`. -->
+    <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
+    <!-- UberSdrIqClient, so `sm-ota tone` can bracket its own transmission with a capture
+         rather than depending on an operator starting sm-iqcapture in another terminal. -->
+    <ProjectReference Include="../Packet.SoundModem.UberSdr/Packet.SoundModem.UberSdr.csproj" />
+  </ItemGroup>
+
+</Project>
