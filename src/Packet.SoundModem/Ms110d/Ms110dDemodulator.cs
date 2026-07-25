@@ -200,6 +200,21 @@ public sealed class Ms110dDemodulator
     /// channel-bit error rate, the §5.3 uncoded-vs-coded split (phase-b-plan §B0).</summary>
     public event Action<int, float[]>? FirstPassBlockLlrs;
 
+    /// <summary>Diagnostic (phase-b-plan §B3.3): when set, FinishBlock runs ONE extra
+    /// turbo re-equalization trained on the returned TRUE info bits for the block —
+    /// oracle labels — after the normal pipeline has finished with the block. This
+    /// measures the ceiling a CONVERGED soft-feedback turbo could reach with the chain
+    /// BCJR's channel/echo model: perfect labels, same estimation machinery. A null
+    /// return skips the block. The shipped decode is never touched, and the demodulator
+    /// is bit-identical when the hook is unset. Results fire on
+    /// <see cref="OracleBlockLlrs"/>. Diagnostic bound only, never performance.</summary>
+    public Func<int, byte[]?>? OracleInfo;
+
+    /// <summary>Companion to <see cref="OracleInfo"/>: the block index, the oracle-pass
+    /// wire-order LLRs (buffer reused per block — copy to keep), and the Viterbi decode
+    /// of those LLRs.</summary>
+    public event Action<int, float[], byte[]>? OracleBlockLlrs;
+
     /// <summary>Turbo blocks that reached a decode fixed point (since construction/Reset).</summary>
     public int TurboConverged { get; private set; }
 
@@ -1982,6 +1997,28 @@ public sealed class Ms110dDemodulator
         else
         {
             TurboSkipped++;
+        }
+
+        // §B3.3 oracle-labels instrument: one extra chain-BCJR re-equalization trained
+        // on the TRUE info bits, after the normal pipeline so the shipped decode above
+        // is untouched. Same gate as the turbo (minus DisableTurbo — the instrument
+        // composes with MS110D_AUTOPSY_NOTURBO).
+        if (OracleInfo?.Invoke(_blockIndex) is byte[] oracleInfo &&
+            _dfe is not null && _mode is not null &&
+            _mode.Modulation is not Ms110dModulation.Qam16 &&
+            _blockFrameChips.Count == _il.Frames &&
+            BlockSamplesResident())
+        {
+            _dfe.SnapshotTraining();
+            TurboReequalize(oracleInfo);
+            if (_blockLlrCount == _il.SizeBits)
+            {
+                var oracleDecode = new byte[_il.InputBits];
+                Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, oracleDecode);
+                OracleBlockLlrs?.Invoke(_blockIndex, _blockLlrs, oracleDecode);
+            }
+
+            _dfe.RestoreTraining();
         }
 
         _blockLlrCount = 0;
