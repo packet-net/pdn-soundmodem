@@ -92,16 +92,24 @@ Inject the Watterson rig and calibrated AWGN **at the transmitter**, using the m
 
 **Prerequisites before the numbers mean anything:**
 
-- **The 100 Hz hum is reduced but NOT fixed, and its source is NOT established.** On the mains PSU it was −8 dBc; after the supply change it is a stable **−20 dBc** (three repeats: −19.9, −20.3, −22.1). Tom's judgement, correctly, is that this is still unacceptable — close-in spurious on a clean carrier should be below −40 dBc.
+- **The 100 Hz hum: reduced, and the evidence now points at the RECEIVER as the remaining floor.**
 
-  **Attribution between transmitter and receiver is unresolved**, and four attempts at a control failed for the same reason: it needs a *clean unmodulated carrier* through the UberSDR, and the band does not offer one on demand. AM broadcasts and band data signals are modulated, FT8 is multi-tone, and RWM — the one true unmodulated carrier — only transmits carrier for part of its schedule, so a long capture spans its CW ID and timing pulses and their sidebands swamp the measurement.
+  | Source of the transmission | ±100 Hz |
+  |---|---|
+  | original mains PSU | −8.0 dBc |
+  | switched-mode mains PSU | −20 dBc (three repeats within 2 dB) |
+  | large battery | −26.9 dBc |
+  | the radio's own tune carrier, current supply | −27.5 dBc |
+  | RWM 9.996 MHz — a distant caesium carrier, through the same receiver | ≈ −27 dBc |
 
-  What would actually settle it, in rough order of effort:
-  1. **Record our transmission on a second receiver.** Tom has one and can hear the signal; if it can be recorded, comparing its 100 Hz skirt against the UberSDR's separates the two immediately.
-  2. **Feed the UberSDR a known-clean carrier** — a signal generator, or the Flex transmitting into an attenuator straight into the receiver, bypassing the near-field coupling entirely.
-  3. **Catch RWM during its unmodulated minute** — its schedule is published; a capture timed to it is a valid control and costs nothing but timing.
+  The supply plainly matters: changing it moved the figure by 12–19 dB, and the original PSU was by far the worst. But **three independent sources now converge on ≈ −27 dBc**, one of which is a distant frequency standard that cannot have 100 Hz sidebands of its own. Three unrelated signals landing on the same number is far more likely to be the measuring instrument than a coincidence, so the working conclusion is that **≈ −27 dBc is the UberSDR's own floor**, and on a good supply the Flex may already be clean — we cannot see past the receiver to tell.
 
-  Until this is settled, do not attribute low-SNR behaviour in E2 to the demodulator. A −20 dBc close-in artefact on every burst is a real impairment wherever it originates.
+  **The next test should target the receiver, not the transmitter**: a common-mode choke on its antenna feed, or its supply. If that floor moves, every figure above needs re-reading.
+
+  Ruled out along the way: **the network cable is not the source.** Pulling the Ethernet mid-transmission made the sidebands ~1.7 dB *worse* and raised the carrier 2.2 dB — the behaviour of a cable acting as part of the RF environment, not one injecting hum. (The radio also unkeys a couple of seconds after the TCP session drops, so that test can only be done on the radio's own tune carrier, never on the waveform path, which needs the network for every packet.)
+
+  Until the receiver floor is understood, do not attribute low-SNR E2 behaviour to the demodulator: a −27 dBc close-in artefact is on every burst we measure, wherever it originates.
+
 - **Check path SNR margin.** The injected noise must dominate the path, so the leakage path needs ~25–30 dB of headroom above the highest test SNR. Measured ~24–26 dB at 15 W. That is tight; it may cap how high the ladder can go.
 
 ### 5. §E3 — IQ vs SSB A/B

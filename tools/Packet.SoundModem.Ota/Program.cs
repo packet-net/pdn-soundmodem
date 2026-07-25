@@ -1000,7 +1000,7 @@ internal static class Commands
         if (a.Has("purity"))
         {
             CarrierPurity(a.Req("in"), a.Dbl("tone-hz", 2000), a.Dbl("span-hz", 2000),
-                a.Int("fft", 32768));
+                a.Int("fft", 32768), a.Dbl("from", 0), a.Dbl("length", 0));
             return 0;
         }
 
@@ -1024,10 +1024,26 @@ internal static class Commands
     /// close-in sidebands, the very things that make a carrier sound rough. A human listening
     /// to the transmission heard rasp that the spur figure did not show, so this exists to
     /// look where that measurement deliberately does not.</remarks>
-    private static void CarrierPurity(string wavPath, double toneHz, double spanHz, int fftSize)
+    private static void CarrierPurity(
+        string wavPath, double toneHz, double spanHz, int fftSize,
+        double fromSeconds = 0, double lengthSeconds = 0)
     {
-        (float[] i, int rate) = WavFile.ReadMono(wavPath, channel: 0);
-        (float[] q, _) = WavFile.ReadMono(wavPath, channel: 1);
+        (float[] iFull, int rate) = WavFile.ReadMono(wavPath, channel: 0);
+        (float[] qFull, _) = WavFile.ReadMono(wavPath, channel: 1);
+
+        // A time window, so a capture spanning a deliberate change — a cable pulled, a supply
+        // swapped — can be compared against itself rather than against a separate run.
+        ReadOnlySpan<float> i = iFull;
+        ReadOnlySpan<float> q = qFull;
+        if (lengthSeconds > 0)
+        {
+            int start = Math.Clamp((int)(fromSeconds * rate), 0, iFull.Length - 1);
+            int count = Math.Min((int)(lengthSeconds * rate), iFull.Length - start);
+            i = iFull.AsSpan(start, count);
+            q = qFull.AsSpan(start, count);
+            Console.WriteLine($"window {fromSeconds:F1}–{fromSeconds + (count / (double)rate):F1} s");
+        }
+
         IqSpectrum spectrum = IqAnalysis.Welch(i, q, rate, fftSize);
 
         // Reference against the carrier's own PEAK BIN, not a lobe-summed tone power: the
