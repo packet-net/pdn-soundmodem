@@ -213,6 +213,14 @@ public sealed class Ms110dDemodulator
     /// channel-bit error rate, the §5.3 uncoded-vs-coded split (phase-b-plan §B0).</summary>
     public event Action<int, float[]>? FirstPassBlockLlrs;
 
+    /// <summary>Diagnostic (phase-b-plan §B3.3 basin): fires once per interleaver block
+    /// AFTER the turbo loop settles, with the block index and the wire-order LLRs of the
+    /// last turbo iterate — on converged blocks the fixed-point stream, on reverted blocks
+    /// the wander state the loop was in when the cap hit (the shipped DECODE on those
+    /// blocks is the first-pass one; the stream here is what the loop believed). Does not
+    /// fire on skipped or aborted blocks. The buffer is reused per block — copy to keep.</summary>
+    public event Action<int, float[]>? TurboBlockLlrs;
+
     /// <summary>Diagnostic (phase-b-plan §B3.3): when set, FinishBlock runs ONE extra
     /// turbo re-equalization trained on the returned TRUE info bits for the block —
     /// oracle labels — after the normal pipeline has finished with the block. This
@@ -2030,6 +2038,11 @@ public sealed class Ms110dDemodulator
                     converged = true;
                     break;
                 }
+            }
+
+            if (!aborted)
+            {
+                TurboBlockLlrs?.Invoke(_blockIndex, _blockLlrs);
             }
 
             if (converged)

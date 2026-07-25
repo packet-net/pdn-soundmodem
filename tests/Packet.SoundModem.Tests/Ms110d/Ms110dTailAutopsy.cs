@@ -219,6 +219,11 @@ public class Ms110dTailAutopsy
 
         demod.FirstPassBlockLlrs += (blockIndex, llrs) => WriteLlrStats("first", blockIndex, llrs);
 
+        // §B3.3 basin instrument: the stream the turbo settled on — the missing middle of
+        // the first→final→oracle walk. On reverted blocks this is the wander state at the
+        // cap, which is exactly the view the basin mechanism analysis needs.
+        demod.TurboBlockLlrs += (blockIndex, llrs) => WriteLlrStats("final", blockIndex, llrs);
+
         // §B3.3 oracle-labels ceiling (MS110D_AUTOPSY_ORACLE=1): the demod runs one
         // extra chain-BCJR turbo pass per block trained on the TRUE info bits — the
         // upper bound a converged soft-feedback turbo could reach with this channel
