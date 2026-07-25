@@ -88,13 +88,26 @@ internal static class LadderCommand
         IReadOnlyList<RenderedPoint> rendered = pass.Render(plan);
         Console.Error.WriteLine($"rendered at {rate} Hz, pass gain {pass.Gain:G4}");
 
+        // The schedule is the request; the manifest is the record. Both are written for every
+        // pass, rehearsal included, because a rehearsal whose settings cannot be reproduced is
+        // not a rehearsal of anything.
+        var schedule = new CampaignSchedule(
+            Name: a.Str("name", $"wn{wn}-{channel}".ToLowerInvariant()),
+            OffsetHz: offsetHz,
+            Bursts: [.. plan.Select(p => new CampaignBurst(
+                p.WaveformNumber, p.Interleaver, p.Blocks, p.Seed, p.SnrDb, p.Channel,
+                ConstraintLength: 7, PreambleSuperframes: a.Int("preamble", 3)))],
+            Notes: a.Str("notes", null));
+
         return dryRun
-            ? DryRun(a, rendered, rate, pass.Gain)
-            : await LiveAsync(a, rendered, offsetHz, rate).ConfigureAwait(false);
+            ? DryRun(a, rendered, rate, pass.Gain, schedule)
+            : await LiveAsync(a, rendered, offsetHz, rate, pass.Gain, schedule).ConfigureAwait(false);
     }
 
     /// <summary>Writes the pass as one IQ file laid out the way a capture would hold it.</summary>
-    private static int DryRun(Args a, IReadOnlyList<RenderedPoint> rendered, int rate, float gain)
+    private static int DryRun(
+        Args a, IReadOnlyList<RenderedPoint> rendered, int rate, float gain,
+        CampaignSchedule schedule)
     {
         string outPath = a.Str("out", "ladder-dryrun.wav");
         double gap = a.Dbl("gap", 3);
@@ -138,19 +151,32 @@ internal static class LadderCommand
 
         // The burst itself starts after its noise lead-in — that is the time the scorer matches.
         var burstTimes = rendered.Select((p, k) => starts[k] + p.LeadInSeconds).ToArray();
+        string manifestPath = Path.ChangeExtension(outPath, ".manifest.json");
+        CampaignFiles.Save(manifestPath, new CampaignManifest(
+            Schedule: schedule,
+            ModemRevision: CampaignFiles.ModemRevision(),
+            WrittenUtc: DateTimeOffset.UtcNow,
+            Radio: "none (rehearsal)",
+            FrequencyMHz: a.Str("freq", "18.106500"),
+            RfPower: null,
+            PassGain: gain,
+            DialCorrectionHz: 0,
+            CapturePath: Path.GetFileName(outPath),
+            CaptureSha256: CampaignFiles.Sha256(outPath),
+            BurstStartSeconds: burstTimes,
+            SupplyNote: a.Str("supply", null)));
+
         Console.Error.WriteLine($"wrote {outPath}: {frames} frames, {frames / (double)rate:F1} s");
+        Console.Error.WriteLine($"wrote {manifestPath} (modem {CampaignFiles.ModemRevision()})");
         Console.Error.WriteLine();
-        Console.Error.WriteLine("score it with:");
-        Console.Error.WriteLine(
-            $"  sm-ota score --in {outPath} --dial-hz {a.Dbl("offset-hz", 2000):F0} "
-            + $"--wn {a.Int("wn", 6)} --count {rendered.Count} --seed {a.Int("seed", 1)} "
-            + $"--at {string.Join(',', burstTimes.Select(t => t.ToString("F2", CultureInfo.InvariantCulture)))}");
+        Console.Error.WriteLine($"score it with:  sm-ota score --in {outPath} --schedule {manifestPath}");
         Console.WriteLine(outPath);
         return 0;
     }
 
     private static async Task<int> LiveAsync(
-        Args a, IReadOnlyList<RenderedPoint> rendered, double offsetHz, int rate)
+        Args a, IReadOnlyList<RenderedPoint> rendered, double offsetHz, int rate,
+        float gain, CampaignSchedule schedule)
     {
         if (!a.Has("rf-power"))
         {
@@ -236,17 +262,37 @@ internal static class LadderCommand
 
         // Burst positions come from what actually happened, not from the plan: the schedule is
         // the request and the key-up times are the record.
-        var schedule = new List<ScheduledBurst>();
+        var burstStarts = new List<double>();
         for (int k = 0; k < keyed.Count; k++)
         {
-            double at = (keyed[k] - result.Sample0Utc).TotalSeconds
-                        + rendered[k].LeadInSeconds; // the burst starts after its noise lead-in
-            schedule.Add(new ScheduledBurst(rendered[k].Reference, at));
+            // Measured against the capture's own first sample, not against the plan: the
+            // schedule is the request and the key-up times are the record.
+            burstStarts.Add((keyed[k] - result.Sample0Utc).TotalSeconds
+                            + rendered[k].LeadInSeconds); // the burst follows its noise lead-in
         }
 
+        string manifestPath = Path.Combine(
+            a.Str("out-dir", "."), Path.GetFileNameWithoutExtension(result.WavPath) + ".manifest.json");
+        CampaignFiles.Save(manifestPath, new CampaignManifest(
+            Schedule: schedule with { Bursts = [.. schedule.Bursts.Take(keyed.Count)] },
+            ModemRevision: CampaignFiles.ModemRevision(),
+            WrittenUtc: DateTimeOffset.UtcNow,
+            Radio: options.Radio,
+            FrequencyMHz: options.FrequencyMHz,
+            RfPower: options.RfPower,
+            PassGain: gain,
+            DialCorrectionHz: a.Dbl("dial-correction", 0),
+            CapturePath: Path.GetFileName(result.WavPath),
+            CaptureSha256: result.WavSha256,
+            CaptureSample0Utc: result.Sample0Utc,
+            ReceiverHost: a.Str("capture-host", null),
+            BurstStartSeconds: [.. burstStarts],
+            SupplyNote: a.Str("supply", null)));
+
         Console.Error.WriteLine();
-        Console.Error.WriteLine($"score it with the capture above; {schedule.Count} burst(s) expected at "
-            + string.Join(',', schedule.Select(s => s.ExpectedSeconds.ToString("F1", CultureInfo.InvariantCulture))));
+        Console.Error.WriteLine($"wrote {manifestPath} (modem {CampaignFiles.ModemRevision()})");
+        Console.Error.WriteLine(
+            $"score it with:  sm-ota score --in {result.WavPath} --schedule {manifestPath}");
         return 0;
     }
 }

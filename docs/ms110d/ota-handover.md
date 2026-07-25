@@ -1,6 +1,6 @@
 # MS110D OTA — handover and remaining roadmap
 
-Written 2026-07-25 at the end of the bring-up session, for whoever picks this up next. Companion documents: [`ota-execution-plan.md`](ota-execution-plan.md) is the plan and the rationale; [`evidence/2026-07-25-ota-bringup/`](evidence/2026-07-25-ota-bringup/) is what happened and what it measured. This file is the forward-looking one: state, environment, the work left in order, and the traps that cost a session each.
+Written 2026-07-25 at the end of the bring-up session, for whoever picks this up next. Companion documents: [`ota-execution-plan.md`](ota-execution-plan.md) is the plan and the rationale; [`ota-air-backlog.md`](ota-air-backlog.md) is everything blocked on hardware, which is where to look the moment a radio is free; [`evidence/`](evidence/) is what happened and what it measured. This file is the forward-looking one: state, environment, the work left in order, and the traps that cost a session each.
 
 ## Read this first
 
@@ -12,7 +12,9 @@ Build against a local `M0LTE.Flex` checkout with `-p:FlexSourcePath=/home/tf/M0L
 dotnet test tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj -c Release \
     -p:FlexSourcePath=/home/tf/M0LTE.Flex/src/M0LTE.Flex/M0LTE.Flex.csproj
 ```
-787 tests (682 pass, 105 skipped — mask suite, corpus and hardware gates) green at handover.
+795 tests (690 pass, 105 skipped — mask suite, corpus and hardware gates) green at handover.
+
+**Run them with `./.test.sh` (gitignored; recreate from the handover if missing).** It pins workstation GC and a 3 GB heap ceiling, because this box has 16 GB and hosts another agent's long mask runs. And **never `pkill` by pattern** — `pkill -f "dotnet test"` matches their runs as readily as ours, and killed one.
 
 ## State
 
@@ -87,11 +89,18 @@ Still owed: the schedule is homogeneous on the command line (one WN, seeds incre
 
 **An observation for whoever owns the demodulator, recorded not acted on:** on a *noiseless* channel WN2's first-pass output has 3 wrong hard decisions in 768, at wire positions 24/40/46, with |LLR| 0.032/0.061/0.414 against a block median of 1.507 — the three least-confident decisions in the block. WN0, WN6 and WN13 are exactly 0, and a 20-super-frame preamble changes nothing, so it is not acquisition settling. The scorer's test asserts the invariant that actually matters — no error may be *confidently* wrong — rather than a count.
 
-### 3. Schedule and manifest types, and `sm-ota monitor` — next
+### 3. ~~Schedule and manifest types~~ — done; `sm-ota monitor` still owed
 
-A JSON schedule (WN, interleaver, seed, power, offset, repeats, gaps) and a per-pass manifest recording actuals, capture SHA-256s, receiver `/api/description`, **and the modem's git commit** — the demodulator changes daily and a score without a revision is uninterpretable. `sm-ota score` should take the schedule file in place of its `--wn/--count/--seed/--at` flags, which only describe a homogeneous pass.
+`CampaignSchedule` (the request) and `CampaignManifest` (the record). `sm-ota ladder` writes both for every pass, rehearsals included, and `sm-ota score --schedule <file>` takes either — reading burst positions from a manifest so a pass is scored where the transmissions actually were. The score table then shows **asked** beside **got**, which is the comparison a ladder exists to make.
 
-`sm-ota monitor` — live capture → streaming convert → demodulate, printing decodes as they happen. Cheap now that §S1 and §S2 exist: it is `BurstScorer` fed from the capture client instead of a file.
+The manifest records the repository revision, stamped into the binary at build time by a target in the OTA csproj and marked `-dirty` when the tree had uncommitted changes. Also the capture's SHA-256, the dial correction, the pass gain, the RF power and a free-text `--supply` note — the supply has already moved both the 100 Hz floor and the frequency reference, and no machine on this bench can see which one is connected.
+
+Two traps found building it, both of the silent-wrong-answer kind:
+
+- **`System.Text.Json` does not object to missing members.** Deserialising a bare schedule into a `CampaignManifest` *succeeds* and yields one whose `Schedule` is null, so a try/catch fallback never fires. `LoadScheduleOrManifest` decides by inspecting the JSON, and a document with no bursts is refused outright — an empty pass and a pass where everything was missed must not look alike.
+- **`Assembly.GetEntryAssembly()` is the test host under a test runner.** The first version of the revision helper returned a 40-character hash belonging to the runner, and would have written that into manifests anywhere the harness was hosted rather than run directly. Read `typeof(CampaignFiles).Assembly`.
+
+Still owed: `sm-ota monitor` — live capture → streaming convert → demodulate, printing decodes as they happen. Cheap now: it is `BurstScorer` fed from the capture client instead of a file.
 
 ### 4. §E2 — built and rehearsed; needs the radio
 

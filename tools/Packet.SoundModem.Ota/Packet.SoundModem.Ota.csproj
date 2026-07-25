@@ -28,6 +28,30 @@
     <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
   </ItemGroup>
 
+  <!-- Stamp the repository revision into the binary, so every manifest a pass writes records
+       which demodulator produced the scores. The demodulator changes daily and a score without a
+       revision is uninterpretable six weeks later; asking the operator to write it down by hand
+       is asking for it to be wrong. Failures here are non-fatal (ContinueOnError) — a build from
+       a tarball with no git still works, it just records "unknown" and says so. -->
+  <Target Name="StampRepositoryRevision" BeforeTargets="GetAssemblyAttributes">
+    <Exec Command="git -C $(MSBuildProjectDirectory) rev-parse --short=12 HEAD"
+          ConsoleToMSBuild="true" ContinueOnError="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="RepositoryRevision" />
+      <Output TaskParameter="ExitCode" PropertyName="RevisionExitCode" />
+    </Exec>
+    <Exec Command="git -C $(MSBuildProjectDirectory) status --porcelain --untracked-files=no"
+          ConsoleToMSBuild="true" ContinueOnError="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="RepositoryDirtyFiles" />
+    </Exec>
+    <PropertyGroup>
+      <RepositoryRevision Condition="'$(RevisionExitCode)' != '0'">unknown</RepositoryRevision>
+      <!-- A dirty tree is normal mid-development; it is not a problem, but a score taken from one
+           cannot be reproduced from the commit alone, so it has to be on the record. -->
+      <RepositoryRevision Condition="'$(RepositoryDirtyFiles)' != ''">$(RepositoryRevision)-dirty</RepositoryRevision>
+      <InformationalVersion>$(Version)+$(RepositoryRevision)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+
   <ItemGroup>
     <!-- M0LTE.Flex (the waveform IQ TX path) flows transitively; WavFile IO for `measure`. -->
     <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />

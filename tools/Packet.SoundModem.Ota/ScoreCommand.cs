@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Packet.SoundModem.Ms110d;
 using Packet.SoundModem.UberSdr;
 
@@ -54,6 +55,15 @@ internal static class ScoreCommand
         }
 
         string inPath = a.Req("in");
+
+        // A schedule file describes a mixed pass — different waveforms, seeds and SNRs — which
+        // the flags below cannot. It also carries the burst positions the pass actually
+        // achieved, so nothing has to be retyped from a log.
+        if (a.Str("schedule", null) is { } schedulePath)
+        {
+            return ScoreAgainstSchedule(a, inPath, schedulePath);
+        }
+
         int wn = a.Int("wn", 6);
         var interleaver = a.Str("interleaver", "short").Equals("long", StringComparison.OrdinalIgnoreCase)
             ? Ms110dInterleaverKind.Long
@@ -109,6 +119,49 @@ internal static class ScoreCommand
         // Zero even when bursts were missed. A missed burst is a measurement result — at the
         // bottom of an E2 ladder it is the expected one — and a non-zero exit would make every
         // low-SNR pass look like the tool had failed.
+        return 0;
+    }
+
+    /// <summary>Scores against a schedule or a manifest, which is how a real pass is scored: the
+    /// bursts differ from one another, and their positions came from what actually happened.</summary>
+    private static int ScoreAgainstSchedule(Args a, string inPath, string schedulePath)
+    {
+        // A manifest is a superset of a schedule — take the burst positions from it when it is
+        // one, so a pass is scored where the transmissions really were.
+        (CampaignSchedule schedule, IReadOnlyList<double>? starts, string revision) =
+            CampaignFiles.LoadScheduleOrManifest(schedulePath);
+
+        var options = new IqToAudioOptions
+        {
+            OutputRate = a.Int("out-rate", 9600),
+            DialHz = a.Dbl("dial-hz", schedule.OffsetHz),
+            SsbLowHz = a.Dbl("ssb-low", 150),
+            SsbHighHz = a.Dbl("ssb-high", 3450),
+            NormalisePeak = 0f,
+        };
+
+        List<ScheduledBurst> bursts = schedule.ToScorerSchedule(starts);
+        CaptureScore score = new BurstScorer(bursts, new BurstScorerOptions
+        {
+            OccupiedLowHz = options.SsbLowHz,
+            OccupiedHighHz = options.SsbHighHz,
+        }).Score(Convert(inPath, options, a.Str("audio", null)));
+
+        Console.WriteLine();
+        Console.WriteLine($"schedule \"{schedule.Name}\" — {schedule.Bursts.Count} burst(s), "
+                          + $"modem {revision}");
+        if (schedule.Notes is { Length: > 0 } notes)
+        {
+            Console.WriteLine(notes);
+        }
+
+        ReportWithSchedule(inPath, schedule, score);
+        if (a.Str("csv", null) is { } csvPath)
+        {
+            WriteCsv(csvPath, score, schedule);
+            Console.Error.WriteLine($"wrote {csvPath}");
+        }
+
         return 0;
     }
 
@@ -206,23 +259,64 @@ internal static class ScoreCommand
         }
     }
 
+    /// <summary>The per-burst table, with the requested SNR beside the measured one — the
+    /// comparison a ladder exists to make, and one a bare score table cannot show.</summary>
+    private static void ReportWithSchedule(string path, CampaignSchedule schedule, CaptureScore score)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"=== score: {Path.GetFileName(path)} — {score.AudioSeconds:F1} s ===");
+        Console.WriteLine($"{"#",3} {"start s",9} {"WN",4} {"asked",7} {"got",7} {"CFO Hz",8} "
+                          + $"{"coded BER",11} {"uncoded BER",12}  end");
+
+        int scheduleIndex = 0;
+        foreach (BurstScore b in score.Bursts)
+        {
+            CampaignBurst? row = b.Scheduled && scheduleIndex < schedule.Bursts.Count
+                ? schedule.Bursts[scheduleIndex++]
+                : null;
+            string asked = row?.SnrDb is double s ? s.ToString("F1", CultureInfo.InvariantCulture) : "—";
+            string got = b.Snr is null ? "—" : b.Snr.SnrDb.ToString("F1", CultureInfo.InvariantCulture);
+            Console.WriteLine(
+                $"{b.Index,3} {b.StartSeconds,9:F2} {b.WaveformNumber?.ToString(CultureInfo.InvariantCulture) ?? "—",4} "
+                + $"{asked,7} {got,7} {b.CfoHz,8:F1} "
+                + $"{(b.Scheduled ? Rate(b.CodedBer) : "unscheduled"),11} "
+                + $"{(b.Scheduled ? Rate(b.UncodedBer) : "—"),12}  {b.Reason}"
+                + (b.Scheduled && !b.WidCorrect ? "  WID MISMATCH" : ""));
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"scored {score.Bursts.Count(b => b.Scheduled)} burst(s); "
+                          + $"{score.Bursts.Count(b => !b.Scheduled)} unscheduled; {score.Missed.Count} MISSED");
+        foreach (ScheduledBurst missed in score.Missed)
+        {
+            Console.WriteLine($"MISSED: WN{missed.Reference.Settings.WaveformNumber} seed "
+                              + $"{missed.Reference.Seed?.ToString(CultureInfo.InvariantCulture) ?? "?"}"
+                              + (missed.ExpectedSeconds >= 0 ? $" expected at {missed.ExpectedSeconds:F1} s" : ""));
+        }
+    }
+
     private static string Rate(double value)
         => double.IsNaN(value) ? "—"
             : value == 0 ? "0"
             : value.ToString("0.00E+00", CultureInfo.InvariantCulture);
 
-    private static void WriteCsv(string path, CaptureScore score)
+    private static void WriteCsv(string path, CaptureScore score, CampaignSchedule? schedule = null)
     {
         using var w = new StreamWriter(path);
+        // requestedSnrDb sits beside the measured one so the two are never separated: a row that
+        // records only what was measured cannot say whether the rig delivered what it was asked.
         w.WriteLine("index,startSeconds,endSeconds,acquired,scheduled,wn,interleaver,cfoHz,widCorrect,"
-                    + "snrDb,payloadBits,payloadErrors,uncodedBits,uncodedErrors,blocks,reason,"
+                    + "requestedSnrDb,snrDb,payloadBits,payloadErrors,uncodedBits,uncodedErrors,blocks,reason,"
                     + "turboConverged,turboReverted,turboAborted");
+        int scheduleIndex = 0;
         foreach (BurstScore b in score.Bursts)
         {
             w.WriteLine(string.Join(',',
                 b.Index, F(b.StartSeconds), F(b.EndSeconds), b.Acquired, b.Scheduled,
                 b.WaveformNumber?.ToString(CultureInfo.InvariantCulture) ?? "", b.Interleaver?.ToString() ?? "",
                 F(b.CfoHz), b.WidCorrect,
+                b.Scheduled && schedule is not null && scheduleIndex < schedule.Bursts.Count
+                    && schedule.Bursts[scheduleIndex++].SnrDb is double asked ? F(asked) : "",
                 b.Snr is null ? "" : F(b.Snr.SnrDb),
                 b.PayloadBits, b.PayloadErrors, b.UncodedBits, b.UncodedErrors, b.Blocks,
                 b.Reason?.ToString() ?? "", b.TurboConverged, b.TurboReverted, b.TurboAborted));
@@ -235,7 +329,7 @@ internal static class ScoreCommand
             w.WriteLine(string.Join(',',
                 -1, F(missed.ExpectedSeconds), "", false, true,
                 missed.Reference.Settings.WaveformNumber, missed.Reference.Settings.Interleaver,
-                "", false, "", missed.Reference.PayloadBits.Length, missed.Reference.PayloadBits.Length,
+                "", false, "", "", missed.Reference.PayloadBits.Length, missed.Reference.PayloadBits.Length,
                 0, 0, 0, "Missed", 0, 0, 0));
         }
     }
