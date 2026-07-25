@@ -85,3 +85,34 @@ PRE-REGISTERED battery-scale measurement, stated before running it:
   15 → 3 cut alone does NOT ship the lever — the shipped path is what the phase gates
   on, and a model-floor gain that never reaches a decode is banked knowledge, not a
   ship.
+
+## Amendment 2 (same day): the decision legs measured a different ship case — WN6
+## margin lever, WN7-neutral; the full battery decides with improve-or-hold bars
+
+Decision legs (`corpse/decide-wn7.txt`, `corpse/decide-wn6.txt`): WN7 3M canonical
+**1.73E-1, 57c/31r — statistically identical to #83** (562,621 vs 562,609 errors on
+IDENTICAL channel/noise realizations — canonical seeds pair the comparison; the basin
+hypothesis is dead at battery scale too, and Amendment 1's bar fails as written). But
+**WN6 6M canonical 57 → 35 errors (8.79E-6 → 5.40E-6, 264c/0r)** — paired evidence on
+identical realizations of a genuine 39% residue cut on a GATED waveform, nearly
+doubling the at-mask margin (1.14× → 1.85×). Mechanism-consistent: WN6's residue lives
+in CONVERGED blocks — the near-perfect-label regime where the corpse measured the
+oracle floor falling 5× — honest within-frame pricing sharpens exactly those final
+LLRs.
+
+Reverting a measured 39% margin gain because the bar was registered against a
+different hypothesis (WN7 conversion) would be rigor pointed the wrong way; shipping
+it silently would be goalpost-moving. The resolution, stated BEFORE the deciding runs:
+the lever's ship case is reformulated as **WN6 margin lever with WN7-neutral
+behavior**, and the standard FULL battery decides with explicit improve-or-hold bars
+on every gated leg (the two completed decision legs stand as their battery slots —
+same build, same seeds):
+
+- WN6 6M disjoint: ≤ 57 errors (improve-or-hold vs #83).
+- WN7 3M disjoint: 1.90E-1 class ±5% (neutral bar; canonical already measured
+  identical).
+- WN13 canonical + disjoint 6M: 0-error class holds (≤ 2).
+- WN2 ×2, WN1 ×2, smokes, AWGN, static, Doppler: hold their #83 states.
+- Any marginal-block catastrophe (the #82 w3/b3 class) anywhere: revert.
+
+Unit suite already green (696/0); guards WN6/WN13sp corpses 0/0 (`corpse/`).
