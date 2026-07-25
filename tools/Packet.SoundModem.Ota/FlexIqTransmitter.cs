@@ -577,6 +577,21 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
                 nameof(interleavedIq));
         }
 
+        // SWR is only meaningful on a constant envelope. Forward and reflected power are
+        // separate meter samples taken at slightly different instants, so if the envelope is
+        // moving between them their ratio describes two different moments and is nonsense. A
+        // two-tone burst modulates at the difference frequency and reported 1.93 where the
+        // constant-envelope pre-flight tone moments earlier read 1.30 into the same load; the
+        // MS110D waveform, with real PAPR, would be worse. So the pre-flight carrier is the
+        // SWR check, and modulated bursts simply do not attempt one.
+        bool constantEnvelope = IsConstantEnvelope(interleavedIq);
+        if (!constantEnvelope)
+        {
+            _log("SWR not evaluated: the burst envelope is modulated, and forward/reflected " +
+                 "samples from different instants cannot be compared. The pre-flight tone is " +
+                 "the SWR measurement.");
+        }
+
         var collected = new List<FlexMeterReading>();
         double? peakSwr = null;
         double? peakFwd = null;
@@ -598,6 +613,11 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
             // Derived SWR (forward/reflected, both dBm) is the trustworthy one — see
             // FlexMeters.SwrFromPowers. Null simply means "not transmitting hard enough to
             // measure", which is not a fault.
+            if (!constantEnvelope)
+            {
+                return;
+            }
+
             double? swr = _meters.SwrFromPowers();
             if (swr is null)
             {
@@ -761,6 +781,51 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
             last = now;
             lastStarved = starvedNow;
         }
+    }
+
+    /// <summary>
+    /// Whether a burst holds a steady envelope while it is on — the precondition for the
+    /// radio's SWR meter to mean anything.
+    /// </summary>
+    /// <remarks>Measured over the samples above half the peak, so the lead-in silence and the
+    /// cosine ramps do not count against it. A single complex tone is exactly constant; a
+    /// two-tone or a data waveform is not.</remarks>
+    internal static bool IsConstantEnvelope(ReadOnlySpan<float> interleavedIq)
+    {
+        double peak = 0;
+        for (int k = 0; k + 1 < interleavedIq.Length; k += 2)
+        {
+            double m = (interleavedIq[k] * (double)interleavedIq[k])
+                + (interleavedIq[k + 1] * (double)interleavedIq[k + 1]);
+            peak = Math.Max(peak, m);
+        }
+
+        if (peak <= 0)
+        {
+            return false;
+        }
+
+        double threshold = peak * 0.25; // half the peak amplitude, in power terms
+        double sum = 0;
+        long count = 0;
+        for (int k = 0; k + 1 < interleavedIq.Length; k += 2)
+        {
+            double m = (interleavedIq[k] * (double)interleavedIq[k])
+                + (interleavedIq[k + 1] * (double)interleavedIq[k + 1]);
+            if (m >= threshold)
+            {
+                sum += m;
+                count++;
+            }
+        }
+
+        if (count == 0)
+        {
+            return false;
+        }
+
+        // Peak-to-average power ratio of the "on" portion; 1.0 is a pure carrier.
+        return peak / (sum / count) < 1.10;
     }
 
     /// <summary>Sets the radio's TX power (0–100) mid-session, for a linearity sweep.</summary>

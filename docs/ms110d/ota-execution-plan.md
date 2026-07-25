@@ -244,12 +244,14 @@ Do (1) always; (2) is worth doing anyway to make the Flex a cleaner reference tr
   | Power control | `rfpower` is percent of 100 W, delivered within 5% at every step (1→1.03 W … 15→14.91 W) |
   | Linearity 1→15 W | forward power +11.6 dB, received level +11.2 dB — tracking within **0.4 dB, no compression** |
   | SWR vs power | 1.31–1.33, flat across the whole range |
-  | Two-tone IMD3 @ 15 W, 0.9 envelope peak | **−27.9 / −28.8 dBc** (IMD5 −35 / −37 dBc), products ~18 dB above the per-bin noise |
-  | TX image rejection | −35 … −38 dBc |
-  | LO/carrier leakage at the waveform centre | −20 … −25 dBc |
-  | Waveform reflection loop | **0 starved samples** in every run to date |
+  | Two-tone IMD3 | ≈ **−28 dBc** at both 15 W and 4 W — see below, this is a floor, not a measurement |
+  | TX image rejection | **−43.7 dBc** |
+  | LO/carrier leakage at the waveform centre | **−27.1 dBc** |
+  | Waveform reflection loop | **0 starved samples**, once the sink was gated on the interlock |
 
-  The linearity and IMD figures still bundle the receiver: at 15 W the capture peaks at −9.3 dBFS, so the RX front end is not obviously the limit, but separating TX IMD from RX IMD wants a repeat at reduced power. Both leakage figures vindicate placing the modem band away from the waveform centre.
+  **The image and leakage figures above supersede earlier ones** (−35.8 and −20.4 dBc). Those were taken while the waveform sink was draining its own transmit ring continuously, so the transmitted signal was being cut about; they were measuring our bug, not the radio. Both leakage figures still vindicate placing the modem band away from the waveform centre.
+
+  **IMD is not yet characterised, and the reason is the path.** Dropping drive by 6.1 dB should improve a genuine third-order product by 12.2 dB. Measured, it moved **1.1 dB** — so ≈ −28 dBc is a floor set by the measurement, not by the transmitter, which is therefore at least that linear and possibly far better. The limit is the leakage path: SNR reaches only ~19 dB at 15 W, with strong band signals inside the capture span (one measured level with our own tone, 15 kHz away). Characterising TX IMD needs a cleaner path or more signal, and more signal is capped by the receiver's ADC — so this is a real Phase-0 conclusion rather than a number to quote: **the dummy-load leakage path is adequate for frequency, linearity and level work, and inadequate for distortion work.**
 
   **The receiver, not the transmitter, sets the power ceiling.** At 10 W the capture peaks at −11.4 dBFS, so ~30 W would reach −6 dBFS and 100 W would clip the shared ADC — degrading the SDR for every user of it. That caps usable SNR at roughly **27 dB at ~30 W** against the 25–30 dB the injected-noise ladder wants: achievable, with nothing spare. More headroom means reducing the receiver's front-end gain, which is a decision about a shared instrument, not a knob to reach for.
 - **I4 — timing.** TX key UTC vs RX acquisition UTC across many bursts → constant offset plus jitter. Establishes the coarse-alignment window §S2 needs and quantifies what NTP-grade timestamps actually buy us here.
