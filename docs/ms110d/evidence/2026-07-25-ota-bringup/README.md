@@ -40,7 +40,7 @@ Upstreamed into `M0LTE.Flex` (0.4.0 and 0.5.0, both published): the `VitaPacket`
 
 **Distortion is not characterised, and the path is why.** Dropping drive 6.1 dB should improve a genuine third-order product by 12.2 dB; measured, IMD3 moved 1.1 dB and held at ≈ −28 dBc at both 15 W and 4 W. That is a floor set by the measurement, so the transmitter is *at least* that linear. The leakage path reaches only ~19 dB SNR with strong band signals in the capture span, and more signal is capped by the receiver's ADC. Deferred to the on-air phase — with the caveat that a fading path corrupts a two-tone measurement much as envelope modulation corrupts SWR, so `m9psy` fixes the coupling problem but not necessarily this one.
 
-## Open: a 100 Hz comb on everything this radio transmits
+## Resolved: a 100 Hz comb, traced to the mains supply
 
 **Found by ear, not by instrument.** Tom listened to a 30 s carrier and said it sounded raspy. The spur figure being reported at the time was −6.4 dBc, and the image −45 dBc, both of which looked fine — because the spur search masks ±200 Hz either side of the carrier so that its own skirt is not counted, and that is exactly where the problem lives. The measurement was blind to it by construction.
 
@@ -60,7 +60,20 @@ What this rules out: our software (−103 dBc), the waveform transmit path, the 
 
 If it is the coupling path it is a bench artefact that disappears on a real antenna; if it is the transmitter it is a real impairment. That distinction matters before E2, because hardware-in-the-loop scoring at low SNR would otherwise be measuring mains hum rather than the modem. Note it did **not** prevent WN2/WN6/WN13 decoding bit-exact at ~25 dB SNR.
 
-Discriminating tests needing physical access: whether the sidebands appear on SmartSDR's own TX trace (before the antenna socket); whether a choke on the dummy-load feedline or moving it relative to the loop changes their level (geometry-dependent ⇒ coupling); and running the radio from a different supply.
+**Resolved by isolation.** Running the Flex from a battery, with only a dummy load and its network connection — no mains, no other galvanic path — removed it:
+
+| Supply | +100 Hz sideband |
+|---|---|
+| mains PSU, 15 W | **−8.0 dBc** |
+| battery, 10 W | **−24.2 dBc** |
+
+**16 dB.** The intermediate evidence had been genuinely confusing and is worth keeping for the pattern: the Flex's own TX panadapter showed nothing (that tap sits ahead of the PA, so modulation at the final stage never reaches it), while an independent receiver heard the hum plainly. Neither observation alone was decisive; the isolation test was.
+
+A supporting measurement on the way: the radio reported its 13.8 V rail at 12.87 V idle and 12.00 V transmitting at 15 W, against 13.4 V measured at the PSU terminals — 1.4 V lost in the DC path under load, with 0.18 V of that across the fuse holder alone. (Tom judged the radio's ADC likely under-reads, so treat the absolute figures with caution; the *drop* is the interesting part.)
+
+**A residual −24 dBc at exactly 100.0 Hz survives on battery**, and cannot be the radio's supply. RWM through the same receiver sat at ~−27 dBc, so the likely reading is two contributors — the transmitter's mains supply at ≈ −8 dBc, now removed, and the receiver at ≈ −24 to −27 dBc, still present. That is a floor on how clean any measurement through this receiver can be, and it needs to be known before E2 attributes low-SNR behaviour to the demodulator.
+
+**The reference moves with the supply.** Changing from mains to battery shifted the observed tone error +113.5 → +129.3 Hz, about 0.88 ppm. The dial correction must therefore be re-measured each session rather than carried across — it is a per-session calibration, not a constant.
 
 ## Bugs found, and what found them
 

@@ -131,6 +131,7 @@ internal static class Commands
             IdMode = a.Str("id-mode", "MS110D"),
             Identify = !a.Has("no-id"),
             InterBurstSettle = TimeSpan.FromSeconds(a.Dbl("settle", 2)),
+            MaxBurstSeconds = a.Dbl("max-seconds", 60),
         };
 
         double toneHz = a.Dbl("tone-hz", 2000);
