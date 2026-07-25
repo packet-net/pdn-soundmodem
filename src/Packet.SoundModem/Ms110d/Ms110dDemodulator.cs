@@ -142,6 +142,7 @@ public sealed class Ms110dDemodulator
     private float[] _softMother = [];
     private float[] _softMotherPost = [];
     private float[] _softWireLlrs = [];
+    private float[] _softWireExt = [];
     private Cf[] _softExpected = [];
     private float[] _softVar = [];
     private Cf[] _turboExpected = [];
@@ -660,6 +661,7 @@ public sealed class Ms110dDemodulator
         _softMother = new float[2 * _il.InputBits];
         _softMotherPost = new float[2 * _il.InputBits];
         _softWireLlrs = new float[_il.SizeBits];
+        _softWireExt = new float[_il.SizeBits];
         int blockSymbols = _il.Frames * _mode.U; // 0 for WN0 (Walsh) — turbo never runs there
         _softExpected = new Cf[blockSymbols];
         _softVar = new float[blockSymbols];
@@ -2166,7 +2168,7 @@ public sealed class Ms110dDemodulator
             }
         }
 
-        TurboCore(_turboExpected, null);
+        TurboCore(_turboExpected, null, null);
     }
 
     /// <summary>Soft-feedback turbo re-equalization (§B3.3): a SISO log-MAP pass over the
@@ -2188,6 +2190,20 @@ public sealed class Ms110dDemodulator
         _siso!.Decode(_softMother, _softMotherPost);
         Ms110dPuncture.Apply(_puncture!, _softMotherPost, _softPunctured);
         _interleaver.Interleave(_softPunctured, _softWireLlrs);
+
+        // Code EXTRINSICS (posterior − channel input, mother domain) → wire order: the
+        // chain-BCJR priors (§B3.3). Posterior would double-count — the detector's own
+        // last-round output echoed back as prior locks the loop onto itself. _softMother
+        // (the SISO input) is consumed here; repeated copies (rates < 1/2) share their
+        // mother position's extrinsic, which excludes the sibling copies' channel LLRs
+        // too — conservative, and exact for the mask-only rates (repeat = 1).
+        for (int i = 0; i < _softMother.Length; i++)
+        {
+            _softMother[i] = _softMotherPost[i] - _softMother[i];
+        }
+
+        Ms110dPuncture.Apply(_puncture!, _softMother, _softPunctured);
+        _interleaver.Interleave(_softPunctured, _softWireExt);
 
         // Per-symbol soft expectations over the descrambled constellation, rotated onto
         // the wire by the scrambler (Psk8[(s+r)&7] == Psk8[s]·Psk8[r] — NextPsk is an
@@ -2251,7 +2267,7 @@ public sealed class Ms110dDemodulator
                 $"turbo-soft b{_blockIndex}: mean|llrIn|={meanIn / _il.SizeBits:F2} mean|llrPost|={meanPost / _il.SizeBits:F2} mean|E|={meanE / _softExpected.Length:F3} weak={weak}/{_softExpected.Length}"));
         }
 
-        TurboCore(_softExpected, _softVar);
+        TurboCore(_softExpected, _softVar, _softWireExt);
     }
 
     /// <summary>P(bit = 0) from an LLR under the positive-⇒-0 convention.</summary>
@@ -2262,13 +2278,24 @@ public sealed class Ms110dDemodulator
             : MathF.Exp(llr) / (1f + MathF.Exp(llr));
     }
 
+    /// <summary>Numerically stable log(1 + eˣ).</summary>
+    private static float Softplus(float x)
+    {
+        if (x > 20f)
+        {
+            return x;
+        }
+
+        return x < -20f ? 0f : MathF.Log(1f + MathF.Exp(x));
+    }
+
     /// <summary>The turbo re-equalization machinery (§B2.3): per-frame FF batch-LS re-solve
     /// on the expected symbols, per-segment h1, scrambler-exact single-lag echo, chain-BCJR
     /// detection. <paramref name="expectedAll"/> holds one expected wire symbol per data
     /// position (frame-major); <paramref name="symbolVar"/> is the per-symbol prior variance
     /// 1−|E[x]|² for soft labels, or null for hard labels — null skips the variance terms
     /// entirely, keeping the hard/oracle path bit-identical to the pre-§B3.3 code.</summary>
-    private void TurboCore(Cf[] expectedAll, float[]? symbolVar)
+    private void TurboCore(Cf[] expectedAll, float[]? symbolVar, float[]? wireExtLlrs)
     {
         var mode = _mode!;
         var dfe = _dfe!;
@@ -2290,6 +2317,19 @@ public sealed class Ms110dDemodulator
         int tirFrames = 0;
         long tirLagSum = 0;
         double tirCoeffSum = 0;
+
+        (Cf[] constellation, byte[] labels) = mode.Modulation switch
+        {
+            Ms110dModulation.Bpsk => (TurboBpsk, Array.Empty<byte>()),
+            Ms110dModulation.Qpsk => (TurboQpsk, TurboQpskLabels),
+            _ => (Ms110dTables.Psk8, SymbolToTribit8),
+        };
+
+        // §B3.3 turbo priors: outer-code extrinsics become per-symbol log-priors on the
+        // chain BCJR (descrambled labels — the scrambler never touches the bit→ring map).
+        float[]? logPriors = wireExtLlrs is null ? null : new float[mode.U * constellation.Length];
+        Span<float> lp0 = stackalloc float[4];
+        Span<float> lp1 = stackalloc float[4];
 
         for (int f = 0; f < _il!.Frames; f++)
         {
@@ -2540,16 +2580,52 @@ public sealed class Ms110dDemodulator
             // halve (the #65 2×-under-confidence lesson).
             float noiseVar = Math.Max(0.5f * residual / mode.U, 1e-6f);
 
-            (Cf[] constellation, byte[] labels) = mode.Modulation switch
+            int bitBase = f * mode.U * bitsPerSymbol;
+            if (logPriors is not null)
             {
-                Ms110dModulation.Bpsk => (TurboBpsk, Array.Empty<byte>()),
-                Ms110dModulation.Qpsk => (TurboQpsk, TurboQpskLabels),
-                _ => (Ms110dTables.Psk8, SymbolToTribit8),
-            };
+                int m = constellation.Length;
+                for (int u = 0; u < mode.U; u++)
+                {
+                    for (int b = 0; b < bitsPerSymbol; b++)
+                    {
+                        // log P(bit=0) = −softplus(−L), log P(bit=1) = −softplus(L)
+                        // under the positive-⇒-0 convention.
+                        float ext = wireExtLlrs![bitBase + (u * bitsPerSymbol) + b];
+                        lp0[b] = -Softplus(-ext);
+                        lp1[b] = -Softplus(ext);
+                    }
+
+                    for (int s = 0; s < m; s++)
+                    {
+                        int label = labels.Length > 0 ? labels[s] : s;
+                        float sum = 0f;
+                        for (int b = 0; b < bitsPerSymbol; b++)
+                        {
+                            sum += ((label >> (bitsPerSymbol - 1 - b)) & 1) == 0 ? lp0[b] : lp1[b];
+                        }
+
+                        logPriors[(u * m) + s] = sum;
+                    }
+                }
+            }
+
             var frameLlrs = new float[mode.U * bitsPerSymbol];
             Ms110dChainBcjr.Equalize(
                 rxDesc, h1Span, h2Span, delay, noiseVar,
-                constellation, labels, bitsPerSymbol, preceding, frameLlrs);
+                constellation, labels, bitsPerSymbol, preceding, frameLlrs,
+                logPriors is null ? default : logPriors);
+
+            // With priors in, the BCJR emits full posteriors; hand the outer code detector
+            // EXTRINSICS only (posterior − prior) — feeding its own opinion back to the
+            // SISO would double-count and lock the loop.
+            if (wireExtLlrs is not null)
+            {
+                for (int i = 0; i < frameLlrs.Length; i++)
+                {
+                    frameLlrs[i] -= wireExtLlrs[bitBase + i];
+                }
+            }
+
             for (int i = 0; i < frameLlrs.Length; i++)
             {
                 AddLlr(frameLlrs[i]);
