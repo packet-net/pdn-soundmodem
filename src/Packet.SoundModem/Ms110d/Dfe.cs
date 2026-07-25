@@ -68,6 +68,22 @@ public sealed class Dfe
     /// <summary>Feed-forward (T/2) tap count.</summary>
     public int FfTaps => _ff.Length;
 
+    /// <summary>Diagnostic: Σ|ff|² of the current feed-forward taps — the equalizer's
+    /// white-noise power gain (§B3.3 fade-crossing corpse instrument).</summary>
+    public float FfEnergy
+    {
+        get
+        {
+            float e = 0f;
+            foreach (Cf t in _ff)
+            {
+                e += t.Cnorm();
+            }
+
+            return e;
+        }
+    }
+
     /// <summary>Feedback (symbol-spaced) tap count.</summary>
     public int FbTaps => _fb.Length;
 

@@ -236,6 +236,12 @@ public sealed class Ms110dDemodulator
     /// of those LLRs.</summary>
     public event Action<int, float[], byte[]>? OracleBlockLlrs;
 
+    /// <summary>Diagnostic (phase-b-plan §B3.3 fade-crossing): while the oracle
+    /// re-equalization runs, TurboCore emits one <c>turbo-frame</c> line per frame with
+    /// the per-segment channel anchors and the BCJR noise floor, so the corpse can
+    /// compare the estimated tap trajectory against the recorded channel truth.</summary>
+    private bool _turboFrameDiag;
+
     /// <summary>Turbo blocks that reached a decode fixed point (since construction/Reset).</summary>
     public int TurboConverged { get; private set; }
 
@@ -2080,7 +2086,9 @@ public sealed class Ms110dDemodulator
             BlockSamplesResident())
         {
             _dfe.SnapshotTraining();
+            _turboFrameDiag = true;
             TurboReequalize(oracleInfo, trustedLabels: true);
+            _turboFrameDiag = false;
             if (_blockLlrCount == _il.SizeBits)
             {
                 var oracleDecode = new byte[_il.InputBits];
@@ -2703,6 +2711,41 @@ public sealed class Ms110dDemodulator
             // Cnorm() sums both complex dimensions; the BCJR wants σ² per dimension, so
             // halve (the #65 2×-under-confidence lesson).
             float noiseVar = Math.Max(0.5f * residual / mode.U, 1e-6f);
+
+            if (_turboFrameDiag && FrameDiagnostics is not null)
+            {
+                var sb = new System.Text.StringBuilder(256);
+                sb.Append(FormattableString.Invariant(
+                    $"turbo-frame b{_blockIndex} f{f}: lag={delay} lag2={delay2} n={noiseVar:E3} ffE={dfe.FfEnergy:F3} sseN={tir.SseNull:F1} sseT={tir.SseTir:F1} h1="));
+                for (int s = 0; s < Segments; s++)
+                {
+                    if (s > 0) { sb.Append('|'); }
+                    sb.Append(FormattableString.Invariant($"{segH1[s].Re:F4},{segH1[s].Im:F4}"));
+                }
+
+                sb.Append(FormattableString.Invariant($" h2avg={h2Avg.Re:F4},{h2Avg.Im:F4}"));
+                if (segEcho)
+                {
+                    sb.Append(" h2=");
+                    for (int s = 0; s < Segments; s++)
+                    {
+                        if (s > 0) { sb.Append('|'); }
+                        sb.Append(FormattableString.Invariant($"{segH2[s].Re:F4},{segH2[s].Im:F4}"));
+                    }
+                }
+
+                if (delay2 > 0)
+                {
+                    sb.Append(" h2b=");
+                    for (int s = 0; s < Segments; s++)
+                    {
+                        if (s > 0) { sb.Append('|'); }
+                        sb.Append(FormattableString.Invariant($"{segH2b[s].Re:F4},{segH2b[s].Im:F4}"));
+                    }
+                }
+
+                FrameDiagnostics.Invoke(sb.ToString());
+            }
 
             int bitBase = f * mode.U * bitsPerSymbol;
             if (logPriors is not null)

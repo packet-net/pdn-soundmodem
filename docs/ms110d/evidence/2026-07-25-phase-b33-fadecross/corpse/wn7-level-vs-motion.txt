@@ -1,0 +1,8 @@
+median mean|p0| 0.91
+median complex motion 0.59
+('hiP0', 'hiMot'): frames 180  median n 0.0134  mean errs   2.3
+('hiP0', 'loMot'): frames 172  median n 0.0114  mean errs   0.9
+('loP0', 'hiMot'): frames 172  median n 0.0387  mean errs  35.9
+('loP0', 'loMot'): frames 180  median n 0.0366  mean errs  27.1
+within loP0: corr(n, complex motion) = 0.115
+within hiP0: corr(n, complex motion) = 0.189
