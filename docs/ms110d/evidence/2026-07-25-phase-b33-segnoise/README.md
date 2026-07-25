@@ -59,3 +59,29 @@ does not exist here. The first pass is bit-identical by construction.
    FD-turbo remains the standing escalation).
 
 Files land here as the measurements run.
+
+---
+
+## Measured (same day) + Amendment 1: the corpse bar fails, the oracle floor falls 5× — decision moves to pre-registered battery scale
+
+`corpse/wn7-segnv.txt`: shipped **72,666 — identical to the digit, 7c/4r, same four
+wanderers** (no conversion: criterion 1's bar is failed) — but **oracle 15 → 3** (the
+corpse's oracle now sits below the 1E-5 line), b7's wander amplitude falls 3×
+(1309 → 414 decode-changes at cap), the late convergers converge faster (b1 i14 → i12,
+b6 i14 → i13), and nothing regresses anywhere (b4 3472 → 4417 and b10 4755 → 5358
+amplitude jitter inside non-converging loops; first decodes bit-identical as designed).
+
+Amendment rather than a silent revert OR a silent ship: the corpse samples only four
+wandering blocks in one burst, and the #83 precedent measured exactly this situation —
+per-iteration sharpening that flipped 2 corpse blocks flipped ~13 bursts at battery
+scale, where the marginal population actually lives. The decision therefore moves to a
+PRE-REGISTERED battery-scale measurement, stated before running it:
+
+- **Legs**: WN7 3M canonical and WN6 6M canonical (the flip-sensitive leg), full §5.3.
+- **Ship bar**: WN7 shipped BER improves vs #83's 1.73E-1 AND WN6 holds its at-mask
+  state (≤ 1E-5 class, no marginal-block catastrophes). Then the FULL battery gates the
+  merge as always.
+- **Else**: revert the lever, record the negative, fall through to B3.4. The oracle
+  15 → 3 cut alone does NOT ship the lever — the shipped path is what the phase gates
+  on, and a model-floor gain that never reaches a decode is banked knowledge, not a
+  ship.
