@@ -142,6 +142,7 @@ public sealed class Ms110dDemodulator
     private float[] _softMother = [];
     private float[] _softMotherPost = [];
     private float[] _softWireLlrs = [];
+    private float[] _softWireExt = [];
     private Cf[] _softExpected = [];
     private float[] _softVar = [];
     private Cf[] _turboExpected = [];
@@ -660,6 +661,7 @@ public sealed class Ms110dDemodulator
         _softMother = new float[2 * _il.InputBits];
         _softMotherPost = new float[2 * _il.InputBits];
         _softWireLlrs = new float[_il.SizeBits];
+        _softWireExt = new float[_il.SizeBits];
         int blockSymbols = _il.Frames * _mode.U; // 0 for WN0 (Walsh) — turbo never runs there
         _softExpected = new Cf[blockSymbols];
         _softVar = new float[blockSymbols];
@@ -2166,7 +2168,7 @@ public sealed class Ms110dDemodulator
             }
         }
 
-        TurboCore(_turboExpected, null);
+        TurboCore(_turboExpected, null, null);
     }
 
     /// <summary>Soft-feedback turbo re-equalization (§B3.3): a SISO log-MAP pass over the
@@ -2188,6 +2190,20 @@ public sealed class Ms110dDemodulator
         _siso!.Decode(_softMother, _softMotherPost);
         Ms110dPuncture.Apply(_puncture!, _softMotherPost, _softPunctured);
         _interleaver.Interleave(_softPunctured, _softWireLlrs);
+
+        // Code EXTRINSICS (posterior − channel input, mother domain) → wire order: the
+        // chain-BCJR priors (§B3.3). Posterior would double-count — the detector's own
+        // last-round output echoed back as prior locks the loop onto itself. _softMother
+        // (the SISO input) is consumed here; repeated copies (rates < 1/2) share their
+        // mother position's extrinsic, which excludes the sibling copies' channel LLRs
+        // too — conservative, and exact for the mask-only rates (repeat = 1).
+        for (int i = 0; i < _softMother.Length; i++)
+        {
+            _softMother[i] = _softMotherPost[i] - _softMother[i];
+        }
+
+        Ms110dPuncture.Apply(_puncture!, _softMother, _softPunctured);
+        _interleaver.Interleave(_softPunctured, _softWireExt);
 
         // Per-symbol soft expectations over the descrambled constellation, rotated onto
         // the wire by the scrambler (Psk8[(s+r)&7] == Psk8[s]·Psk8[r] — NextPsk is an
@@ -2251,7 +2267,7 @@ public sealed class Ms110dDemodulator
                 $"turbo-soft b{_blockIndex}: mean|llrIn|={meanIn / _il.SizeBits:F2} mean|llrPost|={meanPost / _il.SizeBits:F2} mean|E|={meanE / _softExpected.Length:F3} weak={weak}/{_softExpected.Length}"));
         }
 
-        TurboCore(_softExpected, _softVar);
+        TurboCore(_softExpected, _softVar, _softWireExt);
     }
 
     /// <summary>P(bit = 0) from an LLR under the positive-⇒-0 convention.</summary>
@@ -2262,13 +2278,24 @@ public sealed class Ms110dDemodulator
             : MathF.Exp(llr) / (1f + MathF.Exp(llr));
     }
 
+    /// <summary>Numerically stable log(1 + eˣ).</summary>
+    private static float Softplus(float x)
+    {
+        if (x > 20f)
+        {
+            return x;
+        }
+
+        return x < -20f ? 0f : MathF.Log(1f + MathF.Exp(x));
+    }
+
     /// <summary>The turbo re-equalization machinery (§B2.3): per-frame FF batch-LS re-solve
     /// on the expected symbols, per-segment h1, scrambler-exact single-lag echo, chain-BCJR
     /// detection. <paramref name="expectedAll"/> holds one expected wire symbol per data
     /// position (frame-major); <paramref name="symbolVar"/> is the per-symbol prior variance
     /// 1−|E[x]|² for soft labels, or null for hard labels — null skips the variance terms
     /// entirely, keeping the hard/oracle path bit-identical to the pre-§B3.3 code.</summary>
-    private void TurboCore(Cf[] expectedAll, float[]? symbolVar)
+    private void TurboCore(Cf[] expectedAll, float[]? symbolVar, float[]? wireExtLlrs)
     {
         var mode = _mode!;
         var dfe = _dfe!;
@@ -2279,13 +2306,31 @@ public sealed class Ms110dDemodulator
         int fb = dfe.FbTaps;
         Span<Cf> window = stackalloc Cf[dfe.FfTaps];
         Span<Cf> past = stackalloc Cf[fb];
+        Span<float> pastVar = stackalloc float[fb];
         bool genie = _genieRing is not null;
         Span<Cf> estWindow = stackalloc Cf[dfe.FfTaps];
         const int Segments = 4;
         Span<Cf> segH1 = stackalloc Cf[Segments];
+        Span<Cf> segH2 = stackalloc Cf[Segments];
         Span<float> segCentre = stackalloc float[Segments];
         int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
         _blockLlrCount = 0;
+        int tirFrames = 0;
+        long tirLagSum = 0;
+        double tirCoeffSum = 0;
+
+        (Cf[] constellation, byte[] labels) = mode.Modulation switch
+        {
+            Ms110dModulation.Bpsk => (TurboBpsk, Array.Empty<byte>()),
+            Ms110dModulation.Qpsk => (TurboQpsk, TurboQpskLabels),
+            _ => (Ms110dTables.Psk8, SymbolToTribit8),
+        };
+
+        // §B3.3 turbo priors: outer-code extrinsics become per-symbol log-priors on the
+        // chain BCJR (descrambled labels — the scrambler never touches the bit→ring map).
+        float[]? logPriors = wireExtLlrs is null ? null : new float[mode.U * constellation.Length];
+        Span<float> lp0 = stackalloc float[4];
+        Span<float> lp1 = stackalloc float[4];
 
         for (int f = 0; f < _il!.Frames; f++)
         {
@@ -2294,13 +2339,19 @@ public sealed class Ms110dDemodulator
             ReadOnlySpan<float> expectedVar =
                 symbolVar is null ? default : symbolVar.AsSpan(f * mode.U, mode.U);
 
-            // Batch-LS solve: FF-only (no feedback) for the BPSK BCJR path.
-            dfe.BeginTraining();
-            for (int j = 0; j < fb; j++)
-            {
-                past[j] = Cf.Zero;
-            }
+            // The probe preceding this frame's data supplies the known symbol history for
+            // the head rows of the shortening solve and the known echo sources for the
+            // first `delay` chain-BCJR symbols (§B2.2). Frame f's preceding probe is the
+            // one that FOLLOWED frame f−1, whose boundary flag was ((f−1)+2) % Frames == 0.
+            // (For the first frame of the first block it is really the preamble-ending
+            // probe, boundary false — which (f+1) % Frames == 0 also yields for every
+            // multi-frame interleaver.)
+            Cf[] precedingProbe = MiniProbe.Get(mode.K, boundary: (f + 1) % _il.Frames == 0);
 
+            // Batch-LS shortening solve (§B3.3 TIR): the feedback columns carry the
+            // wire-domain symbol history (probe tail before u = 0), so the joint solve can
+            // hand ISI at one lag to the chain BCJR instead of inverting it into a train.
+            dfe.BeginTraining();
             for (int u = 0; u < mode.U; u++)
             {
                 if (!HaveSamplesForChip(frameChip + u + 2))
@@ -2321,11 +2372,39 @@ public sealed class Ms110dDemodulator
                     FillWindow(frameChip + u, window);
                 }
 
-                dfe.AddTrainingRow(window, past, expected[u], weight: 1.0f);
+                for (int j = 0; j < fb; j++)
+                {
+                    int idx = u - 1 - j;
+                    past[j] = idx >= 0 ? expected[idx] : precedingProbe[mode.K + idx];
+                }
+
+                if (symbolVar is null)
+                {
+                    dfe.AddTrainingRow(window, past, expected[u], weight: 1.0f);
+                }
+                else
+                {
+                    for (int j = 0; j < fb; j++)
+                    {
+                        int idx = u - 1 - j;
+                        pastVar[j] = idx >= 0 ? expectedVar[idx] : 0f;
+                    }
+
+                    dfe.AddTrainingRow(window, past, pastVar, expected[u], weight: 1.0f);
+                }
             }
 
-            // Solve with _trackRidge for all modes.
-            dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true, ffNoisePower: GenieNoisePower());
+            // Solve with _trackRidge for all modes; the TIR acceptance margin keeps
+            // echo-free frames on the full-inversion (null) candidate exactly.
+            Dfe.TirSolve tir = dfe.SolveTrainingTir(
+                regularization: _trackRidge, ffNoisePower: GenieNoisePower(),
+                maxLag: Math.Min(fb, mode.U / 2));
+            if (tir.Lag > 0)
+            {
+                tirFrames++;
+                tirLagSum += tir.Lag;
+                tirCoeffSum += Math.Sqrt(tir.Coefficient.Cnorm());
+            }
 
             // Chain-BCJR re-equalization for every PSK mode (§B2.2/§B2.3; the FinishBlock
             // gate excludes QAM16). Channel estimation runs in the WIRE domain: the legacy
@@ -2384,48 +2463,81 @@ public sealed class Ms110dDemodulator
 
             h1Avg *= 1f / Segments;
 
-            // Echo-delay search on wire-domain residuals. The lag cap was 8 under the
-            // 2^delay trellis (issue #64's ceiling); each chain here carries M states
-            // whatever the delay, so the cap is physical, not computational: 24 symbols
-            // (10 ms) covers the D-LXV 9 ms static spread, bounded by the probe length so
-            // the pre-block echo source stays inside the known probe.
-            int maxLag = Math.Min(Math.Min(24, mode.U / 2), mode.K);
-            int delay = 1;
-            var h2Avg = Cf.Zero;
-            for (int lag = 1; lag <= maxLag; lag++)
+            int delay;
+            Cf h2Avg;
+            bool segEcho = tir.Lag > 0;
+            if (tir.Lag > 0)
             {
+                // TIR accepted: the FF was solved to LEAVE the echo at this lag, so the
+                // estimation is pinned there and the significance floor does not apply —
+                // the acceptance margin already established the echo on U rows of
+                // evidence, and the worst case would be an FF that deliberately left an
+                // echo in with a BCJR told there is none.
+                delay = tir.Lag;
                 var acc = Cf.Zero;
-                for (int u = lag; u < mode.U; u++)
+                for (int u = delay; u < mode.U; u++)
                 {
-                    acc += (estWire[u] - (h1Avg * expected[u])) * expected[u - lag].Conj();
+                    acc += (estWire[u] - (h1Avg * expected[u])) * expected[u - delay].Conj();
                 }
 
-                Cf h2 = acc * (1f / (mode.U - lag));
-                if (h2.Cnorm() > h2Avg.Cnorm())
+                h2Avg = acc * (1f / (mode.U - delay));
+
+                // Per-segment h2 on the same grid as h1 (§B2.1 applied to the echo path):
+                // under TIR the echo coefficient is a real fading path, and a
+                // frame-constant estimate misrepresents it exactly the way block-constant
+                // h1 did before per-segment anchors. Segments starting before `delay`
+                // (short U with a deep-lag echo) fall back to the frame estimate.
+                for (int s = 0; s < Segments; s++)
                 {
-                    h2Avg = h2;
-                    delay = lag;
+                    var segAcc = Cf.Zero;
+                    int start = Math.Max(delay, s * segLen);
+                    int end = Math.Min(mode.U, (s * segLen) + segLen);
+                    int count = end - start;
+                    for (int u = start; u < end; u++)
+                    {
+                        segAcc += (estWire[u] - (h1Avg * expected[u])) * expected[u - delay].Conj();
+                    }
+
+                    segH2[s] = count > 0 ? segAcc * (1f / count) : h2Avg;
                 }
             }
-
-            // Significance floor: each noise-only lag estimate has variance ≈ σ²/U, so
-            // the max over ≤24 lags sits near 2·ln24·σ²/U — at the worst gated point
-            // (WN3, U=96, ~4 dB Es/N0) that is ≈ 0.027·|h1|². Below 0.04·|h1|² the
-            // "echo" is a noise pick: run the chains echo-free (matched-filter mode).
-            if (h2Avg.Cnorm() < 0.04f * h1Avg.Cnorm())
+            else
             {
-                h2Avg = Cf.Zero;
+                // Null (full-inversion) solve: today's free echo-delay search on wire-domain
+                // residuals. The lag cap was 8 under the 2^delay trellis (issue #64's
+                // ceiling); each chain here carries M states whatever the delay, so the cap
+                // is physical, not computational: 24 symbols (10 ms) covers the D-LXV 9 ms
+                // static spread, bounded by the probe length so the pre-block echo source
+                // stays inside the known probe.
+                int maxLag = Math.Min(Math.Min(24, mode.U / 2), mode.K);
                 delay = 1;
-            }
+                h2Avg = Cf.Zero;
+                for (int lag = 1; lag <= maxLag; lag++)
+                {
+                    var acc = Cf.Zero;
+                    for (int u = lag; u < mode.U; u++)
+                    {
+                        acc += (estWire[u] - (h1Avg * expected[u])) * expected[u - lag].Conj();
+                    }
 
-            // The probe preceding this frame's data supplies the known echo sources for
-            // the first `delay` symbols (§B2.2: exact chain initialization; the legacy
-            // trellis assumed all-ones history). Frame f's preceding probe is the one
-            // that FOLLOWED frame f−1, whose boundary flag was ((f−1)+2) % Frames == 0.
-            // (For the first frame of the first block it is really the preamble-ending
-            // probe, boundary false — which (f+1) % Frames == 0 also yields for every
-            // multi-frame interleaver.)
-            Cf[] precedingProbe = MiniProbe.Get(mode.K, boundary: (f + 1) % _il.Frames == 0);
+                    Cf h2 = acc * (1f / (mode.U - lag));
+                    if (h2.Cnorm() > h2Avg.Cnorm())
+                    {
+                        h2Avg = h2;
+                        delay = lag;
+                    }
+                }
+
+                // Significance floor: each noise-only lag estimate has variance ≈ σ²/U, so
+                // the max over ≤24 lags sits near 2·ln24·σ²/U — at the worst gated point
+                // (WN3, U=96, ~4 dB Es/N0) that is ≈ 0.027·|h1|². Below 0.04·|h1|² the
+                // "echo" is a noise pick: run the chains echo-free (matched-filter mode).
+                if (h2Avg.Cnorm() < 0.04f * h1Avg.Cnorm())
+                {
+                    h2Avg = Cf.Zero;
+                    delay = 1;
+                }
+            }
 
             // Assemble the descrambled-domain model: z[u] = rxWire[u]·r̄(u) leaves h1
             // unchanged (piecewise-linear through the segment centres) and puts the
@@ -2444,14 +2556,17 @@ public sealed class Ms110dDemodulator
             for (int u = 0; u < mode.U; u++)
             {
                 int s = Math.Min(Segments - 1, u / segLen);
-                Cf h1u;
+                int ia, ib;
+                float t;
                 if (u <= segCentre[0] || Segments == 1)
                 {
-                    h1u = segH1[0];
+                    ia = ib = 0;
+                    t = 0f;
                 }
                 else if (u >= segCentre[Segments - 1])
                 {
-                    h1u = segH1[Segments - 1];
+                    ia = ib = Segments - 1;
+                    t = 0f;
                 }
                 else
                 {
@@ -2460,17 +2575,23 @@ public sealed class Ms110dDemodulator
                         s--;
                     }
 
-                    float t = (u - segCentre[s]) / (segCentre[s + 1] - segCentre[s]);
-                    h1u = (segH1[s] * (1f - t)) + (segH1[s + 1] * t);
+                    ia = s;
+                    ib = s + 1;
+                    t = (u - segCentre[s]) / (segCentre[s + 1] - segCentre[s]);
                 }
+
+                Cf h1u = ia == ib ? segH1[ia] : (segH1[ia] * (1f - t)) + (segH1[ib] * t);
+                Cf h2u = segEcho
+                    ? (ia == ib ? segH2[ia] : (segH2[ia] * (1f - t)) + (segH2[ib] * t))
+                    : h2Avg;
 
                 h1Span[u] = h1u;
                 rxDesc[u] = rxWire[u] * rotors[u].Conj();
                 Cf echoWire = u >= delay ? expected[u - delay] : preceding[u];
                 h2Span[u] = u >= delay
-                    ? h2Avg * rotors[u - delay] * rotors[u].Conj()
-                    : h2Avg * rotors[u].Conj();
-                Cf predicted = (h1u * expected[u]) + (h2Avg * echoWire);
+                    ? h2u * rotors[u - delay] * rotors[u].Conj()
+                    : h2u * rotors[u].Conj();
+                Cf predicted = (h1u * expected[u]) + (h2u * echoWire);
                 residual += (rxWire[u] - predicted).Cnorm();
                 if (symbolVar is not null)
                 {
@@ -2480,7 +2601,7 @@ public sealed class Ms110dDemodulator
                     residual += h1u.Cnorm() * expectedVar[u];
                     if (u >= delay)
                     {
-                        residual += h2Avg.Cnorm() * expectedVar[u - delay];
+                        residual += h2u.Cnorm() * expectedVar[u - delay];
                     }
                 }
             }
@@ -2489,20 +2610,62 @@ public sealed class Ms110dDemodulator
             // halve (the #65 2×-under-confidence lesson).
             float noiseVar = Math.Max(0.5f * residual / mode.U, 1e-6f);
 
-            (Cf[] constellation, byte[] labels) = mode.Modulation switch
+            int bitBase = f * mode.U * bitsPerSymbol;
+            if (logPriors is not null)
             {
-                Ms110dModulation.Bpsk => (TurboBpsk, Array.Empty<byte>()),
-                Ms110dModulation.Qpsk => (TurboQpsk, TurboQpskLabels),
-                _ => (Ms110dTables.Psk8, SymbolToTribit8),
-            };
+                int m = constellation.Length;
+                for (int u = 0; u < mode.U; u++)
+                {
+                    for (int b = 0; b < bitsPerSymbol; b++)
+                    {
+                        // log P(bit=0) = −softplus(−L), log P(bit=1) = −softplus(L)
+                        // under the positive-⇒-0 convention.
+                        float ext = wireExtLlrs![bitBase + (u * bitsPerSymbol) + b];
+                        lp0[b] = -Softplus(-ext);
+                        lp1[b] = -Softplus(ext);
+                    }
+
+                    for (int s = 0; s < m; s++)
+                    {
+                        int label = labels.Length > 0 ? labels[s] : s;
+                        float sum = 0f;
+                        for (int b = 0; b < bitsPerSymbol; b++)
+                        {
+                            sum += ((label >> (bitsPerSymbol - 1 - b)) & 1) == 0 ? lp0[b] : lp1[b];
+                        }
+
+                        logPriors[(u * m) + s] = sum;
+                    }
+                }
+            }
+
             var frameLlrs = new float[mode.U * bitsPerSymbol];
             Ms110dChainBcjr.Equalize(
                 rxDesc, h1Span, h2Span, delay, noiseVar,
-                constellation, labels, bitsPerSymbol, preceding, frameLlrs);
+                constellation, labels, bitsPerSymbol, preceding, frameLlrs,
+                logPriors is null ? default : logPriors);
+
+            // With priors in, the BCJR emits full posteriors; hand the outer code detector
+            // EXTRINSICS only (posterior − prior) — feeding its own opinion back to the
+            // SISO would double-count and lock the loop.
+            if (wireExtLlrs is not null)
+            {
+                for (int i = 0; i < frameLlrs.Length; i++)
+                {
+                    frameLlrs[i] -= wireExtLlrs[bitBase + i];
+                }
+            }
+
             for (int i = 0; i < frameLlrs.Length; i++)
             {
                 AddLlr(frameLlrs[i]);
             }
+        }
+
+        if (FrameDiagnostics is not null)
+        {
+            FrameDiagnostics.Invoke(FormattableString.Invariant(
+                $"turbo-tir b{_blockIndex}: frames={_il.Frames} tir={tirFrames} meanLag={(tirFrames > 0 ? (double)tirLagSum / tirFrames : 0):F1} mean|c|={(tirFrames > 0 ? tirCoeffSum / tirFrames : 0):F3}"));
         }
 
         // Restore DFE state and leave a clean Gram for the next frame.

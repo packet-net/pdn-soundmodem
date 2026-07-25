@@ -38,6 +38,12 @@ internal static class Ms110dChainBcjr
     /// (<c>preceding[k] = x[k − d]</c>); empty treats pre-block echo as absent.</param>
     /// <param name="llrs">Output, length rx.Length·bitsPerSymbol: bit b of symbol t at
     /// [t·bitsPerSymbol + b], positive = bit 0 (the <see cref="Ms110dBcjr"/> convention).</param>
+    /// <param name="symbolLogPriors">Optional per-symbol log-priors from the outer code's
+    /// extrinsics (§B3.3 turbo priors), log P(x[t] = constellation[s]) at [t·M + s] up to a
+    /// per-symbol constant; empty runs prior-free. Each symbol's prior enters its branch
+    /// metric exactly once (forward AND backward), so the output LLRs are full posteriors —
+    /// the caller subtracts the per-bit prior back out to hand the outer code detector
+    /// extrinsics only.</param>
     public static void Equalize(
         ReadOnlySpan<Cf> rx,
         ReadOnlySpan<Cf> h1,
@@ -48,10 +54,12 @@ internal static class Ms110dChainBcjr
         ReadOnlySpan<byte> bitLabels,
         int bitsPerSymbol,
         ReadOnlySpan<Cf> preceding,
-        Span<float> llrs)
+        Span<float> llrs,
+        ReadOnlySpan<float> symbolLogPriors = default)
     {
         int n = rx.Length;
         int m = constellation.Length;
+        bool hasPriors = symbolLogPriors.Length > 0;
         float invTwoSigma2 = 1f / (2f * noiseVar);
 
         // Scratch: α for the longest chain, one branch-metric column, one β ping-pong pair.
@@ -71,11 +79,12 @@ internal static class Ms110dChainBcjr
                 int baseCur = k * m;
                 for (int s = 0; s < m; s++)
                 {
+                    float prior = hasPriors ? symbolLogPriors[(t * m) + s] : 0f;
                     Cf main = h1[t] * constellation[s];
                     if (k == 0)
                     {
                         Cf expected = preceding.Length > 0 ? main + (h2[t] * preceding[c]) : main;
-                        alpha[baseCur + s] = -(rx[t] - expected).Cnorm() * invTwoSigma2;
+                        alpha[baseCur + s] = (-(rx[t] - expected).Cnorm() * invTwoSigma2) + prior;
                         continue;
                     }
 
@@ -88,7 +97,7 @@ internal static class Ms110dChainBcjr
                         acc = LogSumExp(acc, val);
                     }
 
-                    alpha[baseCur + s] = acc;
+                    alpha[baseCur + s] = acc + prior;
                 }
             }
 
@@ -132,7 +141,7 @@ internal static class Ms110dChainBcjr
                     break;
                 }
 
-                // β[k−1][r] = logsumexp_s(β[k][s] + γ_k(r, s)).
+                // β[k−1][r] = logsumexp_s(β[k][s] + γ_k(r, s)); γ carries symbol s's prior.
                 int next = 1 - cur;
                 for (int r = 0; r < m; r++)
                 {
@@ -141,7 +150,8 @@ internal static class Ms110dChainBcjr
                     for (int s = 0; s < m; s++)
                     {
                         Cf expected = (h1[t] * constellation[s]) + echo;
-                        float val = beta[(cur * m) + s] - ((rx[t] - expected).Cnorm() * invTwoSigma2);
+                        float val = beta[(cur * m) + s] - ((rx[t] - expected).Cnorm() * invTwoSigma2)
+                            + (hasPriors ? symbolLogPriors[(t * m) + s] : 0f);
                         acc = LogSumExp(acc, val);
                     }
 

@@ -14,7 +14,8 @@ namespace Packet.SoundModem.Ms110d;
 /// (<c>window[i] = x[2n + lead − i]</c>); the feedback window holds prior symbol decisions
 /// (<c>past[j] = d̂[n−1−j]</c>). Output y = Σ ff·window + Σ fb·past — feedback signs live in
 /// the taps. Initial taps come from a regularized least-squares solve over the known
-/// preamble tail + first probe (<see cref="BeginTraining"/>/<see cref="AddTrainingRow"/>/
+/// preamble tail + first probe (<see cref="BeginTraining"/>/
+/// <see cref="AddTrainingRow(ReadOnlySpan{Cf}, ReadOnlySpan{Cf}, Cf, float)"/>/
 /// <see cref="SolveTraining"/>); per-probe refresh uses <see cref="Nlms"/>.
 /// </remarks>
 public sealed class Dfe
@@ -28,14 +29,20 @@ public sealed class Dfe
     private readonly Cf[] _solution;
     private readonly Cf[,] _seedGram;
     private readonly Cf[] _seedColumn;
+    private readonly Cf[,] _tirGram;
+    private readonly Cf[] _tirRhs;
+    private readonly Cf[] _tirSol;
+    private readonly Cf[] _tirWin;
     private Cf[,]? _gram;
     private Cf[]? _rhs;
     private int _trainingRows;
     private float _trainingWeightSum;
+    private float _trainingTargetEnergy;
     private Cf[,]? _savedGram;
     private Cf[]? _savedRhs;
     private int _savedTrainingRows;
     private float _savedTrainingWeightSum;
+    private float _savedTrainingTargetEnergy;
 
     /// <summary>Creates a DFE with the given tap counts.</summary>
     public Dfe(int ffTaps, int fbTaps)
@@ -52,6 +59,10 @@ public sealed class Dfe
         _solution = new Cf[n];
         _seedGram = new Cf[n, n];
         _seedColumn = new Cf[n];
+        _tirGram = new Cf[n, n];
+        _tirRhs = new Cf[n];
+        _tirSol = new Cf[n];
+        _tirWin = new Cf[n];
     }
 
     /// <summary>Feed-forward (T/2) tap count.</summary>
@@ -188,6 +199,7 @@ public sealed class Dfe
         _rhs = _rhsStore;
         _trainingRows = 0;
         _trainingWeightSum = 0;
+        _trainingTargetEnergy = 0;
     }
 
     /// <summary>Saves the in-progress training accumulation (Gram/RHS/row count) so a
@@ -202,6 +214,7 @@ public sealed class Dfe
         Array.Copy(_rhsStore, _savedRhs, _rhsStore.Length);
         _savedTrainingRows = _trainingRows;
         _savedTrainingWeightSum = _trainingWeightSum;
+        _savedTrainingTargetEnergy = _trainingTargetEnergy;
     }
 
     /// <summary>Restores the accumulation saved by <see cref="SnapshotTraining"/>.</summary>
@@ -218,6 +231,7 @@ public sealed class Dfe
         _rhs = _rhsStore;
         _trainingRows = _savedTrainingRows;
         _trainingWeightSum = _savedTrainingWeightSum;
+        _trainingTargetEnergy = _savedTrainingTargetEnergy;
     }
 
     /// <summary>Adds one training row: the FF window and known past symbols observed when
@@ -257,6 +271,26 @@ public sealed class Dfe
 
         _trainingRows++;
         _trainingWeightSum += weight;
+        _trainingTargetEnergy += weight * desired.Cnorm();
+    }
+
+    /// <summary>Soft-label variant of
+    /// <see cref="AddTrainingRow(ReadOnlySpan{Cf}, ReadOnlySpan{Cf}, Cf, float)"/> for rows
+    /// whose <paramref name="past"/> entries are expectations E[x] rather than known
+    /// symbols. The EM-correct Gram needs E[x·x̄] = |E[x]|² + Var on the feedback
+    /// <b>diagonal</b> (cross terms factor under symbol independence; feed-forward columns
+    /// are received data, not latents) — <paramref name="pastVariance"/> supplies the
+    /// per-entry variance added there. Zero variances reduce bit-identically to the base
+    /// overload.</summary>
+    public void AddTrainingRow(
+        ReadOnlySpan<Cf> window, ReadOnlySpan<Cf> past, ReadOnlySpan<float> pastVariance,
+        Cf desired, float weight = 1f)
+    {
+        AddTrainingRow(window, past, desired, weight);
+        for (int j = 0; j < _fb.Length; j++)
+        {
+            _gram![_ff.Length + j, _ff.Length + j] += new Cf(weight * pastVariance[j], 0);
+        }
     }
 
     /// <summary>Solves the accumulated regularized normal equations and installs the taps.
@@ -311,14 +345,14 @@ public sealed class Dfe
             }
         }
 
-        if (!CholeskyFactor(_gram))
+        if (!CholeskyFactor(_gram, n))
         {
             _gram = null;
             _rhs = null;
             return false;
         }
 
-        CholeskySubstitute(_rhs, _solution);
+        CholeskySubstitute(_rhs, _solution, n);
         Array.Copy(_solution, 0, _ff, 0, _ff.Length);
         Array.Copy(_solution, _ff.Length, _fb, 0, _fb.Length);
         _gram = null;
@@ -326,12 +360,174 @@ public sealed class Dfe
         return true;
     }
 
-    /// <summary>Cholesky-factorizes the Hermitian positive-definite matrix into the
-    /// preallocated lower-triangle scratch; returns false if not positive-definite.
-    /// Every scratch entry is written before it is read, so no clearing between calls.</summary>
-    private bool CholeskyFactor(Cf[,] a)
+    /// <summary>Result of <see cref="SolveTrainingTir"/>. <see cref="Lag"/> = 0 means the
+    /// null (full-inversion) candidate won — feed-forward taps installed, no designed echo.
+    /// <see cref="Lag"/> &gt; 0 means the shortened solve was accepted: the post-FF response
+    /// is ≈ x[u] + <see cref="Coefficient"/>·x[u−Lag] and the echo model must carry that lag.
+    /// <see cref="SseNull"/>/<see cref="SseTir"/> are the exact (unridged) residual sums of
+    /// the two candidates for diagnostics.</summary>
+    public readonly record struct TirSolve(bool Solved, int Lag, Cf Coefficient, float SseNull, float SseTir);
+
+    /// <summary>Target-impulse-response (channel-shortening) variant of
+    /// <see cref="SolveTraining"/> for the §B3.3 turbo re-solve. Rows must have been
+    /// accumulated with the symbol history in the feedback columns (not zeros). Solves the
+    /// unit-tap-constrained shortening problem min |ff·window + b·x[u−d] − x[u]|² —
+    /// jointly linear in (ff, b) because the lag-0 target tap is pinned at 1 — for the
+    /// feed-forward-only null candidate and every single-lag candidate d ≤
+    /// <paramref name="maxLag"/>, and installs the best feed-forward taps (feedback taps
+    /// are left untouched; the turbo equalizes with zeroed feedback). A shortened candidate
+    /// is accepted only when it beats the null by 4·ln(L)·SSE₀/rows — 4× the noise-only
+    /// expectation of the best-of-L free-parameter reduction (the same construction as the
+    /// chain-BCJR 0.04·|h1|² echo floor), so echo-free frames keep today's full-inversion
+    /// solve exactly. Ridge and anchor-to-current-taps semantics mirror
+    /// <see cref="SolveTraining"/> with λ scaled by subset trace/size; the accumulation is
+    /// consumed either way.</summary>
+    public TirSolve SolveTrainingTir(float regularization, float ffNoisePower, int maxLag)
     {
-        int n = _cholY.Length;
+        if (_gram is null || _rhs is null || _trainingRows == 0)
+        {
+            _gram = null;
+            _rhs = null;
+            return new TirSolve(false, 0, Cf.Zero, 0f, 0f);
+        }
+
+        int f = _ff.Length;
+        maxLag = Math.Min(maxLag, _fb.Length);
+        float sseNull = SolveSubset(-1, regularization, ffNoisePower, _tirSol);
+        if (float.IsNaN(sseNull))
+        {
+            _gram = null;
+            _rhs = null;
+            return new TirSolve(false, 0, Cf.Zero, 0f, 0f);
+        }
+
+        Array.Copy(_tirSol, _tirWin, f);
+        int bestLag = 0;
+        var bestB = Cf.Zero;
+        float bestSse = float.MaxValue;
+        for (int lag = 1; lag <= maxLag; lag++)
+        {
+            float sse = SolveSubset(lag - 1, regularization, ffNoisePower, _tirSol);
+            if (!float.IsNaN(sse) && sse < bestSse)
+            {
+                bestSse = sse;
+                bestLag = lag;
+                bestB = _tirSol[f];
+                Array.Copy(_tirSol, _tirWin, f);
+            }
+        }
+
+        float threshold = 4f * MathF.Log(Math.Max(2, maxLag)) * sseNull / _trainingRows;
+        bool accept = bestLag > 0 && bestSse < sseNull - threshold;
+        if (!accept)
+        {
+            // Reinstate the null solution (the winner loop overwrote _tirWin).
+            sseNull = SolveSubset(-1, regularization, ffNoisePower, _tirWin);
+            bestLag = 0;
+            bestB = Cf.Zero;
+            bestSse = sseNull;
+        }
+
+        Array.Copy(_tirWin, 0, _ff, 0, f);
+        _gram = null;
+        _rhs = null;
+
+        // The LS coefficient b sits on the SUBTRACTED side of the target
+        // (ff·window ≈ x[u] − b·x[u−d]), so the post-FF echo coefficient is −b.
+        return new TirSolve(true, bestLag, new Cf(-bestB.Re, -bestB.Im), sseNull, bestSse);
+    }
+
+    /// <summary>Solves the regularized subset system {feed-forward taps} ∪ {feedback column
+    /// <paramref name="fbIndex"/>} (−1 for feed-forward only) from the live training
+    /// accumulation without consuming it, leaving the solution in <paramref name="sol"/>.
+    /// Returns the exact unridged residual sum Σw·|desired − sol·row|² (targetEnergy −
+    /// 2Re(solᴴr) + solᴴG₀sol, with the ridge/anchor and genie noise-diagonal terms backed
+    /// out), or NaN if the subset was degenerate.</summary>
+    private float SolveSubset(int fbIndex, float regularization, float ffNoisePower, Cf[] sol)
+    {
+        int f = _ff.Length;
+        int m = fbIndex >= 0 ? f + 1 : f;
+        Cf[,] gram = _gram!;
+        Cf[] rhs = _rhs!;
+
+        // Subset copy (index map preserves order, so only the stored upper triangle of the
+        // accumulation is read; the lower triangle is filled by conjugation here).
+        for (int i = 0; i < m; i++)
+        {
+            int gi = i < f ? i : f + fbIndex;
+            for (int j = i; j < m; j++)
+            {
+                int gj = j < f ? j : f + fbIndex;
+                Cf v = gram[gi, gj];
+                _tirGram[i, j] = v;
+                if (j != i)
+                {
+                    _tirGram[j, i] = v.Conj();
+                }
+            }
+        }
+
+        float noiseDiag = ffNoisePower > 0 ? ffNoisePower * _trainingWeightSum : 0f;
+        if (noiseDiag > 0)
+        {
+            for (int i = 0; i < f; i++)
+            {
+                _tirGram[i, i] += new Cf(noiseDiag, 0);
+            }
+        }
+
+        double trace = 0;
+        for (int i = 0; i < m; i++)
+        {
+            trace += _tirGram[i, i].Re;
+        }
+
+        float lambda = (float)(regularization * trace / m) + 1e-9f;
+        for (int k = 0; k < m; k++)
+        {
+            _tirGram[k, k] += new Cf(lambda, 0);
+            Cf anchor = k < f ? _ff[k] : _fb[fbIndex];
+            _tirRhs[k] = rhs[k < f ? k : f + fbIndex] + (anchor * lambda);
+        }
+
+        if (!CholeskyFactor(_tirGram, m))
+        {
+            return float.NaN;
+        }
+
+        CholeskySubstitute(_tirRhs, sol, m);
+
+        // Exact data residual of this solution: back the ridge and noise-diagonal terms
+        // out of the quadratic form so candidates compare on what the rows actually say.
+        double lin = 0, quad = 0, nrm = 0, nrmFf = 0;
+        for (int i = 0; i < m; i++)
+        {
+            int gi = i < f ? i : f + fbIndex;
+            lin += (sol[i].Conj() * rhs[gi]).Re;
+            var acc = Cf.Zero;
+            for (int j = 0; j < m; j++)
+            {
+                acc += _tirGram[i, j] * sol[j];
+            }
+
+            quad += (sol[i].Conj() * acc).Re;
+            nrm += sol[i].Cnorm();
+            if (i < f)
+            {
+                nrmFf += sol[i].Cnorm();
+            }
+        }
+
+        double sse = _trainingTargetEnergy + quad - (2 * lin) - (lambda * nrm) - (noiseDiag * nrmFf);
+        return (float)Math.Max(0, sse);
+    }
+
+    /// <summary>Cholesky-factorizes the leading <paramref name="n"/>×<paramref name="n"/>
+    /// block of the Hermitian positive-definite matrix into the preallocated lower-triangle
+    /// scratch; returns false if not positive-definite. Every scratch entry is written
+    /// before it is read, so no clearing between calls.</summary>
+    private bool CholeskyFactor(Cf[,] a, int n)
+    {
         Cf[,] l = _cholL;
         for (int i = 0; i < n; i++)
         {
@@ -363,11 +559,11 @@ public sealed class Dfe
         return true;
     }
 
-    /// <summary>Solves L·Lᴴ·x = b against the factor left by <see cref="CholeskyFactor"/>:
-    /// forward substitution L y = b, then backward Lᴴ x = y.</summary>
-    private void CholeskySubstitute(Cf[] b, Cf[] x)
+    /// <summary>Solves L·Lᴴ·x = b (size <paramref name="n"/>) against the factor left by
+    /// <see cref="CholeskyFactor"/>: forward substitution L y = b, then backward
+    /// Lᴴ x = y.</summary>
+    private void CholeskySubstitute(Cf[] b, Cf[] x, int n)
     {
-        int n = b.Length;
         Cf[,] l = _cholL;
         Cf[] y = _cholY;
         for (int i = 0; i < n; i++)
@@ -455,7 +651,7 @@ public sealed class Dfe
         // Invert by solving each identity column against a single factorization — the
         // factor depends only on the matrix, so reusing it across columns is bit-identical
         // to refactorizing per column.
-        bool ok = CholeskyFactor(gram);
+        bool ok = CholeskyFactor(gram, n);
         if (ok)
         {
             Cf[] e = _seedColumn;
@@ -463,7 +659,7 @@ public sealed class Dfe
             for (int col = 0; col < n; col++)
             {
                 e[col] = new Cf(1, 0);
-                CholeskySubstitute(e, _solution);
+                CholeskySubstitute(e, _solution, n);
                 for (int row = 0; row < n; row++)
                 {
                     _p[row, col] = _solution[row];

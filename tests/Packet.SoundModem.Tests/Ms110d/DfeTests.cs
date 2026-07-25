@@ -160,4 +160,171 @@ public class DfeTests
 
         error.Should().BeLessThan(1e-3f, "noiseless RLS must converge to the exact solution");
     }
+
+    // ------------------------------------------------------------ §B3.3 TIR shortening solve
+
+    private static Cf[] RandomPsk8(int count, int seed)
+    {
+        var random = new Random(seed);
+        var symbols = new Cf[count];
+        for (int i = 0; i < count; i++)
+        {
+            double phi = random.Next(8) * Math.PI / 4;
+            symbols[i] = new Cf((float)Math.Cos(phi), (float)Math.Sin(phi));
+        }
+
+        return symbols;
+    }
+
+    private static Cf Gauss(Random random, float sigma)
+    {
+        double u1 = 1.0 - random.NextDouble();
+        double u2 = random.NextDouble();
+        double r = Math.Sqrt(-2.0 * Math.Log(u1)) * sigma;
+        return new Cf(
+            (float)(r * Math.Cos(2 * Math.PI * u2)),
+            (float)(r * Math.Sin(2 * Math.PI * u2)));
+    }
+
+    /// <summary>Accumulates rows for a symbol-spaced channel y[u] = x[u] + g·x[u−5] + n
+    /// through a 4-tap window — the lag-5 inverse is IIR (taps at 5, 10, …), so full
+    /// inversion is infeasible by construction and the shortened target 1 + c·z⁻⁵ is
+    /// exact.</summary>
+    private static void AccumulateEchoRows(Dfe dfe, float echoGain, float sigma, int noiseSeed)
+    {
+        const int N = 400;
+        Cf[] x = RandomPsk8(N, seed: 42);
+        var noise = new Random(noiseSeed);
+        var y = new Cf[N];
+        for (int u = 0; u < N; u++)
+        {
+            Cf echo = u >= 5 ? x[u - 5] * echoGain : Cf.Zero;
+            y[u] = x[u] + echo + Gauss(noise, sigma);
+        }
+
+        dfe.BeginTraining();
+        Span<Cf> window = stackalloc Cf[dfe.FfTaps];
+        Span<Cf> past = stackalloc Cf[dfe.FbTaps];
+        for (int u = 16; u < N; u++)
+        {
+            for (int i = 0; i < window.Length; i++)
+            {
+                window[i] = y[u - i];
+            }
+
+            for (int j = 0; j < past.Length; j++)
+            {
+                past[j] = x[u - 1 - j];
+            }
+
+            dfe.AddTrainingRow(window, past, x[u]);
+        }
+    }
+
+    [Fact]
+    public void Tir_Solve_Finds_The_Uninvertible_Echo_And_Leaves_It_At_Its_Lag()
+    {
+        var dfe = new Dfe(ffTaps: 4, fbTaps: 8);
+        AccumulateEchoRows(dfe, echoGain: 0.8f, sigma: 0.05f, noiseSeed: 43);
+        Dfe.TirSolve tir = dfe.SolveTrainingTir(regularization: 1e-3f, ffNoisePower: 0f, maxLag: 8);
+
+        tir.Solved.Should().BeTrue();
+        tir.Lag.Should().Be(5, "the designed echo lag must win the candidate search");
+        Math.Sqrt(tir.Coefficient.Cnorm()).Should().BeApproximately(0.8, 0.05,
+            "the post-FF echo coefficient is the channel's echo gain");
+        tir.SseTir.Should().BeLessThan(0.2f * tir.SseNull,
+            "shortening must beat the truncated-IIR inversion decisively");
+    }
+
+    [Fact]
+    public void Tir_Solve_Rejects_The_Free_Parameter_On_An_Echo_Free_Channel()
+    {
+        // Every lag candidate's SSE gain is noise-fit only; the 4·ln(L)·SSE₀/rows margin
+        // must keep the null (full-inversion) solve — no fake designed echo.
+        var dfe = new Dfe(ffTaps: 4, fbTaps: 8);
+        AccumulateEchoRows(dfe, echoGain: 0f, sigma: 0.2f, noiseSeed: 44);
+        Dfe.TirSolve tir = dfe.SolveTrainingTir(regularization: 1e-3f, ffNoisePower: 0f, maxLag: 8);
+
+        tir.Solved.Should().BeTrue();
+        tir.Lag.Should().Be(0);
+        tir.Coefficient.Abs().Should().Be(0f);
+    }
+
+    [Fact]
+    public void Tir_Null_Candidate_Matches_The_Plain_Training_Solve()
+    {
+        // With no feedback columns the TIR method degenerates to the FF-only system that
+        // SolveTraining solves — same Gram, same ridge scale, same Cholesky.
+        var plain = new Dfe(ffTaps: 4, fbTaps: 0);
+        var tir = new Dfe(ffTaps: 4, fbTaps: 0);
+        AccumulateEchoRows(plain, echoGain: 0.5f, sigma: 0.1f, noiseSeed: 45);
+        AccumulateEchoRows(tir, echoGain: 0.5f, sigma: 0.1f, noiseSeed: 45);
+
+        plain.SolveTraining(regularization: 1e-3f, anchorToCurrentTaps: true).Should().BeTrue();
+        Dfe.TirSolve result = tir.SolveTrainingTir(regularization: 1e-3f, ffNoisePower: 0f, maxLag: 0);
+
+        result.Solved.Should().BeTrue();
+        result.Lag.Should().Be(0);
+        Cf[] expected = plain.SnapshotTaps();
+        Cf[] actual = tir.SnapshotTaps();
+        for (int i = 0; i < expected.Length; i++)
+        {
+            (expected[i] - actual[i]).Abs().Should().BeLessThan(1e-6f, $"tap {i}");
+        }
+    }
+
+    [Fact]
+    public void Soft_Variance_Rows_Reduce_To_Hard_Rows_At_Zero_And_Shrink_The_Echo_Above_It()
+    {
+        // The EM diagonal: zero past-variance must be bit-equivalent to the hard overload;
+        // real variance grows the echo column's Gram diagonal, shrinking the coefficient
+        // toward the prior exactly as an uncertain regressor should.
+        var hard = new Dfe(ffTaps: 4, fbTaps: 8);
+        var zero = new Dfe(ffTaps: 4, fbTaps: 8);
+        var soft = new Dfe(ffTaps: 4, fbTaps: 8);
+        AccumulateEchoRows(hard, echoGain: 0.8f, sigma: 0.05f, noiseSeed: 46);
+
+        const int N = 400;
+        Cf[] x = RandomPsk8(N, seed: 42);
+        var noiseZ = new Random(46);
+        var y = new Cf[N];
+        for (int u = 0; u < N; u++)
+        {
+            Cf echo = u >= 5 ? x[u - 5] * 0.8f : Cf.Zero;
+            y[u] = x[u] + echo + Gauss(noiseZ, 0.05f);
+        }
+
+        zero.BeginTraining();
+        soft.BeginTraining();
+        Span<Cf> window = stackalloc Cf[4];
+        Span<Cf> past = stackalloc Cf[8];
+        Span<float> noVar = stackalloc float[8];
+        Span<float> bigVar = stackalloc float[8];
+        bigVar.Fill(0.5f);
+        for (int u = 16; u < N; u++)
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                window[i] = y[u - i];
+            }
+
+            for (int j = 0; j < 8; j++)
+            {
+                past[j] = x[u - 1 - j];
+            }
+
+            zero.AddTrainingRow(window, past, noVar, x[u]);
+            soft.AddTrainingRow(window, past, bigVar, x[u]);
+        }
+
+        Dfe.TirSolve hardResult = hard.SolveTrainingTir(1e-3f, 0f, maxLag: 8);
+        Dfe.TirSolve zeroResult = zero.SolveTrainingTir(1e-3f, 0f, maxLag: 8);
+        Dfe.TirSolve softResult = soft.SolveTrainingTir(1e-3f, 0f, maxLag: 8);
+
+        zeroResult.Lag.Should().Be(hardResult.Lag);
+        (zeroResult.Coefficient - hardResult.Coefficient).Abs().Should().BeLessThan(1e-6f);
+        softResult.Lag.Should().Be(5, "a real echo must survive honest regressor uncertainty");
+        softResult.Coefficient.Abs().Should().BeLessThan(hardResult.Coefficient.Abs(),
+            "variance on the echo column must shrink the coefficient");
+    }
 }
