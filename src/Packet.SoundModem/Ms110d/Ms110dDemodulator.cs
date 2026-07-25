@@ -2279,6 +2279,7 @@ public sealed class Ms110dDemodulator
         int fb = dfe.FbTaps;
         Span<Cf> window = stackalloc Cf[dfe.FfTaps];
         Span<Cf> past = stackalloc Cf[fb];
+        Span<float> pastVar = stackalloc float[fb];
         bool genie = _genieRing is not null;
         Span<Cf> estWindow = stackalloc Cf[dfe.FfTaps];
         const int Segments = 4;
@@ -2286,6 +2287,9 @@ public sealed class Ms110dDemodulator
         Span<float> segCentre = stackalloc float[Segments];
         int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
         _blockLlrCount = 0;
+        int tirFrames = 0;
+        long tirLagSum = 0;
+        double tirCoeffSum = 0;
 
         for (int f = 0; f < _il!.Frames; f++)
         {
@@ -2294,13 +2298,19 @@ public sealed class Ms110dDemodulator
             ReadOnlySpan<float> expectedVar =
                 symbolVar is null ? default : symbolVar.AsSpan(f * mode.U, mode.U);
 
-            // Batch-LS solve: FF-only (no feedback) for the BPSK BCJR path.
-            dfe.BeginTraining();
-            for (int j = 0; j < fb; j++)
-            {
-                past[j] = Cf.Zero;
-            }
+            // The probe preceding this frame's data supplies the known symbol history for
+            // the head rows of the shortening solve and the known echo sources for the
+            // first `delay` chain-BCJR symbols (§B2.2). Frame f's preceding probe is the
+            // one that FOLLOWED frame f−1, whose boundary flag was ((f−1)+2) % Frames == 0.
+            // (For the first frame of the first block it is really the preamble-ending
+            // probe, boundary false — which (f+1) % Frames == 0 also yields for every
+            // multi-frame interleaver.)
+            Cf[] precedingProbe = MiniProbe.Get(mode.K, boundary: (f + 1) % _il.Frames == 0);
 
+            // Batch-LS shortening solve (§B3.3 TIR): the feedback columns carry the
+            // wire-domain symbol history (probe tail before u = 0), so the joint solve can
+            // hand ISI at one lag to the chain BCJR instead of inverting it into a train.
+            dfe.BeginTraining();
             for (int u = 0; u < mode.U; u++)
             {
                 if (!HaveSamplesForChip(frameChip + u + 2))
@@ -2321,11 +2331,39 @@ public sealed class Ms110dDemodulator
                     FillWindow(frameChip + u, window);
                 }
 
-                dfe.AddTrainingRow(window, past, expected[u], weight: 1.0f);
+                for (int j = 0; j < fb; j++)
+                {
+                    int idx = u - 1 - j;
+                    past[j] = idx >= 0 ? expected[idx] : precedingProbe[mode.K + idx];
+                }
+
+                if (symbolVar is null)
+                {
+                    dfe.AddTrainingRow(window, past, expected[u], weight: 1.0f);
+                }
+                else
+                {
+                    for (int j = 0; j < fb; j++)
+                    {
+                        int idx = u - 1 - j;
+                        pastVar[j] = idx >= 0 ? expectedVar[idx] : 0f;
+                    }
+
+                    dfe.AddTrainingRow(window, past, pastVar, expected[u], weight: 1.0f);
+                }
             }
 
-            // Solve with _trackRidge for all modes.
-            dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true, ffNoisePower: GenieNoisePower());
+            // Solve with _trackRidge for all modes; the TIR acceptance margin keeps
+            // echo-free frames on the full-inversion (null) candidate exactly.
+            Dfe.TirSolve tir = dfe.SolveTrainingTir(
+                regularization: _trackRidge, ffNoisePower: GenieNoisePower(),
+                maxLag: Math.Min(fb, mode.U / 2));
+            if (tir.Lag > 0)
+            {
+                tirFrames++;
+                tirLagSum += tir.Lag;
+                tirCoeffSum += Math.Sqrt(tir.Coefficient.Cnorm());
+            }
 
             // Chain-BCJR re-equalization for every PSK mode (§B2.2/§B2.3; the FinishBlock
             // gate excludes QAM16). Channel estimation runs in the WIRE domain: the legacy
@@ -2384,48 +2422,61 @@ public sealed class Ms110dDemodulator
 
             h1Avg *= 1f / Segments;
 
-            // Echo-delay search on wire-domain residuals. The lag cap was 8 under the
-            // 2^delay trellis (issue #64's ceiling); each chain here carries M states
-            // whatever the delay, so the cap is physical, not computational: 24 symbols
-            // (10 ms) covers the D-LXV 9 ms static spread, bounded by the probe length so
-            // the pre-block echo source stays inside the known probe.
-            int maxLag = Math.Min(Math.Min(24, mode.U / 2), mode.K);
-            int delay = 1;
-            var h2Avg = Cf.Zero;
-            for (int lag = 1; lag <= maxLag; lag++)
+            int delay;
+            Cf h2Avg;
+            if (tir.Lag > 0)
             {
+                // TIR accepted: the FF was solved to LEAVE the echo at this lag, so the
+                // estimation is pinned there and the significance floor does not apply —
+                // the acceptance margin already established the echo on U rows of
+                // evidence, and the worst case would be an FF that deliberately left an
+                // echo in with a BCJR told there is none.
+                delay = tir.Lag;
                 var acc = Cf.Zero;
-                for (int u = lag; u < mode.U; u++)
+                for (int u = delay; u < mode.U; u++)
                 {
-                    acc += (estWire[u] - (h1Avg * expected[u])) * expected[u - lag].Conj();
+                    acc += (estWire[u] - (h1Avg * expected[u])) * expected[u - delay].Conj();
                 }
 
-                Cf h2 = acc * (1f / (mode.U - lag));
-                if (h2.Cnorm() > h2Avg.Cnorm())
-                {
-                    h2Avg = h2;
-                    delay = lag;
-                }
+                h2Avg = acc * (1f / (mode.U - delay));
             }
-
-            // Significance floor: each noise-only lag estimate has variance ≈ σ²/U, so
-            // the max over ≤24 lags sits near 2·ln24·σ²/U — at the worst gated point
-            // (WN3, U=96, ~4 dB Es/N0) that is ≈ 0.027·|h1|². Below 0.04·|h1|² the
-            // "echo" is a noise pick: run the chains echo-free (matched-filter mode).
-            if (h2Avg.Cnorm() < 0.04f * h1Avg.Cnorm())
+            else
             {
-                h2Avg = Cf.Zero;
+                // Null (full-inversion) solve: today's free echo-delay search on wire-domain
+                // residuals. The lag cap was 8 under the 2^delay trellis (issue #64's
+                // ceiling); each chain here carries M states whatever the delay, so the cap
+                // is physical, not computational: 24 symbols (10 ms) covers the D-LXV 9 ms
+                // static spread, bounded by the probe length so the pre-block echo source
+                // stays inside the known probe.
+                int maxLag = Math.Min(Math.Min(24, mode.U / 2), mode.K);
                 delay = 1;
-            }
+                h2Avg = Cf.Zero;
+                for (int lag = 1; lag <= maxLag; lag++)
+                {
+                    var acc = Cf.Zero;
+                    for (int u = lag; u < mode.U; u++)
+                    {
+                        acc += (estWire[u] - (h1Avg * expected[u])) * expected[u - lag].Conj();
+                    }
 
-            // The probe preceding this frame's data supplies the known echo sources for
-            // the first `delay` symbols (§B2.2: exact chain initialization; the legacy
-            // trellis assumed all-ones history). Frame f's preceding probe is the one
-            // that FOLLOWED frame f−1, whose boundary flag was ((f−1)+2) % Frames == 0.
-            // (For the first frame of the first block it is really the preamble-ending
-            // probe, boundary false — which (f+1) % Frames == 0 also yields for every
-            // multi-frame interleaver.)
-            Cf[] precedingProbe = MiniProbe.Get(mode.K, boundary: (f + 1) % _il.Frames == 0);
+                    Cf h2 = acc * (1f / (mode.U - lag));
+                    if (h2.Cnorm() > h2Avg.Cnorm())
+                    {
+                        h2Avg = h2;
+                        delay = lag;
+                    }
+                }
+
+                // Significance floor: each noise-only lag estimate has variance ≈ σ²/U, so
+                // the max over ≤24 lags sits near 2·ln24·σ²/U — at the worst gated point
+                // (WN3, U=96, ~4 dB Es/N0) that is ≈ 0.027·|h1|². Below 0.04·|h1|² the
+                // "echo" is a noise pick: run the chains echo-free (matched-filter mode).
+                if (h2Avg.Cnorm() < 0.04f * h1Avg.Cnorm())
+                {
+                    h2Avg = Cf.Zero;
+                    delay = 1;
+                }
+            }
 
             // Assemble the descrambled-domain model: z[u] = rxWire[u]·r̄(u) leaves h1
             // unchanged (piecewise-linear through the segment centres) and puts the
@@ -2503,6 +2554,12 @@ public sealed class Ms110dDemodulator
             {
                 AddLlr(frameLlrs[i]);
             }
+        }
+
+        if (FrameDiagnostics is not null)
+        {
+            FrameDiagnostics.Invoke(FormattableString.Invariant(
+                $"turbo-tir b{_blockIndex}: frames={_il.Frames} tir={tirFrames} meanLag={(tirFrames > 0 ? (double)tirLagSum / tirFrames : 0):F1} mean|c|={(tirFrames > 0 ? tirCoeffSum / tirFrames : 0):F3}"));
         }
 
         // Restore DFE state and leave a clean Gram for the next frame.
