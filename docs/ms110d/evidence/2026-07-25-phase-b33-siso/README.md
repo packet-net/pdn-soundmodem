@@ -17,7 +17,7 @@ The WN13 fade-cluster specimen — the class B3.2 measured as probe-information-
 - **`TailBitingSisoDecoder`** (`src/.../Fec/`): log-MAP BCJR on the mother lattice, same trellis convention as the package Viterbi (branch register v: prev state v≫1, next v&(M−1), outputs parity(v&Poly)); tail-biting by circular wrap-extension W = min(6K, N); max* via a 128-entry log(1+e^−d) table. Returns posterior LLRs for all 2N coded positions — punctured positions (input 0) get the code's own opinion.
 - **Soft expectations**: posteriors → re-puncture (float `Ms110dPuncture.Apply`) → re-interleave (float `Ms110dInterleaver.Interleave`) → per-symbol P(label) products → E[x] over the descrambled constellation, rotated by the scrambler (`Psk8[(s+r)&7] = Psk8[s]·Psk8[r]`). Per-symbol variance 1−|E[x]|².
 - **`TurboCore`** (split out of `TurboReequalize`): the whole §B2.3 machinery — per-frame FF batch-LS, 4-segment h1, scrambler-exact echo, chain BCJR — now takes (expected[], variance[]?). Every estimation consumer keeps its exact form because E[|x|²]=1 on the PSK ring makes the /count normalizations the EM answer for soft labels too; the only new arithmetic is the EM noise term |h|²·(1−|E[x]|²) added to the residual, skipped entirely when variance is null. **The hard path is bit-identical**: the banked first-pass and oracle llrstats reproduce byte-for-byte, and the oracle per-block lines match digit-for-digit (WN7 b0:73…b10:3072; WN13 all-0; WN6 5/49/14/7).
-- **Hybrid bootstrap, cap 8**: iteration 0 trains on hard re-encoded labels, iterations 1+ on SISO soft labels. Convergence rule unchanged (exact decode fixed point, else revert — the #65 discipline).
+- **Hybrid bootstrap, cap 24**: iteration 0 trains on hard re-encoded labels, iterations 1+ on SISO soft labels. Convergence rule unchanged (exact decode fixed point, else revert — the #65 discipline). The cap was measured, not guessed — see `cap/`.
 
 ## The pure-soft negative result (`pure-soft/`) — why the hybrid
 
@@ -25,9 +25,14 @@ v1 ran soft labels from iteration 0 with the old cap 5. It was a regression ever
 
 The hybrid removes both problems at once: the hard iteration 0 is the bootstrap the old turbo already proved on every passing waveform, and it hands iteration 1 properly-scaled chain-BCJR LLRs. Once sharp, E[x] saturates, the labels effectively quantize, and exact fixed points return: in `hybrid/*-trajectory.log` **every** WN6/WN13 block ends at decode-changes=0 (healthy blocks in 2–4 iterations; the WN13 dead block contracts 7656 → 3931 → 3350 → 1132 → 61 → 6 → 0 in 7).
 
+## The iteration cap (`cap/`) — 8 → 24, measured on the WN6 dead-mass burst
+
+The first WN6 mask run (cap 8) put 33k of its 34.7k errors in two bursts whose dead blocks reverted. Corpsing w2/b2 (21,566 errors, 9c/2r at cap 8) showed both reverted blocks still alive when the cap hit: b0 was halving its decode-changes (…88 → 52 → 39), and b3 sat on what looked like a plateau (…1490 → 1543). At cap 16 **both converge**: b0 at iteration 9, and b3 rides out a mid-loop excursion (1543 → 2132 → 2428 → 1999 → 988 → 179 → 9 → **0**) to converge at 15 — the burst drops 21,566 → **633** (11c/0r). b3 using 15 of 16 says margin one is not margin; the shipped cap is 24 (blocks that converge earlier take bit-identical paths; only never-converging blocks pay extra wall-clock before the same revert). The costs are asymmetric — a cap-limited revert throws away a ~10k-error repair, a spare iteration costs a second or two on a rare dead block.
+
 ## Files
 
-- `hybrid/` — the three corpses on the shipped configuration: summaries (headline numbers + unchanged oracle lines), llrstats (first/oracle passes — the bit-identity witnesses), per-iteration trajectories.
+- `hybrid/` — the three corpses on the cap-8 hybrid configuration: summaries (headline numbers + unchanged oracle lines), llrstats (first/oracle passes — the bit-identity witnesses), per-iteration trajectories.
+- `cap/` — the w2/b2 cap-8 vs cap-16 pair that set the shipped cap.
 - `pure-soft/` — v1 summaries (the regression) + the WN6 cold-start trajectory that diagnosed it.
 
 ## Residue

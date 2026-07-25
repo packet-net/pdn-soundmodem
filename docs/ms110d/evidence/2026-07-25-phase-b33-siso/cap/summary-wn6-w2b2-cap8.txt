@@ -1,0 +1,2 @@
+WN6 @ 14 dB baseSeed 506 worker 2 burst 2 (channelSeed 2002507) genie=False
+payload 270304 bits in 11 blocks (16384 symbols/block), decoded 270336, coded errors 21566 (first 43, last 245327), uncoded 34389/360448, collapses 16, turbo 9c/2r/0a/0s, end=Eom, 180224 symbols dumped, lock=//K@Hz (tx K7)

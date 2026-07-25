@@ -1979,14 +1979,22 @@ public sealed class Ms110dDemodulator
             var prevInfo = new byte[info.Length];
             bool converged = false;
             bool aborted = false;
-            for (int iter = 0; iter < 8; iter++)
+            for (int iter = 0; iter < 24; iter++)
             {
                 // Hybrid bootstrap (§B3.3): iteration 0 trains on hard re-encoded labels —
                 // the first-pass LLR stream's fixed max-log scale is far too timid at high
                 // SNR (measured WN6 corpse: mean |LLR| 1.6 where the calibrated chain-BCJR
                 // output runs 12+), so a soft start spends three iterations rediscovering
                 // confidence. The hard pass hands iteration 1 properly-scaled LLRs, and
-                // the SISO soft iterations take over from there.
+                // the SISO soft iterations take over from there. The cap is generous
+                // because the costs are asymmetric: a cap-limited revert throws away ~10k
+                // repaired errors per block, extra iterations only cost wall-clock on the
+                // rare non-converging blocks. Measured on the WN6 w2/b2 corpse: one dead
+                // block reverted at cap 8 while still halving its decode-changes and
+                // converged at 9; the other rode out a mid-loop excursion (1490 → 2428 →
+                // 988 → 179 → 9 → 0) and converged at 15 — so the cap carries headroom
+                // over the worst measured path. Healthy blocks still exit on the first
+                // fixed point, almost always iteration 0 or 1.
                 if (iter == 0)
                 {
                     TurboReequalize(info);
