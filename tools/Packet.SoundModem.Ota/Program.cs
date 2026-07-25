@@ -34,6 +34,7 @@ try
         "measure" => Commands.Measure(args[1..]),
         "score" => ScoreCommand.Run(args[1..]),
         "ladder" => await LadderCommand.RunAsync(args[1..]),
+        "monitor" => await MonitorCommand.RunAsync(args[1..]),
         "-h" or "--help" or "help" => Usage(),
         _ => Unknown(args[0]),
     };
@@ -73,6 +74,8 @@ static int Usage()
                         WID, CFO, SNR, coded and uncoded BER, and what was MISSED.
         sm-ota ladder   §E2: inject the mask suite's own channel at the transmitter and run an
                         SNR ladder through real hardware. --dry-run rehearses it with no radio.
+        sm-ota monitor  watch a receiver live — capture, convert, demodulate, print each burst
+                        as it lands. Receive-only; nothing here transmits.
 
         Run any command with --help for its options.
         """);

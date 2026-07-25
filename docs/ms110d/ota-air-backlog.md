@@ -24,6 +24,8 @@ Status: `todo` · `blocked` (waiting on someone/something else) · `done` (moved
 | A12 | §E3 — IQ vs SSB A/B through DIGU | radio, 20 min | measuring what the TX SSB filter costs | todo |
 | A13 | §I1 receiver AGC/clipping audit, formally | receiver, no transmit | trusting levels at high power | todo |
 
+**Everything offline is now built.** Nothing on this list is waiting on software: `sm-ota ladder`, `score`, `monitor`, the schedule/manifest and the streaming converter are all done and rehearsed. The next thing that moves the campaign forward is a radio.
+
 ---
 
 ## A1 — Re-measure `--dial-correction`

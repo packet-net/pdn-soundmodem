@@ -8,8 +8,21 @@ using System.Text.Json.Nodes;
 namespace Packet.SoundModem.UberSdr;
 
 /// <summary>Options for one capture session (one WAV file).</summary>
+/// <summary>Receives each block of capture PCM as it arrives, for live processing.</summary>
+/// <param name="littleEndianStereoPcm">Interleaved int16 I/Q, exactly as written to the WAV.</param>
+public delegate void IqBlockHandler(ReadOnlySpan<byte> littleEndianStereoPcm);
+
 public sealed class UberSdrCaptureOptions
 {
+    /// <summary>
+    /// Called with every block as it is recorded, after the startup guard and after any trim to
+    /// the target duration — so what the handler sees is exactly what the WAV holds.
+    /// </summary>
+    /// <remarks>This is what lets a pass be watched live instead of only scored afterwards. It
+    /// runs on the receive loop, so it must not block: anything slower than real time will stall
+    /// the socket and the capture will fall behind.</remarks>
+    public IqBlockHandler? OnBlock { get; init; }
+
     public required string Host { get; init; }
     public int Port { get; init; } = 443;
     public bool Ssl { get; init; } = true;
@@ -193,6 +206,7 @@ public sealed class UberSdrIqClient
                     pcm = pcm[..(int)(remainingFrames * 4)]; // trim the final packet to hit the target exactly
                 }
                 wav.Write(pcm);
+                opt.OnBlock?.Invoke(pcm);
 
                 if (wav.FramesWritten >= targetFrames)
                 {

@@ -31,7 +31,7 @@ dotnet test tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj -c Rele
 | §E2 hardware-in-the-loop | **built and rehearsed offline** — needs the radio |
 | §E3 IQ vs SSB A/B, §E4 on air | not started |
 
-`sm-ota` subcommands: `tone`, `sweep`, `tune`, `burst`, `synth`, `meters`, `measure` (`--survey`, `--purity`), `radio`, `rawmeters`, `score`, `ladder`.
+`sm-ota` subcommands: `tone`, `sweep`, `tune`, `burst`, `synth`, `meters`, `measure` (`--survey`, `--purity`), `radio`, `rawmeters`, `score`, `ladder`, `monitor`.
 
 ## Environment — constants and quirks
 
@@ -89,7 +89,7 @@ Still owed: the schedule is homogeneous on the command line (one WN, seeds incre
 
 **An observation for whoever owns the demodulator, recorded not acted on:** on a *noiseless* channel WN2's first-pass output has 3 wrong hard decisions in 768, at wire positions 24/40/46, with |LLR| 0.032/0.061/0.414 against a block median of 1.507 — the three least-confident decisions in the block. WN0, WN6 and WN13 are exactly 0, and a 20-super-frame preamble changes nothing, so it is not acquisition settling. The scorer's test asserts the invariant that actually matters — no error may be *confidently* wrong — rather than a count.
 
-### 3. ~~Schedule and manifest types~~ — done; `sm-ota monitor` still owed
+### 3. ~~Schedule and manifest types, and `sm-ota monitor`~~ — done
 
 `CampaignSchedule` (the request) and `CampaignManifest` (the record). `sm-ota ladder` writes both for every pass, rehearsals included, and `sm-ota score --schedule <file>` takes either — reading burst positions from a manifest so a pass is scored where the transmissions actually were. The score table then shows **asked** beside **got**, which is the comparison a ladder exists to make.
 
@@ -100,7 +100,7 @@ Two traps found building it, both of the silent-wrong-answer kind:
 - **`System.Text.Json` does not object to missing members.** Deserialising a bare schedule into a `CampaignManifest` *succeeds* and yields one whose `Schedule` is null, so a try/catch fallback never fires. `LoadScheduleOrManifest` decides by inspecting the JSON, and a document with no bursts is refused outright — an empty pass and a pass where everything was missed must not look alike.
 - **`Assembly.GetEntryAssembly()` is the test host under a test runner.** The first version of the revision helper returned a 40-character hash belonging to the runner, and would have written that into manifests anywhere the harness was hosted rather than run directly. Read `typeof(CampaignFiles).Assembly`.
 
-Still owed: `sm-ota monitor` — live capture → streaming convert → demodulate, printing decodes as they happen. Cheap now: it is `BurstScorer` fed from the capture client instead of a file.
+`sm-ota monitor` watches a receiver live — capture → convert → demodulate, printing each burst as it lands, receive-only, with the capture still written to disk so a monitored session can be scored afterwards. It runs the same chain a scored pass uses, driven from the socket instead of a file, via a new `OnBlock` hook on the capture client. Proved against `ubersdr`: 20 s real-time, kept up comfortably, zero false acquisitions on band noise.
 
 ### 4. §E2 — built and rehearsed; needs the radio
 
