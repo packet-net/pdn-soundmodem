@@ -32,6 +32,7 @@ try
         "burst" => await Commands.BurstAsync(args[1..]),
         "meters" => await Commands.MetersAsync(args[1..]),
         "measure" => Commands.Measure(args[1..]),
+        "score" => ScoreCommand.Run(args[1..]),
         "-h" or "--help" or "help" => Usage(),
         _ => Unknown(args[0]),
     };
@@ -67,6 +68,8 @@ static int Usage()
                         capturing it on an UberSDR and measuring the result in one go.
         sm-ota meters   dump the radio's meter list and watch live readings (no transmit).
         sm-ota measure  analyse an IQ capture WAV: levels, spectrum, tone, image, spurs, IMD.
+        sm-ota score    convert a captured pass and score every burst in it — acquisition,
+                        WID, CFO, SNR, coded and uncoded BER, and what was MISSED.
 
         Run any command with --help for its options.
         """);

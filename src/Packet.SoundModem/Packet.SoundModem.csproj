@@ -35,6 +35,11 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
+    <!-- The OTA scorer re-encodes the transmitted bit stream to measure UNCODED error rate,
+         which needs the same framing/puncture/interleave internals the mask suite uses. It has
+         to be the production encoder rather than a copy: a scorer with its own idea of the wire
+         order would grade the demodulator against a fiction and never say so. -->
+    <InternalsVisibleTo Include="sm-ota" />
   </ItemGroup>
 
 </Project>

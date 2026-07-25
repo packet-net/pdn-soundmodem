@@ -1,4 +1,4 @@
-# Streaming IQ→audio conversion (§S1) — 2026-07-25
+# Streaming conversion and burst scoring (§S1, §S2) — 2026-07-25
 
 The offline half of the OTA harness, built after the [bring-up session](../2026-07-25-ota-bringup/README.md). Nothing here involves a radio: it is the piece that lets a campaign pass be scored at all, because a pass is an hour long by construction (the receiver's `max_session_time` is 3600 s) and the existing converter could not read one.
 
@@ -37,6 +37,39 @@ Worth keeping: **where an error lives is the diagnosis.** The test now reports t
 The handover recorded that **the receive converter's own tests could not detect a sideband inversion** — they synthesised their input with the same convention they decoded it with, so a reversed kernel cancelled itself and payloads still came back bit-exact. That is how the inversion survived in both converters until the transmit side, whose band placement is asserted against absolute frequencies, exposed it.
 
 There is now a test with nothing to share a convention with: a bare complex exponential at +2000 Hz must appear in the audio at 2000 Hz, and one at −2000 Hz must not appear at all. It runs against **both** converters. It is the assertion that would have caught the original fault on day one.
+
+## Then §S2 — the scorer, and what auditing it turned up
+
+`Ms110dReferenceBits` regenerates what went on the air (payload from its seed, channel bits per block through the production framing/puncture/interleave), and `BurstScorer` streams a capture through one demodulator and grades every burst it finds. `sm-ota score` ties it together. On a synthetic 60 s pass with three WN6 bursts and a fourth scheduled but never transmitted:
+
+```
+  #   start s   WN   CFO Hz   SNR dB   coded BER  uncoded BER  blocks  end
+  0     10.10    6     -0.0     30.5           0            0       1  Eom
+  1     30.10    6     -0.0     30.4           0            0       1  Eom
+  2     50.10    6     -0.0     30.4           0            0       1  Eom
+scored 3 burst(s); 0 unscheduled; 1 MISSED
+MISSED: WN6 seed 4 expected at 55.0 s
+```
+
+**Burst starts come from carrier detect, not from the first block event.** The first attempt used the block event, and it reported `StartSeconds == EndSeconds` for every burst with no SNR at all — because a block event fires only once the whole block has arrived, so it marks the burst's *end*. The symptom was a null SNR; the cause was a start marker that was really an end marker.
+
+### The reference bits are right, and here is why we believe it
+
+Comparing the re-encoded bits against the demodulator's first-pass hard decisions on a **noiseless** channel gives 0 errors for WN0, WN6 and WN13 — and **3 errors in 768 for WN2**, at wire positions 24, 40 and 46.
+
+That is the sort of small discrepancy it would be easy to shrug at or to paper over with a tolerance. The LLR magnitudes settle it:
+
+| | value |
+|---|---|
+| LLR magnitude at the three errors | 0.032, 0.061, 0.414 |
+| block median LLR magnitude | 1.507 |
+| block minimum LLR magnitude | 0.032 |
+
+**The three errors are the three least-confident decisions in the block.** A misaligned reference — wrong wire order, wrong puncture, wrong interleaver increment — compares against bits that are unrelated, so about half its errors would land *above* the median confidence and there would be hundreds of them. Ambiguity puts them all in the low tail. A 20-super-frame preamble instead of 3 changes nothing (identical positions, identical magnitudes), so it is not acquisition settling either.
+
+So the test asserts the invariant rather than a count: **on a noiseless channel the demodulator may be unsure, but it must never be confidently wrong about a bit that was actually transmitted.** A tolerance of "≤ 3 errors" would have passed a genuinely misaligned re-encoder on a shorter block, and would have needed loosening every time a waveform was added.
+
+The WN2 behaviour itself is an observation for whoever owns the demodulator — recorded here, not acted on.
 
 ## Also
 

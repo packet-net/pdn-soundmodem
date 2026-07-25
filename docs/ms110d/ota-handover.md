@@ -25,7 +25,7 @@ dotnet test tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj -c Rele
 | §E1b first modem burst | **done** — WN2, WN6, WN13 all bit-exact |
 | §S3 SNR estimator + audit | **done** |
 | §S1 streaming converter | **done** — an hour converts in 13 s / 26 MB |
-| §S2 burst scorer / uncoded BER | **not started** |
+| §S2 burst scorer / uncoded BER | **done** — `sm-ota score` |
 | §E2 hardware-in-the-loop | **not started** — the point of the exercise |
 | §E3 IQ vs SSB A/B, §E4 on air | not started |
 
@@ -71,19 +71,26 @@ The sideband-inversion test gap is closed too — see [`evidence/2026-07-25-stre
 
 ### 2. Reference bits and uncoded BER (§S2) — next
 
-Regenerate the transmitted bit stream from the manifest seed and compare against `FirstPassBlockLlrs` in wire order, exactly as `Ms110dMaskTests` does — `Ms110dFraming.BuildTxBits` + `EncodeBlock`, `Ms110dPuncture.Get`, `Ms110dInterleaver`. `Ms110dFraming` is `internal`, so add one `InternalsVisibleTo` line to `src/Packet.SoundModem/Packet.SoundModem.csproj` for the OTA tool (precedented — the test assembly already has one).
+`Ms110dReferenceBits` + `BurstScorer` + `sm-ota score`. A capture streams through the converter into **one** demodulator, and every burst comes back with acquisition, WID, CFO, SNR, coded BER, uncoded BER, turbo counters and end reason; a table on stdout and a CSV row per burst, missed bursts included as rows so a summary built by counting cannot lose them.
 
-Then a `BurstScorer` that streams a whole capture through **one** `Ms110dDemodulator` (verified: it returns to `Searching` after each burst and re-acquires), matching detected bursts to schedule entries by order plus a time window, and reporting per burst: acquisition, WID correctness, CFO, coded BER, uncoded BER/SER, turbo counters, end reason, and SNR from `SnrEstimator`.
+```
+sm-ota score --in pass.wav --wn 6 --count 12 --seed 1 --at 10,30,50,… --csv pass.csv
+```
 
-Feed it from `StreamingIqToAudioConverter` directly — block in, block out, no intermediate WAV and no normalisation. There is no offline "decode this capture" entry point yet; the scoring code in `sm-ota burst` is inline in the transmit path and whole-file, so it wants lifting out rather than copying.
+Two things about it that are load-bearing and easy to undo by accident:
 
-Do **not** use absolute time for burst extraction — acquisition finds them; time is a cross-check and the way a *missed* burst is identified, which is itself a headline metric.
+- **Bursts are found by acquisition, never by slicing at the scheduled times.** Slicing hides the result that matters most — a burst the receiver never heard — by handing the demodulator a window already known to contain a signal. Time only matches what was found to what was sent. A missed burst exits 0, because at the bottom of an E2 ladder it is the expected outcome and not a tool failure.
+- **The burst's start comes from `CarrierDetect`, polled per chunk — not from the first block event.** A block event fires only once the whole block has arrived, so using it puts the start at the end; measured, that made `StartSeconds` equal `EndSeconds` and left no burst audio to estimate SNR from. Time resolution is `ChunkSeconds` (0.1 s), and chunking is on absolute sample positions so a pass scores identically however the reader divided it up.
 
-### 3. Schedule and manifest types, and `sm-ota monitor`
+Still owed: the schedule is homogeneous on the command line (one WN, seeds incrementing). A mixed ladder wants §3's JSON.
 
-A JSON schedule (WN, interleaver, seed, power, offset, repeats, gaps) and a per-pass manifest recording actuals, capture SHA-256s, receiver `/api/description`, **and the modem's git commit** — the demodulator changes daily and a score without a revision is uninterpretable.
+**An observation for whoever owns the demodulator, recorded not acted on:** on a *noiseless* channel WN2's first-pass output has 3 wrong hard decisions in 768, at wire positions 24/40/46, with |LLR| 0.032/0.061/0.414 against a block median of 1.507 — the three least-confident decisions in the block. WN0, WN6 and WN13 are exactly 0, and a 20-super-frame preamble changes nothing, so it is not acquisition settling. The scorer's test asserts the invariant that actually matters — no error may be *confidently* wrong — rather than a count.
 
-`sm-ota monitor` — live capture → streaming convert → demodulate, printing decodes as they happen. Cheap once §S1 exists, and worth a lot during a session.
+### 3. Schedule and manifest types, and `sm-ota monitor` — next
+
+A JSON schedule (WN, interleaver, seed, power, offset, repeats, gaps) and a per-pass manifest recording actuals, capture SHA-256s, receiver `/api/description`, **and the modem's git commit** — the demodulator changes daily and a score without a revision is uninterpretable. `sm-ota score` should take the schedule file in place of its `--wn/--count/--seed/--at` flags, which only describe a homogeneous pass.
+
+`sm-ota monitor` — live capture → streaming convert → demodulate, printing decodes as they happen. Cheap now that §S1 and §S2 exist: it is `BurstScorer` fed from the capture client instead of a file.
 
 ### 4. §E2 — the actual point
 
