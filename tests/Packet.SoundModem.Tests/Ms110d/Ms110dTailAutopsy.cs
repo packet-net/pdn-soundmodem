@@ -135,6 +135,8 @@ public class Ms110dTailAutopsy
         using var frames = new StreamWriter(Path.Combine(outDir, $"autopsy-frames-{tag}.log"));
         using var bitErrs = new StreamWriter(Path.Combine(outDir, $"autopsy-biterrs-{tag}.csv"));
         bitErrs.WriteLine("block,symbolInBlock,bitInSymbol");
+        using var oracleBitErrs = new StreamWriter(Path.Combine(outDir, $"autopsy-oracle-biterrs-{tag}.csv"));
+        oracleBitErrs.WriteLine("block,symbolInBlock,bitInSymbol");
         using var llrStats = new StreamWriter(Path.Combine(outDir, $"autopsy-llrstats-{tag}.csv"));
         llrStats.WriteLine("pass,block,bits,errBits,sumAbsRight,sumAbsWrong");
 
@@ -262,6 +264,18 @@ public class Ms110dTailAutopsy
             demod.OracleBlockLlrs += (blockIndex, llrs, dec) =>
             {
                 WriteLlrStats("oracle", blockIndex, llrs);
+
+                // §B3.3 model-front instrument: WHERE the oracle stream is wrong — the
+                // positions localize the residual (fade nulls vs echo regions vs uniform).
+                byte[] fetchedTruth = fetchedBlocks[blockIndex];
+                int cmp = Math.Min(llrs.Length, fetchedTruth.Length);
+                for (int i = 0; i < cmp; i++)
+                {
+                    if ((llrs[i] > 0 ? 0 : 1) != fetchedTruth[i])
+                    {
+                        oracleBitErrs.WriteLine($"{blockIndex},{i / bitsPerSymbol},{i % bitsPerSymbol}");
+                    }
+                }
                 int errs = 0;
                 for (int i = 0; i < dec.Length; i++)
                 {

@@ -363,10 +363,12 @@ public sealed class Dfe
     /// <summary>Result of <see cref="SolveTrainingTir"/>. <see cref="Lag"/> = 0 means the
     /// null (full-inversion) candidate won — feed-forward taps installed, no designed echo.
     /// <see cref="Lag"/> &gt; 0 means the shortened solve was accepted: the post-FF response
-    /// is ≈ x[u] + <see cref="Coefficient"/>·x[u−Lag] and the echo model must carry that lag.
-    /// <see cref="SseNull"/>/<see cref="SseTir"/> are the exact (unridged) residual sums of
-    /// the two candidates for diagnostics.</summary>
-    public readonly record struct TirSolve(bool Solved, int Lag, Cf Coefficient, float SseNull, float SseTir);
+    /// is ≈ x[u] + <see cref="Coefficient"/>·x[u−Lag] (+ <see cref="Coefficient2"/>·x[u−Lag2]
+    /// when <see cref="Lag2"/> &gt; 0 — the §B3.3 straddle pair, Lag2 = Lag ± 1) and the
+    /// echo model must carry those lags. <see cref="SseNull"/>/<see cref="SseTir"/> are the
+    /// exact (unridged) residual sums for diagnostics.</summary>
+    public readonly record struct TirSolve(
+        bool Solved, int Lag, Cf Coefficient, int Lag2, Cf Coefficient2, float SseNull, float SseTir);
 
     /// <summary>Target-impulse-response (channel-shortening) variant of
     /// <see cref="SolveTraining"/> for the §B3.3 turbo re-solve. Rows must have been
@@ -388,17 +390,19 @@ public sealed class Dfe
         {
             _gram = null;
             _rhs = null;
-            return new TirSolve(false, 0, Cf.Zero, 0f, 0f);
+            return new TirSolve(false, 0, Cf.Zero, 0, Cf.Zero, 0f, 0f);
         }
 
         int f = _ff.Length;
         maxLag = Math.Min(maxLag, _fb.Length);
-        float sseNull = SolveSubset(-1, regularization, ffNoisePower, _tirSol);
+        Span<int> one = stackalloc int[1];
+        Span<int> two = stackalloc int[2];
+        float sseNull = SolveSubset(default, regularization, ffNoisePower, _tirSol);
         if (float.IsNaN(sseNull))
         {
             _gram = null;
             _rhs = null;
-            return new TirSolve(false, 0, Cf.Zero, 0f, 0f);
+            return new TirSolve(false, 0, Cf.Zero, 0, Cf.Zero, 0f, 0f);
         }
 
         Array.Copy(_tirSol, _tirWin, f);
@@ -407,7 +411,8 @@ public sealed class Dfe
         float bestSse = float.MaxValue;
         for (int lag = 1; lag <= maxLag; lag++)
         {
-            float sse = SolveSubset(lag - 1, regularization, ffNoisePower, _tirSol);
+            one[0] = lag - 1;
+            float sse = SolveSubset(one, regularization, ffNoisePower, _tirSol);
             if (!float.IsNaN(sse) && sse < bestSse)
             {
                 bestSse = sse;
@@ -419,10 +424,44 @@ public sealed class Dfe
 
         float threshold = 4f * MathF.Log(Math.Max(2, maxLag)) * sseNull / _trainingRows;
         bool accept = bestLag > 0 && bestSse < sseNull - threshold;
-        if (!accept)
+        int lag2 = 0;
+        var bestB2 = Cf.Zero;
+        if (accept)
+        {
+            // §B3.3 straddle pair: a fractional-delay physical echo (the Poor channel's
+            // 2 ms path ≈ 4.8 T) splits across the two lags bracketing it, so the two
+            // candidates tied to the ESTABLISHED lag are {d−1, d} and {d, d+1}. One extra
+            // free parameter over the accepted single-lag solve and only two candidates
+            // (no L-fold search), so the margin drops the ln L factor: the noise-only
+            // best-of-two reduction is ≈ (1 + ln 2)·SSE₀/rows and 4·SSE₀/rows keeps a
+            // >2× safety factor — the same construction as the single-lag acceptance.
+            float pairGate = bestSse - (4f * sseNull / _trainingRows);
+            for (int side = -1; side <= 1; side += 2)
+            {
+                int neighbor = bestLag + side;
+                if (neighbor < 1 || neighbor > maxLag)
+                {
+                    continue;
+                }
+
+                two[0] = Math.Min(bestLag, neighbor) - 1;
+                two[1] = Math.Max(bestLag, neighbor) - 1;
+                float sse = SolveSubset(two, regularization, ffNoisePower, _tirSol);
+                if (!float.IsNaN(sse) && sse < pairGate)
+                {
+                    pairGate = sse;
+                    bestSse = sse;
+                    lag2 = neighbor;
+                    bestB = _tirSol[f + (neighbor < bestLag ? 1 : 0)];
+                    bestB2 = _tirSol[f + (neighbor < bestLag ? 0 : 1)];
+                    Array.Copy(_tirSol, _tirWin, f);
+                }
+            }
+        }
+        else
         {
             // Reinstate the null solution (the winner loop overwrote _tirWin).
-            sseNull = SolveSubset(-1, regularization, ffNoisePower, _tirWin);
+            sseNull = SolveSubset(default, regularization, ffNoisePower, _tirWin);
             bestLag = 0;
             bestB = Cf.Zero;
             bestSse = sseNull;
@@ -432,21 +471,26 @@ public sealed class Dfe
         _gram = null;
         _rhs = null;
 
-        // The LS coefficient b sits on the SUBTRACTED side of the target
-        // (ff·window ≈ x[u] − b·x[u−d]), so the post-FF echo coefficient is −b.
-        return new TirSolve(true, bestLag, new Cf(-bestB.Re, -bestB.Im), sseNull, bestSse);
+        // The LS coefficients sit on the SUBTRACTED side of the target
+        // (ff·window ≈ x[u] − b·x[u−d] − b₂·x[u−d₂]), so the post-FF echo
+        // coefficients are −b/−b₂.
+        return new TirSolve(
+            true, bestLag, new Cf(-bestB.Re, -bestB.Im),
+            lag2, new Cf(-bestB2.Re, -bestB2.Im), sseNull, bestSse);
     }
 
-    /// <summary>Solves the regularized subset system {feed-forward taps} ∪ {feedback column
-    /// <paramref name="fbIndex"/>} (−1 for feed-forward only) from the live training
-    /// accumulation without consuming it, leaving the solution in <paramref name="sol"/>.
-    /// Returns the exact unridged residual sum Σw·|desired − sol·row|² (targetEnergy −
-    /// 2Re(solᴴr) + solᴴG₀sol, with the ridge/anchor and genie noise-diagonal terms backed
-    /// out), or NaN if the subset was degenerate.</summary>
-    private float SolveSubset(int fbIndex, float regularization, float ffNoisePower, Cf[] sol)
+    /// <summary>Solves the regularized subset system {feed-forward taps} ∪ {feedback
+    /// columns <paramref name="fbIndices"/>} (empty for feed-forward only) from the live
+    /// training accumulation without consuming it, leaving the solution in
+    /// <paramref name="sol"/>. Returns the exact unridged residual sum
+    /// Σw·|desired − sol·row|² (targetEnergy − 2Re(solᴴr) + solᴴG₀sol, with the
+    /// ridge/anchor and genie noise-diagonal terms backed out), or NaN if the subset was
+    /// degenerate. <paramref name="fbIndices"/> must be ascending (the index map must
+    /// preserve order so only the stored upper triangle of the accumulation is read).</summary>
+    private float SolveSubset(ReadOnlySpan<int> fbIndices, float regularization, float ffNoisePower, Cf[] sol)
     {
         int f = _ff.Length;
-        int m = fbIndex >= 0 ? f + 1 : f;
+        int m = f + fbIndices.Length;
         Cf[,] gram = _gram!;
         Cf[] rhs = _rhs!;
 
@@ -454,10 +498,10 @@ public sealed class Dfe
         // accumulation is read; the lower triangle is filled by conjugation here).
         for (int i = 0; i < m; i++)
         {
-            int gi = i < f ? i : f + fbIndex;
+            int gi = i < f ? i : f + fbIndices[i - f];
             for (int j = i; j < m; j++)
             {
-                int gj = j < f ? j : f + fbIndex;
+                int gj = j < f ? j : f + fbIndices[j - f];
                 Cf v = gram[gi, gj];
                 _tirGram[i, j] = v;
                 if (j != i)
@@ -485,9 +529,10 @@ public sealed class Dfe
         float lambda = (float)(regularization * trace / m) + 1e-9f;
         for (int k = 0; k < m; k++)
         {
+            int gk = k < f ? k : f + fbIndices[k - f];
+            Cf anchor = k < f ? _ff[k] : _fb[fbIndices[k - f]];
             _tirGram[k, k] += new Cf(lambda, 0);
-            Cf anchor = k < f ? _ff[k] : _fb[fbIndex];
-            _tirRhs[k] = rhs[k < f ? k : f + fbIndex] + (anchor * lambda);
+            _tirRhs[k] = rhs[gk] + (anchor * lambda);
         }
 
         if (!CholeskyFactor(_tirGram, m))
@@ -502,7 +547,7 @@ public sealed class Dfe
         double lin = 0, quad = 0, nrm = 0, nrmFf = 0;
         for (int i = 0; i < m; i++)
         {
-            int gi = i < f ? i : f + fbIndex;
+            int gi = i < f ? i : f + fbIndices[i - f];
             lin += (sol[i].Conj() * rhs[gi]).Re;
             var acc = Cf.Zero;
             for (int j = 0; j < m; j++)

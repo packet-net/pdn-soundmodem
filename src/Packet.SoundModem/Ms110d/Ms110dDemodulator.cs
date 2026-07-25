@@ -2322,15 +2322,24 @@ public sealed class Ms110dDemodulator
         Span<float> pastVar = stackalloc float[fb];
         bool genie = _genieRing is not null;
         Span<Cf> estWindow = stackalloc Cf[dfe.FfTaps];
+        // 4 segments, measured: the banked #81 "16-segment h1 −10%" lever does NOT
+        // compose with TIR — at 16 the correlation windows (16 symbols per segment at
+        // U = 256, less after echo-lag guards) are too noisy for the pinned-echo model
+        // and the WN7 corpse oracle regressed 209 → 495 with a lost convergence
+        // (§B3.3 twolag note, step 3). That banked measurement was inversion-regime-
+        // specific; under TIR the estimates need the averaging.
         const int Segments = 4;
         Span<Cf> segH1 = stackalloc Cf[Segments];
         Span<Cf> segH2 = stackalloc Cf[Segments];
+        Span<Cf> segH2b = stackalloc Cf[Segments];
         Span<float> segCentre = stackalloc float[Segments];
         int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
         _blockLlrCount = 0;
         int tirFrames = 0;
         long tirLagSum = 0;
         double tirCoeffSum = 0;
+        int tirPairFrames = 0;
+        double tirCoeff2Sum = 0;
 
         (Cf[] constellation, byte[] labels) = mode.Modulation switch
         {
@@ -2417,6 +2426,11 @@ public sealed class Ms110dDemodulator
                 tirFrames++;
                 tirLagSum += tir.Lag;
                 tirCoeffSum += Math.Sqrt(tir.Coefficient.Cnorm());
+                if (tir.Lag2 > 0)
+                {
+                    tirPairFrames++;
+                    tirCoeff2Sum += Math.Sqrt(tir.Coefficient2.Cnorm());
+                }
             }
 
             // Chain-BCJR re-equalization for every PSK mode (§B2.2/§B2.3; the FinishBlock
@@ -2478,6 +2492,8 @@ public sealed class Ms110dDemodulator
 
             int delay;
             Cf h2Avg;
+            int delay2 = 0;
+            var h2b = Cf.Zero;
             bool segEcho = tir.Lag > 0;
             if (tir.Lag > 0)
             {
@@ -2512,6 +2528,44 @@ public sealed class Ms110dDemodulator
                     }
 
                     segH2[s] = count > 0 ? segAcc * (1f / count) : h2Avg;
+                }
+
+                // §B3.3 straddle pair: the adjacent-lag coefficient, estimated on the
+                // doubly-subtracted residual (h1 and the dominant echo removed) — the
+                // scrambler decorrelates distinct lags on the PSK ring, so the direct
+                // correlation is consistent. Cancelled softly from the observation in the
+                // assembly loop below; the chain BCJR stays exact on the dominant lag.
+                // Per-segment on the same grid as h1/h2: the fractional tap is the same
+                // physical fading path, and a frame-constant estimate cancels with a
+                // stale coefficient exactly where the fade moves fastest (measured: the
+                // frame-constant form REGRESSED the b10 oracle 6 → 19).
+                if (tir.Lag2 > 0)
+                {
+                    int start2 = Math.Max(delay, tir.Lag2);
+                    var accB = Cf.Zero;
+                    for (int u = start2; u < mode.U; u++)
+                    {
+                        Cf r = estWire[u] - (h1Avg * expected[u]) - (h2Avg * expected[u - delay]);
+                        accB += r * expected[u - tir.Lag2].Conj();
+                    }
+
+                    h2b = accB * (1f / Math.Max(1, mode.U - start2));
+                    delay2 = tir.Lag2;
+
+                    for (int s = 0; s < Segments; s++)
+                    {
+                        var segAcc = Cf.Zero;
+                        int start = Math.Max(start2, s * segLen);
+                        int end = Math.Min(mode.U, (s * segLen) + segLen);
+                        int count = end - start;
+                        for (int u = start; u < end; u++)
+                        {
+                            Cf r = estWire[u] - (h1Avg * expected[u]) - (h2Avg * expected[u - delay]);
+                            segAcc += r * expected[u - tir.Lag2].Conj();
+                        }
+
+                        segH2b[s] = count > 0 ? segAcc * (1f / count) : h2b;
+                    }
                 }
             }
             else
@@ -2598,6 +2652,18 @@ public sealed class Ms110dDemodulator
                     ? (ia == ib ? segH2[ia] : (segH2[ia] * (1f - t)) + (segH2[ib] * t))
                     : h2Avg;
 
+                // §B3.3 straddle pair: soft-cancel the adjacent-lag component before the
+                // chains, at the segment-interpolated coefficient. x̂ is this iteration's
+                // expected symbol (truth on the oracle path — exact cancellation; E[x] on
+                // soft iterations, whose uncertainty enters the noise below); pre-block
+                // sources are known probe chips.
+                if (delay2 > 0)
+                {
+                    Cf h2bu = ia == ib ? segH2b[ia] : (segH2b[ia] * (1f - t)) + (segH2b[ib] * t);
+                    Cf srcB = u >= delay2 ? expected[u - delay2] : precedingProbe[mode.K + (u - delay2)];
+                    rxWire[u] -= h2bu * srcB;
+                }
+
                 h1Span[u] = h1u;
                 rxDesc[u] = rxWire[u] * rotors[u].Conj();
                 Cf echoWire = u >= delay ? expected[u - delay] : preceding[u];
@@ -2610,11 +2676,17 @@ public sealed class Ms110dDemodulator
                 {
                     // EM-consistent noise estimate for soft labels: E|z − h·x|² =
                     // |z − h·E[x]|² + |h|²·(1 − |E[x]|²). The preceding-probe echo
-                    // sources (u < delay) are known exactly — variance 0.
+                    // sources (u < delay) are known exactly — variance 0. The cancelled
+                    // adjacent tap contributes its own cancellation uncertainty.
                     residual += h1u.Cnorm() * expectedVar[u];
                     if (u >= delay)
                     {
                         residual += h2u.Cnorm() * expectedVar[u - delay];
+                    }
+
+                    if (delay2 > 0 && u >= delay2)
+                    {
+                        residual += h2b.Cnorm() * expectedVar[u - delay2];
                     }
                 }
             }
@@ -2678,7 +2750,7 @@ public sealed class Ms110dDemodulator
         if (FrameDiagnostics is not null)
         {
             FrameDiagnostics.Invoke(FormattableString.Invariant(
-                $"turbo-tir b{_blockIndex}: frames={_il.Frames} tir={tirFrames} meanLag={(tirFrames > 0 ? (double)tirLagSum / tirFrames : 0):F1} mean|c|={(tirFrames > 0 ? tirCoeffSum / tirFrames : 0):F3}"));
+                $"turbo-tir b{_blockIndex}: frames={_il.Frames} tir={tirFrames} meanLag={(tirFrames > 0 ? (double)tirLagSum / tirFrames : 0):F1} mean|c|={(tirFrames > 0 ? tirCoeffSum / tirFrames : 0):F3} pair={tirPairFrames} mean|c2|={(tirPairFrames > 0 ? tirCoeff2Sum / tirPairFrames : 0):F3}"));
         }
 
         // Restore DFE state and leave a clean Gram for the next frame.

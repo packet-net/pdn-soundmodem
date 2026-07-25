@@ -67,3 +67,64 @@ The two-tap model y[t] = h1·x[t] + h2a·x[t−d] + h2b·x[t−d−1] is handled
 4. **Escalation unchanged**: FD-turbo if WN7 stalls at mask+2 dB after this lever.
 
 Files land here as the measurements run.
+
+---
+
+## Measured results (filled in as the pre-registered steps ran, same day)
+
+### Step 1 — pair TIR + frame-constant h2b cancellation
+
+WN7 corpse: oracle 238 → 224 (b1 15→6, b5 83→75, b7 29→19; **b4 unchanged at 99; b10
+REGRESSED 6→19**), shipped exactly baseline (107,938, 5c/6r — the same convergence split).
+The pair is real: accepted on ~half the TIR frames across all three corpses (WN7 b0:
+25–36 of 45–54, WN6 11–15, WN13sp 6–27) at mean |c2| ≈ 0.12–0.18. Guards 0/0. The
+Dfe pair solve is unit-tested (exact recovery of a 0.7/0.35 straddle; single-lag echoes
+keep Lag2 = 0). Verdict vs pre-registration: the fall is real but NOT concentrated in
+b4/b5 — the b4/b5 attribution to adjacent-lag sidelobes was wrong or incomplete — and
+b10's regression is the frame-constant-cancellation signature (a stale coefficient on a
+fading tap injects error where the fade moves).
+
+### Localization — where the b4/b5 oracle floor actually lives
+
+New rig instrument (oracle wrong-bit positions): b4's 1,851 raw oracle errors spread over
+a dozen frames at 50–130 each (up to 17% of a frame's bits), roughly uniform WITHIN
+frames. Joining per-frame error counts against the first-pass frame log: the top-error
+frames have probe gain 0.12–0.45 and preMse 0.6–1.3 — **partially-faded frames with high
+residual even under oracle labels**, mixed tapChange. Not tail-staleness, not a single
+catastrophic fade — a fade-frame floor.
+
+### Step 2 — per-segment h2b (pre-registered follow-on, triggered by b10's regression)
+
+Oracle 224 → **209** (b5 75→60; b10 stays 19, b4 stays 99); shipped unchanged; guards
+0/0. Composed two-lag verdict: **oracle 238 → 209 (−12%)**, shipped holds, the cut lands
+in b1/b5/b7, and the small b10 regression (6→19) is the honest residual cost. Ships on
+this evidence; the battery gates the merge.
+
+### Step 3 — 16-segment anchors (the banked #81 seg-sweep lever, composed per its
+pre-registration)
+
+The fade-frame localization (phase moves fastest through partial fades; 4 anchors per
+256-symbol frame under-resolve it) is exactly the mechanism this banked lever targets.
+Segments 4 → 16 for h1/h2/h2b jointly. **Measured: clear regression — REVERTED.** Oracle
+209 → 495 (b4 99→209, b1 6→85, b10 19→62), shipped 107,938 → 125,966 (a convergence
+lost), and even the WN13 specimen picked up 5 oracle errors. The #81 banked −10% was
+measured under FULL INVERSION, where the segments only refine h1 against an
+already-inverted stream; under TIR the pinned-echo model's h1/h2/h2b correlations carry
+the detection model itself, and 16-symbol windows are too noisy to carry it. The banked
+lever is retired as regime-specific, not composed.
+
+## Where the front stands after this leg
+
+Composed ship state: pair TIR + per-segment h2b at 4 segments — **WN7 oracle 238 → 209
+(−12%)**, shipped unchanged, guards clean. The remaining oracle floor is the fade-frame
+class (b4 99, b5 60, b10 19, b7 19, b1/b6 6): partially-faded frames at 17% raw errors
+under oracle labels, uniform within the frame, where finer segmentation adds estimation
+noise faster than resolution (step 3) and the straddle pair is already modeled. Candidate
+mechanisms for the next leg: the probe-anchored solve itself during partial fades (the
+per-frame TIR/FF re-solve trains on U rows spanning the fade — a fade-crossing frame's
+single FF solve may be the binding approximation), or FD-turbo (the pre-registered
+escalation) which re-equalizes per-subband and sidesteps the time-domain solve's
+stationarity assumption entirely. The labels basin remains attractor-bound
+(`../2026-07-25-phase-b33-basin/`): shipped WN7 stays 2.49E-1-class until either the
+model floor cut reaches the iterations (not yet: the split held 5c/6r throughout) or
+FD-turbo changes the per-iteration map.
