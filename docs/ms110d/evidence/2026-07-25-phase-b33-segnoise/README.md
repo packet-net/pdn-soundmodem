@@ -145,3 +145,33 @@ must RETAIN the improvement (≤ 45 errors each — if the gate excludes the fad
 ship case evaporates and the lever reverts); WN7 corpse oracle ≤ 15; guards 0/0; the
 full battery re-runs from scratch on the gated build and every remaining leg holds its
 #83 state.
+
+## Amendment 4 (same day, FINAL): the gated form still kills WN2's disjoint family —
+## REVERTED; the lever closes as a banked negative with real knowledge
+
+Gated build measurements (`corpse/gated-*.txt`, battery `gated-battery.log`): the gate
+kept its promises where promised — WN7 neutral both families (1.73E-1 57c/31r /
+1.90E-1 54c/34r), WN6 retained the improvement both families (**41 / 39 vs #83's
+57 / 57**, 264c/0r), WN13 perfect both families, WN7 corpse oracle stayed 3 with the
+gate engaging on 108/704 frames, guards 0/0. WN2 canonical passed its mask at 17 errors
+with ONE new 2-error cluster (w3/b8) that a dedicated corpse adjudicated as genuine
+heteroscedastic pricing (37% of the burst's frames gate-engaged — at +5 dB the Poor
+channel's swings often exceed 2× within frames). But **WN2 disjoint failed its mask
+outright: 12 → 46 errors, 1.51E-5 direct** — the three #83 clusters persist identically
+and FOUR new clusters appear (10/4/7/13 errors). The gate is not a sufficient guard:
+WN2 is the MARGINAL waveform (+5 dB BPSK), and the LLR sensitivity to floor-estimate
+error scales with marginality — a ±12% χ² floor error that saturated waveforms shrug
+off moves WN2's decision boundaries even in genuinely-heteroscedastic frames. Raising
+the gate threshold on battery feedback would be knob-tuning; the pre-registered
+consequence applies: **REVERTED** (commits cb5c032 + 3fc5153 reverted in-branch; tree
+verified bit-identical to main; corpse baseline reproduced 72,666 / 7c/4r / oracle 15).
+
+Banked knowledge (patches `segnoise-pricing.patch` raw, `segnoise-gated.patch` gated):
+within-frame noise-floor honesty is worth ~30% of WN6's residue (41/39 vs 57/57, paired
+seeds, both families, reproducible) and 5× on the WN7 oracle floor (15 → 3) — the
+near-perfect-label regime genuinely benefits. What a shippable form needs is a floor
+ESTIMATOR whose error doesn't scale into marginal waveforms' decision boundaries:
+candidates for a future pre-registration are cross-frame smoothing of segment floors
+(the fade process is ~1 Hz bandlimited; 33 Hz anchor-rate smoothing could cut estimator
+variance ~8×) or coupling the floor to the |h1|-trajectory model rather than windowed
+residuals. Not knob-tuning the gate.
