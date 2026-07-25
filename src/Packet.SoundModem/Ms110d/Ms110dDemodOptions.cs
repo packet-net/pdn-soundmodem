@@ -84,15 +84,4 @@ public sealed record Ms110dDemodOptions
     /// tax the WN2 genie pair measured (issue #69). Report evidence only, never a gate
     /// default without a full-budget A/B.</summary>
     public float? TrackRidge { get; init; }
-
-    /// <summary>§B3.2b non-causal probe-anchor smoothing weight for the fading path's tap
-    /// trajectory: each per-probe anchor is replaced by (a + w·Σ neighbours′)/(1 + w·n)
-    /// over its rotation-aligned ±1 neighbours at block end, and fading frames are
-    /// re-equalized down the smoothed trajectory before the first decode. Attacks the flat
-    /// per-probe solve-noise tax where the causal anchor ridge is forbidden by lag (U=256:
-    /// 120 ms frames — the WN13 fade-cluster specimen, issue #69); a symmetric window has
-    /// zero group delay. Null (the default) disables recording and the pass entirely —
-    /// bit-identical to the unsmoothed demodulator. Report evidence only, never a gate
-    /// default without a full-budget A/B.</summary>
-    public float? TrajectorySmoothing { get; init; }
 }

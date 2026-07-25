@@ -148,9 +148,6 @@ public class Ms110dTailAutopsy
             TrackRidge = float.TryParse(
                 Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TRACK_RIDGE"), out float tr)
                 ? tr : null,
-            TrajectorySmoothing = float.TryParse(
-                Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TRAJ_SMOOTH"), out float ts)
-                ? ts : null,
         });
         demod.BurstCompleted += bu => endReason = bu.Reason;
         demod.BlockDecoded += b => decoded.AddRange(b.Bits);
@@ -189,9 +186,9 @@ public class Ms110dTailAutopsy
         };
 
         // §B3.2b instrument: per-block uncoded SER and signed-LLR-mass stats for the
-        // first-pass and (when the smoothing pass runs) smoothed LLR streams — the
-        // error-CONFIDENCE view the WN2 anchor-ridge autopsy established (wrong-sign
-        // LLR mass is what the Viterbi actually pays).
+        // first-pass LLR stream — the error-CONFIDENCE view the WN2 anchor-ridge autopsy
+        // established (wrong-sign LLR mass is what the Viterbi actually pays, and the
+        // ratio against a genie corpse locates a block relative to the decode cliff).
         void WriteLlrStats(string pass, int blockIndex, float[] llrs)
         {
             if (blockIndex >= txBlocks)
@@ -220,7 +217,6 @@ public class Ms110dTailAutopsy
         }
 
         demod.FirstPassBlockLlrs += (blockIndex, llrs) => WriteLlrStats("first", blockIndex, llrs);
-        demod.SmoothedBlockLlrs += (blockIndex, llrs) => WriteLlrStats("smoothed", blockIndex, llrs);
 
         if (genie)
         {
