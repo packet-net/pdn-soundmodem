@@ -1892,24 +1892,28 @@ public sealed class Ms110dDemodulator
             _trackingInitialized = true;
         }
 
-        Span<Cf> chips = stackalloc Cf[32];
+        Span<Cf> chips = stackalloc Cf[Wid0WalshModem.RakeChips];
         Span<float> llrs = stackalloc float[2];
-        while (_state == Ms110dRxState.Tracking && HaveSamplesForChip(_symbolChip + 34))
+        Span<float> gainMags = stackalloc float[Wid0WalshModem.Fingers];
+        while (_state == Ms110dRxState.Tracking && HaveSamplesForChip(_symbolChip + Wid0WalshModem.RakeChips + 2))
         {
-            for (int i = 0; i < 32; i++)
+            for (int i = 0; i < Wid0WalshModem.RakeChips; i++)
             {
                 chips[i] = ReadChip(_symbolChip + i);
             }
 
-            _walsh!.Demodulate(chips, llrs, out _, out Cf correlation);
+            _walsh!.DemodulateRake(chips, llrs, out int bestDibit, out Cf combined, out double maxFingerAbs);
             AddLlr(llrs[0]);
             AddLlr(llrs[1]);
 
-            // Decision-directed carrier: the winning Walsh correlation should be real and
-            // positive after descrambling. Average over 8 channel symbols before applying
-            // the correction — the per-symbol phase estimate at the −6 dB operating point
-            // is too noisy to drive the frequency integrator directly.
-            _walshPhaseAcc += correlation;
+            // Decision-directed carrier: the MRC-combined winner statistic Σ ĝ*·corr
+            // should be real and positive; its argument is the residual COMMON phase
+            // error (the fingers absorb per-path phase — §B3.5). Average over 8 channel
+            // symbols before applying the correction — the per-symbol phase estimate at
+            // the −6 dB operating point is too noisy to drive the frequency integrator
+            // directly. During warm-up (cold gains) the combined statistic is near zero
+            // and contributes nothing, which is the desired behaviour.
+            _walshPhaseAcc += combined;
             if (++_walshPhaseCount == 8)
             {
                 if (_walshPhaseAcc.Cnorm() > 1e-12)
@@ -1922,15 +1926,26 @@ public sealed class Ms110dDemodulator
                 _walshPhaseCount = 0;
             }
 
+            if (FrameDiagnostics is not null)
+            {
+                _walsh.CopyGainMagnitudes(gainMags);
+                FrameDiagnostics.Invoke(
+                    $"walsh sym={_symbolInBlock} d*={bestDibit} llr0={llrs[0]:F2} llr1={llrs[1]:F2} " +
+                    $"|g|=[{gainMags[0]:F3} {gainMags[1]:F3} {gainMags[2]:F3} {gainMags[3]:F3} " +
+                    $"{gainMags[4]:F3} {gainMags[5]:F3} {gainMags[6]:F3}] argC={combined.Arg():F3}");
+            }
+
             // Signal-lost discriminator (WN 0): the winning-correlation-to-chip-energy
-            // ratio ≈ 0.5 at the −6 dB mask point but ≈ 0.23 on noise alone.
+            // ratio ≈ 0.5 at the −6 dB mask point but ≈ 0.23 on noise alone. Weak only
+            // when ALL fingers are weak — a finger-0-only test would false-fire on a
+            // direct-path fade with a strong echo, exactly the fades MRC rides (§B3.5).
             double sumMag = 0;
             for (int i = 0; i < 32; i++)
             {
                 sumMag += chips[i].Abs();
             }
 
-            if (correlation.Abs() < 0.35 * sumMag)
+            if (maxFingerAbs < 0.35 * sumMag)
             {
                 // ~1.2 s — long enough to ride a deep Poor-channel fade (see the DFE
                 // path's discriminator for the rationale).
