@@ -116,6 +116,35 @@ The section that follows describes how ALE and MS110D fit together in practice. 
 
 ALE requires the optional **KPE-2** unit; it is not in the base radio, and it is reportedly hard or impossible to obtain — see the section above.
 
+### "2G" means generation, and the generation has to match the channel
+
+ALE generations are eras of the technology, not channels or bands:
+
+| | Standard | Character | Where it stands |
+|---|---|---|---|
+| **1G** | none — vendor schemes | pre-standard selective calling, early 1980s | historical |
+| **2G** | MIL-STD-188-141A App. A, FED-STD-1045 | asynchronous, 8-FSK, robust, slow to link | **what "ALE" means in practice** — near-universal, interoperable |
+| **3G** | MIL-STD-188-141B App. C; NATO STANAG 4538 | **synchronous** — needs time-of-day at both ends — much faster linking, and carries ARQ data-link protocols with it | capable, far less common, needs a clock |
+| **4G** (wideband ALE) | MIL-STD-188-141D, 2017 | linking for HF channels **wider than 3 kHz** | pairs with the wideband members of 110D |
+
+**3G is technically better and a poor fit for us.** It needs synchronised time at both ends — our local UberSDR has no GPS at all (M9PSY's does) — and 3G is not merely a faster handshake: STANAG 4538 brings the ARQ data-link protocols with it, so adopting it means implementing a great deal more than link setup. 2G is the pragmatic choice: simpler than the modem we have already built, needs no clock, and is what every other station on the air actually speaks.
+
+**4G is the one that matters to this project's future**, and for a reason that is easy to miss. Appendix D is not a 3 kHz waveform — it is a *family* parameterised by bandwidth, and we have implemented its narrowest member:
+
+| Bandwidth | Symbol rate | Sub-carrier |
+|---|---|---|
+| **3 kHz** | **2400 Bd** | **1800 Hz** ← what `Get3k` returns |
+| 6 kHz | 4800 Bd | 3300 Hz |
+| 12 kHz | 9600 Bd | 6300 Hz |
+| 24 kHz | 19200 Bd | 12300 Hz |
+| 48 kHz | 38400 Bd | 24300 Hz |
+
+(`tables/d01-symbol-rates.csv`; the sub-carrier is 300 + BW/2 throughout.)
+
+**2G ALE cannot describe a channel wider than 3 kHz.** Its whole design — the tone set, the channel concept, the LQA — assumes a voice-bandwidth channel. So if this project ever climbs the bandwidth column, the link layer has to move generation at the same time. MIL-STD-188-110D and MIL-STD-188-141D are both dated 2017 and are meant to be used together; the generations pair up, and mixing them does not work.
+
+That is not a near-term concern — going wideband would need a transmitter and a receiver that can pass it, which is a bigger step than any radio discussed here — but it is the reason not to over-invest in 2G if wideband is ever the destination.
+
 ### What ALE is, and what it is not
 
 2G ALE (MIL-STD-188-141A) is a **rendezvous and channel-selection layer**. It answers "which of my channels can reach that station right now, and is he listening?" — and nothing else. It carries no traffic. Once it has established a link, it hands over a channel and gets out of the way, and the data waveform runs on that channel as a separate activity.
