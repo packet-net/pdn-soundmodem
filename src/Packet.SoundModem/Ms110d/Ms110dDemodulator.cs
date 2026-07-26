@@ -294,6 +294,13 @@ public sealed class Ms110dDemodulator
     /// LLRs.</summary>
     internal event Action<int, float[], byte[]>? FrozenBlockLlrs;
 
+    /// <summary>§B3.7 M1a instrument: when set (with <see cref="FrameDiagnostics"/>),
+    /// every frozen-pass frame ALSO runs a straddle-pair TIR solve on the same probe
+    /// rows and emits one <c>frozen-pair</c> line — log-only; the applied path stays
+    /// the single-lag solve, which runs last so its taps stand for the frame's
+    /// Equalize calls. Unset = bit-identical.</summary>
+    internal bool TurboFrozenPairDiag { get; set; }
+
     /// <summary>Diagnostic (phase-b-plan §B3.3 fade-crossing): while the oracle
     /// re-equalization runs, TurboCore emits one <c>turbo-frame</c> line per frame with
     /// the per-segment channel anchors and the BCJR noise floor, so the corpse can
@@ -2616,35 +2623,55 @@ public sealed class Ms110dDemodulator
 
             // Probe-only shortening solve. Rows keep their feedback history inside the
             // probe (i ≥ fb), mirroring the §B3.4 Amendment 1 probe-row construction.
-            dfe.BeginTraining();
-            int solveRows = 0;
-            for (int p = 0; p < 2; p++)
+            // The accumulation is consumed by each solve, so the §B3.7 pair diagnostic
+            // below re-runs it.
+            int AccumulateProbeRows(Span<Cf> win, Span<Cf> hist)
             {
-                Cf[] probe = p == 0 ? precedingProbe : followingProbe;
-                long probeChip = p == 0 ? frameChip - mode.K : frameChip + mode.U;
-                for (int i = fb; i < mode.K; i++)
+                dfe.BeginTraining();
+                int rows = 0;
+                for (int p = 0; p < 2; p++)
                 {
-                    if (!HaveSamplesForChip(probeChip + i + 2))
+                    Cf[] probe = p == 0 ? precedingProbe : followingProbe;
+                    long probeChip = p == 0 ? frameChip - mode.K : frameChip + mode.U;
+                    for (int i = fb; i < mode.K; i++)
                     {
-                        continue; // burst-edge probe tail
-                    }
+                        if (!HaveSamplesForChip(probeChip + i + 2))
+                        {
+                            continue; // burst-edge probe tail
+                        }
 
-                    FillWindow(probeChip + i, window);
-                    for (int j = 0; j < fb; j++)
-                    {
-                        past[j] = probe[i - 1 - j];
-                    }
+                        FillWindow(probeChip + i, win);
+                        for (int j = 0; j < fb; j++)
+                        {
+                            hist[j] = probe[i - 1 - j];
+                        }
 
-                    dfe.AddTrainingRow(window, past, probe[i], weight: 1.0f);
-                    solveRows++;
+                        dfe.AddTrainingRow(win, hist, probe[i], weight: 1.0f);
+                        rows++;
+                    }
                 }
+
+                return rows;
             }
 
+            int solveRows = AccumulateProbeRows(window, past);
             if (solveRows == 0)
             {
                 dfe.LoadTaps(savedTaps);
                 dfe.BeginTraining();
                 return;
+            }
+
+            // §B3.7 M1a: log-only straddle-pair solve on the same rows. The applied
+            // solve runs LAST so its taps stand for the frame's Equalize calls.
+            if (TurboFrozenPairDiag && FrameDiagnostics is not null)
+            {
+                Dfe.TirSolve pairTir = dfe.SolveTrainingTir(
+                    regularization: _trackRidge, ffNoisePower: GenieNoisePower(),
+                    maxLag: Math.Min(fb, mode.U / 2), allowPair: true);
+                FrameDiagnostics.Invoke(FormattableString.Invariant(
+                    $"frozen-pair b{_blockIndex} f{f}: rows={solveRows} lag={pairTir.Lag} |c1|={Math.Sqrt(pairTir.Coefficient.Cnorm()):F3} lag2={pairTir.Lag2} |c2|={Math.Sqrt(pairTir.Coefficient2.Cnorm()):F3} sseN={pairTir.SseNull:E3} sseP={pairTir.SseTir:E3}"));
+                AccumulateProbeRows(window, past);
             }
 
             Dfe.TirSolve tir = dfe.SolveTrainingTir(
@@ -2756,7 +2783,7 @@ public sealed class Ms110dDemodulator
             if (FrameDiagnostics is not null)
             {
                 FrameDiagnostics.Invoke(FormattableString.Invariant(
-                    $"frozen-frame b{_blockIndex} f{f}: lag={tir.Lag} |c|={Math.Sqrt(h2Wire.Cnorm()):F3} n={noiseVar:E3} rows={solveRows} h1a={anchor[0].Abs():F3}|{anchor[1].Abs():F3}"));
+                    $"frozen-frame b{_blockIndex} f{f}: lag={tir.Lag} |c|={Math.Sqrt(h2Wire.Cnorm()):F3} n={noiseVar:E3} rows={solveRows} h1a={anchor[0].Abs():F3}|{anchor[1].Abs():F3} sseN={tir.SseNull:E3} sse1={tir.SseTir:E3} a0={anchor[0].Re:F4},{anchor[0].Im:F4} a1={anchor[1].Re:F4},{anchor[1].Im:F4}"));
             }
 
             var frameLlrs = new float[mode.U * bitsPerSymbol];
