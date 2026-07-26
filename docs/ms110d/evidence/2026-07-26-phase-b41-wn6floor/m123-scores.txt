@@ -1,0 +1,12 @@
+wn2-w0-b0: procBW=1.3Hz | logRMS RAW=0.404 TRAJ=0.258 SMOOTH=0.142 SMOOTH2=0.191 | dNLL(vs shipped, mnat) RAW=+48.9 TRAJ=+18.1 SMOOTH=-7.3 SMOOTH2=+0.1 | fade-frames=0 range-frac RAW=nan TRAJ=nan SMOOTH=nan SMOOTH2=nan
+wn2-w0-b34: procBW=0.3Hz | logRMS RAW=0.408 TRAJ=0.289 SMOOTH=0.134 SMOOTH2=0.203 | dNLL(vs shipped, mnat) RAW=+45.7 TRAJ=+26.1 SMOOTH=-8.5 SMOOTH2=+3.5 | fade-frames=0 range-frac RAW=nan TRAJ=nan SMOOTH=nan SMOOTH2=nan
+wn2-w0-b51: procBW=0.9Hz | logRMS RAW=0.410 TRAJ=0.276 SMOOTH=0.141 SMOOTH2=0.210 | dNLL(vs shipped, mnat) RAW=+48.8 TRAJ=+22.9 SMOOTH=-7.7 SMOOTH2=+3.9 | fade-frames=0 range-frac RAW=nan TRAJ=nan SMOOTH=nan SMOOTH2=nan
+wn2-w1-b16: procBW=3.2Hz | logRMS RAW=0.384 TRAJ=0.250 SMOOTH=0.138 SMOOTH2=0.200 | dNLL(vs shipped, mnat) RAW=+43.6 TRAJ=+10.7 SMOOTH=-11.2 SMOOTH2=-4.1 | fade-frames=0 range-frac RAW=nan TRAJ=nan SMOOTH=nan SMOOTH2=nan
+wn6-w0-b0: procBW=1.3Hz | logRMS RAW=0.235 TRAJ=0.228 SMOOTH=0.097 SMOOTH2=0.199 | dNLL(vs shipped, mnat) RAW=+0.8 TRAJ=+7.5 SMOOTH=+8.8 SMOOTH2=+8.7 | fade-frames=31 range-frac RAW=0.47 TRAJ=0.34 SMOOTH=0.93 SMOOTH2=0.41
+wn6-w0-b2: procBW=0.8Hz | logRMS RAW=0.248 TRAJ=0.235 SMOOTH=0.106 SMOOTH2=0.206 | dNLL(vs shipped, mnat) RAW=+0.2 TRAJ=+8.1 SMOOTH=+8.0 SMOOTH2=+12.6 | fade-frames=25 range-frac RAW=0.46 TRAJ=0.15 SMOOTH=0.84 SMOOTH2=0.34
+wn6-w1-b2: procBW=0.8Hz | logRMS RAW=0.234 TRAJ=0.233 SMOOTH=0.103 SMOOTH2=0.216 | dNLL(vs shipped, mnat) RAW=-1.0 TRAJ=+9.8 SMOOTH=+6.5 SMOOTH2=+11.8 | fade-frames=33 range-frac RAW=0.53 TRAJ=0.22 SMOOTH=0.97 SMOOTH2=0.28
+wn6-w1-b3: procBW=0.8Hz | logRMS RAW=0.244 TRAJ=0.243 SMOOTH=0.105 SMOOTH2=0.221 | dNLL(vs shipped, mnat) RAW=+0.8 TRAJ=+11.3 SMOOTH=+9.6 SMOOTH2=+16.1 | fade-frames=26 range-frac RAW=0.54 TRAJ=0.14 SMOOTH=0.88 SMOOTH2=0.33
+wn6-w2-b5: procBW=0.7Hz | logRMS RAW=0.225 TRAJ=0.250 SMOOTH=0.096 SMOOTH2=0.218 | dNLL(vs shipped, mnat) RAW=+1.4 TRAJ=+15.3 SMOOTH=+7.2 SMOOTH2=+20.7 | fade-frames=29 range-frac RAW=0.45 TRAJ=0.25 SMOOTH=0.95 SMOOTH2=0.36
+wn7-w0-b0: procBW=1.4Hz | logRMS RAW=0.285 TRAJ=0.282 SMOOTH=0.096 SMOOTH2=0.239 | dNLL(vs shipped, mnat) RAW=-10.7 TRAJ=+11.1 SMOOTH=+13.4 SMOOTH2=-0.5 | fade-frames=56 range-frac RAW=0.56 TRAJ=0.30 SMOOTH=0.96 SMOOTH2=0.49
+
+M3 gates: candidate err <= 0.25*RAW err on WN2; median fade range-frac >= 0.8 on WN6.
