@@ -76,3 +76,75 @@ disjoint residual bursts remain judgment-only (their M0 use is totals-only).
 (`autopsy-oracle-biterrs`) per residual block — fade-null vs echo-region vs
 uniform; whether the two tight disjoint clusters (spans 13 and 19) are
 single-block single-event; collapse/salvage counts per specimen.
+
+## M0 measured (7/7 specimens, census cross-check OK on all)
+
+All seven ship sides reproduce their b38 battery census rows exactly (coded
+errors, collapses, turbo counters) — specimens valid. Per-block ship vs oracle
+(`corpse/m0-anatomy.txt` for the full table):
+
+| specimen | ship | oracle | matched | excess | beats-oracle | detail |
+|---|---|---|---|---|---|---|
+| c-w1b0 | 20 | 20 | 20 | 0 | 0 | b3 6/6, b6 14/14 — exact floor (the B3.8 pin) |
+| c-w1b1 | 25 | 43 | 13 | 12 | 30 | b2 12/0, b4 6/11, b7 7/11, b8 **0/21** |
+| c-w2b1 | 38 | 34 | 34 | 4 | 0 | b5 6/6, b8 32/28 |
+| d-w0b0 | 16 | 38 | 6 | 10 | 32 | b4 6/6, b6 **0/18**, b8 **0/14**, b10 10/0 |
+| d-w1b0 | 12 | 1 | 1 | 11 | 0 | b5 1/1, b9 11/0 |
+| d-w2b1 | 6 | 6 | 6 | 0 | 0 | b7 6/6 — identical single event |
+| d-w3b0 | 14 | 0 | 0 | 14 | 0 | b5 14/0 |
+
+Totals: canonical ship 83 / oracle **97** / matched **67**; disjoint ship 48 /
+oracle 45 / matched 13; pooled ship 131 / oracle **142** / matched **80**,
+excess 51, beats-oracle 62.
+
+**The honesty gate fires, twice over.**
+1. Pooled matched 80 > 64; canonical matched 67 > 2× its 32-error family line.
+   Even a lever that converted *all* excess-over-oracle mass leaves 80 pooled —
+   arithmetic alone excludes any label-convergence arm from carrying a mask-flip
+   bar.
+2. Stronger: **the oracle ceiling itself fails the mask, worse than ship** —
+   oracle canonical 97 (3.0E-5) / disjoint 45 (1.4E-5) / pooled 142 vs ship's
+   131. The instrument that was to bound the model-front direction is *above*
+   the shipped decoder. The per-segment-echo direction (the oracle's own extra
+   degrees of freedom: per-segment h2 + h2b) is measured dead — the model that
+   carries it, with true labels, loses to ship.
+
+**Error-event character** (`corpse/m0-anatomy2.txt`): every residual ship error
+is a single contiguous decoder error event of 14–24 info bits (c-w2b1 b8 has
+three: 14+14+4); wrong wire bits carry mean |LLR| ≈ 1.0–2.8 against 12–68 for
+right bits, in every residual block, in both the ship-final and oracle passes —
+honest near-zero confidence, **no confidently-wrong / mispricing signature at
+any block**. The SPIKE-UP-family pricing direction has nothing to reprice:
+measured dead. Ship and oracle draw their events quasi-independently from the
+same population (excess 51 vs beats-oracle 62, near-symmetric; in all four
+oracle-clean excess blocks ship's *wire* is cleaner than the oracle's — 561 vs
+753, 670 vs 916, 1067 vs 1246, 439 vs 602 sign errors — yet ship has the coded
+event and the oracle does not; conversely c-w1b1 b8 ships clean through 6,223
+wire errors while the oracle's 1,483-error wire yields 21). Coded outcome is
+essentially decoupled from wire quality in this regime: the block interleaver
+scatters each deep-fade stretch into isolated weak bits, and an error event
+occurs where several near-zero LLRs happen to co-locate within a constraint
+window — a combinatorial lottery over the block's weak-bit population. One
+stretch is truly information-dead (d-w2b1 b7: both decoders make the identical
+6-bit event); the wings are marginal stretches that flip in or out under any
+perturbation (the B3.8 b5-wobble mechanism, now explained).
+
+## Verdict (per the pre-committed fork): WN7's mask flip closes design-only
+
+No arm is registered. The three candidate directions are all measured dead:
+h1-model (B3.8 E2: model error ~2% of the priced floor), per-segment echo
+(this M0: the oracle carrying it fails the mask below ship), and tail pricing
+(this M0: no mispricing signature exists). Label-side arms are excluded by
+arithmetic (matched 80 > 64 pooled even at 100% excess conversion). The
+residual is the waveform's own floor at this channel/SNR — decoder error
+events over deep-fade weak-bit populations, stochastic in every implementation
+detail (redrawing the lottery moves errors between blocks; it does not shrink
+the population; ship 131 vs oracle 142 are two draws from the same
+distribution). Reducing it requires *adding information* — diversity,
+retransmission, outer coding — outside this demodulator's scope.
+
+**WN7 disposition: stays measured-only at 2.56E-5 canonical / 1.48E-5 disjoint
+(mask 1E-5), zero reverts, cumulative 6,760×/13,180× across B3.6–B3.8. The
+detection story closed in B3.8; the model story closes here.** No demod change
+was made this leg, so no held-out was consumed and no battery is required (the
+held-out policy's trigger condition never fired).
