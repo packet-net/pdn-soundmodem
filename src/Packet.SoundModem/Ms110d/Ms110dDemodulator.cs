@@ -343,8 +343,9 @@ public sealed class Ms110dDemodulator
     /// shifted coordinates), solve only the aliased pre-cursor lag, and adopt when
     /// the shifted floor is decisively lower (<see cref="TurboFrozenRelockMargin"/>).
     /// Winning frames run the existing E1″(b) pre-cursor chain with the shift
-    /// threaded through. Frozen/salvage path only; unset = bit-identical.</summary>
-    internal bool TurboFrozenRelock { get; set; }
+    /// threaded through. Frozen/salvage path only; false = bit-identical to #93
+    /// (measurement seam). SHIPPED default-on (Amendment 3 ship bar).</summary>
+    internal bool TurboFrozenRelock { get; set; } = true;
 
     private bool _frozenRelockActive;
 

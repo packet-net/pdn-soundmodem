@@ -464,10 +464,11 @@ public class Ms110dTailAutopsy
         {
             demod.TurboFrozenPreCursor = false;
         }
-        // §B3.8 E3 (Amendment 1): late-lock geometry offer, floor-arbitrated.
-        if (Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_RELOCK") == "1")
+        // §B3.8 E3/Amendment 3, shipped default: late-lock second salvage rung.
+        // "0" disables (the pre-B3.8 seam).
+        if (Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_RELOCK") == "0")
         {
-            demod.TurboFrozenRelock = true;
+            demod.TurboFrozenRelock = false;
         }
         // §B3.8 Amendment 2: decisive-adoption margin (1 = adopt on any improvement).
         if (float.TryParse(Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_RELOCK_MARGIN"),

@@ -315,3 +315,24 @@ seed changes on OTHER blocks — E3 is RED and the clause fires.
 Against the registered bars: **GREEN** — 3 of 3 trio conversions (bar asked ≥2) with
 retention exact. Ship bar proceeds: default-on flip, suite, held-out pair, guards,
 full battery.
+
+## Ship bar: suite, guards, held-outs (battery below)
+
+Default-on flip (`TurboFrozenRelock = true`, `TurboFrozenRelockMargin = 0.5`; env
+seam `MS110D_AUTOPSY_FROZEN_RELOCK=0` restores the pre-B3.8 path). On the shipped
+binary:
+
+- **Suite**: 697 passed / 0 failed (105 env-gated skips) — exact.
+- **Guards, all exact**: WN7 corpse w0/b0 0 / 11c/0r/4v (identical digits — the rung
+  never fires on a converging burst); oracle b5:15; WN6 0 / 11c/0r/0v; WN13sp
+  0 / 11c/0r/0v.
+- **New pins**: WN7 corpse w1/b0 = 20 coded / 11c/0r/5v; WN0 w2/b97 (SEED=500,
+  channelSeed 2097501) = 0 coded / 302 uncoded — the long-banked E1 guard candidate,
+  now in the guard set.
+- **Held-outs (banked pre-design, judged unseen on the shipped binary)**:
+  dj-w1/b0 (1010508) **17,897 / 10c/1r/1v → 12 / 11c/0r/2v** and dj-w3/b0 (3010508)
+  **17,871 / 10c/1r/4v → 14 / 11c/0r/5v** — both leftover blocks convert through the
+  rung to their model-floor tails; zero per-block regressions.
+
+Corpse-side artifacts banked in `corpse/` (m2a/e3/a2/a3/s summaries,
+a2-relock-margins.txt).
