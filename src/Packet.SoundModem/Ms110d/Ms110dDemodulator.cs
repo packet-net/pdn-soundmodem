@@ -35,6 +35,21 @@ public sealed class Ms110dDemodulator
     private const int InterpHalf = 4;             // 8-tap interpolator
     private static readonly double[] BinsHz = [-75, -50, -25, 0, 25, 50, 75];
 
+    /// <summary>Encoded count words for every field value — the joint count vote's
+    /// per-candidate expected dibits (§B3.5 Amendment 1).</summary>
+    private static readonly byte[][] CountWords = BuildCountWords();
+
+    private static byte[][] BuildCountWords()
+    {
+        var words = new byte[32][];
+        for (int c = 0; c < 32; c++)
+        {
+            words[c] = PreambleGenerator.EncodeCount(c);
+        }
+
+        return words;
+    }
+
     private readonly Ms110dDemodOptions _options;
     private FirFilter _rxFilterRe;
     private FirFilter _rxFilterIm;
@@ -577,6 +592,9 @@ public sealed class Ms110dDemodulator
             return;
         }
 
+        FrameDiagnostics?.Invoke(
+            $"count@{_chip0}: dibits={countDibits[0]}{countDibits[1]}{countDibits[2]}{countDibits[3]} count={count}");
+
         // §B3 WID vote (issue #69): the WID section repeats identically in every
         // remaining preamble super-frame, all of which arrive BEFORE data start — so
         // soft-combining it across super-frames costs zero latency and rides out a
@@ -646,6 +664,62 @@ public sealed class Ms110dDemodulator
             BackToSearch();
             return;
         }
+
+        // §B3.5 Amendment 1: joint count vote over the same span the WID vote already
+        // waits for. The count is the last single-read acquisition field (4 dibits,
+        // 3 check bits — corrupted reads beat the check 1-in-8), and a wrong count
+        // places data start whole super-frames off behind a clean-looking lock (four
+        // coin-flip bursts in the WN0 Poor census; the WID's Class-D failure, again).
+        // The field decrements per super-frame, so the vote is decrement-aligned:
+        // candidate c at vote frame v expects EncodeCount(c−v).
+        Span<double> cntMags = stackalloc double[5 * 4 * 4];
+        cntMags.Clear();
+        for (int v = 0; v < votes; v++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                AccumulateWalshMags(
+                    (v * ChipsSuperframe) + ChipsFixed + (32 * j),
+                    Ms110dTables.CntPn, 32 * j, cntMags.Slice(((v * 4) + j) * 4, 4));
+            }
+        }
+
+        double bestScore = -1, secondScore = -1;
+        int jointCount = -1;
+        for (int c = votes - 1; c < 32; c++)
+        {
+            double score = 0;
+            for (int v = 0; v < votes; v++)
+            {
+                byte[] exp = CountWords[c - v];
+                for (int j = 0; j < 4; j++)
+                {
+                    score += cntMags[(((v * 4) + j) * 4) + exp[j]];
+                }
+            }
+
+            if (score > bestScore)
+            {
+                secondScore = bestScore;
+                bestScore = score;
+                jointCount = c;
+            }
+            else if (score > secondScore)
+            {
+                secondScore = score;
+            }
+        }
+
+        double countMargin = (bestScore - secondScore) / (bestScore + 1e-9);
+        FrameDiagnostics?.Invoke(
+            $"count-vote@{_chip0}: single={count} joint={jointCount} margin={countMargin:F3} frames={votes}");
+        if (countMargin < 0.10)
+        {
+            BackToSearch(); // mushy joint = failed acquisition candidate, not a lock
+            return;
+        }
+
+        count = jointCount;
 
         if (!PreambleGenerator.TryDecodeWid(widDibits, out int wn, out Ms110dInterleaverKind il, out int k) ||
             !IsSupported(wn) ||
@@ -1892,24 +1966,28 @@ public sealed class Ms110dDemodulator
             _trackingInitialized = true;
         }
 
-        Span<Cf> chips = stackalloc Cf[32];
+        Span<Cf> chips = stackalloc Cf[Wid0WalshModem.RakeChips];
         Span<float> llrs = stackalloc float[2];
-        while (_state == Ms110dRxState.Tracking && HaveSamplesForChip(_symbolChip + 34))
+        Span<float> gainMags = stackalloc float[Wid0WalshModem.Fingers];
+        while (_state == Ms110dRxState.Tracking && HaveSamplesForChip(_symbolChip + Wid0WalshModem.RakeChips + 2))
         {
-            for (int i = 0; i < 32; i++)
+            for (int i = 0; i < Wid0WalshModem.RakeChips; i++)
             {
                 chips[i] = ReadChip(_symbolChip + i);
             }
 
-            _walsh!.Demodulate(chips, llrs, out _, out Cf correlation);
+            _walsh!.DemodulateRake(chips, llrs, out int bestDibit, out Cf combined, out double maxFingerAbs);
             AddLlr(llrs[0]);
             AddLlr(llrs[1]);
 
-            // Decision-directed carrier: the winning Walsh correlation should be real and
-            // positive after descrambling. Average over 8 channel symbols before applying
-            // the correction — the per-symbol phase estimate at the −6 dB operating point
-            // is too noisy to drive the frequency integrator directly.
-            _walshPhaseAcc += correlation;
+            // Decision-directed carrier: the MRC-combined winner statistic Σ ĝ*·corr
+            // should be real and positive; its argument is the residual COMMON phase
+            // error (the fingers absorb per-path phase — §B3.5). Average over 8 channel
+            // symbols before applying the correction — the per-symbol phase estimate at
+            // the −6 dB operating point is too noisy to drive the frequency integrator
+            // directly. During warm-up (cold gains) the combined statistic is near zero
+            // and contributes nothing, which is the desired behaviour.
+            _walshPhaseAcc += combined;
             if (++_walshPhaseCount == 8)
             {
                 if (_walshPhaseAcc.Cnorm() > 1e-12)
@@ -1922,15 +2000,26 @@ public sealed class Ms110dDemodulator
                 _walshPhaseCount = 0;
             }
 
+            if (FrameDiagnostics is not null)
+            {
+                _walsh.CopyGainMagnitudes(gainMags);
+                FrameDiagnostics.Invoke(
+                    $"walsh sym={_symbolInBlock} d*={bestDibit} llr0={llrs[0]:F2} llr1={llrs[1]:F2} " +
+                    $"|g|=[{gainMags[0]:F3} {gainMags[1]:F3} {gainMags[2]:F3} {gainMags[3]:F3} " +
+                    $"{gainMags[4]:F3} {gainMags[5]:F3} {gainMags[6]:F3}] argC={combined.Arg():F3}");
+            }
+
             // Signal-lost discriminator (WN 0): the winning-correlation-to-chip-energy
-            // ratio ≈ 0.5 at the −6 dB mask point but ≈ 0.23 on noise alone.
+            // ratio ≈ 0.5 at the −6 dB mask point but ≈ 0.23 on noise alone. Weak only
+            // when ALL fingers are weak — a finger-0-only test would false-fire on a
+            // direct-path fade with a strong echo, exactly the fades MRC rides (§B3.5).
             double sumMag = 0;
             for (int i = 0; i < 32; i++)
             {
                 sumMag += chips[i].Abs();
             }
 
-            if (correlation.Abs() < 0.35 * sumMag)
+            if (maxFingerAbs < 0.35 * sumMag)
             {
                 // ~1.2 s — long enough to ride a deep Poor-channel fade (see the DFE
                 // path's discriminator for the rationale).

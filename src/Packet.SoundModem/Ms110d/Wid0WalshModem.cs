@@ -18,9 +18,25 @@ public sealed class Wid0WalshModem
     /// <summary>Chips per WN 0 data channel symbol at 3 kHz.</summary>
     public const int ChipsPerSymbol = 32;
 
-    private readonly Trinomial159Scrambler _scrambler = new();
+    /// <summary>RAKE finger count for <see cref="DemodulateRake"/>: integer chip delays
+    /// 0..6 — T-spaced (≈ decorrelated under the chip pulse) and covering the Poor
+    /// channel's 2 ms (4.8-chip) echo via fingers 4+5 (§B3.5 design note).</summary>
+    public const int Fingers = 7;
 
-    /// <summary>Resets the scramble sequence — call at every interleaver boundary.</summary>
+    /// <summary>Chips <see cref="DemodulateRake"/> consumes per channel symbol: the
+    /// 32-chip symbol plus the trailing finger reach.</summary>
+    public const int RakeChips = ChipsPerSymbol + Fingers - 1;
+
+    private const float GainAlpha = 1f / 6; // ≈80 ms one-pole — inside the 1 Hz fade coherence time
+    private const int WarmupSymbols = 8;    // noncoherent selection while the DD gains are cold
+
+    private readonly Trinomial159Scrambler _scrambler = new();
+    private readonly Cf[] _gains = new Cf[Fingers];
+    private int _symbolsSeen;
+
+    /// <summary>Resets the scramble sequence — call at every interleaver boundary. The
+    /// DD finger gains deliberately survive: the channel is continuous across blocks;
+    /// only the scrambler restarts (§B3.5).</summary>
     public void Reset()
     {
         _scrambler.Reset();
@@ -98,5 +114,117 @@ public sealed class Wid0WalshModem
         // Max-log per-bit LLRs from the coherent (real) correlations.
         llrs[0] = Math.Max(corr[0].Re, corr[1].Re) - Math.Max(corr[2].Re, corr[3].Re);
         llrs[1] = Math.Max(corr[0].Re, corr[2].Re) - Math.Max(corr[1].Re, corr[3].Re);
+    }
+
+    /// <summary>DD-MRC multi-finger demodulation (§B3.5 "Walsh RAKE"): per-finger Walsh
+    /// correlations at chip delays 0..6, combined with decision-directed per-finger
+    /// channel gains into an MRC statistic whose max-log LLRs are quadratic-CSI-weighted.
+    /// <paramref name="chips"/> holds <see cref="RakeChips"/> carrier-corrected chips
+    /// (finger k's window = chips[k..k+32]); the symbol's 32 scramble rotors apply to
+    /// every window. <paramref name="combined"/> is Σ ĝ*·corr(winner) — real-positive
+    /// when locked; its argument drives the common-CFO PLL. <paramref name="maxFingerAbs"/>
+    /// is max over fingers of |corr(winner)| for the all-fingers-weak discriminator.</summary>
+    public void DemodulateRake(
+        ReadOnlySpan<Cf> chips, Span<float> llrs, out int bestDibit, out Cf combined,
+        out double maxFingerAbs)
+    {
+        if (chips.Length != RakeChips || llrs.Length != 2)
+        {
+            throw new ArgumentException("expected 38 chips and 2 LLRs", nameof(chips));
+        }
+
+        // One scramble draw per symbol, applied to every finger's window.
+        Span<Cf> rot = stackalloc Cf[ChipsPerSymbol];
+        for (int i = 0; i < ChipsPerSymbol; i++)
+        {
+            rot[i] = Ms110dTables.Psk8[_scrambler.Next()].Conj();
+        }
+
+        // Per-finger candidate correlations via quarter-phase sums: the four Walsh rows
+        // only depend on i mod 4, so q[j] = Σ_{i≡j} descrambled[i] gives every candidate
+        // as ±q[0]±q[1]±q[2]±q[3].
+        Span<Cf> corr = stackalloc Cf[Fingers * 4];
+        Span<Cf> q = stackalloc Cf[4];
+        for (int k = 0; k < Fingers; k++)
+        {
+            q.Clear();
+            for (int i = 0; i < ChipsPerSymbol; i++)
+            {
+                q[i & 3] += chips[k + i] * rot[i];
+            }
+
+            for (int s = 0; s < 4; s++)
+            {
+                byte[] walsh = Ms110dTables.Walsh[s];
+                var acc = Cf.Zero;
+                for (int j = 0; j < 4; j++)
+                {
+                    acc = walsh[j] == 0 ? acc + q[j] : acc - q[j];
+                }
+
+                corr[(k * 4) + s] = acc;
+            }
+        }
+
+        // MRC decision statistic per candidate; warm-up (cold gains) selects
+        // noncoherently on total finger power instead.
+        Span<float> d = stackalloc float[4];
+        Span<double> power = stackalloc double[4];
+        for (int s = 0; s < 4; s++)
+        {
+            float acc = 0;
+            double pow = 0;
+            for (int k = 0; k < Fingers; k++)
+            {
+                Cf c = corr[(k * 4) + s];
+                acc += (_gains[k].Conj() * c).Re;
+                pow += c.Cnorm();
+            }
+
+            d[s] = acc;
+            power[s] = pow;
+        }
+
+        bool warmup = _symbolsSeen < WarmupSymbols;
+        bestDibit = 0;
+        for (int s = 1; s < 4; s++)
+        {
+            bool wins = warmup ? power[s] > power[bestDibit] : d[s] > d[bestDibit];
+            if (wins)
+            {
+                bestDibit = s;
+            }
+        }
+
+        // LLRs always from the MRC statistic: during warm-up they are near-zero
+        // (self-erasure — 8 of 576 symbols per block, the code absorbs it).
+        llrs[0] = Math.Max(d[0], d[1]) - Math.Max(d[2], d[3]);
+        llrs[1] = Math.Max(d[0], d[2]) - Math.Max(d[1], d[3]);
+
+        combined = Cf.Zero;
+        maxFingerAbs = 0;
+        for (int k = 0; k < Fingers; k++)
+        {
+            Cf c = corr[(k * 4) + bestDibit];
+            combined += _gains[k].Conj() * c;
+            double abs = c.Abs();
+            if (abs > maxFingerAbs)
+            {
+                maxFingerAbs = abs;
+            }
+
+            _gains[k] += ((c * (1f / ChipsPerSymbol)) - _gains[k]) * GainAlpha;
+        }
+
+        _symbolsSeen++;
+    }
+
+    /// <summary>Current DD finger-gain magnitudes (diagnostics).</summary>
+    public void CopyGainMagnitudes(Span<float> mags)
+    {
+        for (int k = 0; k < Fingers && k < mags.Length; k++)
+        {
+            mags[k] = _gains[k].Abs();
+        }
     }
 }

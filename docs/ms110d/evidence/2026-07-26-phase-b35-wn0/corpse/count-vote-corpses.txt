@@ -1,0 +1,26 @@
+=== autopsy-frames-wn0-w2-b104.log
+accept@1231: best=1241 metric=0.438 walkback=10 bin=3
+count-vote@1231.5746662488266: single=3 joint=19 margin=0.209 frames=4
+=== autopsy-frames-wn0-w2-b42.log
+accept@1231: best=1241 metric=0.486 walkback=10 bin=3
+count-vote@1231.3559262617728: single=31 joint=19 margin=0.269 frames=5
+=== autopsy-frames-wn0-w2-b47.log
+accept@1241: best=1241 metric=0.430 walkback=0 bin=3
+accept@2393: best=2393 metric=0.411 walkback=0 bin=3
+count-vote@2392.990726924823: single=25 joint=18 margin=0.344 frames=5
+=== autopsy-frames-wn0-w2-b97.log
+accept@1241: best=1241 metric=0.578 walkback=0 bin=3
+count-vote@1241.2442907558448: single=19 joint=19 margin=0.434 frames=5
+=== autopsy-frames-wn0-w3-b1.log
+accept@1241: best=1241 metric=0.415 walkback=0 bin=3
+count-vote@1241.101985953358: single=16 joint=19 margin=0.402 frames=5
+=== autopsy-summary-wn0-w2-b104.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 198/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+=== autopsy-summary-wn0-w2-b42.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 134/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+=== autopsy-summary-wn0-w2-b47.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 129 (first 134, last 4585), uncoded 1735/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+=== autopsy-summary-wn0-w2-b97.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 697 (first 2889, last 6292), uncoded 1854/12672, collapses 0, turbo 0c/0r/0a/11s, end=, 0 symbols dumped, lock=0/Long/K7@-0.60Hz (tx K7)
+=== autopsy-summary-wn0-w3-b1.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 115 (first 92, last 4029), uncoded 1458/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
