@@ -223,6 +223,10 @@ There is **no serial/GPIO PTT** — keying is a command (nCAT `ptt.go`, *wiki:TC
   ALSA plug-layer resampler.
 - **TX audio injection** is exactly the DAX TX stream (§2.4) — no mic path, fixed levels, the
   data-port-equivalent we want. RX gain via `audio stream … gain`, AGC-T via CAT if needed.
+  **Two corrections measured 2026-07-26 — see §10.**  Creating the DAX streams is *not* sufficient
+  to transmit: the transmitter's audio source must be pointed at DAX (`transmit set dax=1`) or
+  nothing is modulated. And the transmitted bandwidth is set by the radio's **transmit filter**
+  (up to 10 kHz), not by a ~3 kHz slice filter.
 - **Latency** `[unverified for our path]`: FT8 users report about **+0.3 s DT** through DAX, well
   inside FT8's 2.5 s budget. That figure bundles WSJT-X's own buffering. Our path (§4) can run a
   much tighter jitter buffer. The number that matters for **ARDOP's ~1.5–2.1 s ACK windows** is
@@ -617,7 +621,8 @@ Success = keys the radio, `interlock=TRANSMITTING`, RF on the dummy load, no set
 
 ## 9. IQ interfaces — RX via DAX-IQ, TX via the Waveform API (2026-07-17)
 
-The DAX path above (§2–§8) gives the modem an *audio* pipe through a ~3 kHz slice — proven, shipped.
+The DAX path above (§2–§8) gives the modem an *audio* pipe — proven, shipped. (Its bandwidth is set
+by the transmit filter, up to ~10 kHz, not by a ~3 kHz slice filter; see §10.)
 This section is the separate **IQ** story: wideband complex baseband, for (a) multi-channel RX and
 (b) our own >3 kHz waveforms. Two very different mechanisms, one per direction.
 
@@ -847,3 +852,72 @@ blanked during TX). The external-RX route above is the one that works.
   *waveform* for the transmit half — accepted, since there is no other IQ-TX door on a Flex. **Budget
   ~10 kHz**: that still suits HF (2.7 kHz channels) comfortably, but a VARA-FM-class ~25 kbps signal
   does **not** fit and should not be planned against this path without a different transport.
+
+
+---
+
+## 10. DAX audio transmit — two corrections (2026-07-26, M0LTE's FLEX-6500)
+
+Measured against a receiver and SmartSDR's own MON, with the `flex-dax-tx` rig in
+[`M0LTE.Flex`](https://github.com/M0LTE/M0LTE.Flex) (`tools/FlexDaxTx`, ≥ 0.7.0). Both findings
+contradict what §2–§3 assumed, and neither would show up in any test that stops at "packets sent".
+
+### 10.1 The transmitter must be pointed at DAX, or nothing is modulated
+
+Running the eight-step DAX enable (§2.4) and streaming TX packets is **not sufficient to transmit**.
+The transmitter has its own audio-source selection, it defaults to the **mic**, and every command in
+the enable returns `err=0` regardless. A 1 kHz tone through a correctly set up DAX TX stream produced
+**no modulation whatsoever** — the radio keyed, the packets flowed, the meters moved, and the carrier
+was bare.
+
+The missing step is:
+
+```
+transmit set dax=1
+```
+
+Observable on the `transmit` status object as `dax=1` (it reads `dax=0` on a fresh radio, alongside
+`mic_selection=PC`). It is a **global setting that persists** after teardown, so a client that sets it
+changes what the radio transmits from thereafter — worth restoring if the operator goes back to a
+microphone.
+
+Two plausible alternatives were ruled out by probe: `transmit set mic_selection=DAX` is rejected
+(`0x5000002D`), and `dax audio set <ch> tx=1` without a slice is rejected (`0x50001000`).
+
+**This means DAX transmit had never worked from the client library**, and the §8 bring-up table's
+"DAX-TX audio | streamed 0.5 s while `TRANSMITTING`" was true of the packets while saying nothing
+about the air — nobody had looked at a receiver. `FlexStation.SetUpHeadlessAsync` now sends it and
+reads it back (`TransmitSourceIsDax`); `SelectDaxAsTransmitSource = false` declines it for a
+receive-only session.
+
+### 10.2 DAX audio is not a ~3 kHz path — the transmit filter is the limit
+
+§3 and §9 describe DAX as an audio pipe "through a ~3 kHz slice". It isn't. Transmitted audio
+bandwidth is governed by the radio's **transmit filter** — the same one that caps the Waveform API
+path (§9.5) — and it is settable:
+
+| `transmit set filter_high=` | audio sweep cut at |
+|---|---|
+| `10000` | **exactly 10 kHz** above the dial |
+| `3000` | **exactly 3 kHz** above the dial |
+
+An audio chirp transmitted through DAX at 48 kHz was cut precisely where the filter was set, on both
+runs. The factory value is 3000, which is why the ~3 kHz assumption survived: it is the default, not
+a limit of the path.
+
+**So both transmit paths share one bandwidth ceiling of ~10 kHz.** That matters for the roadmap: an
+audio-band own-mode of up to ~10 kHz can run over the **DAX sound-card path**, with no Waveform API,
+no `underlying_mode`, no sideband selection and no band placement — considerably simpler than the IQ
+route for anything that fits. The Waveform API is only needed for signals that must straddle the
+carrier or exceed what an audio path can carry.
+
+`FlexStation` reads the filter back and reports it (`TransmitFilter`); `TransmitFilterHighHz` sets it,
+defaulting to leaving it alone because it is global.
+
+### 10.3 Method note
+
+Both findings came from transmitting a known signal and *looking at a receiver* — not from checking
+return codes or packet counts, which were uniformly healthy in both failure cases. The 3 kHz figure
+in particular had been carried in the docs, in the library's XML comments and in the tool's own
+banner, none of which had ever measured it. Where a number in this document is not accompanied by
+how it was measured, treat it as inherited.
