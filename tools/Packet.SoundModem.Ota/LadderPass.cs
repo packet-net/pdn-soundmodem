@@ -76,6 +76,18 @@ public sealed record LadderPassOptions
 
     /// <summary>Constraint length, 7 or 9.</summary>
     public int ConstraintLength { get; init; } = 7;
+
+    /// <summary>
+    /// Transmit SSB passband edges about the suppressed carrier. The default clears the whole
+    /// MS110D occupied band, which is the reference case: no truncation anywhere.
+    /// </summary>
+    /// <remarks>Narrow these to model a transceiver whose IF filter is narrower than the
+    /// waveform — a conventional SSB radio filters on transmit as well as receive, and the two
+    /// truncations compound. Emulating only the receive side understates the cost.</remarks>
+    public double TxSsbLowHz { get; init; } = 150;
+
+    /// <summary>Upper transmit passband edge.</summary>
+    public double TxSsbHighHz { get; init; } = 3450;
 }
 
 /// <summary>
@@ -164,6 +176,8 @@ public sealed class LadderPass
                 InputRate = Ms110dAudioRate,
                 OutputRate = _options.OutputRate,
                 OffsetHz = _options.OffsetHz,
+                SsbLowHz = _options.TxSsbLowHz,
+                SsbHighHz = _options.TxSsbHighHz,
                 PeakNormalise = false, // one gain for the pass, applied below
             }).Convert(audio);
 

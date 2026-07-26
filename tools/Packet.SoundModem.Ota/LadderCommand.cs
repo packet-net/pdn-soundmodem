@@ -81,6 +81,8 @@ internal static class LadderCommand
             OutputRate = rate,
             OffsetHz = offsetHz,
             PreambleSuperframes = a.Int("preamble", 3),
+            TxSsbLowHz = a.Dbl("tx-ssb-low", 150),
+            TxSsbHighHz = a.Dbl("tx-ssb-high", 3450),
         });
 
         Console.Error.WriteLine(

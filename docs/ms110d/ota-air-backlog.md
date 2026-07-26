@@ -23,10 +23,24 @@ Status: `todo` · `blocked` (waiting on someone/something else) · `done` (moved
 | A11 | §I2 GPSDO cross-check via m9psy | m9psy, no transmit | confidence in A1's method | todo |
 | A12 | §E3 — IQ vs SSB A/B through DIGU | radio, 20 min | measuring what the TX SSB filter costs | todo |
 | A13 | §I1 receiver AGC/clipping audit, formally | receiver, no transmit | trusting levels at high power | todo |
+| A14 | Kenwood TK-90 bench measurements | a TK-90 | extending §E3 to a real commercial radio | blocked, no radio |
 
 **Everything offline is now built.** Nothing on this list is waiting on software: `sm-ota ladder`, `score`, `monitor`, the schedule/manifest and the streaming converter are all done and rehearsed. The next thing that moves the campaign forward is a radio.
 
 ---
+
+## A14 — Kenwood TK-90 bench measurements *(blocked: we do not have one)*
+
+[`radio-tk-90-evaluation.md`](radio-tk-90-evaluation.md) assesses it from the manufacturer's documents and measures the bandwidth penalty in simulation. It looks well suited — ±0.5 ppm, a proper data port, 2G ALE, full CAT — with one compromise: the IF filter is 2.2 kHz built-in, 2.7 kHz with the optional KIF-2, against MS110D's ~3 kHz.
+
+If one is obtained, six measurements turn every estimate in that document into a number; the first three matter most.
+
+1. The actual passband in **both** directions (sweep DI→RF and RF→DEO). The spec gives a width, not edges, and the emulation had to guess them.
+2. Whether KIF-2 is in the **transmit** path. The manual implies the IF filter is, but never says so for KIF-2; if it is receive-only, transmit is stuck at 2.2 kHz and the penalty is worse.
+3. Group delay across the passband — the simulation models amplitude truncation only, and group delay at the edges is what hurts a serial-tone waveform.
+4. ALC linearity on DATA (`sm-ota tone --tone2-hz` does this directly).
+5. Duty cycle, which no Kenwood manual states.
+6. Frequency error against RWM, the same reference used for the Flex and the UberSDR.
 
 ## A1 — Re-measure `--dial-correction`
 
