@@ -336,3 +336,38 @@ binary:
 
 Corpse-side artifacts banked in `corpse/` (m2a/e3/a2/a3/s summaries,
 a2-relock-margins.txt).
+
+## S battery — 32/32 legs, zero retries
+
+**WN7 canonical 3.38E-2 → 2.56E-5 (83 errors / 3,243,776, turbo 88c/0r), disjoint
+2.23E-2 → 1.48E-5 (48 errors, 88c/0r)** — ZERO reverts in either family; every block
+of all 16 bursts converges, and the residue is pure model-floor tails. Per burst
+(baseline → new): canonical 1000508 54,616 → 20, 1001508 36,754 → 25, 2001508
+18,233 → 38, five bursts 0 → 0; disjoint 1010508 17,897 → 12, 1011508 18,376 → 0,
+2010508 18,014 → 0, 3010508 17,871 → 14, 10508 16 → 16, 2011508 6 → 6, two at 0 → 0.
+**No burst regressed in either family.** Cumulative across B3.6 → B3.8: canonical
+1.73E-1 → 2.56E-5 (6,760×), disjoint 1.95E-1 → 1.48E-5 (13,180×).
+
+**Every non-WN7 census byte-identical to the #93 baseline (72 files,
+`battery/census-compare.txt`)**; gated eight at their exact digits; AWGN ×10, static,
+Doppler green; WN8 measured unchanged (4.96E-1/4.97E-1, QAM16 — structurally outside
+the rung).
+
+WN7 is not yet AT MASK (target 1E-5): pooled 131/6.49M ≈ 2.0E-5 sits 1.5–2.6× above
+the line. But the residual has changed KIND: with zero reverts, the salvage/detection
+story is CLOSED — what remains is the converged-decode model-floor tail (the same
+class as the oracle's own b3:6/b6:14 residues), which is a model-refinement question
+(per-segment echo, noise pricing at the tail), not a detection question.
+
+## Disposition
+
+- **E2 (anchor-track h1): RED at the offline gate**, zero demodulator cost. G2 and
+  positional G4 measured dead (h1 model error ~2% of the priced floor, flat profile).
+- **E3 (late-lock salvage rung): GREEN and SHIPPED** — Amendment 1 (window-shift
+  re-lock offer, floor-arbitrated), Amendment 2 (decisive-adoption margin 0.5),
+  Amendment 3 (second-rung scoping; converging blocks structurally untouched).
+- **WN7 OPEN at 2.56E-5 / 1.48E-5** — within 2.6× of the mask, zero reverts, the
+  binding constraint is now the converged model-floor tail, not detection.
+- The intervention-tested negative banked: margins cannot stabilize a ceiling
+  block's fixed point (b5: ANY seed change wobbles it a few bits; only structural
+  scoping — don't touch converging blocks — retains exactly).
