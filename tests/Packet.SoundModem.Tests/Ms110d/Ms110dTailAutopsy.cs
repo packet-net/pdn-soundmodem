@@ -199,6 +199,8 @@ public class Ms110dTailAutopsy
         bitErrs.WriteLine("block,symbolInBlock,bitInSymbol");
         using var oracleBitErrs = new StreamWriter(Path.Combine(outDir, $"autopsy-oracle-biterrs-{tag}.csv"));
         oracleBitErrs.WriteLine("block,symbolInBlock,bitInSymbol");
+        using var frozenBitErrs = new StreamWriter(Path.Combine(outDir, $"autopsy-frozen-biterrs-{tag}.csv"));
+        frozenBitErrs.WriteLine("block,symbolInBlock,bitInSymbol");
         using var llrStats = new StreamWriter(Path.Combine(outDir, $"autopsy-llrstats-{tag}.csv"));
         llrStats.WriteLine("pass,block,bits,errBits,sumAbsRight,sumAbsWrong");
 
@@ -400,6 +402,18 @@ public class Ms110dTailAutopsy
                     return;
                 }
 
+                // §B3.7 M0: per-position frozen LLR-sign errors, same schema as the
+                // first-pass biterrs CSV so scaffold.py applies to the frozen decode.
+                byte[] fetched = fetchedBlocks[blockIndex];
+                int compareBits = Math.Min(llrs.Length, fetched.Length);
+                for (int i = 0; i < compareBits; i++)
+                {
+                    if ((llrs[i] > 0 ? 0 : 1) != fetched[i])
+                    {
+                        frozenBitErrs.WriteLine($"{blockIndex},{i / bitsPerSymbol},{i % bitsPerSymbol}");
+                    }
+                }
+
                 int errs = 0;
                 for (int i = 0; i < dec.Length; i++)
                 {
@@ -438,6 +452,18 @@ public class Ms110dTailAutopsy
         // perturbed restarts. The perturbation touches ONLY the iteration-0 labels; the
         // revert fallback stays the true first pass inside the demod.
         demod.TurboProbeDiag = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TURBO_PROBEDIAG") == "1";
+        // §B3.7 M1a: log-only straddle-pair solve per frozen frame (frozen-pair lines).
+        demod.TurboFrozenPairDiag = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_PAIRDIAG") == "1";
+        // §B3.7 E1′ (Amendment 1): burst-consensus constrained frozen solve.
+        demod.TurboFrozenConsensus = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_CONSENSUS") == "1";
+        // §B3.7 E1″(a) (Amendment 2): alias-priced null on pre-cursor frames.
+        demod.TurboFrozenAliasNull = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_ALIASNULL") == "1";
+        // §B3.7 E1″(b), shipped default (Amendment 3): exact pre-cursor chains on
+        // alias frames. "0" disables (the pre-B3.7 causal-alias seam).
+        if (Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_PRECURSOR") == "0")
+        {
+            demod.TurboFrozenPreCursor = false;
+        }
         if (turboPerturb is not null)
         {
             string[] parts = turboPerturb.Split(',');
