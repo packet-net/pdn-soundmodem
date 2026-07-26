@@ -306,8 +306,27 @@ public sealed class Ms110dDemodulator
     /// every frame's applied solve then tests ONLY that lag under the single-candidate
     /// margin. Kills the ln L acceptance starvation and the 16-periodic-probe
     /// pre-cursor alias (M1a: the lag-11 cluster). Reachable only from the salvage
-    /// rung and the frozen diag pass; unset = bit-identical.</summary>
+    /// rung and the frozen diag pass; unset = bit-identical. Measured RED (the E1′
+    /// post-mortem): the free solve's per-frame choices are frame-local channel truth.
+    /// Kept as a measurement seam.</summary>
     internal bool TurboFrozenConsensus { get; set; }
+
+    /// <summary>§B3.7 E1″(a) (Amendment 2): on frozen-pass frames whose accepted lag
+    /// exceeds half the probe base period — the pre-cursor folded through the periodic
+    /// probe, NOT a causal echo — drop the chain echo model and price the pre-cursor
+    /// into the noise floor. The solve, FF, anchors and floor stand (they fit the true
+    /// response through the folded column); only the chain application changes.
+    /// Frozen/salvage path only; unset = bit-identical.</summary>
+    internal bool TurboFrozenAliasNull { get; set; }
+
+    /// <summary>§B3.7 E1″(b) (Amendment 2): on the same alias frames, run the chains
+    /// EXACTLY on the pre-cursor structure via the observation shift — o[u] = y[u−d]
+    /// couples x[u] (through the pre-cursor coefficient, which rides the cursor slot
+    /// rotor-free) and x[u−d] (through h1), with d = period − lag. The last d data
+    /// symbols are observed only through the pre-cursor coefficient (the mirror of the
+    /// causal form's tail truncation). Takes precedence over E1″(a) on alias frames
+    /// when both are set. Frozen/salvage path only; unset = bit-identical.</summary>
+    internal bool TurboFrozenPreCursor { get; set; }
 
     /// <summary>Diagnostic (phase-b-plan §B3.3 fade-crossing): while the oracle
     /// re-equalization runs, TurboCore emits one <c>turbo-frame</c> line per frame with
@@ -2622,6 +2641,10 @@ public sealed class Ms110dDemodulator
         Span<int> probeIdx = stackalloc int[2 * mode.K];
         Span<Cf> anchor = stackalloc Cf[2];
         Span<float> anchorPos = stackalloc float[2];
+        // §B3.7 E1″: the probe is a base sequence cyclically extended to K, so
+        // probe-row regressors repeat with this period and an accepted lag beyond
+        // half of it is the −(period−lag) pre-cursor folded into the causal search.
+        int probePeriod = MiniProbe.Sequence(mode.K).Base.Length;
 
         // Probe-only shortening rows for frame f. Rows keep their feedback history
         // inside the probe (i ≥ fb), mirroring the §B3.4 Amendment 1 probe-row
@@ -2805,6 +2828,29 @@ public sealed class Ms110dDemodulator
             // (the #65 2×-under-confidence lesson).
             float noiseVar = Math.Max(noiseRows > 0 ? 0.5f * noiseAcc / noiseRows : 1e-2f, 1e-6f);
 
+            // §B3.7 E1″(a) (Amendment 2): an accepted lag beyond half the probe base
+            // period is the pre-cursor folded through the periodic probe — the causal
+            // chain model at that lag is measurably worse than none (E1′ alias→0
+            // class). The solve, FF, anchors and floor stand (they fit the true
+            // response through the folded column); the CHAIN echo model is dropped and
+            // the pre-cursor priced into the floor (unit-power symbols, per dimension).
+            int chainDelay = delay;
+            Cf h2Chain = h2Wire;
+            bool aliasFrame = tir.Lag > probePeriod / 2;
+            bool preCursorFrame = TurboFrozenPreCursor && aliasFrame && probePeriod - tir.Lag >= 1;
+            if (preCursorFrame)
+            {
+                // §B3.7 E1″(b): exact pre-cursor chains — assembly below shifts the
+                // observation by d = period − lag and swaps the tap roles.
+                chainDelay = probePeriod - tir.Lag;
+            }
+            else if (TurboFrozenAliasNull && aliasFrame)
+            {
+                chainDelay = 1;
+                h2Chain = Cf.Zero;
+                noiseVar += 0.5f * tir.Coefficient.Cnorm();
+            }
+
             // Descrambled-domain assembly, mirroring TurboCore: h1 rides through the
             // derotation; the wire echo coefficient folds the rotor product.
             _scrambler.Reset();
@@ -2817,21 +2863,62 @@ public sealed class Ms110dDemodulator
             var rxDesc = new Cf[mode.U];
             var h1Span = new Cf[mode.U];
             var h2Span = new Cf[mode.U];
-            var preceding = new Cf[delay];
-            for (int c = 0; c < delay; c++)
+            var preceding = new Cf[chainDelay];
+            for (int c = 0; c < chainDelay; c++)
             {
-                preceding[c] = precedingProbe[(mode.K - delay) + c];
+                preceding[c] = precedingProbe[(mode.K - chainDelay) + c];
             }
 
             float span = Math.Max(1f, anchorPos[1] - anchorPos[0]);
-            for (int u = 0; u < mode.U; u++)
+            if (preCursorFrame)
             {
-                float t = Math.Clamp((u - anchorPos[0]) / span, 0f, 1f);
-                h1Span[u] = (anchor[0] * (1f - t)) + (anchor[1] * t);
-                rxDesc[u] = rxWire[u] * rotors[u].Conj();
-                h2Span[u] = u >= delay
-                    ? h2Wire * rotors[u - delay] * rotors[u].Conj()
-                    : h2Wire * rotors[u].Conj();
+                // §B3.7 E1″(b) assembly: o[u] = yWire[u−d] = h1(u−d)·xw[u−d] + c·xw[u].
+                // Derotated by r̄(u): the pre-cursor coefficient rides the cursor slot
+                // rotor-free; h1 (evaluated at wire position u−d) takes the echo slot
+                // with the usual rotor fold, probe chips as the u < d sources. The
+                // u < d observations are the preceding probe's last d positions,
+                // equalized in the same feedback-free domain.
+                int d = chainDelay;
+                for (int u = 0; u < d; u++)
+                {
+                    long chip = frameChip - d + u;
+                    if (!HaveSamplesForChip(chip + 2))
+                    {
+                        dfe.LoadTaps(savedTaps);
+                        dfe.BeginTraining();
+                        return;
+                    }
+
+                    FillWindow(chip, window);
+                    rxDesc[u] = dfe.Equalize(window, past) * rotors[u].Conj();
+                }
+
+                for (int u = d; u < mode.U; u++)
+                {
+                    rxDesc[u] = rxWire[u - d] * rotors[u].Conj();
+                }
+
+                for (int u = 0; u < mode.U; u++)
+                {
+                    h1Span[u] = tir.Coefficient;
+                    float t = Math.Clamp(((u - d) - anchorPos[0]) / span, 0f, 1f);
+                    Cf h1w = (anchor[0] * (1f - t)) + (anchor[1] * t);
+                    h2Span[u] = u >= d
+                        ? h1w * rotors[u - d] * rotors[u].Conj()
+                        : h1w * rotors[u].Conj();
+                }
+            }
+            else
+            {
+                for (int u = 0; u < mode.U; u++)
+                {
+                    float t = Math.Clamp((u - anchorPos[0]) / span, 0f, 1f);
+                    h1Span[u] = (anchor[0] * (1f - t)) + (anchor[1] * t);
+                    rxDesc[u] = rxWire[u] * rotors[u].Conj();
+                    h2Span[u] = u >= chainDelay
+                        ? h2Chain * rotors[u - chainDelay] * rotors[u].Conj()
+                        : h2Chain * rotors[u].Conj();
+                }
             }
 
             if (FrameDiagnostics is not null)
@@ -2842,7 +2929,7 @@ public sealed class Ms110dDemodulator
 
             var frameLlrs = new float[mode.U * bitsPerSymbol];
             Ms110dChainBcjr.Equalize(
-                rxDesc, h1Span, h2Span, delay, noiseVar,
+                rxDesc, h1Span, h2Span, chainDelay, noiseVar,
                 constellation, labels, bitsPerSymbol, preceding, frameLlrs,
                 default, noiseVarPerSymbol: default);
             for (int i = 0; i < frameLlrs.Length; i++)

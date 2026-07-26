@@ -456,6 +456,10 @@ public class Ms110dTailAutopsy
         demod.TurboFrozenPairDiag = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_PAIRDIAG") == "1";
         // §B3.7 E1′ (Amendment 1): burst-consensus constrained frozen solve.
         demod.TurboFrozenConsensus = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_CONSENSUS") == "1";
+        // §B3.7 E1″(a) (Amendment 2): alias-priced null on pre-cursor frames.
+        demod.TurboFrozenAliasNull = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_ALIASNULL") == "1";
+        // §B3.7 E1″(b) (Amendment 2): exact pre-cursor chains on alias frames.
+        demod.TurboFrozenPreCursor = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_PRECURSOR") == "1";
         if (turboPerturb is not null)
         {
             string[] parts = turboPerturb.Split(',');

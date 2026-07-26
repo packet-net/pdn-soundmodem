@@ -109,6 +109,25 @@ The alias detection is not a defect to suppress — it is the solve *correctly m
 - **Bars:** the leg's per-arm bars unchanged (GREEN ≥2 of 4 conversions + all 5 retained; AMBER 1 conversion or ≥3-frame frozen-scaffold lift on ≥3 of 4; RED neither). Design disclosure: sub-form design consumed the two specimens' per-frame deltas, so a THIRD specimen is banked as held-out judgment before any sub-form touches it — **w2/b1 (channelSeed 2001508), the canonical burst the B3.6 salvage never improved (54,609)**. A shipping sub-form must not regress w2/b1 and its per-block conversions there are the unseen-data evidence (B3.5b template).
 - **Consequence:** both sub-forms RED → E1-family closed (two built REDs inside one arm family counts as ONE arm verdict — the E2 arm remains next, and the two-consecutive-RED design-only clause then hangs on E2). Either sub-form GREEN/AMBER → it is the arm's result; (b) preferred over (a) at equal bars.
 
+## E1″ measured — the corpse burst converts to ZERO; (b) is the arm's result at AMBER
+
+An unplanned bit-identity check first: a mis-wired flag ran (b)'s binary flag-off on both specimens and reproduced the pre-B3.7 digits EXACTLY (w0/b0 18,239 / 10c/1r/3v with the B3.6 M2a frozen per-block digits) — the whole E1″ restructure is bit-identical when disarmed. It also localized the M0-vs-M2a frozen-digit deltas to the pair-diag's ridge-anchor coupling (the diag pass is otherwise pipeline-state-independent).
+
+- **Sub-form (a):** w0/b0 **0 coded errors / 11c/0r/4v — b10 converts and the canonical corpse burst goes to zero** (arc across the two legs: 72,666 → 18,239 → 0). w1/b0: 54,616 / 8c/3r/2v — outcome-identical, no conversions, no regressions (b8's frozen scaffold +11 frames, 39→50, still short of the ~52 edge).
+- **Sub-form (b):** same bar outcomes (w0/b0 **0 / 11c/0r/4v**, w1/b0 54,616 / 8c/3r/2v) and a strictly better detector: frozen info-decodes beat (a) on **21 of 22 blocks** (w1 b4: 5,270 vs 12,222; w0 b5: 7,683 vs 11,030) — exact MAP on the true pre-cursor structure beats interference-as-noise, as registered.
+- **Bars:** 1 of 4 failing specimens converted, all 5 retentions held, zero regressions anywhere → **AMBER** for both sub-forms; **(b) is the arm's result** per the registered preference. The w1 trio (b2/b7/b8) stays unconverted — their frozen decodes barely move (17,322/17,125/16,075); their deficiency is not alias-dominated.
+
+## Amendment 3 — ship E1″(b) at AMBER (registered before the default flips)
+
+The leg's GREEN ship bar asked for ≥2 conversions; E1″(b) delivers 1 — but that one zeroes the canonical corpse burst outright, with zero regressions on 22 measured blocks and a complete, intervention-tested mechanism. This is the B3.6 Amendment 1 situation (formal bar miss + strong composed evidence), and it takes the same remedy: the shipped form is judged on evidence no design decision consumed.
+
+- **Shipped form:** the pre-cursor chain application becomes the frozen pass's DEFAULT on alias frames (`TurboFrozenPreCursor` initializes true; the env seam can disable it, and the (a) form remains a measurement override). Production reachability is exactly the salvage rung + diag pass, as before.
+- **S1 (held-out, unseen):** w2/b1 (2001508) — banked baseline 54,609 / 8c/3r/0v — must show NO per-block regression; conversions are upside evidence, not required.
+- **S2 (specimens, exact):** w0/b0 = 0 / 11c/0r/4v; w1/b0 = 54,616 / 8c/3r/2v, reproduced by the default-on binary with no autopsy flags.
+- **S3 (guards):** WN7 corpse re-pins at **0 / 11c/0r/4v + oracle b5:15**; WN6 corpse 0/11c0r/0v; WN13sp 0/11c0r/0v; suite 697/0 (105 env-gated skips).
+- **S4 (FULL battery, house three-lane form):** every non-WN7 census byte-identical to the #92 baseline; WN7 both families must improve or hold (≤5.63E-2 / ≤6.14E-2 — the 508-class bursts alone are worth about −18k canonical).
+- **Consequences:** any S-bar red → the default flips back, E1″(b) stays a seam, the leg proceeds to E2 unshipped. All green → ship; E2/G2 remains the registered next arm for the unconverted w1-trio class, in this leg if headroom remains, else banked.
+
 ## Buildable-in-window call (honest)
 
 E1 and E2 are comfortably buildable and testable in-window; E3 is buildable if reached. FD-MMSE proper is neither in-window nor, per the dominance argument, worth building. The design-only exit is registered and respectable: it would close C2b — the last standing structural escalation on WN7 — with a measured verdict, leaving WN7's residual formally attributed to detection-information limits rather than unexplored architecture.
