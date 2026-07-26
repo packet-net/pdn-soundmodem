@@ -74,6 +74,79 @@ Half again as many channel bit errors at the *same* delivered SNR — worth roug
 
 That makes it **the ideal subject for §E3**, which exists to measure exactly this difference. §E3 was scoped as "our IQ path versus our own DAX audio path"; a TK-90 would extend it to "versus a real commercial radio", which is a far more useful comparison, because a real deployment will be running a radio like this and not a Flex in waveform mode.
 
+## How 2G ALE and MS110D would work together in practice
+
+ALE requires the optional **KPE-2** unit; it is not in the base radio.
+
+### What ALE is, and what it is not
+
+2G ALE (MIL-STD-188-141A) is a **rendezvous and channel-selection layer**. It answers "which of my channels can reach that station right now, and is he listening?" — and nothing else. It carries no traffic. Once it has established a link, it hands over a channel and gets out of the way, and the data waveform runs on that channel as a separate activity.
+
+So the pairing is not "ALE carries MS110D". It is: ALE picks the channel and proves the path exists, then MS110D uses it.
+
+### The sequence, concretely
+
+1. Both stations idle in **Net mode**, scanning their net's channel list at the configured Scan Rate.
+2. The caller issues an individual call. The radio first listens for a clear channel (**Listen-before-transmit Time**), then transmits an ALE call long enough for the callee to hear it whichever channel its scan is currently on.
+3. The callee responds; the caller acknowledges. `<< LINKED >>`, link tone, and both radios are now parked on one agreed channel. LQA picks that channel automatically, or the operator overrides it.
+4. **Switch out of Net mode** — to VFO or Channel mode — because Net mode will not transmit anything but ALE (see below).
+5. Set DATA mode, and run MS110D through DI/DEO with PTT on the KCT-39.
+6. Terminate the link explicitly (`TERMINATION` in the ALE Call menu), or let the Wait for Activity Timer drop it.
+
+### The interlock that shapes everything
+
+The three ALE operating modes differ in exactly the way that matters to a data modem:
+
+| Mode | Scans? | Can transmit arbitrary data? | ALE calls? |
+|---|---|---|---|
+| **Net** | Yes, always — *"scan cannot be manually stopped"* | **No, not unless a link is established** | Yes |
+| **Channel** | No | Yes | Yes |
+| **VFO** | No | Yes | **No** (except emergency) |
+
+This is the crux of the integration. **A station sitting in Net mode cannot be made to transmit data on demand** — it is scanning, and the radio refuses. Data can only flow after a link exists, or after the controller has moved the radio to Channel or VFO mode, at which point it is no longer scanning and no longer reachable by anyone else's ALE call.
+
+That is a genuine either/or: *listening for callers* and *being available for data* are different radio states, and something has to arbitrate between them. The manual explicitly allows the transition that makes the flow work — "when a link is established, it is possible to change from Net mode to VFO mode" — so the intended pattern is: scan, link, leave scan, pass traffic, terminate, resume scanning.
+
+### Where the time goes
+
+An ALE call has to be long enough to cover the callee's entire scan cycle, since the caller cannot know where in the scan the callee is. So **call duration scales with the number of channels in the net**, and the handshake costs seconds before a single data bit moves. For a short MS110D burst — ours are a second or two — the link setup can easily cost more airtime than the traffic.
+
+That argues for one of two patterns, and it is a design decision worth making deliberately:
+
+- **Link once, transfer a lot.** Amortise the handshake over a long exchange. Good for bulk transfer, poor for latency.
+- **Skip ALE for scheduled contacts.** If both ends know the time and channel, Channel mode with no link at all is faster and simpler. ALE earns its keep when the channel is *unknown* — which is exactly the case ionospheric conditions create, and exactly the case a fixed schedule does not.
+
+### The gap ALE does not close
+
+**LQA tells you the link exists. It does not tell you which waveform to use.**
+
+ALE's own signalling is 8-ary FSK at a few hundred bits per second — far more robust than most of the MS110D family. A channel that links cleanly may still be nowhere near good enough for the higher waveforms. Our own gate table spans **−6 dB (WN0) to 16 dB (WN8)**, a 22 dB range: "linked" leaves essentially the whole waveform ladder open.
+
+So an ALE-fronted MS110D station still needs a rate-selection policy of its own. LQA score is a reasonable *prior* — it is a real measurement of that channel to that station — but it cannot be the decision. The options are to probe (send a known burst and score it, which is precisely what `sm-ota score` does), to adapt (start conservative and climb), or to carry the previous exchange's measured SNR forward. `BurstScore.Snr` and `UncodedBer` are the right inputs for that, and the harness already produces both.
+
+There is a neat opportunity here: the LQA score and our own measured SNR could be logged together over a campaign, and the relationship between them measured. That would turn LQA from a vendor-defined number into a calibrated predictor of which waveform will work — and it needs no extra hardware beyond the radio itself.
+
+### One thing that works out nicely
+
+The 2G ALE tone set spans roughly 750–2500 Hz. That fits inside the TK-90's 2.2 kHz built-in filter with room to spare, so **the narrow filter costs ALE nothing** — the link layer is unaffected, and only the traffic waveform pays the 1–2 dB measured above. Fitting the KIF-2 improves the data path and leaves ALE exactly as it was.
+
+### Link maintenance, and a question to settle on the bench
+
+The **Wait for Activity Timer** drops the link automatically if nothing happens — and the manual defines "something happening" as *"no PTT (microphone) switch has been pressed"*. Whether keying via the **data-port PTT** on the KCT-39 also resets that timer is not stated, and it matters: if it does not, a long data exchange would have its link terminated underneath it while the modem is mid-transfer.
+
+Other per-net parameters worth knowing about, all set in KPG-102D: **Scan Rate**, **Listen-before-transmit Time**, **LQA Request** (asks the far end to report its score back, giving both directions), **LQA Score Threshold Level** (below which the radio refuses to link at all), **LQA Timeout** (how long scores stay valid), and **AMD Frame**, which the manual notes "must be changed if the transceiver cannot link with other manufacturers transceivers" — a plain admission that 2G ALE interop has framing variations in the field.
+
+### What we would have to build
+
+Modest, and none of it novel:
+
+1. **A Kenwood CAT driver** — `FA`, `MD`, `PC`, `RX`/`TX`, `IF`, `SM`, plus the ALE set `A0`–`B0` (`A5` makes calls, `A6` reports received calls, `A7` reads link status). Structurally the same job `M0LTE.Flex` does for the Flex.
+2. **A link state machine**: request link → poll `A7` → on link, read the chosen channel → switch mode → hand the channel to the modem → terminate.
+3. **PTT arbitration**, so the ALE unit and our modem never both believe they own the transmitter.
+4. **A rate-selection policy** informed by LQA *and* by our own measured SNR from the previous exchange.
+
+The interesting engineering is item 4. Items 1–3 are plumbing.
+
 ## If one is obtained, measure these
 
 In order, and all of them cheap once the radio is on the bench:
@@ -84,6 +157,8 @@ In order, and all of them cheap once the radio is on the bench:
 4. **ALC behaviour on DATA.** Sweep DI level and check the RF envelope tracks linearly. Our two-tone rig (`sm-ota tone --tone2-hz`) does this directly.
 5. **Duty cycle**, since no manual states it and a ladder pass is a high-duty load.
 6. **Actual frequency error**, against the same RWM reference used for the Flex and the UberSDR.
+7. **Whether the data-port PTT resets the ALE Wait for Activity Timer.** If it does not, a long data exchange will have its link terminated underneath it.
+8. **ALE handshake duration** against net size, so the link-setup overhead can be budgeted against burst length.
 
 Items 1, 2 and 4 would take an afternoon and would turn every estimate in this document into a measurement.
 
