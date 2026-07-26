@@ -219,6 +219,125 @@ public sealed class Wid0WalshModem
         _symbolsSeen++;
     }
 
+    /// <summary>§B3.5b genie-gain oracle variant (instrument, never the shipped path —
+    /// evidence/2026-07-26-phase-b35b-wn0genie): detection runs on the noisy
+    /// <paramref name="chips"/> exactly as <see cref="DemodulateRake"/>, but the finger
+    /// gains come from <paramref name="cleanChips"/> — the genie's noise-free copy of the
+    /// same realization — correlated against the TRUE Walsh row
+    /// (<paramref name="trueDibit"/>): zero additive noise, zero decision errors.
+    /// <paramref name="pole"/> false = O-inst (instantaneous truth, no lag, no warm-up);
+    /// true = O-pole (the shipped one-pole/α/warm-up with the truth as innovation —
+    /// keeps the 80 ms lag, isolating it from the noise+decision component). The
+    /// carrier-PLL observable self-cancels under truth gains (registered mechanism
+    /// note 1) — the caller skips RetuneCarrier in oracle mode.</summary>
+    public void DemodulateRakeOracle(
+        ReadOnlySpan<Cf> chips, ReadOnlySpan<Cf> cleanChips, int trueDibit, bool pole,
+        Span<float> llrs, out int bestDibit, out Cf combined, out double maxFingerAbs)
+    {
+        if (chips.Length != RakeChips || cleanChips.Length != RakeChips || llrs.Length != 2)
+        {
+            throw new ArgumentException("expected 38 noisy + 38 clean chips and 2 LLRs", nameof(chips));
+        }
+
+        Span<Cf> rot = stackalloc Cf[ChipsPerSymbol];
+        for (int i = 0; i < ChipsPerSymbol; i++)
+        {
+            rot[i] = Ms110dTables.Psk8[_scrambler.Next()].Conj();
+        }
+
+        // Noisy candidate correlations — the same quarter-phase construction as shipped.
+        Span<Cf> corr = stackalloc Cf[Fingers * 4];
+        Span<Cf> q = stackalloc Cf[4];
+        byte[] trueWalsh = Ms110dTables.Walsh[trueDibit];
+        Span<Cf> truth = stackalloc Cf[Fingers];
+        for (int k = 0; k < Fingers; k++)
+        {
+            q.Clear();
+            var cleanAcc = Cf.Zero;
+            for (int i = 0; i < ChipsPerSymbol; i++)
+            {
+                q[i & 3] += chips[k + i] * rot[i];
+                Cf clean = cleanChips[k + i] * rot[i];
+                cleanAcc = trueWalsh[i & 3] == 0 ? cleanAcc + clean : cleanAcc - clean;
+            }
+
+            truth[k] = cleanAcc * (1f / ChipsPerSymbol);
+            for (int s = 0; s < 4; s++)
+            {
+                byte[] walsh = Ms110dTables.Walsh[s];
+                var acc = Cf.Zero;
+                for (int j = 0; j < 4; j++)
+                {
+                    acc = walsh[j] == 0 ? acc + q[j] : acc - q[j];
+                }
+
+                corr[(k * 4) + s] = acc;
+            }
+        }
+
+        if (!pole)
+        {
+            // O-inst: the truth IS the gain, warm from symbol 0.
+            for (int k = 0; k < Fingers; k++)
+            {
+                _gains[k] = truth[k];
+            }
+        }
+
+        Span<float> d = stackalloc float[4];
+        Span<double> power = stackalloc double[4];
+        for (int s = 0; s < 4; s++)
+        {
+            float acc = 0;
+            double pow = 0;
+            for (int k = 0; k < Fingers; k++)
+            {
+                Cf c = corr[(k * 4) + s];
+                acc += (_gains[k].Conj() * c).Re;
+                pow += c.Cnorm();
+            }
+
+            d[s] = acc;
+            power[s] = pow;
+        }
+
+        // O-pole keeps the shipped warm-up (cold one-pole state); O-inst never needs it.
+        bool warmup = pole && _symbolsSeen < WarmupSymbols;
+        bestDibit = 0;
+        for (int s = 1; s < 4; s++)
+        {
+            bool wins = warmup ? power[s] > power[bestDibit] : d[s] > d[bestDibit];
+            if (wins)
+            {
+                bestDibit = s;
+            }
+        }
+
+        llrs[0] = Math.Max(d[0], d[1]) - Math.Max(d[2], d[3]);
+        llrs[1] = Math.Max(d[0], d[2]) - Math.Max(d[1], d[3]);
+
+        combined = Cf.Zero;
+        maxFingerAbs = 0;
+        for (int k = 0; k < Fingers; k++)
+        {
+            Cf c = corr[(k * 4) + bestDibit];
+            combined += _gains[k].Conj() * c;
+            double abs = c.Abs();
+            if (abs > maxFingerAbs)
+            {
+                maxFingerAbs = abs;
+            }
+
+            if (pole)
+            {
+                // The shipped update rule and order (use-then-update), truth innovation.
+                _gains[k] += (truth[k] - _gains[k]) * GainAlpha;
+            }
+        }
+
+        _symbolsSeen++;
+    }
+
     /// <summary>Current DD finger-gain magnitudes (diagnostics).</summary>
     public void CopyGainMagnitudes(Span<float> mags)
     {

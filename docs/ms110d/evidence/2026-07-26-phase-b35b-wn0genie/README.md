@@ -160,3 +160,97 @@ Nothing ships to the demod's default behaviour. The PR carries: the oracle instr
 (demod-internal seams + rig env `MS110D_AUTOPSY_WALSH_ORACLE=inst|pole`, which implies
 genie feeding), this registration, the corpus artifacts, and the results section
 executing the decision rule above.
+
+---
+
+## Amendment 1 (registered mid-leg, before any lever): M3 re-read + the mechanism the
+## instrument actually found
+
+**M0 and M-healthy: GREEN.** All 10 pass-(a) corpses reproduce their census lines
+exactly (coded AND uncoded columns); H0–H3 stay 0-error under both oracle modes.
+Pass (b) = pass (a) to noise level (2,401 vs 2,377 pooled — E3 419→443, others ±2
+uncoded): the clean-carrier-refine share is nil; attribution is pure.
+
+**M3 as registered: RED (0/6) — and the failure was the fidelity method's assumptions,
+not the instrument.** Two defects, disclosed: (i) the scoring script's data-span
+constant was wrong (42.24 s — a di-bit/coded-bit slip; the true span is 12,672 coded
+bits / 2 per symbol = 6,336 symbols = 84.48 s), which pinned the lag search 42 s off;
+(ii) after fixing it, the registered PAIRING (finger 0 ↔ path 0, fingers 4/5 ↔ path 1)
+is itself the wrong assumption on every error corpse. The full 7-finger × 2-path
+correlation matrix shows:
+
+| population | finger-energy profile | measured pairing |
+|------------|----------------------|------------------|
+| all 9 zero-error bursts (H0–H3 + w0 probes b1,b2,b3,b6,b8) | two peaks: f0 ≈ 0.15, f5 ≈ 0.12–0.15, floor 0.036 | f0↔path0 ρ 0.96–0.97, f5↔path1 ρ 0.94–0.96 |
+| all 9 error bursts (E1–E6 + w0 probes b4=4, b19=21, b23=19 errs) | ONE peak: f0 ≈ 0.15, floor everywhere else | **f0↔path1 ρ 0.95–0.97**; NO finger tracks path0 (best ρ ≤ 0.43 = leakage) |
+
+**M3 amended bar** — the pairing is measured, not assumed: dominant finger↔path ρ ≥
+0.85 for every path that lies inside the finger window. Result: 6/6 error corpses GREEN
+(ρ 0.95–0.97), 4/4 healthy GREEN on both paths (ρ 0.94–0.97). The instrument is
+faithful; findings are readable.
+
+**The mechanism (18/18 concordance, no exceptions):** error bursts are exactly the
+bursts where acquisition locked onto the LATER path — the 2 ms echo. Finger 0 then sits
+on path 1 and the direct path arrives at −4.8 chips, OUTSIDE the causal finger window
+[0..+6]: half the received energy is invisible to the detector and the burst runs 84 s
+as single-path Rayleigh with zero diversity. Direct-locked bursts get the designed
+dual-diversity RAKE and their measured population BER is exactly 0 over ~4.15M bits
+(655/952 census bursts) WITH THE SHIPPED DD DETECTOR. The census tail is not "deep
+fades"; it is a lock-geometry lottery (~31% of bursts).
+
+**M1: R = 1.000.** O-inst decodes every corpus block clean: 2,401 pooled baseline coded
+errors → 0, on all six corpses — achieved on the echo-locked one-path geometry, i.e.
+even WITHOUT the missing path, perfect reference quality crosses every Viterbi cliff.
+Uncoded 1,792–2,120 → 264–343 per burst (≈6.7×).
+
+**M2: noise+decision share 96.1%, lag share 3.9%** (E_pole = 94: E1 23, E2 8, E3 29,
+E4 0, E5 34, E6 0). The 80 ms one-pole lag is nearly free; the DD innovation quality
+(additive noise + wrong-winner updates, poisoning the gains around every fade null) is
+the deficit.
+
+**Decision rule: clause 1 executes (R ≥ 0.95) — the ladder opens. But the registered
+family mapping (M2 → margin-gated DD updates) is OVERRIDDEN by the mechanism evidence,
+and that override is this amendment's point:** the reference-quality family would teach
+DD to survive a geometry in which the detector is starved of half its energy; the
+geometry family removes the starvation and returns every burst to the regime the
+shipped detector already decodes at BER 0 with margin. Mechanism-directed beats
+symptom-directed (the §B3.3→§B4.1 arc's lesson).
+
+### Rung G (geometry): symmetric finger window
+
+**Lever (one lever, WN0-only code):** extend `Wid0WalshModem`'s RAKE window from chip
+delays 0..+6 to **−6..+6** (13 fingers, RakeChips 32+12 = 44; buffer base moves 6 chips
+early; forward sample requirement unchanged at +38). DD update rule, α, warm-up,
+quadratic-CSI MRC, LLR construction, carrier PLL: all UNCHANGED. Whichever path
+acquisition anchors, both paths now land inside the window (echo-locked: path0 at
+−4.8 → fingers −5/−4; direct-locked: unchanged). The signal-lost discriminator keeps
+its physical window (the delay-0 chips) and threshold; max-over-13-vs-7 noise fingers
+shifts its noise-side statistic ≈ +15% (0.23 → ~0.27 vs threshold 0.35) — watched via
+census end-reasons, bar below. No config knob: this is the §B3.5 detector covering the
+channel geometry it was designed for; the off-ramp is git.
+
+**Bars (all pre-registered; one measurement each):**
+
+- G1 (corpse, mechanism): E1–E6 + b4/b19/b23 show two-peak profiles under the shipped
+  DD (direct path recovered), and pooled corpus coded errors ≤ 5% of the 2,401 baseline
+  (≥95% repair by the REAL detector, no oracle). Healthy corpses H0–H3 + b1–b8 probes
+  stay exactly 0.
+- G2 (battery, full both-family §5.3 budgets): WN0 Poor BER ≤ 6.0E-4 both families
+  (≥10× on 5.99E-3/6.40E-3) — the ship bar, B3.5-precedent. Gate consideration only on
+  the measured k against the §5.3 arithmetic, never assumed.
+- G3 (collateral): every other WN's battery censuses byte-identical to the #88/#89
+  baseline (WN0-only code cannot touch them; any drift falsifies that claim and kills
+  the lever). WN0 acquisition-failure count stays 0 and non-Eom end-reasons do not
+  increase (the discriminator margin).
+- Guards + suite exact as ever (WN7 72,666/7c/4r + oracle b5:15, WN6 0/11c0r, WN13sp
+  0/11c0r, 697/0).
+
+**Consequence clauses:** G1 fail → rung G reverts to banked; the reference family
+(margin-gated DD, rung R1) becomes the next registered candidate in its own leg. G3
+fail (any collateral) → rung G dies regardless of G1/G2. G2 partial (repair real but
+<10×) → report honestly; ship/bank decided by the B3.5 ship-worthiness precedent
+(collateral-free measured improvement) with the arithmetic in the results.
+
+Reference-family rungs (margin-gated DD updates, two-sided smoothing with decision
+delay) stay BANKED behind rung G — opened only if G leaves a residue that M2's
+decomposition still attributes to innovation quality.

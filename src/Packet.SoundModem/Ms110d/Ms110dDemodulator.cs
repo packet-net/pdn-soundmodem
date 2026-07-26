@@ -251,6 +251,19 @@ public sealed class Ms110dDemodulator
     /// of those LLRs.</summary>
     public event Action<int, float[], byte[]>? OracleBlockLlrs;
 
+    /// <summary>§B3.5b WN0 genie-gain oracle (instrument,
+    /// evidence/2026-07-26-phase-b35b-wn0genie): returns the TRUE transmitted di-bit for
+    /// (blockIndex, symbolInBlock), or −1 for no-truth symbols (post-EOM), which fall
+    /// back to the shipped DD path. When set, TrackWalsh detects with truth-derived
+    /// finger gains read from the genie stream (required — throws without one) and skips
+    /// the carrier PLL retune (the phase-error observable self-cancels under truth
+    /// gains). Unset = the shipped path, bit-identical. Armed only by the autopsy rig.</summary>
+    internal Func<int, int, int>? WalshOracleDibit { get; set; }
+
+    /// <summary>§B3.5b companion: true = O-pole (shipped one-pole/warm-up with truth
+    /// innovations — keeps the 80 ms lag), false = O-inst (instantaneous truth).</summary>
+    internal bool WalshOraclePole { get; set; }
+
     /// <summary>Diagnostic (phase-b-plan §B3.3 fade-crossing): while the oracle
     /// re-equalization runs, TurboCore emits one <c>turbo-frame</c> line per frame with
     /// the per-segment channel anchors and the BCJR noise floor, so the corpse can
@@ -1967,8 +1980,15 @@ public sealed class Ms110dDemodulator
         }
 
         Span<Cf> chips = stackalloc Cf[Wid0WalshModem.RakeChips];
+        Span<Cf> cleanChips = stackalloc Cf[Wid0WalshModem.RakeChips];
         Span<float> llrs = stackalloc float[2];
         Span<float> gainMags = stackalloc float[Wid0WalshModem.Fingers];
+        bool walshOracle = WalshOracleDibit is not null;
+        if (walshOracle && _genieRing is null)
+        {
+            throw new InvalidOperationException("the WN0 gain oracle requires the genie stream");
+        }
+
         while (_state == Ms110dRxState.Tracking && HaveSamplesForChip(_symbolChip + Wid0WalshModem.RakeChips + 2))
         {
             for (int i = 0; i < Wid0WalshModem.RakeChips; i++)
@@ -1976,7 +1996,26 @@ public sealed class Ms110dDemodulator
                 chips[i] = ReadChip(_symbolChip + i);
             }
 
-            _walsh!.DemodulateRake(chips, llrs, out int bestDibit, out Cf combined, out double maxFingerAbs);
+            int bestDibit;
+            Cf combined;
+            double maxFingerAbs;
+            int trueDibit = walshOracle ? WalshOracleDibit!(_blockIndex, _symbolInBlock) : -1;
+            if (trueDibit >= 0)
+            {
+                for (int i = 0; i < Wid0WalshModem.RakeChips; i++)
+                {
+                    cleanChips[i] = ReadChipEst(_symbolChip + i);
+                }
+
+                _walsh!.DemodulateRakeOracle(
+                    chips, cleanChips, trueDibit, WalshOraclePole, llrs,
+                    out bestDibit, out combined, out maxFingerAbs);
+            }
+            else
+            {
+                _walsh!.DemodulateRake(chips, llrs, out bestDibit, out combined, out maxFingerAbs);
+            }
+
             AddLlr(llrs[0]);
             AddLlr(llrs[1]);
 
@@ -1987,17 +2026,20 @@ public sealed class Ms110dDemodulator
             // the −6 dB operating point is too noisy to drive the frequency integrator
             // directly. During warm-up (cold gains) the combined statistic is near zero
             // and contributes nothing, which is the desired behaviour.
-            _walshPhaseAcc += combined;
-            if (++_walshPhaseCount == 8)
+            if (!walshOracle)
             {
-                if (_walshPhaseAcc.Cnorm() > 1e-12)
+                _walshPhaseAcc += combined;
+                if (++_walshPhaseCount == 8)
                 {
-                    double err = _walshPhaseAcc.Arg();
-                    RetuneCarrier((2.0 * (_symbolChip + 16)) + _tau, 0.4 * err, 0.06 * err / 512.0);
-                }
+                    if (_walshPhaseAcc.Cnorm() > 1e-12)
+                    {
+                        double err = _walshPhaseAcc.Arg();
+                        RetuneCarrier((2.0 * (_symbolChip + 16)) + _tau, 0.4 * err, 0.06 * err / 512.0);
+                    }
 
-                _walshPhaseAcc = Cf.Zero;
-                _walshPhaseCount = 0;
+                    _walshPhaseAcc = Cf.Zero;
+                    _walshPhaseCount = 0;
+                }
             }
 
             if (FrameDiagnostics is not null)
