@@ -16,8 +16,8 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// (the implemented form of design §5.3, restated 2026-07-23): a fixed sample of ≥ 3×10⁶
 /// payload bits (fading gate points additionally ≥ 600 s simulated per D-LXV duration logic);
 /// with ≥ 30 errors the direct BER must be ≤ 1e-5, else the 97.5 % Poisson upper bound must
-/// clear 1e-5. Since §B4 (2026-07-26) the at-mask Poor points (WN1–WN5, WN13) are hard-gated
-/// by default; WN0/WN6/WN7/WN8 are measured-not-gated (WN6 at the line, the rest open), and
+/// clear 1e-5. Since §B4/§B4.1 (2026-07-26) the at-mask Poor points (WN1–WN6, WN13) are
+/// hard-gated by default; WN0/WN7/WN8 are measured-not-gated (open), and
 /// <c>MS110D_POOR_GATED=1</c> forces the gate everywhere. Override the bit budget with
 /// <c>MS110D_MASK_BITS</c> for smoke runs (reports are then labelled SMOKE, not gate evidence).
 /// </summary>
@@ -131,12 +131,12 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         // §B4 (2026-07-26): the at-mask set is hard-gated by default — flip criterion and
         // both-family gate-run evidence in evidence/2026-07-26-phase-b4-gate/. The open
         // points stay measured (WN7 attractor-bound, WN8 doubly blocked, WN0 block-cliff
-        // residual), and WN6 sits AT THE LINE: its §5.3 draws pass (8.79E-6 direct, both
-        // families) but the pooled both-family bound is 1.1E-5 — default-gating a
-        // 0.95×-mask rate is a ~32%/family false red, so it flips only when a margin
-        // lever lands. MS110D_POOR_GATED=1 still forces the gate everywhere (the
-        // chasing-leg tool for open points).
-        bool gated = wn is 1 or 2 or 3 or 4 or 5 or 13
+        // residual). §B4.1 (same day): WN6 joins the gated set — the SPIKE-UP per-segment
+        // pricing margin lever moved it from 57/57 (pooled bound 1.14E-5, AT THE LINE) to
+        // 35/39 both families (pooled 74/12.97M, bound 7.15E-6 — passes the B4 flip
+        // criterion; evidence/2026-07-26-phase-b41-wn6floor/). MS110D_POOR_GATED=1 still
+        // forces the gate everywhere (the chasing-leg tool for open points).
+        bool gated = wn is 1 or 2 or 3 or 4 or 5 or 6 or 13
             || Environment.GetEnvironmentVariable("MS110D_POOR_GATED") == "1";
         if (gated)
         {

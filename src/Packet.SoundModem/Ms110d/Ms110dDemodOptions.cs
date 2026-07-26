@@ -85,12 +85,16 @@ public sealed record Ms110dDemodOptions
     /// default without a full-budget A/B.</summary>
     public float? TrackRidge { get; init; }
 
-    /// <summary>§B4.1 per-segment BCJR noise pricing variant. Null (the default) keeps the
-    /// frame-constant floor bit-identically. <c>"spikeup"</c>: a segment's windowed floor
-    /// replaces the frame constant only where it exceeds it by the segment's own 3σ χ²
-    /// band (exp(3/√count)) — upward-only, so pricing can de-confidence locally-bad spans
-    /// but can never inject an over-confident low floor (the §B3.3 WN2 damage direction).
-    /// <c>"spike2s"</c>: both directions at 3σ. Thresholds are derived from the segment
-    /// dof, never tuned (evidence/2026-07-26-phase-b41-wn6floor/ Amendment 2).</summary>
+    /// <summary>§B4.1 per-segment BCJR noise pricing variant. Null (the default) runs the
+    /// SHIPPED form, <c>"spikeup"</c>: a segment's windowed floor replaces the frame
+    /// constant only where it exceeds it by the segment's own 3σ χ² band (exp(3/√count))
+    /// — upward-only, so pricing can de-confidence locally-bad spans but can never inject
+    /// an over-confident low floor (the §B3.3 WN2 damage direction; WN2's flat-floor
+    /// truth cannot cross its own 24-dof 2.4× band, so it prices frame-constant by
+    /// construction — its battery censuses are bit-identical either way). <c>"off"</c>
+    /// forces the pre-B4.1 frame-constant floor; <c>"spike2s"</c> is the two-sided
+    /// measurement variant. Thresholds are derived from the segment dof, never tuned
+    /// (evidence/2026-07-26-phase-b41-wn6floor/, ship decision in Amendment 2's ladder:
+    /// WN6 6M 57/57 → 35/39 both families with every other point held).</summary>
     public string? TurboNsegMode { get; init; }
 }

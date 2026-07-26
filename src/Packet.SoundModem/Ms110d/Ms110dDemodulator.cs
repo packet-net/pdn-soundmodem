@@ -2984,8 +2984,8 @@ public sealed class Ms110dDemodulator
                     : noiseVar;
             }
 
-            // §B4.1 per-segment noise pricing (Amendment 2 variant ladder): default OFF —
-            // the frame-constant floor prices bit-identically. Armed, a segment's windowed
+            // §B4.1 per-segment noise pricing (Amendment 2 variant ladder; SHIPPED
+            // default = spikeup, "off" restores the frame constant). A segment's windowed
             // floor replaces the frame constant only beyond its own 3σ χ² band
             // (thr = exp(3/√count) — dof-derived, never tuned; WN2's flat-floor truth
             // cannot cross its 24-dof 2.4× band, so it stays frame-constant by
@@ -2994,7 +2994,8 @@ public sealed class Ms110dDemodulator
             // WN2 damage direction); "spike2s" engages both ways. Engaged values
             // interpolate through the segment centres like the channel spans (no cliffs).
             float[]? nvSpan = null;
-            if (_options.TurboNsegMode is string nsegMode)
+            string nsegMode = _options.TurboNsegMode ?? "spikeup"; // null = shipped default
+            if (nsegMode is "spikeup" or "spike2s")
             {
                 bool twoSided = nsegMode == "spike2s";
                 bool engaged = false;
