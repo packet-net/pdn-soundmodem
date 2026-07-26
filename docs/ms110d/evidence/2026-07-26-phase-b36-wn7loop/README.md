@@ -334,6 +334,30 @@ gate is measured afterward, not promised.
 **Cost**: frozen pass + ≤24 soft iterations, reverting 8PSK blocks only; nil on
 converged paths and every non-8PSK mode.
 
+## Amendment 1 — measured (S1/S2/S3 corpse-level: ALL GREEN)
+
+The salvage rung landed as registered (`TrySalvageRevert` + `TurboFrozenProbePass`,
+8PSK-only, revert-path-only; `TurboSalvaged` counter, summary `/{v}v` field).
+
+**Held-out corpse w1/b0** (baseline banked BEFORE implementation: 90,829 coded,
+6c/5r, reverts {b2,b4,b7,b8,b10}, near-correct fixed points b3:6/b6:14):
+
+- **S1 GREEN** — per-block decoded-stream comparison: every non-salvaged block
+  byte-identical to baseline (all deltas exactly 0), zero regressions anywhere.
+- **S2 GREEN** — total 90,829 → **54,616** (0.601× ≤ 0.75) with TWO exact-0
+  conversions: b4 17,990 → 0, b10 18,223 → 0. turbo 8c/3r/2v; b2/b7/b8 stay
+  reverted (first pass preserved).
+
+**Guard pin (w0/b0)**: **18,239 coded / 10c/1r/3v** — the in-process salvage
+reproduces the two-run M2b composed outcome block-for-block (b4→0, b5→3, b7→0, b10
+reverts), which was the registered expectation. This is the new WN7 corpse guard spec;
+oracle b5:15 unchanged. WN6 corpse 0 / 11c/0r/0v and WN13sp 0 / 11c/0r/0v —
+numerically identical to their specs (the disclosed `/0v` field is the only text
+change). Note w1/b0's b10 converts while w0/b0's does not — the frozen-start quality
+threshold cuts per-burst, as expected.
+
+S4 (full battery) follows below.
+
 ## Guards and discipline
 
 WN7 corpse 72,666 coded / 7c/4r + oracle b5:15; WN6 corpse 0 / 11c0r; WN13sp

@@ -306,6 +306,12 @@ public sealed class Ms110dDemodulator
     /// <summary>Turbo blocks reverted to the first-pass decode (no fixed point in 5 iterations).</summary>
     public int TurboReverted { get; private set; }
 
+    /// <summary>§B3.6 salvage: revert-path blocks recovered by the frozen-probe
+    /// re-detection seed (8PSK only) — a fresh soft loop from a label-free start found
+    /// a fixed point where the first-pass-seeded loop wandered. Salvaged blocks also
+    /// count as converged.</summary>
+    public int TurboSalvaged { get; private set; }
+
     /// <summary>Turbo blocks aborted mid-re-equalization (samples no longer available).</summary>
     public int TurboAborted { get; private set; }
 
@@ -2255,6 +2261,19 @@ public sealed class Ms110dDemodulator
             {
                 TurboAborted++;
             }
+            else if (_mode.Modulation == Ms110dModulation.Psk8 &&
+                TrySalvageRevert(info, prevInfo))
+            {
+                // §B3.6 salvage (evidence/2026-07-26-phase-b36-wn7loop, Amendment 1):
+                // the wander states are scaffold-starved — too few frames with clean
+                // labels to anchor the label-trained solves — so a label-free frozen
+                // probe pass re-detects the block and a fresh soft loop runs from that
+                // seed. A fixed point there is accepted on the same converged ⇒ correct
+                // evidence as the primary loop (measured: zero wrong convergences across
+                // every §B3.6 ensemble); no fixed point falls through to the revert.
+                TurboSalvaged++;
+                TurboConverged++;
+            }
             else
             {
                 // Five decode→re-equalize→decode rounds without a fixed point: the loop
@@ -2753,6 +2772,58 @@ public sealed class Ms110dDemodulator
 
         dfe.LoadTaps(savedTaps);
         dfe.BeginTraining();
+    }
+
+    /// <summary>§B3.6 salvage (Amendment 1): on revert-at-cap, re-detect the block with
+    /// the label-free frozen probe pass and run a fresh soft loop (same cap) from that
+    /// seed. Returns true with <paramref name="info"/> holding the new fixed-point decode;
+    /// returns false — <paramref name="info"/> scribbled, caller restores the first
+    /// pass — when the pass aborts or the seeded loop finds no fixed point either.</summary>
+    private bool TrySalvageRevert(byte[] info, byte[] prevInfo)
+    {
+        TurboFrozenProbePass();
+        if (_blockLlrCount != _il!.SizeBits)
+        {
+            return false;
+        }
+
+        Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
+        for (int iter = 0; iter < 24; iter++)
+        {
+            if (iter == 0)
+            {
+                TurboReequalize(info);
+            }
+            else
+            {
+                TurboReequalizeSoft();
+            }
+
+            if (_blockLlrCount != _il.SizeBits)
+            {
+                return false;
+            }
+
+            Array.Copy(info, prevInfo, info.Length);
+            Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
+            if (FrameDiagnostics is not null)
+            {
+                int diffs = 0;
+                for (int i = 0; i < info.Length; i++)
+                {
+                    diffs += info[i] != prevInfo[i] ? 1 : 0;
+                }
+
+                FrameDiagnostics.Invoke($"salvage-iter b{_blockIndex} i{iter} decode-changes={diffs}");
+            }
+
+            if (info.AsSpan().SequenceEqual(prevInfo))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>The turbo re-equalization machinery (§B2.3): per-frame FF batch-LS re-solve

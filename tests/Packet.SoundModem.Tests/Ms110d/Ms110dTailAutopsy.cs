@@ -520,7 +520,8 @@ public class Ms110dTailAutopsy
             $"decoded {decoded.Count}, coded errors {codedErrors} " +
             $"(first {firstErr}, last {lastErr}), uncoded {uncodedErrors}/{uncodedBits}, " +
             $"collapses {demod.CollapseResolves}, turbo {demod.TurboConverged}c/" +
-            $"{demod.TurboReverted}r/{demod.TurboAborted}a/{demod.TurboSkipped}s, " +
+            $"{demod.TurboReverted}r/{demod.TurboAborted}a/{demod.TurboSkipped}s/" +
+            $"{demod.TurboSalvaged}v, " +
             $"end={endReason}, {symbolIndex} symbols dumped, " +
             $"lock={demod.Lock?.WaveformNumber}/{demod.Lock?.Interleaver}/K{demod.Lock?.ConstraintLength}" +
             $"@{demod.Lock?.CfoHz:F2}Hz (tx K{settings.ConstraintLength})\n" +
