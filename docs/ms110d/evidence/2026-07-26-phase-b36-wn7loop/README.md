@@ -358,6 +358,43 @@ threshold cuts per-burst, as expected.
 
 S4 (full battery) follows below.
 
+## S4 — the full battery (ALL GREEN; `battery/`)
+
+32/32 legs rc=0, three-lane house form, WN0 legs gated for the first time (green at
+the exact B3.5b digits: 0 errors bound 1.22E-6 canonical / 3 errors bound 2.92E-6
+disjoint).
+
+**WN7 Poor: canonical 1.73E-1 → 5.63E-2 (182,579/3,243,776), disjoint 1.95E-1 →
+6.14E-2 (199,235/3,243,776)** — 3.1×/3.2×, turbo 78c/10r canonical. Per-burst
+(census, seed → errors): three canonical bursts collapse to exact ZERO (1508:
+54,505 → 0; 2000508: 71,944 → 0; 3001508: 54,513 → 0), the corpse burst 72,666 →
+18,239, one burst untouched (2001508: 54,609 — no salvage landed); disjoint: 11508:
+17,939 → 0, 2011508: 54,804 → 6, every other burst halves or better. **No burst
+regressed in either family.**
+
+**Zero collateral**: every non-WN7 census in both families byte-identical to the
+B3.5b baseline (`battery/census-compare.txt`: non-wn7-diffs=0 across 72 files);
+AWGN ×10, static, Doppler all green; gated legs reproduce their exact baseline
+digits (WN5 23/0, WN6 35/39, WN2 30/29, WN13 0/0, WN1 0/0, WN3 0/0, WN4 0/3,
+WN0 0/3).
+
+## Disposition
+
+The salvage rung ships under Amendment 1 (S1–S4 all green). WN7 stays OPEN
+(measured, not gated) at 5.63E-2/6.14E-2 — ~3.7 decades above mask, exactly the
+honest-expectations shape: the residual is now fully characterized as (a) the
+b2/b7/b8/b10-class blocks whose frozen starts sit ≥ ~35% (scaffold-poor even for the
+probe-anchored detector) and (b) the oracle-floor model tail (b5:15-class) under
+whatever converges. The loop-structure question this leg was registered to answer is
+answered: the wander attractor is escapable EXACTLY when a label-free start can get
+inside the basin — the binding constraint has moved from the loop's structure to the
+label-free detection quality on scaffold-poor blocks, which is C2b/FD-turbo's
+question (per-bin exact channel application vs the single-lag chain constraint) and
+gets its own registered design leg if opened. C1 (restarts) and C3 (schedules) are
+closed with mechanism. The instrument lesson banked: basin coordinates are
+frame-structural, not label-percentage — every future WN7 bar should be set in
+scaffold terms.
+
 ## Guards and discipline
 
 WN7 corpse 72,666 coded / 7c/4r + oracle b5:15; WN6 corpse 0 / 11c0r; WN13sp
