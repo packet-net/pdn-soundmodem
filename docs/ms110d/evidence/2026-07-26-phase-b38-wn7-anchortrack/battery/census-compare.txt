@@ -1,0 +1,74 @@
+== non-WN7 census diffs (expect NONE) ==
+non-wn7-diffs=0
+== WN7 mask lines (new) ==
+2026-07-26T19:13:37.3554440Z [mask] POOR WN7 @ +19 dB: 3,243,776 bits, 83 errors, 8 bursts (0 acquisition failures), 715 s simulated, 4 workers — BER 2.56E-005 (direct, ≥30 errors) | uncoded 1.67E-001, deep-fade(<-6 dB) holds 16% of uncoded errors in 9% of bits, turbo 88c/0r/0a/0s
+2026-07-26T18:45:18.4809356Z [mask] POOR WN7 @ +19 dB (seed+10000): 3,243,776 bits, 48 errors, 8 bursts (0 acquisition failures), 715 s simulated, 4 workers — BER 1.48E-005 (direct, ≥30 errors) | uncoded 1.72E-001, deep-fade(<-6 dB) holds 14% of uncoded errors in 8% of bits, turbo 88c/0r/0a/0s
+== WN7 mask lines (baseline) ==
+2026-07-26T16:26:12.4639236Z [mask] POOR WN7 @ +19 dB: 3,243,776 bits, 109603 errors, 8 bursts (0 acquisition failures), 715 s simulated, 4 workers — BER 3.38E-002 (direct, ≥30 errors) | uncoded 1.67E-001, deep-fade(<-6 dB) holds 16% of uncoded errors in 9% of bits, turbo 82c/6r/0a/0s
+2026-07-26T15:57:59.0361093Z [mask] POOR WN7 @ +19 dB (seed+10000): 3,243,776 bits, 72180 errors, 8 bursts (0 acquisition failures), 715 s simulated, 4 workers — BER 2.23E-002 (direct, ≥30 errors) | uncoded 1.72E-001, deep-fade(<-6 dB) holds 14% of uncoded errors in 8% of bits, turbo 84c/4r/0a/0s
+== per-leg rc ==
+done awgn-wn0
+done awgn-wn1
+done awgn-wn13
+done awgn-wn2
+done awgn-wn3
+done awgn-wn4
+done awgn-wn5
+done awgn-wn6
+done awgn-wn7
+done awgn-wn8
+done doppler
+done static
+done wn0-3m
+done wn0-3md
+done wn1-3m
+done wn1-3md
+done wn13-3m
+done wn13-6md
+done wn2-6m
+done wn2-6md
+done wn3-3m
+done wn3-3md
+done wn4-3m
+done wn4-3md
+done wn5-6m
+done wn5-6md
+done wn6-6m
+done wn6-6md
+done wn7-3m
+done wn7-3md
+done wn8-3m
+done wn8-3md
+== gated leg outcomes ==
+v-awgn-wn0 OK
+v-awgn-wn1 OK
+v-awgn-wn13 OK
+v-awgn-wn2 OK
+v-awgn-wn3 OK
+v-awgn-wn4 OK
+v-awgn-wn5 OK
+v-awgn-wn6 OK
+v-awgn-wn7 OK
+v-awgn-wn8 OK
+v-doppler OK
+v-static OK
+v-wn0-3m OK
+v-wn0-3md OK
+v-wn1-3m OK
+v-wn1-3md OK
+v-wn13-3m OK
+v-wn13-6md OK
+v-wn2-6m OK
+v-wn2-6md OK
+v-wn3-3m OK
+v-wn3-3md OK
+v-wn4-3m OK
+v-wn4-3md OK
+v-wn5-6m OK
+v-wn5-6md OK
+v-wn6-6m OK
+v-wn6-6md OK
+v-wn7-3m OK
+v-wn7-3md OK
+v-wn8-3m OK
+v-wn8-3md OK
