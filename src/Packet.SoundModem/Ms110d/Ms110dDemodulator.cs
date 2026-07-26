@@ -264,6 +264,36 @@ public sealed class Ms110dDemodulator
     /// innovations — keeps the 80 ms lag), false = O-inst (instantaneous truth).</summary>
     internal bool WalshOraclePole { get; set; }
 
+    /// <summary>§B3.6 instrument (evidence/2026-07-26-phase-b36-wn7loop): replaces the
+    /// turbo loop's iteration-0 labels for one block — perturbed restarts (M1b) and
+    /// staged seeding (M2b). Receives the block index and the first-pass decode; a null
+    /// return leaves the start unchanged. Revert protection is untouched: the fallback
+    /// stream remains the TRUE first pass. Unset = the shipped path, bit-identical.
+    /// Armed only by the autopsy rig.</summary>
+    internal Func<int, byte[], byte[]?>? TurboStartOverride { get; set; }
+
+    /// <summary>§B3.6 M1a instrument: when set (with <see cref="FrameDiagnostics"/>),
+    /// every TurboCore pass emits one <c>turbo-probe</c> line per block — the solved
+    /// channel priced on the frames' PRECEDING mini-probe rows (known symbols, the only
+    /// training-domain evidence decode labels cannot launder). Rows keep their feedback
+    /// history and TIR echo sources wholly inside the probe, mirroring the solve's own
+    /// probe-row construction.</summary>
+    internal bool TurboProbeDiag { get; set; }
+
+    /// <summary>§B3.6 C2a stage (M2a measurement): when set (with
+    /// <see cref="FrozenBlockLlrs"/> subscribed), FinishBlock runs one extra label-free
+    /// re-detection pass per block after the normal pipeline — probe-only TIR solve,
+    /// probe-anchored h1, the solve's own shortening target as the chain echo model,
+    /// probe-priced noise floor, chains as no-prior exact-MAP. No decode label touches
+    /// any estimate (the anti-echo-chamber construction). The shipped decode is never
+    /// touched; unset = bit-identical. Armed only by the autopsy rig; PSK modes only.</summary>
+    internal bool TurboFrozenProbe { get; set; }
+
+    /// <summary>§B3.6 companion: the block index, the frozen-pass wire-order LLRs
+    /// (buffer reused per block — copy to keep), and the Viterbi decode of those
+    /// LLRs.</summary>
+    internal event Action<int, float[], byte[]>? FrozenBlockLlrs;
+
     /// <summary>Diagnostic (phase-b-plan §B3.3 fade-crossing): while the oracle
     /// re-equalization runs, TurboCore emits one <c>turbo-frame</c> line per frame with
     /// the per-segment channel anchors and the BCJR noise floor, so the corpse can
@@ -2144,6 +2174,20 @@ public sealed class Ms110dDemodulator
             _dfe.SnapshotTraining();
             var firstPass = new byte[info.Length];
             Array.Copy(info, firstPass, info.Length);
+
+            // §B3.6 seam: an armed instrument may replace the iteration-0 labels
+            // (perturbed restart / staged seed). firstPass was captured above, so the
+            // revert fallback stays the true first-pass decode regardless.
+            if (TurboStartOverride?.Invoke(_blockIndex, info) is byte[] startInfo)
+            {
+                if (startInfo.Length != info.Length)
+                {
+                    throw new InvalidOperationException("TurboStartOverride length mismatch");
+                }
+
+                Array.Copy(startInfo, info, info.Length);
+            }
+
             var prevInfo = new byte[info.Length];
             bool converged = false;
             bool aborted = false;
@@ -2245,6 +2289,26 @@ public sealed class Ms110dDemodulator
                 var oracleDecode = new byte[_il.InputBits];
                 Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, oracleDecode);
                 OracleBlockLlrs?.Invoke(_blockIndex, _blockLlrs, oracleDecode);
+            }
+
+            _dfe.RestoreTraining();
+        }
+
+        // §B3.6 C2a stage measurement (M2a): one label-free re-detection pass after the
+        // normal pipeline — see <see cref="TurboFrozenProbe"/>. The shipped decode above
+        // is untouched.
+        if (TurboFrozenProbe && FrozenBlockLlrs is not null &&
+            _dfe is not null && _mode is not null &&
+            _blockFrameChips.Count == _il.Frames &&
+            BlockSamplesResident())
+        {
+            _dfe.SnapshotTraining();
+            TurboFrozenProbePass();
+            if (_blockLlrCount == _il.SizeBits)
+            {
+                var frozenDecode = new byte[_il.InputBits];
+                Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, frozenDecode);
+                FrozenBlockLlrs.Invoke(_blockIndex, _blockLlrs, frozenDecode);
             }
 
             _dfe.RestoreTraining();
@@ -2487,6 +2551,210 @@ public sealed class Ms110dDemodulator
         return x < -20f ? 0f : MathF.Log(1f + MathF.Exp(x));
     }
 
+    /// <summary>§B3.6 C2a stage: label-free re-detection of the block. Per frame: a
+    /// probe-only TIR shortening solve (both bounding mini-probes' rows, feedback
+    /// history wholly inside the probe), feedback-free application over the data span,
+    /// h1 from the two probe anchors interpolated across the frame, the solve's own
+    /// shortening target c·z^{-lag} as the chain echo model, and a probe-priced noise
+    /// floor — then the chain BCJR as a no-prior exact-MAP detector. No decode label
+    /// enters any estimate, so nothing here can have been laundered by a wrong decode
+    /// (the §B3.6 anti-echo-chamber construction). LLRs land in the block buffer for
+    /// the caller to decode; a mid-block sample shortfall aborts with a partial count,
+    /// exactly like TurboCore.</summary>
+    private void TurboFrozenProbePass()
+    {
+        var mode = _mode!;
+        var dfe = _dfe!;
+        if (mode.Modulation == Ms110dModulation.Qam16)
+        {
+            throw new InvalidOperationException("frozen probe pass is a PSK-program instrument");
+        }
+
+        Cf[] savedTaps = dfe.SnapshotTaps();
+        int fb = dfe.FbTaps;
+        Span<Cf> window = stackalloc Cf[dfe.FfTaps];
+        Span<Cf> past = stackalloc Cf[fb];
+        int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
+        _blockLlrCount = 0;
+
+        (Cf[] constellation, byte[] labels) = mode.Modulation switch
+        {
+            Ms110dModulation.Bpsk => (TurboBpsk, Array.Empty<byte>()),
+            Ms110dModulation.Qpsk => (TurboQpsk, TurboQpskLabels),
+            _ => (Ms110dTables.Psk8, SymbolToTribit8),
+        };
+
+        Span<Cf> probeY = stackalloc Cf[2 * mode.K];
+        Span<int> probeIdx = stackalloc int[2 * mode.K];
+        Span<Cf> anchor = stackalloc Cf[2];
+        Span<float> anchorPos = stackalloc float[2];
+
+        for (int f = 0; f < _il!.Frames; f++)
+        {
+            long frameChip = _blockFrameChips[f];
+            Cf[] precedingProbe = MiniProbe.Get(mode.K, boundary: (f + 1) % _il.Frames == 0);
+            Cf[] followingProbe = MiniProbe.Get(mode.K, boundary: (f + 2) % _il.Frames == 0);
+
+            // Probe-only shortening solve. Rows keep their feedback history inside the
+            // probe (i ≥ fb), mirroring the §B3.4 Amendment 1 probe-row construction.
+            dfe.BeginTraining();
+            int solveRows = 0;
+            for (int p = 0; p < 2; p++)
+            {
+                Cf[] probe = p == 0 ? precedingProbe : followingProbe;
+                long probeChip = p == 0 ? frameChip - mode.K : frameChip + mode.U;
+                for (int i = fb; i < mode.K; i++)
+                {
+                    if (!HaveSamplesForChip(probeChip + i + 2))
+                    {
+                        continue; // burst-edge probe tail
+                    }
+
+                    FillWindow(probeChip + i, window);
+                    for (int j = 0; j < fb; j++)
+                    {
+                        past[j] = probe[i - 1 - j];
+                    }
+
+                    dfe.AddTrainingRow(window, past, probe[i], weight: 1.0f);
+                    solveRows++;
+                }
+            }
+
+            if (solveRows == 0)
+            {
+                dfe.LoadTaps(savedTaps);
+                dfe.BeginTraining();
+                return;
+            }
+
+            Dfe.TirSolve tir = dfe.SolveTrainingTir(
+                regularization: _trackRidge, ffNoisePower: GenieNoisePower(),
+                maxLag: Math.Min(fb, mode.U / 2), allowPair: false);
+            int delay = Math.Max(1, tir.Lag);
+            Cf h2Wire = tir.Lag > 0 ? tir.Coefficient : Cf.Zero;
+
+            // Feedback-free application everywhere (ISI lives in the chain model): the
+            // data span, and the probe rows the anchors/noise floor are measured on —
+            // SAME domain as the chains will see.
+            for (int j = 0; j < fb; j++)
+            {
+                past[j] = Cf.Zero;
+            }
+
+            var rxWire = new Cf[mode.U];
+            for (int u = 0; u < mode.U; u++)
+            {
+                if (!HaveSamplesForChip(frameChip + u + 2))
+                {
+                    dfe.LoadTaps(savedTaps);
+                    dfe.BeginTraining();
+                    return;
+                }
+
+                FillWindow(frameChip + u, window);
+                rxWire[u] = dfe.Equalize(window, past);
+            }
+
+            // Probe anchors: post-FF response on probe rows, echo term removed with the
+            // solve's own coefficient. Row centres give the interpolation abscissae.
+            float noiseAcc = 0f;
+            int noiseRows = 0;
+            for (int p = 0; p < 2; p++)
+            {
+                Cf[] probe = p == 0 ? precedingProbe : followingProbe;
+                long probeChip = p == 0 ? frameChip - mode.K : frameChip + mode.U;
+                float uBase = p == 0 ? -mode.K : mode.U;
+                int firstRow = tir.Lag > 0 ? tir.Lag : 0;
+                var acc = Cf.Zero;
+                int n = 0;
+                float posSum = 0f;
+                for (int i = firstRow; i < mode.K; i++)
+                {
+                    if (!HaveSamplesForChip(probeChip + i + 2))
+                    {
+                        continue;
+                    }
+
+                    FillWindow(probeChip + i, window);
+                    Cf y = dfe.Equalize(window, past);
+                    if (tir.Lag > 0)
+                    {
+                        y -= h2Wire * probe[i - tir.Lag];
+                    }
+
+                    probeY[(p * mode.K) + n] = y;
+                    probeIdx[(p * mode.K) + n] = i;
+                    acc += y * probe[i].Conj();
+                    posSum += uBase + i;
+                    n++;
+                }
+
+                anchor[p] = n > 0 ? acc * (1f / n) : Cf.Zero;
+                anchorPos[p] = n > 0 ? posSum / n : (p == 0 ? -mode.K * 0.5f : mode.U + (mode.K * 0.5f));
+                for (int r = 0; r < n; r++)
+                {
+                    int i = probeIdx[(p * mode.K) + r];
+                    Cf resid = probeY[(p * mode.K) + r] - (anchor[p] * probe[i]);
+                    noiseAcc += resid.Cnorm();
+                    noiseRows++;
+                }
+            }
+
+            // Cnorm() sums both complex dimensions; the BCJR wants σ² per dimension
+            // (the #65 2×-under-confidence lesson).
+            float noiseVar = Math.Max(noiseRows > 0 ? 0.5f * noiseAcc / noiseRows : 1e-2f, 1e-6f);
+
+            // Descrambled-domain assembly, mirroring TurboCore: h1 rides through the
+            // derotation; the wire echo coefficient folds the rotor product.
+            _scrambler.Reset();
+            var rotors = new Cf[mode.U];
+            for (int u = 0; u < mode.U; u++)
+            {
+                rotors[u] = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+            }
+
+            var rxDesc = new Cf[mode.U];
+            var h1Span = new Cf[mode.U];
+            var h2Span = new Cf[mode.U];
+            var preceding = new Cf[delay];
+            for (int c = 0; c < delay; c++)
+            {
+                preceding[c] = precedingProbe[(mode.K - delay) + c];
+            }
+
+            float span = Math.Max(1f, anchorPos[1] - anchorPos[0]);
+            for (int u = 0; u < mode.U; u++)
+            {
+                float t = Math.Clamp((u - anchorPos[0]) / span, 0f, 1f);
+                h1Span[u] = (anchor[0] * (1f - t)) + (anchor[1] * t);
+                rxDesc[u] = rxWire[u] * rotors[u].Conj();
+                h2Span[u] = u >= delay
+                    ? h2Wire * rotors[u - delay] * rotors[u].Conj()
+                    : h2Wire * rotors[u].Conj();
+            }
+
+            if (FrameDiagnostics is not null)
+            {
+                FrameDiagnostics.Invoke(FormattableString.Invariant(
+                    $"frozen-frame b{_blockIndex} f{f}: lag={tir.Lag} |c|={Math.Sqrt(h2Wire.Cnorm()):F3} n={noiseVar:E3} rows={solveRows} h1a={anchor[0].Abs():F3}|{anchor[1].Abs():F3}"));
+            }
+
+            var frameLlrs = new float[mode.U * bitsPerSymbol];
+            Ms110dChainBcjr.Equalize(
+                rxDesc, h1Span, h2Span, delay, noiseVar,
+                constellation, labels, bitsPerSymbol, preceding, frameLlrs,
+                default, noiseVarPerSymbol: default);
+            for (int i = 0; i < frameLlrs.Length; i++)
+            {
+                AddLlr(frameLlrs[i]);
+            }
+        }
+
+        dfe.LoadTaps(savedTaps);
+        dfe.BeginTraining();
+    }
+
     /// <summary>The turbo re-equalization machinery (§B2.3): per-frame FF batch-LS re-solve
     /// on the expected symbols, per-segment h1, scrambler-exact single-lag echo, chain-BCJR
     /// detection. <paramref name="expectedAll"/> holds one expected wire symbol per data
@@ -2534,6 +2802,9 @@ public sealed class Ms110dDemodulator
         double tirCoeffSum = 0;
         int tirPairFrames = 0;
         double tirCoeff2Sum = 0;
+        bool probeDiag = TurboProbeDiag && FrameDiagnostics is not null;
+        double probePriceErr = 0;
+        int probePriceRows = 0;
 
         (Cf[] constellation, byte[] labels) = mode.Modulation switch
         {
@@ -2695,6 +2966,43 @@ public sealed class Ms110dDemodulator
                 {
                     tirPairFrames++;
                     tirCoeff2Sum += Math.Sqrt(tir.Coefficient2.Cnorm());
+                }
+            }
+
+            // §B3.6 M1a: price the solved channel on the preceding probe's rows — known
+            // symbols whose feedback history and TIR echo sources stay wholly inside the
+            // probe, mirroring the solve's own probe-row construction (§B3.4 Amendment 1).
+            // A channel refit to wrong labels explains its label rows by construction;
+            // these rows it cannot launder.
+            if (probeDiag)
+            {
+                long probeChip = frameChip - mode.K;
+                int firstRow = Math.Max(fb, Math.Max(tir.Lag, tir.Lag2));
+                for (int i = firstRow; i < mode.K; i++)
+                {
+                    if (!HaveSamplesForChip(probeChip + i + 2))
+                    {
+                        continue;
+                    }
+
+                    FillWindow(probeChip + i, window);
+                    for (int j = 0; j < fb; j++)
+                    {
+                        past[j] = precedingProbe[i - 1 - j];
+                    }
+
+                    Cf model = precedingProbe[i];
+                    if (tir.Lag > 0)
+                    {
+                        model += tir.Coefficient * precedingProbe[i - tir.Lag];
+                        if (tir.Lag2 > 0)
+                        {
+                            model += tir.Coefficient2 * precedingProbe[i - tir.Lag2];
+                        }
+                    }
+
+                    probePriceErr += (dfe.Equalize(window, past) - model).Cnorm();
+                    probePriceRows++;
                 }
             }
 
@@ -3226,6 +3534,12 @@ public sealed class Ms110dDemodulator
             {
                 AddLlr(frameLlrs[i]);
             }
+        }
+
+        if (probeDiag && probePriceRows > 0)
+        {
+            FrameDiagnostics!.Invoke(FormattableString.Invariant(
+                $"turbo-probe b{_blockIndex}: rows={probePriceRows} resid={probePriceErr / probePriceRows:E3}"));
         }
 
         if (FrameDiagnostics is not null)

@@ -231,6 +231,109 @@ none reached a wrong fixed point). **(3) The eigen-TIR loop converges routinely 
 46–49% starts** (b1, b3, b6, b8, b9) — the basin is wider than the pre-TIR record
 suggested; the four losses are trajectory luck at the same depth, not a deeper class.
 
+## M1 — measured (bars FAILED; the mechanism is the finding)
+
+**M1a: no separation.** The registered primary statistic (final-iterate channel priced
+on the preceding probes' rows) does NOT discriminate: wander end states price at
+0.71–1.03 vs converged blocks at 0.95–1.84 — overlapping, if anything inverted; the
+statistic is dominated by per-block channel state, not decode quality. Decode-changes at
+the cap separate converged from wander trivially (convergence itself) and nothing finer.
+A label-free selector for C1 does not exist in the registered statistics.
+
+**M1b: 0 basin hits in 32 reverting-block trials — and the ensemble destroyed every
+deep convergence too.** All 8 perturbed runs came back 1c/10r: only b0 (19.2% start)
+survived; b1/b2/b3/b6/b8/b9 — including b2 from a 35.3% start — lost convergence in ALL
+8 runs, every end state at the ~50% deep attractor. The perturbation was measurably not
+the small trajectory nudge the registration intended: a 2% info-domain flip re-encodes
+through the K7 code and interleaver into ~7–8% of wire labels changed UNIFORMLY across
+frames — and that locates the real mechanism:
+
+**The scaffold discovery.** Per-frame first-pass label-error distributions separate the
+converge/wander split PERFECTLY on this corpse: every converged block has ≥35 of 64
+frames under 20% label error; every reverting block has ≤33. Even b9 (48.9%, converges)
+vs b7 (48.8%, wanders) dissolves — b9 has 36 scaffold frames, b7 has 33. Convergence is
+not trajectory luck in label space; it rides a **healthy-frame scaffold**: frames with
+nearly-clean labels anchor their per-frame solves, their chains emit correct LLRs, and
+the code propagates correction into the smeared frames. The uniform perturbation
+poisoned every scaffold frame's solve at once — hence uniform destruction; first-pass
+errors are frame-concentrated (the B1 donut statistic), which is what leaves the
+scaffold standing.
+
+**C1 verdict: DEAD**, on both the registered bar (0/32) and the mechanism — outcomes
+are set by start STRUCTURE, which restarts cannot manufacture; perturbation can only
+destroy scaffold, never create it. No amendment can rescue restart-sampling; the axis
+is wrong. (Observed across 88 perturbed block-runs + M0: zero convergences to a wrong
+decode — "converged ⇒ correct" held in every observation.)
+
+## C2a — measured (M2a bar FAILED as a proxy; the M2b diagnostic overturned the proxy)
+
+**M2a (frozen pass alone): bar failed, 1/4.** Per-block info-error % of the label-free
+re-detection (first pass → frozen): b0 19.2→11.0, b1 47.9→29.8, b2 35.3→31.2, b3
+45.7→29.1, b4 49.1→41.1, b5 49.7→39.4, b6 47.7→30.5, b7 48.8→22.5, b8 45.4→34.9, b9
+48.9→36.3, b10 49.5→44.9. A real, uniform, label-free detection gain — but only b7 of
+the four reverting blocks came under the registered ≤30% basin-entry bar. Formal
+outcome per the matrix: C2a RED.
+
+**M2b (diagnostic, run after the formal RED, disclosed as such): the composed candidate
+converts 3 of the 4 dead blocks.** Seeding the shipped loop with the frozen decodes:
+**10c/1r** — b4 18,100 → 0, b5 18,330 → 3, b7 18,000 → 0; only b10 (44.9% frozen
+start) still reverts. Corpse coded errors 72,666 → 18,239 (4.0×). This measurement
+falsifies the M2a bar AS A PROXY: b4 (41.1%) and b5 (39.4%) converged from above the
+30% line — the label-space basin boundary (46–49%, measured on first-pass-structured
+errors) does not transfer to frozen-start error structure, exactly as the scaffold
+mechanism predicts (frozen errors distribute differently across frames than DD-collapse
+errors). The registered ≤30 GREEN bar for M2b is also not met (18,239 ≫ 30 — b10's
+revert dominates), so C2a does not ship on this registration as written.
+
+## Amendment 1 — the revert-path salvage rung (registered 2026-07-26, BEFORE the
+held-out measurement)
+
+Disclosure first: the original matrix says both-red → design-only verdict. Both
+registered candidates ARE red as registered. But the M2b diagnostic showed the composed
+structure converting previously-unconvertible blocks with revert protection intact, and
+the M2a proxy failure has a measured mechanism (wrong basin coordinate). Per the B3.5b
+precedent (a consequence clause may be overridden by mechanism evidence, in an
+amendment, with everything disclosed), this amendment registers the shipped form and
+judges it on evidence the diagnostic has NOT seen: a held-out census burst, the guard
+set, and the full battery. No bar below is evaluated on w0/b0's already-measured
+composed outcome; w0/b0's role becomes guard-pinning only.
+
+**Shipped form (the salvage rung)**: 8PSK only. On revert-at-cap — and only there —
+run the frozen probe pass, decode it, and re-enter the full soft loop (cap 24) seeded
+with that decode. Fixed point ⇒ accept its decode (counted `v` = salvaged, plus
+converged); no fixed point or mid-block abort ⇒ revert to the TRUE first pass exactly
+as today. Converging blocks never touch the salvage path — bit-identical by
+construction. The only 8PSK Poor point is WN7; 8PSK AWGN/static legs are zero-error,
+zero-revert baselines that must stay byte-identical. The turbo summary line gains a
+`/{v}v` field (one-time guard-format change, disclosed here).
+
+**Bars (all registered before measurement):**
+
+- **S1 (safety, held-out corpse w1/b0)**: baseline first, then salvaged, same tree.
+  No block's output coded errors may increase vs baseline; every baseline-converged
+  block's decode byte-identical. Fail ⇒ salvage does not ship; design-only verdict
+  plus an instrument audit of the wrong convergence.
+- **S2 (efficacy, held-out corpse w1/b0)**: total coded errors ≤ 0.75× baseline AND
+  ≥1 reverting block converts to exact 0. Fail with S1 green ⇒ report; the ship
+  decision falls to S4's census bars alone (a structure that sometimes helps and never
+  hurts may ship on census evidence — decided by the bars below, not re-litigated).
+- **S3 (guards)**: WN6 corpse and WN13sp byte-identical (they have zero reverts); the
+  WN7 w0/b0 corpse numbers change BY DESIGN — pinned on the first salvaged run
+  (expected block-for-block ≈ the M2b composed outcomes; a deviation is an instrument
+  audit, not a shrug) and guard-exact thereafter; suite 697/0 (105 env-gated skips).
+- **S4 (battery)**: FULL house three-lane battery, WN0 legs gated. WN7 Poor BER must
+  strictly improve on BOTH families; every non-WN7 census byte-identical to the
+  #90-era baseline; AWGN/static/Doppler legs unchanged. Any non-WN7 movement ⇒ stop,
+  audit, no ship.
+
+**Honest expectations, unchanged**: b10-class blocks (frozen start ≥ ~44%) stay
+reverted; the oracle floor implies ~15-error-grade residual per burst even at full
+conversion. The ship criterion is census improvement with zero collateral — the 1E-5
+gate is measured afterward, not promised.
+
+**Cost**: frozen pass + ≤24 soft iterations, reverting 8PSK blocks only; nil on
+converged paths and every non-8PSK mode.
+
 ## Guards and discipline
 
 WN7 corpse 72,666 coded / 7c/4r + oracle b5:15; WN6 corpse 0 / 11c0r; WN13sp

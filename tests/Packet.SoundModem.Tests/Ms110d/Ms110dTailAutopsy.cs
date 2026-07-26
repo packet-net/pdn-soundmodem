@@ -1,3 +1,4 @@
+using System.Globalization;
 using M0LTE.Fec;
 using M0LTE.Ofdm;
 using Packet.SoundModem.Ms110d;
@@ -170,9 +171,27 @@ public class Ms110dTailAutopsy
         // clean stream.
         string? walshOracle = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_WALSH_ORACLE");
         genie |= walshOracle is not null;
+
+        // §B3.6 M1b perturbed-restart instrument: "p,k" — flip each iteration-0 label
+        // with probability p under a deterministic per-block xorshift seeded by k
+        // (registered: p = 0.02, k = 1..8; evidence/2026-07-26-phase-b36-wn7loop).
+        string? turboPerturb = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TURBO_PERTURB");
+
+        // §B3.6 C2a stage instruments: the frozen (label-free) re-detection pass (M2a)
+        // and the seed file that feeds a prior run's frozen decodes back in as
+        // iteration-0 labels (M2b, the composed candidate).
+        bool turboFrozen = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TURBO_FROZEN") == "1";
+        string? turboSeedFile = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TURBO_SEED");
+        if (turboPerturb is not null && turboSeedFile is not null)
+        {
+            throw new InvalidOperationException("TURBO_PERTURB and TURBO_SEED both set");
+        }
+
         string tag = $"wn{wn}-w{worker}-b{burst}{(clean ? "-clean" : "")}" +
             $"{(genie ? "-genie" : "")}{(oracle ? "-oracle" : "")}" +
-            $"{(walshOracle is null ? "" : $"-wgo{walshOracle}")}";
+            $"{(walshOracle is null ? "" : $"-wgo{walshOracle}")}" +
+            $"{(turboPerturb is null ? "" : $"-tp{turboPerturb.Replace(',', '-')}")}" +
+            $"{(turboFrozen ? "-tfz" : "")}{(turboSeedFile is null ? "" : "-tsd")}";
         using var symbols = new StreamWriter(Path.Combine(outDir, $"autopsy-symbols-{tag}.csv"));
         symbols.WriteLine("index,re,im,refIdx,refRe,refIm");
         using var frames = new StreamWriter(Path.Combine(outDir, $"autopsy-frames-{tag}.log"));
@@ -366,6 +385,83 @@ public class Ms110dTailAutopsy
                     : -1;
         }
 
+        // §B3.6 C2a stage (M2a): arm the frozen pass; per-block coded errors reach the
+        // summary and the decodes are dumped for M2b seeding.
+        var frozenBlockErrs = new List<string>();
+        var frozenDecodes = new Dictionary<int, byte[]>();
+        if (turboFrozen)
+        {
+            demod.TurboFrozenProbe = true;
+            demod.FrozenBlockLlrs += (blockIndex, llrs, dec) =>
+            {
+                WriteLlrStats("frozen", blockIndex, llrs);
+                if (blockIndex >= txBlocks)
+                {
+                    return;
+                }
+
+                int errs = 0;
+                for (int i = 0; i < dec.Length; i++)
+                {
+                    errs += dec[i] != txBits[(blockIndex * il.InputBits) + i] ? 1 : 0;
+                }
+
+                frozenBlockErrs.Add($"b{blockIndex}:{errs}");
+                frozenDecodes[blockIndex] = (byte[])dec.Clone();
+            };
+        }
+
+        // §B3.6 M2b: a prior frozen run's decodes become this run's iteration-0 labels
+        // (the composed C2a candidate, staged across two runs). Blocks absent from the
+        // file keep their shipped start.
+        if (turboSeedFile is not null)
+        {
+            var seeds = new Dictionary<int, byte[]>();
+            foreach (string line in File.ReadAllLines(turboSeedFile))
+            {
+                int colon = line.IndexOf(':');
+                if (colon <= 1 || !line.StartsWith('b'))
+                {
+                    continue;
+                }
+
+                int b = int.Parse(line[1..colon], CultureInfo.InvariantCulture);
+                seeds[b] = line[(colon + 1)..].TrimEnd().Select(c => (byte)(c - '0')).ToArray();
+            }
+
+            demod.TurboStartOverride = (blockIndex, firstPass) =>
+                seeds.TryGetValue(blockIndex, out byte[]? s) && s.Length == firstPass.Length
+                    ? s : null;
+        }
+
+        // §B3.6 M1a probe-pricing diag (turbo-probe lines in the frames log) and M1b
+        // perturbed restarts. The perturbation touches ONLY the iteration-0 labels; the
+        // revert fallback stays the true first pass inside the demod.
+        demod.TurboProbeDiag = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TURBO_PROBEDIAG") == "1";
+        if (turboPerturb is not null)
+        {
+            string[] parts = turboPerturb.Split(',');
+            float pFlip = float.Parse(parts[0], CultureInfo.InvariantCulture);
+            int pSeed = int.Parse(parts[1], CultureInfo.InvariantCulture);
+            demod.TurboStartOverride = (blockIndex, firstPass) =>
+            {
+                var perturbed = (byte[])firstPass.Clone();
+                uint s = unchecked((uint)((pSeed * 1000003) + (blockIndex * 40503)) ^ 2463534242u);
+                for (int i = 0; i < perturbed.Length; i++)
+                {
+                    s ^= s << 13;
+                    s ^= s >> 17;
+                    s ^= s << 5;
+                    if (s * (1.0f / uint.MaxValue) < pFlip)
+                    {
+                        perturbed[i] ^= 1;
+                    }
+                }
+
+                return perturbed;
+            };
+        }
+
         if (genie)
         {
             float[] genieRef = new WattersonChannel(9600, channelSeed, WattersonChannel.Poor).Apply(
@@ -430,7 +526,15 @@ public class Ms110dTailAutopsy
             $"@{demod.Lock?.CfoHz:F2}Hz (tx K{settings.ConstraintLength})\n" +
             $"first-decode errors per block: {string.Join(" ", firstDecodeErrs)}\n" +
             $"final-decode errors per block: {string.Join(" ", finalDecodeErrs)}\n" +
-            (oracle ? $"oracle coded errors per block: {string.Join(" ", oracleBlockErrs)}\n" : ""));
+            (oracle ? $"oracle coded errors per block: {string.Join(" ", oracleBlockErrs)}\n" : "") +
+            (turboFrozen ? $"frozen coded errors per block: {string.Join(" ", frozenBlockErrs)}\n" : ""));
+        if (turboFrozen)
+        {
+            File.WriteAllLines(
+                Path.Combine(outDir, $"autopsy-frozen-decode-{tag}.txt"),
+                frozenDecodes.OrderBy(kv => kv.Key).Select(kv =>
+                    $"b{kv.Key}:{string.Concat(kv.Value.Select(b => b.ToString()))}"));
+        }
         decoded.Count.Should().BeGreaterThan(0,
             "the corpse must at least acquire for the dump to mean anything");
     }
