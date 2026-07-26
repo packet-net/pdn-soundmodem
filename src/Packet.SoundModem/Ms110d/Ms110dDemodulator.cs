@@ -1989,11 +1989,15 @@ public sealed class Ms110dDemodulator
             throw new InvalidOperationException("the WN0 gain oracle requires the genie stream");
         }
 
-        while (_state == Ms110dRxState.Tracking && HaveSamplesForChip(_symbolChip + Wid0WalshModem.RakeChips + 2))
+        // Forward availability is unchanged by the §B3.5b anti-causal fingers: the
+        // buffer extends NegFingers chips BACK (always in ring history) and the same
+        // 38 chips forward.
+        double forwardChips = Wid0WalshModem.RakeChips - Wid0WalshModem.NegFingers;
+        while (_state == Ms110dRxState.Tracking && HaveSamplesForChip(_symbolChip + forwardChips + 2))
         {
             for (int i = 0; i < Wid0WalshModem.RakeChips; i++)
             {
-                chips[i] = ReadChip(_symbolChip + i);
+                chips[i] = ReadChip(_symbolChip - Wid0WalshModem.NegFingers + i);
             }
 
             int bestDibit;
@@ -2004,7 +2008,7 @@ public sealed class Ms110dDemodulator
             {
                 for (int i = 0; i < Wid0WalshModem.RakeChips; i++)
                 {
-                    cleanChips[i] = ReadChipEst(_symbolChip + i);
+                    cleanChips[i] = ReadChipEst(_symbolChip - Wid0WalshModem.NegFingers + i);
                 }
 
                 _walsh!.DemodulateRakeOracle(
@@ -2045,20 +2049,28 @@ public sealed class Ms110dDemodulator
             if (FrameDiagnostics is not null)
             {
                 _walsh.CopyGainMagnitudes(gainMags);
+                var mags = new System.Text.StringBuilder(gainMags.Length * 6);
+                for (int k = 0; k < gainMags.Length; k++)
+                {
+                    mags.Append(k == 0 ? "" : " ").Append(gainMags[k].ToString("F3"));
+                }
+
                 FrameDiagnostics.Invoke(
                     $"walsh sym={_symbolInBlock} d*={bestDibit} llr0={llrs[0]:F2} llr1={llrs[1]:F2} " +
-                    $"|g|=[{gainMags[0]:F3} {gainMags[1]:F3} {gainMags[2]:F3} {gainMags[3]:F3} " +
-                    $"{gainMags[4]:F3} {gainMags[5]:F3} {gainMags[6]:F3}] argC={combined.Arg():F3}");
+                    $"|g|=[{mags}] argC={combined.Arg():F3}");
             }
 
             // Signal-lost discriminator (WN 0): the winning-correlation-to-chip-energy
-            // ratio ≈ 0.5 at the −6 dB mask point but ≈ 0.23 on noise alone. Weak only
-            // when ALL fingers are weak — a finger-0-only test would false-fire on a
-            // direct-path fade with a strong echo, exactly the fades MRC rides (§B3.5).
+            // ratio ≈ 0.5 at the −6 dB mask point but ≈ 0.23 on noise alone (max over 7
+            // causal fingers; the §B3.5b 13-finger window lifts the noise-side statistic
+            // ~15%, margin watched via census end-reasons). Weak only when ALL fingers
+            // are weak — a finger-0-only test would false-fire on a direct-path fade
+            // with a strong echo, exactly the fades MRC rides (§B3.5). The energy window
+            // stays the symbol's own 32 chips regardless of the finger span.
             double sumMag = 0;
             for (int i = 0; i < 32; i++)
             {
-                sumMag += chips[i].Abs();
+                sumMag += chips[Wid0WalshModem.NegFingers + i].Abs();
             }
 
             if (maxFingerAbs < 0.35 * sumMag)

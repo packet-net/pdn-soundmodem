@@ -19,12 +19,23 @@ public sealed class Wid0WalshModem
     public const int ChipsPerSymbol = 32;
 
     /// <summary>RAKE finger count for <see cref="DemodulateRake"/>: integer chip delays
-    /// 0..6 — T-spaced (≈ decorrelated under the chip pulse) and covering the Poor
-    /// channel's 2 ms (4.8-chip) echo via fingers 4+5 (§B3.5 design note).</summary>
-    public const int Fingers = 7;
+    /// −6..+6 — T-spaced (≈ decorrelated under the chip pulse). Symmetric since §B3.5b
+    /// rung G: acquisition anchors whichever Poor path is stronger during the preamble
+    /// (the echo-lock lottery, ~31% of bursts land on the LATER path), so the other
+    /// path's 2 ms (4.8-chip) offset must be covered on BOTH sides — fingers ±(4,5).
+    /// The original causal 0..6 window (§B3.5) made echo-locked bursts single-path:
+    /// the whole census error tail, 18/18 concordance
+    /// (evidence/2026-07-26-phase-b35b-wn0genie Amendment 1).</summary>
+    public const int Fingers = 13;
+
+    /// <summary>Fingers at negative (anti-causal) chip delays: finger index k covers
+    /// delay k − NegFingers; the chip buffer starts NegFingers chips BEFORE the symbol
+    /// boundary.</summary>
+    public const int NegFingers = 6;
 
     /// <summary>Chips <see cref="DemodulateRake"/> consumes per channel symbol: the
-    /// 32-chip symbol plus the trailing finger reach.</summary>
+    /// 32-chip symbol plus the finger reach on both sides (the buffer spans
+    /// [−NegFingers, ChipsPerSymbol + Fingers − 1 − NegFingers) around the symbol).</summary>
     public const int RakeChips = ChipsPerSymbol + Fingers - 1;
 
     private const float GainAlpha = 1f / 6; // ≈80 ms one-pole — inside the 1 Hz fade coherence time
@@ -117,20 +128,22 @@ public sealed class Wid0WalshModem
     }
 
     /// <summary>DD-MRC multi-finger demodulation (§B3.5 "Walsh RAKE"): per-finger Walsh
-    /// correlations at chip delays 0..6, combined with decision-directed per-finger
-    /// channel gains into an MRC statistic whose max-log LLRs are quadratic-CSI-weighted.
-    /// <paramref name="chips"/> holds <see cref="RakeChips"/> carrier-corrected chips
-    /// (finger k's window = chips[k..k+32]); the symbol's 32 scramble rotors apply to
-    /// every window. <paramref name="combined"/> is Σ ĝ*·corr(winner) — real-positive
-    /// when locked; its argument drives the common-CFO PLL. <paramref name="maxFingerAbs"/>
-    /// is max over fingers of |corr(winner)| for the all-fingers-weak discriminator.</summary>
+    /// correlations at chip delays −6..+6 (§B3.5b rung G), combined with decision-directed
+    /// per-finger channel gains into an MRC statistic whose max-log LLRs are
+    /// quadratic-CSI-weighted. <paramref name="chips"/> holds <see cref="RakeChips"/>
+    /// carrier-corrected chips starting <see cref="NegFingers"/> chips before the symbol
+    /// boundary (finger k's window = chips[k..k+32], delay k − NegFingers); the symbol's
+    /// 32 scramble rotors apply to every window. <paramref name="combined"/> is
+    /// Σ ĝ*·corr(winner) — real-positive when locked; its argument drives the common-CFO
+    /// PLL. <paramref name="maxFingerAbs"/> is max over fingers of |corr(winner)| for the
+    /// all-fingers-weak discriminator.</summary>
     public void DemodulateRake(
         ReadOnlySpan<Cf> chips, Span<float> llrs, out int bestDibit, out Cf combined,
         out double maxFingerAbs)
     {
         if (chips.Length != RakeChips || llrs.Length != 2)
         {
-            throw new ArgumentException("expected 38 chips and 2 LLRs", nameof(chips));
+            throw new ArgumentException("expected 44 chips and 2 LLRs", nameof(chips));
         }
 
         // One scramble draw per symbol, applied to every finger's window.
@@ -236,7 +249,7 @@ public sealed class Wid0WalshModem
     {
         if (chips.Length != RakeChips || cleanChips.Length != RakeChips || llrs.Length != 2)
         {
-            throw new ArgumentException("expected 38 noisy + 38 clean chips and 2 LLRs", nameof(chips));
+            throw new ArgumentException("expected 44 noisy + 44 clean chips and 2 LLRs", nameof(chips));
         }
 
         Span<Cf> rot = stackalloc Cf[ChipsPerSymbol];
