@@ -286,6 +286,29 @@ public class Ms110dTailAutopsy
         // cap, which is exactly the view the basin mechanism analysis needs.
         demod.TurboBlockLlrs += (blockIndex, llrs) => WriteLlrStats("final", blockIndex, llrs);
 
+        // §B3.4 instrument: the final stream's INFO decode — what the revert-at-cap
+        // discards. PSK wander states measured worse-than-first (the revert is right);
+        // the QAM16 climb-from-bootstrap may floor far better than its coin-flip first
+        // decode, and this number decides whether the revert logic fits QAM16.
+        var finalDecodeErrs = new List<string>();
+        demod.TurboBlockLlrs += (blockIndex, llrs) =>
+        {
+            if (blockIndex >= txBlocks)
+            {
+                return;
+            }
+
+            var dec = new byte[il.InputBits];
+            Ms110dFraming.DecodeBlock(firstViterbi, puncture, interleaver, llrs, dec);
+            int errs = 0;
+            for (int i = 0; i < dec.Length; i++)
+            {
+                errs += dec[i] != txBits[(blockIndex * il.InputBits) + i] ? 1 : 0;
+            }
+
+            finalDecodeErrs.Add($"b{blockIndex}:{errs}");
+        };
+
         // §B3.3 oracle-labels ceiling (MS110D_AUTOPSY_ORACLE=1): the demod runs one
         // extra chain-BCJR turbo pass per block trained on the TRUE info bits — the
         // upper bound a converged soft-feedback turbo could reach with this channel
@@ -385,6 +408,7 @@ public class Ms110dTailAutopsy
             $"lock={demod.Lock?.WaveformNumber}/{demod.Lock?.Interleaver}/K{demod.Lock?.ConstraintLength}" +
             $"@{demod.Lock?.CfoHz:F2}Hz (tx K{settings.ConstraintLength})\n" +
             $"first-decode errors per block: {string.Join(" ", firstDecodeErrs)}\n" +
+            $"final-decode errors per block: {string.Join(" ", finalDecodeErrs)}\n" +
             (oracle ? $"oracle coded errors per block: {string.Join(" ", oracleBlockErrs)}\n" : ""));
         decoded.Count.Should().BeGreaterThan(0,
             "the corpse must at least acquire for the dump to mean anything");
