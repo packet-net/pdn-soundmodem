@@ -737,7 +737,7 @@ Firmware syntax notes (V1.4.0.0): filter params are **one per command**; `{rx,tx
 is **rejected** (`0x50000016`) though `low_cut`/`high_cut` work; `sub interlock all` is invalid
 (`0x500000A3`) but interlock status arrives to a GUI client anyway.
 
-### 9.5 Open question — achievable TX bandwidth (the crux for our own >3 kHz modes)
+### 9.5 Achievable TX bandwidth — measured, with a 2026-07-26 correction (the crux for our own >3 kHz modes)
 
 The waveform runs at **24 kHz complex**, but `underlying_mode=USB` routes it through the SSB
 modulator + `tx_filter`. FreeDV uses USB with a 600–2400 Hz TX filter and even duplicates its real
@@ -761,17 +761,69 @@ active loop) hearing the dummy-load leakage.** We TX a comb of complex tone-pair
 each `underlying_mode` and capture the RF on UberSDR's `iq96` stream (a spectrogram makes it
 unambiguous — automated peak-picking is defeated by stronger on-air background carriers):
 
-- **`underlying_mode=RAW` → TRUE WIDEBAND COMPLEX IQ→RF.** All four comb tones reproduce, symmetric
-  about the carrier (±3 and ±7 kHz), i.e. **both sidebands** — a clean ~14 kHz-wide complex signal,
-  far beyond SSB. **This is the answer: the Waveform API DOES unlock wideband complex TX.**
-- **`underlying_mode=USB` and `=IQ` → SSB-limited.** Only the +3 kHz tone survives (~single
-  sideband, ~3 kHz) — as expected for USB; notably plain `IQ` behaves like USB here, **`RAW` is the
-  wideband one**.
-- **Ceiling = the waveform's 24 kHz complex rate (±12 kHz).** Pushing the comb to ±10 kHz brings in
-  imaging/aliasing near the Nyquist edge, so the clean usable width is ~±7–10 kHz (~14–20 kHz). Fine
-  for HF (2.7 kHz channels) and modest VHF; whether a higher waveform sample rate exists on the 6000
-  is unconfirmed. Evidence: `docs/img` spectrogram in the session, harness `scratchpad/wfspike`
-  (`rf <mode> comb …`) + `scratchpad/uberiq` (UberSDR iq96 capture).
+- **`underlying_mode=RAW` → all four comb tones reproduce, symmetric about the carrier (±3 and
+  ±7 kHz).** This was read at the time as "both sidebands — true wideband complex IQ→RF, a clean
+  ~14 kHz-wide signal". **That reading is wrong — see the 2026-07-26 correction below.**
+- **`underlying_mode=USB` and `=IQ` → only the +3 kHz tone survives** (~single sideband, ~3 kHz).
+- **Ceiling was assumed to be the waveform's 24 kHz complex rate (±12 kHz).** Evidence: `docs/img`
+  spectrogram in the session, harness `scratchpad/wfspike` (`rf <mode> comb …`) + `scratchpad/uberiq`
+  (UberSDR iq96 capture). Both harnesses were session scratchpads and no longer exist.
+
+#### CORRECTION (2026-07-26) — the wideband claim above is WRONG
+
+Re-measured on the same radio (FLEX-6500, fw 4.1.5, API V1.4.0.0) with the `flex-iq-noise` rig in
+[`M0LTE.Flex`](https://github.com/M0LTE/M0LTE.Flex) (`tools/FlexIqNoise`), against an external
+receiver. **The Waveform API transmit path is single-sideband. It does not carry both sidebands, and
+the usable width is ~10 kHz on one side of the carrier, not ±12 kHz.**
+
+**Why the original conclusion was wrong.** The probe was a **symmetric** comb (±3 and ±7 kHz). A
+symmetric complex comb has a purely *real* I channel, and it contains both the `+f` and `−f` tone —
+so a single-sideband path reproduces it looking symmetric, and "all four tones came back" cannot
+distinguish "both sidebands were transmitted" from "one sideband was, and the probe contained the
+tone that lands there". The measurement could not decide the question it was used for. The same trap
+recurred on 2026-07-26 with a symmetric two-tone probe and produced a second wrong conclusion before
+an asymmetric probe settled it. **Sideband and IQ-orientation questions require an asymmetric probe:
+a single tone, off to one side.**
+
+**What is actually true**, measured with one tone at −3 kHz baseband per mode, and confirmed
+interactively by which way the tone travels as it is retuned:
+
+| `underlying_mode` | a −3 kHz baseband tone appears at | spectrum |
+|---|---|---|
+| **RAW**, `LSB`, `DIGL` | carrier − 3 kHz | **upright** |
+| `IQ`, `USB`, `DIGU` | carrier + 3 kHz | **mirrored** (a modulated signal goes out inverted) |
+| `AM`, `FM` | carrier + both sidebands (+ spurs on FM) | Q discarded; the I channel alone is modulated |
+
+A tone at **+3 kHz baseband produces nothing in any mode** — only the negative half of the baseband
+is ever transmitted. What the mode selects is which side of the carrier the surviving half lands on.
+
+**The width limit is the radio's transmit filter, not the waveform rate.** It lives on the `transmit`
+status object, defaults to a **3 kHz** SSB passband, and **clamps at 10 kHz**:
+
+- Set with `transmit set filter_low=<Hz>` / `filter_high=<Hz>`, but **reported** as `lo`/`hi` —
+  `transmit set hi=` is rejected (`0x5000002D`). That asymmetry is why a probe looking for
+  `filter_high` in the status reads as "the command did nothing".
+- `filter_low` **cannot go negative** (any negative value clamps to 0), so the passband is
+  structurally one-sided and cannot straddle the carrier. Single-sideband is not incidental.
+- Values above 10000 are **silently clamped**, not rejected.
+- It is a **global** radio setting: it persists after teardown and affects ordinary SSB transmit.
+- The waveform's own `tx_filter` (`waveform set <name> tx_filter low_cut=/high_cut=`) is **inert** —
+  accepted with `err=0`, no measurable effect. The `tx_filter high_cut` "accepts 24000 with no clamp"
+  note above is command acceptance only, and means nothing on air.
+
+Leaving that filter at its 3 kHz default silently truncates a wider signal, which is what made an
+8 kHz request come out 3 kHz wide with every command returning success.
+
+**Net achievable TX bandwidth: ~10 kHz, one-sided, spectrum upright, using `underlying_mode=RAW`.**
+
+**Consumer guidance.** `M0LTE.Flex` ≥ 0.6.0 absorbs all of this behind
+`FlexWaveformOptions.OccupiedBandwidthHz`: declare where the signal goes and how wide it is, and the
+library derives the slice frequency, frequency-shifts the samples below DC (a true translation, never
+a conjugation — mirroring would invert the spectrum), opens the transmit filter, and fails setup
+rather than transmitting truncated. It uses `RAW` and refuses the other modes: the mirroring ones
+would invert the signal, and `LSB`/`DIGL` — though positionally identical — route through a full
+audio mode whose compander and speech processing are not known to be bypassed and would not show up
+on a spectrum display.
 
 **UberSDR API notes (for reuse):** `POST /connection` (must send a **User-Agent** header — the
 server maps `user_session_id`→UA and rejects the WS without it) then
@@ -787,11 +839,11 @@ blanked during TX). The external-RX route above is the one that works.
 
 - **Multi-channel RX (own #2 interest):** unblocked, low-risk — DAX-IQ RX + a DDC front-end, no TX
   story, no Waveform API, no licence question. The near-term IQ win.
-- **Wideband own-modes (#8/#9):** RX via DAX-IQ; **TX via the Waveform API is proven feasible,
-  licence-clean, AND wideband** (GPL-3.0 port, headless, 6000-supported; §9.5 confirms
-  `underlying_mode=RAW` carries true complex both-sideband IQ, ~14–20 kHz usable, capped by the
-  24 kHz waveform rate). The §9.5 gate is **cleared**: the Waveform API is a real wideband-TX path,
-  not an SSB dead-end. Building it effectively makes an own-mode a Flex *waveform* for the transmit
-  half — accepted, since there is no other IQ-TX door on a Flex. The ~24 kHz ceiling suits HF and
-  modest-VHF own-modes; a VARA-FM-class ~25 kbps signal would sit near the edge (confirm the
-  waveform max rate before committing to that).
+- **Wideband own-modes (#8/#9):** RX via DAX-IQ; **TX via the Waveform API is proven feasible and
+  licence-clean, but narrower than §9.5 originally claimed** (GPL-3.0 port, headless,
+  6000-supported). Per the 2026-07-26 correction in §9.5, the transmit path is **single-sideband**
+  and capped by the radio's transmit filter at **~10 kHz one-sided** — not the ~14–20 kHz
+  both-sideband figure previously recorded. Building it effectively makes an own-mode a Flex
+  *waveform* for the transmit half — accepted, since there is no other IQ-TX door on a Flex. **Budget
+  ~10 kHz**: that still suits HF (2.7 kHz channels) comfortably, but a VARA-FM-class ~25 kbps signal
+  does **not** fit and should not be planned against this path without a different transport.
