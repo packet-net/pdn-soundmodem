@@ -4,19 +4,26 @@ Written 2026-07-26. Sources are the manufacturer's own documents linked from [wi
 
 ## Verdict
 
-**Well suited, and unusually so — with the optional KIF-2 filter fitted.** Almost everything MS110D needs from a radio, this one has by design rather than by accident: a proper data port with fixed levels, ±0.5 ppm stability, 2G ALE, and a full CAT command set. It is a commercial HF radio built for unattended data, and it shows.
+> **Revised 2026-07-26, after Tom noted that both option boards — KIF-2 and KPE-2 — are hard or impossible to obtain.** That removes the wider filter *and* ALE entirely, which are the two things the first draft leaned on. The revision is below; the original reasoning is kept intact further down because it is still the right analysis, just of a radio nobody can buy the parts for.
 
-**The one real compromise is bandwidth**, and it is worth being precise about rather than hand-waving:
+**As actually obtainable — bare radio, no options — it is a decent but not compelling choice for MS110D.**
 
-| Receive path | −6 dB | −60 dB | Measured cost to MS110D |
-|---|---|---|---|
-| Built-in filter | **2.2 kHz** | 4.8 kHz | ~1.3 dB of energy **plus** ~1 dB of distortion |
-| With KIF-2 | **2.7 kHz** | 6.2 kHz | ~0.3 dB, distortion negligible |
-| Reference (our Flex IQ path) | 3.3 kHz | — | 0 by definition |
+What survives without the option boards is genuinely good: **±0.5 ppm** stability, a proper **DATA mode with fixed DI/DEO levels**, full **CAT**, 100 W with commercial build. Those are real advantages over most amateur radios and they matter for unattended operation.
 
-MS110D Appendix D occupies about 3 kHz — roughly 180–3420 Hz about the 1800 Hz sub-carrier. **Neither filter is wide enough**, and the radio filters on transmit as well as receive, so the truncation happens twice.
+What is lost is most of the case for choosing *this* radio:
 
-With KIF-2 that costs a few tenths of a dB and is of no practical consequence. Without it, budget **2–2.5 dB**, which is a meaningful fraction of the margin between adjacent waveforms. Fit the KIF-2.
+| | With options | As obtainable |
+|---|---|---|
+| Passband | 2.7 kHz (KIF-2) | **2.2 kHz built-in — the only option** |
+| Measured MS110D penalty | ~0.3 dB | **~2–2.5 dB** (1.3 dB energy + ~1 dB distortion) |
+| ALE | 2G, MIL-STD-188/141A | **None. Requires KPE-2** |
+
+So the honest position is:
+
+- **The 2–2.5 dB is now the actual figure, not the avoidable one.** It cannot be tuned or configured away: MS110D Appendix D occupies ~3 kHz (roughly 180–3420 Hz about the 1800 Hz sub-carrier) and no shift of the dial makes a 3.2 kHz signal fit a 2.2 kHz filter. The radio also filters on transmit, so it happens twice. What can be said for it is that the penalty is **fixed, known and measurable** — for a research campaign a constant 2 dB offset that we have characterised is workable, provided it is stated every time a result is quoted.
+- **Without KPE-2 there is no ALE at all**, and ALE was the feature that made this radio interesting rather than merely adequate. See the next section — the answer is probably to build it in software, at which point the radio choice stops depending on an unobtainable board.
+
+**Recommendation.** If a TK-90 is already to hand, it is a perfectly usable MS110D radio and its stability and data port are better than most — budget the 2 dB and get on with it. If one is being bought *for this purpose*, the bandwidth is a poor trade: any modern transceiver offering a 3 kHz or wider SSB filter with a data port removes the penalty entirely, and without KPE-2 the TK-90 no longer brings ALE to offset it.
 
 ## What MS110D actually needs, and how the TK-90 answers
 
@@ -54,7 +61,7 @@ Method: render a WN2/WN6/WN13 AWGN ladder through the emulated passband, score i
 | Reference 3.3 kHz | 6.15 dB | 2.11 × 10⁻² |
 | 2.2 kHz both ends | 6.17 dB | **3.16 × 10⁻²** |
 
-Half again as many channel bit errors at the *same* delivered SNR — worth roughly another dB against the reference curve. So the 2.2 kHz path costs about **1.3 dB of energy plus about 1 dB of distortion**, and the 2.7 kHz path costs about 0.3 dB and nothing measurable beyond it.
+Half again as many channel bit errors at the *same* delivered SNR — worth roughly another dB against the reference curve. So the 2.2 kHz path costs about **1.3 dB of energy plus about 1 dB of distortion**, and the 2.7 kHz path costs about 0.3 dB and nothing measurable beyond it. With KIF-2 unobtainable, the 2.2 kHz row is the one that applies.
 
 **This is a lower bound.** The emulation is a linear-phase FIR with sharp edges. A real crystal filter has passband ripple (2 dB specified), and group-delay distortion that rises steeply at the band edges — which is exactly where a serial-tone waveform keeps the sidebands it needs. Expect the real radio to be somewhat worse than these figures, not better.
 
@@ -74,9 +81,40 @@ Half again as many channel bit errors at the *same* delivered SNR — worth roug
 
 That makes it **the ideal subject for §E3**, which exists to measure exactly this difference. §E3 was scoped as "our IQ path versus our own DAX audio path"; a TK-90 would extend it to "versus a real commercial radio", which is a far more useful comparison, because a real deployment will be running a radio like this and not a Flex in waveform mode.
 
+## Neither option board is obtainable — what follows
+
+Tom reports KIF-2 and KPE-2 are hard or impossible to source. Both conclusions above are conditional on them, so both change.
+
+### The filter: accept it, and measure it
+
+There is no configuration workaround. The waveform is ~3.2 kHz wide about its own sub-carrier, so no amount of shifting the dial fits it through a 2.2 kHz filter — shifting only changes *which* part is cut. Substituting a wider crystal filter is a hardware modification of the IF strip (the built-in part is an MCF, L71-0604-15 / XF252) and is well outside what this campaign should be doing.
+
+What is left is to treat it as a characterised loss rather than a defect. That is not a consolation prize: a **known** 2–2.5 dB offset is scientifically fine, because every result can be quoted against it. And the harness measures it directly — `sm-ota ladder --tx-ssb-low/--tx-ssb-high` and `sm-ota score --ssb-low/--ssb-high` already model it, and a bench sweep of the real radio would replace the modelled figure with a measured one.
+
+The one thing that must not happen is a campaign that quotes TK-90 results against simulation without stating the offset. That is exactly how a 2 dB instrument error becomes a 2 dB demodulator deficiency in somebody's write-up.
+
+### ALE: build it in software instead
+
+Losing KPE-2 does not have to mean losing ALE, and the alternative is arguably better.
+
+**2G ALE is a much simpler waveform than the one this repo already demodulates.** It is 8-ary FSK in the region of 750–2500 Hz at a low symbol rate, with Golay-coded, interleaved, redundantly-transmitted 24-bit words — no equaliser, no turbo decoder, no serial-tone acquisition problem. Against MS110D Appendix D, which this project has already built, it is a modest piece of work, and every DSP primitive it needs is in hand.
+
+The advantages of doing it ourselves are substantial:
+
+- **It works with any radio.** The radio choice stops depending on a discontinued option board — and stops depending on Kenwood at all.
+- **It fits the narrow filter.** The 2G tone set spans roughly 750–2500 Hz, comfortably inside 2.2 kHz. The one part of the system the TK-90's filter does *not* hurt is the part we would be building.
+- **LQA becomes ours.** A vendor's LQA score is an opaque number; ours could be the SNR and uncoded BER the scorer already produces, which is a far better predictor of which waveform will work (see the gap discussed below).
+- **It is testable the way everything else here is.** The same offline loop — render, convert, score — applies directly, so an ALE implementation could be verified without a radio, exactly as the E2 ladder was.
+
+The costs are honest ones: it is new work, 2G ALE has real interop variation in the field (Kenwood's own manual admits as much, noting the AMD frame "must be changed if the transceiver cannot link with other manufacturers transceivers"), and interoperating with commercial stations would need testing against one.
+
+**This is not a recommendation to start now** — it is a much larger piece of work than anything outstanding on the roadmap, and MS110D itself is not finished. But it is worth recording that the ALE capability is not actually gated on hardware we cannot buy, and that if ALE ever becomes a goal, the software route is the one that does not depend on a scarce board.
+
+The section that follows describes how ALE and MS110D fit together in practice. It was written for the TK-90's built-in implementation, but the sequence, the timing arguments and the LQA-versus-waveform gap apply equally to a software one — the mode interlock is the only part that is specific to the radio.
+
 ## How 2G ALE and MS110D would work together in practice
 
-ALE requires the optional **KPE-2** unit; it is not in the base radio.
+ALE requires the optional **KPE-2** unit; it is not in the base radio, and it is reportedly hard or impossible to obtain — see the section above.
 
 ### What ALE is, and what it is not
 

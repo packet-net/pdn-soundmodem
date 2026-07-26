@@ -31,7 +31,7 @@ Status: `todo` · `blocked` (waiting on someone/something else) · `done` (moved
 
 ## A14 — Kenwood TK-90 bench measurements *(blocked: we do not have one)*
 
-[`radio-tk-90-evaluation.md`](radio-tk-90-evaluation.md) assesses it from the manufacturer's documents and measures the bandwidth penalty in simulation. It looks well suited — ±0.5 ppm, a proper data port, 2G ALE, full CAT — with one compromise: the IF filter is 2.2 kHz built-in, 2.7 kHz with the optional KIF-2, against MS110D's ~3 kHz.
+[`radio-tk-90-evaluation.md`](radio-tk-90-evaluation.md) assesses it from the manufacturer's documents and measures the bandwidth penalty in simulation. **Both option boards (KIF-2 filter, KPE-2 ALE) are hard or impossible to obtain**, so the radio as buyable is a 2.2 kHz path with no ALE. What survives is still good — ±0.5 ppm, a proper data port, full CAT — but the measured bandwidth penalty of ~2–2.5 dB is now unavoidable rather than a few tenths, and there is no ALE to offset it. Usable if one is to hand; a poor buy specifically for this purpose.
 
 If one is obtained, six measurements turn every estimate in that document into a number; the first three matter most.
 
