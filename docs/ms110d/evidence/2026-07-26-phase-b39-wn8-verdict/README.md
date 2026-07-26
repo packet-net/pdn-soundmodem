@@ -49,3 +49,38 @@ all seven WN7 specimens.
   second independent wall the arm does not address.
 - Either way, the basin block stands on its own: gating WN8 requires BOTH
   walls down; M0 measures only the ceiling.
+
+## M0 measured (2/2 specimens, census cross-check exact)
+
+Ship sides reproduce their b38 census rows exactly (canonical 269,237 coded /
+10 collapses / 0c-0r-0a-11s; disjoint 269,154 / 13 / 11s) — specimens valid.
+Oracle ceilings on the current chain (`corpse/summary-*.txt`):
+
+- **canonical (509): 496 oracle errors / 540,640 = 9.2E-4** — 92× above the
+  1E-5 mask; per block `89 42 55 15 36 0 116 21 46 62 14` — 10 of 11 blocks
+  nonzero, a distributed model failure, not WN7's isolated fade-lottery events.
+- **disjoint (10509): 136 / 540,640 = 2.5E-4** — 25× above mask; per block
+  `0 0 0 22 33 0 55 0 12 14 0`.
+
+The B3.4 figure (9.3E-4) is reproduced at 9.2E-4 on the chain that B2.2–B3.8
+rebuilt end-to-end (chain decomposition, scrambler-exact echo, per-position h1,
+time-varying channel): **none of the Phase B model improvements moved the
+QAM16 ceiling**. The 16-point constellation at 23 dB on the Poor channel sits
+beyond what this equalizer-plus-chain model class can track even with perfect
+labels.
+
+## Verdict (per the pre-committed rule): WN8 closes design-only, measured-only
+
+Both specimens exceed the 10× line by an order of magnitude — the design-only
+close fires decisively. Both walls stand on current measurements: the
+true-label ceiling at 25–92× mask, and the bootstrap basin (coin-flip first
+decode, turbo structurally gated out for QAM16 — engaging it on coin-flip
+labels was measured harmful in B3.4, and B3.9 shows label quality is not the
+binding constraint even where the model is good). The lever class required —
+FD equalization, pilots-in-data, a per-symbol-tracking model — is a
+waveform-processing redesign, outside Phase B scope.
+
+**WN8 disposition: stays measured-only. No demod change, no held-out consumed,
+no battery required.** With B3.9's WN7 verdict, every Phase B waveform story is
+now resolved: 8 of 10 gated, WN7 and WN8 measured-only with written,
+current-binary verdicts. Phase B closeout opens.
