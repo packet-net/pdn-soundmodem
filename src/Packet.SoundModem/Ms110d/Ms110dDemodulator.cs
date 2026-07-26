@@ -301,6 +301,14 @@ public sealed class Ms110dDemodulator
     /// Equalize calls. Unset = bit-identical.</summary>
     internal bool TurboFrozenPairDiag { get; set; }
 
+    /// <summary>§B3.7 E1′ (Amendment 1): burst-consensus constrained frozen solve — a
+    /// vote sweep of free probe-only solves picks the block's modal accepted lag, and
+    /// every frame's applied solve then tests ONLY that lag under the single-candidate
+    /// margin. Kills the ln L acceptance starvation and the 16-periodic-probe
+    /// pre-cursor alias (M1a: the lag-11 cluster). Reachable only from the salvage
+    /// rung and the frozen diag pass; unset = bit-identical.</summary>
+    internal bool TurboFrozenConsensus { get; set; }
+
     /// <summary>Diagnostic (phase-b-plan §B3.3 fade-crossing): while the oracle
     /// re-equalization runs, TurboCore emits one <c>turbo-frame</c> line per frame with
     /// the per-segment channel anchors and the BCJR noise floor, so the corpse can
@@ -2615,46 +2623,89 @@ public sealed class Ms110dDemodulator
         Span<Cf> anchor = stackalloc Cf[2];
         Span<float> anchorPos = stackalloc float[2];
 
+        // Probe-only shortening rows for frame f. Rows keep their feedback history
+        // inside the probe (i ≥ fb), mirroring the §B3.4 Amendment 1 probe-row
+        // construction. The accumulation is consumed by each solve, so every solve
+        // (vote, pair diagnostic, applied) re-runs this.
+        int AccumulateProbeRows(int f, Span<Cf> win, Span<Cf> hist)
+        {
+            long frameChip = _blockFrameChips[f];
+            dfe.BeginTraining();
+            int rows = 0;
+            for (int p = 0; p < 2; p++)
+            {
+                Cf[] probe = MiniProbe.Get(mode.K, boundary: (f + p + 1) % _il!.Frames == 0);
+                long probeChip = p == 0 ? frameChip - mode.K : frameChip + mode.U;
+                for (int i = fb; i < mode.K; i++)
+                {
+                    if (!HaveSamplesForChip(probeChip + i + 2))
+                    {
+                        continue; // burst-edge probe tail
+                    }
+
+                    FillWindow(probeChip + i, win);
+                    for (int j = 0; j < fb; j++)
+                    {
+                        hist[j] = probe[i - 1 - j];
+                    }
+
+                    dfe.AddTrainingRow(win, hist, probe[i], weight: 1.0f);
+                    rows++;
+                }
+            }
+
+            return rows;
+        }
+
+        // §B3.7 E1′ (Amendment 1) vote sweep: each frame's FREE probe-only solve votes
+        // with its accepted lag; the modal lag is the burst-level consensus the
+        // detection sweep below constrains to. The echo delay is a physical constant
+        // of the burst — the per-frame free search pays an L-fold selection margin on
+        // 2·(K−fb) rows (acceptance starvation) and, on the 16-periodic K=32 probe,
+        // aliases the −d pre-cursor into causal lag K/2−d (M1a's lag-11 cluster).
+        // Votes only; nothing is applied here.
+        int consensusLag = 0;
+        if (TurboFrozenConsensus)
+        {
+            int voteMaxLag = Math.Min(fb, mode.U / 2);
+            Span<int> votes = stackalloc int[voteMaxLag + 1];
+            int totalVotes = 0;
+            for (int f = 0; f < _il!.Frames; f++)
+            {
+                if (AccumulateProbeRows(f, window, past) == 0)
+                {
+                    continue;
+                }
+
+                Dfe.TirSolve vote = dfe.SolveTrainingTir(
+                    regularization: _trackRidge, ffNoisePower: GenieNoisePower(),
+                    maxLag: voteMaxLag, allowPair: false);
+                if (vote.Lag > 0)
+                {
+                    votes[vote.Lag]++;
+                    totalVotes++;
+                }
+            }
+
+            for (int lag = 1; lag <= voteMaxLag; lag++)
+            {
+                if (votes[lag] > (consensusLag > 0 ? votes[consensusLag] : 0))
+                {
+                    consensusLag = lag;
+                }
+            }
+
+            FrameDiagnostics?.Invoke(FormattableString.Invariant(
+                $"frozen-consensus b{_blockIndex}: lag={consensusLag} votes={(consensusLag > 0 ? votes[consensusLag] : 0)}/{totalVotes}"));
+        }
+
         for (int f = 0; f < _il!.Frames; f++)
         {
             long frameChip = _blockFrameChips[f];
             Cf[] precedingProbe = MiniProbe.Get(mode.K, boundary: (f + 1) % _il.Frames == 0);
             Cf[] followingProbe = MiniProbe.Get(mode.K, boundary: (f + 2) % _il.Frames == 0);
 
-            // Probe-only shortening solve. Rows keep their feedback history inside the
-            // probe (i ≥ fb), mirroring the §B3.4 Amendment 1 probe-row construction.
-            // The accumulation is consumed by each solve, so the §B3.7 pair diagnostic
-            // below re-runs it.
-            int AccumulateProbeRows(Span<Cf> win, Span<Cf> hist)
-            {
-                dfe.BeginTraining();
-                int rows = 0;
-                for (int p = 0; p < 2; p++)
-                {
-                    Cf[] probe = p == 0 ? precedingProbe : followingProbe;
-                    long probeChip = p == 0 ? frameChip - mode.K : frameChip + mode.U;
-                    for (int i = fb; i < mode.K; i++)
-                    {
-                        if (!HaveSamplesForChip(probeChip + i + 2))
-                        {
-                            continue; // burst-edge probe tail
-                        }
-
-                        FillWindow(probeChip + i, win);
-                        for (int j = 0; j < fb; j++)
-                        {
-                            hist[j] = probe[i - 1 - j];
-                        }
-
-                        dfe.AddTrainingRow(win, hist, probe[i], weight: 1.0f);
-                        rows++;
-                    }
-                }
-
-                return rows;
-            }
-
-            int solveRows = AccumulateProbeRows(window, past);
+            int solveRows = AccumulateProbeRows(f, window, past);
             if (solveRows == 0)
             {
                 dfe.LoadTaps(savedTaps);
@@ -2671,12 +2722,15 @@ public sealed class Ms110dDemodulator
                     maxLag: Math.Min(fb, mode.U / 2), allowPair: true);
                 FrameDiagnostics.Invoke(FormattableString.Invariant(
                     $"frozen-pair b{_blockIndex} f{f}: rows={solveRows} lag={pairTir.Lag} |c1|={Math.Sqrt(pairTir.Coefficient.Cnorm()):F3} lag2={pairTir.Lag2} |c2|={Math.Sqrt(pairTir.Coefficient2.Cnorm()):F3} sseN={pairTir.SseNull:E3} sseP={pairTir.SseTir:E3}"));
-                AccumulateProbeRows(window, past);
+                AccumulateProbeRows(f, window, past);
             }
 
+            // §B3.7 E1′: constrained to the burst consensus when one exists (single-
+            // candidate margin inside the solve); consensusLag == 0 = the free search,
+            // bit-identical to the pre-E1′ pass.
             Dfe.TirSolve tir = dfe.SolveTrainingTir(
                 regularization: _trackRidge, ffNoisePower: GenieNoisePower(),
-                maxLag: Math.Min(fb, mode.U / 2), allowPair: false);
+                maxLag: Math.Min(fb, mode.U / 2), allowPair: false, onlyLag: consensusLag);
             int delay = Math.Max(1, tir.Lag);
             Cf h2Wire = tir.Lag > 0 ? tir.Coefficient : Cf.Zero;
 

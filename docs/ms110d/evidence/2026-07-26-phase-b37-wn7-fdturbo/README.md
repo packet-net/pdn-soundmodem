@@ -84,6 +84,31 @@ M1a killed E1's mechanism (the pair) and replaced it with a sharper one. E1′ a
 - **Bars:** the registered per-arm bars apply unchanged (GREEN ≥2 of 4 conversions with all 5 current conversions retained; AMBER 1 conversion or ≥3-frame scaffold lift on ≥3 of 4; RED neither — arm dead, no variant stacking). Mechanism checks that must ALSO hold for GREEN/AMBER: post-E1′ frozen accepted-lag histogram shows the 10/11 cluster ~eliminated on specimen blocks, and echo-modeled (lag-5) frame fraction rises materially (expectation: from ~50% toward ≥75%).
 - **Cost:** ~60 lines. **Consequence if RED:** E1′ dead; E2 (anchor-track h1, G2) runs next on its registered form; two consecutive REDs → design-only closure per the leg bars.
 
+## E1′ measured — RED, and the post-mortem overturns the G1 interpretation
+
+Flag-off bit-identity: exact (w0/b0 bare reproduces 18,239 / 10c/1r/3v through the refactor). Flag-on: **w0/b0 36,339 / 9c/2r/2v (b4 LOST its conversion), w1/b0 72,839 / 7c/4r/1v (b10 LOST its conversion; its frozen decode collapsed 13,613 → 16,651)**. Zero failing-block conversions; retention failed on both specimens; every block's frozen detection got worse. Both bar clauses failed → **E1′ dead** per its consequence clause. One registered-risk case fired en route: b5(w0)'s block-level vote picked the alias lag 11 (15/30) — and b5 *kept* converging under the wrong consensus while b4, with the correct lag-5 consensus, regressed.
+
+**Per-frame damage attribution** (cons − free, matched frames, both specimens; `e1-delta.py`):
+
+| class | n (w0 / w1) | meanΔ bits/frame |
+|---|---|---|
+| 5→5 | 287 / 276 | **+0.0 / +0.0** — vote-sweep tap-coupling nuisance is ZERO |
+| alias→5 | 78 / 92 | **+150 / +180** — forcing the physical lag onto lock-on-late-path frames is the main damage |
+| 0→5 | 90 / 94 | **+76 / +110** — the ln 12 margin was calibrated protection, not starvation |
+| alias→0 | 31 / 38 | **−30 / −38** — killing the aliased +11 CHAIN model (keeping null) IMPROVES detection |
+
+The intervention refutes M1's G1 reading. The free solve's per-frame lag choices are frame-local channel truth — which path the lock rode *this* frame — not bookkeeping noise. On late-path frames the aliased solve's FF is *right*: on the 16-periodic probe the lag-11 column IS the −5 pre-cursor column, so the FF fits the true two-path response; the harm is confined to the chain application, which is handed a structurally wrong causal +11 echo (measured: worse than no echo model at all, the alias→0 class). The burst's path delay is constant; the per-frame post-FF response structure is not.
+
+## Amendment 2 — E1″: pre-cursor-correct chain application on alias frames (registered before build)
+
+The alias detection is not a defect to suppress — it is the solve *correctly measuring the pre-cursor* under a periodic-probe fold. The fix belongs on the chain side. A pre-cursor channel y[t] = h1·x[t] + c·x[t+d] is exactly representable by the existing chain BCJR via an observation shift: o[u] = y[u−d] couples x[u] (through c) and x[u−d] (through h1) — the two-tap model with the roles swapped. On a base-P probe (P = 16 at K=32), an accepted lag L > P/2 decodes as a pre-cursor at d = P − L (the lag-11/10 clusters = −5/−6, the −4.8 T straddle).
+
+- **Sub-form (a) — alias-priced null (~10 lines, the measured floor):** on alias frames (accepted lag > P/2), drop the echo model (delay 1, h2 = 0) and price the pre-cursor into the noise floor (noiseVar += |c|²/2 per dimension). Institutionalizes the alias→0 class's measured −30/−38 with correct pricing added; keeps the alias FF.
+- **Sub-form (b) — exact pre-cursor chains (~70 lines):** on alias frames, run the chains on the shifted observation: delay d = P − L; H1[u] = c (rotor-free — the pre-cursor coefficient rides the cursor slot); H2[u] = h1(u−d)·r(u−d)·r̄(u) for u ≥ d, h1·r̄(u) with probe-chip preceding[] for u < d; rxDesc[u] = yWire[u−d]·r̄(u), the u < d observations equalized from the preceding probe region. Mirror truncation: the LAST d data symbols are observed only through c (today's causal form truncates the same way at the other end). The anchor computation already subtracts the pre-cursor correctly through the aliased index (probe[i−L] = probe[i+d] on periodic rows) — anchors and noise floor unchanged.
+- **Measurement order:** (a) first (cheap, measured-floor confidence), then (b); each behind its own flag, corpse verdict between; free solve and non-alias frames untouched — flag-off and non-alias-frame bit-identity by construction.
+- **Bars:** the leg's per-arm bars unchanged (GREEN ≥2 of 4 conversions + all 5 retained; AMBER 1 conversion or ≥3-frame frozen-scaffold lift on ≥3 of 4; RED neither). Design disclosure: sub-form design consumed the two specimens' per-frame deltas, so a THIRD specimen is banked as held-out judgment before any sub-form touches it — **w2/b1 (channelSeed 2001508), the canonical burst the B3.6 salvage never improved (54,609)**. A shipping sub-form must not regress w2/b1 and its per-block conversions there are the unseen-data evidence (B3.5b template).
+- **Consequence:** both sub-forms RED → E1-family closed (two built REDs inside one arm family counts as ONE arm verdict — the E2 arm remains next, and the two-consecutive-RED design-only clause then hangs on E2). Either sub-form GREEN/AMBER → it is the arm's result; (b) preferred over (a) at equal bars.
+
 ## Buildable-in-window call (honest)
 
 E1 and E2 are comfortably buildable and testable in-window; E3 is buildable if reached. FD-MMSE proper is neither in-window nor, per the dominance argument, worth building. The design-only exit is registered and respectable: it would close C2b — the last standing structural escalation on WN7 — with a measured verdict, leaving WN7's residual formally attributed to detection-information limits rather than unexplored architecture.

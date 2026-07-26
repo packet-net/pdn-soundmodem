@@ -411,8 +411,12 @@ public sealed class Dfe
     /// calibrated for (fadecross note, Amendment 1). The refit ridges toward zero (the
     /// tracking-tap anchor is a sequential-solve prior whose phase would pin the floating
     /// target); the monic stages keep the anchor semantics of
-    /// <see cref="SolveTraining"/>. The accumulation is consumed either way.</summary>
-    public TirSolve SolveTrainingTir(float regularization, float ffNoisePower, int maxLag, bool allowPair = true)
+    /// <see cref="SolveTraining"/>. The accumulation is consumed either way.
+    /// <c>onlyLag</c> &gt; 0 (§B3.7 E1′, the frozen pass's burst-consensus constrained
+    /// solve) tests ONLY that lag and drops the margin to the single-candidate form
+    /// 4·ln 2·SSE₀/rows — no L-fold selection premium; 0 is the free search,
+    /// bit-identical to before.</summary>
+    public TirSolve SolveTrainingTir(float regularization, float ffNoisePower, int maxLag, bool allowPair = true, int onlyLag = 0)
     {
         if (_gram is null || _rhs is null || _trainingRows == 0)
         {
@@ -438,7 +442,9 @@ public sealed class Dfe
         var bestB = Cf.Zero;
         float bestSse = float.MaxValue;
         Span<Cf> t = stackalloc Cf[3];
-        for (int lag = 1; lag <= maxLag; lag++)
+        int firstLag = onlyLag > 0 ? onlyLag : 1;
+        int lastLag = onlyLag > 0 ? Math.Min(onlyLag, maxLag) : maxLag;
+        for (int lag = firstLag; lag <= lastLag; lag++)
         {
             one[0] = lag - 1;
             float sse = SolveSubset(one, regularization, ffNoisePower, _tirSol);
@@ -451,7 +457,7 @@ public sealed class Dfe
             }
         }
 
-        float threshold = 4f * MathF.Log(Math.Max(2, maxLag)) * sseNull / _trainingRows;
+        float threshold = 4f * MathF.Log(Math.Max(2, onlyLag > 0 ? 1 : maxLag)) * sseNull / _trainingRows;
         bool accept = bestLag > 0 && bestSse < sseNull - threshold;
         int lag2 = 0;
         var bestB2 = Cf.Zero;

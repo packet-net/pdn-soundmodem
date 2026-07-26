@@ -454,6 +454,8 @@ public class Ms110dTailAutopsy
         demod.TurboProbeDiag = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TURBO_PROBEDIAG") == "1";
         // §B3.7 M1a: log-only straddle-pair solve per frozen frame (frozen-pair lines).
         demod.TurboFrozenPairDiag = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_PAIRDIAG") == "1";
+        // §B3.7 E1′ (Amendment 1): burst-consensus constrained frozen solve.
+        demod.TurboFrozenConsensus = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_CONSENSUS") == "1";
         if (turboPerturb is not null)
         {
             string[] parts = turboPerturb.Split(',');
