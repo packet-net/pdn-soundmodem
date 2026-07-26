@@ -131,3 +131,84 @@ Baseline digits, banked before M2a ran, both reproducing their census cells exac
 
 One revert-block leftover each — the exact residual class the arm targets. No frozen
 anatomy, no per-block breakdown, no oracle was run or read on either.
+
+## M2a/M2b measured — E2 dies at the gate
+
+Instrument runs (shipped binary, no pair-diag): w0/b0 frozen anatomy (digits exact:
+0 coded / 11c/0r/4v, oracle b5:15), w1/b0 frozen anatomy (54,616 / 8c/3r/2v; trio
+frozen decodes b2:17322 / b7:17125 / b8:16075), plus a **first-ever w1/b0 oracle run**.
+Dry-fit scripts banked in `corpse/` (m2b-track.py, m2b2-smooth.py, m2b3-profile.py).
+
+- **Hold-out test (label-free, double spacing)**: the stitched cubic beats linear on
+  every block of both specimens — w0/b0 ALL med 0.106 → 0.085, w1/b0 ALL 0.102 → 0.085.
+  The stitching construct is sound.
+- **Oracle seg test (operational spacing)**: a wash — w0/b0 ALL lin 0.080 / cub 0.082;
+  on the trio's own frames b2 0.109/0.109, b7 0.097/0.097, b8 0.095/0.096. Smoothing
+  variants (triangular-3, Savitzky–Golay-5) all within ±0.002 of linear (m2b2).
+- **Position/floor decomposition (m2b3)**: the model-error profile across the frame is
+  FLAT (mid-frame marginally better than the edges), and the direct overconfidence
+  measurement is **model-error power ≈ 2% of the priced floor at median, ~13% at p90**
+  — on both specimens, including the trio. The B3.7 M1b "model error at the noise
+  floor" reading came from indirect arithmetic and is superseded by this direct
+  measurement.
+
+**Verdict: E2 (both sub-forms) is RED at the offline gate.** The registered kill's
+AND-letter did not fire (the hold-out arm improved — but that is a double-spacing
+curvature statistic; at operational spacing, 4× oversampling makes curvature
+negligible and the residual is not reducible by any processing of the anchor values).
+The gate's intent — the track must reduce operational h1 error — was not met. No
+demodulator code was built; no seam exists. G2 and positional G4 are struck from the
+deficiency budget as *measured-dead*.
+
+## New instrument evidence — the lock-geometry discovery
+
+With G2/G4 dead, the same logs were interrogated for what *does* separate the trio's
+bad frames (scripts banked: m2c-echo.py, m2d-corr.py, m2e-drift.py, m2f-trigger.py):
+
+1. **The trio's basin exists**: the w1/b0 oracle decodes b2/b7/b8 to ZERO (its only
+   residues are b3:6 and b6:14 — blocks the real demod already converges). Label-free
+   detection quality is genuinely the gap; the arm family is not dead by construction.
+2. **Per-frame correlation (m2d)**: bad frames (frozen wire error ≥20%) are NEVER the
+   lag-rejecting frames — lag0-frac of bad = 0.00 in every block (the FF suppressed
+   the echo there; those frames run at 5–10%). Pre-cursor frames are the best class in
+   the pass (2–4%). The bad frames are ALL causal-lag-5 acceptances that AGREE with
+   the oracle's lag.
+3. **The mechanism, from the pass's own floor column**: bad frames carry
+   |c| = 1.01–1.26 (the accepted echo *exceeds* the cursor — the late path dominates)
+   and priced floors n = 0.83–1.89 — **30–80× the normal floor**. The early-lock
+   feedback-free FF cannot equalize a late-path-dominant frame; the probe residual
+   explodes; the chain gets honestly-priced garbage LLRs; the frame drowns at 40–67%
+   error. Natural late-lock frames on the same block ride the same physics at
+   |c| ≈ 0.27, n ≈ 0.02. Within-frame echo drift was tested and refuted as the
+   mechanism (m2e: bad-frame h2 drift ≤ good-frame drift, ≪ floor).
+4. **Trigger quality (m2f)**: "causal accept AND n > 0.15" catches ~95% of all bad
+   frames with ~1 false alarm per block; triggered frames carry 65–74% of the trio's
+   frozen error mass (30–75% across all blocks of both specimens).
+
+## Amendment 1 (pre-registered): E3 — per-frame lock-geometry arbitration
+
+Registered under the consequence clause's new-instrument-evidence provision (E2 =
+this leg's first RED; if E3's corpse measurement goes RED the two-consecutive-RED
+clause closes WN7's detection story design-only).
+
+**Form (one lever — the geometry choice):** on every frozen frame whose free solve
+accepts a causal lag (1 ≤ lag ≤ period/2), also evaluate the LATE-LOCK geometry:
+re-accumulate the probe rows with the equalizer window shifted by the accepted lag L
+(the window shift performs the re-lock; the tap shape carries over, so the ridge
+anchor remains approximately right in shifted coordinates), solve with
+onlyLag = period − L (the E1′ single-candidate seam — the early path returns as the
+aliased pre-cursor), rebuild anchors/floor in the shifted geometry, and **keep
+whichever geometry prices the lower floor n**. The winning late-lock frames then run
+the EXISTING B3.7 pre-cursor chain/assembly with the window shift threaded through
+(chainDelay = period − onlyLag = L). No trigger threshold knob: always-offer,
+floor-arbitrated. Seam `TurboFrozenRelock`; flag-off bit-identical to #93
+(guard-enforced).
+
+**Expectation (honest):** converting the bad half of the triggered error mass should
+carry b7 (51, needs +1) and b8 (50, needs +2) across the ~52 edge; b2 (43, needs +9)
+is the stretch case. Bars, ship bar, held-outs, and consequence clause are UNCHANGED
+from the registration (they were written in frozen-scaffold terms independent of the
+arm's mechanism).
+
+**Kill (corpse-level):** if w1/b0 converts none of the trio and lifts scaffold <+3 on
+<2 of them, or any retention break — E3 is RED and the clause fires.
