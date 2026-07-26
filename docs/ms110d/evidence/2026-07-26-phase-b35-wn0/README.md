@@ -119,6 +119,56 @@ toward zero — self-erasure, not a confident wrong attractor. The llrstats corp
 is the watch instrument; if census shows attractor signatures (confident wrong runs),
 that is rung-2's trigger.
 
+## Amendment 1 (2026-07-26): acceptance A–D pass; the census exposes a preamble-count
+## acquisition class — registered fix: joint count vote
+
+**Ladder results (first form, α = 1/6, no rungs needed):**
+
+| Bar | Registered | Measured | Verdict |
+|-----|-----------|----------|---------|
+| A — combining proof | Poor coded < 1.20E-2 | **1.03E-2** (from 7.96E-2, 7.7×) | PASS |
+| B — flat non-regression | ≤ 1.20E-2 | **4.56E-4** (26×) | PASS |
+| C — AWGN guard | 0 errors, uncoded ≤ 2× | 0/3M, 2.56E-3 = 1.59× | PASS |
+| D — static guard | 0 errors | 0 (uncoded 8.83E-4 → 8.88E-5) | PASS |
+
+Census reshape: 0/476 zero-error bursts → **326/476**; deep-fade concentration 20 % →
+32 %. Corpse guards exact (WN7 72,666/7c/4r + oracle b5:15, WN6 0/11c0r, WN13sp
+0/11c0r); suite 696/0.
+
+**The residual splits into two classes** (`corpse/poor-census-rake.csv`):
+1. **Catastrophic, 4 bursts, 43 % of all errors (4.39E-3)**: coin-flip from bit 0,
+   uncoded ≈ 50 %. Pre-existing and detector-independent (same four bursts, same
+   counts, on the old detector's census — invisible there because every burst failed).
+2. **Residual, 146 bursts (5.91E-3)**: mid-burst fade clusters, healthy finger
+   structure (the detector-side remainder).
+
+**Class-1 mechanism, corpse-confirmed** (`count@` diagnostic, five corpses): the
+preamble COUNT field is the last single-read acquisition field — 4 Walsh dibits with
+3 check bits, read from ONE super-frame (`TryReadPreamble`). A burst-start fade (all
+four dead bursts accepted at metric 0.415–0.486 vs healthy 0.578) or a mis-walkback
+corrupts the read; 1-in-8 corruptions beat the check and place data start whole
+super-frames off with a clean lock — the burst then demodulates preamble/mis-aligned
+chips forever (all-finger noise, no recovery path). Healthy b97 reads count=19 (truth);
+the dead four read 31, 25, 3, 16. b42's mush dibits `3333` decode to 31 and PASS —
+EncodeCount(31) IS 3333, an all-same-symbol attractor. The WID had exactly this Class-D
+failure and was vote-hardened (§B3, issue #69); the count was not. Predicted rate
+≈ P(deep fade over the count read) × 1/8 ≈ 1 % of bursts ✓ 4/476.
+
+**Registered fix (shared acquisition path)**: joint soft count vote across the same
+super-frame span the WID vote already waits for (zero added latency). Per vote frame v
+accumulate the four candidate magnitudes per count position; for each candidate value c
+score Σ_v Σ_j mag_{v,j}(dibit_j(c−v)) — the decrement-aligned analogue of the WID's
+constant-word vote; winner by argmax over c ∈ {votes−1..31} with a margin floor
+(initial 0.10; mushy joint = failed candidate → BackToSearch, the WID's safety valve).
+The single-read gate stays (it sizes the vote span); a corrupt-low single read shrinks
+the vote span but now meets a margin floor where today there is none.
+
+**Pre-registered bars**: the four class-1 corpses joint-decode the true count (or
+BackToSearch and re-acquire) — no coin-flip burst survives; Poor census A re-run lands
+≈ residual-only (≈ 5.9E-3); the four corpse guards stay EXACT (healthy frames dominate
+the joint → same count); AWGN/static/flat unchanged; suite green; FULL battery before
+merge (owed anyway — this touches shared acquisition).
+
 ## Guards for the leg
 
 WN7 corpse 72,666/7c/4r/oracle-15 exact; WN6 corpse 0/11c0r; WN13sp (SEED=10513 w3 b5)
