@@ -135,6 +135,19 @@ The leg's GREEN ship bar asked for ≥2 conversions; E1″(b) delivers 1 — but
 - **S3 (guards, exact):** WN7 corpse re-pins at **0 / 11c/0r/4v**, oracle **b5:15**, WN6 corpse **0 / 11c/0r/0v**, WN13sp **0 / 11c/0r/0v**, suite **697/0** (105 env-gated skips).
 - S4 (full battery) follows; ship stands only on its green.
 
+## S4 — full battery green; the ship stands
+
+32/32 legs rc=0, zero retries, zero acquisition failures. **All 72 non-WN7 censuses byte-identical to the #92 baseline** (`battery/census-compare.txt`, non-wn7-diffs=0). Gated eight at their exact digits: WN5 23/0, WN6 35/39, WN2 30/29, WN13 0/0, WN3 0/0, WN4 0/3, WN1 0/0, WN0 0/3; AWGN ×10, static, Doppler green; WN8 measured unchanged.
+
+**WN7: canonical 5.63E-2 → 3.38E-2 (109,603 / 3,243,776, turbo 82c/6r), disjoint 6.14E-2 → 2.23E-2 (72,180 / 3,243,776, turbo 84c/4r)** — landing within 0.1% of the registered prediction on canonical. Per-burst, NO burst regressed and ~10 blocks converted: canonical 508 18,239→**0** and 3000508 18,361→**0** (five of eight canonical bursts now exactly zero), held-out 2001508 54,609→18,233; disjoint 10508 36,673→**16**, 1011508 72,795→18,376, 2010508 35,932→18,014, 3011508 18,061→**0**. Cumulative across B3.6+B3.7: canonical 1.73E-1 → 3.38E-2 (5.1×), disjoint 1.95E-1 → 2.23E-2 (8.7×).
+
+## Disposition
+
+- **The C2b standing escalation is RESOLVED.** FD-MMSE per-bin application: closed by dominance argument, revival condition measured unmet. What the escalation was actually pointing at — exact application of the true channel structure — turned out to be the pre-cursor: the one channel shape the causal chain model couldn't express, hidden by a periodic-probe alias. It now ships as an exact chain application (Amendment 3), and the label-free frozen pass handles both path orderings of the Watterson channel.
+- **WN7 stays OPEN (measured)** at 3.38E-2/2.23E-2 — ~3.4 decades above the 1E-5 mask. The residual class after this leg: the w1-trio signature (frozen scaffold 43–51 vs the ~52–53 edge; healthy half-frames much improved by the pre-cursor fix, worst-half-mean stuck at ~31% — the mid-frame fade-null profile). **E2 (anchor-track h1 + derived noise pricing) is the registered next arm**: the anchor series oversamples the 1 Hz fade 4× above Nyquist and the current two-point linear interpolator throws that away; M1b measured the resulting h1 error at 7–10% RMS median, 13–21% p90, concentrated exactly where the residual lives. E1′ (consensus) and the E1″(a) variant remain as measurement seams.
+- **Bar lesson banked:** the frozen-seed basin edge is clean in frozen-scaffold terms (converging seeds ≥53 of 64 frames under 20% wire error, failing ≤51 — b10 converted from 52 after the fix, refining the edge to ~52). Future frozen-pass bars should be set on this coordinate.
+- Two intervention-tested negative results are part of the record: per-frame lag choices are frame-local truth (constraining to the burst's physical lag damages every block), and the acceptance margin was calibrated protection (lowering it hurt). Both now have mechanism, not just measurement.
+
 ## Buildable-in-window call (honest)
 
 E1 and E2 are comfortably buildable and testable in-window; E3 is buildable if reached. FD-MMSE proper is neither in-window nor, per the dominance argument, worth building. The design-only exit is registered and respectable: it would close C2b — the last standing structural escalation on WN7 — with a measured verdict, leaving WN7's residual formally attributed to detection-information limits rather than unexplored architecture.
