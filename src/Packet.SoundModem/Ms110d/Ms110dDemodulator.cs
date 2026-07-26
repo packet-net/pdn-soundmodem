@@ -319,14 +319,15 @@ public sealed class Ms110dDemodulator
     /// Frozen/salvage path only; unset = bit-identical.</summary>
     internal bool TurboFrozenAliasNull { get; set; }
 
-    /// <summary>§B3.7 E1″(b) (Amendment 2): on the same alias frames, run the chains
-    /// EXACTLY on the pre-cursor structure via the observation shift — o[u] = y[u−d]
-    /// couples x[u] (through the pre-cursor coefficient, which rides the cursor slot
-    /// rotor-free) and x[u−d] (through h1), with d = period − lag. The last d data
-    /// symbols are observed only through the pre-cursor coefficient (the mirror of the
-    /// causal form's tail truncation). Takes precedence over E1″(a) on alias frames
-    /// when both are set. Frozen/salvage path only; unset = bit-identical.</summary>
-    internal bool TurboFrozenPreCursor { get; set; }
+    /// <summary>§B3.7 E1″(b), SHIPPED default (Amendment 3): on alias frames, run the
+    /// chains EXACTLY on the pre-cursor structure via the observation shift — o[u] =
+    /// y[u−d] couples x[u] (through the pre-cursor coefficient, which rides the cursor
+    /// slot rotor-free) and x[u−d] (through h1), with d = period − lag. The last d
+    /// data symbols are observed only through the pre-cursor coefficient (the mirror
+    /// of the causal form's tail truncation). Takes precedence over E1″(a) on alias
+    /// frames when both are set. Frozen/salvage path only; false restores the
+    /// pre-B3.7 causal-alias application (measurement seam).</summary>
+    internal bool TurboFrozenPreCursor { get; set; } = true;
 
     /// <summary>Diagnostic (phase-b-plan §B3.3 fade-crossing): while the oracle
     /// re-equalization runs, TurboCore emits one <c>turbo-frame</c> line per frame with

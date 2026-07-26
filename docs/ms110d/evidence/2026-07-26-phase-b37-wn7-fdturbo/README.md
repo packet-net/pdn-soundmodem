@@ -128,6 +128,13 @@ The leg's GREEN ship bar asked for ≥2 conversions; E1″(b) delivers 1 — but
 - **S4 (FULL battery, house three-lane form):** every non-WN7 census byte-identical to the #92 baseline; WN7 both families must improve or hold (≤5.63E-2 / ≤6.14E-2 — the 508-class bursts alone are worth about −18k canonical).
 - **Consequences:** any S-bar red → the default flips back, E1″(b) stays a seam, the leg proceeds to E2 unshipped. All green → ship; E2/G2 remains the registered next arm for the unconverted w1-trio class, in this leg if headroom remains, else banked.
 
+## Amendment 3 measured — S1/S2/S3 all green
+
+- **S1 (held-out w2/b1, unseen): 54,609 / 8c/3r/0v → 18,233 / 10c/1r/2v.** Two of the three reverting blocks — on a burst the B3.6 salvage had converted NOTHING on, and which no B3.7 design decision consumed — convert to zero under the shipped form. Zero per-block regressions (the surviving errors sit where they always did). This is the strongest unseen-data outcome the bar allowed for.
+- **S2 (specimens, exact):** w0/b0 **0 / 11c/0r/4v** and w1/b0 **54,616 / 8c/3r/2v**, reproduced by the bare default-on binary.
+- **S3 (guards, exact):** WN7 corpse re-pins at **0 / 11c/0r/4v**, oracle **b5:15**, WN6 corpse **0 / 11c/0r/0v**, WN13sp **0 / 11c/0r/0v**, suite **697/0** (105 env-gated skips).
+- S4 (full battery) follows; ship stands only on its green.
+
 ## Buildable-in-window call (honest)
 
 E1 and E2 are comfortably buildable and testable in-window; E3 is buildable if reached. FD-MMSE proper is neither in-window nor, per the dominance argument, worth building. The design-only exit is registered and respectable: it would close C2b — the last standing structural escalation on WN7 — with a measured verdict, leaving WN7's residual formally attributed to detection-information limits rather than unexplored architecture.

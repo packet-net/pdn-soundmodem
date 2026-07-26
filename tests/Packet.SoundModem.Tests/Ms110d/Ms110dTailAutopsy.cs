@@ -458,8 +458,12 @@ public class Ms110dTailAutopsy
         demod.TurboFrozenConsensus = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_CONSENSUS") == "1";
         // §B3.7 E1″(a) (Amendment 2): alias-priced null on pre-cursor frames.
         demod.TurboFrozenAliasNull = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_ALIASNULL") == "1";
-        // §B3.7 E1″(b) (Amendment 2): exact pre-cursor chains on alias frames.
-        demod.TurboFrozenPreCursor = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_PRECURSOR") == "1";
+        // §B3.7 E1″(b), shipped default (Amendment 3): exact pre-cursor chains on
+        // alias frames. "0" disables (the pre-B3.7 causal-alias seam).
+        if (Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_PRECURSOR") == "0")
+        {
+            demod.TurboFrozenPreCursor = false;
+        }
         if (turboPerturb is not null)
         {
             string[] parts = turboPerturb.Split(',');
