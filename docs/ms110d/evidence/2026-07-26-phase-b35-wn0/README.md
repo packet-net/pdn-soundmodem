@@ -169,6 +169,38 @@ BackToSearch and re-acquire) — no coin-flip burst survives; Poor census A re-r
 the joint → same count); AWGN/static/flat unchanged; suite green; FULL battery before
 merge (owed anyway — this touches shared acquisition).
 
+## Amendment 1 results (2026-07-26): all bars met — the class is dead
+
+Corpse verification (`corpse/count-vote-corpses.txt`): the four dead bursts joint-decode
+the TRUE count — single reads 31/25/3/16 → joint 19/18/19/19 (margins 0.21–0.40, floor
+0.10; b104 recovered on a 4-frame span from its corrupt-low single read) — and two of
+them decode to ZERO coded errors (b42 2920→0, b104→0), the other two to ordinary
+fade-residual counts (w3#1 3149→115, b47 3414→129). Healthy b97: count and burst output
+byte-identical (697). All four corpse guards bit-identical. EncodeCount(31)=`3333`
+confirmed as the all-same-symbol mush attractor that made b42's death a VALID codeword.
+
+Census re-run (`corpse/poor-countvote.mask`, `corpse/poor-census-countvote.csv`):
+**Poor WN0 @ −1 = 5.99E-3** (registered prediction ≈ 5.9E-3), **zero coin-flip bursts**,
+328/476 zero-error, worst burst 697. AWGN (0 errors, uncoded 2.56E-3), flat (4.56E-4)
+and static (0) all byte-identical to the pre-amendment run — healthy count reads are
+unchanged by construction, and the numbers agree.
+
+**Leg total: WN0 Poor 7.96E-2 → 5.99E-3 (13.3×), both failure classes below it named.**
+
+## Residual class and the next leg (bar E not chased here)
+
+The remaining 5.99E-3 is the fade-cluster block cliff, quantified on b97
+(`corpse/`): the Viterbi cliff sits at block-uncoded ≈ 17–20 % — blocks at 7–15 %
+uncoded decode to ZERO, blocks at 19–25 % collapse (84–221 coded errors each). The
+wrong-LLR mass is small everywhere (right:wrong ≈ 13:1 even in collapsing blocks —
+the CSI weighting works); collapsing blocks simply hold too little signal mass
+(right-mass 263–783 vs 1267–2022 in clean blocks): an energy/reference-quality
+ceiling, not a confidence defect. Next-leg direction, in the B3.4 lesson's order —
+instrument the ceiling FIRST: a WN0 genie-gain oracle (true per-finger gains from the
+recorded Watterson taps) to bound all reference-quality levers, then the registered
+rungs (α, margin-gated updates, two-sided gain smoothing) only if the oracle says the
+gap is reference-quality, not physics. WN0 stays measured-not-gated for B4.
+
 ## Guards for the leg
 
 WN7 corpse 72,666/7c/4r/oracle-15 exact; WN6 corpse 0/11c0r; WN13sp (SEED=10513 w3 b5)
