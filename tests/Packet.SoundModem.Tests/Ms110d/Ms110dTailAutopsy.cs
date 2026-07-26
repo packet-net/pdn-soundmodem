@@ -79,8 +79,7 @@ public class Ms110dTailAutopsy
             PreambleSuperframes = 20,
         };
         var tx = new Ms110dModulator(settings);
-        tx.Mode.Modulation.Should().NotBe(Ms110dModulation.Qam16,
-            "the tail autopsy targets the sub-8PSK points; QAM16 truth mapping is not wired");
+        bool qam16 = tx.Mode.Modulation == Ms110dModulation.Qam16;
         Ms110dInterleaverParams il = Ms110dInterleaverParams.Get3k(wn, Ms110dInterleaverKind.Long);
         double blockSeconds = wn == 0
             ? il.Frames * 32.0 / 2400
@@ -136,9 +135,31 @@ public class Ms110dTailAutopsy
                 code, puncture, interleaver, txBits.AsSpan(b * il.InputBits, il.InputBits));
             fetchedBlocks[b] = fetched;
             int bit = 0;
-            for (int sym = 0; sym < symbolsPerBlock; sym++)
+            if (qam16)
             {
-                refRing[(b * symbolsPerBlock) + sym] = RingIndex(fetched, ref bit, tx.Mode.Modulation);
+                // QAM16 truth lives in the WIRE domain (the demod emits wire-domain y —
+                // descrambling happens inside PushMaxLogLlrs via the XOR nibble): symbol
+                // number = 4 fetched bits MSB-first, wire index = number XOR the scramble
+                // nibble, register reset at each data frame start (D.5.1.3).
+                var truthScrambler = new Ms110dScrambler();
+                for (int f = 0; f < il.Frames; f++)
+                {
+                    truthScrambler.Reset();
+                    for (int u = 0; u < tx.Mode.U; u++)
+                    {
+                        int nibble = (fetched[bit++] << 3) | (fetched[bit++] << 2)
+                            | (fetched[bit++] << 1) | fetched[bit++];
+                        refRing[(b * symbolsPerBlock) + (f * tx.Mode.U) + u] =
+                            truthScrambler.NextQam(nibble, 4);
+                    }
+                }
+            }
+            else
+            {
+                for (int sym = 0; sym < symbolsPerBlock; sym++)
+                {
+                    refRing[(b * symbolsPerBlock) + sym] = RingIndex(fetched, ref bit, tx.Mode.Modulation);
+                }
             }
         }
 
@@ -174,7 +195,7 @@ public class Ms110dTailAutopsy
             int i = symbolIndex++;
             if (i < refRing.Length)
             {
-                Cf p = Ms110dTables.Psk8[refRing[i]];
+                Cf p = qam16 ? Ms110dTables.Qam16[refRing[i]] : Ms110dTables.Psk8[refRing[i]];
                 symbols.WriteLine($"{i},{y.Re:F5},{y.Im:F5},{refRing[i]},{p.Re:F5},{p.Im:F5}");
             }
             else
@@ -264,6 +285,29 @@ public class Ms110dTailAutopsy
         // the first→final→oracle walk. On reverted blocks this is the wander state at the
         // cap, which is exactly the view the basin mechanism analysis needs.
         demod.TurboBlockLlrs += (blockIndex, llrs) => WriteLlrStats("final", blockIndex, llrs);
+
+        // §B3.4 instrument: the final stream's INFO decode — what the revert-at-cap
+        // discards. PSK wander states measured worse-than-first (the revert is right);
+        // the QAM16 climb-from-bootstrap may floor far better than its coin-flip first
+        // decode, and this number decides whether the revert logic fits QAM16.
+        var finalDecodeErrs = new List<string>();
+        demod.TurboBlockLlrs += (blockIndex, llrs) =>
+        {
+            if (blockIndex >= txBlocks)
+            {
+                return;
+            }
+
+            var dec = new byte[il.InputBits];
+            Ms110dFraming.DecodeBlock(firstViterbi, puncture, interleaver, llrs, dec);
+            int errs = 0;
+            for (int i = 0; i < dec.Length; i++)
+            {
+                errs += dec[i] != txBits[(blockIndex * il.InputBits) + i] ? 1 : 0;
+            }
+
+            finalDecodeErrs.Add($"b{blockIndex}:{errs}");
+        };
 
         // §B3.3 oracle-labels ceiling (MS110D_AUTOPSY_ORACLE=1): the demod runs one
         // extra chain-BCJR turbo pass per block trained on the TRUE info bits — the
@@ -364,6 +408,7 @@ public class Ms110dTailAutopsy
             $"lock={demod.Lock?.WaveformNumber}/{demod.Lock?.Interleaver}/K{demod.Lock?.ConstraintLength}" +
             $"@{demod.Lock?.CfoHz:F2}Hz (tx K{settings.ConstraintLength})\n" +
             $"first-decode errors per block: {string.Join(" ", firstDecodeErrs)}\n" +
+            $"final-decode errors per block: {string.Join(" ", finalDecodeErrs)}\n" +
             (oracle ? $"oracle coded errors per block: {string.Join(" ", oracleBlockErrs)}\n" : ""));
         decoded.Count.Should().BeGreaterThan(0,
             "the corpse must at least acquire for the dump to mean anything");

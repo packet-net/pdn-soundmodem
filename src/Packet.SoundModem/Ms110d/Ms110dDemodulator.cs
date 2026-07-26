@@ -1973,12 +1973,21 @@ public sealed class Ms110dDemodulator
         // Turbo re-equalization: SISO soft feedback (§B3.3) — a log-MAP pass over the
         // outer code turns the current block LLRs into per-symbol soft expectations for
         // the chain-BCJR re-estimation, then decode again — for every DFE mode except
-        // QAM16 (the 5×-LLR-scale trap remains a throw). The flat-channel skip retired
-        // with the DFE-re-solve fallback that motivated it (§B2.3): on a flat channel the
-        // chain BCJR degenerates to an exact soft-output matched filter — the reason BPSK
-        // U>48 was always allowed through — while the WN2 Poor λ A/B caught the skip
-        // misclassifying short-frame fading bursts as flat (turbo 2c/158s, 7× BER cost):
-        // the excursion statistic is weakest exactly where probes are densest.
+        // QAM16. The §B3.4 exclusion is MEASURED, not a scale trap any more: the wiring
+        // below supports QAM16 end-to-end (wire-domain chains, permuted priors, true
+        // second moments — the oracle instrument exercises it, ceiling 9.3E-4 on the
+        // w0/b0 corpse), but the shipped loop cannot bootstrap — the first decode is
+        // coin-flip (rank-starved first pass), and every label-free start measured
+        // (probe-row solves, probe-anchored bootstrap chains, cap 96) descends into a
+        // self-consistent wrong attractor whose decode is still 50% (banked:
+        // evidence/2026-07-25-phase-b34-wn8/qam16-turbo-full.patch). The gate reopens
+        // when a model-front leg moves the bootstrap or the ceiling. The flat-channel
+        // skip retired with the DFE-re-solve fallback that motivated it (§B2.3): on a
+        // flat channel the chain BCJR degenerates to an exact soft-output matched
+        // filter — the reason BPSK U>48 was always allowed through — while the WN2
+        // Poor λ A/B caught the skip misclassifying short-frame fading bursts as flat
+        // (turbo 2c/158s, 7× BER cost): the excursion statistic is weakest exactly
+        // where probes are densest.
         if (_dfe is not null && _mode is not null &&
             !_options.DisableTurbo &&
             _mode.Modulation is not Ms110dModulation.Qam16 &&
@@ -2081,7 +2090,6 @@ public sealed class Ms110dDemodulator
         // composes with MS110D_AUTOPSY_NOTURBO).
         if (OracleInfo?.Invoke(_blockIndex) is byte[] oracleInfo &&
             _dfe is not null && _mode is not null &&
-            _mode.Modulation is not Ms110dModulation.Qam16 &&
             _blockFrameChips.Count == _il.Frames &&
             BlockSamplesResident())
         {
@@ -2175,17 +2183,20 @@ public sealed class Ms110dDemodulator
                     symbolNumber = (symbolNumber << 1) | (bit < fetched.Length ? fetched[bit++] : 0);
                 }
 
-                int wireIndex = mode.Modulation switch
+                // QAM16 scrambling is an XOR label permutation (D.5.1.3), not a ring
+                // rotation — the expected wire symbol is the permuted constellation
+                // point directly (the modulator's own mapping: 4 fetched bits MSB-first
+                // ARE the symbol number, no transcode table).
+                _turboExpected[(f * mode.U) + u] = mode.Modulation switch
                 {
-                    Ms110dModulation.Bpsk => _scrambler.NextPsk(symbolNumber == 0 ? 0 : 4),
-                    Ms110dModulation.Qpsk => _scrambler.NextPsk(
-                        symbolNumber switch { 0 => 0, 1 => 2, 3 => 4, _ => 6 }),
-                    Ms110dModulation.Psk8 => _scrambler.NextPsk(
-                        Ms110dTables.Transcode8Psk[symbolNumber & 7]),
-                    // The FinishBlock gate excludes QAM16 from turbo.
-                    _ => throw new InvalidOperationException("turbo re-equalization excludes QAM16"),
+                    Ms110dModulation.Bpsk => Ms110dTables.Psk8[
+                        _scrambler.NextPsk(symbolNumber == 0 ? 0 : 4)],
+                    Ms110dModulation.Qpsk => Ms110dTables.Psk8[_scrambler.NextPsk(
+                        symbolNumber switch { 0 => 0, 1 => 2, 3 => 4, _ => 6 })],
+                    Ms110dModulation.Psk8 => Ms110dTables.Psk8[_scrambler.NextPsk(
+                        Ms110dTables.Transcode8Psk[symbolNumber & 7])],
+                    _ => Ms110dTables.Qam16[_scrambler.NextQam(symbolNumber, 4)],
                 };
-                _turboExpected[(f * mode.U) + u] = Ms110dTables.Psk8[wireIndex];
             }
         }
 
@@ -2198,9 +2209,10 @@ public sealed class Ms110dDemodulator
     /// posteriors, and the core trains on the resulting per-symbol expectations E[x]
     /// instead of hard re-encoded decisions. Uncertain symbols shrink toward 0 — exactly
     /// the EM E-step for every estimation consumer (rows, h1/h2 correlations keep their
-    /// /count normalizations because E[|x|²] = 1 on the PSK ring) — so mid-frame channel
-    /// information flows from the code without the 45%-garbage hard labels that stalled
-    /// the WN13 fade-cluster specimen (§B3.2/§B3.3).</summary>
+    /// /count normalizations because E[|x|²] = 1 on the PSK ring; QAM16 carries the true
+    /// second moment instead, §B3.4) — so mid-frame channel information flows from the
+    /// code without the 45%-garbage hard labels that stalled the WN13 fade-cluster
+    /// specimen (§B3.2/§B3.3).</summary>
     private void TurboReequalizeSoft()
     {
         var mode = _mode!;
@@ -2229,7 +2241,12 @@ public sealed class Ms110dDemodulator
         // Per-symbol soft expectations over the descrambled constellation, rotated onto
         // the wire by the scrambler (Psk8[(s+r)&7] == Psk8[s]·Psk8[r] — NextPsk is an
         // additive ring rotation). Variance 1−|E[x]|² feeds the core's noise estimate.
+        // QAM16 (§B3.4) folds the XOR nibble inside the sum instead (the scramble is a
+        // label permutation, not a rotation) and carries the TRUE second moment: XOR
+        // moves symbols BETWEEN rings, so E[|x|²] is a probability-weighted average of
+        // both ring energies, and the variance is E[|x|²] − |E[x]|².
         int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
+        bool qamSoft = mode.Modulation == Ms110dModulation.Qam16;
         int bit = 0;
         Span<float> p0 = stackalloc float[4];
         for (int f = 0; f < _il!.Frames; f++)
@@ -2242,7 +2259,9 @@ public sealed class Ms110dDemodulator
                     p0[b] = Sigmoid(bit < _softWireLlrs.Length ? _softWireLlrs[bit++] : float.MaxValue);
                 }
 
+                int nibble = qamSoft ? _scrambler.NextQam(0, 4) : 0;
                 Cf e = Cf.Zero;
+                float e2 = 0f;
                 for (int t = 0; t < 1 << bitsPerSymbol; t++)
                 {
                     float pt = 1f;
@@ -2252,19 +2271,34 @@ public sealed class Ms110dDemodulator
                         pt *= ((t >> (bitsPerSymbol - 1 - b)) & 1) == 0 ? pBitZero : 1f - pBitZero;
                     }
 
+                    if (qamSoft)
+                    {
+                        Cf wire = Ms110dTables.Qam16[t ^ nibble];
+                        e += wire * pt;
+                        e2 += wire.Cnorm() * pt;
+                        continue;
+                    }
+
                     int ring = mode.Modulation switch
                     {
                         Ms110dModulation.Bpsk => t == 0 ? 0 : 4,
                         Ms110dModulation.Qpsk => t switch { 0 => 0, 1 => 2, 3 => 4, _ => 6 },
-                        Ms110dModulation.Psk8 => Ms110dTables.Transcode8Psk[t & 7],
-                        _ => throw new InvalidOperationException("turbo re-equalization excludes QAM16"),
+                        _ => Ms110dTables.Transcode8Psk[t & 7],
                     };
                     e += Ms110dTables.Psk8[ring] * pt;
                 }
 
                 int idx = (f * mode.U) + u;
-                _softExpected[idx] = e * Ms110dTables.Psk8[_scrambler.NextPsk(0)];
-                _softVar[idx] = Math.Max(0f, 1f - e.Cnorm());
+                if (qamSoft)
+                {
+                    _softExpected[idx] = e;
+                    _softVar[idx] = Math.Max(0f, e2 - e.Cnorm());
+                }
+                else
+                {
+                    _softExpected[idx] = e * Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                    _softVar[idx] = Math.Max(0f, 1f - e.Cnorm());
+                }
             }
         }
 
@@ -2353,8 +2387,14 @@ public sealed class Ms110dDemodulator
         {
             Ms110dModulation.Bpsk => (TurboBpsk, Array.Empty<byte>()),
             Ms110dModulation.Qpsk => (TurboQpsk, TurboQpskLabels),
-            _ => (Ms110dTables.Psk8, SymbolToTribit8),
+            Ms110dModulation.Psk8 => (Ms110dTables.Psk8, SymbolToTribit8),
+            // §B3.4: QAM16 runs the chains in the WIRE domain (the XOR scramble is a
+            // label permutation with no geometric descrambled form): identity labels;
+            // the scramble enters as a per-symbol prior permutation plus per-bit output
+            // sign flips below.
+            _ => (Ms110dTables.Qam16, Array.Empty<byte>()),
         };
+        bool qamWire = mode.Modulation == Ms110dModulation.Qam16;
 
         // §B3.3 turbo priors: outer-code extrinsics become per-symbol log-priors on the
         // chain BCJR (descrambled labels — the scrambler never touches the bit→ring map).
@@ -2368,6 +2408,21 @@ public sealed class Ms110dDemodulator
             ReadOnlySpan<Cf> expected = expectedAll.AsSpan(f * mode.U, mode.U);
             ReadOnlySpan<float> expectedVar =
                 symbolVar is null ? default : symbolVar.AsSpan(f * mode.U, mode.U);
+
+            // §B3.4: per-symbol second moment E[|x|²] = |E[x]|² + Var for the QAM16
+            // correlation denominators below — the PSK-ring E[|x|²] = 1 identity that
+            // let them divide by symbol COUNTS does not hold across two rings. Bounded
+            // below by the inner-ring energy 0.134, so the denominators stay
+            // conditioned; PSK paths keep their count denominators bit-identically.
+            float[]? x2 = null;
+            if (qamWire)
+            {
+                x2 = new float[mode.U];
+                for (int u = 0; u < mode.U; u++)
+                {
+                    x2[u] = expected[u].Cnorm() + (symbolVar is null ? 0f : expectedVar[u]);
+                }
+            }
 
             // The probe preceding this frame's data supplies the known symbol history for
             // the head rows of the shortening solve and the known echo sources for the
@@ -2424,6 +2479,47 @@ public sealed class Ms110dDemodulator
                 }
             }
 
+            // §B3.4 Amendment 1 (QAM16 only): the re-solve's data rows are LABEL rows,
+            // and at a coin-flip first decode the solve has no anchor in truth —
+            // measured as a strong initial pull that stalls into a wander plateau
+            // (0c/11r, corpse w0/b0). The bounding mini-probes are label-free truth at
+            // both ends of the frame: join their rows (those whose feedback history
+            // lies wholly inside the probe) so the re-solved equalizer keeps a truth
+            // floor at every iteration — probe-grade at coin-flip labels, oracle-grade
+            // as labels improve.
+            if (qamWire)
+            {
+                Cf[] followingProbe = MiniProbe.Get(mode.K, boundary: (f + 2) % _il.Frames == 0);
+                for (int p = 0; p < 2; p++)
+                {
+                    Cf[] probe = p == 0 ? precedingProbe : followingProbe;
+                    long probeChip = p == 0 ? frameChip - mode.K : frameChip + mode.U;
+                    for (int i = fb; i < mode.K; i++)
+                    {
+                        if (!HaveSamplesForChip(probeChip + i + 2))
+                        {
+                            continue; // burst-edge probe tail; the data rows above are complete
+                        }
+
+                        if (genie)
+                        {
+                            FillWindowEst(probeChip + i, window);
+                        }
+                        else
+                        {
+                            FillWindow(probeChip + i, window);
+                        }
+
+                        for (int j = 0; j < fb; j++)
+                        {
+                            past[j] = probe[i - 1 - j];
+                        }
+
+                        dfe.AddTrainingRow(window, past, probe[i], weight: 1.0f);
+                    }
+                }
+            }
+
             // Solve with _trackRidge for all modes; the TIR acceptance margin keeps
             // echo-free frames on the full-inversion (null) candidate exactly.
             // Pair candidates only when the expected labels are trustworthy (§B3.3
@@ -2450,17 +2546,26 @@ public sealed class Ms110dDemodulator
                 }
             }
 
-            // Chain-BCJR re-equalization for every PSK mode (§B2.2/§B2.3; the FinishBlock
-            // gate excludes QAM16). Channel estimation runs in the WIRE domain: the legacy
-            // path estimated the echo tap on DESCRAMBLED quantities, where the scrambler's
-            // rotor product r(u−d)·r̄(u) phase-scrambles the lag correlation toward zero —
-            // the echo model was scrambler-blind (issue #65). The scrambler re-enters the
-            // model exactly through the per-position h2 span below.
+            // Chain-BCJR re-equalization for every mode (§B2.2/§B2.3; QAM16 since §B3.4).
+            // Channel estimation runs in the WIRE domain: the legacy path estimated the
+            // echo tap on DESCRAMBLED quantities, where the scrambler's rotor product
+            // r(u−d)·r̄(u) phase-scrambles the lag correlation toward zero — the echo
+            // model was scrambler-blind (issue #65). The scrambler re-enters the PSK
+            // model exactly through the per-position h2 span below; QAM16 stays wire
+            // end-to-end (nibbles permute priors and flip output LLR signs instead).
             _scrambler.Reset();
             var rotors = new Cf[mode.U];
+            int[]? nibbles = qamWire ? new int[mode.U] : null;
             for (int u = 0; u < mode.U; u++)
             {
-                rotors[u] = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                if (qamWire)
+                {
+                    nibbles![u] = _scrambler.NextQam(0, 4);
+                }
+                else
+                {
+                    rotors[u] = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                }
             }
 
             for (int j = 0; j < fb; j++)
@@ -2493,14 +2598,21 @@ public sealed class Ms110dDemodulator
             for (int s = 0; s < Segments; s++)
             {
                 var acc = Cf.Zero;
+                float den = 0f;
                 int start = s * segLen;
                 int end = Math.Min(mode.U, start + segLen);
                 for (int u = start; u < end; u++)
                 {
                     acc += estWire[u] * expected[u].Conj();
+                    if (qamWire)
+                    {
+                        den += x2![u];
+                    }
                 }
 
-                segH1[s] = acc * (1f / Math.Max(1, end - start));
+                segH1[s] = acc * (qamWire
+                    ? 1f / Math.Max(1e-3f, den)
+                    : 1f / Math.Max(1, end - start));
                 segCentre[s] = 0.5f * (start + end - 1);
                 h1Avg += segH1[s];
             }
@@ -2521,12 +2633,19 @@ public sealed class Ms110dDemodulator
                 // echo in with a BCJR told there is none.
                 delay = tir.Lag;
                 var acc = Cf.Zero;
+                float denAvg = 0f;
                 for (int u = delay; u < mode.U; u++)
                 {
                     acc += (estWire[u] - (h1Avg * expected[u])) * expected[u - delay].Conj();
+                    if (qamWire)
+                    {
+                        denAvg += x2![u - delay];
+                    }
                 }
 
-                h2Avg = acc * (1f / (mode.U - delay));
+                h2Avg = acc * (qamWire
+                    ? 1f / Math.Max(1e-3f, denAvg)
+                    : 1f / (mode.U - delay));
 
                 // Per-segment h2 on the same grid as h1 (§B2.1 applied to the echo path):
                 // under TIR the echo coefficient is a real fading path, and a
@@ -2536,15 +2655,22 @@ public sealed class Ms110dDemodulator
                 for (int s = 0; s < Segments; s++)
                 {
                     var segAcc = Cf.Zero;
+                    float segDen = 0f;
                     int start = Math.Max(delay, s * segLen);
                     int end = Math.Min(mode.U, (s * segLen) + segLen);
                     int count = end - start;
                     for (int u = start; u < end; u++)
                     {
                         segAcc += (estWire[u] - (h1Avg * expected[u])) * expected[u - delay].Conj();
+                        if (qamWire)
+                        {
+                            segDen += x2![u - delay];
+                        }
                     }
 
-                    segH2[s] = count > 0 ? segAcc * (1f / count) : h2Avg;
+                    segH2[s] = count > 0
+                        ? segAcc * (qamWire ? 1f / Math.Max(1e-3f, segDen) : 1f / count)
+                        : h2Avg;
                 }
 
                 // §B3.3 straddle pair: the adjacent-lag coefficient, estimated on the
@@ -2560,18 +2686,26 @@ public sealed class Ms110dDemodulator
                 {
                     int start2 = Math.Max(delay, tir.Lag2);
                     var accB = Cf.Zero;
+                    float denB = 0f;
                     for (int u = start2; u < mode.U; u++)
                     {
                         Cf r = estWire[u] - (h1Avg * expected[u]) - (h2Avg * expected[u - delay]);
                         accB += r * expected[u - tir.Lag2].Conj();
+                        if (qamWire)
+                        {
+                            denB += x2![u - tir.Lag2];
+                        }
                     }
 
-                    h2b = accB * (1f / Math.Max(1, mode.U - start2));
+                    h2b = accB * (qamWire
+                        ? 1f / Math.Max(1e-3f, denB)
+                        : 1f / Math.Max(1, mode.U - start2));
                     delay2 = tir.Lag2;
 
                     for (int s = 0; s < Segments; s++)
                     {
                         var segAcc = Cf.Zero;
+                        float segDen = 0f;
                         int start = Math.Max(start2, s * segLen);
                         int end = Math.Min(mode.U, (s * segLen) + segLen);
                         int count = end - start;
@@ -2579,9 +2713,15 @@ public sealed class Ms110dDemodulator
                         {
                             Cf r = estWire[u] - (h1Avg * expected[u]) - (h2Avg * expected[u - delay]);
                             segAcc += r * expected[u - tir.Lag2].Conj();
+                            if (qamWire)
+                            {
+                                segDen += x2![u - tir.Lag2];
+                            }
                         }
 
-                        segH2b[s] = count > 0 ? segAcc * (1f / count) : h2b;
+                        segH2b[s] = count > 0
+                            ? segAcc * (qamWire ? 1f / Math.Max(1e-3f, segDen) : 1f / count)
+                            : h2b;
                     }
                 }
             }
@@ -2599,12 +2739,17 @@ public sealed class Ms110dDemodulator
                 for (int lag = 1; lag <= maxLag; lag++)
                 {
                     var acc = Cf.Zero;
+                    float den = 0f;
                     for (int u = lag; u < mode.U; u++)
                     {
                         acc += (estWire[u] - (h1Avg * expected[u])) * expected[u - lag].Conj();
+                        if (qamWire)
+                        {
+                            den += x2![u - lag];
+                        }
                     }
 
-                    Cf h2 = acc * (1f / (mode.U - lag));
+                    Cf h2 = acc * (qamWire ? 1f / Math.Max(1e-3f, den) : 1f / (mode.U - lag));
                     if (h2.Cnorm() > h2Avg.Cnorm())
                     {
                         h2Avg = h2;
@@ -2626,7 +2771,9 @@ public sealed class Ms110dDemodulator
             // Assemble the descrambled-domain model: z[u] = rxWire[u]·r̄(u) leaves h1
             // unchanged (piecewise-linear through the segment centres) and puts the
             // scrambler into the echo coefficient — h2·r(u−d)·r̄(u) for in-block echoes,
-            // h2·r̄(u) against the known wire chip for the pre-block ones.
+            // h2·r̄(u) against the known wire chip for the pre-block ones. QAM16 (§B3.4)
+            // stays in the wire domain — no derotation, plain h2 — because its scramble
+            // is a label permutation, handled at the priors and the output LLR signs.
             var rxDesc = new Cf[mode.U];
             var h1Span = new Cf[mode.U];
             var h2Span = new Cf[mode.U];
@@ -2682,11 +2829,13 @@ public sealed class Ms110dDemodulator
                 }
 
                 h1Span[u] = h1u;
-                rxDesc[u] = rxWire[u] * rotors[u].Conj();
+                rxDesc[u] = qamWire ? rxWire[u] : rxWire[u] * rotors[u].Conj();
                 Cf echoWire = u >= delay ? expected[u - delay] : preceding[u];
-                h2Span[u] = u >= delay
-                    ? h2u * rotors[u - delay] * rotors[u].Conj()
-                    : h2u * rotors[u].Conj();
+                h2Span[u] = qamWire
+                    ? h2u
+                    : u >= delay
+                        ? h2u * rotors[u - delay] * rotors[u].Conj()
+                        : h2u * rotors[u].Conj();
                 Cf predicted = (h1u * expected[u]) + (h2u * echoWire);
                 residual += (rxWire[u] - predicted).Cnorm();
                 if (symbolVar is not null)
@@ -2764,7 +2913,14 @@ public sealed class Ms110dDemodulator
 
                     for (int s = 0; s < m; s++)
                     {
+                        // QAM16: prior for WIRE symbol s = P(data nibble = s XOR n_u) —
+                        // the extrinsics address DATA bits, so the label is permuted.
                         int label = labels.Length > 0 ? labels[s] : s;
+                        if (qamWire)
+                        {
+                            label = s ^ nibbles![u];
+                        }
+
                         float sum = 0f;
                         for (int b = 0; b < bitsPerSymbol; b++)
                         {
@@ -2781,6 +2937,25 @@ public sealed class Ms110dDemodulator
                 rxDesc, h1Span, h2Span, delay, noiseVar,
                 constellation, labels, bitsPerSymbol, preceding, frameLlrs,
                 logPriors is null ? default : logPriors);
+
+            // QAM16: the chains emitted WIRE-bit LLRs (identity labels over the wire
+            // constellation); data bit i = wire bit i XOR scramble bit i, so scramble
+            // bits flip signs — BEFORE the extrinsic subtraction, which lives in the
+            // data domain.
+            if (qamWire)
+            {
+                for (int u = 0; u < mode.U; u++)
+                {
+                    int nib = nibbles![u];
+                    for (int b = 0; b < bitsPerSymbol; b++)
+                    {
+                        if (((nib >> (bitsPerSymbol - 1 - b)) & 1) != 0)
+                        {
+                            frameLlrs[(u * bitsPerSymbol) + b] = -frameLlrs[(u * bitsPerSymbol) + b];
+                        }
+                    }
+                }
+            }
 
             // With priors in, the BCJR emits full posteriors; hand the outer code detector
             // EXTRINSICS only (posterior − prior) — feeding its own opinion back to the
