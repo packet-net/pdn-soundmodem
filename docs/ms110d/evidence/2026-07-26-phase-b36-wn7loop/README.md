@@ -202,6 +202,35 @@ and a census collapse by orders of magnitude, with §5.3 both-family numbers jud
 gate claim afterward. No gate is promised here, and a converted-but-above-mask WN7 is a
 successful leg with a new, smaller, different problem.
 
+## M0 — measured (2026-07-26, this branch, `m0/` in the job tmp; bar GREEN)
+
+Guard-exact: 72,666 coded / 7c/4r, oracle b5:15, first 147456 / last 405468, uncoded
+89,559/540,672 (16.6%), collapses 14. The fresh anatomy replaces this note's pre-TIR
+basin numbers:
+
+| block | first-decode errors (of 36,864) | % | outcome | end state |
+|---|---|---|---|---|
+| b0 | 7,083 | 19.2% | converged | 0 |
+| b1 | 17,673 | 47.9% | converged | 0 |
+| b2 | 13,005 | 35.3% | converged | 0 |
+| b3 | 16,846 | 45.7% | converged | 0 |
+| b4 | 18,100 | 49.1% | REVERT | wander 18,144 |
+| b5 | 18,330 | 49.7% | REVERT | wander 17,775 |
+| b6 | 17,599 | 47.7% | converged | 0 |
+| b7 | 18,000 | 48.8% | REVERT | wander 12,075 |
+| b8 | 16,736 | 45.4% | converged | 0 |
+| b9 | 18,025 | 48.9% | converged | 0 |
+| b10 | 18,251 | 49.5% | REVERT | wander 18,088 |
+
+Three findings sharpen the candidates. **(1) The basin boundary is NOT a threshold in
+start-error space**: b9 converges from 48.9% while b7 wanders from 48.8% — outcome is
+trajectory-dependent at equal start quality, which is exactly C1's chaos-as-sampler
+premise. **(2) Converged ⇒ correct holds 7/7 at exact zero** on the current tree —
+the oscillating-wander picture stands (end states 12,075–18,144, first-pass grade;
+none reached a wrong fixed point). **(3) The eigen-TIR loop converges routinely from
+46–49% starts** (b1, b3, b6, b8, b9) — the basin is wider than the pre-TIR record
+suggested; the four losses are trajectory luck at the same depth, not a deeper class.
+
 ## Guards and discipline
 
 WN7 corpse 72,666 coded / 7c/4r + oracle b5:15; WN6 corpse 0 / 11c0r; WN13sp
