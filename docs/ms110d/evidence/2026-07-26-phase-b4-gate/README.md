@@ -66,3 +66,41 @@ In `Ms110dMaskTests.Poor_Channel_Mask_Gate`:
 ## 6. Battery structure
 
 Three concurrent detached lanes (16-core box, 4 workers per leg, `choom`-marked expendable), each lane serial within itself: Lane A = Poor canonical (10 legs), Lane B = Poor disjoint (10 legs), Lane C = AWGN per-WN ×10 + static + Doppler. Per-WN chunking with in-process 4-worker splitting is the union-merge unit — each §5.3 point is accepted only on its own whole-point totals (per-chunk log lines never stand in for the gate number). Scripts and raw outputs under the job tmp dir; `battery.log` and censuses committed here.
+
+---
+
+## 7. Results (registration above unchanged post-hoc; battery ran 07:35–08:08 UTC, 33 legs, 3 lanes, zero failures, zero retries, zero acquisition failures)
+
+| Point | Canonical | Disjoint (+10000) | Pooled vs threshold | Verdict |
+|---|---|---|---|---|
+| Poor WN1 @3 dB | 0 / 3,039,488 | 0 / 3,039,488 | 0 ≤ 26 | **FLIPS** |
+| Poor WN2 @5 dB | 30 / 6,086,912 = 4.93E-6 direct | 29 / 6,086,912, bound 6.84E-6 | 59/12.17M ≤ 96 | **FLIPS** |
+| Poor WN3 @7 dB | 0 / 3,192,960 | 0 / 3,192,960 | 0 ≤ 26 | **FLIPS** |
+| Poor WN4 @10 dB | 0 / 3,406,848 | 3 / 3,406,848, bound 2.57E-6 | 3/6.81M ≤ 26 | **FLIPS** |
+| Poor WN5 @11 dB | 23 / 6,486,528, bound 5.32E-6 | 0 / 6,486,528 | 23/12.97M ≤ 96 | **FLIPS** |
+| Poor WN6 @14 dB | 57 / 6,487,296 = 8.79E-6 direct | 57 / 6,487,296 = 8.79E-6 direct | 114/12.97M > 96 | **NO FLIP — clause 2 executes** |
+| Poor WN13 @11 dB | 0 / 3,243,520 | 0 / 6,487,040 | 0/9.73M ≤ 43 | **FLIPS** |
+| Poor WN0 @−1 dB | 17,978 = 5.99E-3 | 19,210 = 6.40E-3 | — | measured, open (= #87 exactly) |
+| Poor WN7 @19 dB | 562,609 = 1.73E-1 | 615,806 = 1.90E-1 | — | measured, open (= #87 exactly) |
+| Poor WN8 @23 dB | 2,145,864 = 4.96E-1 | 2,150,887 = 4.97E-1 | — | measured, open (= #87 exactly) |
+| AWGN ×10 (full §5.3) | 0 errors on all ten | — | — | standing gate holds |
+| Static WID2 @9 dB | 0 / 3,043,456 | — | — | holds |
+| Doppler ±75 Hz ×3 | 0 / 0 / 0 | — | — | holds |
+
+**Flip set = {WN1, WN2, WN3, WN4, WN5, WN13}**, exactly as the registration's predictions plus WN5 resolving green.
+
+**The WN5 verdict** — the genuinely open question — resolved decisively: 23 canonical errors are two tail clusters (6 + 17) with 46/48 bursts clean, and the disjoint family is a flat 0/6.5M. The 480k-smoke "6-error residue" was a cluster, not a rate; pooled WN5 is 1.77E-6, and its at-mask status now rests on fresh full-budget both-family evidence instead of the B3-entry re-baseline.
+
+**WN2's canonical 6M landed exactly k = 30** — onto the ≥30-error direct path at 4.93E-6, consistent with the banked 15/3M rate. Its disjoint tail is the familiar benign near-miss class (seven 1–6-error clusters canonical-side).
+
+**WN6, honestly stated:** the fresh 57/57 are deterministic replications of the banked counts (same seed families, demod untouched since #83's fadecross fix), not new independent draws — the registration's "P ≈ 0.05" treated them as hypothetical fresh draws and was over-modeled; with fixed seeds the outcome was certain given unchanged code. The criterion evaluates on counts either way: pooled 114/12.97M, bound 1.14E-5, no flip. Clause 2 executes — scoreboard amends WN6 to **AT THE LINE** (its §5.3 draws pass; the *rate* is not established under mask; the pre-registered path to flipping it is the banked B3.3-segnoise margin lever behind a shippable noise-floor estimator). The same determinism note covers the measured trio and the AWGN/static/Doppler zeros matching #87 exactly — those rows are replication evidence that the branch changes nothing, which is precisely what a docs+test-gating branch should show.
+
+## 8. Post-flip verification (flipped assembly, NO `MS110D_POOR_GATED` anywhere)
+
+- WN5 default budget → 23 / 6,486,528 — **bit-identical** to gate leg `wn5-6m`; assert executed by default.
+- WN13 default budget → 0 / 3,243,520 — **bit-identical** to gate leg `wn13-3m`.
+- WN2 default budget → 30 / 6,086,912 = 4.93E-6 direct — **bit-identical** to gate leg `wn2-6m`; assert executed by default.
+- **Armed-negative check**: WN2 at `MS110D_MASK_BITS=100000` (a budget that cannot clear the 97.5 % Poisson bound even at zero errors) → **red by default** on `AssertMask`'s Poisson clause (bound 1.87E-5 > 1E-5, `Ms110dMaskTests.cs:143`) with no environment force — positive proof the default gate is armed.
+- Plain suite: **696 total / 0 failed / 105 skipped** (the env-gated mask points, exactly as before the flip) — the hermetic suite (incl. OBW) is untouched; Poor points still skip without `MS110D_MASKS_POOR=1`.
+
+Artifacts: `battery/battery.log` (all three lanes' mask lines), `battery/status.log` (leg timeline, rc per leg), `battery/census/` (per-burst censuses for every Poor leg, both families).
