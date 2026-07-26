@@ -46,3 +46,14 @@ Pre-committed budgets: the B4 table unchanged (WN2/WN5/WN6 at 6M/family, the res
 **Consequence clause 3:** WN6 lands in (45, 57] — improvement short of the ship bar: revert, record the measured shortfall against the banked 41/39 (it would mean the estimator traded away part of the gain for its error reduction), and close per clause 1's terms.
 
 Files land here as the measurements run.
+
+---
+
+## Amendment 1 (2026-07-26, before reading any candidate scores): the scoring construction
+
+Two defects surfaced in the first analysis cut, both in the *measurement*, not the candidates, and both fixed before any M3 verdict is read:
+
+1. **The bandwidth-derivation rule measured noise.** The registered "99 %-power bandwidth of the segment-floor series ×2" criterion returns the χ² noise bandwidth (white — it gave 35–200 Hz), not the process. The reference kernel reverts to the registration's physics bound (4 Hz, half-width 300 symbols), and the *measured* process bandwidth moves to a reported readout via short-lag acf ratio where the AR-like process dominates the white noise: **0.8–2.2 Hz across all ten corpses** — the 4 Hz bound stands validated at ≥2× the measured process.
+2. **Candidate scoring was circular for SMOOTH** (same kernel, nearly the same data as the reference). Amended protocol: within each frame, even positions are the estimation set and odd positions the held-out scoring set. All candidates (and the reference for the RMS/range metrics) are built from even positions; scores are computed against the odd-position field. Additionally a reference-free readout: held-out χ²₂ negative log-likelihood of the odd-position residuals under each candidate floor, with the SHIPPED frame-constant floor as the anchor every candidate must beat. M3's thresholds are unchanged and now applied to the split-half RMS metric.
+
+First honest structural finding (independent of any candidate): **WN2 has zero fade frames** — at 40 ms frames the true within-frame floor range never exceeds 2× on any of its four corpses. WN2's per-segment "pricing" in B3.3 was therefore *always* pure estimator-noise injection, which is exactly why no gate could save it. Any winning estimator must collapse to (near-)frame-constant behavior on WN2 by construction, not by a waveform switch.

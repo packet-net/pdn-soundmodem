@@ -2464,6 +2464,14 @@ public sealed class Ms110dDemodulator
         Span<Cf> segH2 = stackalloc Cf[Segments];
         Span<Cf> segH2b = stackalloc Cf[Segments];
         Span<float> segCentre = stackalloc float[Segments];
+        // §B4.1 floor-estimator instrument (diagnostics ONLY — pricing stays the frame
+        // constant): the assembly residual bucketed on the same u/segLen partition as the
+        // channel anchors, so the corpse can measure within-frame heteroscedasticity and
+        // score candidate estimators. The banked §B3.3 pricing consumed these buckets;
+        // here they only reach the turbo-frame line.
+        Span<float> segResid = stackalloc float[Segments];
+        Span<int> segResidCount = stackalloc int[Segments];
+        Span<float> segNv = stackalloc float[Segments];
         int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
         _blockLlrCount = 0;
         int tirFrames = 0;
@@ -2873,9 +2881,20 @@ public sealed class Ms110dDemodulator
             }
 
             float residual = 0f;
+            segResid.Clear();
+            segResidCount.Clear();
+            // §B4.1: per-position residual/|h1| capture for the oracle-pass reference
+            // floor (label-true residuals; symbolVar is null and allowPair only on the
+            // oracle instrument's call). Diagnostic path only — never the shipped loop.
+            bool residDump = _turboFrameDiag && FrameDiagnostics is not null
+                && symbolVar is null && allowPair;
+            float[]? residPos = residDump ? new float[mode.U] : null;
+            float[]? gainPos = residDump ? new float[mode.U] : null;
             for (int u = 0; u < mode.U; u++)
             {
-                int s = Math.Min(Segments - 1, u / segLen);
+                int sn = Math.Min(Segments - 1, u / segLen);
+                float residBefore = residual;
+                int s = sn;
                 int ia, ib;
                 float t;
                 if (u <= segCentre[0] || Segments == 1)
@@ -2944,6 +2963,14 @@ public sealed class Ms110dDemodulator
                         residual += h2b.Cnorm() * expectedVar[u - delay2];
                     }
                 }
+
+                segResid[sn] += residual - residBefore;
+                segResidCount[sn]++;
+                if (residDump)
+                {
+                    residPos![u] = residual - residBefore;
+                    gainPos![u] = h1u.Abs();
+                }
             }
 
             // Cnorm() sums both complex dimensions; the BCJR wants σ² per dimension, so
@@ -2952,9 +2979,16 @@ public sealed class Ms110dDemodulator
 
             if (_turboFrameDiag && FrameDiagnostics is not null)
             {
+                for (int s = 0; s < Segments; s++)
+                {
+                    segNv[s] = segResidCount[s] > 0
+                        ? Math.Max(0.5f * segResid[s] / segResidCount[s], 1e-6f)
+                        : noiseVar;
+                }
+
                 var sb = new System.Text.StringBuilder(256);
                 sb.Append(FormattableString.Invariant(
-                    $"turbo-frame b{_blockIndex} f{f}: lag={delay} lag2={delay2} n={noiseVar:E3} ffE={dfe.FfEnergy:F3} sseN={tir.SseNull:F1} sseT={tir.SseTir:F1} h1="));
+                    $"turbo-frame b{_blockIndex} f{f}: lag={delay} lag2={delay2} n={noiseVar:E3} nseg={segNv[0]:E2}|{segNv[1]:E2}|{segNv[2]:E2}|{segNv[3]:E2} ffE={dfe.FfEnergy:F3} sseN={tir.SseNull:F1} sseT={tir.SseTir:F1} h1="));
                 for (int s = 0; s < Segments; s++)
                 {
                     if (s > 0) { sb.Append('|'); }
@@ -2983,6 +3017,29 @@ public sealed class Ms110dDemodulator
                 }
 
                 FrameDiagnostics.Invoke(sb.ToString());
+
+                if (residDump)
+                {
+                    // §B4.1 oracle-pass reference field: label-true per-position squared
+                    // residual and the interpolated |h1(u)| the trajectory candidate
+                    // regresses on. One line per frame, oracle pass only.
+                    var rb = new System.Text.StringBuilder(12 * mode.U);
+                    rb.Append(FormattableString.Invariant($"turbo-resid b{_blockIndex} f{f}: r="));
+                    for (int u = 0; u < mode.U; u++)
+                    {
+                        if (u > 0) { rb.Append(','); }
+                        rb.Append(FormattableString.Invariant($"{residPos![u]:E2}"));
+                    }
+
+                    rb.Append(" g=");
+                    for (int u = 0; u < mode.U; u++)
+                    {
+                        if (u > 0) { rb.Append(','); }
+                        rb.Append(FormattableString.Invariant($"{gainPos![u]:F4}"));
+                    }
+
+                    FrameDiagnostics.Invoke(rb.ToString());
+                }
             }
 
             int bitBase = f * mode.U * bitsPerSymbol;
