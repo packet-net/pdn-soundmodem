@@ -254,3 +254,71 @@ fail (any collateral) → rung G dies regardless of G1/G2. G2 partial (repair re
 Reference-family rungs (margin-gated DD updates, two-sided smoothing with decision
 delay) stay BANKED behind rung G — opened only if G leaves a residue that M2's
 decomposition still attributes to innovation quality.
+
+---
+
+## Results
+
+### Instrument phase (corpse/, all bars green)
+
+Four passes per corpse; coded errors:
+
+| corpse | census | a: plain | b: genie-DD | c: O-inst | d: O-pole |
+|--------|--------|----------|-------------|-----------|-----------|
+| H0–H3  | 0 ×4   | 0 ×4 (uncoded exact: 279/238/178/241) | 0 ×4 | 0 ×4 | 0 ×4 |
+| E1 w2b97 | 697  | 697 | 697 | **0** | 23 |
+| E2 w2b53 | 489  | 489 | 489 | **0** | 8  |
+| E3 w3b96 | 419  | 419 | 443 | **0** | 29 |
+| E4 w1b91 | 381  | 381 | 381 | **0** | 0  |
+| E5 w1b41 | 293  | 293 | 293 | **0** | 34 |
+| E6 w2b37 | 98   | 98  | 98  | **0** | 0  |
+| pooled E | 2,377 | 2,377 | 2,401 | **0** | 94 |
+
+M0 exact ×10, M-healthy green, M1 R = 1.000, M2 = 96.1% noise+decision / 3.9% lag,
+M3 (amended pairing) 6/6 + 4/4 at ρ 0.94–0.97. O-inst uncoded on the error corpus:
+1,792–2,120 → 264–343 per burst. The lock-geometry census (corpse/lock-census.txt)
+carries the 18/18 concordance table.
+
+### Rung G (battery/, all bars green)
+
+**G1**: all 9 echo-locked corpses (E1–E6 + b4/b19/b23; 2,445 pooled baseline errors)
+decode **0 coded errors** with the shipped DD detector — bar was ≤5% residual, measured
+0%. Two-peak profiles restored (direct path at −5/−4; both paths DD-tracked at
+ρ 0.91–0.94 — the DD reference was never the bottleneck; the geometry was). All 9
+healthy corpses stay 0 (uncoded shift noise-level, e.g. H0 279→289). The shipped
+detector's uncoded on former killers (238–303/burst) lands at the one-path oracle's
+level: dual diversity ≥ perfect-reference-single-path, exactly the §B3.5 design thesis.
+
+**G2 (full §5.3, both families)**:
+
+- canonical: **3,000,704 bits, 0 errors** — BER 0, 97.5% bound **1.22E-6** (was 5.99E-3)
+- disjoint: **3,000,704 bits, 3 errors** — BER 1.00E-6, bound **2.92E-6** (was 6.40E-3)
+- 476 bursts/family, 0 acquisition failures, all Eom; uncoded 1.85E-2/1.86E-2
+
+**G3**: all 72 non-WN0 battery census files **byte-identical** to the #88/#89 baseline
+(`cmp` clean); gated seven at their exact digits (WN5 23/0, WN6 35/39, WN2 30/29,
+WN13 0/0, WN3 0/0, WN4 0/3, WN1 0/0), open pair unchanged (WN7 1.73E-1/1.95E-1, WN8
+4.96E-1/4.97E-1), AWGN 10/10 + static + Doppler zero. 32/32 legs rc=0, no retries.
+WN0 end-reason profile improved: 9 non-Eom baseline endings → 0 (the 13-finger
+discriminator concern is measured moot). Guards byte-identical through both commits;
+suite 697/0 (105 skips).
+
+### WN0 joins the default-gated set (B4 flip criterion, all three conditions)
+
+(a) families individually §5.3-green: bounds 1.22E-6 / 2.92E-6 ≤ 1E-5. (b) pooled
+3/6,001,408 → bound 1.46E-6 ≤ 1E-5. (c) per-family false-red at the pooled rate:
+P(k ≥ 20 | λ ≈ 1.5) ≈ 1E-15. Flipped in `Ms110dMaskTests` (`wn is 0 or 1 or ...`);
+armed-negative verified: the flipped gate at a 100k smoke budget fails on the Poisson
+clause (bound 3.64E-5 > 1E-5) — the gate is live, not decorative.
+
+### Disposition
+
+- The reference-quality lever class (α, margin-gated DD, two-sided smoothing) closes
+  UNPULLED: registered, priced (R = 1.000 says it *could* have worked), and obsoleted
+  by the mechanism fix — banked-closed unless a future residue reopens it.
+- The "energy ceiling" suspicion is resolved: the energy was there all along, 4.8 chips
+  to the left of the window.
+- Instrument lesson (the leg's method payoff): the fidelity audit that came back RED
+  under the registered pairing was the discovery — following its consequence clause
+  (stop, investigate the instrument) instead of waving it through is what surfaced the
+  echo-lock mechanism. The oracle answered a question it was not asked.

@@ -1,0 +1,35 @@
+O-inst oracle pass (7 causal fingers, delays 0..+6) — the Amendment 1 lock census:
+burst  censusErrs  peaks(delay)  path0-best  path1-best
+H0        0  [0, 5]        d0@0.958  d5@0.940
+H1        0  [0, 5]        d0@0.966  d5@0.958
+H2        0  [0, 5]        d0@0.970  d5@0.944
+H3        0  [0, 5]        d0@0.966  d5@0.956
+E1      697  [0]           d3@0.356  d0@0.970
+E2      489  [0]           d3@0.425  d0@0.964
+E3      419  [0]           d3@0.415  d0@0.964
+E4      381  [0]           d5@0.418  d0@0.963
+E5      293  [0]           d3@0.406  d0@0.962
+E6       98  [0]           d3@0.425  d0@0.960
+b1        0  [0, 5]        d0@0.965  d5@0.952
+b2        0  [0, 5]        d0@0.959  d5@0.954
+b3        0  [0, 5]        d0@0.974  d5@0.948
+b6        0  [0, 5]        d0@0.961  d5@0.960
+b8        0  [0, 5]        d0@0.963  d5@0.964
+b4        4  [0]           d5@0.370  d0@0.964
+b19      21  [0]           d3@0.406  d0@0.953
+b23      19  [0]           d3@0.368  d0@0.962
+
+Rung G shipped-DD pass (13 fingers, delays -6..+6) — direct path recovered:
+E1    peaks(delay)=[-5, 0]          path0 d-5@0.923  path1 d0@0.934
+E2    peaks(delay)=[-5, -4, 0]      path0 d-5@0.923  path1 d0@0.938
+E3    peaks(delay)=[-5, -4, 0]      path0 d-5@0.909  path1 d0@0.919
+E4    peaks(delay)=[-5, -4, 0]      path0 d-5@0.925  path1 d0@0.936
+E5    peaks(delay)=[-5, -4, 0]      path0 d-5@0.934  path1 d0@0.940
+E6    peaks(delay)=[-5, -4, 0]      path0 d-5@0.923  path1 d0@0.935
+b4    peaks(delay)=[-5, 0]          path0 d-5@0.932  path1 d0@0.934
+b19   peaks(delay)=[-5, -4, 0]      path0 d-5@0.941  path1 d0@0.935
+b23   peaks(delay)=[-5, -4, 0]      path0 d-5@0.928  path1 d0@0.943
+H0    peaks(delay)=[0, 4, 5]        path0 d0@0.919  path1 d5@0.930
+H1    peaks(delay)=[0, 5]           path0 d0@0.917  path1 d5@0.925
+H2    peaks(delay)=[0, 5]           path0 d0@0.930  path1 d5@0.927
+H3    peaks(delay)=[0, 5]           path0 d0@0.928  path1 d5@0.932
