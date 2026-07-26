@@ -2472,6 +2472,7 @@ public sealed class Ms110dDemodulator
         Span<float> segResid = stackalloc float[Segments];
         Span<int> segResidCount = stackalloc int[Segments];
         Span<float> segNv = stackalloc float[Segments];
+        Span<float> segPrice = stackalloc float[Segments];
         int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
         _blockLlrCount = 0;
         int tirFrames = 0;
@@ -2976,16 +2977,67 @@ public sealed class Ms110dDemodulator
             // Cnorm() sums both complex dimensions; the BCJR wants σ² per dimension, so
             // halve (the #65 2×-under-confidence lesson).
             float noiseVar = Math.Max(0.5f * residual / mode.U, 1e-6f);
+            for (int s = 0; s < Segments; s++)
+            {
+                segNv[s] = segResidCount[s] > 0
+                    ? Math.Max(0.5f * segResid[s] / segResidCount[s], 1e-6f)
+                    : noiseVar;
+            }
+
+            // §B4.1 per-segment noise pricing (Amendment 2 variant ladder): default OFF —
+            // the frame-constant floor prices bit-identically. Armed, a segment's windowed
+            // floor replaces the frame constant only beyond its own 3σ χ² band
+            // (thr = exp(3/√count) — dof-derived, never tuned; WN2's flat-floor truth
+            // cannot cross its 24-dof 2.4× band, so it stays frame-constant by
+            // construction). "spikeup" engages upward only — pricing can de-confidence a
+            // locally-bad span but never injects an over-confident low floor (the §B3.3
+            // WN2 damage direction); "spike2s" engages both ways. Engaged values
+            // interpolate through the segment centres like the channel spans (no cliffs).
+            float[]? nvSpan = null;
+            if (_options.TurboNsegMode is string nsegMode)
+            {
+                bool twoSided = nsegMode == "spike2s";
+                bool engaged = false;
+                for (int s = 0; s < Segments; s++)
+                {
+                    float thr = segResidCount[s] > 0
+                        ? MathF.Exp(3f / MathF.Sqrt(segResidCount[s])) : float.MaxValue;
+                    bool spike = segNv[s] > noiseVar * thr
+                        || (twoSided && segNv[s] < noiseVar / thr);
+                    segPrice[s] = spike ? segNv[s] : noiseVar;
+                    engaged |= spike;
+                }
+
+                if (engaged)
+                {
+                    nvSpan = new float[mode.U];
+                    for (int u = 0; u < mode.U; u++)
+                    {
+                        int s = Math.Min(Segments - 1, u / segLen);
+                        if (u <= segCentre[0] || Segments == 1)
+                        {
+                            nvSpan[u] = segPrice[0];
+                        }
+                        else if (u >= segCentre[Segments - 1])
+                        {
+                            nvSpan[u] = segPrice[Segments - 1];
+                        }
+                        else
+                        {
+                            if (u < segCentre[s])
+                            {
+                                s--;
+                            }
+
+                            float t = (u - segCentre[s]) / (segCentre[s + 1] - segCentre[s]);
+                            nvSpan[u] = (segPrice[s] * (1f - t)) + (segPrice[s + 1] * t);
+                        }
+                    }
+                }
+            }
 
             if (_turboFrameDiag && FrameDiagnostics is not null)
             {
-                for (int s = 0; s < Segments; s++)
-                {
-                    segNv[s] = segResidCount[s] > 0
-                        ? Math.Max(0.5f * segResid[s] / segResidCount[s], 1e-6f)
-                        : noiseVar;
-                }
-
                 var sb = new System.Text.StringBuilder(256);
                 sb.Append(FormattableString.Invariant(
                     $"turbo-frame b{_blockIndex} f{f}: lag={delay} lag2={delay2} n={noiseVar:E3} nseg={segNv[0]:E2}|{segNv[1]:E2}|{segNv[2]:E2}|{segNv[3]:E2} ffE={dfe.FfEnergy:F3} sseN={tir.SseNull:F1} sseT={tir.SseTir:F1} h1="));
@@ -3082,7 +3134,8 @@ public sealed class Ms110dDemodulator
             Ms110dChainBcjr.Equalize(
                 rxDesc, h1Span, h2Span, delay, noiseVar,
                 constellation, labels, bitsPerSymbol, preceding, frameLlrs,
-                logPriors is null ? default : logPriors);
+                logPriors is null ? default : logPriors,
+                noiseVarPerSymbol: nvSpan is null ? default : nvSpan);
 
             // QAM16: the chains emitted WIRE-bit LLRs (identity labels over the wire
             // constellation); data bit i = wire bit i XOR scramble bit i, so scramble

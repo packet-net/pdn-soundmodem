@@ -434,6 +434,8 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             {
                 RlsForgettingFactor = rlsLambda,
                 TrackRidge = trackRidge,
+                // §B4.1 per-segment pricing variant ("spikeup"/"spike2s"); unset = shipped.
+                TurboNsegMode = Environment.GetEnvironmentVariable("MS110D_TURBO_NSEG"),
             });
             Ms110dBurstEndReason? endReason = null;
             demod.BurstCompleted += bu => endReason = bu.Reason;

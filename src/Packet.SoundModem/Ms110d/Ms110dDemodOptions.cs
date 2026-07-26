@@ -84,4 +84,13 @@ public sealed record Ms110dDemodOptions
     /// tax the WN2 genie pair measured (issue #69). Report evidence only, never a gate
     /// default without a full-budget A/B.</summary>
     public float? TrackRidge { get; init; }
+
+    /// <summary>§B4.1 per-segment BCJR noise pricing variant. Null (the default) keeps the
+    /// frame-constant floor bit-identically. <c>"spikeup"</c>: a segment's windowed floor
+    /// replaces the frame constant only where it exceeds it by the segment's own 3σ χ²
+    /// band (exp(3/√count)) — upward-only, so pricing can de-confidence locally-bad spans
+    /// but can never inject an over-confident low floor (the §B3.3 WN2 damage direction).
+    /// <c>"spike2s"</c>: both directions at 3σ. Thresholds are derived from the segment
+    /// dof, never tuned (evidence/2026-07-26-phase-b41-wn6floor/ Amendment 2).</summary>
+    public string? TurboNsegMode { get; init; }
 }

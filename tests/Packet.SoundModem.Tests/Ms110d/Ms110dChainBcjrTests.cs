@@ -75,6 +75,58 @@ public class Ms110dChainBcjrTests
     }
 
     [Fact]
+    public void Per_Symbol_Noise_Floor_Prices_Each_Position_Analytically()
+    {
+        // §B4.1 per-segment pricing contract: a uniform noiseVarPerSymbol span must
+        // reproduce the scalar path bit-for-bit, and a per-position span must price each
+        // decoupled flat-channel LLR by its OWN floor (2·Re(y)/σ²[t]).
+        const int n = 32;
+        const float noiseVar = 0.05f;
+        var random = new Random(53);
+        var rx = new Cf[n];
+        var h1 = new Cf[n];
+        var h2 = new Cf[n];
+        float sigma = MathF.Sqrt(noiseVar);
+        for (int i = 0; i < n; i++)
+        {
+            h1[i] = new Cf(1, 0);
+            h2[i] = Cf.Zero;
+            float symbol = random.Next(2) == 0 ? 1f : -1f;
+            rx[i] = new Cf(
+                symbol + (sigma * (float)Gaussian(random)),
+                sigma * (float)Gaussian(random));
+        }
+
+        var scalarLlrs = new float[n];
+        Ms110dChainBcjr.Equalize(rx, h1, h2, delay: 3, noiseVar, Bpsk, [], 1, [], scalarLlrs);
+
+        var uniform = new float[n];
+        Array.Fill(uniform, noiseVar);
+        var uniformLlrs = new float[n];
+        Ms110dChainBcjr.Equalize(
+            rx, h1, h2, delay: 3, noiseVar, Bpsk, [], 1, [], uniformLlrs,
+            noiseVarPerSymbol: uniform);
+        uniformLlrs.Should().Equal(scalarLlrs, "a uniform span must reproduce the scalar path exactly");
+
+        var perSymbol = new float[n];
+        for (int i = 0; i < n; i++)
+        {
+            perSymbol[i] = i % 2 == 0 ? noiseVar : 4f * noiseVar;
+        }
+
+        var pricedLlrs = new float[n];
+        Ms110dChainBcjr.Equalize(
+            rx, h1, h2, delay: 3, noiseVar, Bpsk, [], 1, [], pricedLlrs,
+            noiseVarPerSymbol: perSymbol);
+        for (int i = 0; i < n; i++)
+        {
+            float expected = 2f * rx[i].Re / perSymbol[i];
+            pricedLlrs[i].Should().BeApproximately(expected, 0.01f * Math.Abs(expected) + 0.01f,
+                $"per-position floor must price LLR[{i}] by its own σ²");
+        }
+    }
+
+    [Fact]
     public void Chain_Llrs_Match_Brute_Force_Marginalization_On_Qpsk()
     {
         // The exactness proof. n = 6 QPSK symbols, delay 2, complex-valued taps varying

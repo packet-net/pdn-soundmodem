@@ -187,6 +187,8 @@ public class Ms110dTailAutopsy
             TrackRidge = float.TryParse(
                 Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TRACK_RIDGE"), out float tr)
                 ? tr : null,
+            // §B4.1 per-segment pricing variant ("spikeup"/"spike2s"); unset = shipped.
+            TurboNsegMode = Environment.GetEnvironmentVariable("MS110D_TURBO_NSEG"),
         });
         demod.BurstCompleted += bu => endReason = bu.Reason;
         demod.BlockDecoded += b => decoded.AddRange(b.Bits);
