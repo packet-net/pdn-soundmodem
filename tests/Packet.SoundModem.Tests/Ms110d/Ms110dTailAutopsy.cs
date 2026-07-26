@@ -164,8 +164,15 @@ public class Ms110dTailAutopsy
         }
 
         bool oracle = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_ORACLE") == "1";
+
+        // §B3.5b WN0 genie-gain oracle: "inst" | "pole" (evidence/2026-07-26-phase-
+        // b35b-wn0genie). Implies genie feeding — the truth gains are read from the
+        // clean stream.
+        string? walshOracle = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_WALSH_ORACLE");
+        genie |= walshOracle is not null;
         string tag = $"wn{wn}-w{worker}-b{burst}{(clean ? "-clean" : "")}" +
-            $"{(genie ? "-genie" : "")}{(oracle ? "-oracle" : "")}";
+            $"{(genie ? "-genie" : "")}{(oracle ? "-oracle" : "")}" +
+            $"{(walshOracle is null ? "" : $"-wgo{walshOracle}")}";
         using var symbols = new StreamWriter(Path.Combine(outDir, $"autopsy-symbols-{tag}.csv"));
         symbols.WriteLine("index,re,im,refIdx,refRe,refIm");
         using var frames = new StreamWriter(Path.Combine(outDir, $"autopsy-frames-{tag}.log"));
@@ -345,6 +352,18 @@ public class Ms110dTailAutopsy
 
                 oracleBlockErrs.Add($"b{blockIndex}:{errs}");
             };
+        }
+
+        // §B3.5b: truth di-bits for the WN0 gain oracle from the same fetchedBlocks
+        // truth the uncoded accounting uses (Modulate's MSB-first di-bit order); −1
+        // (no truth / post-EOM) falls back to the shipped DD path per symbol.
+        if (walshOracle is not null)
+        {
+            demod.WalshOraclePole = walshOracle == "pole";
+            demod.WalshOracleDibit = (b, sym) =>
+                b < txBlocks && (2 * sym) + 1 < fetchedBlocks[b].Length
+                    ? (fetchedBlocks[b][2 * sym] << 1) | fetchedBlocks[b][(2 * sym) + 1]
+                    : -1;
         }
 
         if (genie)

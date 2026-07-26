@@ -251,6 +251,19 @@ public sealed class Ms110dDemodulator
     /// of those LLRs.</summary>
     public event Action<int, float[], byte[]>? OracleBlockLlrs;
 
+    /// <summary>§B3.5b WN0 genie-gain oracle (instrument,
+    /// evidence/2026-07-26-phase-b35b-wn0genie): returns the TRUE transmitted di-bit for
+    /// (blockIndex, symbolInBlock), or −1 for no-truth symbols (post-EOM), which fall
+    /// back to the shipped DD path. When set, TrackWalsh detects with truth-derived
+    /// finger gains read from the genie stream (required — throws without one) and skips
+    /// the carrier PLL retune (the phase-error observable self-cancels under truth
+    /// gains). Unset = the shipped path, bit-identical. Armed only by the autopsy rig.</summary>
+    internal Func<int, int, int>? WalshOracleDibit { get; set; }
+
+    /// <summary>§B3.5b companion: true = O-pole (shipped one-pole/warm-up with truth
+    /// innovations — keeps the 80 ms lag), false = O-inst (instantaneous truth).</summary>
+    internal bool WalshOraclePole { get; set; }
+
     /// <summary>Diagnostic (phase-b-plan §B3.3 fade-crossing): while the oracle
     /// re-equalization runs, TurboCore emits one <c>turbo-frame</c> line per frame with
     /// the per-segment channel anchors and the BCJR noise floor, so the corpse can
@@ -1967,16 +1980,46 @@ public sealed class Ms110dDemodulator
         }
 
         Span<Cf> chips = stackalloc Cf[Wid0WalshModem.RakeChips];
+        Span<Cf> cleanChips = stackalloc Cf[Wid0WalshModem.RakeChips];
         Span<float> llrs = stackalloc float[2];
         Span<float> gainMags = stackalloc float[Wid0WalshModem.Fingers];
-        while (_state == Ms110dRxState.Tracking && HaveSamplesForChip(_symbolChip + Wid0WalshModem.RakeChips + 2))
+        bool walshOracle = WalshOracleDibit is not null;
+        if (walshOracle && _genieRing is null)
+        {
+            throw new InvalidOperationException("the WN0 gain oracle requires the genie stream");
+        }
+
+        // Forward availability is unchanged by the §B3.5b anti-causal fingers: the
+        // buffer extends NegFingers chips BACK (always in ring history) and the same
+        // 38 chips forward.
+        double forwardChips = Wid0WalshModem.RakeChips - Wid0WalshModem.NegFingers;
+        while (_state == Ms110dRxState.Tracking && HaveSamplesForChip(_symbolChip + forwardChips + 2))
         {
             for (int i = 0; i < Wid0WalshModem.RakeChips; i++)
             {
-                chips[i] = ReadChip(_symbolChip + i);
+                chips[i] = ReadChip(_symbolChip - Wid0WalshModem.NegFingers + i);
             }
 
-            _walsh!.DemodulateRake(chips, llrs, out int bestDibit, out Cf combined, out double maxFingerAbs);
+            int bestDibit;
+            Cf combined;
+            double maxFingerAbs;
+            int trueDibit = walshOracle ? WalshOracleDibit!(_blockIndex, _symbolInBlock) : -1;
+            if (trueDibit >= 0)
+            {
+                for (int i = 0; i < Wid0WalshModem.RakeChips; i++)
+                {
+                    cleanChips[i] = ReadChipEst(_symbolChip - Wid0WalshModem.NegFingers + i);
+                }
+
+                _walsh!.DemodulateRakeOracle(
+                    chips, cleanChips, trueDibit, WalshOraclePole, llrs,
+                    out bestDibit, out combined, out maxFingerAbs);
+            }
+            else
+            {
+                _walsh!.DemodulateRake(chips, llrs, out bestDibit, out combined, out maxFingerAbs);
+            }
+
             AddLlr(llrs[0]);
             AddLlr(llrs[1]);
 
@@ -1987,36 +2030,47 @@ public sealed class Ms110dDemodulator
             // the −6 dB operating point is too noisy to drive the frequency integrator
             // directly. During warm-up (cold gains) the combined statistic is near zero
             // and contributes nothing, which is the desired behaviour.
-            _walshPhaseAcc += combined;
-            if (++_walshPhaseCount == 8)
+            if (!walshOracle)
             {
-                if (_walshPhaseAcc.Cnorm() > 1e-12)
+                _walshPhaseAcc += combined;
+                if (++_walshPhaseCount == 8)
                 {
-                    double err = _walshPhaseAcc.Arg();
-                    RetuneCarrier((2.0 * (_symbolChip + 16)) + _tau, 0.4 * err, 0.06 * err / 512.0);
-                }
+                    if (_walshPhaseAcc.Cnorm() > 1e-12)
+                    {
+                        double err = _walshPhaseAcc.Arg();
+                        RetuneCarrier((2.0 * (_symbolChip + 16)) + _tau, 0.4 * err, 0.06 * err / 512.0);
+                    }
 
-                _walshPhaseAcc = Cf.Zero;
-                _walshPhaseCount = 0;
+                    _walshPhaseAcc = Cf.Zero;
+                    _walshPhaseCount = 0;
+                }
             }
 
             if (FrameDiagnostics is not null)
             {
                 _walsh.CopyGainMagnitudes(gainMags);
+                var mags = new System.Text.StringBuilder(gainMags.Length * 6);
+                for (int k = 0; k < gainMags.Length; k++)
+                {
+                    mags.Append(k == 0 ? "" : " ").Append(gainMags[k].ToString("F3"));
+                }
+
                 FrameDiagnostics.Invoke(
                     $"walsh sym={_symbolInBlock} d*={bestDibit} llr0={llrs[0]:F2} llr1={llrs[1]:F2} " +
-                    $"|g|=[{gainMags[0]:F3} {gainMags[1]:F3} {gainMags[2]:F3} {gainMags[3]:F3} " +
-                    $"{gainMags[4]:F3} {gainMags[5]:F3} {gainMags[6]:F3}] argC={combined.Arg():F3}");
+                    $"|g|=[{mags}] argC={combined.Arg():F3}");
             }
 
             // Signal-lost discriminator (WN 0): the winning-correlation-to-chip-energy
-            // ratio ≈ 0.5 at the −6 dB mask point but ≈ 0.23 on noise alone. Weak only
-            // when ALL fingers are weak — a finger-0-only test would false-fire on a
-            // direct-path fade with a strong echo, exactly the fades MRC rides (§B3.5).
+            // ratio ≈ 0.5 at the −6 dB mask point but ≈ 0.23 on noise alone (max over 7
+            // causal fingers; the §B3.5b 13-finger window lifts the noise-side statistic
+            // ~15%, margin watched via census end-reasons). Weak only when ALL fingers
+            // are weak — a finger-0-only test would false-fire on a direct-path fade
+            // with a strong echo, exactly the fades MRC rides (§B3.5). The energy window
+            // stays the symbol's own 32 chips regardless of the finger span.
             double sumMag = 0;
             for (int i = 0; i < 32; i++)
             {
-                sumMag += chips[i].Abs();
+                sumMag += chips[Wid0WalshModem.NegFingers + i].Abs();
             }
 
             if (maxFingerAbs < 0.35 * sumMag)
