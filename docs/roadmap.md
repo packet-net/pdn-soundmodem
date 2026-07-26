@@ -71,6 +71,17 @@ Critical analysis of the legal basis for the managed codec2 port (LGPL-2.1 → G
 via §3 relicensing) + attribution (Rowe/Valenti/Cowley). Scheduled by Tom as a roadmap task;
 not a blocker, not ours to bless — needs a real FOSS-licence sanity check.
 
+### #12 — 2G ALE in software *(planned, not started)*
+MIL-STD-188-141A Appendix A link establishment, so an MS110D station can find a working channel
+and a listening correspondent unattended. Plan: [`docs/ale/plan.md`](ale/plan.md). Prompted by the
+Kenwood TK-90 assessment — its ALE needs a KPE-2 board that cannot be obtained, and doing it in
+software removes the dependency on any particular radio, makes LQA our own measured SNR rather
+than a vendor's opaque score, and is a smaller job than the modem already built (8-FSK, no
+equaliser, no turbo decoder). **Deliberately unscheduled**: MS110D's Poor gate is open and §E2 has
+never run on hardware. One exception worth taking early — decoding real off-air 2G ALE needs no
+transmit licence, no partner and no hardware this project does not already own, and it would
+verify the waveform constants empirically.
+
 ### #11 — FlexRadio 6500 integration *(in progress — nearly done)*
 Pure-managed client: discovery + TCP session + VITA-49 DAX RX/TX → `IAudioInput`/`IAudioOutput`/
 `IPttControl`, `--device flex:<radio>`. Offline Phases 0–2 merged (mock radio, byte-exact loop).

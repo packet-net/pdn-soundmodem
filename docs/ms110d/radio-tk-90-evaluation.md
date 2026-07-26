@@ -108,7 +108,7 @@ The advantages of doing it ourselves are substantial:
 
 The costs are honest ones: it is new work, 2G ALE has real interop variation in the field (Kenwood's own manual admits as much, noting the AMD frame "must be changed if the transceiver cannot link with other manufacturers transceivers"), and interoperating with commercial stations would need testing against one.
 
-**This is not a recommendation to start now** — it is a much larger piece of work than anything outstanding on the roadmap, and MS110D itself is not finished. But it is worth recording that the ALE capability is not actually gated on hardware we cannot buy, and that if ALE ever becomes a goal, the software route is the one that does not depend on a scarce board.
+**This is not a recommendation to start now** — MS110D's Poor gate is open and §E2 has never run on hardware. But it is worth recording that the ALE capability is not gated on hardware we cannot buy. There is now a plan for it: [`docs/ale/plan.md`](../ale/plan.md), which also identifies one experiment worth doing early regardless — decoding real off-air 2G ALE, which needs no transmit licence, no partner station and no hardware this project does not already own.
 
 The section that follows describes how ALE and MS110D fit together in practice. It was written for the TK-90's built-in implementation, but the sequence, the timing arguments and the LQA-versus-waveform gap apply equally to a software one — the mode interlock is the only part that is specific to the radio.
 
