@@ -212,3 +212,106 @@ arm's mechanism).
 
 **Kill (corpse-level):** if w1/b0 converts none of the trio and lifts scaffold <+3 on
 <2 of them, or any retention break — E3 is RED and the clause fires.
+
+## E3 corpse measured
+
+Flag-off bit-identity: both specimens reproduce #93 exactly (w0/b0 0 / 11c/0r/4v,
+w1/b0 54,616 / 8c/3r/2v). Flag-on:
+
+- **w1/b0: 54,616 → 20 coded errors, 8c/3r/2v → 11c/0r/5v — all three trio blocks
+  convert**, and the residue is b3:6 + b6:14, exactly this burst's oracle floor. The
+  label-free pass reached the model ceiling on the design specimen. Frozen seeds
+  improved on every block (e.g. b2 17,322 → 13,397 detection, then loop-converged).
+- **w0/b0: 0 → 3 (11c/0r/4v)** — a retention break. The 3 bits sit in b5, the burst's
+  ceiling block (the one with a nonzero oracle floor, b5:15). Every frozen seed
+  improved 2–6× (b0 2063→1081, b1 7913→4695, b2 7959→3486, b3 5137→800, b4 8654→3510,
+  b5 7683→7123, b6 3841→2297, b7 4715→2196, b8 10576→3417, b9 11328→4846,
+  b10 14662→6345).
+
+By the registered letter ("any retention break") this is RED as measured; the target
+result (trio to the oracle floor) plus the break's location (3 bits on the one block
+riding the model ceiling) says the arm's *arbitration*, not its geometry, needs a
+mechanism fix — Amendment 2 below, pre-registered before any re-measurement.
+
+## Amendment 2 (pre-registered): decisive-adoption margin
+
+**Mechanism.** The always-offer arbitration adopts on ANY floor improvement,
+including margins within gauge noise of the two anchor passes. Marginal adoptions
+(altVar ≈ noiseVar) are coin flips the instruments never justified — the measured
+target class improves its floor 10–30× (0.8–1.9 → ~0.05). On a salvage block at the
+model ceiling, a marginal adoption changes the frozen seed for zero detection benefit
+and can move the turbo loop's fixed point by a few bits — the b5 signature.
+
+**Form.** Adopt only when the shifted geometry is decisively better:
+`altVar < κ·noiseVar`, κ = 0.7 (pre-registered; single fallback κ = 0.5 if the first
+measurement shows b5's adoptions still marginal-flipping; no sweep). Plus a log-only
+`frozen-relock` diagnostic (causal floor, alt floor, adopted) so adoption margins are
+data. κ = 1.0 with strict inequality is bit-identical to E3-as-measured (the
+verification run).
+
+**Predictions.** (1) w0/b0 returns to 0 / 11c/0r/4v exact — b5's marginal adoptions
+are dropped; (2) w1/b0 keeps ≥2 trio conversions — its target-class adoptions clear
+any reasonable margin. **Honest caveat**: if the margin run shows b5's adoptions are
+already decisive (alt ≪ causal), the wobble is fixed-point sensitivity to a *better*
+seed, not marginal flipping — κ cannot fix that, and the arm stands RED by the
+retention letter unless the ship bar is re-judged with the guard re-pinned; that
+re-judgment is NOT taken unilaterally — it would be recorded here as an open question
+for the ship decision with the evidence laid out.
+
+## Amendment 2 measured — the caveat fires
+
+Control (κ=1): digits reproduce E3-as-measured exactly (w0 3 at the same bit
+positions, w1 20) — the diag build is clean. Margin data: b5's adoptions sit at
+ratios 1.10–1.96× with ONE decisive (f61: 17.6×); the trio's adoptions are decisive
+(medians 7.0×/38.5×/21.1×, only 1–2 below 2× per block). κ=0.7: w1 keeps all three
+conversions (20); w0 STILL 3, same positions. κ=0.5 (the registered fallback,
+protocol now exhausted): w1 20 ✓ all conversions; w0 STILL 3, same positions — even
+with b5 reduced to near-decisive-only adoptions and a *better* frozen seed
+(7683 → 6803), its fixed point wobbles to 3. **The wobble is fixed-point sensitivity
+of a ceiling block (its own oracle floor is 15) to ANY seed change — margins cannot
+fix it.** Prediction (1) failed twice; prediction (2) held twice.
+
+## Amendment 3 (pre-registered): relock as a second salvage rung
+
+**Mechanism.** The E3-full form changes the frozen seed on EVERY salvage block,
+including blocks whose standard salvage already converges — pure downside there: a
+ceiling block's fixed point can move a few bits for zero benefit (the b5 wobble),
+and no label-free arbitration can prefer one converged fixed point over another.
+The class the instruments identified from the start is the salvage-FAIL class (the
+trio, the b10-class): blocks where the revert stands because the standard frozen
+seed can't reach the basin. Scope the intervention to exactly that class.
+
+**Form.** Salvage becomes a two-rung ladder: revert-at-cap → standard frozen
+re-detect + re-loop (unchanged, bit-identical) → *only if that fails*, retry the
+salvage with the late-lock offer enabled (κ = 0.5, the measured decisive-only
+margin). Blocks that converge anywhere along the existing path are structurally
+untouched. Seam semantics: `TurboFrozenRelock` now gates the second rung
+(default on at ship; off = bit-identical to #93); the offer itself activates only
+inside the rung.
+
+**Predictions (falsifiable, both specimens + guards):**
+1. w0/b0 = 0 coded / 11c/0r/4v **bit-identical** (all four salvages succeed on the
+   standard rung; the relock pass never executes).
+2. w1/b0 = 20 coded / 11c/0r/5v (the trio reaches the second rung and converts; the
+   b3:6 + b6:14 oracle-floor residues stand).
+3. WN6 corpse and WN13sp corpse bit-identical (no salvage failures there).
+
+**If prediction 1 or 3 fails**, the rung leaks state it must not — build defect, fix
+or RED. If prediction 2 fails, E3's conversions were an artifact of the full-form
+seed changes on OTHER blocks — E3 is RED and the clause fires.
+
+## Amendment 3 measured — all predictions green, E3 lands GREEN
+
+1. w0/b0 rung-on: **0 coded / 11c/0r/4v, bit-identical** (uncoded 89,559 identical)
+   — retention is structural, the b5 wobble is gone because b5's path never changes.
+2. w1/b0 rung-on: **20 coded / 11c/0r/5v** — the trio converts through the rung,
+   digit-identical to the E3-full result; the residue is the b3:6 + b6:14 oracle
+   floor. Frozen scaffold on the trio: b2 43 → 53, b7 51 → 64, b8 50 → 61 — all
+   three across the ~52 basin edge.
+3. WN6 rung-on 0 / 11c/0r/0v and WN13sp rung-on 0 / 11c/0r/0v — bit-identical to
+   their pins (no salvage failures, rung never fires).
+4. w1/b0 flag-off through the new call path: 54,616 / 8c/3r/2v exact.
+
+Against the registered bars: **GREEN** — 3 of 3 trio conversions (bar asked ≥2) with
+retention exact. Ship bar proceeds: default-on flip, suite, held-out pair, guards,
+full battery.

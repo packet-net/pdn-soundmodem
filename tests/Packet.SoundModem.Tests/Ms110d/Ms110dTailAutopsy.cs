@@ -464,6 +464,17 @@ public class Ms110dTailAutopsy
         {
             demod.TurboFrozenPreCursor = false;
         }
+        // §B3.8 E3 (Amendment 1): late-lock geometry offer, floor-arbitrated.
+        if (Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_RELOCK") == "1")
+        {
+            demod.TurboFrozenRelock = true;
+        }
+        // §B3.8 Amendment 2: decisive-adoption margin (1 = adopt on any improvement).
+        if (float.TryParse(Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_RELOCK_MARGIN"),
+                out float relockMargin))
+        {
+            demod.TurboFrozenRelockMargin = relockMargin;
+        }
         if (turboPerturb is not null)
         {
             string[] parts = turboPerturb.Split(',');

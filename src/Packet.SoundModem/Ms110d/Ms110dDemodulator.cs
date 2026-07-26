@@ -329,6 +329,33 @@ public sealed class Ms110dDemodulator
     /// pre-B3.7 causal-alias application (measurement seam).</summary>
     internal bool TurboFrozenPreCursor { get; set; } = true;
 
+    /// <summary>§B3.8 E3 (Amendments 1/3): the late-lock salvage rung. A causal
+    /// acceptance with the echo above the cursor (late path dominant) can leave the
+    /// feedback-free FF unable to equalize the frame — the priced floor blows up
+    /// 30–80× and the chain drowns on honestly-priced garbage (the trio's bad-frame
+    /// class; the same physics rides cleanly on the natural pre-cursor frames). When
+    /// the STANDARD salvage fails (Amendment 3 — converging blocks are structurally
+    /// untouched: a ceiling block's fixed point can wobble a few bits under ANY seed
+    /// change, the w0/b0 b5 lesson), the salvage is retried with the frozen pass
+    /// offering the late-lock geometry per causal-accept frame: re-train with the
+    /// equalizer window shifted by the accepted lag (the shift performs the re-lock;
+    /// the tap shape carries over, so the ridge anchor stays approximately right in
+    /// shifted coordinates), solve only the aliased pre-cursor lag, and adopt when
+    /// the shifted floor is decisively lower (<see cref="TurboFrozenRelockMargin"/>).
+    /// Winning frames run the existing E1″(b) pre-cursor chain with the shift
+    /// threaded through. Frozen/salvage path only; unset = bit-identical.</summary>
+    internal bool TurboFrozenRelock { get; set; }
+
+    private bool _frozenRelockActive;
+
+    /// <summary>§B3.8 Amendment 2: the late-lock offer adopts only when the shifted
+    /// geometry is decisively better — altVar &lt; margin·noiseVar. 1 = adopt on any
+    /// improvement (the pre-margin E3 form). Marginal adoptions within gauge noise of
+    /// the two anchor passes are coin flips; the measured target class clears any
+    /// reasonable margin (floor improvements of 10–30×, trio adoption medians
+    /// 7–38×), so 0.5 keeps the decisive mass and drops the coin flips.</summary>
+    internal float TurboFrozenRelockMargin { get; set; } = 0.5f;
+
     /// <summary>Diagnostic (phase-b-plan §B3.3 fade-crossing): while the oracle
     /// re-equalization runs, TurboCore emits one <c>turbo-frame</c> line per frame with
     /// the per-segment channel anchors and the BCJR noise floor, so the corpse can
@@ -2297,7 +2324,7 @@ public sealed class Ms110dDemodulator
                 TurboAborted++;
             }
             else if (_mode.Modulation == Ms110dModulation.Psk8 &&
-                TrySalvageRevert(info, prevInfo))
+                (TrySalvageRevert(info, prevInfo) || TrySalvageRelock(info, prevInfo)))
             {
                 // §B3.6 salvage (evidence/2026-07-26-phase-b36-wn7loop, Amendment 1):
                 // the wander states are scaffold-starved — too few frames with clean
@@ -2642,6 +2669,10 @@ public sealed class Ms110dDemodulator
         Span<int> probeIdx = stackalloc int[2 * mode.K];
         Span<Cf> anchor = stackalloc Cf[2];
         Span<float> anchorPos = stackalloc float[2];
+        // §B3.8 E3 scratch: the late-lock offer's candidate anchors (adopted into
+        // anchor/anchorPos only when the shifted geometry wins the floor).
+        Span<Cf> anchorAlt = stackalloc Cf[2];
+        Span<float> anchorPosAlt = stackalloc float[2];
         // §B3.7 E1″: the probe is a base sequence cyclically extended to K, so
         // probe-row regressors repeat with this period and an accepted lag beyond
         // half of it is the −(period−lag) pre-cursor folded into the causal search.
@@ -2650,8 +2681,12 @@ public sealed class Ms110dDemodulator
         // Probe-only shortening rows for frame f. Rows keep their feedback history
         // inside the probe (i ≥ fb), mirroring the §B3.4 Amendment 1 probe-row
         // construction. The accumulation is consumed by each solve, so every solve
-        // (vote, pair diagnostic, applied) re-runs this.
-        int AccumulateProbeRows(int f, Span<Cf> win, Span<Cf> hist)
+        // (vote, pair diagnostic, applied) re-runs this. §B3.8 E3: shift > 0 trains
+        // the same rows with the equalizer window advanced by that many chips — the
+        // late-lock geometry, where the cursor rides the delayed path and the early
+        // path returns as the (aliased) pre-cursor; desired and history columns are
+        // symbol-indexed and do not move.
+        int AccumulateProbeRows(int f, Span<Cf> win, Span<Cf> hist, int shift = 0)
         {
             long frameChip = _blockFrameChips[f];
             dfe.BeginTraining();
@@ -2662,12 +2697,12 @@ public sealed class Ms110dDemodulator
                 long probeChip = p == 0 ? frameChip - mode.K : frameChip + mode.U;
                 for (int i = fb; i < mode.K; i++)
                 {
-                    if (!HaveSamplesForChip(probeChip + i + 2))
+                    if (!HaveSamplesForChip(probeChip + i + shift + 2))
                     {
                         continue; // burst-edge probe tail
                     }
 
-                    FillWindow(probeChip + i, win);
+                    FillWindow(probeChip + i + shift, win);
                     for (int j = 0; j < fb; j++)
                     {
                         hist[j] = probe[i - 1 - j];
@@ -2829,6 +2864,124 @@ public sealed class Ms110dDemodulator
             // (the #65 2×-under-confidence lesson).
             float noiseVar = Math.Max(noiseRows > 0 ? 0.5f * noiseAcc / noiseRows : 1e-2f, 1e-6f);
 
+            // §B3.8 E3 (Amendment 1): late-lock geometry offer. The causal accept can
+            // sit on a frame whose delayed path dominates the cursor (|c| ≳ 1) — the
+            // feedback-free FF then fails to equalize the frame and the priced floor
+            // explodes 30–80×, drowning the frame in honestly-priced garbage LLRs,
+            // while the identical physics rides cleanly in the late-lock geometry
+            // (the natural pre-cursor frames' floors). Re-train with the window
+            // shifted by the accepted lag (the shift performs the re-lock; the tap
+            // shape carries over, so the ridge anchor stays approximately right in
+            // shifted coordinates), solve only the aliased pre-cursor lag, price the
+            // shifted floor identically, and keep the geometry with the lower floor —
+            // arbitration by the quantity the chain is actually priced with, no
+            // threshold knob.
+            int lockShift = 0;
+            if (_frozenRelockActive && TurboFrozenPreCursor
+                && tir.Lag >= 1 && tir.Lag < probePeriod / 2
+                && probePeriod - tir.Lag <= Math.Min(fb, mode.U / 2))
+            {
+                int shift = tir.Lag;
+                Cf[] causalTaps = dfe.SnapshotTaps();
+                bool adopted = false;
+                if (AccumulateProbeRows(f, window, past, shift) == solveRows)
+                {
+                    Dfe.TirSolve sTir = dfe.SolveTrainingTir(
+                        regularization: _trackRidge, ffNoisePower: GenieNoisePower(),
+                        maxLag: Math.Min(fb, mode.U / 2), allowPair: false,
+                        onlyLag: probePeriod - shift);
+                    if (sTir.Lag == probePeriod - shift)
+                    {
+                        for (int j = 0; j < fb; j++)
+                        {
+                            past[j] = Cf.Zero;
+                        }
+
+                        var shiftedRx = new Cf[mode.U];
+                        bool have = true;
+                        for (int u = 0; u < mode.U; u++)
+                        {
+                            if (!HaveSamplesForChip(frameChip + u + shift + 2))
+                            {
+                                have = false;
+                                break;
+                            }
+
+                            FillWindow(frameChip + u + shift, window);
+                            shiftedRx[u] = dfe.Equalize(window, past);
+                        }
+
+                        if (have)
+                        {
+                            // Anchors + floor in the shifted geometry — the same
+                            // construction as above; the folded subtraction
+                            // probe[i − lag] is pre-cursor-correct through the
+                            // periodic probe.
+                            float altAcc = 0f;
+                            int altRows = 0;
+                            for (int p = 0; p < 2; p++)
+                            {
+                                Cf[] probe = p == 0 ? precedingProbe : followingProbe;
+                                long probeChip = p == 0 ? frameChip - mode.K : frameChip + mode.U;
+                                float uBase = p == 0 ? -mode.K : mode.U;
+                                var acc = Cf.Zero;
+                                int n = 0;
+                                float posSum = 0f;
+                                for (int i = sTir.Lag; i < mode.K; i++)
+                                {
+                                    if (!HaveSamplesForChip(probeChip + i + shift + 2))
+                                    {
+                                        continue;
+                                    }
+
+                                    FillWindow(probeChip + i + shift, window);
+                                    Cf y = dfe.Equalize(window, past) - (sTir.Coefficient * probe[i - sTir.Lag]);
+                                    probeY[(p * mode.K) + n] = y;
+                                    probeIdx[(p * mode.K) + n] = i;
+                                    acc += y * probe[i].Conj();
+                                    posSum += uBase + i;
+                                    n++;
+                                }
+
+                                anchorAlt[p] = n > 0 ? acc * (1f / n) : Cf.Zero;
+                                anchorPosAlt[p] = n > 0 ? posSum / n : (p == 0 ? -mode.K * 0.5f : mode.U + (mode.K * 0.5f));
+                                for (int r = 0; r < n; r++)
+                                {
+                                    int i = probeIdx[(p * mode.K) + r];
+                                    Cf resid = probeY[(p * mode.K) + r] - (anchorAlt[p] * probe[i]);
+                                    altAcc += resid.Cnorm();
+                                    altRows++;
+                                }
+                            }
+
+                            float altVar = Math.Max(altRows > 0 ? 0.5f * altAcc / altRows : 1e-2f, 1e-6f);
+                            bool adopt = altRows > 0 && altVar < TurboFrozenRelockMargin * noiseVar;
+                            FrameDiagnostics?.Invoke(FormattableString.Invariant(
+                                $"frozen-relock b{_blockIndex} f{f}: lag={shift} causal={noiseVar:E3} alt={altVar:E3} adopted={(adopt ? 1 : 0)}"));
+                            if (adopt)
+                            {
+                                tir = sTir;
+                                delay = Math.Max(1, tir.Lag);
+                                h2Wire = tir.Coefficient;
+                                rxWire = shiftedRx;
+                                anchor[0] = anchorAlt[0];
+                                anchor[1] = anchorAlt[1];
+                                anchorPos[0] = anchorPosAlt[0];
+                                anchorPos[1] = anchorPosAlt[1];
+                                noiseVar = altVar;
+                                lockShift = shift;
+                                adopted = true;
+                            }
+                        }
+                    }
+                }
+
+                if (!adopted)
+                {
+                    dfe.LoadTaps(causalTaps);
+                }
+            }
+
             // §B3.7 E1″(a) (Amendment 2): an accepted lag beyond half the probe base
             // period is the pre-cursor folded through the periodic probe — the causal
             // chain model at that lag is measurably worse than none (E1′ alias→0
@@ -2882,7 +3035,9 @@ public sealed class Ms110dDemodulator
                 int d = chainDelay;
                 for (int u = 0; u < d; u++)
                 {
-                    long chip = frameChip - d + u;
+                    // §B3.8 E3: on re-locked frames the whole geometry rides shifted
+                    // windows (lockShift = d there, so these chips are frameChip + u).
+                    long chip = frameChip - d + u + lockShift;
                     if (!HaveSamplesForChip(chip + 2))
                     {
                         dfe.LoadTaps(savedTaps);
@@ -2925,7 +3080,7 @@ public sealed class Ms110dDemodulator
             if (FrameDiagnostics is not null)
             {
                 FrameDiagnostics.Invoke(FormattableString.Invariant(
-                    $"frozen-frame b{_blockIndex} f{f}: lag={tir.Lag} |c|={Math.Sqrt(h2Wire.Cnorm()):F3} n={noiseVar:E3} rows={solveRows} h1a={anchor[0].Abs():F3}|{anchor[1].Abs():F3} sseN={tir.SseNull:E3} sse1={tir.SseTir:E3} a0={anchor[0].Re:F4},{anchor[0].Im:F4} a1={anchor[1].Re:F4},{anchor[1].Im:F4}"));
+                    $"frozen-frame b{_blockIndex} f{f}: lag={tir.Lag} |c|={Math.Sqrt(h2Wire.Cnorm()):F3} n={noiseVar:E3} rows={solveRows} h1a={anchor[0].Abs():F3}|{anchor[1].Abs():F3} sseN={tir.SseNull:E3} sse1={tir.SseTir:E3} a0={anchor[0].Re:F4},{anchor[0].Im:F4} a1={anchor[1].Re:F4},{anchor[1].Im:F4} shift={lockShift}"));
             }
 
             var frameLlrs = new float[mode.U * bitsPerSymbol];
@@ -2993,6 +3148,30 @@ public sealed class Ms110dDemodulator
         }
 
         return false;
+    }
+
+    /// <summary>§B3.8 Amendment 3: the second salvage rung. Only when the standard
+    /// salvage fails does the frozen pass re-run with the late-lock offer active —
+    /// blocks that converge anywhere along the existing path are structurally
+    /// untouched (a ceiling block's fixed point can wobble a few bits under ANY seed
+    /// change; no label-free arbitration can prefer one converged fixed point over
+    /// another). Same contract as <see cref="TrySalvageRevert"/>.</summary>
+    private bool TrySalvageRelock(byte[] info, byte[] prevInfo)
+    {
+        if (!TurboFrozenRelock)
+        {
+            return false;
+        }
+
+        _frozenRelockActive = true;
+        try
+        {
+            return TrySalvageRevert(info, prevInfo);
+        }
+        finally
+        {
+            _frozenRelockActive = false;
+        }
     }
 
     /// <summary>The turbo re-equalization machinery (§B2.3): per-frame FF batch-LS re-solve
