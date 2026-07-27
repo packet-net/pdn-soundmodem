@@ -427,6 +427,15 @@ if (deviceIsFlex)
     {
         Console.Error.WriteLine($"flex: {tuneWarning}");
     }
+
+    // The radio's global transmit filter, read back at bring-up (Flex 0.7.0) — it, not the
+    // slice, limits transmitted DAX audio bandwidth, and it is whatever last touched the radio
+    // (a 300 Hz CW filter would silently crush a 3 kHz mode). We deliberately never set it;
+    // reporting it makes a stale value visible. Headless only — attach leaves it to SmartSDR.
+    if (flex.Station.TransmitFilter is (int txFilterLow, int txFilterHigh))
+    {
+        Console.WriteLine($"flex: transmit filter {txFilterLow}..{txFilterHigh} Hz (radio global — limits TX audio bandwidth)");
+    }
 }
 else
 {

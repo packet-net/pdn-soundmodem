@@ -888,7 +888,10 @@ Two plausible alternatives were ruled out by probe: `transmit set mic_selection=
 "DAX-TX audio | streamed 0.5 s while `TRANSMITTING`" was true of the packets while saying nothing
 about the air — nobody had looked at a receiver. `FlexStation.SetUpHeadlessAsync` now sends it and
 reads it back (`TransmitSourceIsDax`); `SelectDaxAsTransmitSource = false` declines it for a
-receive-only session.
+receive-only session. This repo consumes it from M0LTE.Flex 0.8.0: `FlexDevice.OpenAsync` treats a
+non-null `TransmitSourceWarning` after headless bring-up as a failure and throws, rather than run a
+modem that keys and transmits silence; the daemon reports the `TransmitFilter` read-back (§10.2) at
+startup.
 
 ### 10.2 DAX audio is not a ~3 kHz path — the transmit filter is the limit
 
