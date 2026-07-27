@@ -71,8 +71,9 @@ The QPSK failure was diagnosed by elimination:
 - **Not TX audio processing** — the IQ route (which bypasses the SSB modulator, ALC and TX DSP entirely) fails identically to DAX.
 - **Not the drive/ALC** — dropping WN13 to 0.5 drive still fails.
 - **Not RX clipping** — captures peak ~−18 dBFS with zero clipped samples.
+- **Not the long burst / RX drift** — WN13 QPSK on the **Long interleaver over AWGN** decodes perfectly over real RF (6/6 coded-clean). So the long-burst duration and any slow RX frequency drift are *not* the cause; the **Poor fading is essential** to the failure.
 
-What remains is the real RF path common to both transmit routes, and the split is clean along modulation: **BPSK tolerates it, QPSK does not.** The leading hypothesis is the **RSP1's frequency/phase stability** (it is a modest SDR, not a lab reference — its CFO wanders several Hz), which corrupts the more phase-sensitive QPSK preamble/WID acquisition over the long Poor burst while BPSK rides through. This is a **test-rig receiver limitation**, not a modem deficiency — the modem gated all these modes at mask in Phase B simulation and decodes them clean in the dry-run here.
+The failure is therefore the **specific three-way combination of QPSK + the real RF path + fading** — any two of the three is fine (QPSK+Poor in simulation works; QPSK+AWGN over real RF works; BPSK+Poor over real RF works). The most consistent reading: the real RF path adds **receiver phase noise / instability** (the RSP1 is a modest SDR, not a lab reference — its carrier wanders several Hz), and during the Poor channel's deep fades the weak faded signal lets that phase noise exceed QPSK's phase-tracking tolerance, collapsing preamble/WID acquisition. BPSK carries twice the phase margin and rides through; non-faded QPSK (AWGN) has a stable strong carrier and rides through; simulated Poor has no receiver phase noise at all. This is a **test-rig receiver limitation**, not a modem deficiency — the modem gated all these modes at mask in Phase B simulation and decodes them clean in the dry-run here.
 
 ## Harness & library work shipped this session
 
