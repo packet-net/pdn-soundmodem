@@ -61,7 +61,7 @@ Full waterfalls are in `data/` (one CSV per mode × channel × layer); the thres
 
 ### 1. AWGN — faithful to codec2
 
-The AWGN waterfalls land where FreeDV's do. **datac3's 90 % (=10 % PER) knee sits at −3.2 dB against FreeDV's published −3 to −3.5 dB — essentially exact** (codec2's own `README_ofdm` example decodes 47/50 packets at SNR3k −3.54). datac1's knee is ~1.2 dB *better* than the 2020-blog +3 dB, consistent with the note that those are 2020-era mode versions and the current datac1 LDPC (8192,4096) is stronger — not a claim that our engine beats codec2. The mode ordering is coding-theory-correct (the narrow, heavily-coded modes sit far below the wideband datac1), the packet and frame layers agree where a frame is one packet, and every waterfall is a clean monotone knee with no floor.
+The AWGN waterfalls land where FreeDV's do. **datac3's 90 % (=10 % PER) knee sits at −3.2 dB against FreeDV's published −3 to −3.5 dB — essentially exact** (codec2's own datac3 AWGN example sits near SNR3k −3.5 at a low PER). datac1's knee is ~1.2 dB *better* than the 2020-blog +3 dB, consistent with those being 2020-era mode versions whose LDPC has since been strengthened — not a claim that our engine beats codec2. The mode ordering is coding-theory-correct (the narrow, heavily-coded modes sit far below the wideband datac1), the packet and frame layers agree where a frame is one packet, and every waterfall is a clean monotone knee with no floor.
 
 | mode | our AWGN pkt 90% (dB) | FreeDV AWGN 10%PER (dB) | delta |
 |---|---|---|---|
