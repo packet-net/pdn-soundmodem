@@ -96,7 +96,12 @@ internal static class Commands
 
                 Radio:
                   --radio <ip|discover>     default discover
-                  --freq <MHz>              waveform slice centre, six decimals (default 18.098000)
+                  --freq <MHz>              where baseband 0 Hz lands on air, six decimals
+                                            (default 18.098000). The slice is DERIVED above it —
+                                            the waveform path transmits one sideband only
+                  --obw <Hz>                declared occupied bandwidth above --freq (default
+                                            6000, hard max 10000 — the radio's filter clamp).
+                                            Tones outside 0..obw cannot reach the air
                   --antenna <port>          default ANT1
                   --rf-power <0-100>        REQUIRED — no default, by design
                   --max-swr <ratio>         abort threshold (default 1.5)
@@ -129,10 +134,11 @@ internal static class Commands
             return a is null ? 2 : 0;
         }
 
-        var options = new FlexIqTransmitterOptions
+        var options = new FlexTransmitterOptions
         {
             Radio = a.Str("radio", "discover"),
             FrequencyMHz = a.Str("freq", "18.098000"),
+            OccupiedBandwidthHz = a.Int("obw", 6000),
             Antenna = a.Str("antenna", "ANT1"),
             RfPower = a.Int("rf-power", -1) is var p && p >= 0
                 ? p
@@ -148,6 +154,17 @@ internal static class Commands
 
         double toneHz = a.Dbl("tone-hz", 2000);
         double? tone2Hz = a.Has("tone2-hz") ? a.Dbl("tone2-hz", 0) : null;
+        foreach (double? t in (double?[])[toneHz, tone2Hz])
+        {
+            // The placed band is 0..obw above --freq, and only that span reaches the air —
+            // a tone outside it would be transmitted by no setting of anything.
+            if (t is double hz && (hz <= 0 || hz >= options.OccupiedBandwidthHz))
+            {
+                throw new ArgumentException(
+                    $"--tone-hz {hz:F0} is outside the declared band (0..{options.OccupiedBandwidthHz} Hz "
+                    + "above --freq); move the tone or widen --obw (max 10000)");
+            }
+        }
         // A single complex tone is constant-envelope, so it can sit near full scale; two
         // tones peak at twice the per-tone amplitude, hence the lower default.
         double amplitude = a.Dbl("amplitude", tone2Hz is null ? 0.7 : 0.35);
@@ -227,10 +244,12 @@ internal static class Commands
         if (captureHost is not null)
         {
             bool ssl = !a.Has("capture-no-ssl");
-            // Tune the receiver to the WAVEFORM CENTRE, not to the tone. That puts the tone at
-            // +tone-hz, its image at −tone-hz, and any LO/carrier leakage at 0 Hz — three
-            // distinct, separately measurable things. Tuning to the tone itself would sit it
-            // on the receiver's own DC, where a DC offset is indistinguishable from signal.
+            // Tune the receiver to the BAND REFERENCE (--freq, where baseband 0 Hz lands), not
+            // to the tone. That puts the tone at +tone-hz, any residual image at −tone-hz, and
+            // LO/carrier leakage at +obw (the DERIVED slice sits at the top of the placed
+            // band) — distinct, separately measurable things. Tuning to the tone itself would
+            // sit it on the receiver's own DC, where a DC offset is indistinguishable from
+            // signal.
             double centreHz = double.Parse(options.FrequencyMHz, CultureInfo.InvariantCulture) * 1e6;
             var capOpt = new UberSdrCaptureOptions
             {
@@ -351,10 +370,11 @@ internal static class Commands
         int fixedPower = a.Int("rf-power", 10);
         double fixedAmplitude = a.Dbl("amplitude", 0.9);
 
-        var options = new FlexIqTransmitterOptions
+        var options = new FlexTransmitterOptions
         {
             Radio = radio,
             FrequencyMHz = freq,
+            OccupiedBandwidthHz = a.Int("obw", 6000),
             Antenna = a.Str("antenna", "ANT1"),
             RfPower = sweepAmplitude ? fixedPower : (int)steps[0],
             MaxSwr = a.Dbl("max-swr", 1.5),
@@ -857,10 +877,11 @@ internal static class Commands
         Log($"WN{wn} seed {seed}: {payloadBits} payload bits → {burstSeconds:F2} s, " +
             $"offset {offset:F0} Hz, peak {ToneGenerator.PeakMagnitude(iq):F2}");
 
-        var options = new FlexIqTransmitterOptions
+        var options = new FlexTransmitterOptions
         {
             Radio = a.Str("radio", "10.45.0.76"),
             FrequencyMHz = a.Str("freq", "18.106500"),
+            OccupiedBandwidthHz = a.Int("obw", 6000),
             Antenna = a.Str("antenna", "ANT1"),
             RfPower = a.Int("rf-power", -1) is var p && p >= 0
                 ? p
@@ -873,13 +894,23 @@ internal static class Commands
             InterBurstSettle = TimeSpan.FromSeconds(a.Dbl("settle", 2)),
         };
 
+        // The modem band tops out at offset + the SSB high edge; a band declared narrower
+        // than that would have its top silently absent from the air.
+        if (offset + 3450 > options.OccupiedBandwidthHz)
+        {
+            throw new ArgumentException(
+                $"--offset-hz {offset:F0} puts the MS110D band top at {offset + 3450:F0} Hz, outside "
+                + $"the declared --obw {options.OccupiedBandwidthHz} Hz");
+        }
+
         await using FlexIqTransmitter tx = await FlexIqTransmitter.OpenAsync(options, Log);
 
         bool ssl = !a.Has("capture-no-ssl");
         double centreHz = double.Parse(options.FrequencyMHz, CultureInfo.InvariantCulture) * 1e6;
-        // The capture is tuned to the waveform centre PLUS the measured reference error, so the
-        // residual carrier offset the demodulator sees is near zero. Without it the combined
-        // TX+RX error at 18 MHz exceeds the ±75 Hz acquisition grid and nothing acquires.
+        // The capture is tuned to the --freq reference (where baseband 0 Hz lands) PLUS the
+        // measured reference error, so the residual carrier offset the demodulator sees is
+        // near zero. Without it the combined TX+RX error at 18 MHz exceeds the ±75 Hz
+        // acquisition grid and nothing acquires.
         double correction = a.Dbl("dial-correction", 0);
         double idSeconds = options.Identify
             ? MorseGenerator.DurationSeconds(MorseGenerator.IdText("M0LTE", options.IdMode), 30)

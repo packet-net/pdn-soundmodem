@@ -29,7 +29,7 @@ public sealed class IdentificationIntervalTests
         var mock = new MockFlexRadio(DaxStreamFormat.FullBandwidth, MockRxMode.Silence, MockSetupMode.Headless);
         mock.Start();
         FlexClient client = await FlexClient.ConnectAsync("127.0.0.1", mock.TcpPort, mock.UdpPort);
-        FlexIqTransmitter tx = await FlexIqTransmitter.AttachAsync(client, new FlexIqTransmitterOptions
+        FlexIqTransmitter tx = await FlexIqTransmitter.AttachAsync(client, new FlexTransmitterOptions
         {
             Radio = "mock",
             FrequencyMHz = "18.098000",
@@ -122,7 +122,7 @@ public sealed class IdentificationIntervalTests
             tx.LastIdentifiedUtc.Should().BeNull();
         }
 
-        var defaults = new FlexIqTransmitterOptions { RfPower = 1 };
+        var defaults = new FlexTransmitterOptions { RfPower = 1 };
         defaults.Identify.Should().BeTrue("the default must be to identify");
         defaults.IdentifyInterval.Should().Be(TimeSpan.FromMinutes(10));
         defaults.Time.Should().BeSameAs(TimeProvider.System,

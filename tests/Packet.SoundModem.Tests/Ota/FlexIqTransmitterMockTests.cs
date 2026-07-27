@@ -22,10 +22,14 @@ public sealed class FlexIqTransmitterMockTests
 {
     private const int Rate = FlexIqTransmitter.SampleRate;
 
-    private static FlexIqTransmitterOptions Options() => new()
+    /// <summary>The declared band width — the samples' 0..obw span is what reaches the air.</summary>
+    private const int Obw = 6000;
+
+    private static FlexTransmitterOptions Options() => new()
     {
         Radio = "mock",
         FrequencyMHz = "18.098000",
+        OccupiedBandwidthHz = Obw,
         Antenna = "ANT1",
         RfPower = 1,
         // Left at the default (true): the mock now serves `meter list`, so the interlock's
@@ -95,20 +99,27 @@ public sealed class FlexIqTransmitterMockTests
                 q[k] = captured[(2 * k) + 1];
             }
 
+            // What the radio is handed is the PLACED baseband: only the negative half of a
+            // waveform's baseband is transmitted, so the library shifts the declared 0..obw
+            // span down by obw. The +2000 Hz tone must therefore arrive at 2000 − obw =
+            // −4000 Hz, which the derived slice (top edge of the band) carries back to
+            // --freq + 2000 on air. A tone still at +2000 here would be in the half that
+            // never transmits.
             IqSpectrum spectrum = IqAnalysis.Welch(i, q, Rate, fftSize: 4096);
-            (double hz, double power) = spectrum.FindPeak(1800, 2200);
+            (double hz, double power) = spectrum.FindPeak(2000 - Obw - 200, 2000 - Obw + 200);
 
-            hz.Should().BeApproximately(2000.0, 2.0);
+            hz.Should().BeApproximately(2000.0 - Obw, 2.0);
             // Amplitude 0.5 → mean-square 0.25 while the tone is on. The captured buffer also
             // holds the lead-in/lead-out silence and the cosine ramps, so the averaged level
             // sits a little below that; the tolerance covers the duty cycle, not sloppiness.
+            // The placement shift is a pure frequency translation, so the level is unchanged.
             IqAnalysis.Db(power).Should().BeInRange(IqAnalysis.Db(0.25) - 3.0, IqAnalysis.Db(0.25) + 0.5);
             (IqAnalysis.Db(spectrum.TonePower(-hz)) - IqAnalysis.Db(power)).Should().BeLessThan(-60);
         }
     }
 
     [Fact]
-    public async Task The_waveform_is_brought_up_in_raw_mode_on_the_requested_frequency()
+    public async Task The_waveform_is_brought_up_in_raw_mode_on_the_placed_band()
     {
         (MockFlexRadio mock, FlexClient client, FlexIqTransmitter tx) = await OpenAsync();
         await using (mock)
@@ -117,13 +128,23 @@ public sealed class FlexIqTransmitterMockTests
         {
             IReadOnlyList<string> log = mock.CommandLog;
 
-            // RAW is the only underlying mode that carries true wideband complex IQ to RF
-            // (docs/flex-integration.md §9.5) — USB and IQ are SSB-limited, so a regression
-            // here would silently halve the transmitted spectrum.
+            // RAW is the one underlying mode band placement uses: every mode is single-sideband
+            // (only the negative half of the baseband transmits), and the alternatives either
+            // mirror the spectrum (IQ/USB/DIGU) or route through a full audio mode whose
+            // processing is uncharacterised (LSB/DIGL).
             log.Should().Contain(c => c.Contains("waveform create") && c.Contains("underlying_mode=RAW"));
-            // The band-persistence fix: `slice create freq=` alone is ignored by a real 6500.
+
+            // The slice is DERIVED, not the requested frequency: with the band's lower edge at
+            // 18.098000 and a 6000 Hz width, the slice belongs at the band's top edge —
+            // 18.104000 — because RF = slice + (negative) baseband. The band-persistence fix
+            // (`slice create freq=` alone is ignored by a real 6500) must land there too.
             log.Should().Contain(c => c.StartsWith("slice t ", StringComparison.Ordinal)
-                && c.Contains("18.098000"));
+                && c.Contains("18.104000"));
+
+            // And the GLOBAL transmit filter — the setting that actually caps occupied
+            // bandwidth, 3 kHz from the factory — must have been opened to the declared width.
+            log.Should().Contain(c => c.Contains("transmit set filter_high=6000"));
+            mock.TransmitFilter.High.Should().Be(Obw);
         }
     }
 

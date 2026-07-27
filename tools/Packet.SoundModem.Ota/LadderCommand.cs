@@ -194,7 +194,7 @@ internal static class LadderCommand
                 + $"--rate {rate} is for --dry-run");
         }
 
-        var options = new FlexIqTransmitterOptions
+        var options = new FlexTransmitterOptions
         {
             Radio = a.Str("radio", "discover"),
             FrequencyMHz = a.Str("freq", "18.106500"),

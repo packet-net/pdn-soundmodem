@@ -3,17 +3,30 @@ using M0LTE.Flex;
 
 namespace Packet.SoundModem.Ota;
 
-/// <summary>Bring-up and safety parameters for <see cref="FlexIqTransmitter"/>.</summary>
-public sealed record FlexIqTransmitterOptions
+/// <summary>
+/// Bring-up and safety parameters shared by both transmit routes —
+/// <see cref="FlexIqTransmitter"/> (waveform IQ, the bench/instrument path) and
+/// <see cref="FlexDaxTransmitter"/> (DAX audio, the deployment path). Everything from
+/// <see cref="RfPower"/> down is policy and applies to either; the frequency/bandwidth
+/// knobs say which route they belong to.
+/// </summary>
+public sealed record FlexTransmitterOptions
 {
     /// <summary>Radio address: an IP/hostname, or <c>discover</c> for the UDP :4992
     /// broadcast, or <c>mock</c> handled by the caller.</summary>
     public string Radio { get; init; } = "discover";
 
-    /// <summary>Waveform slice frequency, MHz in the six-decimal Flex form. This is the
-    /// <b>waveform centre</b>: any LO/carrier leakage lands here, so the plan places it
-    /// deliberately below the occupied band (18.098000 → effective dial 18.100000 with a
-    /// +2000 Hz offset).</summary>
+    /// <summary>
+    /// The RF frequency where the transmitted baseband's 0 Hz lands, MHz in the six-decimal
+    /// Flex form. A component at +f Hz in the samples (a tone, the modem's suppressed
+    /// carrier offset) is transmitted at this frequency + f.
+    /// </summary>
+    /// <remarks>On the DAX route this is simply the slice dial (DIGU: audio lands above it).
+    /// On the waveform-IQ route it is the lower edge of the <see cref="IqBand"/> the library
+    /// places: the slice is <em>derived</em> at this + <see cref="OccupiedBandwidthHz"/>,
+    /// because the waveform path transmits only the negative half of its baseband — see
+    /// <see cref="FlexIqTransmitter"/>. Any LO/carrier leakage lands at the derived slice,
+    /// i.e. <see cref="OccupiedBandwidthHz"/> above here — outside the occupied band.</remarks>
     public string FrequencyMHz { get; init; } = "18.098000";
 
     /// <summary>Antenna port. The dummy load is on ANT1.</summary>
@@ -23,12 +36,28 @@ public sealed record FlexIqTransmitterOptions
     /// power level is always a decision rather than an accident.</summary>
     public required int RfPower { get; init; }
 
-    /// <summary>TX filter edges. The defaults are the ±12 kHz limit of the 24 kHz waveform
-    /// rate.</summary>
-    public int TxFilterLowHz { get; init; } = -12000;
+    /// <summary>
+    /// Waveform-IQ route only: the width of the band declared to the library's
+    /// <see cref="IqBand"/> placement, in Hz above <see cref="FrequencyMHz"/>. Everything the
+    /// session transmits must sit inside 0…this in the samples' own baseband; content outside
+    /// it does not reach the air (the radio's global transmit filter is sized to exactly this
+    /// width, and the placement shift puts only this span in the transmitted half).
+    /// </summary>
+    /// <remarks>The radio clamps its transmit filter at 10 kHz, so this cannot exceed 10000 —
+    /// the waveform path is single-sideband and ≤10 kHz one-sided; ±12 kHz two-sided transmit
+    /// does not exist on this hardware. The default clears the MS110D band at its +2000 Hz
+    /// offset (2150–5450 Hz) plus the test tones, with margin.</remarks>
+    public int OccupiedBandwidthHz { get; init; } = 6000;
 
-    /// <summary>TX filter high cut.</summary>
-    public int TxFilterHighHz { get; init; } = 12000;
+    /// <summary>
+    /// DAX route only: the high cut applied to the radio's global transmit filter, Hz.
+    /// </summary>
+    /// <remarks>The factory value is a 3 kHz SSB passband, which would truncate the top of the
+    /// MS110D occupied band (skirts to ≈3450 Hz on the 1800 Hz sub-carrier) — and whatever a
+    /// previous waveform session left behind would otherwise apply silently, since the filter
+    /// is global and persistent. So the DAX route always states it. The default clears the
+    /// full MS110D band and nothing more.</remarks>
+    public int DaxTransmitFilterHighHz { get; init; } = 3450;
 
     /// <summary>Abort threshold for SWR. 1.5:1 is a cautious sanity check into a 1 kW dummy
     /// load fed by a 100 W radio — it is there to catch a disconnected or wrong load, not to
@@ -119,16 +148,49 @@ public sealed record FlexIqTransmitterOptions
     /// ten minutes of a test run, and a ladder pass paced in real time cannot be rehearsed at
     /// all. House rule (CLAUDE.md): wall-clock via <see cref="TimeProvider"/> only.</remarks>
     public TimeProvider Time { get; init; } = TimeProvider.System;
+
+    /// <summary>
+    /// The power and bandwidth gates, applied identically by both transmit routes before
+    /// anything touches the radio.
+    /// </summary>
+    public void Validate()
+    {
+        if (RfPower is < 0 or > 100)
+        {
+            throw new ArgumentOutOfRangeException(nameof(RfPower), RfPower, "RF power must be 0–100");
+        }
+
+        if (RfPower > RfPowerCeiling)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(RfPower), RfPower,
+                $"RF power {RfPower} exceeds the {RfPowerCeiling} ceiling. The limit is the " +
+                "RECEIVER, not the transmitter: the loop is metres from the dummy load and its ADC clips " +
+                "near 100 W, at which point the front end makes its own intermodulation and compresses the " +
+                "very levels a sweep measures. Raise RfPowerCeiling once RX gain has been reduced to suit, " +
+                "checking captured peak dBFS.");
+        }
+
+        if (OccupiedBandwidthHz is <= 0 or > 10000)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(OccupiedBandwidthHz), OccupiedBandwidthHz,
+                "the radio's transmit filter clamps at 10 kHz, so the declared band must be 1–10000 Hz");
+        }
+    }
 }
 
-/// <summary>What one keyed transmission did.</summary>
+/// <summary>What one keyed transmission did, on either transmit route.</summary>
 /// <param name="KeyUtc">When <c>xmit 1</c> was issued.</param>
 /// <param name="UnkeyUtc">When <c>xmit 0</c> was issued.</param>
-/// <param name="Samples">Complex samples handed to the radio.</param>
-/// <param name="PacketsReflected">Waveform TX buffers reflected during the burst.</param>
+/// <param name="Samples">Samples handed to the radio (complex on the waveform route, mono
+/// audio on the DAX route).</param>
+/// <param name="PacketsReflected">Waveform TX buffers reflected during the burst. The DAX
+/// route is push rather than reflection-driven, so there it counts DAX packets sent.</param>
 /// <param name="SamplesStarved">Complex samples the radio pulled that the ring could not
 /// supply. <b>Must be zero</b> — a non-zero count is a phase discontinuity on the air and
-/// invalidates the spectral measurement.</param>
+/// invalidates the spectral measurement. Always zero on the DAX route, where nothing
+/// pulls.</param>
 /// <param name="Drained">Whether the ring drained before the unkey.</param>
 /// <param name="Meters">Every meter sample seen while keyed.</param>
 /// <param name="Aborted">Set when the safety interlock cut the transmission short.</param>
@@ -158,19 +220,31 @@ public sealed record TransmitReport(
 }
 
 /// <summary>
-/// Wideband complex IQ transmit through a FlexRadio 6000-series waveform, with transmitter
-/// health metering and a safety interlock.
+/// Complex IQ transmit through a FlexRadio 6000-series waveform, with transmitter
+/// health metering and a safety interlock — the bench/instrument route.
 /// </summary>
 /// <remarks>
-/// <para>The transmit half of the MS110D OTA chain (ota-execution-plan §T2/§T4). Uses
+/// <para>The transmit half of the MS110D OTA chain (ota-execution-plan §T2/§T4), on
 /// <c>M0LTE.Flex</c>'s <see cref="FlexWaveform"/> headless bring-up with
-/// <c>underlying_mode=RAW</c>, which is the only path on a Flex that carries true wideband
-/// complex IQ to RF (docs/flex-integration.md §9.5); DAX audio TX is clamped to the mode's
-/// ~3 kHz SSB filter and DAX-IQ is receive-only.</para>
-/// <para><b>Everything here is new code under test.</b> The waveform IQ path has had one
-/// hardware session (a tone and a comb) and no consumer until now, so the counters
-/// (<c>PacketsReflected</c>, <c>SamplesStarved</c>) are reported on every burst and a starve
-/// is treated as a failed measurement, not a warning.</para>
+/// <c>underlying_mode=RAW</c>.</para>
+/// <para><b>The waveform path is single-sideband</b> (measured on M0LTE's 6500, fw 4.1.5,
+/// 2026-07-26 — this retracts the earlier "true wideband both-sidebands" claim, which came
+/// from a symmetric comb that could not distinguish the cases): only the <b>negative</b>
+/// half of the baseband ever reaches the air, in every <c>underlying_mode</c>, and the
+/// occupied width is capped by the radio's <b>global</b> transmit filter — 3 kHz factory,
+/// 10 kHz hard clamp, <c>filter_low</c> cannot go negative. Usable width is therefore
+/// ≤10 kHz one-sided; ±12 kHz two-sided transmit does not exist on this hardware. Band
+/// placement is owned by the library: this class declares an
+/// <see cref="IqBand"/> (<see cref="FlexTransmitterOptions.FrequencyMHz"/> +
+/// <see cref="FlexTransmitterOptions.OccupiedBandwidthHz"/>,
+/// <see cref="IqBandReference.LowerEdge"/> — our generators emit one-sided analytic
+/// baseband), and the library derives the slice, translates the samples below DC, opens the
+/// filter, and throws rather than transmitting truncated.</para>
+/// <para>This route bypasses the radio's SSB modulator, ALC and TX DSP entirely, which is
+/// why it is the reference/instrument leg (§E1–§E2). The modem's own deployment path is DAX
+/// audio — see <see cref="FlexDaxTransmitter"/> and the §E3 A/B.</para>
+/// <para>The counters (<c>PacketsReflected</c>, <c>SamplesStarved</c>) are reported on every
+/// burst and a starve is treated as a failed measurement, not a warning.</para>
 /// </remarks>
 public sealed class FlexIqTransmitter : IAsyncDisposable
 {
@@ -187,7 +261,7 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
     /// signal we have that the reflection loop kept up.</remarks>
     public const int PacketSamples = 128;
 
-    private readonly FlexIqTransmitterOptions _options;
+    private readonly FlexTransmitterOptions _options;
     private readonly FlexClient _client;
     private readonly FlexWaveform _waveform;
     private readonly FlexWaveformIqOutput _iq;
@@ -203,7 +277,7 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
     private DateTime UtcNow => _options.Time.GetUtcNow().UtcDateTime;
 
     private FlexIqTransmitter(
-        FlexIqTransmitterOptions options, FlexClient client, FlexWaveform waveform,
+        FlexTransmitterOptions options, FlexClient client, FlexWaveform waveform,
         FlexWaveformIqOutput iq, FlexPtt ptt, FlexMeters meters, Action<string> log, bool ownsClient)
     {
         _options = options;
@@ -311,7 +385,7 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
 
     /// <summary>
     /// Sends a Morse station identification: callsign then mode, at
-    /// <see cref="FlexIqTransmitterOptions.IdWpm"/>.
+    /// <see cref="FlexTransmitterOptions.IdWpm"/>.
     /// </summary>
     /// <remarks>A data waveform carries nothing a listener can read, so on a real antenna the
     /// station has to say who it is in a form decodable without our software.</remarks>
@@ -347,7 +421,7 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
 
     /// <summary>
     /// Identifies if the station has not done so yet, or if
-    /// <see cref="FlexIqTransmitterOptions.IdentifyInterval"/> has elapsed since it last did.
+    /// <see cref="FlexTransmitterOptions.IdentifyInterval"/> has elapsed since it last did.
     /// </summary>
     /// <remarks>Call this before every transmission. It is a no-op almost always, and the one
     /// time it is not is the time it would otherwise have been forgotten.</remarks>
@@ -393,14 +467,11 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
     /// <summary>Connects, registers the waveform, owns a slice, subscribes to meters and
     /// prepares the IQ sink and PTT.</summary>
     public static async Task<FlexIqTransmitter> OpenAsync(
-        FlexIqTransmitterOptions options, Action<string>? log = null, CancellationToken cancellation = default)
+        FlexTransmitterOptions options, Action<string>? log = null, CancellationToken cancellation = default)
     {
         ArgumentNullException.ThrowIfNull(options);
         Action<string> write = log ?? (_ => { });
-        if (options.RfPower is < 0 or > 100)
-        {
-            throw new ArgumentOutOfRangeException(nameof(options), options.RfPower, "RF power must be 0–100");
-        }
+        options.Validate();
 
         write($"connecting to radio '{options.Radio}'…");
         FlexClient client = string.Equals(options.Radio, "discover", StringComparison.OrdinalIgnoreCase)
@@ -423,45 +494,53 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
     /// mock tests use, and the way to share one session with other consumers.
     /// </summary>
     public static async Task<FlexIqTransmitter> AttachAsync(
-        FlexClient client, FlexIqTransmitterOptions options, Action<string>? log = null,
+        FlexClient client, FlexTransmitterOptions options, Action<string>? log = null,
         bool ownsClient = false, CancellationToken cancellation = default)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(options);
         Action<string> write = log ?? (_ => { });
-        if (options.RfPower is < 0 or > 100)
-        {
-            throw new ArgumentOutOfRangeException(nameof(options), options.RfPower, "RF power must be 0–100");
-        }
-
-        if (options.RfPower > options.RfPowerCeiling)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(options), options.RfPower,
-                $"RF power {options.RfPower} exceeds the {options.RfPowerCeiling} ceiling. The limit is the " +
-                "RECEIVER, not the transmitter: the loop is metres from the dummy load and its ADC clips " +
-                "near 100 W, at which point the front end makes its own intermodulation and compresses the " +
-                "very levels a sweep measures. Raise RfPowerCeiling once RX gain has been reduced to suit, " +
-                "checking captured peak dBFS.");
-        }
+        options.Validate();
 
         {
             write($"connected: version {client.Version}, handle {client.Handle}");
+
+            // Band placement is the library's job, not ours: our generators emit one-sided
+            // analytic baseband (0…+OccupiedBandwidthHz), and the radio transmits only the
+            // NEGATIVE half of a waveform's baseband — so M0LTE.Flex derives the slice at the
+            // band's top edge, translates the samples below DC (a true frequency shift, never
+            // a mirror), sizes the global transmit filter to the declared width, and throws
+            // rather than putting a silently truncated signal on air. The hand-rolled
+            // slice-centre-plus-offset scheme this replaces put the signal in the half that
+            // never transmits under the corrected model.
             FlexWaveform waveform = await FlexWaveform.SetUpHeadlessAsync(
                 client,
                 new FlexWaveformOptions
                 {
                     UnderlyingMode = "RAW",
-                    Frequency = options.FrequencyMHz,
+                    Band = new IqBand(
+                        double.Parse(options.FrequencyMHz, CultureInfo.InvariantCulture),
+                        options.OccupiedBandwidthHz,
+                        IqBandReference.LowerEdge),
                     Antenna = options.Antenna,
-                    TxFilterLowHz = options.TxFilterLowHz,
-                    TxFilterHighHz = options.TxFilterHighHz,
                     RfPower = options.RfPower,
                 },
                 cancellation).ConfigureAwait(false);
 
-            write($"waveform '{waveform.WaveformName}' on slice {waveform.SliceIndex}, " +
-                  $"{options.FrequencyMHz} MHz {options.Antenna} RAW, rfpower {options.RfPower}");
+            (double lowMhz, double highMhz) = waveform.OccupiedBand ?? (0, 0);
+            write($"waveform '{waveform.WaveformName}' on slice {waveform.SliceIndex}: band " +
+                  $"{lowMhz:F6}–{highMhz:F6} MHz, slice derived at {waveform.SliceFrequencyMhz:F6} MHz, " +
+                  $"{options.Antenna} RAW, rfpower {options.RfPower}");
+            if (waveform.TransmitFilter is (int filterLow, int filterHigh))
+            {
+                write($"transmit filter {filterLow}–{filterHigh} Hz (global; caps the occupied width)");
+            }
+
+            if (waveform.TransmitFilterWarning is not null)
+            {
+                write($"WARNING filter: {waveform.TransmitFilterWarning}");
+            }
+
             if (waveform.TuneWarning is not null)
             {
                 write($"WARNING tune: {waveform.TuneWarning}");
@@ -595,13 +674,8 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
                 nameof(interleavedIq));
         }
 
-        // SWR is only meaningful on a constant envelope. Forward and reflected power are
-        // separate meter samples taken at slightly different instants, so if the envelope is
-        // moving between them their ratio describes two different moments and is nonsense. A
-        // two-tone burst modulates at the difference frequency and reported 1.93 where the
-        // constant-envelope pre-flight tone moments earlier read 1.30 into the same load; the
-        // MS110D waveform, with real PAPR, would be worse. So the pre-flight carrier is the
-        // SWR check, and modulated bursts simply do not attempt one.
+        // SWR is only meaningful on a constant envelope — the trust rules live on
+        // SwrInterlock. On this route the envelope is directly measurable from the IQ.
         bool constantEnvelope = IsConstantEnvelope(interleavedIq);
         if (!constantEnvelope)
         {
@@ -610,73 +684,13 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
                  "the SWR measurement.");
         }
 
-        var collected = new List<FlexMeterReading>();
-        double? peakSwr = null;
-        double? peakFwd = null;
-        string? abortReason = null;
-        var gate = new Lock();
-
-        void OnMeter(FlexMeterReading r)
-        {
-            lock (gate)
-            {
-                collected.Add(r);
-                if (r.Descriptor.Name.Equals("FWDPWR", StringComparison.OrdinalIgnoreCase)
-                    && (peakFwd is null || r.Value > peakFwd))
-                {
-                    peakFwd = r.Value;
-                }
-            }
-
-            // Derived SWR (forward/reflected, both dBm) is the trustworthy one — see
-            // FlexMeters.SwrFromPowers. Null simply means "not transmitting hard enough to
-            // measure", which is not a fault.
-            if (!constantEnvelope)
-            {
-                return;
-            }
-
-            double? swr = _meters.SwrFromPowers();
-            if (swr is null)
-            {
-                return;
-            }
-
-            // Only believe SWR at full output. Forward and reflected power are separate meter
-            // samples taken at slightly different instants, so during the key-up and key-down
-            // ramps they describe different moments of a changing envelope and their ratio is
-            // meaningless — it reads high. Taking a peak over the whole burst then reliably
-            // catches that artefact rather than the antenna: a load measuring a steady 1.31
-            // reported 1.56 purely because a ramp was included. Requiring the sample to sit
-            // within 3 dB of the burst's own peak forward power confines the measurement to
-            // the steady state.
-            if (!_meters.TryGet("FWDPWR", out FlexMeterReading fwdNow)
-                || peakFwd is null || fwdNow.Value < peakFwd - 3.0)
-            {
-                return;
-            }
-
-            lock (gate)
-            {
-                if (peakSwr is null || swr > peakSwr)
-                {
-                    peakSwr = swr;
-                }
-
-                if (swr > _options.MaxSwr && abortReason is null)
-                {
-                    abortReason = $"SWR {swr:F2} exceeded the {_options.MaxSwr:F2} limit";
-                }
-            }
-        }
-
         int faultsBefore;
         lock (_faultGate)
         {
             faultsBefore = _faults.Count;
         }
 
-        _meters.Updated += OnMeter;
+        using var interlock = new SwrInterlock(_meters, _options.MaxSwr, constantEnvelope);
         long reflectedBefore = _iq.PacketsReflected;
         long starvedBefore = _iq.SamplesStarved;
         long reflected = 0;
@@ -705,7 +719,7 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
             const int chunk = SampleRate / 20 * 2; // 50 ms of interleaved I,Q
             for (int offset = prefill; offset < payload.Length;)
             {
-                if (abortReason is not null || cancellation.IsCancellationRequested)
+                if (interlock.AbortReason is not null || cancellation.IsCancellationRequested)
                 {
                     break;
                 }
@@ -715,15 +729,24 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
                 offset += take;
             }
 
-            drained = abortReason is null
+            // Read the starve counter HERE, the moment the last sample is written — not after
+            // the drain. A starve that matters is the producer falling behind the radio while
+            // there are still samples to send; once the whole burst is in the ring it cannot
+            // underrun on real data. The radio keeps pulling through the drain-and-unkey window
+            // and the sink zero-pads those empty pulls — benign tail silence, not a phase
+            // discontinuity — and M0LTE.Flex 0.8.0 counts them where 0.5.0 did not (a library
+            // behaviour change, worth an upstream note). Snapshotting before the drain keeps
+            // SamplesStarved a sharp oracle for the real failure through the version bump.
+            starved = _iq.SamplesStarved - starvedBefore;
+
+            drained = interlock.AbortReason is null
                 && _iq.Drain(TimeSpan.FromSeconds(seconds + 5));
             reflected = _iq.PacketsReflected - reflectedBefore;
-            starved = _iq.SamplesStarved - starvedBefore;
         }
         finally
         {
             _ptt.Unkey();
-            _meters.Updated -= OnMeter;
+            interlock.Dispose(); // stop collecting at unkey (idempotent with the using)
         }
 
         DateTime unkeyUtc = UtcNow;
@@ -734,6 +757,7 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
             faults = [.. _faults.Skip(faultsBefore)];
         }
 
+        string? abortReason = interlock.AbortReason;
         if (abortReason is not null)
         {
             _log($"ABORTED: {abortReason}");
@@ -744,12 +768,12 @@ public sealed class FlexIqTransmitter : IAsyncDisposable
             reflected,
             starved,
             drained,
-            collected,
+            interlock.Collected,
             abortReason is not null,
             abortReason)
         {
-            PeakSwr = peakSwr,
-            PeakForwardDbm = peakFwd,
+            PeakSwr = interlock.PeakSwr,
+            PeakForwardDbm = interlock.PeakForwardDbm,
             Faults = faults,
         };
 

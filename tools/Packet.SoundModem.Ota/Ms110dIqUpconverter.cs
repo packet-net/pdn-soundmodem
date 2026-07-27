@@ -13,11 +13,14 @@ public sealed class Ms110dIqUpconverterOptions
     public int OutputRate { get; init; } = 24000;
 
     /// <summary>
-    /// Where the suppressed carrier lands relative to the waveform centre, in Hz.
+    /// Where the suppressed carrier lands relative to the transmitter's band reference
+    /// (<c>FlexTransmitterOptions.FrequencyMHz</c>, where baseband 0 Hz lands on air), in Hz.
     /// </summary>
-    /// <remarks>Non-zero by default so the occupied band sits clear of the waveform centre,
-    /// where a real 6500 puts its LO/carrier leakage — measured at −27 dBc, which would
-    /// otherwise sit inside the modem's passband.</remarks>
+    /// <remarks>Non-zero by default so the occupied band sits clear of baseband 0 Hz, where
+    /// any DC term in our own IQ ends up on air. The radio's LO/carrier leakage (measured at
+    /// −27 dBc on a real 6500) lands at the <em>derived slice</em> — the top edge of the
+    /// placed band, above the modem's passband — so both artefacts stay outside the occupied
+    /// band.</remarks>
     public double OffsetHz { get; init; } = 2000;
 
     /// <summary>SSB passband edges above the suppressed carrier. The default clears the full
