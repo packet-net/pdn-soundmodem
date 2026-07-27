@@ -71,6 +71,8 @@ internal static class LadderCommand
                   --radio <ip|discover> default discover
                   --freq <MHz>          waveform slice centre (default 18.106500)
                   --offset-hz <Hz>      carrier offset from the centre (default 2000; iq route)
+                  --audio-amplitude <a> dax-route audio drive into DIGU, 0..1 (default 0.9). Lower
+                                        backs off the ALC; a sweep isolates ALC cost from the rest
                   --gap <s>             quiet between transmissions (default 3)
                   --antenna <port>      transmit port. Default ANT1, but selecting the RSP1
                                         capture (below) defaults it to ANT2 — the RSP1 rig's
@@ -127,6 +129,12 @@ internal static class LadderCommand
         {
             OutputRate = rate,
             OffsetHz = offsetHz,
+            // The DAX route's audio drive into the radio's DIGU modulator. Lowering it backs the
+            // audio off the ALC threshold; because the ladder is self-calibrating (signal and
+            // injected noise scale together) and the RSP1's thermal floor is far below the signal,
+            // the measured SNR is drive-independent EXCEPT for drive-dependent ALC/compression
+            // distortion — so a sweep of this isolates ALC cost from linear DIGU/rendering cost.
+            AudioAmplitude = a.Dbl("audio-amplitude", 0.9),
             PreambleSuperframes = a.Int("preamble", 3),
             TxSsbLowHz = a.Dbl("tx-ssb-low", 150),
             TxSsbHighHz = a.Dbl("tx-ssb-high", 3450),
@@ -250,14 +258,15 @@ internal static class LadderCommand
         // wins. Keying ANT1 while capturing on ANT2 would record nothing and waste the session.
         bool captureRsp = string.Equals(a.Str("capture", ""), "rsp", StringComparison.OrdinalIgnoreCase);
 
-        // The RSP1 rig has a STRICT 5 W transmit ceiling (off-air, into the attenuator chain).
-        // Enforce it two ways when that rig is selected: cap the commanded rfpower LEVEL low so we
-        // never even momentarily command more before the first meter arrives, AND set the
-        // measured-watts abort — the real guard, since rfpower is a 0–100 level, not watts, and the
-        // interlock cuts the transmission the instant measured FWDPWR exceeds the limit. --max-watts
-        // overrides the measured ceiling. The dummy-load path keeps the receiver-overload ceiling
-        // and no measured-power limit.
-        double? maxWatts = captureRsp || a.Has("max-watts") ? a.Dbl("max-watts", 5.0) : null;
+        // RSP1 rig transmit-power limits. The strict 5 W ceiling was relaxed (2026-07-27) — the
+        // radio now has its own 15 % (~15 W) hardware cap, and the attenuator chain (50 W/15 dB then
+        // 5 W/10 dB pads: the 5 W pad sees TX−15 dB ≈ 0.5 W at 15 W) plus the RSP1 (−82 dBm at 15 W)
+        // are safe well beyond that — so 15 W is the working ceiling. Still enforced two ways: the
+        // commanded rfpower LEVEL is capped, AND the measured-watts abort cuts the burst the instant
+        // FWDPWR exceeds --max-watts (the real guard, since rfpower is a 0–100 level, not watts).
+        // For higher-rate modes prefer more OUTPUT power here with the audio drive (--audio-amplitude)
+        // kept below the ALC knee, rather than more drive — high-PAPR modes compress sooner.
+        double? maxWatts = captureRsp || a.Has("max-watts") ? a.Dbl("max-watts", 15.0) : null;
 
         var options = new FlexTransmitterOptions
         {
@@ -265,7 +274,7 @@ internal static class LadderCommand
             FrequencyMHz = a.Str("freq", "18.106500"),
             Antenna = a.Str("antenna", captureRsp ? "ANT2" : "ANT1"),
             RfPower = a.Int("rf-power", 0),
-            RfPowerCeiling = captureRsp ? 5 : 30,
+            RfPowerCeiling = captureRsp ? 20 : 30,
             MaxForwardWatts = maxWatts,
             IdMode = "MS110D",
         };
