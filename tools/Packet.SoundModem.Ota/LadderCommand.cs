@@ -36,6 +36,18 @@ internal static class LadderCommand
     public static async Task<int> RunAsync(string[] argv)
     {
         var a = Args.Parse(argv);
+
+        // The ladder above is MS110D-coupled end to end (LadderPass → Ms110dModulator, BurstScorer →
+        // Ms110dDemodulator). Selecting a FreeDV datac OFDM mode hands off to the OFDM sibling, which
+        // renders and scores through the datac engine instead — same `ladder --dry-run`/live shape,
+        // a different waveform. Everything below this line stays exactly the MS110D path it was. The
+        // routing predicate is the same one that maps the mode to the engine, so a name that routes
+        // here can never be one the mapper then rejects.
+        if (a is not null && DatacEngine.IsDatacMode(a.Str("mode", null)))
+        {
+            return await OfdmLadderCommand.RunAsync(a).ConfigureAwait(false);
+        }
+
         if (a is null || a.Has("help"))
         {
             Console.Error.WriteLine("""
@@ -431,7 +443,7 @@ internal static class LadderCommand
     /// and no NCO, because the radio's DIGU modulator does the sideband placement the up-converter
     /// does in software on the IQ route.
     /// </summary>
-    private static float[] Resample(float[] audio, int fromRate, int toRate)
+    internal static float[] Resample(float[] audio, int fromRate, int toRate)
     {
         // 401 taps, matching the up-converter's resampler so the two routes' band-limiting agrees.
         const int taps = 401;
@@ -454,7 +466,7 @@ internal static class LadderCommand
 
     /// <summary>Scales a buffer in place and returns it — the pass audio gain applied to the
     /// resampled DAX audio at transmit time.</summary>
-    private static float[] ScaleInPlace(float[] samples, float gain)
+    internal static float[] ScaleInPlace(float[] samples, float gain)
     {
         for (int k = 0; k < samples.Length; k++)
         {
@@ -466,7 +478,7 @@ internal static class LadderCommand
 
     /// <summary>Expands a leading <c>~/</c> to the user's home directory — the ssh key path is
     /// given the way an operator types it.</summary>
-    private static string ExpandUser(string path) =>
+    internal static string ExpandUser(string path) =>
         path.StartsWith("~/", StringComparison.Ordinal)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[2..])
             : path;
