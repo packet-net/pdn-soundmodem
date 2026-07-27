@@ -1,0 +1,32 @@
+xUnit.net v3 In-Process Runner v3.2.2+728c1dce01 (64-bit .NET 10.0.7)
+[37m  Discovering: Packet.SoundModem.Tests
+[0m[37m  Discovered:  Packet.SoundModem.Tests
+[0m[37m  Starting:    Packet.SoundModem.Tests
+[0mscale=0.500 ridge=2.00: reason=SignalLost decoded=3072/24544 codedErrs=21472 initRef=0.3090
+scale=0.500 ridge=1.00: reason=SignalLost decoded=3072/24544 codedErrs=21472 initRef=0.4080
+scale=0.500 ridge=0.50: reason=SignalLost decoded=3072/24544 codedErrs=21472 initRef=0.4890
+scale=0.500 ridge=0.25: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.5450
+scale=0.500 ridge=0.10: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.5870
+scale=0.500 ridge=0.03: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.6120
+scale=0.250 ridge=2.00: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.3090
+scale=0.250 ridge=1.00: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.4090
+scale=0.250 ridge=0.50: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.4900
+scale=0.250 ridge=0.25: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.5450
+scale=0.250 ridge=0.10: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.5870
+scale=0.250 ridge=0.03: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.6120
+scale=0.100 ridge=2.00: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.3090
+scale=0.100 ridge=1.00: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.4090
+scale=0.100 ridge=0.50: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.4900
+scale=0.100 ridge=0.25: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.5450
+scale=0.100 ridge=0.10: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.5870
+scale=0.100 ridge=0.03: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.6120
+scale=0.050 ridge=2.00: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.3090
+scale=0.050 ridge=1.00: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.4090
+scale=0.050 ridge=0.50: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.4900
+scale=0.050 ridge=0.25: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.5450
+scale=0.050 ridge=0.10: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.5870
+scale=0.050 ridge=0.03: reason=SignalLost decoded=0/24544 codedErrs=24544 initRef=0.6120
+[37m  Finished:    Packet.SoundModem.Tests (ID = '1646a2ca5ef1520aa2393459155dd77ad050fc1711a00f6b94dbf1aefecb2b2c')
+[0m[37m=== TEST EXECUTION SUMMARY ===
+[0m[37m   Packet.SoundModem.Tests  Total: 1, Errors: 0, Failed: 0, Skipped: 0, Not Run: 0, Time: 42.299s
+[0m[0m

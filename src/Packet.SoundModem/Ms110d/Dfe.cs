@@ -319,8 +319,17 @@ public sealed class Dfe
     /// everything else). <paramref name="ffNoisePower"/> (channel-truth genie only) adds
     /// σ²·Σweight to the feed-forward Gram diagonal — the term noisy rows contribute
     /// implicitly — so a solve over noise-free rows still yields the MMSE equalizer rather
-    /// than the zero-forcing one (feedback regressors are decisions, noise-free either way).</summary>
-    public bool SolveTraining(float regularization = 1e-3f, bool anchorToCurrentTaps = false, float ffNoisePower = 0f)
+    /// than the zero-forcing one (feedback regressors are decisions, noise-free either way).
+    /// <paramref name="ridgeFromFfBlock"/> (issue #101) scales the ridge by the FEED-FORWARD
+    /// block diagonal only, not the whole trace: the FF columns carry the received signal
+    /// (their energy tracks the absolute receive level) while the feedback columns are the
+    /// KNOWN past symbols (fixed unit magnitude, level-independent), so a whole-trace ridge
+    /// is dominated by the feedback block and over-shrinks the FF taps at a low receive level.
+    /// FF-block scaling makes the ridge — and therefore the solved filter — scale-invariant;
+    /// used only by the dead-init re-solve.</summary>
+    public bool SolveTraining(
+        float regularization = 1e-3f, bool anchorToCurrentTaps = false, float ffNoisePower = 0f,
+        bool ridgeFromFfBlock = false)
     {
         if (_gram is null || _rhs is null ||
             (!anchorToCurrentTaps && _trainingRows < _ff.Length + _fb.Length) ||
@@ -341,13 +350,14 @@ public sealed class Dfe
             }
         }
 
+        int traceCount = ridgeFromFfBlock ? _ff.Length : n;
         double trace = 0;
-        for (int i = 0; i < n; i++)
+        for (int i = 0; i < traceCount; i++)
         {
             trace += _gram[i, i].Re;
         }
 
-        float lambda = (float)(regularization * trace / n) + 1e-9f;
+        float lambda = (float)(regularization * trace / traceCount) + 1e-9f;
         for (int i = 0; i < n; i++)
         {
             _gram[i, i] += new Cf(lambda, 0);
@@ -1034,7 +1044,8 @@ public sealed class Dfe
     /// initialization — design §2.5: "RLS subsumes the MMSE-init"). Falls back to scaled
     /// identity if the Gram is degenerate. <paramref name="ffNoisePower"/> as in
     /// <see cref="SolveTraining"/> (channel-truth genie only).</summary>
-    public void SeedRlsFromTraining(float regularization, float pFallback = 1.0f, float ffNoisePower = 0f)
+    public void SeedRlsFromTraining(
+        float regularization, float pFallback = 1.0f, float ffNoisePower = 0f, bool ridgeFromFfBlock = false)
     {
         if (_gram is null || _p is null)
         {
@@ -1053,13 +1064,16 @@ public sealed class Dfe
             }
         }
 
+        // #101: FF-block ridge scaling (see SolveTraining) keeps the RLS P seed consistent
+        // with the dead-init re-solve's scale-invariant ridge.
+        int traceCount = ridgeFromFfBlock ? _ff.Length : n;
         double trace = 0;
-        for (int i = 0; i < n; i++)
+        for (int i = 0; i < traceCount; i++)
         {
             trace += gram[i, i].Re;
         }
 
-        float ridge = (float)(regularization * trace / n) + 1e-9f;
+        float ridge = (float)(regularization * trace / traceCount) + 1e-9f;
         for (int i = 0; i < n; i++)
         {
             gram[i, i] += new Cf(ridge, 0);

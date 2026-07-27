@@ -121,6 +121,8 @@ public sealed class Ms110dDemodulator
     private int _ffLead;
     private float _initRidge;      // initial LS ridge (MMSE-scaled per mini-probe class)
     private float _trackRidge;     // per-probe re-solve ridge
+    private float _deadInitFloor;  // #101: below this init gain the solve is dead — re-solve softer (0 = guard off)
+    private float _deadInitRidge;  // #101: soft ridge for the dead-init re-solve
     private Cf[] _known = [];
     private Cf[] _decisions = [];  // ring of past FbTaps decisions, newest at [0]
     private readonly Ms110dScrambler _scrambler = new();
@@ -388,6 +390,13 @@ public sealed class Ms110dDemodulator
     /// decision-directed tracking collapsed and was restarted from the probe alone.</summary>
     public int CollapseResolves { get; private set; }
 
+    /// <summary>Dead-init re-solves (issue #101; since construction/Reset). Zero on healthy
+    /// runs — a nonzero count says the K=48 init LS solve came out dead (near-zero gain,
+    /// the heavy init ridge over-shrinking the feed-forward taps at a low receive level or
+    /// a faded init window) and was re-solved with a soft ridge so tracking never starts
+    /// from a dead filter.</summary>
+    public int DeadInitResolves { get; private set; }
+
     /// <summary>Fires for every decoded input-data block.</summary>
     public event Action<Ms110dRxBlock>? BlockDecoded;
 
@@ -438,6 +447,7 @@ public sealed class Ms110dDemodulator
         TurboAborted = 0;
         TurboSkipped = 0;
         CollapseResolves = 0;
+        DeadInitResolves = 0;
         EndBurst();
     }
 
@@ -1220,7 +1230,11 @@ public sealed class Ms110dDemodulator
         // than the locked one stays equalizable — on the fading Poor channel the lock can
         // land on the later path while the earlier one is faded, and its return puts a
         // −2 ms (−9.6 T/2) pre-cursor into the window.
-        (int ff, int fb, int lead, float initRidge, float trackRidge) = _mode!.K switch
+        // deadInitFloor/deadInitRidge (issue #101): only K=48 carries the heavy init ridge
+        // that can dead-init, so only K=48 arms the guard; K=32/24 pass floor = 0 (guard off,
+        // provably byte-identical). See the guard comment at the SnapshotTraining call.
+        (int ff, int fb, int lead, float initRidge, float trackRidge, float deadInitFloor, float deadInitRidge)
+            = _mode!.K switch
         {
             // K=48 (WN1/2, rate 1/8 & 1/4, run at the −3/0 dB and 5 dB static gates) has the
             // widest DFE — 32 FF + 22 FB = 54 complex taps — yet the FEWEST data symbols per
@@ -1242,14 +1256,16 @@ public sealed class Ms110dDemodulator
             // ~8-frame memory ≈ 300 ms, inside the 1 Hz coherence time; U=256's 120 ms
             // frames forbid this (measured: WN13 at 4× its ridge → 4.9E-2), which is why
             // the value is per-K, not global.
-            48 => (32, 22, 16, 1.0f, 8.0f),
-            24 => (16, 6, 8, 1e-3f, 0.15f),
-            _ => (24, 12, 13, 1e-3f, 0.15f),
+            48 => (32, 22, 16, 1.0f, 8.0f, 0.030f, 1.0f),
+            24 => (16, 6, 8, 1e-3f, 0.15f, 0f, 0f),
+            _ => (24, 12, 13, 1e-3f, 0.15f, 0f, 0f),
         };
         _dfe = new Dfe(ff, fb);
         _ffLead = lead;
         _initRidge = initRidge;
         _trackRidge = _options.TrackRidge ?? trackRidge;
+        _deadInitFloor = _options.DeadInitFloor ?? deadInitFloor;
+        _deadInitRidge = _options.DeadInitRidge ?? deadInitRidge;
 
         // Known symbols for chips [dataStart−576, dataStart+K): the final super-frame
         // (count = 0) plus the preamble-ending probe (design §2.4).
@@ -1283,45 +1299,44 @@ public sealed class Ms110dDemodulator
             _dfe.AddTrainingRow(window, past, _known[n]);
         }
 
-        // RLS forgetting policy — a DOCUMENTED DEVIATION from design §2.5 (issue #64):
-        // λ = 1 − ln10/U ties the exponential window to the frame (memory U/ln10 ≈ 0.43·U
-        // symbols, i.e. a 10× down-weight per data span), so the per-probe anchored batch
-        // solve, not the RLS recursion, owns cross-frame memory. §2.5 specified a fixed
-        // λ = 0.995 (≈200-symbol/83 ms memory, set by the 1 Hz coherence time); for U=48
-        // the frame-tied window is only ~21 symbols ≈ 8.7 ms — far shorter than the physics
-        // needs, noisier than it has to be. Which policy wins is a measurement question:
-        // the Phase B RLS-vs-NLMS A/B (phase-b-plan §B2.4) settles it; until then this is
-        // the measured-baseline value, kept so evidence stays comparable.
-        _dfe.BeginRls(
-            _options.RlsForgettingFactor ?? (float)(1.0 - Math.Log(10.0) / _mode.U), pInit: 1.0f);
-        _dfe.SeedRlsFromTraining(_initRidge, pFallback: 1.0f, ffNoisePower: GenieNoisePower());
-        _dfe.SolveTraining(regularization: _initRidge, ffNoisePower: GenieNoisePower());
-        _dfe.BeginTraining();
+        // #101 dead-init guard: snapshot the clean init accumulator so a dead solve can be
+        // re-solved with a soft ridge WITHOUT re-accumulating the rows (SolveTraining consumes
+        // the Gram in place). Cheap (one n×n copy) and only at burst init.
+        _dfe.SnapshotTraining();
 
-        // Seed the decision history with the probe tail and measure the training MSE.
+        // Solve the batch LS and measure the init probe gain. The local SeedSolveMeasure owns
+        // the RLS seed, the anchored batch solve, and the K-symbol gain/MSE/energy probe — the
+        // guard below repeats it verbatim with a softer ridge.
+        (double mse, double energy, Cf gain) = SeedSolveMeasure(_initRidge, window, past);
+
+        // Dead-init guard (issue #101). The K=48 init ridge (initRidge = 1.0, scaled by the
+        // mean Gram diagonal — dominated by the FIXED-magnitude feedback regressors, the known
+        // past symbols) over-shrinks the feed-forward taps when the init window's signal rides
+        // low: a faded init window, or a low absolute receive level (there is NO AGC ahead of
+        // this front end). The solve then returns a near-dead equalizer (gain → 0) that the
+        // anchored trackRidge = 8 re-solves can never rebuild — it is anchored to the dead taps
+        // — so every probe reads bad and the burst dies SignalLost with no coded output. That
+        // is the real-RF WN2 Poor failure (#101), reproduced exactly by scaling a clean-sim
+        // burst down ~−20 dB (init gain 0.081 → 0.014). This is a ONE-DIRECTIONAL floor: it
+        // fires only below _deadInitFloor — a gain the mask's own surviving bursts never reach,
+        // so it fires ZERO times in-family and the mask censuses stay byte-identical — re-solves
+        // the SAME snapshotted rows once with a soft ridge toward zero (a live filter that the
+        // per-probe tracker refines as the fade lifts), and is a strict no-op on every healthy
+        // init and on the K=32/24 modes (_deadInitFloor = 0). trackRidge and the razor-thin
+        // at-mask ridge sweep it won (§B3.2) are untouched.
+        if (_deadInitFloor > 0 && gain.Abs() / k < _deadInitFloor)
+        {
+            _dfe.RestoreTraining();
+            (mse, energy, gain) = SeedSolveMeasure(_deadInitRidge, window, past, ffScaled: true);
+            DeadInitResolves++;
+        }
+
+        // Seed the decision history with the probe tail (unused by the measure loop above —
+        // it reads known symbols — so this is order-independent of the solve).
         _decisions = new Cf[fb];
         for (int j = 0; j < fb; j++)
         {
             _decisions[j] = _known[ChipsSuperframe + k - 1 - j];
-        }
-
-        double mse = 0;
-        double energy = 0;
-        var gain = Cf.Zero;
-        for (int i = 0; i < k; i++)
-        {
-            int n = ChipsSuperframe + i;
-            FillWindowEst(baseChip + n, window);
-            for (int j = 0; j < fb; j++)
-            {
-                past[j] = _known[n - 1 - j];
-            }
-
-            Cf y = _dfe.Equalize(window, past);
-            gain += y * _known[n].Conj();
-            Cf err = y - _known[n];
-            mse += err.Cnorm();
-            energy += window[_ffLead].Cnorm();
         }
 
         _probeMse = mse / k;
@@ -1332,6 +1347,47 @@ public sealed class Ms110dDemodulator
         _collapseArmed = true;
         _frameChip = _dataStartChip + k;
         _frameInBlock = 0;
+        return;
+
+        // RLS seed + anchored batch solve + K-symbol init-probe measurement, factored so the
+        // dead-init guard can repeat it with a soft ridge. RLS forgetting policy — a DOCUMENTED
+        // DEVIATION from design §2.5 (issue #64): λ = 1 − ln10/U ties the exponential window to
+        // the frame (memory U/ln10 ≈ 0.43·U symbols, a 10× down-weight per data span), so the
+        // per-probe anchored batch solve, not the RLS recursion, owns cross-frame memory. §2.5
+        // specified a fixed λ = 0.995 (≈200-symbol/83 ms memory, set by the 1 Hz coherence
+        // time); for U=48 the frame-tied window is only ~21 symbols ≈ 8.7 ms. Which policy wins
+        // is a measurement question (phase-b-plan §B2.4); until then this is the measured-
+        // baseline value, kept so evidence stays comparable.
+        (double Mse, double Energy, Cf Gain) SeedSolveMeasure(float ridge, Span<Cf> win, Span<Cf> pst,
+            bool ffScaled = false)
+        {
+            Dfe dfe = _dfe!;
+            dfe.BeginRls(
+                _options.RlsForgettingFactor ?? (float)(1.0 - Math.Log(10.0) / _mode!.U), pInit: 1.0f);
+            dfe.SeedRlsFromTraining(ridge, pFallback: 1.0f, ffNoisePower: GenieNoisePower(), ridgeFromFfBlock: ffScaled);
+            dfe.SolveTraining(regularization: ridge, ffNoisePower: GenieNoisePower(), ridgeFromFfBlock: ffScaled);
+            dfe.BeginTraining();
+
+            double m = 0;
+            double en = 0;
+            var g = Cf.Zero;
+            for (int i = 0; i < k; i++)
+            {
+                int n = ChipsSuperframe + i;
+                FillWindowEst(baseChip + n, win);
+                for (int j = 0; j < fb; j++)
+                {
+                    pst[j] = _known[n - 1 - j];
+                }
+
+                Cf y = dfe.Equalize(win, pst);
+                g += y * _known[n].Conj();
+                m += (y - _known[n]).Cnorm();
+                en += win[_ffLead].Cnorm();
+            }
+
+            return (m, en, g);
+        }
     }
 
     private void FillWindow(double symbolChip, Span<Cf> window)
@@ -1439,6 +1495,13 @@ public sealed class Ms110dDemodulator
                 dfe.AddTrainingRow(window, probePast, probe[i], weight: 6f);
             }
 
+            // #101: preserve the probe-only rows so a dead cold restart can be re-solved
+            // scale-invariantly (see the dead-restart guard after the solve). K=48 only.
+            if (_deadInitFloor > 0)
+            {
+                dfe.SnapshotTraining();
+            }
+
             Span<Cf> zeroTaps = stackalloc Cf[startTaps.Length];
             dfe.LoadTaps(zeroTaps);
             CollapseResolves++;
@@ -1448,6 +1511,28 @@ public sealed class Ms110dDemodulator
 
         dfe.SeedRlsFromTraining(_trackRidge, pFallback: 1.0f, ffNoisePower: GenieNoisePower());
         dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true, ffNoisePower: GenieNoisePower());
+
+        // #101 dead-restart guard: the freshSolve is a COLD restart (zeroed taps, ridge toward
+        // zero) with no anchor to carry the receive-level scale — so the trace-scaled trackRidge
+        // over-shrinks its feed-forward taps at a low absolute level, exactly like the init solve
+        // did, and the burst dies SignalLost on the first fade that collapses tracking. Guard it
+        // identically: if the cold restart came out dead (post-solve probe correlation below the
+        // dead floor), re-solve the SAME probe rows with the FF-block-scaled ridge (anchored to
+        // re-zeroed taps = a scale-invariant ridge toward zero). At a nominal receive level the
+        // cold restart is healthy, so this never fires in the mask (byte-identical); it is armed
+        // for K=48 only (_deadInitFloor = 0 elsewhere).
+        if (freshSolve && _deadInitFloor > 0 && ProbeGain() < _deadInitFloor)
+        {
+            dfe.RestoreTraining();
+            Span<Cf> reZero = stackalloc Cf[startTaps.Length];
+            dfe.LoadTaps(reZero);
+            dfe.SeedRlsFromTraining(
+                _deadInitRidge, pFallback: 1.0f, ffNoisePower: GenieNoisePower(), ridgeFromFfBlock: true);
+            dfe.SolveTraining(
+                regularization: _deadInitRidge, anchorToCurrentTaps: true, ffNoisePower: GenieNoisePower(),
+                ridgeFromFfBlock: true);
+            DeadInitResolves++;
+        }
 
         // §B2.1 per-probe phase re-anchor. The anchored ridge solve corrects the tap
         // SHAPE only fractionally per probe — correct for slow shape drift, but for the
@@ -1841,6 +1926,30 @@ public sealed class Ms110dDemodulator
             _frameInBlock = 0;
             FinishBlock();
             _blockFrameChips.Clear();
+        }
+
+        return;
+
+        // #101: post-solve probe correlation |Σ y·p̄| / K with the CURRENT taps — the dead-
+        // restart guard's scale-invariant health measure (a dead cold restart reads ≈ 0). Its
+        // own stack buffers keep it capture-free; called only on a freshSolve (K=48).
+        double ProbeGain()
+        {
+            Span<Cf> win = stackalloc Cf[dfe.FfTaps];
+            Span<Cf> pst = stackalloc Cf[dfe.FbTaps];
+            var acc = Cf.Zero;
+            for (int i = dfe.FbTaps; i < mode.K; i++)
+            {
+                FillWindowEst(probeChip + i, win);
+                for (int j = 0; j < dfe.FbTaps; j++)
+                {
+                    pst[j] = probe[i - 1 - j];
+                }
+
+                acc += dfe.Equalize(win, pst) * probe[i].Conj();
+            }
+
+            return acc.Abs() / mode.K;
         }
     }
 

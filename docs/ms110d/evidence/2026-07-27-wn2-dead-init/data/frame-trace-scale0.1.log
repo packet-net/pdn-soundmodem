@@ -1,0 +1,33 @@
+xUnit.net v3 In-Process Runner v3.2.2+728c1dce01 (64-bit .NET 10.0.7)
+[37m  Discovering: Packet.SoundModem.Tests
+[0m[37m  Discovered:  Packet.SoundModem.Tests
+[0m[37m  Starting:    Packet.SoundModem.Tests
+[0mframe@11568: gain=0.239 ref=0.409 mse=0.316 tau=-0.028 omega=-1.57E-004 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.583 energy=0.000/0.000 fresh=False phase=0.473 anchor=0.443@0.463 phi=-0.463
+frame@11664: gain=0.308 ref=0.400 mse=0.184 tau=-0.019 omega=-2.00E-004 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.340 energy=0.001/0.000 fresh=False phase=-0.085 anchor=0.569@-0.083 phi=0.083
+frame@11760: gain=0.292 ref=0.396 mse=0.177 tau=-0.007 omega=-2.16E-004 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.326 energy=0.001/0.000 fresh=False phase=-0.031 anchor=0.538@-0.030 phi=0.030
+frame@11856: gain=0.263 ref=0.390 mse=0.215 tau=0.023 omega=-1.10E-004 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.396 energy=0.001/0.000 fresh=False phase=0.205 anchor=0.487@0.204 phi=-0.204
+frame@11952: gain=0.350 ref=0.384 mse=0.159 tau=-0.007 omega=-8.29E-005 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.293 energy=0.001/0.000 fresh=False phase=0.050 anchor=0.648@0.051 phi=-0.051
+frame@12048: gain=0.305 ref=0.382 mse=0.160 tau=-0.034 omega=-1.29E-004 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.296 energy=0.001/0.000 fresh=False phase=-0.089 anchor=0.563@-0.088 phi=0.088
+frame@12144: gain=0.309 ref=0.378 mse=0.157 tau=-0.064 omega=-6.82E-005 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.291 energy=0.001/0.000 fresh=False phase=0.115 anchor=0.575@0.116 phi=-0.116
+frame@12240: gain=0.373 ref=0.375 mse=0.113 tau=-0.094 omega=-8.70E-005 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.208 energy=0.001/0.000 fresh=False phase=-0.038 anchor=0.688@-0.036 phi=0.036
+frame@12336: gain=0.336 ref=0.375 mse=0.158 tau=-0.091 omega=-5.67E-005 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.292 energy=0.001/0.000 fresh=False phase=0.058 anchor=0.620@0.058 phi=-0.058
+frame@12432: gain=0.335 ref=0.373 mse=0.164 tau=-0.110 omega=-1.64E-004 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.303 energy=0.001/0.000 fresh=False phase=-0.209 anchor=0.621@-0.206 phi=0.206
+frame@12528: gain=0.320 ref=0.371 mse=0.162 tau=-0.105 omega=-1.67E-004 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.300 energy=0.001/0.001 fresh=False phase=-0.009 anchor=0.595@-0.006 phi=0.006
+frame@12624: gain=0.405 ref=0.369 mse=0.108 tau=-0.089 omega=-1.61E-004 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.200 energy=0.001/0.001 fresh=False phase=0.014 anchor=0.744@0.012 phi=-0.012
+frame@12720: gain=0.311 ref=0.370 mse=0.207 tau=-0.073 omega=-1.81E-004 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.382 energy=0.001/0.001 fresh=False phase=-0.042 anchor=0.575@-0.039 phi=0.039
+frame@12816: gain=0.313 ref=0.367 mse=0.209 tau=-0.081 omega=-1.29E-004 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.385 energy=0.001/0.001 fresh=False phase=0.097 anchor=0.580@0.100 phi=-0.100
+frame@12912: gain=0.345 ref=0.365 mse=0.161 tau=-0.074 omega=-1.83E-004 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.298 energy=0.001/0.001 fresh=False phase=-0.096 anchor=0.634@-0.102 phi=0.102
+frame@13008: gain=0.314 ref=0.364 mse=0.225 tau=-0.067 omega=-8.39E-005 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.415 energy=0.001/0.001 fresh=False phase=0.187 anchor=0.572@0.189 phi=-0.190
+frame@13104: gain=0.226 ref=0.361 mse=0.302 tau=-0.061 omega=-8.34E-005 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.557 energy=0.001/0.001 fresh=False phase=0.003 anchor=0.414@0.001 phi=-0.001
+frame@13200: gain=0.208 ref=0.354 mse=0.308 tau=-0.061 omega=-1.50E-004 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.569 energy=0.001/0.001 fresh=False phase=-0.127 anchor=0.389@-0.129 phi=0.129
+frame@13296: gain=0.170 ref=0.347 mse=0.398 tau=-0.063 omega=-3.03E-005 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.735 energy=0.001/0.001 fresh=False phase=0.234 anchor=0.324@0.231 phi=-0.231
+frame@13392: gain=0.202 ref=0.338 mse=0.321 tau=-0.056 omega=-1.08E-004 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.593 energy=0.001/0.001 fresh=False phase=-0.149 anchor=0.368@-0.150 phi=0.150
+frame@13488: gain=0.145 ref=0.331 mse=0.396 tau=-0.060 omega=-9.07E-007 bad=0 tapChange=0.0000 floor=0.0000 fading=False/False preMse=0.732 energy=0.001/0.001 fresh=False phase=0.207 anchor=0.272@0.206 phi=-0.207
+frame@13584: gain=0.107 ref=0.331 mse=0.441 tau=-0.036 omega=-9.07E-007 bad=1 tapChange=0.0000 floor=0.0000 fading=False/True preMse=0.815 energy=0.001/0.001 fresh=True phase=-0.432 anchor=0.007@-0.000 phi=0.000
+frame@13680: gain=0.004 ref=0.331 mse=0.536 tau=-0.029 omega=-1.41E-006 bad=2 tapChange=0.4673 floor=0.0001 fading=False/True preMse=0.989 energy=0.001/0.001 fresh=False phase=-0.001 anchor=0.011@-0.001 phi=0.001
+frame@13776: gain=0.006 ref=0.331 mse=0.533 tau=-0.032 omega=-3.24E-006 bad=3 tapChange=0.0715 floor=0.0002 fading=True/True preMse=0.984 energy=0.000/0.001 fresh=False phase=-0.005 anchor=0.014@-0.004 phi=0.004
+RESULT reason=SignalLost decoded=0 codedErrs=24544
+[37m  Finished:    Packet.SoundModem.Tests (ID = '1646a2ca5ef1520aa2393459155dd77ad050fc1711a00f6b94dbf1aefecb2b2c')
+[0m[37m=== TEST EXECUTION SUMMARY ===
+[0m[37m   Packet.SoundModem.Tests  Total: 1, Errors: 0, Failed: 0, Skipped: 0, Not Run: 0, Time: 2.300s
+[0m[0m

@@ -85,6 +85,17 @@ public sealed record Ms110dDemodOptions
     /// default without a full-budget A/B.</summary>
     public float? TrackRidge { get; init; }
 
+    /// <summary>Dead-init guard threshold override (issue #101). Null keeps the measured
+    /// per-K default (K=48 only). Below this init probe gain the K=48 init LS solve is judged
+    /// dead and re-solved with a scale-invariant (FF-block-scaled) ridge so tracking never
+    /// starts from a near-zero filter (the real-RF WN2 Poor SignalLost failure). The A/B knob
+    /// for calibrating the floor; report/calibration evidence only.</summary>
+    public float? DeadInitFloor { get; init; }
+
+    /// <summary>Dead-init re-solve ridge override (issue #101), FF-block-scaled. Null keeps the
+    /// measured per-K default. The A/B knob for calibrating the re-solve regularization.</summary>
+    public float? DeadInitRidge { get; init; }
+
     /// <summary>§B4.1 per-segment BCJR noise pricing variant. Null (the default) runs the
     /// SHIPPED form, <c>"spikeup"</c>: a segment's windowed floor replaces the frame
     /// constant only where it exceeds it by the segment's own 3σ χ² band (exp(3/√count))
