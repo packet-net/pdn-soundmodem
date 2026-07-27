@@ -1,48 +1,56 @@
-# WN2 (BPSK r1/4, K=48) DFE dead-init — investigation & TRADEOFF finding (2026-07-27)
+# WN2 (BPSK r1/4, K=48) DFE dead-init — input signal-level AGC (2026-07-27)
 
-Issue #101. **Verdict: TRADEOFF — not shipped, #101 stays open.** The mechanism is confirmed and a lever that greens the failure is demonstrated, but the lever regresses the razor-thin WN2 sim mask (disjoint 12 → 31 errors = 1.02E-5, **fails the 1E-5 mask**). Per the closeout §5.3 consequence rule and the issue's hard constraint, a change that trades the OTA-Poor win for a sim-mask loss is a net negative and is not shipped. This directory is the honest record of the mechanism, the lever, and the measured regression that blocks it.
+Issue #101. **Lever: a slow input signal-level AGC ahead of the DFE.** The real-RF WN2 Poor failure is a global receive-level offset (~20 dB below the sim's nominal, no AGC upstream) that over-regularises the K=48 cold-restart LS solves → the equalizer initialises dead → SignalLost. The fix normalizes the global receive level back to nominal ahead of the equalizer. It is a **dead-zone no-op at the sim's nominal level (masks unchanged by construction)** and lifts only globally-low bursts.
+
+The earlier FF-scaled-ridge lever is **banked as a measured negative** (`ff-scaled-ridge-lever.patch`, `data/`): it regressed the razor-thin WN2 disjoint mask (12 → 31 = 1.02E-5, fail). This document supersedes that as the shipped direction; the negative is kept as evidence.
 
 ## Mechanism (confirmed, reproduced bit-exactly in sim)
 
-The K=48 DFE solves its per-probe least squares with a Tikhonov ridge `λ = reg · trace/n` scaled by the **mean Gram diagonal**. That diagonal is dominated by the *feedback* regressors — the last super-frame's KNOWN symbols, fixed unit magnitude, channel- and level-independent — while the ridge shrinks the *feed-forward* taps, whose signal rides at the (possibly low) absolute receive level. There is no AGC ahead of the equalizer. So when the received level is low, `λ` stays ~constant (feedback-set) while the FF signal shrinks, and the solve returns a near-zero-gain (**dead**) filter.
+The K=48 DFE ridges its LS solves by `λ = reg · trace/n`, and that trace is dominated by the **feedback** regressors (the known past symbols, fixed unit magnitude, level-independent) while the ridge shrinks the **feed-forward** taps, whose signal rides at the absolute receive level. With no AGC upstream, a low level over-shrinks the FF taps to a near-zero-gain (**dead**) filter → SignalLost. The OTA campaign resolved WN2 to a pure **level** interaction (reproduced by level-scaling, unaffected by phase-noise; `2026-07-27-ota-lab-campaign/`), and the capture sits ~20 dB below sim nominal — WN2's K=48 ridge over-shrinks there while WN4's K=32 ridge survives at the same level.
 
-Two solve sites are **cold restarts** — they have no anchor to carry the receive-level scale, so both go dead at a low level:
+**Confirmation that global level-norm recovers it (the pre-registered de-risk):** the identical WN2 Poor burst decodes cleanly at nominal (0 coded errors) and dies SignalLost when scaled −20 dB (`data/scale-calibration-*.log`; init gain 0.081 → 0.014, matching the OTA `ref≈0.014`) — so restoring the global level to nominal recovers it by construction. The OTA campaign's own `inject.py --mode level --factor 0.1` reproduction is the real-capture-side of the same statement.
 
-1. **The init solve** (`InitializeDfe`, `initRidge = 1.0`). Reproduced exactly by the issue's own method — scale a clean-sim WN2 Poor burst down: init gain **0.081 (full level) → 0.014 (−20 dB)**, matching the real-RF capture's `gain≈0.005 ref≈0.014`. See `data/scale-calibration-main.log`.
-2. **The freshSolve collapse-recovery** (`ProcessFrame`, zeroes the taps and re-solves toward zero with `trackRidge = 8`). Even after the init is repaired, the burst tracks healthy for ~20 frames then dies at the first fade that trips collapse detection: the cold restart returns `gain = 0.004` and the burst ends `SignalLost`. See `data/frame-trace-scale0.1.log` (frame@13584 onward).
+## The lever — slow (global) signal-level AGC
 
-The anchored *steady-state* per-probe solve is scale-robust (the anchor carries the scale) — only the two cold restarts break.
+`EstimatePreambleLevel()` correlates the received **Fixed** subsection of each trailing preamble super-frame against the known Fixed chips in 32-chip groups (`|Σ y·k̄|/32`, noise averaged out of each group — a **signal** estimate, not total power) and averages over ~1–2 s of preamble. That long window averages the ~1 Hz Watterson fade out, so it measures the **global** receive level, not the instantaneous fade. Then a per-burst scalar `_agcGain` normalizes it: **at or above `AgcLevelFloor` the gain is exactly 1.0 (dead-zone no-op); below it the burst is boosted to `AgcNominalLevel`** (capped). `_agcGain` is applied in the DFE read path (`ReadT2`), unity during acquisition — so acquisition and every nominal-or-stronger burst are untouched.
 
-## The lever (demonstrated): FF-block-scaled ridge on the cold restarts
+**Why this is mask-neutral where the ridge was not:** the ridge scaling was *instantaneous* per solve, so it could not tell a globally-weak signal from a nominal-level fade — both present low FF energy — and it fit noise during nominal fades, regressing the mask. The AGC's estimate is *slow/global*: a nominal ~1 Hz fade averages out over the preamble window, so the estimate stays ~nominal → the dead-zone keeps the gain at exactly 1.0 → **byte-identical**. A real-RF global offset does *not* average out → it is detected and corrected. The slow time constant is the whole difference.
 
-Scale the cold-restart ridge by the **feed-forward block diagonal only** (`Dfe.SolveTraining(ridgeFromFfBlock: true)`), not the whole trace. The ridge then tracks the received signal energy, so the solved filter is **scale-invariant**. Wired as a dead-restart guard at both cold-restart sites (init gain-floor + freshSolve post-solve gain-floor), armed for K=48 only.
+Measured level vs scale (fixture, `data/agc-scale-calibration.log`): nominal (×1) = **0.1186**, linear in scale (×0.5 → 0.0593, ×0.1 → 0.0119). The dead-zone floor is set strictly below the gated mask families' minimum level (census in `data/`), so the AGC fires **zero times in-family** and the masks are byte-identical.
 
-Result — the red test (`Ms110dDeadInitTests.Wn2_Poor_Dead_Init_Recovers_At_Low_Receive_Level`, a WN2 Poor burst scaled −20 dB): **RED on `main`** (`SignalLost`, 24 544 coded errors, init gain 0.014) → **GREEN with the lever** (`Eom`, 0 coded errors, init gain scale-invariant at 0.409, decodes as cleanly as full level since scaling is level-only). All scales −6 → −40 dB green. See `data/scale-calibration-fixed.log`, `data/ff-scaled-ridge-sweep.log`.
+## The bar — INVERTED: mask-neutral (byte-identical), and the low-level fixture greens
 
-## Why it can't ship — the freshSolve fix regresses the razor-thin mask
+A correct level-norm is a no-op at nominal, so the battery bar is that the masks are **unchanged**, not merely "still pass":
 
-The freshSolve fires **~34–43 times per burst** in the WN2 sim mask (during nominal-level fades). FF-scaling fundamentally **cannot distinguish a globally-weak signal from a nominal-level fade** — both present low FF energy — so at a nominal fade the FF-scaled freshSolve drops its ridge and **fits noise**, injecting errors. Measured on the shipped-ridge b32 baseline (WN2 Poor 3M, both families, `data/*-3m.log`, `data/*-perburst-diff.txt`):
+- WN2 Poor both seed families **byte-identical** to the b32 baseline (18 / 12 errors), AGC fires 0× in-family.
+- AWGN 10/10 unchanged, static WID2 (0/3/9 ms) unchanged, Doppler ±75 Hz unchanged, non-target waveforms byte-identical, guard-pin corpses intact, hermetic suite green.
+- The red fixture `Wn2_Poor_Dead_Init_Recovers_At_Low_Receive_Level` (−20 dB) greens (SignalLost → Eom, 0 errors), and `Wn2_Poor_Full_Level_Is_Agc_No_Op` holds (gain exactly 1.0).
 
-| family | baseline (main, b32) | with the lever | verdict |
-|--------|----------------------|----------------|---------|
-| canonical 3M | 18 errors | **10** (net better, but individual bursts regress **0→2, 0→2, 0→6**) | passes, not byte-identical |
-| disjoint 3M | 12 errors (3.94E-6) | **31 = 1.02E-5** | **FAILS the 1E-5 mask** |
+If any mask moves at all, the AGC is chasing fades (wrong time constant / normalizing total power) — iterate the window/floor until it is neutral.
 
-The disjoint regression is the killer: the lever converts **five previously-perfect (0-error) bursts** into error bursts (0→7, 0→9, 0→4, 0→3, 0→3), for a net 12 → 31. This is the exact razor-thin behaviour the §B3.2 anchor-ridge sweep and the closeout warn about — WN2 rides the ridge-8 knee, and any change to the cold-restart regularization that fires in-family moves it off.
+## Verification (measured)
 
-## Why the init guard alone is not a fix either
+**Red fixture** `Wn2_Poor_Dead_Init_Recovers_At_Low_Receive_Level` (−20 dB): RED on main (SignalLost, 24 544 errors) → **GREEN with the AGC** (Eom, 0 errors; AGC level 0.0119, gain 10.1×, init gain restored 0.014 → 0.082). `Wn2_Poor_Full_Level_Is_Agc_No_Op`: **gain exactly 1.000** at nominal. Both run ungated in the suite. (`data/agc-scale-calibration.log`.)
 
-The init guard is mask-neutral (fires only when the init solve is dead, which nominal mask bursts are not) — but it is **insufficient and, in sim, inert**:
+**WN2 Poor 6M — the razor gate (`data/wn2-6m-*`):**
 
-- **Natural init-window fades self-heal on `main`.** A census scan of **934 WN2 Poor bursts** at the mask SNR (canonical + a disjoint offset) found **zero `SignalLost`** — a faded init is recovered by the very freshSolve cold-restart above, because the burst *body* is at nominal level so the recovery solve is healthy. So a genuine sim dead-init → `SignalLost` is rarer than 1/934 and the init guard has no realizable sim effect.
-- **Real-RF is globally weak**, so the body is low too and the freshSolve recovery is *also* dead — which is why fixing only the init leaves the burst dying at the first fade (the frame trace above). The init guard cannot fix real-RF without the freshSolve fix, and the freshSolve fix regresses the mask.
+| family | with AGC | closeout baseline | AGC fired |
+|--------|----------|-------------------|-----------|
+| canonical | 30 / 6.09M = **4.93E-6** | 30 / 4.93E-6 | **agc 0** |
+| disjoint | 29 = **4.76E-6** (bound 6.84E-6) | 29 (bound 6.84E-6) | **agc 0** |
 
-## The path forward (out of scope for this surgical lever)
+Matches the closeout §1 numbers **exactly**, and `agc 0` on both families proves the AGC never fired in-family → every read `× 1.0f` (bit-exact) → **byte-identical**. (The 3M spot-check reads 15 canonical vs the b32 doc's 18; the one differing burst, seed 3015503, is `agc gain=1.000` at level 0.158 — a pre-existing b32→current-main drift, not the AGC. 123/124 match b32 to the byte.)
 
-A mask-neutral fix must **distinguish global-low-level from a nominal fade** and arm the scale-invariant cold restarts only for the former. The only stable distinguisher is the burst's *healthy* signal reference (fade-independent), i.e. an SNR estimate or a level reference — but any such gate carries an **absolute level threshold that overfits the sim's nominal level and does not generalize to real-RF's arbitrary receive level** (a different radio/attenuator sets a different "nominal"). The robust form is an **input AGC** normalizing the signal to the level the ridges were tuned for (making init, tracking, and freshSolve all see nominal), or a per-probe noise/SNR estimate driving the ridge — both larger, front-end / architecture changes with their own full mask-reverification burden, not a one-lever DFE tweak. Recommended as the Phase-C-class direction; registered here so it is not re-attempted as a ridge tweak.
+**Guard-pin corpses (closeout §6) — all byte-identical:** WN7 w0/b0 `0 coded / 11c/0r/4v`, WN7 w1/b0 `20 coded / 11c/0r/5v`, WN6 w0/b0 `0 / 11c/0r/0v`, WN13sp `0 / 11c/0r/0v`, WN0 w2/b97 `0 coded`. K≠48 (and WN0 Walsh has no DFE), so the AGC is a nominal-level no-op there.
+
+**Hermetic suite: 701 passed / 0 failed** (107 env-gated skips) with the AGC — including the two ungated red tests.
+
+**AWGN gates (WN0–6, 13): all 0 errors, `agc 0`** — WN0 @ −6 dB, WN1 @ −3 dB, WN2 @ 0 dB, WN3 @ +3, WN4 @ +5, WN5 @ +6, WN6 @ +9, WN13 @ +6. **Static WID2 (0/3/9 ms) @ +9 dB: 0 errors, `agc 0`. Doppler ±75 Hz: 0 errors, `agc 0`.** **WN1 Poor (the other K=48, AGC-armed mode), both families: byte-identical, `agc 0`.** Every mask point reports `agc 0` — the AGC is a strict no-op in-family, so the masks are byte-identical by construction. (`data/battery/`.)
+
+The universal `agc 0` is expected: the preamble signal level is set by the modulator and channel, not the SNR or mode, so at the sim's nominal level every mode's estimate (~0.12–0.16) sits far above the 0.04 floor. The AGC engages only for a globally-low receive level (real-RF Poor), which is exactly the −20 dB red fixture it greens.
 
 ## Files
 
-- `Ms110dDeadInitTests.cs` (test project) — the red test (RED on main, GREEN with the lever) + the scale/ridge/frame calibration rigs (env-gated).
-- Code: `Ms110dDemodulator.cs` (`InitializeDfe` init guard, `ProcessFrame` freshSolve dead-restart guard, `DeadInitResolves` counter) + `Dfe.cs` (`ridgeFromFfBlock` FF-block ridge) + `Ms110dDemodOptions` (`DeadInitFloor`/`DeadInitRidge` A/B knobs). This is the **demonstration branch of the rejected lever**, kept as the investigation artifact — NOT for merge.
-- `data/` — the measurements: `scale-calibration-main.log` / `-fixed.log` (the −20 dB reproduction, main vs lever), `ff-scaled-ridge-sweep.log`, `frame-trace-scale0.1.log` (the freshSolve death), `fixed-canonical-3m.log` / `fixed-disjoint-3m.log` (the mask runs), `canonical-perburst-diff.txt` / `disjoint-perburst-diff.txt` (the per-burst regression against b32).
+- Code: `Ms110dDemodulator.cs` (`_agcGain`, `EstimatePreambleLevel`, the `InitializeDfe` set + `ReadT2` apply). No ridge changes.
+- `Ms110dDeadInitTests.cs` — the red fixture + the no-op control + env-gated level calibration/census.
+- `ff-scaled-ridge-lever.patch` + `data/*` — the banked ridge negative and its mask-regression measurements (`disjoint-perburst-diff.txt`: five previously-perfect bursts → error bursts).

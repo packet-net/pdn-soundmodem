@@ -5,22 +5,21 @@ using Packet.SoundModem.Tests.Channel;
 namespace Packet.SoundModem.Tests.Ms110d;
 
 /// <summary>
-/// Regression rig for issue #101 — the WN2 (BPSK r1/4, K=48) DFE dead-init edge. Over a
-/// low absolute receive level (no AGC in this front end), the K=48 init LS solve's ridge
-/// (<c>initRidge = 1.0</c>, scaled by the mean Gram diagonal — which is dominated by the
-/// fixed-magnitude feedback regressors) over-shrinks the feed-forward taps, so the solve
-/// returns a near-dead equalizer (init gain ≈ 0) the anchored (<c>trackRidge = 8</c>)
-/// tracker cannot recover from → the burst ends <see cref="Ms110dBurstEndReason.SignalLost"/>.
-/// The reproduction is the issue's own controlled one: build a WN2 Poor burst that decodes
-/// cleanly at full level, then scale the received samples down (the −20 dB nudge the real
-/// path applied) and watch the equalizer initialise dead.
+/// Regression rig for issue #101 — the WN2 (BPSK r1/4, K=48) DFE dead-init edge and the input
+/// signal-level AGC that fixes it. There is no AGC upstream of this modem, so a globally-low
+/// receive level (the real-RF Poor capture, ~20 dB below the sim's nominal) leaves the K=48
+/// cold-restart LS solves over-regularised → the equalizer initialises dead → SignalLost. The
+/// fix normalizes the global receive level (estimated from a fade-averaged preamble SIGNAL
+/// correlation) up to nominal ahead of the equalizer; it is a dead-zone no-op at the sim's
+/// nominal level (masks unchanged) and lifts only globally-low bursts. Reproduced by the
+/// issue's own method — scale a clean-sim WN2 Poor burst down ~−20 dB (init gain 0.081 → 0.014,
+/// matching the OTA capture's ref≈0.014).
 /// </summary>
 public class Ms110dDeadInitTests
 {
-    // A deterministic WN2 Poor burst, built exactly as Ms110dMaskTests.RunPointWorker /
-    // Ms110dTailAutopsy build theirs (Long interleaver, K=7, 20-super-frame preamble). The
-    // seed is bespoke (outside the gated mask seed families) — this is a robustness fixture,
-    // not a mask point.
+    // A deterministic WN2 Poor burst, built exactly as Ms110dMaskTests.RunPointWorker builds
+    // theirs (Long interleaver, K=7, 20-super-frame preamble). Bespoke seed, outside the gated
+    // mask families — a robustness fixture, not a mask point.
     private const int FixtureSeed = 424_242;
     private const double Wn2PoorSnrDb = 5.0;
 
@@ -61,36 +60,40 @@ public class Ms110dDeadInitTests
     }
 
     private sealed record DecodeResult(
-        Ms110dBurstEndReason? Reason, int Decoded, long CodedErrors, double InitRefGain);
+        Ms110dBurstEndReason? Reason, int Decoded, long CodedErrors,
+        double InitRefGain, double AgcLevel, double AgcGain);
 
-    private static DecodeResult RunBurst(
-        float[] rx, byte[] payload, Ms110dDemodOptions? options = null, Action<string>? frameSink = null)
+    private static double Field(string line, string key)
     {
-        var demod = new Ms110dDemodulator(options ?? new Ms110dDemodOptions());
-        var decoded = new List<byte>(payload.Length + 64);
-        Ms110dBurstEndReason? reason = null;
-        double initRefGain = double.NaN;
-        demod.BlockDecoded += b => decoded.AddRange(b.Bits);
-        demod.BurstCompleted += bu => reason = bu.Reason;
-        if (frameSink is not null)
+        int at = line.IndexOf(key, StringComparison.Ordinal);
+        if (at < 0)
         {
-            demod.FrameDiagnostics += frameSink;
+            return double.NaN;
         }
 
+        int start = at + key.Length;
+        int end = line.IndexOf(' ', start);
+        return double.Parse(line[start..(end < 0 ? line.Length : end)], CultureInfo.InvariantCulture);
+    }
+
+    private static DecodeResult RunBurst(float[] rx, byte[] payload)
+    {
+        var demod = new Ms110dDemodulator(new Ms110dDemodOptions());
+        var decoded = new List<byte>(payload.Length + 64);
+        Ms110dBurstEndReason? reason = null;
+        double initRefGain = double.NaN, agcLevel = double.NaN, agcGain = double.NaN;
+        demod.BlockDecoded += b => decoded.AddRange(b.Bits);
+        demod.BurstCompleted += bu => reason = bu.Reason;
         demod.FrameDiagnostics += line =>
         {
-            // The FIRST frame diagnostic reports ref=<init gain> (InitializeDfe seeds
-            // _probeGainRef, and ProcessFrame prints it before the healthy-probe update).
-            if (double.IsNaN(initRefGain))
+            if (double.IsNaN(agcGain) && line.StartsWith("agc@", StringComparison.Ordinal))
             {
-                int at = line.IndexOf("ref=", StringComparison.Ordinal);
-                if (at >= 0)
-                {
-                    int start = at + 4;
-                    int end = line.IndexOf(' ', start);
-                    initRefGain = double.Parse(
-                        line[start..(end < 0 ? line.Length : end)], CultureInfo.InvariantCulture);
-                }
+                agcLevel = Field(line, "level=");
+                agcGain = Field(line, "gain=");
+            }
+            else if (double.IsNaN(initRefGain) && line.StartsWith("frame@", StringComparison.Ordinal))
+            {
+                initRefGain = Field(line, "ref=");
             }
         };
         demod.Process(rx);
@@ -106,65 +109,46 @@ public class Ms110dDeadInitTests
         }
 
         codedErrors += payload.Length - compared; // truncated decode counts as errors
-        return new DecodeResult(reason, decoded.Count, codedErrors, initRefGain);
+        return new DecodeResult(reason, decoded.Count, codedErrors, initRefGain, agcLevel, agcGain);
     }
 
     // The red test (issue #101): a WN2 Poor burst that decodes cleanly at full receive level
-    // dies SignalLost with no coded output once the level is scaled down ~−20 dB — the K=48
-    // init LS solve returns a dead equalizer (init gain 0.081 → 0.014, matching the real-RF
-    // capture) that the anchored tracker cannot rebuild. On current `main` this asserts RED
-    // (reason SignalLost, init gain ≈ 0.014). With the dead-init guard the softer re-solve
-    // hands tracking a live filter and the burst decodes — same SNR as full level, so clean.
+    // dies SignalLost once the level is scaled down ~−20 dB — the K=48 init solve initialises
+    // dead. RED on `main` (SignalLost, init gain ≈ 0.014); GREEN with the input AGC (the global
+    // level-normalization lifts it back to nominal so the equalizer initialises and tracks
+    // normally — same SNR as full level, so it decodes clean).
     [Fact]
     public void Wn2_Poor_Dead_Init_Recovers_At_Low_Receive_Level()
     {
-        // Env-gated reproduction (issue #101 investigation): RED on main (SignalLost), GREEN with
-        // the FF-scaled cold-restart lever — but the lever regresses the WN2 disjoint sim mask
-        // (12 → 31 = 1.02E-5), so it is NOT shipped (see the evidence README). Kept as an on-
-        // demand reproduction, not a normal-suite gate.
-        Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_DEADINIT_CAL") != "1",
-            "set MS110D_DEADINIT_CAL=1 — #101 investigation reproduction (lever not shipped)");
-
-        // −20 dB — the issue's own controlled reproduction (real path level nudge).
+        // −20 dB — the issue's own controlled reproduction (real path level offset).
         (float[] rx, byte[] payload) = BuildWn2PoorBurst(FixtureSeed, FixtureSeed + 1, scale: 0.1);
         DecodeResult r = RunBurst(rx, payload);
 
         r.Reason.Should().Be(
             Ms110dBurstEndReason.Eom,
-            "the dead-init guard must keep the equalizer alive so the burst decodes to EOM " +
-            "instead of dying SignalLost (init gain must not collapse to ~0)");
-        r.InitRefGain.Should().BeGreaterThan(
-            0.030,
-            "the re-solved init gain must clear the dead floor (was ≈ 0.014 dead on main)");
+            "the input AGC must normalize the globally-low level so the burst decodes to EOM " +
+            "instead of dying at a dead init");
+        r.AgcGain.Should().BeGreaterThan(
+            2.0, "the AGC must detect the low level and boost it (≈10× at −20 dB)");
         r.CodedErrors.Should().Be(
-            0,
-            "scaling is level-only (SNR unchanged), so a live equalizer decodes it as cleanly " +
-            "as the full-level burst (0 coded errors)");
+            0, "scaling is level-only (SNR unchanged), so a normalized burst decodes cleanly");
     }
 
-    // The full-level control: the SAME burst at nominal level decodes cleanly on main and must
-    // stay byte-clean under the fix — the guard is a no-op above the dead floor.
+    // The full-level control: the SAME burst at nominal level must be a strict AGC no-op —
+    // gain exactly 1.0 — so the sim masks are unchanged by construction.
     [Fact]
-    public void Wn2_Poor_Full_Level_Burst_Decodes_Clean()
+    public void Wn2_Poor_Full_Level_Is_Agc_No_Op()
     {
-        // Env-gated reproduction (issue #101): the full-level control. On main this is 0 errors;
-        // WITH the lever the freshSolve dead-restart guard fires on a full-level fade and injects
-        // 3 coded errors — the same mechanism that regresses the disjoint mask. This test FAILS
-        // under the lever by design, documenting that perturbation; on-demand only.
-        Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_DEADINIT_CAL") != "1",
-            "set MS110D_DEADINIT_CAL=1 — #101 investigation reproduction (lever not shipped)");
-
         (float[] rx, byte[] payload) = BuildWn2PoorBurst(FixtureSeed, FixtureSeed + 1, scale: 1.0);
         DecodeResult r = RunBurst(rx, payload);
 
         r.Reason.Should().Be(Ms110dBurstEndReason.Eom);
         r.CodedErrors.Should().Be(0);
-        r.InitRefGain.Should().BeGreaterThan(
-            0.030, "the full-level init is healthy and the guard must not fire on it");
+        r.AgcGain.Should().Be(1.0, "at the nominal level the AGC dead-zone leaves the gain at unity");
     }
 
-    // Calibration: sweep the receive-level scale and print the init gain / reason so the
-    // dead-init flip point is visible. Env-gated so it never runs in the normal suite.
+    // Calibration (env-gated): sweep the receive-level scale and print reason / init gain /
+    // measured AGC level+gain so the dead-init flip point and the AGC response are visible.
     [Fact]
     public void Dead_Init_Scale_Calibration()
     {
@@ -177,96 +161,47 @@ public class Ms110dDeadInitTests
             DecodeResult r = RunBurst(rx, payload);
             Console.Error.WriteLine(
                 $"scale={scale:F3} ({20 * Math.Log10(scale):+0.0;-0.0} dB): reason={r.Reason} " +
-                $"decoded={r.Decoded}/{payload.Length} codedErrs={r.CodedErrors} initRef={r.InitRefGain:F4}");
+                $"decoded={r.Decoded}/{payload.Length} codedErrs={r.CodedErrors} " +
+                $"initRef={r.InitRefGain:F4} agcLevel={r.AgcLevel:F4} agcGain={r.AgcGain:F3}");
         }
     }
 
-    // Trace: dump the first frames' diagnostics at scale 0.10 (default guard) to see where a
-    // globally-weak burst dies. Env-gated.
+    // Calibration (env-gated): the AGC level over the gated WN2 Poor mask seed families
+    // (canonical 502 + disjoint 10502, workers 0..3, bursts 0..61) — reports the MIN level, so
+    // the AgcLevelFloor dead-zone can be set strictly below it (guaranteeing the AGC never
+    // fires in-family → mask byte-identical). Level depends on the channel realization, not the
+    // payload.
     [Fact]
-    public void Dead_Init_Frame_Trace()
+    public void Mask_Family_Agc_Level_Census()
     {
         Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_DEADINIT_CAL") != "1",
-            "set MS110D_DEADINIT_CAL=1 for the dead-init frame trace");
-
-        (float[] rx, byte[] payload) = BuildWn2PoorBurst(FixtureSeed, FixtureSeed + 1, scale: 0.1);
-        int n = 0;
-        DecodeResult r = RunBurst(rx, payload, frameSink: line =>
-        {
-            if (line.StartsWith("frame@", StringComparison.Ordinal) && n++ < 24)
-            {
-                Console.Error.WriteLine(line);
-            }
-        });
-        Console.Error.WriteLine($"RESULT reason={r.Reason} decoded={r.Decoded} codedErrs={r.CodedErrors}");
-    }
-
-    // Calibration: force the dead-init guard (floor 0.5, always fires) and sweep the
-    // FF-scaled re-solve ridge at several receive-level scales, so the re-solve ridge that
-    // rescues the dead cases to a clean decode is visible. Env-gated.
-    [Fact]
-    public void Dead_Init_Ridge_Sweep()
-    {
-        Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_DEADINIT_CAL") != "1",
-            "set MS110D_DEADINIT_CAL=1 for the dead-init ridge sweep");
-
-        foreach (double scale in new[] { 0.5, 0.25, 0.1, 0.05 })
-        {
-            foreach (float ridge in new[] { 2.0f, 1.0f, 0.5f, 0.25f, 0.1f, 0.03f })
-            {
-                (float[] rx, byte[] payload) = BuildWn2PoorBurst(FixtureSeed, FixtureSeed + 1, scale);
-                DecodeResult r = RunBurst(rx, payload, new Ms110dDemodOptions
-                {
-                    DeadInitFloor = 0.5f,
-                    DeadInitRidge = ridge,
-                });
-                Console.Error.WriteLine(
-                    $"scale={scale:F3} ridge={ridge:F2}: reason={r.Reason} " +
-                    $"decoded={r.Decoded}/{payload.Length} codedErrs={r.CodedErrors} initRef={r.InitRefGain:F4}");
-            }
-        }
-    }
-
-    // Full-level init-gain census over the gated WN2 Poor mask seed families (canonical
-    // 502 + disjoint 10502, workers 0..3, bursts 0..61 = the 6M budget). Reports the
-    // MINIMUM init gain among these SURVIVING bursts — the dead-init floor must sit strictly
-    // below it, so the guard never fires on a mask burst (byte-identity of the mask census).
-    // Init gain depends on the channel realization + fixed preamble, not the payload.
-    [Fact]
-    public void Mask_Family_Init_Gain_Census()
-    {
-        Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_DEADINIT_CAL") != "1",
-            "set MS110D_DEADINIT_CAL=1 for the mask-family init-gain census");
+            "set MS110D_DEADINIT_CAL=1 for the AGC-level census");
 
         foreach (int baseSeed in new[] { 502, 10_502 })
         {
-            double min = double.PositiveInfinity;
-            int minWorker = -1, minBurst = -1, signalLost = 0;
+            double min = double.PositiveInfinity, max = 0;
+            int fired = 0;
             for (int worker = 0; worker < 4; worker++)
             {
                 int workerSeed = baseSeed + (worker * 1_000_000);
                 for (int burst = 0; burst < 62; burst++)
                 {
-                    int channelSeed = workerSeed + (1000 * burst) + 1;
-                    (float[] rx, byte[] payload) = BuildWn2PoorBurst(workerSeed, channelSeed, 1.0);
+                    (float[] rx, byte[] payload) = BuildWn2PoorBurst(workerSeed, workerSeed + (1000 * burst) + 1, 1.0);
                     DecodeResult r = RunBurst(rx, payload);
-                    if (r.Reason == Ms110dBurstEndReason.SignalLost)
+                    if (!double.IsNaN(r.AgcLevel))
                     {
-                        signalLost++;
+                        min = Math.Min(min, r.AgcLevel);
+                        max = Math.Max(max, r.AgcLevel);
                     }
 
-                    if (r.InitRefGain < min)
+                    if (r.AgcGain != 1.0)
                     {
-                        min = r.InitRefGain;
-                        minWorker = worker;
-                        minBurst = burst;
+                        fired++;
                     }
                 }
             }
 
-            Console.Error.WriteLine(
-                $"family {baseSeed}: min initRef={min:F4} at w{minWorker}/b{minBurst}, " +
-                $"SignalLost bursts={signalLost}/248");
+            Console.Error.WriteLine($"family {baseSeed}: min agcLevel={min:F4} max={max:F4}, AGC fired on {fired}/248");
         }
     }
 }
