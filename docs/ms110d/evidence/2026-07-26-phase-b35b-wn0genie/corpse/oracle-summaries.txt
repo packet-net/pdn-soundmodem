@@ -1,0 +1,120 @@
+== autopsy-summary-wn0-w0-b0-genie-wgoinst.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 73/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w0-b0-genie-wgopole.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 165/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w0-b0-genie.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 279/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w0-b0.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 279/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w1-b0-genie-wgoinst.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 66/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w1-b0-genie-wgopole.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 121/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w1-b0-genie.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 238/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w1-b0.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 238/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w1-b41-genie-wgoinst.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 317/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w1-b41-genie-wgopole.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 34 (first 1042, last 5136), uncoded 1109/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:5 b2:5 b3:0 b4:0 b5:0 b6:0 b7:0 b8:24 b9:0 b10:0
+== autopsy-summary-wn0-w1-b41-genie.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 293 (first 609, last 5750), uncoded 1897/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:45 b2:45 b3:4 b4:0 b5:0 b6:0 b7:0 b8:184 b9:15 b10:0
+== autopsy-summary-wn0-w1-b41.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 293 (first 609, last 5750), uncoded 1895/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:45 b2:45 b3:4 b4:0 b5:0 b6:0 b7:0 b8:184 b9:15 b10:0
+== autopsy-summary-wn0-w1-b91-genie-wgoinst.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 317/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w1-b91-genie-wgopole.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 1183/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w1-b91-genie.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 381 (first 1730, last 5124), uncoded 1928/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:188 b4:34 b5:58 b6:27 b7:0 b8:74 b9:0 b10:0
+== autopsy-summary-wn0-w1-b91.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 381 (first 1730, last 5124), uncoded 1928/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:188 b4:34 b5:58 b6:27 b7:0 b8:74 b9:0 b10:0
+== autopsy-summary-wn0-w2-b0-genie-wgoinst.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 41/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w2-b0-genie-wgopole.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 89/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w2-b0-genie.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 178/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w2-b0.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 178/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w2-b37-genie-wgoinst.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 264/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w2-b37-genie-wgopole.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 1063/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w2-b37-genie.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 98 (first 134, last 4690), uncoded 1792/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:4 b1:0 b2:0 b3:0 b4:8 b5:0 b6:0 b7:82 b8:4 b9:0 b10:0
+== autopsy-summary-wn0-w2-b37.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 98 (first 134, last 4690), uncoded 1792/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:4 b1:0 b2:0 b3:0 b4:8 b5:0 b6:0 b7:82 b8:4 b9:0 b10:0
+== autopsy-summary-wn0-w2-b53-genie-wgoinst.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 287/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w2-b53-genie-wgopole.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 8 (first 2178, last 2188), uncoded 1141/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:8 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w2-b53-genie.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 489 (first 576, last 6139), uncoded 2119/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:137 b2:5 b3:29 b4:23 b5:11 b6:0 b7:262 b8:0 b9:0 b10:22
+== autopsy-summary-wn0-w2-b53.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 489 (first 576, last 6139), uncoded 2120/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:137 b2:5 b3:29 b4:23 b5:11 b6:0 b7:262 b8:0 b9:0 b10:22
+== autopsy-summary-wn0-w2-b97-genie-wgoinst.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 310/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w2-b97-genie-wgopole.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 23 (first 3032, last 5277), uncoded 1162/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:8 b6:0 b7:4 b8:4 b9:7 b10:0
+== autopsy-summary-wn0-w2-b97-genie.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 697 (first 2889, last 6292), uncoded 1852/12672, collapses 0, turbo 0c/0r/0a/11s, end=, 0 symbols dumped, lock=0/Long/K7@-0.55Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:84 b6:0 b7:193 b8:66 b9:139 b10:221
+== autopsy-summary-wn0-w2-b97.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 697 (first 2889, last 6292), uncoded 1854/12672, collapses 0, turbo 0c/0r/0a/11s, end=, 0 symbols dumped, lock=0/Long/K7@-0.60Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:84 b6:0 b7:193 b8:66 b9:139 b10:221
+== autopsy-summary-wn0-w3-b0-genie-wgoinst.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 80/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w3-b0-genie-wgopole.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 142/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w3-b0-genie.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 241/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w3-b0.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 241/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w3-b96-genie-wgoinst.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 343/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:0 b10:0
+== autopsy-summary-wn0-w3-b96-genie-wgopole.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 29 (first 224, last 6273), uncoded 1135/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:3 b1:4 b2:0 b3:0 b4:0 b5:0 b6:0 b7:0 b8:0 b9:7 b10:15
+== autopsy-summary-wn0-w3-b96-genie.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 443 (first 1, last 6302), uncoded 1982/12672, collapses 0, turbo 0c/0r/0a/11s, end=, 0 symbols dumped, lock=0/Long/K7@-0.09Hz (tx K7)
+first-decode errors per block: b0:92 b1:0 b2:0 b3:0 b4:40 b5:0 b6:0 b7:68 b8:0 b9:13 b10:246
+== autopsy-summary-wn0-w3-b96.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 419 (first 2, last 6302), uncoded 1991/12672, collapses 0, turbo 0c/0r/0a/11s, end=, 0 symbols dumped, lock=0/Long/K7@0.04Hz (tx K7)
+first-decode errors per block: b0:68 b1:0 b2:0 b3:0 b4:40 b5:0 b6:0 b7:68 b8:0 b9:13 b10:246

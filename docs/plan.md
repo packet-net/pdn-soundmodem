@@ -216,6 +216,10 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-07-27 — M0LTE.Flex 0.3.0 → 0.8.0: the DAX transmit source becomes load-bearing
+
+The Flex client dependency moves 0.3.0 → 0.8.0, picking up docs/flex-integration.md §10's findings as library behaviour: `FlexStation.SetUpHeadlessAsync` now sends `transmit set dax=1` and reads it back — on 0.3.0 the DAX transmit path never modulated anything (the transmitter's audio source defaulted to the mic, and every DAX enable step returned err=0 regardless). No source changes were needed for the API breaks (0.4.0's `VitaPacket` doesn't touch our `byte[]` mock wiring; 0.8.0's waveform-options split doesn't touch the DAX path we use). Consumer side: `FlexDevice.OpenAsync` treats a non-null `TransmitSourceWarning` after headless bring-up as a failure and throws — a modem that keys and transmits mic silence is dead, not degraded — and the daemon reports the radio's global transmit filter read-back at startup (it, not the slice, limits transmitted audio bandwidth; we deliberately never set it). M0LTE.Radio.Audio stays pinned at 0.1.0 (0.8.0 pins the same). `MockFlexRadio` now models the transmitter source at its real default of dax=0, so the Flex mock loop tests are the offline proof the selection works.
+
 ### 2026-07-24 (evening) — MS110D Phases B1+B2 closed: all four broken-tier mechanisms confirmed, then the science core lands WN4 (and WN13) Poor at mask
 
 B1 (PR #72): every broken-tier point got a confirmed mechanism from ≥3 independent instruments before any fix — WN7/WN8 intra-frame rotation collapsing DD tracking past the ±22.5°/±16° decision half-angles with the anchored probe solve as the persistence mechanism, WN6 a rate-3/4 code cliff on shared physics (its uncoded SER BEATS passing WN13's), WN0 coherent Walsh detection wasting the channel's 2-path diversity (Poor 8× worse than flat Rayleigh; echo refuted by a zero-error static 2-path run). Autopsies in [ms110d/phase-b-autopsies.md](ms110d/phase-b-autopsies.md).

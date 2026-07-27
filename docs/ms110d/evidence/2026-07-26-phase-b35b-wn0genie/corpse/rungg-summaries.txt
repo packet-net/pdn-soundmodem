@@ -1,0 +1,36 @@
+== autopsy-summary-wn0-w0-b0.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 289/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w0-b1.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 266/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w0-b19.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 196/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w0-b2.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 187/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w0-b23.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 129/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w0-b3.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 344/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w0-b4.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 151/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w0-b6.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 154/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w0-b8.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 340/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w1-b0.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 302/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w1-b41.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 236/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w1-b91.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 238/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w2-b0.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 218/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w2-b37.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 256/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w2-b53.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 303/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w2-b97.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 302/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w3-b0.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 337/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+== autopsy-summary-wn0-w3-b96.txt
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 357/12672, collapses 0, turbo 0c/0r/0a/11s, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)

@@ -16,8 +16,9 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// (the implemented form of design §5.3, restated 2026-07-23): a fixed sample of ≥ 3×10⁶
 /// payload bits (fading gate points additionally ≥ 600 s simulated per D-LXV duration logic);
 /// with ≥ 30 errors the direct BER must be ≤ 1e-5, else the 97.5 % Poisson upper bound must
-/// clear 1e-5. Poor-channel points are measured-not-gated in Phase A (design §6, Q1) —
-/// <c>MS110D_POOR_GATED=1</c> arms the Phase B at-mask hard gate. Override the bit budget with
+/// clear 1e-5. Since §B4/§B4.1/§B3.5b (2026-07-26) the at-mask Poor points (WN0–WN6, WN13)
+/// are hard-gated by default; WN7/WN8 are measured-not-gated (open), and
+/// <c>MS110D_POOR_GATED=1</c> forces the gate everywhere. Override the bit budget with
 /// <c>MS110D_MASK_BITS</c> for smoke runs (reports are then labelled SMOKE, not gate evidence).
 /// </summary>
 public class Ms110dMaskTests(ITestOutputHelper output)
@@ -27,7 +28,8 @@ public class Ms110dMaskTests(ITestOutputHelper output)
     private sealed record MaskRun(
         long Bits, long Errors, int Bursts, int AcquisitionFailures, double SimSeconds,
         long UncodedBits = 0, long UncodedErrors = 0, long DeepFadeBits = 0, long DeepFadeErrors = 0,
-        int TurboConverged = 0, int TurboReverted = 0, int TurboAborted = 0, int TurboSkipped = 0)
+        int TurboConverged = 0, int TurboReverted = 0, int TurboAborted = 0, int TurboSkipped = 0,
+        int AgcResolves = 0)
     {
         public double Ber => Bits == 0 ? double.NaN : (double)Errors / Bits;
     }
@@ -116,13 +118,32 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         Assert.SkipWhen(wnFilter is not null && wnFilter != wn.ToString(),
             $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
 
-        MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, TargetBits(), seed: 500 + wn + SeedOffset(),
+        // §B4 (2026-07-26): WN2/WN5/WN6's rates sit close enough to the mask that a 3M
+        // sample is not §5.3-decidable (WN6 ≈8.8E-6 clears only the ≥30-error direct
+        // path, and 3M expects ~28; WN2 ≈4.9E-6 trips the <30-error Poisson bound from
+        // k=20). The default is the 6M budget the B4 gate evidence used.
+        long targetBits = Environment.GetEnvironmentVariable("MS110D_MASK_BITS") is null && wn is 2 or 5 or 6
+            ? 6_000_000 : TargetBits();
+
+        MaskRun run = RunPoint(wn, snrDb, WattersonChannel.Poor, targetBits, seed: 500 + wn + SeedOffset(),
             minSimSeconds: 600);
         Report($"POOR WN{wn} @ {snrDb:+0;-0;0} dB{SeedTag()}", run);
 
-        // Phase A: measured, not gated (design §6, Q1) — the number is banked via Report /
-        // MS110D_MASK_LOG. MS110D_POOR_GATED=1 arms the Phase B at-mask hard gate.
-        if (Environment.GetEnvironmentVariable("MS110D_POOR_GATED") == "1")
+        // §B4 (2026-07-26): the at-mask set is hard-gated by default — flip criterion and
+        // both-family gate-run evidence in evidence/2026-07-26-phase-b4-gate/. The open
+        // points stay measured (WN7 attractor-bound, WN8 doubly blocked). §B4.1 (same
+        // day): WN6 joins the gated set — the SPIKE-UP per-segment pricing margin lever
+        // moved it from 57/57 (pooled bound 1.14E-5, AT THE LINE) to 35/39 both families
+        // (pooled 74/12.97M, bound 7.15E-6 — passes the B4 flip criterion;
+        // evidence/2026-07-26-phase-b41-wn6floor/). §B3.5b (same day): WN0 joins — the
+        // symmetric RAKE finger window ended the echo-lock lottery and took the point
+        // from 5.99E-3/6.40E-3 to 0 and 3 errors per 3M family (bounds 1.22E-6/2.92E-6,
+        // pooled 1.46E-6 — passes all three B4 flip conditions;
+        // evidence/2026-07-26-phase-b35b-wn0genie/). MS110D_POOR_GATED=1 still forces
+        // the gate everywhere (the chasing-leg tool for open points).
+        bool gated = wn is 0 or 1 or 2 or 3 or 4 or 5 or 6 or 13
+            || Environment.GetEnvironmentVariable("MS110D_POOR_GATED") == "1";
+        if (gated)
         {
             AssertMask(run);
         }
@@ -298,7 +319,8 @@ public class Ms110dMaskTests(ITestOutputHelper output)
                 total.UncodedBits + r.UncodedBits, total.UncodedErrors + r.UncodedErrors,
                 total.DeepFadeBits + r.DeepFadeBits, total.DeepFadeErrors + r.DeepFadeErrors,
                 total.TurboConverged + r.TurboConverged, total.TurboReverted + r.TurboReverted,
-                total.TurboAborted + r.TurboAborted, total.TurboSkipped + r.TurboSkipped);
+                total.TurboAborted + r.TurboAborted, total.TurboSkipped + r.TurboSkipped,
+                total.AgcResolves + r.AgcResolves);
         }
 
         return total;
@@ -347,7 +369,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         int bursts = 0, acquisitionFailures = 0;
         double simSeconds = 0;
         long uncodedBits = 0, uncodedErrors = 0, deepFadeBits = 0, deepFadeErrors = 0;
-        int turboConverged = 0, turboReverted = 0, turboAborted = 0, turboSkipped = 0;
+        int turboConverged = 0, turboReverted = 0, turboAborted = 0, turboSkipped = 0, agcResolves = 0;
         // MS110D_DEBUG moved host-side: the library fires FrameDiagnostics, the harness prints.
         bool debugTrace = Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1";
         // MS110D_MASK_GENIE=1: feed the demodulator the SAME channel realization noise-free
@@ -418,6 +440,8 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             {
                 RlsForgettingFactor = rlsLambda,
                 TrackRidge = trackRidge,
+                // §B4.1 per-segment pricing variant ("spikeup"/"spike2s"); unset = shipped.
+                TurboNsegMode = Environment.GetEnvironmentVariable("MS110D_TURBO_NSEG"),
             });
             Ms110dBurstEndReason? endReason = null;
             demod.BurstCompleted += bu => endReason = bu.Reason;
@@ -542,6 +566,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             turboReverted += demod.TurboReverted;
             turboAborted += demod.TurboAborted;
             turboSkipped += demod.TurboSkipped;
+            agcResolves += demod.AgcResolves;
 
             if (bursts % 10 == 0)
             {
@@ -555,7 +580,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         return new MaskRun(
             bits, errors, bursts, acquisitionFailures, simSeconds,
             uncodedBits, uncodedErrors, deepFadeBits, deepFadeErrors,
-            turboConverged, turboReverted, turboAborted, turboSkipped);
+            turboConverged, turboReverted, turboAborted, turboSkipped, agcResolves);
     }
 
     /// <summary>Composite channel power (equal-power-normalized) at a gain-trajectory
@@ -597,6 +622,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             }
 
             line += $", turbo {run.TurboConverged}c/{run.TurboReverted}r/{run.TurboAborted}a/{run.TurboSkipped}s";
+            line += $", agc {run.AgcResolves}"; // #101: 0 = AGC no-op in-family (masks byte-identical)
         }
 
         if (run.Bits < 3_000_000)

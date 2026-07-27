@@ -1,0 +1,71 @@
+== c-w1b0
+  b3: ship=6 oracle=6 shipClusters=[24358-24371]x6
+    final: wireErr=761 mean|LLR|right=45.3 wrong=1.0
+    oracle: wireErr=967 mean|LLR|right=31.8 wrong=1.1
+    oracleWire hist16=[22, 21, 58, 1, 1, 21, 179, 0, 39, 200, 174, 53, 27, 26, 16, 129] n=967
+  b6: ship=14 oracle=14 shipClusters=[26629-26648]x14
+    final: wireErr=751 mean|LLR|right=42.1 wrong=1.2
+    oracle: wireErr=877 mean|LLR|right=28.5 wrong=1.1
+    oracleWire hist16=[10, 53, 45, 10, 109, 43, 2, 64, 161, 189, 85, 2, 26, 65, 1, 12] n=877
+== c-w1b1
+  b2: ship=12 oracle=0 shipClusters=[6352-6374]x12
+    final: wireErr=561 mean|LLR|right=48.2 wrong=1.1
+    oracle: wireErr=753 mean|LLR|right=33.6 wrong=1.1
+    oracleWire hist16=[29, 26, 1, 3, 60, 10, 109, 162, 0, 161, 12, 103, 36, 10, 26, 5] n=753
+  b4: ship=6 oracle=11 shipClusters=[28888-28901]x6
+    final: wireErr=11861 mean|LLR|right=15.6 wrong=1.4
+    oracle: wireErr=1427 mean|LLR|right=27.2 wrong=1.1
+    oracleWire hist16=[10, 9, 17, 10, 365, 26, 2, 0, 76, 7, 42, 222, 137, 279, 209, 16] n=1427
+  b7: ship=7 oracle=11 shipClusters=[15262-15275]x7
+    final: wireErr=11650 mean|LLR|right=17.6 wrong=2.6
+    oracle: wireErr=1216 mean|LLR|right=27.7 wrong=1.1
+    oracleWire hist16=[32, 345, 30, 1, 96, 29, 108, 83, 0, 64, 0, 6, 0, 122, 287, 13] n=1216
+  b8: ship=0 oracle=21 shipClusters=-
+    final: wireErr=6223 mean|LLR|right=19.7 wrong=1.5
+    oracle: wireErr=1483 mean|LLR|right=25.4 wrong=1.1
+    oracleWire hist16=[73, 274, 131, 7, 16, 3, 206, 201, 0, 63, 274, 128, 64, 7, 23, 13] n=1483
+== c-w2b1
+  b5: ship=6 oracle=6 shipClusters=[30265-30278]x6
+    final: wireErr=255 mean|LLR|right=68.5 wrong=1.2
+    oracle: wireErr=363 mean|LLR|right=47.0 wrong=1.3
+    oracleWire hist16=[52, 7, 53, 4, 0, 43, 145, 3, 4, 0, 0, 0, 1, 44, 0, 7] n=363
+  b8: ship=32 oracle=28 shipClusters=[4573-4592]x14 [20443-20462]x14 [36465-36469]x4
+    final: wireErr=15096 mean|LLR|right=11.8 wrong=2.8
+    oracle: wireErr=1502 mean|LLR|right=23.7 wrong=1.1
+    oracleWire hist16=[150, 15, 26, 119, 242, 168, 51, 54, 203, 155, 68, 114, 0, 0, 12, 125] n=1502
+== d-w0b0
+  b4: ship=6 oracle=6 shipClusters=[34780-34793]x6
+    final: wireErr=11283 mean|LLR|right=17.6 wrong=1.9
+    oracle: wireErr=1174 mean|LLR|right=28.2 wrong=1.2
+    oracleWire hist16=[171, 97, 285, 104, 77, 15, 188, 23, 2, 62, 0, 127, 11, 2, 10, 0] n=1174
+  b6: ship=0 oracle=18 shipClusters=-
+    final: wireErr=11375 mean|LLR|right=22.4 wrong=8.0
+    oracle: wireErr=1280 mean|LLR|right=28.0 wrong=1.1
+    oracleWire hist16=[178, 18, 109, 11, 2, 271, 314, 35, 6, 42, 3, 0, 87, 65, 116, 23] n=1280
+  b8: ship=0 oracle=14 shipClusters=-
+    final: wireErr=8812 mean|LLR|right=13.6 wrong=5.2
+    oracle: wireErr=734 mean|LLR|right=23.9 wrong=1.1
+    oracleWire hist16=[38, 49, 2, 98, 0, 3, 61, 11, 15, 26, 94, 161, 3, 2, 6, 165] n=734
+  b10: ship=10 oracle=0 shipClusters=[33087-33110]x10
+    final: wireErr=670 mean|LLR|right=53.5 wrong=1.2
+    oracle: wireErr=916 mean|LLR|right=39.8 wrong=1.2
+    oracleWire hist16=[0, 0, 29, 104, 0, 0, 4, 73, 269, 2, 211, 26, 51, 27, 120, 0] n=916
+== d-w1b0
+  b5: ship=1 oracle=1 shipClusters=[24922-24922]x1
+    final: wireErr=576 mean|LLR|right=47.8 wrong=1.0
+    oracle: wireErr=680 mean|LLR|right=33.0 wrong=1.0
+    oracleWire hist16=[10, 0, 82, 134, 67, 23, 0, 5, 76, 6, 78, 1, 0, 92, 57, 49] n=680
+  b9: ship=11 oracle=0 shipClusters=[7270-7292]x11
+    final: wireErr=1067 mean|LLR|right=40.0 wrong=1.1
+    oracle: wireErr=1246 mean|LLR|right=27.6 wrong=1.1
+    oracleWire hist16=[5, 0, 1, 3, 73, 26, 4, 247, 376, 82, 55, 3, 129, 95, 129, 18] n=1246
+== d-w2b1
+  b7: ship=6 oracle=6 shipClusters=[4465-4478]x6
+    final: wireErr=13238 mean|LLR|right=15.3 wrong=2.2
+    oracle: wireErr=332 mean|LLR|right=30.1 wrong=1.5
+    oracleWire hist16=[1, 16, 32, 18, 21, 2, 39, 88, 5, 2, 11, 6, 1, 0, 6, 84] n=332
+== d-w3b0
+  b5: ship=14 oracle=0 shipClusters=[29050-29069]x14
+    final: wireErr=439 mean|LLR|right=42.8 wrong=1.1
+    oracle: wireErr=602 mean|LLR|right=29.1 wrong=1.3
+    oracleWire hist16=[6, 0, 114, 3, 1, 24, 7, 145, 83, 13, 0, 3, 7, 12, 0, 184] n=602

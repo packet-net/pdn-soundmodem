@@ -50,3 +50,59 @@ Instruments and pass criteria fixed before the first run:
 5. **Escalation (pre-registered):** if WN7 stalls above mask+2 dB after TIR + the seg levers + (if the residual demands it) the two-adjacent-lag chain, the FD-turbo architecture decision is taken explicitly — not more tuning.
 
 Files land here as the measurements run: corpse before/after summaries + llrstats, echo/TIR state diagnostics, mask logs, battery log.
+
+---
+
+## Measured results (filled in as the pre-registered steps ran, same day)
+
+Three levers landed, each committed only after its own corpse measurement; the acceptance
+corpses are exactly the pre-registered ones. Per-step summaries in `corpse/` (file names
+carry the lever stack), per-iteration trajectories in `corpse/*-iters.txt`, the cap sweep
+in `cap96/`.
+
+### Step 1 — TIR alone (commit `6c43cf9`)
+
+| Corpse | main (#80) shipped | TIR shipped | main oracle | TIR oracle |
+|---|---|---|---|---|
+| WN6 w0/b0 | 7,572 | **15** (11c/0r) | 75 | **0** (all 11 blocks) |
+| WN7 w0/b0 | 172,691 | 125,980 (4c/7r) | 15,136 | **326** |
+| WN13 specimen w3/b5 | 16 | **0** | 0 | 0 |
+
+The WN7 **oracle ceiling collapsed 46×** — the §B3.3 split is confirmed in the fix
+direction: the model was the binding constraint, and keeping the echo at its lag as
+chain-BCJR diversity (instead of inverting it into a train) removes it. TIR engages on
+30–56 of 64 frames with mean lag 5.0 (the physical 2 ms path) and mean |c| 0.3–0.6; the
+0.04-floor starvation (65% of frames echo-free) is gone by construction. WN7's shipped
+decode is now **labels-limited**: the gap to its own oracle is convergence from a
+39%-wrong first decode, not model fidelity.
+
+### Step 2 — chain-BCJR priors from SISO extrinsics (commit `7850476`)
+
+WN6 15 → **0**; WN13 specimen holds 0; WN7 125,980 → 107,944 (5c/6r), oracle unchanged
+(the oracle path is prior-free by design). The WN7 per-iteration trajectories change
+regime: the five plateau blocks (2–6k decode-changes, flat) become monotone contractions —
+b9 converges at i20, b1/b6/b7 fall to ~1–1.5k at the cap.
+
+### Cap sweep — cap 24 confirmed (temp edit, `cap96/`, not committed)
+
+At cap 96 the WN7 outcome is **identical** (107,944, 5c/6r): b1/b6/b7 contract to a
+~300–700-change wander without ever reaching a fixed point; b4/b5/b10 plateau at ~4–6k.
+Quadrupling the iteration budget converts nothing — the #80 cap keeps its measured value,
+and the residue is model-shaped (near-miss self-consistent states), not iteration-starved.
+
+### Step 3 — per-segment h2 on the TIR echo path (commit `3a95deb`)
+
+WN7 oracle 326 → **237** (b3 11→0, b1 41→15, b6 19→6, b10 18→6, b4 110→99, b5 98→83);
+shipped statistically unchanged (107,938) — the lever moves the model floor, not the
+convergence basin. WN6 and WN13-specimen guards hold at 0 shipped / 0 oracle.
+
+### Where WN7 stands after this leg (the honest split)
+
+Two stacked gaps remain on the corpse burst: **model floor** — oracle 237/405,472 ≈
+5.8E-4, ~58× the mask even under perfect labels, with the residual concentrated in b4/b5
+(99/83) where the T/2 fractional sidelobes of the 4.8-symbol echo exceed the single-lag
+model (the pre-registered §B2.2 two-adjacent-lag chain, M² states, is the next model
+lever); and **labels basin** — shipped 107,938 vs oracle 237, the six reverted blocks
+having the worst first-pass starts (errBits 17–22%). Both fronts stay open into the next
+leg; the FD-turbo architecture decision remains the pre-registered escalation if they
+stall at mask+2 dB.

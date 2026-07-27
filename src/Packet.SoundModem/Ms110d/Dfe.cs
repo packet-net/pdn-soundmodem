@@ -33,6 +33,7 @@ public sealed class Dfe
     private readonly Cf[] _tirRhs;
     private readonly Cf[] _tirSol;
     private readonly Cf[] _tirWin;
+    private readonly Cf[][] _tirCols;
     private Cf[,]? _gram;
     private Cf[]? _rhs;
     private int _trainingRows;
@@ -63,10 +64,27 @@ public sealed class Dfe
         _tirRhs = new Cf[n];
         _tirSol = new Cf[n];
         _tirWin = new Cf[n];
+        _tirCols = [new Cf[ffTaps], new Cf[ffTaps], new Cf[ffTaps]];
     }
 
     /// <summary>Feed-forward (T/2) tap count.</summary>
     public int FfTaps => _ff.Length;
+
+    /// <summary>Diagnostic: Σ|ff|² of the current feed-forward taps — the equalizer's
+    /// white-noise power gain (§B3.3 fade-crossing corpse instrument).</summary>
+    public float FfEnergy
+    {
+        get
+        {
+            float e = 0f;
+            foreach (Cf t in _ff)
+            {
+                e += t.Cnorm();
+            }
+
+            return e;
+        }
+    }
 
     /// <summary>Feedback (symbol-spaced) tap count.</summary>
     public int FbTaps => _fb.Length;
@@ -363,51 +381,73 @@ public sealed class Dfe
     /// <summary>Result of <see cref="SolveTrainingTir"/>. <see cref="Lag"/> = 0 means the
     /// null (full-inversion) candidate won — feed-forward taps installed, no designed echo.
     /// <see cref="Lag"/> &gt; 0 means the shortened solve was accepted: the post-FF response
-    /// is ≈ x[u] + <see cref="Coefficient"/>·x[u−Lag] and the echo model must carry that lag.
-    /// <see cref="SseNull"/>/<see cref="SseTir"/> are the exact (unridged) residual sums of
-    /// the two candidates for diagnostics.</summary>
-    public readonly record struct TirSolve(bool Solved, int Lag, Cf Coefficient, float SseNull, float SseTir);
+    /// is ∝ x[u] + <see cref="Coefficient"/>·x[u−Lag] (+ <see cref="Coefficient2"/>·x[u−Lag2]
+    /// when <see cref="Lag2"/> &gt; 0 — the §B3.3 straddle pair, Lag2 = Lag ± 1) and the
+    /// echo model must carry those lags. Under the floating-gain solve the overall cursor
+    /// gain g is NOT normalized to 1 (§B3.3 eigen-TIR) — the coefficients here are the
+    /// c/g ratios, so their meaning is unchanged. <see cref="SseNull"/>/<see cref="SseTir"/>
+    /// are the exact (unridged) residual sums for diagnostics.</summary>
+    public readonly record struct TirSolve(
+        bool Solved, int Lag, Cf Coefficient, int Lag2, Cf Coefficient2, float SseNull, float SseTir);
 
     /// <summary>Target-impulse-response (channel-shortening) variant of
     /// <see cref="SolveTraining"/> for the §B3.3 turbo re-solve. Rows must have been
-    /// accumulated with the symbol history in the feedback columns (not zeros). Solves the
-    /// unit-tap-constrained shortening problem min |ff·window + b·x[u−d] − x[u]|² —
-    /// jointly linear in (ff, b) because the lag-0 target tap is pinned at 1 — for the
-    /// feed-forward-only null candidate and every single-lag candidate d ≤
-    /// <paramref name="maxLag"/>, and installs the best feed-forward taps (feedback taps
-    /// are left untouched; the turbo equalizes with zeroed feedback). A shortened candidate
-    /// is accepted only when it beats the null by 4·ln(L)·SSE₀/rows — 4× the noise-only
-    /// expectation of the best-of-L free-parameter reduction (the same construction as the
-    /// chain-BCJR 0.04·|h1|² echo floor), so echo-free frames keep today's full-inversion
-    /// solve exactly. Ridge and anchor-to-current-taps semantics mirror
-    /// <see cref="SolveTraining"/> with λ scaled by subset trace/size; the accumulation is
-    /// consumed either way.</summary>
-    public TirSolve SolveTrainingTir(float regularization, float ffNoisePower, int maxLag)
+    /// accumulated with the symbol history in the feedback columns (not zeros). Selection
+    /// and acceptance are MONIC, exactly as #82: the null candidate solves
+    /// min |ff·window − x[u]|², every single-lag candidate adds one free coefficient
+    /// (min |ff·window + b·x[u−d] − x[u]|²), and a candidate is accepted only when it
+    /// beats the null by 4·ln(L)·SSE₀/rows — 4× the noise-only expectation of the
+    /// best-of-L free-parameter reduction — so echo-free frames keep today's
+    /// full-inversion solve exactly. On the ACCEPTED lag set only, the installed FF is
+    /// then re-solved with a FLOATING target gain
+    /// (min ‖ff·window − g·x[u] − c·x[u−d]‖², ‖(g, c)‖ = 1 — §B3.3 eigen-TIR): the monic
+    /// pinned unit cursor forces the FF to invert a faded cursor path — measured on the
+    /// WN7 corpse boosting the noise floor 5.3× and carrying ~74% of the oracle error
+    /// mass (the weak-cursor class) — where the unit-norm target shifts weight onto the
+    /// strong echo column and lets the chain BCJR collect both paths in the trellis. The
+    /// eigen solve is NOT used for selection: the target columns' post-projection
+    /// residuals are mutually correlated through the shared window, giving λmin a
+    /// first-order gauge gain on echo-free noise that the monic margins are not
+    /// calibrated for (fadecross note, Amendment 1). The refit ridges toward zero (the
+    /// tracking-tap anchor is a sequential-solve prior whose phase would pin the floating
+    /// target); the monic stages keep the anchor semantics of
+    /// <see cref="SolveTraining"/>. The accumulation is consumed either way.
+    /// <c>onlyLag</c> &gt; 0 (§B3.7 E1′, the frozen pass's burst-consensus constrained
+    /// solve) tests ONLY that lag and drops the margin to the single-candidate form
+    /// 4·ln 2·SSE₀/rows — no L-fold selection premium; 0 is the free search,
+    /// bit-identical to before.</summary>
+    public TirSolve SolveTrainingTir(float regularization, float ffNoisePower, int maxLag, bool allowPair = true, int onlyLag = 0)
     {
         if (_gram is null || _rhs is null || _trainingRows == 0)
         {
             _gram = null;
             _rhs = null;
-            return new TirSolve(false, 0, Cf.Zero, 0f, 0f);
+            return new TirSolve(false, 0, Cf.Zero, 0, Cf.Zero, 0f, 0f);
         }
 
         int f = _ff.Length;
         maxLag = Math.Min(maxLag, _fb.Length);
-        float sseNull = SolveSubset(-1, regularization, ffNoisePower, _tirSol);
+        Span<int> one = stackalloc int[1];
+        Span<int> two = stackalloc int[2];
+        float sseNull = SolveSubset(default, regularization, ffNoisePower, _tirSol);
         if (float.IsNaN(sseNull))
         {
             _gram = null;
             _rhs = null;
-            return new TirSolve(false, 0, Cf.Zero, 0f, 0f);
+            return new TirSolve(false, 0, Cf.Zero, 0, Cf.Zero, 0f, 0f);
         }
 
         Array.Copy(_tirSol, _tirWin, f);
         int bestLag = 0;
         var bestB = Cf.Zero;
         float bestSse = float.MaxValue;
-        for (int lag = 1; lag <= maxLag; lag++)
+        Span<Cf> t = stackalloc Cf[3];
+        int firstLag = onlyLag > 0 ? onlyLag : 1;
+        int lastLag = onlyLag > 0 ? Math.Min(onlyLag, maxLag) : maxLag;
+        for (int lag = firstLag; lag <= lastLag; lag++)
         {
-            float sse = SolveSubset(lag - 1, regularization, ffNoisePower, _tirSol);
+            one[0] = lag - 1;
+            float sse = SolveSubset(one, regularization, ffNoisePower, _tirSol);
             if (!float.IsNaN(sse) && sse < bestSse)
             {
                 bestSse = sse;
@@ -417,36 +457,416 @@ public sealed class Dfe
             }
         }
 
-        float threshold = 4f * MathF.Log(Math.Max(2, maxLag)) * sseNull / _trainingRows;
+        float threshold = 4f * MathF.Log(Math.Max(2, onlyLag > 0 ? 1 : maxLag)) * sseNull / _trainingRows;
         bool accept = bestLag > 0 && bestSse < sseNull - threshold;
-        if (!accept)
+        int lag2 = 0;
+        var bestB2 = Cf.Zero;
+        if (accept && !allowPair)
+        {
+            // Pair candidates suppressed (§B3.3: label-trust gate — the demod's hard
+            // iteration 0 cancels the adjacent tap with re-encoded labels that can be
+            // ~half wrong, injecting unpriced observation error; measured flipping a
+            // marginal WN6 block out of convergence at 146× the point's BER). The
+            // accepted single-lag solve stands unchanged.
+        }
+        else if (accept)
+        {
+            // §B3.3 straddle pair: a fractional-delay physical echo (the Poor channel's
+            // 2 ms path ≈ 4.8 T) splits across the two lags bracketing it, so the two
+            // candidates tied to the ESTABLISHED lag are {d−1, d} and {d, d+1}. One extra
+            // free parameter over the accepted single-lag solve and only two candidates
+            // (no L-fold search), so the margin drops the ln L factor: the noise-only
+            // best-of-two reduction is ≈ (1 + ln 2)·SSE₀/rows and 4·SSE₀/rows keeps a
+            // >2× safety factor — the same construction as the single-lag acceptance.
+            float pairGate = bestSse - (4f * sseNull / _trainingRows);
+            for (int side = -1; side <= 1; side += 2)
+            {
+                int neighbor = bestLag + side;
+                if (neighbor < 1 || neighbor > maxLag)
+                {
+                    continue;
+                }
+
+                two[0] = Math.Min(bestLag, neighbor) - 1;
+                two[1] = Math.Max(bestLag, neighbor) - 1;
+                float sse = SolveSubset(two, regularization, ffNoisePower, _tirSol);
+                if (!float.IsNaN(sse) && sse < pairGate)
+                {
+                    pairGate = sse;
+                    bestSse = sse;
+                    lag2 = neighbor;
+                    bestB = _tirSol[f + (neighbor < bestLag ? 1 : 0)];
+                    bestB2 = _tirSol[f + (neighbor < bestLag ? 0 : 1)];
+                    Array.Copy(_tirSol, _tirWin, f);
+                }
+            }
+        }
+        else
         {
             // Reinstate the null solution (the winner loop overwrote _tirWin).
-            sseNull = SolveSubset(-1, regularization, ffNoisePower, _tirWin);
+            sseNull = SolveSubset(default, regularization, ffNoisePower, _tirWin);
             bestLag = 0;
             bestB = Cf.Zero;
             bestSse = sseNull;
         }
 
+        // §B3.3 eigen refit (fadecross note, Amendment 1): the monic machinery above
+        // established the lag set and the acceptance evidence bit-identically to #82;
+        // NOW float the target gain over the accepted columns so the FF stops inverting
+        // a faded cursor path (the weak-cursor noise boost — measured 5.3× on the WN7
+        // corpse). Rejected and echo-free frames never reach here. The monic solution
+        // stands if the refit degenerates numerically.
+        var coeff = Cf.Zero;
+        var coeff2 = Cf.Zero;
+        if (bestLag > 0)
+        {
+            // Monic coefficients sit on the SUBTRACTED side of the target
+            // (ff·window ≈ x[u] − b·x[u−d]): post-FF echo = −b.
+            coeff = new Cf(-bestB.Re, -bestB.Im);
+            coeff2 = new Cf(-bestB2.Re, -bestB2.Im);
+            if (PrepareFloatingTir(regularization, ffNoisePower))
+            {
+                Span<int> idx = lag2 > 0 ? two : one[..1];
+                if (lag2 > 0)
+                {
+                    two[0] = Math.Min(bestLag, lag2) - 1;
+                    two[1] = Math.Max(bestLag, lag2) - 1;
+                }
+                else
+                {
+                    one[0] = bestLag - 1;
+                }
+
+                float fsse = SolveFloatingCandidate(idx, _tirSol, t);
+                if (!float.IsNaN(fsse))
+                {
+                    Array.Copy(_tirSol, _tirWin, f);
+                    Cf g = t[0];
+                    Cf c1 = lag2 > 0 ? t[1 + (lag2 < bestLag ? 1 : 0)] : t[1];
+                    Cf c2 = lag2 > 0 ? t[1 + (lag2 < bestLag ? 0 : 1)] : Cf.Zero;
+
+                    // Floating coefficients sit on the TARGET side (ff·window ≈
+                    // g·x[u] + c·x[u−d]): the relative echo is c/g — the same
+                    // quantity the monic −b reports. A collapsed cursor gain (|g|²
+                    // below gauge noise) reports the raw c; diagnostics only, the
+                    // demod re-estimates the echo model by correlation either way.
+                    float gN = g.Cnorm();
+                    if (gN >= 1e-4f)
+                    {
+                        Cf invG = g.Conj() * (1f / gN);
+                        coeff = c1 * invG;
+                        coeff2 = c2 * invG;
+                    }
+                    else
+                    {
+                        coeff = c1;
+                        coeff2 = c2;
+                    }
+                }
+            }
+        }
+
         Array.Copy(_tirWin, 0, _ff, 0, f);
         _gram = null;
         _rhs = null;
-
-        // The LS coefficient b sits on the SUBTRACTED side of the target
-        // (ff·window ≈ x[u] − b·x[u−d]), so the post-FF echo coefficient is −b.
-        return new TirSolve(true, bestLag, new Cf(-bestB.Re, -bestB.Im), sseNull, bestSse);
+        return new TirSolve(true, bestLag, coeff, lag2, coeff2, sseNull, bestSse);
     }
 
-    /// <summary>Solves the regularized subset system {feed-forward taps} ∪ {feedback column
-    /// <paramref name="fbIndex"/>} (−1 for feed-forward only) from the live training
-    /// accumulation without consuming it, leaving the solution in <paramref name="sol"/>.
-    /// Returns the exact unridged residual sum Σw·|desired − sol·row|² (targetEnergy −
-    /// 2Re(solᴴr) + solᴴG₀sol, with the ridge/anchor and genie noise-diagonal terms backed
-    /// out), or NaN if the subset was degenerate.</summary>
-    private float SolveSubset(int fbIndex, float regularization, float ffNoisePower, Cf[] sol)
+    /// <summary>Prepares the floating-gain (§B3.3 eigen-TIR) candidate machinery: copies
+    /// the feed-forward block of the live accumulation, adds the genie noise diagonal and
+    /// the same λ = reg·trace/f ridge the null candidate uses (toward ZERO — the
+    /// tracking-tap anchor is a sequential-solve prior whose phase would pin the floating
+    /// target), Cholesky-factorizes it into the shared scratch, and back-substitutes the
+    /// shared first target column A⁻¹·(Wᴴx). The factor stays valid for every
+    /// <see cref="SolveFloatingCandidate"/> of this accumulation (the small eigen systems
+    /// use their own local storage). Returns false if the block is degenerate.</summary>
+    private bool PrepareFloatingTir(float regularization, float ffNoisePower)
     {
         int f = _ff.Length;
-        int m = fbIndex >= 0 ? f + 1 : f;
+        Cf[,] gram = _gram!;
+        Cf[] rhs = _rhs!;
+        for (int i = 0; i < f; i++)
+        {
+            for (int j = i; j < f; j++)
+            {
+                Cf v = gram[i, j];
+                _tirGram[i, j] = v;
+                if (j != i)
+                {
+                    _tirGram[j, i] = v.Conj();
+                }
+            }
+        }
+
+        float noiseDiag = ffNoisePower > 0 ? ffNoisePower * _trainingWeightSum : 0f;
+        double trace = 0;
+        for (int i = 0; i < f; i++)
+        {
+            _tirGram[i, i] += new Cf(noiseDiag, 0);
+            trace += _tirGram[i, i].Re;
+        }
+
+        float lambda = (float)(regularization * trace / f) + 1e-9f;
+        for (int i = 0; i < f; i++)
+        {
+            _tirGram[i, i] += new Cf(lambda, 0);
+        }
+
+        if (!CholeskyFactor(_tirGram, f))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < f; i++)
+        {
+            _tirRhs[i] = rhs[i];
+        }
+
+        CholeskySubstitute(_tirRhs, _tirCols[0], f);
+        return true;
+    }
+
+    /// <summary>Solves one floating-gain shortening candidate over the target columns
+    /// [x] ∪ {x[·−d] : d−1 ∈ <paramref name="fbIndices"/>} (ascending):
+    /// min ‖ff·window − t·targets‖² s.t. ‖t‖ = 1. The optimal t is the smallest
+    /// eigenvector of R = D − BᴴA⁻¹B (Hermitian PSD, 2×2 or 3×3), found by inverse
+    /// iteration on the local Cholesky of R + εI; the FF is the linear combination of the
+    /// pre-substituted A⁻¹ columns. Requires <see cref="PrepareFloatingTir"/>. Writes the
+    /// feed-forward taps into <paramref name="sol"/>[0..f) and the unit target into
+    /// <paramref name="t"/>. Returns the exact unridged data residual
+    /// Σw·‖targets·t − ff·window‖² (comparable with <see cref="SolveSubset"/>'s monic
+    /// residuals — the null target is also unit-norm), or NaN if degenerate.</summary>
+    private float SolveFloatingCandidate(ReadOnlySpan<int> fbIndices, Cf[] sol, Span<Cf> t)
+    {
+        int f = _ff.Length;
+        int k = fbIndices.Length;
+        int m = 1 + k;
+        Cf[,] gram = _gram!;
+        Cf[] rhs = _rhs!;
+
+        // Fresh target columns through the shared FF factor: C_j = A⁻¹·(Wᴴ·P_j).
+        for (int j = 0; j < k; j++)
+        {
+            int gi = f + fbIndices[j];
+            for (int i = 0; i < f; i++)
+            {
+                _tirRhs[i] = gram[i, gi];
+            }
+
+            CholeskySubstitute(_tirRhs, _tirCols[1 + j], f);
+        }
+
+        // D (target Gram) and R = D − BᴴA⁻¹B, m×m Hermitian in row-major 3×3 storage.
+        // B's columns are read straight from the accumulation (b₀ = Wᴴx = rhs,
+        // b_{1+j} = WᴴP_j = stored upper-triangle Gram entries).
+        Span<Cf> d = stackalloc Cf[9];
+        Span<Cf> r = stackalloc Cf[9];
+        for (int a = 0; a < m; a++)
+        {
+            for (int b = a; b < m; b++)
+            {
+                Cf dv = (a, b) switch
+                {
+                    (0, 0) => new Cf(_trainingTargetEnergy, 0),
+                    (0, _) => rhs[f + fbIndices[b - 1]].Conj(),
+                    _ => gram[f + fbIndices[a - 1], f + fbIndices[b - 1]],
+                };
+                var s = Cf.Zero;
+                Cf[] cb = _tirCols[b];
+                for (int i = 0; i < f; i++)
+                {
+                    Cf ba = a == 0 ? rhs[i] : gram[i, f + fbIndices[a - 1]];
+                    s += ba.Conj() * cb[i];
+                }
+
+                d[(a * 3) + b] = dv;
+                r[(a * 3) + b] = dv - s;
+                if (b != a)
+                {
+                    d[(b * 3) + a] = dv.Conj();
+                    r[(b * 3) + a] = (dv - s).Conj();
+                }
+            }
+        }
+
+        // Smallest eigenvector by inverse iteration on R + εI (R is PSD: the Schur
+        // complement of a Gram matrix, and the ridge on A only raises it). Local
+        // lower-triangle factor — the shared scratch still holds the FF factor.
+        double tr = 0;
+        for (int a = 0; a < m; a++)
+        {
+            tr += r[(a * 3) + a].Re;
+        }
+
+        float eps = (float)(1e-6 * tr / m) + 1e-12f;
+        Span<Cf> l = stackalloc Cf[9];
+        Span<Cf> y = stackalloc Cf[3];
+        Span<Cf> v = stackalloc Cf[3];
+        bool factored = false;
+        for (int attempt = 0; attempt < 2 && !factored; attempt++, eps *= 100f)
+        {
+            factored = true;
+            for (int i = 0; i < m && factored; i++)
+            {
+                for (int j = 0; j <= i; j++)
+                {
+                    Cf sum = r[(i * 3) + j];
+                    if (i == j)
+                    {
+                        sum += new Cf(eps, 0);
+                    }
+
+                    for (int c = 0; c < j; c++)
+                    {
+                        sum -= l[(i * 3) + c] * l[(j * 3) + c].Conj();
+                    }
+
+                    if (i == j)
+                    {
+                        if (sum.Re <= 0)
+                        {
+                            factored = false;
+                            break;
+                        }
+
+                        l[(i * 3) + i] = new Cf(MathF.Sqrt(sum.Re), 0);
+                    }
+                    else
+                    {
+                        l[(i * 3) + j] = sum * (1f / l[(j * 3) + j].Re);
+                    }
+                }
+            }
+        }
+
+        if (!factored)
+        {
+            return float.NaN;
+        }
+
+        v[0] = new Cf(1f, 0f);
+        for (int iter = 0; iter < 3; iter++)
+        {
+            for (int i = 0; i < m; i++)
+            {
+                Cf sum = v[i];
+                for (int c = 0; c < i; c++)
+                {
+                    sum -= l[(i * 3) + c] * y[c];
+                }
+
+                y[i] = sum * (1f / l[(i * 3) + i].Re);
+            }
+
+            for (int i = m - 1; i >= 0; i--)
+            {
+                Cf sum = y[i];
+                for (int c = i + 1; c < m; c++)
+                {
+                    sum -= l[(c * 3) + i].Conj() * v[c];
+                }
+
+                v[i] = sum * (1f / l[(i * 3) + i].Re);
+            }
+
+            float nrm = 0f;
+            for (int i = 0; i < m; i++)
+            {
+                nrm += v[i].Cnorm();
+            }
+
+            if (nrm <= 0f || !float.IsFinite(nrm))
+            {
+                return float.NaN;
+            }
+
+            float inv = 1f / MathF.Sqrt(nrm);
+            for (int i = 0; i < m; i++)
+            {
+                v[i] *= inv;
+            }
+        }
+
+        // Deterministic phase gauge: rotate the largest component real-positive.
+        int big = 0;
+        for (int i = 1; i < m; i++)
+        {
+            if (v[i].Cnorm() > v[big].Cnorm())
+            {
+                big = i;
+            }
+        }
+
+        Cf phase = v[big] * (1f / MathF.Sqrt(v[big].Cnorm()));
+        for (int i = 0; i < m; i++)
+        {
+            v[i] *= phase.Conj();
+            t[i] = v[i];
+        }
+
+        // ff = Σ t_j·C_j, then the exact unridged data residual
+        // tᴴDt − 2·Re(ffᴴ·Bt) + ffᴴ·A₀·ff (A₀ = raw Wᴴ·W — ridge and genie noise
+        // diagonal backed out, matching SolveSubset's convention).
+        for (int i = 0; i < f; i++)
+        {
+            Cf acc = v[0] * _tirCols[0][i];
+            for (int j = 0; j < k; j++)
+            {
+                acc += v[1 + j] * _tirCols[1 + j][i];
+            }
+
+            sol[i] = acc;
+        }
+
+        double dt = 0;
+        for (int a = 0; a < m; a++)
+        {
+            for (int b = 0; b < m; b++)
+            {
+                dt += (v[a].Conj() * d[(a * 3) + b] * v[b]).Re;
+            }
+        }
+
+        double lin = 0;
+        for (int i = 0; i < f; i++)
+        {
+            Cf bt = rhs[i] * v[0];
+            for (int j = 0; j < k; j++)
+            {
+                bt += gram[i, f + fbIndices[j]] * v[1 + j];
+            }
+
+            lin += (sol[i].Conj() * bt).Re;
+        }
+
+        double quad = 0;
+        for (int i = 0; i < f; i++)
+        {
+            var acc = Cf.Zero;
+            for (int j = 0; j < f; j++)
+            {
+                acc += (j >= i ? gram[i, j] : gram[j, i].Conj()) * sol[j];
+            }
+
+            quad += (sol[i].Conj() * acc).Re;
+        }
+
+        double sse = dt - (2 * lin) + quad;
+        return (float)Math.Max(0, sse);
+    }
+
+    /// <summary>Solves the regularized subset system {feed-forward taps} ∪ {feedback
+    /// columns <paramref name="fbIndices"/>} (empty for feed-forward only) from the live
+    /// training accumulation without consuming it, leaving the solution in
+    /// <paramref name="sol"/>. Returns the exact unridged residual sum
+    /// Σw·|desired − sol·row|² (targetEnergy − 2Re(solᴴr) + solᴴG₀sol, with the
+    /// ridge/anchor and genie noise-diagonal terms backed out), or NaN if the subset was
+    /// degenerate. <paramref name="fbIndices"/> must be ascending (the index map must
+    /// preserve order so only the stored upper triangle of the accumulation is read).</summary>
+    private float SolveSubset(ReadOnlySpan<int> fbIndices, float regularization, float ffNoisePower, Cf[] sol)
+    {
+        int f = _ff.Length;
+        int m = f + fbIndices.Length;
         Cf[,] gram = _gram!;
         Cf[] rhs = _rhs!;
 
@@ -454,10 +874,10 @@ public sealed class Dfe
         // accumulation is read; the lower triangle is filled by conjugation here).
         for (int i = 0; i < m; i++)
         {
-            int gi = i < f ? i : f + fbIndex;
+            int gi = i < f ? i : f + fbIndices[i - f];
             for (int j = i; j < m; j++)
             {
-                int gj = j < f ? j : f + fbIndex;
+                int gj = j < f ? j : f + fbIndices[j - f];
                 Cf v = gram[gi, gj];
                 _tirGram[i, j] = v;
                 if (j != i)
@@ -485,9 +905,10 @@ public sealed class Dfe
         float lambda = (float)(regularization * trace / m) + 1e-9f;
         for (int k = 0; k < m; k++)
         {
+            int gk = k < f ? k : f + fbIndices[k - f];
+            Cf anchor = k < f ? _ff[k] : _fb[fbIndices[k - f]];
             _tirGram[k, k] += new Cf(lambda, 0);
-            Cf anchor = k < f ? _ff[k] : _fb[fbIndex];
-            _tirRhs[k] = rhs[k < f ? k : f + fbIndex] + (anchor * lambda);
+            _tirRhs[k] = rhs[gk] + (anchor * lambda);
         }
 
         if (!CholeskyFactor(_tirGram, m))
@@ -502,7 +923,7 @@ public sealed class Dfe
         double lin = 0, quad = 0, nrm = 0, nrmFf = 0;
         for (int i = 0; i < m; i++)
         {
-            int gi = i < f ? i : f + fbIndex;
+            int gi = i < f ? i : f + fbIndices[i - f];
             lin += (sol[i].Conj() * rhs[gi]).Re;
             var acc = Cf.Zero;
             for (int j = 0; j < m; j++)

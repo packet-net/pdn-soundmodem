@@ -1,3 +1,4 @@
+using System.Globalization;
 using M0LTE.Fec;
 using M0LTE.Ofdm;
 using Packet.SoundModem.Ms110d;
@@ -79,8 +80,7 @@ public class Ms110dTailAutopsy
             PreambleSuperframes = 20,
         };
         var tx = new Ms110dModulator(settings);
-        tx.Mode.Modulation.Should().NotBe(Ms110dModulation.Qam16,
-            "the tail autopsy targets the sub-8PSK points; QAM16 truth mapping is not wired");
+        bool qam16 = tx.Mode.Modulation == Ms110dModulation.Qam16;
         Ms110dInterleaverParams il = Ms110dInterleaverParams.Get3k(wn, Ms110dInterleaverKind.Long);
         double blockSeconds = wn == 0
             ? il.Frames * 32.0 / 2400
@@ -104,7 +104,21 @@ public class Ms110dTailAutopsy
         {
             RecordGains = true,
         };
-        float[] rx = channel.Apply(audio, snrDb, leadInSamples: 2400, leadOutSamples: 2400);
+
+        // MS110D_AUTOPSY_CLEAN=1: no channel at all — no fading, no noise, just the
+        // lead-in/out padding. Isolates systematic first-pass error (equalizer bias,
+        // probe/data geometry) from everything channel-induced.
+        bool clean = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_CLEAN") == "1";
+        float[] rx;
+        if (clean)
+        {
+            rx = new float[2400 + audio.Length + 2400];
+            audio.CopyTo(rx, 2400);
+        }
+        else
+        {
+            rx = channel.Apply(audio, snrDb, leadInSamples: 2400, leadOutSamples: 2400);
+        }
 
         // Per-symbol truth: re-encode the TX stream to wire bits per block (the same
         // telemetry path as the mask harness) and transcode to descrambled ring points.
@@ -122,19 +136,71 @@ public class Ms110dTailAutopsy
                 code, puncture, interleaver, txBits.AsSpan(b * il.InputBits, il.InputBits));
             fetchedBlocks[b] = fetched;
             int bit = 0;
-            for (int sym = 0; sym < symbolsPerBlock; sym++)
+            if (qam16)
             {
-                refRing[(b * symbolsPerBlock) + sym] = RingIndex(fetched, ref bit, tx.Mode.Modulation);
+                // QAM16 truth lives in the WIRE domain (the demod emits wire-domain y —
+                // descrambling happens inside PushMaxLogLlrs via the XOR nibble): symbol
+                // number = 4 fetched bits MSB-first, wire index = number XOR the scramble
+                // nibble, register reset at each data frame start (D.5.1.3).
+                var truthScrambler = new Ms110dScrambler();
+                for (int f = 0; f < il.Frames; f++)
+                {
+                    truthScrambler.Reset();
+                    for (int u = 0; u < tx.Mode.U; u++)
+                    {
+                        int nibble = (fetched[bit++] << 3) | (fetched[bit++] << 2)
+                            | (fetched[bit++] << 1) | fetched[bit++];
+                        refRing[(b * symbolsPerBlock) + (f * tx.Mode.U) + u] =
+                            truthScrambler.NextQam(nibble, 4);
+                    }
+                }
+            }
+            else
+            {
+                for (int sym = 0; sym < symbolsPerBlock; sym++)
+                {
+                    refRing[(b * symbolsPerBlock) + sym] = RingIndex(fetched, ref bit, tx.Mode.Modulation);
+                }
             }
         }
 
         bool oracle = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_ORACLE") == "1";
-        string tag = $"wn{wn}-w{worker}-b{burst}{(genie ? "-genie" : "")}{(oracle ? "-oracle" : "")}";
+
+        // §B3.5b WN0 genie-gain oracle: "inst" | "pole" (evidence/2026-07-26-phase-
+        // b35b-wn0genie). Implies genie feeding — the truth gains are read from the
+        // clean stream.
+        string? walshOracle = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_WALSH_ORACLE");
+        genie |= walshOracle is not null;
+
+        // §B3.6 M1b perturbed-restart instrument: "p,k" — flip each iteration-0 label
+        // with probability p under a deterministic per-block xorshift seeded by k
+        // (registered: p = 0.02, k = 1..8; evidence/2026-07-26-phase-b36-wn7loop).
+        string? turboPerturb = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TURBO_PERTURB");
+
+        // §B3.6 C2a stage instruments: the frozen (label-free) re-detection pass (M2a)
+        // and the seed file that feeds a prior run's frozen decodes back in as
+        // iteration-0 labels (M2b, the composed candidate).
+        bool turboFrozen = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TURBO_FROZEN") == "1";
+        string? turboSeedFile = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TURBO_SEED");
+        if (turboPerturb is not null && turboSeedFile is not null)
+        {
+            throw new InvalidOperationException("TURBO_PERTURB and TURBO_SEED both set");
+        }
+
+        string tag = $"wn{wn}-w{worker}-b{burst}{(clean ? "-clean" : "")}" +
+            $"{(genie ? "-genie" : "")}{(oracle ? "-oracle" : "")}" +
+            $"{(walshOracle is null ? "" : $"-wgo{walshOracle}")}" +
+            $"{(turboPerturb is null ? "" : $"-tp{turboPerturb.Replace(',', '-')}")}" +
+            $"{(turboFrozen ? "-tfz" : "")}{(turboSeedFile is null ? "" : "-tsd")}";
         using var symbols = new StreamWriter(Path.Combine(outDir, $"autopsy-symbols-{tag}.csv"));
         symbols.WriteLine("index,re,im,refIdx,refRe,refIm");
         using var frames = new StreamWriter(Path.Combine(outDir, $"autopsy-frames-{tag}.log"));
         using var bitErrs = new StreamWriter(Path.Combine(outDir, $"autopsy-biterrs-{tag}.csv"));
         bitErrs.WriteLine("block,symbolInBlock,bitInSymbol");
+        using var oracleBitErrs = new StreamWriter(Path.Combine(outDir, $"autopsy-oracle-biterrs-{tag}.csv"));
+        oracleBitErrs.WriteLine("block,symbolInBlock,bitInSymbol");
+        using var frozenBitErrs = new StreamWriter(Path.Combine(outDir, $"autopsy-frozen-biterrs-{tag}.csv"));
+        frozenBitErrs.WriteLine("block,symbolInBlock,bitInSymbol");
         using var llrStats = new StreamWriter(Path.Combine(outDir, $"autopsy-llrstats-{tag}.csv"));
         llrStats.WriteLine("pass,block,bits,errBits,sumAbsRight,sumAbsWrong");
 
@@ -149,6 +215,8 @@ public class Ms110dTailAutopsy
             TrackRidge = float.TryParse(
                 Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TRACK_RIDGE"), out float tr)
                 ? tr : null,
+            // §B4.1 per-segment pricing variant ("spikeup"/"spike2s"); unset = shipped.
+            TurboNsegMode = Environment.GetEnvironmentVariable("MS110D_TURBO_NSEG"),
         });
         demod.BurstCompleted += bu => endReason = bu.Reason;
         demod.BlockDecoded += b => decoded.AddRange(b.Bits);
@@ -157,7 +225,7 @@ public class Ms110dTailAutopsy
             int i = symbolIndex++;
             if (i < refRing.Length)
             {
-                Cf p = Ms110dTables.Psk8[refRing[i]];
+                Cf p = qam16 ? Ms110dTables.Qam16[refRing[i]] : Ms110dTables.Psk8[refRing[i]];
                 symbols.WriteLine($"{i},{y.Re:F5},{y.Im:F5},{refRing[i]},{p.Re:F5},{p.Im:F5}");
             }
             else
@@ -219,6 +287,58 @@ public class Ms110dTailAutopsy
 
         demod.FirstPassBlockLlrs += (blockIndex, llrs) => WriteLlrStats("first", blockIndex, llrs);
 
+        // §B3.3 basin instrument: the FIRST DECODE's per-block info errors — the quantity
+        // the basin boundary is measured in (llrstats `first` counts raw stream signs,
+        // which per-frame LLR weighting cannot change; the Viterbi decode is what it
+        // changes). Decoded rig-side so the demod's own pipeline is untouched.
+        var firstViterbi = new TailBitingViterbiDecoder(code);
+        var firstDecodeErrs = new List<string>();
+        demod.FirstPassBlockLlrs += (blockIndex, llrs) =>
+        {
+            if (blockIndex >= txBlocks)
+            {
+                return;
+            }
+
+            var dec = new byte[il.InputBits];
+            Ms110dFraming.DecodeBlock(firstViterbi, puncture, interleaver, llrs, dec);
+            int errs = 0;
+            for (int i = 0; i < dec.Length; i++)
+            {
+                errs += dec[i] != txBits[(blockIndex * il.InputBits) + i] ? 1 : 0;
+            }
+
+            firstDecodeErrs.Add($"b{blockIndex}:{errs}");
+        };
+
+        // §B3.3 basin instrument: the stream the turbo settled on — the missing middle of
+        // the first→final→oracle walk. On reverted blocks this is the wander state at the
+        // cap, which is exactly the view the basin mechanism analysis needs.
+        demod.TurboBlockLlrs += (blockIndex, llrs) => WriteLlrStats("final", blockIndex, llrs);
+
+        // §B3.4 instrument: the final stream's INFO decode — what the revert-at-cap
+        // discards. PSK wander states measured worse-than-first (the revert is right);
+        // the QAM16 climb-from-bootstrap may floor far better than its coin-flip first
+        // decode, and this number decides whether the revert logic fits QAM16.
+        var finalDecodeErrs = new List<string>();
+        demod.TurboBlockLlrs += (blockIndex, llrs) =>
+        {
+            if (blockIndex >= txBlocks)
+            {
+                return;
+            }
+
+            var dec = new byte[il.InputBits];
+            Ms110dFraming.DecodeBlock(firstViterbi, puncture, interleaver, llrs, dec);
+            int errs = 0;
+            for (int i = 0; i < dec.Length; i++)
+            {
+                errs += dec[i] != txBits[(blockIndex * il.InputBits) + i] ? 1 : 0;
+            }
+
+            finalDecodeErrs.Add($"b{blockIndex}:{errs}");
+        };
+
         // §B3.3 oracle-labels ceiling (MS110D_AUTOPSY_ORACLE=1): the demod runs one
         // extra chain-BCJR turbo pass per block trained on the TRUE info bits — the
         // upper bound a converged soft-feedback turbo could reach with this channel
@@ -233,6 +353,18 @@ public class Ms110dTailAutopsy
             demod.OracleBlockLlrs += (blockIndex, llrs, dec) =>
             {
                 WriteLlrStats("oracle", blockIndex, llrs);
+
+                // §B3.3 model-front instrument: WHERE the oracle stream is wrong — the
+                // positions localize the residual (fade nulls vs echo regions vs uniform).
+                byte[] fetchedTruth = fetchedBlocks[blockIndex];
+                int cmp = Math.Min(llrs.Length, fetchedTruth.Length);
+                for (int i = 0; i < cmp; i++)
+                {
+                    if ((llrs[i] > 0 ? 0 : 1) != fetchedTruth[i])
+                    {
+                        oracleBitErrs.WriteLine($"{blockIndex},{i / bitsPerSymbol},{i % bitsPerSymbol}");
+                    }
+                }
                 int errs = 0;
                 for (int i = 0; i < dec.Length; i++)
                 {
@@ -243,14 +375,139 @@ public class Ms110dTailAutopsy
             };
         }
 
+        // §B3.5b: truth di-bits for the WN0 gain oracle from the same fetchedBlocks
+        // truth the uncoded accounting uses (Modulate's MSB-first di-bit order); −1
+        // (no truth / post-EOM) falls back to the shipped DD path per symbol.
+        if (walshOracle is not null)
+        {
+            demod.WalshOraclePole = walshOracle == "pole";
+            demod.WalshOracleDibit = (b, sym) =>
+                b < txBlocks && (2 * sym) + 1 < fetchedBlocks[b].Length
+                    ? (fetchedBlocks[b][2 * sym] << 1) | fetchedBlocks[b][(2 * sym) + 1]
+                    : -1;
+        }
+
+        // §B3.6 C2a stage (M2a): arm the frozen pass; per-block coded errors reach the
+        // summary and the decodes are dumped for M2b seeding.
+        var frozenBlockErrs = new List<string>();
+        var frozenDecodes = new Dictionary<int, byte[]>();
+        if (turboFrozen)
+        {
+            demod.TurboFrozenProbe = true;
+            demod.FrozenBlockLlrs += (blockIndex, llrs, dec) =>
+            {
+                WriteLlrStats("frozen", blockIndex, llrs);
+                if (blockIndex >= txBlocks)
+                {
+                    return;
+                }
+
+                // §B3.7 M0: per-position frozen LLR-sign errors, same schema as the
+                // first-pass biterrs CSV so scaffold.py applies to the frozen decode.
+                byte[] fetched = fetchedBlocks[blockIndex];
+                int compareBits = Math.Min(llrs.Length, fetched.Length);
+                for (int i = 0; i < compareBits; i++)
+                {
+                    if ((llrs[i] > 0 ? 0 : 1) != fetched[i])
+                    {
+                        frozenBitErrs.WriteLine($"{blockIndex},{i / bitsPerSymbol},{i % bitsPerSymbol}");
+                    }
+                }
+
+                int errs = 0;
+                for (int i = 0; i < dec.Length; i++)
+                {
+                    errs += dec[i] != txBits[(blockIndex * il.InputBits) + i] ? 1 : 0;
+                }
+
+                frozenBlockErrs.Add($"b{blockIndex}:{errs}");
+                frozenDecodes[blockIndex] = (byte[])dec.Clone();
+            };
+        }
+
+        // §B3.6 M2b: a prior frozen run's decodes become this run's iteration-0 labels
+        // (the composed C2a candidate, staged across two runs). Blocks absent from the
+        // file keep their shipped start.
+        if (turboSeedFile is not null)
+        {
+            var seeds = new Dictionary<int, byte[]>();
+            foreach (string line in File.ReadAllLines(turboSeedFile))
+            {
+                int colon = line.IndexOf(':');
+                if (colon <= 1 || !line.StartsWith('b'))
+                {
+                    continue;
+                }
+
+                int b = int.Parse(line[1..colon], CultureInfo.InvariantCulture);
+                seeds[b] = line[(colon + 1)..].TrimEnd().Select(c => (byte)(c - '0')).ToArray();
+            }
+
+            demod.TurboStartOverride = (blockIndex, firstPass) =>
+                seeds.TryGetValue(blockIndex, out byte[]? s) && s.Length == firstPass.Length
+                    ? s : null;
+        }
+
+        // §B3.6 M1a probe-pricing diag (turbo-probe lines in the frames log) and M1b
+        // perturbed restarts. The perturbation touches ONLY the iteration-0 labels; the
+        // revert fallback stays the true first pass inside the demod.
+        demod.TurboProbeDiag = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TURBO_PROBEDIAG") == "1";
+        // §B3.7 M1a: log-only straddle-pair solve per frozen frame (frozen-pair lines).
+        demod.TurboFrozenPairDiag = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_PAIRDIAG") == "1";
+        // §B3.7 E1′ (Amendment 1): burst-consensus constrained frozen solve.
+        demod.TurboFrozenConsensus = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_CONSENSUS") == "1";
+        // §B3.7 E1″(a) (Amendment 2): alias-priced null on pre-cursor frames.
+        demod.TurboFrozenAliasNull = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_ALIASNULL") == "1";
+        // §B3.7 E1″(b), shipped default (Amendment 3): exact pre-cursor chains on
+        // alias frames. "0" disables (the pre-B3.7 causal-alias seam).
+        if (Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_PRECURSOR") == "0")
+        {
+            demod.TurboFrozenPreCursor = false;
+        }
+        // §B3.8 E3/Amendment 3, shipped default: late-lock second salvage rung.
+        // "0" disables (the pre-B3.8 seam).
+        if (Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_RELOCK") == "0")
+        {
+            demod.TurboFrozenRelock = false;
+        }
+        // §B3.8 Amendment 2: decisive-adoption margin (1 = adopt on any improvement).
+        if (float.TryParse(Environment.GetEnvironmentVariable("MS110D_AUTOPSY_FROZEN_RELOCK_MARGIN"),
+                out float relockMargin))
+        {
+            demod.TurboFrozenRelockMargin = relockMargin;
+        }
+        if (turboPerturb is not null)
+        {
+            string[] parts = turboPerturb.Split(',');
+            float pFlip = float.Parse(parts[0], CultureInfo.InvariantCulture);
+            int pSeed = int.Parse(parts[1], CultureInfo.InvariantCulture);
+            demod.TurboStartOverride = (blockIndex, firstPass) =>
+            {
+                var perturbed = (byte[])firstPass.Clone();
+                uint s = unchecked((uint)((pSeed * 1000003) + (blockIndex * 40503)) ^ 2463534242u);
+                for (int i = 0; i < perturbed.Length; i++)
+                {
+                    s ^= s << 13;
+                    s ^= s >> 17;
+                    s ^= s << 5;
+                    if (s * (1.0f / uint.MaxValue) < pFlip)
+                    {
+                        perturbed[i] ^= 1;
+                    }
+                }
+
+                return perturbed;
+            };
+        }
+
         if (genie)
         {
-            float[] clean = new WattersonChannel(9600, channelSeed, WattersonChannel.Poor).Apply(
+            float[] genieRef = new WattersonChannel(9600, channelSeed, WattersonChannel.Poor).Apply(
                 audio, double.PositiveInfinity, leadInSamples: 2400, leadOutSamples: 2400);
             for (int i = 0; i < rx.Length; i += 4800)
             {
                 int length = Math.Min(4800, rx.Length - i);
-                demod.WriteGenie(clean.AsSpan(i, length));
+                demod.WriteGenie(genieRef.AsSpan(i, length));
                 demod.Process(rx.AsSpan(i, length));
             }
         }
@@ -259,8 +516,9 @@ public class Ms110dTailAutopsy
             demod.Process(rx);
         }
 
-        using (var gainsOut = new StreamWriter(Path.Combine(outDir, $"autopsy-gains-{tag}.csv")))
+        if (!clean)
         {
+            using var gainsOut = new StreamWriter(Path.Combine(outDir, $"autopsy-gains-{tag}.csv"));
             gainsOut.WriteLine("index,p0re,p0im,p1re,p1im");
             IReadOnlyList<Cf[]> gains = channel.LastPathGains!;
             int count = Math.Max(gains[0].Length, gains[1].Length);
@@ -300,11 +558,22 @@ public class Ms110dTailAutopsy
             $"decoded {decoded.Count}, coded errors {codedErrors} " +
             $"(first {firstErr}, last {lastErr}), uncoded {uncodedErrors}/{uncodedBits}, " +
             $"collapses {demod.CollapseResolves}, turbo {demod.TurboConverged}c/" +
-            $"{demod.TurboReverted}r/{demod.TurboAborted}a/{demod.TurboSkipped}s, " +
+            $"{demod.TurboReverted}r/{demod.TurboAborted}a/{demod.TurboSkipped}s/" +
+            $"{demod.TurboSalvaged}v, " +
             $"end={endReason}, {symbolIndex} symbols dumped, " +
             $"lock={demod.Lock?.WaveformNumber}/{demod.Lock?.Interleaver}/K{demod.Lock?.ConstraintLength}" +
             $"@{demod.Lock?.CfoHz:F2}Hz (tx K{settings.ConstraintLength})\n" +
-            (oracle ? $"oracle coded errors per block: {string.Join(" ", oracleBlockErrs)}\n" : ""));
+            $"first-decode errors per block: {string.Join(" ", firstDecodeErrs)}\n" +
+            $"final-decode errors per block: {string.Join(" ", finalDecodeErrs)}\n" +
+            (oracle ? $"oracle coded errors per block: {string.Join(" ", oracleBlockErrs)}\n" : "") +
+            (turboFrozen ? $"frozen coded errors per block: {string.Join(" ", frozenBlockErrs)}\n" : ""));
+        if (turboFrozen)
+        {
+            File.WriteAllLines(
+                Path.Combine(outDir, $"autopsy-frozen-decode-{tag}.txt"),
+                frozenDecodes.OrderBy(kv => kv.Key).Select(kv =>
+                    $"b{kv.Key}:{string.Concat(kv.Value.Select(b => b.ToString()))}"));
+        }
         decoded.Count.Should().BeGreaterThan(0,
             "the corpse must at least acquire for the dump to mean anything");
     }

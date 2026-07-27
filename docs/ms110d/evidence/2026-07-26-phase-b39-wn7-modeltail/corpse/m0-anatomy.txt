@@ -1,0 +1,30 @@
+c-w1b0 [canonical] ship=20 oracle=20 matched=20 excess=0 beats-oracle=0 collapses=15 turbo=11c/0r/0a/0s/5v census-check=OK
+    b3: ship=   6 oracle=   6
+    b6: ship=  14 oracle=  14
+c-w1b1 [canonical] ship=25 oracle=43 matched=13 excess=12 beats-oracle=30 collapses=9 turbo=11c/0r/0a/0s/5v census-check=OK
+    b2: ship=  12 oracle=   0
+    b4: ship=   6 oracle=  11
+    b7: ship=   7 oracle=  11
+    b8: ship=   0 oracle=  21
+c-w2b1 [canonical] ship=38 oracle=34 matched=34 excess=4 beats-oracle=0 collapses=9 turbo=11c/0r/0a/0s/3v census-check=OK
+    b5: ship=   6 oracle=   6
+    b8: ship=  32 oracle=  28
+d-w0b0 [disjoint] ship=16 oracle=38 matched=6 excess=10 beats-oracle=32 collapses=15 turbo=11c/0r/0a/0s/8v census-check=OK
+    b4: ship=   6 oracle=   6
+    b6: ship=   0 oracle=  18
+    b8: ship=   0 oracle=  14
+    b10: ship=  10 oracle=   0
+d-w1b0 [disjoint] ship=12 oracle=1 matched=1 excess=11 beats-oracle=0 collapses=9 turbo=11c/0r/0a/0s/2v census-check=OK
+    b5: ship=   1 oracle=   1
+    b9: ship=  11 oracle=   0
+d-w2b1 [disjoint] ship=6 oracle=6 matched=6 excess=0 beats-oracle=0 collapses=16 turbo=11c/0r/0a/0s/3v census-check=OK
+    b7: ship=   6 oracle=   6
+d-w3b0 [disjoint] ship=14 oracle=0 matched=0 excess=14 beats-oracle=0 collapses=9 turbo=11c/0r/0a/0s/5v census-check=OK
+    b5: ship=  14 oracle=   0
+
+canonical: ship=83 oracle=97 matched=67 excess=16 beats-oracle=30  (family budget ~32/3.24M)
+disjoint: ship=48 oracle=45 matched=13 excess=35 beats-oracle=32  (family budget ~32/3.24M)
+pooled: ship=131 oracle=142 matched=80 excess=51 beats-oracle=62  (pooled budget ~64/6.49M)
+
+honesty gate: matched mass must be <= budget for a model-front arm to be registrable;
+  pooled matched = 80 vs 64; canonical 67 vs 32; disjoint 13 vs 32
