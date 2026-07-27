@@ -71,8 +71,8 @@ catch (Exception ex) when (ex is ArgumentException or InvalidOperationException 
     return 1;
 }
 
-// convert: IQ48 capture WAV → 9600 Hz MS110D audio WAV. Reuses the repo's WavFile IO
-// (whole-file; slice per burst for very long captures).
+// convert: IQ48 capture WAV → 9600 Hz MS110D audio WAV, streamed in constant memory (a campaign
+// pass is an hour, 691 MB, and does not fit).
 static int RunConvert(string[] argv)
 {
     var a = Args.Parse(argv);
@@ -81,10 +81,15 @@ static int RunConvert(string[] argv)
         Console.Error.WriteLine("""
             sm-iqcapture convert --in <iq48.wav> [--out <audio.wav>]
                           [--dial-hz <Hz>] [--ssb-low 150] [--ssb-high 3450] [--out-rate 9600]
+                          [--gain auto|<factor>]
 
             --dial-hz: IQ-baseband frequency of the SSB suppressed carrier (our TX dial − RX tune
                        frequency); 0 when the RX is tuned exactly to our dial. Narrow the SSB
                        edges to emulate a tighter RX filter for comparison.
+            --gain:    auto (default) makes a first pass to find the peak and scales it to 0.7,
+                       which is a PER-FILE scale — levels are then not comparable between files.
+                       Give a number instead when comparing captures. The peak, the gain applied
+                       and any clipping are always reported.
             """);
         return a is null ? 2 : 0;
     }
@@ -92,29 +97,53 @@ static int RunConvert(string[] argv)
     {
         string inPath = a.Req("in");
         string outPath = a.Str("out", Path.ChangeExtension(inPath, ".audio9600.wav"));
-        var opt = new IqToAudioOptions
+        string gainArg = a.Str("gain", "auto");
+        int outRate = a.Int("out-rate", 9600);
+        double dialHz = double.Parse(a.Str("dial-hz", "0"));
+        double ssbLow = double.Parse(a.Str("ssb-low", "150"));
+        double ssbHigh = double.Parse(a.Str("ssb-high", "3450"));
+
+        IqToAudioOptions Options(int rate) => new()
         {
-            OutputRate = a.Int("out-rate", 9600),
-            DialHz = double.Parse(a.Str("dial-hz", "0")),
-            SsbLowHz = double.Parse(a.Str("ssb-low", "150")),
-            SsbHighHz = double.Parse(a.Str("ssb-high", "3450")),
+            InputRate = rate, OutputRate = outRate, DialHz = dialHz,
+            SsbLowHz = ssbLow, SsbHighHz = ssbHigh,
         };
 
-        (float[] iF, int rate) = WavFile.ReadMono(inPath, channel: 0);
-        (float[] qF, _) = WavFile.ReadMono(inPath, channel: 1);
-        var opt2 = rate == opt.InputRate ? opt : new IqToAudioOptions
+        int inputRate;
+        long inputFrames;
+        using (var probe = new PcmWavReader(inPath))
         {
-            InputRate = rate, OutputRate = opt.OutputRate, DialHz = opt.DialHz,
-            SsbLowHz = opt.SsbLowHz, SsbHighHz = opt.SsbHighHz,
-        };
-        var iD = Array.ConvertAll(iF, x => (double)x);
-        var qD = Array.ConvertAll(qF, x => (double)x);
+            inputRate = probe.SampleRate;
+            inputFrames = probe.FrameCount;
+            if (probe.Channels != 2)
+            {
+                throw new InvalidDataException($"expected a 2-channel IQ capture, found {probe.Channels}");
+            }
+        }
 
-        float[] audio = new IqToAudioConverter(opt2).Convert(iD, qD);
-        WavFile.WriteMono(outPath, audio, opt2.OutputRate);
+        double gain;
+        if (gainArg.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            double raw = StreamCapture(inPath, Options(inputRate), null, 1.0, out _);
+            gain = raw > 1e-12 ? 0.7 / raw : 1.0;
+        }
+        else
+        {
+            gain = double.Parse(gainArg);
+        }
+
+        double peak;
+        int clipped;
+        using (var writer = new PcmWavWriter(outPath, outRate, channels: 1))
+        {
+            peak = StreamCapture(inPath, Options(inputRate), writer, gain, out clipped);
+        }
+
+        long outFrames = inputFrames / (inputRate / outRate);
         Console.Error.WriteLine(
-            $"converted {iF.Length} IQ samples @ {rate} Hz → {audio.Length} audio samples @ " +
-            $"{opt2.OutputRate} Hz (dial {opt2.DialHz:F0} Hz, SSB {opt2.SsbLowHz:F0}–{opt2.SsbHighHz:F0} Hz)");
+            $"converted {inputFrames} IQ frames @ {inputRate} Hz → {outFrames} audio samples @ " +
+            $"{outRate} Hz (dial {dialHz:F0} Hz, SSB {ssbLow:F0}–{ssbHigh:F0} Hz), " +
+            $"gain {gain:G4}, peak out {peak:F4}" + (clipped > 0 ? $", CLIPPED {clipped} samples" : ""));
         Console.WriteLine(outPath);
         return 0;
     }
@@ -123,6 +152,45 @@ static int RunConvert(string[] argv)
         Console.Error.WriteLine($"error: {ex.Message}");
         return 1;
     }
+}
+
+/// <summary>Streams one capture through the converter, optionally writing it. Returns the peak
+/// output magnitude (after <paramref name="gain"/>).</summary>
+static double StreamCapture(
+    string path, IqToAudioOptions opt, PcmWavWriter? writer, double gain, out int clipped)
+{
+    const int blockFrames = 1 << 16;
+    using var reader = new PcmWavReader(path);
+    var converter = new StreamingIqToAudioConverter(opt);
+    var input = new short[blockFrames * 2];
+    var output = new float[converter.MaxOutputFor(blockFrames) + converter.MaxFlushOutput];
+
+    double peak = 0;
+    int clips = 0;
+    void Consume(int count)
+    {
+        for (int k = 0; k < count; k++)
+        {
+            float v = (float)(output[k] * gain);
+            output[k] = v;
+            peak = Math.Max(peak, Math.Abs(v));
+        }
+
+        if (writer is not null)
+        {
+            clips += writer.WriteSamples(output.AsSpan(0, count));
+        }
+    }
+
+    int frames;
+    while ((frames = reader.ReadFrames(input)) > 0)
+    {
+        Consume(converter.Process(input.AsSpan(0, frames * 2), output));
+    }
+
+    Consume(converter.Flush(output));
+    clipped = clips;
+    return peak;
 }
 
 /// <summary>Tiny <c>--key value</c> / <c>--flag</c> argument parser.</summary>

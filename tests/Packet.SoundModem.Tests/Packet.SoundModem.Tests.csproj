@@ -12,9 +12,18 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The Watterson rig lives here but is compiled by the OTA tool, which injects the same
+         channel at the transmitter for §E2. One definition, reached from both sides; the file
+         stays here because this is where it belongs and where it is maintained. -->
+    <Compile Remove="Channel/WattersonChannel.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
     <!-- Dev tool under test: the ka9q_ubersdr IQ capture decoder (UberSdrPcmDecoderTests). -->
     <ProjectReference Include="../../tools/Packet.SoundModem.UberSdr/Packet.SoundModem.UberSdr.csproj" />
+    <!-- Dev tool under test: the OTA transmit harness (Ota/*Tests). -->
+    <ProjectReference Include="../../tools/Packet.SoundModem.Ota/Packet.SoundModem.Ota.csproj" />
   </ItemGroup>
 
 </Project>

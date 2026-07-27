@@ -11,7 +11,13 @@
   <ItemGroup>
     <PackageReference Include="System.IO.Ports" />
     <!-- FlexRadio 6000-series client, lifted out of this repo into its own package. -->
-    <PackageReference Include="M0LTE.Flex" />
+    <!-- Build against a local M0LTE.Flex checkout with
+         `-p:FlexSourcePath=/path/to/M0LTE.Flex/src/M0LTE.Flex/M0LTE.Flex.csproj`.
+         The Flex work here is co-developed with that library and the radio is the only
+         authority on how it behaves, so iterating means editing both and testing on air —
+         a pack/publish round trip per change is friction with nothing to show for it.
+         Unset (the default and what CI uses), the published package is consumed. -->
+    <PackageReference Include="M0LTE.Flex" Condition="'$(FlexSourcePath)' == ''" />
     <PackageReference Include="M0LTE.Radio.Audio" />
     <PackageReference Include="M0LTE.Fec" />
     <PackageReference Include="M0LTE.Il2p" />
@@ -23,8 +29,17 @@
     <PackageReference Include="M0LTE.Ofdm" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(FlexSourcePath)' != ''">
+    <ProjectReference Include="$(FlexSourcePath)" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
+    <!-- The OTA scorer re-encodes the transmitted bit stream to measure UNCODED error rate,
+         which needs the same framing/puncture/interleave internals the mask suite uses. It has
+         to be the production encoder rather than a copy: a scorer with its own idea of the wire
+         order would grade the demodulator against a fiction and never say so. -->
+    <InternalsVisibleTo Include="sm-ota" />
   </ItemGroup>
 
 </Project>

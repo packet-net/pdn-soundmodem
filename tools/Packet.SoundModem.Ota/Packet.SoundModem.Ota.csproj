@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>sm-ota</AssemblyName>
+    <RootNamespace>Packet.SoundModem.Ota</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="M0LTE.Dsp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The Watterson rig, compiled from where it lives in the test project rather than copied.
+         §E2 injects at the transmitter the SAME channel the mask suite simulates, and the entire
+         value of that comparison rests on it being the same rig: a second implementation would
+         measure the difference between two rigs and report it as the cost of real hardware. The
+         file does not move on disk, so it stays the mask suite's to edit and every change flows
+         through here; the test project stops compiling it (see its csproj) so there is exactly
+         one definition; its namespace is unchanged so no test source needs touching. -->
+    <Compile Include="../../tests/Packet.SoundModem.Tests/Channel/WattersonChannel.cs"
+             Link="Channel/WattersonChannel.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- WattersonChannelTests exercises the rig's internal FadingGains. -->
+    <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
+  </ItemGroup>
+
+  <!-- Stamp the repository revision into the binary, so every manifest a pass writes records
+       which demodulator produced the scores. The demodulator changes daily and a score without a
+       revision is uninterpretable six weeks later; asking the operator to write it down by hand
+       is asking for it to be wrong. Failures here are non-fatal (ContinueOnError) — a build from
+       a tarball with no git still works, it just records "unknown" and says so. -->
+  <Target Name="StampRepositoryRevision" BeforeTargets="GetAssemblyAttributes">
+    <Exec Command="git -C $(MSBuildProjectDirectory) rev-parse --short=12 HEAD"
+          ConsoleToMSBuild="true" ContinueOnError="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="RepositoryRevision" />
+      <Output TaskParameter="ExitCode" PropertyName="RevisionExitCode" />
+    </Exec>
+    <Exec Command="git -C $(MSBuildProjectDirectory) status --porcelain --untracked-files=no"
+          ConsoleToMSBuild="true" ContinueOnError="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="RepositoryDirtyFiles" />
+    </Exec>
+    <PropertyGroup>
+      <RepositoryRevision Condition="'$(RevisionExitCode)' != '0'">unknown</RepositoryRevision>
+      <!-- A dirty tree is normal mid-development; it is not a problem, but a score taken from one
+           cannot be reproduced from the commit alone, so it has to be on the record. -->
+      <RepositoryRevision Condition="'$(RepositoryDirtyFiles)' != ''">$(RepositoryRevision)-dirty</RepositoryRevision>
+      <InformationalVersion>$(Version)+$(RepositoryRevision)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+
+  <ItemGroup>
+    <!-- M0LTE.Flex (the waveform IQ TX path) flows transitively; WavFile IO for `measure`. -->
+    <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
+    <!-- UberSdrIqClient, so `sm-ota tone` can bracket its own transmission with a capture
+         rather than depending on an operator starting sm-iqcapture in another terminal. -->
+    <ProjectReference Include="../Packet.SoundModem.UberSdr/Packet.SoundModem.UberSdr.csproj" />
+  </ItemGroup>
+
+</Project>
