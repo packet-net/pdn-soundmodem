@@ -1,0 +1,13 @@
+payload 24544 bits in 8 blocks (12288 symbols/block), decoded 24576, coded errors 0 (first -1, last -1), uncoded 13169/98304, collapses 32, turbo 8c/0r/0a/0s, end=Eom, 98304 symbols dumped, lock=//K@Hz (tx K7)
+payload 24544 bits in 8 blocks (12288 symbols/block), decoded 24576, coded errors 5 (first 10147, last 10154), uncoded 14673/98304, collapses 40, turbo 8c/0r/0a/0s, end=Eom, 98304 symbols dumped, lock=//K@Hz (tx K7)
+payload 24544 bits in 8 blocks (12288 symbols/block), decoded 24576, coded errors 4 (first 723, last 728), uncoded 15294/98304, collapses 36, turbo 8c/0r/0a/0s, end=Eom, 98304 symbols dumped, lock=//K@Hz (tx K7)
+payload 24544 bits in 8 blocks (12288 symbols/block), decoded 24576, coded errors 6 (first 6377, last 6383), uncoded 15339/98304, collapses 34, turbo 8c/0r/0a/0s, end=Eom, 98304 symbols dumped, lock=//K@Hz (tx K7)
+payload 270304 bits in 11 blocks (16384 symbols/block), decoded 270336, coded errors 0 (first -1, last -1), uncoded 29145/360448, collapses 11, turbo 11c/0r/0a/0s, end=Eom, 180224 symbols dumped, lock=//K@Hz (tx K7)
+payload 270304 bits in 11 blocks (16384 symbols/block), decoded 270336, coded errors 8 (first 171262, last 171272), uncoded 31134/360448, collapses 16, turbo 11c/0r/0a/0s, end=Eom, 180224 symbols dumped, lock=//K@Hz (tx K7)
+payload 270304 bits in 11 blocks (16384 symbols/block), decoded 270336, coded errors 0 (first -1, last -1), uncoded 31693/360448, collapses 17, turbo 11c/0r/0a/0s, end=Eom, 180224 symbols dumped, lock=//K@Hz (tx K7)
+payload 270304 bits in 11 blocks (16384 symbols/block), decoded 270336, coded errors 8 (first 202531, last 202541), uncoded 35165/360448, collapses 14, turbo 11c/0r/0a/0s, end=Eom, 180224 symbols dumped, lock=//K@Hz (tx K7)
+payload 270304 bits in 11 blocks (16384 symbols/block), decoded 270336, coded errors 19 (first 213664, last 216281), uncoded 28491/360448, collapses 9, turbo 11c/0r/0a/0s, end=Eom, 180224 symbols dumped, lock=//K@Hz (tx K7)
+payload 405472 bits in 11 blocks (16384 symbols/block), decoded 405504, coded errors 72666 (first 147456, last 405468), uncoded 89559/540672, collapses 14, turbo 7c/4r/0a/0s, end=, 180736 symbols dumped, lock=7/Long/K7@0.05Hz (tx K7)
+oracle coded errors per block: b0:0 b1:0 b2:0 b3:0 b4:0 b5:15 b6:0 b7:0 b8:0 b9:0 b10:0
+payload 405472 bits in 11 blocks (16384 symbols/block), decoded 405504, coded errors 72666 (first 147456, last 405468), uncoded 89559/540672, collapses 14, turbo 7c/4r/0a/0s, end=, 180736 symbols dumped, lock=7/Long/K7@0.05Hz (tx K7)
+VARIANT spikeup DONE

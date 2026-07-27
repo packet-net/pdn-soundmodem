@@ -1,0 +1,5 @@
+payload 405472 bits in 11 blocks (16384 symbols/block), decoded 405504, coded errors 20 (first 134950, last 247832), uncoded 97704/540672, collapses 15, turbo 11c/0r/0a/0s/5v, end=Eom, 180224 symbols dumped, lock=//K@Hz (tx K7)
+payload 405472 bits in 11 blocks (16384 symbols/block), decoded 405504, coded errors 0 (first -1, last -1), uncoded 89559/540672, collapses 14, turbo 11c/0r/0a/0s/4v, end=Eom, 180224 symbols dumped, lock=//K@Hz (tx K7)
+payload 6304 bits in 11 blocks (0 symbols/block), decoded 6336, coded errors 0 (first -1, last -1), uncoded 302/12672, collapses 0, turbo 0c/0r/0a/11s/0v, end=Eom, 0 symbols dumped, lock=//K@Hz (tx K7)
+payload 270304 bits in 11 blocks (16384 symbols/block), decoded 270336, coded errors 0 (first -1, last -1), uncoded 29145/360448, collapses 11, turbo 11c/0r/0a/0s/0v, end=Eom, 180224 symbols dumped, lock=//K@Hz (tx K7)
+payload 202720 bits in 11 blocks (16384 symbols/block), decoded 202752, coded errors 0 (first -1, last -1), uncoded 46564/360448, collapses 15, turbo 11c/0r/0a/0s/0v, end=Eom, 180224 symbols dumped, lock=//K@Hz (tx K7)

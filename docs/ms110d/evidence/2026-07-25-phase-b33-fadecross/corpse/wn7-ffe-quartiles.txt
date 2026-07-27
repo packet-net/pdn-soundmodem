@@ -1,0 +1,8 @@
+hiP0: frames 352  median n 0.0127  median ffE 12.91  median n/ffE 0.00099  median sseT/U 0.0355  mean errs 1.6
+loP0: frames 352  median n 0.0375  median ffE 22.91  median n/ffE 0.00155  median sseT/U 0.1082  mean errs 31.4
+
+by |p0| quartile (low->high):
+  q0: median n 0.0471  ffE 24.49  n/ffE 0.00173  mean errs 48.7
+  q1: median n 0.0301  ffE 22.33  n/ffE 0.00132  mean errs 14.1
+  q2: median n 0.0172  ffE 15.60  n/ffE 0.00109  mean errs 2.6
+  q3: median n 0.0089  ffE 10.09  n/ffE 0.00085  mean errs 0.5

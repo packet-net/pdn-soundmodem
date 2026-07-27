@@ -33,7 +33,37 @@ public sealed class Ms110dDemodulator
     private const int ChipsFixed = 288;           // 9 × 32 (M ≥ 2)
     private const int ChipsSuperframe = 576;
     private const int InterpHalf = 4;             // 8-tap interpolator
+
+    // #101 input signal-level AGC (see the _agcGain field). AgcLevelFloor is the receive
+    // level below which a burst is judged globally weak and normalized up to AgcNominalLevel;
+    // at or above it the gain is exactly 1.0 (a dead-zone that makes the AGC a no-op at the
+    // sim's nominal level and every stronger level → masks byte-identical). Both are the
+    // measured fade-averaged Fixed-section correlation amplitude (|Σ y·k̄|/32, k unit-magnitude
+    // 8PSK); AgcMaxGain caps the boost so a near-noise burst is not amplified without bound.
+    // Measured (data/agc-scale-calibration.log): the sim nominal Fixed-section correlation
+    // amplitude is ~0.119, linear in receive level (−20 dB → 0.012). The dead-zone floor 0.04
+    // sits far below the fade-averaged mask levels (which cluster near nominal because the
+    // ~1 Hz fade averages out over the ~2 s window) and far above the −20 dB real-RF level, so
+    // the AGC fires zero times in-family (masks byte-identical) yet catches the real-RF offset.
+    private const float AgcNominalLevel = 0.12f;  // boost target — the level the ridges were tuned for
+    private const float AgcLevelFloor = 0.04f;    // dead-zone edge: at/above this the gain is exactly 1.0
+    private const float AgcMaxGain = 32f;
     private static readonly double[] BinsHz = [-75, -50, -25, 0, 25, 50, 75];
+
+    /// <summary>Encoded count words for every field value — the joint count vote's
+    /// per-candidate expected dibits (§B3.5 Amendment 1).</summary>
+    private static readonly byte[][] CountWords = BuildCountWords();
+
+    private static byte[][] BuildCountWords()
+    {
+        var words = new byte[32][];
+        for (int c = 0; c < 32; c++)
+        {
+            words[c] = PreambleGenerator.EncodeCount(c);
+        }
+
+        return words;
+    }
 
     private readonly Ms110dDemodOptions _options;
     private FirFilter _rxFilterRe;
@@ -100,6 +130,13 @@ public sealed class Ms110dDemodulator
     private Ms110dInterleaverParams? _il;
     private long _dataStartChip;
     private bool _trackingInitialized;
+    // #101 input signal-level AGC: a per-burst scalar applied to the DFE read path so a
+    // globally-low receive level (real-RF, no AGC upstream) is normalized to the level the
+    // K=48 cold-restart solves were tuned for. 1.0 = no-op (set for every nominal-or-stronger
+    // burst by the dead-zone, so the sim masks are unchanged by construction). Estimated from a
+    // fade-averaged preamble SIGNAL correlation, so a nominal fade never trips it. See
+    // InitializeDfe / EstimatePreambleLevel.
+    private float _agcGain = 1.0f;
 
     // Tracking state (WN ≥ 1).
     private Dfe? _dfe;
@@ -213,6 +250,14 @@ public sealed class Ms110dDemodulator
     /// channel-bit error rate, the §5.3 uncoded-vs-coded split (phase-b-plan §B0).</summary>
     public event Action<int, float[]>? FirstPassBlockLlrs;
 
+    /// <summary>Diagnostic (phase-b-plan §B3.3 basin): fires once per interleaver block
+    /// AFTER the turbo loop settles, with the block index and the wire-order LLRs of the
+    /// last turbo iterate — on converged blocks the fixed-point stream, on reverted blocks
+    /// the wander state the loop was in when the cap hit (the shipped DECODE on those
+    /// blocks is the first-pass one; the stream here is what the loop believed). Does not
+    /// fire on skipped or aborted blocks. The buffer is reused per block — copy to keep.</summary>
+    public event Action<int, float[]>? TurboBlockLlrs;
+
     /// <summary>Diagnostic (phase-b-plan §B3.3): when set, FinishBlock runs ONE extra
     /// turbo re-equalization trained on the returned TRUE info bits for the block —
     /// oracle labels — after the normal pipeline has finished with the block. This
@@ -228,11 +273,129 @@ public sealed class Ms110dDemodulator
     /// of those LLRs.</summary>
     public event Action<int, float[], byte[]>? OracleBlockLlrs;
 
+    /// <summary>§B3.5b WN0 genie-gain oracle (instrument,
+    /// evidence/2026-07-26-phase-b35b-wn0genie): returns the TRUE transmitted di-bit for
+    /// (blockIndex, symbolInBlock), or −1 for no-truth symbols (post-EOM), which fall
+    /// back to the shipped DD path. When set, TrackWalsh detects with truth-derived
+    /// finger gains read from the genie stream (required — throws without one) and skips
+    /// the carrier PLL retune (the phase-error observable self-cancels under truth
+    /// gains). Unset = the shipped path, bit-identical. Armed only by the autopsy rig.</summary>
+    internal Func<int, int, int>? WalshOracleDibit { get; set; }
+
+    /// <summary>§B3.5b companion: true = O-pole (shipped one-pole/warm-up with truth
+    /// innovations — keeps the 80 ms lag), false = O-inst (instantaneous truth).</summary>
+    internal bool WalshOraclePole { get; set; }
+
+    /// <summary>§B3.6 instrument (evidence/2026-07-26-phase-b36-wn7loop): replaces the
+    /// turbo loop's iteration-0 labels for one block — perturbed restarts (M1b) and
+    /// staged seeding (M2b). Receives the block index and the first-pass decode; a null
+    /// return leaves the start unchanged. Revert protection is untouched: the fallback
+    /// stream remains the TRUE first pass. Unset = the shipped path, bit-identical.
+    /// Armed only by the autopsy rig.</summary>
+    internal Func<int, byte[], byte[]?>? TurboStartOverride { get; set; }
+
+    /// <summary>§B3.6 M1a instrument: when set (with <see cref="FrameDiagnostics"/>),
+    /// every TurboCore pass emits one <c>turbo-probe</c> line per block — the solved
+    /// channel priced on the frames' PRECEDING mini-probe rows (known symbols, the only
+    /// training-domain evidence decode labels cannot launder). Rows keep their feedback
+    /// history and TIR echo sources wholly inside the probe, mirroring the solve's own
+    /// probe-row construction.</summary>
+    internal bool TurboProbeDiag { get; set; }
+
+    /// <summary>§B3.6 C2a stage (M2a measurement): when set (with
+    /// <see cref="FrozenBlockLlrs"/> subscribed), FinishBlock runs one extra label-free
+    /// re-detection pass per block after the normal pipeline — probe-only TIR solve,
+    /// probe-anchored h1, the solve's own shortening target as the chain echo model,
+    /// probe-priced noise floor, chains as no-prior exact-MAP. No decode label touches
+    /// any estimate (the anti-echo-chamber construction). The shipped decode is never
+    /// touched; unset = bit-identical. Armed only by the autopsy rig; PSK modes only.</summary>
+    internal bool TurboFrozenProbe { get; set; }
+
+    /// <summary>§B3.6 companion: the block index, the frozen-pass wire-order LLRs
+    /// (buffer reused per block — copy to keep), and the Viterbi decode of those
+    /// LLRs.</summary>
+    internal event Action<int, float[], byte[]>? FrozenBlockLlrs;
+
+    /// <summary>§B3.7 M1a instrument: when set (with <see cref="FrameDiagnostics"/>),
+    /// every frozen-pass frame ALSO runs a straddle-pair TIR solve on the same probe
+    /// rows and emits one <c>frozen-pair</c> line — log-only; the applied path stays
+    /// the single-lag solve, which runs last so its taps stand for the frame's
+    /// Equalize calls. Unset = bit-identical.</summary>
+    internal bool TurboFrozenPairDiag { get; set; }
+
+    /// <summary>§B3.7 E1′ (Amendment 1): burst-consensus constrained frozen solve — a
+    /// vote sweep of free probe-only solves picks the block's modal accepted lag, and
+    /// every frame's applied solve then tests ONLY that lag under the single-candidate
+    /// margin. Kills the ln L acceptance starvation and the 16-periodic-probe
+    /// pre-cursor alias (M1a: the lag-11 cluster). Reachable only from the salvage
+    /// rung and the frozen diag pass; unset = bit-identical. Measured RED (the E1′
+    /// post-mortem): the free solve's per-frame choices are frame-local channel truth.
+    /// Kept as a measurement seam.</summary>
+    internal bool TurboFrozenConsensus { get; set; }
+
+    /// <summary>§B3.7 E1″(a) (Amendment 2): on frozen-pass frames whose accepted lag
+    /// exceeds half the probe base period — the pre-cursor folded through the periodic
+    /// probe, NOT a causal echo — drop the chain echo model and price the pre-cursor
+    /// into the noise floor. The solve, FF, anchors and floor stand (they fit the true
+    /// response through the folded column); only the chain application changes.
+    /// Frozen/salvage path only; unset = bit-identical.</summary>
+    internal bool TurboFrozenAliasNull { get; set; }
+
+    /// <summary>§B3.7 E1″(b), SHIPPED default (Amendment 3): on alias frames, run the
+    /// chains EXACTLY on the pre-cursor structure via the observation shift — o[u] =
+    /// y[u−d] couples x[u] (through the pre-cursor coefficient, which rides the cursor
+    /// slot rotor-free) and x[u−d] (through h1), with d = period − lag. The last d
+    /// data symbols are observed only through the pre-cursor coefficient (the mirror
+    /// of the causal form's tail truncation). Takes precedence over E1″(a) on alias
+    /// frames when both are set. Frozen/salvage path only; false restores the
+    /// pre-B3.7 causal-alias application (measurement seam).</summary>
+    internal bool TurboFrozenPreCursor { get; set; } = true;
+
+    /// <summary>§B3.8 E3 (Amendments 1/3): the late-lock salvage rung. A causal
+    /// acceptance with the echo above the cursor (late path dominant) can leave the
+    /// feedback-free FF unable to equalize the frame — the priced floor blows up
+    /// 30–80× and the chain drowns on honestly-priced garbage (the trio's bad-frame
+    /// class; the same physics rides cleanly on the natural pre-cursor frames). When
+    /// the STANDARD salvage fails (Amendment 3 — converging blocks are structurally
+    /// untouched: a ceiling block's fixed point can wobble a few bits under ANY seed
+    /// change, the w0/b0 b5 lesson), the salvage is retried with the frozen pass
+    /// offering the late-lock geometry per causal-accept frame: re-train with the
+    /// equalizer window shifted by the accepted lag (the shift performs the re-lock;
+    /// the tap shape carries over, so the ridge anchor stays approximately right in
+    /// shifted coordinates), solve only the aliased pre-cursor lag, and adopt when
+    /// the shifted floor is decisively lower (<see cref="TurboFrozenRelockMargin"/>).
+    /// Winning frames run the existing E1″(b) pre-cursor chain with the shift
+    /// threaded through. Frozen/salvage path only; false = bit-identical to #93
+    /// (measurement seam). SHIPPED default-on (Amendment 3 ship bar).</summary>
+    internal bool TurboFrozenRelock { get; set; } = true;
+
+    private bool _frozenRelockActive;
+
+    /// <summary>§B3.8 Amendment 2: the late-lock offer adopts only when the shifted
+    /// geometry is decisively better — altVar &lt; margin·noiseVar. 1 = adopt on any
+    /// improvement (the pre-margin E3 form). Marginal adoptions within gauge noise of
+    /// the two anchor passes are coin flips; the measured target class clears any
+    /// reasonable margin (floor improvements of 10–30×, trio adoption medians
+    /// 7–38×), so 0.5 keeps the decisive mass and drops the coin flips.</summary>
+    internal float TurboFrozenRelockMargin { get; set; } = 0.5f;
+
+    /// <summary>Diagnostic (phase-b-plan §B3.3 fade-crossing): while the oracle
+    /// re-equalization runs, TurboCore emits one <c>turbo-frame</c> line per frame with
+    /// the per-segment channel anchors and the BCJR noise floor, so the corpse can
+    /// compare the estimated tap trajectory against the recorded channel truth.</summary>
+    private bool _turboFrameDiag;
+
     /// <summary>Turbo blocks that reached a decode fixed point (since construction/Reset).</summary>
     public int TurboConverged { get; private set; }
 
     /// <summary>Turbo blocks reverted to the first-pass decode (no fixed point in 5 iterations).</summary>
     public int TurboReverted { get; private set; }
+
+    /// <summary>§B3.6 salvage: revert-path blocks recovered by the frozen-probe
+    /// re-detection seed (8PSK only) — a fresh soft loop from a label-free start found
+    /// a fixed point where the first-pass-seeded loop wandered. Salvaged blocks also
+    /// count as converged.</summary>
+    public int TurboSalvaged { get; private set; }
 
     /// <summary>Turbo blocks aborted mid-re-equalization (samples no longer available).</summary>
     public int TurboAborted { get; private set; }
@@ -246,6 +409,12 @@ public sealed class Ms110dDemodulator
     /// §B2.1c; since construction/Reset). Zero on healthy runs — a nonzero count says
     /// decision-directed tracking collapsed and was restarted from the probe alone.</summary>
     public int CollapseResolves { get; private set; }
+
+    /// <summary>Bursts whose input AGC fired (issue #101 — the receive level fell below the
+    /// dead-zone floor and was normalized up). Zero on every nominal-or-stronger burst, so a
+    /// zero total across a mask point proves the AGC was a strict no-op there (masks
+    /// byte-identical); a nonzero count over real-RF Poor is the fix engaging.</summary>
+    public int AgcResolves { get; private set; }
 
     /// <summary>Fires for every decoded input-data block.</summary>
     public event Action<Ms110dRxBlock>? BlockDecoded;
@@ -297,6 +466,7 @@ public sealed class Ms110dDemodulator
         TurboAborted = 0;
         TurboSkipped = 0;
         CollapseResolves = 0;
+        AgcResolves = 0;
         EndBurst();
     }
 
@@ -564,6 +734,9 @@ public sealed class Ms110dDemodulator
             return;
         }
 
+        FrameDiagnostics?.Invoke(
+            $"count@{_chip0}: dibits={countDibits[0]}{countDibits[1]}{countDibits[2]}{countDibits[3]} count={count}");
+
         // §B3 WID vote (issue #69): the WID section repeats identically in every
         // remaining preamble super-frame, all of which arrive BEFORE data start — so
         // soft-combining it across super-frames costs zero latency and rides out a
@@ -635,6 +808,62 @@ public sealed class Ms110dDemodulator
             BackToSearch();
             return;
         }
+
+        // §B3.5 Amendment 1: joint count vote over the same span the WID vote already
+        // waits for. The count is the last single-read acquisition field (4 dibits,
+        // 3 check bits — corrupted reads beat the check 1-in-8), and a wrong count
+        // places data start whole super-frames off behind a clean-looking lock (four
+        // coin-flip bursts in the WN0 Poor census; the WID's Class-D failure, again).
+        // The field decrements per super-frame, so the vote is decrement-aligned:
+        // candidate c at vote frame v expects EncodeCount(c−v).
+        Span<double> cntMags = stackalloc double[5 * 4 * 4];
+        cntMags.Clear();
+        for (int v = 0; v < votes; v++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                AccumulateWalshMags(
+                    (v * ChipsSuperframe) + ChipsFixed + (32 * j),
+                    Ms110dTables.CntPn, 32 * j, cntMags.Slice(((v * 4) + j) * 4, 4));
+            }
+        }
+
+        double bestScore = -1, secondScore = -1;
+        int jointCount = -1;
+        for (int c = votes - 1; c < 32; c++)
+        {
+            double score = 0;
+            for (int v = 0; v < votes; v++)
+            {
+                byte[] exp = CountWords[c - v];
+                for (int j = 0; j < 4; j++)
+                {
+                    score += cntMags[(((v * 4) + j) * 4) + exp[j]];
+                }
+            }
+
+            if (score > bestScore)
+            {
+                secondScore = bestScore;
+                bestScore = score;
+                jointCount = c;
+            }
+            else if (score > secondScore)
+            {
+                secondScore = score;
+            }
+        }
+
+        double countMargin = (bestScore - secondScore) / (bestScore + 1e-9);
+        FrameDiagnostics?.Invoke(
+            $"count-vote@{_chip0}: single={count} joint={jointCount} margin={countMargin:F3} frames={votes}");
+        if (countMargin < 0.10)
+        {
+            BackToSearch(); // mushy joint = failed acquisition candidate, not a lock
+            return;
+        }
+
+        count = jointCount;
 
         if (!PreambleGenerator.TryDecodeWid(widDibits, out int wn, out Ms110dInterleaverKind il, out int k) ||
             !IsSupported(wn) ||
@@ -921,7 +1150,10 @@ public sealed class Ms110dDemodulator
         double pos = _chip0 + halfChips + _tau;
         var value = Interpolate(pos, _ring, _written);
         double theta = _thetaBase + (_omega * (pos - _chip0));
-        return value * Cf.CmplxConj((float)theta);
+        // #101 input AGC (_agcGain, unity except on a globally-low burst): normalizes the
+        // receive level ahead of the equalizer. Unity during acquisition and for every
+        // nominal-or-stronger burst, so acquisition and the sim masks are untouched.
+        return value * Cf.CmplxConj((float)theta) * _agcGain;
     }
 
     /// <summary>Estimation-side read: the genie ring when the genie is enabled, otherwise
@@ -940,7 +1172,7 @@ public sealed class Ms110dDemodulator
         // in both rings or a genie run differs even when fed the noisy stream itself.
         var value = Interpolate(pos, _genieRing, Math.Min(_genieWritten, _written));
         double theta = _thetaBase + (_omega * (pos - _chip0));
-        return value * Cf.CmplxConj((float)theta);
+        return value * Cf.CmplxConj((float)theta) * _agcGain; // #101 AGC (see ReadT2)
     }
 
     private Cf ReadChip(double chip)
@@ -1014,8 +1246,61 @@ public sealed class Ms110dDemodulator
         }
     }
 
+    /// <summary>Fade-averaged global receive SIGNAL level (issue #101): coherently correlate
+    /// the received Fixed subsection of each trailing preamble super-frame against the known
+    /// Fixed chips in 32-chip groups — noise averages out of each group, and |Σ y·k̄|/32 is
+    /// that group's signal amplitude — then average over all groups. Averaging several
+    /// super-frames (~1–2 s) averages the ~1 Hz Watterson fade out, so the result reflects the
+    /// GLOBAL level (a real-RF weak signal), not the instantaneous fade — the property that
+    /// lets the AGC no-op through a nominal fade yet catch a globally-low level. Reads at the
+    /// current <see cref="_agcGain"/> (unity here, before the AGC is set), so it measures the
+    /// true level. Matched to the signal, NOT total power — total RMS tracks SNR, so a
+    /// total-power AGC would attenuate at low SNR and disturb the masks.</summary>
+    private double EstimatePreambleLevel()
+    {
+        byte[] fixedChips = new PreambleGenerator(0, 2).FixedSectionChips();
+        int sfAvail = (int)Math.Clamp(_dataStartChip / ChipsSuperframe, 1, 8);
+        double sum = 0;
+        int groups = 0;
+        for (int sf = 1; sf <= sfAvail; sf++)
+        {
+            long baseChip = _dataStartChip - (sf * ChipsSuperframe);
+            for (int g = 0; g < ChipsFixed / 32; g++)
+            {
+                var c = Cf.Zero;
+                for (int i = 0; i < 32; i++)
+                {
+                    int chip = (g * 32) + i;
+                    c += ReadChipEst(baseChip + chip) * Ms110dTables.Psk8[fixedChips[chip]].Conj();
+                }
+
+                sum += c.Abs() / 32.0;
+                groups++;
+            }
+        }
+
+        return groups > 0 ? sum / groups : 0;
+    }
+
     private void InitializeDfe()
     {
+        // #101 input signal-level AGC: estimate the global receive level and set the per-burst
+        // normalization BEFORE the carrier refit and DFE training read the (now-normalized)
+        // signal. _agcGain is unity here, so EstimatePreambleLevel measures the true level; the
+        // dead-zone keeps _agcGain = 1.0 for every nominal-or-stronger burst (a strict no-op —
+        // acquisition already happened at unity and the sim masks are unchanged by
+        // construction), and only a globally-low burst (real-RF) is scaled up to nominal.
+        double agcLevel = EstimatePreambleLevel();
+        _agcGain = agcLevel <= 0 || agcLevel >= AgcLevelFloor
+            ? 1.0f
+            : (float)Math.Min(AgcNominalLevel / agcLevel, AgcMaxGain);
+        if (_agcGain != 1.0f)
+        {
+            AgcResolves++;
+        }
+
+        FrameDiagnostics?.Invoke($"agc@{_dataStartChip}: level={agcLevel:F4} gain={_agcGain:F3}");
+
         // Same stale-extrapolation concern as the WN0 path: re-fit the carrier over the
         // final super-frames before training (see TrackWalsh).
         int tail = TailRefineSuperframes();
@@ -1888,45 +2173,101 @@ public sealed class Ms110dDemodulator
             _trackingInitialized = true;
         }
 
-        Span<Cf> chips = stackalloc Cf[32];
+        Span<Cf> chips = stackalloc Cf[Wid0WalshModem.RakeChips];
+        Span<Cf> cleanChips = stackalloc Cf[Wid0WalshModem.RakeChips];
         Span<float> llrs = stackalloc float[2];
-        while (_state == Ms110dRxState.Tracking && HaveSamplesForChip(_symbolChip + 34))
+        Span<float> gainMags = stackalloc float[Wid0WalshModem.Fingers];
+        bool walshOracle = WalshOracleDibit is not null;
+        if (walshOracle && _genieRing is null)
         {
-            for (int i = 0; i < 32; i++)
+            throw new InvalidOperationException("the WN0 gain oracle requires the genie stream");
+        }
+
+        // Forward availability is unchanged by the §B3.5b anti-causal fingers: the
+        // buffer extends NegFingers chips BACK (always in ring history) and the same
+        // 38 chips forward.
+        double forwardChips = Wid0WalshModem.RakeChips - Wid0WalshModem.NegFingers;
+        while (_state == Ms110dRxState.Tracking && HaveSamplesForChip(_symbolChip + forwardChips + 2))
+        {
+            for (int i = 0; i < Wid0WalshModem.RakeChips; i++)
             {
-                chips[i] = ReadChip(_symbolChip + i);
+                chips[i] = ReadChip(_symbolChip - Wid0WalshModem.NegFingers + i);
             }
 
-            _walsh!.Demodulate(chips, llrs, out _, out Cf correlation);
+            int bestDibit;
+            Cf combined;
+            double maxFingerAbs;
+            int trueDibit = walshOracle ? WalshOracleDibit!(_blockIndex, _symbolInBlock) : -1;
+            if (trueDibit >= 0)
+            {
+                for (int i = 0; i < Wid0WalshModem.RakeChips; i++)
+                {
+                    cleanChips[i] = ReadChipEst(_symbolChip - Wid0WalshModem.NegFingers + i);
+                }
+
+                _walsh!.DemodulateRakeOracle(
+                    chips, cleanChips, trueDibit, WalshOraclePole, llrs,
+                    out bestDibit, out combined, out maxFingerAbs);
+            }
+            else
+            {
+                _walsh!.DemodulateRake(chips, llrs, out bestDibit, out combined, out maxFingerAbs);
+            }
+
             AddLlr(llrs[0]);
             AddLlr(llrs[1]);
 
-            // Decision-directed carrier: the winning Walsh correlation should be real and
-            // positive after descrambling. Average over 8 channel symbols before applying
-            // the correction — the per-symbol phase estimate at the −6 dB operating point
-            // is too noisy to drive the frequency integrator directly.
-            _walshPhaseAcc += correlation;
-            if (++_walshPhaseCount == 8)
+            // Decision-directed carrier: the MRC-combined winner statistic Σ ĝ*·corr
+            // should be real and positive; its argument is the residual COMMON phase
+            // error (the fingers absorb per-path phase — §B3.5). Average over 8 channel
+            // symbols before applying the correction — the per-symbol phase estimate at
+            // the −6 dB operating point is too noisy to drive the frequency integrator
+            // directly. During warm-up (cold gains) the combined statistic is near zero
+            // and contributes nothing, which is the desired behaviour.
+            if (!walshOracle)
             {
-                if (_walshPhaseAcc.Cnorm() > 1e-12)
+                _walshPhaseAcc += combined;
+                if (++_walshPhaseCount == 8)
                 {
-                    double err = _walshPhaseAcc.Arg();
-                    RetuneCarrier((2.0 * (_symbolChip + 16)) + _tau, 0.4 * err, 0.06 * err / 512.0);
+                    if (_walshPhaseAcc.Cnorm() > 1e-12)
+                    {
+                        double err = _walshPhaseAcc.Arg();
+                        RetuneCarrier((2.0 * (_symbolChip + 16)) + _tau, 0.4 * err, 0.06 * err / 512.0);
+                    }
+
+                    _walshPhaseAcc = Cf.Zero;
+                    _walshPhaseCount = 0;
+                }
+            }
+
+            if (FrameDiagnostics is not null)
+            {
+                _walsh.CopyGainMagnitudes(gainMags);
+                var mags = new System.Text.StringBuilder(gainMags.Length * 6);
+                for (int k = 0; k < gainMags.Length; k++)
+                {
+                    mags.Append(k == 0 ? "" : " ").Append(gainMags[k].ToString("F3"));
                 }
 
-                _walshPhaseAcc = Cf.Zero;
-                _walshPhaseCount = 0;
+                FrameDiagnostics.Invoke(
+                    $"walsh sym={_symbolInBlock} d*={bestDibit} llr0={llrs[0]:F2} llr1={llrs[1]:F2} " +
+                    $"|g|=[{mags}] argC={combined.Arg():F3}");
             }
 
             // Signal-lost discriminator (WN 0): the winning-correlation-to-chip-energy
-            // ratio ≈ 0.5 at the −6 dB mask point but ≈ 0.23 on noise alone.
+            // ratio ≈ 0.5 at the −6 dB mask point but ≈ 0.23 on noise alone (max over 7
+            // causal fingers; the §B3.5b 13-finger window lifts the noise-side statistic
+            // ~15%, margin watched via census end-reasons). Weak only when ALL fingers
+            // are weak — a finger-0-only test would false-fire on a direct-path fade
+            // with a strong echo, exactly the fades MRC rides (§B3.5). The energy window
+            // stays the symbol's own 32 chips regardless of the finger span.
             double sumMag = 0;
             for (int i = 0; i < 32; i++)
             {
-                sumMag += chips[i].Abs();
+                sumMag += chips[Wid0WalshModem.NegFingers + i].Abs();
             }
 
-            if (correlation.Abs() < 0.35 * sumMag)
+            if (maxFingerAbs < 0.35 * sumMag)
             {
                 // ~1.2 s — long enough to ride a deep Poor-channel fade (see the DFE
                 // path's discriminator for the rationale).
@@ -1969,12 +2310,21 @@ public sealed class Ms110dDemodulator
         // Turbo re-equalization: SISO soft feedback (§B3.3) — a log-MAP pass over the
         // outer code turns the current block LLRs into per-symbol soft expectations for
         // the chain-BCJR re-estimation, then decode again — for every DFE mode except
-        // QAM16 (the 5×-LLR-scale trap remains a throw). The flat-channel skip retired
-        // with the DFE-re-solve fallback that motivated it (§B2.3): on a flat channel the
-        // chain BCJR degenerates to an exact soft-output matched filter — the reason BPSK
-        // U>48 was always allowed through — while the WN2 Poor λ A/B caught the skip
-        // misclassifying short-frame fading bursts as flat (turbo 2c/158s, 7× BER cost):
-        // the excursion statistic is weakest exactly where probes are densest.
+        // QAM16. The §B3.4 exclusion is MEASURED, not a scale trap any more: the wiring
+        // below supports QAM16 end-to-end (wire-domain chains, permuted priors, true
+        // second moments — the oracle instrument exercises it, ceiling 9.3E-4 on the
+        // w0/b0 corpse), but the shipped loop cannot bootstrap — the first decode is
+        // coin-flip (rank-starved first pass), and every label-free start measured
+        // (probe-row solves, probe-anchored bootstrap chains, cap 96) descends into a
+        // self-consistent wrong attractor whose decode is still 50% (banked:
+        // evidence/2026-07-25-phase-b34-wn8/qam16-turbo-full.patch). The gate reopens
+        // when a model-front leg moves the bootstrap or the ceiling. The flat-channel
+        // skip retired with the DFE-re-solve fallback that motivated it (§B2.3): on a
+        // flat channel the chain BCJR degenerates to an exact soft-output matched
+        // filter — the reason BPSK U>48 was always allowed through — while the WN2
+        // Poor λ A/B caught the skip misclassifying short-frame fading bursts as flat
+        // (turbo 2c/158s, 7× BER cost): the excursion statistic is weakest exactly
+        // where probes are densest.
         if (_dfe is not null && _mode is not null &&
             !_options.DisableTurbo &&
             _mode.Modulation is not Ms110dModulation.Qam16 &&
@@ -1988,6 +2338,20 @@ public sealed class Ms110dDemodulator
             _dfe.SnapshotTraining();
             var firstPass = new byte[info.Length];
             Array.Copy(info, firstPass, info.Length);
+
+            // §B3.6 seam: an armed instrument may replace the iteration-0 labels
+            // (perturbed restart / staged seed). firstPass was captured above, so the
+            // revert fallback stays the true first-pass decode regardless.
+            if (TurboStartOverride?.Invoke(_blockIndex, info) is byte[] startInfo)
+            {
+                if (startInfo.Length != info.Length)
+                {
+                    throw new InvalidOperationException("TurboStartOverride length mismatch");
+                }
+
+                Array.Copy(startInfo, info, info.Length);
+            }
+
             var prevInfo = new byte[info.Length];
             bool converged = false;
             bool aborted = false;
@@ -2042,6 +2406,11 @@ public sealed class Ms110dDemodulator
                 }
             }
 
+            if (!aborted)
+            {
+                TurboBlockLlrs?.Invoke(_blockIndex, _blockLlrs);
+            }
+
             if (converged)
             {
                 TurboConverged++;
@@ -2049,6 +2418,19 @@ public sealed class Ms110dDemodulator
             else if (aborted)
             {
                 TurboAborted++;
+            }
+            else if (_mode.Modulation == Ms110dModulation.Psk8 &&
+                (TrySalvageRevert(info, prevInfo) || TrySalvageRelock(info, prevInfo)))
+            {
+                // §B3.6 salvage (evidence/2026-07-26-phase-b36-wn7loop, Amendment 1):
+                // the wander states are scaffold-starved — too few frames with clean
+                // labels to anchor the label-trained solves — so a label-free frozen
+                // probe pass re-detects the block and a fresh soft loop runs from that
+                // seed. A fixed point there is accepted on the same converged ⇒ correct
+                // evidence as the primary loop (measured: zero wrong convergences across
+                // every §B3.6 ensemble); no fixed point falls through to the revert.
+                TurboSalvaged++;
+                TurboConverged++;
             }
             else
             {
@@ -2072,17 +2454,38 @@ public sealed class Ms110dDemodulator
         // composes with MS110D_AUTOPSY_NOTURBO).
         if (OracleInfo?.Invoke(_blockIndex) is byte[] oracleInfo &&
             _dfe is not null && _mode is not null &&
-            _mode.Modulation is not Ms110dModulation.Qam16 &&
             _blockFrameChips.Count == _il.Frames &&
             BlockSamplesResident())
         {
             _dfe.SnapshotTraining();
-            TurboReequalize(oracleInfo);
+            _turboFrameDiag = true;
+            TurboReequalize(oracleInfo, trustedLabels: true);
+            _turboFrameDiag = false;
             if (_blockLlrCount == _il.SizeBits)
             {
                 var oracleDecode = new byte[_il.InputBits];
                 Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, oracleDecode);
                 OracleBlockLlrs?.Invoke(_blockIndex, _blockLlrs, oracleDecode);
+            }
+
+            _dfe.RestoreTraining();
+        }
+
+        // §B3.6 C2a stage measurement (M2a): one label-free re-detection pass after the
+        // normal pipeline — see <see cref="TurboFrozenProbe"/>. The shipped decode above
+        // is untouched.
+        if (TurboFrozenProbe && FrozenBlockLlrs is not null &&
+            _dfe is not null && _mode is not null &&
+            _blockFrameChips.Count == _il.Frames &&
+            BlockSamplesResident())
+        {
+            _dfe.SnapshotTraining();
+            TurboFrozenProbePass();
+            if (_blockLlrCount == _il.SizeBits)
+            {
+                var frozenDecode = new byte[_il.InputBits];
+                Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, frozenDecode);
+                FrozenBlockLlrs.Invoke(_blockIndex, _blockLlrs, frozenDecode);
             }
 
             _dfe.RestoreTraining();
@@ -2145,7 +2548,7 @@ public sealed class Ms110dDemodulator
     /// the core on the exact expected wire symbols. This is the §B3.3 oracle instrument's
     /// path (true info bits ⇒ the converged-soft-feedback ceiling) — the shipped turbo loop
     /// uses <see cref="TurboReequalizeSoft"/> instead.</summary>
-    private void TurboReequalize(byte[] info)
+    private void TurboReequalize(byte[] info, bool trustedLabels = false)
     {
         var mode = _mode!;
 
@@ -2164,21 +2567,24 @@ public sealed class Ms110dDemodulator
                     symbolNumber = (symbolNumber << 1) | (bit < fetched.Length ? fetched[bit++] : 0);
                 }
 
-                int wireIndex = mode.Modulation switch
+                // QAM16 scrambling is an XOR label permutation (D.5.1.3), not a ring
+                // rotation — the expected wire symbol is the permuted constellation
+                // point directly (the modulator's own mapping: 4 fetched bits MSB-first
+                // ARE the symbol number, no transcode table).
+                _turboExpected[(f * mode.U) + u] = mode.Modulation switch
                 {
-                    Ms110dModulation.Bpsk => _scrambler.NextPsk(symbolNumber == 0 ? 0 : 4),
-                    Ms110dModulation.Qpsk => _scrambler.NextPsk(
-                        symbolNumber switch { 0 => 0, 1 => 2, 3 => 4, _ => 6 }),
-                    Ms110dModulation.Psk8 => _scrambler.NextPsk(
-                        Ms110dTables.Transcode8Psk[symbolNumber & 7]),
-                    // The FinishBlock gate excludes QAM16 from turbo.
-                    _ => throw new InvalidOperationException("turbo re-equalization excludes QAM16"),
+                    Ms110dModulation.Bpsk => Ms110dTables.Psk8[
+                        _scrambler.NextPsk(symbolNumber == 0 ? 0 : 4)],
+                    Ms110dModulation.Qpsk => Ms110dTables.Psk8[_scrambler.NextPsk(
+                        symbolNumber switch { 0 => 0, 1 => 2, 3 => 4, _ => 6 })],
+                    Ms110dModulation.Psk8 => Ms110dTables.Psk8[_scrambler.NextPsk(
+                        Ms110dTables.Transcode8Psk[symbolNumber & 7])],
+                    _ => Ms110dTables.Qam16[_scrambler.NextQam(symbolNumber, 4)],
                 };
-                _turboExpected[(f * mode.U) + u] = Ms110dTables.Psk8[wireIndex];
             }
         }
 
-        TurboCore(_turboExpected, null, null);
+        TurboCore(_turboExpected, null, null, allowPair: trustedLabels);
     }
 
     /// <summary>Soft-feedback turbo re-equalization (§B3.3): a SISO log-MAP pass over the
@@ -2187,9 +2593,10 @@ public sealed class Ms110dDemodulator
     /// posteriors, and the core trains on the resulting per-symbol expectations E[x]
     /// instead of hard re-encoded decisions. Uncertain symbols shrink toward 0 — exactly
     /// the EM E-step for every estimation consumer (rows, h1/h2 correlations keep their
-    /// /count normalizations because E[|x|²] = 1 on the PSK ring) — so mid-frame channel
-    /// information flows from the code without the 45%-garbage hard labels that stalled
-    /// the WN13 fade-cluster specimen (§B3.2/§B3.3).</summary>
+    /// /count normalizations because E[|x|²] = 1 on the PSK ring; QAM16 carries the true
+    /// second moment instead, §B3.4) — so mid-frame channel information flows from the
+    /// code without the 45%-garbage hard labels that stalled the WN13 fade-cluster
+    /// specimen (§B3.2/§B3.3).</summary>
     private void TurboReequalizeSoft()
     {
         var mode = _mode!;
@@ -2218,7 +2625,12 @@ public sealed class Ms110dDemodulator
         // Per-symbol soft expectations over the descrambled constellation, rotated onto
         // the wire by the scrambler (Psk8[(s+r)&7] == Psk8[s]·Psk8[r] — NextPsk is an
         // additive ring rotation). Variance 1−|E[x]|² feeds the core's noise estimate.
+        // QAM16 (§B3.4) folds the XOR nibble inside the sum instead (the scramble is a
+        // label permutation, not a rotation) and carries the TRUE second moment: XOR
+        // moves symbols BETWEEN rings, so E[|x|²] is a probability-weighted average of
+        // both ring energies, and the variance is E[|x|²] − |E[x]|².
         int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
+        bool qamSoft = mode.Modulation == Ms110dModulation.Qam16;
         int bit = 0;
         Span<float> p0 = stackalloc float[4];
         for (int f = 0; f < _il!.Frames; f++)
@@ -2231,7 +2643,9 @@ public sealed class Ms110dDemodulator
                     p0[b] = Sigmoid(bit < _softWireLlrs.Length ? _softWireLlrs[bit++] : float.MaxValue);
                 }
 
+                int nibble = qamSoft ? _scrambler.NextQam(0, 4) : 0;
                 Cf e = Cf.Zero;
+                float e2 = 0f;
                 for (int t = 0; t < 1 << bitsPerSymbol; t++)
                 {
                     float pt = 1f;
@@ -2241,19 +2655,34 @@ public sealed class Ms110dDemodulator
                         pt *= ((t >> (bitsPerSymbol - 1 - b)) & 1) == 0 ? pBitZero : 1f - pBitZero;
                     }
 
+                    if (qamSoft)
+                    {
+                        Cf wire = Ms110dTables.Qam16[t ^ nibble];
+                        e += wire * pt;
+                        e2 += wire.Cnorm() * pt;
+                        continue;
+                    }
+
                     int ring = mode.Modulation switch
                     {
                         Ms110dModulation.Bpsk => t == 0 ? 0 : 4,
                         Ms110dModulation.Qpsk => t switch { 0 => 0, 1 => 2, 3 => 4, _ => 6 },
-                        Ms110dModulation.Psk8 => Ms110dTables.Transcode8Psk[t & 7],
-                        _ => throw new InvalidOperationException("turbo re-equalization excludes QAM16"),
+                        _ => Ms110dTables.Transcode8Psk[t & 7],
                     };
                     e += Ms110dTables.Psk8[ring] * pt;
                 }
 
                 int idx = (f * mode.U) + u;
-                _softExpected[idx] = e * Ms110dTables.Psk8[_scrambler.NextPsk(0)];
-                _softVar[idx] = Math.Max(0f, 1f - e.Cnorm());
+                if (qamSoft)
+                {
+                    _softExpected[idx] = e;
+                    _softVar[idx] = Math.Max(0f, e2 - e.Cnorm());
+                }
+                else
+                {
+                    _softExpected[idx] = e * Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                    _softVar[idx] = Math.Max(0f, 1f - e.Cnorm());
+                }
             }
         }
 
@@ -2277,7 +2706,7 @@ public sealed class Ms110dDemodulator
                 $"turbo-soft b{_blockIndex}: mean|llrIn|={meanIn / _il.SizeBits:F2} mean|llrPost|={meanPost / _il.SizeBits:F2} mean|E|={meanE / _softExpected.Length:F3} weak={weak}/{_softExpected.Length}"));
         }
 
-        TurboCore(_softExpected, _softVar, _softWireExt);
+        TurboCore(_softExpected, _softVar, _softWireExt, allowPair: true);
     }
 
     /// <summary>P(bit = 0) from an LLR under the positive-⇒-0 convention.</summary>
@@ -2299,13 +2728,555 @@ public sealed class Ms110dDemodulator
         return x < -20f ? 0f : MathF.Log(1f + MathF.Exp(x));
     }
 
+    /// <summary>§B3.6 C2a stage: label-free re-detection of the block. Per frame: a
+    /// probe-only TIR shortening solve (both bounding mini-probes' rows, feedback
+    /// history wholly inside the probe), feedback-free application over the data span,
+    /// h1 from the two probe anchors interpolated across the frame, the solve's own
+    /// shortening target c·z^{-lag} as the chain echo model, and a probe-priced noise
+    /// floor — then the chain BCJR as a no-prior exact-MAP detector. No decode label
+    /// enters any estimate, so nothing here can have been laundered by a wrong decode
+    /// (the §B3.6 anti-echo-chamber construction). LLRs land in the block buffer for
+    /// the caller to decode; a mid-block sample shortfall aborts with a partial count,
+    /// exactly like TurboCore.</summary>
+    private void TurboFrozenProbePass()
+    {
+        var mode = _mode!;
+        var dfe = _dfe!;
+        if (mode.Modulation == Ms110dModulation.Qam16)
+        {
+            throw new InvalidOperationException("frozen probe pass is a PSK-program instrument");
+        }
+
+        Cf[] savedTaps = dfe.SnapshotTaps();
+        int fb = dfe.FbTaps;
+        Span<Cf> window = stackalloc Cf[dfe.FfTaps];
+        Span<Cf> past = stackalloc Cf[fb];
+        int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
+        _blockLlrCount = 0;
+
+        (Cf[] constellation, byte[] labels) = mode.Modulation switch
+        {
+            Ms110dModulation.Bpsk => (TurboBpsk, Array.Empty<byte>()),
+            Ms110dModulation.Qpsk => (TurboQpsk, TurboQpskLabels),
+            _ => (Ms110dTables.Psk8, SymbolToTribit8),
+        };
+
+        Span<Cf> probeY = stackalloc Cf[2 * mode.K];
+        Span<int> probeIdx = stackalloc int[2 * mode.K];
+        Span<Cf> anchor = stackalloc Cf[2];
+        Span<float> anchorPos = stackalloc float[2];
+        // §B3.8 E3 scratch: the late-lock offer's candidate anchors (adopted into
+        // anchor/anchorPos only when the shifted geometry wins the floor).
+        Span<Cf> anchorAlt = stackalloc Cf[2];
+        Span<float> anchorPosAlt = stackalloc float[2];
+        // §B3.7 E1″: the probe is a base sequence cyclically extended to K, so
+        // probe-row regressors repeat with this period and an accepted lag beyond
+        // half of it is the −(period−lag) pre-cursor folded into the causal search.
+        int probePeriod = MiniProbe.Sequence(mode.K).Base.Length;
+
+        // Probe-only shortening rows for frame f. Rows keep their feedback history
+        // inside the probe (i ≥ fb), mirroring the §B3.4 Amendment 1 probe-row
+        // construction. The accumulation is consumed by each solve, so every solve
+        // (vote, pair diagnostic, applied) re-runs this. §B3.8 E3: shift > 0 trains
+        // the same rows with the equalizer window advanced by that many chips — the
+        // late-lock geometry, where the cursor rides the delayed path and the early
+        // path returns as the (aliased) pre-cursor; desired and history columns are
+        // symbol-indexed and do not move.
+        int AccumulateProbeRows(int f, Span<Cf> win, Span<Cf> hist, int shift = 0)
+        {
+            long frameChip = _blockFrameChips[f];
+            dfe.BeginTraining();
+            int rows = 0;
+            for (int p = 0; p < 2; p++)
+            {
+                Cf[] probe = MiniProbe.Get(mode.K, boundary: (f + p + 1) % _il!.Frames == 0);
+                long probeChip = p == 0 ? frameChip - mode.K : frameChip + mode.U;
+                for (int i = fb; i < mode.K; i++)
+                {
+                    if (!HaveSamplesForChip(probeChip + i + shift + 2))
+                    {
+                        continue; // burst-edge probe tail
+                    }
+
+                    FillWindow(probeChip + i + shift, win);
+                    for (int j = 0; j < fb; j++)
+                    {
+                        hist[j] = probe[i - 1 - j];
+                    }
+
+                    dfe.AddTrainingRow(win, hist, probe[i], weight: 1.0f);
+                    rows++;
+                }
+            }
+
+            return rows;
+        }
+
+        // §B3.7 E1′ (Amendment 1) vote sweep: each frame's FREE probe-only solve votes
+        // with its accepted lag; the modal lag is the burst-level consensus the
+        // detection sweep below constrains to. The echo delay is a physical constant
+        // of the burst — the per-frame free search pays an L-fold selection margin on
+        // 2·(K−fb) rows (acceptance starvation) and, on the 16-periodic K=32 probe,
+        // aliases the −d pre-cursor into causal lag K/2−d (M1a's lag-11 cluster).
+        // Votes only; nothing is applied here.
+        int consensusLag = 0;
+        if (TurboFrozenConsensus)
+        {
+            int voteMaxLag = Math.Min(fb, mode.U / 2);
+            Span<int> votes = stackalloc int[voteMaxLag + 1];
+            int totalVotes = 0;
+            for (int f = 0; f < _il!.Frames; f++)
+            {
+                if (AccumulateProbeRows(f, window, past) == 0)
+                {
+                    continue;
+                }
+
+                Dfe.TirSolve vote = dfe.SolveTrainingTir(
+                    regularization: _trackRidge, ffNoisePower: GenieNoisePower(),
+                    maxLag: voteMaxLag, allowPair: false);
+                if (vote.Lag > 0)
+                {
+                    votes[vote.Lag]++;
+                    totalVotes++;
+                }
+            }
+
+            for (int lag = 1; lag <= voteMaxLag; lag++)
+            {
+                if (votes[lag] > (consensusLag > 0 ? votes[consensusLag] : 0))
+                {
+                    consensusLag = lag;
+                }
+            }
+
+            FrameDiagnostics?.Invoke(FormattableString.Invariant(
+                $"frozen-consensus b{_blockIndex}: lag={consensusLag} votes={(consensusLag > 0 ? votes[consensusLag] : 0)}/{totalVotes}"));
+        }
+
+        for (int f = 0; f < _il!.Frames; f++)
+        {
+            long frameChip = _blockFrameChips[f];
+            Cf[] precedingProbe = MiniProbe.Get(mode.K, boundary: (f + 1) % _il.Frames == 0);
+            Cf[] followingProbe = MiniProbe.Get(mode.K, boundary: (f + 2) % _il.Frames == 0);
+
+            int solveRows = AccumulateProbeRows(f, window, past);
+            if (solveRows == 0)
+            {
+                dfe.LoadTaps(savedTaps);
+                dfe.BeginTraining();
+                return;
+            }
+
+            // §B3.7 M1a: log-only straddle-pair solve on the same rows. The applied
+            // solve runs LAST so its taps stand for the frame's Equalize calls.
+            if (TurboFrozenPairDiag && FrameDiagnostics is not null)
+            {
+                Dfe.TirSolve pairTir = dfe.SolveTrainingTir(
+                    regularization: _trackRidge, ffNoisePower: GenieNoisePower(),
+                    maxLag: Math.Min(fb, mode.U / 2), allowPair: true);
+                FrameDiagnostics.Invoke(FormattableString.Invariant(
+                    $"frozen-pair b{_blockIndex} f{f}: rows={solveRows} lag={pairTir.Lag} |c1|={Math.Sqrt(pairTir.Coefficient.Cnorm()):F3} lag2={pairTir.Lag2} |c2|={Math.Sqrt(pairTir.Coefficient2.Cnorm()):F3} sseN={pairTir.SseNull:E3} sseP={pairTir.SseTir:E3}"));
+                AccumulateProbeRows(f, window, past);
+            }
+
+            // §B3.7 E1′: constrained to the burst consensus when one exists (single-
+            // candidate margin inside the solve); consensusLag == 0 = the free search,
+            // bit-identical to the pre-E1′ pass.
+            Dfe.TirSolve tir = dfe.SolveTrainingTir(
+                regularization: _trackRidge, ffNoisePower: GenieNoisePower(),
+                maxLag: Math.Min(fb, mode.U / 2), allowPair: false, onlyLag: consensusLag);
+            int delay = Math.Max(1, tir.Lag);
+            Cf h2Wire = tir.Lag > 0 ? tir.Coefficient : Cf.Zero;
+
+            // Feedback-free application everywhere (ISI lives in the chain model): the
+            // data span, and the probe rows the anchors/noise floor are measured on —
+            // SAME domain as the chains will see.
+            for (int j = 0; j < fb; j++)
+            {
+                past[j] = Cf.Zero;
+            }
+
+            var rxWire = new Cf[mode.U];
+            for (int u = 0; u < mode.U; u++)
+            {
+                if (!HaveSamplesForChip(frameChip + u + 2))
+                {
+                    dfe.LoadTaps(savedTaps);
+                    dfe.BeginTraining();
+                    return;
+                }
+
+                FillWindow(frameChip + u, window);
+                rxWire[u] = dfe.Equalize(window, past);
+            }
+
+            // Probe anchors: post-FF response on probe rows, echo term removed with the
+            // solve's own coefficient. Row centres give the interpolation abscissae.
+            float noiseAcc = 0f;
+            int noiseRows = 0;
+            for (int p = 0; p < 2; p++)
+            {
+                Cf[] probe = p == 0 ? precedingProbe : followingProbe;
+                long probeChip = p == 0 ? frameChip - mode.K : frameChip + mode.U;
+                float uBase = p == 0 ? -mode.K : mode.U;
+                int firstRow = tir.Lag > 0 ? tir.Lag : 0;
+                var acc = Cf.Zero;
+                int n = 0;
+                float posSum = 0f;
+                for (int i = firstRow; i < mode.K; i++)
+                {
+                    if (!HaveSamplesForChip(probeChip + i + 2))
+                    {
+                        continue;
+                    }
+
+                    FillWindow(probeChip + i, window);
+                    Cf y = dfe.Equalize(window, past);
+                    if (tir.Lag > 0)
+                    {
+                        y -= h2Wire * probe[i - tir.Lag];
+                    }
+
+                    probeY[(p * mode.K) + n] = y;
+                    probeIdx[(p * mode.K) + n] = i;
+                    acc += y * probe[i].Conj();
+                    posSum += uBase + i;
+                    n++;
+                }
+
+                anchor[p] = n > 0 ? acc * (1f / n) : Cf.Zero;
+                anchorPos[p] = n > 0 ? posSum / n : (p == 0 ? -mode.K * 0.5f : mode.U + (mode.K * 0.5f));
+                for (int r = 0; r < n; r++)
+                {
+                    int i = probeIdx[(p * mode.K) + r];
+                    Cf resid = probeY[(p * mode.K) + r] - (anchor[p] * probe[i]);
+                    noiseAcc += resid.Cnorm();
+                    noiseRows++;
+                }
+            }
+
+            // Cnorm() sums both complex dimensions; the BCJR wants σ² per dimension
+            // (the #65 2×-under-confidence lesson).
+            float noiseVar = Math.Max(noiseRows > 0 ? 0.5f * noiseAcc / noiseRows : 1e-2f, 1e-6f);
+
+            // §B3.8 E3 (Amendment 1): late-lock geometry offer. The causal accept can
+            // sit on a frame whose delayed path dominates the cursor (|c| ≳ 1) — the
+            // feedback-free FF then fails to equalize the frame and the priced floor
+            // explodes 30–80×, drowning the frame in honestly-priced garbage LLRs,
+            // while the identical physics rides cleanly in the late-lock geometry
+            // (the natural pre-cursor frames' floors). Re-train with the window
+            // shifted by the accepted lag (the shift performs the re-lock; the tap
+            // shape carries over, so the ridge anchor stays approximately right in
+            // shifted coordinates), solve only the aliased pre-cursor lag, price the
+            // shifted floor identically, and keep the geometry with the lower floor —
+            // arbitration by the quantity the chain is actually priced with, no
+            // threshold knob.
+            int lockShift = 0;
+            if (_frozenRelockActive && TurboFrozenPreCursor
+                && tir.Lag >= 1 && tir.Lag < probePeriod / 2
+                && probePeriod - tir.Lag <= Math.Min(fb, mode.U / 2))
+            {
+                int shift = tir.Lag;
+                Cf[] causalTaps = dfe.SnapshotTaps();
+                bool adopted = false;
+                if (AccumulateProbeRows(f, window, past, shift) == solveRows)
+                {
+                    Dfe.TirSolve sTir = dfe.SolveTrainingTir(
+                        regularization: _trackRidge, ffNoisePower: GenieNoisePower(),
+                        maxLag: Math.Min(fb, mode.U / 2), allowPair: false,
+                        onlyLag: probePeriod - shift);
+                    if (sTir.Lag == probePeriod - shift)
+                    {
+                        for (int j = 0; j < fb; j++)
+                        {
+                            past[j] = Cf.Zero;
+                        }
+
+                        var shiftedRx = new Cf[mode.U];
+                        bool have = true;
+                        for (int u = 0; u < mode.U; u++)
+                        {
+                            if (!HaveSamplesForChip(frameChip + u + shift + 2))
+                            {
+                                have = false;
+                                break;
+                            }
+
+                            FillWindow(frameChip + u + shift, window);
+                            shiftedRx[u] = dfe.Equalize(window, past);
+                        }
+
+                        if (have)
+                        {
+                            // Anchors + floor in the shifted geometry — the same
+                            // construction as above; the folded subtraction
+                            // probe[i − lag] is pre-cursor-correct through the
+                            // periodic probe.
+                            float altAcc = 0f;
+                            int altRows = 0;
+                            for (int p = 0; p < 2; p++)
+                            {
+                                Cf[] probe = p == 0 ? precedingProbe : followingProbe;
+                                long probeChip = p == 0 ? frameChip - mode.K : frameChip + mode.U;
+                                float uBase = p == 0 ? -mode.K : mode.U;
+                                var acc = Cf.Zero;
+                                int n = 0;
+                                float posSum = 0f;
+                                for (int i = sTir.Lag; i < mode.K; i++)
+                                {
+                                    if (!HaveSamplesForChip(probeChip + i + shift + 2))
+                                    {
+                                        continue;
+                                    }
+
+                                    FillWindow(probeChip + i + shift, window);
+                                    Cf y = dfe.Equalize(window, past) - (sTir.Coefficient * probe[i - sTir.Lag]);
+                                    probeY[(p * mode.K) + n] = y;
+                                    probeIdx[(p * mode.K) + n] = i;
+                                    acc += y * probe[i].Conj();
+                                    posSum += uBase + i;
+                                    n++;
+                                }
+
+                                anchorAlt[p] = n > 0 ? acc * (1f / n) : Cf.Zero;
+                                anchorPosAlt[p] = n > 0 ? posSum / n : (p == 0 ? -mode.K * 0.5f : mode.U + (mode.K * 0.5f));
+                                for (int r = 0; r < n; r++)
+                                {
+                                    int i = probeIdx[(p * mode.K) + r];
+                                    Cf resid = probeY[(p * mode.K) + r] - (anchorAlt[p] * probe[i]);
+                                    altAcc += resid.Cnorm();
+                                    altRows++;
+                                }
+                            }
+
+                            float altVar = Math.Max(altRows > 0 ? 0.5f * altAcc / altRows : 1e-2f, 1e-6f);
+                            bool adopt = altRows > 0 && altVar < TurboFrozenRelockMargin * noiseVar;
+                            FrameDiagnostics?.Invoke(FormattableString.Invariant(
+                                $"frozen-relock b{_blockIndex} f{f}: lag={shift} causal={noiseVar:E3} alt={altVar:E3} adopted={(adopt ? 1 : 0)}"));
+                            if (adopt)
+                            {
+                                tir = sTir;
+                                delay = Math.Max(1, tir.Lag);
+                                h2Wire = tir.Coefficient;
+                                rxWire = shiftedRx;
+                                anchor[0] = anchorAlt[0];
+                                anchor[1] = anchorAlt[1];
+                                anchorPos[0] = anchorPosAlt[0];
+                                anchorPos[1] = anchorPosAlt[1];
+                                noiseVar = altVar;
+                                lockShift = shift;
+                                adopted = true;
+                            }
+                        }
+                    }
+                }
+
+                if (!adopted)
+                {
+                    dfe.LoadTaps(causalTaps);
+                }
+            }
+
+            // §B3.7 E1″(a) (Amendment 2): an accepted lag beyond half the probe base
+            // period is the pre-cursor folded through the periodic probe — the causal
+            // chain model at that lag is measurably worse than none (E1′ alias→0
+            // class). The solve, FF, anchors and floor stand (they fit the true
+            // response through the folded column); the CHAIN echo model is dropped and
+            // the pre-cursor priced into the floor (unit-power symbols, per dimension).
+            int chainDelay = delay;
+            Cf h2Chain = h2Wire;
+            bool aliasFrame = tir.Lag > probePeriod / 2;
+            bool preCursorFrame = TurboFrozenPreCursor && aliasFrame && probePeriod - tir.Lag >= 1;
+            if (preCursorFrame)
+            {
+                // §B3.7 E1″(b): exact pre-cursor chains — assembly below shifts the
+                // observation by d = period − lag and swaps the tap roles.
+                chainDelay = probePeriod - tir.Lag;
+            }
+            else if (TurboFrozenAliasNull && aliasFrame)
+            {
+                chainDelay = 1;
+                h2Chain = Cf.Zero;
+                noiseVar += 0.5f * tir.Coefficient.Cnorm();
+            }
+
+            // Descrambled-domain assembly, mirroring TurboCore: h1 rides through the
+            // derotation; the wire echo coefficient folds the rotor product.
+            _scrambler.Reset();
+            var rotors = new Cf[mode.U];
+            for (int u = 0; u < mode.U; u++)
+            {
+                rotors[u] = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+            }
+
+            var rxDesc = new Cf[mode.U];
+            var h1Span = new Cf[mode.U];
+            var h2Span = new Cf[mode.U];
+            var preceding = new Cf[chainDelay];
+            for (int c = 0; c < chainDelay; c++)
+            {
+                preceding[c] = precedingProbe[(mode.K - chainDelay) + c];
+            }
+
+            float span = Math.Max(1f, anchorPos[1] - anchorPos[0]);
+            if (preCursorFrame)
+            {
+                // §B3.7 E1″(b) assembly: o[u] = yWire[u−d] = h1(u−d)·xw[u−d] + c·xw[u].
+                // Derotated by r̄(u): the pre-cursor coefficient rides the cursor slot
+                // rotor-free; h1 (evaluated at wire position u−d) takes the echo slot
+                // with the usual rotor fold, probe chips as the u < d sources. The
+                // u < d observations are the preceding probe's last d positions,
+                // equalized in the same feedback-free domain.
+                int d = chainDelay;
+                for (int u = 0; u < d; u++)
+                {
+                    // §B3.8 E3: on re-locked frames the whole geometry rides shifted
+                    // windows (lockShift = d there, so these chips are frameChip + u).
+                    long chip = frameChip - d + u + lockShift;
+                    if (!HaveSamplesForChip(chip + 2))
+                    {
+                        dfe.LoadTaps(savedTaps);
+                        dfe.BeginTraining();
+                        return;
+                    }
+
+                    FillWindow(chip, window);
+                    rxDesc[u] = dfe.Equalize(window, past) * rotors[u].Conj();
+                }
+
+                for (int u = d; u < mode.U; u++)
+                {
+                    rxDesc[u] = rxWire[u - d] * rotors[u].Conj();
+                }
+
+                for (int u = 0; u < mode.U; u++)
+                {
+                    h1Span[u] = tir.Coefficient;
+                    float t = Math.Clamp(((u - d) - anchorPos[0]) / span, 0f, 1f);
+                    Cf h1w = (anchor[0] * (1f - t)) + (anchor[1] * t);
+                    h2Span[u] = u >= d
+                        ? h1w * rotors[u - d] * rotors[u].Conj()
+                        : h1w * rotors[u].Conj();
+                }
+            }
+            else
+            {
+                for (int u = 0; u < mode.U; u++)
+                {
+                    float t = Math.Clamp((u - anchorPos[0]) / span, 0f, 1f);
+                    h1Span[u] = (anchor[0] * (1f - t)) + (anchor[1] * t);
+                    rxDesc[u] = rxWire[u] * rotors[u].Conj();
+                    h2Span[u] = u >= chainDelay
+                        ? h2Chain * rotors[u - chainDelay] * rotors[u].Conj()
+                        : h2Chain * rotors[u].Conj();
+                }
+            }
+
+            if (FrameDiagnostics is not null)
+            {
+                FrameDiagnostics.Invoke(FormattableString.Invariant(
+                    $"frozen-frame b{_blockIndex} f{f}: lag={tir.Lag} |c|={Math.Sqrt(h2Wire.Cnorm()):F3} n={noiseVar:E3} rows={solveRows} h1a={anchor[0].Abs():F3}|{anchor[1].Abs():F3} sseN={tir.SseNull:E3} sse1={tir.SseTir:E3} a0={anchor[0].Re:F4},{anchor[0].Im:F4} a1={anchor[1].Re:F4},{anchor[1].Im:F4} shift={lockShift}"));
+            }
+
+            var frameLlrs = new float[mode.U * bitsPerSymbol];
+            Ms110dChainBcjr.Equalize(
+                rxDesc, h1Span, h2Span, chainDelay, noiseVar,
+                constellation, labels, bitsPerSymbol, preceding, frameLlrs,
+                default, noiseVarPerSymbol: default);
+            for (int i = 0; i < frameLlrs.Length; i++)
+            {
+                AddLlr(frameLlrs[i]);
+            }
+        }
+
+        dfe.LoadTaps(savedTaps);
+        dfe.BeginTraining();
+    }
+
+    /// <summary>§B3.6 salvage (Amendment 1): on revert-at-cap, re-detect the block with
+    /// the label-free frozen probe pass and run a fresh soft loop (same cap) from that
+    /// seed. Returns true with <paramref name="info"/> holding the new fixed-point decode;
+    /// returns false — <paramref name="info"/> scribbled, caller restores the first
+    /// pass — when the pass aborts or the seeded loop finds no fixed point either.</summary>
+    private bool TrySalvageRevert(byte[] info, byte[] prevInfo)
+    {
+        TurboFrozenProbePass();
+        if (_blockLlrCount != _il!.SizeBits)
+        {
+            return false;
+        }
+
+        Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
+        for (int iter = 0; iter < 24; iter++)
+        {
+            if (iter == 0)
+            {
+                TurboReequalize(info);
+            }
+            else
+            {
+                TurboReequalizeSoft();
+            }
+
+            if (_blockLlrCount != _il.SizeBits)
+            {
+                return false;
+            }
+
+            Array.Copy(info, prevInfo, info.Length);
+            Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
+            if (FrameDiagnostics is not null)
+            {
+                int diffs = 0;
+                for (int i = 0; i < info.Length; i++)
+                {
+                    diffs += info[i] != prevInfo[i] ? 1 : 0;
+                }
+
+                FrameDiagnostics.Invoke($"salvage-iter b{_blockIndex} i{iter} decode-changes={diffs}");
+            }
+
+            if (info.AsSpan().SequenceEqual(prevInfo))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>§B3.8 Amendment 3: the second salvage rung. Only when the standard
+    /// salvage fails does the frozen pass re-run with the late-lock offer active —
+    /// blocks that converge anywhere along the existing path are structurally
+    /// untouched (a ceiling block's fixed point can wobble a few bits under ANY seed
+    /// change; no label-free arbitration can prefer one converged fixed point over
+    /// another). Same contract as <see cref="TrySalvageRevert"/>.</summary>
+    private bool TrySalvageRelock(byte[] info, byte[] prevInfo)
+    {
+        if (!TurboFrozenRelock)
+        {
+            return false;
+        }
+
+        _frozenRelockActive = true;
+        try
+        {
+            return TrySalvageRevert(info, prevInfo);
+        }
+        finally
+        {
+            _frozenRelockActive = false;
+        }
+    }
+
     /// <summary>The turbo re-equalization machinery (§B2.3): per-frame FF batch-LS re-solve
     /// on the expected symbols, per-segment h1, scrambler-exact single-lag echo, chain-BCJR
     /// detection. <paramref name="expectedAll"/> holds one expected wire symbol per data
     /// position (frame-major); <paramref name="symbolVar"/> is the per-symbol prior variance
     /// 1−|E[x]|² for soft labels, or null for hard labels — null skips the variance terms
     /// entirely, keeping the hard/oracle path bit-identical to the pre-§B3.3 code.</summary>
-    private void TurboCore(Cf[] expectedAll, float[]? symbolVar, float[]? wireExtLlrs)
+    private void TurboCore(Cf[] expectedAll, float[]? symbolVar, float[]? wireExtLlrs, bool allowPair)
     {
         var mode = _mode!;
         var dfe = _dfe!;
@@ -2319,21 +3290,49 @@ public sealed class Ms110dDemodulator
         Span<float> pastVar = stackalloc float[fb];
         bool genie = _genieRing is not null;
         Span<Cf> estWindow = stackalloc Cf[dfe.FfTaps];
+        // 4 segments, measured: the banked #81 "16-segment h1 −10%" lever does NOT
+        // compose with TIR — at 16 the correlation windows (16 symbols per segment at
+        // U = 256, less after echo-lag guards) are too noisy for the pinned-echo model
+        // and the WN7 corpse oracle regressed 209 → 495 with a lost convergence
+        // (§B3.3 twolag note, step 3). That banked measurement was inversion-regime-
+        // specific; under TIR the estimates need the averaging.
         const int Segments = 4;
         Span<Cf> segH1 = stackalloc Cf[Segments];
+        Span<Cf> segH2 = stackalloc Cf[Segments];
+        Span<Cf> segH2b = stackalloc Cf[Segments];
         Span<float> segCentre = stackalloc float[Segments];
+        // §B4.1 floor-estimator instrument (diagnostics ONLY — pricing stays the frame
+        // constant): the assembly residual bucketed on the same u/segLen partition as the
+        // channel anchors, so the corpse can measure within-frame heteroscedasticity and
+        // score candidate estimators. The banked §B3.3 pricing consumed these buckets;
+        // here they only reach the turbo-frame line.
+        Span<float> segResid = stackalloc float[Segments];
+        Span<int> segResidCount = stackalloc int[Segments];
+        Span<float> segNv = stackalloc float[Segments];
+        Span<float> segPrice = stackalloc float[Segments];
         int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
         _blockLlrCount = 0;
         int tirFrames = 0;
         long tirLagSum = 0;
         double tirCoeffSum = 0;
+        int tirPairFrames = 0;
+        double tirCoeff2Sum = 0;
+        bool probeDiag = TurboProbeDiag && FrameDiagnostics is not null;
+        double probePriceErr = 0;
+        int probePriceRows = 0;
 
         (Cf[] constellation, byte[] labels) = mode.Modulation switch
         {
             Ms110dModulation.Bpsk => (TurboBpsk, Array.Empty<byte>()),
             Ms110dModulation.Qpsk => (TurboQpsk, TurboQpskLabels),
-            _ => (Ms110dTables.Psk8, SymbolToTribit8),
+            Ms110dModulation.Psk8 => (Ms110dTables.Psk8, SymbolToTribit8),
+            // §B3.4: QAM16 runs the chains in the WIRE domain (the XOR scramble is a
+            // label permutation with no geometric descrambled form): identity labels;
+            // the scramble enters as a per-symbol prior permutation plus per-bit output
+            // sign flips below.
+            _ => (Ms110dTables.Qam16, Array.Empty<byte>()),
         };
+        bool qamWire = mode.Modulation == Ms110dModulation.Qam16;
 
         // §B3.3 turbo priors: outer-code extrinsics become per-symbol log-priors on the
         // chain BCJR (descrambled labels — the scrambler never touches the bit→ring map).
@@ -2347,6 +3346,21 @@ public sealed class Ms110dDemodulator
             ReadOnlySpan<Cf> expected = expectedAll.AsSpan(f * mode.U, mode.U);
             ReadOnlySpan<float> expectedVar =
                 symbolVar is null ? default : symbolVar.AsSpan(f * mode.U, mode.U);
+
+            // §B3.4: per-symbol second moment E[|x|²] = |E[x]|² + Var for the QAM16
+            // correlation denominators below — the PSK-ring E[|x|²] = 1 identity that
+            // let them divide by symbol COUNTS does not hold across two rings. Bounded
+            // below by the inner-ring energy 0.134, so the denominators stay
+            // conditioned; PSK paths keep their count denominators bit-identically.
+            float[]? x2 = null;
+            if (qamWire)
+            {
+                x2 = new float[mode.U];
+                for (int u = 0; u < mode.U; u++)
+                {
+                    x2[u] = expected[u].Cnorm() + (symbolVar is null ? 0f : expectedVar[u]);
+                }
+            }
 
             // The probe preceding this frame's data supplies the known symbol history for
             // the head rows of the shortening solve and the known echo sources for the
@@ -2403,29 +3417,130 @@ public sealed class Ms110dDemodulator
                 }
             }
 
+            // §B3.4 Amendment 1 (QAM16 only): the re-solve's data rows are LABEL rows,
+            // and at a coin-flip first decode the solve has no anchor in truth —
+            // measured as a strong initial pull that stalls into a wander plateau
+            // (0c/11r, corpse w0/b0). The bounding mini-probes are label-free truth at
+            // both ends of the frame: join their rows (those whose feedback history
+            // lies wholly inside the probe) so the re-solved equalizer keeps a truth
+            // floor at every iteration — probe-grade at coin-flip labels, oracle-grade
+            // as labels improve.
+            if (qamWire)
+            {
+                Cf[] followingProbe = MiniProbe.Get(mode.K, boundary: (f + 2) % _il.Frames == 0);
+                for (int p = 0; p < 2; p++)
+                {
+                    Cf[] probe = p == 0 ? precedingProbe : followingProbe;
+                    long probeChip = p == 0 ? frameChip - mode.K : frameChip + mode.U;
+                    for (int i = fb; i < mode.K; i++)
+                    {
+                        if (!HaveSamplesForChip(probeChip + i + 2))
+                        {
+                            continue; // burst-edge probe tail; the data rows above are complete
+                        }
+
+                        if (genie)
+                        {
+                            FillWindowEst(probeChip + i, window);
+                        }
+                        else
+                        {
+                            FillWindow(probeChip + i, window);
+                        }
+
+                        for (int j = 0; j < fb; j++)
+                        {
+                            past[j] = probe[i - 1 - j];
+                        }
+
+                        dfe.AddTrainingRow(window, past, probe[i], weight: 1.0f);
+                    }
+                }
+            }
+
             // Solve with _trackRidge for all modes; the TIR acceptance margin keeps
             // echo-free frames on the full-inversion (null) candidate exactly.
+            // Pair candidates only when the expected labels are trustworthy (§B3.3
+            // label-trust gate): the oracle path (truth) and the soft iterations (E[x]
+            // whose uncertainty the cancellation prices via the variance bump). The
+            // shipped hard iteration 0 re-encodes a first decode that is up to ~49%
+            // wrong on deep-start blocks, and cancelling the adjacent tap with those
+            // labels injects unpriced error into the very observation the chains
+            // equalize — measured flipping a marginal WN6 block out of convergence
+            // (11.4k errors in one block, 146× the point's BER) while the corpse and
+            // every trusted-label consumer improved.
             Dfe.TirSolve tir = dfe.SolveTrainingTir(
                 regularization: _trackRidge, ffNoisePower: GenieNoisePower(),
-                maxLag: Math.Min(fb, mode.U / 2));
+                maxLag: Math.Min(fb, mode.U / 2), allowPair: allowPair);
             if (tir.Lag > 0)
             {
                 tirFrames++;
                 tirLagSum += tir.Lag;
                 tirCoeffSum += Math.Sqrt(tir.Coefficient.Cnorm());
+                if (tir.Lag2 > 0)
+                {
+                    tirPairFrames++;
+                    tirCoeff2Sum += Math.Sqrt(tir.Coefficient2.Cnorm());
+                }
             }
 
-            // Chain-BCJR re-equalization for every PSK mode (§B2.2/§B2.3; the FinishBlock
-            // gate excludes QAM16). Channel estimation runs in the WIRE domain: the legacy
-            // path estimated the echo tap on DESCRAMBLED quantities, where the scrambler's
-            // rotor product r(u−d)·r̄(u) phase-scrambles the lag correlation toward zero —
-            // the echo model was scrambler-blind (issue #65). The scrambler re-enters the
-            // model exactly through the per-position h2 span below.
+            // §B3.6 M1a: price the solved channel on the preceding probe's rows — known
+            // symbols whose feedback history and TIR echo sources stay wholly inside the
+            // probe, mirroring the solve's own probe-row construction (§B3.4 Amendment 1).
+            // A channel refit to wrong labels explains its label rows by construction;
+            // these rows it cannot launder.
+            if (probeDiag)
+            {
+                long probeChip = frameChip - mode.K;
+                int firstRow = Math.Max(fb, Math.Max(tir.Lag, tir.Lag2));
+                for (int i = firstRow; i < mode.K; i++)
+                {
+                    if (!HaveSamplesForChip(probeChip + i + 2))
+                    {
+                        continue;
+                    }
+
+                    FillWindow(probeChip + i, window);
+                    for (int j = 0; j < fb; j++)
+                    {
+                        past[j] = precedingProbe[i - 1 - j];
+                    }
+
+                    Cf model = precedingProbe[i];
+                    if (tir.Lag > 0)
+                    {
+                        model += tir.Coefficient * precedingProbe[i - tir.Lag];
+                        if (tir.Lag2 > 0)
+                        {
+                            model += tir.Coefficient2 * precedingProbe[i - tir.Lag2];
+                        }
+                    }
+
+                    probePriceErr += (dfe.Equalize(window, past) - model).Cnorm();
+                    probePriceRows++;
+                }
+            }
+
+            // Chain-BCJR re-equalization for every mode (§B2.2/§B2.3; QAM16 since §B3.4).
+            // Channel estimation runs in the WIRE domain: the legacy path estimated the
+            // echo tap on DESCRAMBLED quantities, where the scrambler's rotor product
+            // r(u−d)·r̄(u) phase-scrambles the lag correlation toward zero — the echo
+            // model was scrambler-blind (issue #65). The scrambler re-enters the PSK
+            // model exactly through the per-position h2 span below; QAM16 stays wire
+            // end-to-end (nibbles permute priors and flip output LLR signs instead).
             _scrambler.Reset();
             var rotors = new Cf[mode.U];
+            int[]? nibbles = qamWire ? new int[mode.U] : null;
             for (int u = 0; u < mode.U; u++)
             {
-                rotors[u] = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                if (qamWire)
+                {
+                    nibbles![u] = _scrambler.NextQam(0, 4);
+                }
+                else
+                {
+                    rotors[u] = Ms110dTables.Psk8[_scrambler.NextPsk(0)];
+                }
             }
 
             for (int j = 0; j < fb; j++)
@@ -2458,14 +3573,21 @@ public sealed class Ms110dDemodulator
             for (int s = 0; s < Segments; s++)
             {
                 var acc = Cf.Zero;
+                float den = 0f;
                 int start = s * segLen;
                 int end = Math.Min(mode.U, start + segLen);
                 for (int u = start; u < end; u++)
                 {
                     acc += estWire[u] * expected[u].Conj();
+                    if (qamWire)
+                    {
+                        den += x2![u];
+                    }
                 }
 
-                segH1[s] = acc * (1f / Math.Max(1, end - start));
+                segH1[s] = acc * (qamWire
+                    ? 1f / Math.Max(1e-3f, den)
+                    : 1f / Math.Max(1, end - start));
                 segCentre[s] = 0.5f * (start + end - 1);
                 h1Avg += segH1[s];
             }
@@ -2474,6 +3596,9 @@ public sealed class Ms110dDemodulator
 
             int delay;
             Cf h2Avg;
+            int delay2 = 0;
+            var h2b = Cf.Zero;
+            bool segEcho = tir.Lag > 0;
             if (tir.Lag > 0)
             {
                 // TIR accepted: the FF was solved to LEAVE the echo at this lag, so the
@@ -2483,12 +3608,97 @@ public sealed class Ms110dDemodulator
                 // echo in with a BCJR told there is none.
                 delay = tir.Lag;
                 var acc = Cf.Zero;
+                float denAvg = 0f;
                 for (int u = delay; u < mode.U; u++)
                 {
                     acc += (estWire[u] - (h1Avg * expected[u])) * expected[u - delay].Conj();
+                    if (qamWire)
+                    {
+                        denAvg += x2![u - delay];
+                    }
                 }
 
-                h2Avg = acc * (1f / (mode.U - delay));
+                h2Avg = acc * (qamWire
+                    ? 1f / Math.Max(1e-3f, denAvg)
+                    : 1f / (mode.U - delay));
+
+                // Per-segment h2 on the same grid as h1 (§B2.1 applied to the echo path):
+                // under TIR the echo coefficient is a real fading path, and a
+                // frame-constant estimate misrepresents it exactly the way block-constant
+                // h1 did before per-segment anchors. Segments starting before `delay`
+                // (short U with a deep-lag echo) fall back to the frame estimate.
+                for (int s = 0; s < Segments; s++)
+                {
+                    var segAcc = Cf.Zero;
+                    float segDen = 0f;
+                    int start = Math.Max(delay, s * segLen);
+                    int end = Math.Min(mode.U, (s * segLen) + segLen);
+                    int count = end - start;
+                    for (int u = start; u < end; u++)
+                    {
+                        segAcc += (estWire[u] - (h1Avg * expected[u])) * expected[u - delay].Conj();
+                        if (qamWire)
+                        {
+                            segDen += x2![u - delay];
+                        }
+                    }
+
+                    segH2[s] = count > 0
+                        ? segAcc * (qamWire ? 1f / Math.Max(1e-3f, segDen) : 1f / count)
+                        : h2Avg;
+                }
+
+                // §B3.3 straddle pair: the adjacent-lag coefficient, estimated on the
+                // doubly-subtracted residual (h1 and the dominant echo removed) — the
+                // scrambler decorrelates distinct lags on the PSK ring, so the direct
+                // correlation is consistent. Cancelled softly from the observation in the
+                // assembly loop below; the chain BCJR stays exact on the dominant lag.
+                // Per-segment on the same grid as h1/h2: the fractional tap is the same
+                // physical fading path, and a frame-constant estimate cancels with a
+                // stale coefficient exactly where the fade moves fastest (measured: the
+                // frame-constant form REGRESSED the b10 oracle 6 → 19).
+                if (tir.Lag2 > 0)
+                {
+                    int start2 = Math.Max(delay, tir.Lag2);
+                    var accB = Cf.Zero;
+                    float denB = 0f;
+                    for (int u = start2; u < mode.U; u++)
+                    {
+                        Cf r = estWire[u] - (h1Avg * expected[u]) - (h2Avg * expected[u - delay]);
+                        accB += r * expected[u - tir.Lag2].Conj();
+                        if (qamWire)
+                        {
+                            denB += x2![u - tir.Lag2];
+                        }
+                    }
+
+                    h2b = accB * (qamWire
+                        ? 1f / Math.Max(1e-3f, denB)
+                        : 1f / Math.Max(1, mode.U - start2));
+                    delay2 = tir.Lag2;
+
+                    for (int s = 0; s < Segments; s++)
+                    {
+                        var segAcc = Cf.Zero;
+                        float segDen = 0f;
+                        int start = Math.Max(start2, s * segLen);
+                        int end = Math.Min(mode.U, (s * segLen) + segLen);
+                        int count = end - start;
+                        for (int u = start; u < end; u++)
+                        {
+                            Cf r = estWire[u] - (h1Avg * expected[u]) - (h2Avg * expected[u - delay]);
+                            segAcc += r * expected[u - tir.Lag2].Conj();
+                            if (qamWire)
+                            {
+                                segDen += x2![u - tir.Lag2];
+                            }
+                        }
+
+                        segH2b[s] = count > 0
+                            ? segAcc * (qamWire ? 1f / Math.Max(1e-3f, segDen) : 1f / count)
+                            : h2b;
+                    }
+                }
             }
             else
             {
@@ -2504,12 +3714,17 @@ public sealed class Ms110dDemodulator
                 for (int lag = 1; lag <= maxLag; lag++)
                 {
                     var acc = Cf.Zero;
+                    float den = 0f;
                     for (int u = lag; u < mode.U; u++)
                     {
                         acc += (estWire[u] - (h1Avg * expected[u])) * expected[u - lag].Conj();
+                        if (qamWire)
+                        {
+                            den += x2![u - lag];
+                        }
                     }
 
-                    Cf h2 = acc * (1f / (mode.U - lag));
+                    Cf h2 = acc * (qamWire ? 1f / Math.Max(1e-3f, den) : 1f / (mode.U - lag));
                     if (h2.Cnorm() > h2Avg.Cnorm())
                     {
                         h2Avg = h2;
@@ -2531,7 +3746,9 @@ public sealed class Ms110dDemodulator
             // Assemble the descrambled-domain model: z[u] = rxWire[u]·r̄(u) leaves h1
             // unchanged (piecewise-linear through the segment centres) and puts the
             // scrambler into the echo coefficient — h2·r(u−d)·r̄(u) for in-block echoes,
-            // h2·r̄(u) against the known wire chip for the pre-block ones.
+            // h2·r̄(u) against the known wire chip for the pre-block ones. QAM16 (§B3.4)
+            // stays in the wire domain — no derotation, plain h2 — because its scramble
+            // is a label permutation, handled at the priors and the output LLR signs.
             var rxDesc = new Cf[mode.U];
             var h1Span = new Cf[mode.U];
             var h2Span = new Cf[mode.U];
@@ -2542,17 +3759,31 @@ public sealed class Ms110dDemodulator
             }
 
             float residual = 0f;
+            segResid.Clear();
+            segResidCount.Clear();
+            // §B4.1: per-position residual/|h1| capture for the oracle-pass reference
+            // floor (label-true residuals; symbolVar is null and allowPair only on the
+            // oracle instrument's call). Diagnostic path only — never the shipped loop.
+            bool residDump = _turboFrameDiag && FrameDiagnostics is not null
+                && symbolVar is null && allowPair;
+            float[]? residPos = residDump ? new float[mode.U] : null;
+            float[]? gainPos = residDump ? new float[mode.U] : null;
             for (int u = 0; u < mode.U; u++)
             {
-                int s = Math.Min(Segments - 1, u / segLen);
-                Cf h1u;
+                int sn = Math.Min(Segments - 1, u / segLen);
+                float residBefore = residual;
+                int s = sn;
+                int ia, ib;
+                float t;
                 if (u <= segCentre[0] || Segments == 1)
                 {
-                    h1u = segH1[0];
+                    ia = ib = 0;
+                    t = 0f;
                 }
                 else if (u >= segCentre[Segments - 1])
                 {
-                    h1u = segH1[Segments - 1];
+                    ia = ib = Segments - 1;
+                    t = 0f;
                 }
                 else
                 {
@@ -2561,34 +3792,185 @@ public sealed class Ms110dDemodulator
                         s--;
                     }
 
-                    float t = (u - segCentre[s]) / (segCentre[s + 1] - segCentre[s]);
-                    h1u = (segH1[s] * (1f - t)) + (segH1[s + 1] * t);
+                    ia = s;
+                    ib = s + 1;
+                    t = (u - segCentre[s]) / (segCentre[s + 1] - segCentre[s]);
+                }
+
+                Cf h1u = ia == ib ? segH1[ia] : (segH1[ia] * (1f - t)) + (segH1[ib] * t);
+                Cf h2u = segEcho
+                    ? (ia == ib ? segH2[ia] : (segH2[ia] * (1f - t)) + (segH2[ib] * t))
+                    : h2Avg;
+
+                // §B3.3 straddle pair: soft-cancel the adjacent-lag component before the
+                // chains, at the segment-interpolated coefficient. x̂ is this iteration's
+                // expected symbol (truth on the oracle path — exact cancellation; E[x] on
+                // soft iterations, whose uncertainty enters the noise below); pre-block
+                // sources are known probe chips.
+                if (delay2 > 0)
+                {
+                    Cf h2bu = ia == ib ? segH2b[ia] : (segH2b[ia] * (1f - t)) + (segH2b[ib] * t);
+                    Cf srcB = u >= delay2 ? expected[u - delay2] : precedingProbe[mode.K + (u - delay2)];
+                    rxWire[u] -= h2bu * srcB;
                 }
 
                 h1Span[u] = h1u;
-                rxDesc[u] = rxWire[u] * rotors[u].Conj();
+                rxDesc[u] = qamWire ? rxWire[u] : rxWire[u] * rotors[u].Conj();
                 Cf echoWire = u >= delay ? expected[u - delay] : preceding[u];
-                h2Span[u] = u >= delay
-                    ? h2Avg * rotors[u - delay] * rotors[u].Conj()
-                    : h2Avg * rotors[u].Conj();
-                Cf predicted = (h1u * expected[u]) + (h2Avg * echoWire);
+                h2Span[u] = qamWire
+                    ? h2u
+                    : u >= delay
+                        ? h2u * rotors[u - delay] * rotors[u].Conj()
+                        : h2u * rotors[u].Conj();
+                Cf predicted = (h1u * expected[u]) + (h2u * echoWire);
                 residual += (rxWire[u] - predicted).Cnorm();
                 if (symbolVar is not null)
                 {
                     // EM-consistent noise estimate for soft labels: E|z − h·x|² =
                     // |z − h·E[x]|² + |h|²·(1 − |E[x]|²). The preceding-probe echo
-                    // sources (u < delay) are known exactly — variance 0.
+                    // sources (u < delay) are known exactly — variance 0. The cancelled
+                    // adjacent tap contributes its own cancellation uncertainty.
                     residual += h1u.Cnorm() * expectedVar[u];
                     if (u >= delay)
                     {
-                        residual += h2Avg.Cnorm() * expectedVar[u - delay];
+                        residual += h2u.Cnorm() * expectedVar[u - delay];
                     }
+
+                    if (delay2 > 0 && u >= delay2)
+                    {
+                        residual += h2b.Cnorm() * expectedVar[u - delay2];
+                    }
+                }
+
+                segResid[sn] += residual - residBefore;
+                segResidCount[sn]++;
+                if (residDump)
+                {
+                    residPos![u] = residual - residBefore;
+                    gainPos![u] = h1u.Abs();
                 }
             }
 
             // Cnorm() sums both complex dimensions; the BCJR wants σ² per dimension, so
             // halve (the #65 2×-under-confidence lesson).
             float noiseVar = Math.Max(0.5f * residual / mode.U, 1e-6f);
+            for (int s = 0; s < Segments; s++)
+            {
+                segNv[s] = segResidCount[s] > 0
+                    ? Math.Max(0.5f * segResid[s] / segResidCount[s], 1e-6f)
+                    : noiseVar;
+            }
+
+            // §B4.1 per-segment noise pricing (Amendment 2 variant ladder; SHIPPED
+            // default = spikeup, "off" restores the frame constant). A segment's windowed
+            // floor replaces the frame constant only beyond its own 3σ χ² band
+            // (thr = exp(3/√count) — dof-derived, never tuned; WN2's flat-floor truth
+            // cannot cross its 24-dof 2.4× band, so it stays frame-constant by
+            // construction). "spikeup" engages upward only — pricing can de-confidence a
+            // locally-bad span but never injects an over-confident low floor (the §B3.3
+            // WN2 damage direction); "spike2s" engages both ways. Engaged values
+            // interpolate through the segment centres like the channel spans (no cliffs).
+            float[]? nvSpan = null;
+            string nsegMode = _options.TurboNsegMode ?? "spikeup"; // null = shipped default
+            if (nsegMode is "spikeup" or "spike2s")
+            {
+                bool twoSided = nsegMode == "spike2s";
+                bool engaged = false;
+                for (int s = 0; s < Segments; s++)
+                {
+                    float thr = segResidCount[s] > 0
+                        ? MathF.Exp(3f / MathF.Sqrt(segResidCount[s])) : float.MaxValue;
+                    bool spike = segNv[s] > noiseVar * thr
+                        || (twoSided && segNv[s] < noiseVar / thr);
+                    segPrice[s] = spike ? segNv[s] : noiseVar;
+                    engaged |= spike;
+                }
+
+                if (engaged)
+                {
+                    nvSpan = new float[mode.U];
+                    for (int u = 0; u < mode.U; u++)
+                    {
+                        int s = Math.Min(Segments - 1, u / segLen);
+                        if (u <= segCentre[0] || Segments == 1)
+                        {
+                            nvSpan[u] = segPrice[0];
+                        }
+                        else if (u >= segCentre[Segments - 1])
+                        {
+                            nvSpan[u] = segPrice[Segments - 1];
+                        }
+                        else
+                        {
+                            if (u < segCentre[s])
+                            {
+                                s--;
+                            }
+
+                            float t = (u - segCentre[s]) / (segCentre[s + 1] - segCentre[s]);
+                            nvSpan[u] = (segPrice[s] * (1f - t)) + (segPrice[s + 1] * t);
+                        }
+                    }
+                }
+            }
+
+            if (_turboFrameDiag && FrameDiagnostics is not null)
+            {
+                var sb = new System.Text.StringBuilder(256);
+                sb.Append(FormattableString.Invariant(
+                    $"turbo-frame b{_blockIndex} f{f}: lag={delay} lag2={delay2} n={noiseVar:E3} nseg={segNv[0]:E2}|{segNv[1]:E2}|{segNv[2]:E2}|{segNv[3]:E2} ffE={dfe.FfEnergy:F3} sseN={tir.SseNull:F1} sseT={tir.SseTir:F1} h1="));
+                for (int s = 0; s < Segments; s++)
+                {
+                    if (s > 0) { sb.Append('|'); }
+                    sb.Append(FormattableString.Invariant($"{segH1[s].Re:F4},{segH1[s].Im:F4}"));
+                }
+
+                sb.Append(FormattableString.Invariant($" h2avg={h2Avg.Re:F4},{h2Avg.Im:F4}"));
+                if (segEcho)
+                {
+                    sb.Append(" h2=");
+                    for (int s = 0; s < Segments; s++)
+                    {
+                        if (s > 0) { sb.Append('|'); }
+                        sb.Append(FormattableString.Invariant($"{segH2[s].Re:F4},{segH2[s].Im:F4}"));
+                    }
+                }
+
+                if (delay2 > 0)
+                {
+                    sb.Append(" h2b=");
+                    for (int s = 0; s < Segments; s++)
+                    {
+                        if (s > 0) { sb.Append('|'); }
+                        sb.Append(FormattableString.Invariant($"{segH2b[s].Re:F4},{segH2b[s].Im:F4}"));
+                    }
+                }
+
+                FrameDiagnostics.Invoke(sb.ToString());
+
+                if (residDump)
+                {
+                    // §B4.1 oracle-pass reference field: label-true per-position squared
+                    // residual and the interpolated |h1(u)| the trajectory candidate
+                    // regresses on. One line per frame, oracle pass only.
+                    var rb = new System.Text.StringBuilder(12 * mode.U);
+                    rb.Append(FormattableString.Invariant($"turbo-resid b{_blockIndex} f{f}: r="));
+                    for (int u = 0; u < mode.U; u++)
+                    {
+                        if (u > 0) { rb.Append(','); }
+                        rb.Append(FormattableString.Invariant($"{residPos![u]:E2}"));
+                    }
+
+                    rb.Append(" g=");
+                    for (int u = 0; u < mode.U; u++)
+                    {
+                        if (u > 0) { rb.Append(','); }
+                        rb.Append(FormattableString.Invariant($"{gainPos![u]:F4}"));
+                    }
+
+                    FrameDiagnostics.Invoke(rb.ToString());
+                }
+            }
 
             int bitBase = f * mode.U * bitsPerSymbol;
             if (logPriors is not null)
@@ -2607,7 +3989,14 @@ public sealed class Ms110dDemodulator
 
                     for (int s = 0; s < m; s++)
                     {
+                        // QAM16: prior for WIRE symbol s = P(data nibble = s XOR n_u) —
+                        // the extrinsics address DATA bits, so the label is permuted.
                         int label = labels.Length > 0 ? labels[s] : s;
+                        if (qamWire)
+                        {
+                            label = s ^ nibbles![u];
+                        }
+
                         float sum = 0f;
                         for (int b = 0; b < bitsPerSymbol; b++)
                         {
@@ -2623,7 +4012,27 @@ public sealed class Ms110dDemodulator
             Ms110dChainBcjr.Equalize(
                 rxDesc, h1Span, h2Span, delay, noiseVar,
                 constellation, labels, bitsPerSymbol, preceding, frameLlrs,
-                logPriors is null ? default : logPriors);
+                logPriors is null ? default : logPriors,
+                noiseVarPerSymbol: nvSpan is null ? default : nvSpan);
+
+            // QAM16: the chains emitted WIRE-bit LLRs (identity labels over the wire
+            // constellation); data bit i = wire bit i XOR scramble bit i, so scramble
+            // bits flip signs — BEFORE the extrinsic subtraction, which lives in the
+            // data domain.
+            if (qamWire)
+            {
+                for (int u = 0; u < mode.U; u++)
+                {
+                    int nib = nibbles![u];
+                    for (int b = 0; b < bitsPerSymbol; b++)
+                    {
+                        if (((nib >> (bitsPerSymbol - 1 - b)) & 1) != 0)
+                        {
+                            frameLlrs[(u * bitsPerSymbol) + b] = -frameLlrs[(u * bitsPerSymbol) + b];
+                        }
+                    }
+                }
+            }
 
             // With priors in, the BCJR emits full posteriors; hand the outer code detector
             // EXTRINSICS only (posterior − prior) — feeding its own opinion back to the
@@ -2642,10 +4051,16 @@ public sealed class Ms110dDemodulator
             }
         }
 
+        if (probeDiag && probePriceRows > 0)
+        {
+            FrameDiagnostics!.Invoke(FormattableString.Invariant(
+                $"turbo-probe b{_blockIndex}: rows={probePriceRows} resid={probePriceErr / probePriceRows:E3}"));
+        }
+
         if (FrameDiagnostics is not null)
         {
             FrameDiagnostics.Invoke(FormattableString.Invariant(
-                $"turbo-tir b{_blockIndex}: frames={_il.Frames} tir={tirFrames} meanLag={(tirFrames > 0 ? (double)tirLagSum / tirFrames : 0):F1} mean|c|={(tirFrames > 0 ? tirCoeffSum / tirFrames : 0):F3}"));
+                $"turbo-tir b{_blockIndex}: frames={_il.Frames} tir={tirFrames} meanLag={(tirFrames > 0 ? (double)tirLagSum / tirFrames : 0):F1} mean|c|={(tirFrames > 0 ? tirCoeffSum / tirFrames : 0):F3} pair={tirPairFrames} mean|c2|={(tirPairFrames > 0 ? tirCoeff2Sum / tirPairFrames : 0):F3}"));
         }
 
         // Restore DFE state and leave a clean Gram for the next frame.
@@ -2668,6 +4083,7 @@ public sealed class Ms110dDemodulator
     private void EndBurst()
     {
         _state = Ms110dRxState.Searching;
+        _agcGain = 1.0f; // #101: next burst re-acquires and re-estimates its own level at unity
         _lock = null;
         _mode = null;
         _il = null;
