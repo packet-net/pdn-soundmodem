@@ -30,16 +30,26 @@ public enum LadderChannel
     Poor,
 }
 
-/// <summary>One rendered point: the bits that went out, and the IQ that carried them.</summary>
+/// <summary>One rendered point: the bits that went out, and the two forms of the signal that
+/// carried them — the complex IQ the waveform route transmits and the real audio the DAX route
+/// transmits.</summary>
 /// <param name="Point">The point this came from.</param>
 /// <param name="Reference">Bits, for the scorer.</param>
-/// <param name="Iq">Interleaved complex baseband at the pass's output rate.</param>
+/// <param name="Iq">Interleaved complex baseband at the pass's output rate, <b>pre-scaled</b> by
+/// the pass IQ gain (<see cref="LadderPass.Gain"/>).</param>
+/// <param name="Audio">The real post-channel audio at <see cref="LadderPass.Ms110dAudioRate"/> —
+/// the same signal before software up-conversion, what the DAX route transmits. <b>Natural
+/// scale</b>, unlike <paramref name="Iq"/>: the DAX route resamples it and applies
+/// <see cref="LadderPass.AudioGain"/> at transmit time (see <see cref="LadderCommand"/>), so the
+/// one-gain-per-pass level policy is applied to the audio exactly as it is to the IQ, just at the
+/// last moment rather than baked in here.</param>
 /// <param name="LeadInSeconds">Noise transmitted ahead of the burst — the scorer's guard.</param>
 /// <param name="BurstSeconds">Length of the modulated burst itself.</param>
 public sealed record RenderedPoint(
     LadderPoint Point,
     Ms110dReferenceBits Reference,
     float[] Iq,
+    float[] Audio,
     double LeadInSeconds,
     double BurstSeconds);
 
@@ -55,6 +65,16 @@ public sealed record LadderPassOptions
 
     /// <summary>Peak IQ magnitude of the <em>worst</em> point, which sets the gain for all of them.</summary>
     public double Amplitude { get; init; } = 0.9;
+
+    /// <summary>
+    /// Peak real-audio amplitude of the <em>worst</em> point, which sets the DAX audio gain for
+    /// all of them — the audio-route counterpart of <see cref="Amplitude"/>.
+    /// </summary>
+    /// <remarks>A separate constant because the audio and the up-converted IQ have different
+    /// natural scales (the complex bandpass and the resample change the peak), so one target
+    /// cannot serve both. 0.9 leaves headroom for the 9600→24000 resample overshoot and the DAX
+    /// s16 clamp, the same way <see cref="Amplitude"/> does for the waveform's dynamic range.</remarks>
+    public double AudioAmplitude { get; init; } = 0.9;
 
     /// <summary>
     /// Noise-only audio transmitted before each burst.
@@ -146,6 +166,7 @@ public sealed class LadderPass
     {
         var rendered = new List<RenderedPoint>(points.Count);
         double peak = 0;
+        double audioPeak = 0;
 
         foreach (LadderPoint point in points)
         {
@@ -187,11 +208,24 @@ public sealed class LadderPass
                 peak = Math.Max(peak, magnitude);
             }
 
+            // The DAX route transmits the audio, not the IQ — so its worst-point peak has to be
+            // tracked separately (different natural scale) for the audio gain below.
+            for (int k = 0; k < audio.Length; k++)
+            {
+                audioPeak = Math.Max(audioPeak, Math.Abs(audio[k]));
+            }
+
             rendered.Add(new RenderedPoint(
-                point, reference, iq,
+                point, reference, iq, audio,
                 _options.LeadInSeconds,
                 clean.Length / (double)Ms110dAudioRate));
         }
+
+        // The audio is carried out at NATURAL scale and the pass audio gain is applied at transmit
+        // time (the DAX route resamples first, then scales) — so, exactly like the IQ gain, one
+        // constant chosen from the worst point sets the level for every point. Signal power is
+        // then identical at every point on both routes and only the injected noise varies.
+        AudioGain = audioPeak > 1e-12 ? (float)(_options.AudioAmplitude / audioPeak) : 1f;
 
         peak = Math.Sqrt(peak);
         if (peak > 1e-12)
@@ -213,9 +247,15 @@ public sealed class LadderPass
         return rendered;
     }
 
-    /// <summary>The single gain applied across the last <see cref="Render"/> — a pass constant,
+    /// <summary>The single IQ gain applied across the last <see cref="Render"/> — a pass constant,
     /// and one the manifest has to record for a level to mean anything later.</summary>
     public float Gain { get; private set; } = 1f;
+
+    /// <summary>The single DAX audio gain from the last <see cref="Render"/> — the audio-route
+    /// counterpart of <see cref="Gain"/>, applied to the resampled audio at transmit time rather
+    /// than baked into <see cref="RenderedPoint.Audio"/>, and recorded in the manifest as the
+    /// pass level whenever the DAX route transmitted.</summary>
+    public float AudioGain { get; private set; } = 1f;
 
     /// <summary>MS110D's native audio rate, which is also the rig's.</summary>
     public const int Ms110dAudioRate = 9600;

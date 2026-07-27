@@ -122,9 +122,9 @@ Per this repo's provenance rule, the per-unit value scaling (`dBm`, `SWR`, `degC
 - **Per burst, during a campaign:** sample the meters around each transmission, log them into the manifest, and **abort on** SWR over threshold, `PATEMP` climbing, or any fault `M…` message. An hour-long unattended ladder with no transmitter-health telemetry is not something to run.
 - Meters also give an **independent TX-power record per burst**, which is exactly what the §I3 linearity sweep and the §E2 power-varied repeats need on the transmit side — the coupling factor being uncalibrated (see *The geometry*) means received level alone can never supply it.
 
-### T3 — `FlexSsbTransmitter` (the A/B leg)
+### T3 — `FlexDaxTransmitter` (the deployment route, and the A/B leg) — **delivered**
 
-Same seeded bursts, same runner, `--tx ssb`: 9600 Hz audio → ×5 → 48 kHz into the existing DAX audio output (`FlexDevice`/`FlexStation` headless path, `mode=DIGU`) with `FlexPtt`. No new DSP. Exists solely to make §E3's differential measurable.
+Same seeded bursts, same runner, selected with `--route dax` (**now the ladder's default**): 9600 Hz audio → ×5 → 48 kHz → ÷2 → 24 kHz into a reduced-bandwidth DAX audio stream (`FlexStation` headless path, `mode=DIGU`) with `FlexPtt`. No new DSP and no offset/NCO/SSB synthesis — DIGU places audio *f* at dial + *f*, so the radio does what the IQ route's up-converter does in software. This is the modem's real deployment path, which is why it is the default and the IQ route (`--route iq`) is the reference instrument; the pair make §E3's differential a matter of flipping one flag. `FlexDaxTransmitter` shares `FlexTransmitterOptions`, `SwrInterlock`, the Morse identification and the inter-burst settle with the IQ route through the `IOtaTransmitter` seam, points the transmitter at DAX and reads the selection back (throwing rather than keying a mic-sourced transmitter into silence — mirrors `FlexDevice.OpenAsync`), and opens the global transmit filter to `DaxTransmitFilterHighHz` (default 3450 Hz). SWR on this route is meaningful only on the constant-envelope pre-flight tone, not the modulated bursts — decided by construction rather than measured, since real audio has no analytic envelope to inspect.
 
 ---
 

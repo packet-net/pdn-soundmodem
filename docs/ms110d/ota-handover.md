@@ -106,11 +106,17 @@ Two traps found building it, both of the silent-wrong-answer kind:
 
 `sm-ota ladder` injects the rig at the transmitter and scores the pass. `--dry-run` renders the whole thing to an IQ file with no radio involved, which is how it was proved: rendered, converted, scored, and the measured SNR tracked the requested SNR to 0.3 dB at every rung from 18 dB down to 3 dB, with coded BER holding at zero to 6 dB (WN6's gate is 9 dB). The only untested link is the hardware.
 
+**`--route` picks the live transmit path, and `dax` is the default.** The DAX route (`FlexDaxTransmitter`) is the modem's real deployment path: it hands the radio real audio and the radio's own DIGU SSB modulator places it — audio frequency *f* lands at dial + *f*, carrier suppressed at the dial — so the MS110D waveform (native 9600 Hz, 1800 Hz sub-carrier, occupied ≈180–3420 Hz) goes out with **no software offset, NCO or SSB synthesis**, just a 9600→24000 Hz resample into a reduced-bandwidth DAX stream. The IQ route (`FlexIqTransmitter`, `--route iq`) is the bench instrument: it synthesises single-sideband IQ in software through a headless `RAW` waveform, bypassing the radio's SSB modulator, ALC and TX DSP. The route selector changes *only* the live transmit path — `--dry-run` and `sm-ota score` are receiver-side and model the captured IQ regardless of how it was radiated, so they are identical either way.
+
 ```
-sm-ota ladder --wn 6 --snr 18,12,9,6,3 --repeats 4 --dry-run --out pass.wav   # rehearse
+sm-ota ladder --wn 6 --snr 18,12,9,6,3 --repeats 4 --dry-run --out pass.wav   # rehearse (receiver-side, route-independent)
 sm-ota ladder --wn 6 --snr 18,12,9,6,3 --repeats 4 --rf-power 15 \
-              --capture-host ubersdr --dial-correction <re-measure!>          # for real
+              --capture-host ubersdr --dial-correction <re-measure!>          # for real, DAX (the deployment default)
+sm-ota ladder --wn 6 --snr 18,12,9,6,3 --repeats 4 --rf-power 15 --route iq \
+              --capture-host ubersdr --dial-correction <re-measure!>          # the bench-instrument IQ leg
 ```
+
+The one gain across the whole pass is applied on both routes (a separate audio-gain constant for DAX, since the audio and the up-converted IQ have different natural scales), and the manifest records whichever level actually reached the radio.
 
 `WattersonChannel` is compiled into the tool from where it lives in the test project (see both csprojs) — one definition, still the mask suite's to edit. Three things about the design are load-bearing:
 
@@ -145,6 +151,8 @@ sm-ota ladder --wn 6 --snr 18,12,9,6,3 --repeats 4 --rf-power 15 \
 ### 5. §E3 — IQ vs SSB A/B
 
 Same seeded bursts through `RAW` IQ and through DAX audio (`FlexStation`, `mode=DIGU`). The difference **is** the TX SSB filter and ALC contribution, measured rather than inferred. Claim a DAX channel other than 1 if SmartSDR is running.
+
+**Both legs are now built into `sm-ota ladder`** — flip `--route` between the two (`dax` the default deployment path, `iq` the bench instrument) on otherwise-identical invocations, and the manifests differ only in how the same seeded bursts were radiated. `FlexDaxTransmitter` shares the whole safety envelope with the IQ route (the same `FlexTransmitterOptions`, `SwrInterlock`, Morse identification and inter-burst settle) via the `IOtaTransmitter` seam; it points the transmitter at DAX (`transmit set dax=1`) and reads the selection back, throwing at bring-up rather than key a mic-sourced transmitter into silence, and it opens the global transmit filter to `DaxTransmitFilterHighHz` (default 3450) so the top of the MS110D band is not truncated by a stale 3 kHz SSB passband.
 
 ### 6. §E4 — on air
 

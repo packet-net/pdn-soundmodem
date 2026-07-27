@@ -1,9 +1,22 @@
 using System.Globalization;
+using M0LTE.Dsp;
 using M0LTE.Flex;
 using Packet.SoundModem.Ms110d;
 using Packet.SoundModem.UberSdr;
 
 namespace Packet.SoundModem.Ota;
+
+/// <summary>Which transmit route a live ladder pass drives.</summary>
+internal enum LadderRoute
+{
+    /// <summary>DAX audio through the radio's own DIGU SSB modulator — the modem's real
+    /// deployment path, and the ladder's default. See <see cref="FlexDaxTransmitter"/>.</summary>
+    Dax,
+
+    /// <summary>Complex IQ through a headless waveform — the bench/instrument path that bypasses
+    /// the radio's SSB modulator, ALC and TX DSP. See <see cref="FlexIqTransmitter"/>.</summary>
+    Iq,
+}
 
 /// <summary>
 /// <c>sm-ota ladder</c> — the §E2 pass: the mask suite's own channel injected at the
@@ -45,10 +58,16 @@ internal static class LadderCommand
                                         result can be fed straight to `sm-ota score`)
 
                 Live:
+                  --route dax|iq        transmit route (default dax). dax is the modem's real
+                                        deployment path: real audio through the radio's own DIGU
+                                        SSB modulator, so the radio does what the software
+                                        up-converter does on the iq route. iq is the bench
+                                        instrument: software single-sideband IQ through a headless
+                                        waveform, bypassing the radio's SSB modulator/ALC/TX DSP
                   --rf-power <0-100>    REQUIRED to transmit — no default, by design
                   --radio <ip|discover> default discover
                   --freq <MHz>          waveform slice centre (default 18.106500)
-                  --offset-hz <Hz>      carrier offset from the centre (default 2000)
+                  --offset-hz <Hz>      carrier offset from the centre (default 2000; iq route)
                   --gap <s>             quiet between transmissions (default 3)
                   --capture-host <h>    capture the pass on an UberSDR and score it
                   --dial-correction <Hz>  RE-MEASURE THIS EVERY SESSION (see the handover)
@@ -85,10 +104,13 @@ internal static class LadderCommand
             TxSsbHighHz = a.Dbl("tx-ssb-high", 3450),
         });
 
+        var route = a.Str("route", "dax").StartsWith('i') ? LadderRoute.Iq : LadderRoute.Dax;
+
         Console.Error.WriteLine(
             $"ladder: WN{wn} {channel}, {snrs.Length} rung(s) × {a.Int("repeats", 1)} = {plan.Count} bursts");
         IReadOnlyList<RenderedPoint> rendered = pass.Render(plan);
-        Console.Error.WriteLine($"rendered at {rate} Hz, pass gain {pass.Gain:G4}");
+        Console.Error.WriteLine(
+            $"rendered at {rate} Hz, pass IQ gain {pass.Gain:G4}, audio gain {pass.AudioGain:G4}");
 
         // The schedule is the request; the manifest is the record. Both are written for every
         // pass, rehearsal included, because a rehearsal whose settings cannot be reproduced is
@@ -103,7 +125,7 @@ internal static class LadderCommand
 
         return dryRun
             ? DryRun(a, rendered, rate, pass.Gain, schedule)
-            : await LiveAsync(a, rendered, offsetHz, rate, pass.Gain, schedule).ConfigureAwait(false);
+            : await LiveAsync(a, rendered, rate, pass, route, schedule).ConfigureAwait(false);
     }
 
     /// <summary>Writes the pass as one IQ file laid out the way a capture would hold it.</summary>
@@ -177,8 +199,8 @@ internal static class LadderCommand
     }
 
     private static async Task<int> LiveAsync(
-        Args a, IReadOnlyList<RenderedPoint> rendered, double offsetHz, int rate,
-        float gain, CampaignSchedule schedule)
+        Args a, IReadOnlyList<RenderedPoint> rendered, int rate,
+        LadderPass pass, LadderRoute route, CampaignSchedule schedule)
     {
         if (!a.Has("rf-power"))
         {
@@ -187,6 +209,9 @@ internal static class LadderCommand
                 + "Add --dry-run to rehearse the pass without a radio.");
         }
 
+        // Both live routes work at 24 kHz — the waveform IQ rate and the reduced-bandwidth DAX
+        // rate are the same — so this guard holds for either. The DAX route resamples each point's
+        // 9600 Hz audio to that rate itself (below); the IQ was rendered there.
         if (rate != FlexIqTransmitter.SampleRate)
         {
             throw new ArgumentException(
@@ -206,8 +231,15 @@ internal static class LadderCommand
         void Log(string m) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] {m}");
 
         double gap = a.Dbl("gap", 3);
+
+        // The route selector picks the transmitter; everything downstream — capture, timing,
+        // manifest — is route-independent and runs against the IOtaTransmitter seam. The DAX route
+        // is the modem's deployment path and the default; the IQ route is the bench instrument.
+        Log($"route: {(route == LadderRoute.Dax ? "dax (deployment audio path)" : "iq (bench instrument)")}");
         await using FlexClient client = await FlexClient.ConnectAsync(options.Radio);
-        FlexIqTransmitter tx = await FlexIqTransmitter.AttachAsync(client, options, Log);
+        await using IOtaTransmitter tx = route == LadderRoute.Dax
+            ? (IOtaTransmitter)await FlexDaxTransmitter.AttachAsync(client, options, Log)
+            : await FlexIqTransmitter.AttachAsync(client, options, Log);
 
         // Capture the whole pass in one session, so every burst is scored from one timebase.
         double captureSeconds = rendered.Sum(p => (p.Iq.Length / 2.0 / rate) + gap) + 30;
@@ -242,7 +274,17 @@ internal static class LadderCommand
             await tx.EnsureIdentifiedAsync().ConfigureAwait(false);
             Log($"WN{point.Point.WaveformNumber} {point.Point.SnrDb:+0.0;-0.0;0} dB "
                 + $"{point.Point.Channel} seed {point.Point.Seed}");
-            TransmitReport report = await tx.TransmitAsync(point.Iq).ConfigureAwait(false);
+
+            // The only route-specific step: the IQ route sends the pre-scaled complex baseband as
+            // rendered; the DAX route sends real audio, so it resamples the point's natural-scale
+            // 9600 Hz audio to the DAX rate and applies the one pass audio gain here (post-resample,
+            // so the level the radio sees is the pass constant — see LadderPass.AudioGain).
+            float[] payload = route == LadderRoute.Dax
+                ? ScaleInPlace(
+                    Resample(point.Audio, LadderPass.Ms110dAudioRate, FlexDaxTransmitter.SampleRate),
+                    pass.AudioGain)
+                : point.Iq;
+            TransmitReport report = await tx.TransmitAsync(payload).ConfigureAwait(false);
             keyed.Add(report.KeyUtc);
             if (report.Aborted)
             {
@@ -282,7 +324,9 @@ internal static class LadderCommand
             Radio: options.Radio,
             FrequencyMHz: options.FrequencyMHz,
             RfPower: options.RfPower,
-            PassGain: gain,
+            // The pass level that actually reached the radio: the audio gain on the DAX route, the
+            // IQ gain on the waveform route.
+            PassGain: route == LadderRoute.Dax ? pass.AudioGain : pass.Gain,
             DialCorrectionHz: a.Dbl("dial-correction", 0),
             CapturePath: Path.GetFileName(result.WavPath),
             CaptureSha256: result.WavSha256,
@@ -296,5 +340,44 @@ internal static class LadderCommand
         Console.Error.WriteLine(
             $"score it with:  sm-ota score --in {result.WavPath} --schedule {manifestPath}");
         return 0;
+    }
+
+    /// <summary>
+    /// Resamples real audio through the same integer path <see cref="Ms110dIqUpconverter"/> uses —
+    /// ×5 to the 48 kHz intermediate, then ÷2 — for the DAX route. Just the resample: no bandpass
+    /// and no NCO, because the radio's DIGU modulator does the sideband placement the up-converter
+    /// does in software on the IQ route.
+    /// </summary>
+    private static float[] Resample(float[] audio, int fromRate, int toRate)
+    {
+        // 401 taps, matching the up-converter's resampler so the two routes' band-limiting agrees.
+        const int taps = 401;
+        int intermediate = toRate * 2; // 48000 for the 24 kHz DAX rate
+        if (intermediate % fromRate != 0)
+        {
+            throw new ArgumentException(
+                $"no integer ×N/÷2 path from {fromRate} Hz to {toRate} Hz", nameof(fromRate));
+        }
+
+        var upsampler = new Upsampler(intermediate, intermediate / fromRate, taps);
+        var mid = new float[upsampler.OutputLength(audio.Length)];
+        upsampler.Process(audio, mid);
+
+        var decimator = new Decimator(intermediate, 2, taps);
+        var outBuf = new float[decimator.MaxOutput(mid.Length)];
+        int n = decimator.Process(mid, outBuf);
+        return n == outBuf.Length ? outBuf : outBuf[..n];
+    }
+
+    /// <summary>Scales a buffer in place and returns it — the pass audio gain applied to the
+    /// resampled DAX audio at transmit time.</summary>
+    private static float[] ScaleInPlace(float[] samples, float gain)
+    {
+        for (int k = 0; k < samples.Length; k++)
+        {
+            samples[k] *= gain;
+        }
+
+        return samples;
     }
 }
