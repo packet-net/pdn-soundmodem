@@ -134,6 +134,9 @@ public static class FlexDevice
     /// <param name="tuning">Headless slice params (frequency/antenna/mode); null = defaults.
     /// Ignored in attach mode.</param>
     /// <param name="cancellation">Cancels the connect + bring-up.</param>
+    /// <exception cref="InvalidOperationException">Headless bring-up could not point the
+    /// transmitter at DAX (<see cref="FlexStation.TransmitSourceWarning"/>) — the modem would
+    /// key and transmit silence.</exception>
     public static async Task<FlexRuntime> OpenAsync(
         string device, int dspRate, int packetBuffer, FlexTuning? tuning, CancellationToken cancellation)
     {
@@ -186,6 +189,23 @@ public static class FlexDevice
         FlexStation station = spec.Headless
             ? await FlexStation.SetUpHeadlessAsync(client, format, options, cancellation).ConfigureAwait(false)
             : await FlexStation.SetUpAsync(client, format, options, cancellation).ConfigureAwait(false);
+
+        // Headless bring-up points the transmitter at DAX (`transmit set dax=1`, Flex 0.7.0) and
+        // reads the selection back — on a real radio every DAX enable step returns err=0 whether
+        // or not the transmitter is listening to DAX, so without the read-back a mic-sourced
+        // transmitter keys and sends silence. That is a dead modem, not a degraded one: fail the
+        // bring-up loudly rather than run with it. (Attach mode never selects the source —
+        // SmartSDR owns the transmitter there — so its warning stays null and this never fires.)
+        if (station.TransmitSourceWarning is string transmitWarning)
+        {
+            await station.DisposeAsync().ConfigureAwait(false); // disposes the shared client too
+            if (mock is not null)
+            {
+                await mock.DisposeAsync().ConfigureAwait(false);
+            }
+
+            throw new InvalidOperationException($"flex: {transmitWarning}");
+        }
 
         // Flex's audio/PTT types implement the M0LTE.Radio.Audio seams directly (Flex 0.2.0),
         // which is this modem's seam too — no adapter needed.
