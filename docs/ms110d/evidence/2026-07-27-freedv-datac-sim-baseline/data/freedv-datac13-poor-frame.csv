@@ -1,0 +1,7 @@
+mode,channel,layer,rate,frameBytes,snrDb,levelDb,trials,successes,successRate,ciLo,ciHi,fer,codedBer,margin
+freedv-datac13,Poor,Frame,8000,60,-6,0,100,18,0.18,0.117001,0.266675,0.82,0.82,0
+freedv-datac13,Poor,Frame,8000,60,-4,0,100,41,0.41,0.318672,0.507987,0.59,0.59,0
+freedv-datac13,Poor,Frame,8000,60,-2,0,100,69,0.69,0.593738,0.772204,0.31,0.31,0
+freedv-datac13,Poor,Frame,8000,60,0,0,100,80,0.8,0.711169,0.866634,0.2,0.2,0
+freedv-datac13,Poor,Frame,8000,60,2,0,100,92,0.92,0.850017,0.958907,0.08,0.08,0
+freedv-datac13,Poor,Frame,8000,60,4,0,100,97,0.97,0.915479,0.989746,0.03,0.03,0
