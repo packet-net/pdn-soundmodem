@@ -82,6 +82,18 @@ public sealed record FlexTransmitterOptions
     /// invalidating the other.</remarks>
     public int RfPowerCeiling { get; init; } = 30;
 
+    /// <summary>
+    /// Hard forward-power ceiling in <b>watts</b> — the interlock aborts any transmission the
+    /// instant measured FWDPWR exceeds it — or null for no measured-power limit.
+    /// </summary>
+    /// <remarks>Distinct from <see cref="RfPowerCeiling"/>, which caps the commanded 0–100
+    /// <c>rfpower</c> level: that level is not watts and its mapping to power is the radio's, so a
+    /// strict power limit has to be held against what the radio actually measures. Enforced on
+    /// every FWDPWR sample regardless of envelope (a data burst counts too). Set for the attenuated
+    /// RSP1 rig, whose off-air chain has a strict 5 W ceiling; null elsewhere (the dummy load needs
+    /// no such limit).</remarks>
+    public double? MaxForwardWatts { get; init; }
+
     /// <summary>Silence written before the tone/burst to absorb the PTT→TRANSMITTING settle
     /// (measured at 139 ms on M0LTE's 6500).</summary>
     public double LeadInSeconds { get; init; } = 0.3;
@@ -690,7 +702,8 @@ public sealed class FlexIqTransmitter : IOtaTransmitter
             faultsBefore = _faults.Count;
         }
 
-        using var interlock = new SwrInterlock(_meters, _options.MaxSwr, constantEnvelope);
+        using var interlock = new SwrInterlock(
+            _meters, _options.MaxSwr, constantEnvelope, _options.MaxForwardWatts);
         long reflectedBefore = _iq.PacketsReflected;
         long starvedBefore = _iq.SamplesStarved;
         long reflected = 0;

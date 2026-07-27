@@ -28,6 +28,7 @@ internal sealed class SwrInterlock : IDisposable
 {
     private readonly FlexMeters _meters;
     private readonly double _maxSwr;
+    private readonly double? _maxForwardWatts;
     private readonly bool _constantEnvelope;
     private readonly List<FlexMeterReading> _collected = [];
     private readonly Lock _gate = new();
@@ -42,11 +43,19 @@ internal sealed class SwrInterlock : IDisposable
     /// <param name="constantEnvelope">Whether the burst holds a constant RF envelope — the
     /// precondition for the radio's forward/reflected samples to be comparable at all. False
     /// collects meters and peak forward power but never evaluates SWR.</param>
-    public SwrInterlock(FlexMeters meters, double maxSwr, bool constantEnvelope)
+    /// <param name="maxForwardWatts">Hard forward-power ceiling in watts, or null for none. Unlike
+    /// SWR this needs no constant envelope — power is power — so it is checked on every FWDPWR
+    /// sample regardless, and abort fires the instant measured forward power exceeds it. This is
+    /// the enforcement behind a strict transmit-power limit (e.g. the 5 W ceiling on the
+    /// attenuated RSP1 rig): the radio's <c>rfpower</c> is a 0–100 level, not watts, so the
+    /// measured power is what the limit is held against, not the commanded setting.</param>
+    public SwrInterlock(
+        FlexMeters meters, double maxSwr, bool constantEnvelope, double? maxForwardWatts = null)
     {
         ArgumentNullException.ThrowIfNull(meters);
         _meters = meters;
         _maxSwr = maxSwr;
+        _maxForwardWatts = maxForwardWatts;
         _constantEnvelope = constantEnvelope;
         _meters.Updated += OnMeter;
     }
@@ -105,10 +114,24 @@ internal sealed class SwrInterlock : IDisposable
         lock (_gate)
         {
             _collected.Add(reading);
-            if (reading.Descriptor.Name.Equals("FWDPWR", StringComparison.OrdinalIgnoreCase)
-                && (_peakFwd is null || reading.Value > _peakFwd))
+            if (reading.Descriptor.Name.Equals("FWDPWR", StringComparison.OrdinalIgnoreCase))
             {
-                _peakFwd = reading.Value;
+                if (_peakFwd is null || reading.Value > _peakFwd)
+                {
+                    _peakFwd = reading.Value;
+                }
+
+                // The forward-power ceiling is enforced in measured watts and independently of the
+                // SWR path (no constant-envelope precondition — a modulated data burst still must
+                // not exceed the limit). Abort the instant a sample is over.
+                if (_maxForwardWatts is double maxW
+                    && FlexMeters.DbmToWatts(reading.Value) > maxW
+                    && _abortReason is null)
+                {
+                    _abortReason =
+                        $"forward power {FlexMeters.DbmToWatts(reading.Value):F1} W exceeded the " +
+                        $"{maxW:F1} W limit";
+                }
             }
         }
 

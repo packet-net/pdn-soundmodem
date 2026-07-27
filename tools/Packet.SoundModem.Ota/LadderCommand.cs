@@ -65,6 +65,9 @@ internal static class LadderCommand
                                         instrument: software single-sideband IQ through a headless
                                         waveform, bypassing the radio's SSB modulator/ALC/TX DSP
                   --rf-power <0-100>    REQUIRED to transmit — no default, by design
+                  --max-watts <W>       abort any burst whose measured forward power exceeds this.
+                                        Defaults to 5 W (and caps the rfpower level) when --capture
+                                        rsp is selected — the RSP1 rig's strict off-air ceiling
                   --radio <ip|discover> default discover
                   --freq <MHz>          waveform slice centre (default 18.106500)
                   --offset-hz <Hz>      carrier offset from the centre (default 2000; iq route)
@@ -247,12 +250,23 @@ internal static class LadderCommand
         // wins. Keying ANT1 while capturing on ANT2 would record nothing and waste the session.
         bool captureRsp = string.Equals(a.Str("capture", ""), "rsp", StringComparison.OrdinalIgnoreCase);
 
+        // The RSP1 rig has a STRICT 5 W transmit ceiling (off-air, into the attenuator chain).
+        // Enforce it two ways when that rig is selected: cap the commanded rfpower LEVEL low so we
+        // never even momentarily command more before the first meter arrives, AND set the
+        // measured-watts abort — the real guard, since rfpower is a 0–100 level, not watts, and the
+        // interlock cuts the transmission the instant measured FWDPWR exceeds the limit. --max-watts
+        // overrides the measured ceiling. The dummy-load path keeps the receiver-overload ceiling
+        // and no measured-power limit.
+        double? maxWatts = captureRsp || a.Has("max-watts") ? a.Dbl("max-watts", 5.0) : null;
+
         var options = new FlexTransmitterOptions
         {
             Radio = a.Str("radio", "discover"),
             FrequencyMHz = a.Str("freq", "18.106500"),
             Antenna = a.Str("antenna", captureRsp ? "ANT2" : "ANT1"),
             RfPower = a.Int("rf-power", 0),
+            RfPowerCeiling = captureRsp ? 5 : 30,
+            MaxForwardWatts = maxWatts,
             IdMode = "MS110D",
         };
 
@@ -263,6 +277,11 @@ internal static class LadderCommand
             + (captureRsp && a.Has("antenna") && options.Antenna != "ANT2"
                 ? "  *** WARNING: RSP1 capture is on ANT2 — transmitting on a different port records nothing ***"
                 : ""));
+        if (maxWatts is double mw)
+        {
+            Log($"transmit power ceiling: {mw:F1} W measured (rfpower level capped at {options.RfPowerCeiling}) "
+                + "— the interlock aborts any burst that exceeds it");
+        }
 
         double gap = a.Dbl("gap", 3);
 

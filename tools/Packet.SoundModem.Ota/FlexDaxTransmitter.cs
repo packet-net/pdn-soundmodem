@@ -379,7 +379,8 @@ public sealed class FlexDaxTransmitter : IOtaTransmitter
             faultsBefore = _faults.Count;
         }
 
-        using var interlock = new SwrInterlock(_meters, _options.MaxSwr, constantEnvelope);
+        using var interlock = new SwrInterlock(
+            _meters, _options.MaxSwr, constantEnvelope, _options.MaxForwardWatts);
         long packetsBefore = _output.PacketsSent;
         DateTime keyUtc;
         bool drained;
