@@ -246,7 +246,7 @@ public sealed record TransmitReport(
 /// <para>The counters (<c>PacketsReflected</c>, <c>SamplesStarved</c>) are reported on every
 /// burst and a starve is treated as a failed measurement, not a warning.</para>
 /// </remarks>
-public sealed class FlexIqTransmitter : IAsyncDisposable
+public sealed class FlexIqTransmitter : IOtaTransmitter
 {
     /// <summary>The waveform stream's complex sample rate (24 kHz on the 6000 series).</summary>
     public const int SampleRate = FlexWaveformIqOutput.SampleRate;

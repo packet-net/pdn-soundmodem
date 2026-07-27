@@ -228,6 +228,90 @@ public static class MorseGenerator
         return iq;
     }
 
+    /// <summary>
+    /// Renders a message as mono real audio — a cosine tone at <paramref name="toneHz"/> keyed by
+    /// the message, with raised-cosine edges. The DAX-audio counterpart of <see cref="Complex"/>.
+    /// </summary>
+    /// <remarks>On the DAX route the radio's own DIGU SSB modulator carries this audio onto the
+    /// air (dial + <paramref name="toneHz"/>), so there is no complex baseband — the keyed carrier
+    /// is a real tone. The shaped edges matter for exactly the same reason as the complex version:
+    /// hard-keying splatters, and we are about to publish spectral measurements of our own
+    /// transmitter.</remarks>
+    /// <param name="text">The message, e.g. <c>"M0LTE MS110D"</c>.</param>
+    /// <param name="toneHz">Audio tone frequency (lands at dial + this on DIGU).</param>
+    /// <param name="amplitude">Key-down amplitude.</param>
+    /// <param name="wordsPerMinute">Sending speed.</param>
+    /// <param name="sampleRate">Audio sample rate (24000 for the reduced-bandwidth DAX path).</param>
+    /// <param name="edgeSeconds">Rise/fall time. 5 ms is the usual click-free compromise;
+    /// it must stay well under a dot (40 ms at 30 wpm).</param>
+    public static float[] Real(
+        string text, double toneHz, double amplitude, double wordsPerMinute,
+        int sampleRate, double edgeSeconds = 0.005)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (!CanEncode(text))
+        {
+            throw new ArgumentException($"'{text}' contains characters with no Morse code", nameof(text));
+        }
+
+        double dot = DotSeconds(wordsPerMinute);
+        if (edgeSeconds * 2 >= dot)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(edgeSeconds), edgeSeconds,
+                $"rise+fall must fit inside one {dot * 1000:F0} ms dot at {wordsPerMinute} wpm");
+        }
+
+        IReadOnlyList<(bool KeyDown, double Seconds)> pattern = KeyingPattern(text, wordsPerMinute);
+        int total = 0;
+        foreach ((bool _, double seconds) in pattern)
+        {
+            total += (int)Math.Round(seconds * sampleRate);
+        }
+
+        var envelope = new double[total];
+        int at = 0;
+        foreach ((bool keyDown, double seconds) in pattern)
+        {
+            int n = (int)Math.Round(seconds * sampleRate);
+            if (keyDown)
+            {
+                int edge = (int)Math.Round(edgeSeconds * sampleRate);
+                for (int k = 0; k < n; k++)
+                {
+                    double e = 1.0;
+                    if (k < edge)
+                    {
+                        e = 0.5 * (1.0 - Math.Cos(Math.PI * k / edge));
+                    }
+                    else if (n - 1 - k < edge)
+                    {
+                        e = 0.5 * (1.0 - Math.Cos(Math.PI * (n - 1 - k) / edge));
+                    }
+
+                    envelope[at + k] = e;
+                }
+            }
+
+            at += n;
+        }
+
+        var audio = new float[total];
+        double phase = 0;
+        double step = 2.0 * Math.PI * toneHz / sampleRate;
+        for (int k = 0; k < total; k++)
+        {
+            audio[k] = (float)(amplitude * envelope[k] * Math.Cos(phase));
+            phase += step;
+            if (phase > Math.PI)
+            {
+                phase -= 2.0 * Math.PI;
+            }
+        }
+
+        return audio;
+    }
+
     /// <summary>The identification message for a session: callsign then mode.</summary>
     public static string IdText(string callsign, string? mode)
     {

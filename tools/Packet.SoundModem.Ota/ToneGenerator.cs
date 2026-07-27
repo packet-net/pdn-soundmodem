@@ -108,6 +108,88 @@ public static class ToneGenerator
         return iq;
     }
 
+    /// <summary>
+    /// Generates a sum of real cosines as mono samples — the DAX-audio counterpart of
+    /// <see cref="Complex"/>.
+    /// </summary>
+    /// <remarks>The DAX route hands the radio real audio and the radio's own DIGU SSB modulator
+    /// places it: a tone at <paramref name="frequenciesHz"/> lands at dial + that frequency, so
+    /// there is no analytic baseband, no image to reject and no NCO — the point of the DAX path
+    /// versus the IQ one. Phase is accumulated and wrapped per tone for the same reason the
+    /// complex version does it: a long tone stays exactly on frequency.</remarks>
+    /// <param name="frequenciesHz">Audio tone frequencies (Hz). On DIGU each lands at dial + f.</param>
+    /// <param name="amplitudePerTone">Peak amplitude of each tone. An N-tone sum peaks at N × this;
+    /// check <see cref="PeakReal"/> before transmitting.</param>
+    /// <param name="seconds">Duration of the tone itself (ramps included).</param>
+    /// <param name="sampleRate">Audio sample rate — 24000 for the reduced-bandwidth DAX path.</param>
+    /// <param name="rampSeconds">Raised-cosine taper at each end.</param>
+    public static float[] Real(
+        IReadOnlyList<double> frequenciesHz,
+        double amplitudePerTone,
+        double seconds,
+        int sampleRate,
+        double rampSeconds = DefaultRampSeconds)
+    {
+        ArgumentNullException.ThrowIfNull(frequenciesHz);
+        if (frequenciesHz.Count == 0)
+        {
+            throw new ArgumentException("at least one tone frequency is required", nameof(frequenciesHz));
+        }
+
+        if (sampleRate <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleRate));
+        }
+
+        if (seconds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(seconds));
+        }
+
+        double nyquist = sampleRate / 2.0;
+        for (int t = 0; t < frequenciesHz.Count; t++)
+        {
+            if (frequenciesHz[t] <= 0 || frequenciesHz[t] >= nyquist)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(frequenciesHz),
+                    frequenciesHz[t],
+                    $"a real audio tone must be inside 0…{nyquist:F0} Hz");
+            }
+        }
+
+        int n = (int)Math.Round(seconds * sampleRate);
+        int rampSamples = Math.Min((int)Math.Round(Math.Max(0, rampSeconds) * sampleRate), n / 2);
+
+        int tones = frequenciesHz.Count;
+        var phase = new double[tones];
+        var step = new double[tones];
+        for (int t = 0; t < tones; t++)
+        {
+            step[t] = 2.0 * Math.PI * frequenciesHz[t] / sampleRate;
+        }
+
+        var audio = new float[n];
+        for (int k = 0; k < n; k++)
+        {
+            double envelope = Envelope(k, n, rampSamples) * amplitudePerTone;
+            double sample = 0;
+            for (int t = 0; t < tones; t++)
+            {
+                sample += Math.Cos(phase[t]);
+                phase[t] += step[t];
+                if (phase[t] > Math.PI)
+                {
+                    phase[t] -= 2.0 * Math.PI;
+                }
+            }
+
+            audio[k] = (float)(sample * envelope);
+        }
+
+        return audio;
+    }
+
     /// <summary>Interleaved I,Q silence — the lead-in that absorbs the PTT settle
     /// (139 ms measured on the 6500) and the lead-out that lets the tail drain before
     /// unkeying.</summary>
@@ -119,6 +201,18 @@ public static class ToneGenerator
         }
 
         return new float[2 * (int)Math.Round(seconds * sampleRate)];
+    }
+
+    /// <summary>Mono silence — the DAX-route lead-in/lead-out, one sample per frame rather than
+    /// the interleaved I,Q pair <see cref="Silence"/> returns.</summary>
+    public static float[] SilenceReal(double seconds, int sampleRate)
+    {
+        if (seconds < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(seconds));
+        }
+
+        return new float[(int)Math.Round(seconds * sampleRate)];
     }
 
     /// <summary>Concatenates interleaved I,Q blocks.</summary>
@@ -158,6 +252,24 @@ public static class ToneGenerator
         }
 
         return Math.Sqrt(peak);
+    }
+
+    /// <summary>Largest |sample| in a mono buffer — the DAX-route clipping check, the real-audio
+    /// counterpart of <see cref="PeakMagnitude"/>. The radio's s16 DAX transport clamps at ±1.0,
+    /// so anything above that is clipped before it reaches the SSB modulator.</summary>
+    public static double PeakReal(ReadOnlySpan<float> audio)
+    {
+        double peak = 0;
+        for (int k = 0; k < audio.Length; k++)
+        {
+            double m = Math.Abs(audio[k]);
+            if (m > peak)
+            {
+                peak = m;
+            }
+        }
+
+        return peak;
     }
 
     private static double Envelope(int k, int n, int rampSamples)
