@@ -11,9 +11,11 @@
 # Bounded to WORKERS parallelism; the box is a shared 16 GB LXC.
 set -u
 
-ROOT="/home/tf/pdn-freedv-sim"
+# Path-relative to this script so it reproduces from any checkout of the branch.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$HERE/../../../.." && pwd)"   # evidence/<date>/ -> repo root
 SMOTA="$ROOT/tools/Packet.SoundModem.Ota/bin/Release/net10.0/sm-ota.dll"
-DATA="$ROOT/docs/ms110d/evidence/2026-07-27-freedv-datac-sim-baseline/data"
+DATA="$HERE/data"
 WORKERS="${WORKERS:-4}"
 PKT_BURSTS="${PKT_BURSTS:-200}"   # per-packet layer: tight CIs + directly compares to FreeDV's N/100
 FRM_BURSTS="${FRM_BURSTS:-100}"   # frame layer: the deployment metric
