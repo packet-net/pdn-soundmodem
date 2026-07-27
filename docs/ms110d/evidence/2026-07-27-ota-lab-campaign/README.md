@@ -6,7 +6,7 @@ The first end-to-end over-the-wire characterization of the MS110D modem: transmi
 
 - **On AWGN the real deployment path reproduces simulation.** WN4 (BPSK r2/3), WN6 (QPSK r3/4) and WN13 (QPSK r9/16) all gave real BER-vs-SNR waterfalls whose coded knees sit at the expected thresholds, in the coding-theory-correct order (WN13's stronger code beats WN6 despite both being QPSK).
 - **The DAX deployment path is bench-equivalent when driven right.** Driving the DIGU audio hard (0.9) costs ~1.2 dB to ALC compression; backing off to ~0.7 recovers it entirely. This is the single most important operational finding for real deployment.
-- **On the Poor (Watterson) channel, a receiver-side rig limitation appeared.** BPSK (WN4) survives real Poor RF; **both QPSK modes (WN6, WN13) fail systematically with WID misreads** — a failure that does **not** occur in simulation and is isolated to the real RF path, most likely the RSP1's frequency/phase stability. This is a limitation of the *test rig*, not evidence against the modem.
+- **On the Poor (Watterson) channel, most modes fail on the real rig — cause not yet fully explained.** WN2, WN6 and WN13 all fail systematically over real Poor RF with WID misreads; **WN4 is the lone exception** (it survives). The failure requires *both* the real RF path *and* the fading — it does not occur in simulation, and QPSK-over-AWGN survives real RF — and it is not the delivered level, TX processing, drive, clipping, the waveform, or burst length (all ruled out). It is **not** the BPSK-vs-QPSK split I first reported (WN2 is BPSK and fails). The leading suspect is the RSP1's reference instability (phase noise / carrier wander) interacting with deep fades, but why WN4 alone survives is open. Either way it points at the *test rig / receiver*, not a modem fault — every mode decodes clean in the dry-run.
 
 ## The rig
 
@@ -62,18 +62,21 @@ Watterson "Poor" fading injected at the transmitter, Long interleaver, at/around
 | Mode | Over real RF | Same waveform, dry-run (sim) |
 |---|---|---|
 | WN4 BPSK r2/3 | **8 of 9 bursts coded-clean** (0 errors through 8–25 % uncoded fading); 1 WID-mismatch failure | clean |
+| WN2 BPSK r1/4 | **all bursts fail — WID MISMATCH / SignalLost** | (not dry-run; decodes at mask in Phase B) |
 | WN6 QPSK r3/4 | **all bursts fail — WID MISMATCH / SignalLost** | **clean** (coded 0) |
 | WN13 QPSK r9/16 | **all bursts fail — WID MISMATCH / SignalLost** | **clean** (coded 0) |
 
-The QPSK failure was diagnosed by elimination:
+The failure was diagnosed by elimination. It is **not**:
 
-- **Not the waveform or config** — the identical WN6/WN13 Poor bursts decode clean in a pure-simulation dry-run.
-- **Not TX audio processing** — the IQ route (which bypasses the SSB modulator, ALC and TX DSP entirely) fails identically to DAX.
-- **Not the drive/ALC** — dropping WN13 to 0.5 drive still fails.
-- **Not RX clipping** — captures peak ~−18 dBFS with zero clipped samples.
-- **Not the long burst / RX drift** — WN13 QPSK on the **Long interleaver over AWGN** decodes perfectly over real RF (6/6 coded-clean). So the long-burst duration and any slow RX frequency drift are *not* the cause; the **Poor fading is essential** to the failure.
+- **the waveform or config** — the identical WN6/WN13 Poor bursts decode clean in a pure-simulation dry-run;
+- **TX audio processing** — the IQ route (which bypasses the SSB modulator, ALC and TX DSP entirely) fails identically to DAX;
+- **the drive/ALC** — dropping WN13 to 0.5 drive still fails;
+- **RX clipping** — captures peak ~−18 dBFS with zero clipped samples;
+- **the delivered level / gain policy** — the failing captures are level-for-level and fade-depth-for-fade-depth identical to WN4's working one (peak ~−18, active-median ~−32, ~7–8 dB fades);
+- **the long burst / RX drift alone** — WN13 QPSK on the **Long interleaver over AWGN** decodes 6/6 clean over real RF, so the long-burst duration and slow drift are not the cause; the **fading is essential**;
+- **a BPSK-vs-QPSK split** — WN2 is BPSK and fails, so my first-pass "QPSK-only" reading was wrong.
 
-The failure is therefore the **specific three-way combination of QPSK + the real RF path + fading** — any two of the three is fine (QPSK+Poor in simulation works; QPSK+AWGN over real RF works; BPSK+Poor over real RF works). The most consistent reading: the real RF path adds **receiver phase noise / instability** (the RSP1 is a modest SDR, not a lab reference — its carrier wanders several Hz), and during the Poor channel's deep fades the weak faded signal lets that phase noise exceed QPSK's phase-tracking tolerance, collapsing preamble/WID acquisition. BPSK carries twice the phase margin and rides through; non-faded QPSK (AWGN) has a stable strong carrier and rides through; simulated Poor has no receiver phase noise at all. This is a **test-rig receiver limitation**, not a modem deficiency — the modem gated all these modes at mask in Phase B simulation and decodes them clean in the dry-run here.
+What is established: the failure requires **both the real RF path and the fading** (either alone works), it lives in preamble/WID acquisition (WID misread → SignalLost), and it hits three modes while sparing WN4. What is **not** established is the mechanism and, especially, **why WN4 alone survives** — the mode parameters (rate, U, K) don't split cleanly, the delivered levels are identical, and the terse harness log does not expose which WID the demod actually read. The leading suspect remains the **RSP1's reference instability** (phase noise / carrier wander, several Hz, worst where a deep fade leaves the carrier weak) interacting with acquisition — a **test-rig receiver limitation**, since every mode decodes clean in simulation. Resolving it needs either the modem's lock-info/autopsy instrumentation (to see the misread WID and the per-frame carrier state — a modem-side change) or a disciplined RX reference (to remove the RSP1 as a variable). Both are pre-registered next steps, not this campaign's to close.
 
 ## Harness & library work shipped this session
 
@@ -88,6 +91,6 @@ The failure is therefore the **specific three-way combination of QPSK + the real
 
 ## Next steps
 
-1. **A better RX reference is the gating item for QPSK Poor.** A GPSDO-disciplined receiver (or disciplining the RSP1) would test whether QPSK Poor holds over real RF, or a second SDR to cross-check. Until then, over-air QPSK-Poor numbers are rig-limited, not modem-limited.
+1. **Resolve the Poor-acquisition failure.** Two independent levers: (a) a disciplined RX reference (GPSDO'd receiver, external reference into the RSP1, or a second SDR to cross-check) to remove the RSP1 as a variable; (b) the modem's lock-info/autopsy instrumentation surfaced through the harness, to see the misread WID and the per-frame carrier state during a failing burst — this needs a (small, authorised) modem-side change. Until one of these lands, over-air Poor numbers are rig-limited, not modem-limited, and WN4's survival is unexplained.
 2. **Phase 1 NVIS** over a real ionospheric path, once the reference question is settled.
-3. **Preserve the capture corpus** — these WAVs are permanent regression fixtures re-scoreable against every future modem build.
+3. **Preserve the capture corpus** — these WAVs are permanent regression fixtures re-scoreable against every future modem build; the failing Poor captures are especially worth keeping for offline re-analysis with better instrumentation.
