@@ -1,3 +1,4 @@
+using System.Globalization;
 using Packet.SoundModem.Ms110d;
 
 namespace Packet.SoundModem.Ota;
@@ -23,6 +24,10 @@ namespace Packet.SoundModem.Ota;
 /// <param name="TurboReverted">Turbo passes reverted during this burst.</param>
 /// <param name="TurboAborted">Turbo passes aborted during this burst.</param>
 /// <param name="Snr">SNR of the burst against the quiet before it, in the rig's convention.</param>
+/// <param name="Diagnostics">The demodulator's <see cref="Ms110dDemodulator.FrameDiagnostics"/>
+/// lines emitted while this burst was live — the acquisition/WID trace, time-prefixed. Empty
+/// unless <see cref="BurstScorerOptions.CaptureDiagnostics"/> is set; the event is
+/// fire-and-forget, so collecting it cannot change what the demodulator decoded.</param>
 public sealed record BurstScore(
     int Index,
     double StartSeconds,
@@ -42,7 +47,8 @@ public sealed record BurstScore(
     int TurboConverged,
     int TurboReverted,
     int TurboAborted,
-    SnrEstimate? Snr)
+    SnrEstimate? Snr,
+    IReadOnlyList<string> Diagnostics)
 {
     /// <summary>Coded bit error rate. It saturates at 0 and at 1, so read it beside
     /// <see cref="UncodedBer"/> rather than on its own.</summary>
@@ -105,6 +111,12 @@ public sealed record BurstScorerOptions
 
     /// <summary>Upper edge of the occupied band.</summary>
     public double OccupiedHighHz { get; init; } = 3450;
+
+    /// <summary>Collect the demodulator's <see cref="Ms110dDemodulator.FrameDiagnostics"/> trace
+    /// per burst into <see cref="BurstScore.Diagnostics"/>. Off by default — this is an acquisition
+    /// autopsy tool, not part of scoring, and the event is fire-and-forget so subscribing to it
+    /// leaves the decoded bits byte-identical.</summary>
+    public bool CaptureDiagnostics { get; init; }
 }
 
 /// <summary>
@@ -170,6 +182,17 @@ public sealed class BurstScorer
         bool scheduled = false;
         long uncodedBits = 0, uncodedErrors = 0;
         int turboC0 = 0, turboR0 = 0, turboA0 = 0;
+
+        // Acquisition/WID autopsy, opt-in. Each FrameDiagnostics line is stamped with the sample
+        // it fired at, so a burst later claims the lines that fell inside its span — the
+        // acquisition trace fires between carrier-detect and lock, which is inside it. The event
+        // is fire-and-forget, so subscribing changes nothing the demodulator decodes.
+        List<(long Sample, string Message)>? diagnostics =
+            _options.CaptureDiagnostics ? new List<(long, string)>() : null;
+        if (diagnostics is not null)
+        {
+            demod.FrameDiagnostics += message => diagnostics.Add((consumed, message));
+        }
 
         Ms110dReferenceBits? MatchSchedule(double startSeconds)
         {
@@ -281,6 +304,22 @@ public sealed class BurstScorer
                     _options.OccupiedLowHz, _options.OccupiedHighHz);
             }
 
+            IReadOnlyList<string> burstDiagnostics = Array.Empty<string>();
+            if (diagnostics is not null)
+            {
+                var lines = new List<string>();
+                foreach ((long sample, string message) in diagnostics)
+                {
+                    if (sample >= burstStartSample && sample <= consumed)
+                    {
+                        lines.Add(string.Create(CultureInfo.InvariantCulture,
+                            $"{sample / (double)rate,8:F2}s {message}"));
+                    }
+                }
+
+                burstDiagnostics = lines;
+            }
+
             found.Add(new BurstScore(
                 Index: found.Count,
                 StartSeconds: burstStartSample / (double)rate,
@@ -302,7 +341,8 @@ public sealed class BurstScorer
                 TurboConverged: demod.TurboConverged - turboC0,
                 TurboReverted: demod.TurboReverted - turboR0,
                 TurboAborted: demod.TurboAborted - turboA0,
-                Snr: snr));
+                Snr: snr,
+                Diagnostics: burstDiagnostics));
 
             burstStartSample = -1;
             burstNoise = null;

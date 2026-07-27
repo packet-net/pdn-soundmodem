@@ -46,6 +46,8 @@ internal static class ScoreCommand
                 Output:
                   --csv <path>         one row per burst, for the campaign record
                   --audio <path>       also write the converted 9600 Hz audio
+                  --diagnostics        print the demodulator's acquisition/WID trace under
+                                       each burst — an autopsy for bursts that never lock
 
                 Bursts are found by acquisition, never by slicing at the scheduled times: a
                 burst the receiver never heard is the result that matters most, and slicing
@@ -107,7 +109,10 @@ internal static class ScoreCommand
         };
 
         string? audioPath = a.Str("audio", null);
-        CaptureScore score = new BurstScorer(schedule).Score(Convert(inPath, options, audioPath));
+        CaptureScore score = new BurstScorer(schedule, new BurstScorerOptions
+        {
+            CaptureDiagnostics = a.Has("diagnostics"),
+        }).Score(Convert(inPath, options, audioPath));
 
         Report(inPath, wn, score);
         if (a.Str("csv", null) is { } csvPath)
@@ -145,6 +150,7 @@ internal static class ScoreCommand
         {
             OccupiedLowHz = options.SsbLowHz,
             OccupiedHighHz = options.SsbHighHz,
+            CaptureDiagnostics = a.Has("diagnostics"),
         }).Score(Convert(inPath, options, a.Str("audio", null)));
 
         Console.WriteLine();
@@ -222,6 +228,10 @@ internal static class ScoreCommand
             Console.WriteLine($"{b.Index,3} {b.StartSeconds,9:F2} {wid,4} {b.CfoHz,8:F1} {snr,8} " +
                               $"{coded,11} {uncoded,12} {b.Blocks,7}  {b.Reason}"
                               + (b.Scheduled && !b.WidCorrect ? "  WID MISMATCH" : ""));
+            foreach (string line in b.Diagnostics)
+            {
+                Console.WriteLine($"      {line}");
+            }
         }
 
         int scored = score.Bursts.Count(b => b.Scheduled);
@@ -282,6 +292,10 @@ internal static class ScoreCommand
                 + $"{(b.Scheduled ? Rate(b.CodedBer) : "unscheduled"),11} "
                 + $"{(b.Scheduled ? Rate(b.UncodedBer) : "—"),12}  {b.Reason}"
                 + (b.Scheduled && !b.WidCorrect ? "  WID MISMATCH" : ""));
+            foreach (string line in b.Diagnostics)
+            {
+                Console.WriteLine($"      {line}");
+            }
         }
 
         Console.WriteLine();
