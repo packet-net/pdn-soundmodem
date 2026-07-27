@@ -31,6 +31,14 @@ The live network this modem must serve is NinoTNC IL2P+CRC (300 BPSK / 2400 QPSK
 cross-check. Known wire nuance: the spec v0.6 example packets leave the RESERVED (ex-FEC)
 header bit clear; Dire Wolf sets it. We encode it clear and ignore it on receive.
 
+## Mode validation ledger (keep it current)
+
+[docs/mode-validation.md](docs/mode-validation.md) is the living record of every mode/submode's
+validation status (simulation + on-air) and its provenance. **Standing rule: whenever you prove a
+modem/mode works — especially one that was *not* working before — add a dated entry to the ledger**
+naming the mode, the broken→working transition, and the commit/PR/issue that did it, and update its
+row in the matrix. A fix isn't finished until the ledger records it.
+
 ## Conventions (mirror packet.net)
 
 - net10.0, C# latest, nullable + warnings-as-errors, Central Package Management
