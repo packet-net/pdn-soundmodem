@@ -1,0 +1,211 @@
+using System.Globalization;
+
+namespace Packet.SoundModem.Ota;
+
+/// <summary>
+/// <c>sm-ota sim</c> — the pure-software BER-vs-SNR baseline: render a burst for any
+/// <c>ModemCatalog</c> mode, push it through calibrated AWGN or a Watterson fading channel at a
+/// known SNR, decode it, and tally frame/packet success. No radio, no capture, no self-calibrating
+/// noise lead-in — the SNR is injected directly, so a run is deterministic and fast.
+/// </summary>
+/// <remarks>
+/// This is the sim half of the campaign methodology the MS110D <c>ladder</c> drives over the air:
+/// the same <see cref="Packet.SoundModem.Tests.Channel.WattersonChannel"/> rig, the same 3&#160;kHz
+/// SNR convention, generalized off the MS110D-specific path so it covers the FreeDV datac OFDM
+/// family (and, through the <c>IModem</c> seam, any other catalogue mode). It produces the
+/// AWGN / Poor / Good waterfalls a Phase-B on-air readiness call rests on.
+/// </remarks>
+internal static class SimCommand
+{
+    public static int Run(string[] argv)
+    {
+        var a = Args.Parse(argv);
+        if (a is null || a.Has("help") || !a.Has("mode"))
+        {
+            Console.Error.WriteLine("""
+                sm-ota sim --mode <catalogue-mode> --snr <a,b,c> [options]
+
+                Renders bursts, injects a channel at a known SNR (3 kHz noise bandwidth), decodes,
+                and tallies frame/packet success — the software BER-vs-SNR baseline.
+
+                  --mode <name>        ModemCatalog mode (e.g. freedv-datac0 … freedv-datac14).
+                                       Any catalogue mode works at the frame layer.
+                  --snr <a,b,c>        SNR rungs in dB (3 kHz), ascending
+                  --channel <list>     awgn|good|poor, comma-separated (default awgn)
+                  --layer frame|packet frame = full IL2P+CRC frame through the IModem surface
+                                       (the deployment metric, any mode). packet = one raw datac
+                                       packet through the library's own DatacReceiver, scored on
+                                       CRC + post-LDPC coded BER (the FreeDV cross-check; datac
+                                       modes only). Default frame.
+                  --bursts <n>         independent trials per point (default 100)
+                  --levels <a,b,c>     absolute input-level scales in dB (default 0). At a fixed
+                                       SNR this is the level-invariance probe: signal and noise
+                                       scale together so the SNR is unchanged; a level-sensitive
+                                       front end (no input AGC) degrades as the level falls. Runs
+                                       as an inner axis at every SNR rung.
+                  --frame-bytes <n>    AX.25 frame size, frame layer (default 60)
+                  --rate <Hz>          DSP rate. Default 8000 for freedv-* (engine-native, the rate
+                                       FreeDV's own figures are measured at), else DspRateFor(mode).
+                                       Pass 48000 to exercise the ×6/÷6 deployment path.
+                  --seed <n>           first burst seed (default 1)
+                  --workers <n>        bounded parallelism (default 4 — shared box)
+                  --csv <path>         write one row per point
+                  --quiet              suppress the per-point progress lines
+
+                Every point carries its own fade/noise realisation derived from the burst seed, so a
+                point reproduces from (mode, channel, SNR, seed, count) alone.
+                """);
+            return a is null ? 2 : 0;
+        }
+
+        string mode = a.Req("mode");
+        double[] snrs = a.Req("snr").Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => double.Parse(s.Trim(), CultureInfo.InvariantCulture)).ToArray();
+        SimChannelKind[] channels = a.Str("channel", "awgn").Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(SimChannel.Parse).ToArray();
+        SimLayer layer = a.Str("layer", "frame").StartsWith('p') ? SimLayer.Packet : SimLayer.Frame;
+        double[] levels = a.Str("levels", "0").Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => double.Parse(s.Trim(), CultureInfo.InvariantCulture)).ToArray();
+        int bursts = a.Int("bursts", 100);
+        int frameBytes = a.Int("frame-bytes", 60);
+        int? rate = a.Has("rate") ? a.Int("rate", 8000) : null;
+        int firstSeed = a.Int("seed", 1);
+        int workers = a.Int("workers", 4);
+        bool quiet = a.Has("quiet");
+
+        // Native 8 kHz is the right default for the datac family: it is codec2's own rate and what
+        // FreeDV's published operating points are measured at. Other modes take their catalogue rate.
+        int effectiveRate = rate ?? (mode.StartsWith("freedv-", StringComparison.Ordinal)
+            ? 8000 : Packet.SoundModem.Modems.ModemCatalog.DspRateFor(mode));
+        int? rateArg = layer == SimLayer.Packet ? null : effectiveRate;
+
+        void Log(string m)
+        {
+            if (!quiet)
+            {
+                Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] {m}");
+            }
+        }
+
+        Log($"sim {mode} layer={layer} rate={(layer == SimLayer.Packet ? 8000 : effectiveRate)} "
+            + $"bursts={bursts} frameBytes={frameBytes} workers={workers}");
+        Log($"channels: {string.Join(',', channels)}  snrs: {string.Join(',', snrs)}");
+
+        bool levelScan = levels.Length > 1 || levels[0] != 0;
+        var rows = new List<SimPointResult>();
+        foreach (SimChannelKind kind in channels)
+        {
+            var levelZeroCurve = new List<SimPointResult>();
+            foreach (double snr in snrs)
+            {
+                foreach (double level in levels)
+                {
+                    SimPointResult r = SimBench.RunPoint(
+                        mode, rateArg, layer, kind, snr, bursts, frameBytes, firstSeed, workers, level);
+                    rows.Add(r);
+                    if (level == 0)
+                    {
+                        levelZeroCurve.Add(r);
+                    }
+
+                    (double lo, double hi) = r.SuccessCi;
+                    string lvl = levelScan ? $" lvl {level,+5:+0.0;-0.0} dB" : "";
+                    Log($"  {kind,-4} {snr,6:+0.0;-0.0} dB{lvl}  ok {r.Successes,4}/{r.Trials}  "
+                        + $"succ {r.SuccessRate,5:P0} [{lo:P0}..{hi:P0}]  "
+                        + $"FER {r.Fer:0.000}  codedBER {Fmt(r.CodedBer)}  margin {r.Margin:0.0}");
+                }
+            }
+
+            if (levelZeroCurve.Count > 1)
+            {
+                double knee = SimBench.Threshold(levelZeroCurve, 0.5);
+                double knee90 = SimBench.Threshold(levelZeroCurve, 0.9);
+                Log($"  {kind} threshold: 50% at {Knee(knee)} dB, 90% at {Knee(knee90)} dB");
+            }
+        }
+
+        if (levelScan)
+        {
+            ReportLevelInvariance(rows);
+        }
+
+        Report(mode, layer, levelScan, rows);
+
+        if (a.Str("csv", null) is { } csvPath)
+        {
+            WriteCsv(csvPath, effectiveRate, layer, frameBytes, rows);
+            Console.Error.WriteLine($"wrote {csvPath}");
+        }
+
+        return 0;
+    }
+
+    private static void Report(string mode, SimLayer layer, bool levelScan, IReadOnlyList<SimPointResult> rows)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"=== sim {mode} ({layer}) ===");
+        string lvlHead = levelScan ? $" {"level",6}" : "";
+        Console.WriteLine($"{"channel",-7} {"SNR",6}{lvlHead} {"ok/N",9} {"succ%",6} {"95% CI",13} "
+            + $"{"FER",7} {"codedBER",10} {"margin",7}");
+        foreach (SimPointResult r in rows)
+        {
+            (double lo, double hi) = r.SuccessCi;
+            string lvl = levelScan ? $" {r.LevelDb,6:+0.0;-0.0}" : "";
+            Console.WriteLine($"{r.Channel,-7} {r.SnrDb,6:+0.0;-0.0}{lvl} {r.Successes,4}/{r.Trials,-4} "
+                + $"{r.SuccessRate,6:P0} {$"{lo:P0}..{hi:P0}",13} {r.Fer,7:0.000} "
+                + $"{Fmt(r.CodedBer),10} {r.Margin,7:0.0}");
+        }
+    }
+
+    /// <summary>
+    /// The level-invariance verdict: for each (channel, SNR) with a level scan, the spread of the
+    /// success rate across the level axis. A level-robust receiver holds flat — max−min ≈ 0 across
+    /// the whole non-clipping range; a level-sensitive one (the WN2 lesson: an un-normalised front
+    /// end) sags at low level even though the SNR never moved. Clipping at high positive level is a
+    /// separate, expected effect and is flagged, not counted against invariance.
+    /// </summary>
+    private static void ReportLevelInvariance(IReadOnlyList<SimPointResult> rows)
+    {
+        Console.WriteLine();
+        Console.WriteLine("=== level-invariance probe (fixed SNR, absolute level scanned) ===");
+        Console.WriteLine($"{"channel",-7} {"SNR",6} {"levels",7} {"succ min..max",16} {"verdict",10}");
+        foreach (IGrouping<(SimChannelKind, double), SimPointResult> g in rows
+                     .GroupBy(r => (r.Channel, r.SnrDb)))
+        {
+            var scan = g.OrderBy(r => r.LevelDb).ToList();
+            double min = scan.Min(r => r.SuccessRate);
+            double max = scan.Max(r => r.SuccessRate);
+            // Invariant when every level holds within a burst-count-worth of the best — a couple of
+            // trials of scatter is sampling noise, not level sensitivity.
+            double slack = 3.0 / Math.Max(1, scan[0].Trials);
+            string verdict = max - min <= slack ? "INVARIANT" : "LEVEL-DEP";
+            Console.WriteLine($"{g.Key.Item1,-7} {g.Key.Item2,6:+0.0;-0.0} {scan.Count,7} "
+                + $"{$"{min:P0}..{max:P0}",16} {verdict,10}");
+        }
+    }
+
+    private static void WriteCsv(
+        string path, int rate, SimLayer layer, int frameBytes, IReadOnlyList<SimPointResult> rows)
+    {
+        using var w = new StreamWriter(path);
+        w.WriteLine("mode,channel,layer,rate,frameBytes,snrDb,levelDb,trials,successes,successRate,"
+            + "ciLo,ciHi,fer,codedBer,margin");
+        foreach (SimPointResult r in rows)
+        {
+            (double lo, double hi) = r.SuccessCi;
+            w.WriteLine(string.Join(',',
+                r.Mode, r.Channel, r.Layer, rate, frameBytes,
+                F(r.SnrDb), F(r.LevelDb), r.Trials, r.Successes, F(r.SuccessRate), F(lo), F(hi),
+                F(r.Fer), F(r.CodedBer), F(r.Margin)));
+        }
+    }
+
+    private static string Knee(double v) => double.IsNaN(v) ? "—" : v.ToString("+0.0;-0.0", CultureInfo.InvariantCulture);
+
+    private static string Fmt(double v) => double.IsNaN(v) ? "—"
+        : v == 0 ? "0"
+        : v.ToString("0.00E+00", CultureInfo.InvariantCulture);
+
+    private static string F(double v) => double.IsNaN(v) ? ""
+        : v.ToString("G6", CultureInfo.InvariantCulture);
+}

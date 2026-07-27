@@ -33,6 +33,7 @@ try
         "meters" => await Commands.MetersAsync(args[1..]),
         "measure" => Commands.Measure(args[1..]),
         "score" => ScoreCommand.Run(args[1..]),
+        "sim" => SimCommand.Run(args[1..]),
         "ladder" => await LadderCommand.RunAsync(args[1..]),
         "monitor" => await MonitorCommand.RunAsync(args[1..]),
         "-h" or "--help" or "help" => Usage(),
@@ -72,6 +73,9 @@ static int Usage()
         sm-ota measure  analyse an IQ capture WAV: levels, spectrum, tone, image, spurs, IMD.
         sm-ota score    convert a captured pass and score every burst in it — acquisition,
                         WID, CFO, SNR, coded and uncoded BER, and what was MISSED.
+        sm-ota sim      pure-software BER-vs-SNR baseline for any ModemCatalog mode: render a
+                        burst, inject AWGN/Watterson at a known SNR, decode, tally frame/packet
+                        success. No radio. Drives the FreeDV datac OFDM waterfalls.
         sm-ota ladder   §E2: inject the mask suite's own channel at the transmitter and run an
                         SNR ladder through real hardware. --dry-run rehearses it with no radio.
         sm-ota monitor  watch a receiver live — capture, convert, demodulate, print each burst
