@@ -28,7 +28,8 @@ public class Ms110dMaskTests(ITestOutputHelper output)
     private sealed record MaskRun(
         long Bits, long Errors, int Bursts, int AcquisitionFailures, double SimSeconds,
         long UncodedBits = 0, long UncodedErrors = 0, long DeepFadeBits = 0, long DeepFadeErrors = 0,
-        int TurboConverged = 0, int TurboReverted = 0, int TurboAborted = 0, int TurboSkipped = 0)
+        int TurboConverged = 0, int TurboReverted = 0, int TurboAborted = 0, int TurboSkipped = 0,
+        int AgcResolves = 0)
     {
         public double Ber => Bits == 0 ? double.NaN : (double)Errors / Bits;
     }
@@ -318,7 +319,8 @@ public class Ms110dMaskTests(ITestOutputHelper output)
                 total.UncodedBits + r.UncodedBits, total.UncodedErrors + r.UncodedErrors,
                 total.DeepFadeBits + r.DeepFadeBits, total.DeepFadeErrors + r.DeepFadeErrors,
                 total.TurboConverged + r.TurboConverged, total.TurboReverted + r.TurboReverted,
-                total.TurboAborted + r.TurboAborted, total.TurboSkipped + r.TurboSkipped);
+                total.TurboAborted + r.TurboAborted, total.TurboSkipped + r.TurboSkipped,
+                total.AgcResolves + r.AgcResolves);
         }
 
         return total;
@@ -367,7 +369,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         int bursts = 0, acquisitionFailures = 0;
         double simSeconds = 0;
         long uncodedBits = 0, uncodedErrors = 0, deepFadeBits = 0, deepFadeErrors = 0;
-        int turboConverged = 0, turboReverted = 0, turboAborted = 0, turboSkipped = 0;
+        int turboConverged = 0, turboReverted = 0, turboAborted = 0, turboSkipped = 0, agcResolves = 0;
         // MS110D_DEBUG moved host-side: the library fires FrameDiagnostics, the harness prints.
         bool debugTrace = Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1";
         // MS110D_MASK_GENIE=1: feed the demodulator the SAME channel realization noise-free
@@ -564,6 +566,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             turboReverted += demod.TurboReverted;
             turboAborted += demod.TurboAborted;
             turboSkipped += demod.TurboSkipped;
+            agcResolves += demod.AgcResolves;
 
             if (bursts % 10 == 0)
             {
@@ -577,7 +580,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         return new MaskRun(
             bits, errors, bursts, acquisitionFailures, simSeconds,
             uncodedBits, uncodedErrors, deepFadeBits, deepFadeErrors,
-            turboConverged, turboReverted, turboAborted, turboSkipped);
+            turboConverged, turboReverted, turboAborted, turboSkipped, agcResolves);
     }
 
     /// <summary>Composite channel power (equal-power-normalized) at a gain-trajectory
@@ -619,6 +622,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             }
 
             line += $", turbo {run.TurboConverged}c/{run.TurboReverted}r/{run.TurboAborted}a/{run.TurboSkipped}s";
+            line += $", agc {run.AgcResolves}"; // #101: 0 = AGC no-op in-family (masks byte-identical)
         }
 
         if (run.Bits < 3_000_000)

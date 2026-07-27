@@ -33,6 +33,21 @@ public sealed class Ms110dDemodulator
     private const int ChipsFixed = 288;           // 9 × 32 (M ≥ 2)
     private const int ChipsSuperframe = 576;
     private const int InterpHalf = 4;             // 8-tap interpolator
+
+    // #101 input signal-level AGC (see the _agcGain field). AgcLevelFloor is the receive
+    // level below which a burst is judged globally weak and normalized up to AgcNominalLevel;
+    // at or above it the gain is exactly 1.0 (a dead-zone that makes the AGC a no-op at the
+    // sim's nominal level and every stronger level → masks byte-identical). Both are the
+    // measured fade-averaged Fixed-section correlation amplitude (|Σ y·k̄|/32, k unit-magnitude
+    // 8PSK); AgcMaxGain caps the boost so a near-noise burst is not amplified without bound.
+    // Measured (data/agc-scale-calibration.log): the sim nominal Fixed-section correlation
+    // amplitude is ~0.119, linear in receive level (−20 dB → 0.012). The dead-zone floor 0.04
+    // sits far below the fade-averaged mask levels (which cluster near nominal because the
+    // ~1 Hz fade averages out over the ~2 s window) and far above the −20 dB real-RF level, so
+    // the AGC fires zero times in-family (masks byte-identical) yet catches the real-RF offset.
+    private const float AgcNominalLevel = 0.12f;  // boost target — the level the ridges were tuned for
+    private const float AgcLevelFloor = 0.04f;    // dead-zone edge: at/above this the gain is exactly 1.0
+    private const float AgcMaxGain = 32f;
     private static readonly double[] BinsHz = [-75, -50, -25, 0, 25, 50, 75];
 
     /// <summary>Encoded count words for every field value — the joint count vote's
@@ -115,6 +130,13 @@ public sealed class Ms110dDemodulator
     private Ms110dInterleaverParams? _il;
     private long _dataStartChip;
     private bool _trackingInitialized;
+    // #101 input signal-level AGC: a per-burst scalar applied to the DFE read path so a
+    // globally-low receive level (real-RF, no AGC upstream) is normalized to the level the
+    // K=48 cold-restart solves were tuned for. 1.0 = no-op (set for every nominal-or-stronger
+    // burst by the dead-zone, so the sim masks are unchanged by construction). Estimated from a
+    // fade-averaged preamble SIGNAL correlation, so a nominal fade never trips it. See
+    // InitializeDfe / EstimatePreambleLevel.
+    private float _agcGain = 1.0f;
 
     // Tracking state (WN ≥ 1).
     private Dfe? _dfe;
@@ -388,6 +410,12 @@ public sealed class Ms110dDemodulator
     /// decision-directed tracking collapsed and was restarted from the probe alone.</summary>
     public int CollapseResolves { get; private set; }
 
+    /// <summary>Bursts whose input AGC fired (issue #101 — the receive level fell below the
+    /// dead-zone floor and was normalized up). Zero on every nominal-or-stronger burst, so a
+    /// zero total across a mask point proves the AGC was a strict no-op there (masks
+    /// byte-identical); a nonzero count over real-RF Poor is the fix engaging.</summary>
+    public int AgcResolves { get; private set; }
+
     /// <summary>Fires for every decoded input-data block.</summary>
     public event Action<Ms110dRxBlock>? BlockDecoded;
 
@@ -438,6 +466,7 @@ public sealed class Ms110dDemodulator
         TurboAborted = 0;
         TurboSkipped = 0;
         CollapseResolves = 0;
+        AgcResolves = 0;
         EndBurst();
     }
 
@@ -1111,7 +1140,10 @@ public sealed class Ms110dDemodulator
         double pos = _chip0 + halfChips + _tau;
         var value = Interpolate(pos, _ring, _written);
         double theta = _thetaBase + (_omega * (pos - _chip0));
-        return value * Cf.CmplxConj((float)theta);
+        // #101 input AGC (_agcGain, unity except on a globally-low burst): normalizes the
+        // receive level ahead of the equalizer. Unity during acquisition and for every
+        // nominal-or-stronger burst, so acquisition and the sim masks are untouched.
+        return value * Cf.CmplxConj((float)theta) * _agcGain;
     }
 
     /// <summary>Estimation-side read: the genie ring when the genie is enabled, otherwise
@@ -1130,7 +1162,7 @@ public sealed class Ms110dDemodulator
         // in both rings or a genie run differs even when fed the noisy stream itself.
         var value = Interpolate(pos, _genieRing, Math.Min(_genieWritten, _written));
         double theta = _thetaBase + (_omega * (pos - _chip0));
-        return value * Cf.CmplxConj((float)theta);
+        return value * Cf.CmplxConj((float)theta) * _agcGain; // #101 AGC (see ReadT2)
     }
 
     private Cf ReadChip(double chip)
@@ -1204,8 +1236,61 @@ public sealed class Ms110dDemodulator
         }
     }
 
+    /// <summary>Fade-averaged global receive SIGNAL level (issue #101): coherently correlate
+    /// the received Fixed subsection of each trailing preamble super-frame against the known
+    /// Fixed chips in 32-chip groups — noise averages out of each group, and |Σ y·k̄|/32 is
+    /// that group's signal amplitude — then average over all groups. Averaging several
+    /// super-frames (~1–2 s) averages the ~1 Hz Watterson fade out, so the result reflects the
+    /// GLOBAL level (a real-RF weak signal), not the instantaneous fade — the property that
+    /// lets the AGC no-op through a nominal fade yet catch a globally-low level. Reads at the
+    /// current <see cref="_agcGain"/> (unity here, before the AGC is set), so it measures the
+    /// true level. Matched to the signal, NOT total power — total RMS tracks SNR, so a
+    /// total-power AGC would attenuate at low SNR and disturb the masks.</summary>
+    private double EstimatePreambleLevel()
+    {
+        byte[] fixedChips = new PreambleGenerator(0, 2).FixedSectionChips();
+        int sfAvail = (int)Math.Clamp(_dataStartChip / ChipsSuperframe, 1, 8);
+        double sum = 0;
+        int groups = 0;
+        for (int sf = 1; sf <= sfAvail; sf++)
+        {
+            long baseChip = _dataStartChip - (sf * ChipsSuperframe);
+            for (int g = 0; g < ChipsFixed / 32; g++)
+            {
+                var c = Cf.Zero;
+                for (int i = 0; i < 32; i++)
+                {
+                    int chip = (g * 32) + i;
+                    c += ReadChipEst(baseChip + chip) * Ms110dTables.Psk8[fixedChips[chip]].Conj();
+                }
+
+                sum += c.Abs() / 32.0;
+                groups++;
+            }
+        }
+
+        return groups > 0 ? sum / groups : 0;
+    }
+
     private void InitializeDfe()
     {
+        // #101 input signal-level AGC: estimate the global receive level and set the per-burst
+        // normalization BEFORE the carrier refit and DFE training read the (now-normalized)
+        // signal. _agcGain is unity here, so EstimatePreambleLevel measures the true level; the
+        // dead-zone keeps _agcGain = 1.0 for every nominal-or-stronger burst (a strict no-op —
+        // acquisition already happened at unity and the sim masks are unchanged by
+        // construction), and only a globally-low burst (real-RF) is scaled up to nominal.
+        double agcLevel = EstimatePreambleLevel();
+        _agcGain = agcLevel <= 0 || agcLevel >= AgcLevelFloor
+            ? 1.0f
+            : (float)Math.Min(AgcNominalLevel / agcLevel, AgcMaxGain);
+        if (_agcGain != 1.0f)
+        {
+            AgcResolves++;
+        }
+
+        FrameDiagnostics?.Invoke($"agc@{_dataStartChip}: level={agcLevel:F4} gain={_agcGain:F3}");
+
         // Same stale-extrapolation concern as the WN0 path: re-fit the carrier over the
         // final super-frames before training (see TrackWalsh).
         int tail = TailRefineSuperframes();
@@ -3988,6 +4073,7 @@ public sealed class Ms110dDemodulator
     private void EndBurst()
     {
         _state = Ms110dRxState.Searching;
+        _agcGain = 1.0f; // #101: next burst re-acquires and re-estimates its own level at unity
         _lock = null;
         _mode = null;
         _il = null;
