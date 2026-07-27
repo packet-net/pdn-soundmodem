@@ -13,16 +13,19 @@ internal enum SimLayer
     Packet,
 }
 
-/// <summary>One waterfall point: everything one (mode, channel, layer, SNR) cell measured.</summary>
+/// <summary>One waterfall point: everything one (mode, channel, layer, SNR, level) cell measured.</summary>
 /// <param name="Trials">Bursts run.</param>
 /// <param name="Successes">Frames matched (frame layer) or packets CRC-OK (packet layer).</param>
 /// <param name="BitErrors">Coded bit errors — a lost frame/packet counts all its bits wrong.</param>
 /// <param name="TotalBits">Bits compared.</param>
 /// <param name="Margin">Frame layer: mean FEC-corrected bytes on matched frames. Packet layer: mean
 /// LDPC parity checks satisfied — a soft distance-from-the-cliff indicator either way.</param>
+/// <param name="LevelDb">Absolute input-level scale applied to the post-channel signal+noise before
+/// the receiver, in dB. 0 is the nominal level; the SNR is unchanged (signal and noise scale
+/// together) — the level-invariance axis. A level-sensitive front end degrades here at fixed SNR.</param>
 internal sealed record SimPointResult(
     string Mode, SimChannelKind Channel, SimLayer Layer, double SnrDb,
-    int Trials, int Successes, long BitErrors, long TotalBits, double Margin)
+    int Trials, int Successes, long BitErrors, long TotalBits, double Margin, double LevelDb = 0)
 {
     /// <summary>Fraction of bursts that delivered — the number FreeDV's "N/100" is quoted as.</summary>
     public double SuccessRate => Trials == 0 ? 0 : (double)Successes / Trials;
@@ -49,12 +52,16 @@ internal sealed record SimPointResult(
 /// </remarks>
 internal static class SimBench
 {
-    /// <summary>Scores one (mode, channel, layer, SNR) cell over <paramref name="bursts"/> trials.</summary>
+    /// <summary>Scores one (mode, channel, layer, SNR, level) cell over <paramref name="bursts"/>
+    /// trials.</summary>
+    /// <param name="levelDb">Absolute level scale on the post-channel signal+noise (0 = nominal).
+    /// The SNR is unchanged; this is the level-invariance axis.</param>
     public static SimPointResult RunPoint(
         string mode, int? rate, SimLayer layer, SimChannelKind kind, double snrDb,
-        int bursts, int frameBytes, int firstSeed, int workers)
+        int bursts, int frameBytes, int firstSeed, int workers, double levelDb = 0)
     {
         var options = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, workers) };
+        float levelScale = (float)Math.Pow(10, levelDb / 20.0);
         int successes = 0;
         long bitErrors = 0;
         long totalBits = 0;
@@ -70,7 +77,7 @@ internal static class SimBench
                 if (layer == SimLayer.Packet)
                 {
                     var probe = new DatacPacketProbe(mode);
-                    PacketResult r = probe.Run(seed, kind, snrDb);
+                    PacketResult r = probe.Run(seed, kind, snrDb, levelScale);
                     acc.Successes += r.CrcOk ? 1 : 0;
                     acc.BitErrors += r.BitErrors;
                     acc.TotalBits += r.PayloadBits;
@@ -82,6 +89,7 @@ internal static class SimBench
                     byte[] frame = SimModem.Frame(frameBytes, seed);
                     float[] active = sm.RenderBurst(frame);
                     float[] rx = SimChannel.Apply(active, sm.Rate, kind, snrDb, seed + 3_000_000);
+                    ScaleInPlace(rx, levelScale);
                     SimDecode d = sm.Decode(rx, frame);
                     int bits = frameBytes * 8;
                     acc.Successes += d.Matched ? 1 : 0;
@@ -104,7 +112,21 @@ internal static class SimBench
             });
 
         double margin = bursts > 0 ? marginSum / bursts : 0;
-        return new SimPointResult(mode, kind, layer, snrDb, bursts, successes, bitErrors, totalBits, margin);
+        return new SimPointResult(
+            mode, kind, layer, snrDb, bursts, successes, bitErrors, totalBits, margin, levelDb);
+    }
+
+    private static void ScaleInPlace(float[] samples, float scale)
+    {
+        if (scale == 1f)
+        {
+            return;
+        }
+
+        for (int i = 0; i < samples.Length; i++)
+        {
+            samples[i] *= scale;
+        }
     }
 
     /// <summary>The SNR (dB) where the success rate crosses <paramref name="target"/>, by linear

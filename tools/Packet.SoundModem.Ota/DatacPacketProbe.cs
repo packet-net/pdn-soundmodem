@@ -54,7 +54,11 @@ internal sealed class DatacPacketProbe
     /// <param name="seed">Draws both the payload and (offset) the channel realisation.</param>
     /// <param name="kind">Channel geometry.</param>
     /// <param name="snrDb">SNR in a 3&#160;kHz noise bandwidth.</param>
-    public PacketResult Run(int seed, SimChannelKind kind, double snrDb)
+    /// <param name="levelScale">Absolute level scale on the post-channel signal+noise before the
+    /// float→short front end (1 = nominal). The SNR is unchanged — this is the level-invariance
+    /// axis; a level-sensitive receiver (e.g. one that quantises to short with no AGC) degrades as
+    /// the level falls even though the SNR does not.</param>
+    public PacketResult Run(int seed, SimChannelKind kind, double snrDb, float levelScale = 1f)
     {
         var tx = new DatacTransmitter(_mode);
         byte[] payload = new byte[tx.PayloadBytes];
@@ -71,11 +75,13 @@ internal sealed class DatacPacketProbe
         float[] rx = SimChannel.Apply(active, Rate, kind, snrDb, seed + 5_000_000);
 
         // Float → short on codec2's ±32767 scale, then hand the demodulator exactly Nin at a time —
-        // the FreeDvDatacModem.FeedNative contract, so the probe drives the engine identically.
+        // the FreeDvDatacModem.FeedNative contract, so the probe drives the engine identically. The
+        // level scale is applied here, in the float domain, exactly where a receiver's delivered
+        // level would sit ahead of the modem's short front end.
         short[] samples = new short[rx.Length];
         for (int i = 0; i < rx.Length; i++)
         {
-            float scaled = rx[i] * 32767f;
+            float scaled = rx[i] * levelScale * 32767f;
             samples[i] = scaled >= 32767f ? (short)32767
                 : scaled <= -32768f ? (short)-32768
                 : (short)scaled;

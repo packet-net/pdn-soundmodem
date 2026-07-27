@@ -132,6 +132,26 @@ public class SimBenchTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Absolute_Level_Scan_Is_Invariant_At_A_Healthy_Snr()
+    {
+        // The WN2-analogue probe: at a fixed, healthy SNR, scaling the absolute input level down
+        // must not change the decode — OFDM's pilot-based normalisation should make it level-blind
+        // (unlike the un-normalised MS110D WN2 front end). A −20 dB quieter signal at the same SNR
+        // must still decode every packet.
+        SimPointResult nominal = SimBench.RunPoint(
+            "freedv-datac3", null, SimLayer.Packet, SimChannelKind.Awgn, snrDb: 8,
+            bursts: 8, frameBytes: 60, firstSeed: 1, workers: 4, levelDb: 0);
+        SimPointResult quiet = SimBench.RunPoint(
+            "freedv-datac3", null, SimLayer.Packet, SimChannelKind.Awgn, snrDb: 8,
+            bursts: 8, frameBytes: 60, firstSeed: 1, workers: 4, levelDb: -20);
+
+        output.WriteLine($"nominal {nominal.Successes}/{nominal.Trials}, −20 dB {quiet.Successes}/{quiet.Trials}");
+        nominal.Successes.Should().Be(nominal.Trials, "a healthy-SNR packet decodes at nominal level");
+        quiet.Successes.Should().Be(nominal.Successes, "and identically 20 dB quieter — level-invariant");
+        quiet.LevelDb.Should().Be(-20);
+    }
+
+    [Fact]
     public void Threshold_Interpolates_The_Half_Success_Crossing()
     {
         var curve = new List<SimPointResult>
