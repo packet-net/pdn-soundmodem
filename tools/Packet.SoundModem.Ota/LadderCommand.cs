@@ -91,7 +91,19 @@ internal static class LadderCommand
         IReadOnlyList<LadderPoint> plan = LadderPass.Plan(
             wn, snrs, a.Int("repeats", 1), channel, interleaver, a.Int("blocks", 1), a.Int("seed", 1));
 
-        double offsetHz = a.Dbl("offset-hz", 2000);
+        var route = a.Str("route", "dax").StartsWith('i') ? LadderRoute.Iq : LadderRoute.Dax;
+
+        // OffsetHz is a property of the transmit route, not a free knob. The IQ route applies a
+        // software NCO offset (default 2000 Hz) to clear baseband DC in its software SSB; the DAX
+        // route applies NONE — the radio's DIGU modulator places the native 1800 Hz sub-carrier
+        // directly, already clear of DC — so its effective offset is 0. This one value flows both
+        // to the IQ up-converter (which renders the dry-run's simulated capture, so a DAX rehearsal
+        // places the signal exactly where a real DAX capture would) AND to the manifest, whose
+        // OffsetHz the scorer uses as the down-shift that lands the sub-carrier at 1800 Hz audio
+        // (StreamingIqToAudioConverter DialHz = schedule.OffsetHz). Getting it wrong misplaces every
+        // burst by the offset, so it is derived from the route, never defaulted blindly. `--offset-hz`
+        // therefore applies to the IQ route only.
+        double offsetHz = route == LadderRoute.Dax ? 0.0 : a.Dbl("offset-hz", 2000);
         bool dryRun = a.Has("dry-run");
         int rate = a.Int("rate", dryRun ? 48000 : FlexIqTransmitter.SampleRate);
 
@@ -103,8 +115,6 @@ internal static class LadderCommand
             TxSsbLowHz = a.Dbl("tx-ssb-low", 150),
             TxSsbHighHz = a.Dbl("tx-ssb-high", 3450),
         });
-
-        var route = a.Str("route", "dax").StartsWith('i') ? LadderRoute.Iq : LadderRoute.Dax;
 
         Console.Error.WriteLine(
             $"ladder: WN{wn} {channel}, {snrs.Length} rung(s) × {a.Int("repeats", 1)} = {plan.Count} bursts");
