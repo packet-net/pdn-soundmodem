@@ -39,6 +39,7 @@ dotnet test tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj -c Rele
 |---|---|
 | Radio | FlexRadio 6500 at `10.45.0.76`, dummy load on ANT1 |
 | Receiver | `ubersdr` (M0LTE, Reading), iq48 only, `max_session_time` 3600 s, **no GPSDO, no GPS** |
+| Receiver (alt) | **RSP1 on `studybox`** — `--capture rsp`, `rx_sdr` CF32 streamed over ssh. On Flex **ANT2** (ubersdr/dummy-load path is ANT1). Single-client device; no GPS. See the RSP1 section below |
 | Frequency | 17m: waveform centre **18.106500 MHz**, modem/tone at **+2000 Hz** → 18.1085 MHz |
 | Flex reference | corrected: `radio set freq_error_ppb=-1497` (persists) |
 | Receiver reference | ≈ **−6.3 ppm**, measured against **RWM 9.996 MHz** |
@@ -159,6 +160,22 @@ Same seeded bursts through `RAW` IQ and through DAX audio (`FlexStation`, `mode=
 Real antenna, `m9psy` joins as second site, ID bookends, power varied across repeats. Gated on B3.2 per the original plan; not gated on B3.3/B3.4. Morse ID is built and on by default (`MorseGenerator`, callsign taken from the radio).
 
 Two-tone IMD is deferred here (Tom's call). Carry the caveat: **a fading path corrupts a two-tone measurement much as envelope modulation corrupts SWR**. `m9psy` fixes the coupling and reference problems but not that one; a stable attenuated tap is what would.
+
+## RSP1 / studybox capture backend
+
+A second capture backend, parallel to the UberSDR one and behind `--capture rsp`. It mirrors `UberSdrIqClient`: same `CaptureResult`, same 16-bit stereo (interleaved I/Q) WAV via `PcmWavWriter` + JSON sidecar, so a capture drops straight into `sm-ota score` with no scorer change. Where the UberSDR client reads a websocket, `RspIqClient` runs `rx_sdr -d driver=sdrplay … -F CF32 -` on `studybox` over ssh and reads its stdout live, converting CF32 (interleaved float32 I/Q) to int16 on the fly (×32767, clamp — never wrap). Same streaming shape: a startup guard (default 1 s of settling discarded), `Sample0Utc` taken as the wall clock at the first sample *kept* after the guard — a real timestamp, which is the whole reason for streaming rather than capture-then-copy — and a trim to the target duration.
+
+```
+sm-ota ladder --wn 6 --snr 12,9,6,3 --repeats 4 --rf-power 15 \
+              --capture rsp --dial-correction <re-measure!>          # RSP1 on ANT2, DAX route
+```
+
+Selecting `--capture rsp` **defaults `--antenna` to ANT2** (the RSP1 rig's port; ANT1 is the dummy-load/UberSDR path). An explicit `--antenna` still wins, and if it is anything but ANT2 the ladder logs a warning — keying a different port while capturing on ANT2 records nothing. Options: `--rsp-host` (default `studybox`), `--rsp-freq` (default `--freq` centre + `--dial-correction`), `--rsp-rate` (default 96000 — any low rate covers the 3 kHz waveform), `--rsp-gain` (default below), `--rsp-ssh-key` (default `~/.ssh/id_ed25519`).
+
+Two traps found and handled here, both the single-client-device kind:
+
+1. **This `rx_sdr` build cannot disable the RSP1's AGC.** It links no `setGainMode` and the SoapySDRPlay3 module exposes no AGC write-setting (only `agc_setpoint`), so a `-g` gain string cannot turn AGC off — `AGC=false` is parsed as a phantom gain element, IFGR is silently ignored, and `rx_sdr` logs `Not updating IFGR gain because AGC is enabled`. The client watches stderr for that line and warns loudly. The default gain `AGC=false,IFGR=40,RFGR=0` still requests AGC off (forward-compatible with an rx_tools build that honours it) and, via RFGR=0, was validated on the real rig to put the noise floor at ≈ −51 dBFS RMS, peak ≈ −30 dBFS, no clipping, repeatable run to run. At the campaign's ≈ −88 dBm input the AGC sits pinned at maximum gain, so the level is effectively fixed — **but a strong burst can still pump it**, which is the real cost of AGC-on and the reason to fix it (a patched `rx_sdr` with `setGainMode`, or a small SoapySDR helper) before quoting absolute levels across a ladder.
+2. **`rx_sdr` survives a closed SSH channel and holds the RSP1.** Killing the local ssh client does *not* stop the remote `rx_sdr`; it keeps running, the single-client device stays locked, and every later capture fails with `SoapySDRDevice_make failed`. So the remote command is `echo RXPID:$$ 1>&2; exec rx_sdr …` — `exec` makes `rx_sdr` inherit the shell's PID, which is echoed first — and on stop the client kills the local ssh *and* opens a second ssh to `kill` that PID. A fixed `--duration` also adds an `-n` sample-count backstop so even a missed kill self-terminates. Validated end to end against the real RSP1: 4 s at 18.100 MHz → a well-formed WAV that `PcmWavReader` opens at 96000 Hz / 2 channels, remote process reaped, device released. Gated hardware test: `SM_OTA_RSP_HW=1 … -class …RspIqClientTests`.
 
 ## Outstanding measurements
 

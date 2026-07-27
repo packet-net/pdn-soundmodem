@@ -69,7 +69,20 @@ internal static class LadderCommand
                   --freq <MHz>          waveform slice centre (default 18.106500)
                   --offset-hz <Hz>      carrier offset from the centre (default 2000; iq route)
                   --gap <s>             quiet between transmissions (default 3)
+                  --antenna <port>      transmit port. Default ANT1, but selecting the RSP1
+                                        capture (below) defaults it to ANT2 — the RSP1 rig's
+                                        port — because ANT1 is the dummy-load/UberSDR path and
+                                        keying it while capturing on ANT2 records nothing
                   --capture-host <h>    capture the pass on an UberSDR and score it
+                  --capture rsp         instead capture on the RSP1/studybox SDR (rx_sdr streamed
+                                        over ssh). Implies --antenna ANT2 unless --antenna is
+                                        given. RSP1 options:
+                    --rsp-host <h>        default studybox
+                    --rsp-freq <Hz>       RX tune (default: --freq centre + --dial-correction)
+                    --rsp-rate <Hz>       complex sample rate (default 96000)
+                    --rsp-gain <str>      rx_sdr -g string (default AGC=false,IFGR=40,RFGR=0;
+                                          note this rx_sdr build cannot actually disable AGC)
+                    --rsp-ssh-key <path>  ssh identity (default ~/.ssh/id_ed25519)
                   --dial-correction <Hz>  RE-MEASURE THIS EVERY SESSION (see the handover)
                   --out-dir <dir>       where captures and the CSV land
 
@@ -229,16 +242,27 @@ internal static class LadderCommand
                 + $"--rate {rate} is for --dry-run");
         }
 
+        // The RSP1 rig lives on Flex ANT2 (ANT1 is the dummy-load/UberSDR path), so selecting the
+        // RSP1 capture flips the transmit antenna default to ANT2 — an explicit --antenna still
+        // wins. Keying ANT1 while capturing on ANT2 would record nothing and waste the session.
+        bool captureRsp = string.Equals(a.Str("capture", ""), "rsp", StringComparison.OrdinalIgnoreCase);
+
         var options = new FlexTransmitterOptions
         {
             Radio = a.Str("radio", "discover"),
             FrequencyMHz = a.Str("freq", "18.106500"),
-            Antenna = a.Str("antenna", "ANT1"),
+            Antenna = a.Str("antenna", captureRsp ? "ANT2" : "ANT1"),
             RfPower = a.Int("rf-power", 0),
             IdMode = "MS110D",
         };
 
         void Log(string m) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] {m}");
+
+        Log($"transmit antenna: {options.Antenna}"
+            + (captureRsp && !a.Has("antenna") ? "  (defaulted to ANT2 for the RSP1 capture rig)" : "")
+            + (captureRsp && a.Has("antenna") && options.Antenna != "ANT2"
+                ? "  *** WARNING: RSP1 capture is on ANT2 — transmitting on a different port records nothing ***"
+                : ""));
 
         double gap = a.Dbl("gap", 3);
 
@@ -251,14 +275,36 @@ internal static class LadderCommand
             ? (IOtaTransmitter)await FlexDaxTransmitter.AttachAsync(client, options, Log)
             : await FlexIqTransmitter.AttachAsync(client, options, Log);
 
-        // Capture the whole pass in one session, so every burst is scored from one timebase.
+        // Capture the whole pass in one session, so every burst is scored from one timebase. The
+        // capture backend is selected here; everything downstream — timing, manifest, scoring —
+        // is backend-independent because both return the same CaptureResult.
         double captureSeconds = rendered.Sum(p => (p.Iq.Length / 2.0 / rate) + gap) + 30;
-        UberSdrIqClient? capture = null;
+        double centreHz = double.Parse(options.FrequencyMHz, CultureInfo.InvariantCulture) * 1e6;
         Task<CaptureResult>? capturing = null;
         using var cts = new CancellationTokenSource();
-        if (a.Str("capture-host", null) is { } host)
+        if (captureRsp)
         {
-            double centreHz = double.Parse(options.FrequencyMHz, CultureInfo.InvariantCulture) * 1e6;
+            var rspOpt = new RspCaptureOptions
+            {
+                Host = a.Str("rsp-host", "studybox"),
+                SshKeyPath = ExpandUser(a.Str("rsp-ssh-key", "~/.ssh/id_ed25519")),
+                FrequencyHz = a.Int("rsp-freq", (int)Math.Round(centreHz + a.Dbl("dial-correction", 0))),
+                SampleRate = a.Int("rsp-rate", 96000),
+                Gain = a.Str("rsp-gain", RspIqClient.DefaultGain),
+                Name = $"ladder-wn{rendered[0].Point.WaveformNumber}",
+                OutputDir = a.Str("out-dir", "."),
+                DurationSeconds = (int)Math.Ceiling(captureSeconds),
+            };
+            Log($"capture: RSP1 on {rspOpt.Host} at {rspOpt.FrequencyHz} Hz, {rspOpt.SampleRate} S/s, "
+                + $"gain [{rspOpt.Gain}] for {rspOpt.DurationSeconds} s");
+            capturing = new RspIqClient(m => Log($"[rsp] {m}")).CaptureAsync(rspOpt, cts.Token);
+            // rx_sdr over ssh: allow for the SSH connect, the device open and the 1 s startup guard
+            // before the first key-up. Burst alignment uses Sample0Utc, so this delay need only get
+            // the stream running past its guard, not be exact.
+            await Task.Delay(TimeSpan.FromSeconds(4)).ConfigureAwait(false);
+        }
+        else if (a.Str("capture-host", null) is { } host)
+        {
             var capOpt = new UberSdrCaptureOptions
             {
                 Host = host,
@@ -268,8 +314,7 @@ internal static class LadderCommand
                 OutputDir = a.Str("out-dir", "."),
                 DurationSeconds = (int)Math.Ceiling(captureSeconds),
             };
-            capture = new UberSdrIqClient(m => Log($"[rx] {m}"));
-            capturing = capture.CaptureAsync(capOpt, cts.Token);
+            capturing = new UberSdrIqClient(m => Log($"[rx] {m}")).CaptureAsync(capOpt, cts.Token);
             await Task.Delay(TimeSpan.FromSeconds(3)).ConfigureAwait(false);
         }
 
@@ -341,7 +386,7 @@ internal static class LadderCommand
             CapturePath: Path.GetFileName(result.WavPath),
             CaptureSha256: result.WavSha256,
             CaptureSample0Utc: result.Sample0Utc,
-            ReceiverHost: a.Str("capture-host", null),
+            ReceiverHost: captureRsp ? a.Str("rsp-host", "studybox") : a.Str("capture-host", null),
             BurstStartSeconds: [.. burstStarts],
             SupplyNote: a.Str("supply", null)));
 
@@ -390,4 +435,11 @@ internal static class LadderCommand
 
         return samples;
     }
+
+    /// <summary>Expands a leading <c>~/</c> to the user's home directory — the ssh key path is
+    /// given the way an operator types it.</summary>
+    private static string ExpandUser(string path) =>
+        path.StartsWith("~/", StringComparison.Ordinal)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[2..])
+            : path;
 }
