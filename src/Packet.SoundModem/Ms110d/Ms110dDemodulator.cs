@@ -559,6 +559,7 @@ public sealed class Ms110dDemodulator
 
         if (!PreambleGenerator.TryDecodeCount(countDibits, out int count))
         {
+            FrameDiagnostics?.Invoke($"reject@{_chip0}: gate=count cfo={_lock!.CfoHz:F1}");
             BackToSearch();
             return;
         }
@@ -629,6 +630,8 @@ public sealed class Ms110dDemodulator
         FrameDiagnostics?.Invoke($"wid@{_chip0}: votes={votes} margin={voteMargin:F3}");
         if (voteMargin < 0.20)
         {
+            FrameDiagnostics?.Invoke(
+                $"reject@{_chip0}: gate=margin margin={voteMargin:F3} cfo={_lock!.CfoHz:F1}");
             BackToSearch();
             return;
         }
@@ -642,12 +645,19 @@ public sealed class Ms110dDemodulator
             // (WN 0, UltraShort). That is a failed acquisition candidate, not a
             // crash: Get3k throwing here killed the receiver mid-burst (found by
             // the Poor WN0 mask run at −1 dB, seed 500, ~2.8M bits in).
+            FrameDiagnostics?.Invoke(
+                $"reject@{_chip0}: gate=wid wn={wn} il={il} k={k} cfo={_lock!.CfoHz:F1}");
             BackToSearch();
             return;
         }
 
         RefineCarrier(0, SuperframeChips(count, wn, il, k));
         _lock = new Ms110dLockInfo(wn, il, k, _lock!.CfoHz);
+
+        // Autopsy hook: the (waveform, interleaver, K) actually locked, so a burst that
+        // reaches Tracking yet decodes nothing can be told apart from a mis-voted WID that
+        // merely passed its checksum. Fire-and-forget; observing the lock cannot change it.
+        FrameDiagnostics?.Invoke($"lock@{_chip0}: wn={wn} il={il} k={k} cfo={_lock.CfoHz:F1}");
         _mode = Ms110dMode.Mode3k(wn);
         _il = Ms110dInterleaverParams.Get3k(wn, il);
         ConvolutionalCode code = k == 9 ? ConvolutionalCode.K9 : ConvolutionalCode.K7;
