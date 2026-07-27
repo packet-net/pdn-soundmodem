@@ -32,8 +32,10 @@ internal sealed class RspCaptureOptions
     /// is proven and the default.</summary>
     public int SampleRate { get; init; } = 96000;
 
-    /// <summary>rx_sdr <c>-g</c> gain string. Default requests AGC off and a fixed IFGR/RFGR.
-    /// See <see cref="RspIqClient.DefaultGain"/> for the caveat about this build of rx_sdr.</summary>
+    /// <summary>rx_sdr <c>-g</c> gain string. Default disables AGC and sets a fixed IFGR/RFGR, so the
+    /// receive level is deterministic rather than AGC-controlled. See
+    /// <see cref="RspIqClient.DefaultGain"/> for the measured level curve and the rx_sdr build this
+    /// needs.</summary>
     public string Gain { get; init; } = RspIqClient.DefaultGain;
 
     public string? Name { get; init; }
@@ -64,14 +66,18 @@ internal sealed class RspCaptureOptions
 /// </summary>
 internal sealed class RspIqClient
 {
-    /// <summary>Default rx_sdr <c>-g</c> string. RFGR=0 (max RF gain) with IFGR=40 was validated
-    /// on the real rig to put the noise floor at about −51 dBFS RMS with no clipping and generous
-    /// headroom for a burst. <c>AGC=false</c> REQUESTS AGC off in rx_tools' conventional form, but
-    /// the rx_sdr build on studybox links no <c>setGainMode</c> and exposes no AGC write-setting,
-    /// so it cannot actually disable AGC — it logs <c>Not updating IFGR gain because AGC is
-    /// enabled</c> and ignores IFGR. The client surfaces that warning loudly. At the campaign's
-    /// input level the AGC sits pinned at maximum gain, so the level is effectively fixed; a
-    /// strong burst can still pump it. Override with <c>--rsp-gain</c>.</summary>
+    /// <summary>Default rx_sdr <c>-g</c> string: AGC off with a fixed IFGR/RFGR, so the receive
+    /// level is deterministic rather than AGC-controlled. <c>AGC=false</c> disables automatic gain
+    /// via <c>setGainMode</c>, and the fixed IFGR/RFGR are then honoured — this needs the patched
+    /// rx_sdr on studybox (fork <c>github.com/M0LTE/rx_tools</c>, branch <c>agc-gainmode</c>, which
+    /// teaches <c>-g</c> an <c>AGC=</c> pseudo-element). Stock rx_tools has no such handling, leaves
+    /// AGC on and ignores IFGR (logging <c>Not updating IFGR gain because AGC is enabled</c>).
+    /// <para>Measured determinism at 18.1 MHz (AGC off, RFGR=0, noise-floor RMS): IFGR 20 → −48,
+    /// 25 → −53, 30 → −58, 40 → −67, 50 → −75, 59 → −78 dBFS — about 1 dB per IFGR unit in the
+    /// working region. AGC on self-levels to ~−48 dBFS regardless of IFGR, i.e. the level the old
+    /// AGC-pinned campaign actually ran at, which equals fixed IFGR=20. IFGR=40 here is ~20 dB
+    /// quieter with more burst headroom; drop to IFGR≈20–25 to reproduce the AGC-era level. Override
+    /// with <c>--rsp-gain</c>.</para></summary>
     public const string DefaultGain = "AGC=false,IFGR=40,RFGR=0";
 
     private const string ClientTag = "sm-ota RSP1 capture (rx_sdr over ssh)";
@@ -284,11 +290,13 @@ internal sealed class RspIqClient
                     continue;
                 }
 
-                if (!agcWarned && clean.Contains("AGC is enabled", StringComparison.OrdinalIgnoreCase))
+                if (!agcWarned && clean.Contains("Not updating", StringComparison.OrdinalIgnoreCase)
+                    && clean.Contains("AGC is enabled", StringComparison.OrdinalIgnoreCase))
                 {
                     agcWarned = true;
-                    _log?.Invoke("WARNING: rx_sdr could not disable AGC on this build (no setGainMode); " +
-                                 "IFGR is ignored and the level is AGC-controlled — see RspIqClient.DefaultGain");
+                    _log?.Invoke("WARNING: AGC is enabled, so rx_sdr is ignoring the fixed IFGR and the level " +
+                                 "is AGC-controlled — pass AGC=false for a deterministic level (the patched " +
+                                 "studybox rx_sdr honours it; see RspIqClient.DefaultGain)");
                 }
 
                 _log?.Invoke($"rx_sdr: {clean}");
