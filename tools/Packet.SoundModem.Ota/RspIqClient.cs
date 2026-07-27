@@ -75,10 +75,13 @@ internal sealed class RspIqClient
     /// <para>Measured determinism at 18.1 MHz (AGC off, RFGR=0, noise-floor RMS): IFGR 20 → −48,
     /// 25 → −53, 30 → −58, 40 → −67, 50 → −75, 59 → −78 dBFS — about 1 dB per IFGR unit in the
     /// working region. AGC on self-levels to ~−48 dBFS regardless of IFGR, i.e. the level the old
-    /// AGC-pinned campaign actually ran at, which equals fixed IFGR=20. IFGR=40 here is ~20 dB
-    /// quieter with more burst headroom; drop to IFGR≈20–25 to reproduce the AGC-era level. Override
-    /// with <c>--rsp-gain</c>.</para></summary>
-    public const string DefaultGain = "AGC=false,IFGR=40,RFGR=0";
+    /// AGC-pinned campaign actually ran at, which equals fixed IFGR=20. The default is IFGR=20:
+    /// two live passes at 18.1 MHz decoded WN4 clean there with the capture peaking ~−22 dBFS
+    /// (22 dB clipping headroom) and the signal ~22 dB over the floor — the validated operating
+    /// point, now deterministic. A higher IFGR (quieter) buys clipping headroom but pushes the
+    /// delivered signal toward the RSP1's own in-band noise, worsening the low-SNR self-calibration;
+    /// go quieter only if a burst is at risk of clipping. Override with <c>--rsp-gain</c>.</para></summary>
+    public const string DefaultGain = "AGC=false,IFGR=20,RFGR=0";
 
     private const string ClientTag = "sm-ota RSP1 capture (rx_sdr over ssh)";
 

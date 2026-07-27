@@ -135,7 +135,7 @@ public class RspIqClientTests
         cmd.Should().Contain("-f 18100000");
         cmd.Should().Contain("-s 96000");
         cmd.Should().Contain("-F CF32");
-        cmd.Should().Contain("-g AGC=false,IFGR=40,RFGR=0");
+        cmd.Should().Contain("-g AGC=false,IFGR=20,RFGR=0");
         cmd.Should().Contain("AGC=false", "the command requests AGC off in rx_tools' conventional form");
         cmd.Should().Contain("echo RXPID:$$", "the PID is reported so the remote process can be killed cleanly");
         cmd.Should().EndWith(" -", "CF32 is streamed to stdout");
