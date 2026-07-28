@@ -44,6 +44,10 @@ internal static class SimCommand
                                        front end (no input AGC) degrades as the level falls. Runs
                                        as an inner axis at every SNR rung.
                   --frame-bytes <n>    AX.25 frame size, frame layer (default 60)
+                  --txdelay <ms>       flag/preamble run-in before each frame (default 0). The fast
+                                       classic-HDLC FSK detectors (fsk9600/c4fsk9600/c4fsk19200)
+                                       cannot lock onto 2 opening flags; pass ~150 to characterise
+                                       them. 0 keeps the datac/MS110D baseline byte-identical
                   --rate <Hz>          DSP rate. Default 8000 for freedv-* (engine-native, the rate
                                        FreeDV's own figures are measured at), else DspRateFor(mode).
                                        Pass 48000 to exercise the ×6/÷6 deployment path.
@@ -71,6 +75,7 @@ internal static class SimCommand
         int? rate = a.Has("rate") ? a.Int("rate", 8000) : null;
         int firstSeed = a.Int("seed", 1);
         int workers = a.Int("workers", 4);
+        int txDelayMs = a.Int("txdelay", 0);
         bool quiet = a.Has("quiet");
 
         // Native 8 kHz is the right default for the datac family: it is codec2's own rate and what
@@ -101,7 +106,8 @@ internal static class SimCommand
                 foreach (double level in levels)
                 {
                     SimPointResult r = SimBench.RunPoint(
-                        mode, rateArg, layer, kind, snr, bursts, frameBytes, firstSeed, workers, level);
+                        mode, rateArg, layer, kind, snr, bursts, frameBytes, firstSeed, workers, level,
+                        txDelayMs);
                     rows.Add(r);
                     if (level == 0)
                     {
