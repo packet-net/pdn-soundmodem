@@ -78,6 +78,8 @@ static int Usage()
                         success. No radio. Drives the FreeDV datac OFDM waterfalls.
         sm-ota ladder   §E2: inject the mask suite's own channel at the transmitter and run an
                         SNR ladder through real hardware. --dry-run rehearses it with no radio.
+                        --mode freedv-datac<N> runs the OFDM ladder instead (DAX route, OFDM
+                        scorer); default (no --mode / --wn N) is the MS110D ladder.
         sm-ota monitor  watch a receiver live — capture, convert, demodulate, print each burst
                         as it lands. Receive-only; nothing here transmits.
 

@@ -28,19 +28,7 @@ internal sealed class DatacPacketProbe
 {
     private readonly OfdmMode _mode;
 
-    public DatacPacketProbe(string mode)
-    {
-        _mode = mode switch
-        {
-            "freedv-datac0" => OfdmMode.Datac0,
-            "freedv-datac1" => OfdmMode.Datac1,
-            "freedv-datac3" => OfdmMode.Datac3,
-            "freedv-datac4" => OfdmMode.Datac4,
-            "freedv-datac13" => OfdmMode.Datac13,
-            "freedv-datac14" => OfdmMode.Datac14,
-            _ => throw new ArgumentException($"'{mode}' is not a FreeDV datac mode", nameof(mode)),
-        };
-    }
+    public DatacPacketProbe(string mode) => _mode = DatacEngine.Mode(mode);
 
     /// <summary>Engine-native sample rate — 8000&#160;Hz, the rate FreeDV's own figures are measured
     /// at. The probe runs natively (no ×6/÷6 resampling) so nothing but the engine and the channel
@@ -60,51 +48,17 @@ internal sealed class DatacPacketProbe
     /// the level falls even though the SNR does not.</param>
     public PacketResult Run(int seed, SimChannelKind kind, double snrDb, float levelScale = 1f)
     {
-        var tx = new DatacTransmitter(_mode);
-        byte[] payload = new byte[tx.PayloadBytes];
-        new Random(seed).NextBytes(payload);
-
-        Cf[] burst = tx.ModulateBurst([payload]);
-        float[] active = new float[burst.Length];
-        for (int i = 0; i < burst.Length; i++)
-        {
-            active[i] = burst[i].Re * (1f / 32768f);
-        }
+        byte[] payload = DatacEngine.Payload(_mode, seed);
+        float[] active = DatacEngine.CleanBurst(_mode, payload);
 
         // Same channel rig as every other waterfall, calibrated against the active burst power.
         float[] rx = SimChannel.Apply(active, Rate, kind, snrDb, seed + 5_000_000);
 
-        // Float → short on codec2's ±32767 scale, then hand the demodulator exactly Nin at a time —
-        // the FreeDvDatacModem.FeedNative contract, so the probe drives the engine identically. The
-        // level scale is applied here, in the float domain, exactly where a receiver's delivered
-        // level would sit ahead of the modem's short front end.
-        short[] samples = new short[rx.Length];
-        for (int i = 0; i < rx.Length; i++)
-        {
-            float scaled = rx[i] * levelScale * 32767f;
-            samples[i] = scaled >= 32767f ? (short)32767
-                : scaled <= -32768f ? (short)-32768
-                : (short)scaled;
-        }
-
-        var receiver = new DatacReceiver(_mode, packetsPerBurst: 1, endOfBurstDetection: true);
-        DatacRxResult? decoded = null;
-        int pos = 0;
-        while (true)
-        {
-            int nin = receiver.Demod.Nin;
-            if (samples.Length - pos < nin)
-            {
-                break;
-            }
-
-            foreach (DatacRxResult result in receiver.Process(samples.AsSpan(pos, nin)))
-            {
-                decoded ??= result;
-            }
-
-            pos += nin;
-        }
+        // Float → short on codec2's ±32767 scale (the level scale applied in the float domain, where a
+        // receiver's delivered level would sit ahead of the modem), then drive the engine Nin at a
+        // time — the FreeDvDatacModem.FeedNative contract, shared through DatacEngine.
+        short[] samples = DatacEngine.ToShort(rx, levelScale);
+        DatacRxResult? decoded = DatacEngine.DecodeFirstPacket(_mode, samples, out _);
 
         int payloadBits = payload.Length * 8;
         if (decoded is not { } r)
@@ -113,22 +67,8 @@ internal sealed class DatacPacketProbe
             return new PacketResult(false, payloadBits, payloadBits, 0, 0);
         }
 
-        int bitErrors = BitErrors(r.Bytes, payload);
+        int bitErrors = DatacEngine.BitErrors(r.Bytes, payload);
         return new PacketResult(r.CrcOk, bitErrors, payloadBits, r.Iterations, r.ParityChecks);
-    }
-
-    private static int BitErrors(byte[] got, byte[] sent)
-    {
-        int errors = 0;
-        int n = Math.Min(got.Length, sent.Length);
-        for (int i = 0; i < n; i++)
-        {
-            errors += System.Numerics.BitOperations.PopCount((uint)(byte)(got[i] ^ sent[i]));
-        }
-
-        // Bytes that never arrived (a short/absent LDPC output) are wholly wrong.
-        errors += (sent.Length - n) * 8;
-        return errors;
     }
 }
 
