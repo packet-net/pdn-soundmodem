@@ -51,13 +51,22 @@ internal sealed class SimModem
 
     /// <summary>
     /// Renders one burst carrying <paramref name="frame"/>, with modulator silence trimmed so the
-    /// channel calibrates its noise against the burst's own power (TXDELAY set to zero; the trailing
-    /// guard tail and any leading pad are exact zeros and are cut here).
+    /// channel calibrates its noise against the burst's own power (the trailing guard tail and any
+    /// leading pad are exact zeros and are cut here).
     /// </summary>
-    public float[] RenderBurst(ReadOnlySpan<byte> frame)
+    /// <param name="frame">The AX.25 frame to carry.</param>
+    /// <param name="txDelayMilliseconds">
+    /// TXDELAY — the flag/preamble run-in ahead of the frame, in milliseconds. Zero (the default,
+    /// used by the datac/sim baseline) is fine for waveforms that carry their own sync (IL2P, OFDM)
+    /// or acquire in a couple of symbols (AFSK 1200). The fast baseband FSK detectors (classic-HDLC
+    /// <c>fsk9600</c>/<c>c4fsk9600</c> at 9600 baud) need a real run-in to lock clock and DCD before
+    /// the frame — 2 opening flags is not enough — so the over-the-air FM ladder renders with a
+    /// realistic TXDELAY. The run-in is signal, not silence, so it is not trimmed and does not
+    /// dilute the SNR calibration.</param>
+    public float[] RenderBurst(ReadOnlySpan<byte> frame, int txDelayMilliseconds = 0)
     {
         IModem tx = ModemCatalog.Create(Mode, Rate, static _ => { });
-        float[] audio = tx.Modulate(frame, txDelayMilliseconds: 0);
+        float[] audio = tx.Modulate(frame, txDelayMilliseconds);
         return TrimSilence(audio);
     }
 

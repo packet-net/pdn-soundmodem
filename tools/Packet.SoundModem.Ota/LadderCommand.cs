@@ -48,6 +48,15 @@ internal static class LadderCommand
             return await OfdmLadderCommand.RunAsync(a).ConfigureAwait(false);
         }
 
+        // The FM-native modes (afsk1200, fsk*, c4fsk*, qpsk3600) are carried as frequency modulation,
+        // so they hand off to the FM sibling — render → channel → FM-mod at the mode's target
+        // deviation → FM-demod → decode — rather than the MS110D SSB path below. Same
+        // `ladder --dry-run`/live shape, a different transmit chain.
+        if (a is not null && FmModeCatalog.IsFmMode(a.Str("mode", null)))
+        {
+            return await FmLadderCommand.RunAsync(a).ConfigureAwait(false);
+        }
+
         if (a is null || a.Has("help"))
         {
             Console.Error.WriteLine("""
