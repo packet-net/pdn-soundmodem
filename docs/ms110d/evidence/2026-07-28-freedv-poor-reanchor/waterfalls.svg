@@ -1,0 +1,320 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="996" height="530" font-family="sans-serif" font-size="11">
+<rect width="996" height="530" fill="white"/>
+<text x="498.0" y="22" text-anchor="middle" font-size="15" font-weight="bold">FreeDV datac Poor/MPP re-anchor — burst vs stream vs codec2 ch, per 100</text>
+<g>
+<rect x="70" y="78" width="246" height="148" fill="none" stroke="#ccc"/>
+<line x1="70" y1="226.0" x2="316" y2="226.0" stroke="#eee"/>
+<text x="66" y="229.0" text-anchor="end" fill="#888">0</text>
+<line x1="70" y1="189.0" x2="316" y2="189.0" stroke="#eee"/>
+<text x="66" y="192.0" text-anchor="end" fill="#888">25</text>
+<line x1="70" y1="152.0" x2="316" y2="152.0" stroke="#eee"/>
+<text x="66" y="155.0" text-anchor="end" fill="#888">50</text>
+<line x1="70" y1="122.4" x2="316" y2="122.4" stroke="#eee"/>
+<text x="66" y="125.4" text-anchor="end" fill="#888">70</text>
+<line x1="70" y1="92.8" x2="316" y2="92.8" stroke="#eee"/>
+<text x="66" y="95.8" text-anchor="end" fill="#888">90</text>
+<line x1="70" y1="78.0" x2="316" y2="78.0" stroke="#eee"/>
+<text x="66" y="81.0" text-anchor="end" fill="#888">100</text>
+<line x1="111.0" y1="78" x2="111.0" y2="226" stroke="#f3f3f3"/>
+<text x="111.0" y="239" text-anchor="middle" fill="#888">-3</text>
+<line x1="138.3" y1="78" x2="138.3" y2="226" stroke="#f3f3f3"/>
+<text x="138.3" y="239" text-anchor="middle" fill="#888">-2</text>
+<line x1="165.7" y1="78" x2="165.7" y2="226" stroke="#f3f3f3"/>
+<text x="165.7" y="239" text-anchor="middle" fill="#888">-1</text>
+<line x1="193.0" y1="78" x2="193.0" y2="226" stroke="#f3f3f3"/>
+<text x="193.0" y="239" text-anchor="middle" fill="#888">0</text>
+<line x1="220.3" y1="78" x2="220.3" y2="226" stroke="#f3f3f3"/>
+<text x="220.3" y="239" text-anchor="middle" fill="#888">1</text>
+<line x1="247.7" y1="78" x2="247.7" y2="226" stroke="#f3f3f3"/>
+<text x="247.7" y="239" text-anchor="middle" fill="#888">2</text>
+<line x1="275.0" y1="78" x2="275.0" y2="226" stroke="#f3f3f3"/>
+<text x="275.0" y="239" text-anchor="middle" fill="#888">3</text>
+<line x1="302.3" y1="78" x2="302.3" y2="226" stroke="#f3f3f3"/>
+<text x="302.3" y="239" text-anchor="middle" fill="#888">4</text>
+<path d="M83.7 217.1 L138.3 193.4 L193.0 153.5 L247.7 129.8 L302.3 104.6" fill="none" stroke="#999" stroke-width="2"/>
+<circle cx="83.7" cy="217.1" r="2" fill="#999"/>
+<circle cx="138.3" cy="193.4" r="2" fill="#999"/>
+<circle cx="193.0" cy="153.5" r="2" fill="#999"/>
+<circle cx="247.7" cy="129.8" r="2" fill="#999"/>
+<circle cx="302.3" cy="104.6" r="2" fill="#999"/>
+<path d="M83.7 199.4 L138.3 168.3 L193.0 120.9 L247.7 100.2 L302.3 88.4" fill="none" stroke="#1f6fd6" stroke-width="2"/>
+<circle cx="83.7" cy="199.4" r="2" fill="#1f6fd6"/>
+<circle cx="138.3" cy="168.3" r="2" fill="#1f6fd6"/>
+<circle cx="193.0" cy="120.9" r="2" fill="#1f6fd6"/>
+<circle cx="247.7" cy="100.2" r="2" fill="#1f6fd6"/>
+<circle cx="302.3" cy="88.4" r="2" fill="#1f6fd6"/>
+<path d="M138.6 146.1 L165.9 123.9 L193.3 106.1 L220.6 103.2 L247.9 94.3" fill="none" stroke="#2ca25f" stroke-width="2"/>
+<circle cx="138.6" cy="146.1" r="2" fill="#2ca25f"/>
+<circle cx="165.9" cy="123.9" r="2" fill="#2ca25f"/>
+<circle cx="193.3" cy="106.1" r="2" fill="#2ca25f"/>
+<circle cx="220.6" cy="103.2" r="2" fill="#2ca25f"/>
+<circle cx="247.9" cy="94.3" r="2" fill="#2ca25f"/>
+<circle cx="193.0" cy="122.4" r="4.5" fill="none" stroke="#d62728" stroke-width="2.5"/>
+<text x="70" y="68" font-weight="bold">datac0 (pub 70/100 @ +0 dB)</text>
+</g>
+<g>
+<rect x="394" y="78" width="246" height="148" fill="none" stroke="#ccc"/>
+<line x1="394" y1="226.0" x2="640" y2="226.0" stroke="#eee"/>
+<text x="390" y="229.0" text-anchor="end" fill="#888">0</text>
+<line x1="394" y1="189.0" x2="640" y2="189.0" stroke="#eee"/>
+<text x="390" y="192.0" text-anchor="end" fill="#888">25</text>
+<line x1="394" y1="152.0" x2="640" y2="152.0" stroke="#eee"/>
+<text x="390" y="155.0" text-anchor="end" fill="#888">50</text>
+<line x1="394" y1="122.4" x2="640" y2="122.4" stroke="#eee"/>
+<text x="390" y="125.4" text-anchor="end" fill="#888">70</text>
+<line x1="394" y1="92.8" x2="640" y2="92.8" stroke="#eee"/>
+<text x="390" y="95.8" text-anchor="end" fill="#888">90</text>
+<line x1="394" y1="78.0" x2="640" y2="78.0" stroke="#eee"/>
+<text x="390" y="81.0" text-anchor="end" fill="#888">100</text>
+<line x1="407.7" y1="78" x2="407.7" y2="226" stroke="#f3f3f3"/>
+<text x="407.7" y="239" text-anchor="middle" fill="#888">1</text>
+<line x1="435.0" y1="78" x2="435.0" y2="226" stroke="#f3f3f3"/>
+<text x="435.0" y="239" text-anchor="middle" fill="#888">2</text>
+<line x1="462.3" y1="78" x2="462.3" y2="226" stroke="#f3f3f3"/>
+<text x="462.3" y="239" text-anchor="middle" fill="#888">3</text>
+<line x1="489.7" y1="78" x2="489.7" y2="226" stroke="#f3f3f3"/>
+<text x="489.7" y="239" text-anchor="middle" fill="#888">4</text>
+<line x1="517.0" y1="78" x2="517.0" y2="226" stroke="#f3f3f3"/>
+<text x="517.0" y="239" text-anchor="middle" fill="#888">5</text>
+<line x1="544.3" y1="78" x2="544.3" y2="226" stroke="#f3f3f3"/>
+<text x="544.3" y="239" text-anchor="middle" fill="#888">6</text>
+<line x1="571.7" y1="78" x2="571.7" y2="226" stroke="#f3f3f3"/>
+<text x="571.7" y="239" text-anchor="middle" fill="#888">7</text>
+<line x1="599.0" y1="78" x2="599.0" y2="226" stroke="#f3f3f3"/>
+<text x="599.0" y="239" text-anchor="middle" fill="#888">8</text>
+<line x1="626.3" y1="78" x2="626.3" y2="226" stroke="#f3f3f3"/>
+<text x="626.3" y="239" text-anchor="middle" fill="#888">9</text>
+<path d="M407.7 223.0 L462.3 184.6 L517.0 110.6 L571.7 81.0 L626.3 79.5" fill="none" stroke="#999" stroke-width="2"/>
+<circle cx="407.7" cy="223.0" r="2" fill="#999"/>
+<circle cx="462.3" cy="184.6" r="2" fill="#999"/>
+<circle cx="517.0" cy="110.6" r="2" fill="#999"/>
+<circle cx="571.7" cy="81.0" r="2" fill="#999"/>
+<circle cx="626.3" cy="79.5" r="2" fill="#999"/>
+<path d="M407.7 223.0 L462.3 177.2 L517.0 95.8 L571.7 81.0 L626.3 78.0" fill="none" stroke="#1f6fd6" stroke-width="2"/>
+<circle cx="407.7" cy="223.0" r="2" fill="#1f6fd6"/>
+<circle cx="462.3" cy="177.2" r="2" fill="#1f6fd6"/>
+<circle cx="517.0" cy="95.8" r="2" fill="#1f6fd6"/>
+<circle cx="571.7" cy="81.0" r="2" fill="#1f6fd6"/>
+<circle cx="626.3" cy="78.0" r="2" fill="#1f6fd6"/>
+<path d="M471.9 146.1 L499.2 119.4 L526.6 103.2 L553.9 88.4 L581.2 82.4" fill="none" stroke="#2ca25f" stroke-width="2"/>
+<circle cx="471.9" cy="146.1" r="2" fill="#2ca25f"/>
+<circle cx="499.2" cy="119.4" r="2" fill="#2ca25f"/>
+<circle cx="526.6" cy="103.2" r="2" fill="#2ca25f"/>
+<circle cx="553.9" cy="88.4" r="2" fill="#2ca25f"/>
+<circle cx="581.2" cy="82.4" r="2" fill="#2ca25f"/>
+<circle cx="517.0" cy="89.8" r="4.5" fill="none" stroke="#d62728" stroke-width="2.5"/>
+<text x="394" y="68" font-weight="bold">datac1 (pub 92/100 @ +5 dB)</text>
+</g>
+<g>
+<rect x="718" y="78" width="246" height="148" fill="none" stroke="#ccc"/>
+<line x1="718" y1="226.0" x2="964" y2="226.0" stroke="#eee"/>
+<text x="714" y="229.0" text-anchor="end" fill="#888">0</text>
+<line x1="718" y1="189.0" x2="964" y2="189.0" stroke="#eee"/>
+<text x="714" y="192.0" text-anchor="end" fill="#888">25</text>
+<line x1="718" y1="152.0" x2="964" y2="152.0" stroke="#eee"/>
+<text x="714" y="155.0" text-anchor="end" fill="#888">50</text>
+<line x1="718" y1="122.4" x2="964" y2="122.4" stroke="#eee"/>
+<text x="714" y="125.4" text-anchor="end" fill="#888">70</text>
+<line x1="718" y1="92.8" x2="964" y2="92.8" stroke="#eee"/>
+<text x="714" y="95.8" text-anchor="end" fill="#888">90</text>
+<line x1="718" y1="78.0" x2="964" y2="78.0" stroke="#eee"/>
+<text x="714" y="81.0" text-anchor="end" fill="#888">100</text>
+<line x1="759.0" y1="78" x2="759.0" y2="226" stroke="#f3f3f3"/>
+<text x="759.0" y="239" text-anchor="middle" fill="#888">-3</text>
+<line x1="786.3" y1="78" x2="786.3" y2="226" stroke="#f3f3f3"/>
+<text x="786.3" y="239" text-anchor="middle" fill="#888">-2</text>
+<line x1="813.7" y1="78" x2="813.7" y2="226" stroke="#f3f3f3"/>
+<text x="813.7" y="239" text-anchor="middle" fill="#888">-1</text>
+<line x1="841.0" y1="78" x2="841.0" y2="226" stroke="#f3f3f3"/>
+<text x="841.0" y="239" text-anchor="middle" fill="#888">0</text>
+<line x1="868.3" y1="78" x2="868.3" y2="226" stroke="#f3f3f3"/>
+<text x="868.3" y="239" text-anchor="middle" fill="#888">1</text>
+<line x1="895.7" y1="78" x2="895.7" y2="226" stroke="#f3f3f3"/>
+<text x="895.7" y="239" text-anchor="middle" fill="#888">2</text>
+<line x1="923.0" y1="78" x2="923.0" y2="226" stroke="#f3f3f3"/>
+<text x="923.0" y="239" text-anchor="middle" fill="#888">3</text>
+<line x1="950.3" y1="78" x2="950.3" y2="226" stroke="#f3f3f3"/>
+<text x="950.3" y="239" text-anchor="middle" fill="#888">4</text>
+<path d="M731.7 226.0 L786.3 189.0 L841.0 132.8 L895.7 94.3 L950.3 83.9" fill="none" stroke="#999" stroke-width="2"/>
+<circle cx="731.7" cy="226.0" r="2" fill="#999"/>
+<circle cx="786.3" cy="189.0" r="2" fill="#999"/>
+<circle cx="841.0" cy="132.8" r="2" fill="#999"/>
+<circle cx="895.7" cy="94.3" r="2" fill="#999"/>
+<circle cx="950.3" cy="83.9" r="2" fill="#999"/>
+<path d="M731.7 223.0 L786.3 175.7 L841.0 115.0 L895.7 94.3 L950.3 82.4" fill="none" stroke="#1f6fd6" stroke-width="2"/>
+<circle cx="731.7" cy="223.0" r="2" fill="#1f6fd6"/>
+<circle cx="786.3" cy="175.7" r="2" fill="#1f6fd6"/>
+<circle cx="841.0" cy="115.0" r="2" fill="#1f6fd6"/>
+<circle cx="895.7" cy="94.3" r="2" fill="#1f6fd6"/>
+<circle cx="950.3" cy="82.4" r="2" fill="#1f6fd6"/>
+<path d="M800.0 140.2 L827.3 115.0 L854.7 101.7 L882.0 88.4 L909.3 83.9" fill="none" stroke="#2ca25f" stroke-width="2"/>
+<circle cx="800.0" cy="140.2" r="2" fill="#2ca25f"/>
+<circle cx="827.3" cy="115.0" r="2" fill="#2ca25f"/>
+<circle cx="854.7" cy="101.7" r="2" fill="#2ca25f"/>
+<circle cx="882.0" cy="88.4" r="2" fill="#2ca25f"/>
+<circle cx="909.3" cy="83.9" r="2" fill="#2ca25f"/>
+<circle cx="841.0" cy="116.5" r="4.5" fill="none" stroke="#d62728" stroke-width="2.5"/>
+<text x="718" y="68" font-weight="bold">datac3 (pub 74/100 @ +0 dB)</text>
+</g>
+<g>
+<rect x="70" y="308" width="246" height="148" fill="none" stroke="#ccc"/>
+<line x1="70" y1="456.0" x2="316" y2="456.0" stroke="#eee"/>
+<text x="66" y="459.0" text-anchor="end" fill="#888">0</text>
+<line x1="70" y1="419.0" x2="316" y2="419.0" stroke="#eee"/>
+<text x="66" y="422.0" text-anchor="end" fill="#888">25</text>
+<line x1="70" y1="382.0" x2="316" y2="382.0" stroke="#eee"/>
+<text x="66" y="385.0" text-anchor="end" fill="#888">50</text>
+<line x1="70" y1="352.4" x2="316" y2="352.4" stroke="#eee"/>
+<text x="66" y="355.4" text-anchor="end" fill="#888">70</text>
+<line x1="70" y1="322.8" x2="316" y2="322.8" stroke="#eee"/>
+<text x="66" y="325.8" text-anchor="end" fill="#888">90</text>
+<line x1="70" y1="308.0" x2="316" y2="308.0" stroke="#eee"/>
+<text x="66" y="311.0" text-anchor="end" fill="#888">100</text>
+<line x1="111.0" y1="308" x2="111.0" y2="456" stroke="#f3f3f3"/>
+<text x="111.0" y="469" text-anchor="middle" fill="#888">-7</text>
+<line x1="138.3" y1="308" x2="138.3" y2="456" stroke="#f3f3f3"/>
+<text x="138.3" y="469" text-anchor="middle" fill="#888">-6</text>
+<line x1="165.7" y1="308" x2="165.7" y2="456" stroke="#f3f3f3"/>
+<text x="165.7" y="469" text-anchor="middle" fill="#888">-5</text>
+<line x1="193.0" y1="308" x2="193.0" y2="456" stroke="#f3f3f3"/>
+<text x="193.0" y="469" text-anchor="middle" fill="#888">-4</text>
+<line x1="220.3" y1="308" x2="220.3" y2="456" stroke="#f3f3f3"/>
+<text x="220.3" y="469" text-anchor="middle" fill="#888">-3</text>
+<line x1="247.7" y1="308" x2="247.7" y2="456" stroke="#f3f3f3"/>
+<text x="247.7" y="469" text-anchor="middle" fill="#888">-2</text>
+<line x1="275.0" y1="308" x2="275.0" y2="456" stroke="#f3f3f3"/>
+<text x="275.0" y="469" text-anchor="middle" fill="#888">-1</text>
+<line x1="302.3" y1="308" x2="302.3" y2="456" stroke="#f3f3f3"/>
+<text x="302.3" y="469" text-anchor="middle" fill="#888">0</text>
+<path d="M83.7 424.9 L138.3 367.2 L193.0 337.6 L247.7 324.3 L302.3 315.4" fill="none" stroke="#999" stroke-width="2"/>
+<circle cx="83.7" cy="424.9" r="2" fill="#999"/>
+<circle cx="138.3" cy="367.2" r="2" fill="#999"/>
+<circle cx="193.0" cy="337.6" r="2" fill="#999"/>
+<circle cx="247.7" cy="324.3" r="2" fill="#999"/>
+<circle cx="302.3" cy="315.4" r="2" fill="#999"/>
+<path d="M83.7 429.4 L138.3 356.8 L193.0 334.6 L247.7 316.9 L302.3 309.5" fill="none" stroke="#1f6fd6" stroke-width="2"/>
+<circle cx="83.7" cy="429.4" r="2" fill="#1f6fd6"/>
+<circle cx="138.3" cy="356.8" r="2" fill="#1f6fd6"/>
+<circle cx="193.0" cy="334.6" r="2" fill="#1f6fd6"/>
+<circle cx="247.7" cy="316.9" r="2" fill="#1f6fd6"/>
+<circle cx="302.3" cy="309.5" r="2" fill="#1f6fd6"/>
+<path d="M126.9 368.7 L154.2 343.5 L181.5 333.2 L208.9 321.3 L236.2 319.8" fill="none" stroke="#2ca25f" stroke-width="2"/>
+<circle cx="126.9" cy="368.7" r="2" fill="#2ca25f"/>
+<circle cx="154.2" cy="343.5" r="2" fill="#2ca25f"/>
+<circle cx="181.5" cy="333.2" r="2" fill="#2ca25f"/>
+<circle cx="208.9" cy="321.3" r="2" fill="#2ca25f"/>
+<circle cx="236.2" cy="319.8" r="2" fill="#2ca25f"/>
+<circle cx="193.0" cy="322.8" r="4.5" fill="none" stroke="#d62728" stroke-width="2.5"/>
+<text x="70" y="298" font-weight="bold">datac4 (pub 90/100 @ -4 dB)</text>
+</g>
+<g>
+<rect x="394" y="308" width="246" height="148" fill="none" stroke="#ccc"/>
+<line x1="394" y1="456.0" x2="640" y2="456.0" stroke="#eee"/>
+<text x="390" y="459.0" text-anchor="end" fill="#888">0</text>
+<line x1="394" y1="419.0" x2="640" y2="419.0" stroke="#eee"/>
+<text x="390" y="422.0" text-anchor="end" fill="#888">25</text>
+<line x1="394" y1="382.0" x2="640" y2="382.0" stroke="#eee"/>
+<text x="390" y="385.0" text-anchor="end" fill="#888">50</text>
+<line x1="394" y1="352.4" x2="640" y2="352.4" stroke="#eee"/>
+<text x="390" y="355.4" text-anchor="end" fill="#888">70</text>
+<line x1="394" y1="322.8" x2="640" y2="322.8" stroke="#eee"/>
+<text x="390" y="325.8" text-anchor="end" fill="#888">90</text>
+<line x1="394" y1="308.0" x2="640" y2="308.0" stroke="#eee"/>
+<text x="390" y="311.0" text-anchor="end" fill="#888">100</text>
+<line x1="435.0" y1="308" x2="435.0" y2="456" stroke="#f3f3f3"/>
+<text x="435.0" y="469" text-anchor="middle" fill="#888">-7</text>
+<line x1="462.3" y1="308" x2="462.3" y2="456" stroke="#f3f3f3"/>
+<text x="462.3" y="469" text-anchor="middle" fill="#888">-6</text>
+<line x1="489.7" y1="308" x2="489.7" y2="456" stroke="#f3f3f3"/>
+<text x="489.7" y="469" text-anchor="middle" fill="#888">-5</text>
+<line x1="517.0" y1="308" x2="517.0" y2="456" stroke="#f3f3f3"/>
+<text x="517.0" y="469" text-anchor="middle" fill="#888">-4</text>
+<line x1="544.3" y1="308" x2="544.3" y2="456" stroke="#f3f3f3"/>
+<text x="544.3" y="469" text-anchor="middle" fill="#888">-3</text>
+<line x1="571.7" y1="308" x2="571.7" y2="456" stroke="#f3f3f3"/>
+<text x="571.7" y="469" text-anchor="middle" fill="#888">-2</text>
+<line x1="599.0" y1="308" x2="599.0" y2="456" stroke="#f3f3f3"/>
+<text x="599.0" y="469" text-anchor="middle" fill="#888">-1</text>
+<line x1="626.3" y1="308" x2="626.3" y2="456" stroke="#f3f3f3"/>
+<text x="626.3" y="469" text-anchor="middle" fill="#888">0</text>
+<path d="M407.7 401.2 L462.3 367.2 L517.0 339.1 L571.7 322.8 L626.3 315.4" fill="none" stroke="#999" stroke-width="2"/>
+<circle cx="407.7" cy="401.2" r="2" fill="#999"/>
+<circle cx="462.3" cy="367.2" r="2" fill="#999"/>
+<circle cx="517.0" cy="339.1" r="2" fill="#999"/>
+<circle cx="571.7" cy="322.8" r="2" fill="#999"/>
+<circle cx="626.3" cy="315.4" r="2" fill="#999"/>
+<path d="M407.7 386.4 L462.3 355.4 L517.0 328.7 L571.7 322.8 L626.3 312.4" fill="none" stroke="#1f6fd6" stroke-width="2"/>
+<circle cx="407.7" cy="386.4" r="2" fill="#1f6fd6"/>
+<circle cx="462.3" cy="355.4" r="2" fill="#1f6fd6"/>
+<circle cx="517.0" cy="328.7" r="2" fill="#1f6fd6"/>
+<circle cx="571.7" cy="322.8" r="2" fill="#1f6fd6"/>
+<circle cx="626.3" cy="312.4" r="2" fill="#1f6fd6"/>
+<path d="M471.6 343.5 L499.0 336.1 L526.3 325.8 L553.6 324.3 L581.0 319.8" fill="none" stroke="#2ca25f" stroke-width="2"/>
+<circle cx="471.6" cy="343.5" r="2" fill="#2ca25f"/>
+<circle cx="499.0" cy="336.1" r="2" fill="#2ca25f"/>
+<circle cx="526.3" cy="325.8" r="2" fill="#2ca25f"/>
+<circle cx="553.6" cy="324.3" r="2" fill="#2ca25f"/>
+<circle cx="581.0" cy="319.8" r="2" fill="#2ca25f"/>
+<circle cx="517.0" cy="322.8" r="4.5" fill="none" stroke="#d62728" stroke-width="2.5"/>
+<text x="394" y="298" font-weight="bold">datac13 (pub 90/100 @ -4 dB)</text>
+</g>
+<g>
+<rect x="718" y="308" width="246" height="148" fill="none" stroke="#ccc"/>
+<line x1="718" y1="456.0" x2="964" y2="456.0" stroke="#eee"/>
+<text x="714" y="459.0" text-anchor="end" fill="#888">0</text>
+<line x1="718" y1="419.0" x2="964" y2="419.0" stroke="#eee"/>
+<text x="714" y="422.0" text-anchor="end" fill="#888">25</text>
+<line x1="718" y1="382.0" x2="964" y2="382.0" stroke="#eee"/>
+<text x="714" y="385.0" text-anchor="end" fill="#888">50</text>
+<line x1="718" y1="352.4" x2="964" y2="352.4" stroke="#eee"/>
+<text x="714" y="355.4" text-anchor="end" fill="#888">70</text>
+<line x1="718" y1="322.8" x2="964" y2="322.8" stroke="#eee"/>
+<text x="714" y="325.8" text-anchor="end" fill="#888">90</text>
+<line x1="718" y1="308.0" x2="964" y2="308.0" stroke="#eee"/>
+<text x="714" y="311.0" text-anchor="end" fill="#888">100</text>
+<line x1="759.0" y1="308" x2="759.0" y2="456" stroke="#f3f3f3"/>
+<text x="759.0" y="469" text-anchor="middle" fill="#888">-5</text>
+<line x1="786.3" y1="308" x2="786.3" y2="456" stroke="#f3f3f3"/>
+<text x="786.3" y="469" text-anchor="middle" fill="#888">-4</text>
+<line x1="813.7" y1="308" x2="813.7" y2="456" stroke="#f3f3f3"/>
+<text x="813.7" y="469" text-anchor="middle" fill="#888">-3</text>
+<line x1="841.0" y1="308" x2="841.0" y2="456" stroke="#f3f3f3"/>
+<text x="841.0" y="469" text-anchor="middle" fill="#888">-2</text>
+<line x1="868.3" y1="308" x2="868.3" y2="456" stroke="#f3f3f3"/>
+<text x="868.3" y="469" text-anchor="middle" fill="#888">-1</text>
+<line x1="895.7" y1="308" x2="895.7" y2="456" stroke="#f3f3f3"/>
+<text x="895.7" y="469" text-anchor="middle" fill="#888">0</text>
+<line x1="923.0" y1="308" x2="923.0" y2="456" stroke="#f3f3f3"/>
+<text x="923.0" y="469" text-anchor="middle" fill="#888">1</text>
+<line x1="950.3" y1="308" x2="950.3" y2="456" stroke="#f3f3f3"/>
+<text x="950.3" y="469" text-anchor="middle" fill="#888">2</text>
+<path d="M731.7 413.1 L786.3 385.0 L841.0 353.9 L895.7 337.6 L950.3 319.8" fill="none" stroke="#999" stroke-width="2"/>
+<circle cx="731.7" cy="413.1" r="2" fill="#999"/>
+<circle cx="786.3" cy="385.0" r="2" fill="#999"/>
+<circle cx="841.0" cy="353.9" r="2" fill="#999"/>
+<circle cx="895.7" cy="337.6" r="2" fill="#999"/>
+<circle cx="950.3" cy="319.8" r="2" fill="#999"/>
+<path d="M731.7 377.6 L786.3 345.0 L841.0 330.2 L895.7 315.4 L950.3 309.5" fill="none" stroke="#1f6fd6" stroke-width="2"/>
+<circle cx="731.7" cy="377.6" r="2" fill="#1f6fd6"/>
+<circle cx="786.3" cy="345.0" r="2" fill="#1f6fd6"/>
+<circle cx="841.0" cy="330.2" r="2" fill="#1f6fd6"/>
+<circle cx="895.7" cy="315.4" r="2" fill="#1f6fd6"/>
+<circle cx="950.3" cy="309.5" r="2" fill="#1f6fd6"/>
+<path d="M791.0 337.6 L818.3 324.3 L845.6 321.3 L873.0 319.8 L900.3 316.9" fill="none" stroke="#2ca25f" stroke-width="2"/>
+<circle cx="791.0" cy="337.6" r="2" fill="#2ca25f"/>
+<circle cx="818.3" cy="324.3" r="2" fill="#2ca25f"/>
+<circle cx="845.6" cy="321.3" r="2" fill="#2ca25f"/>
+<circle cx="873.0" cy="319.8" r="2" fill="#2ca25f"/>
+<circle cx="900.3" cy="316.9" r="2" fill="#2ca25f"/>
+<circle cx="841.0" cy="322.8" r="4.5" fill="none" stroke="#d62728" stroke-width="2.5"/>
+<text x="718" y="298" font-weight="bold">datac14 (pub 90/100 @ -2 dB)</text>
+</g>
+<line x1="24" y1="512" x2="46" y2="512" stroke="#999" stroke-width="3"/>
+<text x="51" y="516">burst (#104)</text>
+<line x1="151.8" y1="512" x2="173.8" y2="512" stroke="#1f6fd6" stroke-width="3"/>
+<text x="178.8" y="516">stream (codec2 method)</text>
+<line x1="343.6" y1="512" x2="365.6" y2="512" stroke="#2ca25f" stroke-width="3"/>
+<text x="370.6" y="516">our modem / ch --mpp</text>
+<line x1="522.6" y1="512" x2="544.6" y2="512" stroke="#d62728" stroke-width="3"/>
+<text x="549.6" y="516">published MPP point</text>
+</svg>

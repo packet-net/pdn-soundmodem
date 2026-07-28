@@ -1,0 +1,6 @@
+mode,method,channel,bursts,snrDb,successes,successRate,ciLo,ciHi
+freedv-datac14,stream,Poor,100,-6,53,0.53,0.432887,0.624893
+freedv-datac14,stream,Poor,100,-4,75,0.75,0.656954,0.824549
+freedv-datac14,stream,Poor,100,-2,85,0.85,0.767163,0.906941
+freedv-datac14,stream,Poor,100,0,95,0.95,0.888248,0.978457
+freedv-datac14,stream,Poor,100,2,99,0.99,0.945512,0.998233
