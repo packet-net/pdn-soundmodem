@@ -58,7 +58,8 @@ internal static class SimBench
     /// The SNR is unchanged; this is the level-invariance axis.</param>
     public static SimPointResult RunPoint(
         string mode, int? rate, SimLayer layer, SimChannelKind kind, double snrDb,
-        int bursts, int frameBytes, int firstSeed, int workers, double levelDb = 0)
+        int bursts, int frameBytes, int firstSeed, int workers, double levelDb = 0,
+        int txDelayMs = 0)
     {
         var options = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, workers) };
         float levelScale = (float)Math.Pow(10, levelDb / 20.0);
@@ -87,7 +88,7 @@ internal static class SimBench
                 {
                     var sm = new SimModem(mode, rate);
                     byte[] frame = SimModem.Frame(frameBytes, seed);
-                    float[] active = sm.RenderBurst(frame);
+                    float[] active = sm.RenderBurst(frame, txDelayMs);
                     float[] rx = SimChannel.Apply(active, sm.Rate, kind, snrDb, seed + 3_000_000);
                     ScaleInPlace(rx, levelScale);
                     SimDecode d = sm.Decode(rx, frame);
