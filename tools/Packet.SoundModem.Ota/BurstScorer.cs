@@ -16,7 +16,8 @@ namespace Packet.SoundModem.Ota;
 /// <param name="WidCorrect">Whether the WID matched what was scheduled.</param>
 /// <param name="PayloadBits">Payload bits expected.</param>
 /// <param name="PayloadErrors">Payload bits wrong, missing ones included.</param>
-/// <param name="UncodedBits">Channel bits compared against the re-encoded reference.</param>
+/// <param name="UncodedBits">Channel bits compared against the re-encoded reference —
+/// erasures (exactly-zero LLRs, where the demodulator expressed no opinion) excluded.</param>
 /// <param name="UncodedErrors">Channel bits wrong — the informative rate.</param>
 /// <param name="Blocks">Blocks the demodulator decoded.</param>
 /// <param name="Reason">Which D.5.4.5 exit ended the burst.</param>
@@ -258,9 +259,17 @@ public sealed class BurstScorer
 
             ReadOnlySpan<byte> sent = reference.Block(blockIndex);
             int compare = Math.Min(llrs.Length, sent.Length);
-            uncodedBits += compare;
             for (int i = 0; i < compare; i++)
             {
+                // An exactly-zero LLR is an erasure, not an opinion — WN0's cold-start RAKE
+                // erases its first symbol of every burst by design — so it is neither a
+                // compared bit nor an error (docs/ms110d/ota-handover.md §2).
+                if (llrs[i] == 0)
+                {
+                    continue;
+                }
+
+                uncodedBits++;
                 if ((llrs[i] > 0 ? 0 : 1) != sent[i])
                 {
                     uncodedErrors++;

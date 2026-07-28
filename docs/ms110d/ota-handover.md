@@ -81,10 +81,11 @@ The sideband-inversion test gap is closed too — see [`evidence/2026-07-25-stre
 sm-ota score --in pass.wav --wn 6 --count 12 --seed 1 --at 10,30,50,… --csv pass.csv
 ```
 
-Two things about it that are load-bearing and easy to undo by accident:
+Three things about it that are load-bearing and easy to undo by accident:
 
 - **Bursts are found by acquisition, never by slicing at the scheduled times.** Slicing hides the result that matters most — a burst the receiver never heard — by handing the demodulator a window already known to contain a signal. Time only matches what was found to what was sent. A missed burst exits 0, because at the bottom of an E2 ladder it is the expected outcome and not a tool failure.
 - **The burst's start comes from `CarrierDetect`, polled per chunk — not from the first block event.** A block event fires only once the whole block has arrived, so using it puts the start at the end; measured, that made `StartSeconds` equal `EndSeconds` and left no burst audio to estimate SNR from. Time resolution is `ChunkSeconds` (0.1 s), and chunking is on absolute sample positions so a pass scores identically however the reader divided it up.
+- **Uncoded BER grades opinions, not erasures.** An exactly-zero LLR is the demodulator expressing no opinion — WN0 erases its first channel symbol of every burst by design, because the RAKE's decision-directed finger gains start cold — so those positions are neither bits compared nor errors. The hard-decision tie-break reads an erasure as a bit 1, so grading it would charge up to 2/80 = 2.5 % on a clean WN0 Short block regardless of SNR, and every clean-channel point would sit above the curve it is compared with.
 
 Still owed: the schedule is homogeneous on the command line (one WN, seeds incrementing). A mixed ladder wants §3's JSON.
 
