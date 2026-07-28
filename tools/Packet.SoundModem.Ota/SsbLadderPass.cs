@@ -232,6 +232,7 @@ internal sealed class SsbLadderPass
         if (_options.RenderIq && peak > 1e-12)
         {
             float gain = (float)(IqPeakTarget / peak);
+            Gain = gain;
             foreach (SsbRenderedPoint point in rendered)
             {
                 float[] iq = point.Iq;
@@ -248,4 +249,10 @@ internal sealed class SsbLadderPass
     /// <summary>The single DAX audio gain from the last <see cref="Render"/>, applied to the resampled
     /// audio at transmit time and recorded in the manifest as the pass level.</summary>
     public float AudioGain { get; private set; } = 1f;
+
+    /// <summary>The single IQ gain from the last <see cref="Render"/> — the peak-normalisation constant
+    /// already baked into every point's <see cref="SsbRenderedPoint.Iq"/>. This is the level that
+    /// reaches the radio on the IQ transmit route; recorded in the manifest as that route's pass gain.
+    /// Only set when the pass rendered IQ (<see cref="SsbLadderPassOptions.RenderIq"/>).</summary>
+    public float Gain { get; private set; } = 1f;
 }

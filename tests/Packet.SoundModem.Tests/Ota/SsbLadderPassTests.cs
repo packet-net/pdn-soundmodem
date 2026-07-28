@@ -25,17 +25,19 @@ public class SsbLadderPassTests
     private const int NativeRate = 12000; // every SSB audio-carrier mode runs at 12 kHz
     private const int CaptureRate = 48000;
 
-    private static SsbLadderPassOptions Options() => new()
+    private static SsbLadderPassOptions Options(double offsetHz = 0) => new()
     {
-        // Render straight at the capture rate (no radio in this loop). OffsetHz stays at its 0 default
-        // — the DAX route places the carrier at its native audio centre.
+        // Render straight at the capture rate (no radio in this loop). OffsetHz is 0 for the DAX-style
+        // placement (carrier at its native audio centre) and 2000 for the IQ route's software SSB.
         OutputRate = CaptureRate,
+        OffsetHz = offsetHz,
     };
 
     /// <summary>Lays rendered points out as a capture would hold them, with quiet between, converts the
-    /// IQ back to the mode's 12 kHz audio and returns it with each burst's active-start time.</summary>
+    /// IQ back to the mode's 12 kHz audio (down-shifting by <paramref name="dialHz"/>, which must equal
+    /// the pass offset) and returns it with each burst's active-start time.</summary>
     private static (float[] Audio, double[] BurstStarts) LayOutAndConvert(
-        IReadOnlyList<SsbRenderedPoint> points, double gapSeconds = 2.0, int seed = 4)
+        IReadOnlyList<SsbRenderedPoint> points, double dialHz = 0, double gapSeconds = 2.0, int seed = 4)
     {
         var random = new Random(seed);
         var iq = new List<short>();
@@ -68,7 +70,7 @@ public class SsbLadderPassTests
         {
             InputRate = CaptureRate,
             OutputRate = NativeRate,
-            DialHz = 0,
+            DialHz = dialHz,
             SsbLowHz = 150,
             SsbHighHz = 3450,
             NormalisePeak = 0f,
@@ -107,14 +109,15 @@ public class SsbLadderPassTests
             Radio: "none (test)",
             FrequencyMHz: "18.106500",
             RfPower: null,
-            PassAudioGain: 1,
+            PassGain: 1,
             DialCorrectionHz: 0);
 
-    private static SsbCaptureScore RenderAndScore(string mode, double[] snrs, int firstSeed)
+    private static SsbCaptureScore RenderAndScore(
+        string mode, double[] snrs, int firstSeed, double offsetHz = 0)
     {
         IReadOnlyList<SsbLadderPoint> plan = SsbLadderPass.Plan(mode, snrs, repeats: 1, firstSeed: firstSeed);
-        IReadOnlyList<SsbRenderedPoint> rendered = new SsbLadderPass(Options()).Render(plan);
-        (float[] audio, double[] starts) = LayOutAndConvert(rendered);
+        IReadOnlyList<SsbRenderedPoint> rendered = new SsbLadderPass(Options(offsetHz)).Render(plan);
+        (float[] audio, double[] starts) = LayOutAndConvert(rendered, dialHz: offsetHz);
         return new SsbBurstScorer(audio, NativeRate).Score(Manifest(mode, plan, rendered, starts));
     }
 
@@ -138,6 +141,25 @@ public class SsbLadderPassTests
             "the transmitted noise lead-in exists so the receiver measures the delivered SNR "
             + "rather than trusting the requested one");
         score.Bursts[0].Decoded.Should().BeTrue("every one of these rungs is inside the mode's working range");
+    }
+
+    [Theory]
+    [InlineData("bpsk1200")]
+    [InlineData("qpsk600")]
+    [InlineData("afsk300")]
+    public void The_iq_route_offset_round_trips(string mode)
+    {
+        // The IQ route (the default) places the carrier at +offset in the software SSB and the scorer
+        // down-shifts by the same offset the manifest records; a mismatch would misplace every burst by
+        // the offset. Prove the 2 kHz offset round-trips: render at +2000, convert back with DialHz 2000,
+        // and the bursts still decode with the SNR tracking. This is the plumbing the on-air IQ pass
+        // (which recovers the DIGU headroom loss) rests on.
+        SsbCaptureScore score = RenderAndScore(mode, [18, 10], firstSeed: 71, offsetHz: 2000);
+
+        score.Bursts.Should().HaveCount(2);
+        score.Bursts.Should().OnlyContain(b => b.Decoded, "the 2 kHz IQ offset must round-trip cleanly");
+        score.Bursts[0].Snr!.SnrDb.Should().BeApproximately(18, 1.5,
+            "the delivered SNR must still track the request through the offset up/down-shift");
     }
 
     [Theory]

@@ -33,7 +33,8 @@ internal sealed record SsbCampaignBurst(
 /// exactly the same code.</remarks>
 /// <param name="Name">Short label; ends up in filenames and the evidence log.</param>
 /// <param name="Mode">The pass mode (also carried per-burst for a future mixed-mode pass).</param>
-/// <param name="OffsetHz">The transmit dial offset — the scorer's IQ→audio down-shift (DAX = 0).</param>
+/// <param name="OffsetHz">The transmit dial offset — the scorer's IQ→audio down-shift (0 for the DAX
+/// route, the software SSB offset e.g. 2000 Hz for the IQ route).</param>
 /// <param name="CaptureRate">IQ sample rate of the capture the positions index into.</param>
 /// <param name="Bursts">In transmit order.</param>
 /// <param name="ModemRevision">Repository revision of the binary that ran.</param>
@@ -41,7 +42,8 @@ internal sealed record SsbCampaignBurst(
 /// <param name="Radio">Radio address, or "none (rehearsal)".</param>
 /// <param name="FrequencyMHz">Waveform slice centre.</param>
 /// <param name="RfPower">Radio power setting, or null when nothing was transmitted.</param>
-/// <param name="PassAudioGain">The single DAX audio gain applied across the pass.</param>
+/// <param name="PassGain">The single pass gain that reached the radio: the DAX audio gain on the DAX
+/// route, the IQ gain on the waveform route.</param>
 /// <param name="DialCorrectionHz">The session's measured dial correction.</param>
 /// <param name="CapturePath">Capture file, if one was recorded.</param>
 /// <param name="CaptureSha256">Its hash.</param>
@@ -60,7 +62,7 @@ internal sealed record SsbCampaignManifest(
     string Radio,
     string FrequencyMHz,
     int? RfPower,
-    double PassAudioGain,
+    double PassGain,
     double DialCorrectionHz,
     string? CapturePath = null,
     string? CaptureSha256 = null,
