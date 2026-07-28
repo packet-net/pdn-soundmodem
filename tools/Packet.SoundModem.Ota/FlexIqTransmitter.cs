@@ -912,6 +912,26 @@ public sealed class FlexIqTransmitter : IOtaTransmitter
 
         _meters.Dispose();
         _iq.Dispose();
+
+        // Remove the headless slice this waveform created (see FlexDaxTransmitter.DisposeAsync for
+        // the mechanism): the radio does not auto-remove it on disconnect, so without this each pass
+        // leaks a slice toward the 6500's 4-slice limit. Best-effort, while the client is alive and
+        // before the waveform is torn down.
+        if (!string.IsNullOrEmpty(_waveform.SliceIndex))
+        {
+            try
+            {
+                await _client.SendCommandExpectOkAsync($"slice remove {_waveform.SliceIndex}")
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (
+                ex is IOException or TimeoutException or InvalidOperationException
+                    or ObjectDisposedException or FlexProtocolException)
+            {
+                // best effort — tearing down anyway
+            }
+        }
+
         await _waveform.DisposeAsync().ConfigureAwait(false);
         if (_ownsClient)
         {

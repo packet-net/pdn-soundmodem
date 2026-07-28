@@ -486,6 +486,28 @@ public sealed class FlexDaxTransmitter : IOtaTransmitter
 
         _meters.Dispose();
 
+        // Remove the headless slice this station created. The radio does NOT auto-remove it when
+        // the client disconnects, and FlexStation.DisposeAsync only disposes the client — so
+        // without this every pass leaks a slice, and they pile up to the 6500's 4-slice limit until
+        // `slice create` starts failing (0x50000003). Done here (regardless of _ownsClient) while
+        // the client is still alive — the dispose order is transmitter-before-client — and
+        // best-effort, since we are tearing down. The transmitter always brings the station up
+        // headless, so the slice is always ours to remove.
+        if (!string.IsNullOrEmpty(_station.SliceIndex))
+        {
+            try
+            {
+                await _client.SendCommandExpectOkAsync($"slice remove {_station.SliceIndex}")
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex) when (
+                ex is IOException or TimeoutException or InvalidOperationException
+                    or ObjectDisposedException or FlexProtocolException)
+            {
+                // best effort — tearing down anyway
+            }
+        }
+
         // FlexStation.DisposeAsync does nothing but dispose the client, so tearing the station
         // down here would dispose a session we may not own. Dispose the client only when we own
         // it (which releases the station's DAX streams with the session); otherwise leave it to
