@@ -58,7 +58,7 @@ The continuous-stream method (codec2's) recovers +2 to +22 points on the identic
 | datac13 | −4 | 86 | 83 | 90 | −0 |
 | datac14 | −2 | 91 | 86 | 90 | +6 |
 
-For five of six modes codec2's `ch` is **comparable to or milder** than our Watterson (our channel is not the optimist); the wideband datac1 is the exception (`ch` +9 harsher). The **anchor** (codec2 tx→ch→rx) reproduces published within ±7 for every mode — datac4 exactly (90/90), datac3 near-exactly (76 vs 74) — validating the `ch` build + fading file to within a single 100-burst realisation's tail noise.
+For five of six modes codec2's `ch` is **comparable to or milder** than our Watterson (our channel is not the optimist); the wideband datac1 is the exception (`ch` +9 harsher). The **anchor** (codec2 tx→ch→rx) reproduces published within ±9 for every mode (datac4 exactly 90/90, datac3 near-exactly 76 vs 74; the wideband datac1 is the widest miss at 83 vs 92) — validating the `ch` build + fading file to within a single 100-burst realisation's tail noise.
 
 ### Decomposition of the #104 gap
 
