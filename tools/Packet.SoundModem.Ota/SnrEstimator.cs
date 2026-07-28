@@ -45,6 +45,11 @@ public static class SnrEstimator
     /// <param name="occupiedLowHz">Low edge of the band the recording actually contains signal
     /// and noise in. 0 with <paramref name="occupiedHighHz"/> means the whole band.</param>
     /// <param name="occupiedHighHz">High edge of that band.</param>
+    /// <returns>The estimate, or <see langword="null"/> when the measurement failed — the
+    /// noise estimate met or exceeded the burst power, so there is no signal to quote an SNR for
+    /// (see the noise-subtraction note below). A failed measurement is <em>unmeasurable</em>, not
+    /// a real, catastrophically low SNR; callers surface it as "no reading" and the self-cal
+    /// aggregate skips it, rather than letting a −250 dB floor masquerade as delivered SNR.</returns>
     /// <remarks>
     /// <b>Pass the occupied band for anything that came through an SSB filter.</b> A captured
     /// pass has been through the receive converter's passband (150–3450 Hz by default), so its
@@ -56,7 +61,7 @@ public static class SnrEstimator
     /// bottom of a §E2 ladder. Narrower still and the median lands in the stopband entirely, and
     /// the estimator reports a noise floor of nothing and an SNR of everything.
     /// </remarks>
-    public static SnrEstimate Estimate(
+    public static SnrEstimate? Estimate(
         ReadOnlySpan<float> burst, ReadOnlySpan<float> noise, int sampleRate,
         double bandwidthHz = ReferenceBandwidthHz,
         double occupiedLowHz = 0, double occupiedHighHz = 0)
@@ -92,7 +97,20 @@ public static class SnrEstimator
 
         double burstPower = total / burst.Length;
         double noiseOverBurstBand = noiseDensity * occupied;
-        double signal = Math.Max(burstPower - noiseOverBurstBand, 1e-30);
+        double signal = burstPower - noiseOverBurstBand;
+        if (signal <= 0)
+        {
+            // The noise estimate meets or exceeds the burst power: there is no signal left after
+            // removing the noise riding on the burst, so this is a FAILED measurement, not a real
+            // −250 dB delivered SNR. Flooring the signal to a tiny epsilon (as this once did) makes
+            // 10·log10(signal / noiseInBand) read ≈ −250 dB, which then masquerades as a
+            // catastrophic delivered SNR and drags the per-run self-cal aggregate to tens of dB.
+            // Report it as unmeasurable instead; the scorers surface it as "no reading" and the
+            // self-cal average skips it. On the rig this is the FIRST burst of a run, whose noise
+            // lead-in sits in the capture's warm-up region (rx_sdr/RSP1/DC settling) where the noise
+            // floor is momentarily inflated above the burst power. See issue #121.
+            return null;
+        }
 
         return new SnrEstimate(
             10.0 * Math.Log10(signal / noiseInBand), signal, noiseInBand, noiseDensity, bandwidthHz);

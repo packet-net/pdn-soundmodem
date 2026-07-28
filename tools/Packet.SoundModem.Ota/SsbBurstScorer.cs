@@ -79,6 +79,31 @@ internal sealed class SsbBurstScorer
     // The recovered audio has been through the SSB passband, so its noise occupies that band; the SNR
     // estimator must be told so, or it over-subtracts noise at the bottom of the ladder. These match
     // the MS110D/OFDM scorers' occupied band.
+    //
+    // The occupied band is the receive SSB PASSBAND — where the noise lives — and is deliberately the
+    // same for every mode, because the noise floor does not depend on the mode's own signal bandwidth
+    // and neither does the estimator: it measures total burst power and subtracts the noise across this
+    // band, so a narrow bpsk300 carrier and a wide bpsk1200 carrier are both scored against the noise
+    // in the same 3 kHz reference. That the band is mode-independent is CORRECT, not a bug.
+    //
+    // #121 (part 2) observed that on the rig bpsk1200's delivered SNR reads ~2.3 dB under asked across a
+    // run, while afsk300 (~0.9 dB) and bpsk300 (~0.1–1.5 dB) sit far closer — a mode-dependent offset,
+    // and #121 wondered whether the occupied band here was mis-set for bpsk1200. It is not. The
+    // end-to-end harness self-cal (SsbLadderPassTests, which renders each mode through the sim channel,
+    // the real SSB up/down-conversion, and this estimator) tracks measured−asked to within ~0.10–0.15 dB
+    // for EVERY SSB mode — bpsk1200 included, and in fact bpsk1200 is the tightest — with no
+    // mode-dependent bias. So the estimator and this occupied band are unbiased for these waveforms; the
+    // ~2.3 dB is not introduced in the measurement.
+    //
+    // The offset is therefore a real, rig-side DELIVERED-signal difference, not a harness defect: the
+    // Flex DIGU/DAX transmit path and the radio's own SSB/roofing filter roll off the edges of the wider
+    // ~1.2 kHz bpsk1200 spectrum (a 1200-baud carrier, like qpsk2400 spanning ≈900–2100 Hz about its
+    // audio centre) more than they touch the narrow 300-baud afsk300/bpsk300 carriers, and ALC on the
+    // wider crest factor trims a little more. By the rig's own convention (signal power vs noise in
+    // 3 kHz) the delivered SNR of the wider mode really is a couple of dB lower — a true value the scorer
+    // reports faithfully, not a mis-measurement. Characterised in #121, not a defect; do not "correct"
+    // it here by widening/narrowing the band per mode, which would bias the measurement to hide a real
+    // transmit-chain effect.
     private const double OccupiedLowHz = 150;
     private const double OccupiedHighHz = 3450;
 
