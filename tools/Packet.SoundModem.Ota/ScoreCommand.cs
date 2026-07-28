@@ -305,6 +305,17 @@ internal static class ScoreCommand
         Console.WriteLine();
         Console.WriteLine($"scored {score.Bursts.Count(b => b.Scheduled)} burst(s); "
                           + $"{score.Bursts.Count(b => !b.Scheduled)} unscheduled; {score.Missed.Count} MISSED");
+
+        // No pooled rate here — a ladder's bursts were sent at different SNRs, so pooling
+        // would be a meaningless number. But the erasure exclusion must still surface at the
+        // console, or the campaign path (this one) only shows it in the CSV.
+        long uncodedErasures = score.Bursts.Where(b => b.Scheduled).Sum(b => b.UncodedErasures);
+        if (uncodedErasures > 0)
+        {
+            Console.WriteLine($"{uncodedErasures} erasure(s) excluded from uncoded grading "
+                              + "— see the uncodedErasures CSV column");
+        }
+
         foreach (ScheduledBurst missed in score.Missed)
         {
             Console.WriteLine($"MISSED: WN{missed.Reference.Settings.WaveformNumber} seed "
