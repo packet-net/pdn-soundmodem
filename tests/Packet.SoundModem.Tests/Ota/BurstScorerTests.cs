@@ -48,21 +48,12 @@ public class BurstScorerTests
         }
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(2)]
-    [InlineData(6)]
-    [InlineData(13)]
-    public void The_reference_bits_are_the_bits_the_demodulator_sees_on_a_clean_channel(int wn)
+    /// <summary>Grades the demodulator's first-pass LLRs on a noiseless channel against a
+    /// reference, position for position.</summary>
+    private static (long Bits, long Errors, long ConfidentlyWrong, long Erasures, int LengthMismatches)
+        Grade(Ms110dReferenceBits reference, float[] audio)
     {
-        // The load-bearing test. If the re-encoder's wire order, puncture or interleave differs
-        // from the transmitter's by so much as one position, this reports about 50 % uncoded
-        // errors while the payload still decodes perfectly — a scorer that grades every OTA
-        // result against a fiction and never says so.
-        var reference = new Ms110dReferenceBits(Settings(wn), PayloadBits(wn), seed: 500 + wn);
-        float[] audio = new Ms110dModulator(Settings(wn)).Modulate(reference.PayloadBits);
-
-        long bits = 0, errors = 0, confidentlyWrong = 0;
+        long bits = 0, errors = 0, confidentlyWrong = 0, erasures = 0;
         int lengthMismatches = 0;
         var demod = new Ms110dDemodulator();
         demod.FirstPassBlockLlrs += (blockIndex, llrs) =>
@@ -86,9 +77,26 @@ public class BurstScorerTests
             double confident = magnitudes[magnitudes.Length / 2]; // the block's median confidence
 
             int compare = Math.Min(llrs.Length, sent.Length);
-            bits += compare;
             for (int i = 0; i < compare; i++)
             {
+                // An exactly-zero LLR is an erasure, not a decision: the soft-output path
+                // expressed no opinion at that position (the Walsh detector still picks a
+                // di-bit noncoherently, but the scorer grades sign(LLR), and there is none).
+                // The exact match is load-bearing: structural zeros are identically 0f, and
+                // any tolerance would start eating genuine low-confidence errors like WN2's.
+                // WN0 erases its first channel symbol of every burst by design — the RAKE's
+                // decision-directed finger gains start cold, so the MRC statistic is zero for
+                // every candidate (Wid0WalshModem.DemodulateRake) — and the > 0 tie-break
+                // reads that silence as a hard 1: with both bits of the erased di-bit sent as
+                // 0 that is 2/80 = 2.5 % charged errors on a clean Short block (1/80 = 1.25 %
+                // at the theory's seed).
+                if (llrs[i] == 0)
+                {
+                    erasures++;
+                    continue;
+                }
+
+                bits++;
                 if ((llrs[i] > 0 ? 0 : 1) != sent[i])
                 {
                     errors++;
@@ -103,6 +111,25 @@ public class BurstScorerTests
         demod.Process(new float[2400]);
         demod.Process(audio);
         demod.Process(new float[4800]);
+        return (bits, errors, confidentlyWrong, erasures, lengthMismatches);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    [InlineData(6)]
+    [InlineData(13)]
+    public void The_reference_bits_are_the_bits_the_demodulator_sees_on_a_clean_channel(int wn)
+    {
+        // The load-bearing test. If the re-encoder's wire order, puncture or interleave differs
+        // from the transmitter's by so much as one position, this reports about 50 % uncoded
+        // errors while the payload still decodes perfectly — a scorer that grades every OTA
+        // result against a fiction and never says so.
+        var reference = new Ms110dReferenceBits(Settings(wn), PayloadBits(wn), seed: 500 + wn);
+        float[] audio = new Ms110dModulator(Settings(wn)).Modulate(reference.PayloadBits);
+
+        (long bits, long errors, long confidentlyWrong, long erasures, int lengthMismatches) =
+            Grade(reference, audio);
 
         bits.Should().BeGreaterThan(0, "the demodulator must have produced first-pass LLRs");
         lengthMismatches.Should().Be(0,
@@ -113,8 +140,56 @@ public class BurstScorerTests
             + "confidently wrong about a bit that was actually transmitted — a misaligned "
             + "reference would put about half its errors above the median confidence, and "
             + "there are {0} errors in {1} bits", errors, bits);
+        erasures.Should().Be(wn == 0 ? 2 : 0,
+            "WN0's cold-start RAKE erases exactly its first di-bit of a burst and the DFE "
+            + "modes erase nothing; any other count is an LLR path gone quiet — or a "
+            + "demodulator change that must be reflected here, not skipped green");
         (errors / (double)bits).Should().BeLessThan(0.01,
             "a handful of near-zero-confidence positions is the waveform; a percentage is a bug");
+    }
+
+    [Fact]
+    public void A_reference_that_was_never_transmitted_still_fails_the_error_checks()
+    {
+        // The erasure skip must not blind the guard it serves. Grade a WN0 burst — the mode
+        // the skip removes positions from — against bits that were never on the air, and the
+        // result must look exactly like the de-rigging failure: errors at every confidence
+        // level, not just near zero. Four blocks so the random payload dominates the constant
+        // EOM tail both references share.
+        int payloadBits = Ms110dReferenceBits.PayloadBitsForBlocks(0, Ms110dInterleaverKind.Short, blocks: 4);
+        var transmitted = new Ms110dReferenceBits(Settings(0), payloadBits, seed: 500);
+        var wrong = new Ms110dReferenceBits(Settings(0), payloadBits, seed: 501);
+        float[] audio = new Ms110dModulator(Settings(0)).Modulate(transmitted.PayloadBits);
+
+        (long bits, long errors, long confidentlyWrong, _, _) = Grade(wrong, audio);
+
+        bits.Should().BeGreaterThan(0, "the demodulator must have produced first-pass LLRs");
+        confidentlyWrong.Should().BeGreaterThan(0,
+            "unrelated reference bits disagree with the demodulator at the median confidence too");
+        (errors / (double)bits).Should().BeGreaterThan(0.25,
+            "unrelated reference bits disagree about half the time — anything near the clean "
+            + "channel's rate would mean the guard can no longer see a wrong reference");
+    }
+
+    [Fact]
+    public void A_scheduled_wn0_burst_reports_the_erasures_it_excludes()
+    {
+        // The production counterpart to the theory's erasure pin: the scorer must REPORT the
+        // positions it drops, so a quiet LLR path on a real capture shows as a growing count
+        // rather than silently flattering the uncoded rate. WN0's cold-start RAKE erases
+        // exactly its first di-bit of every burst, whatever the SNR.
+        var reference = new Ms110dReferenceBits(Settings(0), PayloadBits(0), seed: 66);
+        float[] audio = Transmit(reference, snrDb: 25, seed: 42);
+        var schedule = new List<ScheduledBurst> { new(reference, 5.0) };
+
+        CaptureScore score = new BurstScorer(schedule).Score(Blocks(audio, 4096));
+
+        score.Bursts.Should().ContainSingle();
+        BurstScore burst = score.Bursts[0];
+        burst.WidCorrect.Should().BeTrue();
+        burst.UncodedErasures.Should().Be(2, "WN0 erases its first di-bit of every burst by design");
+        burst.UncodedBits.Should().Be(78, "the 80 wire bits less the 2 erased positions");
+        burst.UncodedErrors.Should().Be(0, "25 dB AWGN is far above WN0's -6 dB operating point");
     }
 
     [Fact]
@@ -159,6 +234,7 @@ public class BurstScorerTests
             burst.Reason.Should().Be(Ms110dBurstEndReason.Eom);
             burst.PayloadErrors.Should().Be(0);
             burst.UncodedBits.Should().BeGreaterThan(0);
+            burst.UncodedErasures.Should().Be(0, "only WN0 has a designed erasure; the DFE modes erase nothing");
             burst.StartSeconds.Should().BeApproximately(schedule[k].ExpectedSeconds, 1.0);
         }
     }
@@ -257,6 +333,7 @@ public class BurstScorerTests
         score.Bursts[0].Scheduled.Should().BeFalse();
         score.Bursts[0].Acquired.Should().BeTrue();
         score.Bursts[0].UncodedBits.Should().Be(0);
+        score.Bursts[0].UncodedErasures.Should().Be(0, "no reference, no grading — erasures included");
         score.Bursts[0].WidCorrect.Should().BeFalse();
     }
 }

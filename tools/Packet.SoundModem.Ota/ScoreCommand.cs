@@ -239,6 +239,7 @@ internal static class ScoreCommand
         long payloadErrors = score.Bursts.Where(b => b.Scheduled).Sum(b => b.PayloadErrors);
         long uncodedBits = score.Bursts.Where(b => b.Scheduled).Sum(b => b.UncodedBits);
         long uncodedErrors = score.Bursts.Where(b => b.Scheduled).Sum(b => b.UncodedErrors);
+        long uncodedErasures = score.Bursts.Where(b => b.Scheduled).Sum(b => b.UncodedErasures);
 
         Console.WriteLine();
         Console.WriteLine($"scored {scored} burst(s); {score.Bursts.Count - scored} unscheduled; "
@@ -256,7 +257,10 @@ internal static class ScoreCommand
         if (uncodedBits > 0)
         {
             Console.WriteLine($"uncoded {uncodedErrors}/{uncodedBits} = {Rate(uncodedErrors / (double)uncodedBits)}"
-                              + (scored > 1 ? "   (pooled — per-burst rows above)" : ""));
+                              + (scored > 1 ? "   (pooled — per-burst rows above)" : "")
+                              + (uncodedErasures > 0
+                                  ? $"   ({uncodedErasures} erasure(s) excluded — see uncodedErasures)"
+                                  : ""));
         }
 
         // A missed burst is the headline, so it is said plainly rather than left to be inferred
@@ -301,6 +305,17 @@ internal static class ScoreCommand
         Console.WriteLine();
         Console.WriteLine($"scored {score.Bursts.Count(b => b.Scheduled)} burst(s); "
                           + $"{score.Bursts.Count(b => !b.Scheduled)} unscheduled; {score.Missed.Count} MISSED");
+
+        // No pooled rate here — a ladder's bursts were sent at different SNRs, so pooling
+        // would be a meaningless number. But the erasure exclusion must still surface at the
+        // console, or the campaign path (this one) only shows it in the CSV.
+        long uncodedErasures = score.Bursts.Where(b => b.Scheduled).Sum(b => b.UncodedErasures);
+        if (uncodedErasures > 0)
+        {
+            Console.WriteLine($"{uncodedErasures} erasure(s) excluded from uncoded grading "
+                              + "— see the uncodedErasures CSV column");
+        }
+
         foreach (ScheduledBurst missed in score.Missed)
         {
             Console.WriteLine($"MISSED: WN{missed.Reference.Settings.WaveformNumber} seed "
@@ -320,8 +335,8 @@ internal static class ScoreCommand
         // requestedSnrDb sits beside the measured one so the two are never separated: a row that
         // records only what was measured cannot say whether the rig delivered what it was asked.
         w.WriteLine("index,startSeconds,endSeconds,acquired,scheduled,wn,interleaver,cfoHz,widCorrect,"
-                    + "requestedSnrDb,snrDb,payloadBits,payloadErrors,uncodedBits,uncodedErrors,blocks,reason,"
-                    + "turboConverged,turboReverted,turboAborted");
+                    + "requestedSnrDb,snrDb,payloadBits,payloadErrors,uncodedBits,uncodedErrors,"
+                    + "uncodedErasures,blocks,reason,turboConverged,turboReverted,turboAborted");
         int scheduleIndex = 0;
         foreach (BurstScore b in score.Bursts)
         {
@@ -332,7 +347,8 @@ internal static class ScoreCommand
                 b.Scheduled && schedule is not null && scheduleIndex < schedule.Bursts.Count
                     && schedule.Bursts[scheduleIndex++].SnrDb is double asked ? F(asked) : "",
                 b.Snr is null ? "" : F(b.Snr.SnrDb),
-                b.PayloadBits, b.PayloadErrors, b.UncodedBits, b.UncodedErrors, b.Blocks,
+                b.PayloadBits, b.PayloadErrors, b.UncodedBits, b.UncodedErrors, b.UncodedErasures,
+                b.Blocks,
                 b.Reason?.ToString() ?? "", b.TurboConverged, b.TurboReverted, b.TurboAborted));
         }
 
@@ -344,7 +360,7 @@ internal static class ScoreCommand
                 -1, F(missed.ExpectedSeconds), "", false, true,
                 missed.Reference.Settings.WaveformNumber, missed.Reference.Settings.Interleaver,
                 "", false, "", "", missed.Reference.PayloadBits.Length, missed.Reference.PayloadBits.Length,
-                0, 0, 0, "Missed", 0, 0, 0));
+                0, 0, 0, 0, "Missed", 0, 0, 0));
         }
     }
 
