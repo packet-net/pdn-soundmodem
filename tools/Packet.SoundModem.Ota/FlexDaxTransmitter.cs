@@ -159,7 +159,11 @@ public sealed class FlexDaxTransmitter : IOtaTransmitter
             {
                 Frequency = options.FrequencyMHz,
                 Antenna = options.Antenna,
-                SliceMode = "DIGU",
+                // DIGU for the SSB modes (the deployment default); FM/NFM for the FM-native modes,
+                // where the DAX audio frequency-modulates the carrier and the drive is calibrated to
+                // the mode's target peak deviation. The transmit-filter high cut still applies (it
+                // caps the audio bandwidth reaching the modulator on either mode).
+                SliceMode = options.SliceMode,
                 DaxChannel = DaxChannel,
                 TransmitFilterHighHz = options.DaxTransmitFilterHighHz,
                 SelectDaxAsTransmitSource = true,
@@ -180,7 +184,7 @@ public sealed class FlexDaxTransmitter : IOtaTransmitter
         }
 
         write($"DAX station on slice {station.SliceIndex}: {options.FrequencyMHz} MHz {options.Antenna} " +
-              $"DIGU, dax ch {DaxChannel}");
+              $"{options.SliceMode}, dax ch {DaxChannel}");
         write($"transmit source is DAX: {station.TransmitSourceIsDax?.ToString() ?? "unreported"}");
         if (station.TransmitFilter is (int filterLow, int filterHigh))
         {

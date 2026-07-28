@@ -48,6 +48,15 @@ internal static class LadderCommand
             return await OfdmLadderCommand.RunAsync(a).ConfigureAwait(false);
         }
 
+        // The FM-native modes (afsk1200, fsk*, c4fsk*, qpsk3600) are carried as frequency modulation,
+        // so they hand off to the FM sibling — render → channel → FM-mod at the mode's target
+        // deviation → FM-demod → decode — rather than the MS110D SSB path below. Same
+        // `ladder --dry-run`/live shape, a different transmit chain.
+        if (a is not null && FmModeCatalog.IsFmMode(a.Str("mode", null)))
+        {
+            return await FmLadderCommand.RunAsync(a).ConfigureAwait(false);
+        }
+
         // The SSB audio-carrier modes (afsk300*/bpsk*/qpsk600/qpsk2400) place their carrier inside the
         // audio, so they ride the same DAX SSB route as the deployment modes — the audio-carrier sibling
         // renders and scores through the IModem seam. Same `ladder --dry-run`/live shape as the MS110D

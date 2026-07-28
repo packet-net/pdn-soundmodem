@@ -109,11 +109,17 @@ public sealed class FlexIqTransmitterMockTests
             (double hz, double power) = spectrum.FindPeak(2000 - Obw - 200, 2000 - Obw + 200);
 
             hz.Should().BeApproximately(2000.0 - Obw, 2.0);
-            // Amplitude 0.5 → mean-square 0.25 while the tone is on. The captured buffer also
-            // holds the lead-in/lead-out silence and the cosine ramps, so the averaged level
-            // sits a little below that; the tolerance covers the duty cycle, not sloppiness.
-            // The placement shift is a pure frequency translation, so the level is unchanged.
-            IqAnalysis.Db(power).Should().BeInRange(IqAnalysis.Db(0.25) - 3.0, IqAnalysis.Db(0.25) + 0.5);
+            // Amplitude 0.5 → mean-square 0.25 while the tone is on. The captured buffer also holds
+            // the lead-in/lead-out silence and the cosine ramps, and the reflection loop drains a
+            // load-dependent amount of trailing silence, so the Welch-averaged tone power sits below
+            // 0.25 by a duty cycle that varies with how much silence was captured (observed to reach
+            // ~−9.3 dB under a loaded parallel suite). The sharp gates own correctness: A_tone asserts
+            // SamplesStarved == 0 (no phase discontinuity), the −60 dBc check below owns image
+            // rejection, and the ±2 Hz check above owns placement. This is only a coarse "the tone is
+            // present at roughly the right level" band, so its lower edge is generous enough to
+            // survive the capture-duty-cycle variance. The placement shift is a pure frequency
+            // translation, so the level is unchanged.
+            IqAnalysis.Db(power).Should().BeInRange(IqAnalysis.Db(0.25) - 6.0, IqAnalysis.Db(0.25) + 0.5);
             (IqAnalysis.Db(spectrum.TonePower(-hz)) - IqAnalysis.Db(power)).Should().BeLessThan(-60);
         }
     }

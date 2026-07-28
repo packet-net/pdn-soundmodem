@@ -36,6 +36,7 @@ try
         "sim" => SimCommand.Run(args[1..]),
         "sim-stream" => SimStreamCommand.Run(args[1..]),
         "ladder" => await LadderCommand.RunAsync(args[1..]),
+        "fm-deviation" => FmLadderCommand.Deviation(args[1..]),
         "monitor" => await MonitorCommand.RunAsync(args[1..]),
         "-h" or "--help" or "help" => Usage(),
         _ => Unknown(args[0]),
@@ -82,8 +83,11 @@ static int Usage()
                         managed WattersonChannel, or emits/decodes int16 for codec2's own `ch`.
         sm-ota ladder   §E2: inject the mask suite's own channel at the transmitter and run an
                         SNR ladder through real hardware. --dry-run rehearses it with no radio.
-                        --mode freedv-datac<N> runs the OFDM ladder instead (DAX route, OFDM
+                        --mode freedv-datac<N> runs the OFDM ladder; --mode <fm-mode>
+                        (afsk1200/fsk9600/…) runs the FM ladder (DAX FM route, discriminator
                         scorer); default (no --mode / --wn N) is the MS110D ladder.
+        sm-ota fm-deviation  FM-discriminate an IQ capture and print the peak/RMS/mean deviation
+                        in kHz — the instrument for calibrating an FM mode's drive to its target.
         sm-ota monitor  watch a receiver live — capture, convert, demodulate, print each burst
                         as it lands. Receive-only; nothing here transmits.
 

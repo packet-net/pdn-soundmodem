@@ -121,6 +121,16 @@ public sealed record FlexTransmitterOptions
     /// signal they just heard was.</summary>
     public string? IdMode { get; init; } = "MS110D";
 
+    /// <summary>
+    /// The radio slice mode the DAX route brings the station up in. <c>DIGU</c> (the default) is the
+    /// SSB deployment path — the radio's SSB modulator places audio <c>f</c> at <c>dial + f</c>. Set
+    /// <c>FM</c> (or <c>NFM</c>) for the FM-native modes, which are carried as frequency modulation:
+    /// the DAX audio then <em>frequency-modulates</em> the carrier, and the drive is calibrated so the
+    /// achieved peak deviation is the mode's target (see <c>docs/mode-modulation-reference.md</c>).
+    /// Ignored by the waveform-IQ route, which synthesises its own baseband.
+    /// </summary>
+    public string SliceMode { get; init; } = "DIGU";
+
     /// <summary>Send a Morse identification at session start and at
     /// <see cref="IdentifyInterval"/> thereafter. On by default.</summary>
     public bool Identify { get; init; } = true;
