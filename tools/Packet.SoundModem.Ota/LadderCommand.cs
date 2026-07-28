@@ -57,6 +57,16 @@ internal static class LadderCommand
             return await FmLadderCommand.RunAsync(a).ConfigureAwait(false);
         }
 
+        // The SSB audio-carrier modes (afsk300*/bpsk*/qpsk600/qpsk2400) place their carrier inside the
+        // audio, so they ride the same DAX SSB route as the deployment modes — the audio-carrier sibling
+        // renders and scores through the IModem seam. Same `ladder --dry-run`/live shape as the MS110D
+        // and datac paths; the MS110D path below is untouched. (qpsk3600 looks like one of these but is
+        // an FM mode, so IsSsbMode excludes it and it falls through — the FM coverage path owns it.)
+        if (a is not null && SsbLadderCommand.IsSsbMode(a.Str("mode", null)))
+        {
+            return await SsbLadderCommand.RunAsync(a).ConfigureAwait(false);
+        }
+
         if (a is null || a.Has("help"))
         {
             Console.Error.WriteLine("""

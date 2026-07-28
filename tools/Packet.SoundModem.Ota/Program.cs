@@ -34,6 +34,7 @@ try
         "measure" => Commands.Measure(args[1..]),
         "score" => ScoreCommand.Run(args[1..]),
         "sim" => SimCommand.Run(args[1..]),
+        "sim-stream" => SimStreamCommand.Run(args[1..]),
         "ladder" => await LadderCommand.RunAsync(args[1..]),
         "fm-deviation" => FmLadderCommand.Deviation(args[1..]),
         "monitor" => await MonitorCommand.RunAsync(args[1..]),
@@ -77,6 +78,9 @@ static int Usage()
         sm-ota sim      pure-software BER-vs-SNR baseline for any ModemCatalog mode: render a
                         burst, inject AWGN/Watterson at a known SNR, decode, tally frame/packet
                         success. No radio. Drives the FreeDV datac OFDM waterfalls.
+        sm-ota sim-stream  continuous-stream datac measurement: N single-packet bursts through ONE
+                        channel run, scored packets-received/sent (codec2's MPP currency). Injects a
+                        managed WattersonChannel, or emits/decodes int16 for codec2's own `ch`.
         sm-ota ladder   §E2: inject the mask suite's own channel at the transmitter and run an
                         SNR ladder through real hardware. --dry-run rehearses it with no radio.
                         --mode freedv-datac<N> runs the OFDM ladder; --mode <fm-mode>
