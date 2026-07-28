@@ -79,13 +79,17 @@ public class BurstScorerTests
             int compare = Math.Min(llrs.Length, sent.Length);
             for (int i = 0; i < compare; i++)
             {
-                // An exactly-zero LLR is an erasure, not a decision: the demodulator expressed
-                // no opinion at that position. WN0 erases its first channel symbol of every
-                // burst by design — the RAKE's decision-directed finger gains start cold, so
-                // the MRC statistic is zero for every candidate (Wid0WalshModem.DemodulateRake)
-                // — and the > 0 tie-break reads that silence as a hard 1: with both bits of
-                // the erased di-bit sent as 0 that is 2/80 = 2.5 % charged errors on a clean
-                // Short block (1/80 = 1.25 % at the theory's seed).
+                // An exactly-zero LLR is an erasure, not a decision: the soft-output path
+                // expressed no opinion at that position (the Walsh detector still picks a
+                // di-bit noncoherently, but the scorer grades sign(LLR), and there is none).
+                // The exact match is load-bearing: structural zeros are identically 0f, and
+                // any tolerance would start eating genuine low-confidence errors like WN2's.
+                // WN0 erases its first channel symbol of every burst by design — the RAKE's
+                // decision-directed finger gains start cold, so the MRC statistic is zero for
+                // every candidate (Wid0WalshModem.DemodulateRake) — and the > 0 tie-break
+                // reads that silence as a hard 1: with both bits of the erased di-bit sent as
+                // 0 that is 2/80 = 2.5 % charged errors on a clean Short block (1/80 = 1.25 %
+                // at the theory's seed).
                 if (llrs[i] == 0)
                 {
                     erasures++;
@@ -168,6 +172,27 @@ public class BurstScorerTests
     }
 
     [Fact]
+    public void A_scheduled_wn0_burst_reports_the_erasures_it_excludes()
+    {
+        // The production counterpart to the theory's erasure pin: the scorer must REPORT the
+        // positions it drops, so a quiet LLR path on a real capture shows as a growing count
+        // rather than silently flattering the uncoded rate. WN0's cold-start RAKE erases
+        // exactly its first di-bit of every burst, whatever the SNR.
+        var reference = new Ms110dReferenceBits(Settings(0), PayloadBits(0), seed: 66);
+        float[] audio = Transmit(reference, snrDb: 25, seed: 42);
+        var schedule = new List<ScheduledBurst> { new(reference, 5.0) };
+
+        CaptureScore score = new BurstScorer(schedule).Score(Blocks(audio, 4096));
+
+        score.Bursts.Should().ContainSingle();
+        BurstScore burst = score.Bursts[0];
+        burst.WidCorrect.Should().BeTrue();
+        burst.UncodedErasures.Should().Be(2, "WN0 erases its first di-bit of every burst by design");
+        burst.UncodedBits.Should().Be(78, "the 80 wire bits less the 2 erased positions");
+        burst.UncodedErrors.Should().Be(0, "25 dB AWGN is far above WN0's -6 dB operating point");
+    }
+
+    [Fact]
     public void The_reference_payload_is_reproducible_from_its_seed_alone()
     {
         // A manifest records the seed and the length, not megabytes of payload. That only works
@@ -209,6 +234,7 @@ public class BurstScorerTests
             burst.Reason.Should().Be(Ms110dBurstEndReason.Eom);
             burst.PayloadErrors.Should().Be(0);
             burst.UncodedBits.Should().BeGreaterThan(0);
+            burst.UncodedErasures.Should().Be(0, "only WN0 has a designed erasure; the DFE modes erase nothing");
             burst.StartSeconds.Should().BeApproximately(schedule[k].ExpectedSeconds, 1.0);
         }
     }
@@ -307,6 +333,7 @@ public class BurstScorerTests
         score.Bursts[0].Scheduled.Should().BeFalse();
         score.Bursts[0].Acquired.Should().BeTrue();
         score.Bursts[0].UncodedBits.Should().Be(0);
+        score.Bursts[0].UncodedErasures.Should().Be(0, "no reference, no grading — erasures included");
         score.Bursts[0].WidCorrect.Should().BeFalse();
     }
 }

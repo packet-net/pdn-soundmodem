@@ -17,8 +17,12 @@ namespace Packet.SoundModem.Ota;
 /// <param name="PayloadBits">Payload bits expected.</param>
 /// <param name="PayloadErrors">Payload bits wrong, missing ones included.</param>
 /// <param name="UncodedBits">Channel bits compared against the re-encoded reference —
-/// erasures (exactly-zero LLRs, where the demodulator expressed no opinion) excluded.</param>
+/// erasures (exactly-zero LLRs, where the soft-output path expressed no opinion) excluded.</param>
 /// <param name="UncodedErrors">Channel bits wrong — the informative rate.</param>
+/// <param name="UncodedErasures">Channel bits excluded as erasures (exactly-zero LLR). WN0
+/// erases its first di-bit of every burst by design, so 2 is structural there; any other
+/// count on any waveform is an LLR path gone quiet, and because it is recorded here it
+/// cannot silently shrink <see cref="UncodedBits"/>.</param>
 /// <param name="Blocks">Blocks the demodulator decoded.</param>
 /// <param name="Reason">Which D.5.4.5 exit ended the burst.</param>
 /// <param name="TurboConverged">Turbo passes that converged during this burst.</param>
@@ -43,6 +47,7 @@ public sealed record BurstScore(
     long PayloadErrors,
     long UncodedBits,
     long UncodedErrors,
+    long UncodedErasures,
     int Blocks,
     Ms110dBurstEndReason? Reason,
     int TurboConverged,
@@ -181,7 +186,7 @@ public sealed class BurstScorer
         Ms110dLockInfo? locked = null;
         Ms110dReferenceBits? reference = null;
         bool scheduled = false;
-        long uncodedBits = 0, uncodedErrors = 0;
+        long uncodedBits = 0, uncodedErrors = 0, uncodedErasures = 0;
         int turboC0 = 0, turboR0 = 0, turboA0 = 0;
 
         // Acquisition/WID autopsy, opt-in. Each FrameDiagnostics line is stamped with the sample
@@ -261,11 +266,16 @@ public sealed class BurstScorer
             int compare = Math.Min(llrs.Length, sent.Length);
             for (int i = 0; i < compare; i++)
             {
-                // An exactly-zero LLR is an erasure, not an opinion — WN0's cold-start RAKE
-                // erases its first symbol of every burst by design — so it is neither a
-                // compared bit nor an error (docs/ms110d/ota-handover.md §2).
+                // An exactly-zero LLR is an erasure: the soft-output path expressed no
+                // opinion (WN0's cold-start RAKE erases its first symbol of every burst by
+                // design), so the position is neither a compared bit nor an error — and it
+                // is counted, so a quiet LLR path shows in campaign output instead of
+                // silently shrinking the denominator. The exact match is load-bearing:
+                // structural zeros are identically 0f, and any tolerance would start
+                // eating genuine low-confidence errors (docs/ms110d/ota-handover.md §2).
                 if (llrs[i] == 0)
                 {
+                    uncodedErasures++;
                     continue;
                 }
 
@@ -345,6 +355,7 @@ public sealed class BurstScorer
                 PayloadErrors: payloadErrors,
                 UncodedBits: uncodedBits,
                 UncodedErrors: uncodedErrors,
+                UncodedErasures: uncodedErasures,
                 Blocks: burst.Blocks,
                 Reason: burst.Reason,
                 TurboConverged: demod.TurboConverged - turboC0,
@@ -360,6 +371,7 @@ public sealed class BurstScorer
             scheduled = false;
             uncodedBits = 0;
             uncodedErrors = 0;
+            uncodedErasures = 0;
             burstFill = 0;
 
             // Quiet from before this burst is no use to the next one.
@@ -391,6 +403,7 @@ public sealed class BurstScorer
                 scheduled = false;
                 uncodedBits = 0;
                 uncodedErrors = 0;
+                uncodedErasures = 0;
                 burstFill = 0;
             }
 
