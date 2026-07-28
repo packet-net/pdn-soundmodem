@@ -71,9 +71,10 @@ public class SnrEstimatorTests
     {
         (float[] burst, float[] noise) = RigBurst(wn, snrDb, seed: 1000 + wn);
 
-        SnrEstimate estimate = SnrEstimator.Estimate(burst, noise, Rate);
+        SnrEstimate? estimate = SnrEstimator.Estimate(burst, noise, Rate);
 
-        estimate.SnrDb.Should().BeApproximately(snrDb, 1.0,
+        estimate.Should().NotBeNull("a burst put through the rig at a real SNR must measure back");
+        estimate!.SnrDb.Should().BeApproximately(snrDb, 1.0,
             "an SNR estimate that disagrees with the rig would shift every OTA point along "
             + "the comparison curve");
     }
@@ -85,11 +86,13 @@ public class SnrEstimatorTests
         // reference bandwidth must lower the reported SNR by exactly the bandwidth ratio.
         (float[] burst, float[] noise) = RigBurst(wn: 2, snrDb: 10.0, seed: 77);
 
-        SnrEstimate at3k = SnrEstimator.Estimate(burst, noise, Rate, 3000);
-        SnrEstimate at6k = SnrEstimator.Estimate(burst, noise, Rate, 6000);
+        SnrEstimate? at3k = SnrEstimator.Estimate(burst, noise, Rate, 3000);
+        SnrEstimate? at6k = SnrEstimator.Estimate(burst, noise, Rate, 6000);
 
-        (at3k.SnrDb - at6k.SnrDb).Should().BeApproximately(10 * Math.Log10(2.0), 0.01);
-        at3k.BandwidthHz.Should().Be(3000);
+        at3k.Should().NotBeNull();
+        at6k.Should().NotBeNull();
+        (at3k!.SnrDb - at6k!.SnrDb).Should().BeApproximately(10 * Math.Log10(2.0), 0.01);
+        at3k!.BandwidthHz.Should().Be(3000);
     }
 
     [Fact]
@@ -117,11 +120,38 @@ public class SnrEstimatorTests
             quietNoise[k] = noise[k] * scale;
         }
 
-        SnrEstimate loud = SnrEstimator.Estimate(burst, noise, Rate);
-        SnrEstimate quiet = SnrEstimator.Estimate(quietBurst, quietNoise, Rate);
+        SnrEstimate? loud = SnrEstimator.Estimate(burst, noise, Rate);
+        SnrEstimate? quiet = SnrEstimator.Estimate(quietBurst, quietNoise, Rate);
 
-        quiet.SnrDb.Should().BeApproximately(loud.SnrDb, 0.05,
+        loud.Should().NotBeNull();
+        quiet.Should().NotBeNull();
+        quiet!.SnrDb.Should().BeApproximately(loud!.SnrDb, 0.05,
             "SNR is a ratio; the recording level must not appear in it");
+    }
+
+    [Fact]
+    public void A_noise_estimate_at_or_above_the_burst_power_is_reported_as_unmeasurable()
+    {
+        // The first-burst warm-up failure from issue #121. The noise lead-in sits in the capture's
+        // settling region (rx_sdr/RSP1/DC), so the measured noise floor is momentarily louder than
+        // the burst. There is no signal left after removing that noise — a FAILED measurement, which
+        // must come back as null (no reading), NOT as the ≈ −250 dB delivered SNR a signal floored to
+        // an epsilon would produce and which then drags the per-run self-cal aggregate to tens of dB.
+        var random = new Random(4242);
+        var quietBurst = new float[4096];
+        var loudNoise = new float[4096];
+        for (int k = 0; k < quietBurst.Length; k++)
+        {
+            quietBurst[k] = (float)((random.NextDouble() - 0.5) * 0.01);
+        }
+
+        for (int k = 0; k < loudNoise.Length; k++)
+        {
+            loudNoise[k] = (float)((random.NextDouble() - 0.5) * 2.0);
+        }
+
+        SnrEstimator.Estimate(quietBurst, loudNoise, Rate).Should().BeNull(
+            "a noise floor at or above the burst power is a failed measurement, not a −250 dB SNR");
     }
 
     [Fact]
@@ -131,19 +161,21 @@ public class SnrEstimatorTests
         // in the gap moves one bin rather than the whole floor; a mean would follow it and
         // report the burst as far worse than it is.
         (float[] burst, float[] noise) = RigBurst(wn: 2, snrDb: 10.0, seed: 5);
-        SnrEstimate clean = SnrEstimator.Estimate(burst, noise, Rate);
+        SnrEstimate? clean = SnrEstimator.Estimate(burst, noise, Rate);
+        clean.Should().NotBeNull();
 
         var polluted = new float[noise.Length];
         noise.CopyTo(polluted, 0);
-        double rms = Math.Sqrt(clean.NoiseDensity * (Rate / 2.0));
+        double rms = Math.Sqrt(clean!.NoiseDensity * (Rate / 2.0));
         for (int k = 0; k < polluted.Length; k++)
         {
             polluted[k] += (float)(20 * rms * Math.Sin(2 * Math.PI * 2500 * k / Rate));
         }
 
-        SnrEstimate withCarrier = SnrEstimator.Estimate(burst, polluted, Rate);
+        SnrEstimate? withCarrier = SnrEstimator.Estimate(burst, polluted, Rate);
 
-        (withCarrier.SnrDb - clean.SnrDb).Should().BeApproximately(0, 1.0,
+        withCarrier.Should().NotBeNull();
+        (withCarrier!.SnrDb - clean!.SnrDb).Should().BeApproximately(0, 1.0,
             "a strong carrier in the guard interval must not move the noise floor estimate");
     }
 
