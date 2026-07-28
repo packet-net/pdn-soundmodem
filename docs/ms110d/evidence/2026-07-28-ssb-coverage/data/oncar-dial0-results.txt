@@ -1,0 +1,108 @@
+
+### afsk300 awgn (snr 3,0,-3,-6) ###
+=== ssb score: ssb-afsk300_18106500_2026-07-28T06:18:43.675Z.wav — 173.0 s, afsk300 (12 burst(s), modem 053307286568) ===
+  #  start s   asked     got  d(dB)   CFO Hz  acq  decode  corr B
+  0    21.66     3.0     2.4   -0.6        —   NO    LOST       0
+  1    33.94     0.0    -0.6   -0.6        —   NO    LOST       0
+  2    46.20    -3.0    -4.3   -1.3        —   NO    LOST       0
+  3    58.48    -6.0    -7.6   -1.6        —   NO    LOST       0
+  4    70.76     3.0     2.4   -0.6        —   NO    LOST       0
+  5    83.03     0.0    -0.5   -0.5        —   NO    LOST       0
+  6    95.31    -3.0    -3.9   -0.9        —   NO    LOST       0
+  7   107.59    -6.0    -7.1   -1.1        —   NO    LOST       0
+  8   119.85     3.0     2.6   -0.4        —   NO    LOST       0
+  9   132.13     0.0    -0.9   -0.9        —   NO    LOST       0
+ 10   144.42    -3.0    -4.5   -1.5        —   NO    LOST       0
+ 11   156.69    -6.0    -6.2   -0.2        —   NO    LOST       0
+acquired 0/12, decoded 0/12 (FER 1.000)
+mean |measured − asked| SNR: 0.86 dB (the self-calibration check — the ladder is only plotted correctly if this is small)
+
+### bpsk1200 awgn (snr 8,5,2,-1) ###
+=== ssb score: ssb-bpsk1200_18106500_2026-07-28T06:21:47.197Z.wav — 157.0 s, bpsk1200 (12 burst(s), modem 053307286568) ===
+  #  start s   asked     got  d(dB)   CFO Hz  acq  decode  corr B
+  0    23.03     8.0     5.7   -2.3   -120.0  yes      ok       6
+  1    34.03     5.0     2.8   -2.2    -60.0  yes      ok       6
+  2    45.03     2.0    -0.2   -2.2      0.0  yes      ok       6
+  3    56.04    -1.0    -3.7   -2.7        —   NO    LOST       0
+  4    67.04     8.0     5.6   -2.4    -90.0  yes      ok       1
+  5    78.05     5.0     3.0   -2.0    -60.0  yes      ok       4
+  6    89.05     2.0    -0.4   -2.4        —   NO    LOST       0
+  7   100.06    -1.0    -3.8   -2.8        —   NO    LOST       0
+  8   111.07     8.0     5.7   -2.3    -90.0  yes      ok       2
+  9   122.09     5.0     2.7   -2.3    -60.0  yes      ok       5
+ 10   133.09     2.0    -0.2   -2.2        —   NO    LOST       0
+ 11   144.10    -1.0    -3.1   -2.1        —   NO    LOST       0
+acquired 7/12, decoded 7/12 (FER 0.417)
+mean |measured − asked| SNR: 2.33 dB (the self-calibration check — the ladder is only plotted correctly if this is small)
+
+### qpsk600 awgn (snr 8,5,2,-1) ###
+=== ssb score: ssb-qpsk600_18106500_2026-07-28T06:24:35.664Z.wav — 164.0 s, qpsk600 (12 burst(s), modem 053307286568) ===
+  #  start s   asked     got  d(dB)   CFO Hz  acq  decode  corr B
+  0    22.23     8.0     6.9   -1.1        —   NO    LOST       0
+  1    33.81     5.0     4.2   -0.8        —   NO    LOST       0
+  2    45.39     2.0     0.9   -1.1        —   NO    LOST       0
+  3    56.98    -1.0    -2.1   -1.1        —   NO    LOST       0
+  4    68.56     8.0     7.1   -0.9        —   NO    LOST       0
+  5    80.15     5.0     4.0   -1.0        —   NO    LOST       0
+  6    91.76     2.0     1.1   -0.9        —   NO    LOST       0
+  7   103.35    -1.0    -1.7   -0.7        —   NO    LOST       0
+  8   114.94     8.0     7.3   -0.7        —   NO    LOST       0
+  9   126.52     5.0     4.0   -1.0        —   NO    LOST       0
+ 10   138.11     2.0     0.6   -1.4        —   NO    LOST       0
+ 11   149.71    -1.0    -1.3   -0.3        —   NO    LOST       0
+acquired 0/12, decoded 0/12 (FER 1.000)
+mean |measured − asked| SNR: 0.93 dB (the self-calibration check — the ladder is only plotted correctly if this is small)
+
+### afsk300 poor (snr 8,5,2,-1) ###
+=== ssb score: ssb-afsk300_18106500_2026-07-28T06:27:30.647Z.wav — 173.0 s, afsk300 (12 burst(s), modem 053307286568) ===
+  #  start s   asked     got  d(dB)   CFO Hz  acq  decode  corr B
+  0    21.90     8.0  -246.3 -254.3        —   NO    LOST       0
+  1    32.15     5.0     2.4   -2.6        —   NO    LOST       0
+  2    44.42     2.0     2.5   +0.5        —   NO    LOST       0
+  3    56.70    -1.0    -3.3   -2.3        —   NO    LOST       0
+  4    68.97     8.0     8.3   +0.3        —   NO    LOST       0
+  5    81.25     5.0     5.2   +0.2        —   NO    LOST       0
+  6    93.52     2.0    -0.2   -2.2        —   NO    LOST       0
+  7   105.81    -1.0    -2.7   -1.7        —   NO    LOST       0
+  8   118.08     8.0     9.5   +1.5        —   NO    LOST       0
+  9   130.36     5.0     4.5   -0.5        —   NO    LOST       0
+ 10   142.64     2.0     1.7   -0.3        —   NO    LOST       0
+ 11   154.92    -1.0    -4.4   -3.4        —   NO    LOST       0
+acquired 0/12, decoded 0/12 (FER 1.000)
+mean |measured − asked| SNR: 22.47 dB (the self-calibration check — the ladder is only plotted correctly if this is small)
+
+### bpsk1200 poor (snr 12,9,6,3) ###
+=== ssb score: ssb-bpsk1200_18106500_2026-07-28T06:30:34.166Z.wav — 157.0 s, bpsk1200 (12 burst(s), modem 053307286568) ===
+  #  start s   asked     got  d(dB)   CFO Hz  acq  decode  corr B
+  0    23.02    12.0  -245.6 -257.6        —   NO    LOST       0
+  1    32.00     9.0     1.0   -8.0        —  yes    LOST       0
+  2    43.00     6.0     5.0   -1.0        —   NO    LOST       0
+  3    54.01     3.0    -4.3   -7.3        —   NO    LOST       0
+  4    65.01    12.0     4.9   -7.1        —   NO    LOST       0
+  5    76.01     9.0     9.4   +0.4        —   NO    LOST       0
+  6    87.02     6.0     2.7   -3.3        —   NO    LOST       0
+  7    98.03     3.0    -2.8   -5.8        —   NO    LOST       0
+  8   109.02    12.0     8.3   -3.7        —   NO    LOST       0
+  9   120.03     9.0     7.9   -1.1        —  yes    LOST       0
+ 10   131.04     6.0     2.0   -4.0        —   NO    LOST       0
+ 11   142.05     3.0    -1.1   -4.1        —   NO    LOST       0
+acquired 2/12, decoded 0/12 (FER 1.000)
+mean |measured − asked| SNR: 25.30 dB (the self-calibration check — the ladder is only plotted correctly if this is small)
+
+### qpsk600 poor (snr 12,9,6,3) ###
+=== ssb score: ssb-qpsk600_18106500_2026-07-28T06:33:22.633Z.wav — 164.0 s, qpsk600 (12 burst(s), modem 053307286568) ===
+  #  start s   asked     got  d(dB)   CFO Hz  acq  decode  corr B
+  0    22.24    12.0     9.9   -2.1        —   NO    LOST       0
+  1    33.83     9.0     6.8   -2.2        —   NO    LOST       0
+  2    45.42     6.0     7.1   +1.1        —   NO    LOST       0
+  3    57.00     3.0    -3.6   -6.6        —   NO    LOST       0
+  4    68.59    12.0     6.4   -5.6        —   NO    LOST       0
+  5    80.17     9.0     8.1   -0.9        —   NO    LOST       0
+  6    91.77     6.0     2.0   -4.0        —   NO    LOST       0
+  7   103.35     3.0     4.6   +1.6        —   NO    LOST       0
+  8   114.94    12.0    11.4   -0.6        —   NO    LOST       0
+  9   126.52     9.0     4.9   -4.1        —   NO    LOST       0
+ 10   138.11     6.0     4.6   -1.4        —   NO    LOST       0
+ 11   149.69     3.0     2.5   -0.5        —   NO    LOST       0
+acquired 0/12, decoded 0/12 (FER 1.000)
+mean |measured − asked| SNR: 2.55 dB (the self-calibration check — the ladder is only plotted correctly if this is small)

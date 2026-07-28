@@ -1,0 +1,23 @@
+=== ssb score: ssb-bpsk1200_18106500_2026-07-28T07:27:02.789Z.wav — 221.0 s, bpsk1200 (18 burst(s), modem 053307286568) ===
+  #  start s   asked     got  d(dB)   CFO Hz  acq  decode  corr B
+  0    23.10     8.0     5.5   -2.5   -120.0  yes      ok       6
+  1    34.11     6.0     3.7   -2.3    -60.0  yes      ok       1
+  2    45.11     4.0     1.9   -2.1    -30.0  yes      ok       0
+  3    56.11     2.0    -0.3   -2.3        —   NO    LOST       0
+  4    67.14     0.0    -2.0   -2.0        —   NO    LOST       0
+  5    78.16    -2.0    -4.4   -2.4        —   NO    LOST       0
+  6    89.16     8.0     5.6   -2.4   -120.0  yes      ok       6
+  7   100.16     6.0     3.5   -2.5    -60.0  yes      ok       6
+  8   111.17     4.0     1.9   -2.1     60.0  yes      ok       5
+  9   122.17     2.0    -0.2   -2.2     30.0  yes      ok       7
+ 10   133.17     0.0    -2.3   -2.3        —   NO    LOST       0
+ 11   144.16    -2.0    -3.8   -1.8        —   NO    LOST       0
+ 12   155.16     8.0     5.8   -2.2   -120.0  yes      ok       6
+ 13   166.16     6.0     3.6   -2.4    -60.0  yes      ok       5
+ 14   177.16     4.0     2.1   -1.9    -30.0  yes      ok       8
+ 15   188.16     2.0    -0.2   -2.2     60.0  yes      ok       9
+ 16   199.16     0.0    -2.6   -2.6        —   NO    LOST       0
+ 17   210.19    -2.0    -4.9   -2.9        —   NO    LOST       0
+acquired 11/18, decoded 11/18 (FER 0.389)
+mean |measured − asked| SNR: 2.29 dB (the self-calibration check — the ladder is only plotted correctly if this is small)
+BPSK_CLEAN_DONE
