@@ -34,6 +34,59 @@ public class NinoCorpusQcTests
         ["1110"] = "afsk300-il2pc",
     };
 
+    private static List<(int Start, int End)> SplitBursts(float[] samples, int rate)
+    {
+        int win = Math.Max(1, rate / 100); // 10 ms envelope
+        int n = samples.Length / win;
+        var env = new float[n];
+        float peak = 0;
+        for (int i = 0; i < n; i++)
+        {
+            float mx = 0;
+            for (int j = i * win; j < (i + 1) * win; j++)
+            {
+                mx = Math.Max(mx, Math.Abs(samples[j]));
+            }
+
+            env[i] = mx;
+            peak = Math.Max(peak, mx);
+        }
+
+        float th = 0.05f * peak;
+        var outp = new List<(int, int)>();
+        int? start = null;
+        int quiet = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (env[i] > th && start is null)
+            {
+                start = i;
+                quiet = 0;
+            }
+            else if (env[i] <= th && start is not null)
+            {
+                quiet++;
+                if (quiet > 8)
+                {
+                    outp.Add((start.Value * win, (i - quiet + 1) * win));
+                    start = null;
+                    quiet = 0;
+                }
+            }
+            else
+            {
+                quiet = 0;
+            }
+        }
+
+        if (start is not null)
+        {
+            outp.Add((start.Value * win, samples.Length));
+        }
+
+        return outp;
+    }
+
     [Fact]
     public void Corpus_Files_Decode_Through_Their_Paired_Modes()
     {
@@ -85,8 +138,26 @@ public class NinoCorpusQcTests
                 "coherent" => new ModemOptions(Detector: PskDetector.Coherent),
                 _ => default,
             };
-            IModem modem = ModemCatalog.Create(mode, rate, frames.Add, options);
-            modem.Process(padded);
+            if (Environment.GetEnvironmentVariable("NINO_CORPUS_SPLIT") == "1")
+            {
+                // Split at silence gaps and decode each burst with a FRESH modem: the
+                // inter-burst-state discriminator (continuous-processing misses that
+                // vanish here indict the demod's burst-to-burst recovery — DCD
+                // release/AGC — not the recording).
+                foreach ((int start, int end) in SplitBursts(padded, rate))
+                {
+                    int lead = rate / 5;
+                    var burst = new float[(end - start) + (2 * lead)];
+                    Array.Copy(padded, start, burst, lead, end - start);
+                    IModem one = ModemCatalog.Create(mode, rate, frames.Add, options);
+                    one.Process(burst);
+                }
+            }
+            else
+            {
+                IModem modem = ModemCatalog.Create(mode, rate, frames.Add, options);
+                modem.Process(padded);
+            }
 
             string verdict = frames.Count == expected ? "OK " : "QC-FAIL";
             string sizes = string.Join(",", frames.Select(f => f.Length));
