@@ -32,6 +32,7 @@ internal static class SimCommand
                                        Any catalogue mode works at the frame layer.
                   --snr <a,b,c>        SNR rungs in dB (3 kHz), ascending
                   --channel <list>     awgn|good|poor, comma-separated (default awgn)
+                  --cfo <list>         carrier-offset Hz, comma-separated sweep axis (default 0)
                   --layer frame|packet frame = full IL2P+CRC frame through the IModem surface
                                        (the deployment metric, any mode). packet = one raw datac
                                        packet through the library's own DatacReceiver, scored on
@@ -70,6 +71,8 @@ internal static class SimCommand
         SimLayer layer = a.Str("layer", "frame").StartsWith('p') ? SimLayer.Packet : SimLayer.Frame;
         double[] levels = a.Str("levels", "0").Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Select(s => double.Parse(s.Trim(), CultureInfo.InvariantCulture)).ToArray();
+        double[] cfos = a.Str("cfo", "0").Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => double.Parse(s.Trim(), CultureInfo.InvariantCulture)).ToArray();
         int bursts = a.Int("bursts", 100);
         int frameBytes = a.Int("frame-bytes", 60);
         int? rate = a.Has("rate") ? a.Int("rate", 8000) : null;
@@ -105,9 +108,11 @@ internal static class SimCommand
             {
                 foreach (double level in levels)
                 {
+                    foreach (double cfo in cfos)
+                    {
                     SimPointResult r = SimBench.RunPoint(
                         mode, rateArg, layer, kind, snr, bursts, frameBytes, firstSeed, workers, level,
-                        txDelayMs);
+                        txDelayMs, cfo);
                     rows.Add(r);
                     if (level == 0)
                     {
@@ -116,9 +121,11 @@ internal static class SimCommand
 
                     (double lo, double hi) = r.SuccessCi;
                     string lvl = levelScan ? $" lvl {level,+5:+0.0;-0.0} dB" : "";
-                    Log($"  {kind,-4} {snr,6:+0.0;-0.0} dB{lvl}  ok {r.Successes,4}/{r.Trials}  "
+                    string cfoTag = cfos.Length > 1 || cfos[0] != 0 ? $" cfo {cfo,+6:+0.0;-0.0} Hz" : "";
+                    Log($"  {kind,-4} {snr,6:+0.0;-0.0} dB{lvl}{cfoTag}  ok {r.Successes,4}/{r.Trials}  "
                         + $"succ {r.SuccessRate,5:P0} [{lo:P0}..{hi:P0}]  "
                         + $"FER {r.Fer:0.000}  codedBER {Fmt(r.CodedBer)}  margin {r.Margin:0.0}");
+                    }
                 }
             }
 
@@ -150,14 +157,17 @@ internal static class SimCommand
     {
         Console.WriteLine();
         Console.WriteLine($"=== sim {mode} ({layer}) ===");
+        bool cfoScan = rows.Any(r => r.CfoHz != 0);
         string lvlHead = levelScan ? $" {"level",6}" : "";
-        Console.WriteLine($"{"channel",-7} {"SNR",6}{lvlHead} {"ok/N",9} {"succ%",6} {"95% CI",13} "
+        string cfoHead = cfoScan ? $" {"cfoHz",6}" : "";
+        Console.WriteLine($"{"channel",-7} {"SNR",6}{lvlHead}{cfoHead} {"ok/N",9} {"succ%",6} {"95% CI",13} "
             + $"{"FER",7} {"codedBER",10} {"margin",7}");
         foreach (SimPointResult r in rows)
         {
             (double lo, double hi) = r.SuccessCi;
             string lvl = levelScan ? $" {r.LevelDb,6:+0.0;-0.0}" : "";
-            Console.WriteLine($"{r.Channel,-7} {r.SnrDb,6:+0.0;-0.0}{lvl} {r.Successes,4}/{r.Trials,-4} "
+            string cfoCol = cfoScan ? $" {r.CfoHz,6:+0;-0;0}" : "";
+            Console.WriteLine($"{r.Channel,-7} {r.SnrDb,6:+0.0;-0.0}{lvl}{cfoCol} {r.Successes,4}/{r.Trials,-4} "
                 + $"{r.SuccessRate,6:P0} {$"{lo:P0}..{hi:P0}",13} {r.Fer,7:0.000} "
                 + $"{Fmt(r.CodedBer),10} {r.Margin,7:0.0}");
         }
@@ -194,14 +204,14 @@ internal static class SimCommand
         string path, int rate, SimLayer layer, int frameBytes, IReadOnlyList<SimPointResult> rows)
     {
         using var w = new StreamWriter(path);
-        w.WriteLine("mode,channel,layer,rate,frameBytes,snrDb,levelDb,trials,successes,successRate,"
+        w.WriteLine("mode,channel,layer,rate,frameBytes,snrDb,levelDb,cfoHz,trials,successes,successRate,"
             + "ciLo,ciHi,fer,codedBer,margin");
         foreach (SimPointResult r in rows)
         {
             (double lo, double hi) = r.SuccessCi;
             w.WriteLine(string.Join(',',
                 r.Mode, r.Channel, r.Layer, rate, frameBytes,
-                F(r.SnrDb), F(r.LevelDb), r.Trials, r.Successes, F(r.SuccessRate), F(lo), F(hi),
+                F(r.SnrDb), F(r.LevelDb), F(r.CfoHz), r.Trials, r.Successes, F(r.SuccessRate), F(lo), F(hi),
                 F(r.Fer), F(r.CodedBer), F(r.Margin)));
         }
     }
