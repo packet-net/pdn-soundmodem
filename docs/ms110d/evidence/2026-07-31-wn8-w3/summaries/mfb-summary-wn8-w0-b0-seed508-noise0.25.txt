@@ -1,0 +1,7 @@
+WN8 @ 23 dB baseSeed 508 worker 0 burst 0 (channelSeed 509) MFB
+trajectory noise rel=0.25: NMSE p0 -11.9 dB, p1 -12.3 dB
+model residual RMS(rebuilt-exact)/RMS(exact) = 6.129E-002 (envelope-LPF unmodelled; pessimistic)
+noise sigma2/sample 2.0514E-004; statistic noise predicted 5.8263E-003 vs measured 3.7116E-002
+MF slicer SER 7.055E-002 (12715/180224)
+MFB coded errors 316/540672 = 5.845E-004
+MFB coded errors per block: b0:29 b1:1 b2:35 b3:74 b4:0 b5:19 b6:140 b7:0 b8:4 b9:14 b10:0
