@@ -1,0 +1,37 @@
+14:56:39 battery start, HEAD=dd90121
+15:03:48 lane-C done awgn-wn0 rc=0
+15:04:50 lane-A done poor-wn5 rc=0
+15:04:52 lane-B done poord-wn5 rc=0
+15:10:30 lane-B done poord-wn6 rc=0
+15:10:30 lane-A done poor-wn6 rc=0
+16:05:32 lane-A done poor-wn2 rc=0
+16:05:41 lane-B done poord-wn2 rc=0
+16:07:47 lane-C done awgn-wn1 rc=0
+16:08:22 lane-A done poor-wn13 rc=0
+16:08:38 lane-B done poord-wn13 rc=0
+16:16:23 lane-A done poor-wn3 rc=0
+16:16:33 lane-B done poord-wn3 rc=0
+16:21:42 lane-A done poor-wn4 rc=0
+16:21:58 lane-B done poord-wn4 rc=0
+16:55:59 lane-C done awgn-wn2 rc=0
+17:09:03 lane-A done poor-wn1 rc=0
+17:09:13 lane-B done poord-wn1 rc=0
+17:12:21 lane-C done awgn-wn3 rc=0
+17:21:25 lane-C done awgn-wn4 rc=0
+17:23:27 lane-A done poor-wn0 rc=0
+17:23:45 lane-B done poord-wn0 rc=0
+17:27:25 lane-A done poor-wn8 rc=0
+17:27:37 lane-B done poord-wn8 rc=0
+17:28:39 lane-C done awgn-wn5 rc=0
+17:32:17 lane-C done awgn-wn6 rc=0
+17:34:44 lane-C done awgn-wn7 rc=0
+17:35:42 lane-C done awgn-wn8 rc=0
+17:36:33 lane-B done poord-wn7 rc=0
+17:36:33 lane-B LANE B COMPLETE
+17:37:45 lane-A done poor-wn7 rc=0
+17:37:45 lane-A LANE A COMPLETE
+17:39:54 lane-C done awgn-wn13 rc=0
+18:04:40 lane-C done static rc=0
+18:33:31 lane-C done doppler rc=0
+18:33:31 lane-C LANE C COMPLETE
+18:33:31 BATTERY COMPLETE
