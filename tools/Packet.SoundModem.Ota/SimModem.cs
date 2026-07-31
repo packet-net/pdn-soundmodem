@@ -26,6 +26,9 @@ namespace Packet.SoundModem.Ota;
 /// </remarks>
 internal sealed class SimModem
 {
+    /// <summary>Modem options (detector override etc.) applied to both directions.</summary>
+    public ModemOptions Options { get; init; }
+
     /// <summary>Builds the adapter for a catalogue mode.</summary>
     /// <param name="mode">A <see cref="ModemCatalog"/> mode string (e.g. <c>freedv-datac0</c>).</param>
     /// <param name="rate">DSP sample rate; defaults to <see cref="ModemCatalog.DspRateFor"/>. The
@@ -65,7 +68,7 @@ internal sealed class SimModem
     /// dilute the SNR calibration.</param>
     public float[] RenderBurst(ReadOnlySpan<byte> frame, int txDelayMilliseconds = 0)
     {
-        IModem tx = ModemCatalog.Create(Mode, Rate, static _ => { });
+        IModem tx = ModemCatalog.Create(Mode, Rate, static _ => { }, Options);
         float[] audio = tx.Modulate(frame, txDelayMilliseconds);
         return TrimSilence(audio);
     }
@@ -80,7 +83,7 @@ internal sealed class SimModem
     {
         var received = new List<byte[]>();
         int correctedBytes = 0;
-        IModem rx = ModemCatalog.Create(Mode, Rate, received.Add);
+        IModem rx = ModemCatalog.Create(Mode, Rate, received.Add, Options);
         rx.FrameDecoded += (frame, quality) =>
         {
             if (BytesEqual(frame, sentFrame) && quality.CorrectedBytes is int c)

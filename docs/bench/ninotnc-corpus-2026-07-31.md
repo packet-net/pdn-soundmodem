@@ -30,7 +30,7 @@ Three AX.25 UI frames (QST < M0LTE-1, PID F0), short/medium/long info fields (~7
 
 ## Decode provenance (QC)
 
-Every file was energy-segmented (all 3 bursts physically present) and decoded through pdn-soundmodem's paired catalog mode (`NinoCorpusQcTests`, report `nino-qc-final.txt`): **34/45 decode 3/3**. The 11 exceptions are pdn-soundmodem limitations on good captures, kept deliberately as interop test material: `qpsk600` copies almost nothing (0–1/3 — issue #11's mechanism, a ±5 Hz-class acquisition), `qpsk3600` copies 1–2/3 (under investigation), `c4fsk9600` needs ≥~250 ms TXDELAY (its detectors' known run-in floor — the txd50 file decodes 0/3, txd250 3/3), plus single-frame misses on `afsk300`@240 ms, `afsk1200-il2p`@120 ms, `bpsk1200`@500 ms.
+Every file was energy-segmented (all 3 bursts physically present) and decoded through pdn-soundmodem's paired catalog mode (`NinoCorpusQcTests`, report `nino-qc-final.txt`): **40/45 decode 3/3** (as of the 2026-07-31 QPSK detector default reversal — differential detection copies all nine QPSK files; under the earlier coherent default `qpsk600` copied 0–1/3 and `qpsk3600` 1–2/3, the diagnosis that drove the reversal). The 5 remaining exceptions are pdn-soundmodem limitations on good captures, kept deliberately as interop test material: `c4fsk9600` needs ≥~250 ms TXDELAY (its detectors' known run-in floor — the txd50 file decodes 0/3, txd250 3/3), plus single-frame misses on `afsk300`@240 ms, `afsk1200-il2p`@120 ms, `bpsk1200`@500 ms.
 
 ## TNC behaviours discovered during capture (N9600A4 v3.44)
 

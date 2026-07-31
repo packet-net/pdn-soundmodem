@@ -79,11 +79,18 @@ public class NinoCorpusQcTests
             Array.Copy(samples, padded, produced);
 
             var frames = new List<byte[]>();
-            IModem modem = ModemCatalog.Create(mode, rate, frames.Add);
+            ModemOptions options = Environment.GetEnvironmentVariable("NINO_CORPUS_DETECTOR") switch
+            {
+                "differential" => new ModemOptions(Detector: PskDetector.Differential),
+                "coherent" => new ModemOptions(Detector: PskDetector.Coherent),
+                _ => default,
+            };
+            IModem modem = ModemCatalog.Create(mode, rate, frames.Add, options);
             modem.Process(padded);
 
             string verdict = frames.Count == expected ? "OK " : "QC-FAIL";
-            report?.WriteLine($"{verdict} {name,-42} {mode,-16} frames {frames.Count}/{expected}");
+            string sizes = string.Join(",", frames.Select(f => f.Length));
+            report?.WriteLine($"{verdict} {name,-42} {mode,-16} frames {frames.Count}/{expected} sizes [{sizes}]");
             if (frames.Count != expected)
             {
                 failures.Add($"{name}: {mode} decoded {frames.Count}/{expected}");
