@@ -295,13 +295,19 @@ public sealed class Ms110dDemodulator
     /// burst ends). Passive — null (the default) changes nothing.</summary>
     internal Action<int, long[]>? InstrumentBlockReady { get; set; }
 
-    /// <summary>W5a instrument seam: the shipped CFO/timing-corrected T/2 ring read at
-    /// 2·chip + δ half-chip positions — the same read every shipped consumer uses.
-    /// Read-only; instrument use only.</summary>
-    internal Cf InstrumentReadT2(double halfChips)
+    /// <summary>The shipped CFO/timing-corrected T/2 ring read at 2·chip + δ half-chip
+    /// positions — used by the W5b2 MFB-form block decoder and the W5a instrument rig.
+    /// Read-only.</summary>
+    internal Cf RingReadT2(double halfChips)
     {
         return ReadT2(halfChips);
     }
+
+    /// <summary>Bridge for out-of-class shipped/instrument components (the MFB block
+    /// decoder) to emit <see cref="FrameDiagnostics"/> lines; null when nothing
+    /// listens, so callers can skip formatting entirely.</summary>
+    internal Action<string>? FrameDiagnosticsForInstruments =>
+        FrameDiagnostics is null ? null : line => FrameDiagnostics?.Invoke(line);
 
     /// <summary>W2 V-split: gauge fits per frame partition (1 = the W1 whole-frame fit,
     /// 2 = independent half-frame fits — prices within-frame gauge drift). Truth-pass
@@ -456,6 +462,8 @@ public sealed class Ms110dDemodulator
     /// zero total across a mask point proves the AGC was a strict no-op there (masks
     /// byte-identical); a nonzero count over real-RF Poor is the fix engaging.</summary>
     public int AgcResolves { get; private set; }
+
+    private Ms110dMfbBlockDecoder? _mfb; // W5b2: lazily built at the first QAM16 block
 
     /// <summary>Fires for every decoded input-data block.</summary>
     public event Action<Ms110dRxBlock>? BlockDecoded;
@@ -2484,6 +2492,34 @@ public sealed class Ms110dDemodulator
 
             _dfe.RestoreTraining();
         }
+        else if (_dfe is not null && _mode is not null &&
+            !_options.DisableTurbo &&
+            _mode.Modulation is Ms110dModulation.Qam16 &&
+            _blockFrameChips.Count == _il.Frames &&
+            BlockSamplesResident())
+        {
+            // W5b2 (wn8-program): the MFB-form block decoder — the measured successor
+            // to the §B3.4 QAM16 exclusion above. The whole detection stack is
+            // replaced for QAM16 blocks (composite-FIR probe anchors, per-burst
+            // delay-profile window, matched projection, soft/hard cancellation
+            // schedule with the gated decision-directed re-fit); no fixed point by
+            // the cap keeps the first-pass decode (the §B3.3 revert principle).
+            // Structural scoping: only QAM16 reaches this branch, so every other
+            // waveform's path is bit-identical by construction.
+            _mfb ??= new Ms110dMfbBlockDecoder(
+                _mode, _il, _code!, _puncture!, _interleaver!, _viterbi!, _siso!);
+            var firstPass = new byte[info.Length];
+            Array.Copy(info, firstPass, info.Length);
+            if (_mfb.DecodeBlock(this, _blockFrameChips, info))
+            {
+                TurboConverged++;
+            }
+            else
+            {
+                TurboReverted++;
+                Array.Copy(firstPass, info, info.Length);
+            }
+        }
         else
         {
             TurboSkipped++;
@@ -4437,6 +4473,11 @@ public sealed class Ms110dDemodulator
         _il = null;
         _dfe = null;
         _walsh = null;
+        // W5b2: the next burst may lock on the other propagation path — the MFB
+        // decoder's delay-profile window must be re-scanned per burst. The decoder
+        // itself is mode-shaped, so a mode change rebuilds it.
+        _mfb?.ResetBurst();
+        _mfb = null;
         _trackingInitialized = false;
         _blockLlrCount = 0;
         _blockIndex = 0;
