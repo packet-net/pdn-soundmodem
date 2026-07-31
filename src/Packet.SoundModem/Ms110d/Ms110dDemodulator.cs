@@ -289,6 +289,20 @@ public sealed class Ms110dDemodulator
     /// wire-order LLRs (buffer reused — copy to keep), and their Viterbi decode.</summary>
     internal event Action<int, float[], byte[]>? TruthBlockLlrs;
 
+    /// <summary>W5a instrument seam: fires in FinishBlock with the block index and the
+    /// block's frame-start chips while the block's samples are still resident, so a rig
+    /// can pull the ring spans it needs synchronously (the ring wraps long before a
+    /// burst ends). Passive — null (the default) changes nothing.</summary>
+    internal Action<int, long[]>? InstrumentBlockReady { get; set; }
+
+    /// <summary>W5a instrument seam: the shipped CFO/timing-corrected T/2 ring read at
+    /// 2·chip + δ half-chip positions — the same read every shipped consumer uses.
+    /// Read-only; instrument use only.</summary>
+    internal Cf InstrumentReadT2(double halfChips)
+    {
+        return ReadT2(halfChips);
+    }
+
     /// <summary>W2 V-split: gauge fits per frame partition (1 = the W1 whole-frame fit,
     /// 2 = independent half-frame fits — prices within-frame gauge drift). Truth-pass
     /// instrument knob only.</summary>
@@ -2538,6 +2552,14 @@ public sealed class Ms110dDemodulator
             }
 
             _dfe.RestoreTraining();
+        }
+
+        // W5a instrument seam (see InstrumentBlockReady) — after every shipped and
+        // instrument pass, while the block's samples are still resident.
+        if (InstrumentBlockReady is not null &&
+            _blockFrameChips.Count == _il.Frames && BlockSamplesResident())
+        {
+            InstrumentBlockReady.Invoke(_blockIndex, [.. _blockFrameChips]);
         }
 
         _blockLlrCount = 0;
