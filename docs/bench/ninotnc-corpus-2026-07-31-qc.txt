@@ -1,45 +1,45 @@
-OK  0000-9600gfsk-ax25-txd120ms.wav            fsk9600          frames 3/3
-OK  0000-9600gfsk-ax25-txd250ms.wav            fsk9600          frames 3/3
-OK  0000-9600gfsk-ax25-txd50ms.wav             fsk9600          frames 3/3
-OK  0001-19200c4fsk-il2pc-txd100ms.wav         c4fsk19200       frames 3/3
-OK  0001-19200c4fsk-il2pc-txd200ms.wav         c4fsk19200       frames 3/3
-OK  0001-19200c4fsk-il2pc-txd40ms.wav          c4fsk19200       frames 3/3
-OK  0010-9600gfsk-il2pc-txd120ms.wav           fsk9600-il2p     frames 3/3
-OK  0010-9600gfsk-il2pc-txd250ms.wav           fsk9600-il2p     frames 3/3
-OK  0010-9600gfsk-il2pc-txd50ms.wav            fsk9600-il2p     frames 3/3
-QC-FAIL 0011-9600c4fsk-il2pc-txd120ms.wav          c4fsk9600        frames 2/3
-OK  0011-9600c4fsk-il2pc-txd250ms.wav          c4fsk9600        frames 3/3
-QC-FAIL 0011-9600c4fsk-il2pc-txd50ms.wav           c4fsk9600        frames 0/3
-OK  0100-4800gfsk-il2pc-txd150ms.wav           fsk4800-il2p     frames 3/3
-OK  0100-4800gfsk-il2pc-txd300ms.wav           fsk4800-il2p     frames 3/3
-OK  0100-4800gfsk-il2pc-txd60ms.wav            fsk4800-il2p     frames 3/3
-QC-FAIL 0101-3600qpsk-il2pc-txd160ms.wav           qpsk3600         frames 1/3
-QC-FAIL 0101-3600qpsk-il2pc-txd300ms.wav           qpsk3600         frames 2/3
-QC-FAIL 0101-3600qpsk-il2pc-txd80ms.wav            qpsk3600         frames 1/3
-OK  0110-1200afsk-ax25-txd120ms.wav            afsk1200         frames 3/3
-OK  0110-1200afsk-ax25-txd240ms.wav            afsk1200         frames 3/3
-OK  0110-1200afsk-ax25-txd500ms.wav            afsk1200         frames 3/3
-QC-FAIL 0111-1200afsk-il2pc-txd120ms.wav           afsk1200-il2p    frames 2/3
-OK  0111-1200afsk-il2pc-txd240ms.wav           afsk1200-il2p    frames 3/3
-OK  0111-1200afsk-il2pc-txd500ms.wav           afsk1200-il2p    frames 3/3
-OK  1000-300bpsk-il2pc-txd1000ms.wav           bpsk300          frames 3/3
-OK  1000-300bpsk-il2pc-txd240ms.wav            bpsk300          frames 3/3
-OK  1000-300bpsk-il2pc-txd500ms.wav            bpsk300          frames 3/3
-QC-FAIL 1001-600qpsk-il2pc-txd160ms.wav            qpsk600          frames 0/3
-QC-FAIL 1001-600qpsk-il2pc-txd300ms.wav            qpsk600          frames 0/3
-QC-FAIL 1001-600qpsk-il2pc-txd600ms.wav            qpsk600          frames 1/3
-OK  1010-1200bpsk-il2pc-txd120ms.wav           bpsk1200         frames 3/3
-OK  1010-1200bpsk-il2pc-txd240ms.wav           bpsk1200         frames 3/3
-QC-FAIL 1010-1200bpsk-il2pc-txd500ms.wav           bpsk1200         frames 1/3
-OK  1011-2400qpsk-il2pc-txd100ms.wav           qpsk2400         frames 3/3
-OK  1011-2400qpsk-il2pc-txd200ms.wav           qpsk2400         frames 3/3
-OK  1011-2400qpsk-il2pc-txd400ms.wav           qpsk2400         frames 3/3
-OK  1100-300afsk-ax25-txd1000ms.wav            afsk300          frames 3/3
-QC-FAIL 1100-300afsk-ax25-txd240ms.wav             afsk300          frames 2/3
-OK  1100-300afsk-ax25-txd500ms.wav             afsk300          frames 3/3
-OK  1101-300afsk-il2p-txd1000ms.wav            afsk300-il2p     frames 3/3
-OK  1101-300afsk-il2p-txd240ms.wav             afsk300-il2p     frames 3/3
-OK  1101-300afsk-il2p-txd500ms.wav             afsk300-il2p     frames 3/3
-OK  1110-300afsk-il2pc-txd1000ms.wav           afsk300-il2pc    frames 3/3
-OK  1110-300afsk-il2pc-txd240ms.wav            afsk300-il2pc    frames 3/3
-OK  1110-300afsk-il2pc-txd500ms.wav            afsk300-il2pc    frames 3/3
+OK  0000-9600gfsk-ax25-txd120ms.wav            fsk9600          frames 3/3 sizes [86,142,267]
+OK  0000-9600gfsk-ax25-txd250ms.wav            fsk9600          frames 3/3 sizes [90,146,271]
+OK  0000-9600gfsk-ax25-txd50ms.wav             fsk9600          frames 3/3 sizes [87,143,268]
+OK  0001-19200c4fsk-il2pc-txd100ms.wav         c4fsk19200       frames 3/3 sizes [86,142,267]
+OK  0001-19200c4fsk-il2pc-txd200ms.wav         c4fsk19200       frames 3/3 sizes [90,146,271]
+OK  0001-19200c4fsk-il2pc-txd40ms.wav          c4fsk19200       frames 3/3 sizes [87,143,268]
+OK  0010-9600gfsk-il2pc-txd120ms.wav           fsk9600-il2p     frames 3/3 sizes [86,142,267]
+OK  0010-9600gfsk-il2pc-txd250ms.wav           fsk9600-il2p     frames 3/3 sizes [90,146,271]
+OK  0010-9600gfsk-il2pc-txd50ms.wav            fsk9600-il2p     frames 3/3 sizes [87,143,268]
+QC-FAIL 0011-9600c4fsk-il2pc-txd120ms.wav          c4fsk9600        frames 2/3 sizes [86,267]
+OK  0011-9600c4fsk-il2pc-txd250ms.wav          c4fsk9600        frames 3/3 sizes [90,146,271]
+QC-FAIL 0011-9600c4fsk-il2pc-txd50ms.wav           c4fsk9600        frames 0/3 sizes []
+OK  0100-4800gfsk-il2pc-txd150ms.wav           fsk4800-il2p     frames 3/3 sizes [86,142,267]
+OK  0100-4800gfsk-il2pc-txd300ms.wav           fsk4800-il2p     frames 3/3 sizes [90,146,271]
+OK  0100-4800gfsk-il2pc-txd60ms.wav            fsk4800-il2p     frames 3/3 sizes [87,143,268]
+OK  0101-3600qpsk-il2pc-txd160ms.wav           qpsk3600         frames 3/3 sizes [86,142,267]
+OK  0101-3600qpsk-il2pc-txd300ms.wav           qpsk3600         frames 3/3 sizes [90,146,271]
+OK  0101-3600qpsk-il2pc-txd80ms.wav            qpsk3600         frames 3/3 sizes [87,143,268]
+OK  0110-1200afsk-ax25-txd120ms.wav            afsk1200         frames 3/3 sizes [88,144,269]
+OK  0110-1200afsk-ax25-txd240ms.wav            afsk1200         frames 3/3 sizes [86,142,267]
+OK  0110-1200afsk-ax25-txd500ms.wav            afsk1200         frames 3/3 sizes [90,146,271]
+OK  0111-1200afsk-il2pc-txd120ms.wav           afsk1200-il2p    frames 3/3 sizes [88,144,269]
+OK  0111-1200afsk-il2pc-txd240ms.wav           afsk1200-il2p    frames 3/3 sizes [86,142,267]
+OK  0111-1200afsk-il2pc-txd500ms.wav           afsk1200-il2p    frames 3/3 sizes [90,146,271]
+OK  1000-300bpsk-il2pc-txd1000ms.wav           bpsk300          frames 3/3 sizes [91,147,272]
+OK  1000-300bpsk-il2pc-txd240ms.wav            bpsk300          frames 3/3 sizes [88,144,269]
+OK  1000-300bpsk-il2pc-txd500ms.wav            bpsk300          frames 3/3 sizes [86,142,267]
+OK  1001-600qpsk-il2pc-txd160ms.wav            qpsk600          frames 3/3 sizes [88,144,269]
+OK  1001-600qpsk-il2pc-txd300ms.wav            qpsk600          frames 3/3 sizes [86,142,267]
+OK  1001-600qpsk-il2pc-txd600ms.wav            qpsk600          frames 3/3 sizes [90,146,271]
+OK  1010-1200bpsk-il2pc-txd120ms.wav           bpsk1200         frames 3/3 sizes [88,144,269]
+OK  1010-1200bpsk-il2pc-txd240ms.wav           bpsk1200         frames 3/3 sizes [86,142,267]
+OK  1010-1200bpsk-il2pc-txd500ms.wav           bpsk1200         frames 3/3 sizes [90,146,271]
+OK  1011-2400qpsk-il2pc-txd100ms.wav           qpsk2400         frames 3/3 sizes [88,144,269]
+OK  1011-2400qpsk-il2pc-txd200ms.wav           qpsk2400         frames 3/3 sizes [86,142,267]
+OK  1011-2400qpsk-il2pc-txd400ms.wav           qpsk2400         frames 3/3 sizes [90,146,271]
+OK  1100-300afsk-ax25-txd1000ms.wav            afsk300          frames 3/3 sizes [91,147,202]
+OK  1100-300afsk-ax25-txd240ms.wav             afsk300          frames 3/3 sizes [88,144,199]
+OK  1100-300afsk-ax25-txd500ms.wav             afsk300          frames 3/3 sizes [86,142,197]
+OK  1101-300afsk-il2p-txd1000ms.wav            afsk300-il2p     frames 3/3 sizes [91,147,272]
+OK  1101-300afsk-il2p-txd240ms.wav             afsk300-il2p     frames 3/3 sizes [88,144,269]
+OK  1101-300afsk-il2p-txd500ms.wav             afsk300-il2p     frames 3/3 sizes [86,142,267]
+OK  1110-300afsk-il2pc-txd1000ms.wav           afsk300-il2pc    frames 3/3 sizes [91,147,272]
+OK  1110-300afsk-il2pc-txd240ms.wav            afsk300-il2pc    frames 3/3 sizes [88,144,269]
+OK  1110-300afsk-il2pc-txd500ms.wav            afsk300-il2pc    frames 3/3 sizes [86,142,267]
