@@ -20,7 +20,8 @@
     <PackageReference Include="M0LTE.Flex" Condition="'$(FlexSourcePath)' == ''" />
     <PackageReference Include="M0LTE.Radio.Audio" />
     <PackageReference Include="M0LTE.Fec" />
-    <PackageReference Include="M0LTE.Il2p" />
+    <!-- Same local-checkout override pattern as FlexSourcePath, for the IL2P codec. -->
+    <PackageReference Include="M0LTE.Il2p" Condition="'$(Il2pSourcePath)' == ''" />
     <PackageReference Include="M0LTE.Ardop" />
     <PackageReference Include="M0LTE.Pocsag" />
     <!-- DSP primitives, OFDM modem and LDPC codec, each lifted out into its own package. -->
@@ -31,6 +32,10 @@
 
   <ItemGroup Condition="'$(FlexSourcePath)' != ''">
     <ProjectReference Include="$(FlexSourcePath)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(Il2pSourcePath)' != ''">
+    <ProjectReference Include="$(Il2pSourcePath)" />
   </ItemGroup>
 
   <ItemGroup>

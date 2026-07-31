@@ -43,6 +43,25 @@ public sealed class C4fskModem : IModem
     private float _peakLow;
     private float _previousFiltered;
 
+    // Symbol-spaced 5-tap decision-directed equalizer over the decision-instant
+    // normalised values (NLMS, centre-tap identity start, decisions delayed two
+    // symbols). Real NinoTNC transmissions leave pattern-dependent ISI that a plain
+    // centre-sample slicer cannot survive: outer symbols squeezed by opposite-going
+    // neighbours sample at 0.53-0.67 normalised — under the 2/3 boundary — so whole
+    // frames die on payload content alone (2026-07-31 bench corpus: txd50 0/3 and
+    // txd120 2/3 from recordings whose levels/spectra/DC are indistinguishable from
+    // the txd250 capture that decodes clean; every error in the instrumented trace
+    // was an outer→inner demotion). With this equalizer the same nine bursts drop
+    // from 103 symbol errors to 25, and every burst's distinct-bad-byte count falls
+    // inside the RS 8-per-block budget. Adaptation is silence-safe because the
+    // energy gate already stops symbols flowing when the channel is idle.
+    private readonly float[] _ffeTaps = new float[FfeLength];
+    private readonly float[] _ffeHistory = new float[FfeLength];
+    private int _ffeCount;
+
+    private const int FfeLength = 5;
+    private const float FfeMu = 0.05f;
+
     /// <summary>
     /// MMDVM-TNC "Mode 2" sync, 4 bytes chosen to be outer-symbol-only: 0x5D 0x57 0xDF
     /// 0x7F. The deframer hunts 24 bits, so it takes the low three bytes; the first byte
@@ -101,6 +120,7 @@ public sealed class C4fskModem : IModem
 
         _upsample = sampleRate / symbolRate < 8 ? 2 : 1;
         _clockIncrement = (double)symbolRate / (sampleRate * _upsample);
+        ResetFfe();
     }
 
     /// <summary>Creates the 9600 bps mode — NinoTNC mode 3 (4800 sym/s, 10 kHz OBW).</summary>
@@ -144,10 +164,12 @@ public sealed class C4fskModem : IModem
             {
                 // Reset the deframer on the energy-gate falling edge: if it was
                 // mid-collection when the carrier stopped, abandon the phantom frame so
-                // the next burst's sync word is not consumed as payload.
+                // the next burst's sync word is not consumed as payload. The equalizer
+                // resets with it — its taps model the burst that just ended.
                 if (_previousEnergyBusy)
                 {
                     _deframer.Reset();
+                    ResetFfe();
                 }
 
                 _previousEnergyBusy = false;
@@ -173,29 +195,55 @@ public sealed class C4fskModem : IModem
                 float half = Math.Max((_peakHigh - _peakLow) * 0.5f, 1e-6f);
                 float normalised = (value - mid) / half;
 
-                int level = normalised switch
-                {
-                    < -2f / 3f => 0,
-                    < 0f => 1,
-                    < 2f / 3f => 2,
-                    _ => 3,
-                };
-
                 // Symbol clock. The shared BitDpll cannot be used as-is for 4-PAM: it
                 // nudges on EVERY level change, and an outer-to-outer transition sweeps
                 // through the inner thresholds mid-flight, injecting nudges half a symbol
                 // off — measured as total clock collapse (0 frames from a recording that
                 // decodes with 1 symbol error in 316 at a fixed phase). Only the middle
                 // threshold's crossings — sign changes — land at symbol boundaries, so
-                // only they steer the clock; the 4-level decision is sampled at the wrap.
+                // only they steer the clock; the 4-level decision is taken at the wrap,
+                // through the equalizer.
                 _clockPhase += _clockIncrement;
                 if (_clockPhase >= 0.5)
                 {
                     _clockPhase -= 1.0;
-                    int dibit = LevelToDibit[level];
-                    _deframer.PushBit((dibit >> 1) & 1);
-                    _deframer.PushBit(dibit & 1);
-                    _packetDcd.OnSymbol();
+
+                    for (int t = 0; t < FfeLength - 1; t++)
+                    {
+                        _ffeHistory[t] = _ffeHistory[t + 1];
+                    }
+
+                    _ffeHistory[FfeLength - 1] = normalised;
+                    if (++_ffeCount >= (FfeLength / 2) + 1)
+                    {
+                        float equalized = 0;
+                        float power = 1e-6f;
+                        for (int t = 0; t < FfeLength; t++)
+                        {
+                            equalized += _ffeTaps[t] * _ffeHistory[t];
+                            power += _ffeHistory[t] * _ffeHistory[t];
+                        }
+
+                        int level = equalized switch
+                        {
+                            < -2f / 3f => 0,
+                            < 0f => 1,
+                            < 2f / 3f => 2,
+                            _ => 3,
+                        };
+
+                        float target = level switch { 0 => -1f, 1 => -1f / 3f, 2 => 1f / 3f, _ => 1f };
+                        float step = FfeMu / power * (target - equalized);
+                        for (int t = 0; t < FfeLength; t++)
+                        {
+                            _ffeTaps[t] += step * _ffeHistory[t];
+                        }
+
+                        int dibit = LevelToDibit[level];
+                        _deframer.PushBit((dibit >> 1) & 1);
+                        _deframer.PushBit(dibit & 1);
+                        _packetDcd.OnSymbol();
+                    }
                 }
 
                 int sign = normalised > 0 ? 1 : 0;
@@ -279,6 +327,15 @@ public sealed class C4fskModem : IModem
         _peakHigh = 0;
         _peakLow = 0;
         _previousFiltered = 0;
+        ResetFfe();
+    }
+
+    private void ResetFfe()
+    {
+        Array.Clear(_ffeTaps);
+        Array.Clear(_ffeHistory);
+        _ffeTaps[FfeLength / 2] = 1;
+        _ffeCount = 0;
     }
 
     private static int[] BuildInverse()
