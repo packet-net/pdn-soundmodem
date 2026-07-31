@@ -153,7 +153,7 @@ public class Ms110dMfbFormReceiver
             var ring = new Cf[hcEnd - hc0];
             for (long hc = hc0; hc < hcEnd; hc++)
             {
-                ring[hc - hc0] = demod.InstrumentReadT2(hc);
+                ring[hc - hc0] = demod.RingReadT2(hc);
             }
 
             spans.Add((blockIndex, frameChips, hc0, ring));
