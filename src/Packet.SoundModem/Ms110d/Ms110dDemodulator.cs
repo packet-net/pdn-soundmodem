@@ -289,6 +289,17 @@ public sealed class Ms110dDemodulator
     /// wire-order LLRs (buffer reused — copy to keep), and their Viterbi decode.</summary>
     internal event Action<int, float[], byte[]>? TruthBlockLlrs;
 
+    /// <summary>W2 V-split: gauge fits per frame partition (1 = the W1 whole-frame fit,
+    /// 2 = independent half-frame fits — prices within-frame gauge drift). Truth-pass
+    /// instrument knob only.</summary>
+    internal int TruthGaugeSplit { get; set; } = 1;
+
+    /// <summary>W2 V-xtaps: adds cursor±1 tap pairs to the gauge basis (responses to
+    /// x[u+1]/x[u−1]), soft-cancelled from the observation before the chains exactly
+    /// like the straddle — the 16QAM re-measurement of the B3.7 beyond-model revival
+    /// condition. Truth-pass instrument knob only.</summary>
+    internal bool TruthGaugeXtaps { get; set; }
+
     /// <summary>§B3.5b WN0 genie-gain oracle (instrument,
     /// evidence/2026-07-26-phase-b35b-wn0genie): returns the TRUE transmitted di-bit for
     /// (blockIndex, symbolInBlock), or −1 for no-truth symbols (post-EOM), which fall
@@ -2571,19 +2582,20 @@ public sealed class Ms110dDemodulator
             : (float)(_genieNoiseSum / _genieNoiseCount);
     }
 
-    /// <summary>In-place Gaussian elimination with partial pivoting for the W1
-    /// truth-gauge normal equations (n ≤ 6, row-major 6-wide storage). The solution
+    /// <summary>In-place Gaussian elimination with partial pivoting for the W1/W2
+    /// truth-gauge normal equations (n ≤ 10, row-major 10-wide storage). The solution
     /// lands in <paramref name="b"/>; returns false on a singular system (the caller
     /// ridges the diagonal, so effectively never).</summary>
     private static bool SolveComplex(Span<Cf> a, Span<Cf> b, int n)
     {
+        const int stride = 10;
         for (int col = 0; col < n; col++)
         {
             int pivot = col;
-            float best = a[(col * 6) + col].Cnorm();
+            float best = a[(col * stride) + col].Cnorm();
             for (int r = col + 1; r < n; r++)
             {
-                float m = a[(r * 6) + col].Cnorm();
+                float m = a[(r * stride) + col].Cnorm();
                 if (m > best)
                 {
                     best = m;
@@ -2600,16 +2612,17 @@ public sealed class Ms110dDemodulator
             {
                 for (int c = col; c < n; c++)
                 {
-                    (a[(col * 6) + c], a[(pivot * 6) + c]) = (a[(pivot * 6) + c], a[(col * 6) + c]);
+                    (a[(col * stride) + c], a[(pivot * stride) + c]) =
+                        (a[(pivot * stride) + c], a[(col * stride) + c]);
                 }
 
                 (b[col], b[pivot]) = (b[pivot], b[col]);
             }
 
-            Cf inv = a[(col * 6) + col].Conj() * (1f / a[(col * 6) + col].Cnorm());
+            Cf inv = a[(col * stride) + col].Conj() * (1f / a[(col * stride) + col].Cnorm());
             for (int r = col + 1; r < n; r++)
             {
-                Cf factor = a[(r * 6) + col] * inv;
+                Cf factor = a[(r * stride) + col] * inv;
                 if (factor.Cnorm() == 0f)
                 {
                     continue;
@@ -2617,7 +2630,7 @@ public sealed class Ms110dDemodulator
 
                 for (int c = col; c < n; c++)
                 {
-                    a[(r * 6) + c] -= factor * a[(col * 6) + c];
+                    a[(r * stride) + c] -= factor * a[(col * stride) + c];
                 }
 
                 b[r] -= factor * b[col];
@@ -2629,10 +2642,10 @@ public sealed class Ms110dDemodulator
             Cf acc = b[r];
             for (int c = r + 1; c < n; c++)
             {
-                acc -= a[(r * 6) + c] * b[c];
+                acc -= a[(r * stride) + c] * b[c];
             }
 
-            Cf inv = a[(r * 6) + r].Conj() * (1f / a[(r * 6) + r].Cnorm());
+            Cf inv = a[(r * stride) + r].Conj() * (1f / a[(r * stride) + r].Cnorm());
             b[r] = acc * inv;
         }
 
@@ -3416,12 +3429,14 @@ public sealed class Ms110dDemodulator
         Span<int> segResidCount = stackalloc int[Segments];
         Span<float> segNv = stackalloc float[Segments];
         Span<float> segPrice = stackalloc float[Segments];
-        // W1 truth-gauge scratch (layout {a1,b1,a2,b2,a2b,b2b}; hoisted out of the frame
-        // loop for the stackalloc-in-loop rule). Zero cost when truthChannel is false.
-        Span<Cf> truthGauge = stackalloc Cf[6];
-        Span<Cf> truthPhi = stackalloc Cf[6];
-        Span<Cf> truthGram = stackalloc Cf[36];
-        Span<Cf> truthRhs = stackalloc Cf[6];
+        // W1/W2 truth-gauge scratch (slot layout {a1,b1, a2,b2, a2b,b2b, aPre,bPre,
+        // aPost,bPost}; two parts for the V-split variant; hoisted out of the frame loop
+        // for the stackalloc-in-loop rule). Zero cost when truthChannel is false.
+        Span<Cf> truthGauge = stackalloc Cf[20];
+        Span<Cf> truthPhi = stackalloc Cf[10];
+        Span<Cf> truthGram = stackalloc Cf[100];
+        Span<Cf> truthRhs = stackalloc Cf[10];
+        Span<int> truthSlots = stackalloc int[10];
         int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
         _blockLlrCount = 0;
         int tirFrames = 0;
@@ -3864,8 +3879,11 @@ public sealed class Ms110dDemodulator
             // call are the oracle path's own — the estimator's TIME MODEL is the only
             // delta, which is precisely the W1 registration's question.
             Cf[]? tg1 = null, tg2 = null;
+            Cf[]? truthFollow = null;
             bool truthFit = false;
             bool truthEcho = false;
+            bool truthXtaps = false;
+            int truthParts = 1;
             if (truthChannel && TruthGainsAtSample is not null)
             {
                 tg1 = new Cf[mode.U];
@@ -3875,65 +3893,107 @@ public sealed class Ms110dDemodulator
                     (tg1[u], tg2[u]) = TruthGainsAtSample(2.0 * PositionOfChip(frameChip + u));
                 }
 
-                // The unknowns pack densely from slot 0 — the straddle pair only ever
-                // exists alongside the echo pair (delay2 is TIR-branch-only), so the
-                // compact index and the gauge-layout slot coincide for every n.
                 truthEcho = segEcho || h2Avg.Cnorm() > 0f;
-                int n = 2 * (1 + (truthEcho ? 1 : 0) + (delay2 > 0 ? 1 : 0));
-                truthGram.Clear();
-                truthRhs.Clear();
-                truthPhi.Clear();
-                for (int u = 0; u < mode.U; u++)
+                truthXtaps = TruthGaugeXtaps;
+                truthParts = Math.Clamp(TruthGaugeSplit, 1, 2);
+                truthFollow = MiniProbe.Get(mode.K, boundary: (f + 2) % _il.Frames == 0);
+
+                // Compact unknown list → gauge slots; inactive slots stay zero so the
+                // assembly reads are branch-free on the layout.
+                int n = 0;
+                truthSlots[n++] = 0;
+                truthSlots[n++] = 1;
+                if (truthEcho)
                 {
-                    truthPhi[0] = tg1[u] * expected[u];
-                    truthPhi[1] = tg2[u] * expected[u];
-                    if (truthEcho)
-                    {
-                        Cf src = u >= delay
-                            ? expected[u - delay]
-                            : precedingProbe[(mode.K - delay) + u];
-                        truthPhi[2] = tg1[u] * src;
-                        truthPhi[3] = tg2[u] * src;
-                    }
+                    truthSlots[n++] = 2;
+                    truthSlots[n++] = 3;
+                }
 
-                    if (delay2 > 0)
-                    {
-                        Cf srcB = u >= delay2
-                            ? expected[u - delay2]
-                            : precedingProbe[mode.K + (u - delay2)];
-                        truthPhi[4] = tg1[u] * srcB;
-                        truthPhi[5] = tg2[u] * srcB;
-                    }
+                if (delay2 > 0)
+                {
+                    truthSlots[n++] = 4;
+                    truthSlots[n++] = 5;
+                }
 
-                    for (int i = 0; i < n; i++)
+                if (truthXtaps)
+                {
+                    truthSlots[n++] = 6;
+                    truthSlots[n++] = 7;
+                    truthSlots[n++] = 8;
+                    truthSlots[n++] = 9;
+                }
+
+                truthGauge.Clear();
+                truthFit = true;
+                for (int part = 0; part < truthParts; part++)
+                {
+                    int uStart = part * mode.U / truthParts;
+                    int uEnd = (part + 1) * mode.U / truthParts;
+                    truthGram.Clear();
+                    truthRhs.Clear();
+                    for (int u = uStart; u < uEnd; u++)
                     {
-                        truthRhs[i] += truthPhi[i].Conj() * estWire[u];
-                        for (int j = 0; j < n; j++)
+                        truthPhi.Clear();
+                        truthPhi[0] = tg1[u] * expected[u];
+                        truthPhi[1] = tg2[u] * expected[u];
+                        if (truthEcho)
                         {
-                            truthGram[(i * 6) + j] += truthPhi[i].Conj() * truthPhi[j];
+                            Cf src = u >= delay
+                                ? expected[u - delay]
+                                : precedingProbe[(mode.K - delay) + u];
+                            truthPhi[2] = tg1[u] * src;
+                            truthPhi[3] = tg2[u] * src;
+                        }
+
+                        if (delay2 > 0)
+                        {
+                            Cf srcB = u >= delay2
+                                ? expected[u - delay2]
+                                : precedingProbe[mode.K + (u - delay2)];
+                            truthPhi[4] = tg1[u] * srcB;
+                            truthPhi[5] = tg2[u] * srcB;
+                        }
+
+                        if (truthXtaps)
+                        {
+                            Cf pre = u + 1 < mode.U ? expected[u + 1] : truthFollow[0];
+                            Cf post = u >= 1 ? expected[u - 1] : precedingProbe[mode.K - 1];
+                            truthPhi[6] = tg1[u] * pre;
+                            truthPhi[7] = tg2[u] * pre;
+                            truthPhi[8] = tg1[u] * post;
+                            truthPhi[9] = tg2[u] * post;
+                        }
+
+                        for (int i = 0; i < n; i++)
+                        {
+                            Cf pi = truthPhi[truthSlots[i]].Conj();
+                            truthRhs[i] += pi * estWire[u];
+                            for (int j = 0; j < n; j++)
+                            {
+                                truthGram[(i * 10) + j] += pi * truthPhi[truthSlots[j]];
+                            }
                         }
                     }
-                }
 
-                float ridge = 0f;
-                for (int i = 0; i < n; i++)
-                {
-                    ridge += truthGram[(i * 6) + i].Re;
-                }
-
-                ridge = Math.Max(1e-6f, 1e-4f * ridge / n);
-                for (int i = 0; i < n; i++)
-                {
-                    truthGram[(i * 6) + i] += new Cf(ridge, 0f);
-                }
-
-                truthFit = SolveComplex(truthGram, truthRhs, n);
-                truthGauge.Clear();
-                if (truthFit)
-                {
+                    float ridge = 0f;
                     for (int i = 0; i < n; i++)
                     {
-                        truthGauge[i] = truthRhs[i];
+                        ridge += truthGram[(i * 10) + i].Re;
+                    }
+
+                    ridge = Math.Max(1e-6f, 1e-4f * ridge / n);
+                    for (int i = 0; i < n; i++)
+                    {
+                        truthGram[(i * 10) + i] += new Cf(ridge, 0f);
+                    }
+
+                    truthFit &= SolveComplex(truthGram, truthRhs, n);
+                    if (truthFit)
+                    {
+                        for (int i = 0; i < n; i++)
+                        {
+                            truthGauge[(part * 10) + truthSlots[i]] = truthRhs[i];
+                        }
                     }
                 }
 
@@ -3942,13 +4002,15 @@ public sealed class Ms110dDemodulator
                     float fitResid = 0f;
                     for (int u = 0; u < mode.U; u++)
                     {
-                        Cf model = ((truthGauge[0] * tg1[u]) + (truthGauge[1] * tg2[u])) * expected[u];
+                        Span<Cf> tp = truthGauge.Slice(
+                            truthParts == 2 && u >= mode.U / 2 ? 10 : 0, 10);
+                        Cf model = ((tp[0] * tg1[u]) + (tp[1] * tg2[u])) * expected[u];
                         if (truthEcho)
                         {
                             Cf src = u >= delay
                                 ? expected[u - delay]
                                 : precedingProbe[(mode.K - delay) + u];
-                            model += ((truthGauge[2] * tg1[u]) + (truthGauge[3] * tg2[u])) * src;
+                            model += ((tp[2] * tg1[u]) + (tp[3] * tg2[u])) * src;
                         }
 
                         if (delay2 > 0)
@@ -3956,7 +4018,15 @@ public sealed class Ms110dDemodulator
                             Cf srcB = u >= delay2
                                 ? expected[u - delay2]
                                 : precedingProbe[mode.K + (u - delay2)];
-                            model += ((truthGauge[4] * tg1[u]) + (truthGauge[5] * tg2[u])) * srcB;
+                            model += ((tp[4] * tg1[u]) + (tp[5] * tg2[u])) * srcB;
+                        }
+
+                        if (truthXtaps)
+                        {
+                            Cf pre = u + 1 < mode.U ? expected[u + 1] : truthFollow[0];
+                            Cf post = u >= 1 ? expected[u - 1] : precedingProbe[mode.K - 1];
+                            model += ((tp[6] * tg1[u]) + (tp[7] * tg2[u])) * pre;
+                            model += ((tp[8] * tg1[u]) + (tp[9] * tg2[u])) * post;
                         }
 
                         fitResid += (estWire[u] - model).Cnorm();
@@ -3964,11 +4034,9 @@ public sealed class Ms110dDemodulator
 
                     FrameDiagnostics.Invoke(
                         FormattableString.Invariant(
-                            $"truth-frame b{_blockIndex} f{f}: lag={delay} lag2={delay2} rms={0.5f * fitResid / mode.U:E3}") +
+                            $"truth-frame b{_blockIndex} f{f}: lag={delay} lag2={delay2} split={truthParts} xtaps={(truthXtaps ? 1 : 0)} rms={0.5f * fitResid / mode.U:E3}") +
                         FormattableString.Invariant(
-                            $" a1={truthGauge[0].Abs():F4} b1={truthGauge[1].Abs():F4} a2={truthGauge[2].Abs():F4}") +
-                        FormattableString.Invariant(
-                            $" b2={truthGauge[3].Abs():F4} a2b={truthGauge[4].Abs():F4} b2b={truthGauge[5].Abs():F4}"));
+                            $" a1={truthGauge[0].Abs():F4} b1={truthGauge[1].Abs():F4} a2={truthGauge[2].Abs():F4} b2={truthGauge[3].Abs():F4}"));
                 }
             }
 
@@ -4032,10 +4100,13 @@ public sealed class Ms110dDemodulator
                     : h2Avg;
                 if (truthFit)
                 {
-                    // W1: the truth-gauge model replaces the segment interpolation —
-                    // same taps, per-symbol-exact time variation.
-                    h1u = (truthGauge[0] * tg1![u]) + (truthGauge[1] * tg2![u]);
-                    h2u = truthEcho ? (truthGauge[2] * tg1[u]) + (truthGauge[3] * tg2[u]) : Cf.Zero;
+                    // W1/W2: the truth-gauge model replaces the segment interpolation —
+                    // same taps, per-symbol-exact time variation (part-selected for the
+                    // V-split variant).
+                    Span<Cf> tp = truthGauge.Slice(
+                        truthParts == 2 && u >= mode.U / 2 ? 10 : 0, 10);
+                    h1u = (tp[0] * tg1![u]) + (tp[1] * tg2![u]);
+                    h2u = truthEcho ? (tp[2] * tg1[u]) + (tp[3] * tg2[u]) : Cf.Zero;
                 }
 
                 // §B3.3 straddle pair: soft-cancel the adjacent-lag component before the
@@ -4048,11 +4119,25 @@ public sealed class Ms110dDemodulator
                     Cf h2bu = ia == ib ? segH2b[ia] : (segH2b[ia] * (1f - t)) + (segH2b[ib] * t);
                     if (truthFit)
                     {
-                        h2bu = (truthGauge[4] * tg1![u]) + (truthGauge[5] * tg2![u]);
+                        Span<Cf> tpb = truthGauge.Slice(
+                            truthParts == 2 && u >= mode.U / 2 ? 10 : 0, 10);
+                        h2bu = (tpb[4] * tg1![u]) + (tpb[5] * tg2![u]);
                     }
 
                     Cf srcB = u >= delay2 ? expected[u - delay2] : precedingProbe[mode.K + (u - delay2)];
                     rxWire[u] -= h2bu * srcB;
+                }
+
+                // W2 V-xtaps: exact cancellation of the fitted cursor±1 components,
+                // the same pattern as the straddle above.
+                if (truthFit && truthXtaps)
+                {
+                    Span<Cf> tpx = truthGauge.Slice(
+                        truthParts == 2 && u >= mode.U / 2 ? 10 : 0, 10);
+                    Cf pre = u + 1 < mode.U ? expected[u + 1] : truthFollow![0];
+                    Cf post = u >= 1 ? expected[u - 1] : precedingProbe[mode.K - 1];
+                    rxWire[u] -= (((tpx[6] * tg1![u]) + (tpx[7] * tg2![u])) * pre)
+                        + (((tpx[8] * tg1[u]) + (tpx[9] * tg2[u])) * post);
                 }
 
                 h1Span[u] = h1u;

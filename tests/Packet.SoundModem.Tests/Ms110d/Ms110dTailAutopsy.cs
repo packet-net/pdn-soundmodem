@@ -399,9 +399,18 @@ public class Ms110dTailAutopsy
         {
             IReadOnlyList<Cf[]> pathGains = channel.LastPathGains
                 ?? throw new InvalidOperationException("channel gains were not recorded");
+
+            // W2 variants: V-offset shifts the truth lookup by a constant (the
+            // front-end group-delay scan); V-split/V-xtaps are demod-side gauge knobs.
+            double truthOffset = double.TryParse(
+                Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TRUTH_OFFSET"),
+                NumberStyles.Float, CultureInfo.InvariantCulture, out double to) ? to : 0.0;
+            demod.TruthGaugeSplit = EnvInt("MS110D_AUTOPSY_TRUTH_SPLIT", 1);
+            demod.TruthGaugeXtaps =
+                Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TRUTH_XTAPS") == "1";
             demod.TruthGainsAtSample = pos =>
             {
-                double x = (pos - 2400.0) / 100.0;
+                double x = (pos - 2400.0 + truthOffset) / 100.0;
                 return (InterpGain(pathGains[0], x), InterpGain(pathGains[1], x));
             };
             demod.TruthBlockLlrs += (blockIndex, llrs, dec) =>
