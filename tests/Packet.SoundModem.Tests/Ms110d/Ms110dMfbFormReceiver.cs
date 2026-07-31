@@ -53,6 +53,32 @@ public class Ms110dMfbFormReceiver
         int worker = EnvInt("MS110D_MFBRX_WORKER", 0);
         int burst = EnvInt("MS110D_MFBRX_BURST", 0);
         int iters = EnvInt("MS110D_MFBRX_ITERS", 3);
+        bool soft = Environment.GetEnvironmentVariable("MS110D_MFBRX_SOFT") == "1";
+        // Schedule variant: soft cancellation for rungs < SOFTUNTIL, hard after — soft's
+        // fast wide-basin descent handing over to hard's exact fixed-point tail.
+        int softUntil = EnvInt("MS110D_MFBRX_SOFTUNTIL", soft ? int.MaxValue : 0);
+        // Decision-directed anchor re-fit: mid-frame anchors fitted on decision rows
+        // (E[x]) triple the anchor density, attacking the trajectory-interpolation
+        // error through deep fades — "oracle-grade as labels improve", label-free by
+        // construction (its labels are the loop's own). MS110D_MFBRX_REFITAT is a
+        // comma list of rungs (default: the soft→hard handover when REFIT=1).
+        bool refit = Environment.GetEnvironmentVariable("MS110D_MFBRX_REFIT") == "1";
+        var refitRungs = new HashSet<int>();
+        string? refitAt = Environment.GetEnvironmentVariable("MS110D_MFBRX_REFITAT");
+        if (refitAt is not null)
+        {
+            foreach (string part in refitAt.Split(','))
+            {
+                if (int.TryParse(part, out int rr))
+                {
+                    refitRungs.Add(rr);
+                }
+            }
+        }
+        else if (refit)
+        {
+            refitRungs.Add(softUntil);
+        }
         string outDir = Environment.GetEnvironmentVariable("MS110D_MFBRX_OUT") ?? ".";
 
         // Bit-exact corpse reconstruction (the banked construction).
@@ -238,6 +264,12 @@ public class Ms110dMfbFormReceiver
 
         var rungTotals = new long[iters + 1];
         Span<double> metric = stackalloc double[16];
+        Span<double> p0 = stackalloc double[4];
+        var siso = new TailBitingSisoDecoder(code);
+        var softPunctured = new float[il.SizeBits];
+        var softMother = new float[2 * il.InputBits];
+        var softMotherPost = new float[2 * il.InputBits];
+        var softWire = new float[il.SizeBits];
         var truthResidBlocks = new List<string>();
         var anchorResidBlocks = new List<string>();
         var rungLines = new List<string>[iters + 1];
@@ -505,10 +537,91 @@ public class Ms110dMfbFormReceiver
             // --- The detection rung ladder -----------------------------------------
             var llrs = new float[il.SizeBits];
             var dec = new byte[il.InputBits];
+            var probeAnchorChip = anchorChip.ToList();
+            var probeAnchorH = anchorH.ToList();
             Complex[]? decisions = null; // wire-symbol assignment from the last decode
 
             for (int rung = 0; rung <= iters; rung++)
             {
+                if (refitRungs.Contains(rung) && decisions is not null)
+                {
+                    // Two mid-frame decision anchors per frame ([16,112) and [144,240)
+                    // chips in), fitted on rows whose every source is a decided data
+                    // chip — the anchor grid triples and the interpolation gap through
+                    // deep fades drops from ~120 ms to ~40 ms. Each refit rebuilds from
+                    // the probe anchors so repeated refits replace, not accumulate.
+                    anchorChip = probeAnchorChip.ToList();
+                    anchorH = probeAnchorH.ToList();
+                    var phiRow = new Complex[lLen];
+                    for (int f2 = 0; f2 < frames; f2++)
+                    {
+                        for (int half = 0; half < 2; half++)
+                        {
+                            long start = frameChips[f2] + 16 + (half * 128);
+                            long end = start + 96;
+                            Array.Clear(rhs);
+                            for (int i = 0; i < lLen; i++)
+                            {
+                                for (int j = 0; j < lLen; j++)
+                                {
+                                    gram[i, j] = Complex.Zero;
+                                }
+                            }
+
+                            for (long hc = (2 * start) + lMax; hc < (2 * end) + lMin; hc++)
+                            {
+                                Complex rowV = ring[hc - hc0];
+                                for (int i = 0; i < lLen; i++)
+                                {
+                                    long src = hc - (lMin + i);
+                                    if ((src & 1) != 0)
+                                    {
+                                        phiRow[i] = Complex.Zero;
+                                        continue;
+                                    }
+
+                                    long c = src / 2;
+                                    long rel = ((long)f2 * u256) + (c - frameChips[f2]);
+                                    phiRow[i] = decisions[rel];
+                                }
+
+                                for (int i = 0; i < lLen; i++)
+                                {
+                                    Complex pi = Complex.Conjugate(phiRow[i]);
+                                    rhs[i] += pi * rowV;
+                                    for (int j = 0; j < lLen; j++)
+                                    {
+                                        gram[i, j] += pi * phiRow[j];
+                                    }
+                                }
+                            }
+
+                            double trace2 = 0;
+                            for (int i = 0; i < lLen; i++)
+                            {
+                                trace2 += gram[i, i].Real;
+                            }
+
+                            double ridge2 = Math.Max(1e-9, 1e-3 * trace2 / lLen);
+                            for (int i = 0; i < lLen; i++)
+                            {
+                                gram[i, i] += ridge2;
+                            }
+
+                            var h2 = (Complex[])rhs.Clone();
+                            if (SolveHermitian(gram, h2))
+                            {
+                                anchorChip.Add((start + end) / 2.0);
+                                anchorH.Add(h2);
+                            }
+                        }
+                    }
+
+                    var merged = anchorChip.Zip(anchorH).OrderBy(t => t.First).ToList();
+                    anchorChip = merged.Select(t => t.First).ToList();
+                    anchorH = merged.Select(t => t.Second).ToList();
+                }
+
                 Complex[]? recon = decisions is null ? null : Reconstruct(decisions);
                 double sigma2;
                 if (recon is null)
@@ -619,19 +732,61 @@ public class Ms110dMfbFormReceiver
                 rungTotals[rung] += errs;
                 rungLines[rung].Add($"b{b}:{errs}");
 
-                // Re-encode the decode as the next rung's cancellation assignment.
-                byte[] reFetched = Ms110dFraming.EncodeBlock(code, puncture, interleaver, dec);
-                decisions = new Complex[frames * u256];
-                int rbit = 0;
-                for (int f = 0; f < frames; f++)
+                if (rung < softUntil)
                 {
-                    for (int u = 0; u < u256; u++)
+                    // W5b1 soft cancellation: SISO per-bit posteriors → per-symbol E[x]
+                    // (independent-bit approximation over the 16 numbers, nib-permuted).
+                    // Wrong decisions self-attenuate toward zero in the reconstruction —
+                    // the B3.3 lesson in this architecture. The hard decode above still
+                    // scores and detects convergence.
+                    interleaver.Deinterleave(llrs, softPunctured);
+                    Ms110dPuncture.Depuncture(puncture, softPunctured, softMother);
+                    siso.Decode(softMother, softMotherPost);
+                    Ms110dPuncture.Apply(puncture, softMotherPost, softPunctured);
+                    interleaver.Interleave(softPunctured, softWire);
+                    decisions = new Complex[frames * u256];
+                    for (int d = 0; d < decisions.Length; d++)
                     {
-                        int number = (reFetched[rbit] << 3) | (reFetched[rbit + 1] << 2)
-                            | (reFetched[rbit + 2] << 1) | reFetched[rbit + 3];
-                        rbit += 4;
-                        Cf w = Ms110dTables.Qam16[number ^ nibs[u]];
-                        decisions[(f * u256) + u] = new Complex(w.Re, w.Im);
+                        int u = d % u256;
+                        for (int bb = 0; bb < 4; bb++)
+                        {
+                            double l = Math.Clamp(softWire[(d * 4) + bb], -30f, 30f);
+                            p0[bb] = 1.0 / (1.0 + Math.Exp(-l)); // positive ⇒ bit 0
+                        }
+
+                        Complex ex = Complex.Zero;
+                        for (int m = 0; m < 16; m++)
+                        {
+                            double pm = 1.0;
+                            for (int bb = 0; bb < 4; bb++)
+                            {
+                                bool one = ((m >> (3 - bb)) & 1) != 0;
+                                pm *= one ? 1.0 - p0[bb] : p0[bb];
+                            }
+
+                            Cf w = Ms110dTables.Qam16[m ^ nibs[u]];
+                            ex += pm * new Complex(w.Re, w.Im);
+                        }
+
+                        decisions[d] = ex;
+                    }
+                }
+                else
+                {
+                    // Re-encode the decode as the next rung's cancellation assignment.
+                    byte[] reFetched = Ms110dFraming.EncodeBlock(code, puncture, interleaver, dec);
+                    decisions = new Complex[frames * u256];
+                    int rbit = 0;
+                    for (int f = 0; f < frames; f++)
+                    {
+                        for (int u = 0; u < u256; u++)
+                        {
+                            int number = (reFetched[rbit] << 3) | (reFetched[rbit + 1] << 2)
+                                | (reFetched[rbit + 2] << 1) | reFetched[rbit + 3];
+                            rbit += 4;
+                            Cf w = Ms110dTables.Qam16[number ^ nibs[u]];
+                            decisions[(f * u256) + u] = new Complex(w.Re, w.Im);
+                        }
                     }
                 }
             }
