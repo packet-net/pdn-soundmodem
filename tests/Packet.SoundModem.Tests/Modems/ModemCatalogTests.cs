@@ -61,10 +61,12 @@ public class ModemCatalogTests
     [Theory]
     [InlineData("bpsk300", PskDetector.Differential)]
     [InlineData("bpsk1200", PskDetector.Differential)]
-    [InlineData("qpsk600", PskDetector.Coherent)]
-    [InlineData("qpsk3600", PskDetector.Coherent)]
-    public void DefaultDetectorFor_Is_Differential_For_Bpsk_Coherent_For_Qpsk(string mode, PskDetector expected)
+    [InlineData("qpsk600", PskDetector.Differential)]
+    [InlineData("qpsk3600", PskDetector.Differential)]
+    public void DefaultDetectorFor_Is_Differential_For_Every_Psk_Family(string mode, PskDetector expected)
     {
+        // BPSK reversed 2026-07-18 (#40/#42); QPSK followed 2026-07-31 on the studybox
+        // NinoTNC corpus — see DefaultDetectorFor's provenance comment.
         ModemCatalog.DefaultDetectorFor(mode).Should().Be(expected);
     }
 

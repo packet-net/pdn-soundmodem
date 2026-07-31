@@ -62,12 +62,17 @@ public static class ModemCatalog
         || mode.StartsWith("qpsk", StringComparison.Ordinal);
 
     /// <summary>
-    /// The default PSK detector for a mode when the caller does not override it: BPSK differential
-    /// (measured best on real off-air HF), QPSK coherent (V.26A interop validated coherent). Only
-    /// meaningful for the <c>bpsk*</c>/<c>qpsk*</c> modes.
+    /// The default PSK detector for a mode when the caller does not override it: differential for
+    /// every PSK family. BPSK reversed to differential 2026-07-18 (issues #40/#42 — coherent's
+    /// narrow Costas loop cannot acquire real carriers); QPSK followed 2026-07-31 on the studybox
+    /// NinoTNC corpus: coherent copied 0–2 of 3 real NinoTNC frames per capture even on a wired
+    /// audio loop (knife-edge timing over multi-second bursts, ±5–8 Hz CFO walls — issues #11/#116/
+    /// #144), while differential — V.26A is differentially encoded by construction — copies 9/9
+    /// QPSK corpus files and widens the CFO half-widths ×4–7, for 0.4–3.5 dB at the AWGN knee
+    /// (`docs/bench/ninotnc-corpus-2026-07-31.md`, `docs/cfo/evidence/`). Coherent remains
+    /// selectable via <see cref="ModemOptions.Detector"/>.
     /// </summary>
-    public static PskDetector DefaultDetectorFor(string mode) =>
-        mode.StartsWith("qpsk", StringComparison.Ordinal) ? PskDetector.Coherent : PskDetector.Differential;
+    public static PskDetector DefaultDetectorFor(string mode) => PskDetector.Differential;
 
     /// <summary>
     /// Builds the modem for <paramref name="mode"/> at <paramref name="dspRate"/>, delivering decoded
