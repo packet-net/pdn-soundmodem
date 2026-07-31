@@ -166,6 +166,19 @@ public class Ms110dTailAutopsy
 
         bool oracle = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_ORACLE") == "1";
 
+        // W1 (wn8-program) true-channel injection: the oracle-pass structure with the
+        // channel's time variation from recorded Watterson truth instead of the
+        // label-trained segment anchors (Ms110dDemodulator.TruthGainsAtSample). Implies
+        // the oracle pass — the two bounds land side by side on every block.
+        bool truth = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TRUTH") == "1";
+        if (truth && clean)
+        {
+            throw new InvalidOperationException(
+                "MS110D_AUTOPSY_TRUTH needs a channel (unset MS110D_AUTOPSY_CLEAN)");
+        }
+
+        oracle |= truth;
+
         // §B3.5b WN0 genie-gain oracle: "inst" | "pole" (evidence/2026-07-26-phase-
         // b35b-wn0genie). Implies genie feeding — the truth gains are read from the
         // clean stream.
@@ -188,7 +201,7 @@ public class Ms110dTailAutopsy
         }
 
         string tag = $"wn{wn}-w{worker}-b{burst}{(clean ? "-clean" : "")}" +
-            $"{(genie ? "-genie" : "")}{(oracle ? "-oracle" : "")}" +
+            $"{(genie ? "-genie" : "")}{(oracle ? "-oracle" : "")}{(truth ? "-truth" : "")}" +
             $"{(walshOracle is null ? "" : $"-wgo{walshOracle}")}" +
             $"{(turboPerturb is null ? "" : $"-tp{turboPerturb.Replace(',', '-')}")}" +
             $"{(turboFrozen ? "-tfz" : "")}{(turboSeedFile is null ? "" : "-tsd")}";
@@ -372,6 +385,40 @@ public class Ms110dTailAutopsy
                 }
 
                 oracleBlockErrs.Add($"b{blockIndex}:{errs}");
+            };
+        }
+
+        // W1 truth wiring: the rig owns lead-in/gain-rate alignment (input sample →
+        // channel-span position → 96 Hz trajectory index, linearly interpolated — the
+        // same interpolation the channel itself applied between gain samples); the demod
+        // owns chip→sample. The constant RX front-end group delay is deliberately NOT
+        // compensated: a few ms against a 1 Hz fade is a sub-percent trajectory error,
+        // priced into the fit residual (W1 registration).
+        var truthBlockErrs = new List<string>();
+        if (truth)
+        {
+            IReadOnlyList<Cf[]> pathGains = channel.LastPathGains
+                ?? throw new InvalidOperationException("channel gains were not recorded");
+            demod.TruthGainsAtSample = pos =>
+            {
+                double x = (pos - 2400.0) / 100.0;
+                return (InterpGain(pathGains[0], x), InterpGain(pathGains[1], x));
+            };
+            demod.TruthBlockLlrs += (blockIndex, llrs, dec) =>
+            {
+                WriteLlrStats("truth", blockIndex, llrs);
+                if (blockIndex >= txBlocks)
+                {
+                    return;
+                }
+
+                int errs = 0;
+                for (int i = 0; i < dec.Length; i++)
+                {
+                    errs += dec[i] != txBits[(blockIndex * il.InputBits) + i] ? 1 : 0;
+                }
+
+                truthBlockErrs.Add($"b{blockIndex}:{errs}");
             };
         }
 
@@ -566,6 +613,7 @@ public class Ms110dTailAutopsy
             $"first-decode errors per block: {string.Join(" ", firstDecodeErrs)}\n" +
             $"final-decode errors per block: {string.Join(" ", finalDecodeErrs)}\n" +
             (oracle ? $"oracle coded errors per block: {string.Join(" ", oracleBlockErrs)}\n" : "") +
+            (truth ? $"truth coded errors per block: {string.Join(" ", truthBlockErrs)}\n" : "") +
             (turboFrozen ? $"frozen coded errors per block: {string.Join(" ", frozenBlockErrs)}\n" : ""));
         if (turboFrozen)
         {
@@ -576,5 +624,22 @@ public class Ms110dTailAutopsy
         }
         decoded.Count.Should().BeGreaterThan(0,
             "the corpse must at least acquire for the dump to mean anything");
+    }
+
+    /// <summary>Truth-gain lookup at a fractional 96 Hz trajectory index — linear
+    /// interpolation matching the channel's own gain application; endpoints clamped
+    /// (only ever reached by lead-in/lead-out positions no data chip maps to).</summary>
+    private static Cf InterpGain(Cf[] trajectory, double x)
+    {
+        if (trajectory.Length == 1)
+        {
+            return trajectory[0]; // static path: a single recorded constant
+        }
+
+        double clamped = Math.Clamp(x, 0, trajectory.Length - 1);
+        int i0 = (int)clamped;
+        int i1 = Math.Min(trajectory.Length - 1, i0 + 1);
+        float frac = (float)(clamped - i0);
+        return (trajectory[i0] * (1f - frac)) + (trajectory[i1] * frac);
     }
 }
