@@ -43,6 +43,15 @@ public class Ms110dMfbBound
         Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_MFB") != "1",
             "set MS110D_MFB=1 for the W1b matched-filter bound");
 
+        // W3: the trajectory-source knob. "truth" = the banked W1b anchor; "noise" =
+        // truth + complex white perturbation at MS110D_MFB_TRAJNOISE relative rms (maps
+        // the ceiling-vs-NMSE curve); "probes" = label-free probe-anchor LS on each
+        // probe's ISI-clean interior, linearly interpolated across the burst.
+        string traj = Environment.GetEnvironmentVariable("MS110D_MFB_TRAJ") ?? "truth";
+        double trajNoise = double.TryParse(
+            Environment.GetEnvironmentVariable("MS110D_MFB_TRAJNOISE"),
+            NumberStyles.Float, CultureInfo.InvariantCulture, out double tn) ? tn : 0.0;
+
         int wn = EnvInt("MS110D_MFB_WN", 8);
         double snrDb = double.TryParse(Environment.GetEnvironmentVariable("MS110D_MFB_SNR"),
             out double s) ? s : PoorSnr[wn];
@@ -150,6 +159,59 @@ public class Ms110dMfbBound
 
         float pathScale = (float)(1.0 / Math.Sqrt(2.0));
 
+        // W3: the working trajectory the receiver BELIEVES. Estimation error enters the
+        // statistic honestly (the true signal leaks through the estimated basis as a
+        // per-symbol 2×2 distortion; pricing uses the believed Gram).
+        Cf[][] estGains;
+        double[] nmse = [0.0, 0.0];
+        if (traj == "probes")
+        {
+            estGains = EstimateFromProbes(
+                rx, wireSymbols, preambleLen, u256, k32, il.Frames * txBlocks, pulses, pathScale, n);
+        }
+        else if (traj == "noise" && trajNoise > 0)
+        {
+            var perturb = new Random(channelSeed + 777);
+            estGains = new Cf[2][];
+            for (int k = 0; k < 2; k++)
+            {
+                double ms = 0;
+                foreach (Cf g in gains[k])
+                {
+                    ms += g.Cnorm();
+                }
+
+                float std = (float)(Math.Sqrt(ms / gains[k].Length) * trajNoise / Math.Sqrt(2.0));
+                estGains[k] = new Cf[gains[k].Length];
+                for (int i = 0; i < gains[k].Length; i++)
+                {
+                    estGains[k][i] = gains[k][i] + new Cf(
+                        (float)(std * Gaussian(perturb)), (float)(std * Gaussian(perturb)));
+                }
+            }
+        }
+        else
+        {
+            estGains = [gains[0], gains[1]];
+        }
+
+        // Trajectory NMSE vs truth over the data span (pooled per path).
+        for (int k = 0; k < 2; k++)
+        {
+            double err = 0, pow = 0;
+            int lo = (preambleLen + k32) * 4 / 100;
+            int hi = Math.Min(gains[k].Length,
+                (preambleLen + k32 + (txBlocks * il.Frames * (u256 + k32))) * 4 / 100);
+            for (int i = lo; i < hi; i++)
+            {
+                Cf e = InterpGain(estGains[k], i) - gains[k][i];
+                err += e.Cnorm();
+                pow += gains[k][i].Cnorm();
+            }
+
+            nmse[k] = err / Math.Max(pow, 1e-12);
+        }
+
         // Calibration lane (i): rebuild the noiseless faded signal from the wire
         // symbols + templates and measure the model residual. Validates layout, pulse
         // model, carrier convention, and gain alignment in one label-exact shot.
@@ -178,8 +240,11 @@ public class Ms110dMfbBound
         var llrs = new float[il.SizeBits];
         var dec = new byte[il.InputBits];
         Span<float> metric = stackalloc float[16];
+        string trajTag = traj == "truth" && trajNoise == 0
+            ? ""
+            : FormattableString.Invariant($"-{traj}{(traj == "noise" ? trajNoise.ToString("0.###", CultureInfo.InvariantCulture) : "")}");
         using var summary = new StreamWriter(Path.Combine(outDir,
-            FormattableString.Invariant($"mfb-summary-wn{wn}-w{worker}-b{burst}-seed{baseSeed}.txt")));
+            FormattableString.Invariant($"mfb-summary-wn{wn}-w{worker}-b{burst}-seed{baseSeed}{trajTag}.txt")));
         for (int b = 0; b < txBlocks; b++)
         {
             byte[] fetched = Ms110dFraming.EncodeBlock(
@@ -198,7 +263,7 @@ public class Ms110dMfbBound
                         "the data-index layout must match the modulator's wire stream");
 
                     (Cf y, float m11, float m12, float m22) =
-                        Project(r, wire, sym, pulses, gains, pathScale);
+                        Project(r, wire, sym, pulses, gains, estGains, pathScale);
 
                     // Predicted vs measured statistic-noise check (lane iii).
                     float det = (m11 * m22) - (m12 * m12);
@@ -261,6 +326,8 @@ public class Ms110dMfbBound
         summary.WriteLine(FormattableString.Invariant(
             $"WN{wn} @ {snrDb} dB baseSeed {baseSeed} worker {worker} burst {burst} (channelSeed {channelSeed}) MFB"));
         summary.WriteLine(FormattableString.Invariant(
+            $"trajectory {traj}{(trajNoise > 0 ? $" rel={trajNoise:0.###}" : "")}: NMSE p0 {10.0 * Math.Log10(Math.Max(nmse[0], 1e-12)):F1} dB, p1 {10.0 * Math.Log10(Math.Max(nmse[1], 1e-12)):F1} dB"));
+        summary.WriteLine(FormattableString.Invariant(
             $"model residual RMS(rebuilt-exact)/RMS(exact) = {modelResidual:E3} (envelope-LPF unmodelled; pessimistic)"));
         summary.WriteLine(FormattableString.Invariant(
             $"noise sigma2/sample {sigma2:E4}; statistic noise predicted {predSum / sliceSymbols:E4} vs measured {measSum / sliceSymbols:E4}"));
@@ -295,19 +362,23 @@ public class Ms110dMfbBound
         }
     }
 
-    /// <summary>Projects the noise onto the symbol's two real passband templates
-    /// (responses to x = 1 and x = j), whitens by the template Gram, and adds the true
-    /// symbol back: ŷ = x + M⁻¹·⟨r, e⟩. Returns ŷ and the Gram entries (the per-symbol
-    /// noise covariance is σ²·M⁻¹).</summary>
+    /// <summary>The per-symbol statistic under a BELIEVED trajectory: the receiver's
+    /// templates ê come from <paramref name="estGains"/>, so the true signal (templates
+    /// from <paramref name="gains"/>) leaks through the estimated basis as a per-symbol
+    /// 2×2 distortion T — ŷ = T·x + M̂⁻¹·⟨r, ê⟩ — while pricing uses the believed Gram
+    /// M̂ (noise covariance σ²·M̂⁻¹). With estGains ≡ gains, T = I exactly and this is
+    /// the banked W1b matched-filter statistic.</summary>
     private static (Cf Y, float M11, float M12, float M22) Project(
         float[] r, Cf truth, int symbolIndex,
-        (float[] Taps, int First)[] pulses, IReadOnlyList<Cf[]> gains, float pathScale)
+        (float[] Taps, int First)[] pulses, IReadOnlyList<Cf[]> gains, Cf[][] estGains,
+        float pathScale)
     {
         int basePos = symbolIndex * 4;
         int first = Math.Min(pulses[0].First, pulses[1].First);
         int last = Math.Max(pulses[0].First + pulses[0].Taps.Length,
             pulses[1].First + pulses[1].Taps.Length);
         double m11 = 0, m12 = 0, m22 = 0, v1 = 0, v2 = 0;
+        double c1e1 = 0, c2e1 = 0, c1e2 = 0, c2e2 = 0;
         for (int m = first; m < last; m++)
         {
             int i = basePos + m;
@@ -316,33 +387,214 @@ public class Ms110dMfbBound
                 continue;
             }
 
-            var c = Cf.Zero;
+            var cTrue = Cf.Zero;
+            var cEst = Cf.Zero;
             for (int k = 0; k < pulses.Length; k++)
             {
                 int t = m - pulses[k].First;
                 if (t >= 0 && t < pulses[k].Taps.Length)
                 {
-                    c += InterpGain(gains[k], i / 100.0) * (pulses[k].Taps[t] * pathScale);
+                    float w = pulses[k].Taps[t] * pathScale;
+                    cTrue += InterpGain(gains[k], i / 100.0) * w;
+                    cEst += InterpGain(estGains[k], i / 100.0) * w;
                 }
             }
 
             double phase = 2.0 * Math.PI * 3.0 * i / 16.0;
             double cos = Math.Cos(phase);
             double sin = Math.Sin(phase);
-            // e1 = response to x=1, e2 = response to x=j (passband real).
-            double e1 = (c.Re * cos) - (c.Im * sin);
-            double e2 = -((c.Im * cos) + (c.Re * sin));
-            m11 += e1 * e1;
-            m12 += e1 * e2;
-            m22 += e2 * e2;
-            v1 += r[i] * e1;
-            v2 += r[i] * e2;
+            double e1t = (cTrue.Re * cos) - (cTrue.Im * sin);
+            double e2t = -((cTrue.Im * cos) + (cTrue.Re * sin));
+            double f1 = (cEst.Re * cos) - (cEst.Im * sin);
+            double f2 = -((cEst.Im * cos) + (cEst.Re * sin));
+            m11 += f1 * f1;
+            m12 += f1 * f2;
+            m22 += f2 * f2;
+            v1 += r[i] * f1;
+            v2 += r[i] * f2;
+            c1e1 += f1 * e1t;
+            c2e1 += f2 * e1t;
+            c1e2 += f1 * e2t;
+            c2e2 += f2 * e2t;
         }
 
         double det = Math.Max((m11 * m22) - (m12 * m12), 1e-12);
+        double t11 = ((m22 * c1e1) - (m12 * c2e1)) / det;
+        double t21 = ((m11 * c2e1) - (m12 * c1e1)) / det;
+        double t12 = ((m22 * c1e2) - (m12 * c2e2)) / det;
+        double t22 = ((m11 * c2e2) - (m12 * c1e2)) / det;
         double n1 = ((m22 * v1) - (m12 * v2)) / det;
         double n2 = ((m11 * v2) - (m12 * v1)) / det;
-        return (truth + new Cf((float)n1, (float)n2), (float)m11, (float)m12, (float)m22);
+        double y1 = (t11 * truth.Re) + (t12 * truth.Im) + n1;
+        double y2 = (t21 * truth.Re) + (t22 * truth.Im) + n2;
+        return (new Cf((float)y1, (float)y2), (float)m11, (float)m12, (float)m22);
+    }
+
+    /// <summary>Label-free probe-anchor trajectory estimate: per probe, a 4-real-unknown
+    /// LS for the two path gains over the probe's ISI-clean interior (samples ≥96 past
+    /// the probe start, so no data pulse — direct or delayed — reaches a row; the gains
+    /// are ~constant over the 3.3 ms window), linearly interpolated between probe
+    /// centres onto the 96 Hz grid. Sees only rx and the known probe chips.</summary>
+    private static Cf[][] EstimateFromProbes(
+        float[] rx, Cf[] wireSymbols, int preambleLen, int u, int k32, int framesTotal,
+        (float[] Taps, int First)[] pulses, float pathScale, int envLength)
+    {
+        int gridLength = ((envLength - 1) / 100) + 1;
+        var anchorX = new List<double>();
+        var anchorG = new List<Cf[]>();
+        Span<double> a = stackalloc double[16];
+        Span<double> b = stackalloc double[4];
+        Span<double> f = stackalloc double[4];
+        for (int p = 0; p <= framesTotal; p++)
+        {
+            int s = preambleLen + (p * (u + k32));
+            int rowLo = 4 * (s + 24);
+            int rowHi = 4 * (s + k32);
+            if (rowHi >= envLength)
+            {
+                break;
+            }
+
+            a.Clear();
+            b.Clear();
+            for (int t = rowLo; t < rowHi; t++)
+            {
+                var c1 = Cf.Zero;
+                var c2 = Cf.Zero;
+                for (int c = s; c < s + k32; c++)
+                {
+                    int m = t - (4 * c);
+                    for (int k = 0; k < 2; k++)
+                    {
+                        int tap = m - pulses[k].First;
+                        if (tap >= 0 && tap < pulses[k].Taps.Length)
+                        {
+                            Cf add = wireSymbols[c] * (pulses[k].Taps[tap] * pathScale);
+                            if (k == 0)
+                            {
+                                c1 += add;
+                            }
+                            else
+                            {
+                                c2 += add;
+                            }
+                        }
+                    }
+                }
+
+                double phase = 2.0 * Math.PI * 3.0 * t / 16.0;
+                double cos = Math.Cos(phase);
+                double sin = Math.Sin(phase);
+                f[0] = (c1.Re * cos) - (c1.Im * sin);
+                f[1] = -((c1.Im * cos) + (c1.Re * sin));
+                f[2] = (c2.Re * cos) - (c2.Im * sin);
+                f[3] = -((c2.Im * cos) + (c2.Re * sin));
+                double row = rx[2400 + t];
+                for (int i = 0; i < 4; i++)
+                {
+                    b[i] += row * f[i];
+                    for (int j = 0; j < 4; j++)
+                    {
+                        a[(i * 4) + j] += f[i] * f[j];
+                    }
+                }
+            }
+
+            if (!Solve4(a, b))
+            {
+                continue;
+            }
+
+            anchorX.Add((rowLo + rowHi) / 2.0 / 100.0);
+            anchorG.Add([new Cf((float)b[0], (float)b[1]), new Cf((float)b[2], (float)b[3])]);
+        }
+
+        var est = new Cf[2][];
+        for (int k = 0; k < 2; k++)
+        {
+            est[k] = new Cf[gridLength];
+            for (int i = 0; i < gridLength; i++)
+            {
+                double x = i;
+                int hi = anchorX.FindIndex(ax => ax >= x);
+                if (hi < 0)
+                {
+                    est[k][i] = anchorG[^1][k];
+                }
+                else if (hi == 0)
+                {
+                    est[k][i] = anchorG[0][k];
+                }
+                else
+                {
+                    double frac = (x - anchorX[hi - 1]) / (anchorX[hi] - anchorX[hi - 1]);
+                    est[k][i] = (anchorG[hi - 1][k] * (float)(1 - frac)) + (anchorG[hi][k] * (float)frac);
+                }
+            }
+        }
+
+        return est;
+    }
+
+    private static bool Solve4(Span<double> a, Span<double> b)
+    {
+        for (int col = 0; col < 4; col++)
+        {
+            int pivot = col;
+            for (int r2 = col + 1; r2 < 4; r2++)
+            {
+                if (Math.Abs(a[(r2 * 4) + col]) > Math.Abs(a[(pivot * 4) + col]))
+                {
+                    pivot = r2;
+                }
+            }
+
+            if (Math.Abs(a[(pivot * 4) + col]) < 1e-12)
+            {
+                return false;
+            }
+
+            if (pivot != col)
+            {
+                for (int c = 0; c < 4; c++)
+                {
+                    (a[(col * 4) + c], a[(pivot * 4) + c]) = (a[(pivot * 4) + c], a[(col * 4) + c]);
+                }
+
+                (b[col], b[pivot]) = (b[pivot], b[col]);
+            }
+
+            for (int r2 = col + 1; r2 < 4; r2++)
+            {
+                double factor = a[(r2 * 4) + col] / a[(col * 4) + col];
+                for (int c = col; c < 4; c++)
+                {
+                    a[(r2 * 4) + c] -= factor * a[(col * 4) + c];
+                }
+
+                b[r2] -= factor * b[col];
+            }
+        }
+
+        for (int r2 = 3; r2 >= 0; r2--)
+        {
+            double acc = b[r2];
+            for (int c = r2 + 1; c < 4; c++)
+            {
+                acc -= a[(r2 * 4) + c] * b[c];
+            }
+
+            b[r2] = acc / a[(r2 * 4) + r2];
+        }
+
+        return true;
+    }
+
+    private static double Gaussian(Random random)
+    {
+        double u1 = 1.0 - random.NextDouble();
+        double u2 = random.NextDouble();
+        return Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Sin(2.0 * Math.PI * u2);
     }
 
     private static Cf InterpGain(Cf[] trajectory, double x)
