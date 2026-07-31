@@ -340,7 +340,8 @@ internal sealed class Ms110dMfbBlockDecoder
         var gram = new Complex[ScanLen, ScanLen];
         var rhs = new Complex[ScanLen];
         var phi = new Complex[ScanLen];
-        for (int p = 0; p < 8; p++)
+        int scanProbes = Math.Min(8, frameChips.Count); // short interleavers have fewer frames per block
+        for (int p = 0; p < scanProbes; p++)
         {
             long ps = frameChips[p] - k;
             bool boundary = (p + 1) % _il.Frames == 0;
