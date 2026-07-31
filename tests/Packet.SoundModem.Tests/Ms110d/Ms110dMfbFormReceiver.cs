@@ -24,9 +24,16 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// </summary>
 public class Ms110dMfbFormReceiver
 {
-    private const int LMin = -6;   // composite-response support, T/2 half-chips
-    private const int LMax = 16;
-    private const int L = LMax - LMin;
+    // Wide delay-profile scan bounds, T/2 half-chips. Acquisition centres the chip
+    // clock on whichever path is stronger during the preamble (the B3.5b lesson — the
+    // W5a anatomy caught the disjoint specimen locked on the ECHO, putting the direct
+    // path at −9.6 and outside a fixed one-sided window, with exactly half the signal
+    // power unexplained). The scan finds the per-burst peaks inside these bounds and a
+    // WinLen-wide detection window is placed over them.
+    private const int ScanMin = -18;
+    private const int ScanMax = 19;
+    private const int ScanLen = ScanMax - ScanMin;
+    private const int WinLen = 26;
 
     private static int EnvInt(string name, int fallback)
     {
@@ -115,8 +122,8 @@ public class Ms110dMfbFormReceiver
                 return;
             }
 
-            long hc0 = (2 * (frameChips[0] - k32)) + (2 * LMin);
-            long hcEnd = (2 * (frameChips[^1] + u256 + k32)) + (2 * LMax);
+            long hc0 = (2 * (frameChips[0] - k32)) + (2 * ScanMin);
+            long hcEnd = (2 * (frameChips[^1] + u256 + k32)) + (2 * ScanMax);
             var ring = new Cf[hcEnd - hc0];
             for (long hc = hc0; hc < hcEnd; hc++)
             {
@@ -128,10 +135,106 @@ public class Ms110dMfbFormReceiver
         demod.Process(rx);
         spans.Count.Should().Be(txBlocks, "every block must acquire and be pulled");
 
+        // Per-burst delay-profile scan: ridged wide LS on each of the first 8 probes of
+        // block 0, tap ENERGIES accumulated across probes (robust to fading — phases
+        // decorrelate, delay positions don't). The detection window is placed over the
+        // energy support.
+        int lMin;
+        {
+            (int B0, long[] Fc0, long Hc00, Cf[] Ring0) = spans[0];
+            var profile = new double[ScanLen];
+            var wGram = new Complex[ScanLen, ScanLen];
+            var wRhs = new Complex[ScanLen];
+            for (int p = 0; p < 8; p++)
+            {
+                long ps = Fc0[p] - k32;
+                bool boundary = (p + 1) % frames == 0;
+                Cf[] probe = MiniProbe.Get(k32, boundary);
+                Array.Clear(wRhs);
+                for (int i = 0; i < ScanLen; i++)
+                {
+                    for (int j = 0; j < ScanLen; j++)
+                    {
+                        wGram[i, j] = Complex.Zero;
+                    }
+                }
+
+                long rowLo = (2 * ps) + ScanMax;
+                long rowHi = (2 * (ps + k32)) + ScanMin;
+                for (long hc = rowLo; hc < rowHi; hc++)
+                {
+                    var row = new Complex(Ring0[hc - Hc00].Re, Ring0[hc - Hc00].Im);
+                    for (int i = 0; i < ScanLen; i++)
+                    {
+                        long src = hc - (ScanMin + i);
+                        if ((src & 1) != 0)
+                        {
+                            continue;
+                        }
+
+                        Cf x = probe[(src / 2) - ps];
+                        var phiI = new Complex(x.Re, x.Im);
+                        wRhs[i] += Complex.Conjugate(phiI) * row;
+                        for (int j = i; j < ScanLen; j++)
+                        {
+                            long srcJ = hc - (ScanMin + j);
+                            if ((srcJ & 1) != 0)
+                            {
+                                continue;
+                            }
+
+                            Cf xj = probe[(srcJ / 2) - ps];
+                            Complex g = Complex.Conjugate(phiI) * new Complex(xj.Re, xj.Im);
+                            wGram[i, j] += g;
+                            if (j != i)
+                            {
+                                wGram[j, i] += Complex.Conjugate(g);
+                            }
+                        }
+                    }
+                }
+
+                double trace = 0;
+                for (int i = 0; i < ScanLen; i++)
+                {
+                    trace += wGram[i, i].Real;
+                }
+
+                double ridge = Math.Max(1e-9, 3e-2 * trace / ScanLen);
+                for (int i = 0; i < ScanLen; i++)
+                {
+                    wGram[i, i] += ridge;
+                }
+
+                var hw = (Complex[])wRhs.Clone();
+                if (!SolveHermitian(wGram, hw))
+                {
+                    continue;
+                }
+
+                for (int i = 0; i < ScanLen; i++)
+                {
+                    profile[i] += (hw[i].Real * hw[i].Real) + (hw[i].Imaginary * hw[i].Imaginary);
+                }
+            }
+
+            double peak = profile.Max();
+            int pkLo = Array.FindIndex(profile, e => e >= 0.1 * peak);
+            int pkHi = Array.FindLastIndex(profile, e => e >= 0.1 * peak);
+            lMin = ScanMin + pkLo - 7;
+            if (ScanMin + pkHi + 8 > lMin + WinLen)
+            {
+                lMin = (ScanMin + pkHi + 8) - WinLen;
+            }
+        }
+
+        int lLen = WinLen;
+        int lMax = lMin + lLen;
+
         using var summary = new StreamWriter(Path.Combine(outDir,
             FormattableString.Invariant($"mfbrx-summary-wn{wn}-w{worker}-b{burst}-seed{baseSeed}.txt")));
         summary.WriteLine(FormattableString.Invariant(
-            $"WN{wn} @ {snrDb} dB baseSeed {baseSeed} worker {worker} burst {burst} (channelSeed {channelSeed}) MFB-form receiver, L={L} [{LMin},{LMax})"));
+            $"WN{wn} @ {snrDb} dB baseSeed {baseSeed} worker {worker} burst {burst} (channelSeed {channelSeed}) MFB-form receiver, window [{lMin},{lMax})"));
 
         var rungTotals = new long[iters + 1];
         Span<double> metric = stackalloc double[16];
@@ -160,8 +263,8 @@ public class Ms110dMfbFormReceiver
             var anchorH = new List<Complex[]>();
             double anchorResidSum = 0;
             long anchorResidRows = 0;
-            var gram = new Complex[L, L];
-            var rhs = new Complex[L];
+            var gram = new Complex[lLen, lLen];
+            var rhs = new Complex[lLen];
             for (int p = 0; p <= frames; p++)
             {
                 bool preceding = p < frames;
@@ -172,22 +275,22 @@ public class Ms110dMfbFormReceiver
                 Cf[] probe = MiniProbe.Get(k32, boundary);
 
                 Array.Clear(rhs);
-                for (int i = 0; i < L; i++)
+                for (int i = 0; i < lLen; i++)
                 {
-                    for (int j = 0; j < L; j++)
+                    for (int j = 0; j < lLen; j++)
                     {
                         gram[i, j] = Complex.Zero;
                     }
                 }
 
-                long rowLo = (2 * ps) + LMax;
-                long rowHi = (2 * (ps + k32)) + LMin;
+                long rowLo = (2 * ps) + lMax;
+                long rowHi = (2 * (ps + k32)) + lMin;
                 for (long hc = rowLo; hc < rowHi; hc++)
                 {
                     Complex row = ring[hc - hc0];
-                    for (int i = 0; i < L; i++)
+                    for (int i = 0; i < lLen; i++)
                     {
-                        long src = hc - (LMin + i);
+                        long src = hc - (lMin + i);
                         if ((src & 1) != 0)
                         {
                             continue; // chips sit on even half-positions only
@@ -197,9 +300,9 @@ public class Ms110dMfbFormReceiver
                         Cf x = probe[c - ps];
                         var phiI = new Complex(x.Re, x.Im);
                         rhs[i] += Complex.Conjugate(phiI) * row;
-                        for (int j = i; j < L; j++)
+                        for (int j = i; j < lLen; j++)
                         {
-                            long srcJ = hc - (LMin + j);
+                            long srcJ = hc - (lMin + j);
                             if ((srcJ & 1) != 0)
                             {
                                 continue;
@@ -217,13 +320,13 @@ public class Ms110dMfbFormReceiver
                 }
 
                 double trace = 0;
-                for (int i = 0; i < L; i++)
+                for (int i = 0; i < lLen; i++)
                 {
                     trace += gram[i, i].Real;
                 }
 
-                double ridge = Math.Max(1e-9, 1e-3 * trace / L);
-                for (int i = 0; i < L; i++)
+                double ridge = Math.Max(1e-9, 1e-3 * trace / lLen);
+                for (int i = 0; i < lLen; i++)
                 {
                     gram[i, i] += ridge;
                 }
@@ -238,9 +341,9 @@ public class Ms110dMfbFormReceiver
                 for (long hc = rowLo; hc < rowHi; hc++)
                 {
                     Complex model = Complex.Zero;
-                    for (int i = 0; i < L; i++)
+                    for (int i = 0; i < lLen; i++)
                     {
-                        long src = hc - (LMin + i);
+                        long src = hc - (lMin + i);
                         if ((src & 1) != 0)
                         {
                             continue;
@@ -262,6 +365,43 @@ public class Ms110dMfbFormReceiver
             double sigmaAnchor = anchorResidSum / Math.Max(1, anchorResidRows);
             anchorResidBlocks.Add(FormattableString.Invariant($"b{b}:{sigmaAnchor:E2}"));
 
+            if (b == 0)
+            {
+                // First-block anatomy for the anchor lane: ring power, per-anchor h
+                // energy, and the demod's lock view — enough to localize a bad fit.
+                double ringPower = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    ringPower += (ring[i].Real * ring[i].Real) + (ring[i].Imaginary * ring[i].Imaginary);
+                }
+
+                var hEnergy = new List<string>();
+                for (int p2 = 0; p2 < Math.Min(4, anchorH.Count); p2++)
+                {
+                    double e = 0;
+                    int peak = 0;
+                    for (int i = 0; i < lLen; i++)
+                    {
+                        double m = (anchorH[p2][i].Real * anchorH[p2][i].Real)
+                            + (anchorH[p2][i].Imaginary * anchorH[p2][i].Imaginary);
+                        e += m;
+                        if (m > ((anchorH[p2][peak].Real * anchorH[p2][peak].Real)
+                            + (anchorH[p2][peak].Imaginary * anchorH[p2][peak].Imaginary)))
+                        {
+                            peak = i;
+                        }
+                    }
+
+                    hEnergy.Add(FormattableString.Invariant($"a{p2}:E={e:E2}@pk{lMin + peak}"));
+                }
+
+                summary.WriteLine(
+                    FormattableString.Invariant(
+                        $"b0 anatomy: mean|ring|^2={ringPower / n:E2} anchors={anchorH.Count} {string.Join(" ", hEnergy)}") +
+                    FormattableString.Invariant(
+                        $" lock={demod.Lock?.WaveformNumber}/{demod.Lock?.Interleaver}/K{demod.Lock?.ConstraintLength}@{demod.Lock?.CfoHz:F2}Hz"));
+            }
+
             // Per-chip interpolated response h(t) — per-tap linear between anchors.
             Complex[] HAt(double chip)
             {
@@ -277,8 +417,8 @@ public class Ms110dMfbFormReceiver
                 }
 
                 double frac = (chip - anchorChip[hi - 1]) / (anchorChip[hi] - anchorChip[hi - 1]);
-                var h = new Complex[L];
-                for (int i = 0; i < L; i++)
+                var h = new Complex[lLen];
+                for (int i = 0; i < lLen; i++)
                 {
                     h[i] = (anchorH[hi - 1][i] * (1 - frac)) + (anchorH[hi][i] * frac);
                 }
@@ -312,9 +452,9 @@ public class Ms110dMfbFormReceiver
                 void AddChip(long c, Complex x)
                 {
                     Complex[] h = HAt(c);
-                    for (int i = 0; i < L; i++)
+                    for (int i = 0; i < lLen; i++)
                     {
-                        long hc = (2 * c) + LMin + i;
+                        long hc = (2 * c) + lMin + i;
                         if (hc >= hc0 && hc < hc0 + n)
                         {
                             recon[hc - hc0] += h[i] * x;
@@ -400,9 +540,9 @@ public class Ms110dMfbFormReceiver
                     Complex[] h = HAt(c);
                     double g2 = 0;
                     Complex acc = Complex.Zero;
-                    for (int i = 0; i < L; i++)
+                    for (int i = 0; i < lLen; i++)
                     {
-                        long hc = (2 * c) + LMin + i;
+                        long hc = (2 * c) + lMin + i;
                         if (hc < hc0 || hc >= hc0 + n)
                         {
                             continue;
