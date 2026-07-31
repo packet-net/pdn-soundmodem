@@ -63,9 +63,11 @@ doubling pattern) cross-validates against D-XLIX's 2/7 rate.
   D.6.3 acquisition performance literally "Not yet standardized."; a stale D-LII
   cross-reference in the D.6 prose.
 
-These tables feed the App D design doc (task #7); the build phases per the verified scoping:
-Phase A = 3 kHz framing + Walsh-75/BPSK/QPSK + basic DFE; Phase B = 16-QAM+ (gated on a
-validation oracle — no open App D implementation exists).
+These tables feed the App D design doc (task #7). Both build phases are now closed:
+Phase A (3 kHz framing + Walsh-75/BPSK/QPSK + DFE) closed 2026-07-23
+([phase-a-closeout.md](phase-a-closeout.md)); Phase B (8PSK/16QAM + binding Poor-channel
+mask gating) closed 2026-07-27 ([phase-b-closeout.md](phase-b-closeout.md)) — WN0–6+13
+hard-gated at mask on Poor, WN7/WN8 closed with measured-only verdicts (closeout §4).
 
 ## Ledger clearance (2026-07-17)
 

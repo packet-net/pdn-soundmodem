@@ -47,15 +47,19 @@ from **GB7RDG's HF port** (operate as M0LTE), where ARDOP stations already run. 
 session is optional gravy (Pat works via the host interface for free). Write the on-air bench doc
 before the session; add the busy-detector port if channel-sharing needs it on air.
 
-### #7 — MIL-STD-188-110D App D: Phases B/C *(in progress)*
-Phase A (Walsh-75/BPSK/QPSK + LMS DFE) landed, **all 12 mask points 0 errors at full statistical
-budget**, KISS-integrated (`ms110d-wn*`). Constants dual-verified; design in `docs/ms110d/`.
-- **Phase B** — 8PSK/16QAM (WN7–9) + an **RLS equaliser** for fading; Poor-channel mask gating
-  becomes binding. **Parked for Fable** (Tom, 2026-07-17): the hardest-reasoning DSP left, no
-  deadline. All remaining 110D work is ordinary DSP (no more vision/transcription).
-- **Phase C** — 32/64/256-QAM (groundwave-gated, high-SNR).
-- Validation is pdn↔pdn only (no external oracle exists) — the spec's D-LXIV/LXV masks in the
-  Watterson/CCIR sim + self-consistency; the off-air/hardware rung is parked (Tom).
+### #7 — MIL-STD-188-110D App D *(Phases A+B complete)*
+Phase A (Walsh-75/BPSK/QPSK + DFE) closed 2026-07-23 — all mask points 0 errors at full
+statistical budget, KISS-integrated (`ms110d-wn*`); `docs/ms110d/phase-a-closeout.md`.
+- **Phase B closed 2026-07-27** (`docs/ms110d/phase-b-closeout.md`): 8PSK (WN7) / 16QAM (WN8)
+  landed and the Poor-channel gating went binding — WN0–6+13 hard-gated at mask. WN7/WN8 close
+  measured-only: WN7 at the waveform's own fade-lottery floor (needs added information —
+  diversity/ARQ/outer coding — outside the demodulator); WN8 at coin-flip behind a true-label
+  model ceiling and a bootstrap basin (needs waveform-processing redesign).
+- On-air (2026-07-27/28): every masked waveform meets its mask over the real rig
+  (`docs/ms110d/evidence/2026-07-27-110d-full-campaign/`); WN7/WN8 Poor masks sit above the
+  rig's ~15–16 dB ceiling, so those Poor points are sim-only.
+- **Phase C** — 32/64/256-QAM, WN9–12 (groundwave-gated, high-SNR) — not started.
+- Validation is pdn↔pdn + on-air self-consistency (no external App D oracle exists).
 
 ### #8 — Own FM OFDM *(pending)*
 Greenfield speed play through an FM voice channel (VARA FM is the only incumbent, and closed).
