@@ -34,4 +34,11 @@ Two mechanisms surfaced by the instrumented port and fixed with measured provena
 
 **Off-rig direction check (WN8, 500k-bit smoke)**: {3 ms, 2 Hz} 7.55E-4 (650× better than the old path's coin-flip); {1 ms, 0.5 Hz} 9.09E-2 (5× better — two blocks fail under the ~2× longer deep fades of the 0.5 Hz process). Both directions improve; no constant helps only the D.6.1 geometry. **Slow-fade estimation is the measured weak edge** — recorded as the standing engineering note for any future leg (candidate: fade-adaptive refit cadence), not a merge blocker (the direction bar is met).
 
-**Battery** (three-lane, launched 09:58:58 on the final binaries): (appended on completion)
+**Battery** (three-lane detached, final binaries, 09:59–13:37; artifacts in [battery/](battery/)):
+- **All 108 non-WN8 census files byte-identical to the W0 baseline** — the structural-scoping guarantee proven at battery scale, both seed families (gated-eight spot digits exact: WN2 30, WN7 83, WN0d 3).
+- **AWGN WN8: 0 errors / 4,325,120 bits** at full budget — the receiver swap holds AWGN clean.
+- **Poor WN8 at full §5.3 budgets: 1,254 / 4,325,120 = 2.90E-4 canonical; 98,065 = 2.27E-2 disjoint** (from 4.96E-1/4.97E-1 — 1,711× / 22×). The disjoint tail is four single-block non-convergences across the 8 bursts (one ~24.5k-error reverted block each on w0/b1, w1/b0, w2/b0, w3/b0; the same fade-lottery class the corpses showed); canonical's worst burst leaks 1,029.
+
+## Verdict
+
+**The §6 merge bar is met — W5b2 merges.** Integrity: byte-identity 108/108, all five guard pins exact, hermetic 790/0, AWGN WN8 zero, off-rig direction improving on both alternate geometries. Improvement: WN8 Poor moves from coin-flip to **2.90E-4 / 2.27E-2** measured at full budgets — the first time the shipped modem has *decoded* 16QAM on the Poor channel. Not at mask (1E-5), and sim-only by rig physics: **W6 owns the gate/verdict decision** on these numbers (on current evidence, exit (ii) — a dramatically improved measured-only ceiling — unless further legs close the burst-population tail: the measured levers are the disjoint single-block non-convergences and the slow-fade weak edge, both recorded). The mode-validation ledger entry and matrix row are updated in this PR per the standing rule.
