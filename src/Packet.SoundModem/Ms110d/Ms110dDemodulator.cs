@@ -273,6 +273,22 @@ public sealed class Ms110dDemodulator
     /// of those LLRs.</summary>
     public event Action<int, float[], byte[]>? OracleBlockLlrs;
 
+    /// <summary>W1 true-channel injection instrument (wn8-program-plan §4, evidence
+    /// 2026-07-31-wn8-w1): when set alongside <see cref="OracleInfo"/>, FinishBlock runs
+    /// one further re-equalization whose channel TIME VARIATION comes from the recorded
+    /// Watterson truth — per-symbol h(u) = a·g₁(u) + b·g₂(u) per model tap, with only
+    /// the static per-frame gauge constants LS-fitted on the true symbols — instead of
+    /// the oracle's label-trained segment anchors. The delegate maps an absolute input
+    /// sample position (9600 Hz domain, lead-in included) to the two recorded path gains
+    /// at that instant: the rig owns lead-in/gain-rate alignment, the demodulator owns
+    /// chip→sample (2·PositionOfChip). Null (the default) leaves every path
+    /// bit-identical. Results fire on <see cref="TruthBlockLlrs"/>. Instrument only.</summary>
+    internal Func<double, (Cf G1, Cf G2)>? TruthGainsAtSample { get; set; }
+
+    /// <summary>Companion to <see cref="TruthGainsAtSample"/>: block index, truth-pass
+    /// wire-order LLRs (buffer reused — copy to keep), and their Viterbi decode.</summary>
+    internal event Action<int, float[], byte[]>? TruthBlockLlrs;
+
     /// <summary>§B3.5b WN0 genie-gain oracle (instrument,
     /// evidence/2026-07-26-phase-b35b-wn0genie): returns the TRUE transmitted di-bit for
     /// (blockIndex, symbolInBlock), or −1 for no-truth symbols (post-EOM), which fall
@@ -2471,6 +2487,28 @@ public sealed class Ms110dDemodulator
             _dfe.RestoreTraining();
         }
 
+        // W1 true-channel injection (wn8-program): one further re-equalization with
+        // truth time-variation, after the oracle pass so the two bounds land side by
+        // side on the same block. The shipped decode above is untouched; the pass emits
+        // truth-frame diagnostics of its own (never turbo-frame — those stay oracle's).
+        if (TruthGainsAtSample is not null &&
+            OracleInfo?.Invoke(_blockIndex) is byte[] truthInfo &&
+            _dfe is not null && _mode is not null &&
+            _blockFrameChips.Count == _il.Frames &&
+            BlockSamplesResident())
+        {
+            _dfe.SnapshotTraining();
+            TurboReequalize(truthInfo, trustedLabels: true, truthChannel: true);
+            if (_blockLlrCount == _il.SizeBits)
+            {
+                var truthDecode = new byte[_il.InputBits];
+                Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, truthDecode);
+                TruthBlockLlrs?.Invoke(_blockIndex, _blockLlrs, truthDecode);
+            }
+
+            _dfe.RestoreTraining();
+        }
+
         // §B3.6 C2a stage measurement (M2a): one label-free re-detection pass after the
         // normal pipeline — see <see cref="TurboFrozenProbe"/>. The shipped decode above
         // is untouched.
@@ -2533,6 +2571,74 @@ public sealed class Ms110dDemodulator
             : (float)(_genieNoiseSum / _genieNoiseCount);
     }
 
+    /// <summary>In-place Gaussian elimination with partial pivoting for the W1
+    /// truth-gauge normal equations (n ≤ 6, row-major 6-wide storage). The solution
+    /// lands in <paramref name="b"/>; returns false on a singular system (the caller
+    /// ridges the diagonal, so effectively never).</summary>
+    private static bool SolveComplex(Span<Cf> a, Span<Cf> b, int n)
+    {
+        for (int col = 0; col < n; col++)
+        {
+            int pivot = col;
+            float best = a[(col * 6) + col].Cnorm();
+            for (int r = col + 1; r < n; r++)
+            {
+                float m = a[(r * 6) + col].Cnorm();
+                if (m > best)
+                {
+                    best = m;
+                    pivot = r;
+                }
+            }
+
+            if (best < 1e-20f)
+            {
+                return false;
+            }
+
+            if (pivot != col)
+            {
+                for (int c = col; c < n; c++)
+                {
+                    (a[(col * 6) + c], a[(pivot * 6) + c]) = (a[(pivot * 6) + c], a[(col * 6) + c]);
+                }
+
+                (b[col], b[pivot]) = (b[pivot], b[col]);
+            }
+
+            Cf inv = a[(col * 6) + col].Conj() * (1f / a[(col * 6) + col].Cnorm());
+            for (int r = col + 1; r < n; r++)
+            {
+                Cf factor = a[(r * 6) + col] * inv;
+                if (factor.Cnorm() == 0f)
+                {
+                    continue;
+                }
+
+                for (int c = col; c < n; c++)
+                {
+                    a[(r * 6) + c] -= factor * a[(col * 6) + c];
+                }
+
+                b[r] -= factor * b[col];
+            }
+        }
+
+        for (int r = n - 1; r >= 0; r--)
+        {
+            Cf acc = b[r];
+            for (int c = r + 1; c < n; c++)
+            {
+                acc -= a[(r * 6) + c] * b[c];
+            }
+
+            Cf inv = a[(r * 6) + r].Conj() * (1f / a[(r * 6) + r].Cnorm());
+            b[r] = acc * inv;
+        }
+
+        return true;
+    }
+
     private static int TurboBitsPerSymbol(Ms110dModulation modulation)
     {
         return modulation switch
@@ -2548,7 +2654,7 @@ public sealed class Ms110dDemodulator
     /// the core on the exact expected wire symbols. This is the §B3.3 oracle instrument's
     /// path (true info bits ⇒ the converged-soft-feedback ceiling) — the shipped turbo loop
     /// uses <see cref="TurboReequalizeSoft"/> instead.</summary>
-    private void TurboReequalize(byte[] info, bool trustedLabels = false)
+    private void TurboReequalize(byte[] info, bool trustedLabels = false, bool truthChannel = false)
     {
         var mode = _mode!;
 
@@ -2584,7 +2690,7 @@ public sealed class Ms110dDemodulator
             }
         }
 
-        TurboCore(_turboExpected, null, null, allowPair: trustedLabels);
+        TurboCore(_turboExpected, null, null, allowPair: trustedLabels, truthChannel);
     }
 
     /// <summary>Soft-feedback turbo re-equalization (§B3.3): a SISO log-MAP pass over the
@@ -3276,7 +3382,7 @@ public sealed class Ms110dDemodulator
     /// position (frame-major); <paramref name="symbolVar"/> is the per-symbol prior variance
     /// 1−|E[x]|² for soft labels, or null for hard labels — null skips the variance terms
     /// entirely, keeping the hard/oracle path bit-identical to the pre-§B3.3 code.</summary>
-    private void TurboCore(Cf[] expectedAll, float[]? symbolVar, float[]? wireExtLlrs, bool allowPair)
+    private void TurboCore(Cf[] expectedAll, float[]? symbolVar, float[]? wireExtLlrs, bool allowPair, bool truthChannel = false)
     {
         var mode = _mode!;
         var dfe = _dfe!;
@@ -3310,6 +3416,12 @@ public sealed class Ms110dDemodulator
         Span<int> segResidCount = stackalloc int[Segments];
         Span<float> segNv = stackalloc float[Segments];
         Span<float> segPrice = stackalloc float[Segments];
+        // W1 truth-gauge scratch (layout {a1,b1,a2,b2,a2b,b2b}; hoisted out of the frame
+        // loop for the stackalloc-in-loop rule). Zero cost when truthChannel is false.
+        Span<Cf> truthGauge = stackalloc Cf[6];
+        Span<Cf> truthPhi = stackalloc Cf[6];
+        Span<Cf> truthGram = stackalloc Cf[36];
+        Span<Cf> truthRhs = stackalloc Cf[6];
         int bitsPerSymbol = TurboBitsPerSymbol(mode.Modulation);
         _blockLlrCount = 0;
         int tirFrames = 0;
@@ -3743,6 +3855,123 @@ public sealed class Ms110dDemodulator
                 }
             }
 
+            // W1 true-channel injection (wn8-program): replace the segment-anchor TIME
+            // BASIS with the recorded truth trajectories. Each model tap gets a static
+            // per-frame two-basis gauge h(u) = a·g₁(u) + b·g₂(u); the gauge constants
+            // are LS-fitted on this frame's true symbols, so labels supply only
+            // 2·(1+echo+straddle) complex constants per frame while the fade motion is
+            // per-symbol exact. The FF solve, rxWire, echo lags, pricing, and the chain
+            // call are the oracle path's own — the estimator's TIME MODEL is the only
+            // delta, which is precisely the W1 registration's question.
+            Cf[]? tg1 = null, tg2 = null;
+            bool truthFit = false;
+            bool truthEcho = false;
+            if (truthChannel && TruthGainsAtSample is not null)
+            {
+                tg1 = new Cf[mode.U];
+                tg2 = new Cf[mode.U];
+                for (int u = 0; u < mode.U; u++)
+                {
+                    (tg1[u], tg2[u]) = TruthGainsAtSample(2.0 * PositionOfChip(frameChip + u));
+                }
+
+                // The unknowns pack densely from slot 0 — the straddle pair only ever
+                // exists alongside the echo pair (delay2 is TIR-branch-only), so the
+                // compact index and the gauge-layout slot coincide for every n.
+                truthEcho = segEcho || h2Avg.Cnorm() > 0f;
+                int n = 2 * (1 + (truthEcho ? 1 : 0) + (delay2 > 0 ? 1 : 0));
+                truthGram.Clear();
+                truthRhs.Clear();
+                truthPhi.Clear();
+                for (int u = 0; u < mode.U; u++)
+                {
+                    truthPhi[0] = tg1[u] * expected[u];
+                    truthPhi[1] = tg2[u] * expected[u];
+                    if (truthEcho)
+                    {
+                        Cf src = u >= delay
+                            ? expected[u - delay]
+                            : precedingProbe[(mode.K - delay) + u];
+                        truthPhi[2] = tg1[u] * src;
+                        truthPhi[3] = tg2[u] * src;
+                    }
+
+                    if (delay2 > 0)
+                    {
+                        Cf srcB = u >= delay2
+                            ? expected[u - delay2]
+                            : precedingProbe[mode.K + (u - delay2)];
+                        truthPhi[4] = tg1[u] * srcB;
+                        truthPhi[5] = tg2[u] * srcB;
+                    }
+
+                    for (int i = 0; i < n; i++)
+                    {
+                        truthRhs[i] += truthPhi[i].Conj() * estWire[u];
+                        for (int j = 0; j < n; j++)
+                        {
+                            truthGram[(i * 6) + j] += truthPhi[i].Conj() * truthPhi[j];
+                        }
+                    }
+                }
+
+                float ridge = 0f;
+                for (int i = 0; i < n; i++)
+                {
+                    ridge += truthGram[(i * 6) + i].Re;
+                }
+
+                ridge = Math.Max(1e-6f, 1e-4f * ridge / n);
+                for (int i = 0; i < n; i++)
+                {
+                    truthGram[(i * 6) + i] += new Cf(ridge, 0f);
+                }
+
+                truthFit = SolveComplex(truthGram, truthRhs, n);
+                truthGauge.Clear();
+                if (truthFit)
+                {
+                    for (int i = 0; i < n; i++)
+                    {
+                        truthGauge[i] = truthRhs[i];
+                    }
+                }
+
+                if (truthFit && FrameDiagnostics is not null)
+                {
+                    float fitResid = 0f;
+                    for (int u = 0; u < mode.U; u++)
+                    {
+                        Cf model = ((truthGauge[0] * tg1[u]) + (truthGauge[1] * tg2[u])) * expected[u];
+                        if (truthEcho)
+                        {
+                            Cf src = u >= delay
+                                ? expected[u - delay]
+                                : precedingProbe[(mode.K - delay) + u];
+                            model += ((truthGauge[2] * tg1[u]) + (truthGauge[3] * tg2[u])) * src;
+                        }
+
+                        if (delay2 > 0)
+                        {
+                            Cf srcB = u >= delay2
+                                ? expected[u - delay2]
+                                : precedingProbe[mode.K + (u - delay2)];
+                            model += ((truthGauge[4] * tg1[u]) + (truthGauge[5] * tg2[u])) * srcB;
+                        }
+
+                        fitResid += (estWire[u] - model).Cnorm();
+                    }
+
+                    FrameDiagnostics.Invoke(
+                        FormattableString.Invariant(
+                            $"truth-frame b{_blockIndex} f{f}: lag={delay} lag2={delay2} rms={0.5f * fitResid / mode.U:E3}") +
+                        FormattableString.Invariant(
+                            $" a1={truthGauge[0].Abs():F4} b1={truthGauge[1].Abs():F4} a2={truthGauge[2].Abs():F4}") +
+                        FormattableString.Invariant(
+                            $" b2={truthGauge[3].Abs():F4} a2b={truthGauge[4].Abs():F4} b2b={truthGauge[5].Abs():F4}"));
+                }
+            }
+
             // Assemble the descrambled-domain model: z[u] = rxWire[u]·r̄(u) leaves h1
             // unchanged (piecewise-linear through the segment centres) and puts the
             // scrambler into the echo coefficient — h2·r(u−d)·r̄(u) for in-block echoes,
@@ -3801,6 +4030,13 @@ public sealed class Ms110dDemodulator
                 Cf h2u = segEcho
                     ? (ia == ib ? segH2[ia] : (segH2[ia] * (1f - t)) + (segH2[ib] * t))
                     : h2Avg;
+                if (truthFit)
+                {
+                    // W1: the truth-gauge model replaces the segment interpolation —
+                    // same taps, per-symbol-exact time variation.
+                    h1u = (truthGauge[0] * tg1![u]) + (truthGauge[1] * tg2![u]);
+                    h2u = truthEcho ? (truthGauge[2] * tg1[u]) + (truthGauge[3] * tg2[u]) : Cf.Zero;
+                }
 
                 // §B3.3 straddle pair: soft-cancel the adjacent-lag component before the
                 // chains, at the segment-interpolated coefficient. x̂ is this iteration's
@@ -3810,6 +4046,11 @@ public sealed class Ms110dDemodulator
                 if (delay2 > 0)
                 {
                     Cf h2bu = ia == ib ? segH2b[ia] : (segH2b[ia] * (1f - t)) + (segH2b[ib] * t);
+                    if (truthFit)
+                    {
+                        h2bu = (truthGauge[4] * tg1![u]) + (truthGauge[5] * tg2![u]);
+                    }
+
                     Cf srcB = u >= delay2 ? expected[u - delay2] : precedingProbe[mode.K + (u - delay2)];
                     rxWire[u] -= h2bu * srcB;
                 }
