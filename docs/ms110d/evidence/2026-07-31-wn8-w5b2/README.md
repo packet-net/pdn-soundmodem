@@ -16,6 +16,22 @@ Registered 2026-07-31, after W5b1 fixed the design by measurement ([../2026-07-3
 
 **Budget.** ~600 lines shipped (new class + FinishBlock integration + burst-state plumbing), corpse iteration, one three-lane battery (~3.5 h on this box).
 
-## Measurements
+## Measurements (2026-07-31)
 
-(after the runs)
+**Corpses (the registered bar: ≤~100-class canonical / ≤~30-class disjoint, fixed points):**
+
+| Specimen | Shipped before | Shipped now | Termination |
+|---|---|---|---|
+| canonical (509) | 269,237 (coin-flip) | **112** | 9 exact fixed points + 2 cycle-accepts (b3 @R36, b6 @R40), max 40 rungs |
+| disjoint (10509) | 269,154 | **32** | 10 fixed points + 1 cycle-accept (b4 @R40) |
+
+Two mechanisms surfaced by the instrumented port and fixed with measured provenance:
+- **Period-2 limit cycles**: the deep-fade-lottery blocks end in exact two-cycles (b3: churn frozen at 53/49,152, σ² alternating 0.4%) that the strict fixed-point test reverted to coin-flip. Fix: accept a *detected exact* 2-cycle by choosing the member whose reconstruction explains the ring better — label-free likelihood selection; the §B3.4 confident-wrong attractor cannot satisfy decode == decode-two-rungs-ago exactly, so the revert protection stands for genuine wander.
+- **The refit gate recalibrated**: measured refit-good handovers sit at ≤2% decode churn and the W5b1 poison case at ~30%; the gate moves from my guessed 1% (which skipped b6's refit at 2%) to 5% — inside the measured gap with margin both sides.
+- Port defect caught by the hermetic suite: the delay-profile scan read 8 probes unconditionally and crashed short-interleaver loopback blocks — clamped to the block's frame count (six QAM16 loopback tests red → green; the 64-frame corpse shape byte-unchanged).
+
+**Guard pins**: all five byte-identical to the W0 pin outputs on the final binaries. **Hermetic suite: 790 / 0 / 110.**
+
+**Off-rig direction check (WN8, 500k-bit smoke)**: {3 ms, 2 Hz} 7.55E-4 (650× better than the old path's coin-flip); {1 ms, 0.5 Hz} 9.09E-2 (5× better — two blocks fail under the ~2× longer deep fades of the 0.5 Hz process). Both directions improve; no constant helps only the D.6.1 geometry. **Slow-fade estimation is the measured weak edge** — recorded as the standing engineering note for any future leg (candidate: fade-adaptive refit cadence), not a merge blocker (the direction bar is met).
+
+**Battery** (three-lane, launched 09:58:58 on the final binaries): (appended on completion)
