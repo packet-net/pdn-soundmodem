@@ -12,6 +12,18 @@ Registered 2026-07-31 before the run, per [wn8-program-plan.md](../../wn8-progra
 
 **Kill/proceed rule (pre-committed).** Proceed to W1 only if ALL of: hermetic suite 0 failed; the eight gated Poor points PASS with mask lines statistically consistent with b38 (identical seeds → expect identical digits; any changed digit on a non-target point is drift); WN7 measured rows reproduce b38 exactly (83/6,486,528-class canonical, 48 disjoint — byte-identical census CSVs); WN8 reproduces coin-flip (4.96E-1/4.97E-1); AWGN 10/10 + static + doppler zero errors; all five corpse pins at their §6 digits. ANY drift → stop, diagnose, and close the discrepancy in writing before any DSP work. This battery's censuses become the program's byte-identity baseline regardless of route.
 
-## Measurements
+## Measurements (2026-07-31, HEAD 4994c3f code tree ≡ main 373beb4 + docs-only commits)
 
-(appended after the run)
+- **Hermetic suite: 790 passed / 0 failed / 108 env-gated skips** — the program's re-pinned count (Phase B's 697/0/105 plus the OTA-era additions; zero failures is the pin).
+- **All five §6 guard-pin corpses at their exact digits** (`pins.sh`, summaries under `/tmp/wn8-w0-pins` reproduced in the run): WN7 w0/b0 **0 coded / 11c/0r/4v / oracle b5:15**; WN7 w1/b0 **20 coded / 11c/0r/5v**; WN6 w0/b0 **0 / 11c/0r/0v**; WN13sp **0 / 11c/0r/0v**; WN0 w2/b97 **0 coded**.
+- **Battery** ([battery/](battery/): per-point mask lines, status.log, 120 census CSVs, census-compare.txt):
+  - **Poor canonical — every error count identical to b38 battery-A**: WN0 0, WN1 0, WN2 30/6.09M, WN3 0, WN4 0, WN5 23/6.49M, WN6 35/6.49M, WN13 0, WN7 **83 → 2.56E-5**, WN8 **2,145,864 → 4.96E-1**.
+  - **Poor disjoint — identical to b38 battery-B**: WN0 3, WN1 0, WN2 29, WN3 0, WN4 3, WN5 0, WN6 39, WN7 **48 → 1.48E-5**, WN8 **2,150,887 → 4.97E-1**. (WN13 disjoint ran the in-code 3M budget, 0/3,243,520 — b38's lane used an explicit 6M override, 0/6,487,040; zero errors both, a budget-shape difference, not drift.)
+  - **WN7 census byte-identity: all 8 files identical to b38** (`census-compare.txt`) — canonical + disjoint × workers 0–3.
+  - **AWGN 10/10 zero errors at b38's exact bit counts.** Two points (WN6, WN8) died at first launch with `Fatal error. Internal CLR error. (0x80131506)` at peak battery load — and the MTP wrapper still exited 0, so the lane's rc=0 concealed it; the missing-mask-line rule (the Phase A evidence-chain discipline) caught both. Re-run on the idle box: clean, digits identical to b38.
+  - **Static WID2 0/3,043,456** (= b38). **Doppler 3/3 zero errors** (this driver ran the run-masks.sh doppler form — no worker fan-out — so budgets are smaller than b38's lane-C doppler leg; an instrument-shape note on an engineering check, not a gate).
+- Wall-clock: ~3.5 h for the three lanes on this box (Debug config, `dotnet test --no-build` per run-masks.sh), vs b38's ~33 min — a speed difference only; every deterministic digit reproduced.
+
+## Verdict
+
+**PASS — no drift.** Current main reproduces the b38/b39 baseline exactly on every comparable digit: both WN8 walls stand as banked (coin-flip both families), WN7's measured rows and censuses are byte-identical, the gated eight hold, and the guard pins are green. This battery's censuses ([battery/census/](battery/census/), all 30 points × workers) are the program's byte-identity baseline from here on. **Proceed to W1.**
