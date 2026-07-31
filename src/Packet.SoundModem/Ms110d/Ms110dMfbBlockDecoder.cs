@@ -212,7 +212,30 @@ internal sealed class Ms110dMfbBlockDecoder
 
         RebuildAnchors(midFrame: false, frameChips);
 
-        // The measured schedule.
+        // The measured schedule, with the W6a diversity fallback: the soft-first and
+        // hard-first basins differ per block (the W5b1 schedule table — hard solved
+        // blocks soft left, and vice versa), so a block the shipped soft-first
+        // schedule cannot terminate reruns once hard-first before the revert. Fires
+        // only where the alternative is a coin-flip block.
+        bool converged = RunSchedule(softFirst: true, frameChips, hc0, n, lMin, diag);
+        if (!converged)
+        {
+            RebuildAnchors(midFrame: false, frameChips); // drop attempt-0 refit anchors
+            converged = RunSchedule(softFirst: false, frameChips, hc0, n, lMin, diag);
+        }
+
+        if (converged)
+        {
+            Array.Copy(_dec, info, info.Length);
+        }
+
+        return converged;
+    }
+
+    private bool RunSchedule(
+        bool softFirst, IReadOnlyList<long> frameChips,
+        long hc0, int n, int lMin, Action<string>? diag)
+    {
         bool haveDecisions = false;
         bool converged = false;
         bool cycleAccepted = false;
@@ -223,8 +246,8 @@ internal sealed class Ms110dMfbBlockDecoder
         int lastChurn = int.MaxValue;
         for (; rung <= TotalCap; rung++)
         {
-            bool softPhase = rung < SoftCap && !refitDone;
-            if (!softPhase && !refitDone)
+            bool softPhase = softFirst && rung < SoftCap && !refitDone;
+            if (!softPhase && !refitDone && rung >= SoftCap)
             {
                 refitDone = true; // handover — re-fit first if the gate admits it
                 handoverChurn = lastChurn;
@@ -318,14 +341,9 @@ internal sealed class Ms110dMfbBlockDecoder
 
         diag?.Invoke(
             FormattableString.Invariant(
-                $"mfb-block rungs={rung} window=[{lMin},{lMin + WinLen}) conv={(cycleAccepted ? 2 : converged ? 1 : 0)}") +
+                $"mfb-block sched={(softFirst ? "soft" : "hard")} rungs={rung} window=[{lMin},{lMin + WinLen}) conv={(cycleAccepted ? 2 : converged ? 1 : 0)}") +
             FormattableString.Invariant(
                 $" handoverChurn={handoverChurn} refit={(refitApplied ? 1 : 0)} finalChurn={lastChurn}"));
-        if (converged)
-        {
-            Array.Copy(_dec, info, info.Length);
-        }
-
         return converged;
     }
 

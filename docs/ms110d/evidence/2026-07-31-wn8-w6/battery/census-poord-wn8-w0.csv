@@ -1,0 +1,3 @@
+burst,channelSeed,bits,decoded,errors,firstErr,lastErr,collapses,uncodedErrs,deepFadeErrs,turboC,turboR,turboA,turboS,reason
+0,10509,540640,540672,32,222082,231935,13,194843,25637,11,0,0,0,Eom
+1,11509,540640,540672,1890,356,49094,15,171516,21479,11,0,0,0,Eom
