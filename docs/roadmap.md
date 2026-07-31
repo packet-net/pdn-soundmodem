@@ -47,14 +47,15 @@ from **GB7RDG's HF port** (operate as M0LTE), where ARDOP stations already run. 
 session is optional gravy (Pat works via the host interface for free). Write the on-air bench doc
 before the session; add the busy-detector port if channel-sharing needs it on air.
 
-### #7 — MIL-STD-188-110D App D *(Phases A+B complete)*
+### #7 — MIL-STD-188-110D App D *(Phases A+B complete; WN8 redesign program live)*
 Phase A (Walsh-75/BPSK/QPSK + DFE) closed 2026-07-23 — all mask points 0 errors at full
 statistical budget, KISS-integrated (`ms110d-wn*`); `docs/ms110d/phase-a-closeout.md`.
 - **Phase B closed 2026-07-27** (`docs/ms110d/phase-b-closeout.md`): 8PSK (WN7) / 16QAM (WN8)
   landed and the Poor-channel gating went binding — WN0–6+13 hard-gated at mask. WN7/WN8 close
   measured-only: WN7 at the waveform's own fade-lottery floor (needs added information —
   diversity/ARQ/outer coding — outside the demodulator); WN8 at coin-flip behind a true-label
-  model ceiling and a bootstrap basin (needs waveform-processing redesign).
+  model ceiling and a bootstrap basin (needs waveform-processing redesign — now the live
+  **WN8 redesign program**, `docs/ms110d/wn8-program-plan.md`).
 - On-air (2026-07-27/28): every masked waveform meets its mask over the real rig
   (`docs/ms110d/evidence/2026-07-27-110d-full-campaign/`); WN7/WN8 Poor masks sit above the
   rig's ~15–16 dB ceiling, so those Poor points are sim-only.
