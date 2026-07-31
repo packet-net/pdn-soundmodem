@@ -19,6 +19,26 @@ Registered 2026-07-31, after W3 banked the proceed-with-margin verdict ([../2026
 
 **Budget.** Passive demod seams (~30 lines) + one test-side instrument (~450 lines); corpse runs only; hermetic suite + unchanged-demod note (no §6 battery — nothing ships).
 
-## Measurements
+## Measurements (2026-07-31, [summaries/](summaries/); hermetic 790/0/110)
 
-(after the runs)
+**Estimation chain, both specimens** (after two instrument findings, below): anchor-fit residual **~7E-5** per complex ring sample, truth-recon calibration **~3.0E-4** over the whole data span — the ring-domain composite-FIR estimator and interpolated h(t) are valid on both seed families.
+
+**Two burst-dependent failure modes, caught by the instrument's own lanes and fixed field-realistically:**
+1. The fixed support [−6,16) truncated the echo's raised-cosine tail (canonical anatomy: anchor peaks at 0 AND +10).
+2. The disjoint burst's acquisition locked on the ECHO path (the B3.5b phenomenon at WN8), putting the direct path at −10 — outside any one-sided window, with exactly half the signal power unexplained (anchor residual 1.8E-2 ≈ mean|ring|²/2, ladder dead-flat; [summaries/pre-fix-fixed-window-disjoint.txt](summaries/pre-fix-fixed-window-disjoint.txt)). Fix: a per-burst delay-profile scan (ridged wide LS over [−18,+19) on 8 probes, per-tap energies accumulated across fading) places the 26-tap window — canonical got [−5,21), disjoint [−17,9), and the disjoint anchors collapsed 250× to 7.3E-5.
+
+**The detection ladder** (per-rung coded info-bit errors, self-seeded — R0 is matched projection with un-cancelled ISI at a coin-flip-class decode):
+
+| Rung | canonical | disjoint |
+|---|---|---|
+| R0 | 257,815 | 260,245 |
+| R12 | 34,931 | 80,182 |
+| R40 | 1,860 | 191 |
+| R60 | **36** | **140** |
+| R70/R80 | 36 (frozen) | 140 (frozen) |
+
+Fixed points, not churn: totals frozen over the last 20 rungs, **18 of 22 blocks at exactly zero** (canonical residual all in b3:36; disjoint b4:73, b6:5, b8:62). The b34 wrong-attractor test passes — these are stable correct-majority fixed points reached from coin-flip.
+
+## Verdict
+
+**The registered "credible" read fires decisively; the receiver algorithm is real.** A fully label-free, self-seeded MFB-form receiver — shipped acquisition, probe-anchored composite-FIR trajectories with per-burst window placement, matched projection, hard-decision reconstruction-and-cancellation — converges from coin-flip to the **truth-injection class** (pooled 176 vs W1's truth-fed 136) with 18/22 blocks exactly zero, on both seed families, in the demod's own signal domain. The b34 uncrossable-basin verdict is crossed by architecture, label-free. Not yet MFB-class (0/0): the residual concentrates in 3 fade-lottery blocks, and the loop needs ~60 rungs from its cold seed. **W5b registers next** with the closure levers this prototype deliberately left on the table: soft cancellation (SISO E[x] — the B3.3 lesson in this architecture), per-symbol elliptical pricing inside the loop (the W1b form; this prototype priced with a crude global σ per rung), decision-directed anchor re-fit at convergence, and a warm iteration-0 seed (the existing chain pass) to collapse the rung count to shipping economics — plus the W5b/W5c ladder (structural QAM16 scoping, guard pins, byte-identity, battery) before anything gates.

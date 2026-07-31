@@ -1,0 +1,5 @@
+WN8 @ 23 dB baseSeed 10508 worker 0 burst 0 (channelSeed 10509) MFB-form receiver, L=22 [-6,16)
+b0 anatomy: mean|ring|^2=4.31E-002 anchors=65 a0:E=7.20E-002@pk0 a1:E=9.06E-002@pk0 a2:E=8.60E-002@pk0 a3:E=4.54E-002@pk0 lock=8/Long/K7@0.27Hz
+anchor-fit residual per block: b0:1.89E-002 b1:2.68E-002 b2:5.07E-002 b3:1.82E-002 b4:2.82E-002 b5:2.29E-002 b6:2.33E-002 b7:2.16E-002 b8:1.95E-002 b9:2.80E-002 b10:2.60E-002
+truth-recon residual per block: b0:1.72E-002 b1:2.41E-002 b2:4.64E-002 b3:1.64E-002 b4:2.56E-002 b5:2.05E-002 b6:2.12E-002 b7:1.98E-002 b8:1.79E-002 b9:2.55E-002 b10:2.40E-002
+R0 coded errors 269908/540672: b0:24460 b1:24562 b2:24750 b3:24520 b4:24769 b5:24283 b6:24456 b7:24540 b8:24463 b9:24584 b10:24521
