@@ -35,11 +35,18 @@ internal sealed class Ms110dMfbBlockDecoder
     private const int WinLen = 26;
 
     // Schedule caps (cap-class: they trade wall-clock, never correctness — the exact
-    // fixed point / revert pair does the real termination) and the re-fit gate (the
-    // W5b1 label-quality condition, percent-scale).
+    // fixed point / cycle-accept / revert triple does the real termination) and the
+    // re-fit gate: the W5b2 corpse measured refit-good handovers at ≤2% decode churn
+    // and the W5b1 poison case at ~30% — 5% sits in the measured gap with margin on
+    // both sides.
     private const int SoftCap = 30;
-    private const int TotalCap = 48;
-    private const double RefitChurnGate = 0.01;
+    // 72: the W5b2 corpse measured the three deep-fade-lottery blocks (canonical
+    // b3/b6, disjoint b4) needing ~45-60 rungs while 20/22 blocks converge by ~15-35;
+    // at 48 exactly those three cap-reverted. The §B3.4 Amendment 3 asymmetry argument
+    // applies verbatim: a cap revert throws away a repaired block, extra rungs only
+    // cost wall-clock on the rare stragglers.
+    private const int TotalCap = 72;
+    private const double RefitChurnGate = 0.05;
 
     private readonly Ms110dMode _mode;
     private readonly Ms110dInterleaverParams _il;
@@ -58,6 +65,7 @@ internal sealed class Ms110dMfbBlockDecoder
     private readonly float[] _llrs;
     private readonly byte[] _dec;
     private readonly byte[] _prevDec;
+    private readonly byte[] _prevDec2;
     private readonly float[] _softPunctured;
     private readonly float[] _softMother;
     private readonly float[] _softMotherPost;
@@ -99,6 +107,7 @@ internal sealed class Ms110dMfbBlockDecoder
         _llrs = new float[il.SizeBits];
         _dec = new byte[il.InputBits];
         _prevDec = new byte[il.InputBits];
+        _prevDec2 = new byte[il.InputBits];
         _softPunctured = new float[il.SizeBits];
         _softMother = new float[2 * il.InputBits];
         _softMotherPost = new float[2 * il.InputBits];
@@ -206,7 +215,10 @@ internal sealed class Ms110dMfbBlockDecoder
         // The measured schedule.
         bool haveDecisions = false;
         bool converged = false;
+        bool cycleAccepted = false;
         bool refitDone = false;
+        bool refitApplied = false;
+        int handoverChurn = -1;
         int rung = 0;
         int lastChurn = int.MaxValue;
         for (; rung <= TotalCap; rung++)
@@ -215,15 +227,18 @@ internal sealed class Ms110dMfbBlockDecoder
             if (!softPhase && !refitDone)
             {
                 refitDone = true; // handover — re-fit first if the gate admits it
+                handoverChurn = lastChurn;
                 if (haveDecisions && lastChurn <= (int)(RefitChurnGate * _il.InputBits))
                 {
                     RefitAnchors(frameChips, hc0);
                     RebuildAnchors(midFrame: true, frameChips);
+                    refitApplied = true;
                 }
             }
 
             Project(frameChips, hc0, n, lMin, haveDecisions);
             BuildLlrs(lMin);
+            Array.Copy(_prevDec, _prevDec2, _prevDec.Length);
             Array.Copy(_dec, _prevDec, _dec.Length);
             Ms110dFraming.DecodeBlock(_viterbi, _puncture, _interleaver, _llrs, _dec);
             int churn = 0;
@@ -240,6 +255,8 @@ internal sealed class Ms110dMfbBlockDecoder
             }
 
             lastChurn = churn;
+            diag?.Invoke(FormattableString.Invariant(
+                $"mfb-rung r{rung} churn={churn} soft={(softPhase ? 1 : 0)} sigma={_sigma2:E2}"));
             if (rung > 0 && churn == 0)
             {
                 if (softPhase)
@@ -247,10 +264,12 @@ internal sealed class Ms110dMfbBlockDecoder
                     // A stable soft decode is a handover signal, not the final fixed
                     // point — force the re-fit + hard tail to confirm it exactly.
                     refitDone = true;
+                    handoverChurn = lastChurn;
                     if (lastChurn <= (int)(RefitChurnGate * _il.InputBits))
                     {
                         RefitAnchors(frameChips, hc0);
                         RebuildAnchors(midFrame: true, frameChips);
+                        refitApplied = true;
                     }
 
                     SetDecisionsHard();
@@ -262,7 +281,30 @@ internal sealed class Ms110dMfbBlockDecoder
                 break;
             }
 
-            if (softPhase && !(rung == SoftCap - 1))
+            // An exact period-2 limit cycle in the hard tail: two near-identical
+            // decodes swapping forever (measured on the deep-fade-lottery blocks —
+            // b3 canonical cycles at churn 53 with σ² alternating by 0.4%). Accept the
+            // cycle member whose reconstruction explains the ring better — a
+            // label-free likelihood selection. The §B3.4 confident-wrong attractor
+            // cannot satisfy decode == decode-two-rungs-ago exactly, so the revert
+            // protection stands for genuine wander.
+            if (!softPhase && rung > 1 && churn > 0 &&
+                _dec.AsSpan().SequenceEqual(_prevDec2))
+            {
+                double sigmaB = _sigma2; // priced _prevDec's reconstruction this rung
+                SetDecisionsHard();      // from _dec — price the other cycle member
+                double sigmaA = ReconResidual(frameChips, hc0, n, lMin);
+                if (sigmaB < sigmaA)
+                {
+                    Array.Copy(_prevDec, _dec, _dec.Length);
+                }
+
+                converged = true;
+                cycleAccepted = true;
+                break;
+            }
+
+            if (softPhase)
             {
                 SetDecisionsSoft();
             }
@@ -274,8 +316,11 @@ internal sealed class Ms110dMfbBlockDecoder
             haveDecisions = true;
         }
 
-        diag?.Invoke(FormattableString.Invariant(
-            $"mfb-block rungs={rung} window=[{lMin},{lMin + WinLen}) conv={(converged ? 1 : 0)}"));
+        diag?.Invoke(
+            FormattableString.Invariant(
+                $"mfb-block rungs={rung} window=[{lMin},{lMin + WinLen}) conv={(cycleAccepted ? 2 : converged ? 1 : 0)}") +
+            FormattableString.Invariant(
+                $" handoverChurn={handoverChurn} refit={(refitApplied ? 1 : 0)} finalChurn={lastChurn}"));
         if (converged)
         {
             Array.Copy(_dec, info, info.Length);
@@ -507,55 +552,66 @@ internal sealed class Ms110dMfbBlockDecoder
     private Complex[]? _recon;
     private double _sigma2;
 
-    private void Project(IReadOnlyList<long> frameChips, long hc0, int n, int lMin, bool cancel)
+    /// <summary>Rebuilds the block reconstruction from the current
+    /// <see cref="_decisions"/> (probes always known) and returns the mean squared
+    /// residual per complex sample over the data span — the label-free noise price and
+    /// the likelihood proxy the cycle-accept selection uses.</summary>
+    private double ReconResidual(IReadOnlyList<long> frameChips, long hc0, int n, int lMin)
     {
         int u = _mode.U;
         int k = _mode.K;
         int frames = _il.Frames;
         _recon ??= new Complex[_ring.Length];
+        Array.Clear(_recon, 0, n);
+        void AddChip(long c, Complex x)
+        {
+            InterpolateH(c, _hAt);
+            for (int i = 0; i < WinLen; i++)
+            {
+                long hc = (2 * c) + lMin + i;
+                if (hc >= hc0 && hc < hc0 + n)
+                {
+                    _recon[hc - hc0] += _hAt[i] * x;
+                }
+            }
+        }
+
+        for (int p = 0; p <= frames; p++)
+        {
+            bool preceding = p < frames;
+            long ps = preceding ? frameChips[p] - k : frameChips[frames - 1] + u;
+            bool boundary = preceding ? (p + 1) % frames == 0 : (frames + 1) % frames == 0;
+            Cf[] probe = MiniProbe.Get(k, boundary);
+            for (int c = 0; c < k; c++)
+            {
+                AddChip(ps + c, new Complex(probe[c].Re, probe[c].Im));
+            }
+        }
+
+        for (int d = 0; d < _decisions.Length; d++)
+        {
+            AddChip(_dataChip[d], _decisions[d]);
+        }
+
+        double resid = 0;
+        long rows = 0;
+        for (long hc = 2 * frameChips[0]; hc < 2 * (frameChips[frames - 1] + u); hc++)
+        {
+            Complex diff = _ring[hc - hc0] - _recon[hc - hc0];
+            resid += (diff.Real * diff.Real) + (diff.Imaginary * diff.Imaginary);
+            rows++;
+        }
+
+        return Math.Max(resid / rows, 1e-12);
+    }
+
+    private void Project(IReadOnlyList<long> frameChips, long hc0, int n, int lMin, bool cancel)
+    {
+        int u = _mode.U;
+        _recon ??= new Complex[_ring.Length];
         if (cancel)
         {
-            Array.Clear(_recon, 0, n);
-            void AddChip(long c, Complex x)
-            {
-                InterpolateH(c, _hAt);
-                for (int i = 0; i < WinLen; i++)
-                {
-                    long hc = (2 * c) + lMin + i;
-                    if (hc >= hc0 && hc < hc0 + n)
-                    {
-                        _recon[hc - hc0] += _hAt[i] * x;
-                    }
-                }
-            }
-
-            for (int p = 0; p <= frames; p++)
-            {
-                bool preceding = p < frames;
-                long ps = preceding ? frameChips[p] - k : frameChips[frames - 1] + u;
-                bool boundary = preceding ? (p + 1) % frames == 0 : (frames + 1) % frames == 0;
-                Cf[] probe = MiniProbe.Get(k, boundary);
-                for (int c = 0; c < k; c++)
-                {
-                    AddChip(ps + c, new Complex(probe[c].Re, probe[c].Im));
-                }
-            }
-
-            for (int d = 0; d < _decisions.Length; d++)
-            {
-                AddChip(_dataChip[d], _decisions[d]);
-            }
-
-            double resid = 0;
-            long rows = 0;
-            for (long hc = 2 * frameChips[0]; hc < 2 * (frameChips[frames - 1] + u); hc++)
-            {
-                Complex diff = _ring[hc - hc0] - _recon[hc - hc0];
-                resid += (diff.Real * diff.Real) + (diff.Imaginary * diff.Imaginary);
-                rows++;
-            }
-
-            _sigma2 = Math.Max(resid / rows, 1e-12);
+            _sigma2 = ReconResidual(frameChips, hc0, n, lMin);
         }
 
         var r0Dist = cancel ? null : new List<double>(_proj.Length);
