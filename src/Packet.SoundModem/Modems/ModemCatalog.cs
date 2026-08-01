@@ -39,6 +39,67 @@ public static class ModemCatalog
     public static bool IsKnown(string mode) => _knownSet.Contains(mode);
 
     /// <summary>
+    /// Mode names closest to <paramref name="mode"/>, for a "did you mean" on a typo. A
+    /// case-insensitive hit wins outright — the catalogue is ordinal, so <c>AFSK1200</c> is a
+    /// miss and naming the cased spelling is the whole answer. Otherwise the nearest by edit
+    /// distance, closest first. Empty when nothing is near enough to be a useful guess.
+    /// </summary>
+    /// <remarks>Start-up path only (the daemon rejecting a bad config), never per-frame.</remarks>
+    public static string[] NearestModes(string mode, int max = 3)
+    {
+        if (string.IsNullOrWhiteSpace(mode))
+        {
+            return [];
+        }
+
+        string[] cased = _knownModes
+            .Where(m => string.Equals(m, mode, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (cased.Length > 0)
+        {
+            return cased;
+        }
+
+        // Scale the budget with the name so "ms110d-wn13" tolerates more than "afsk300" does,
+        // without a short typo matching half the catalogue.
+        int budget = Math.Clamp(mode.Length / 3, 2, 4);
+        return _knownModes
+            .Select(m => (Mode: m, Distance: EditDistance(m, mode)))
+            .Where(x => x.Distance <= budget)
+            .OrderBy(x => x.Distance)
+            .ThenBy(x => x.Mode, StringComparer.Ordinal)
+            .Take(max)
+            .Select(x => x.Mode)
+            .ToArray();
+    }
+
+    /// <summary>Case-insensitive Levenshtein distance, two rows rather than a full matrix.</summary>
+    private static int EditDistance(string a, string b)
+    {
+        int[] previous = new int[b.Length + 1];
+        int[] current = new int[b.Length + 1];
+        for (int j = 0; j <= b.Length; j++)
+        {
+            previous[j] = j;
+        }
+
+        for (int i = 1; i <= a.Length; i++)
+        {
+            current[0] = i;
+            for (int j = 1; j <= b.Length; j++)
+            {
+                int cost = char.ToLowerInvariant(a[i - 1]) == char.ToLowerInvariant(b[j - 1]) ? 0 : 1;
+                current[j] = Math.Min(
+                    Math.Min(current[j - 1] + 1, previous[j] + 1),
+                    previous[j - 1] + cost);
+            }
+
+            (previous, current) = (current, previous);
+        }
+
+        return previous[b.Length];
+    }
+
+    /// <summary>
     /// The DSP sample rate a mode's demod/mod chain runs at: 48000 for the wideband baseband
     /// families (fsk*/c4fsk*/anything at 9600) and the OFDM/MS110D waveforms, 12000 otherwise.
     /// A soundcard capture rate must be an integer multiple of this.

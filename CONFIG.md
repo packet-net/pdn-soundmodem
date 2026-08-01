@@ -268,39 +268,83 @@ lands on `frequency` regardless of the radio's last-used band.
 
 ## What is rejected at start-up
 
-The daemon validates and exits rather than running in a state you did not ask for. Errors
-come out two different ways, which is worth knowing before you go looking for them in the
-journal.
+The daemon validates before it opens anything, and refuses to start rather than run in a state
+you did not ask for. Every configuration problem is reported the same way — the file, what is
+wrong in plain words, and what to do — and exits with status **2**:
 
-**Clean message, exit code 2:**
+```
+configuration error in /etc/pdn-soundmodem/soundmodem.json
+  not valid JSON — line 7, position 3: ',' is an invalid start of a value.
 
-| Condition | Message |
+  The service will not start until this is fixed. To start from a known-good file:
+    sudo cp /usr/share/pdn-soundmodem/soundmodem.example.json /etc/pdn-soundmodem/soundmodem.json
+  Then edit it for your sound device and PTT, and:
+    sudo systemctl restart pdn-soundmodem
+  Every setting is documented at https://github.com/packet-net/pdn-soundmodem/blob/main/CONFIG.md
+```
+
+Read it with:
+
+```sh
+systemctl status pdn-soundmodem          # the last few lines, usually enough
+journalctl -u pdn-soundmodem -n 30       # the whole message
+```
+
+**A rejected config does not crash-loop.** The unit sets `RestartPreventExitStatus=2`, so
+systemd leaves the service stopped after a configuration error and the journal holds one
+readable explanation rather than a copy every five seconds. Fix the file and
+`systemctl restart pdn-soundmodem`. Any *other* failure — a USB sound card that has not
+enumerated yet at boot, for instance — still restarts on its own as usual.
+
+| Condition | What you get |
 |---|---|
+| File missing, unreadable, or in a missing directory | `no such file` / `no such directory` / `permission denied reading the file` |
+| File empty | `the file is empty` |
+| File contains the literal `null` | `the file contains only \`null\`` — with a minimal working config to copy |
+| Malformed JSON | `not valid JSON — line L, position P: …` (counted from 1, as your editor does) |
+| Two modems on the same `subChannel` | `two modems share "subChannel": N … renumber one of them` |
+| `ardop` alongside `modems` or `paging` | `"ardop" cannot be combined with … keep "ardop" and delete the others, or delete "ardop"` |
+| `mode` not a known mode | `unknown mode 'X'` — with a **did you mean** for near misses, and a link to the mode table |
+| `frequency` on a fixed-centre mode | `mode 'X' has a fixed centre frequency — drop the frequency override …` |
 | `captureRate` not a multiple of the DSP rate | `--capture-rate must be a multiple of N` |
-| `frequency` on a fixed-centre mode | `modem N: mode 'X' has a fixed centre frequency — drop the frequency override …` |
 | `ptt` alongside a `flex:` device | `--device flex: keys the radio itself; remove the conflicting --ptt …` |
-| `type` not `serial` or `cm108` | `unknown ptt type 'X'` |
+| `ptt.type` not `serial` or `cm108` | `unknown ptt type 'X'` |
 
-**Unhandled exception with a .NET stack trace, exit code 134:**
+The mode suggestion is worth knowing about, because a hyphen is easy to lose among 38 names:
 
-| Condition | First line of the trace |
-|---|---|
-| Two modems on the same `subChannel` | `InvalidDataException: duplicate sub-channel N` |
-| `ardop` alongside `modems` or `paging` | `InvalidDataException: Ardop is exclusive with Modems/Paging …` |
-| `mode` not a known mode | `ArgumentException: unknown mode 'X'` |
-| File contains the literal `null` | `InvalidDataException: empty configuration` |
-| File is empty or malformed JSON | `JsonException: The input does not contain any JSON tokens …` |
-| File does not exist | `FileNotFoundException: Could not find file '…'` |
+```
+modem 0: unknown mode 'fsk9600il2p'
+  did you mean: fsk9600-il2p, fsk4800-il2p
+  the 38 valid mode names are listed at …/docs/modes.md
+```
 
-> **A config typo crash-loops.** The systemd unit sets `Restart=on-failure` with
-> `RestartSec=5`, so a config the daemon rejects is retried every five seconds and the
-> journal fills with repeats. `systemctl status pdn-soundmodem` shows the most recent
-> failure; `journalctl -u pdn-soundmodem | head -20` gets you the first line of the error,
-> which is the one that names the actual problem. Once you have read it,
-> `systemctl stop pdn-soundmodem` while you fix the file.
+### Hardware the config names but the machine does not have
 
-The stack traces are ugly but the exception message on the first line is accurate — read
-that line and ignore the frames below it.
+Different case, deliberately handled differently. A config that is *structurally* fine but
+points at a sound card or PTT line that will not open — the usual first-install experience,
+since the seeded config names a CM108 on `/dev/hidraw0` — exits **1**, not 2, so the service
+**keeps restarting**. That is on purpose: a USB interface may simply not have enumerated yet
+at boot, and the service should come up by itself when it does rather than stay down waiting
+for a human.
+
+You still get a message rather than a stack trace:
+
+```
+cannot open the cm108 PTT device "/dev/hidraw0"
+  Could not find file '/dev/hidraw0'.
+
+  Set by "ptt" in /etc/pdn-soundmodem/soundmodem.json
+  This selects how the radio is keyed; omit it entirely for VOX, or for a
+  FlexRadio, which keys itself.
+  List what this machine actually has:
+    ls -l /dev/hidraw*
+  /dev/hidraw* is root-only by default, so the unprivileged service user cannot
+  open it without a udev rule granting the audio group access — see the
+  Permissions section of INSTALL.md. …
+```
+
+So: **"will not start until this is fixed" means the service is stopped and waiting for you;
+"will keep retrying" means it is still trying and may fix itself.**
 
 ## Config file vs command line
 

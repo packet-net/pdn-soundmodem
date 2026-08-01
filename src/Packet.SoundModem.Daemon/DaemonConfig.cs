@@ -187,11 +187,15 @@ public sealed class DaemonConfig
     public static DaemonConfig Load(string path)
     {
         var config = JsonSerializer.Deserialize<DaemonConfig>(File.ReadAllText(path), Options)
-            ?? throw new InvalidDataException("empty configuration");
+            ?? throw new InvalidDataException(
+                "the file contains only `null` — there is nothing to configure from. A minimal "
+                + "working file is {\"device\": \"default\", \"modems\": [{\"subChannel\": 0, "
+                + "\"mode\": \"afsk1200\"}]}");
         if (config.Ardop is not null && (config.Modems.Count > 0 || config.Paging is not null))
         {
             throw new InvalidDataException(
-                "Ardop is exclusive with Modems/Paging — the ARDOP channel is dedicated");
+                "\"ardop\" cannot be combined with \"modems\" or \"paging\" — the ARDOP channel is "
+                + "dedicated. Keep \"ardop\" and delete the others, or delete \"ardop\".");
         }
 
         if (config.Modems.Count == 0 && config.Ardop is null)
@@ -202,9 +206,97 @@ public sealed class DaemonConfig
         var duplicates = config.Modems.GroupBy(m => m.SubChannel).Where(g => g.Count() > 1).ToList();
         if (duplicates.Count > 0)
         {
-            throw new InvalidDataException($"duplicate sub-channel {duplicates[0].Key}");
+            throw new InvalidDataException(
+                $"two modems share \"subChannel\": {duplicates[0].Key}. Each modem needs its own "
+                + "KISS sub-channel (0-15) — renumber one of them.");
         }
 
         return config;
     }
+
+    /// <summary>
+    /// Loads a configuration file, turning every failure into an operator-facing explanation
+    /// instead of an exception. Returns null with <paramref name="error"/> set on failure.
+    /// </summary>
+    /// <remarks>
+    /// This is what the daemon calls. A bad config is an operator typo, not a bug, and the
+    /// person who has to act on it reads it in `journalctl` — a .NET stack trace there tells
+    /// them nothing they can use, and buries the one line that names the problem.
+    /// </remarks>
+    public static DaemonConfig? TryLoad(string path, out string error)
+    {
+        try
+        {
+            error = "";
+            // A truncated file is a likely half-finished edit, and "does not contain any JSON
+            // tokens" is a poor way to be told the file is empty.
+            if (File.Exists(path) && File.ReadAllText(path).AsSpan().IsWhiteSpace())
+            {
+                error = Describe(path, "the file is empty");
+                return null;
+            }
+
+            return Load(path);
+        }
+        catch (FileNotFoundException)
+        {
+            error = Describe(path, $"no such file: {path}");
+        }
+        catch (DirectoryNotFoundException)
+        {
+            error = Describe(path, $"no such directory: {Path.GetDirectoryName(path)}");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            error = Describe(path, "permission denied reading the file");
+        }
+        catch (JsonException e)
+        {
+            // System.Text.Json counts lines from 0; humans and editors count from 1.
+            string at = e.LineNumber is { } line
+                ? $"line {line + 1}, position {(e.BytePositionInLine ?? 0) + 1}: "
+                : "";
+            string detail = e.Message.Split(" Path:")[0];
+            error = Describe(path, $"not valid JSON — {at}{detail}");
+        }
+        catch (InvalidDataException e)
+        {
+            error = Describe(path, e.Message);
+        }
+        catch (IOException e)
+        {
+            error = Describe(path, $"could not be read: {e.Message}");
+        }
+
+        return null;
+    }
+
+    /// <summary>Formats a config failure as "what is wrong" followed by "what to do".</summary>
+    private static string Describe(string path, string problem)
+    {
+        var text = new System.Text.StringBuilder();
+        text.AppendLine($"configuration error in {path}");
+        text.AppendLine($"  {problem}");
+        text.AppendLine();
+        text.AppendLine("  The service will not start until this is fixed. To start from a known-good file:");
+        if (File.Exists(ExamplePath))
+        {
+            text.AppendLine($"    sudo cp {ExamplePath} {path}");
+        }
+        else
+        {
+            text.AppendLine($"    copy the annotated example over {path}");
+        }
+
+        text.AppendLine("  Then edit it for your sound device and PTT, and:");
+        text.AppendLine("    sudo systemctl restart pdn-soundmodem");
+        text.Append("  Every setting is documented at " + ConfigDocUrl);
+        return text.ToString();
+    }
+
+    /// <summary>Where the .deb puts the annotated example config.</summary>
+    internal const string ExamplePath = "/usr/share/pdn-soundmodem/soundmodem.example.json";
+
+    internal const string ConfigDocUrl =
+        "https://github.com/packet-net/pdn-soundmodem/blob/main/CONFIG.md";
 }

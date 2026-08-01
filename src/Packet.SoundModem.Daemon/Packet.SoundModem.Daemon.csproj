@@ -13,4 +13,10 @@
     <ProjectReference Include="../Packet.SoundModem/Packet.SoundModem.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- DeviceDiagnostics' messages are the first thing an admin reads in journalctl on a
+         fresh install, so they are pinned by tests. -->
+    <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
+  </ItemGroup>
+
 </Project>
