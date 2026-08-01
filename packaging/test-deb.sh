@@ -93,6 +93,10 @@ check(){ if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null 2>&1
+# Docker images ship a policy-rc.d that makes every maintainer-script service start a
+# no-op. Leave it in place and postinst's `start` is silently skipped, which would make
+# any assertion about auto-start vacuous. Remove it so the real thing runs.
+rm -f /usr/sbin/policy-rc.d
 apt-get install -y -qq "/debs/$DEB" >/dev/null 2>&1
 
 echo "== install under real systemd =="
@@ -102,9 +106,13 @@ verify=$(systemd-analyze verify /usr/lib/systemd/system/pdn-soundmodem.service 2
 [ -z "$verify" ] && ok "systemd-analyze verify is clean" || bad "systemd-analyze verify: $verify"
 state=$(systemctl is-enabled pdn-soundmodem.service 2>&1)
 [ "$state" = "enabled" ] && ok "enabled on install" || bad "expected enabled on install, got '$state'"
-# postinst starts it too; there is no sound card in here so it will not stay up, but it
-# must fail on the hardware, not on packaging (missing native lib, unusable ExecStart).
-check "postinst started it" "journalctl -u pdn-soundmodem.service --no-pager 2>/dev/null | grep -q ."
+# postinst starts it too. There is no sound card in here so it will not stay up, but
+# systemd must have actually executed it — assert on a timestamp systemd only sets once
+# the main process has run. (`journalctl | grep -q .` is NOT a valid check here: it
+# matches the literal "-- No entries --" line and so passes when nothing ever started.)
+started=$(systemctl show pdn-soundmodem.service -p ExecMainStartTimestamp --value 2>/dev/null)
+[ -n "$started" ] && ok "postinst started it ($started)" \
+                  || bad "postinst did not start the unit — ExecMainStartTimestamp empty"
 
 echo
 echo "== start =="
