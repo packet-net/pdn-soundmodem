@@ -18,7 +18,7 @@ namespace Packet.SoundModem.Tests.Modems;
 public class C4fskEqualizerTests
 {
     [Theory]
-    [InlineData("c4fsk9600", 4800, 0.62)]
+    [InlineData("c4fsk9600", 4800, 0.63)]
     [InlineData("c4fsk19200", 9600, 0.65)]
     public void Isi_Closed_Eye_Still_Decodes(string mode, int symbolRate, double cutoffFactor)
     {
@@ -42,12 +42,15 @@ public class C4fskEqualizerTests
             : C4fskModem.C4fsk19200(rate, _ => { });
         float[] clean = tx.Modulate(frame, 120);
 
-        // The cutoff (0.62×/0.65× the symbol rate per mode) leaves the binary eye open
+        // The cutoff (0.63×/0.65× the symbol rate per mode) leaves the binary eye open
         // but drags 4-level outer symbols with opposite-going neighbours toward the
         // inner band — the measured corpus failure mode, reproduced hermetically at
-        // the tightest cutoff the equalizer still recovers (0.6× and below closes the
-        // eye past what decision-directed adaptation can reopen; 0.65×+ decodes even
-        // without it at 4800 sym/s).
+        // the tightest cutoff the equalizer still recovers. (0.62× passed before the
+        // preamble adaptation freeze: pre-converging on the rank-deficient preamble
+        // bought one extra hundredth of cutoff at the price of unbounded tap drift on
+        // long noisy run-ins — see the freeze comment in C4fskModem. The no-equalizer
+        // discrimination anchor for c4fsk9600 is the bench corpus: 45/45 with the
+        // equalizer, 43/45 without; c4fsk19200's 0.65× row fails outright without it.)
         var channel = new FirFilter(FilterDesign.LowPass(cutoffFactor * symbolRate, rate, 48));
         var audio = new float[(rate / 2) + clean.Length + (rate / 2)];
         for (int i = 0; i < clean.Length; i++)

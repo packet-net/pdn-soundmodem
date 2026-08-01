@@ -81,11 +81,18 @@ internal static class SimChannel
     /// <param name="snrDb">SNR in a 3&#160;kHz noise bandwidth; <see cref="double.PositiveInfinity"/>
     /// for a noiseless run.</param>
     /// <param name="seed">Channel realisation seed.</param>
-    /// <param name="leadInSeconds">Noise-only padding before the burst (acquisition floor).</param>
+    /// <param name="leadInSeconds">Noise-only padding before the burst (acquisition floor).
+    /// Must comfortably exceed the receiver's noise-floor seeding window:
+    /// <see cref="Packet.SoundModem.Modems.EnergyBusyDetector"/> seeds its floor from its first
+    /// 8 × 20 ms = 160 ms of audio, taking the LOUDEST seed block. The old 0.15 s default sat just
+    /// inside that window, so the 8th seed block already contained burst audio, the floor seeded at
+    /// ~signal level, and the burst never rose the 6 dB needed to assert — the energy-gated modes
+    /// (C4FSK) discarded every sample and scored 0/N at any SNR while ungated modes were untouched
+    /// (the 2026-08-01 diagnosis; the FM ladder never hit it because its lead-in is 6 s).</param>
     /// <param name="leadOutSeconds">Noise-only padding after the burst (end-of-burst window).</param>
     public static float[] Apply(
         ReadOnlySpan<float> activeBurst, int rate, SimChannelKind kind, double snrDb, int seed,
-        double leadInSeconds = 0.15, double leadOutSeconds = 1.2, double cfoHz = 0)
+        double leadInSeconds = 0.5, double leadOutSeconds = 1.2, double cfoHz = 0)
     {
         var channel = new WattersonChannel(rate, seed, Paths(kind));
         return channel.Apply(
