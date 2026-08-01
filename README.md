@@ -12,7 +12,8 @@ designed to serve two masters from one core:
 **Installing?** Every release ships `.deb` packages for amd64 / arm64 / armhf with a systemd
 unit. They are self-contained, so there is no .NET runtime to install on the target — grab one
 from the [latest release](https://github.com/packet-net/pdn-soundmodem/releases/latest) and
-follow **[INSTALL.md](INSTALL.md)**.
+follow **[INSTALL.md](INSTALL.md)**. Every configuration setting is documented in
+**[CONFIG.md](CONFIG.md)**.
 
 ## Status
 

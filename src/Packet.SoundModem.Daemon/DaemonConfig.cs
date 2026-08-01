@@ -137,8 +137,10 @@ public sealed class CsmaConfig
     public int TxTailMilliseconds { get; set; } = 20;
 }
 
-/// <summary>pdn-soundmodem daemon configuration file (JSON, comments not allowed —
-/// keep a commented example beside it).</summary>
+/// <summary>pdn-soundmodem daemon configuration file. JSON, with comments and trailing
+/// commas accepted (see <see cref="Options"/>) and case-insensitive key matching — the
+/// shipped soundmodem.example.json relies on that and annotates itself. Full reference:
+/// CONFIG.md.</summary>
 public sealed class DaemonConfig
 {
     /// <summary>ALSA device for capture and playback.</summary>
