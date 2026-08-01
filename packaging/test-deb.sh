@@ -127,6 +127,31 @@ fi
 systemctl stop pdn-soundmodem.service >/dev/null 2>&1
 
 echo
+echo "== a bad config stops, and says why, instead of crash-looping =="
+cp /etc/pdn-soundmodem/soundmodem.json /tmp/good.json
+printf '{ "device": "null", "modems": [ { "subChannel": 0, "mode": } ] }' > /etc/pdn-soundmodem/soundmodem.json
+systemctl reset-failed pdn-soundmodem >/dev/null 2>&1 || true
+journalctl --rotate >/dev/null 2>&1; journalctl --vacuum-time=1s >/dev/null 2>&1
+systemctl restart pdn-soundmodem >/dev/null 2>&1 || true
+# Longer than RestartSec=5, so a unit that was going to crash-loop has had its chance.
+sleep 9
+restarts=$(systemctl show pdn-soundmodem.service -p NRestarts --value 2>/dev/null)
+[ "$restarts" = "0" ] && ok "no restarts after a bad config (RestartPreventExitStatus=2)" \
+                      || bad "expected 0 restarts, got '$restarts' — a bad config is crash-looping"
+code=$(systemctl show pdn-soundmodem.service -p ExecMainStatus --value 2>/dev/null)
+[ "$code" = "2" ] && ok "exited 2 (the code the unit refuses to retry)" \
+                  || bad "expected exit 2 for a bad config, got '$code'"
+log=$(journalctl -u pdn-soundmodem.service --no-pager 2>/dev/null)
+echo "$log" | grep -q 'configuration error in /etc/pdn-soundmodem/soundmodem.json' \
+  && ok "journal names the file" || bad "journal does not name the offending file"
+echo "$log" | grep -q 'not valid JSON' && ok "journal says what is wrong" || bad "journal does not say what is wrong"
+echo "$log" | grep -q 'CONFIG.md' && ok "journal points at the reference" || bad "journal has no pointer to docs"
+echo "$log" | grep -q 'Unhandled exception' && bad "journal contains a stack trace" \
+                                            || ok "no stack trace in the journal"
+cp /tmp/good.json /etc/pdn-soundmodem/soundmodem.json
+systemctl reset-failed pdn-soundmodem >/dev/null 2>&1 || true
+
+echo
 echo "== reinstall keeps enablement =="
 apt-get install -y -qq --reinstall "/debs/$DEB" >/dev/null 2>&1
 check "still enabled after reinstall" "[ \"\$(systemctl is-enabled pdn-soundmodem.service)\" = enabled ]"

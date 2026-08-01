@@ -34,8 +34,14 @@ sha256sum -c SHA256SUMS --ignore-missing
 
 **The service is enabled and started on install, and on a fresh install it will fail —
 that is expected.** A packet modem has no useful defaults: the seeded config names a sound
-device and PTT line that almost certainly don't match your machine. `systemctl status
-pdn-soundmodem` right after installing will tell you what it could not open.
+device and PTT line that almost certainly don't match your machine.
+
+```sh
+systemctl status pdn-soundmodem
+```
+
+tells you exactly what it could not open, which setting selects it, and the command that
+lists what your machine actually has. Work through what it says, then restart.
 
 Installing seeds `/etc/pdn-soundmodem/soundmodem.json` from the shipped example
 (`/usr/share/pdn-soundmodem/soundmodem.example.json`). Edit it:

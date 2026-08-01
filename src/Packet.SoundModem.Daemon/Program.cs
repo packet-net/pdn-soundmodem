@@ -176,7 +176,16 @@ WaterfallConfig? waterfallConfig = null;
 
 if (configPath is not null)
 {
-    DaemonConfig config = DaemonConfig.Load(configPath);
+    // A bad config is an operator typo, not a bug: explain it and exit 2. The unit's
+    // RestartPreventExitStatus=2 stops systemd retrying, so the journal carries one
+    // readable explanation instead of a stack trace every RestartSec.
+    DaemonConfig? config = DaemonConfig.TryLoad(configPath, out string configError);
+    if (config is null)
+    {
+        Console.Error.WriteLine(configError);
+        return 2;
+    }
+
     device = config.Device;
     captureRate = config.CaptureRate;
     kissPort = config.KissPort;
@@ -279,6 +288,24 @@ foreach (ModemConfig modemConfig in modems)
     int subChannel = modemConfig.SubChannel;
     string mode = modemConfig.Mode;
     double? frequency = modemConfig.Frequency;
+    if (!ModemCatalog.IsKnown(mode))
+    {
+        // Checked here rather than left to ModemCatalog.Create's throw: 38 mode names is
+        // plenty to mistype, and "unknown mode 'fsk9600il2p'" with a stack trace under it
+        // does not tell you that the name you wanted was one hyphen away.
+        Console.Error.WriteLine($"modem {subChannel}: unknown mode '{mode}'");
+        string[] near = ModemCatalog.NearestModes(mode);
+        if (near.Length > 0)
+        {
+            Console.Error.WriteLine($"  did you mean: {string.Join(", ", near)}");
+        }
+
+        Console.Error.WriteLine(
+            $"  the {ModemCatalog.KnownModes.Count} valid mode names are listed at "
+            + "https://github.com/packet-net/pdn-soundmodem/blob/main/docs/modes.md");
+        return 2;
+    }
+
     if (frequency is not null && !ModemCatalog.AcceptsCentreFrequency(mode))
     {
         Console.Error.WriteLine(
@@ -514,33 +541,57 @@ else if (deviceIsFlex)
 else
 {
     ptt = new NullPtt();
-    switch (pttConfig?.Type)
+
+    // Hardware the config names but the box does not have is the single most likely thing to
+    // go wrong on a first install (the seeded config points at a CM108 on /dev/hidraw0). Say
+    // which setting, which file, and how to list what is really there — but exit 1, not 2, so
+    // the unit keeps retrying and comes up by itself if the device was only slow to appear.
+    try
     {
-        case null:
-            break;
-        case "serial":
-            string serialLine = pttConfig.Line ?? "rts";
-            ptt = new SerialPtt(pttConfig.Device, useRts: serialLine != "dtr", useDtr: serialLine == "dtr");
-            Console.WriteLine($"ptt: serial {pttConfig.Device} ({serialLine})");
-            break;
-        case "cm108":
-            int gpio = pttConfig.Gpio ?? 3;
-            ptt = new Cm108Ptt(pttConfig.Device, gpio);
-            Console.WriteLine($"ptt: cm108 {pttConfig.Device} (gpio {gpio})");
-            break;
-        default:
-            Console.Error.WriteLine($"unknown ptt type '{pttConfig.Type}'");
-            return 2;
+        switch (pttConfig?.Type)
+        {
+            case null:
+                break;
+            case "serial":
+                string serialLine = pttConfig.Line ?? "rts";
+                ptt = new SerialPtt(pttConfig.Device, useRts: serialLine != "dtr", useDtr: serialLine == "dtr");
+                Console.WriteLine($"ptt: serial {pttConfig.Device} ({serialLine})");
+                break;
+            case "cm108":
+                int gpio = pttConfig.Gpio ?? 3;
+                ptt = new Cm108Ptt(pttConfig.Device, gpio);
+                Console.WriteLine($"ptt: cm108 {pttConfig.Device} (gpio {gpio})");
+                break;
+            default:
+                Console.Error.WriteLine($"unknown ptt type '{pttConfig.Type}'");
+                return 2;
+        }
+    }
+    catch (Exception e) when (e is IOException or UnauthorizedAccessException
+                                or InvalidOperationException or ArgumentException)
+    {
+        Console.Error.WriteLine(DeviceDiagnostics.Ptt(pttConfig!, configPath, e));
+        return 1;
     }
 
-    // Transmit: modulate at the DSP rate; play at the card-native capture rate through the
-    // image-rejecting upsampler (cards commonly refuse to open 12 kHz playback directly).
-    playback = captureRate == DspRate
-        ? new AlsaAudioOutput(device, DspRate)
-        : new UpsamplingAudioOutput(new AlsaAudioOutput(device, captureRate), DspRate);
-    // Receive: capture at the card-native rate; ARDOP buffers more deeply (500 ms vs the
-    // 120 ms default) to ride out device hiccups (snd-aloop re-locking mid-frame).
-    input = new AlsaAudioInput(device, captureRate, ardopPort is null ? 120_000 : 500_000);
+    try
+    {
+        // Transmit: modulate at the DSP rate; play at the card-native capture rate through the
+        // image-rejecting upsampler (cards commonly refuse to open 12 kHz playback directly).
+        playback = captureRate == DspRate
+            ? new AlsaAudioOutput(device, DspRate)
+            : new UpsamplingAudioOutput(new AlsaAudioOutput(device, captureRate), DspRate);
+        // Receive: capture at the card-native rate; ARDOP buffers more deeply (500 ms vs the
+        // 120 ms default) to ride out device hiccups (snd-aloop re-locking mid-frame).
+        input = new AlsaAudioInput(device, captureRate, ardopPort is null ? 120_000 : 500_000);
+    }
+    catch (Exception e) when (e is IOException or UnauthorizedAccessException
+                                or InvalidOperationException or ArgumentException)
+    {
+        Console.Error.WriteLine(DeviceDiagnostics.Audio(device, configPath, e));
+        return 1;
+    }
+
     Console.WriteLine($"audio: {device} capture {captureRate} Hz → {DspRate} Hz");
 }
 

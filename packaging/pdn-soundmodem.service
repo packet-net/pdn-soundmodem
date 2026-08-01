@@ -11,6 +11,11 @@ Type=simple
 ExecStart=/usr/bin/pdn-soundmodem --config /etc/pdn-soundmodem/soundmodem.json
 Restart=on-failure
 RestartSec=5
+# The daemon exits 2, and only 2, for "your configuration is wrong" — after printing what is
+# wrong and how to fix it. Retrying that every RestartSec would bury the explanation under
+# copies of itself and never succeed, so stay stopped and let the operator read it. Every
+# other failure (a card that vanished, a crash) still restarts.
+RestartPreventExitStatus=2
 User=pdn-soundmodem
 # audio: /dev/snd/*. dialout: serial PTT (/dev/ttyUSB*, /dev/ttyS*). CM108 PTT writes
 # to /dev/hidraw*, which is root-only by default — add a udev rule granting the audio

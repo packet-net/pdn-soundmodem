@@ -20,6 +20,9 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
+    <!-- The daemon, for DaemonConfig's operator-facing load errors (DaemonConfigTests). Those
+         messages are what an admin gets in journalctl, so they are worth pinning. -->
+    <ProjectReference Include="../../src/Packet.SoundModem.Daemon/Packet.SoundModem.Daemon.csproj" />
     <!-- Dev tool under test: the ka9q_ubersdr IQ capture decoder (UberSdrPcmDecoderTests). -->
     <ProjectReference Include="../../tools/Packet.SoundModem.UberSdr/Packet.SoundModem.UberSdr.csproj" />
     <!-- Dev tool under test: the OTA transmit harness (Ota/*Tests). -->
