@@ -11,7 +11,10 @@ designed to serve two masters from one core:
 
 ## Status
 
-All planned modem families are implemented and bench-proven. What exists today:
+All planned modem families are implemented and bench-proven. **The complete mode table —
+every mode with its capabilities and verification level — is at
+[docs/modes.md](docs/modes.md)**; per-mode validation provenance lives in the
+[mode validation ledger](docs/mode-validation.md). What exists today:
 
 - **IL2P codec** (spec draft v0.6, including IL2P+CRC): full frame encode/decode — Type 0/1
   headers, packet-synchronous scrambling, Reed-Solomon FEC (GF(2⁸) 0x11D), payload block

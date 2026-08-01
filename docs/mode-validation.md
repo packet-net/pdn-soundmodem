@@ -18,6 +18,9 @@ Status legend used in the matrix:
 
 ## Mode matrix
 
+> The reader-facing capability view of this matrix is [docs/modes.md](modes.md) — when a
+> row's Status changes here, update that table's row in the same PR.
+
 | Mode | Family | What it is | Sim validation (test/mask) | On-air validation | Status |
 |---|---|---|---|---|---|
 | `afsk1200` | AFSK | 1200 Bd Bell-202 AFSK, AX.25 HDLC framing (UZ7HO Mux3-style BPF→mix→I/Q-LPF→discriminator→DPLL chain) | `AfskLoopbackTests.cs` (clean/quiet/noisy/back-to-back/split-block); `DirewolfCrossValidationTests.cs` (4/4 vs Dire Wolf `atest` on independent `gen_packets` fixtures); `OccupiedBandwidthTests.cs` (spectral shape vs a checked-in real NinoTNC 48 kHz capture, `samples/ninotnc/afsk1200.wav`); `NinoTncParityTests.cs` (acquires at TXDELAY 0, matching real-NinoTNC bench figures); `QtsmInteropTests.cs` (qtsm→ours 10/10 UI frames) | **Real off-air corpus**: WA8LMF TNC Test CD Tracks 1+2 (APRS 1200 AFSK), multi+emphasis bank scores 972/970 (Track 2) and 959/999 (Track 1) vs Dire Wolf `atest` on the same corpus (`docs/plan.md` Phase 1) | ✅ working |
