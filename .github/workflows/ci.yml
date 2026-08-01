@@ -25,3 +25,18 @@ jobs:
         env:
           NINOTNC_ASPIRATION: "1"
         run: dotnet test --configuration Release --no-build -- --filter-trait "Category=Aspiration"
+
+      # Smoke-build the .deb so packaging breakage surfaces here rather than at the
+      # moment someone cuts a tag. amd64 only — the arch-specific part is one SDK flag.
+      - name: Package smoke build (.deb)
+        run: |
+          set -euo pipefail
+          packaging/build-deb.sh 0.0.0-ci amd64 ./artifacts
+          deb=./artifacts/pdn-soundmodem_0.0.0-ci_amd64.deb
+          dpkg-deb --contents "$deb" | grep -q 'usr/lib/systemd/system/pdn-soundmodem\.service$'
+          dpkg-deb --contents "$deb" | grep -q 'usr/lib/pdn-soundmodem/pdn-soundmodem$'
+          dpkg-deb --contents "$deb" | grep -q 'usr/bin/pdn-soundmodem ->'
+          # postinst seeds the config from this path, and it must not be under
+          # /usr/share/doc, which dpkg is allowed to exclude.
+          dpkg-deb --contents "$deb" | grep -q 'usr/share/pdn-soundmodem/soundmodem\.example\.json$'
+          dpkg-deb --contents "$deb" | grep -q 'usr/lib/pdn-soundmodem/libSystem\.IO\.Ports\.Native\.so$'

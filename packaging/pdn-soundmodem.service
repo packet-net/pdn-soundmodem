@@ -1,6 +1,10 @@
 [Unit]
 Description=pdn-soundmodem headless soundcard packet modem
+Documentation=https://github.com/packet-net/pdn-soundmodem
 After=sound.target network.target
+# The modem needs a real sound device and PTT line named in the config; there are no
+# useful defaults. Fail the condition rather than crash-loop if the file is missing.
+ConditionPathExists=/etc/pdn-soundmodem/soundmodem.json
 
 [Service]
 Type=simple
@@ -8,9 +12,16 @@ ExecStart=/usr/bin/pdn-soundmodem --config /etc/pdn-soundmodem/soundmodem.json
 Restart=on-failure
 RestartSec=5
 User=pdn-soundmodem
+# audio: /dev/snd/*. dialout: serial PTT (/dev/ttyUSB*, /dev/ttyS*). CM108 PTT writes
+# to /dev/hidraw*, which is root-only by default — add a udev rule granting the audio
+# group access to your interface's hidraw node if you use "ptt": {"type": "cm108"}.
 SupplementaryGroups=audio dialout
 # Real-time-ish scheduling headroom for the audio thread (optional; see docs).
 LimitRTPRIO=10
+
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=full
 
 [Install]
 WantedBy=multi-user.target

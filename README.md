@@ -9,6 +9,11 @@ designed to serve two masters from one core:
 - **Standalone**: a headless-first KISS-TCP modem daemon any host application (LinBPQ, APRS
   software, …) can attach to, in the niche QtSoundModem serves today.
 
+**Installing?** Every release ships `.deb` packages for amd64 / arm64 / armhf with a systemd
+unit. They are self-contained, so there is no .NET runtime to install on the target — grab one
+from the [latest release](https://github.com/packet-net/pdn-soundmodem/releases/latest) and
+follow **[INSTALL.md](INSTALL.md)**.
+
 ## Status
 
 All planned modem families are implemented and bench-proven. **The complete mode table —
@@ -139,6 +144,17 @@ The research that scoped this project lives in
 dotnet build
 dotnet test
 ```
+
+To build the Debian package — see [INSTALL.md](INSTALL.md) for installing and configuring it:
+
+```sh
+packaging/build-deb.sh 0.7.0 amd64    # also arm64, armhf; cross-builds from any host
+packaging/test-deb.sh                 # install/enable/upgrade/purge in containers (needs Docker)
+```
+
+Tagging `v*` runs [the release workflow](.github/workflows/release.yml), which tests, builds
+all three `.deb`s and the NuGet package, attaches them to a GitHub Release and pushes the
+package to nuget.org.
 
 ## Licence, provenance and credits
 
