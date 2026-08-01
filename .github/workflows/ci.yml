@@ -32,11 +32,15 @@ jobs:
         run: |
           set -euo pipefail
           packaging/build-deb.sh 0.0.0-ci amd64 ./artifacts
-          deb=./artifacts/pdn-soundmodem_0.0.0-ci_amd64.deb
-          dpkg-deb --contents "$deb" | grep -q 'usr/lib/systemd/system/pdn-soundmodem\.service$'
-          dpkg-deb --contents "$deb" | grep -q 'usr/lib/pdn-soundmodem/pdn-soundmodem$'
-          dpkg-deb --contents "$deb" | grep -q 'usr/bin/pdn-soundmodem ->'
+          # Capture the listing once and match it in memory. Piping dpkg-deb straight
+          # into `grep -q` makes grep close the pipe the moment it matches, and the
+          # SIGPIPE dpkg-deb takes for that becomes a pipeline failure under pipefail.
+          listing="$(dpkg-deb --contents ./artifacts/pdn-soundmodem_0.0.0-ci_amd64.deb)"
+          grep -q 'usr/lib/systemd/system/pdn-soundmodem\.service$' <<<"$listing"
+          grep -q 'usr/lib/pdn-soundmodem/pdn-soundmodem$' <<<"$listing"
+          grep -q 'usr/bin/pdn-soundmodem ->' <<<"$listing"
           # postinst seeds the config from this path, and it must not be under
           # /usr/share/doc, which dpkg is allowed to exclude.
-          dpkg-deb --contents "$deb" | grep -q 'usr/share/pdn-soundmodem/soundmodem\.example\.json$'
-          dpkg-deb --contents "$deb" | grep -q 'usr/lib/pdn-soundmodem/libSystem\.IO\.Ports\.Native\.so$'
+          grep -q 'usr/share/pdn-soundmodem/soundmodem\.example\.json$' <<<"$listing"
+          # Serial PTT dies with DllNotFoundException if this shim is missing.
+          grep -q 'usr/lib/pdn-soundmodem/libSystem\.IO\.Ports\.Native\.so$' <<<"$listing"
