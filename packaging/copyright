@@ -1,0 +1,51 @@
+pdn-soundmodem — headless soundcard packet-radio modem
+https://github.com/packet-net/pdn-soundmodem
+
+Copyright © 2026 Tom Fanning M0LTE and Packet.NET contributors
+
+This package ships a single self-contained executable that bundles the
+pdn-soundmodem code, its .NET dependencies and the .NET runtime.
+
+LICENCE
+-------
+
+pdn-soundmodem is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+
+On Debian systems the full text of the GNU General Public License version 3 can
+be found in /usr/share/common-licenses/GPL-3.
+
+DERIVED WORK AND PROVENANCE
+---------------------------
+
+pdn-soundmodem is GPL-3.0-or-later because it contains work derived from:
+
+  QtSoundModem — Copyright © Andrei Kopanchuk UZ7HO, ported to Qt by
+  John Wiseman G8BPQ.  Licensed GPL-3.0-or-later.
+
+  Dire Wolf — Copyright © John Langner WB2OSZ.  Licensed GPL-2.0-or-later,
+  used here under the "or later" clause as GPL-3.0.
+
+Every algorithm ported from those projects carries a comment at the port site
+naming the source file and function.  Protocol layers (IL2P v0.6, FX.25) are
+implemented from the published specifications and their test vectors; where a
+reference C source was used to pin a constant the specification leaves in a
+figure, the comment says so.  See PROVENANCE.md in the source distribution for
+the complete audit.
+
+BUNDLED THIRD-PARTY COMPONENTS
+------------------------------
+
+The executable statically bundles the .NET runtime and libraries
+(Copyright © .NET Foundation and Contributors, MIT licence) together with the
+Packet.NET support packages (M0LTE.Dsp, M0LTE.Fec, M0LTE.FecLdpc, M0LTE.Il2p,
+M0LTE.Ofdm, M0LTE.Ardop, M0LTE.Pocsag, M0LTE.Radio.Audio) and M0LTE.Flex
+(AGPL-3.0, combined under GPLv3 §13).  All are licence-compatible with
+GPL-3.0-or-later.  Their individual licence texts are distributed with their
+respective upstream sources.

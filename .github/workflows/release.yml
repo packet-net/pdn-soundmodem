@@ -1,0 +1,220 @@
+name: release
+
+# The release pipeline for a `v*` tag: test, then build the pdn-soundmodem NuGet package
+# (modem core library) and the .deb packages (daemon + systemd unit) for amd64/arm64/armhf,
+# attach the .debs to a GitHub Release, and push the package to nuget.org.
+#
+# workflow_dispatch runs build everything and leave it as workflow artifacts without
+# releasing anything — a full dry run of the pipeline. Set `publish: true` to also cut the
+# GitHub Release and push to NuGet.
+#
+# Runs as a single job on purpose: the runner is self-hosted and memory-bounded, so the
+# three self-contained publishes go one at a time, and keeping them in one job avoids
+# shuttling ~75 MB artifacts between jobs to do it.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without the leading v (e.g. 0.7.0 or 0.7.0-rc1)'
+        required: true
+      publish:
+        description: 'Also cut the GitHub Release and push to NuGet'
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: [self-hosted, Linux, X64]
+    env:
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The xUnit v3 / MTP test apphosts (OutputType=Exe) resolve the runtime via
+      # DOTNET_ROOT; the runner's distro dotnet lives outside the apphost's default
+      # search paths, so register it explicitly or every test invocation dies with
+      # "You must install .NET". Same fix as ci.yml.
+      - name: Register .NET root for MTP apphosts
+        run: echo "DOTNET_ROOT=$(dirname "$(readlink -f "$(which dotnet)")")" >> "$GITHUB_ENV"
+
+      - name: Preflight
+        run: |
+          # dpkg-deb ships in the Essential `dpkg` package, so this only trips if the
+          # runner is not Debian-family — in which case it cannot build .debs at all.
+          command -v dpkg-deb >/dev/null || {
+            echo "::error::dpkg-deb is missing — this job needs a Debian-family runner"
+            exit 1
+          }
+          command -v gh >/dev/null || { echo "::error::gh CLI is missing on this runner"; exit 1; }
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            version="${GITHUB_REF#refs/tags/v}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          version="${version#v}"
+          if [ -z "$version" ]; then
+            echo "::error::no version (tag v* or the version input is required)"
+            exit 1
+          fi
+          # Debian is stricter than SemVer: a version must start with a digit.
+          case "$version" in
+            [0-9]*) ;;
+            *) echo "::error::version '$version' must start with a digit"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          # A hyphen means a SemVer prerelease (0.7.0-rc1); mark the release accordingly.
+          case "$version" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.publish }}" = "true" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test
+        run: dotnet test --configuration Release -- --filter-not-trait "Category=Aspiration"
+
+      - name: Pack NuGet package
+        run: |
+          dotnet pack src/Packet.SoundModem/Packet.SoundModem.csproj \
+            --configuration Release \
+            --output ./artifacts \
+            -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Build .deb packages
+        run: |
+          set -euo pipefail
+          # Pin the changelog date to the commit being built so a rebuild of a tag is
+          # byte-identical. %ct is always a Unix timestamp, unlike the event payload's
+          # pushed_at, which is an integer for push events and an ISO string elsewhere.
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          for arch in amd64 arm64 armhf; do
+            echo "::group::deb $arch"
+            packaging/build-deb.sh "${{ steps.version.outputs.version }}" "$arch" ./artifacts
+            echo "::endgroup::"
+          done
+
+      - name: Verify .deb contents
+        run: |
+          set -euo pipefail
+          for deb in ./artifacts/*.deb; do
+            echo "::group::$(basename "$deb")"
+            dpkg-deb --info "$deb"
+            dpkg-deb --contents "$deb"
+            # A package that ships no unit file is not the package we meant to ship.
+            dpkg-deb --contents "$deb" | grep -q 'usr/lib/systemd/system/pdn-soundmodem\.service$'
+            dpkg-deb --contents "$deb" | grep -q 'usr/lib/pdn-soundmodem/pdn-soundmodem$'
+            dpkg-deb --contents "$deb" | grep -q 'usr/bin/pdn-soundmodem ->'
+            # postinst seeds the config from this path; if it moves, install breaks.
+            dpkg-deb --contents "$deb" | grep -q 'usr/share/pdn-soundmodem/soundmodem\.example\.json$'
+            dpkg-deb --contents "$deb" | grep -q 'usr/lib/pdn-soundmodem/libSystem\.IO\.Ports\.Native\.so$'
+            echo "::endgroup::"
+          done
+
+      - name: Checksums
+        working-directory: ./artifacts
+        run: |
+          sha256sum *.deb *.nupkg > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pdn-soundmodem-${{ steps.version.outputs.version }}
+          path: |
+            artifacts/*.deb
+            artifacts/*.nupkg
+            artifacts/SHA256SUMS
+          if-no-files-found: error
+
+      - name: GitHub Release
+        if: steps.version.outputs.publish == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/relnotes.md <<'NOTES'
+          ### Install (Debian/Ubuntu/Raspberry Pi OS)
+
+          Download the `.deb` for your architecture and install it — the package is
+          self-contained, so no .NET runtime is needed on the target:
+
+          ```
+          sudo apt install ./pdn-soundmodem_VERSION_ARCH.deb
+          ```
+
+          `amd64` for x86-64, `arm64` for a 64-bit Raspberry Pi OS, `armhf` for 32-bit.
+
+          The package installs a systemd unit but deliberately does **not** start it: the
+          modem needs a real sound device and PTT line, so edit the seeded config first and
+          then enable it.
+
+          ```
+          sudoedit /etc/pdn-soundmodem/soundmodem.json
+          sudo systemctl enable --now pdn-soundmodem
+          systemctl status pdn-soundmodem
+          ```
+
+          KISS-over-TCP is on port 8105 by default. Verify downloads against `SHA256SUMS`.
+
+          Full instructions — config, PTT permissions, upgrading, uninstalling — are in
+          [INSTALL.md](https://github.com/packet-net/pdn-soundmodem/blob/main/INSTALL.md).
+          NOTES
+          sed -i "s/pdn-soundmodem_VERSION_ARCH/pdn-soundmodem_${VERSION}_<arch>/" /tmp/relnotes.md
+
+          prerelease=""
+          if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then prerelease="--prerelease"; fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG exists — replacing its assets"
+            gh release upload "$TAG" ./artifacts/*.deb ./artifacts/*.nupkg ./artifacts/SHA256SUMS --clobber
+          else
+            # --notes (not --notes-file) is the flag gh documents as prependable to
+            # --generate-notes' output; the generated "What's Changed" list follows ours.
+            gh release create "$TAG" \
+              ./artifacts/*.deb ./artifacts/*.nupkg ./artifacts/SHA256SUMS \
+              --target "$GITHUB_SHA" \
+              --title "pdn-soundmodem $VERSION" \
+              --notes "$(cat /tmp/relnotes.md)" \
+              --generate-notes \
+              $prerelease
+          fi
+
+      - name: Push to nuget.org
+        if: steps.version.outputs.publish == 'true' && env.NUGET_API_KEY != ''
+        run: |
+          set -euo pipefail
+          dotnet nuget push "./artifacts/pdn-soundmodem.${{ steps.version.outputs.version }}.nupkg" \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "${NUGET_API_KEY}" \
+            --skip-duplicate
+          if [ -f "./artifacts/pdn-soundmodem.${{ steps.version.outputs.version }}.snupkg" ]; then
+            dotnet nuget push "./artifacts/pdn-soundmodem.${{ steps.version.outputs.version }}.snupkg" \
+              --source https://api.nuget.org/v3/index.json \
+              --api-key "${NUGET_API_KEY}" \
+              --skip-duplicate || \
+              echo "::warning::snupkg push failed; main nupkg still uploaded."
+          fi
+
+      - name: Warn if NUGET_API_KEY missing
+        if: steps.version.outputs.publish == 'true' && env.NUGET_API_KEY == ''
+        run: echo "::warning::NUGET_API_KEY is not visible to this repo — NuGet push skipped (the GitHub Release still has the .debs). Grant the org secret access to pdn-soundmodem."
