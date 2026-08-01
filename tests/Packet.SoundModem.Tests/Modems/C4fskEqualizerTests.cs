@@ -18,6 +18,48 @@ namespace Packet.SoundModem.Tests.Modems;
 public class C4fskEqualizerTests
 {
     [Theory]
+    [InlineData("c4fsk9600")]
+    public void Noise_Only_Audio_Emits_No_Frames_And_A_Burst_After_It_Decodes(string mode)
+    {
+        // Idle-channel robustness pinned at the modem surface, implementation-agnostic:
+        // a long noisy idle produces no false frames, and a burst arriving after 20 s
+        // of it still decodes. (c4fsk19200 is not covered: its after-noise cold start
+        // at 5 samples/symbol is an open capability bar tracked in the ledger's
+        // 2026-08-01 ungating follow-up.)
+        const int rate = 48000;
+        var random = new Random(20260801);
+        var noise = new float[rate * 20];
+        for (int i = 0; i < noise.Length; i++)
+        {
+            noise[i] = 0.02f * (float)((random.NextDouble() + random.NextDouble()
+                + random.NextDouble() - 1.5) / 1.5);
+        }
+
+        byte[] frame =
+        [
+            0xA0, 0xA4, 0xA6, 0x40, 0x40, 0x40, 0xE0,
+            0x9A, 0x60, 0x98, 0xA8, 0x8A, 0x40, 0x63,
+            0x03, 0xF0, .. System.Text.Encoding.ASCII.GetBytes("after the idle channel"),
+        ];
+        IModem tx = mode == "c4fsk9600"
+            ? C4fskModem.C4fsk9600(rate, _ => { })
+            : C4fskModem.C4fsk19200(rate, _ => { });
+        float[] burst = tx.Modulate(frame, 20);
+
+        var got = new List<byte[]>();
+        IModem rx = mode == "c4fsk9600"
+            ? C4fskModem.C4fsk9600(rate, got.Add)
+            : C4fskModem.C4fsk19200(rate, got.Add);
+        rx.Process(noise);
+        int falseFrames = got.Count;
+        rx.Process(burst);
+        rx.Process(new float[rate / 2]);
+
+        falseFrames.Should().Be(0, "noise alone must never produce a frame for {0}", mode);
+        got.Should().ContainSingle().Which.Should().Equal(frame);
+    }
+
+    [Theory]
     [InlineData("c4fsk9600", 4800, 0.63)]
     [InlineData("c4fsk19200", 9600, 0.65)]
     public void Isi_Closed_Eye_Still_Decodes(string mode, int symbolRate, double cutoffFactor)
@@ -52,7 +94,7 @@ public class C4fskEqualizerTests
         // discrimination anchor for c4fsk9600 is the bench corpus: 45/45 with the
         // equalizer, 43/45 without; c4fsk19200's 0.65× row fails outright without it.)
         var channel = new FirFilter(FilterDesign.LowPass(cutoffFactor * symbolRate, rate, 48));
-        var audio = new float[(rate / 2) + clean.Length + (rate / 2)];
+        var audio = new float[(rate / 2) + clean.Length + (rate * 5)];   // TEMP-DIAG long tail
         for (int i = 0; i < clean.Length; i++)
         {
             audio[(rate / 2) + i] = channel.Next(clean[i]);
