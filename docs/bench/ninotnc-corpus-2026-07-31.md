@@ -41,3 +41,27 @@ Every file was energy-segmented (all 3 bursts physically present) and decoded th
 1. **The first frame after a TXDELAY change transmits with the previous TXDELAY** (measured via burst-preamble durations across tier files). Flush with a sacrificial frame.
 2. **SETHW mode select is fire-and-forget and can silently not apply** — verify via GETALL (`BrdSwchMod` low byte → mode, mapping in the driver) with retries.
 3. **In mode 1100 (300 Bd AFSK AX.25) the TNC never transmitted a ~253 B-info AX.25 frame** (short/medium aired, the long burst simply absent; the 300 Bd IL2P modes transmit comparable-duration frames fine). The corpus's 1100 long frame is ~183 B as a workaround; the mechanism is unexplained — possibly a mode-specific length/time limit worth a look.
+
+## Acquisition floors behind real NinoTNC preambles (2026-08-01)
+
+Measured by surgically trimming each mode's conservative-tier capture down a keep-ladder (40/20/10/5/2/0 ms of preamble retained, per burst, sample-precise) and QC-decoding all 90 variants through the shipped receiver. "Floor" = shortest kept preamble decoding 3/3; single capture per mode, 3 frames per rung, clean-channel — read as ±1 rung. NinoTNC reference floors from the 2026-07-16 TNC-to-TNC survey (1 × 16-bit word in 13/15 modes; ~10 ms on 9600 GFSK AX.25).
+
+| Mode | Our floor | NinoTNC floor | Verdict |
+|---|---|---|---|
+| `fsk9600-il2p` (0010) | **0 ms** (sync only) | 1.7 ms | beat |
+| `fsk4800-il2p` (0100) | **0 ms** (sync only) | 3.3 ms | beat |
+| `qpsk2400` (1011) | **0 ms** (sync only) | 3.3 ms | beat |
+| `qpsk3600` (0101) | 2 ms (0 ms: 2/3) | 2.2 ms | match/beat |
+| `fsk9600` AX.25 (0000) | 5 ms | ~10 ms | beat |
+| `bpsk1200` (1010) | 5 ms | 13.3 ms | beat |
+| `c4fsk9600` (0011) | 10 ms | 1.7 ms | behind |
+| `qpsk600` (1001) | 10 ms | 13.3 ms | beat |
+| `afsk1200-il2p` (0111) | 10 ms | 13.3 ms | beat |
+| `c4fsk19200` (0001) | 20 ms | 0.8 ms | behind |
+| `bpsk300` (1000) | 20 ms | 53 ms | beat |
+| `afsk300` AX.25 (1100) | 40 ms | 53 ms | beat |
+| `afsk300-il2p` (1101) | 40 ms | 53 ms | beat |
+| `afsk300-il2pc` (1110) | 40 ms | 53 ms | beat |
+| `afsk1200` AX.25 (0110) | >40 ms (40: 2/3; ≤120) | 13.3 ms | behind |
+
+Notes: (1) the sub-floor misses are dominated by the FIRST burst (cold start from silence) — warm re-acquisition is typically a rung or two lower (e.g. `afsk1200` decodes bursts 2–3 at 20 ms kept); (2) the two C4FSK floors are bounded by the energy gate's assert latency (~a block or two at 20 ms/block), the deliberate silence-immunity trade documented in `C4fskModem`; (3) occasional non-monotonic blips (a 0 ms rung decoding where 2 ms did not) are marginal-zone sync-hunt lottery, expected at ±1-bit sync tolerance.
