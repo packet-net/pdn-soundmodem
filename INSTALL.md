@@ -62,6 +62,11 @@ decoder. It binds to loopback unless you set `"bind": "*"`.
 
 The file is JSON but comments are allowed, so the example's annotations can stay.
 
+> **Every setting, with defaults and validation rules, is documented in
+> [CONFIG.md](CONFIG.md)** — the four fields above are just the ones you need to get on the
+> air. CONFIG.md also covers POCSAG paging, the ARDOP virtual TNC, FlexRadio, CSMA timing,
+> and how command-line flags interact with the config file.
+
 Then restart it to pick up your changes:
 
 ```sh
