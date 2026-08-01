@@ -169,13 +169,14 @@ jobs:
 
           `amd64` for x86-64, `arm64` for a 64-bit Raspberry Pi OS, `armhf` for 32-bit.
 
-          The package installs a systemd unit but deliberately does **not** start it: the
-          modem needs a real sound device and PTT line, so edit the seeded config first and
-          then enable it.
+          The systemd unit is enabled and started on install, and on a fresh install it
+          **will fail** — that is expected. The modem has no useful defaults, so the seeded
+          config names a sound device and PTT line that won't match your machine. Edit it
+          and restart:
 
           ```
           sudoedit /etc/pdn-soundmodem/soundmodem.json
-          sudo systemctl enable --now pdn-soundmodem
+          sudo systemctl restart pdn-soundmodem
           systemctl status pdn-soundmodem
           ```
 

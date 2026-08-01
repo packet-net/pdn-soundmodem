@@ -30,11 +30,12 @@ Each release also ships a `SHA256SUMS` file. To verify before installing:
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 
-## Configure, then start
+## Configure
 
-**The service is installed but deliberately not started.** A packet modem has no useful
-defaults — it needs a real sound device and a PTT line — so the package leaves it to you
-rather than putting a failed unit in your journal on every install.
+**The service is enabled and started on install, and on a fresh install it will fail —
+that is expected.** A packet modem has no useful defaults: the seeded config names a sound
+device and PTT line that almost certainly don't match your machine. `systemctl status
+pdn-soundmodem` right after installing will tell you what it could not open.
 
 Installing seeds `/etc/pdn-soundmodem/soundmodem.json` from the shipped example
 (`/usr/share/pdn-soundmodem/soundmodem.example.json`). Edit it:
@@ -61,13 +62,16 @@ decoder. It binds to loopback unless you set `"bind": "*"`.
 
 The file is JSON but comments are allowed, so the example's annotations can stay.
 
-Then enable and start it:
+Then restart it to pick up your changes:
 
 ```sh
-sudo systemctl enable --now pdn-soundmodem
+sudo systemctl restart pdn-soundmodem
 systemctl status pdn-soundmodem
 journalctl -u pdn-soundmodem -f
 ```
+
+It is already enabled at boot. If you would rather it didn't run, `sudo systemctl disable
+--now pdn-soundmodem` — the setting survives package upgrades.
 
 KISS-over-TCP listens on port **8105** by default. Point LinBPQ, Direwolf-style APRS
 software, or the PDN node at it.

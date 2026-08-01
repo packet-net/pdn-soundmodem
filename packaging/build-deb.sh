@@ -107,19 +107,21 @@ Description: Headless soundcard packet-radio modem (KISS TCP)
  (classic G3RUH and IL2P) and FX.25, with native DCD, p-persistent CSMA,
  serial/CM108 PTT and a multi-client KISS-over-TCP server.
  .
- Ships a systemd unit. The service is registered but not enabled on install:
- edit /etc/pdn-soundmodem/soundmodem.json for your sound device and PTT, then
- run "systemctl enable --now pdn-soundmodem".
+ Ships a systemd unit, enabled and started on install. The modem has no useful
+ defaults, so edit /etc/pdn-soundmodem/soundmodem.json for your sound device and
+ PTT and then "systemctl restart pdn-soundmodem"; until you do, the service will
+ fail to start and "systemctl status pdn-soundmodem" will say why.
  .
  GPL-3.0-or-later.
 EOF
 
 # --- maintainer scripts -------------------------------------------------------
-# The systemd stanzas follow dh_installsystemd's --no-enable output: the unit is
-# registered so that enable/disable and purge behave, but a fresh install does not
-# start it. A packet modem cannot run on defaults — it needs a real sound device and
-# a PTT line named in the config — so auto-starting would only ever put a failed
-# unit in the journal on every first install.
+# The systemd stanzas follow dh_installsystemd's default output: enable the unit and
+# start it on install, restart it on upgrade. Note the consequence — the seeded config
+# names a sound device and PTT line that will not exist on most machines, so the first
+# start after a fresh install is expected to fail until an admin edits it. That is the
+# Debian-conventional posture and a deliberate choice; `systemctl status` after install
+# is the intended way to find out what needs configuring.
 
 cat > "$STAGE/root/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
@@ -138,26 +140,32 @@ case "$1" in
         chmod 0644 "$CONFIG"
         echo "pdn-soundmodem: seeded $CONFIG from the example."
     fi
-    echo "pdn-soundmodem: edit $CONFIG (device, modems, ptt),"
-    echo "                then: systemctl enable --now pdn-soundmodem"
+    echo "pdn-soundmodem: edit $CONFIG for your sound device and PTT, then"
+    echo "                systemctl restart pdn-soundmodem. Until then the service will"
+    echo "                fail to start — systemctl status pdn-soundmodem says why."
     ;;
 esac
 
 if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ]; then
     if command -v deb-systemd-helper >/dev/null; then
-        # Undo the mask that postrm sets on remove, then record the unit in the helper's
-        # state file so purge can clean up after it.
-        #
-        # Deliberately no `enable` here, and no was-enabled guard around one: was-enabled
-        # reports true for a unit the helper has never seen, so dh_installsystemd's usual
-        # dance enables on first install. An admin who has run `systemctl enable` keeps it
-        # across upgrades regardless — dpkg replaces the unit file under /usr/lib and never
-        # touches the wants symlink in /etc.
+        # Undo the mask that postrm sets on remove.
         deb-systemd-helper unmask 'pdn-soundmodem.service' >/dev/null || true
-        deb-systemd-helper update-state 'pdn-soundmodem.service' >/dev/null || true
+        # was-enabled reports true for a unit the helper has never seen, so this enables on
+        # first install and re-creates symlinks on upgrade if [Install] changed. The else
+        # branch records current symlinks so purge cleans up after an admin who disabled it.
+        if deb-systemd-helper --quiet was-enabled 'pdn-soundmodem.service'; then
+            deb-systemd-helper enable 'pdn-soundmodem.service' >/dev/null || true
+        else
+            deb-systemd-helper update-state 'pdn-soundmodem.service' >/dev/null || true
+        fi
     fi
     if [ -d /run/systemd/system ] && command -v systemctl >/dev/null; then
         systemctl --system daemon-reload >/dev/null || true
+        # $2 is the previously-configured version: set on upgrade, empty on first install.
+        if [ -n "${2:-}" ]; then _action=restart; else _action=start; fi
+        if command -v deb-systemd-invoke >/dev/null; then
+            deb-systemd-invoke "$_action" 'pdn-soundmodem.service' >/dev/null || true
+        fi
     fi
 fi
 

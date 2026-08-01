@@ -49,7 +49,7 @@ check "systemd unit installed"          "[ -f /usr/lib/systemd/system/pdn-soundm
 check "example config outside doc"      "[ -f /usr/share/pdn-soundmodem/soundmodem.example.json ]"
 check "config seeded"                   "[ -f /etc/pdn-soundmodem/soundmodem.json ]"
 check "system user created"             "getent passwd pdn-soundmodem >/dev/null"
-check "unit NOT enabled on install"     "! ls /etc/systemd/system/multi-user.target.wants/pdn-soundmodem.service 2>/dev/null"
+check "unit enabled on install"         "[ -L /etc/systemd/system/multi-user.target.wants/pdn-soundmodem.service ]"
 
 echo
 echo "== the binary runs from the packaged layout =="
@@ -60,10 +60,7 @@ echo "$out" | grep -q 'DllNotFoundException' \
 echo "$out" | grep -q 'kiss tcp' && ok "modem starts and binds KISS" || bad "modem did not bind KISS"
 
 echo
-echo "== enable, then remove =="
-# d-s-h refuses to run unless it believes dpkg invoked it.
-DPKG_MAINTSCRIPT_PACKAGE=pdn-soundmodem deb-systemd-helper enable pdn-soundmodem.service || true
-check "unit enables"                    "[ -L /etc/systemd/system/multi-user.target.wants/pdn-soundmodem.service ]"
+echo "== remove =="
 apt-get remove -y -qq pdn-soundmodem >/dev/null 2>&1
 check "binary gone after remove"        "[ ! -e /usr/lib/pdn-soundmodem/pdn-soundmodem ]"
 check "config survives remove"          "[ -f /etc/pdn-soundmodem/soundmodem.json ]"
@@ -104,14 +101,13 @@ check "systemd sees the unit" "systemctl cat pdn-soundmodem.service >/dev/null 2
 verify=$(systemd-analyze verify /usr/lib/systemd/system/pdn-soundmodem.service 2>&1)
 [ -z "$verify" ] && ok "systemd-analyze verify is clean" || bad "systemd-analyze verify: $verify"
 state=$(systemctl is-enabled pdn-soundmodem.service 2>&1)
-[ "$state" = "disabled" ] && ok "not enabled on install" || bad "expected disabled on install, got '$state'"
+[ "$state" = "enabled" ] && ok "enabled on install" || bad "expected enabled on install, got '$state'"
+# postinst starts it too; there is no sound card in here so it will not stay up, but it
+# must fail on the hardware, not on packaging (missing native lib, unusable ExecStart).
+check "postinst started it" "journalctl -u pdn-soundmodem.service --no-pager 2>/dev/null | grep -q ."
 
 echo
-echo "== enable / start =="
-systemctl enable pdn-soundmodem.service >/dev/null 2>&1
-check "enables" "[ \"\$(systemctl is-enabled pdn-soundmodem.service)\" = enabled ]"
-# There is no sound card in here, so it will not stay up — but it must fail on the
-# hardware, not on packaging (missing native lib, unusable ExecStart).
+echo "== start =="
 systemctl start pdn-soundmodem.service >/dev/null 2>&1
 sleep 3
 if journalctl -u pdn-soundmodem.service --no-pager 2>/dev/null | grep -q 'DllNotFoundException\|203/EXEC'; then
