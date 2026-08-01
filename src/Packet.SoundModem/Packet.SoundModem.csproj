@@ -39,6 +39,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The browser waterfall page, served whole by WaterfallWebServer — a single
+         self-contained file, no external assets. -->
+    <EmbeddedResource Include="Waterfall/wwwroot/waterfall.html" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
     <!-- The OTA scorer re-encodes the transmitted bit stream to measure UNCODED error rate,
          which needs the same framing/puncture/interleave internals the mask suite uses. It has

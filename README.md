@@ -115,6 +115,16 @@ pinned by their standards — a `:FREQ` on any of those is rejected, not silentl
 The QtSoundModem cross-validation matrix (which QtSM `ModemType` each of our modes pairs
 with, both directions) is in [docs/qtsm-loop.md](docs/qtsm-loop.md) § Results.
 
+**See it — the browser waterfall.** `--waterfall 8107` (or the `"waterfall"` config section) serves a self-contained web page — no external assets, nothing to install — with a 30 fps spectrum view over a scrolling waterfall of the shared audio passband:
+
+![Browser waterfall: two modems overlaid on the passband, each decoded frame tagged on its burst with callsign, SNR and frequency offset](docs/waterfall.png)
+
+- **Every configured modem is drawn over the passband** — band shading and centre line from its *measured* occupied bandwidth (at start-up each modem modulates a throwaway frame and the ITU-R SM.443 99 % OBW of that audio is what gets shaded, so any mode, including future ones, is drawn correctly with no table to maintain).
+- **Audio and RF frequency scales together**: enter the rig's dial frequency (and USB/LSB) and the ruler, modem chips and hover readout all show absolute RF alongside audio Hz; the dial is per-browser retunable, with a config default.
+- **Every decoded frame is attributed to its energy burst**: a tag rides the waterfall at the modem's frequency naming the source callsign, the burst's SNR (band power vs a min-tracking noise floor, measured from the same spectral lines the display draws) and the frequency offset of the winning decoder branch, with a bracket spanning the burst's measured extent — plus a decode log panel with the full from›to/mode/quality detail.
+- Selectable span (2–4 kHz nominal for the SSB passband, wider on the 48 kHz modes), floor/top levels with auto-set, and an honest "no audio" indicator while the half-duplex channel transmits.
+- `--wav-loop FILE` replays a recording through the whole live daemon at wall-clock pace — the hardware-free way to demo or develop against the waterfall.
+
 **Hear it:** [samples/demo/](samples/demo/) holds one representative WAV per mode family —
 each produced by the real transmit path, carrying a genuine frame, and decoded back to its
 payload with the reference tool a ham would use (multimon-ng, codec2 `freedv_data_raw_rx`,

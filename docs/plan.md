@@ -109,6 +109,16 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   fixture). End-to-end tests: KISS-in → audio → independent demod, RX → broadcast to all
   clients, ACKMODE echo ordering, param plumbing. Not yet: config file, CM108 PTT,
   spectrum-over-TCP, stereo second channel, live-audio soak (hardware).
+- ✅ Daemon-side browser waterfall (2026-08-01, PR #157): `WaterfallWebServer` — an
+  HttpListener + WebSocket server in the library (the KISS-server pattern) serving a single
+  embedded page: 30 fps spectrum + waterfall (`WaterfallSource`, overlapping Hann FFTs at
+  hop = rate/30, 2048-pt @ 12 kHz / 8192-pt @ 48 kHz ≈ 5.9 Hz/bin), per-modem band overlays
+  measured off each modem's own modulator via the SM.443 OBW meter at start-up, operator-set
+  dial frequency + sideband for an absolute-RF scale, and per-frame burst attribution
+  (callsign parsed display-grade from the AX.25 address field, SNR + burst extent from
+  `BandActivityTracker` min-tracking over the display's own lines, offset from the winning
+  bank branch). Daemon `--waterfall PORT` / `--dial HZ` / `"waterfall"` config;
+  `--wav-loop FILE` replays a recording as the live capture device for hardware-free demos.
 - ⬜ packet.net side: `kind: soundmodem` transport + `transport is ICarrierSense` probe at
   PortSupervisor (seam mapped in the research doc §5), spectrum + constellation SSE
   endpoints + waterfall/constellation UI (PdnPortTuningApi is the template; add to the SSE
@@ -215,6 +225,10 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   committed corpora don't yet).
 
 ## Amendment log
+
+### 2026-08-01 — the daemon grows its own browser waterfall (Phase 2's display, without waiting for packet.net)
+
+Tom asked for a web waterfall in the daemon itself: 30 fps, selectable 2–4 kHz-nominal span, operator-set dial frequency, modems drawn over the passband with AF + absolute-RF centres and shaded bandwidth, a spectrum view above, and per-burst callsign/SNR/offset attribution readable straight off the scroll. Landed as PR #157, all in the library so the PDN node can reuse it: `WaterfallSource` (overlapping-FFT display-rate lines; the existing `SpectrumSource` stays as the low-rate telemetry feed), `WaterfallWebServer` (HttpListener + WebSocket, single embedded page, per-client bounded queues that drop history rather than stall the receive thread), display-grade `Ax25AddressParser`, and `BandActivityTracker` (burst SNR/extent from the display's own lines — the EnergyBusyDetector min-tracking idea on spectral power, so the numbers always agree with what the screen shows). Two measurement-over-tables decisions: modem overlay bands are measured at start-up from each modem's own modulated audio (SM.443 99 % OBW — new modes draw correctly for free), and burst extent/SNR are measured rather than derived from mode bitrate tables. The daemon gains `--waterfall`/`--dial`/config, and `--wav-loop` (a recording replayed at wall-clock pace as the capture device) for hardware-free demos — which is also how the page was verified on this GUI-less box: the real page driven by a byte-exact stubbed socket under headless Chrome, the real socket path proven by a ClientWebSocket integration test (this box's Chrome cannot create sockets at all, an environment quirk worth remembering — headless canvas *compositing* also silently fails here while the canvas pixels are provably correct via toDataURL). Marker palette validated with the dataviz checker (OKLCH dark band + CVD ΔE); README carries the screenshot.
 
 ### 2026-07-31 — WN8 redesign program closed (exit ii): WN8 decodes on Poor; the walls fell to measurement
 
