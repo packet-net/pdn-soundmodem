@@ -58,6 +58,10 @@ public sealed class C4fskModem : IModem
     private readonly float[] _ffeTaps = new float[FfeLength];
     private readonly float[] _ffeHistory = new float[FfeLength];
     private int _ffeCount;
+    private int _alternatingOuterRun;
+    private int _nonAlternatingRun;
+    private bool _ffeFrozen;
+    private int _previousLevel;
 
     private const int FfeLength = 5;
     private const float FfeMu = 0.05f;
@@ -232,11 +236,53 @@ public sealed class C4fskModem : IModem
                             _ => 3,
                         };
 
-                        float target = level switch { 0 => -1f, 1 => -1f / 3f, 2 => 1f / 3f, _ => 1f };
-                        float step = FfeMu / power * (target - equalized);
-                        for (int t = 0; t < FfeLength; t++)
+                        // Our own 0x77 preamble alternates ±outer every symbol, so each
+                        // neighbour is exactly the negated centre — rank-deficient
+                        // training in which any taps with w[c] − w[c−1] − w[c+1] = 1
+                        // fit the preamble perfectly, and noise random-walks the taps
+                        // along that null space for the whole run-in. Measured as an
+                        // INVERTED preamble trend in the sim (25 dB AWGN: txd20 12/12 →
+                        // txd250 4/12; clean at 60 dB where nothing drives the walk).
+                        // Cure: freeze adaptation while the decision stream is an outer
+                        // alternation, with hysteresis both ways — 8 conforming
+                        // decisions freeze, 4 consecutive non-conforming unfreeze — so
+                        // an isolated noisy preamble decision cannot restart the drift
+                        // (at 5 samples/symbol the 19200 mode's preamble decisions are
+                        // noisy enough that a single-run gate leaked: txd250 3/12 vs
+                        // 12/12 with hysteresis). Scrambled data never freezes (a
+                        // conforming run of 8 is 4⁻⁸ per position) and a NinoTNC's
+                        // 2-up-2-down preamble never matches the alternation test, so
+                        // real-capture behaviour is untouched. NO identity leak: a
+                        // leak's few-per-cent tap bias measurably costs the most
+                        // marginal real capture (corpus txd50 burst 1 sits at exactly
+                        // its RS budget of 8 bad bytes — 45/45 without leak, 44/45
+                        // with 0.002).
+                        if (level is 0 or 3 && level == 3 - _previousLevel)
                         {
-                            _ffeTaps[t] += step * _ffeHistory[t];
+                            _nonAlternatingRun = 0;
+                            if (++_alternatingOuterRun >= 8)
+                            {
+                                _ffeFrozen = true;
+                            }
+                        }
+                        else
+                        {
+                            _alternatingOuterRun = 0;
+                            if (++_nonAlternatingRun >= 4)
+                            {
+                                _ffeFrozen = false;
+                            }
+                        }
+
+                        _previousLevel = level;
+                        if (!_ffeFrozen)
+                        {
+                            float target = level switch { 0 => -1f, 1 => -1f / 3f, 2 => 1f / 3f, _ => 1f };
+                            float step = FfeMu / power * (target - equalized);
+                            for (int t = 0; t < FfeLength; t++)
+                            {
+                                _ffeTaps[t] += step * _ffeHistory[t];
+                            }
                         }
 
                         int dibit = LevelToDibit[level];
@@ -336,6 +382,10 @@ public sealed class C4fskModem : IModem
         Array.Clear(_ffeHistory);
         _ffeTaps[FfeLength / 2] = 1;
         _ffeCount = 0;
+        _alternatingOuterRun = 0;
+        _nonAlternatingRun = 0;
+        _ffeFrozen = false;
+        _previousLevel = 0;
     }
 
     private static int[] BuildInverse()
