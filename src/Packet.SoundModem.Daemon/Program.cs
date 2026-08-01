@@ -25,7 +25,7 @@ using Packet.SoundModem.Ms110d;
 // single modem; --psk-detector coherent forces coherent), qpsk2400, qpsk3600 (both IL2P+CRC),
 // fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC), freedv-datac0/1/3/4/13/14 (FreeDV datac
 // OFDM waveform; payloads carry the family-standard IL2P+CRC bit stream — a pdn convention,
-// FreeDV defines no framing at the raw-data layer), ms110d-wn0/1/2/3/4/5/6/13
+// FreeDV defines no framing at the raw-data layer), ms110d-wn0/1/2/3/4/5/6/7/8/13
 // (MIL-STD-188-110D App D 3 kHz serial-tone, 75–3200 bps; same IL2P+CRC payload
 // convention; RX is autobaud — the wnN suffix selects the transmit waveform only).
 // Multiple --modem options share the
