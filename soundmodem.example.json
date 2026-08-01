@@ -35,6 +35,12 @@
     { "subChannel": 1, "mode": "bpsk300", "frequency": 1500, "offsetPairs": 4, "offsetStepHz": 7.5 }
   ],
   "ptt": { "type": "cm108", "device": "/dev/hidraw0", "gpio": 3 },
+  // Browser waterfall (optional): 30 fps spectrum + waterfall at http://<bind>:<port>/,
+  // every modem's measured band overlaid (audio + RF centres), each decoded frame tagged
+  // on its burst with callsign, SNR and frequency offset. "dialFrequencyHz" presets the
+  // rig dial the RF scale derives from (0 = unset; every browser can retune its own copy);
+  // "sideband" is "usb" or "lsb"; "bind" "*" opens it beyond loopback.
+  // "waterfall": { "port": 8107, "bind": "127.0.0.1", "dialFrequencyHz": 14105000, "sideband": "usb" },
   // POCSAG paging endpoint (optional; DAPNET/POCSAG-compatible waveform, local paging
   // API — line-based TCP: "PAGE <ric> <function> ALPHA|NUMERIC|TONE [text]").
   // "paging": { "port": 8106, "baud": 1200, "invertPolarity": false },

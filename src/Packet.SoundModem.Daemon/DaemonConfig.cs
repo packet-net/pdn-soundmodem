@@ -96,6 +96,31 @@ public sealed class FlexConfig
     public string DaxChannel { get; set; } = "1";
 }
 
+/// <summary>Browser waterfall endpoint (spectrum + waterfall + per-frame burst
+/// attribution); null = disabled. See WaterfallWebServer.</summary>
+public sealed class WaterfallConfig
+{
+    /// <summary>HTTP listen port.</summary>
+    public int Port { get; set; } = 8107;
+
+    /// <summary>Bind address; "*" listens on all interfaces (default loopback only).</summary>
+    public string Bind { get; set; } = "127.0.0.1";
+
+    /// <summary>Rig dial frequency in Hz, the page's opening default (each browser can
+    /// retune its own copy). 0 = unset: audio frequencies only until the operator enters
+    /// one.</summary>
+    public double DialFrequencyHz { get; set; }
+
+    /// <summary>"usb" (RF = dial + audio, default) or "lsb" (RF = dial − audio).</summary>
+    public string Sideband { get; set; } = "usb";
+
+    /// <summary>Waterfall line rate / display frame rate. Default 30.</summary>
+    public int LinesPerSecond { get; set; } = 30;
+
+    /// <summary>FFT length override; 0 = the rate default (2048 at 12 kHz, 8192 at 48 kHz).</summary>
+    public int FftSize { get; set; }
+}
+
 /// <summary>Channel-access tunables (KISS clients can override at runtime).</summary>
 public sealed class CsmaConfig
 {
@@ -141,6 +166,9 @@ public sealed class DaemonConfig
     /// <summary>Headless FlexRadio slice params (Device <c>flex:</c> with no <c>@station</c>);
     /// null = defaults. Ignored for ALSA devices and attach-mode Flex.</summary>
     public FlexConfig? Flex { get; set; }
+
+    /// <summary>Browser waterfall endpoint; null = disabled.</summary>
+    public WaterfallConfig? Waterfall { get; set; }
 
     /// <summary>Channel-access parameters.</summary>
     public CsmaConfig Csma { get; set; } = new();

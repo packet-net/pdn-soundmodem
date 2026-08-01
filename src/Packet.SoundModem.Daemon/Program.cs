@@ -14,10 +14,11 @@ using Packet.SoundModem.Ms110d;
 //   pdn-soundmodem [--device default] [--capture-rate 48000] [--kiss 8105]
 //                  [--modem N:MODE[:FREQ]]... [--ptt serial:/dev/ttyUSB0[:rts|:dtr]]
 //                  [--ptt cm108:/dev/hidraw0[:gpio]]
-//                  [--txdelay MS] [--wav FILE] [--quality-frames]
+//                  [--txdelay MS] [--wav FILE] [--wav-loop FILE] [--quality-frames]
 //                  [--psk-detector coherent|differential]
 //                  [--paging PORT[:BAUD]]
 //                  [--ardop PORT]
+//                  [--waterfall PORT] [--dial HZ]
 //
 // Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, bpsk1200 — the BPSK modes are a
 // differential frequency-diversity bank by default (parallel branches at stepped centres;
@@ -40,6 +41,15 @@ using Packet.SoundModem.Ms110d;
 // ms110d-*) are pinned by their standards — a :FREQ on any of these is an error, not
 // silently ignored.
 // --wav decodes a file instead of live audio (testing/corpus runs) and exits.
+// --wav-loop replays a file forever at wall-clock pace as if it were the capture device —
+// the whole live daemon (KISS, waterfall) runs off the recording; no soundcard needed.
+//
+// --waterfall serves the browser waterfall on PORT (default 8107 via the config section):
+// 30 fps spectrum + waterfall over the shared passband, every modem's measured band drawn
+// with its audio and RF centre marked, and each decoded frame tagged on its energy burst
+// with source callsign, band SNR and frequency offset. --dial presets the rig dial
+// frequency in Hz the RF scale derives from (operators can retune per-browser); the
+// config section adds bind/sideband/rate knobs.
 // --psk-detector selects the BPSK/QPSK detection method: coherent (default, matches the
 // NinoTNC's Costas loop and noise margin) or differential (opt-in, acquires at zero preamble
 // at a ~1-2 dB noise cost — for short-preamble links). See issue #5.
@@ -99,8 +109,11 @@ int kissPort = 8105;
 // radios and bench rigs should configure this down; issue #3 has the full derivation.
 int txDelay = 300;
 string? wavPath = null;
+string? wavLoopPath = null;
 string? pttSpec = null;
 string? configPath = null;
+int? waterfallPort = null;
+double? dialHz = null;
 bool qualityFrames = false;
 // PSK detection method. --psk-detector overrides it for every PSK mode; unset, the modes pick
 // their measured-best default: BPSK defaults to Differential (on real off-air HF, benchmarked
@@ -134,6 +147,9 @@ for (int i = 0; i < args.Length; i++)
         case "--ptt": pttSpec = Next(); break;
         case "--txdelay": txDelay = int.Parse(Next()); break;
         case "--wav": wavPath = Next(); break;
+        case "--wav-loop": wavLoopPath = Next(); break;
+        case "--waterfall": waterfallPort = int.Parse(Next()); break;
+        case "--dial": dialHz = double.Parse(Next()); break;
         case "--quality-frames": qualityFrames = true; break;
         case "--psk-detector": pskDetectorOverride = Enum.Parse<PskDetector>(Next(), ignoreCase: true); break;
         case "--paging": pagingSpec = Next(); break;
@@ -156,6 +172,7 @@ CsmaConfig csma = new() { TxDelayMilliseconds = txDelay };
 PttConfig? pttConfig = null;
 PagingConfig? paging = null;
 FlexConfig? flexConfig = null;
+WaterfallConfig? waterfallConfig = null;
 
 if (configPath is not null)
 {
@@ -168,8 +185,27 @@ if (configPath is not null)
     pttConfig = config.Ptt;
     paging = config.Paging;
     flexConfig = config.Flex;
+    waterfallConfig = config.Waterfall;
     ardopPort ??= config.Ardop?.Port;
     Console.WriteLine($"config: {configPath}");
+}
+
+// --waterfall/--dial override (or stand in for) the config's waterfall section.
+if (waterfallPort is int wfPort)
+{
+    waterfallConfig ??= new WaterfallConfig();
+    waterfallConfig.Port = wfPort;
+}
+
+if (dialHz is double dial)
+{
+    if (waterfallConfig is null)
+    {
+        Console.Error.WriteLine("--dial only means something with a waterfall (--waterfall PORT)");
+        return 2;
+    }
+
+    waterfallConfig.DialFrequencyHz = dial;
 }
 
 // Headless FlexRadio slice params: CLI flags override the config's Flex section, which
@@ -302,6 +338,29 @@ if (wavPath is not null)
     return 0;
 }
 
+// The browser waterfall (spectrum + waterfall + per-frame burst attribution). Started
+// before audio flows: Start() measures every modem's band off its own modulator and
+// registers the channel receive tap.
+Packet.SoundModem.Waterfall.WaterfallWebServer? waterfallServer = null;
+if (waterfallConfig is not null)
+{
+    waterfallServer = new Packet.SoundModem.Waterfall.WaterfallWebServer(
+        channel,
+        waterfallConfig.Port,
+        new Packet.SoundModem.Waterfall.WaterfallOptions
+        {
+            DialFrequencyHz = waterfallConfig.DialFrequencyHz,
+            Sideband = waterfallConfig.Sideband,
+            LinesPerSecond = waterfallConfig.LinesPerSecond,
+            FftSize = waterfallConfig.FftSize,
+        },
+        waterfallConfig.Bind);
+    waterfallServer.Start();
+    Console.WriteLine($"waterfall: {waterfallServer.Url}");
+}
+
+await using var waterfallLifetime = waterfallServer;
+
 // The Flex owns keying (the slice PTT is an API command), so a conflicting --ptt /
 // configured PTT is rejected — matching how --device flex: implicitly keys the radio.
 if (deviceIsFlex && (pttSpec is not null || pttConfig is not null))
@@ -410,7 +469,22 @@ IPttControl ptt;
 IAudioOutput playback;
 IAudioInput input;
 
-if (deviceIsFlex)
+if (wavLoopPath is not null)
+{
+    // A recording standing in for the capture device: same decimation path, no TX side.
+    var wavLoop = new WavLoopAudioInput(wavLoopPath);
+    if (wavLoop.SampleRate % DspRate != 0)
+    {
+        Console.Error.WriteLine($"--wav-loop rate {wavLoop.SampleRate} is not a multiple of {DspRate}");
+        return 2;
+    }
+
+    ptt = new NullPtt();
+    playback = new NullAudioOutput(DspRate);
+    input = wavLoop;
+    Console.WriteLine($"audio: wav-loop {wavLoopPath} {wavLoop.SampleRate} Hz → {DspRate} Hz");
+}
+else if (deviceIsFlex)
 {
     flex = await FlexDevice.OpenAsync(device, DspRate, flexPacketBuffer, flexTuning, cancellation.Token);
     ptt = flex.Ptt;
