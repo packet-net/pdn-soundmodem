@@ -175,10 +175,13 @@ jobs:
           and restart:
 
           ```
-          sudoedit /etc/pdn-soundmodem/soundmodem.json
+          sudo nano /etc/pdn-soundmodem/soundmodem.json
           sudo systemctl restart pdn-soundmodem
           systemctl status pdn-soundmodem
           ```
+
+          (Debian only installs `sudo` when the root password is left blank at setup — if you
+          do not have it, become root with `su -` and drop the `sudo` prefix.)
 
           KISS-over-TCP is on port 8105 by default. Verify downloads against `SHA256SUMS`.
 

@@ -278,10 +278,14 @@ public sealed class DaemonConfig
         text.AppendLine($"configuration error in {path}");
         text.AppendLine($"  {problem}");
         text.AppendLine();
-        text.AppendLine("  The service will not start until this is fixed. To start from a known-good file:");
+        // Commands are given bare, as root, rather than with a sudo prefix: Debian only
+        // installs sudo when the root password is left blank at install time, so a "sudo …"
+        // line is a command that does not exist on a good number of the machines this runs on.
+        text.AppendLine("  The service will not start until this is fixed. As root, to start");
+        text.AppendLine("  from a known-good file:");
         if (File.Exists(ExamplePath))
         {
-            text.AppendLine($"    sudo cp {ExamplePath} {path}");
+            text.AppendLine($"    cp {ExamplePath} {path}");
         }
         else
         {
@@ -289,7 +293,7 @@ public sealed class DaemonConfig
         }
 
         text.AppendLine("  Then edit it for your sound device and PTT, and:");
-        text.AppendLine("    sudo systemctl restart pdn-soundmodem");
+        text.AppendLine("    systemctl restart pdn-soundmodem");
         text.Append("  Every setting is documented at " + ConfigDocUrl);
         return text.ToString();
     }

@@ -24,11 +24,28 @@ sudo apt install ./pdn-soundmodem_<version>_<arch>.deb
 Using `apt` rather than `dpkg -i` lets it pull the handful of system libraries the package
 depends on (`libasound2`, `libstdc++6` and friends).
 
+> **No `sudo` on your system?** Debian only installs it when you leave the root password
+> blank during setup, so plenty of Debian machines have no `sudo` at all — Ubuntu and
+> Raspberry Pi OS always do. If `sudo` is not there, become root (`su -`) and run every
+> command in this document without the `sudo` prefix.
+
 Each release also ships a `SHA256SUMS` file. To verify before installing:
 
 ```sh
 sha256sum -c SHA256SUMS --ignore-missing
 ```
+
+If you downloaded the `.deb` into `/root`, apt prints a notice while installing:
+
+```
+N: Download is performed unsandboxed as root as file '/root/pdn-soundmodem_…deb'
+   couldn't be accessed by user '_apt'. - pkgAcquire::Run (13: Permission denied)
+```
+
+**This is harmless** — an `N:` notice, not an error, and the package installs correctly.
+apt drops to the unprivileged `_apt` user to fetch files, and `/root` is mode `0700` so
+`_apt` cannot read it; apt says so and carries on as root. Keep the `.deb` somewhere
+world-readable such as `/tmp` and it does not appear.
 
 ## Configure
 
@@ -44,10 +61,11 @@ tells you exactly what it could not open, which setting selects it, and the comm
 lists what your machine actually has. Work through what it says, then restart.
 
 Installing seeds `/etc/pdn-soundmodem/soundmodem.json` from the shipped example
-(`/usr/share/pdn-soundmodem/soundmodem.example.json`). Edit it:
+(`/usr/share/pdn-soundmodem/soundmodem.example.json`). Open it as root in whichever editor
+you have — `nano` on a stock Raspberry Pi OS or Ubuntu, `vi` on a minimal Debian:
 
 ```sh
-sudoedit /etc/pdn-soundmodem/soundmodem.json
+sudo nano /etc/pdn-soundmodem/soundmodem.json
 ```
 
 At minimum, set:
