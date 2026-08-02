@@ -156,6 +156,20 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void The_Suggested_Commands_Never_Assume_Sudo_Exists()
+    {
+        // Debian installs sudo only when the root password is left blank at setup, so a good
+        // number of the machines this runs on do not have it. The message says "as root" and
+        // gives bare commands, which is right on those and on sudo systems alike.
+        string path = WriteConfig("{ not json");
+
+        DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().NotContain("sudo", "the command would not exist on a sudo-less Debian");
+        error.Should().Contain("As root", "the privilege needed has to be stated some other way");
+    }
+
+    [Fact]
     public void A_Missing_File_Is_Reported_As_Configuration_Not_As_A_Crash()
     {
         string path = Path.Combine(_dir, "does-not-exist.json");

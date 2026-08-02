@@ -21,6 +21,10 @@ Applying a change means restarting the service — the file is read once at star
 sudo systemctl restart pdn-soundmodem
 ```
 
+(Commands here are written with `sudo`, as on Ubuntu and Raspberry Pi OS. Debian only
+installs `sudo` when the root password is left blank at setup — without it, become root
+with `su -` and drop the prefix.)
+
 ## Top-level keys
 
 | Key | Type | Default | What it does |
@@ -276,10 +280,11 @@ wrong in plain words, and what to do — and exits with status **2**:
 configuration error in /etc/pdn-soundmodem/soundmodem.json
   not valid JSON — line 7, position 3: ',' is an invalid start of a value.
 
-  The service will not start until this is fixed. To start from a known-good file:
-    sudo cp /usr/share/pdn-soundmodem/soundmodem.example.json /etc/pdn-soundmodem/soundmodem.json
+  The service will not start until this is fixed. As root, to start
+  from a known-good file:
+    cp /usr/share/pdn-soundmodem/soundmodem.example.json /etc/pdn-soundmodem/soundmodem.json
   Then edit it for your sound device and PTT, and:
-    sudo systemctl restart pdn-soundmodem
+    systemctl restart pdn-soundmodem
   Every setting is documented at https://github.com/packet-net/pdn-soundmodem/blob/main/CONFIG.md
 ```
 
