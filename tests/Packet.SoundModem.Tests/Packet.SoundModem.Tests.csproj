@@ -19,6 +19,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The frame log's store, for reading a written log back in FrameLogTests. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
     <!-- The daemon, for DaemonConfig's operator-facing load errors (DaemonConfigTests). Those
          messages are what an admin gets in journalctl, so they are worth pinning. -->

@@ -1,4 +1,5 @@
 using System.Globalization;
+using Microsoft.Data.Sqlite;
 using System.Net;
 using System.Net.Sockets;
 using M0LTE.Radio.Audio;
@@ -110,6 +111,7 @@ string bindAddress = "127.0.0.1";
 string sideband = "usb";
 bool sidebandWasStated = false;
 double? dialFrequency = null;
+FrameLogConfig? frameLogConfig = null;
 // 300 ms is a RADIO allowance, not a modem requirement — the modems themselves acquire
 // from 0-20 ms TXDELAY in every mode (150 ms for qpsk2400 facing a NinoTNC), measured and
 // CI-enforced (NinoTncParityTests; docs/ninotnc-loop.md § How short can TXDELAY be?).
@@ -207,6 +209,7 @@ if (configPath is not null)
     sideband = config.Sideband;
     sidebandWasStated = config.SidebandWasStated;
     dialFrequency = config.DialFrequency;
+    frameLogConfig = config.FrameLog;
     modems = config.Modems;
     pttConfig = config.Ptt;
     paging = config.Paging;
@@ -413,6 +416,40 @@ if (txDelay is int txDelayOverride)
 {
     channel.Csma.TxDelayMilliseconds = txDelayOverride;
 }
+
+// Every frame the station hears, written down. Subscribed to the same event the KISS servers
+// and the waterfall use, so it records what was actually decoded rather than a second opinion.
+FrameLog? frameLog = null;
+if (frameLogConfig is not null)
+{
+    try
+    {
+        frameLog = FrameLog.Open(frameLogConfig.Path);
+    }
+    catch (Exception e) when (e is IOException or UnauthorizedAccessException or SqliteException)
+    {
+        Console.Error.WriteLine(
+            $"cannot open the frame log at {frameLogConfig.Path}\n"
+            + $"  {e.Message}\n"
+            + "  Set by \"frameLog\".\"path\". The service user must be able to write to its\n"
+            + "  directory; remove the \"frameLog\" section to run without one.");
+        return 2;
+    }
+
+    var frameLogRfByModem = modems.ToDictionary(
+        m => m.SubChannel,
+        m => (Audio: m.Frequency, Rf: m.RfFrequency));
+    channel.FrameReceivedWithQuality += (sub, frame, quality) =>
+    {
+        (double? audio, double? rf) = frameLogRfByModem.TryGetValue(sub, out var placement)
+            ? placement
+            : (null, null);
+        frameLog.Record(sub, frame, quality, audio, rf);
+    };
+    Console.WriteLine($"frame log: {frameLog.Path}");
+}
+
+await using var frameLogLifetime = frameLog;
 
 // Per-family PSK detector, for the informational print below: --psk-detector overrides both;
 // unset, the catalogue's per-family defaults apply (BPSK differential, QPSK coherent).

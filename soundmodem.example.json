@@ -71,5 +71,8 @@
   // default for bench runs with no host attached.
   // One bind for every listener: KISS, the per-modem ports, the waterfall, paging and ARDOP.
   // Loopback unless you say otherwise — KISS has no authentication.
+  // Every frame heard, written to SQLite (WAL, so you can read it while the modem runs).
+  // Omit and nothing is written down.
+  // "frameLog": { "path": "/var/lib/pdn-soundmodem/frames.db" },
   "bind": "127.0.0.1"
 }

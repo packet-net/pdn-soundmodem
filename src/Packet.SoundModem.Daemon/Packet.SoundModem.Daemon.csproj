@@ -14,6 +14,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The frame log's store. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- DeviceDiagnostics' messages are the first thing an admin reads in journalctl on a
          fresh install, so they are pinned by tests. -->
     <InternalsVisibleTo Include="Packet.SoundModem.Tests" />

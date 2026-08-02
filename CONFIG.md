@@ -40,6 +40,7 @@ with `su -` and drop the prefix.)
 | `waterfall` | object | *(disabled)* | Browser spectrum/waterfall page — [below](#waterfall) |
 | `paging` | object | *(disabled)* | POCSAG paging endpoint — [below](#paging) |
 | `ardop` | object | *(disabled)* | ARDOP virtual TNC — [below](#ardop) |
+| `frameLog` | object | *(not kept)* | Record every frame heard to SQLite — [below](#framelog) |
 | `flex` | object | see below | FlexRadio slice params — [below](#flex) |
 
 ---
@@ -351,10 +352,56 @@ for confirming you are hearing the band at a sane level before trusting the deco
 | `linesPerSecond` | int | `30` | Waterfall line / display frame rate |
 | `fftSize` | int | `0` | 0 = rate default (2048 at 12 kHz, 8192 at 48 kHz) |
 
+**The page can play the received audio.** Press *Listen* in the top bar and the station's
+receive audio streams to the browser, so you can hear the channel you are watching — an SSB
+signal, a burst you are about to decode, or the noise floor you are arguing with. It is
+per-viewer and **off until asked for**, so opening the page to look at a waterfall does not
+quietly start pulling ~24 KB/s, and several viewers cost nothing unless they each ask.
+
+Nothing is received while the station transmits, so the audio stops for the length of a keyup.
+That is silence, not a dropout.
+
 Omit the section to disable it. `dialFrequencyHz` is only the page's opening default — each
 browser can retune its own copy, and it is inherited from a band plan when there is one. The
 waterfall binds to the top-level [`bind`](#kissport-and-bind) like everything else; there is no
 authentication, so opening it beyond loopback means a reverse proxy or VPN.
+
+## `frameLog`
+
+Everything the station hears, written to a SQLite file:
+
+```json
+"frameLog": { "path": "/var/lib/pdn-soundmodem/frames.db" }
+```
+
+Omit the section and frames are heard and not written down. One row per decoded frame:
+
+| Column | What it holds |
+|---|---|
+| `heard_at` | UTC, ISO 8601 |
+| `sub_channel`, `mode`, `mode_name` | which modem heard it, and what it is — `bpsk300-il2pc` and `BPSK300 IL2Pc` |
+| `source`, `destination` | AX.25 callsigns where the frame carries them; null where it does not |
+| `length`, `corrected`, `crc_valid` | size, FEC corrections applied, whether the CRC checked |
+| `offset_hz` | how far off centre the sender actually was |
+| `audio_hz`, `rf_hz` | where that modem sits — `rf_hz` filled in when you have given it an `rfFrequency` |
+| `payload` | the frame itself, as a blob |
+
+So "who have I heard on 40m today" is a query:
+
+```sql
+SELECT source, COUNT(*), MAX(heard_at)
+FROM frames WHERE rf_hz > 7000000 AND rf_hz < 7300000
+GROUP BY source ORDER BY 2 DESC;
+```
+
+**It is written on a background thread** — the receive path queues and returns, so logging never
+delays a decode. If the disk fills or goes away the modem keeps decoding and drops log rows
+rather than stopping. **The file is WAL**, so you can read it with `sqlite3` or point a dashboard
+at it while the modem is still running and writing.
+
+The packaged service runs unprivileged, so the default path is under its own state directory. If
+you move it, the service user has to be able to write to the directory — the daemon says so
+plainly at start-up rather than running without a log you asked for.
 
 ## `paging`
 

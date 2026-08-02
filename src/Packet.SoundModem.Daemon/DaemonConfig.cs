@@ -144,6 +144,20 @@ public sealed class FlexConfig
     public const string DefaultHeadlessDaxChannel = "2";
 }
 
+/// <summary>Frame log: every frame heard, written to a SQLite file. Null = not kept.</summary>
+public sealed class FrameLogConfig
+{
+    /// <summary>
+    /// Where to keep it. The packaged service runs as an unprivileged user, so the default sits
+    /// under its own state directory rather than somewhere it cannot write.
+    /// </summary>
+    public string Path { get; set; } = "/var/lib/pdn-soundmodem/frames.db";
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
 /// <summary>Browser waterfall endpoint (spectrum + waterfall + per-frame burst
 /// attribution); null = disabled. See WaterfallWebServer.</summary>
 public sealed class WaterfallConfig
@@ -239,6 +253,9 @@ public sealed class DaemonConfig
 
     /// <summary>Browser waterfall endpoint; null = disabled.</summary>
     public WaterfallConfig? Waterfall { get; set; }
+
+    /// <summary>Frame log; null = frames are heard and not written down.</summary>
+    public FrameLogConfig? FrameLog { get; set; }
 
     /// <summary>
     /// Settings present in the file that this version does not know. Kept so start-up can say
