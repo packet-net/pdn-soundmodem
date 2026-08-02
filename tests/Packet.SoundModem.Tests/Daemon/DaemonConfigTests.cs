@@ -114,22 +114,6 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
-    public void Ardop_Beside_Modems_Explains_The_Exclusivity_And_Both_Ways_Out()
-    {
-        string path = WriteConfig("""
-            {"device": "null", "ardop": {"port": 8515},
-             "modems": [{"subChannel": 0, "mode": "afsk1200"}]}
-            """);
-
-        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
-
-        config.Should().BeNull();
-        error.Should().Contain("ardop").And.Contain("dedicated");
-        error.Should().Contain("delete", "the operator needs to be told which way out to take");
-        ShouldGuideTheOperator(error, path);
-    }
-
-    [Fact]
     public void An_Empty_File_Says_So_Rather_Than_Talking_About_Json_Tokens()
     {
         string path = WriteConfig("   \n  ");
@@ -201,23 +185,23 @@ public class DaemonConfigTests : IDisposable
     {
         string path = WriteConfig("""
             {"device": "null", "kissPort": 8105, "kissBind": "127.0.0.1",
-             "modems": [{"subChannel": 0, "mode": "afsk1200", "kissPort": 8110}]}
+             "modems": [{"subChannel": 0, "mode": "afsk1200", "port": 8110}]}
             """);
 
         DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
 
         config.Should().NotBeNull(error);
         config!.Warnings.Should().BeEmpty();
-        config.Modems[0].KissPort.Should().Be(8110);
+        config.Modems[0].Port.Should().Be(8110);
     }
 
     [Theory]
     // A modem's port against the shared one, and against another modem's.
-    [InlineData("""{"kissPort": 8105, "modems": [{"subChannel": 0, "kissPort": 8105}]}""", "8105")]
-    [InlineData("""{"modems": [{"subChannel": 0, "kissPort": 9000}, {"subChannel": 1, "kissPort": 9000}]}""", "9000")]
+    [InlineData("""{"kissPort": 8105, "modems": [{"subChannel": 0, "port": 8105}]}""", "8105")]
+    [InlineData("""{"modems": [{"subChannel": 0, "port": 9000}, {"subChannel": 1, "port": 9000}]}""", "9000")]
     // And against the other services sharing the daemon.
-    [InlineData("""{"waterfall": {"port": 9100}, "modems": [{"subChannel": 0, "kissPort": 9100}]}""", "9100")]
-    [InlineData("""{"paging": {"port": 9200}, "modems": [{"subChannel": 0, "kissPort": 9200}]}""", "9200")]
+    [InlineData("""{"waterfall": {"port": 9100}, "modems": [{"subChannel": 0, "port": 9100}]}""", "9100")]
+    [InlineData("""{"paging": {"port": 9200}, "modems": [{"subChannel": 0, "port": 9200}]}""", "9200")]
     // ardopcf's data port is always command+1, so a service on 8516 collides with ardop 8515.
     [InlineData("""{"ardop": {"port": 8515}, "waterfall": {"port": 8516}}""", "8516")]
     public void Two_Services_Wanting_The_Same_Port_Is_Rejected_By_Name(string json, string port)
@@ -263,6 +247,103 @@ public class DaemonConfigTests : IDisposable
         DaemonConfig.ParseBind("").Should().Be(System.Net.IPAddress.Loopback);
         DaemonConfig.ParseBind(null).Should().Be(System.Net.IPAddress.Loopback);
         DaemonConfig.ParseBind("*").Should().Be(System.Net.IPAddress.Any);
+    }
+
+    [Fact]
+    public void Ardop_Sits_In_The_Modems_List_Beside_The_Packet_Modes()
+    {
+        // The whole point of the change: one 3 kHz passband carrying ARDOP and packet modes at
+        // once, each with its own centre and its own host port.
+        string path = WriteConfig("""
+            {"device": "null", "captureRate": 12000, "modems": [
+              {"subChannel": 0, "mode": "afsk300-il2pc", "frequency": 300,  "port": 8100},
+              {"subChannel": 1, "mode": "ardop",         "frequency": 950,  "port": 8101},
+              {"subChannel": 2, "mode": "bpsk300",       "frequency": 1600, "port": 8103}
+            ]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error, "ardop beside packet modems is no longer exclusive");
+        config!.Warnings.Should().BeEmpty();
+        config.Modems.Should().HaveCount(3);
+        config.Modems[1].Mode.Should().Be("ardop");
+        config.Modems[1].Frequency.Should().Be(950);
+    }
+
+    [Fact]
+    public void An_Ardop_Port_Reserves_The_Data_Port_Above_It()
+    {
+        // ardopcf's data port is always command + 1, so this config looks fine and is not:
+        // ARDOP's data port and the third modem both want 8102.
+        string path = WriteConfig("""
+            {"device": "null", "modems": [
+              {"subChannel": 1, "mode": "ardop",   "port": 8101},
+              {"subChannel": 2, "mode": "bpsk300", "port": 8102}
+            ]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("8102").And.Contain("ARDOP data port");
+    }
+
+    [Fact]
+    public void Two_Ardop_Modems_Are_Rejected()
+    {
+        string path = WriteConfig("""
+            {"device": "null", "modems": [
+              {"subChannel": 0, "mode": "ardop", "port": 8515},
+              {"subChannel": 1, "mode": "ardop", "port": 8600}
+            ]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("One ARDOP TNC per channel");
+    }
+
+    [Fact]
+    public void Ardop_Configured_Both_Ways_At_Once_Is_Rejected_With_The_Way_Out()
+    {
+        string path = WriteConfig("""
+            {"device": "null", "ardop": {"port": 8515},
+             "modems": [{"subChannel": 0, "mode": "ardop", "port": 8600}]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("configured twice").And.Contain("delete the \"ardop\" section");
+    }
+
+    [Fact]
+    public void The_Old_Top_Level_Ardop_Section_Still_Loads()
+    {
+        // Released in 0.7.x; it keeps working and is folded into a modem entry at start-up.
+        string path = WriteConfig("""{"device": "null", "ardop": {"port": 8515}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Ardop!.Port.Should().Be(8515);
+    }
+
+    [Fact]
+    public void A_Modem_Entry_Still_Spelling_It_KissPort_Is_Told_The_New_Name()
+    {
+        string path = WriteConfig("""
+            {"device": "null", "modems": [{"subChannel": 0, "mode": "afsk1200", "kissPort": 8110}]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.Modems[0].Port.Should().BeNull("the old spelling is not silently honoured");
+        config.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("kissPort").And.Contain("now spelled").And.Contain("port");
     }
 
     [Fact]

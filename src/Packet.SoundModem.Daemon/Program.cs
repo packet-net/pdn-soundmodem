@@ -256,18 +256,47 @@ foreach (string spec in modemSpecs)
     });
 }
 
-if (ardopPort is not null && (modems.Count > 0 || paging is not null))
+// ARDOP now shares the channel with the packet modems instead of excluding them: it is a
+// modem entry like any other, and an ARQ session holds packet transmissions off the air
+// through the channel's TransmitInhibit rather than through a config-level ban.
+ModemConfig? ardopModem = modems.FirstOrDefault(m => DaemonConfig.IsArdop(m.Mode));
+if (ardopModem is not null && ardopPort is not null)
 {
-    Console.Error.WriteLine("--ardop is exclusive with --modem/--paging (the ARDOP channel is dedicated)");
+    Console.Error.WriteLine(
+        "ARDOP is configured twice — as a modem and with --ardop/\"ardop\". Keep the modem entry.");
     return 2;
 }
 
-if (modems.Count == 0 && ardopPort is null)
+if (ardopModem is null && ardopPort is not null)
+{
+    // The top-level section / --ardop remains supported: fold it into a modem entry so there
+    // is one code path from here on.
+    ardopModem = new ModemConfig
+    {
+        Mode = "ardop",
+        Port = ardopPort,
+        SubChannel = Enumerable.Range(0, 16).First(n => modems.All(m => m.SubChannel != n)),
+    };
+    modems.Add(ardopModem);
+}
+
+if (modems.Count == 0)
 {
     modems.Add(new ModemConfig());
 }
 
+// ARDOP's engine is native 12 kHz, so it cannot share a channel with the 48 kHz families.
 int DspRate = modems.Any(m => ModemCatalog.DspRateFor(m.Mode) == 48000) ? 48000 : 12000;
+if (ardopModem is not null && DspRate != M0LTE.Ardop.ArdopModulator.SampleRate)
+{
+    string wideband = string.Join(", ", modems
+        .Where(m => ModemCatalog.DspRateFor(m.Mode) == 48000).Select(m => m.Mode).Distinct());
+    Console.Error.WriteLine(
+        $"ardop needs a {M0LTE.Ardop.ArdopModulator.SampleRate} Hz channel, but {wideband} "
+        + "runs at 48000 Hz. ARDOP can share a channel with the 12 kHz modes (afsk*, bpsk*, "
+        + "qpsk*) but not with the 9600/c4fsk/freedv/ms110d families.");
+    return 2;
+}
 
 // A FlexRadio provides its own DAX sample clock (24/48 kHz auto-picked from the DSP rate),
 // so --capture-rate (an ALSA concept) does not apply.
@@ -299,6 +328,13 @@ foreach (ModemConfig modemConfig in modems)
     int subChannel = modemConfig.SubChannel;
     string mode = modemConfig.Mode;
     double? frequency = modemConfig.Frequency;
+    if (DaemonConfig.IsArdop(mode))
+    {
+        // Not a demodulator: a whole virtual TNC with its own host protocol. Wired below,
+        // against the same channel, as a receive tap plus a priority transmitter.
+        continue;
+    }
+
     if (!ModemCatalog.IsKnown(mode))
     {
         // Checked here rather than left to ModemCatalog.Create's throw: 38 mode names is
@@ -455,10 +491,12 @@ if (ardopPort is null)
 
     // Plus a port to itself for any modem that asked for one, so a host that only speaks
     // KISS channel 0 can still reach a modem that is not sub-channel 0.
-    foreach (ModemConfig modemConfig in modems.Where(m => m.KissPort is not null))
+    // ardop is excluded: its port speaks the ardopcf host interface, not KISS.
+    foreach (ModemConfig modemConfig in modems
+                 .Where(m => m.Port is not null && !DaemonConfig.IsArdop(m.Mode)))
     {
         var dedicated = new KissTcpServer(
-            channel, modemConfig.KissPort!.Value, kissAddress, subChannel: modemConfig.SubChannel);
+            channel, modemConfig.Port!.Value, kissAddress, subChannel: modemConfig.SubChannel);
         dedicated.EmitQualityFrames = qualityFrames;
         dedicated.Start();
         kissServers.Add(dedicated);
@@ -478,39 +516,53 @@ if (ardopPort is null)
 await using var kissLifetime = new KissServerSet(kissServers);
 
 M0LTE.Ardop.Host.ArdopHostServer? ardopServer = null;
-if (ardopPort is not null)
+if (ardopModem is not null)
 {
-    // ARDOP does its own channel discipline; the daemon's p-persistence roll must
-    // never delay its bursts (docs/ardop-design.md §2.2 — dedicated channel).
-    channel.Csma.Persistence = 255;
-    if (channel.SampleRate != M0LTE.Ardop.ArdopModulator.SampleRate)
-    {
-        throw new ArgumentException(
-            $"ARDOP needs a {M0LTE.Ardop.ArdopModulator.SampleRate} Hz channel, got {channel.SampleRate}");
-    }
-
+    // ARDOP runs its own channel discipline (ARQ timing budgets, negotiated leaders), so its
+    // own bursts must never wait on a p-persistence roll — they go out through the channel's
+    // inhibit-bypassing path. The packet modems keep normal CSMA among themselves; what keeps
+    // them off an ARQ session is TransmitInhibit, set once the engine exists.
     // Bind the M0LTE.Ardop TNC to this daemon's channel: transmit bursts through the
     // channel-access path, receive audio via a channel tap (the old ForChannel glue,
     // now that the package is audio-device-agnostic).
+    if (ardopModem.Frequency is double ardopCentre
+        && ArdopChannelShift.Concern(ardopCentre, DspRate) is string ardopConcern)
+    {
+        Console.Error.WriteLine($"ardop: WARNING — {ardopConcern}");
+    }
+
+    var ardopShift = ArdopChannelShift.For(ardopModem.Frequency, DspRate);
     var ardopTnc = new M0LTE.Ardop.Host.ArdopHostTnc(captureDevice: device, playbackDevice: device)
     {
-        Transmitter = audio => channel.EnqueueTransmit(_ =>
-        {
-            var floats = new float[audio.Length];
-            for (int i = 0; i < audio.Length; i++)
+        Transmitter = audio => channel.EnqueueTransmit(
+            _ =>
             {
-                floats[i] = audio[i] / 32768f;
-            }
+                var floats = new float[audio.Length];
+                for (int i = 0; i < audio.Length; i++)
+                {
+                    floats[i] = audio[i] / 32768f;
+                }
 
-            return floats;
-        }),
+                return ardopShift.Transmit(floats);
+            },
+            rejected: null,
+            // ARDOP's own bursts are what the inhibit exists to protect; they never wait on it.
+            bypassInhibit: true),
     };
-    channel.AddReceiveTap(ardopTnc.ProcessReceive);
-    ardopServer = new M0LTE.Ardop.Host.ArdopHostServer(ardopTnc, ardopPort.Value, ownsTnc: true);
+    channel.AddReceiveTap(samples => ardopTnc.ProcessReceive(ardopShift.Receive(samples)));
+
+    // Hold the packet modems off the air for the length of an ARQ session. Their frames are
+    // queued, not discarded, until TransmitInhibitTimeout gives up on one — an AX.25 host will
+    // have retried long before a Winlink session ends.
+    M0LTE.Ardop.Arq.ArdopArqEngine ardopEngine = ardopTnc.Engine;
+    channel.TransmitInhibit = () => ardopEngine.IsConnected || ardopEngine.IsPending;
+
+    int ardopCommandPort = ardopModem.Port ?? 8515;
+    ardopServer = new M0LTE.Ardop.Host.ArdopHostServer(ardopTnc, ardopCommandPort, ownsTnc: true);
     ardopServer.Start();
     Console.WriteLine(
-        $"ardop host tcp: 127.0.0.1:{ardopServer.LocalCommandPort} (data {ardopServer.LocalDataPort}, " +
-        "ardopcf-compatible virtual TNC)");
+        $"ardop host tcp: 127.0.0.1:{ardopServer.LocalCommandPort} (data {ardopServer.LocalDataPort}, "
+        + $"ardopcf-compatible virtual TNC, modem {ardopModem.SubChannel}{ardopShift.Describe()})");
 }
 await using var ardopLifetime = ardopServer;
 

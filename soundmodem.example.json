@@ -52,7 +52,11 @@
   // ARDOP virtual TNC (optional; ardopcf-compatible TCP host interface — Pat and
   // other Winlink hosts connect unmodified; data port is always port+1). The ARDOP
   // channel is dedicated: "ardop" is exclusive with "modems"/"paging", and the
-  // channel must run at 12 kHz ("captureRate": 12000 recommended on aloop/bench).
+  // channel must run at 12 kHz). Preferred form is a modem entry, which also takes a
+  // "frequency" (ARDOP is pinned to 1500 Hz; the daemon shifts it) and shares the passband
+  // with the packet modes — while an ARQ session is up their transmissions are held:
+  //   { "subChannel": 1, "mode": "ardop", "frequency": 950, "port": 8101 }
+  // "port" there speaks the ardopcf host interface, not KISS, and reserves port+1 for data.
   // "ardop": { "port": 8515 },
   // Channel access (TXDELAY, P, SLOTTIME, TXTAIL) is NOT configured here — it belongs to the
   // host, which sets it at runtime with the KISS parameter commands 0x01-0x04. Until a host
