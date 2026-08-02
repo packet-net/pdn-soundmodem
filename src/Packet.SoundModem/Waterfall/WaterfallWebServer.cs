@@ -93,6 +93,15 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     private readonly List<WaterfallClient> _clients = [];
     private readonly List<short> _audioBlock = [];
 
+    // The spectrum source is fed from two threads — the receive loop and the transmitter — and
+    // is not itself thread-safe. Half duplex keeps them apart in practice, but not across the
+    // instant the transmit flag flips, which is exactly when both are live.
+    private readonly object _sourceLock = new();
+
+    // Set while feeding our own transmission, so the line that comes back out can be told apart
+    // from a received one. Lines are emitted synchronously inside Process, so this is exact.
+    private bool _lineIsTransmit;
+
     /// <summary>
     /// One connected browser. Audio is per-client and off by default: a viewer who opened the
     /// page to look at a waterfall should not silently start pulling 24 KB/s, and several
@@ -213,9 +222,17 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _configMessage = BuildConfigMessage();
         _channel.AddReceiveTap(samples =>
         {
-            source.Process(samples);
+            lock (_sourceLock)
+            {
+                source.Process(samples);
+            }
+
             BroadcastAudio(samples);
         });
+
+        // Draw what we transmit, so the display stays continuous across a keyup instead of
+        // freezing and silently compressing the time axis.
+        _channel.TransmittedAudio += OnTransmittedAudio;
         _channel.FrameReceivedWithQuality += OnFrame;
         _listener.Start();
         _acceptLoop = AcceptLoopAsync();
@@ -275,12 +292,41 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
     /// <summary>Line sink (receive thread): feed the SNR trackers, then fan the line out
     /// to every client as [0x01][u32 LE line index][bins].</summary>
+    private void OnTransmittedAudio(ReadOnlyMemory<float> samples)
+    {
+        WaterfallSource? source = _source;
+        if (source is null)
+        {
+            return;
+        }
+
+        lock (_sourceLock)
+        {
+            _lineIsTransmit = true;
+            try
+            {
+                source.Process(samples.Span);
+            }
+            finally
+            {
+                _lineIsTransmit = false;
+            }
+        }
+    }
+
     private void OnLine(long index, ReadOnlyMemory<byte> line)
     {
         ReadOnlySpan<byte> bins = line.Span;
-        foreach (BandActivityTracker tracker in _trackers.Values)
+        bool transmit = _lineIsTransmit;
+
+        // Our own transmission is not a signal we heard. Feeding it to the trackers would report
+        // a huge SNR and attribute it to whatever frame decoded next.
+        if (!transmit)
         {
-            tracker.AddLine(bins);
+            foreach (BandActivityTracker tracker in _trackers.Values)
+            {
+                tracker.AddLine(bins);
+            }
         }
 
         bool anyClients;
@@ -295,7 +341,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
 
         var message = new byte[5 + bins.Length];
-        message[0] = 0x01;
+        // 0x01 heard, 0x03 transmitted — the page draws them differently, because a burst of
+        // your own must not read as a strong station.
+        message[0] = transmit ? (byte)0x03 : (byte)0x01;
         BinaryPrimitives.WriteUInt32LittleEndian(message.AsSpan(1), (uint)index);
         bins.CopyTo(message.AsSpan(5));
         Broadcast(WebSocketMessageType.Binary, message);
@@ -586,6 +634,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     {
         await _stopping.CancelAsync().ConfigureAwait(false);
         _channel.FrameReceivedWithQuality -= OnFrame;
+        _channel.TransmittedAudio -= OnTransmittedAudio;
         try
         {
             _listener.Stop();

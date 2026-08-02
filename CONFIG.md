@@ -361,6 +361,17 @@ quietly start pulling ~24 KB/s, and several viewers cost nothing unless they eac
 Nothing is received while the station transmits, so the audio stops for the length of a keyup.
 That is silence, not a dropout.
 
+**Your own transmissions are drawn.** Receive processing is gated off while transmitting — half
+duplex — so the waterfall used to freeze for the length of every keyup, which quietly compressed
+its time axis: a three-second transmission left no gap, and signals either side of it ended up
+drawn adjacent. Transmitted audio is now fed to the display too, in its own colour ramp, so a
+keyup occupies its real duration and reads as *yours* rather than as a strong station. The stats
+line says `transmitting` from knowing rather than from guessing at silence.
+
+It is drawn only. Transmitted audio is kept out of the SNR trackers — measuring your own
+transmitter would report an enormous burst and attribute it to whatever decoded next — and is
+not sent to the audio stream.
+
 Omit the section to disable it. `dialFrequencyHz` is only the page's opening default — each
 browser can retune its own copy, and it is inherited from a band plan when there is one. The
 waterfall binds to the top-level [`bind`](#kissport-and-bind) like everything else; there is no
