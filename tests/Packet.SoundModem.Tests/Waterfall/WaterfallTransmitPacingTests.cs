@@ -59,7 +59,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
 
         // A frame big enough to be over a second of AFSK1200 — long enough that "all at once"
         // and "spread over the burst" cannot be confused for one another.
-        Task transmitting = TransmitAsync(new byte[220]);
+        Task transmitting = TransmitAsync(Payload(220));
 
         List<long> arrivals = await CollectTransmitLinesAsync(socket, atLeast: 25);
         await transmitting;
@@ -87,7 +87,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
     {
         using ClientWebSocket socket = await ConnectAsync();
 
-        Task transmitting = TransmitAsync(new byte[220]);
+        Task transmitting = TransmitAsync(Payload(220));
         List<long> arrivals = await CollectTransmitLinesAsync(socket, atLeast: 30);
         await transmitting;
 
@@ -109,7 +109,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         using ClientWebSocket socket = await ConnectAsync();
 
         var clock = Stopwatch.StartNew();
-        await TransmitAsync(new byte[220]);
+        await TransmitAsync(Payload(220));
         clock.Stop();
 
         // FakeAudioOutput drains instantly, so this is the handover cost and nothing else.
@@ -119,6 +119,139 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         // And the display is still painting it afterwards — the point of doing it this way.
         List<long> arrivals = await CollectTransmitLinesAsync(socket, atLeast: 10);
         arrivals.Should().HaveCountGreaterThanOrEqualTo(10);
+    }
+
+    [Fact]
+    public async Task Our_Own_Burst_Renders_Like_A_Strong_Station_Rather_Than_A_Fault()
+    {
+        // A modulator's raw output is ~35 dB hotter than anything the display ever sees on
+        // receive. Drawn literally it does not look like a strong signal, it looks like a fault:
+        // the transform's leakage skirt, buried in the noise for a received signal, sits far
+        // above the display floor for this one and smears across the entire span. Measured on
+        // this burst: 1021 of 1024 bins lit, peak pinned past the top of the scale.
+        //
+        // The reference is the same audio received at a strong-signal level, so this asserts the
+        // design intent directly — our own transmission is drawn on the scale the operator has
+        // calibrated their eye to — rather than pinning a number that only holds for one modem.
+        using ClientWebSocket socket = await ConnectAsync();
+
+        Task transmitting = TransmitAsync(Payload(220));
+        byte[] transmitted = await NextLineAsync(socket, 0x03, skip: 5);
+        await transmitting;
+
+        float[] audio = new Afsk1200Modem(SampleRate, _ => { }).Modulate(Payload(220), 20);
+        for (int i = 0; i < audio.Length; i++)
+        {
+            audio[i] *= 0.02f;   // a strong station, well above the noise and not overloading
+        }
+
+        _channel.ProcessReceive(audio);
+        byte[] received = await NextLineAsync(socket, 0x01, skip: 5);
+
+        (int txLit, double txPeak) = Describe(transmitted);
+        (int rxLit, double rxPeak) = Describe(received);
+
+        txLit.Should().BeLessThanOrEqualTo(
+            (int)(rxLit * 1.3),
+            "our own transmission must not cover more of the display than a strong station does");
+        txPeak.Should().BeLessThanOrEqualTo(
+            Math.Min(1.0, rxPeak * 1.3),
+            "nor be pinned at the top of the scale when a real signal is not");
+        txPeak.Should().BeGreaterThan(
+            0.4, "it still has to be clearly visible — this is a level fix, not a mute");
+    }
+
+    /// <summary>Lit bins and peak brightness of a line, in the page's default dB window.</summary>
+    private static (int Lit, double Peak) Describe(byte[] line)
+    {
+        ReadOnlySpan<byte> bins = line.AsSpan(5);
+        int lit = 0;
+        double peak = 0;
+        foreach (byte bin in bins)
+        {
+            double brightness = Brightness(bin);
+            if (brightness > 0.15)
+            {
+                lit++;
+            }
+
+            peak = Math.Max(peak, brightness);
+        }
+
+        return (lit, peak);
+    }
+
+    [Fact]
+    public async Task Scaling_For_The_Display_Does_Not_Move_Or_Reshape_The_Signal()
+    {
+        // The whole point is that it is a gain and nothing else: the operator is reading
+        // bandwidth and placement off this line, and both must survive.
+        using ClientWebSocket socket = await ConnectAsync();
+
+        Task transmitting = TransmitAsync(Payload(220));
+        byte[] line = await NextLineAsync(socket, 0x03, skip: 5);
+        await transmitting;
+
+        ReadOnlySpan<byte> bins = line.AsSpan(5);
+        double binHz = (double)SampleRate / (bins.Length * 2);
+        int peak = 0;
+        for (int b = 0; b < bins.Length; b++)
+        {
+            if (bins[b] > bins[peak])
+            {
+                peak = b;
+            }
+        }
+
+        // Bell 202 at the 1700 Hz default centre: the peak belongs to one of its two tones.
+        (peak * binHz).Should().BeInRange(
+            1000, 2400, "the drawn signal must sit where the modem actually transmits");
+    }
+
+    /// <summary>
+    /// A frame of varied data. Not zeros: an all-zero AX.25 frame modulates to something close to
+    /// a pure tone, which occupies a fraction of the span a real frame does — narrow enough that
+    /// it passed the level assertions below even unnormalised, and so proved nothing.
+    /// </summary>
+    private static byte[] Payload(int length)
+    {
+        var frame = new byte[length];
+        for (int i = 0; i < length; i++)
+        {
+            frame[i] = (byte)(i * 7);
+        }
+
+        return frame;
+    }
+
+    /// <summary>Maps a line byte to display brightness in the page's default −95..−35 dB window.</summary>
+    private static double Brightness(byte bin)
+    {
+        const double floorDb = -95, topDb = -35;
+        double db = Packet.SoundModem.Dsp.WaterfallSource.FloorDb
+            + (bin * (-Packet.SoundModem.Dsp.WaterfallSource.FloorDb / 255.0));
+        return Math.Clamp((db - floorDb) / (topDb - floorDb), 0, 1);
+    }
+
+    /// <summary>
+    /// A line of the given type from well inside the burst. The first few are still part-filled
+    /// with whatever preceded it, so they are not representative of either state.
+    /// </summary>
+    private async Task<byte[]> NextLineAsync(ClientWebSocket socket, byte type, int skip)
+    {
+        int seen = 0;
+        var clock = Stopwatch.StartNew();
+        while (clock.ElapsedMilliseconds < 20_000)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await ReceiveAsync(socket);
+            if (kind == WebSocketMessageType.Binary && payload.Length > 5 && payload[0] == type
+                && seen++ >= skip)
+            {
+                return payload;
+            }
+        }
+
+        throw new InvalidOperationException($"no 0x{type:X2} line arrived");
     }
 
     private async Task<ClientWebSocket> ConnectAsync()
