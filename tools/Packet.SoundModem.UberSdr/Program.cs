@@ -1,5 +1,6 @@
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.UberSdr;
+using Packet.SoundModem.Iq;
 
 // sm-iqcapture — capture one IQ48 (or PCM) session from a ka9q_ubersdr / UberSDR instance to a
 // 16-bit stereo WAV + JSON sidecar. One session per invocation; drive per-pass reconnect from a

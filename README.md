@@ -131,6 +131,19 @@ with, both directions) is in [docs/qtsm-loop.md](docs/qtsm-loop.md) § Results.
 - Selectable span (2–4 kHz nominal for the SSB passband, wider on the 48 kHz modes), floor/top levels with auto-set, and an honest "no audio" indicator while the half-duplex channel transmits.
 - `--wav-loop FILE` replays a recording through the whole live daemon at wall-clock pace — the hardware-free way to demo or develop against the waterfall.
 
+**A station without an antenna.** `"device": "ubersdr:m9psy-1.instance.ubersdr.org"` points the
+whole modem at a public [UberSDR](https://github.com/madpsy/ka9q_ubersdr) web receiver instead of
+a sound card — of which there are many, on far better antennas than a suburban garden allows.
+The daemon takes the receiver's **IQ** stream (48 kHz of complex baseband, ±24 kHz) and
+demodulates SSB from it in-process, so every mode, the waterfall and the frame log work exactly
+as they do on a radio, and the band plan's dial tunes the receiver rather than being printed for
+you to dial in. IQ rather than the instance's own audio because holding the complex baseband
+means the receive filter is the one *your* band plan asked for and there is no AGC anywhere in
+the path. It is **receive only** — there is no transmitter at the far end of a WebSocket, so
+`ptt` is rejected and transmissions are refused with that as the reason rather than queued
+against a transmitter that will never appear. See
+[CONFIG.md § Listening to a web receiver](CONFIG.md#listening-to-a-web-receiver).
+
 **Hear it:** [samples/demo/](samples/demo/) holds one representative WAV per mode family —
 each produced by the real transmit path, carrying a genuine frame, and decoded back to its
 payload with the reference tool a ham would use (multimon-ng, codec2 `freedv_data_raw_rx`,
@@ -172,6 +185,9 @@ prior art and stays GPL:
 - **MMDVM-TNC** (Jonathan Naylor, G4KLX) — GPL-2.0-or-later — the "Mode 2" C4FSK wire
   format (preamble, sync, symbol mapping) that the NinoTNC's C4FSK modes inherit and that
   `C4fskModem` implements.
+- **ka9q_ubersdr** (madpsy) — GPL-3.0 — the web-receiver software the `ubersdr:` device talks
+  to; its `iq-recorder` client is the source of the IQ stream's packet framing, ported here
+  with provenance.
 
 The sibling [packet.net](https://github.com/packet-net/packet.net) repo is AGPL-3.0; the two
 combine under GPLv3 §13 / AGPLv3 §13. Nothing MIT-licensed may depend on this package.

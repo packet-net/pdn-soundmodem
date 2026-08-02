@@ -28,6 +28,8 @@
     <PackageReference Include="M0LTE.Dsp" />
     <PackageReference Include="M0LTE.FecLdpc" />
     <PackageReference Include="M0LTE.Ofdm" />
+    <!-- The `ubersdr:` receive device: UberSDR streams its IQ as zstd-compressed PCM frames. -->
+    <PackageReference Include="ZstdSharp.Port" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(FlexSourcePath)' != ''">

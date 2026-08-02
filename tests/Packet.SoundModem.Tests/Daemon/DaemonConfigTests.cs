@@ -452,6 +452,42 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void An_UberSdr_Section_Loads_With_Its_Defaults()
+    {
+        string path = WriteConfig("""
+            {
+              "device": "ubersdr:m9psy-1.instance.ubersdr.org",
+              "ubersdr": { "gain": 4.0 },
+              "modems": [ { "subChannel": 0, "mode": "bpsk300", "rfFrequency": 7051600 } ]
+            }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.UberSdr!.Gain.Should().Be(4.0);
+        config.UberSdr.Mode.Should().Be("iq48", "every public instance offers it");
+        config.UberSdr.SsbLowHz.Should().BeNull("unset means the device's own default");
+        config.Warnings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_Misspelt_UberSdr_Setting_Is_Reported_Rather_Than_Dropped()
+    {
+        // System.Text.Json discards unknown members in silence, which turns a typo into a config
+        // that looks accepted and quietly does something else.
+        string path = WriteConfig("""
+            {"device": "ubersdr:sdr.example", "ubersdr": {"passwrd": "hunter2"}}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("passwrd").And.Contain("ubersdr");
+    }
+
+    [Fact]
     public void A_Missing_File_Is_Reported_As_Configuration_Not_As_A_Crash()
     {
         string path = Path.Combine(_dir, "does-not-exist.json");

@@ -55,6 +55,10 @@ CLAUDE.md § Licence rules).
 | `Kiss/*`, `Channel/SoundModemChannel` (CSMA) | KISS specification (framing, commands, the BPQ ACKMODE extension) and AX.25 §6.4 classic p-persistence. Implemented from the specs — deliberately no dependency on packet.net's AGPL `Packet.Kiss`. |
 | `Audio/*`, `Dsp/*` (ALSA, WAV, FIR/design, decimator, upsampler, FFT, spectrum, constellation) | Standard APIs and textbook DSP (windowed-sinc design, polyphase-style rate change, radix-2 FFT). The runtime filter-design *choice* mirrors QtSM's approach. `SpectrumSource` and `ConstellationSource` (per-symbol PSK decision points, batched into auto-ranged scope frames) are original diagnostic side channels of this project, structurally alike; the constellation feed taps the differential product the PSK demodulators already compute (`IConstellationSource`). |
 | `Channel/Cm108Ptt` | The de-facto CM108 HID report convention (5-byte output report, GPIO3) as documented and used by Dire Wolf and QtSoundModem. |
+| `UberSdr/PcmBinaryDecoder` | **ka9q_ubersdr lineage** (madpsy, GPL-3.0 — compatible with this repo): a direct port of `clients/iq-recorder/pcm_decoder.go` (`DecodePCMBinary`). The hybrid `PC`/`PM` header layout, field offsets, the big-endian int16 payload and the pre-seeded rate/channels convention are that client's, cited in the file per this repo's porting rule. Cross-checked against it on a live simultaneous capture: bit-identical in steady state (docs/ms110d/ota-capture-client-plan.md § C1). |
+| `UberSdr/UberSdrAudioInput`, `UberSdr/UberSdrDevice` | Original. The connection flow it re-implements (`POST /connection` → `/api/description` → `wss://…/ws?mode=iq48&format=pcm-zstd`) is documented from reading ka9q_ubersdr's `clients/iq-recorder/main.go`; the reconnecting receive loop, the ring buffer and the `IAudioInput` surface are this project's. |
+| `Iq/IqToAudioConverter`, `Iq/StreamingIqToAudioConverter` | Original. Textbook SSB demodulation from complex baseband (NCO → complex bandpass keeping one sideband → real part → decimate); the streaming form's collapse of the bandpass and anti-alias filters into one kernel evaluated only at output instants is this project's, and is pinned sample-for-sample against the readable reference by test. |
+| `Iq/DigitalDownconverter`, `Iq/MultiChannelReceiver` | Original. Textbook NCO + decimating FIR, mirroring `Dsp/Decimator`'s output-instant evaluation. |
 | Daemon, KISS TCP server, config | Original. |
 
 ## What was deliberately not taken
@@ -67,7 +71,8 @@ slicer, dedup, busy detector) or recorded the lever as future work in `docs/plan
 ## Licence consequence
 
 Components above carry material derived from Dire Wolf (GPL-2.0-or-later, upgradeable),
-UZ7HO/QtSoundModem (GPLv3+) and MMDVM-TNC (GPL-2.0-or-later, upgradeable). Beyond that, everything here was written with both GPL
+UZ7HO/QtSoundModem (GPLv3+), MMDVM-TNC (GPL-2.0-or-later, upgradeable) and ka9q_ubersdr
+(GPL-3.0). Beyond that, everything here was written with both GPL
 trees having been read, so the conservative and honest licence for the whole is
 **GPL-3.0-or-later** — chosen deliberately at the project's founding (packet.net
 `docs/research/headless-soundmodem.md` §4 and §Decisions, 2026-07-14) rather than

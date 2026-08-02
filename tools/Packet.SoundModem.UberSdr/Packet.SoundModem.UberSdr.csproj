@@ -7,12 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ZstdSharp.Port" />
     <PackageReference Include="M0LTE.Dsp" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- WavFile IO for the `convert` subcommand. -->
+    <!-- WavFile IO for the `convert` subcommand, and the UberSDR wire decoder + IQ→SSB
+         converters, which moved into the core when the daemon gained the `ubersdr:` device. -->
     <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
   </ItemGroup>
 

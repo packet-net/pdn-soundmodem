@@ -15,6 +15,14 @@
   // different channel here (or use attach mode). See docs/flex-integration.md §8.
   // "flex": { "antenna": "ANT1" },   // mode defaults to DIGU; daxChannel defaults to 2 headless,
   //                                  which keeps out of a running SmartSDR's way (it takes 1)
+  // A public UberSDR web receiver is a device too: "ubersdr:<instance>" — a host, a host:port,
+  // or the https:// URL you would open in a browser. The daemon takes the receiver's IQ stream
+  // and demodulates SSB from it in-process, so every mode, the waterfall and the frame log work
+  // as they do on a sound card. It is RECEIVE ONLY: there is no transmitter, so omit "ptt", and
+  // transmissions are refused rather than queued. Give the modems "rfFrequency" (or pin
+  // "dialFrequency") — that is what tunes the receiver. e.g.:
+  //   "device": "ubersdr:m9psy-1.instance.ubersdr.org",
+  //   "ubersdr": { "mode": "iq48" },   // also: password, ssbLowHz/ssbHighHz, gain
   "captureRate": 48000,
   // Modems can be placed by absolute RF frequency instead of audio centre — state the band
   // plan the way you think of it and the daemon works out the dial, tells you what to set,

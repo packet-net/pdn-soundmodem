@@ -43,6 +43,26 @@ internal static class DeviceDiagnostics
         {Retry}
         """;
 
+    /// <summary>
+    /// An UberSDR instance that would not stream. Same "keep retrying" treatment as a sound card:
+    /// a web receiver is reachable over the internet, so it can be rebooting, saturated with
+    /// listeners, or simply behind a link that is down for a minute — none of which is the
+    /// operator's mistake and all of which clear on their own.
+    /// </summary>
+    internal static string UberSdr(string device, string? configPath, Exception error) =>
+        $"""
+        cannot stream IQ from "{device}"
+          {error.Message}
+
+        {Source(configPath, "device", "--device")}
+          This names a public UberSDR web receiver, which the station listens to instead of a
+          sound card. Check it is up and serving IQ:
+            curl -s https://<instance>/api/description | head -c 400
+          The address is the one you would open in a browser — the whole URL works as well as
+          the bare host. Session limits, IQ mode and any password live in the "ubersdr" section.
+        {Retry}
+        """;
+
     internal static string Ptt(PttConfig ptt, string? configPath, Exception error)
     {
         string where = Source(configPath, "ptt", "--ptt");

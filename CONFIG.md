@@ -42,6 +42,7 @@ with `su -` and drop the prefix.)
 | `ardop` | object | *(disabled)* | ARDOP virtual TNC — [below](#ardop) |
 | `frameLog` | object | *(not kept)* | Record every frame heard to SQLite — [below](#framelog) |
 | `flex` | object | see below | FlexRadio slice params — [below](#flex) |
+| `ubersdr` | object | see below | UberSDR stream params — [below](#ubersdr) |
 
 ---
 
@@ -62,6 +63,8 @@ your machine has.
   nothing. Useful for checking a config parses and the daemon starts.
 - **`"flex:<radio>[:slice][@station]"`** — a FlexRadio 6000-series over the LAN as both sound
   card *and* PTT.
+- **`"ubersdr:<instance>"`** — a public UberSDR web receiver, **receive only** —
+  [below](#listening-to-a-web-receiver).
 
 For the Flex form, `<radio>` is `discover` (broadcast), an IP (`host[:port]`), a discovery
 spec (`serial=…` / `name=…`), or `mock` (an in-process fake for offline testing). `<slice>` is
@@ -72,6 +75,71 @@ slice from the [`flex`](#flex) section. A trailing `@station` attaches to a runn
 existing slice instead, and the `flex` slice params are ignored because SmartSDR configures
 it. Either way the radio keys itself, so **`ptt` must be omitted** — configuring both is
 rejected at start-up. See [docs/flex-integration.md](docs/flex-integration.md).
+
+### Listening to a web receiver
+
+A station needs an antenna in a quiet place, and most of us do not have one. `ubersdr:` points
+the whole modem at somebody who does — a public [UberSDR](https://github.com/madpsy/ka9q_ubersdr)
+instance, of which there are many, on far better antennas than a suburban garden allows:
+
+```json
+{
+  "device": "ubersdr:m9psy-1.instance.ubersdr.org",
+  "modems": [
+    { "subChannel": 0, "mode": "afsk300-il2pc",           "rfFrequency": 7050300, "port": 8101 },
+    { "subChannel": 1, "mode": "ardop", "bandwidth": 500, "rfFrequency": 7050950, "port": 8200 },
+    { "subChannel": 2, "mode": "bpsk300",                 "rfFrequency": 7051600, "port": 8102 }
+  ],
+  "waterfall": { "port": 8099 },
+  "bind": "0.0.0.0"
+}
+```
+
+That is an ordinary config with an ordinary band plan. Every mode works, the waterfall works,
+the frame log works, KISS works — the device is the only thing that changed:
+
+```
+dial: 7.049450 MHz USB
+  modem 0 afsk300-il2pc at 7.050300 MHz = 850 Hz audio
+  modem 1 ardop at 7.050950 MHz = 1500 Hz audio
+  modem 2 bpsk300 at 7.051600 MHz = 2150 Hz audio
+audio: m9psy-1.instance.ubersdr.org iq48 IQ at 7.049450 MHz → USB 150-3450 Hz audio at 12000 Hz (RECEIVE ONLY)
+ubersdr: M9PSY-1 · RX888 with 40m Full Wave Loop (GPSDO) · Dalgety Bay, Scotland, UK · reference offset 0 Hz
+```
+
+**Write the instance however you have it.** `ubersdr:m9psy-1.instance.ubersdr.org`,
+`ubersdr:host:8443`, or the whole URL out of the browser's address bar —
+`ubersdr:https://m9psy-1.instance.ubersdr.org/` — all name the same receiver. HTTPS on 443 is
+assumed, because that is what public instances run.
+
+**It receives and cannot transmit.** There is no transmitter at the far end of a WebSocket, so:
+
+- `ptt` alongside it is rejected at start-up — there is nothing for a PTT line to key;
+- anything sent to a KISS port is refused immediately, with that as the reason, rather than
+  queued against a transmitter that will never appear;
+- `ardop` still loads and still hears the channel, but no ARQ session can ever complete. The
+  daemon says so at start-up rather than leaving you to work it out from a Winlink timeout.
+
+**The dial is not yours to set, so the daemon sets it.** Give the modems `rfFrequency` — or pin
+`dialFrequency` — and the receiver is tuned there, exactly as a headless Flex is. Without either
+it refuses to start: unlike a radio there is no dial already set to read a number off.
+
+**It takes IQ, not the instance's demodulated audio.** UberSDR will demodulate SSB for you, but
+then its filter, its AGC and its resampler are all in the path and none of them is yours. Taking
+`iq48` puts the whole ±24 kHz of complex baseband here, so the receive filter is the one your
+band plan asked for and there is no AGC anywhere — which is what makes an SNR figure off this
+path mean the same thing as one off a sound card. `captureRate` does not apply; the stream
+brings its own 48 kHz clock.
+
+**Sessions end and are picked up again.** Public instances cap a session (3 hours on the ones
+measured, reported at start-up), and a modem is expected to run for months. A closed stream is
+treated as ordinary and reconnected, losing about a second each time to the receiver's
+start-of-stream level ramp. Only an instance that stays unreachable for five minutes stops the
+service — with exit 1, so systemd restarts it and tries afresh.
+
+**Be a good guest.** These are somebody else's receivers, run at their expense, with a limited
+number of listener slots. One long session is kinder than repeated reconnects, and a station you
+intend to leave running for weeks is worth mentioning to the operator.
 
 ## `captureRate`
 
@@ -531,6 +599,39 @@ Set `daxChannel` explicitly if you have other DAX users to work around.
 > it bypasses that chain, which makes it a measurement instrument rather than a deployment
 > path. See [docs/flex-integration.md](docs/flex-integration.md) § 2.3.
 
+## `ubersdr`
+
+Stream parameters used **only** when `device` is `ubersdr:<instance>` — see
+[Listening to a web receiver](#listening-to-a-web-receiver) for what that is and how it behaves.
+Ignored for every other device. Where to tune is *not* here: that comes from the band plan, as
+it does on a Flex.
+
+```json
+"ubersdr": { "mode": "iq48", "gain": 1.0 }
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `mode` | string | `"iq48"` | The receiver's IQ mode. `iq48` is 48 kHz complex, ±24 kHz, and is what every public instance offers; `iq96` where one allows it |
+| `password` | string | *(none)* | For a protected instance |
+| `ssbLowHz` | number | `150` | Lower edge of the SSB filter to synthesise, Hz above the dial |
+| `ssbHighHz` | number | `3450` | Upper edge, likewise |
+| `startupGuardMs` | int | `1000` | Audio discarded after each connect |
+| `gain` | number | `1.0` | Linear gain on the demodulated audio |
+
+**`ssbLowHz`/`ssbHighHz` are the receive filter**, and unlike a rig's they are actually yours to
+choose — holding the complex baseband is what makes that possible. The default clears the whole
+300–2700 Hz band a plan can place modems in, with room either side, so nothing legal gets
+clipped on the way in. Narrowing them emulates a tighter rig for comparison.
+
+**`startupGuardMs` covers a real transient.** Instances ramp their level over the first
+0.7–1.0 s of a stream (measured 2026-07-24), which would otherwise put a fade at the head of
+every session and a stripe on the waterfall. It costs about a second per reconnect.
+
+**`gain` is for the display, not the decoders.** Everything downstream is floating point and
+level-independent; measured off `m9psy-1`, the demodulated audio lands around −26 dBFS RMS,
+which is soundcard-like already. Raise it if a quiet instance makes the waterfall hard to read.
+
 ---
 
 ## What is rejected at start-up
@@ -576,6 +677,8 @@ enumerated yet at boot, for instance — still restarts on its own as usual.
 | `frequency` on a fixed-centre mode | `mode 'X' has a fixed centre frequency — drop the frequency override …` |
 | `captureRate` not a multiple of the DSP rate | `--capture-rate must be a multiple of N` |
 | `ptt` alongside a `flex:` device | `--device flex: keys the radio itself; remove the conflicting --ptt …` |
+| `ptt` alongside a `ubersdr:` device | `--device ubersdr: is a receive-only station … Remove "ptt".` |
+| `ubersdr:` with no `rfFrequency` and no `dialFrequency` | `the UberSDR instance … has to be told where to listen` |
 | `ptt.type` not `serial` or `cm108` | `unknown ptt type 'X'` |
 
 The mode suggestion is worth knowing about, because a hyphen is easy to lose among 38 names:
@@ -695,6 +798,21 @@ Some options are command-line only and have no config equivalent — `--wav FILE
 ```
 
 Point Pat at 8101 (data 8102), and your packet host at 8100 and 8103.
+
+**A monitoring station on somebody else's antenna** — no radio, no sound card, no PTT; it hears
+40 m from Scotland and writes down everything it decodes:
+
+```json
+{
+  "device": "ubersdr:m9psy-1.instance.ubersdr.org",
+  "modems": [
+    { "subChannel": 0, "mode": "afsk300-il2pc", "rfFrequency": 7050300 },
+    { "subChannel": 1, "mode": "bpsk300",       "rfFrequency": 7051600 }
+  ],
+  "waterfall": { "port": 8107 },
+  "frameLog": { "path": "/var/lib/pdn-soundmodem/frames.db" }
+}
+```
 
 **A FlexRadio over the LAN, no sound card at all** — no `ptt`, the radio keys itself:
 

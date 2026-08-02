@@ -184,10 +184,34 @@ public sealed class SoundModemChannel
         Func<int, float[]> modulate, Action<Exception>? rejected = null, bool ownsChannelTiming = false)
     {
         ArgumentNullException.ThrowIfNull(modulate);
+        if (ReceiveOnlyReason is string receiveOnly)
+        {
+            var refusal = new InvalidOperationException(receiveOnly);
+            rejected?.Invoke(refusal);
+            Task faulted = Task.FromException(refusal);
+            _ = faulted.Exception; // observed here: a fire-and-forget caller cannot, and on a
+                                   // receive-only channel this happens to every frame.
+            return faulted;
+        }
+
         return !ownsChannelTiming && TransmitInhibit is not null
             ? EnqueueWhenPermittedAsync(modulate, rejected)
             : EnqueueNow(modulate, rejected, ownsChannelTiming);
     }
+
+    /// <summary>
+    /// Set to say the channel has no transmitter at all, with the reason an operator or a host
+    /// should be told. Every transmission is then refused the moment it is queued, carrying this
+    /// as its message.
+    /// </summary>
+    /// <remarks>
+    /// This is not <see cref="TransmitInhibit"/>, which holds a transmission back until the
+    /// channel frees up. Nothing here ever frees up — a web receiver has no transmitter — so
+    /// queueing would only turn "cannot" into a 30-second wait ending in the wrong explanation.
+    /// It also bypasses <c>ownsChannelTiming</c>: ARDOP owning the timing of a channel it cannot
+    /// key changes nothing about whether the frame goes out.
+    /// </remarks>
+    public string? ReceiveOnlyReason { get; set; }
 
     /// <summary>
     /// Raised with each block of audio as it is handed to the sound device — the station's own

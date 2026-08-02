@@ -20,9 +20,10 @@
     <PackageVersion Include="M0LTE.FecLdpc" Version="0.1.0" />
     <PackageVersion Include="M0LTE.Ofdm" Version="0.1.0" />
 
-    <!-- Dev tooling only (tools/Packet.SoundModem.UberSdr) — pure-managed zstd port for the
-         ka9q_ubersdr IQ capture path (pcm-zstd WebSocket frames). MIT; not referenced by the
-         shipped pdn-soundmodem package. -->
+    <!-- Pure-managed zstd port for the ka9q_ubersdr / UberSDR IQ path (pcm-zstd WebSocket
+         frames). MIT, so GPL-compatible per CLAUDE.md's licence rules. It was dev-tooling-only
+         while the only consumer was the capture tool; the shipped package now carries the
+         `ubersdr:` receive device, so the wire decoder — and this — moved into the core. -->
     <PackageVersion Include="ZstdSharp.Port" Version="0.8.8" />
 
     <!-- Dev tooling only (tools/Packet.SoundModem.NinoCompare) — the NinoTNC comparison harness.

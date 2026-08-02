@@ -38,8 +38,8 @@ SSB) are pinned in [mode-modulation-reference.md](mode-modulation-reference.md).
 | `afsk1200-il2p-nocrc` | AFSK | 1200 bps | IL2P | 12 kHz | yes | FM/VHF | — | **Untested** — construction only |
 | `afsk300` | AFSK (200 Hz shift) | 300 bps | AX.25 HDLC | 12 kHz | yes | SSB/HF | NinoTNC (1100) | **Bench** ⚠ — corpus decodes 3/3; on-air blocked by rig CFO drift (#116); NinoTNC's own 1100 RX has quirks (see bench doc) |
 | `afsk300-il2p` | AFSK | 300 bps | IL2P | 12 kHz | yes | SSB/HF | NinoTNC (1101) | **Bench** — corpus, both directions |
-| `afsk300-il2pc` | AFSK | 300 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1110) | **Bench** — corpus, both directions |
-| `bpsk300` | BPSK + 4-pair diversity bank | 300 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1000), QtSM V26A | **On-air** — GB7RDG off-air decode + BER waterfall ⚠ open residual-miss scoreboard |
+| `afsk300-il2pc` | AFSK | 300 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1110) | **On-air** — first off-air decode 2026-08-02 (GB7BEX-15→GB7IOW-1 via a `ubersdr:` web receiver); bench corpus both directions |
+| `bpsk300` | BPSK + 4-pair diversity bank | 300 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1000), QtSM V26A | **On-air** — GB7RDG off-air decode + BER waterfall + 7 live 40 m frames via a `ubersdr:` web receiver (2026-08-02) ⚠ open residual-miss scoreboard |
 | `bpsk300-multi` | alias of `bpsk300` | 300 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | as `bpsk300` | **On-air** |
 | `bpsk300-nocrc` | BPSK | 300 bps | IL2P | 12 kHz | yes | SSB/HF | — | **Untested** — construction only |
 | `bpsk1200` | BPSK + diversity bank | 1200 bps | IL2P+CRC | 12 kHz | yes | SSB/HF | NinoTNC (1010), QtSM V26A | **On-air** — AWGN campaign 2026-07-28 |

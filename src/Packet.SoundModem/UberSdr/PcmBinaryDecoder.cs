@@ -123,5 +123,6 @@ public sealed class PcmBinaryDecoder : IDisposable
             gpsTimestampNanos);
     }
 
+    /// <summary>Releases the zstd decompressor.</summary>
     public void Dispose() => _zstd.Dispose();
 }
