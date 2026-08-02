@@ -34,3 +34,27 @@ The **general** off-frequency case (normal ~150 ms preamble, tens-of-Hz offset) 
 `afsk1200-multi` model applied to PSK); whichever branch sits within a few Hz of the signal
 acquires it. See `BpskMultiModemTests`. Reproduce this file with a `BpskModem`/`BpskMultiModem`
 unit test decimating 48 kHz → 12 kHz.
+
+## `m9psy-40m-afsk300-il2pc-qrm.wav`
+
+**M0LTE** connecting to **GB7IOW-1**, mode **afsk300-il2pc** (NinoTNC mode 14), captured
+2026-08-02 20:39:42 UTC off the live 40 m slot through the `m9psy-1.instance.ubersdr.org`
+public web receiver (RX888 + 40 m full-wave loop, GPSDO-disciplined, Dalgety Bay): iq48 →
+`StreamingSsbDemodulator` (dial 7.049450 USB, 150–3450 Hz) → 12 kHz — the daemon's exact
+`ubersdr:` receive path. **16-bit mono PCM, 12 kHz, 10 s.**
+
+- Slot 7.050300, so the packet centre sits at **850 Hz** audio; the station is ~3 Hz off.
+  SNR ≈ 20 dB — not a weak signal.
+- The point of this clip is what ELSE is in it: the slot's everyday neighbour, a QSO at
+  ~7.0500 (audio ≈ 475–700 Hz), runs right through the transmission at comparable power.
+  That is inside a ±400 Hz receive passband and largely outside a ±300 one.
+- **Decodes to `M0LTE>GB7IOW-1`** (SABM+P, CRC-valid IL2P+CRC, 15 bytes:
+  `8E846E929EAEE29A6098A88A40613F`) with the current `Afsk300Modem` defaults and with
+  `Afsk300MultiModem`; the ±400 Hz filters the mode shipped with for its first year decode
+  **nothing** from it — discriminator capture by the neighbour. Guarded by
+  `OffAirAfsk300Tests`.
+
+This is the capture that motivated the 2026-08-02 afsk300 receive-filter narrowing and the
+`Afsk300MultiModem` bank: on the first 30 minutes of this slot (13 decodable frames from 3
+stations), the wide single modem decoded 3, the bank 13. Full corpus + analysis harness
+notes in the mode-validation ledger entry of the same date.

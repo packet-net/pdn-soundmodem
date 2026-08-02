@@ -40,8 +40,19 @@ public sealed class Afsk300Modem : IModem
     // score. Nino filters these modes to 500 Hz OBW and the measured energy spans
     // 1520–1870 Hz, so ±300 passes the signal whole with room for the filter's own
     // transition width, while staying tight enough to keep the discriminator clean.
-    private const double BandPassHalfWidth = 400;
-    private const double LowPassCutoff = 400;
+    //
+    // These were shipped at 400 for a year of bench work, where the extra width cost
+    // nothing — one clean signal at high SNR. On the real 40 m channel it cost frames: a
+    // quadrature discriminator follows the strongest thing in its passband, and ±400
+    // around the band-plan centre reaches far enough to swallow the neighbouring QSO that
+    // in practice lives ~200 Hz below the slot (measured 2026-08-02 on m9psy-1 off-air
+    // capture: with a comparable-power neighbour in-passband, ±400 needed the packet
+    // +6 dB above the interference to decode where ±250 managed −3 dB and a ±175 Hz
+    // passband −12 dB). 300 is the bench plateau midpoint and the single-modem balance of
+    // interference rejection against carrier-offset range; the Afsk300MultiModem bank
+    // runs tighter 250 Hz branches and buys the offset range back with diversity.
+    private const double DefaultBandPassHalfWidth = 300;
+    private const double DefaultLowPassCutoff = 300;
     private const double ToneShift = 100;
 
     /// <summary>
@@ -66,9 +77,16 @@ public sealed class Afsk300Modem : IModem
     /// <param name="frameReceived">Receives each decoded AX.25 frame.</param>
     /// <param name="framing">Which of the three HF modes to run.</param>
     /// <param name="centerFrequency">Mark/space midpoint; 1700 Hz (tones 1600/1800).</param>
+    /// <param name="bandPassHalfWidth">Receive band-pass half-width around the centre.
+    /// Narrower rejects more of a crowded HF neighbourhood at the cost of carrier-offset
+    /// range — see the constant above; <see cref="Afsk300MultiModem"/> passes 250 here.</param>
+    /// <param name="lowPassCutoff">Receive I/Q low-pass cutoff, paired with
+    /// <paramref name="bandPassHalfWidth"/>.</param>
     public Afsk300Modem(
         int sampleRate, Action<byte[]> frameReceived, Afsk300Framing framing = Afsk300Framing.Il2pCrc,
-        double centerFrequency = 1700)
+        double centerFrequency = 1700,
+        double bandPassHalfWidth = DefaultBandPassHalfWidth,
+        double lowPassCutoff = DefaultLowPassCutoff)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _framing = framing;
@@ -113,7 +131,7 @@ public sealed class Afsk300Modem : IModem
                     previousDcd = dcd;
                     deframer.PushBit(bit);
                 },
-                centerFrequency, Baud, BandPassHalfWidth, LowPassCutoff,
+                centerFrequency, Baud, bandPassHalfWidth, lowPassCutoff,
                 toneShift: ToneShift);
             _demodulator = demodulator;
             _modulator = new AfskModulator(
@@ -122,7 +140,7 @@ public sealed class Afsk300Modem : IModem
         }
 
         _demodulator = new AfskDemodulator(
-            sampleRate, bitSink, centerFrequency, Baud, BandPassHalfWidth, LowPassCutoff,
+            sampleRate, bitSink, centerFrequency, Baud, bandPassHalfWidth, lowPassCutoff,
             toneShift: ToneShift);
         _modulator = new AfskModulator(
             sampleRate, Baud, centerFrequency - ToneShift, centerFrequency + ToneShift);

@@ -136,7 +136,18 @@ public sealed class UberSdrIqClient
                 WebSocketReceiveResult res;
                 do
                 {
-                    res = await ws.ReceiveAsync(rent, ct);
+                    // A public instance can vanish mid-session (restart, slot reclaim) without
+                    // a close handshake. That ends the session; it does not invalidate the
+                    // contiguous audio already on disk, so finalise rather than crash.
+                    try
+                    {
+                        res = await ws.ReceiveAsync(rent, ct);
+                    }
+                    catch (WebSocketException ex)
+                    {
+                        _log?.Invoke($"connection lost mid-session ({ex.Message}); keeping what was captured");
+                        goto done;
+                    }
                     if (res.MessageType == WebSocketMessageType.Close)
                     {
                         _log?.Invoke("server closed the connection");
