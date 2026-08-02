@@ -40,7 +40,7 @@ Then, edit `/etc/pdn-soundmodem/soundmodem.json`, minimal RX example using an Ub
 }
 ```
 
-Then, `systemctl restart pdn-soundmodem`
+Then, `systemctl restart pdn-soundmodem`, open your browser: `http://my-host:8099`.
 
 ## Status
 
