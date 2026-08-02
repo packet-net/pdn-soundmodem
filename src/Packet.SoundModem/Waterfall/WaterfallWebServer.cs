@@ -371,20 +371,60 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             to = destination;
         }
 
+        BroadcastFrame(
+            subChannel, quality.Mode, from, to, quality.FrameBytes, snrDb, burstLines,
+            quality.FrequencyOffsetHz is { } offset ? Math.Round(offset, 1) : null,
+            quality.CorrectedBytes, quality.CrcValid);
+    }
+
+    /// <summary>
+    /// Reports a frame heard by a demodulator that is not one of the channel's sub-channel
+    /// modems — ARDOP, whose demodulator is inside the virtual TNC and never raises
+    /// <see cref="SoundModemChannel.FrameReceivedWithQuality"/>.
+    /// </summary>
+    /// <remarks>
+    /// Without this the panel is silently partial: the ARDOP band is drawn, its bursts paint the
+    /// waterfall, and nothing is ever listed for it. SNR comes from the caller because the
+    /// demodulator's own measurement is better than anything the band tracker can infer from a
+    /// burst that overlaps the packet slots.
+    /// </remarks>
+    public void ReportFrame(
+        int subChannel,
+        string mode,
+        string? from,
+        string? to,
+        int lengthBytes,
+        double? snrDb,
+        bool? decodedOk)
+    {
+        if (_source is null)
+        {
+            return;   // not started; nothing to attribute the frame to and nobody to tell
+        }
+
+        BroadcastFrame(
+            subChannel, mode, from, to, lengthBytes, snrDb,
+            burstLines: null, offsetHz: null, corrected: null, crc: decodedOk);
+    }
+
+    private void BroadcastFrame(
+        int subChannel, string mode, string? from, string? to, int lengthBytes,
+        double? snrDb, int? burstLines, double? offsetHz, int? corrected, bool? crc)
+    {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
         {
             type = "frame",
             line = _source!.NextLineIndex,
             sub = subChannel,
-            mode = quality.Mode,
+            mode,
             from,
             to,
-            lenBytes = quality.FrameBytes,
+            lenBytes = lengthBytes,
             snrDb,
             burstLines,
-            offsetHz = quality.FrequencyOffsetHz is { } offset ? Math.Round(offset, 1) : (double?)null,
-            corrected = quality.CorrectedBytes,
-            crc = quality.CrcValid,
+            offsetHz,
+            corrected,
+            crc,
         }, Json);
         Broadcast(WebSocketMessageType.Text, message);
     }
@@ -398,6 +438,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// WebSocket framing.
     /// </summary>
     private const int AudioBlockMilliseconds = 40;
+
+    /// <summary>
+    /// Type byte plus padding to a 4-byte boundary, so the samples that follow can be viewed
+    /// directly as 16-bit (or later 32-bit) values without copying.
+    /// </summary>
+    internal const int AudioHeaderBytes = 4;
 
     private static void TryApplyClientRequest(WaterfallClient client, ReadOnlySpan<byte> utf8)
     {
@@ -450,12 +496,14 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
         while (_audioBlock.Count >= blockSamples)
         {
-            var message = new byte[1 + (blockSamples * 2)];
+            // 4-byte header, not 1: a browser's Int16Array view needs its byte offset aligned
+            // to the element size, and samples starting at byte 1 threw RangeError on arrival.
+            var message = new byte[AudioHeaderBytes + (blockSamples * 2)];
             message[0] = 0x02;
             for (int i = 0; i < blockSamples; i++)
             {
                 BinaryPrimitives.WriteInt16LittleEndian(
-                    message.AsSpan(1 + (i * 2)), _audioBlock[i]);
+                    message.AsSpan(AudioHeaderBytes + (i * 2)), _audioBlock[i]);
             }
 
             _audioBlock.RemoveRange(0, blockSamples);

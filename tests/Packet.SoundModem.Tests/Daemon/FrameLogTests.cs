@@ -137,6 +137,23 @@ public class FrameLogTests : IDisposable
     }
 
     [Fact]
+    public async Task An_Ardop_Frame_Is_Logged_Under_Its_Frame_Type()
+    {
+        // Every ARDOP entry would otherwise read "ARDOP", which says nothing: the frame type is
+        // the interesting part — a connect request and a data frame are different events.
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.Record(
+                2, [7, 7, 7], new FrameQuality(
+                    "ardop", FrameBytes: 3, CorrectedBytes: null, CrcValid: true,
+                    FrequencyOffsetHz: null, EmphasisDb: null),
+                audioHz: 1500, rfHz: 7_050_950, modeName: "ARDOP ConReq500M"));
+
+        Dictionary<string, object?> row = rows.Should().ContainSingle().Subject;
+        row["mode"].Should().Be("ardop", "the mode column stays queryable");
+        row["mode_name"].Should().Be("ARDOP ConReq500M");
+    }
+
+    [Fact]
     public async Task Reopening_An_Existing_Log_Appends_Rather_Than_Starting_Again()
     {
         await using (FrameLog first = FrameLog.Open(DbPath, _time))

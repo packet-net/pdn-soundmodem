@@ -815,6 +815,39 @@ if (ardopModem is not null)
     };
     channel.AddReceiveTap(samples => ardopTnc.ProcessReceive(ardopShift.Receive(samples)));
 
+    // ARDOP demodulates inside the virtual TNC, so its frames never reach the channel event the
+    // waterfall and the frame log listen to — without this the ARDOP band is drawn and its
+    // bursts paint, but nothing it hears is ever listed. M0LTE.Ardop 0.3.0 raises every frame
+    // the demodulator recovers, including other stations' sessions and failed decodes, which is
+    // what a monitor wants: "someone transmitted and we could not read them" is information.
+    if (waterfallServer is not null || frameLog is not null)
+    {
+        int ardopSub = ardopModem.SubChannel;
+        double? ardopAudioHz = ardopModem.Frequency ?? ArdopChannelShift.NativeCentreHz;
+        double? ardopRfHz = ardopModem.RfFrequency;
+        ardopTnc.FrameDecoded += frame =>
+        {
+            byte[] data = frame.Data ?? [];
+            // Caller/Target are carried in clear by the connect handshake and ID frames; a data
+            // frame in someone else's session carries neither, and is listed unattributed.
+            string? from = string.IsNullOrWhiteSpace(frame.Caller) ? null : frame.Caller;
+            string? to = string.IsNullOrWhiteSpace(frame.Target) ? null : frame.Target;
+
+            waterfallServer?.ReportFrame(
+                ardopSub, frame.Name, from, to, data.Length, frame.SnDb, frame.Ok);
+
+            frameLog?.Record(
+                ardopSub,
+                data,
+                new FrameQuality(
+                    "ardop", data.Length, CorrectedBytes: null, CrcValid: frame.Ok,
+                    FrequencyOffsetHz: null, EmphasisDb: null),
+                ardopAudioHz,
+                ardopRfHz,
+                modeName: $"ARDOP {frame.Name}");
+        };
+    }
+
     // Hold the packet modems off the air for the length of an ARQ session. Their frames are
     // queued, not discarded, until TransmitInhibitTimeout gives up on one — an AX.25 host will
     // have retried long before a Winlink session ends.
