@@ -17,6 +17,11 @@ RestartSec=5
 # other failure (a card that vanished, a crash) still restarts.
 RestartPreventExitStatus=2
 User=pdn-soundmodem
+# systemd creates /var/lib/pdn-soundmodem owned by the service user. Without it the frame log's
+# default path is unwritable — an unprivileged user cannot create a directory in /var/lib — and
+# a station that enabled the log would refuse to start.
+StateDirectory=pdn-soundmodem
+StateDirectoryMode=0750
 # audio: /dev/snd/*. dialout: serial PTT (/dev/ttyUSB*, /dev/ttyS*). CM108 PTT writes
 # to /dev/hidraw*, which is root-only by default — add a udev rule granting the audio
 # group access to your interface's hidraw node if you use "ptt": {"type": "cm108"}.
