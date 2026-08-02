@@ -268,6 +268,14 @@ Sharing a box with a running SmartSDR means picking a `daxChannel` it is not usi
 grabs DAX 1. The headless path disables band persistence and explicitly tunes the slice, so it
 lands on `frequency` regardless of the radio's last-used band.
 
+> **There is no IQ / raw-waveform option here, by design.** The daemon reaches a Flex over
+> **DAX audio** only: it hands real audio to the radio's own DIGU SSB modulator, so the signal
+> goes through the same TX chain a user's would. The software-IQ route — single-sideband IQ
+> through a headless waveform, bypassing the radio's SSB modulator, ALC and TX DSP — exists
+> only in the OTA bench harness (`sm-ota ladder --route iq`), and exists precisely *because*
+> it bypasses that chain, which makes it a measurement instrument rather than a deployment
+> path. See [docs/flex-integration.md](docs/flex-integration.md) § 2.3.
+
 ---
 
 ## What is rejected at start-up
