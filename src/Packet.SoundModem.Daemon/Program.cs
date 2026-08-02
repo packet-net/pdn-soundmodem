@@ -778,7 +778,8 @@ if (ardopModem is not null)
         Console.Error.WriteLine(
             "ardop: WARNING — ARDOP is a connected-mode ARQ protocol and this station cannot "
             + "transmit, so no session will ever complete: it will hear the channel and never "
-            + "answer. The host port is still served, and the waterfall still draws its band.");
+            + "answer. The host port is still served, and every frame it demodulates — including "
+            + "other stations' sessions — is still drawn and written down.");
     }
 
     var ardopShift = ArdopChannelShift.For(ardopModem.Frequency, DspRate);

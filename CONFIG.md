@@ -119,6 +119,8 @@ assumed, because that is what public instances run.
   queued against a transmitter that will never appear;
 - `ardop` still loads and still hears the channel, but no ARQ session can ever complete. The
   daemon says so at start-up rather than leaving you to work it out from a Winlink timeout.
+  It is not pointless there: every frame ARDOP demodulates — other stations' sessions included —
+  is still drawn on the waterfall and written to the frame log.
 
 **The dial is not yours to set, so the daemon sets it.** Give the modems `rfFrequency` — or pin
 `dialFrequency` — and the receiver is tuned there, exactly as a headless Flex is. Without either
