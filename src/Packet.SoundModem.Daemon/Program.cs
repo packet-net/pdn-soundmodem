@@ -664,6 +664,13 @@ if (waterfallConfig is not null)
 
 await using var waterfallLifetime = waterfallServer;
 
+// The radio's transmit meters, when there is a radio that has them.
+M0LTE.Flex.FlexMeters? flexMeters = null;
+using var flexMetersLifetime = new Disposer(() => flexMeters?.Dispose());
+
+/// <summary>Below this the transmitter is not keyed and the readout is meaningless.</summary>
+const double TransmitReadoutFloorWatts = 0.1;
+
 // The Flex owns keying (the slice PTT is an API command), so a conflicting --ptt /
 // configured PTT is rejected — matching how --device flex: implicitly keys the radio.
 if (deviceIsFlex && (pttSpec is not null || pttConfig is not null))
@@ -1023,6 +1030,46 @@ else if (deviceIsFlex)
         Console.WriteLine($"flex: reference {flex.Station.Client.Reference.Describe()}");
     }
 
+    // What the transmitter is actually doing, live, in the page's top bar. The meters are the
+    // radio's own — forward power and SWR — so this reports the transmission rather than what we
+    // asked for, which is the difference that matters when an antenna is wrong.
+    if (waterfallServer is not null)
+    {
+        try
+        {
+            M0LTE.Flex.FlexMeters txMeters =
+                await M0LTE.Flex.FlexMeters.SubscribeAsync(flex.Station.Client);
+            flexMeters = txMeters;
+            txMeters.Updated += reading =>
+            {
+                if (!reading.Descriptor.Name.Equals("FWDPWR", StringComparison.OrdinalIgnoreCase))
+                {
+                    return;   // one update per keyed sample is plenty; SWR is read alongside it
+                }
+
+                double watts = M0LTE.Flex.FlexMeters.DbmToWatts(reading.Value);
+                if (watts < TransmitReadoutFloorWatts)
+                {
+                    waterfallServer.SetTransmitStatus(null);
+                    return;
+                }
+
+                // Rounded, because the readout updates many times a second and a digit that
+                // never settles is harder to read than one that does.
+                double? swr = txMeters.SwrFromPowers();
+                string reading_ = swr is double s && !double.IsInfinity(s)
+                    ? $"TX {watts:F1} W · SWR {s:F1}"
+                    : $"TX {watts:F1} W";
+                waterfallServer.SetTransmitStatus(reading_);
+            };
+        }
+        catch (Exception e) when (e is M0LTE.Flex.FlexProtocolException or IOException)
+        {
+            // A station that cannot read its meters still transmits perfectly well.
+            Console.Error.WriteLine($"flex: no transmit metering — {e.Message}");
+        }
+    }
+
     // Always reported, set or not: an inherited power shapes every transmission just as much as
     // a configured one, and it is the number the operator will be asked about on the air.
     if (flex.Station.RfPowerApplied is int rfPower)
@@ -1161,3 +1208,9 @@ if (!deviceIsFlex)
 }
 
 return radioLost ? 1 : 0;
+
+/// <summary>Runs an action on scope exit — for state captured after its `using` must be declared.</summary>
+internal sealed class Disposer(Action onDispose) : IDisposable
+{
+    public void Dispose() => onDispose();
+}

@@ -258,6 +258,62 @@ public class WaterfallWebServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Transmit_Metering_Reaches_The_Page_And_Clears_On_Key_Up()
+    {
+        // Forward power and SWR while keyed. Cleared on key-up rather than left showing the last
+        // reading, which would otherwise look like a station transmitting into a dummy load
+        // forever.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        (_, _) = await Receive(socket);   // config
+
+        _server.SetTransmitStatus("TX 29.4 W · SWR 1.2");
+        JsonDocument keyed = await NextTextAsync(socket);
+        keyed.RootElement.GetProperty("type").GetString().Should().Be("tx");
+        keyed.RootElement.GetProperty("status").GetString().Should().Be("TX 29.4 W · SWR 1.2");
+        keyed.Dispose();
+
+        _server.SetTransmitStatus(null);
+        JsonDocument unkeyed = await NextTextAsync(socket);
+        unkeyed.RootElement.GetProperty("type").GetString().Should().Be("tx");
+        unkeyed.RootElement.GetProperty("status").ValueKind.Should().Be(
+            JsonValueKind.Null, "an unkeyed transmitter has nothing to report");
+        unkeyed.Dispose();
+    }
+
+    [Fact]
+    public async Task An_Unchanged_Transmit_Reading_Is_Not_Rebroadcast()
+    {
+        // The meters update many times a second; only changes are worth a message.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        (_, _) = await Receive(socket);
+
+        _server.SetTransmitStatus("TX 29.4 W");
+        (await NextTextAsync(socket)).Dispose();
+
+        _server.SetTransmitStatus("TX 29.4 W");
+        _server.SetTransmitStatus("TX 30.1 W");
+
+        JsonDocument next = await NextTextAsync(socket);
+        next.RootElement.GetProperty("status").GetString().Should()
+            .Be("TX 30.1 W", "the repeat must not have been sent");
+        next.Dispose();
+    }
+
+    private async Task<JsonDocument> NextTextAsync(ClientWebSocket socket)
+    {
+        while (true)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind == WebSocketMessageType.Text)
+            {
+                return JsonDocument.Parse(payload);
+            }
+        }
+    }
+
+    [Fact]
     public async Task A_Frame_From_A_Demodulator_Outside_The_Channel_Is_Listed_Like_Any_Other()
     {
         // ARDOP demodulates inside its virtual TNC, so its frames never raise the channel event
