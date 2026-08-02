@@ -167,9 +167,16 @@ public static class ModemCatalog
             "afsk1200-multi" => new Afsk1200MultiModem(dspRate, frameReceived, offsetPairs: 3, centerFrequency: frequency ?? 1700),
             "afsk1200-il2p" => new Afsk1200Il2pModem(dspRate, frameReceived, crc: true, frequency ?? 1700),
             "afsk1200-il2p-nocrc" => new Afsk1200Il2pModem(dspRate, frameReceived, crc: false, frequency ?? 1700),
-            "afsk300" => new Afsk300Modem(dspRate, frameReceived, Afsk300Framing.Ax25, frequency ?? 1700),
-            "afsk300-il2p" => new Afsk300Modem(dspRate, frameReceived, Afsk300Framing.Il2p, frequency ?? 1700),
-            "afsk300-il2pc" => new Afsk300Modem(dspRate, frameReceived, Afsk300Framing.Il2pCrc, frequency ?? 1700),
+            // The 300 baud HF AFSK family defaults to the narrow-branch frequency-diversity
+            // bank — on the live 40 m slot the single wide modem lost most frames to a
+            // neighbouring QSO inside its passband (see Afsk300MultiModem). offsetPairs/
+            // offsetStepHz tune it (offsetPairs:0 gives a single tight-filtered modem).
+            "afsk300" => new Afsk300MultiModem(dspRate, frameReceived, Afsk300Framing.Ax25,
+                frequency ?? 1700, offsetPairs ?? 5, offsetStepHz),
+            "afsk300-il2p" => new Afsk300MultiModem(dspRate, frameReceived, Afsk300Framing.Il2p,
+                frequency ?? 1700, offsetPairs ?? 5, offsetStepHz),
+            "afsk300-il2pc" => new Afsk300MultiModem(dspRate, frameReceived, Afsk300Framing.Il2pCrc,
+                frequency ?? 1700, offsetPairs ?? 5, offsetStepHz),
             // BPSK defaults to the differential frequency-diversity bank — offsetPairs/offsetStepHz
             // tune it (offsetPairs:0 gives a plain single modem).
             "bpsk300" or "bpsk300-multi" => new BpskMultiModem(dspRate, frameReceived, crc: true, frequency ?? 1500,

@@ -1,0 +1,176 @@
+namespace Packet.SoundModem.Modems;
+
+/// <summary>
+/// Frequency-diversity 300 baud HF AFSK: 2·<c>offsetPairs</c>+1 parallel
+/// <see cref="Afsk300Modem"/> branches spaced <c>offsetHz</c> apart around the channel
+/// centre, each with a deliberately tight (±250 Hz) receive passband, with content-based
+/// deduplication across the bank — the <see cref="Afsk1200MultiModem"/>/
+/// <see cref="BpskMultiModem"/> multi-decoder model applied to the NinoTNC "SSB AFSK"
+/// family. Transmit uses the centre branch only.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The bank exists for a different reason than the 1200 baud one. Bell 202's problem is
+/// twist; this mode's problem is <b>neighbours</b>. A 500 Hz-OBW slot on 40 m lives a
+/// couple of hundred Hz from other users, and a quadrature FM discriminator follows the
+/// strongest signal in its passband — so receive selectivity is worth real frames.
+/// Measured on off-air capture of the live 7.0503 MHz slot (m9psy-1 web receiver,
+/// 2026-08-02, a neighbouring QSO ~200 Hz below the slot): with the interferer at equal
+/// power, ±400 Hz filters needed the packet +6 dB above it, ±250 managed −3 dB. Tight
+/// filters, though, shrink the carrier-offset range each branch can serve (real stations
+/// on the slot measured up to ±35 Hz off, and the single-demod tolerance is ±60–70 Hz),
+/// so the bank steps narrow branches across the offset range instead of widening any one
+/// of them: selectivity per branch, coverage from diversity. On the first 30 minutes of
+/// captured traffic the shipped single modem decoded 3 of 13 frames; this bank shape
+/// decoded 13 of 13.
+/// </para>
+/// <para>
+/// No emphasis variants: across a 200 Hz tone spacing, real-world response tilt is
+/// fractions of a dB — the twist machinery that transforms Bell 202 has nothing to work
+/// on here.
+/// </para>
+/// </remarks>
+public sealed class Afsk300MultiModem : IModem
+{
+    /// <summary>Per-branch receive filter width. Tighter than the single modem's 300
+    /// default: a branch only has to serve half an <c>offsetHz</c> step of residual
+    /// offset, so it can spend the margin on interference rejection instead.</summary>
+    private const double BranchFilterHz = 250;
+
+    private readonly Afsk300Modem[] _branches;
+    private readonly Afsk300Modem _transmit;
+    private readonly Action<byte[]> _frameReceived;
+    private readonly FrameDeduper _deduper;
+    private readonly int _dedupeChunk;
+    private readonly Afsk300Framing _framing;
+    private long _samplesProcessed;
+
+    /// <summary>Creates the bank.</summary>
+    /// <param name="sampleRate">Channel DSP rate (multiple of 300).</param>
+    /// <param name="frameReceived">Receives each unique decoded AX.25 frame once.</param>
+    /// <param name="framing">Which of the three HF framings to run (NinoTNC modes 12/13/14).</param>
+    /// <param name="centerFrequency">Channel centre — the middle branch and TX.</param>
+    /// <param name="offsetPairs">Extra branches either side of centre (0 = a single
+    /// tight-filtered branch). The default ±5 spans ±175 Hz.</param>
+    /// <param name="offsetHz">Frequency step between adjacent branches. The default 35 Hz
+    /// keeps the worst-case residual (half a step) well inside a tight branch's measured
+    /// ~±35 Hz range.</param>
+    public Afsk300MultiModem(
+        int sampleRate,
+        Action<byte[]> frameReceived,
+        Afsk300Framing framing = Afsk300Framing.Il2pCrc,
+        double centerFrequency = 1700,
+        int offsetPairs = 5,
+        double? offsetHz = null)
+    {
+        ArgumentNullException.ThrowIfNull(frameReceived);
+        ArgumentOutOfRangeException.ThrowIfNegative(offsetPairs);
+        _frameReceived = frameReceived;
+        _framing = framing;
+        // Dedup window a few frame-times wide: branches decode the same transmission
+        // within a frame-time of one another, and the sample clock advances with the
+        // audio (see Process).
+        _deduper = new FrameDeduper(3L * sampleRate);
+        _dedupeChunk = Math.Max(1, sampleRate / 10);
+        double step = offsetHz ?? 35;
+
+        int count = 2 * offsetPairs + 1;
+        _branches = new Afsk300Modem[count];
+        for (int i = 0; i < count; i++)
+        {
+            double offset = (i - offsetPairs) * step;
+            // Drive everything off FrameDecoded (which carries the CRC/FEC quality); the
+            // required frame sink is a no-op so each decode reaches the deduper exactly once.
+            _branches[i] = new Afsk300Modem(
+                sampleRate, static _ => { }, framing, centerFrequency + offset,
+                bandPassHalfWidth: BranchFilterHz, lowPassCutoff: BranchFilterHz);
+            _branches[i].FrameDecoded += (frame, quality) => OnFrame(frame, offset, quality);
+        }
+
+        _transmit = _branches[offsetPairs]; // the centre (offset 0) branch
+    }
+
+    /// <inheritdoc />
+    public event Action<byte[], FrameQuality>? FrameDecoded;
+
+    /// <inheritdoc />
+    public string Mode => $"{_transmit.Mode}-multi{_branches.Length}";
+
+    /// <inheritdoc />
+    public bool CarrierDetect
+    {
+        get
+        {
+            foreach (Afsk300Modem branch in _branches)
+            {
+                if (branch.CarrierDetect)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
+    public bool ChannelBusy
+    {
+        get
+        {
+            foreach (Afsk300Modem branch in _branches)
+            {
+                if (branch.ChannelBusy)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
+    public void Process(ReadOnlySpan<float> samples)
+    {
+        // Feed the bank in bounded chunks so the dedupe clock advances with the audio
+        // even when a caller hands over one huge buffer — otherwise a legitimate repeat
+        // later in the same buffer would be suppressed (mirrors the other banks).
+        for (int position = 0; position < samples.Length; position += _dedupeChunk)
+        {
+            var slice = samples.Slice(position, Math.Min(_dedupeChunk, samples.Length - position));
+            foreach (Afsk300Modem branch in _branches)
+            {
+                branch.Process(slice);
+            }
+
+            _samplesProcessed += slice.Length;
+        }
+    }
+
+    /// <inheritdoc />
+    public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds) =>
+        _transmit.Modulate(ax25Frame, txDelayMilliseconds);
+
+    /// <inheritdoc />
+    public void ResetCarrierState()
+    {
+        foreach (Afsk300Modem branch in _branches)
+        {
+            branch.ResetCarrierState();
+        }
+    }
+
+    // Several branches usually decode the same transmission within a frame-time of each
+    // other; emit the first and drop content-identical repeats in the window.
+    private void OnFrame(byte[] frame, double offsetHz, FrameQuality quality)
+    {
+        if (!_deduper.ShouldEmit(frame, _samplesProcessed))
+        {
+            return;
+        }
+
+        _frameReceived(frame);
+        FrameDecoded?.Invoke(frame, quality with { Mode = Mode, FrequencyOffsetHz = offsetHz });
+    }
+}

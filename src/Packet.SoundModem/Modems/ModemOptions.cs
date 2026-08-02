@@ -9,11 +9,11 @@ namespace Packet.SoundModem.Modems;
 /// (afsk tone-pair, bpsk/qpsk carrier). Must be <see langword="null"/> for the fixed-centre
 /// modes (fsk*/c4fsk*/freedv-*/ms110d-*); supplying one for those throws — see
 /// <see cref="ModemCatalog.AcceptsCentreFrequency"/>.</param>
-/// <param name="OffsetPairs">Frequency-diversity bank width for the <c>bpsk*</c> modes:
-/// <c>2·OffsetPairs+1</c> stepped branches (0 collapses to a plain single modem). Ignored by
-/// non-bank modes. Null ⇒ 4.</param>
-/// <param name="OffsetStepHz">Hz step between diversity branches for the <c>bpsk*</c> modes.
-/// Null ⇒ the mode's baud-derived default (baud/40).</param>
+/// <param name="OffsetPairs">Frequency-diversity bank width for the <c>bpsk*</c> and
+/// <c>afsk300*</c> modes: <c>2·OffsetPairs+1</c> stepped branches (0 collapses to a plain
+/// single modem). Ignored by non-bank modes. Null ⇒ 4 (bpsk) / 5 (afsk300).</param>
+/// <param name="OffsetStepHz">Hz step between diversity branches for the <c>bpsk*</c> and
+/// <c>afsk300*</c> modes. Null ⇒ the mode's default (bpsk baud/40; afsk300 35 Hz).</param>
 /// <param name="Detector">PSK detection method for <c>bpsk*</c>/<c>qpsk*</c>. Null ⇒ the
 /// per-family default from <see cref="ModemCatalog.DefaultDetectorFor"/> (BPSK differential,
 /// QPSK coherent).</param>
