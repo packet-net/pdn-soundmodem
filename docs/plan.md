@@ -231,6 +231,12 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-08-02 (later³) — a station behind a spent quota waits; it does not hammer
+
+The public UberSDR instances meter listening per address per day (3 h on `m9psy-1`), and restarting Tom's daemon put it behind that limit — where the `ubersdr:` device's failure handling turned one polite refusal into an all-evening pelting: a 429 at start-up crashed the daemon (systemd `RestartSec=5` re-asked every five seconds forever), and mid-run the reconnect loop's fixed one-second "breath" plus a give-up-and-restart path did the same in different clothes. None of that can mint quota; all of it burdens somebody else's receiver.
+
+Fixed by classifying failures by what fixes them (`UberSdrReconnectPolicy`, unit-tested apart from the sockets). **Refused-for-now** — HTTP 429 on the preflight or the stream upgrade (`CollectHttpResponseDetails`), or a reply whose `daily_time_remaining_secs` is 0 — waits on a long ladder (60 s doubling to a 15 min cap), never trips the give-up restart, and at start-up brings the station up anyway (KISS, waterfall, a clear log line) with the stream joining when the receiver relents: the same behaviour as if the quota had run out mid-afternoon. **Transient** transport failures keep the quick ladder and the 5-minute give-up (a restart can genuinely help there). **Sessions that die before delivering 10 s of audio** — an instance that accepts and instantly drops — now escalate 5 s → 5 min instead of breathing one second forever. One healthy session resets the ladder. `ConnectionResponse` learns the daily-metering fields; the preflight's refusals come back as data for the caller to classify rather than as exceptions. Verified live against the actually-refusing instance: the daemon prints the reason twice, stays up, and waits. Released as 0.14.1.
+
 ### 2026-08-02 (later²) — afsk300's real problem was its receive filter: the narrow-branch diversity bank
 
 Tom pointed the session at the live 7.0503 MHz slot through the `ubersdr:` device — pdn-soundmodem has never decoded afsk300-il2pc well there, which no bench result predicted. The investigation ran on evidence, not code reading: a segmented IQ capture of the slot from `m9psy-1` (corpus/ubersdr/, kept locally), decoded offline through the daemon's exact receive path with an instrumented branch bank, plus synthetic CFO/interference sweeps against the recorded channel.

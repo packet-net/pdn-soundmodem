@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Net;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -58,6 +59,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
     private int _count;
     private long _dropped;
     private long _droppedReported;
+    private long _published;
     private bool _ended;
     private Task? _pump;
     private ClientWebSocket? _first;
@@ -131,15 +133,56 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         string sessionId = Guid.NewGuid().ToString();
         ConnectionResponse connection = await PreflightAsync(endpoint, sessionId, tuning, cancellation)
             .ConfigureAwait(false);
+
+        // A refusal that only time can lift — the address's daily listening allowance is spent,
+        // or the instance is rate-limiting — is not a start-up error. The station comes up (KISS,
+        // waterfall, silence) and the receive loop asks again patiently, exactly as it would had
+        // the quota run out mid-afternoon instead of at boot. Everything else that is wrong with
+        // the reply stays a start-up error, because a config typo retried forever is a silence
+        // nobody can explain.
+        bool refusedForNow = connection.RefusedForNow;
+        if (!refusedForNow)
+        {
+            if (!connection.Allowed)
+            {
+                throw new InvalidOperationException(
+                    $"{endpoint} refused the connection: {connection.Reason ?? "no reason given"}");
+            }
+
+            if (connection.AllowedIqModes is { Count: > 0 } modes
+                && !connection.Bypassed
+                && !modes.Contains(tuning.Mode, StringComparer.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"{endpoint} does not offer IQ mode '{tuning.Mode}' to this client — it allows "
+                    + $"{string.Join(", ", modes)}. Set \"ubersdr\": {{ \"mode\": \"{modes[0]}\" }}, or "
+                    + "ask the receiver's operator for access.");
+            }
+        }
+
         string? description = Describe(
             await FetchDescriptionAsync(endpoint, cancellation).ConfigureAwait(false));
 
         var input = new UberSdrAudioInput(endpoint, tuning, iqRate, connection, description, log);
 
-        // Prove the stream opens before returning: the daemon prints its start-up banner off the
-        // back of this, and a banner claiming a receiver we never reached is worse than an error.
-        input._first = await input.ConnectAsync(sessionId, cancellation).ConfigureAwait(false);
-        input._pump = Task.Run(() => input.PumpAsync(sessionId), CancellationToken.None);
+        if (refusedForNow)
+        {
+            log?.Invoke(
+                $"ubersdr: {endpoint} is refusing us for now "
+                + $"({connection.Reason ?? "daily listening allowance exhausted"}, "
+                + $"{connection.DailyTimeUsedSecs} s used today). The stream will be retried "
+                + "patiently; audio starts when the receiver lets us back in.");
+        }
+        else
+        {
+            // Prove the stream opens before returning: the daemon prints its start-up banner off
+            // the back of this, and a banner claiming a receiver we never reached is worse than
+            // an error.
+            input._first = await input.ConnectAsync(sessionId, cancellation).ConfigureAwait(false);
+        }
+
+        input._pump = Task.Run(
+            () => input.PumpAsync(sessionId, startRefused: refusedForNow), CancellationToken.None);
         return input;
     }
 
@@ -219,12 +262,28 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
     }
 
     /// <summary>The reconnecting receive loop. Runs until disposed.</summary>
-    private async Task PumpAsync(string sessionId)
+    /// <remarks>
+    /// Pacing is <see cref="UberSdrReconnectPolicy"/>'s: consecutive failures escalate, one
+    /// healthy session resets. Three failure classes, deliberately distinct: transport
+    /// failures feed the give-up clock (a service restart can genuinely help there); an
+    /// explicit refusal (HTTP 429, spent daily quota) waits on a long ladder and NEVER gives
+    /// up, because restarting cannot mint quota and a crash-looping unit re-asks every
+    /// RestartSec — the exact hammering this loop exists to avoid; and a session that dies
+    /// before delivering real audio escalates too, because "accepts then instantly closes,
+    /// forever" met a fixed one-second breath here once, and the result was a public receiver
+    /// pelted all night.
+    /// </remarks>
+    private async Task PumpAsync(string sessionId, bool startRefused)
     {
         CancellationToken cancellation = _stopping.Token;
         ClientWebSocket? socket = Interlocked.Exchange(ref _first, null);
-        TimeSpan backoff = TimeSpan.FromSeconds(1);
+        var policy = new UberSdrReconnectPolicy();
         DateTimeOffset? downSince = null;
+
+        if (startRefused && !await WaitAsync(policy.After(UberSdrReconnectOutcome.Refused)))
+        {
+            return;
+        }
 
         while (!cancellation.IsCancellationRequested)
         {
@@ -234,10 +293,26 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
                 {
                     socket = await ConnectAsync(sessionId, cancellation).ConfigureAwait(false);
                     downSince = null;
-                    backoff = TimeSpan.FromSeconds(1);
                     _log?.Invoke($"ubersdr: reconnected to {_endpoint}");
                 }
-                catch (Exception e) when (e is not OperationCanceledException)
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (UberSdrRefusedException e)
+                {
+                    downSince = null; // refused is answered, not unreachable
+                    TimeSpan wait = policy.After(UberSdrReconnectOutcome.Refused);
+                    _log?.Invoke($"ubersdr: {_endpoint} is refusing us for now ({e.Message}); "
+                        + $"asking again in {wait.TotalMinutes:F0} min");
+                    if (!await WaitAsync(wait))
+                    {
+                        return;
+                    }
+
+                    continue;
+                }
+                catch (Exception e)
                 {
                     downSince ??= DateTimeOffset.UtcNow;
                     TimeSpan down = DateTimeOffset.UtcNow - downSince.Value;
@@ -249,22 +324,19 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
                         return;
                     }
 
+                    TimeSpan wait = policy.After(UberSdrReconnectOutcome.Transient);
                     _log?.Invoke($"ubersdr: {_endpoint} unreachable ({e.Message}); "
-                        + $"retrying in {backoff.TotalSeconds:F0}s");
-                    try
-                    {
-                        await Task.Delay(backoff, cancellation).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException)
+                        + $"retrying in {wait.TotalSeconds:F0}s");
+                    if (!await WaitAsync(wait))
                     {
                         return;
                     }
 
-                    backoff = TimeSpan.FromSeconds(Math.Min(30, backoff.TotalSeconds * 2));
                     continue;
                 }
             }
 
+            long publishedBefore = Interlocked.Read(ref _published);
             try
             {
                 await ReceiveAsync(socket, cancellation).ConfigureAwait(false);
@@ -287,18 +359,18 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
             }
 
             // Ordinary: the instance caps a session at max_session_time, so an unremarkable
-            // stream ends every few hours and simply has to be picked up again.
-            _log?.Invoke($"ubersdr: reconnecting to {_endpoint}");
-
-            // A breath first. These are somebody else's receivers with a finite number of
-            // listener slots, and an instance that accepts and immediately closes — full,
-            // restarting, refusing us for a reason it does not state over the socket — must not
-            // be met with an unthrottled reconnect loop.
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(1), cancellation).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
+            // stream ends every few hours and simply has to be picked up again. The line
+            // between that and "the instance accepts us and instantly drops us" is drawn in
+            // audio actually delivered.
+            long delivered = Interlocked.Read(ref _published) - publishedBefore;
+            bool healthy = delivered >= 10L * _tuning.OutputRate;
+            TimeSpan pause = policy.After(
+                healthy ? UberSdrReconnectOutcome.Healthy : UberSdrReconnectOutcome.ShortSession);
+            _log?.Invoke(healthy
+                ? $"ubersdr: reconnecting to {_endpoint}"
+                : $"ubersdr: the session ended after only {delivered / (double)_tuning.OutputRate:F1} s "
+                    + $"of audio; backing off {pause.TotalSeconds:F0}s before reconnecting to {_endpoint}");
+            if (!await WaitAsync(pause))
             {
                 break;
             }
@@ -308,6 +380,26 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         {
             _ended = true;
             Monitor.PulseAll(_gate);
+        }
+
+        // False when the wait was cut short by disposal — the loop's only reason to stop waiting.
+        async Task<bool> WaitAsync(TimeSpan delay)
+        {
+            try
+            {
+                await Task.Delay(delay, cancellation).ConfigureAwait(false);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                lock (_gate)
+                {
+                    _ended = true;
+                    Monitor.PulseAll(_gate);
+                }
+
+                return false;
+            }
         }
     }
 
@@ -415,6 +507,8 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
     /// consumer is costing samples.</summary>
     private void Publish(ReadOnlySpan<float> samples)
     {
+        // The pump reads this across threads to tell a real session from an instant death.
+        Interlocked.Add(ref _published, samples.Length);
         float gain = _tuning.Gain;
         long dropped = 0;
         lock (_gate)
@@ -490,6 +584,10 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         var uri = new Uri($"{_endpoint.WebSocketScheme}://{_endpoint.Host}:{_endpoint.Port}/ws?{query}");
         var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("User-Agent", UserAgent);
+        // Keep the upgrade's HTTP status so a 429 — the receiver rate-limiting or out of daily
+        // quota — is distinguishable from a transport failure; the two deserve very different
+        // retry cadences.
+        socket.Options.CollectHttpResponseDetails = true;
         if (!string.IsNullOrEmpty(_tuning.Password))
         {
             socket.Options.SetRequestHeader("X-Password", _tuning.Password);
@@ -498,6 +596,11 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         try
         {
             await socket.ConnectAsync(uri, cancellation).ConfigureAwait(false);
+        }
+        catch (WebSocketException e) when (socket.HttpStatusCode == HttpStatusCode.TooManyRequests)
+        {
+            socket.Dispose();
+            throw new UberSdrRefusedException("HTTP 429 — rate limited or out of daily quota", e);
         }
         catch
         {
@@ -511,7 +614,9 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
     /// <summary>
     /// <c>POST /connection</c>: whether we may stream at all, and whether the mode we want is on
     /// offer. Asked before the WebSocket so a refusal arrives as a sentence rather than as a
-    /// socket that closes for no stated reason.
+    /// socket that closes for no stated reason. Refusals come back as the reply itself
+    /// (<see cref="ConnectionResponse.Allowed"/> false) — the caller decides which refusals are
+    /// errors and which are "wait"; only an unreachable or non-UberSDR endpoint throws.
     /// </summary>
     private static async Task<ConnectionResponse> PreflightAsync(
         UberSdrEndpoint endpoint, string sessionId, UberSdrTuning tuning, CancellationToken cancellation)
@@ -532,6 +637,19 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
             request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
             using HttpResponseMessage response = await Http.SendAsync(request, cancellation)
                 .ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                // The instance would not even discuss it. Same class as a spent daily quota:
+                // nothing on our side is wrong, only time helps — report it as such rather
+                // than as unreachability.
+                return new ConnectionResponse
+                {
+                    Allowed = false,
+                    Reason = "HTTP 429 — rate limited",
+                    DailyTimeRemainingSecs = 0,
+                };
+            }
+
             response.EnsureSuccessStatusCode();
             await using Stream stream = await response.Content.ReadAsStreamAsync(cancellation)
                 .ConfigureAwait(false);
@@ -548,22 +666,6 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         {
             throw new InvalidOperationException(
                 $"{endpoint.HttpBase}/connection returned nothing — is that an UberSDR instance?");
-        }
-
-        if (!reply.Allowed)
-        {
-            throw new InvalidOperationException(
-                $"{endpoint} refused the connection: {reply.Reason ?? "no reason given"}");
-        }
-
-        if (reply.AllowedIqModes is { Count: > 0 } modes
-            && !reply.Bypassed
-            && !modes.Contains(tuning.Mode, StringComparer.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException(
-                $"{endpoint} does not offer IQ mode '{tuning.Mode}' to this client — it allows "
-                + $"{string.Join(", ", modes)}. Set \"ubersdr\": {{ \"mode\": \"{modes[0]}\" }}, or "
-                + "ask the receiver's operator for access.");
         }
 
         return reply;

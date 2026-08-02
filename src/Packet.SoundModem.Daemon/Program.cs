@@ -968,9 +968,19 @@ else if (deviceIsUberSdr)
         waterfallServer?.SetRadioStatus(receiver);
     }
 
-    Console.WriteLine(
-        $"ubersdr: session limit {uberSdr.Connection.MaxSessionTime} s — the stream is picked up "
-        + "again each time the receiver ends one");
+    if (uberSdr.Connection.RefusedForNow)
+    {
+        Console.Error.WriteLine(
+            "ubersdr: the receiver is refusing this address for now "
+            + $"({uberSdr.Connection.Reason ?? "daily listening allowance exhausted"}). The station "
+            + "is up and will start hearing audio when the receiver lets us back in.");
+    }
+    else
+    {
+        Console.WriteLine(
+            $"ubersdr: session limit {uberSdr.Connection.MaxSessionTime} s — the stream is picked up "
+            + "again each time the receiver ends one");
+    }
 
     // A receiver that stays unreachable is not something to sit quietly on. Exit 1 so the unit
     // restarts and tries afresh, exactly as for a Flex whose session dies (exit 2 is reserved
