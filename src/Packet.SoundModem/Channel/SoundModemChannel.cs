@@ -38,8 +38,8 @@ public sealed class SoundModemChannel
 {
     private readonly Dictionary<int, IModem> _modems = [];
     private readonly List<ReceiveTap> _receiveTaps = [];
-    private readonly Channel<(Func<int, float[]> Modulate, TaskCompletionSource Done, Action<Exception>? Rejected)> _txQueue =
-        System.Threading.Channels.Channel.CreateUnbounded<(Func<int, float[]>, TaskCompletionSource, Action<Exception>?)>();
+    private readonly Channel<(Func<int, float[]> Modulate, TaskCompletionSource Done, Action<Exception>? Rejected, bool OwnsTiming)> _txQueue =
+        System.Threading.Channels.Channel.CreateUnbounded<(Func<int, float[]>, TaskCompletionSource, Action<Exception>?, bool)>();
     private readonly TimeProvider _time;
     private readonly Random _random;
     private readonly SpectrumSource? _spectrum;
@@ -172,18 +172,21 @@ public sealed class SoundModemChannel
     /// <param name="modulate">Renders the transmission; an <see cref="ArgumentException"/>
     /// thrown here drops the item and faults the returned task, as for frames.</param>
     /// <param name="rejected">Optional observer for such a rejection.</param>
-    /// <param name="bypassInhibit">
+    /// <param name="ownsChannelTiming">
     /// True for a transmitter that owns the channel's timing rather than sharing it — an ARDOP
-    /// ARQ session, whose turnarounds are what <see cref="TransmitInhibit"/> protects. Everything
-    /// else leaves this false and waits its turn.
+    /// ARQ session, whose turnarounds are what <see cref="TransmitInhibit"/> protects. Such a
+    /// transmission skips <b>both</b> the inhibit and the p-persistence roll: it is not one of
+    /// the stations contending for the channel, it is the one running it, and deferring would
+    /// mean deferring partly to its own signal — a shifted ARDOP centre sits inside a packet
+    /// modem's passband and trips its busy detector. Everything else leaves this false.
     /// </param>
     public Task EnqueueTransmit(
-        Func<int, float[]> modulate, Action<Exception>? rejected = null, bool bypassInhibit = false)
+        Func<int, float[]> modulate, Action<Exception>? rejected = null, bool ownsChannelTiming = false)
     {
         ArgumentNullException.ThrowIfNull(modulate);
-        return !bypassInhibit && TransmitInhibit is not null
+        return !ownsChannelTiming && TransmitInhibit is not null
             ? EnqueueWhenPermittedAsync(modulate, rejected)
-            : EnqueueNow(modulate, rejected);
+            : EnqueueNow(modulate, rejected, ownsChannelTiming);
     }
 
     /// <summary>
@@ -219,16 +222,16 @@ public sealed class SoundModemChannel
             await Task.Delay(InhibitPollInterval).ConfigureAwait(false);
         }
 
-        await EnqueueNow(modulate, rejected).ConfigureAwait(false);
+        await EnqueueNow(modulate, rejected, ownsChannelTiming: false).ConfigureAwait(false);
     }
 
     /// <summary>Coarse on purpose: this gates against sessions lasting minutes.</summary>
     private static readonly TimeSpan InhibitPollInterval = TimeSpan.FromMilliseconds(50);
 
-    private Task EnqueueNow(Func<int, float[]> modulate, Action<Exception>? rejected)
+    private Task EnqueueNow(Func<int, float[]> modulate, Action<Exception>? rejected, bool ownsChannelTiming)
     {
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_txQueue.Writer.TryWrite((modulate, done, rejected)))
+        if (!_txQueue.Writer.TryWrite((modulate, done, rejected, ownsChannelTiming)))
         {
             done.SetException(new InvalidOperationException("transmit queue closed"));
         }
@@ -256,7 +259,12 @@ public sealed class SoundModemChannel
         {
             // Classic p-persistence (AX.25 §6.4): when the channel is clear, roll p; on
             // failure wait one slot and try again; while busy, keep waiting slots.
-            while (true)
+            //
+            // A transmission that owns the channel's timing skips all of it. ARDOP runs its own
+            // channel discipline against ARQ turnaround budgets, and the busy it would be
+            // deferring to is partly its own signal — at a shifted centre it sits inside a
+            // packet modem's passband and asserts that modem's busy detector.
+            while (!(reader.TryPeek(out var next) && next.OwnsTiming))
             {
                 if (ChannelBusy)
                 {

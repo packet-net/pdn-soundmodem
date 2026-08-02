@@ -665,8 +665,9 @@ if (ardopModem is not null)
                 return ardopShift.Transmit(floats);
             },
             rejected: null,
-            // ARDOP's own bursts are what the inhibit exists to protect; they never wait on it.
-            bypassInhibit: true),
+            // ARDOP owns this channel's timing: its bursts wait on neither the inhibit nor
+            // the p-persistence roll.
+            ownsChannelTiming: true),
     };
     channel.AddReceiveTap(samples => ardopTnc.ProcessReceive(ardopShift.Receive(samples)));
 

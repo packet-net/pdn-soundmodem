@@ -77,7 +77,7 @@ public class TransmitInhibitTests : IAsyncLifetime
         _inhibited = true;
 
         Task sent = _channel.EnqueueTransmit(
-            _ => new float[SampleRate / 10], rejected: null, bypassInhibit: true);
+            _ => new float[SampleRate / 10], rejected: null, ownsChannelTiming: true);
 
         await sent.WaitAsync(TimeSpan.FromSeconds(10));
         _output.WrittenCount.Should().BeGreaterThan(0);
@@ -98,6 +98,36 @@ public class TransmitInhibitTests : IAsyncLifetime
         await send.Should().ThrowAsync<InvalidOperationException>()
             .Where(e => e.Message.Contains("holding the channel"));
         reported.Should().NotBeNull("the rejection must be observable, not just thrown");
+        _output.WrittenCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task A_Timing_Owner_Skips_The_Persistence_Roll_As_Well_As_The_Inhibit()
+    {
+        // ARDOP runs its own channel discipline against ARQ turnaround budgets, and the busy it
+        // would defer to is partly its own signal — a shifted centre sits inside a packet
+        // modem's passband and asserts that modem's busy detector. Deferring to yourself is
+        // the bug this guards.
+        _channel.Csma.Persistence = 0;          // never win the roll
+        _channel.Csma.SlotTimeMilliseconds = 5_000;
+
+        Task owned = _channel.EnqueueTransmit(
+            _ => new float[SampleRate / 10], rejected: null, ownsChannelTiming: true);
+
+        await owned.WaitAsync(TimeSpan.FromSeconds(10));
+        _output.WrittenCount.Should().BeGreaterThan(0, "it must not have waited on p at all");
+    }
+
+    [Fact]
+    public async Task A_Shared_Transmission_Still_Takes_The_Roll()
+    {
+        _channel.Csma.Persistence = 0;
+        _channel.Csma.SlotTimeMilliseconds = 5_000;
+
+        Task shared = _channel.EnqueueTransmit(0, Frame());
+        await Task.Delay(600);
+
+        shared.IsCompleted.Should().BeFalse("CSMA still applies to everything that shares the channel");
         _output.WrittenCount.Should().Be(0);
     }
 
