@@ -147,7 +147,7 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
                         return _shift.Transmit(floats);
                     },
                     rejected: null,
-                    bypassInhibit: true),
+                    ownsChannelTiming: true),
             };
             Channel.AddReceiveTap(samples => Tnc.ProcessReceive(_shift.Receive(samples)));
             Channel.TransmitInhibit = () => Tnc.Engine.IsConnected || Tnc.Engine.IsPending;
