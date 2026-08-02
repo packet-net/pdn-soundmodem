@@ -34,17 +34,22 @@ public sealed class ModemConfig
     public double? OffsetStepHz { get; set; }
 
     /// <summary>
-    /// A KISS TCP port dedicated to this modem alone; null (the default) means it is reachable
-    /// only through the shared <see cref="DaemonConfig.KissPort"/> by its sub-channel nibble.
+    /// A TCP port dedicated to this modem alone; null (the default) means a packet modem is
+    /// reachable only through the shared <see cref="DaemonConfig.KissPort"/> by its nibble.
     /// </summary>
     /// <remarks>
-    /// For host software that hardcodes KISS channel 0 and gives you no way to set the nibble —
-    /// on the shared port such a host can only ever reach sub-channel 0, however many modems
-    /// are configured. A dedicated port surfaces this modem's frames as nibble 0 and transmits
-    /// everything it receives on this modem whatever nibble was used, so the host never has to
-    /// know the multiplex exists. The shared port keeps working alongside it.
+    /// <b>The protocol spoken here follows the mode.</b> A packet mode gets KISS: only this
+    /// modem's frames, presented as nibble 0, and everything sent to it transmitted on this
+    /// modem whatever nibble was used — which is what host software that hardcodes KISS channel
+    /// 0 needs to reach a modem that is not sub-channel 0. <c>ardop</c> instead gets the
+    /// ardopcf host interface, command on this port and data always on the next one up, because
+    /// an ARQ session has no KISS representation.
     /// </remarks>
-    public int? KissPort { get; set; }
+    public int? Port { get; set; }
+
+    /// <summary>Keys in this modem entry that the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
 /// <summary>PTT configuration.</summary>
@@ -206,11 +211,23 @@ public sealed class DaemonConfig
                 "the file contains only `null` — there is nothing to configure from. A minimal "
                 + "working file is {\"device\": \"default\", \"modems\": [{\"subChannel\": 0, "
                 + "\"mode\": \"afsk1200\"}]}");
-        if (config.Ardop is not null && (config.Modems.Count > 0 || config.Paging is not null))
+        // ARDOP is no longer exclusive with the packet modems: it shares the channel, and the
+        // daemon holds packet transmissions while an ARQ session is up (SoundModemChannel's
+        // TransmitInhibit). What is not allowed is asking for it twice.
+        int ardopModems = config.Modems.Count(m => IsArdop(m.Mode));
+        if (ardopModems > 1)
         {
             throw new InvalidDataException(
-                "\"ardop\" cannot be combined with \"modems\" or \"paging\" — the ARDOP channel is "
-                + "dedicated. Keep \"ardop\" and delete the others, or delete \"ardop\".");
+                "two modems have \"mode\": \"ardop\". One ARDOP TNC per channel — it is a whole "
+                + "virtual TNC with its own host interface, not a demodulator you can run twice.");
+        }
+
+        if (ardopModems > 0 && config.Ardop is not null)
+        {
+            throw new InvalidDataException(
+                "ARDOP is configured twice — once as a modem entry and once in the top-level "
+                + "\"ardop\" section. Keep the modem entry (it can also carry \"frequency\" and "
+                + "\"port\") and delete the \"ardop\" section.");
         }
 
         if (config.Modems.Count == 0 && config.Ardop is null)
@@ -264,8 +281,25 @@ public sealed class DaemonConfig
             }
         }
 
+        foreach (ModemConfig modem in config.Modems)
+        {
+            foreach (string key in modem.UnknownSettings?.Keys ?? Enumerable.Empty<string>())
+            {
+                warnings.Add(
+                    key.Equals("kissPort", StringComparison.OrdinalIgnoreCase)
+                        ? $"modem {modem.SubChannel}: \"kissPort\" is now spelled \"port\" (it carries "
+                          + "KISS or the ardopcf host interface depending on the mode) and is being IGNORED."
+                        : $"modem {modem.SubChannel}: \"{key}\" is not a setting this version knows, and "
+                          + $"is being IGNORED. Check the spelling against {ConfigDocUrl}");
+            }
+        }
+
         return warnings;
     }
+
+    /// <summary>True for the mode name that is an ARDOP virtual TNC rather than a packet modem.</summary>
+    internal static bool IsArdop(string? mode) =>
+        string.Equals(mode, "ardop", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Rejects two services asking for the same TCP port. Left to the OS this surfaces as a
@@ -290,9 +324,14 @@ public sealed class DaemonConfig
             Claim(config.KissPort, "\"kissPort\"");
         }
 
-        foreach (ModemConfig modem in config.Modems.Where(m => m.KissPort is not null))
+        foreach (ModemConfig modem in config.Modems.Where(m => m.Port is not null))
         {
-            Claim(modem.KissPort!.Value, $"the \"kissPort\" of modem {modem.SubChannel}");
+            Claim(modem.Port!.Value, $"the \"port\" of modem {modem.SubChannel}");
+            if (IsArdop(modem.Mode))
+            {
+                // ardopcf's convention, not ours to move: data is always command + 1.
+                Claim(modem.Port!.Value + 1, $"the ARDOP data port of modem {modem.SubChannel}");
+            }
         }
 
         if (config.Waterfall is not null)

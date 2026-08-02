@@ -172,9 +172,61 @@ public sealed class SoundModemChannel
     /// <param name="modulate">Renders the transmission; an <see cref="ArgumentException"/>
     /// thrown here drops the item and faults the returned task, as for frames.</param>
     /// <param name="rejected">Optional observer for such a rejection.</param>
-    public Task EnqueueTransmit(Func<int, float[]> modulate, Action<Exception>? rejected = null)
+    /// <param name="bypassInhibit">
+    /// True for a transmitter that owns the channel's timing rather than sharing it — an ARDOP
+    /// ARQ session, whose turnarounds are what <see cref="TransmitInhibit"/> protects. Everything
+    /// else leaves this false and waits its turn.
+    /// </param>
+    public Task EnqueueTransmit(
+        Func<int, float[]> modulate, Action<Exception>? rejected = null, bool bypassInhibit = false)
     {
         ArgumentNullException.ThrowIfNull(modulate);
+        return !bypassInhibit && TransmitInhibit is not null
+            ? EnqueueWhenPermittedAsync(modulate, rejected)
+            : EnqueueNow(modulate, rejected);
+    }
+
+    /// <summary>
+    /// Consulted before a shared transmission is queued; while it returns true the transmission
+    /// waits. Set by a host that has to keep a stretch of the channel clear — an ARDOP ARQ
+    /// session, whose timing an AX.25 frame landing mid-turnaround would break. Null (the
+    /// default) means nothing is holding the channel and every transmission queues immediately.
+    /// </summary>
+    public Func<bool>? TransmitInhibit { get; set; }
+
+    /// <summary>
+    /// How long a transmission waits on <see cref="TransmitInhibit"/> before being rejected.
+    /// A held frame cannot wait indefinitely: an AX.25 host will have retried long before an
+    /// ARQ session ends, so a definite answer beats a transmission that eventually escapes
+    /// minutes late as a duplicate.
+    /// </summary>
+    public TimeSpan TransmitInhibitTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    private async Task EnqueueWhenPermittedAsync(Func<int, float[]> modulate, Action<Exception>? rejected)
+    {
+        var waitedFor = System.Diagnostics.Stopwatch.StartNew();
+        while (TransmitInhibit?.Invoke() == true)
+        {
+            if (waitedFor.Elapsed > TransmitInhibitTimeout)
+            {
+                var refusal = new InvalidOperationException(
+                    $"another service is holding the channel (waited {TransmitInhibitTimeout.TotalSeconds:F0}s); "
+                    + "transmission dropped");
+                rejected?.Invoke(refusal);
+                throw refusal;
+            }
+
+            await Task.Delay(InhibitPollInterval).ConfigureAwait(false);
+        }
+
+        await EnqueueNow(modulate, rejected).ConfigureAwait(false);
+    }
+
+    /// <summary>Coarse on purpose: this gates against sessions lasting minutes.</summary>
+    private static readonly TimeSpan InhibitPollInterval = TimeSpan.FromMilliseconds(50);
+
+    private Task EnqueueNow(Func<int, float[]> modulate, Action<Exception>? rejected)
+    {
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!_txQueue.Writer.TryWrite((modulate, done, rejected)))
         {

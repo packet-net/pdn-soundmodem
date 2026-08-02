@@ -117,8 +117,8 @@ Give a modem its own port and that stops mattering:
 ```json
 "kissPort": 8105,
 "modems": [
-  { "subChannel": 0, "mode": "afsk1200", "kissPort": 8110 },
-  { "subChannel": 1, "mode": "bpsk300",  "kissPort": 8111 }
+  { "subChannel": 0, "mode": "afsk1200", "port": 8110 },
+  { "subChannel": 1, "mode": "bpsk300",  "port": 8111 }
 ]
 ```
 
@@ -150,11 +150,11 @@ This is the QtSoundModem multiplex model — your host software picks a modem by
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `subChannel` | int | `0` | KISS port nibble, 0–15. Must be unique — duplicates are rejected at start-up |
-| `mode` | string | `"afsk1200"` | See [docs/modes.md](docs/modes.md) for all 38 modes |
+| `mode` | string | `"afsk1200"` | See [docs/modes.md](docs/modes.md) for all 38 modes, plus `ardop` — [below](#ardop) |
 | `frequency` | number | mode default | Audio centre in Hz, TX **and** RX |
 | `offsetPairs` | int | `4` | Diversity-bank modes only |
 | `offsetStepHz` | number | baud/40 | Diversity-bank modes only |
-| `kissPort` | int | *(none)* | A TCP port carrying this modem alone — [below](#a-port-per-modem) |
+| `port` | int | *(none)* | A TCP port carrying this modem alone — KISS, or the ardopcf host interface for `ardop` — [below](#a-port-per-modem) |
 
 Omit `modems` entirely and you get one `afsk1200` on sub-channel 0.
 
@@ -167,6 +167,7 @@ centre. Only the **variable-centre families** accept it:
 |---|---|---|
 | `afsk*` | 1700 Hz | yes |
 | `bpsk*`, `qpsk*` | 1500 Hz (1650 for `qpsk3600`) | yes |
+| `ardop` | 1500 Hz | yes — shifted outside the TNC, [see below](#ardop) |
 | `fsk*`, `c4fsk*` | — occupies DC-to-Nyquist | **no** |
 | `freedv-*`, `ms110d-*` | — pinned by their specs | **no** |
 
@@ -279,20 +280,54 @@ modems.
 ## `ardop`
 
 An ARDOP virtual TNC with an ardopcf-compatible host interface, so Pat, Winlink Express,
-ARIM/gARIM and hamChat connect unmodified.
+ARIM/gARIM and hamChat connect unmodified. **It is a modem entry like any other** — it shares
+the passband with the packet modes rather than excluding them:
 
 ```json
-"ardop": { "port": 8515 }
+"captureRate": 12000,
+"modems": [
+  { "subChannel": 0, "mode": "afsk300-il2pc", "frequency": 300,  "port": 8100 },
+  { "subChannel": 1, "mode": "ardop",         "frequency": 950,  "port": 8101 },
+  { "subChannel": 2, "mode": "bpsk300",       "frequency": 1600, "port": 8103 }
+]
 ```
 
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `port` | int | `8515` | Command port; the **data port is always `port + 1`** |
+Three modes in one 3 kHz passband on one radio, each on its own centre and its own host port.
 
-**The ARDOP channel is dedicated**: `ardop` is exclusive with `modems` and `paging`, and
-configuring them together is rejected at start-up. ARDOP runs its own channel discipline, so
-the daemon's CSMA is bypassed. `"captureRate": 12000` is the recommended setting for this
-mode. See [docs/ardop-design.md](docs/ardop-design.md).
+**`port` here speaks ardopcf, not KISS.** ARDOP is a connected-mode ARQ protocol with session
+semantics; there is no way to express a session over KISS, which carries AX.25 frames and knows
+nothing of connections. So the entry gets the ardopcf host interface: **command on `port`, data
+always on `port + 1`.** That reservation is real and the daemon enforces it — `8103` above is
+not a typo, because `8102` belongs to ARDOP's data port.
+
+**`frequency` moves it off 1500 Hz.** ARDOP's waveforms are pinned to a 1500 Hz centre and the
+underlying library exposes no way to move them, so the daemon shifts the audio outside the TNC:
+transmitted audio is mixed from 1500 Hz to your centre, and received audio mixed back before the
+TNC sees it. The TNC never knows. Choose the centre with ARDOP's *negotiated* bandwidth in mind
+— up to 2000 Hz — and the daemon warns at start-up when a centre cannot fit the widest session
+inside a nominal 300–2700 Hz SSB passband.
+
+**Sharing the radio with an ARQ session.** ARDOP owns the channel's timing while a session is
+up: an AX.25 frame landing mid-turnaround breaks it. So while the ARQ engine is connected or
+connecting, packet transmissions are **held** — queued, not discarded. A frame held longer than
+30 seconds is then rejected rather than escaping minutes late as a duplicate, since an AX.25
+host will have retried long before a Winlink session ends. Receive is unaffected throughout:
+every modem and ARDOP hear the channel simultaneously.
+
+**ARDOP is 12 kHz.** It can share a channel with the other 12 kHz modes (`afsk*`, `bpsk*`,
+`qpsk*`) but not with the 48 kHz families (`fsk9600`, `c4fsk*`, `freedv-*`, `ms110d-*`);
+configuring both is rejected at start-up naming the offending modes.
+
+One ARDOP TNC per channel — it is a whole virtual TNC, not a demodulator you can run twice.
+
+> The older top-level form still works and is folded into a modem entry at start-up:
+> ```json
+> "ardop": { "port": 8515 }
+> ```
+> It has no `frequency` and no `subChannel`, so prefer the modem entry. Configuring both at
+> once is rejected.
+
+See [docs/ardop-design.md](docs/ardop-design.md).
 
 ## `flex`
 
@@ -471,16 +506,22 @@ Some options are command-line only and have no config equivalent — `--wav FILE
 }
 ```
 
-**Winlink over HF via ARDOP** — no `modems`, no `paging`:
+**Winlink over HF via ARDOP, sharing 40m with two packet modes** — one radio, one passband:
 
 ```json
 {
   "device": "plughw:1,0",
   "captureRate": 12000,
-  "ardop": { "port": 8515 },
+  "modems": [
+    { "subChannel": 0, "mode": "afsk300-il2pc", "frequency": 300,  "port": 8100 },
+    { "subChannel": 1, "mode": "ardop",         "frequency": 950,  "port": 8101 },
+    { "subChannel": 2, "mode": "bpsk300",       "frequency": 1600, "port": 8103 }
+  ],
   "ptt": { "type": "serial", "device": "/dev/ttyUSB0", "line": "rts" }
 }
 ```
+
+Point Pat at 8101 (data 8102), and your packet host at 8100 and 8103.
 
 **A FlexRadio over the LAN, no sound card at all** — no `ptt`, the radio keys itself:
 
