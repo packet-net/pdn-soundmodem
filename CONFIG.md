@@ -331,8 +331,8 @@ Until a host sends them, these are in force:
 channel: a host on one modem's dedicated port that sends TXDELAY changes it for every modem,
 and with several clients connected the last one to send a parameter frame wins.
 
-> Earlier versions accepted a `"csma"` block in the config. It is now ignored, and the daemon
-> says so loudly at start-up rather than quietly reverting a link you had tuned.
+> A `"csma"` block from an earlier version is not a setting any more; the daemon flags it as
+> unknown at start-up rather than silently reverting a link you had tuned.
 
 ## `waterfall`
 
@@ -399,9 +399,10 @@ delays a decode. If the disk fills or goes away the modem keeps decoding and dro
 rather than stopping. **The file is WAL**, so you can read it with `sqlite3` or point a dashboard
 at it while the modem is still running and writing.
 
-The packaged service runs unprivileged, so the default path is under its own state directory. If
-you move it, the service user has to be able to write to the directory — the daemon says so
-plainly at start-up rather than running without a log you asked for.
+The packaged service runs unprivileged and the unit declares `StateDirectory=pdn-soundmodem`, so
+systemd creates `/var/lib/pdn-soundmodem/` owned by the service user and the default path just
+works. If you move it, the service user has to be able to write to wherever you move it to — the
+daemon says so plainly at start-up rather than running without a log you asked for.
 
 ## `paging`
 

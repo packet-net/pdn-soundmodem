@@ -154,19 +154,19 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
-    public void A_Withdrawn_Csma_Block_Is_Called_Out_Rather_Than_Silently_Ignored()
+    public void A_Setting_This_Version_Does_Not_Know_Is_Called_Out_Rather_Than_Silently_Ignored()
     {
-        // Channel access moved to the host (KISS 0x01-0x04). System.Text.Json would drop this
-        // block without a word, quietly restoring the defaults on a link somebody had tuned.
+        // System.Text.Json drops unknown members without a word, so a typo — or a setting that
+        // has since been withdrawn — would look accepted and do nothing.
         string path = WriteConfig("""
             {"device": "null", "csma": {"txDelayMilliseconds": 50, "persistence": 200}}
             """);
 
         DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
 
-        config.Should().NotBeNull(error, "a stale csma block is a warning, not a refusal to start");
+        config.Should().NotBeNull(error, "an unknown setting is a warning, not a refusal to start");
         config!.Warnings.Should().ContainSingle()
-            .Which.Should().Contain("csma").And.Contain("IGNORED").And.Contain("KISS");
+            .Which.Should().Contain("csma").And.Contain("IGNORED");
     }
 
     [Fact]
@@ -320,7 +320,7 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
-    public void A_Modem_Entry_Still_Spelling_It_KissPort_Is_Told_The_New_Name()
+    public void An_Unknown_Setting_On_A_Modem_Is_Called_Out_With_Its_Sub_Channel()
     {
         string path = WriteConfig("""
             {"device": "null", "modems": [{"subChannel": 0, "mode": "afsk1200", "kissPort": 8110}]}
@@ -329,9 +329,9 @@ public class DaemonConfigTests : IDisposable
         DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
 
         config.Should().NotBeNull();
-        config!.Modems[0].Port.Should().BeNull("the old spelling is not silently honoured");
+        config!.Modems[0].Port.Should().BeNull("a key this version does not know does nothing");
         config.Warnings.Should().ContainSingle()
-            .Which.Should().Contain("kissPort").And.Contain("now spelled").And.Contain("port");
+            .Which.Should().Contain("modem 0").And.Contain("kissPort");
     }
 
     [Fact]
@@ -402,26 +402,15 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
-    public void The_Retired_KissBind_Is_Called_Out_Rather_Than_Silently_Ignored()
+    public void An_Unknown_Setting_Inside_A_Section_Is_Called_Out_With_Its_Section()
     {
-        string path = WriteConfig("""{"device": "null", "kissBind": "0.0.0.0"}""");
+        string path = WriteConfig("""{"device": "null", "waterfall": {"port": 8099, "colour": "green"}}""");
 
         DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
 
         config.Should().NotBeNull();
-        config!.Bind.Should().Be("127.0.0.1", "the old key must not quietly still work");
-        config.Warnings.Should().ContainSingle().Which.Should().Contain("kissBind").And.Contain("bind");
-    }
-
-    [Fact]
-    public void The_Retired_Waterfall_Bind_Is_Called_Out_Too()
-    {
-        string path = WriteConfig("""{"device": "null", "waterfall": {"port": 8099, "bind": "*"}}""");
-
-        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
-
-        config.Should().NotBeNull();
-        config!.Warnings.Should().ContainSingle().Which.Should().Contain("waterfall").And.Contain("bind");
+        config!.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("waterfall").And.Contain("colour");
     }
 
     [Fact]

@@ -361,40 +361,16 @@ public sealed class DaemonConfig
         var warnings = new List<string>();
         foreach (string key in config.UnknownSettings?.Keys ?? Enumerable.Empty<string>())
         {
-            if (key.Equals("kissBind", StringComparison.OrdinalIgnoreCase))
-            {
-                warnings.Add(
-                    "\"kissBind\" is now just \"bind\", which every listener uses — KISS, the "
-                    + "per-modem ports, the waterfall, paging and ARDOP. The old key is being IGNORED.");
-            }
-            else if (key.Equals("csma", StringComparison.OrdinalIgnoreCase))
-            {
-                // Withdrawn deliberately: TXDELAY/P/SLOTTIME/TXTAIL belong to the host, which
-                // sets them over KISS. Silently ignoring a tuned block would quietly restore
-                // the defaults on somebody's working link.
-                warnings.Add(
-                    "\"csma\" is no longer a configuration setting and is being IGNORED. Channel "
-                    + "access is the host's to set: send KISS TXDELAY (0x01), P (0x02), SLOTTIME "
-                    + "(0x03) and TXTAIL (0x04) from your host software. Until it does, the "
-                    + "defaults are 300 ms / 63 / 100 ms / 20 ms. `--txdelay MS` still overrides "
-                    + "the TXDELAY default for bench use.");
-            }
-            else
-            {
-                warnings.Add(
-                    $"\"{key}\" is not a setting this version knows, and is being IGNORED. Check "
-                    + $"the spelling against {ConfigDocUrl}");
-            }
+            warnings.Add(
+                $"\"{key}\" is not a setting this version knows, and is being IGNORED. Check "
+                + $"the spelling against {ConfigDocUrl}");
         }
 
         foreach (string key in config.Waterfall?.UnknownSettings?.Keys ?? Enumerable.Empty<string>())
         {
             warnings.Add(
-                key.Equals("bind", StringComparison.OrdinalIgnoreCase)
-                    ? "the waterfall's own \"bind\" is gone — the top-level \"bind\" covers every "
-                      + "listener now. The old key is being IGNORED."
-                    : $"waterfall: \"{key}\" is not a setting this version knows, and is being "
-                      + $"IGNORED. Check the spelling against {ConfigDocUrl}");
+                $"waterfall: \"{key}\" is not a setting this version knows, and is being "
+                + $"IGNORED. Check the spelling against {ConfigDocUrl}");
         }
 
         foreach (ModemConfig modem in config.Modems)
@@ -402,11 +378,8 @@ public sealed class DaemonConfig
             foreach (string key in modem.UnknownSettings?.Keys ?? Enumerable.Empty<string>())
             {
                 warnings.Add(
-                    key.Equals("kissPort", StringComparison.OrdinalIgnoreCase)
-                        ? $"modem {modem.SubChannel}: \"kissPort\" is now spelled \"port\" (it carries "
-                          + "KISS or the ardopcf host interface depending on the mode) and is being IGNORED."
-                        : $"modem {modem.SubChannel}: \"{key}\" is not a setting this version knows, and "
-                          + $"is being IGNORED. Check the spelling against {ConfigDocUrl}");
+                    $"modem {modem.SubChannel}: \"{key}\" is not a setting this version knows, and "
+                    + $"is being IGNORED. Check the spelling against {ConfigDocUrl}");
             }
         }
 
