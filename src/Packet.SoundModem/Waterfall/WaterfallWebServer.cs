@@ -28,6 +28,9 @@ public sealed class WaterfallOptions
     /// <summary>FFT length; 0 picks the rate default (2048 at 12 kHz, 8192 at 48 kHz).</summary>
     public int FftSize { get; set; }
 
+    /// <summary>Clock used to pace our own transmissions onto the display. Injected for tests.</summary>
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
     /// <summary>
     /// What the host says each modem is meant to occupy, by sub-channel. Two things the
     /// waterfall cannot work out for itself.
@@ -97,6 +100,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     // is not itself thread-safe. Half duplex keeps them apart in practice, but not across the
     // instant the transmit flag flips, which is exactly when both are live.
     private readonly object _sourceLock = new();
+    private readonly object _transmitLock = new();
+    private readonly Queue<float[]> _transmitPending = new();
+    private int _transmitPendingSamples;
+    private int _transmitPendingOffset;
+    private long _transmitPacedAt;
+    private ITimer? _transmitPacer;
 
     // Set while feeding our own transmission, so the line that comes back out can be told apart
     // from a received one. Lines are emitted synchronously inside Process, so this is exact.
@@ -290,12 +299,104 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }, Json);
     }
 
-    /// <summary>Line sink (receive thread): feed the SNR trackers, then fan the line out
-    /// to every client as [0x01][u32 LE line index][bins].</summary>
+    /// <summary>
+    /// Our own transmitted audio, queued to be painted at the rate it will actually go out.
+    /// </summary>
+    /// <remarks>
+    /// <para>The whole keyup arrives here in one call: the modulator produces the burst as a
+    /// single array long before the sound card has played a sample of it. Painting it on arrival
+    /// put a two-second burst on the display as sixty lines inside a few milliseconds, followed
+    /// by two seconds of nothing at all — receive processing is gated off while transmitting, so
+    /// there is no other line source during a keyup. That is the judder: a lurch at key-down and
+    /// then a frozen display for the length of the transmission.</para>
+    /// <para>So it is queued and released by <see cref="PaceTransmitLines"/> at the rate real
+    /// time passes, which is the rate the audio is leaving the radio. The pacing lives here and
+    /// not in the channel because the transmitter must never wait on a picture — this returns
+    /// immediately however long the burst is.</para>
+    /// </remarks>
     private void OnTransmittedAudio(ReadOnlyMemory<float> samples)
+    {
+        if (_source is null || samples.IsEmpty)
+        {
+            return;
+        }
+
+        lock (_transmitLock)
+        {
+            _transmitPending.Enqueue(samples.ToArray());
+            _transmitPendingSamples += samples.Length;
+
+            if (_transmitPacer is not null)
+            {
+                return;
+            }
+
+            // First burst of a keyup: start the clock here, so the first tick releases the
+            // audio of one tick rather than a backlog measured from whenever the timer last ran.
+            _transmitPacedAt = _options.TimeProvider.GetTimestamp();
+            var period = TimeSpan.FromMilliseconds(1000.0 / _options.LinesPerSecond);
+            _transmitPacer = _options.TimeProvider.CreateTimer(
+                _ => PaceTransmitLines(), null, period, period);
+        }
+    }
+
+    /// <summary>
+    /// Releases however much transmitted audio real time has passed for, and stops once the
+    /// queue is empty.
+    /// </summary>
+    /// <remarks>
+    /// <para>Paced by elapsed time rather than by counting ticks, because a timer that fires late
+    /// — and at a 33 ms period on a busy box it will — must still paint the right amount rather
+    /// than fall progressively behind the transmission it is drawing. That also removes any need
+    /// to detect and correct a backlog: a late tick simply releases proportionally more.</para>
+    /// <para>The queue is not a backlog. It is audio that has not gone out yet — the display is
+    /// meant to trail the modulator by exactly as much as the sound card does.</para>
+    /// </remarks>
+    private void PaceTransmitLines()
     {
         WaterfallSource? source = _source;
         if (source is null)
+        {
+            return;
+        }
+
+        long now = _options.TimeProvider.GetTimestamp();
+        var due = new List<ArraySegment<float>>();
+
+        lock (_transmitLock)
+        {
+            double elapsed = _options.TimeProvider.GetElapsedTime(_transmitPacedAt, now).TotalSeconds;
+            _transmitPacedAt = now;
+            int budget = (int)(elapsed * _channel.SampleRate);
+
+            while (budget > 0 && _transmitPending.Count > 0)
+            {
+                float[] head = _transmitPending.Peek();
+                int available = head.Length - _transmitPendingOffset;
+                int take = Math.Min(available, budget);
+                due.Add(new ArraySegment<float>(head, _transmitPendingOffset, take));
+
+                budget -= take;
+                _transmitPendingSamples -= take;
+                if (take == available)
+                {
+                    _transmitPending.Dequeue();
+                    _transmitPendingOffset = 0;
+                }
+                else
+                {
+                    _transmitPendingOffset += take;
+                }
+            }
+
+            if (_transmitPending.Count == 0)
+            {
+                _transmitPacer?.Dispose();
+                _transmitPacer = null;
+            }
+        }
+
+        if (due.Count == 0)
         {
             return;
         }
@@ -305,7 +406,10 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             _lineIsTransmit = true;
             try
             {
-                source.Process(samples.Span);
+                foreach (ArraySegment<float> piece in due)
+                {
+                    source.Process(piece.AsSpan());
+                }
             }
             finally
             {
@@ -313,6 +417,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             }
         }
     }
+
+
 
     private void OnLine(long index, ReadOnlyMemory<byte> line)
     {
@@ -683,6 +789,15 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         await _stopping.CancelAsync().ConfigureAwait(false);
         _channel.FrameReceivedWithQuality -= OnFrame;
         _channel.TransmittedAudio -= OnTransmittedAudio;
+        lock (_transmitLock)
+        {
+            _transmitPacer?.Dispose();
+            _transmitPacer = null;
+            _transmitPending.Clear();
+            _transmitPendingSamples = 0;
+            _transmitPendingOffset = 0;
+        }
+
         try
         {
             _listener.Stop();
