@@ -591,6 +591,9 @@ if (pttSpec is not null)
 // One bind for every listener — KISS, per-modem ports, waterfall, paging and ARDOP.
 System.Net.IPAddress listenAddress = DaemonConfig.ParseBind(bindAddress)!;
 
+// Set when the radio's session dies, so the exit code says "retry me" rather than "I am done".
+bool radioLost = false;
+
 using var cancellation = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
 {
@@ -757,6 +760,20 @@ else if (deviceIsFlex)
     // slice, limits transmitted DAX audio bandwidth, and it is whatever last touched the radio
     // (a 300 Hz CW filter would silently crush a 3 kHz mode). We deliberately never set it;
     // reporting it makes a stale value visible. Headless only — attach leaves it to SmartSDR.
+    // A radio that reboots, or a network that blips, ends the session — and nothing used to
+    // notice. The modem then sat with a dead socket: no audio, no waterfall, and nothing said
+    // why. Stop instead, with exit 1 so the unit restarts and rediscovers the radio rather
+    // than staying down (exit 2 is reserved for "your configuration is wrong", which a restart
+    // could never fix).
+    flex.Station.Client.Disconnected += () =>
+    {
+        Console.Error.WriteLine(
+            "flex: the radio's session ended — rebooted, dropped off the network, or closed the "
+            + "connection. Stopping so the service restarts and rediscovers it.");
+        radioLost = true;
+        cancellation.Cancel();
+    };
+
     // The radio's frequency reference, into the waterfall's top bar and kept current. Only a
     // Flex reports one; a soundcard station shows nothing rather than an empty label.
     if (waterfallServer is not null)
@@ -894,4 +911,4 @@ if (!deviceIsFlex)
     (input as IDisposable)?.Dispose();
 }
 
-return 0;
+return radioLost ? 1 : 0;
