@@ -125,63 +125,20 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// Measures the 99 % occupied bandwidth of <paramref name="modem"/>'s own transmit
-    /// audio (a throwaway frame, preamble skipped). False when the modem cannot render the
-    /// probe frame — that modem's overlay is simply omitted.
+    /// Measures a modem's occupied band for the overlay. Delegates to
+    /// <see cref="ModemBandProbe"/>, which the RF band planner uses too — one measurement, so
+    /// what the waterfall draws and what the planner fits can never disagree.
     /// </summary>
     internal static bool TryMeasureBand(int subChannel, IModem modem, int sampleRate, out ModemBand band)
     {
         band = default;
-        // A representative little UI frame: PDNSM>PDNSM with a short payload — enough
-        // symbols for a stable Welch estimate in every mode.
-        var probe = BuildProbeFrame();
-        float[] audio;
-        try
-        {
-            audio = modem.Modulate(probe, txDelayMilliseconds: 60);
-        }
-        catch (ArgumentException)
+        if (!ModemBandProbe.TryMeasure(modem, sampleRate, out double low, out double high))
         {
             return false;
         }
 
-        // Skip the leading third: preamble/training, which some modes shape differently
-        // from steady-state modulation (the OBW meter wants steady state).
-        int skip = audio.Length / 3;
-        if (audio.Length - skip < 2048)
-        {
-            return false;
-        }
-
-        var (low, high, _, _) = OccupiedBandwidth.Measure(
-            audio.AsSpan(skip), sampleRate, fftSize: sampleRate >= 24000 ? 4096 : 1024);
         band = new ModemBand(subChannel, modem.Mode, low, high, (low + high) / 2);
         return true;
-    }
-
-    private static byte[] BuildProbeFrame()
-    {
-        var frame = new byte[48];
-        WriteAddress(frame, 0, "PDNSM", last: false);
-        WriteAddress(frame, 7, "PDNSM", last: true);
-        frame[14] = 0x03;
-        frame[15] = 0xF0;
-        for (int n = 16; n < frame.Length; n++)
-        {
-            frame[n] = (byte)(n * 37); // arbitrary non-repeating payload
-        }
-
-        return frame;
-
-        static void WriteAddress(byte[] frame, int at, string call, bool last)
-        {
-            for (int n = 0; n < 6; n++)
-            {
-                frame[at + n] = (byte)((n < call.Length ? call[n] : ' ') << 1);
-            }
-
-            frame[at + 6] = (byte)(0x60 | (last ? 1 : 0));
-        }
     }
 
     private byte[] BuildConfigMessage()

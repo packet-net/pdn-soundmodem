@@ -15,6 +15,12 @@
   // different channel here (or use attach mode). See docs/flex-integration.md §8.
   // "flex": { "frequency": "14.100000", "antenna": "ANT1", "mode": "DIGU", "daxChannel": "1" },
   "captureRate": 48000,
+  // Modems can be placed by absolute RF frequency instead of audio centre — state the band
+  // plan the way you think of it and the daemon works out the dial, tells you what to set,
+  // and refuses to start if no single dial can fit them all. See CONFIG.md.
+  //   "sideband": "usb",            // or "lsb"; RF = dial + audio on USB
+  //   "dialFrequency": 7049450,     // omit and the daemon chooses one that fits
+  //   "modems": [ { "subChannel": 0, "mode": "bpsk300", "rfFrequency": 7051600 } ]
   // The shared KISS port: every modem, selected by the KISS port nibble. A modem can also be
   // given a port to itself with "kissPort" in its entry below — that port carries only that
   // modem, presented as nibble 0, which is what host software that hardcodes KISS channel 0

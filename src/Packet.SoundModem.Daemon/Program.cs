@@ -1,3 +1,4 @@
+using System.Globalization;
 using M0LTE.Radio.Audio;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
@@ -103,6 +104,8 @@ string device = "default";
 int captureRate = 48000;
 int kissPort = 8105;
 string kissBind = "127.0.0.1";
+string sideband = "usb";
+double? dialFrequency = null;
 // 300 ms is a RADIO allowance, not a modem requirement — the modems themselves acquire
 // from 0-20 ms TXDELAY in every mode (150 ms for qpsk2400 facing a NinoTNC), measured and
 // CI-enforced (NinoTncParityTests; docs/ninotnc-loop.md § How short can TXDELAY be?).
@@ -197,6 +200,8 @@ if (configPath is not null)
     captureRate = config.CaptureRate;
     kissPort = config.KissPort;
     kissBind = config.KissBind;
+    sideband = config.Sideband;
+    dialFrequency = config.DialFrequency;
     modems = config.Modems;
     pttConfig = config.Ptt;
     paging = config.Paging;
@@ -306,6 +311,47 @@ if (!deviceIsFlex && captureRate % DspRate != 0)
 {
     Console.Error.WriteLine($"--capture-rate must be a multiple of {DspRate}");
     return 2;
+}
+
+// A configuration written in RF terms becomes a dial plus an audio centre per modem. Done
+// here because it needs the DSP rate (to measure each mode's real occupied width) and must
+// land before the modems are built with those centres.
+RfPlan.Result? bandPlan;
+try
+{
+    bandPlan = BandPlanner.Plan(modems, sideband, dialFrequency, DspRate);
+}
+catch (InvalidDataException planFailure)
+{
+    Console.Error.WriteLine($"band plan: {planFailure.Message}");
+    return 2;
+}
+
+if (bandPlan is not null)
+{
+    bool flexWillTune = deviceIsFlex && FlexDevice.Parse(device).Headless;
+    BandPlanner.Report(bandPlan, Console.Out, flexWillTune);
+    foreach (string warning in bandPlan.Warnings)
+    {
+        Console.Error.WriteLine($"band plan: WARNING — {warning}");
+    }
+
+    // A Flex is its own dial: rather than telling the operator to set it, set it. Headless
+    // only — in attach mode SmartSDR owns the slice and we would be fighting it. The transmit
+    // filter is a global, persistent radio setting, so state its high cut from the plan or a
+    // previous session's narrow filter silently truncates the top of the band.
+    if (flexWillTune)
+    {
+        int filterHigh = BandPlanner.TransmitFilterHighHz(bandPlan);
+        flexTuning = flexTuning with
+        {
+            Frequency = (bandPlan.DialHz / 1_000_000).ToString("F6", CultureInfo.InvariantCulture),
+            TransmitFilterHighHz = filterHigh,
+        };
+        Console.WriteLine(
+            $"flex: setting the slice to {RfPlan.Mhz(bandPlan.DialHz)} and the transmit filter "
+            + $"high cut to {filterHigh} Hz from the band plan");
+    }
 }
 
 var channel = new SoundModemChannel(DspRate);
@@ -423,8 +469,12 @@ if (waterfallConfig is not null)
         waterfallConfig.Port,
         new Packet.SoundModem.Waterfall.WaterfallOptions
         {
-            DialFrequencyHz = waterfallConfig.DialFrequencyHz,
-            Sideband = waterfallConfig.Sideband,
+            // The band plan already knows the dial; the waterfall's RF scale should not have
+            // to be told it a second time (and then disagree when one of them is edited).
+            DialFrequencyHz = waterfallConfig.DialFrequencyHz != 0
+                ? waterfallConfig.DialFrequencyHz
+                : bandPlan?.DialHz ?? 0,
+            Sideband = bandPlan?.Sideband ?? waterfallConfig.Sideband,
             LinesPerSecond = waterfallConfig.LinesPerSecond,
             FftSize = waterfallConfig.FftSize,
         },
@@ -627,6 +677,26 @@ else if (deviceIsFlex)
     if (flex.Station.TransmitFilter is (int txFilterLow, int txFilterHigh))
     {
         Console.WriteLine($"flex: transmit filter {txFilterLow}..{txFilterHigh} Hz (radio global — limits TX audio bandwidth)");
+
+        // Only the high cut is settable through the station API, so the low cut is whatever the
+        // radio was left on. Compare it against the plan rather than assume: a modem sitting
+        // below the filter's low edge transmits nothing, and does so silently.
+        if (bandPlan is not null)
+        {
+            var clipped = bandPlan.Modems
+                .Where(m => m.AudioCentreHz - (m.Slot.BandwidthHz / 2) < txFilterLow
+                         || m.AudioCentreHz + (m.Slot.BandwidthHz / 2) > txFilterHigh)
+                .ToList();
+            foreach (PlannedModem m in clipped)
+            {
+                Console.Error.WriteLine(
+                    $"flex: WARNING — modem {m.Slot.SubChannel} ({m.Slot.Mode}) occupies "
+                    + $"{m.AudioCentreHz - (m.Slot.BandwidthHz / 2):F0}-"
+                    + $"{m.AudioCentreHz + (m.Slot.BandwidthHz / 2):F0} Hz, outside the radio's "
+                    + $"{txFilterLow}..{txFilterHigh} Hz transmit filter — it will be clipped. "
+                    + "The low cut is not settable from here; widen it on the radio.");
+            }
+        }
     }
 }
 else
