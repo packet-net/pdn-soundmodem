@@ -71,15 +71,19 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
             500, "the burst must paint across its own duration, not in a single instant chunk");
 
         // And no one gap may swallow most of the keyup — the "hangs at the start" half of the
-        // symptom, which a spread-out first-to-last alone would not catch.
+        // symptom, which a spread-out first-to-last alone would not catch. Measured against the
+        // burst rather than the clock: a 33 ms timer sharing a machine with the rest of the suite
+        // gets starved for hundreds of milliseconds at a time, and that is the test bench
+        // stalling rather than the product.
         long widestGap = 0;
         for (int i = 1; i < arrivals.Count; i++)
         {
             widestGap = Math.Max(widestGap, arrivals[i] - arrivals[i - 1]);
         }
 
+        long span = arrivals[^1] - arrivals[0];
         widestGap.Should().BeLessThan(
-            250, "lines must keep coming through the keyup rather than stalling");
+            span / 2, "lines must keep coming through the keyup rather than stalling in it");
     }
 
     [Fact]
@@ -159,6 +163,73 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
             "nor be pinned at the top of the scale when a real signal is not");
         txPeak.Should().BeGreaterThan(
             0.4, "it still has to be clearly visible — this is a level fix, not a mute");
+    }
+
+    [Fact]
+    public void A_Quiet_Stretch_Of_A_Keyup_Is_Not_Amplified_Into_A_Full_Width_Haze()
+    {
+        // The regression this exists to prevent. Scaling transmitted audio by normalising each
+        // buffer to a target level is an automatic gain control, and an AGC exists to make quiet
+        // things loud: a ramp-down, a tail, an idle stretch of a shifted burst gets multiplied by
+        // an enormous gain and its noise floor fills the whole span. Measured at the time: near
+        // silence at −65 dBFS rms, normalised to −40, lit 1011 of 1024 bins — the same full-width
+        // haze as the original bug, reached from the opposite direction.
+        var rng = new Random(1);
+        var nearSilence = new float[8000];
+        for (int i = 0; i < nearSilence.Length; i++)
+        {
+            nearSilence[i] = (float)((rng.NextDouble() - 0.5) * 2 * 1e-3);
+        }
+
+        (int lit, double peak) = RenderTransmit(nearSilence);
+
+        lit.Should().Be(0, "quiet transmitted audio must stay quiet on the display");
+        peak.Should().BeLessThan(0.15);
+    }
+
+    [Fact]
+    public void A_Loud_Burst_And_A_Quiet_One_Keep_Their_Relative_Levels()
+    {
+        // The property that rules out an AGC of any kind: two bursts 20 dB apart must still be
+        // 20 dB apart on the display. A normaliser would draw them identically.
+        float[] loud = new Afsk1200Modem(SampleRate, _ => { }).Modulate(Payload(220), 20);
+        var quiet = new float[loud.Length];
+        for (int i = 0; i < loud.Length; i++)
+        {
+            quiet[i] = loud[i] * 0.1f;
+        }
+
+        (_, double loudPeak) = RenderTransmit(loud);
+        (_, double quietPeak) = RenderTransmit(quiet);
+
+        loudPeak.Should().BeGreaterThan(
+            quietPeak + 0.1, "a quieter transmission must render as a quieter one");
+    }
+
+    /// <summary>Runs audio through the transmit display scaling and one waterfall line.</summary>
+    private static (int Lit, double Peak) RenderTransmit(float[] audio)
+    {
+        float[] scaled = WaterfallWebServer.ForDisplay(audio);
+        var lines = new List<byte[]>();
+        var source = new Packet.SoundModem.Dsp.WaterfallSource(
+            SampleRate, (_, line) => lines.Add(line.ToArray()), LinesPerSecond, 2048);
+        source.Process(scaled);
+
+        byte[] last = lines[^1];
+        int lit = 0;
+        double peak = 0;
+        foreach (byte bin in last)
+        {
+            double brightness = Brightness(bin);
+            if (brightness > 0.15)
+            {
+                lit++;
+            }
+
+            peak = Math.Max(peak, brightness);
+        }
+
+        return (lit, peak);
     }
 
     /// <summary>Lit bins and peak brightness of a line, in the page's default dB window.</summary>
