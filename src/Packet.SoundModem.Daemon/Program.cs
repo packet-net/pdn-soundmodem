@@ -12,6 +12,7 @@ using Packet.SoundModem.Ms110d;
 //
 //   pdn-soundmodem [--config soundmodem.json]
 //   pdn-soundmodem [--device default] [--capture-rate 48000] [--kiss 8105]
+//                  [--kiss-bind 127.0.0.1|*]
 //                  [--modem N:MODE[:FREQ]]... [--ptt serial:/dev/ttyUSB0[:rts|:dtr]]
 //                  [--ptt cm108:/dev/hidraw0[:gpio]]
 //                  [--txdelay MS] [--wav FILE] [--wav-loop FILE] [--quality-frames]
@@ -101,13 +102,14 @@ using Packet.SoundModem.Ms110d;
 string device = "default";
 int captureRate = 48000;
 int kissPort = 8105;
+string kissBind = "127.0.0.1";
 // 300 ms is a RADIO allowance, not a modem requirement — the modems themselves acquire
 // from 0-20 ms TXDELAY in every mode (150 ms for qpsk2400 facing a NinoTNC), measured and
 // CI-enforced (NinoTncParityTests; docs/ninotnc-loop.md § How short can TXDELAY be?).
 // The default budgets for a real transmitter's PTT-to-RF settling, which the wired bench
 // cannot see and which routinely needs 100-300 ms on FM gear. Wired links, data-port
 // radios and bench rigs should configure this down; issue #3 has the full derivation.
-int txDelay = 300;
+int? txDelay = null;
 string? wavPath = null;
 string? wavLoopPath = null;
 string? pttSpec = null;
@@ -143,6 +145,7 @@ for (int i = 0; i < args.Length; i++)
         case "--device": device = Next(); break;
         case "--capture-rate": captureRate = int.Parse(Next()); break;
         case "--kiss": kissPort = int.Parse(Next()); break;
+        case "--kiss-bind": kissBind = Next(); break;
         case "--modem": modemSpecs.Add(Next()); break;
         case "--ptt": pttSpec = Next(); break;
         case "--txdelay": txDelay = int.Parse(Next()); break;
@@ -168,7 +171,6 @@ for (int i = 0; i < args.Length; i++)
 }
 
 var modems = new List<ModemConfig>();
-CsmaConfig csma = new() { TxDelayMilliseconds = txDelay };
 PttConfig? pttConfig = null;
 PagingConfig? paging = null;
 FlexConfig? flexConfig = null;
@@ -186,11 +188,16 @@ if (configPath is not null)
         return 2;
     }
 
+    foreach (string warning in config.Warnings)
+    {
+        Console.Error.WriteLine($"config: WARNING — {warning}");
+    }
+
     device = config.Device;
     captureRate = config.CaptureRate;
     kissPort = config.KissPort;
+    kissBind = config.KissBind;
     modems = config.Modems;
-    csma = config.Csma;
     pttConfig = config.Ptt;
     paging = config.Paging;
     flexConfig = config.Flex;
@@ -273,10 +280,14 @@ if (!deviceIsFlex && captureRate % DspRate != 0)
 }
 
 var channel = new SoundModemChannel(DspRate);
-channel.Csma.TxDelayMilliseconds = csma.TxDelayMilliseconds;
-channel.Csma.Persistence = csma.Persistence;
-channel.Csma.SlotTimeMilliseconds = csma.SlotTimeMilliseconds;
-channel.Csma.TxTailMilliseconds = csma.TxTailMilliseconds;
+// Channel access (TXDELAY, P, SLOTTIME, TXTAIL) belongs to the host, which sets it over KISS
+// at runtime — see KissTcpServer. The library's defaults stand until it does; there is
+// deliberately no configuration-file equivalent. --txdelay remains as a bench override for
+// runs with no host attached.
+if (txDelay is int txDelayOverride)
+{
+    channel.Csma.TxDelayMilliseconds = txDelayOverride;
+}
 
 // Per-family PSK detector, for the informational print below: --psk-detector overrides both;
 // unset, the catalogue's per-family defaults apply (BPSK differential, QPSK coherent).
@@ -424,19 +435,47 @@ Console.CancelKeyPress += (_, e) =>
     cancellation.Cancel();
 };
 
-KissTcpServer? server = null;
+var kissServers = new List<KissTcpServer>();
 if (ardopPort is null)
 {
-    server = new KissTcpServer(channel, kissPort);
-    server.EmitQualityFrames = qualityFrames;
-    server.Start();
+    System.Net.IPAddress kissAddress = DaemonConfig.ParseBind(kissBind)!;
+    string shown = Equals(kissAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : kissAddress.ToString();
+
+    // The shared port: every modem, addressed by nibble (the QtSoundModem multiplex model).
+    var shared = new KissTcpServer(channel, kissPort, kissAddress);
+    shared.EmitQualityFrames = qualityFrames;
+    shared.Start();
+    kissServers.Add(shared);
     if (qualityFrames)
     {
         Console.WriteLine("rx-quality frames: on (KISS command 0x07, JSON payload)");
     }
-    Console.WriteLine($"kiss tcp: 127.0.0.1:{server.LocalPort}");
+
+    Console.WriteLine($"kiss tcp: {shown}:{shared.LocalPort} (all modems, by sub-channel nibble)");
+
+    // Plus a port to itself for any modem that asked for one, so a host that only speaks
+    // KISS channel 0 can still reach a modem that is not sub-channel 0.
+    foreach (ModemConfig modemConfig in modems.Where(m => m.KissPort is not null))
+    {
+        var dedicated = new KissTcpServer(
+            channel, modemConfig.KissPort!.Value, kissAddress, subChannel: modemConfig.SubChannel);
+        dedicated.EmitQualityFrames = qualityFrames;
+        dedicated.Start();
+        kissServers.Add(dedicated);
+        Console.WriteLine(
+            $"kiss tcp: {shown}:{dedicated.LocalPort} (modem {modemConfig.SubChannel} "
+            + $"{modemConfig.Mode} only, as nibble 0)");
+    }
+
+    if (!Equals(kissAddress, System.Net.IPAddress.Loopback))
+    {
+        Console.WriteLine(
+            "kiss: WARNING — listening beyond loopback. KISS has no authentication: anything "
+            + "that can reach these ports can transmit on your licence.");
+    }
 }
-await using var kissLifetime = server;
+
+await using var kissLifetime = new KissServerSet(kissServers);
 
 M0LTE.Ardop.Host.ArdopHostServer? ardopServer = null;
 if (ardopPort is not null)

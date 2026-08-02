@@ -31,10 +31,10 @@ with `su -` and drop the prefix.)
 |---|---|---|---|
 | `device` | string | `"default"` | Sound device (or FlexRadio) — [below](#device) |
 | `captureRate` | int | `48000` | ALSA capture/playback rate in Hz — [below](#capturerate) |
-| `kissPort` | int | `8105` | KISS-over-TCP listen port |
+| `kissPort` | int | `8105` | Shared KISS-over-TCP port, all modems by nibble — [below](#kissport-and-kissbind) |
+| `kissBind` | string | `"127.0.0.1"` | Address the KISS listeners bind to; `"*"` for all |
 | `modems` | array | one `afsk1200` on sub-channel 0 | The modems sharing the channel — [below](#modems) |
 | `ptt` | object | *(none — VOX)* | How the radio is keyed — [below](#ptt) |
-| `csma` | object | see below | Channel-access timing — [below](#csma) |
 | `waterfall` | object | *(disabled)* | Browser spectrum/waterfall page — [below](#waterfall) |
 | `paging` | object | *(disabled)* | POCSAG paging endpoint — [below](#paging) |
 | `ardop` | object | *(disabled)* | ARDOP virtual TNC — [below](#ardop) |
@@ -90,6 +90,51 @@ need, so the card's native rate is the right answer — 48000 for essentially al
 Mixing families is fine: if *any* configured mode needs 48 kHz, the whole channel runs at
 48 kHz. Ignored entirely for `flex:` devices, which supply their own DAX sample clock.
 
+## `kissPort` and `kissBind`
+
+```json
+"kissPort": 8105,
+"kissBind": "127.0.0.1"
+```
+
+`kissPort` is the **shared** port: every modem is reachable on it, selected by the KISS port
+nibble — the QtSoundModem multiplex model, and what Direwolf does on 8001. `kissBind` is the
+address every KISS listener binds to; `"*"` opens it to all interfaces.
+
+> **KISS has no authentication of any kind.** Anything that can reach the port can key your
+> transmitter. It stays on loopback unless you deliberately change it, and the daemon prints a
+> warning at start-up when you do. If a host on another machine needs access, an SSH tunnel is
+> a better answer than `"*"`.
+
+### A port per modem
+
+The nibble only helps if your host software lets you set it, and a good deal of it does not —
+it assumes KISS channel 0 and offers nowhere to say otherwise. On the shared port such a host
+can only ever reach `subChannel: 0`, however many modems you have configured.
+
+Give a modem its own port and that stops mattering:
+
+```json
+"kissPort": 8105,
+"modems": [
+  { "subChannel": 0, "mode": "afsk1200", "kissPort": 8110 },
+  { "subChannel": 1, "mode": "bpsk300",  "kissPort": 8111 }
+]
+```
+
+A dedicated port carries **only** that modem, and presents it as **nibble 0**:
+
+- frames received by that modem arrive on it labelled channel 0;
+- other modems' traffic never appears on it;
+- anything transmitted into it goes out on that modem, whatever nibble the client used.
+
+So a host that only speaks channel 0 talks to port 8111 and works `bpsk300` without ever
+knowing a multiplex exists. The shared port keeps working alongside, still reporting true
+nibbles — you can run both at once.
+
+Two services asking for the same TCP port is rejected at start-up, naming both, rather than
+left to whichever listener happens to bind second.
+
 ## `modems`
 
 The logical modems sharing the one audio channel, each addressed by its KISS port nibble.
@@ -109,6 +154,7 @@ This is the QtSoundModem multiplex model — your host software picks a modem by
 | `frequency` | number | mode default | Audio centre in Hz, TX **and** RX |
 | `offsetPairs` | int | `4` | Diversity-bank modes only |
 | `offsetStepHz` | number | baud/40 | Diversity-bank modes only |
+| `kissPort` | int | *(none)* | A TCP port carrying this modem alone — [below](#a-port-per-modem) |
 
 Omit `modems` entirely and you get one `afsk1200` on sub-channel 0.
 
@@ -162,29 +208,30 @@ Serial PTT works out of the box because the unit already joins the `dialout` gro
 Which `/dev/hidraw*` node is yours is worth confirming rather than assuming — the number
 moves with what else is plugged in. `ls -l /sys/class/hidraw/*/device/` maps them to USB IDs.
 
-## `csma`
+## Channel access is the host's, not the config's
 
-Channel-access timing, in the usual TNC terms. KISS clients can override these at runtime, so
-these are the values the daemon starts with.
+There is deliberately **no `csma` section**. TXDELAY, P (persistence), SLOTTIME and TXTAIL are
+the host's to set, and it sets them at runtime with the standard KISS parameter commands —
+`0x01`, `0x02`, `0x03` and `0x04`. The daemon honours all four the moment they arrive, which
+QtSoundModem does not.
 
-```json
-"csma": {
-  "txDelayMilliseconds": 300,
-  "persistence": 63,
-  "slotTimeMilliseconds": 100,
-  "txTailMilliseconds": 20
-}
-```
+Until a host sends them, these are in force:
 
-| Field | Default | Notes |
+| Parameter | Default | Notes |
 |---|---|---|
-| `txDelayMilliseconds` | `300` | Key-up to first data. Long enough for the radio's T/R relay and the far end's AGC to settle |
-| `persistence` | `63` | p-persistence 0–255. 63 ≈ 25 % chance of transmitting per slot |
-| `slotTimeMilliseconds` | `100` | Gap between persistence rolls |
-| `txTailMilliseconds` | `20` | Carrier held after the last bit |
+| TXDELAY | 300 ms | Key-up to first data. A *radio* allowance — the modems themselves acquire from 0–20 ms; 300 ms budgets a real transmitter's PTT-to-RF settling, which FM gear routinely needs |
+| P (persistence) | 63 | ≈ 25 % chance of transmitting per slot |
+| SLOTTIME | 100 ms | Gap between persistence rolls |
+| TXTAIL | 20 ms | Carrier held after the last bit |
 
-`txDelayMilliseconds` is the one most worth tuning: too short and the first bytes are cut off
-at the far end, too long and you waste channel time on every frame.
+`--txdelay MS` overrides the TXDELAY default, for bench runs with no host attached.
+
+**Scope is the radio, not the modem.** There is one PTT, so these settings apply to the whole
+channel: a host on one modem's dedicated port that sends TXDELAY changes it for every modem,
+and with several clients connected the last one to send a parameter frame wins.
+
+> Earlier versions accepted a `"csma"` block in the config. It is now ignored, and the daemon
+> says so loudly at start-up rather than quietly reverting a link you had tuned.
 
 ## `waterfall`
 
@@ -369,8 +416,9 @@ pdn-soundmodem --device plughw:1,0 --modem 0:afsk1200 --kiss 8105 --ptt serial:/
 ```
 
 **When `--config` is given, the file wins for most settings** — it overwrites `device`,
-`captureRate`, `kissPort`, `ptt`, `csma`, `paging`, `flex` and `waterfall`, so a
-`--txdelay` or `--device` passed alongside `--config` is silently discarded. The exceptions:
+`captureRate`, `kissPort`, `kissBind`, `ptt`, `paging`, `flex` and `waterfall`, so a
+`--device` passed alongside `--config` is silently discarded (`--txdelay` still applies —
+it has no config equivalent). The exceptions:
 
 | Flag | Behaviour with `--config` |
 |---|---|
@@ -394,8 +442,7 @@ Some options are command-line only and have no config equivalent — `--wav FILE
   "captureRate": 48000,
   "kissPort": 8105,
   "modems": [ { "subChannel": 0, "mode": "afsk1200-multi" } ],
-  "ptt": { "type": "serial", "device": "/dev/ttyUSB0", "line": "rts" },
-  "csma": { "txDelayMilliseconds": 300, "persistence": 63, "slotTimeMilliseconds": 100, "txTailMilliseconds": 20 }
+  "ptt": { "type": "serial", "device": "/dev/ttyUSB0", "line": "rts" }
 }
 ```
 

@@ -32,6 +32,19 @@ public sealed class ModemConfig
     /// offset tolerance. Coverage spans ±<see cref="OffsetPairs"/>·this. Ignored by non-bank
     /// modes.</summary>
     public double? OffsetStepHz { get; set; }
+
+    /// <summary>
+    /// A KISS TCP port dedicated to this modem alone; null (the default) means it is reachable
+    /// only through the shared <see cref="DaemonConfig.KissPort"/> by its sub-channel nibble.
+    /// </summary>
+    /// <remarks>
+    /// For host software that hardcodes KISS channel 0 and gives you no way to set the nibble —
+    /// on the shared port such a host can only ever reach sub-channel 0, however many modems
+    /// are configured. A dedicated port surfaces this modem's frames as nibble 0 and transmits
+    /// everything it receives on this modem whatever nibble was used, so the host never has to
+    /// know the multiplex exists. The shared port keeps working alongside it.
+    /// </remarks>
+    public int? KissPort { get; set; }
 }
 
 /// <summary>PTT configuration.</summary>
@@ -121,22 +134,6 @@ public sealed class WaterfallConfig
     public int FftSize { get; set; }
 }
 
-/// <summary>Channel-access tunables (KISS clients can override at runtime).</summary>
-public sealed class CsmaConfig
-{
-    /// <summary>TXDELAY in milliseconds.</summary>
-    public int TxDelayMilliseconds { get; set; } = 300;
-
-    /// <summary>p-persistence 0–255.</summary>
-    public int Persistence { get; set; } = 63;
-
-    /// <summary>Slot time in milliseconds.</summary>
-    public int SlotTimeMilliseconds { get; set; } = 100;
-
-    /// <summary>TX tail in milliseconds.</summary>
-    public int TxTailMilliseconds { get; set; } = 20;
-}
-
 /// <summary>pdn-soundmodem daemon configuration file. JSON, with comments and trailing
 /// commas accepted (see <see cref="Options"/>) and case-insensitive key matching — the
 /// shipped soundmodem.example.json relies on that and annotates itself. Full reference:
@@ -149,8 +146,16 @@ public sealed class DaemonConfig
     /// <summary>Capture rate; card-native (48000) recommended — the daemon decimates.</summary>
     public int CaptureRate { get; set; } = 48000;
 
-    /// <summary>KISS TCP listen port.</summary>
+    /// <summary>KISS TCP listen port — shared by every modem, addressed by sub-channel nibble.
+    /// Individual modems can also get a port to themselves; see <see cref="ModemConfig.KissPort"/>.</summary>
     public int KissPort { get; set; } = 8105;
+
+    /// <summary>
+    /// Address the KISS listeners bind to; "*" for all interfaces. Loopback by default, because
+    /// KISS has no authentication whatsoever — anything that can reach the port can transmit on
+    /// your licence. Applies to the shared port and every per-modem port.
+    /// </summary>
+    public string KissBind { get; set; } = "127.0.0.1";
 
     /// <summary>The logical modems sharing the audio channel.</summary>
     public List<ModemConfig> Modems { get; set; } = [];
@@ -172,8 +177,18 @@ public sealed class DaemonConfig
     /// <summary>Browser waterfall endpoint; null = disabled.</summary>
     public WaterfallConfig? Waterfall { get; set; }
 
-    /// <summary>Channel-access parameters.</summary>
-    public CsmaConfig Csma { get; set; } = new();
+    /// <summary>
+    /// Settings present in the file that this version does not know. Kept so start-up can say
+    /// so out loud: System.Text.Json drops unknown members silently, which turns a typo — or a
+    /// setting that has since been withdrawn, like the old "csma" block — into a config that
+    /// looks accepted and does something else.
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+
+    /// <summary>Non-fatal complaints raised while loading; the daemon prints them at start-up.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<string> Warnings { get; private set; } = [];
 
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -211,8 +226,102 @@ public sealed class DaemonConfig
                 + "KISS sub-channel (0-15) — renumber one of them.");
         }
 
+        if (ParseBind(config.KissBind) is null)
+        {
+            throw new InvalidDataException(
+                $"\"kissBind\": \"{config.KissBind}\" is not an IP address. Use \"127.0.0.1\" for "
+                + "loopback only, \"*\" for every interface, or the address of one interface.");
+        }
+
+        ValidatePorts(config);
+        config.Warnings = CollectWarnings(config);
         return config;
     }
+
+    /// <summary>Things worth saying out loud that are not worth refusing to start over.</summary>
+    private static List<string> CollectWarnings(DaemonConfig config)
+    {
+        var warnings = new List<string>();
+        foreach (string key in config.UnknownSettings?.Keys ?? Enumerable.Empty<string>())
+        {
+            if (key.Equals("csma", StringComparison.OrdinalIgnoreCase))
+            {
+                // Withdrawn deliberately: TXDELAY/P/SLOTTIME/TXTAIL belong to the host, which
+                // sets them over KISS. Silently ignoring a tuned block would quietly restore
+                // the defaults on somebody's working link.
+                warnings.Add(
+                    "\"csma\" is no longer a configuration setting and is being IGNORED. Channel "
+                    + "access is the host's to set: send KISS TXDELAY (0x01), P (0x02), SLOTTIME "
+                    + "(0x03) and TXTAIL (0x04) from your host software. Until it does, the "
+                    + "defaults are 300 ms / 63 / 100 ms / 20 ms. `--txdelay MS` still overrides "
+                    + "the TXDELAY default for bench use.");
+            }
+            else
+            {
+                warnings.Add(
+                    $"\"{key}\" is not a setting this version knows, and is being IGNORED. Check "
+                    + $"the spelling against {ConfigDocUrl}");
+            }
+        }
+
+        return warnings;
+    }
+
+    /// <summary>
+    /// Rejects two services asking for the same TCP port. Left to the OS this surfaces as a
+    /// bind failure from whichever listener happens to start second, naming neither setting.
+    /// </summary>
+    private static void ValidatePorts(DaemonConfig config)
+    {
+        var claimed = new Dictionary<int, string>();
+        void Claim(int port, string what)
+        {
+            if (claimed.TryGetValue(port, out string? already))
+            {
+                throw new InvalidDataException(
+                    $"{what} and {already} both want TCP port {port}. Give them different ports.");
+            }
+
+            claimed[port] = what;
+        }
+
+        if (config.Ardop is null)
+        {
+            Claim(config.KissPort, "\"kissPort\"");
+        }
+
+        foreach (ModemConfig modem in config.Modems.Where(m => m.KissPort is not null))
+        {
+            Claim(modem.KissPort!.Value, $"the \"kissPort\" of modem {modem.SubChannel}");
+        }
+
+        if (config.Waterfall is not null)
+        {
+            Claim(config.Waterfall.Port, "the waterfall");
+        }
+
+        if (config.Paging is not null)
+        {
+            Claim(config.Paging.Port, "the paging endpoint");
+        }
+
+        if (config.Ardop is not null)
+        {
+            Claim(config.Ardop.Port, "the ARDOP command port");
+            // ardopcf's convention, not ours to move: data is always command + 1.
+            Claim(config.Ardop.Port + 1, "the ARDOP data port");
+        }
+    }
+
+    /// <summary>
+    /// Parses a bind setting; "*" means every interface. Null when it is not an address. Unset
+    /// or blank stays on loopback — the safe reading, since the alternative would silently put
+    /// an unauthenticated transmit interface on every interface because a value was empty.
+    /// </summary>
+    internal static System.Net.IPAddress? ParseBind(string? bind) =>
+        string.IsNullOrWhiteSpace(bind) ? System.Net.IPAddress.Loopback
+        : bind == "*" ? System.Net.IPAddress.Any
+        : System.Net.IPAddress.TryParse(bind, out System.Net.IPAddress? parsed) ? parsed : null;
 
     /// <summary>
     /// Loads a configuration file, turning every failure into an operator-facing explanation
