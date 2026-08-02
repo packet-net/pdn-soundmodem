@@ -142,6 +142,23 @@ public sealed class FlexConfig
 
     /// <summary>Out of SmartSDR's way, and valid on every 6000-series model (a 6500 has four).</summary>
     public const string DefaultHeadlessDaxChannel = "2";
+
+    /// <summary>
+    /// Transmit power in watts. Null (the default) leaves whatever the radio is already set to.
+    /// </summary>
+    /// <remarks>
+    /// <para>Watts rather than the radio's 0–100 percentage because that is what an operator
+    /// means; the daemon converts using the PA size the radio reports (100 W on the 6000
+    /// series, so the two happen to coincide there).</para>
+    /// <para>The radio <b>rejects</b> a power above its Max Power Level rather than reducing to
+    /// it, so a value above your ceiling fails at startup with a message naming both numbers —
+    /// it does not quietly transmit at less than you asked for.</para>
+    /// <para>Only the client that owns the transmit slice can set this, which in a headless
+    /// station is the daemon itself: with pdn-soundmodem holding the slice, an external tool's
+    /// request is accepted and discarded. That is why this lives in the config rather than being
+    /// left to the rig.</para>
+    /// </remarks>
+    public double? TxPowerWatts { get; set; }
 }
 
 /// <summary>Frame log: every frame heard, written to a SQLite file. Null = not kept.</summary>

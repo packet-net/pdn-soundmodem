@@ -252,7 +252,19 @@ var flexTuning = new FlexTuning
         ?? (FlexDevice.IsFlex(device) && FlexDevice.Parse(device).Headless
             ? FlexConfig.DefaultHeadlessDaxChannel
             : "1"),
+    TxPowerWatts = flexConfig?.TxPowerWatts,
 };
+
+// Caught here rather than at the radio, which answers an out-of-range power with a bare
+// protocol code and no hint about which setting produced it.
+if (flexTuning.TxPowerWatts is double requestedWatts
+    && (requestedWatts < 0 || requestedWatts > FlexDevice.PaWatts))
+{
+    Console.Error.WriteLine(
+        $"\"flex\".\"txPowerWatts\" is {requestedWatts:0.#} W, outside the 0–{FlexDevice.PaWatts:F0} W "
+        + "a 6000-series PA can produce.");
+    return 2;
+}
 
 if (pagingSpec is not null)
 {
@@ -854,6 +866,18 @@ else if (deviceIsFlex)
         PublishReference(flex.Station.Client.Reference);
         flex.Station.Client.ReferenceChanged += PublishReference;
         Console.WriteLine($"flex: reference {flex.Station.Client.Reference.Describe()}");
+    }
+
+    // Always reported, set or not: an inherited power shapes every transmission just as much as
+    // a configured one, and it is the number the operator will be asked about on the air.
+    if (flex.Station.RfPowerApplied is int rfPower)
+    {
+        double watts = rfPower / 100.0 * FlexDevice.PaWatts;
+        string ceiling = flex.Station.MaxPowerLevel is int max
+            ? $", limit {max / 100.0 * FlexDevice.PaWatts:0.#} W"
+            : "";
+        string source = flexTuning.TxPowerWatts is null ? " (radio's own setting)" : "";
+        Console.WriteLine($"flex: transmit power {watts:0.#} W{ceiling}{source}");
     }
 
     if (flex.Station.TransmitFilter is (int txFilterLow, int txFilterHigh))

@@ -503,6 +503,7 @@ the slice.
 | `antenna` | string | `"ANT1"` | RX/TX antenna |
 | `mode` | string | `"DIGU"` | Slice demod mode |
 | `daxChannel` | string | `"2"` headless, `"1"` attach | DAX channel to claim — [below](#coexisting-with-smartsdr) |
+| `txPowerWatts` | number | unset | Transmit power in watts — [below](#transmit-power) |
 
 The headless path disables band persistence and explicitly tunes the slice, so it lands on the
 requested frequency regardless of the radio's last-used band.
@@ -513,6 +514,39 @@ is rejected — silently accepting it would mirror every modem about the dial.
 
 **A band plan supersedes `frequency`.** With `rfFrequency` modems the dial is computed, so a slice
 frequency here would be saying two different things; the daemon warns and uses the plan.
+
+### Transmit power
+
+```json
+"flex": { "antenna": "ANT1", "txPowerWatts": 30 }
+```
+
+Watts, not the radio's 0–100 number, because watts is what your licence is written in. Every
+6000-series model has a 100 W PA, so on that family the two happen to coincide — the daemon
+converts using the PA size regardless, so the config stays honest about its units.
+
+**Unset, the radio's own setting is left alone** — the station transmits at whatever the rig is
+on, exactly as it did before this setting existed. Either way the daemon prints what is in force
+at startup, because an inherited power shapes every transmission just as much as a configured one:
+
+```
+flex: transmit power 30 W, limit 50 W
+flex: transmit power 9 W, limit 50 W (radio's own setting)
+```
+
+**Above your Max Power Level, the radio refuses rather than reduces.** Asking for 30 W against a
+15 W ceiling is an error — not 15 W, and not some fraction of it. The daemon reads the ceiling
+first and fails at startup naming both numbers, so raise the limit at the rig (Settings →
+Transmit → Max Power Level) or ask for less.
+
+**Why this is here at all, rather than left to the rig.** RF power is held *per station*, and
+only the client that owns the transmit slice can set it. In a headless station that client is
+pdn-soundmodem. Anything else — SmartSDR on another machine, a command-line tool — has its
+request answered `err=0` and silently discarded, and the value never moves. Measured on a
+FLEX-6500 (fw 4.2.20.41343, 2026-08-02). So while the daemon holds the slice, the daemon is the
+only thing that *can* set the power, which is why it has to be configurable here.
+
+The setting persists on the radio after the daemon exits, like the transmit filter.
 
 ### Coexisting with SmartSDR
 
