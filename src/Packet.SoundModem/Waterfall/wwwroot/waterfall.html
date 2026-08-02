@@ -210,7 +210,7 @@ let fpsCount = 0, fpsShown = 0;
 // Categorical identity hues for modem markers, fixed order, validated (OKLCH dark band,
 // CVD + normal-vision ΔE, ≥3:1 on the surface) — identity is never color-alone: every
 // marker ships with its sub-channel + mode text.
-const MODEM_HUES = ["#2599bb", "#43a54e", "#8f72e6", "#d45a7d"];
+const MODEM_HUES = ["#31d2f2", "#3ee686", "#7aa2ff", "#ff5fd2"];
 const hueFor = i => MODEM_HUES[i % MODEM_HUES.length];
 
 const $ = id => document.getElementById(id);
@@ -269,9 +269,17 @@ const AUDIO_LEAD = 0.12;   // seconds of scheduling lead; below this, jitter is 
 
 function audioOn() { return audioCtx !== null; }
 
+// Deliberately not wrapped in a catch-all: a send that fails here is a programming error, and
+// swallowing it is what made this feature look like it worked while never asking for anything.
+function requestAudio(on) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "audio", on }));
+  }
+}
+
 async function toggleAudio() {
   if (audioOn()) {
-    try { ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: "audio", on: false })); } catch {}
+    requestAudio(false);
     try { await audioCtx.close(); } catch {}
     audioCtx = null; audioGain = null; audioNext = 0;
   } else {
@@ -282,7 +290,7 @@ async function toggleAudio() {
     audioGain.gain.value = parseFloat($("vol").value);
     audioGain.connect(audioCtx.destination);
     audioNext = 0;
-    try { ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: "audio", on: true })); } catch {}
+    requestAudio(true);
   }
   syncAudioButton();
 }
@@ -296,7 +304,9 @@ function syncAudioButton() {
 
 function playAudio(buf) {
   if (!audioOn() || !cfg) return;
-  const pcm = new Int16Array(buf, 1);
+  // Samples start at byte 4: a typed-array view needs its offset aligned to the element size,
+  // and a 1-byte header put every s16 on an odd boundary.
+  const pcm = new Int16Array(buf, 4);
   const frame = audioCtx.createBuffer(1, pcm.length, cfg.sampleRate);
   const out = frame.getChannelData(0);
   for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] / 32768;
@@ -463,12 +473,16 @@ function drawOverlay() {
   cfg.modems.forEach((m, i) => {
     const x0 = afToX(m.lowHz, w), x1 = afToX(m.highHz, w), xc = afToX(m.centreHz, w);
     if (x0 > w) return;
-    octx.fillStyle = hueFor(i) + "14";
+    // The edges carry most of the legibility, so they are solid and the fill stays translucent
+    // enough to read a signal through: a wash dark enough to see would hide what it marks.
+    octx.fillStyle = hueFor(i) + "26";
     octx.fillRect(x0, 0, x1 - x0, h);
-    octx.strokeStyle = hueFor(i) + "50"; octx.lineWidth = 1;
+    octx.fillStyle = hueFor(i) + "ee";
+    octx.fillRect(x0, 0, x1 - x0, 3 * dpr());   // solid cap: unambiguous extent at a glance
+    octx.strokeStyle = hueFor(i) + "cc"; octx.lineWidth = 1;
     octx.beginPath(); octx.moveTo(Math.round(x0) + .5, 0); octx.lineTo(Math.round(x0) + .5, h); octx.stroke();
     octx.beginPath(); octx.moveTo(Math.round(x1) + .5, 0); octx.lineTo(Math.round(x1) + .5, h); octx.stroke();
-    octx.strokeStyle = hueFor(i) + "a0";
+    octx.strokeStyle = hueFor(i) + "e6";
     octx.setLineDash([4, 6]);
     octx.beginPath(); octx.moveTo(Math.round(xc) + .5, 0); octx.lineTo(Math.round(xc) + .5, h); octx.stroke();
     octx.setLineDash([]);
@@ -494,9 +508,12 @@ function drawSpectrum() {
   // modem bands (identity tint + centre), quiet behind the trace
   cfg.modems.forEach((m, i) => {
     const x0 = afToX(m.lowHz, w), x1 = afToX(m.highHz, w), xc = afToX(m.centreHz, w);
-    sctx.fillStyle = hueFor(i) + "10";
+    sctx.fillStyle = hueFor(i) + "22";
     sctx.fillRect(x0, 0, x1 - x0, h);
-    sctx.strokeStyle = hueFor(i) + "66";
+    sctx.strokeStyle = hueFor(i) + "99"; sctx.lineWidth = 1;
+    sctx.beginPath(); sctx.moveTo(Math.round(x0) + .5, 0); sctx.lineTo(Math.round(x0) + .5, h); sctx.stroke();
+    sctx.beginPath(); sctx.moveTo(Math.round(x1) + .5, 0); sctx.lineTo(Math.round(x1) + .5, h); sctx.stroke();
+    sctx.strokeStyle = hueFor(i) + "cc";
     sctx.setLineDash([3, 5]);
     sctx.beginPath(); sctx.moveTo(Math.round(xc) + .5, 0); sctx.lineTo(Math.round(xc) + .5, h); sctx.stroke();
     sctx.setLineDash([]);
@@ -642,10 +659,16 @@ function hookHover(el) {
 hookHover(spec); hookHover(wf);
 
 /* ---------- socket ---------- */
+let ws = null;               // the live socket; toggleAudio needs to reach it
+
 function connect() {
-  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws = new WebSocket(`ws://${location.host}/ws`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => { $("conn").textContent = "live"; $("conn").className = "live"; };
+  ws.onopen = () => {
+    $("conn").textContent = "live"; $("conn").className = "live";
+    // A reconnect starts with audio off server-side; ask again if the operator had it on.
+    if (audioOn()) { requestAudio(true); }
+  };
   ws.onclose = () => {
     $("conn").textContent = "reconnecting…"; $("conn").className = "dead";
     setTimeout(connect, 2000);

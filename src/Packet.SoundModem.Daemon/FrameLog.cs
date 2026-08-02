@@ -94,8 +94,14 @@ internal sealed class FrameLog : IAsyncDisposable
     /// Queues a heard frame. Returns immediately: called from the receive path, which is
     /// decoding the next burst while this is being written.
     /// </summary>
+    /// <param name="modeName">
+    /// Overrides the human-readable name derived from <see cref="FrameQuality.Mode"/>. ARDOP
+    /// uses it to name the frame type — "ARDOP ConReq500M" rather than a column of identical
+    /// "ARDOP" rows, since with ARDOP the frame type is most of what the entry says.
+    /// </param>
     internal void Record(
-        int subChannel, byte[] frame, FrameQuality quality, double? audioHz, double? rfHz)
+        int subChannel, byte[] frame, FrameQuality quality, double? audioHz, double? rfHz,
+        string? modeName = null)
     {
         // A backlog means the disk cannot keep up with the air. Dropping the newest keeps the
         // memory bounded and the loss visible, which is better than either alternative.
@@ -110,7 +116,7 @@ internal sealed class FrameLog : IAsyncDisposable
             _time.GetUtcNow(),
             subChannel,
             quality.Mode,
-            ModeNames.Display(quality.Mode),
+            modeName ?? ModeNames.Display(quality.Mode),
             string.IsNullOrWhiteSpace(source) ? null : source,
             string.IsNullOrWhiteSpace(destination) ? null : destination,
             quality.FrameBytes,
