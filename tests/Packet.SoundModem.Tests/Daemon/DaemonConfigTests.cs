@@ -184,7 +184,7 @@ public class DaemonConfigTests : IDisposable
     public void A_Correct_File_Warns_About_Nothing()
     {
         string path = WriteConfig("""
-            {"device": "null", "kissPort": 8105, "kissBind": "127.0.0.1",
+            {"device": "null", "kissPort": 8105, "bind": "127.0.0.1",
              "modems": [{"subChannel": 0, "mode": "afsk1200", "port": 8110}]}
             """);
 
@@ -220,27 +220,15 @@ public class DaemonConfigTests : IDisposable
     [InlineData("*")]
     [InlineData("0.0.0.0")]
     [InlineData("192.168.1.10")]
-    public void A_Usable_KissBind_Is_Accepted(string bind)
+    public void A_Usable_Bind_Is_Accepted(string bind)
     {
-        string path = WriteConfig($$"""{"device": "null", "kissBind": "{{bind}}"}""");
+        string path = WriteConfig($$"""{"device": "null", "bind": "{{bind}}"}""");
 
         DaemonConfig.TryLoad(path, out string error).Should().NotBeNull(error);
     }
 
     [Fact]
-    public void A_KissBind_That_Is_Not_An_Address_Is_Rejected_With_The_Alternatives()
-    {
-        string path = WriteConfig("""{"device": "null", "kissBind": "everywhere"}""");
-
-        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
-
-        config.Should().BeNull();
-        error.Should().Contain("kissBind").And.Contain("127.0.0.1").And.Contain("*");
-        ShouldGuideTheOperator(error, path);
-    }
-
-    [Fact]
-    public void A_Blank_KissBind_Stays_On_Loopback_Rather_Than_Opening_Up()
+    public void A_Blank_Bind_Stays_On_Loopback_Rather_Than_Opening_Up()
     {
         // The unsafe reading of an empty value would put an unauthenticated transmit interface
         // on every interface because somebody left a string empty.
@@ -399,6 +387,79 @@ public class DaemonConfigTests : IDisposable
 
         config.Should().BeNull();
         error.Should().Contain("modem 1 (bpsk300)").And.Contain("every modem");
+    }
+
+    [Fact]
+    public void One_Bind_Covers_Every_Listener()
+    {
+        string path = WriteConfig("""{"device": "null", "bind": "0.0.0.0"}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Bind.Should().Be("0.0.0.0");
+        config.Warnings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void The_Retired_KissBind_Is_Called_Out_Rather_Than_Silently_Ignored()
+    {
+        string path = WriteConfig("""{"device": "null", "kissBind": "0.0.0.0"}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.Bind.Should().Be("127.0.0.1", "the old key must not quietly still work");
+        config.Warnings.Should().ContainSingle().Which.Should().Contain("kissBind").And.Contain("bind");
+    }
+
+    [Fact]
+    public void The_Retired_Waterfall_Bind_Is_Called_Out_Too()
+    {
+        string path = WriteConfig("""{"device": "null", "waterfall": {"port": 8099, "bind": "*"}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.Warnings.Should().ContainSingle().Which.Should().Contain("waterfall").And.Contain("bind");
+    }
+
+    [Fact]
+    public void A_Bind_That_Is_Not_An_Address_Is_Rejected()
+    {
+        string path = WriteConfig("""{"device": "null", "bind": "everywhere"}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"bind\"").And.Contain("127.0.0.1");
+    }
+
+    [Fact]
+    public void Whether_Sideband_Was_Written_Down_Is_Distinguishable_From_The_Default()
+    {
+        // On a Flex the slice mode states the sideband, so a defaulted value is corrected
+        // silently while one written down that contradicts the radio is an error. Those two
+        // are the same value once deserialized, hence reading it back off the document.
+        string stated = WriteConfig("""{"device": "null", "sideband": "usb"}""");
+        DaemonConfig.TryLoad(stated, out _)!.SidebandWasStated.Should().BeTrue();
+
+        string defaulted = WriteConfig("""{"device": "null"}""");
+        DaemonConfig.TryLoad(defaulted, out _)!.SidebandWasStated.Should().BeFalse();
+    }
+
+    [Fact]
+    public void An_Unset_Flex_Dax_Channel_Stays_Out_Of_SmartSDRs_Way()
+    {
+        // SmartSDR grabs DAX 1 and the two contend (live finding, 2026-07-17), so the default
+        // has to be somewhere else or the order they are started in decides whether it works.
+        string path = WriteConfig("""{"device": "flex:mock", "flex": {"antenna": "ANT1"}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Flex!.DaxChannel.Should().BeNull("unset means the daemon chooses");
+        FlexConfig.DefaultHeadlessDaxChannel.Should().NotBe("1");
     }
 
     [Fact]
