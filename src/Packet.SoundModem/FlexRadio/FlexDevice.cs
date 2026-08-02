@@ -64,6 +64,18 @@ public sealed record FlexTuning
     /// <summary>Slice demod mode. Default "DIGU" (a data mode). Headless only.</summary>
     public string Mode { get; init; } = "DIGU";
 
+    /// <summary>
+    /// Transmit-filter high cut in Hz; null leaves whatever the radio already had. Headless only.
+    /// </summary>
+    /// <remarks>
+    /// The transmit filter is a <b>global, persistent</b> radio setting, not a slice one — it is
+    /// whatever last touched the radio, so a previous session's narrow filter will quietly
+    /// truncate the top of a wide band plan. Stating it at bring-up is the only way to know what
+    /// it is. Only the high cut is settable through the station API; the low cut and the receive
+    /// filter are not, so a plan needing those changed has to be set on the radio.
+    /// </remarks>
+    public int? TransmitFilterHighHz { get; init; }
+
     /// <summary>The DAX channel the client claims (both headless and attach). Default "1". A
     /// headless client sharing a box with a running SmartSDR must pick a channel SmartSDR is not
     /// using (SmartSDR grabs DAX 1) — see docs/flex-integration.md §8.</summary>
@@ -185,6 +197,7 @@ public static class FlexDevice
             Antenna = tuning.Antenna,
             SliceMode = tuning.Mode,
             DaxChannel = tuning.DaxChannel,
+            TransmitFilterHighHz = tuning.TransmitFilterHighHz,
         };
         FlexStation station = spec.Headless
             ? await FlexStation.SetUpHeadlessAsync(client, format, options, cancellation).ConfigureAwait(false)

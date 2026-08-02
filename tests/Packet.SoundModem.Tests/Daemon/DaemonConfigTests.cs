@@ -347,6 +347,61 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void A_Band_Plan_In_Rf_Terms_Loads()
+    {
+        string path = WriteConfig("""
+            {"device": "null", "captureRate": 12000, "sideband": "usb", "modems": [
+              {"subChannel": 0, "mode": "afsk300-il2pc", "rfFrequency": 7050300},
+              {"subChannel": 1, "mode": "ardop",         "rfFrequency": 7050950, "bandwidth": 500},
+              {"subChannel": 2, "mode": "bpsk300",       "rfFrequency": 7051600}
+            ]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Sideband.Should().Be("usb");
+        config.Modems[0].RfFrequency.Should().Be(7_050_300);
+        config.Modems[1].Bandwidth.Should().Be(500);
+        config.Modems.Should().AllSatisfy(m => m.Frequency.Should().BeNull(
+            "audio centres are the plan's output, not its input"));
+    }
+
+    [Fact]
+    public void Saying_It_Both_Ways_On_One_Modem_Is_Rejected()
+    {
+        string path = WriteConfig("""
+            {"device": "null", "modems": [
+              {"subChannel": 0, "mode": "bpsk300", "frequency": 1500, "rfFrequency": 7051600}
+            ]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("both").And.Contain("frequency").And.Contain("rfFrequency");
+    }
+
+    [Fact]
+    public void Mixing_Rf_Addressed_And_Audio_Addressed_Modems_Is_Rejected()
+    {
+        // The dial is shared, so a modem pinned in audio terms would sit at whatever RF the
+        // dial chosen for the others happened to put it — silently, and differently each time
+        // the plan changed.
+        string path = WriteConfig("""
+            {"device": "null", "modems": [
+              {"subChannel": 0, "mode": "afsk300-il2pc", "rfFrequency": 7050300},
+              {"subChannel": 1, "mode": "bpsk300",       "frequency": 1500}
+            ]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("modem 1 (bpsk300)").And.Contain("every modem");
+    }
+
+    [Fact]
     public void A_Missing_File_Is_Reported_As_Configuration_Not_As_A_Crash()
     {
         string path = Path.Combine(_dir, "does-not-exist.json");

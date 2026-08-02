@@ -47,6 +47,22 @@ public sealed class ModemConfig
     /// </remarks>
     public int? Port { get; set; }
 
+    /// <summary>
+    /// Where this modem sits on the band, in absolute Hz (7051600 for 7051.6 kHz). Mutually
+    /// exclusive with <see cref="Frequency"/>: state a band plan in RF terms and the daemon
+    /// works out the dial and every modem's audio centre from it, rather than you doing that
+    /// arithmetic and it being silently wrong when the dial moves.
+    /// </summary>
+    public double? RfFrequency { get; set; }
+
+    /// <summary>
+    /// How much room to plan for this modem, in Hz; measured from the modem itself when unset.
+    /// Meaningful mainly for <c>ardop</c>, which has no fixed width — its bandwidth is
+    /// negotiated per session, so the planner assumes the widest (2000 Hz) unless told
+    /// otherwise. Setting it also caps what ARDOP will negotiate (200/500/1000/2000).
+    /// </summary>
+    public double? Bandwidth { get; set; }
+
     /// <summary>Keys in this modem entry that the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
@@ -162,6 +178,21 @@ public sealed class DaemonConfig
     /// </summary>
     public string KissBind { get; set; } = "127.0.0.1";
 
+    /// <summary>
+    /// Which sideband the radio is set to, for turning RF frequencies into audio ones: "usb"
+    /// (RF = dial + audio, the data-mode norm) or "lsb" (RF = dial - audio).
+    /// </summary>
+    public string Sideband { get; set; } = "usb";
+
+    /// <summary>
+    /// Pins the dial instead of letting the daemon choose one — for a net frequency, or to
+    /// match another application. Only meaningful alongside <see cref="ModemConfig.RfFrequency"/>.
+    /// Unset (the default) the daemon picks a dial that centres every modem in the passband and
+    /// prints it; pinned, it is used as-is and merely checked, because you can see your radio
+    /// and the passband it checks against is only nominal.
+    /// </summary>
+    public double? DialFrequency { get; set; }
+
     /// <summary>The logical modems sharing the audio channel.</summary>
     public List<ModemConfig> Modems { get; set; } = [];
 
@@ -241,6 +272,30 @@ public sealed class DaemonConfig
             throw new InvalidDataException(
                 $"two modems share \"subChannel\": {duplicates[0].Key}. Each modem needs its own "
                 + "KISS sub-channel (0-15) — renumber one of them.");
+        }
+
+        ModemConfig? bothWays = config.Modems.FirstOrDefault(
+            m => m.RfFrequency is not null && m.Frequency is not null);
+        if (bothWays is not null)
+        {
+            throw new InvalidDataException(
+                $"modem {bothWays.SubChannel} sets both \"frequency\" ({bothWays.Frequency}) and "
+                + $"\"rfFrequency\" ({bothWays.RfFrequency}). Those say the same thing two ways — "
+                + "\"frequency\" is an audio offset, \"rfFrequency\" is a place on the band. Keep one.");
+        }
+
+        // A band plan is all-or-nothing: the dial is shared, so a modem pinned in audio terms
+        // would drift across the band as the dial is chosen for the others.
+        var rfAddressed = config.Modems.Where(m => m.RfFrequency is not null).ToList();
+        if (rfAddressed.Count > 0 && rfAddressed.Count != config.Modems.Count)
+        {
+            string audioOnly = string.Join(", ", config.Modems
+                .Where(m => m.RfFrequency is null)
+                .Select(m => $"modem {m.SubChannel} ({m.Mode})"));
+            throw new InvalidDataException(
+                $"some modems have \"rfFrequency\" and some do not ({audioOnly}). Give every modem "
+                + "an \"rfFrequency\" or none of them: the dial is shared, so one pinned to an audio "
+                + "offset would sit at whatever RF the dial chosen for the others happens to put it.");
         }
 
         if (ParseBind(config.KissBind) is null)

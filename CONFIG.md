@@ -33,6 +33,8 @@ with `su -` and drop the prefix.)
 | `captureRate` | int | `48000` | ALSA capture/playback rate in Hz — [below](#capturerate) |
 | `kissPort` | int | `8105` | Shared KISS-over-TCP port, all modems by nibble — [below](#kissport-and-kissbind) |
 | `kissBind` | string | `"127.0.0.1"` | Address the KISS listeners bind to; `"*"` for all |
+| `sideband` | string | `"usb"` | Which sideband the radio is on — [below](#band-plans-in-rf-terms) |
+| `dialFrequency` | number | *(computed)* | Pin the dial instead of letting the daemon choose — [below](#band-plans-in-rf-terms) |
 | `modems` | array | one `afsk1200` on sub-channel 0 | The modems sharing the channel — [below](#modems) |
 | `ptt` | object | *(none — VOX)* | How the radio is keyed — [below](#ptt) |
 | `waterfall` | object | *(disabled)* | Browser spectrum/waterfall page — [below](#waterfall) |
@@ -152,6 +154,8 @@ This is the QtSoundModem multiplex model — your host software picks a modem by
 | `subChannel` | int | `0` | KISS port nibble, 0–15. Must be unique — duplicates are rejected at start-up |
 | `mode` | string | `"afsk1200"` | See [docs/modes.md](docs/modes.md) for all 38 modes, plus `ardop` — [below](#ardop) |
 | `frequency` | number | mode default | Audio centre in Hz, TX **and** RX |
+| `rfFrequency` | number | *(none)* | Where on the band it sits, in absolute Hz — [below](#band-plans-in-rf-terms) |
+| `bandwidth` | number | measured | How much room to plan for; mainly for `ardop` — [below](#band-plans-in-rf-terms) |
 | `offsetPairs` | int | `4` | Diversity-bank modes only |
 | `offsetStepHz` | number | baud/40 | Diversity-bank modes only |
 | `port` | int | *(none)* | A TCP port carrying this modem alone — KISS, or the ardopcf host interface for `ardop` — [below](#a-port-per-modem) |
@@ -182,6 +186,98 @@ off-frequency peer. `offsetPairs` is the number of branches *either side* of cen
 
 More branches widen coverage at a linear CPU cost. `"offsetPairs": 0` gives a plain single
 centred modem. Both are ignored by non-bank modes.
+
+## Band plans in RF terms
+
+Audio centres are an awkward way to describe a band plan: you think in "BPSK300 at 7051.6", not
+"1600 Hz with the dial on 7050.0", and the moment the dial moves every number is wrong. Give the
+daemon `rfFrequency` instead and it works the dial out for you:
+
+```json
+"sideband": "usb",
+"modems": [
+  { "subChannel": 0, "mode": "afsk300-il2pc", "rfFrequency": 7050300 },
+  { "subChannel": 1, "mode": "ardop",         "rfFrequency": 7050950, "bandwidth": 500 },
+  { "subChannel": 2, "mode": "bpsk300",       "rfFrequency": 7051600 }
+]
+```
+
+At start-up it tells you what to set:
+
+```
+dial: 7.049450 MHz USB — set your radio to this
+  modem 0 afsk300-il2pc at 7.050300 MHz = 850 Hz audio
+  modem 1 ardop at 7.050950 MHz = 1500 Hz audio
+  modem 2 bpsk300 at 7.051600 MHz = 2150 Hz audio
+```
+
+**It picks a better dial than you would by hand.** The obvious round number for that plan is
+7050.000, giving a tidy-looking 300/950/1600 Hz — but `afsk300` then occupies 150–450 Hz, half of
+it below where an SSB filter starts. The daemon centres the whole ensemble in the passband
+instead, which is how 7.049450 falls out.
+
+`sideband` is `"usb"` (RF = dial + audio, the data-mode norm) or `"lsb"` (RF = dial − audio).
+
+**Bandwidths are measured, not assumed.** Each modem is asked to modulate a probe frame and the
+occupied width is metered off it — the same measurement the waterfall draws its overlays from, so
+the two can never disagree. `ardop` is the exception: its bandwidth is negotiated per session, so
+the planner assumes the widest (2000 Hz) unless `bandwidth` says otherwise. Setting it also caps
+what ARDOP negotiates (200/500/1000/2000), which is worth doing — it reclaims the room the
+planner would otherwise reserve.
+
+### Rules
+
+- **All or nothing.** Either every modem has an `rfFrequency` or none does. The dial is shared,
+  so a modem pinned to an audio offset would sit at whatever RF the dial chosen for the others
+  happened to put it.
+- **One or the other.** A modem cannot set both `frequency` and `rfFrequency`; they say the same
+  thing two ways.
+- **No dial, no start.** If the modems are spread wider than one SSB passband can carry, the
+  daemon says so — naming the span and the modems — rather than starting something that cannot
+  work. Nothing else can be done about it: that is a second-radio problem.
+
+### Pinning the dial
+
+Set `dialFrequency` for a net frequency, or to match another application, and it is used as-is:
+
+```json
+"dialFrequency": 7050000,
+"sideband": "usb"
+```
+
+A pinned dial that puts a modem outside the nominal 300–2700 Hz passband **warns and starts**
+rather than refusing — that figure is nominal, the daemon cannot see your rig's filter, and you
+asked for this dial. Omit `dialFrequency` and it will be chosen to fit.
+
+The waterfall inherits the computed dial and sideband, so its RF scale is right without being
+told twice.
+
+### On a FlexRadio, it just does it
+
+For a headless `flex:` device the daemon owns the radio, so rather than telling you the dial it
+**sets** it — the slice goes to the computed frequency, and the transmit filter's high cut is
+opened to clear the highest modem:
+
+```
+dial: 7.049450 MHz USB
+  modem 0 afsk300-il2pc at 7.050300 MHz = 850 Hz audio
+  modem 1 ardop at 7.050950 MHz = 1500 Hz audio
+  modem 2 bpsk300 at 7.051600 MHz = 2150 Hz audio
+flex: setting the slice to 7.049450 MHz and the transmit filter high cut to 2550 Hz from the band plan
+```
+
+That matters because **the transmit filter is a global, persistent radio setting** — whatever
+last touched the radio. A 300 Hz CW filter left over from another session would quietly truncate
+the top of a band plan, and nothing would say so.
+
+**Only the high cut can be set from here.** The transmit filter's *low* cut and the slice's
+*receive* filter are not exposed by the station API, so they stay as the radio has them. The
+daemon reads the transmit filter back at bring-up and warns, per modem, if the plan falls outside
+what the radio will actually pass — so a modem sitting below the low cut is reported rather than
+silently transmitting nothing. Widening that is a job for the radio.
+
+In attach mode (`@station`) none of this happens: SmartSDR owns the slice, and the daemon would
+only be fighting it.
 
 ## `ptt`
 
