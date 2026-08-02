@@ -15,6 +15,33 @@ from the [latest release](https://github.com/packet-net/pdn-soundmodem/releases/
 follow **[INSTALL.md](INSTALL.md)**. Every configuration setting is documented in
 **[CONFIG.md](CONFIG.md)**.
 
+## Quick Start
+
+Packaged for Debian / Ubuntu, amd64, arm64, armhf. Probably will work on Pi OS.
+
+Install / update:
+
+```
+wget -qO- https://api.github.com/repos/packet-net/pdn-soundmodem/releases/latest | grep -o "https://github.com/[^\"]*_$(dpkg --print-architecture)\.deb" | xargs -I{} sh -c 'wget -qO /tmp/pdn-soundmodem.deb "{}" && { command -v sudo >/dev/null 2>&1 && sudo apt install -y /tmp/pdn-soundmodem.deb || su -c "apt install -y /tmp/pdn-soundmodem.deb"; }'
+```
+
+Then, edit `/etc/pdn-soundmodem/soundmodem.json`, minimal RX example using an UberSDR websdr:
+
+```
+{
+  "device": "ubersdr:m9psy-1.instance.ubersdr.org",
+  "modems": [
+    { "subChannel": 0, "mode": "afsk300-il2pc",           "rfFrequency": 7050300, "port": 8101 },
+    { "subChannel": 1, "mode": "ardop", "bandwidth": 500, "rfFrequency": 7050950, "port": 8200 },
+    { "subChannel": 2, "mode": "bpsk300",                 "rfFrequency": 7051600, "port": 8102 }
+  ],
+  "waterfall": { "port": 8099 },
+  "bind": "0.0.0.0"
+}
+```
+
+Then, `systemctl restart pdn-soundmodem`
+
 ## Status
 
 All planned modem families are implemented and bench-proven. **The complete mode table —
