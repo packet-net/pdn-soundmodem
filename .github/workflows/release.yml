@@ -90,8 +90,15 @@ jobs:
             echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Restore past the HTTP cache. This runner is self-hosted and keeps its NuGet cache
+      # between jobs forever, so a dependency published minutes ago is invisible to it while
+      # nuget.org already serves the package — which is every release that bumps a dependency
+      # we just cut. An ephemeral runner never sees this; ours would see it every time.
+      - name: Restore (bypassing the NuGet HTTP cache)
+        run: dotnet restore --no-http-cache
+
       - name: Test
-        run: dotnet test --configuration Release -- --filter-not-trait "Category=Aspiration"
+        run: dotnet test --configuration Release --no-restore -- --filter-not-trait "Category=Aspiration"
 
       - name: Pack NuGet package
         run: |
