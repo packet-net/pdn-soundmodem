@@ -115,8 +115,12 @@ public sealed class ArdopConfig
 /// docs/flex-integration.md §8.</summary>
 public sealed class FlexConfig
 {
-    /// <summary>Slice frequency (MHz, six-decimal Flex form). Default "14.100000".</summary>
-    public string Frequency { get; set; } = "14.100000";
+    /// <summary>
+    /// Slice frequency (MHz, six-decimal Flex form). Null takes the default, and a band plan
+    /// supersedes it entirely — with <c>rfFrequency</c> modems the dial is computed, so setting
+    /// this as well says two different things.
+    /// </summary>
+    public string? Frequency { get; set; }
 
     /// <summary>RX/TX antenna. Default "ANT1".</summary>
     public string Antenna { get; set; } = "ANT1";
@@ -124,10 +128,20 @@ public sealed class FlexConfig
     /// <summary>Slice demod mode. Default "DIGU".</summary>
     public string Mode { get; set; } = "DIGU";
 
-    /// <summary>The DAX channel the client claims (both headless and attach). Default "1". Set a
-    /// different channel to coexist with a running SmartSDR (which grabs DAX 1) — see
-    /// docs/flex-integration.md §8.</summary>
-    public string DaxChannel { get; set; } = "1";
+    /// <summary>
+    /// The DAX channel the client claims, on both the headless and attach paths. Unset, a
+    /// headless client takes <see cref="DefaultHeadlessDaxChannel"/> so that it coexists with
+    /// SmartSDR without being told to.
+    /// </summary>
+    /// <remarks>
+    /// A running SmartSDR grabs DAX channel 1 and the two contend (live finding, 2026-07-17 —
+    /// docs/flex-integration.md §8). Defaulting elsewhere means the order the two are started in
+    /// stops mattering, which is the whole problem with picking 1 and hoping.
+    /// </remarks>
+    public string? DaxChannel { get; set; }
+
+    /// <summary>Out of SmartSDR's way, and valid on every 6000-series model (a 6500 has four).</summary>
+    public const string DefaultHeadlessDaxChannel = "2";
 }
 
 /// <summary>Browser waterfall endpoint (spectrum + waterfall + per-frame burst
@@ -136,9 +150,6 @@ public sealed class WaterfallConfig
 {
     /// <summary>HTTP listen port.</summary>
     public int Port { get; set; } = 8107;
-
-    /// <summary>Bind address; "*" listens on all interfaces (default loopback only).</summary>
-    public string Bind { get; set; } = "127.0.0.1";
 
     /// <summary>Rig dial frequency in Hz, the page's opening default (each browser can
     /// retune its own copy). 0 = unset: audio frequencies only until the operator enters
@@ -153,6 +164,10 @@ public sealed class WaterfallConfig
 
     /// <summary>FFT length override; 0 = the rate default (2048 at 12 kHz, 8192 at 48 kHz).</summary>
     public int FftSize { get; set; }
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
 /// <summary>pdn-soundmodem daemon configuration file. JSON, with comments and trailing
@@ -172,17 +187,29 @@ public sealed class DaemonConfig
     public int KissPort { get; set; } = 8105;
 
     /// <summary>
-    /// Address the KISS listeners bind to; "*" for all interfaces. Loopback by default, because
-    /// KISS has no authentication whatsoever — anything that can reach the port can transmit on
-    /// your licence. Applies to the shared port and every per-modem port.
+    /// Address every TCP listener binds to — KISS, the per-modem ports, the waterfall, paging
+    /// and ARDOP alike; "*" or "0.0.0.0" for all interfaces. One setting rather than one per
+    /// service: they are all on the same machine facing the same network.
     /// </summary>
-    public string KissBind { get; set; } = "127.0.0.1";
+    /// <remarks>
+    /// Loopback by default because KISS has no authentication whatsoever — anything that can
+    /// reach the port can transmit on your licence.
+    /// </remarks>
+    public string Bind { get; set; } = "127.0.0.1";
 
     /// <summary>
     /// Which sideband the radio is set to, for turning RF frequencies into audio ones: "usb"
     /// (RF = dial + audio, the data-mode norm) or "lsb" (RF = dial - audio).
     /// </summary>
     public string Sideband { get; set; } = "usb";
+
+    /// <summary>
+    /// Whether the file actually said "sideband", as opposed to taking the default. On a Flex
+    /// the slice mode states the sideband, so a value that was merely defaulted is silently
+    /// corrected while one that was written down and contradicts the radio is an error.
+    /// </summary>
+    [JsonIgnore]
+    public bool SidebandWasStated { get; private set; }
 
     /// <summary>
     /// Pins the dial instead of letting the daemon choose one — for a net frequency, or to
@@ -298,13 +325,14 @@ public sealed class DaemonConfig
                 + "offset would sit at whatever RF the dial chosen for the others happens to put it.");
         }
 
-        if (ParseBind(config.KissBind) is null)
+        if (ParseBind(config.Bind) is null)
         {
             throw new InvalidDataException(
-                $"\"kissBind\": \"{config.KissBind}\" is not an IP address. Use \"127.0.0.1\" for "
+                $"\"bind\": \"{config.Bind}\" is not an IP address. Use \"127.0.0.1\" for "
                 + "loopback only, \"*\" for every interface, or the address of one interface.");
         }
 
+        config.SidebandWasStated = StatesKey(path, "sideband");
         ValidatePorts(config);
         config.Warnings = CollectWarnings(config);
         return config;
@@ -316,7 +344,13 @@ public sealed class DaemonConfig
         var warnings = new List<string>();
         foreach (string key in config.UnknownSettings?.Keys ?? Enumerable.Empty<string>())
         {
-            if (key.Equals("csma", StringComparison.OrdinalIgnoreCase))
+            if (key.Equals("kissBind", StringComparison.OrdinalIgnoreCase))
+            {
+                warnings.Add(
+                    "\"kissBind\" is now just \"bind\", which every listener uses — KISS, the "
+                    + "per-modem ports, the waterfall, paging and ARDOP. The old key is being IGNORED.");
+            }
+            else if (key.Equals("csma", StringComparison.OrdinalIgnoreCase))
             {
                 // Withdrawn deliberately: TXDELAY/P/SLOTTIME/TXTAIL belong to the host, which
                 // sets them over KISS. Silently ignoring a tuned block would quietly restore
@@ -334,6 +368,16 @@ public sealed class DaemonConfig
                     $"\"{key}\" is not a setting this version knows, and is being IGNORED. Check "
                     + $"the spelling against {ConfigDocUrl}");
             }
+        }
+
+        foreach (string key in config.Waterfall?.UnknownSettings?.Keys ?? Enumerable.Empty<string>())
+        {
+            warnings.Add(
+                key.Equals("bind", StringComparison.OrdinalIgnoreCase)
+                    ? "the waterfall's own \"bind\" is gone — the top-level \"bind\" covers every "
+                      + "listener now. The old key is being IGNORED."
+                    : $"waterfall: \"{key}\" is not a setting this version knows, and is being "
+                      + $"IGNORED. Check the spelling against {ConfigDocUrl}");
         }
 
         foreach (ModemConfig modem in config.Modems)
@@ -404,6 +448,32 @@ public sealed class DaemonConfig
             Claim(config.Ardop.Port, "the ARDOP command port");
             // ardopcf's convention, not ours to move: data is always command + 1.
             Claim(config.Ardop.Port + 1, "the ARDOP data port");
+        }
+    }
+
+    /// <summary>
+    /// Whether the file names a top-level key at all, as against taking its default. Read from
+    /// the document rather than the object, because a defaulted value and a value written down
+    /// that happens to equal the default are indistinguishable once deserialized.
+    /// </summary>
+    private static bool StatesKey(string path, string key)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(
+                File.ReadAllText(path),
+                new JsonDocumentOptions
+                {
+                    CommentHandling = JsonCommentHandling.Skip,
+                    AllowTrailingCommas = true,
+                });
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.EnumerateObject().Any(
+                    p => p.Name.Equals(key, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception)
+        {
+            return false;
         }
     }
 

@@ -13,7 +13,8 @@
   // lands on "frequency" regardless of the radio's last-used band. "daxChannel" (default "1")
   // applies to both paths; sharing a box with a running SmartSDR (which grabs DAX 1) needs a
   // different channel here (or use attach mode). See docs/flex-integration.md §8.
-  // "flex": { "frequency": "14.100000", "antenna": "ANT1", "mode": "DIGU", "daxChannel": "1" },
+  // "flex": { "antenna": "ANT1" },   // mode defaults to DIGU; daxChannel defaults to 2 headless,
+  //                                  which keeps out of a running SmartSDR's way (it takes 1)
   "captureRate": 48000,
   // Modems can be placed by absolute RF frequency instead of audio centre — state the band
   // plan the way you think of it and the daemon works out the dial, tells you what to set,
@@ -51,7 +52,7 @@
   // on its burst with callsign, SNR and frequency offset. "dialFrequencyHz" presets the
   // rig dial the RF scale derives from (0 = unset; every browser can retune its own copy);
   // "sideband" is "usb" or "lsb"; "bind" "*" opens it beyond loopback.
-  // "waterfall": { "port": 8107, "bind": "127.0.0.1", "dialFrequencyHz": 14105000, "sideband": "usb" },
+  // "waterfall": { "port": 8107, "dialFrequencyHz": 14105000, "sideband": "usb" },
   // POCSAG paging endpoint (optional; DAPNET/POCSAG-compatible waveform, local paging
   // API — line-based TCP: "PAGE <ric> <function> ALPHA|NUMERIC|TONE [text]").
   // "paging": { "port": 8106, "baud": 1200, "invertPolarity": false },
@@ -68,5 +69,7 @@
   // host, which sets it at runtime with the KISS parameter commands 0x01-0x04. Until a host
   // does, the defaults are 300 ms / 63 / 100 ms / 20 ms. `--txdelay MS` overrides the TXDELAY
   // default for bench runs with no host attached.
-  "kissBind": "127.0.0.1"
+  // One bind for every listener: KISS, the per-modem ports, the waterfall, paging and ARDOP.
+  // Loopback unless you say otherwise — KISS has no authentication.
+  "bind": "127.0.0.1"
 }

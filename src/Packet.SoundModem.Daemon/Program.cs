@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using M0LTE.Radio.Audio;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
@@ -13,7 +15,7 @@ using Packet.SoundModem.Ms110d;
 //
 //   pdn-soundmodem [--config soundmodem.json]
 //   pdn-soundmodem [--device default] [--capture-rate 48000] [--kiss 8105]
-//                  [--kiss-bind 127.0.0.1|*]
+//                  [--bind 127.0.0.1|*]
 //                  [--modem N:MODE[:FREQ]]... [--ptt serial:/dev/ttyUSB0[:rts|:dtr]]
 //                  [--ptt cm108:/dev/hidraw0[:gpio]]
 //                  [--txdelay MS] [--wav FILE] [--wav-loop FILE] [--quality-frames]
@@ -103,8 +105,9 @@ using Packet.SoundModem.Ms110d;
 string device = "default";
 int captureRate = 48000;
 int kissPort = 8105;
-string kissBind = "127.0.0.1";
+string bindAddress = "127.0.0.1";
 string sideband = "usb";
+bool sidebandWasStated = false;
 double? dialFrequency = null;
 // 300 ms is a RADIO allowance, not a modem requirement — the modems themselves acquire
 // from 0-20 ms TXDELAY in every mode (150 ms for qpsk2400 facing a NinoTNC), measured and
@@ -148,7 +151,7 @@ for (int i = 0; i < args.Length; i++)
         case "--device": device = Next(); break;
         case "--capture-rate": captureRate = int.Parse(Next()); break;
         case "--kiss": kissPort = int.Parse(Next()); break;
-        case "--kiss-bind": kissBind = Next(); break;
+        case "--bind": bindAddress = Next(); break;
         case "--modem": modemSpecs.Add(Next()); break;
         case "--ptt": pttSpec = Next(); break;
         case "--txdelay": txDelay = int.Parse(Next()); break;
@@ -199,8 +202,9 @@ if (configPath is not null)
     device = config.Device;
     captureRate = config.CaptureRate;
     kissPort = config.KissPort;
-    kissBind = config.KissBind;
+    bindAddress = config.Bind;
     sideband = config.Sideband;
+    sidebandWasStated = config.SidebandWasStated;
     dialFrequency = config.DialFrequency;
     modems = config.Modems;
     pttConfig = config.Ptt;
@@ -237,7 +241,13 @@ var flexTuning = new FlexTuning
     Frequency = flexFreq ?? flexConfig?.Frequency ?? "14.100000",
     Antenna = flexAnt ?? flexConfig?.Antenna ?? "ANT1",
     Mode = flexMode ?? flexConfig?.Mode ?? "DIGU",
-    DaxChannel = flexDaxCh ?? flexConfig?.DaxChannel ?? "1",
+    // Unset, a headless client stays off DAX 1: SmartSDR takes that one and the two contend,
+    // so defaulting elsewhere makes the order they are started in stop mattering. Attach mode
+    // is SmartSDR's slice by definition, so it keeps 1.
+    DaxChannel = flexDaxCh ?? flexConfig?.DaxChannel
+        ?? (FlexDevice.IsFlex(device) && FlexDevice.Parse(device).Headless
+            ? FlexConfig.DefaultHeadlessDaxChannel
+            : "1"),
 };
 
 if (pagingSpec is not null)
@@ -264,6 +274,34 @@ foreach (string spec in modemSpecs)
 // ARDOP now shares the channel with the packet modems instead of excluding them: it is a
 // modem entry like any other, and an ARQ session holds packet transmissions off the air
 // through the channel's TransmitInhibit rather than through a config-level ban.
+// On a Flex the slice mode states the sideband, so it is not something to be configured
+// separately and disagreed with: DIGL alongside the default "usb" would mirror every modem
+// about the dial and say nothing.
+if (FlexDevice.IsFlex(device) && FlexDevice.Parse(device).Headless)
+{
+    string? impliedSideband = flexTuning.Mode.ToUpperInvariant() switch
+    {
+        "DIGU" or "USB" => "usb",
+        "DIGL" or "LSB" => "lsb",
+        _ => null,
+    };
+
+    if (impliedSideband is not null)
+    {
+        bool statedExplicitly = sidebandWasStated;
+        if (statedExplicitly && !string.Equals(sideband, impliedSideband, StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine(
+                $"\"sideband\": \"{sideband}\" contradicts the Flex slice mode {flexTuning.Mode}, "
+                + $"which is {impliedSideband.ToUpperInvariant()}. Every modem would land mirrored "
+                + "about the dial. Drop \"sideband\" — the slice mode already says which it is.");
+            return 2;
+        }
+
+        sideband = impliedSideband;
+    }
+}
+
 ModemConfig? ardopModem = modems.FirstOrDefault(m => DaemonConfig.IsArdop(m.Mode));
 if (ardopModem is not null && ardopPort is not null)
 {
@@ -342,6 +380,17 @@ if (bandPlan is not null)
     // previous session's narrow filter silently truncates the top of the band.
     if (flexWillTune)
     {
+        // Overwriting a stated slice frequency without a word would leave someone upgrading a
+        // working Flex config with a number that has quietly stopped meaning anything.
+        if (flexConfig?.Frequency is not null || flexFreq is not null)
+        {
+            Console.Error.WriteLine(
+                $"flex: WARNING — the slice frequency you set ({flexFreq ?? flexConfig!.Frequency}) "
+                + "is superseded by the band plan, which computed "
+                + $"{RfPlan.Mhz(bandPlan.DialHz)}. Remove it, or remove the modems' "
+                + "\"rfFrequency\" if you meant to place them by audio centre.");
+        }
+
         int filterHigh = BandPlanner.TransmitFilterHighHz(bandPlan);
         flexTuning = flexTuning with
         {
@@ -478,8 +527,22 @@ if (waterfallConfig is not null)
             LinesPerSecond = waterfallConfig.LinesPerSecond,
             FftSize = waterfallConfig.FftSize,
         },
-        waterfallConfig.Bind);
-    waterfallServer.Start();
+        // One bind for every listener; the waterfall no longer carries its own.
+        bindAddress);
+    try
+    {
+        waterfallServer.Start();
+    }
+    catch (Exception e) when (e is HttpListenerException or SocketException)
+    {
+        Console.Error.WriteLine(
+            $"cannot serve the waterfall on {bindAddress}:{waterfallConfig.Port}\n"
+            + $"  {e.Message}\n"
+            + "  Set by \"waterfall\".\"port\" and the top-level \"bind\". Another process may\n"
+            + "  already hold the port; \"*\" or \"0.0.0.0\" serves every interface.");
+        return 2;
+    }
+
     Console.WriteLine($"waterfall: {waterfallServer.Url}");
 }
 
@@ -514,6 +577,9 @@ if (pttSpec is not null)
     }
 }
 
+// One bind for every listener — KISS, per-modem ports, waterfall, paging and ARDOP.
+System.Net.IPAddress listenAddress = DaemonConfig.ParseBind(bindAddress)!;
+
 using var cancellation = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
 {
@@ -522,13 +588,16 @@ Console.CancelKeyPress += (_, e) =>
 };
 
 var kissServers = new List<KissTcpServer>();
-if (ardopPort is null)
+// KISS serves the packet modems, so it starts whenever there are any — ARDOP sharing the
+// channel is no longer a reason to withhold it. (It was, when an ARDOP channel carried nothing
+// else; gating on the old top-level "ardop" setting would now silently leave the packet modems
+// with no host interface at all.)
+if (modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
 {
-    System.Net.IPAddress kissAddress = DaemonConfig.ParseBind(kissBind)!;
-    string shown = Equals(kissAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : kissAddress.ToString();
+    string shown = Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString();
 
     // The shared port: every modem, addressed by nibble (the QtSoundModem multiplex model).
-    var shared = new KissTcpServer(channel, kissPort, kissAddress);
+    var shared = new KissTcpServer(channel, kissPort, listenAddress);
     shared.EmitQualityFrames = qualityFrames;
     shared.Start();
     kissServers.Add(shared);
@@ -546,7 +615,7 @@ if (ardopPort is null)
                  .Where(m => m.Port is not null && !DaemonConfig.IsArdop(m.Mode)))
     {
         var dedicated = new KissTcpServer(
-            channel, modemConfig.Port!.Value, kissAddress, subChannel: modemConfig.SubChannel);
+            channel, modemConfig.Port!.Value, listenAddress, subChannel: modemConfig.SubChannel);
         dedicated.EmitQualityFrames = qualityFrames;
         dedicated.Start();
         kissServers.Add(dedicated);
@@ -555,7 +624,7 @@ if (ardopPort is null)
             + $"{modemConfig.Mode} only, as nibble 0)");
     }
 
-    if (!Equals(kissAddress, System.Net.IPAddress.Loopback))
+    if (!Equals(listenAddress, System.Net.IPAddress.Loopback))
     {
         Console.WriteLine(
             "kiss: WARNING — listening beyond loopback. KISS has no authentication: anything "
@@ -608,10 +677,11 @@ if (ardopModem is not null)
     channel.TransmitInhibit = () => ardopEngine.IsConnected || ardopEngine.IsPending;
 
     int ardopCommandPort = ardopModem.Port ?? 8515;
-    ardopServer = new M0LTE.Ardop.Host.ArdopHostServer(ardopTnc, ardopCommandPort, ownsTnc: true);
+    ardopServer = new M0LTE.Ardop.Host.ArdopHostServer(
+        ardopTnc, ardopCommandPort, listenAddress, ownsTnc: true);
     ardopServer.Start();
     Console.WriteLine(
-        $"ardop host tcp: 127.0.0.1:{ardopServer.LocalCommandPort} (data {ardopServer.LocalDataPort}, "
+        $"ardop host tcp: {(Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString())}:{ardopServer.LocalCommandPort} (data {ardopServer.LocalDataPort}, "
         + $"ardopcf-compatible virtual TNC, modem {ardopModem.SubChannel}{ardopShift.Describe()})");
 }
 await using var ardopLifetime = ardopServer;
@@ -622,9 +692,10 @@ if (paging is not null)
     var polarity = paging.InvertPolarity
         ? M0LTE.Pocsag.PocsagPolarity.Inverted
         : M0LTE.Pocsag.PocsagPolarity.Normal;
-    pagingServer = new Packet.SoundModem.Pocsag.PagingTcpServer(channel, paging.Port, paging.Baud, polarity);
+    pagingServer = new Packet.SoundModem.Pocsag.PagingTcpServer(
+        channel, paging.Port, paging.Baud, polarity, listenAddress);
     pagingServer.Start();
-    Console.WriteLine($"paging tcp: 127.0.0.1:{pagingServer.LocalPort} ({pagingServer.Mode}, DAPNET/POCSAG-compatible)");
+    Console.WriteLine($"paging tcp: {(Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString())}:{pagingServer.LocalPort} ({pagingServer.Mode}, DAPNET/POCSAG-compatible)");
 }
 await using var pagingLifetime = pagingServer;
 

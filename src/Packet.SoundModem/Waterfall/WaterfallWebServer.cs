@@ -83,8 +83,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _options = options ?? new WaterfallOptions();
         Port = port;
         _listener = new HttpListener();
-        _listener.Prefixes.Add($"http://{(bind == "*" ? "+" : bind)}:{port}/");
-        Url = $"http://{(bind == "*" ? "127.0.0.1" : bind)}:{port}/";
+        // HttpListener wants "+" for "every interface" and rejects the literal 0.0.0.0 that a
+        // TcpListener is perfectly happy with — the daemon uses one bind setting for both, so
+        // translate here rather than make the operator know which listener wants which spelling.
+        bool everyInterface = bind is "*" or "0.0.0.0" or "::" or "[::]";
+        _listener.Prefixes.Add($"http://{(everyInterface ? "+" : bind)}:{port}/");
+        Url = $"http://{(everyInterface ? "127.0.0.1" : bind)}:{port}/";
     }
 
     /// <summary>The listen port.</summary>

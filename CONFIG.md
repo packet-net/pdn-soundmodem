@@ -32,7 +32,7 @@ with `su -` and drop the prefix.)
 | `device` | string | `"default"` | Sound device (or FlexRadio) — [below](#device) |
 | `captureRate` | int | `48000` | ALSA capture/playback rate in Hz — [below](#capturerate) |
 | `kissPort` | int | `8105` | Shared KISS-over-TCP port, all modems by nibble — [below](#kissport-and-kissbind) |
-| `kissBind` | string | `"127.0.0.1"` | Address the KISS listeners bind to; `"*"` for all |
+| `bind` | string | `"127.0.0.1"` | Address **every** listener binds to; `"*"` or `"0.0.0.0"` for all |
 | `sideband` | string | `"usb"` | Which sideband the radio is on — [below](#band-plans-in-rf-terms) |
 | `dialFrequency` | number | *(computed)* | Pin the dial instead of letting the daemon choose — [below](#band-plans-in-rf-terms) |
 | `modems` | array | one `afsk1200` on sub-channel 0 | The modems sharing the channel — [below](#modems) |
@@ -92,16 +92,19 @@ need, so the card's native rate is the right answer — 48000 for essentially al
 Mixing families is fine: if *any* configured mode needs 48 kHz, the whole channel runs at
 48 kHz. Ignored entirely for `flex:` devices, which supply their own DAX sample clock.
 
-## `kissPort` and `kissBind`
+## `kissPort` and `bind`
 
 ```json
 "kissPort": 8105,
-"kissBind": "127.0.0.1"
+"bind": "127.0.0.1"
 ```
 
 `kissPort` is the **shared** port: every modem is reachable on it, selected by the KISS port
-nibble — the QtSoundModem multiplex model, and what Direwolf does on 8001. `kissBind` is the
-address every KISS listener binds to; `"*"` opens it to all interfaces.
+nibble — the QtSoundModem multiplex model, and what Direwolf does on 8001.
+
+`bind` is the address **every** listener uses — the shared KISS port, the per-modem ports, the
+waterfall, paging and ARDOP alike. One setting rather than one per service: they are all on the
+same machine facing the same network. `"*"` or `"0.0.0.0"` opens them to all interfaces.
 
 > **KISS has no authentication of any kind.** Anything that can reach the port can key your
 > transmitter. It stays on loopback unless you deliberately change it, and the daemon prints a
@@ -337,21 +340,21 @@ decoded frame tagged on its burst with callsign, SNR and frequency offset. Genui
 for confirming you are hearing the band at a sane level before trusting the decoder.
 
 ```json
-"waterfall": { "port": 8107, "bind": "127.0.0.1", "dialFrequencyHz": 14105000, "sideband": "usb" }
+"waterfall": { "port": 8107, "dialFrequencyHz": 14105000, "sideband": "usb" }
 ```
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `port` | int | `8107` | HTTP listen port |
-| `bind` | string | `"127.0.0.1"` | `"*"` listens on all interfaces |
 | `dialFrequencyHz` | number | `0` | Rig dial the RF scale derives from; 0 = audio frequencies only |
 | `sideband` | string | `"usb"` | `"usb"` (RF = dial + audio) or `"lsb"` (RF = dial − audio) |
 | `linesPerSecond` | int | `30` | Waterfall line / display frame rate |
 | `fftSize` | int | `0` | 0 = rate default (2048 at 12 kHz, 8192 at 48 kHz) |
 
 Omit the section to disable it. `dialFrequencyHz` is only the page's opening default — each
-browser can retune its own copy. **`"bind": "*"` serves the page to anyone who can reach the
-box**; there is no authentication, so keep it on loopback or behind a reverse proxy or VPN.
+browser can retune its own copy, and it is inherited from a band plan when there is one. The
+waterfall binds to the top-level [`bind`](#kissport-and-bind) like everything else; there is no
+authentication, so opening it beyond loopback means a reverse proxy or VPN.
 
 ## `paging`
 
@@ -437,14 +440,29 @@ the slice.
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `frequency` | string | `"14.100000"` | MHz, six-decimal Flex form — a **string**, not a number |
+| `frequency` | string | `"14.100000"` | MHz, six-decimal Flex form — a **string**, not a number. Superseded by a band plan |
 | `antenna` | string | `"ANT1"` | RX/TX antenna |
 | `mode` | string | `"DIGU"` | Slice demod mode |
-| `daxChannel` | string | `"1"` | DAX channel to claim; applies to headless **and** attach |
+| `daxChannel` | string | `"2"` headless, `"1"` attach | DAX channel to claim — [below](#coexisting-with-smartsdr) |
 
-Sharing a box with a running SmartSDR means picking a `daxChannel` it is not using — SmartSDR
-grabs DAX 1. The headless path disables band persistence and explicitly tunes the slice, so it
-lands on `frequency` regardless of the radio's last-used band.
+The headless path disables band persistence and explicitly tunes the slice, so it lands on the
+requested frequency regardless of the radio's last-used band.
+
+**The slice mode states the sideband**, so do not also set `sideband`: `DIGU` is USB, `DIGL` is
+LSB, and the daemon takes it from the slice. Setting a `sideband` that contradicts the slice mode
+is rejected — silently accepting it would mirror every modem about the dial.
+
+**A band plan supersedes `frequency`.** With `rfFrequency` modems the dial is computed, so a slice
+frequency here would be saying two different things; the daemon warns and uses the plan.
+
+### Coexisting with SmartSDR
+
+A running SmartSDR grabs **DAX channel 1**, and a headless client on the same channel contends
+with it (live finding, 2026-07-17). So an unset `daxChannel` puts a *headless* client on **2** —
+which means it does not matter whether SmartSDR was started before or after the modem. Attach
+mode keeps 1, because there it is SmartSDR's slice by definition.
+
+Set `daxChannel` explicitly if you have other DAX users to work around.
 
 > **There is no IQ / raw-waveform option here, by design.** The daemon reaches a Flex over
 > **DAX audio** only: it hands real audio to the radio's own DIGU SSB modulator, so the signal
@@ -547,7 +565,7 @@ pdn-soundmodem --device plughw:1,0 --modem 0:afsk1200 --kiss 8105 --ptt serial:/
 ```
 
 **When `--config` is given, the file wins for most settings** — it overwrites `device`,
-`captureRate`, `kissPort`, `kissBind`, `ptt`, `paging`, `flex` and `waterfall`, so a
+`captureRate`, `kissPort`, `bind`, `ptt`, `paging`, `flex` and `waterfall`, so a
 `--device` passed alongside `--config` is silently discarded (`--txdelay` still applies —
 it has no config equivalent). The exceptions:
 
