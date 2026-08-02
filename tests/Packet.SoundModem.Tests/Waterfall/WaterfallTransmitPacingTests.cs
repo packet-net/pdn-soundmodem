@@ -27,6 +27,8 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
     private const int SampleRate = 12000;
     private const int LinesPerSecond = 30;
 
+    private const double CentreHz = 850;   // the 300-baud slot this station actually runs
+
     private readonly SoundModemChannel _channel = new(SampleRate, randomSeed: 7);
     private readonly WaterfallWebServer _server;
     private readonly int _port;
@@ -34,7 +36,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
 
     public WaterfallTransmitPacingTests()
     {
-        _channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        _channel.AddModem(0, sink => ModemCatalog.Create("afsk300-il2pc", SampleRate, sink, new ModemOptions(CentreFrequencyHz: CentreHz)));
         _port = FreePort();
         _server = new WaterfallWebServer(
             _channel, _port, new WaterfallOptions { LinesPerSecond = LinesPerSecond });
@@ -59,7 +61,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
 
         // A frame big enough to be over a second of AFSK1200 — long enough that "all at once"
         // and "spread over the burst" cannot be confused for one another.
-        Task transmitting = TransmitAsync(Payload(220));
+        Task transmitting = TransmitAsync(Payload(60));
 
         List<long> arrivals = await CollectTransmitLinesAsync(socket, atLeast: 25);
         await transmitting;
@@ -91,7 +93,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
     {
         using ClientWebSocket socket = await ConnectAsync();
 
-        Task transmitting = TransmitAsync(Payload(220));
+        Task transmitting = TransmitAsync(Payload(60));
         List<long> arrivals = await CollectTransmitLinesAsync(socket, atLeast: 30);
         await transmitting;
 
@@ -113,7 +115,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         using ClientWebSocket socket = await ConnectAsync();
 
         var clock = Stopwatch.StartNew();
-        await TransmitAsync(Payload(220));
+        await TransmitAsync(Payload(60));
         clock.Stop();
 
         // FakeAudioOutput drains instantly, so this is the handover cost and nothing else.
@@ -139,18 +141,31 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         // calibrated their eye to — rather than pinning a number that only holds for one modem.
         using ClientWebSocket socket = await ConnectAsync();
 
-        Task transmitting = TransmitAsync(Payload(220));
+        Task transmitting = TransmitAsync(Payload(60));
         byte[] transmitted = await NextLineAsync(socket, 0x03, skip: 5);
         await transmitting;
 
-        float[] audio = new Afsk1200Modem(SampleRate, _ => { }).Modulate(Payload(220), 20);
+        float[] audio = Modulated(Payload(60));
         for (int i = 0; i < audio.Length; i++)
         {
             audio[i] *= 0.02f;   // a strong station, well above the noise and not overloading
         }
 
-        _channel.ProcessReceive(audio);
+        // Receive audio is deliberately not drawn while our own burst is still being painted —
+        // the two must not share a transform — so it is offered repeatedly until one lands.
+        using var feeding = new CancellationTokenSource();
+        Task feed = Task.Run(async () =>
+        {
+            while (!feeding.IsCancellationRequested)
+            {
+                _channel.ProcessReceive(audio);
+                await Task.Delay(100, CancellationToken.None);
+            }
+        });
+
         byte[] received = await NextLineAsync(socket, 0x01, skip: 5);
+        await feeding.CancelAsync();
+        await feed;
 
         (int txLit, double txPeak) = Describe(transmitted);
         (int rxLit, double rxPeak) = Describe(received);
@@ -192,7 +207,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
     {
         // The property that rules out an AGC of any kind: two bursts 20 dB apart must still be
         // 20 dB apart on the display. A normaliser would draw them identically.
-        float[] loud = new Afsk1200Modem(SampleRate, _ => { }).Modulate(Payload(220), 20);
+        float[] loud = Modulated(Payload(60));
         var quiet = new float[loud.Length];
         for (int i = 0; i < loud.Length; i++)
         {
@@ -204,6 +219,120 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
 
         loudPeak.Should().BeGreaterThan(
             quietPeak + 0.1, "a quieter transmission must render as a quieter one");
+    }
+
+    [Fact]
+    public async Task Band_Noise_Is_Not_Mixed_Into_The_Burst_We_Are_Still_Painting()
+    {
+        // Receive processing is gated during a keyup, but the paced painting outlives the keyup
+        // whenever the audio device's Drain returns before the audio has actually left the radio
+        // — the normal case. Receive audio then resumes while the burst is still being drawn, and
+        // both feed the same transform, which has one accumulator: a single window ends up
+        // holding part of a burst and part of the band noise and comes out broadband. Measured
+        // before the fix: transmitted lines lighting 450-550 bins instead of ~75, with the line
+        // type alternating between the two ramps. That is the full-width haze over the back half
+        // of a keyup.
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => ModemCatalog.Create("afsk300-il2pc", SampleRate, sink, new ModemOptions(CentreFrequencyHz: CentreHz)));
+        await using var server = new WaterfallWebServer(
+            channel, FreePort(), new WaterfallOptions { LinesPerSecond = LinesPerSecond });
+        server.Start();
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{server.Url.Split(':')[^1].TrimEnd('/')}/ws"), _cancellation.Token);
+        await ReceiveAsync(socket);   // config
+
+        // Band noise, always flowing, exactly as a sound card delivers it.
+        using var noiseStop = new CancellationTokenSource();
+        var rng = new Random(3);
+        Task noise = Task.Run(async () =>
+        {
+            var block = new float[400];
+            while (!noiseStop.IsCancellationRequested)
+            {
+                for (int i = 0; i < block.Length; i++)
+                {
+                    block[i] = (float)(rng.NextDouble() - 0.5) * 0.004f;
+                }
+
+                channel.ProcessReceive(block);
+                await Task.Delay(33, CancellationToken.None);
+            }
+        });
+
+        channel.Csma.Persistence = 255;
+        channel.Csma.TxDelayMilliseconds = 200;
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        Task transmitter = channel.RunTransmitterAsync(
+            new InstantDrainOutput(SampleRate), new NullPtt(), stop.Token);
+        await channel.EnqueueTransmit(0, Payload(60)).WaitAsync(TimeSpan.FromSeconds(20));
+
+        // The defect is not a level: it is receive lines appearing among the transmitted ones,
+        // because both are feeding one transform. So that is what is asserted — no bin count,
+        // which would only be calibrated for whichever modem this test happened to pick.
+        var types = new List<byte>();
+        int transmitLines = 0;
+        var clock = Stopwatch.StartNew();
+        while (transmitLines < 20 && clock.ElapsedMilliseconds < 20_000)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await ReceiveAsync(socket);
+            if (kind != WebSocketMessageType.Binary || payload.Length <= 5)
+            {
+                continue;
+            }
+
+            if (payload[0] != 0x01 && payload[0] != 0x03)
+            {
+                continue;
+            }
+
+            if (payload[0] == 0x03)
+            {
+                transmitLines++;
+            }
+
+            types.Add(payload[0]);
+        }
+
+        await noiseStop.CancelAsync();
+        await noise;
+        await stop.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        transmitLines.Should().Be(20, "the burst must paint");
+
+        // From the first transmitted line to the last, nothing else may be drawn. Measured before
+        // the fix, the two alternated line for line — TX, RX, TX, RX — all the way through.
+        int first = types.IndexOf(0x03);
+        List<byte> duringBurst = [.. types.Skip(first)];
+
+        duringBurst.Should().AllSatisfy(
+            type => type.Should().Be(
+                (byte)0x03,
+                "receive audio must not be drawn into the burst we are still painting"));
+    }
+
+    /// <summary>
+    /// An output that buffers and returns straight away — its Drain does not wait for the air.
+    /// What a real device does, and what leaves the pacer still painting after the keyup ends.
+    /// </summary>
+    private sealed class InstantDrainOutput(int sampleRate) : IAudioOutput
+    {
+        public int SampleRate { get; } = sampleRate;
+
+        public void Write(ReadOnlySpan<float> samples)
+        {
+        }
+
+        public void Drain()
+        {
+        }
     }
 
     /// <summary>Runs audio through the transmit display scaling and one waterfall line.</summary>
@@ -259,7 +388,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         // bandwidth and placement off this line, and both must survive.
         using ClientWebSocket socket = await ConnectAsync();
 
-        Task transmitting = TransmitAsync(Payload(220));
+        Task transmitting = TransmitAsync(Payload(60));
         byte[] line = await NextLineAsync(socket, 0x03, skip: 5);
         await transmitting;
 
@@ -274,9 +403,8 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
             }
         }
 
-        // Bell 202 at the 1700 Hz default centre: the peak belongs to one of its two tones.
         (peak * binHz).Should().BeInRange(
-            1000, 2400, "the drawn signal must sit where the modem actually transmits");
+            CentreHz - 400, CentreHz + 400, "the drawn signal must sit where the modem transmits");
     }
 
     /// <summary>
@@ -284,6 +412,11 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
     /// a pure tone, which occupies a fraction of the span a real frame does — narrow enough that
     /// it passed the level assertions below even unnormalised, and so proved nothing.
     /// </summary>
+    /// <summary>The audio one frame of this mode puts on the air.</summary>
+    private static float[] Modulated(byte[] frame) =>
+        ModemCatalog.Create("afsk300-il2pc", SampleRate, _ => { },
+            new ModemOptions(CentreFrequencyHz: CentreHz)).Modulate(frame, txDelayMilliseconds: 20);
+
     private static byte[] Payload(int length)
     {
         var frame = new byte[length];
