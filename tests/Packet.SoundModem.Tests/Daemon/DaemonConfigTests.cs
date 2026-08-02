@@ -170,6 +170,102 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void A_Withdrawn_Csma_Block_Is_Called_Out_Rather_Than_Silently_Ignored()
+    {
+        // Channel access moved to the host (KISS 0x01-0x04). System.Text.Json would drop this
+        // block without a word, quietly restoring the defaults on a link somebody had tuned.
+        string path = WriteConfig("""
+            {"device": "null", "csma": {"txDelayMilliseconds": 50, "persistence": 200}}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error, "a stale csma block is a warning, not a refusal to start");
+        config!.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("csma").And.Contain("IGNORED").And.Contain("KISS");
+    }
+
+    [Fact]
+    public void An_Unknown_Setting_Is_Called_Out_So_A_Typo_Is_Not_Silent()
+    {
+        string path = WriteConfig("""{"device": "null", "modemz": []}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.Warnings.Should().ContainSingle().Which.Should().Contain("modemz");
+    }
+
+    [Fact]
+    public void A_Correct_File_Warns_About_Nothing()
+    {
+        string path = WriteConfig("""
+            {"device": "null", "kissPort": 8105, "kissBind": "127.0.0.1",
+             "modems": [{"subChannel": 0, "mode": "afsk1200", "kissPort": 8110}]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Warnings.Should().BeEmpty();
+        config.Modems[0].KissPort.Should().Be(8110);
+    }
+
+    [Theory]
+    // A modem's port against the shared one, and against another modem's.
+    [InlineData("""{"kissPort": 8105, "modems": [{"subChannel": 0, "kissPort": 8105}]}""", "8105")]
+    [InlineData("""{"modems": [{"subChannel": 0, "kissPort": 9000}, {"subChannel": 1, "kissPort": 9000}]}""", "9000")]
+    // And against the other services sharing the daemon.
+    [InlineData("""{"waterfall": {"port": 9100}, "modems": [{"subChannel": 0, "kissPort": 9100}]}""", "9100")]
+    [InlineData("""{"paging": {"port": 9200}, "modems": [{"subChannel": 0, "kissPort": 9200}]}""", "9200")]
+    // ardopcf's data port is always command+1, so a service on 8516 collides with ardop 8515.
+    [InlineData("""{"ardop": {"port": 8515}, "waterfall": {"port": 8516}}""", "8516")]
+    public void Two_Services_Wanting_The_Same_Port_Is_Rejected_By_Name(string json, string port)
+    {
+        string path = WriteConfig(json.Insert(1, "\"device\": \"null\", "));
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull("a port clash must not be left to whichever listener binds second");
+        error.Should().Contain(port).And.Contain("both want TCP port");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1")]
+    [InlineData("*")]
+    [InlineData("0.0.0.0")]
+    [InlineData("192.168.1.10")]
+    public void A_Usable_KissBind_Is_Accepted(string bind)
+    {
+        string path = WriteConfig($$"""{"device": "null", "kissBind": "{{bind}}"}""");
+
+        DaemonConfig.TryLoad(path, out string error).Should().NotBeNull(error);
+    }
+
+    [Fact]
+    public void A_KissBind_That_Is_Not_An_Address_Is_Rejected_With_The_Alternatives()
+    {
+        string path = WriteConfig("""{"device": "null", "kissBind": "everywhere"}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("kissBind").And.Contain("127.0.0.1").And.Contain("*");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void A_Blank_KissBind_Stays_On_Loopback_Rather_Than_Opening_Up()
+    {
+        // The unsafe reading of an empty value would put an unauthenticated transmit interface
+        // on every interface because somebody left a string empty.
+        DaemonConfig.ParseBind("").Should().Be(System.Net.IPAddress.Loopback);
+        DaemonConfig.ParseBind(null).Should().Be(System.Net.IPAddress.Loopback);
+        DaemonConfig.ParseBind("*").Should().Be(System.Net.IPAddress.Any);
+    }
+
+    [Fact]
     public void A_Missing_File_Is_Reported_As_Configuration_Not_As_A_Crash()
     {
         string path = Path.Combine(_dir, "does-not-exist.json");

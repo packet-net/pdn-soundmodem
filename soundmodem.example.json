@@ -15,6 +15,10 @@
   // different channel here (or use attach mode). See docs/flex-integration.md §8.
   // "flex": { "frequency": "14.100000", "antenna": "ANT1", "mode": "DIGU", "daxChannel": "1" },
   "captureRate": 48000,
+  // The shared KISS port: every modem, selected by the KISS port nibble. A modem can also be
+  // given a port to itself with "kissPort" in its entry below — that port carries only that
+  // modem, presented as nibble 0, which is what host software that hardcodes KISS channel 0
+  // needs in order to reach a modem that is not sub-channel 0.
   "kissPort": 8105,
   // "frequency" (optional) sets a modem's audio centre in Hz, QtSoundModem-style, on both
   // TX and RX — e.g. move 300 BPSK to 1459 to meet a peer sitting off the usual centre.
@@ -33,6 +37,7 @@
   "modems": [
     { "subChannel": 0, "mode": "afsk1200-multi", "frequency": 1700 },
     { "subChannel": 1, "mode": "bpsk300", "frequency": 1500, "offsetPairs": 4, "offsetStepHz": 7.5 }
+    // Add "kissPort": 8110 to an entry to give that modem a TCP port of its own.
   ],
   "ptt": { "type": "cm108", "device": "/dev/hidraw0", "gpio": 3 },
   // Browser waterfall (optional): 30 fps spectrum + waterfall at http://<bind>:<port>/,
@@ -49,10 +54,9 @@
   // channel is dedicated: "ardop" is exclusive with "modems"/"paging", and the
   // channel must run at 12 kHz ("captureRate": 12000 recommended on aloop/bench).
   // "ardop": { "port": 8515 },
-  "csma": {
-    "txDelayMilliseconds": 300,
-    "persistence": 63,
-    "slotTimeMilliseconds": 100,
-    "txTailMilliseconds": 20
-  }
+  // Channel access (TXDELAY, P, SLOTTIME, TXTAIL) is NOT configured here — it belongs to the
+  // host, which sets it at runtime with the KISS parameter commands 0x01-0x04. Until a host
+  // does, the defaults are 300 ms / 63 / 100 ms / 20 ms. `--txdelay MS` overrides the TXDELAY
+  // default for bench runs with no host attached.
+  "kissBind": "127.0.0.1"
 }
