@@ -129,6 +129,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
     }
     private WaterfallSource? _source;
+    private string? _transmitStatus;
     private byte[] _configMessage = [];
     private Task? _acceptLoop;
 
@@ -158,6 +159,27 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
     /// <summary>A URL the page is reachable at.</summary>
     public string Url { get; }
+
+    /// <summary>
+    /// What the transmitter is doing right now — forward power and SWR — or null when it is not
+    /// keyed. Shown next to the radio status and cleared on key-up.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="SetRadioStatus"/> because it changes on every keyup rather than
+    /// once in a session, and because an empty transmit status is the normal state rather than a
+    /// missing reading.
+    /// </remarks>
+    public void SetTransmitStatus(string? status)
+    {
+        if (status == _transmitStatus)
+        {
+            return;
+        }
+
+        _transmitStatus = status;
+        Broadcast(WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(
+            new { type = "tx", status }, Json));
+    }
 
     /// <summary>
     /// A line about the radio for the page's top bar — the frequency reference on a FlexRadio.

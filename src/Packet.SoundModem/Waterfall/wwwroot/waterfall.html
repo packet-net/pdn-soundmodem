@@ -34,6 +34,9 @@
   .radio-status { margin-left: 10px; padding: 1px 7px; border-radius: 9px;
                   background: rgba(255,255,255,.06); font-size: 12px; }
   .radio-status.bad { background: rgba(255,120,90,.16); color: #ff9a7a; }
+  /* Keyed, in the same cyan the waterfall draws our own transmissions in. */
+  .radio-status.tx { background: rgba(49,210,242,.16); color: #7fe3f7; }
+  .radio-status.tx.swr { background: rgba(255,120,90,.16); color: #ff9a7a; }
   .seg-btn { font: inherit; color: var(--fg); background: #1a1d22; border: 1px solid #2b3038;
              border-radius: 6px; padding: 3px 10px; cursor: pointer; }
   .seg-btn.on { background: var(--amber); color: #12141a; border-color: var(--amber); }
@@ -130,6 +133,7 @@
     <!-- The radio's frequency reference, when it has one to report. Hidden entirely rather
          than shown empty, so a soundcard station is not told about an absent oscillator. -->
     <span id="radioStatus" class="radio-status" hidden></span>
+    <span id="txStatus" class="radio-status tx" hidden></span>
   </div>
 
   <div class="ctl">
@@ -251,6 +255,18 @@ const binsInSpan = () => Math.min(cfg.lineLength, Math.round(spanHz() / cfg.binW
 const afToX = (af, w) => af / spanHz() * w;
 // The reference line reads as a warning when the radio is not running on what it was told to
 // use — that is the case an operator has to act on, and it should not look like the good one.
+// Only visible while keyed. A high SWR turns it red, because that is the one reading here an
+// operator has to stop and act on.
+function setTransmitStatus(status) {
+  const el = document.getElementById("txStatus");
+  if (!el) return;
+  if (!status) { el.hidden = true; el.textContent = ""; return; }
+  el.hidden = false;
+  el.textContent = status;
+  const swr = /SWR ([0-9.]+)/.exec(status);
+  el.classList.toggle("swr", swr !== null && parseFloat(swr[1]) >= 2.0);
+}
+
 function setRadioStatus(status) {
   const el = document.getElementById("radioStatus");
   if (!el) return;
@@ -684,6 +700,8 @@ function connect() {
         renderChips(); resizeAll(); drawRuler(); drawOverlay();
       } else if (msg.type === "radio") {
         setRadioStatus(msg.status);
+      } else if (msg.type === "tx") {
+        setTransmitStatus(msg.status);
       } else if (msg.type === "frame") {
         tagFrame(msg); logFrame(msg);
       }
