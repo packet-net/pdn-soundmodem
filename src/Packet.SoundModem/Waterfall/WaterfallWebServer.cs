@@ -371,20 +371,60 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             to = destination;
         }
 
+        BroadcastFrame(
+            subChannel, quality.Mode, from, to, quality.FrameBytes, snrDb, burstLines,
+            quality.FrequencyOffsetHz is { } offset ? Math.Round(offset, 1) : null,
+            quality.CorrectedBytes, quality.CrcValid);
+    }
+
+    /// <summary>
+    /// Reports a frame heard by a demodulator that is not one of the channel's sub-channel
+    /// modems — ARDOP, whose demodulator is inside the virtual TNC and never raises
+    /// <see cref="SoundModemChannel.FrameReceivedWithQuality"/>.
+    /// </summary>
+    /// <remarks>
+    /// Without this the panel is silently partial: the ARDOP band is drawn, its bursts paint the
+    /// waterfall, and nothing is ever listed for it. SNR comes from the caller because the
+    /// demodulator's own measurement is better than anything the band tracker can infer from a
+    /// burst that overlaps the packet slots.
+    /// </remarks>
+    public void ReportFrame(
+        int subChannel,
+        string mode,
+        string? from,
+        string? to,
+        int lengthBytes,
+        double? snrDb,
+        bool? decodedOk)
+    {
+        if (_source is null)
+        {
+            return;   // not started; nothing to attribute the frame to and nobody to tell
+        }
+
+        BroadcastFrame(
+            subChannel, mode, from, to, lengthBytes, snrDb,
+            burstLines: null, offsetHz: null, corrected: null, crc: decodedOk);
+    }
+
+    private void BroadcastFrame(
+        int subChannel, string mode, string? from, string? to, int lengthBytes,
+        double? snrDb, int? burstLines, double? offsetHz, int? corrected, bool? crc)
+    {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
         {
             type = "frame",
             line = _source!.NextLineIndex,
             sub = subChannel,
-            mode = quality.Mode,
+            mode,
             from,
             to,
-            lenBytes = quality.FrameBytes,
+            lenBytes = lengthBytes,
             snrDb,
             burstLines,
-            offsetHz = quality.FrequencyOffsetHz is { } offset ? Math.Round(offset, 1) : (double?)null,
-            corrected = quality.CorrectedBytes,
-            crc = quality.CrcValid,
+            offsetHz,
+            corrected,
+            crc,
         }, Json);
         Broadcast(WebSocketMessageType.Text, message);
     }

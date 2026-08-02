@@ -257,6 +257,55 @@ public class WaterfallWebServerTests : IAsyncLifetime
         frame.Dispose();
     }
 
+    [Fact]
+    public async Task A_Frame_From_A_Demodulator_Outside_The_Channel_Is_Listed_Like_Any_Other()
+    {
+        // ARDOP demodulates inside its virtual TNC, so its frames never raise the channel event
+        // every other modem's do. Before this the ARDOP band was drawn and its bursts painted,
+        // and the decode panel stayed empty for it forever.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        (_, _) = await Receive(socket);   // the config message
+
+        _server.ReportFrame(
+            subChannel: 2, mode: "ConReq500M", from: "M0LTE", to: "GB7RDG",
+            lengthBytes: 22, snrDb: 14.0, decodedOk: true);
+
+        JsonDocument? frame = null;
+        while (frame is null)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind == WebSocketMessageType.Text)
+            {
+                frame = JsonDocument.Parse(payload);
+            }
+        }
+
+        frame.RootElement.GetProperty("type").GetString().Should().Be("frame");
+        frame.RootElement.GetProperty("sub").GetInt32().Should().Be(2);
+        frame.RootElement.GetProperty("mode").GetString().Should()
+            .Be("ConReq500M", "with ARDOP the frame type is most of what the entry says");
+        frame.RootElement.GetProperty("from").GetString().Should().Be("M0LTE");
+        frame.RootElement.GetProperty("to").GetString().Should().Be("GB7RDG");
+        frame.RootElement.GetProperty("lenBytes").GetInt32().Should().Be(22);
+        frame.RootElement.GetProperty("snrDb").GetDouble().Should()
+            .Be(14.0, "the demodulator's own report beats anything the band tracker can infer");
+        frame.RootElement.GetProperty("crc").GetBoolean().Should().BeTrue();
+        frame.Dispose();
+    }
+
+    [Fact]
+    public async Task Reporting_A_Frame_Before_The_Server_Starts_Is_Harmless()
+    {
+        // Start order is the daemon's business, not a reason to crash a receive thread.
+        await using var unstarted = new WaterfallWebServer(
+            new SoundModemChannel(SampleRate, randomSeed: 3), FreePort());
+
+        Action report = () => unstarted.ReportFrame(2, "IDFrame", "M0LTE", null, 0, null, true);
+
+        report.Should().NotThrow();
+    }
+
     private async Task<(WebSocketMessageType Kind, byte[] Payload)> Receive(ClientWebSocket socket)
     {
         var buffer = new byte[64 * 1024];
