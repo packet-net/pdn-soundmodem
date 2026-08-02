@@ -38,6 +38,7 @@
              border-radius: 6px; padding: 3px 10px; cursor: pointer; }
   .seg-btn.on { background: var(--amber); color: #12141a; border-color: var(--amber); }
   #vol { width: 84px; }
+  #stats.tx { color: #8cd7e2; }
 
   .ctl { display: flex; flex-direction: column; gap: 2px; }
   .ctl label {
@@ -202,6 +203,8 @@ let lastBins = null;         // newest raw line (Uint8Array)
 let smooth = null;           // smoothed spectrum (Float32Array, dB)
 let peaks = null;            // decaying peak-hold (Float32Array, dB)
 let lastLineAt = 0;          // wall-clock ms of the newest line
+let lastTxAt = 0;            // wall-clock ms of the newest transmitted line
+let lineIsTx = false;        // is the line being drawn one of ours?
 let fpsCount = 0, fpsShown = 0;
 
 // Categorical identity hues for modem markers, fixed order, validated (OKLCH dark band,
@@ -222,6 +225,18 @@ for (let i = 0; i < 256; i++) {
   const x = i / 255 * (INFERNO.length - 1), a = Math.floor(x), f = x - a;
   const c0 = INFERNO[a], c1 = INFERNO[Math.min(a + 1, INFERNO.length - 1)];
   for (let k = 0; k < 3; k++) LUT[i * 3 + k] = c0[k] + (c1[k] - c0[k]) * f;
+}
+
+// Our own transmission gets its own ramp — a cyan-to-white ridge rather than inferno's
+// black-red-yellow. Identity is never colour alone: TX rows are also marked in the stats line
+// and the ruler, but a burst of your own must not look like a strong station at a glance.
+const TX_RAMP = [[6,18,26],[10,44,60],[12,74,96],[16,110,134],[26,150,172],
+                 [70,188,205],[140,215,226],[205,238,243],[255,255,255]];
+const TX_LUT = new Uint8Array(256 * 3);
+for (let i = 0; i < 256; i++) {
+  const x = i / 255 * (TX_RAMP.length - 1), a = Math.floor(x), f = x - a;
+  const c0 = TX_RAMP[a], c1 = TX_RAMP[Math.min(a + 1, TX_RAMP.length - 1)];
+  for (let k = 0; k < 3; k++) TX_LUT[i * 3 + k] = c0[k] + (c1[k] - c0[k]) * f;
 }
 
 /* ---------- byte <-> dB (must match WaterfallSource: 0 => -100 dBFS, 255 => 0) ---------- */
@@ -524,10 +539,11 @@ function drawWaterfallLine(bins) {
   const n = binsInSpan();
   if (rowCanvas.width !== n) rowCanvas.width = n;
   const img = rowCtx.createImageData(n, 1);
+  const ramp = lineIsTx ? TX_LUT : LUT;
   for (let b = 0; b < n; b++) {
     const v = Math.round(norm(byteToDb(bins[b])) * 255) * 3;
-    img.data[b * 4] = LUT[v]; img.data[b * 4 + 1] = LUT[v + 1];
-    img.data[b * 4 + 2] = LUT[v + 2]; img.data[b * 4 + 3] = 255;
+    img.data[b * 4] = ramp[v]; img.data[b * 4 + 1] = ramp[v + 1];
+    img.data[b * 4 + 2] = ramp[v + 2]; img.data[b * 4 + 3] = 255;
   }
   rowCtx.putImageData(img, 0, 0);
   gctx.imageSmoothingEnabled = true;
@@ -652,7 +668,10 @@ function connect() {
     }
     const bytes = new Uint8Array(e.data);
     if (bytes[0] === 0x02) { playAudio(e.data); return; }
-    if (bytes[0] !== 0x01 || !cfg) return;
+    // 0x01 heard, 0x03 our own transmission.
+    if ((bytes[0] !== 0x01 && bytes[0] !== 0x03) || !cfg) return;
+    lineIsTx = bytes[0] === 0x03;
+    if (lineIsTx) lastTxAt = performance.now();
     lastLine = new DataView(e.data).getUint32(1, true);
     const bins = bytes.subarray(5);
     lastBins = bins;
@@ -679,10 +698,16 @@ connect();
 setInterval(() => {
   fpsShown = fpsCount; fpsCount = 0;
   if (!cfg) return;
-  const stale = performance.now() - lastLineAt > 1500;
-  $("stats").textContent = stale
-    ? "no audio (transmitting?)"
-    : `${fpsShown} fps · ${cfg.binWidthHz.toFixed(1)} Hz/bin`;
+  const now = performance.now();
+  // Transmitting is now something the page knows rather than infers from silence.
+  const transmitting = now - lastTxAt < 400;
+  const stale = now - lastLineAt > 1500;
+  $("stats").textContent = transmitting
+    ? "transmitting"
+    : stale
+      ? "no audio"
+      : `${fpsShown} fps · ${cfg.binWidthHz.toFixed(1)} Hz/bin`;
+  $("stats").classList.toggle("tx", transmitting);
 }, 1000);
 </script>
 </body>

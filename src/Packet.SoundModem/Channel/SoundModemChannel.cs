@@ -190,6 +190,21 @@ public sealed class SoundModemChannel
     }
 
     /// <summary>
+    /// Raised with each block of audio as it is handed to the sound device — the station's own
+    /// transmission, at the channel rate.
+    /// </summary>
+    /// <remarks>
+    /// For a display that wants to draw what we put on the air. Receive processing is gated off
+    /// while transmitting (half duplex), so without this a waterfall simply stops for the length
+    /// of every keyup and its time axis quietly stops meaning anything.
+    ///
+    /// Raised at the moment the samples are written, which is slightly ahead of them leaving the
+    /// device — there is a buffer and a drain behind this. Close enough for a display; not a
+    /// timing reference.
+    /// </remarks>
+    public event Action<ReadOnlyMemory<float>>? TransmittedAudio;
+
+    /// <summary>
     /// Consulted before a shared transmission is queued; while it returns true the transmission
     /// waits. Set by a host that has to keep a stretch of the channel clear — an ARDOP ARQ
     /// session, whose timing an AX.25 frame landing mid-turnaround would break. Null (the
@@ -306,13 +321,18 @@ public sealed class SoundModemChannel
 
                     first = false;
                     output.Write(samples);
+                    TransmittedAudio?.Invoke(samples);
                     output.Drain();
                     item.Done.TrySetResult();
                 }
 
                 if (Csma.TxTailMilliseconds > 0)
                 {
-                    output.Write(new float[SampleRate * Csma.TxTailMilliseconds / 1000]);
+                    // The tail is silence, but it is time we held the channel — a display that
+                    // skips it under-reports how long the keyup actually was.
+                    var tail = new float[SampleRate * Csma.TxTailMilliseconds / 1000];
+                    output.Write(tail);
+                    TransmittedAudio?.Invoke(tail);
                 }
 
                 output.Drain();

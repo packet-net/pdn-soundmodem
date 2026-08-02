@@ -4,6 +4,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using AwesomeAssertions;
+using M0LTE.Radio.Audio;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Waterfall;
@@ -101,6 +102,48 @@ public class WaterfallWebServerTests : IAsyncLifetime
         band.HighHz.Should().BeGreaterThan(2200);
         band.HighHz.Should().BeLessThan(4000);
         band.CentreHz.Should().BeApproximately(1700, 400);
+    }
+
+    [Fact]
+    public async Task Our_Own_Transmission_Is_Drawn_But_Marked_As_Ours()
+    {
+        // Receive processing is gated off while transmitting, so without this the display simply
+        // stops for the length of every keyup and its time axis stops meaning anything. Drawn —
+        // but under its own line type, because a burst of your own must not read as a strong
+        // station.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        // Transmit for real, so this exercises the path the transmitter loop actually takes.
+        _channel.Csma.Persistence = 255;
+        _channel.Csma.TxDelayMilliseconds = 20;
+        using var transmitCancel = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var output = new Channel.FakeAudioOutput(SampleRate);
+        Task transmitter = _channel.RunTransmitterAsync(output, new NullPtt(), transmitCancel.Token);
+        await _channel.EnqueueTransmit(0, TestFrame()).WaitAsync(TimeSpan.FromSeconds(15));
+
+        byte[]? txLine = null;
+        for (int i = 0; i < 20 && txLine is null; i++)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind == WebSocketMessageType.Binary && payload[0] == 0x03)
+            {
+                txLine = payload;
+            }
+        }
+
+        txLine.Should().NotBeNull("a transmission must still produce waterfall lines");
+        txLine!.Length.Should().Be(5 + 1024, "a transmitted line is shaped like any other");
+
+        await transmitCancel.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
     }
 
     [Fact]
