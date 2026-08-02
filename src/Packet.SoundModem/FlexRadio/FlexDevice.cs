@@ -80,6 +80,9 @@ public sealed record FlexTuning
     /// headless client sharing a box with a running SmartSDR must pick a channel SmartSDR is not
     /// using (SmartSDR grabs DAX 1) — see docs/flex-integration.md §8.</summary>
     public string DaxChannel { get; init; } = "1";
+
+    /// <summary>Transmit power in watts. Null leaves the radio's own setting alone.</summary>
+    public double? TxPowerWatts { get; init; }
 }
 
 /// <summary>
@@ -198,6 +201,7 @@ public static class FlexDevice
             SliceMode = tuning.Mode,
             DaxChannel = tuning.DaxChannel,
             TransmitFilterHighHz = tuning.TransmitFilterHighHz,
+            RfPower = tuning.TxPowerWatts is double watts ? ToRfPowerPercent(watts) : null,
         };
         FlexStation station = spec.Headless
             ? await FlexStation.SetUpHeadlessAsync(client, format, options, cancellation).ConfigureAwait(false)
@@ -238,6 +242,32 @@ public static class FlexDevice
         return colon < 0
             ? (spec, Vita49.DiscoveryPort)
             : (spec[..colon], int.Parse(spec[(colon + 1)..]));
+    }
+
+    /// <summary>
+    /// The 6000-series PA size. Every model in the family is 100 W, which the radio confirms as
+    /// <c>slice N max_internal_pa_power</c> — so on this family watts and the radio's 0–100 power
+    /// number coincide, and the conversion exists to keep the config in the units an operator
+    /// thinks in rather than because the arithmetic is hard.
+    /// </summary>
+    public const double PaWatts = 100.0;
+
+    /// <summary>Converts watts to the radio's 0–100 transmit power number.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The request is negative or above what the PA can produce — a config error worth catching
+    /// before it reaches the radio, which would answer with a bare protocol code.
+    /// </exception>
+    public static int ToRfPowerPercent(double watts)
+    {
+        if (watts < 0 || watts > PaWatts)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(watts), watts, $"transmit power must be between 0 and {PaWatts:F0} W");
+        }
+
+        // Round to nearest: the radio takes whole numbers, and 0.5 W of rounding is far below
+        // what anything downstream can tell apart.
+        return (int)Math.Round(watts / PaWatts * 100.0, MidpointRounding.AwayFromZero);
     }
 
     private static bool IsSliceLetter(string segment) =>
