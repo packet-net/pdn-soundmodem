@@ -194,8 +194,12 @@ public class WaterfallWebServerTests : IAsyncLifetime
         }
 
         audio.Should().NotBeNull("audio must flow once asked for");
-        // [0x02][s16 LE mono], 40 ms at the channel rate.
-        (audio!.Length - 1).Should().Be(SampleRate * 40 / 1000 * 2);
+        // [0x02][pad×3][s16 LE mono], 40 ms at the channel rate.
+        (audio!.Length - WaterfallWebServer.AudioHeaderBytes).Should().Be(SampleRate * 40 / 1000 * 2);
+        // The header must keep the samples on a 2-byte boundary: a browser views them as an
+        // Int16Array, which throws outright on an unaligned offset. A 1-byte header did.
+        (WaterfallWebServer.AudioHeaderBytes % 2).Should().Be(
+            0, "an unaligned payload cannot be read by the client at all");
     }
 
     [Fact]

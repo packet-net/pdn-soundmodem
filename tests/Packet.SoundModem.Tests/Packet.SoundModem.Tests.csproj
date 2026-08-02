@@ -34,4 +34,9 @@
     <ProjectReference Include="../../tools/Packet.SoundModem.Ota/Packet.SoundModem.Ota.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The page probe is run by Node from the test output directory. -->
+    <None Include="Waterfall/browser/page-probe.mjs" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

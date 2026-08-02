@@ -399,6 +399,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// </summary>
     private const int AudioBlockMilliseconds = 40;
 
+    /// <summary>
+    /// Type byte plus padding to a 4-byte boundary, so the samples that follow can be viewed
+    /// directly as 16-bit (or later 32-bit) values without copying.
+    /// </summary>
+    internal const int AudioHeaderBytes = 4;
+
     private static void TryApplyClientRequest(WaterfallClient client, ReadOnlySpan<byte> utf8)
     {
         try
@@ -450,12 +456,14 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
         while (_audioBlock.Count >= blockSamples)
         {
-            var message = new byte[1 + (blockSamples * 2)];
+            // 4-byte header, not 1: a browser's Int16Array view needs its byte offset aligned
+            // to the element size, and samples starting at byte 1 threw RangeError on arrival.
+            var message = new byte[AudioHeaderBytes + (blockSamples * 2)];
             message[0] = 0x02;
             for (int i = 0; i < blockSamples; i++)
             {
                 BinaryPrimitives.WriteInt16LittleEndian(
-                    message.AsSpan(1 + (i * 2)), _audioBlock[i]);
+                    message.AsSpan(AudioHeaderBytes + (i * 2)), _audioBlock[i]);
             }
 
             _audioBlock.RemoveRange(0, blockSamples);
