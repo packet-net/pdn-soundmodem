@@ -318,6 +318,98 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
                 "receive audio must not be drawn into the burst we are still painting"));
     }
 
+    [Fact]
+    public async Task The_Display_Keeps_Moving_Between_Key_Down_And_The_First_Audio()
+    {
+        // Receive processing stops the instant the transmitter takes the channel, but the first
+        // transmitted audio does not exist until the frame has been modulated and handed to the
+        // device. Nothing was drawn in between, so the waterfall visibly stalled as the PTT
+        // engaged. The modem here takes half a second to modulate, which is that gap made
+        // deterministic; a real one is shorter but a real display still stops for it.
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new SlowToModulate(SampleRate, TimeSpan.FromMilliseconds(500)));
+        await using var server = new WaterfallWebServer(
+            channel, FreePort(), new WaterfallOptions { LinesPerSecond = LinesPerSecond });
+        server.Start();
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(
+            new Uri($"ws://127.0.0.1:{server.Url.Split(':')[^1].TrimEnd('/')}/ws"), _cancellation.Token);
+        await ReceiveAsync(socket);   // config
+
+        var keyedAt = new TaskCompletionSource<long>();
+        var clock = Stopwatch.StartNew();
+        channel.TransmittingChanged += keyed =>
+        {
+            if (keyed)
+            {
+                keyedAt.TrySetResult(clock.ElapsedMilliseconds);
+            }
+        };
+
+        channel.Csma.Persistence = 255;
+        channel.Csma.TxDelayMilliseconds = 20;
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        Task transmitter = channel.RunTransmitterAsync(
+            new InstantDrainOutput(SampleRate), new NullPtt(), stop.Token);
+        Task sending = channel.EnqueueTransmit(0, Payload(60));
+
+        byte[] firstLine = await NextLineAsync(socket, 0x03, skip: 0);
+        long drawnAt = clock.ElapsedMilliseconds;
+        long keyed = await keyedAt.Task;
+
+        await sending.WaitAsync(TimeSpan.FromSeconds(20));
+        await stop.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        // Within a few line periods of key-down, not half a second later when the audio turns up.
+        (drawnAt - keyed).Should().BeLessThan(
+            250, "the display must not stall while the first frame is being modulated");
+        firstLine.Length.Should().BeGreaterThan(5, "and it must be a real line");
+    }
+
+    /// <summary>
+    /// A modem that takes a long time to produce its audio — the key-down gap, made deterministic
+    /// and large enough to see. Every real modem has this gap; only the size differs.
+    /// </summary>
+    private sealed class SlowToModulate(int sampleRate, TimeSpan cost) : IModem
+    {
+        public string Mode => "slow";
+
+        public event Action<byte[], FrameQuality>? FrameDecoded;
+
+        public bool CarrierDetect => false;
+
+        public bool ChannelBusy => false;
+
+        public void Process(ReadOnlySpan<float> samples)
+        {
+        }
+
+        public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds)
+        {
+            Thread.Sleep(cost);
+            FrameDecoded?.Invoke([], default);   // never raised; keeps the compiler honest
+            var audio = new float[sampleRate];   // one second of tone
+            for (int n = 0; n < audio.Length; n++)
+            {
+                audio[n] = 0.5f * MathF.Sin(2 * MathF.PI * (float)CentreHz * n / sampleRate);
+            }
+
+            return audio;
+        }
+
+        public void ResetCarrierState()
+        {
+        }
+    }
+
     /// <summary>
     /// An output that buffers and returns straight away — its Drain does not wait for the air.
     /// What a real device does, and what leaves the pacer still painting after the keyup ends.

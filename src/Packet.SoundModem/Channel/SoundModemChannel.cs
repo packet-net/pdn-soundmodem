@@ -229,6 +229,17 @@ public sealed class SoundModemChannel
     public event Action<ReadOnlyMemory<float>>? TransmittedAudio;
 
     /// <summary>
+    /// Raised with true when the transmitter takes the channel and false when it gives it back.
+    /// </summary>
+    /// <remarks>
+    /// For a display. Receive processing stops the moment this goes true, but the first
+    /// transmitted audio does not exist until the frame has been modulated and handed to the
+    /// device — so anything drawing the channel needs to know a keyup has begun rather than
+    /// inferring it from audio that has not arrived yet, or it simply stops for that gap.
+    /// </remarks>
+    public event Action<bool>? TransmittingChanged;
+
+    /// <summary>
     /// Consulted before a shared transmission is queued; while it returns true the transmission
     /// waits. Set by a host that has to keep a stretch of the channel clear — an ARDOP ARQ
     /// session, whose timing an AX.25 frame landing mid-turnaround would break. Null (the
@@ -320,6 +331,7 @@ public sealed class SoundModemChannel
             }
 
             _transmitting = true;
+            TransmittingChanged?.Invoke(true);
             try
             {
                 ptt.Key();
@@ -365,6 +377,7 @@ public sealed class SoundModemChannel
             {
                 ptt.Unkey();
                 _transmitting = false;
+                TransmittingChanged?.Invoke(false);
                 foreach (IModem modem in _modems.Values)
                 {
                     modem.ResetCarrierState();

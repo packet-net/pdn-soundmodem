@@ -105,6 +105,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     private int _transmitPendingSamples;
     private int _transmitPendingOffset;
     private long _transmitPacedAt;
+    private float[] _transmitSilence = [];
     private ITimer? _transmitPacer;
 
     // Set while feeding our own transmission, so the line that comes back out can be told apart
@@ -130,6 +131,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
     private WaterfallSource? _source;
     private string? _transmitStatus;
+    private volatile bool _keyed;
     private byte[] _configMessage = [];
     private Task? _acceptLoop;
 
@@ -260,7 +262,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // two ramps as it goes. Receive processing is gated during a keyup, but the paced
             // painting outlives it whenever the audio device's Drain returns before the audio has
             // actually left the radio, which is the normal case.
-            if (Volatile.Read(ref _transmitPendingSamples) == 0)
+            if (!_keyed && Volatile.Read(ref _transmitPendingSamples) == 0)
             {
                 lock (_sourceLock)
                 {
@@ -275,6 +277,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         // Draw what we transmit, so the display stays continuous across a keyup instead of
         // freezing and silently compressing the time axis.
         _channel.TransmittedAudio += OnTransmittedAudio;
+        _channel.TransmittingChanged += OnTransmittingChanged;
         _channel.FrameReceivedWithQuality += OnFrame;
         _listener.Start();
         _acceptLoop = AcceptLoopAsync();
@@ -347,6 +350,25 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// not in the channel because the transmitter must never wait on a picture — this returns
     /// immediately however long the burst is.</para>
     /// </remarks>
+    /// <summary>
+    /// Key-down and key-up. Painting starts at key-down rather than when the first audio arrives.
+    /// </summary>
+    /// <remarks>
+    /// Receive processing stops the instant the transmitter takes the channel, but the first
+    /// transmitted audio does not exist until the frame has been modulated and handed to the
+    /// device. Nothing at all is drawn in between, so the waterfall visibly stalls as the PTT
+    /// engages. Starting here means the time axis keeps moving through that gap — and through
+    /// the gaps between frames in one keyup — with silence, which is what was on the air.
+    /// </remarks>
+    private void OnTransmittingChanged(bool keyed)
+    {
+        _keyed = keyed;
+        if (keyed)
+        {
+            StartPacing();
+        }
+    }
+
     private void OnTransmittedAudio(ReadOnlyMemory<float> samples)
     {
         if (_source is null || samples.IsEmpty)
@@ -360,14 +382,23 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         {
             _transmitPending.Enqueue(display);
             Volatile.Write(ref _transmitPendingSamples, _transmitPendingSamples + display.Length);
+        }
 
+        StartPacing();
+    }
+
+    /// <summary>Starts the pacing clock if it is not already running.</summary>
+    private void StartPacing()
+    {
+        lock (_transmitLock)
+        {
             if (_transmitPacer is not null)
             {
                 return;
             }
 
-            // First burst of a keyup: start the clock here, so the first tick releases the
-            // audio of one tick rather than a backlog measured from whenever the timer last ran.
+            // Start the clock here, so the first tick releases one tick's worth rather than a
+            // backlog measured from whenever the timer last ran.
             _transmitPacedAt = _options.TimeProvider.GetTimestamp();
             var period = TimeSpan.FromMilliseconds(1000.0 / _options.LinesPerSecond);
             _transmitPacer = _options.TimeProvider.CreateTimer(
@@ -467,7 +498,20 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 }
             }
 
-            if (_transmitPending.Count == 0)
+            // Still keyed with nothing queued — the gap between key-down and the first modulated
+            // frame, or between frames. Silence is what is on the air, and drawing it is what
+            // keeps the time axis moving instead of stalling until audio turns up.
+            if (due.Count == 0 && _keyed && budget > 0)
+            {
+                if (_transmitSilence.Length < budget)
+                {
+                    _transmitSilence = new float[budget];
+                }
+
+                due.Add(new ArraySegment<float>(_transmitSilence, 0, budget));
+            }
+
+            if (_transmitPending.Count == 0 && !_keyed)
             {
                 _transmitPacer?.Dispose();
                 _transmitPacer = null;
@@ -867,6 +911,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         await _stopping.CancelAsync().ConfigureAwait(false);
         _channel.FrameReceivedWithQuality -= OnFrame;
         _channel.TransmittedAudio -= OnTransmittedAudio;
+        _channel.TransmittingChanged -= OnTransmittingChanged;
         lock (_transmitLock)
         {
             _transmitPacer?.Dispose();
