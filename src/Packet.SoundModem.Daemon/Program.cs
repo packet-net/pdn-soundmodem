@@ -9,6 +9,7 @@ using M0LTE.Dsp;
 using Packet.SoundModem.FlexRadio;
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.Modems;
+using Packet.SoundModem.Waterfall;
 using Packet.SoundModem.Ms110d;
 
 // pdn-soundmodem: headless soundcard packet modem daemon.
@@ -526,6 +527,16 @@ if (waterfallConfig is not null)
             Sideband = bandPlan?.Sideband ?? waterfallConfig.Sideband,
             LinesPerSecond = waterfallConfig.LinesPerSecond,
             FftSize = waterfallConfig.FftSize,
+            // What each modem is meant to occupy. The centre so the label reads as the
+            // operator placed it rather than as the probe measured it, and a width for ARDOP,
+            // which is a receive tap rather than an IModem and so cannot be probed at all.
+            DeclaredBands = [.. modems.Select(m => new DeclaredBand(
+                m.SubChannel,
+                DaemonConfig.IsArdop(m.Mode) ? "ardop" : m.Mode,
+                m.Frequency ?? (DaemonConfig.IsArdop(m.Mode) ? ArdopChannelShift.NativeCentreHz : 0),
+                DaemonConfig.IsArdop(m.Mode)
+                    ? m.Bandwidth ?? ArdopChannelShift.WidestBandwidthHz
+                    : null))],
         },
         // One bind for every listener; the waterfall no longer carries its own.
         bindAddress);

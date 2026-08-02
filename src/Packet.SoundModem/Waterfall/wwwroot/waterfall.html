@@ -218,7 +218,9 @@ const afToX = (af, w) => af / spanHz() * w;
 const dialSet = () => ui.dialHz != null && ui.dialHz > 0;
 const rfAt = af => ui.sideband === "lsb" ? ui.dialHz - af : ui.dialHz + af;
 const fmtRfKhz = af => (rfAt(af) / 1000).toFixed(2);
-const fmtRfMhz = af => (rfAt(af) / 1e6).toFixed(5);
+// Six decimals is Hz precision on MHz; trailing zeros are noise on a dial you would read as
+// 7.0516. toFixed(5) was both coarser than the modems are placed and left a stray zero.
+const fmtRfMhz = af => (rfAt(af) / 1e6).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
 
 /* ---------- canvases ---------- */
 const spec = $("spec"), ruler = $("ruler"), wf = $("wf"), overlay = $("overlay");
@@ -313,8 +315,8 @@ function renderChips() {
     chip.className = "chip";
     const rf = dialSet() ? ` <span class="rf">${fmtRfMhz(m.centreHz)}</span>` : "";
     chip.innerHTML = `<i style="background:${hueFor(i)}"></i>` +
-      `<span><b>${m.sub} · ${m.mode}</b> ${Math.round(m.centreHz)} Hz${rf}</span>`;
-    chip.title = `measured band ${Math.round(m.lowHz)}–${Math.round(m.highHz)} Hz`;
+      `<span><b>${m.sub} · ${m.modeName || m.mode}</b> ${Math.round(m.centreHz)} Hz${rf}</span>`;
+    chip.title = `${m.mode}\nband ${Math.round(m.lowHz)}–${Math.round(m.highHz)} Hz`;
     return chip;
   }));
 }
@@ -399,9 +401,9 @@ function drawSpectrum() {
     sctx.font = `${10 * d}px ui-monospace, monospace`;
     sctx.textAlign = "center"; sctx.textBaseline = "top";
     sctx.lineWidth = 3 * d; sctx.strokeStyle = "rgba(10,13,17,.9)";
-    sctx.strokeText(`${m.sub}·${m.mode}`, xc, 3 * d);
+    sctx.strokeText(`${m.sub}·${m.modeName || m.mode}`, xc, 3 * d);
     sctx.fillStyle = hueFor(i) + "cc";
-    sctx.fillText(`${m.sub}·${m.mode}`, xc, 3 * d);
+    sctx.fillText(`${m.sub}·${m.modeName || m.mode}`, xc, 3 * d);
   });
 
   if (!smooth) return;
