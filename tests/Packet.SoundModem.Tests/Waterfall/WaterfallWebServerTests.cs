@@ -104,6 +104,58 @@ public class WaterfallWebServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Receive_Audio_Is_Sent_Only_To_A_Browser_That_Asked_For_It()
+    {
+        // Opening the page to look at a waterfall must not quietly start pulling ~24 KB/s, and
+        // several viewers must not each cost that unless they each asked.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        var tone = new float[SampleRate];
+        for (int n = 0; n < tone.Length; n++)
+        {
+            tone[n] = 0.3f * MathF.Sin(2 * MathF.PI * 1700 * n / SampleRate);
+        }
+
+        _channel.ProcessReceive(tone);
+        var seenBefore = new List<byte>();
+        for (int i = 0; i < 5; i++)
+        {
+            (_, byte[] payload) = await Receive(socket);
+            seenBefore.Add(payload[0]);
+        }
+
+        seenBefore.Should().NotContain((byte)0x02, "audio is off until the browser asks");
+
+        await socket.SendAsync(
+            System.Text.Encoding.UTF8.GetBytes("""{"type":"audio","on":true}"""),
+            WebSocketMessageType.Text, true, _cancellation.Token);
+
+        // Keep feeding and reading until audio appears: the request is applied by the server's
+        // receive loop asynchronously, and the per-client queue drops oldest when it backs up,
+        // so a single shot can race either way.
+        byte[]? audio = null;
+        for (int round = 0; round < 20 && audio is null; round++)
+        {
+            await Task.Delay(50);
+            _channel.ProcessReceive(tone);
+            for (int i = 0; i < 20 && audio is null; i++)
+            {
+                (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+                if (kind == WebSocketMessageType.Binary && payload[0] == 0x02)
+                {
+                    audio = payload;
+                }
+            }
+        }
+
+        audio.Should().NotBeNull("audio must flow once asked for");
+        // [0x02][s16 LE mono], 40 ms at the channel rate.
+        (audio!.Length - 1).Should().Be(SampleRate * 40 / 1000 * 2);
+    }
+
+    [Fact]
     public async Task Streams_config_lines_and_frame_events_over_the_websocket()
     {
         using var socket = new ClientWebSocket();

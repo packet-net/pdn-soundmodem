@@ -34,6 +34,10 @@
   .radio-status { margin-left: 10px; padding: 1px 7px; border-radius: 9px;
                   background: rgba(255,255,255,.06); font-size: 12px; }
   .radio-status.bad { background: rgba(255,120,90,.16); color: #ff9a7a; }
+  .seg-btn { font: inherit; color: var(--fg); background: #1a1d22; border: 1px solid #2b3038;
+             border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  .seg-btn.on { background: var(--amber); color: #12141a; border-color: var(--amber); }
+  #vol { width: 84px; }
 
   .ctl { display: flex; flex-direction: column; gap: 2px; }
   .ctl label {
@@ -143,6 +147,14 @@
   </div>
 
   <div class="ctl">
+    <label for="listen">Audio</label>
+    <div class="ctl-row">
+      <button id="listen" class="seg-btn">Listen</button>
+      <input id="vol" type="range" min="0" max="1" step="0.02" value="0.7" disabled>
+    </div>
+  </div>
+
+  <div class="ctl">
     <label>Level · dBFS</label>
     <div class="ctl-row">
       <input type="range" id="floor" min="-100" max="-45" step="1" title="Floor">
@@ -233,6 +245,60 @@ function setRadioStatus(status) {
   el.classList.toggle("bad", /UNLOCKED|reboot|unknown/i.test(status));
 }
 
+// ---------------------------------------------------------------- receive audio (opt-in)
+// Blocks carry no timestamps and are played in arrival order. Nothing is received while the
+// station transmits, so the stream simply stops for the length of a keyup — that has to sound
+// like silence, which it does: playback runs dry and the next block starts a fresh schedule.
+let audioCtx = null, audioNext = 0, audioGain = null;
+const AUDIO_LEAD = 0.12;   // seconds of scheduling lead; below this, jitter is audible
+
+function audioOn() { return audioCtx !== null; }
+
+async function toggleAudio() {
+  if (audioOn()) {
+    try { ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: "audio", on: false })); } catch {}
+    try { await audioCtx.close(); } catch {}
+    audioCtx = null; audioGain = null; audioNext = 0;
+  } else {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // A user gesture opened it, so resume is allowed here and nowhere else.
+    await audioCtx.resume();
+    audioGain = audioCtx.createGain();
+    audioGain.gain.value = parseFloat($("vol").value);
+    audioGain.connect(audioCtx.destination);
+    audioNext = 0;
+    try { ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: "audio", on: true })); } catch {}
+  }
+  syncAudioButton();
+}
+
+function syncAudioButton() {
+  const b = $("listen");
+  b.classList.toggle("on", audioOn());
+  b.textContent = audioOn() ? "Listening" : "Listen";
+  $("vol").disabled = !audioOn();
+}
+
+function playAudio(buf) {
+  if (!audioOn() || !cfg) return;
+  const pcm = new Int16Array(buf, 1);
+  const frame = audioCtx.createBuffer(1, pcm.length, cfg.sampleRate);
+  const out = frame.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] / 32768;
+
+  const now = audioCtx.currentTime;
+  // Behind, or starting fresh after a keyup: rebase rather than pile up latency.
+  if (audioNext < now + 0.01) audioNext = now + AUDIO_LEAD;
+  // Too far ahead means the browser was backgrounded and blocks queued; drop to catch up.
+  if (audioNext > now + 1.0) { audioNext = now + AUDIO_LEAD; return; }
+
+  const src = audioCtx.createBufferSource();
+  src.buffer = frame;
+  src.connect(audioGain);
+  src.start(audioNext);
+  audioNext += frame.duration;
+}
+
 const dialSet = () => ui.dialHz != null && ui.dialHz > 0;
 const rfAt = af => ui.sideband === "lsb" ? ui.dialHz - af : ui.dialHz + af;
 const fmtRfKhz = af => (rfAt(af) / 1000).toFixed(2);
@@ -275,6 +341,9 @@ window.addEventListener("resize", resizeAll);
 
 /* ---------- header controls ---------- */
 function initControls() {
+  $("listen").onclick = () => toggleAudio();
+  $("vol").oninput = () => { if (audioGain) audioGain.gain.value = parseFloat($("vol").value); };
+
   if (ui.dialHz == null && cfg.dialHz > 0) ui.dialHz = cfg.dialHz;
   if (ui.sideband == null) ui.sideband = (cfg.sideband || "usb").toLowerCase();
 
@@ -582,6 +651,7 @@ function connect() {
       return;
     }
     const bytes = new Uint8Array(e.data);
+    if (bytes[0] === 0x02) { playAudio(e.data); return; }
     if (bytes[0] !== 0x01 || !cfg) return;
     lastLine = new DataView(e.data).getUint32(1, true);
     const bins = bytes.subarray(5);

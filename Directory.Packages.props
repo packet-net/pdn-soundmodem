@@ -27,6 +27,14 @@
 
     <!-- Dev tooling only (tools/Packet.SoundModem.NinoCompare) — the NinoTNC comparison harness.
          All MIT-licensed; not referenced by the shipped pdn-soundmodem package. -->
+    <!-- Frame log store. MIT (and SQLitePCLRaw's bundled SQLite is public domain), so
+         GPL-compatible per CLAUDE.md's licence rules. -->
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+    <!-- Pinned above what Microsoft.Data.Sqlite drags in: its transitive
+         SQLitePCLRaw.lib.e_sqlite3 2.1.11 carries GHSA-2m69-gcr7-jv3q (a vulnerable bundled
+         SQLite), which this repo's NuGet audit correctly refuses to build. The advisory covers
+         <= 2.1.11; this is the patched line. -->
+    <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
     <PackageVersion Include="MQTTnet" Version="5.2.0.1603" />
     <PackageVersion Include="Packet.Ax25" Version="0.23.0" />
     <PackageVersion Include="Packet.Core" Version="0.23.0" />

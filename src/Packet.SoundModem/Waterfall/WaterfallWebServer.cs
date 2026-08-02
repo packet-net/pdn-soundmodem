@@ -90,7 +90,26 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     private readonly Dictionary<int, BandActivityTracker> _trackers = [];
     private readonly List<ModemBand> _bands = [];
     private readonly object _clientsLock = new();
-    private readonly List<Channel<(WebSocketMessageType Kind, byte[] Payload)>> _clients = [];
+    private readonly List<WaterfallClient> _clients = [];
+    private readonly List<short> _audioBlock = [];
+
+    /// <summary>
+    /// One connected browser. Audio is per-client and off by default: a viewer who opened the
+    /// page to look at a waterfall should not silently start pulling 24 KB/s, and several
+    /// viewers should not each cost that unless they asked.
+    /// </summary>
+    private sealed class WaterfallClient
+    {
+        public required Channel<(WebSocketMessageType Kind, byte[] Payload)> Queue { get; init; }
+
+        private int _audio;
+
+        public bool AudioEnabled
+        {
+            get => Volatile.Read(ref _audio) != 0;
+            set => Volatile.Write(ref _audio, value ? 1 : 0);
+        }
+    }
     private WaterfallSource? _source;
     private byte[] _configMessage = [];
     private Task? _acceptLoop;
@@ -192,7 +211,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _bands.Sort((a, b) => a.SubChannel.CompareTo(b.SubChannel));
 
         _configMessage = BuildConfigMessage();
-        _channel.AddReceiveTap(samples => source.Process(samples));
+        _channel.AddReceiveTap(samples =>
+        {
+            source.Process(samples);
+            BroadcastAudio(samples);
+        });
         _channel.FrameReceivedWithQuality += OnFrame;
         _listener.Start();
         _acceptLoop = AcceptLoopAsync();
@@ -318,13 +341,93 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         Broadcast(WebSocketMessageType.Text, message);
     }
 
+    /// <summary>How many audio blocks a second at <see cref="AudioBlockMilliseconds"/> each.</summary>
+    private const int AudioBlocksPerSecond = 1000 / AudioBlockMilliseconds;
+
+    /// <summary>
+    /// Audio block length. Short enough that a browser can start playing promptly and that a
+    /// dropped block is a click rather than a gap; long enough not to spend the whole budget on
+    /// WebSocket framing.
+    /// </summary>
+    private const int AudioBlockMilliseconds = 40;
+
+    private static void TryApplyClientRequest(WaterfallClient client, ReadOnlySpan<byte> utf8)
+    {
+        try
+        {
+            using JsonDocument request = JsonDocument.Parse(utf8.ToArray());
+            if (request.RootElement.TryGetProperty("type", out JsonElement type)
+                && type.GetString() == "audio"
+                && request.RootElement.TryGetProperty("on", out JsonElement on))
+            {
+                client.AudioEnabled = on.ValueKind == JsonValueKind.True;
+            }
+        }
+        catch (JsonException)
+        {
+            // A browser sending nonsense loses nothing but its own request.
+        }
+    }
+
+    /// <summary>
+    /// Receive audio to whoever asked for it, as [0x02][s16 LE mono] at the channel rate.
+    /// </summary>
+    /// <remarks>
+    /// Nothing is received while transmitting — the channel gates its receive tap on half
+    /// duplex — so the stream simply stops for the length of a keyup. The browser hears that as
+    /// silence, which is what it is, rather than as a glitch or a desync: blocks carry no
+    /// timestamps and are played in arrival order, so a gap costs nothing to recover from.
+    /// </remarks>
+    private void BroadcastAudio(ReadOnlySpan<float> samples)
+    {
+        bool wanted;
+        lock (_clientsLock)
+        {
+            wanted = _clients.Any(c => c.AudioEnabled);
+        }
+
+        if (!wanted)
+        {
+            // Do not accumulate for nobody, and do not carry a stale half-block into the moment
+            // somebody starts listening.
+            _audioBlock.Clear();
+            return;
+        }
+
+        int blockSamples = _channel.SampleRate * AudioBlockMilliseconds / 1000;
+        foreach (float sample in samples)
+        {
+            _audioBlock.Add((short)Math.Clamp(sample * 32767f, short.MinValue, short.MaxValue));
+        }
+
+        while (_audioBlock.Count >= blockSamples)
+        {
+            var message = new byte[1 + (blockSamples * 2)];
+            message[0] = 0x02;
+            for (int i = 0; i < blockSamples; i++)
+            {
+                BinaryPrimitives.WriteInt16LittleEndian(
+                    message.AsSpan(1 + (i * 2)), _audioBlock[i]);
+            }
+
+            _audioBlock.RemoveRange(0, blockSamples);
+            lock (_clientsLock)
+            {
+                foreach (WaterfallClient listener in _clients.Where(c => c.AudioEnabled))
+                {
+                    listener.Queue.Writer.TryWrite((WebSocketMessageType.Binary, message));
+                }
+            }
+        }
+    }
+
     private void Broadcast(WebSocketMessageType kind, byte[] payload)
     {
         lock (_clientsLock)
         {
-            foreach (var client in _clients)
+            foreach (WaterfallClient client in _clients)
             {
-                client.Writer.TryWrite((kind, payload));
+                client.Queue.Writer.TryWrite((kind, payload));
             }
         }
     }
@@ -393,14 +496,17 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         // Bounded per-client queue, oldest lines dropped: a stalled browser loses history,
         // never stalls the receive thread or other clients.
         var queue = System.Threading.Channels.Channel.CreateBounded<(WebSocketMessageType, byte[])>(
-            new BoundedChannelOptions(_options.LinesPerSecond)
+            // Deep enough to hold a second of waterfall lines plus a second of audio blocks;
+            // audio that arrives late is worse than audio dropped, so the queue stays shallow.
+            new BoundedChannelOptions(_options.LinesPerSecond + AudioBlocksPerSecond)
             {
                 FullMode = BoundedChannelFullMode.DropOldest,
                 SingleReader = true,
             });
+        var client = new WaterfallClient { Queue = queue };
         lock (_clientsLock)
         {
-            _clients.Add(queue);
+            _clients.Add(client);
         }
 
         try
@@ -416,6 +522,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 if (received.MessageType == WebSocketMessageType.Close)
                 {
                     break;
+                }
+
+                // The only thing a browser asks for: start or stop sending it audio.
+                if (received.MessageType == WebSocketMessageType.Text && received.Count > 0)
+                {
+                    TryApplyClientRequest(client, buffer.AsSpan(0, received.Count));
                 }
             }
 
@@ -435,7 +547,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         {
             lock (_clientsLock)
             {
-                _clients.Remove(queue);
+                _clients.Remove(client);
             }
 
             queue.Writer.TryComplete();
@@ -492,7 +604,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         {
             foreach (var client in _clients)
             {
-                client.Writer.TryComplete();
+                client.Queue.Writer.TryComplete();
             }
 
             _clients.Clear();
