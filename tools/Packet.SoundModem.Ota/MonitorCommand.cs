@@ -3,6 +3,7 @@ using System.Globalization;
 using Packet.SoundModem.Ms110d;
 using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Iq;
+using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Ota;
 
@@ -45,7 +46,7 @@ internal static class MonitorCommand
             return a is null ? 2 : 0;
         }
 
-        var converter = new StreamingIqToAudioConverter(new IqToAudioOptions
+        var converter = new StreamingSsbDemodulator(new SsbDemodulatorOptions
         {
             InputRate = 48000,
             OutputRate = 9600,

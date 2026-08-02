@@ -7,15 +7,22 @@ using Packet.SoundModem.Iq;
 namespace Packet.SoundModem.Tests.UberSdr;
 
 /// <summary>
-/// End-to-end proof of the C2 offline SSB demodulator: MS110D modulate (9600 Hz) → synthesise a
-/// 48 kHz USB IQ capture (the modem placed at a chosen dial offset, quantised to int16 like a
-/// real capture, plus AWGN) → <see cref="IqToAudioConverter"/> → the MS110D demodulator must
-/// recover the exact payload. This exercises the NCO dial correction, the complex SSB bandpass
-/// (which must reject the negative-frequency image the real-into-I synthesis deliberately
-/// injects), and the decimation back to 9600 Hz. Noise performance is out of scope here (that is
-/// the mask suite); these run at high SNR to isolate the conversion chain.
+/// End-to-end proof of the SSB demodulator against a real waveform: MS110D modulate (9600 Hz) →
+/// synthesise a 48 kHz USB IQ capture (the modem placed at a chosen dial offset, quantised to
+/// int16 like a real capture, plus AWGN) → <see cref="SsbDemodulator"/> → the MS110D demodulator
+/// must recover the exact payload. This exercises the NCO dial correction, the complex SSB
+/// bandpass (which must reject the negative-frequency image the real-into-I synthesis
+/// deliberately injects), and the decimation back to 9600 Hz. Noise performance is out of scope
+/// here (that is the mask suite); these run at high SNR to isolate the conversion chain.
 /// </summary>
-public class IqToAudioConverterLoopbackTests
+/// <remarks>
+/// The demodulators themselves live in <c>M0LTE.Dsp</c>, and the tests that pin <em>them</em> —
+/// streaming-versus-reference equivalence, block-boundary independence, sideband selection at
+/// absolute frequencies, decimation by one — live there with them, because they are properties of
+/// the filter and need no modem to state. What stays here is the question only this repo can
+/// ask: whether a real burst survives the round trip and still decodes to the bit.
+/// </remarks>
+public class SsbDemodulatorMs110dLoopbackTests
 {
     private const int Fs = 48000;
 
@@ -119,7 +126,7 @@ public class IqToAudioConverterLoopbackTests
         float[] audio48 = Upsample5(padded);
         short[] iq = SynthIq(audio48, dialHz, snrDb: 35, seed: 99 + wn);
 
-        var converter = new IqToAudioConverter(new IqToAudioOptions { DialHz = dialHz });
+        var converter = new SsbDemodulator(new SsbDemodulatorOptions { DialHz = dialHz });
         float[] recovered = converter.Convert(iq);
 
         // Decode the recovered audio.
@@ -139,7 +146,69 @@ public class IqToAudioConverterLoopbackTests
     public void Output_Is_At_The_Requested_Rate_And_Length()
     {
         var iq = new short[48000 * 2]; // 1 s of silence IQ
-        float[] outp = new IqToAudioConverter(new IqToAudioOptions()).Convert(iq);
+        float[] outp = new SsbDemodulator(new SsbDemodulatorOptions()).Convert(iq);
         outp.Length.Should().Be(9600, "48000 Hz decimated by 5 over 1 s → 9600 samples");
+    }
+
+    /// <summary>Runs the streaming converter over a capture in blocks of the given size.</summary>
+    private static float[] Stream(short[] interleaved, SsbDemodulatorOptions options, int blockFrames)
+    {
+        var converter = new StreamingSsbDemodulator(options);
+        var output = new List<float>();
+        var buffer = new float[converter.MaxOutputFor(blockFrames) + converter.MaxFlushOutput];
+
+        int frames = interleaved.Length / 2;
+        for (int start = 0; start < frames; start += blockFrames)
+        {
+            int n = Math.Min(blockFrames, frames - start);
+            int wrote = converter.Process(interleaved.AsSpan(start * 2, n * 2), buffer);
+            output.AddRange(buffer.AsSpan(0, wrote));
+        }
+
+        output.AddRange(buffer.AsSpan(0, converter.Flush(buffer)));
+        return [.. output];
+    }
+
+    [Fact]
+    public void A_real_burst_still_decodes_through_the_streaming_path()
+    {
+        // End-to-end insurance: the equivalence test above compares numbers, this one compares
+        // the only thing that matters downstream.
+        var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = 6 });
+        var random = new Random(808);
+        var payload = new byte[400];
+        for (int i = 0; i < payload.Length; i++)
+        {
+            payload[i] = (byte)random.Next(2);
+        }
+
+        float[] audio9600 = tx.Modulate(payload);
+        var padded = new float[2400 + audio9600.Length + 4800];
+        audio9600.CopyTo(padded, 2400);
+
+        // Upsample ×5 into I only (so the negative-frequency image is present to be rejected),
+        // then quantise as a capture would.
+        var iq = new short[padded.Length * 5 * 2];
+        var lp = new M0LTE.Dsp.FirFilter(M0LTE.Dsp.FilterDesign.LowPass(4200, Fs, 41));
+        for (int i = 0; i < padded.Length; i++)
+        {
+            for (int j = 0; j < 5; j++)
+            {
+                float s = lp.Next(j == 0 ? padded[i] * 5f : 0f);
+                iq[((i * 5) + j) * 2] = (short)Math.Clamp(Math.Round(s * 0.4 * 32767.0), short.MinValue, short.MaxValue);
+            }
+        }
+
+        float[] recovered = Stream(iq, new SsbDemodulatorOptions { NormalisePeak = 0f }, blockFrames: 4096);
+
+        var demod = new Ms110dDemodulator();
+        Ms110dBurst? burst = null;
+        demod.BurstCompleted += b => burst ??= b;
+        demod.Process(recovered);
+        demod.Process(new float[6000]);
+
+        burst.Should().NotBeNull();
+        burst!.Reason.Should().Be(Ms110dBurstEndReason.Eom);
+        burst.PayloadBits.Should().Equal(payload);
     }
 }

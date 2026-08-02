@@ -2,6 +2,7 @@ using Packet.SoundModem.Ms110d;
 using Packet.SoundModem.Ota;
 using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Iq;
+using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Tests.Ota;
 
@@ -187,7 +188,7 @@ public class Ms110dIqUpconverterTests
             qD[(2 * k) + 1] = k + 1 < q24.Length ? 0.5 * (q24[k] + q24[k + 1]) : q24[k];
         }
 
-        float[] recovered = new IqToAudioConverter(new IqToAudioOptions
+        float[] recovered = new SsbDemodulator(new SsbDemodulatorOptions
         {
             InputRate = 2 * WaveformRate,
             OutputRate = 9600,

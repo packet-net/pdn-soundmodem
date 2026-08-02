@@ -150,7 +150,7 @@ internal static class LadderCommand
         // to the IQ up-converter (which renders the dry-run's simulated capture, so a DAX rehearsal
         // places the signal exactly where a real DAX capture would) AND to the manifest, whose
         // OffsetHz the scorer uses as the down-shift that lands the sub-carrier at 1800 Hz audio
-        // (StreamingIqToAudioConverter DialHz = schedule.OffsetHz). Getting it wrong misplaces every
+        // (StreamingSsbDemodulator DialHz = schedule.OffsetHz). Getting it wrong misplaces every
         // burst by the offset, so it is derived from the route, never defaulted blindly. `--offset-hz`
         // therefore applies to the IQ route only.
         double offsetHz = route == LadderRoute.Dax ? 0.0 : a.Dbl("offset-hz", 2000);

@@ -54,7 +54,7 @@ public sealed class Ms110dIqUpconverterOptions
 
 /// <summary>
 /// Turns MS110D transmit audio into the complex baseband the Flex waveform path transmits:
-/// the mirror of the capture tool's <c>IqToAudioConverter</c>, and the transmit half of the
+/// the mirror of the capture tool's <c>SsbDemodulator</c>, and the transmit half of the
 /// OTA chain.
 /// </summary>
 /// <remarks>

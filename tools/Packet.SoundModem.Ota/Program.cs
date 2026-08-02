@@ -5,6 +5,7 @@ using Packet.SoundModem.Ms110d;
 using Packet.SoundModem.Ota;
 using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Iq;
+using M0LTE.Dsp;
 
 // sm-ota — the MS110D over-the-air harness. See docs/ms110d/ota-execution-plan.md.
 //
@@ -960,7 +961,7 @@ internal static class Commands
         var iD = Array.ConvertAll(iCh, v => (double)v);
         var qD = Array.ConvertAll(qCh, v => (double)v);
 
-        float[] recovered = new IqToAudioConverter(new IqToAudioOptions
+        float[] recovered = new SsbDemodulator(new SsbDemodulatorOptions
         {
             InputRate = rate,
             OutputRate = 9600,

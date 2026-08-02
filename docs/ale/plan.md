@@ -74,7 +74,7 @@ tests/Packet.SoundModem.Tests/Ale/
 docs/ale/tables/                    transcribed from the standard (A0)
 ```
 
-**Reuse rather than rebuild.** `M0LTE.Dsp` supplies `FilterDesign`, `FirFilter`, `Fft` and `Decimator`. The OTA harness already has everything needed to test it on air: `LadderPass` renders, `StreamingIqToAudioConverter` converts, `sm-ota monitor` watches live. The Watterson rig is already compiled into the OTA tool and gates MS110D — it should gate ALE too.
+**Reuse rather than rebuild.** `M0LTE.Dsp` supplies `FilterDesign`, `FirFilter`, `Fft`, `Decimator` and the SSB demodulators. The OTA harness already has everything needed to test it on air: `LadderPass` renders, `StreamingSsbDemodulator` converts, `sm-ota monitor` watches live. The Watterson rig is already compiled into the OTA tool and gates MS110D — it should gate ALE too.
 
 **Golay(24,12) is new.** The repo's `Fec/` has CRC-16/X-25, Hamming(7,4) and Reed-Solomon GF(2⁸), but no Golay. It is a small, self-contained, exhaustively-testable piece of work: a 12×12 generator matrix, syndrome decoding to 3 errors, and a test that enumerates every correctable error pattern — which for this code is cheap enough to do exhaustively rather than statistically.
 

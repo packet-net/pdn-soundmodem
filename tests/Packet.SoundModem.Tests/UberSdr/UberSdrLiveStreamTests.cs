@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Packet.SoundModem.Iq;
 using Packet.SoundModem.UberSdr;
+using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Tests.UberSdr;
 

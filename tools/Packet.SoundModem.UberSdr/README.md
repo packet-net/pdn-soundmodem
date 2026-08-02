@@ -34,7 +34,7 @@ sm-iqcapture convert --in capture.wav [--out audio9600.wav] \
              [--dial-hz 0] [--ssb-low 150] [--ssb-high 3450] [--out-rate 9600]
 ```
 
-`--dial-hz` is the IQ-baseband frequency of the SSB suppressed carrier — set it to (our TX dial − the RX tune frequency); 0 when the RX is tuned exactly to our dial. Narrow `--ssb-low/--ssb-high` to emulate a tighter RX filter for an A/B against the RRC-clearing default. Chain: shift by −dial → complex bandpass (upper sideband only) → take real part → decimate to the output rate. `IqToAudioConverter` is validated by a modulate→synthesise-IQ→convert→demodulate loopback (`tests/Packet.SoundModem.Tests/UberSdr/`) recovering exact payloads across waveforms and dial offsets.
+`--dial-hz` is the IQ-baseband frequency of the SSB suppressed carrier — set it to (our TX dial − the RX tune frequency); 0 when the RX is tuned exactly to our dial. Narrow `--ssb-low/--ssb-high` to emulate a tighter RX filter for an A/B against the RRC-clearing default. Chain: shift by −dial → complex bandpass (upper sideband only) → take real part → decimate to the output rate. The demodulator itself is `M0LTE.Dsp`'s `SsbDemodulator`/`StreamingSsbDemodulator` — general-purpose SSB-from-complex-baseband, not specific to this tool — and is validated here by a modulate→synthesise-IQ→convert→demodulate loopback (`tests/Packet.SoundModem.Tests/UberSdr/`) recovering exact payloads across waveforms and dial offsets.
 
 ## How it works
 
