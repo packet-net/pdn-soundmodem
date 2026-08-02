@@ -122,6 +122,30 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// <summary>A URL the page is reachable at.</summary>
     public string Url { get; }
 
+    /// <summary>
+    /// A line about the radio for the page's top bar — the frequency reference on a FlexRadio.
+    /// Null means there is nothing to say (no radio that reports one), and the page shows
+    /// nothing rather than an empty label.
+    /// </summary>
+    /// <remarks>
+    /// Set whenever it changes; late-joining browsers get the current value with their config,
+    /// so a page opened an hour in is not blank until the next change.
+    /// </remarks>
+    public void SetRadioStatus(string? status)
+    {
+        if (status == _radioStatus)
+        {
+            return;
+        }
+
+        _radioStatus = status;
+        _configMessage = BuildConfigMessage();
+        Broadcast(WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(
+            new { type = "radio", status }, Json));
+    }
+
+    private string? _radioStatus;
+
     /// <summary>The measured per-modem display bands (populated by <see cref="Start"/>).</summary>
     public IReadOnlyList<ModemBand> Bands => _bands;
 
@@ -212,6 +236,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             lineLength = source.LineLength,
             linesPerSecond = source.LinesPerSecond,
             dialHz = _options.DialFrequencyHz,
+            radioStatus = _radioStatus,
             sideband = _options.Sideband,
             modems = _bands.Select(b => new
             {

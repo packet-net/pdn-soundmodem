@@ -31,6 +31,9 @@
   .wordmark { font-family: var(--mono); font-size: 14px; letter-spacing: .02em; white-space: nowrap; }
   .wordmark b { color: var(--amber); font-weight: 600; }
   .wordmark span { color: var(--muted); }
+  .radio-status { margin-left: 10px; padding: 1px 7px; border-radius: 9px;
+                  background: rgba(255,255,255,.06); font-size: 12px; }
+  .radio-status.bad { background: rgba(255,120,90,.16); color: #ff9a7a; }
 
   .ctl { display: flex; flex-direction: column; gap: 2px; }
   .ctl label {
@@ -118,7 +121,11 @@
 </head>
 <body>
 <header>
-  <div class="wordmark"><b>pdn-soundmodem</b> <span>waterfall</span></div>
+  <div class="wordmark"><b>pdn-soundmodem</b> <span>waterfall</span>
+    <!-- The radio's frequency reference, when it has one to report. Hidden entirely rather
+         than shown empty, so a soundcard station is not told about an absent oscillator. -->
+    <span id="radioStatus" class="radio-status" hidden></span>
+  </div>
 
   <div class="ctl">
     <label for="dial">Dial · MHz</label>
@@ -215,6 +222,17 @@ const nyquist = () => cfg.sampleRate / 2;
 const spanHz = () => Math.min(ui.spanHz, nyquist());
 const binsInSpan = () => Math.min(cfg.lineLength, Math.round(spanHz() / cfg.binWidthHz));
 const afToX = (af, w) => af / spanHz() * w;
+// The reference line reads as a warning when the radio is not running on what it was told to
+// use — that is the case an operator has to act on, and it should not look like the good one.
+function setRadioStatus(status) {
+  const el = document.getElementById("radioStatus");
+  if (!el) return;
+  if (!status) { el.hidden = true; el.textContent = ""; return; }
+  el.hidden = false;
+  el.textContent = status;
+  el.classList.toggle("bad", /UNLOCKED|reboot|unknown/i.test(status));
+}
+
 const dialSet = () => ui.dialHz != null && ui.dialHz > 0;
 const rfAt = af => ui.sideband === "lsb" ? ui.dialHz - af : ui.dialHz + af;
 const fmtRfKhz = af => (rfAt(af) / 1000).toFixed(2);
@@ -554,7 +572,10 @@ function connect() {
         const first = !cfg;
         cfg = msg;
         if (first) { initControls(); }
+        setRadioStatus(cfg.radioStatus);
         renderChips(); resizeAll(); drawRuler(); drawOverlay();
+      } else if (msg.type === "radio") {
+        setRadioStatus(msg.status);
       } else if (msg.type === "frame") {
         tagFrame(msg); logFrame(msg);
       }
