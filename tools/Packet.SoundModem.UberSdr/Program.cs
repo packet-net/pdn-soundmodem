@@ -1,6 +1,7 @@
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Iq;
+using M0LTE.Dsp;
 
 // sm-iqcapture — capture one IQ48 (or PCM) session from a ka9q_ubersdr / UberSDR instance to a
 // 16-bit stereo WAV + JSON sidecar. One session per invocation; drive per-pass reconnect from a
@@ -104,7 +105,7 @@ static int RunConvert(string[] argv)
         double ssbLow = double.Parse(a.Str("ssb-low", "150"));
         double ssbHigh = double.Parse(a.Str("ssb-high", "3450"));
 
-        IqToAudioOptions Options(int rate) => new()
+        SsbDemodulatorOptions Options(int rate) => new()
         {
             InputRate = rate, OutputRate = outRate, DialHz = dialHz,
             SsbLowHz = ssbLow, SsbHighHz = ssbHigh,
@@ -158,11 +159,11 @@ static int RunConvert(string[] argv)
 /// <summary>Streams one capture through the converter, optionally writing it. Returns the peak
 /// output magnitude (after <paramref name="gain"/>).</summary>
 static double StreamCapture(
-    string path, IqToAudioOptions opt, PcmWavWriter? writer, double gain, out int clipped)
+    string path, SsbDemodulatorOptions opt, PcmWavWriter? writer, double gain, out int clipped)
 {
     const int blockFrames = 1 << 16;
     using var reader = new PcmWavReader(path);
-    var converter = new StreamingIqToAudioConverter(opt);
+    var converter = new StreamingSsbDemodulator(opt);
     var input = new short[blockFrames * 2];
     var output = new float[converter.MaxOutputFor(blockFrames) + converter.MaxFlushOutput];
 

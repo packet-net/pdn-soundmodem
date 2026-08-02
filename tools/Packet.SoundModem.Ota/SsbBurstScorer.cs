@@ -1,6 +1,7 @@
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Iq;
+using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Ota;
 
@@ -57,7 +58,7 @@ internal sealed record SsbCaptureScore(double AudioSeconds, IReadOnlyList<SsbBur
 /// </summary>
 /// <remarks>
 /// <para>The capture's IQ is converted to the mode's native DSP-rate real audio with the same
-/// <see cref="StreamingIqToAudioConverter"/> the MS110D and OFDM scorers use (DAX places the audio
+/// <see cref="StreamingSsbDemodulator"/> the MS110D and OFDM scorers use (DAX places the audio
 /// carrier at its native audio centre, so the down-shift is the manifest's <c>OffsetHz</c>, which is 0
 /// for DAX). Each burst is then scored in its own window: a fresh <see cref="IModem"/> is driven over
 /// the burst exactly as the deployment path drives it, giving an unambiguous 0/1 result per burst (a
@@ -153,7 +154,7 @@ internal sealed class SsbBurstScorer
                 + $"{nativeRate} Hz — the IQ→audio decimation needs one");
         }
 
-        var converter = new StreamingIqToAudioConverter(new IqToAudioOptions
+        var converter = new StreamingSsbDemodulator(new SsbDemodulatorOptions
         {
             InputRate = reader.SampleRate,
             OutputRate = nativeRate,

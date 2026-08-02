@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Packet.SoundModem.Ota;
 using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Iq;
+using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Tests.Ota;
 
@@ -62,7 +63,7 @@ public class OfdmLadderPassTests
             Quiet(gapSeconds);
         }
 
-        var converter = new StreamingIqToAudioConverter(new IqToAudioOptions
+        var converter = new StreamingSsbDemodulator(new SsbDemodulatorOptions
         {
             InputRate = CaptureRate,
             OutputRate = OfdmBurstScorer.NativeRate,

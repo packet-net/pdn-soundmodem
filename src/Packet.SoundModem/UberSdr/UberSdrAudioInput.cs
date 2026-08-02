@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using M0LTE.Radio.Audio;
 using Packet.SoundModem.Iq;
+using M0LTE.Dsp;
 
 namespace Packet.SoundModem.UberSdr;
 
@@ -315,7 +316,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
     {
         // One converter per session: its filter state belongs to a contiguous stream, and a
         // reconnect is a discontinuity by definition.
-        var converter = new StreamingIqToAudioConverter(new IqToAudioOptions
+        var converter = new StreamingSsbDemodulator(new SsbDemodulatorOptions
         {
             InputRate = _iqRate,
             OutputRate = _tuning.OutputRate,

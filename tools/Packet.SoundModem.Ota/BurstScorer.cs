@@ -1,6 +1,7 @@
 using System.Globalization;
 using Packet.SoundModem.Ms110d;
 using Packet.SoundModem.Iq;
+using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Ota;
 
@@ -110,7 +111,7 @@ public sealed record BurstScorerOptions
     /// <summary>
     /// The band the converted audio actually occupies — the receive converter's SSB passband.
     /// </summary>
-    /// <remarks>Must match whatever <c>IqToAudioOptions.SsbLowHz</c>/<c>SsbHighHz</c> the capture
+    /// <remarks>Must match whatever <c>SsbDemodulatorOptions.SsbLowHz</c>/<c>SsbHighHz</c> the capture
     /// was converted with. The noise in a converted pass lives only inside that passband, and an
     /// estimator that assumes it fills the whole audio band over-subtracts noise from the burst —
     /// harmless at high SNR, 2.6 dB out at 0 dB. See <see cref="SnrEstimator.Estimate"/>.</remarks>

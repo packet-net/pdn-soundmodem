@@ -3,6 +3,7 @@ using System.Text.Json;
 using Packet.SoundModem.Ms110d;
 using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Iq;
+using M0LTE.Dsp;
 
 namespace Packet.SoundModem.Ota;
 
@@ -100,7 +101,7 @@ internal static class ScoreCommand
                 times.Length > 0 ? times[k] : -1));
         }
 
-        var options = new IqToAudioOptions
+        var options = new SsbDemodulatorOptions
         {
             OutputRate = 9600,
             DialHz = a.Dbl("dial-hz", 2000),
@@ -137,7 +138,7 @@ internal static class ScoreCommand
         (CampaignSchedule schedule, IReadOnlyList<double>? starts, string revision) =
             CampaignFiles.LoadScheduleOrManifest(schedulePath);
 
-        var options = new IqToAudioOptions
+        var options = new SsbDemodulatorOptions
         {
             OutputRate = a.Int("out-rate", 9600),
             DialHz = a.Dbl("dial-hz", schedule.OffsetHz),
@@ -175,7 +176,7 @@ internal static class ScoreCommand
     /// <summary>Streams the capture through the converter, so the scorer never sees a file and
     /// the pass length never becomes a memory question.</summary>
     private static IEnumerable<ReadOnlyMemory<float>> Convert(
-        string path, IqToAudioOptions options, string? audioPath)
+        string path, SsbDemodulatorOptions options, string? audioPath)
     {
         const int blockFrames = 1 << 16;
         using var reader = new PcmWavReader(path);
@@ -184,7 +185,7 @@ internal static class ScoreCommand
             throw new InvalidDataException($"expected a 2-channel IQ capture, found {reader.Channels}");
         }
 
-        var converter = new StreamingIqToAudioConverter(new IqToAudioOptions
+        var converter = new StreamingSsbDemodulator(new SsbDemodulatorOptions
         {
             InputRate = reader.SampleRate,
             OutputRate = options.OutputRate,

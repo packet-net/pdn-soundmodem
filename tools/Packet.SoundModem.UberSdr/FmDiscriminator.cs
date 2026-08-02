@@ -49,7 +49,7 @@ public sealed class IqToFmAudioOptions
 /// <summary>
 /// Turns a captured IQ stream (complex baseband centred near the FM carrier) into the real audio a
 /// mode's demodulator consumes, by <b>instantaneous-frequency (phase-derivative) discrimination</b>
-/// — the FM counterpart of <see cref="IqToAudioConverter"/>, and the receive half of the FM OTA
+/// — the FM counterpart of <see cref="SsbDemodulator"/>, and the receive half of the FM OTA
 /// chain. The FM-native modes (afsk1200, fsk9600, c4fsk, qpsk3600 audio-over-FM) reach the air as
 /// frequency modulation, so the harness FM-demodulates the RSP1's IQ here and feeds the result to
 /// the mode's own demodulator exactly as the SSB path feeds it single-sideband audio.
