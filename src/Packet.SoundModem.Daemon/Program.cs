@@ -757,6 +757,18 @@ else if (deviceIsFlex)
     // slice, limits transmitted DAX audio bandwidth, and it is whatever last touched the radio
     // (a 300 Hz CW filter would silently crush a 3 kHz mode). We deliberately never set it;
     // reporting it makes a stale value visible. Headless only — attach leaves it to SmartSDR.
+    // The radio's frequency reference, into the waterfall's top bar and kept current. Only a
+    // Flex reports one; a soundcard station shows nothing rather than an empty label.
+    if (waterfallServer is not null)
+    {
+        void PublishReference(M0LTE.Flex.FlexReferenceStatus reference) =>
+            waterfallServer.SetRadioStatus(reference.Describe());
+
+        PublishReference(flex.Station.Client.Reference);
+        flex.Station.Client.ReferenceChanged += PublishReference;
+        Console.WriteLine($"flex: reference {flex.Station.Client.Reference.Describe()}");
+    }
+
     if (flex.Station.TransmitFilter is (int txFilterLow, int txFilterHigh))
     {
         Console.WriteLine($"flex: transmit filter {txFilterLow}..{txFilterHigh} Hz (radio global — limits TX audio bandwidth)");
