@@ -343,52 +343,40 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// Where our own transmission is drawn on the display's scale: the level a strong received
-    /// station comes in at.
+    /// How far our own transmission is turned down before it is drawn.
     /// </summary>
     /// <remarks>
-    /// Measured at 12 kHz with the page's default −95..−35 dB window: a modulator's raw output
-    /// (−4.9 dBFS rms) lights 1021 of 1024 bins — the whole waterfall, edge to edge — because the
-    /// transform's own leakage skirt sits 40 dB down, which is buried in the noise for a received
-    /// signal and 40 dB above the display floor for this one. Normalised here, it lights 539 and
-    /// peaks at 77 % brightness; a genuinely strong received station lights 562 and peaks at 79 %.
+    /// <para>A modulator emits around −5 dBFS rms — some 35 dB hotter than anything the display
+    /// ever sees on receive, and the page's window is −95..−35 dB. Drawn as-is, the transform's
+    /// own leakage skirt (40 dB below the peak, buried in the noise for a received signal) lands
+    /// well above the display floor and smears across the full span: measured, 1021 of 1024 bins
+    /// lit. Turned down by this, the same burst lights 539 and peaks at 77 % brightness, against
+    /// 562 and 79 % for a genuinely strong received station.</para>
+    /// <para><b>A fixed gain, deliberately, and not a normalisation to a target level.</b>
+    /// Normalising each buffer is an automatic gain control, and an AGC's whole purpose is to
+    /// make quiet things loud — so the quiet buffers in a keyup (a ramp-down, a tail, an idle
+    /// stretch of a shifted ARDOP burst) get multiplied by an enormous gain and their noise floor
+    /// fills the entire span. Measured: near-silence at −65 dBFS rms normalised to −40 lights
+    /// 1011 of 1024 bins. That is the same full-width haze as the original bug, arrived at from
+    /// the opposite direction, and it is why this is a constant. The modulator's level is a
+    /// stable property of the system; there is nothing here that needs tracking.</para>
     /// </remarks>
-    private const double TransmitDisplayRmsDbfs = -40;
-
-    /// <summary>Below this there is nothing to normalise — TXTAIL is literal silence.</summary>
-    private const double TransmitSilenceRms = 1e-4;
+    internal const double TransmitDisplayGainDb = -35;
 
     /// <summary>
     /// Scales transmitted audio to the level the display is calibrated for.
     /// </summary>
     /// <remarks>
-    /// <para>Our own transmit level is not a measurement of anything the display can show: it is
+    /// Our own transmit level is not a measurement of anything the display can show: it is
     /// whatever the modulator happens to emit, which differs per mode and which no receiver would
     /// ever see at that strength. Drawing it literally does not produce a hot signal, it produces
-    /// a saturated one — every bin past the top of the scale, the shape lost, and a smear across
-    /// the full span that looks like a fault rather than a transmission.</para>
-    /// <para>So it is normalised to a fixed level rather than shown as-is. Purely a gain: the
-    /// spectrum's shape, and therefore the bandwidth and placement the operator is looking at,
-    /// is untouched.</para>
+    /// a saturated one. Purely a gain — the spectrum's shape, and so the bandwidth and placement
+    /// the operator reads off it, is untouched, and quiet stays quiet.
     /// </remarks>
-    private static float[] ForDisplay(ReadOnlySpan<float> samples)
+    internal static float[] ForDisplay(ReadOnlySpan<float> samples)
     {
-        double sum = 0;
-        foreach (float sample in samples)
-        {
-            sum += (double)sample * sample;
-        }
-
-        double rms = Math.Sqrt(sum / samples.Length);
+        double gain = Math.Pow(10, TransmitDisplayGainDb / 20);
         var scaled = new float[samples.Length];
-        if (rms < TransmitSilenceRms)
-        {
-            // Silence, and dividing by it would turn the tail into a wall of noise.
-            samples.CopyTo(scaled);
-            return scaled;
-        }
-
-        double gain = Math.Pow(10, TransmitDisplayRmsDbfs / 20) / rms;
         for (int i = 0; i < samples.Length; i++)
         {
             scaled[i] = (float)(samples[i] * gain);
