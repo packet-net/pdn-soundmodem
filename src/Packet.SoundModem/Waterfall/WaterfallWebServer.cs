@@ -27,7 +27,32 @@ public sealed class WaterfallOptions
 
     /// <summary>FFT length; 0 picks the rate default (2048 at 12 kHz, 8192 at 48 kHz).</summary>
     public int FftSize { get; set; }
+
+    /// <summary>
+    /// What the host says each modem is meant to occupy, by sub-channel. Two things the
+    /// waterfall cannot work out for itself.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>The centre.</b> Probing gives measured band edges, and their midpoint is a few
+    /// Hz off the centre the operator asked for — enough that a modem placed at 7051600 renders
+    /// as 7.05159 and reads like a bug. The configured centre is the truth for a label; the
+    /// measured edges remain the truth for the drawn band.</para>
+    /// <para><b>Bands that cannot be probed.</b> ARDOP is not an <see cref="IModem"/> — it is a
+    /// receive tap with its own transmitter — so nothing enumerable carries it and it was
+    /// simply absent from the display. Declared here, it is drawn from its centre and width
+    /// like anything else.</para>
+    /// </remarks>
+    public IReadOnlyList<DeclaredBand> DeclaredBands { get; set; } = [];
 }
+
+/// <summary>A band the host declares rather than the waterfall measuring it.</summary>
+/// <param name="SubChannel">Which modem, for ordering and labels.</param>
+/// <param name="Mode">Its mode string; rendered for display by <see cref="ModeNames"/>.</param>
+/// <param name="CentreHz">The audio centre the operator configured.</param>
+/// <param name="BandwidthHz">
+/// Its width, used only when the band cannot be measured (ARDOP). Null means "measure it".
+/// </param>
+public sealed record DeclaredBand(int SubChannel, string Mode, double CentreHz, double? BandwidthHz);
 
 /// <summary>One modem's display band, measured off its own modulator at start-up.</summary>
 /// <param name="SubChannel">KISS sub-channel.</param>
@@ -112,14 +137,35 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
         foreach ((int sub, IModem modem) in _channel.Modems.OrderBy(m => m.Key))
         {
-            if (TryMeasureBand(sub, modem, _channel.SampleRate, out ModemBand band))
+            if (!TryMeasureBand(sub, modem, _channel.SampleRate, out ModemBand band))
             {
-                _bands.Add(band);
-                _trackers[sub] = new BandActivityTracker(
-                    source.BinWidthHz, source.LinesPerSecond, source.LineLength,
-                    band.LowHz, band.HighHz);
+                continue;
             }
+
+            // Measured edges, but the configured centre where the host stated one: the
+            // midpoint of a measurement is a few Hz off what the operator asked for.
+            if (Declared(sub) is { } declared)
+            {
+                band = band with { CentreHz = declared.CentreHz };
+            }
+
+            AddBand(band, source);
         }
+
+        // Bands nothing enumerable carries — ARDOP, which is a tap rather than a modem.
+        foreach (DeclaredBand declared in _options.DeclaredBands
+                     .Where(d => !_channel.Modems.ContainsKey(d.SubChannel) && d.BandwidthHz is > 0)
+                     .OrderBy(d => d.SubChannel))
+        {
+            double half = declared.BandwidthHz!.Value / 2;
+            AddBand(
+                new ModemBand(
+                    declared.SubChannel, declared.Mode,
+                    declared.CentreHz - half, declared.CentreHz + half, declared.CentreHz),
+                source);
+        }
+
+        _bands.Sort((a, b) => a.SubChannel.CompareTo(b.SubChannel));
 
         _configMessage = BuildConfigMessage();
         _channel.AddReceiveTap(samples => source.Process(samples));
@@ -145,6 +191,16 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         return true;
     }
 
+    private DeclaredBand? Declared(int subChannel) =>
+        _options.DeclaredBands.FirstOrDefault(d => d.SubChannel == subChannel);
+
+    private void AddBand(ModemBand band, WaterfallSource source)
+    {
+        _bands.Add(band);
+        _trackers[band.SubChannel] = new BandActivityTracker(
+            source.BinWidthHz, source.LinesPerSecond, source.LineLength, band.LowHz, band.HighHz);
+    }
+
     private byte[] BuildConfigMessage()
     {
         WaterfallSource source = _source!;
@@ -161,6 +217,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             {
                 sub = b.SubChannel,
                 mode = b.Mode,
+                modeName = ModeNames.Display(b.Mode),
                 lowHz = Math.Round(b.LowHz, 1),
                 highHz = Math.Round(b.HighHz, 1),
                 centreHz = Math.Round(b.CentreHz, 1),
