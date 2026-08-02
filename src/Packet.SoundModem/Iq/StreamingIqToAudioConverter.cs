@@ -1,10 +1,12 @@
 using M0LTE.Dsp;
 
-namespace Packet.SoundModem.UberSdr;
+namespace Packet.SoundModem.Iq;
 
 /// <summary>
-/// The block-at-a-time form of <see cref="IqToAudioConverter"/>: captured IQ in, 9600 Hz MS110D
-/// audio out, in constant memory and at a fraction of the arithmetic.
+/// The block-at-a-time form of <see cref="IqToAudioConverter"/>: complex baseband in, real SSB
+/// audio out at the requested rate, in constant memory and at a fraction of the arithmetic. This
+/// is what an unbounded stream needs — a capture being scored offline, or a live receiver feeding
+/// the modems (the daemon's <c>ubersdr:</c> device).
 /// </summary>
 /// <remarks>
 /// <para><b>Why this exists.</b> The whole-file converter allocates six arrays the length of the
@@ -39,6 +41,7 @@ public sealed class StreamingIqToAudioConverter
     private readonly int _mask;
     private readonly double _wr;      // NCO step phasor
     private readonly double _wi;
+    private readonly double _mirror;  // −1 on LSB: conjugate the shifted baseband
     private readonly int _pad;
 
     private double _pr = 1.0;
@@ -49,6 +52,7 @@ public sealed class StreamingIqToAudioConverter
     private long _produced;
     private bool _flushed;
 
+    /// <summary>Creates the converter; null takes every default.</summary>
     public StreamingIqToAudioConverter(IqToAudioOptions? options = null)
     {
         IqToAudioOptions opt = options ?? new IqToAudioOptions();
@@ -65,6 +69,7 @@ public sealed class StreamingIqToAudioConverter
         double dPhi = -2.0 * Math.PI * opt.DialHz / opt.InputRate;
         _wr = Math.Cos(dPhi);
         _wi = Math.Sin(dPhi);
+        _mirror = opt.Sideband == Sideband.Lower ? -1.0 : 1.0;
 
         // The SSB bandpass, exactly as the reference builds it — including the sign of the
         // imaginary half, which selects the UPPER sideband only because the convolution below
@@ -89,14 +94,26 @@ public sealed class StreamingIqToAudioConverter
         // in is known. Reading it out of the filter as an impulse response settles that by
         // observation instead of by guessing which end is which: gImpulse is by definition the
         // g[t] in y[k] = sum_t g[t]·x[k−t], whatever the class does internally.
-        float[] design = FilterDesign.LowPass(0.45 * opt.OutputRate, opt.InputRate, 8 * _factor + 1);
-        int gt = design.Length;
-        var probe = new FirFilter(design);
-        var g = new double[gt];
-        for (int t = 0; t < gt; t++)
+        // At factor 1 there is nothing to decimate and so nothing to anti-alias: g is the unit
+        // impulse, the composite kernel collapses to the SSB bandpass alone, and the reference
+        // omits its low-pass on the same condition so the two still agree sample-for-sample.
+        double[] g;
+        if (_factor == 1)
         {
-            g[t] = probe.Next(t == 0 ? 1f : 0f);
+            g = [1.0];
         }
+        else
+        {
+            float[] design = FilterDesign.LowPass(0.45 * opt.OutputRate, opt.InputRate, 8 * _factor + 1);
+            var probe = new FirFilter(design);
+            g = new double[design.Length];
+            for (int t = 0; t < g.Length; t++)
+            {
+                g[t] = probe.Next(t == 0 ? 1f : 0f);
+            }
+        }
+
+        int gt = g.Length;
 
         // Composite kernel: e[p] = sum_s g[gt-1-s] * h[p-s]. Cascading the two filters and taking
         // the real part at the end is the same operation as the reference's filter → real → filter,
@@ -141,8 +158,10 @@ public sealed class StreamingIqToAudioConverter
         _fed = _pad;
     }
 
+    /// <summary>Complex sample rate of the IQ fed in, Hz.</summary>
     public int InputRate { get; }
 
+    /// <summary>Real sample rate of the audio produced, Hz.</summary>
     public int OutputRate { get; }
 
     /// <summary>Input samples of look-ahead the filter needs before an output instant can be
@@ -225,9 +244,11 @@ public sealed class StreamingIqToAudioConverter
         }
 
         // NCO: shift by −DialHz so the suppressed carrier sits at 0 Hz. Incremental phasor,
-        // renormalised on the same schedule as the reference so the two do not diverge.
+        // renormalised on the same schedule as the reference so the two do not diverge. On LSB
+        // the result is conjugated, mirroring the spectrum about the dial so that the wanted
+        // lower sideband becomes an upper one and the single USB kernel below serves both.
         double re = (i * _pr) - (q * _pi);
-        double im = (i * _pi) + (q * _pr);
+        double im = _mirror * ((i * _pi) + (q * _pr));
         double npr = (_pr * _wr) - (_pi * _wi);
         _pi = (_pr * _wi) + (_pi * _wr);
         _pr = npr;

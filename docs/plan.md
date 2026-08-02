@@ -204,6 +204,11 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   self-contained single file, Depends: libasound2 only, systemd unit + example config,
   pdn-soundmodem system user with audio+dialout). amd64 package binary smoke-tested
   (4/4 on the direwolf fixture); arm64 built ready for the Pi.
+- ✅ UberSDR as a receive-only device (2026-08-02): `--device ubersdr:<instance>` streams a
+  public web receiver's iq48 and demodulates SSB from it in-process, so an ordinary band-plan
+  config runs unchanged on somebody else's antenna. Receive only, and the channel says so
+  once (`ReceiveOnlyReason`) rather than each host interface finding out separately. See the
+  amendment log entry below.
 - ⬜ DCD-over-KISS extension (awaiting an agreed NinoTNC-ecosystem format); Windows
   audio backend (deferred 2026-07-15); extra decode-only listeners; multi-decoder banks
   for the PSK modes.
@@ -225,6 +230,16 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   committed corpora don't yet).
 
 ## Amendment log
+
+### 2026-08-02 — a station with no antenna: `ubersdr:` as a receive-only device
+
+Tom asked for UberSDR as a source for receive-only instances, IQ preferred, driven by an ordinary band-plan config with nothing but the device string changed. Landed as `--device ubersdr:<instance>`: the instance may be a host, a host:port, or the https:// URL out of a browser's address bar. The daemon takes the receiver's **iq48** stream (48 kHz complex, ±24 kHz), demodulates SSB from it in-process at the channel's DSP rate, and hands the modems real audio — so every mode, the waterfall, the frame log and KISS work unchanged, and the band plan's computed dial *tunes the receiver* the way it tunes a headless Flex rather than being printed for an operator to dial in. IQ rather than the instance's own demodulated audio for the reason the OTA capture plan gives: holding the complex baseband keeps the receiver's filter, AGC and resampler out of the path, which is what makes an SNR figure off this route mean the same thing as one off a sound card.
+
+Most of the machinery already existed for the MS110D OTA campaign and only had to move: `PcmBinaryDecoder` and `ConnectionResponse` from `tools/Packet.SoundModem.UberSdr` into the core (which gains a `ZstdSharp.Port` dependency — MIT), and `IqToAudioConverter`/`StreamingIqToAudioConverter` into `Iq/`. Two gaps had to be filled to make an offline scorer's converter serve a live receiver: **decimation by 1**, for the 48 kHz mode families whose DSP rate *is* the IQ rate (the anti-alias low-pass is dropped there, in both converters together so their sample-for-sample equivalence test still holds), and **LSB**, which is the same kernel applied to the conjugated baseband. New is `UberSdrAudioInput` — a reconnecting receive loop behind `IAudioInput`, with the C0-measured one-second startup guard applied per connection, because public instances cap a session at three hours and a modem is expected to run for months.
+
+The honest half of the feature is that there is no transmitter at the far end of a WebSocket. `SoundModemChannel.ReceiveOnlyReason` says so once, so KISS, paging and ARDOP all get the same refusal immediately rather than each discovering it differently — deliberately *not* `TransmitInhibit`, which would turn "cannot" into a 30-second wait ending in the wrong explanation. `ptt` alongside the device is rejected at start-up; `ardop` still loads, still hears the channel, and is warned about at start-up since no ARQ session can ever complete (its transmitter delegate is now awaited and caught, because the TNC's transmit worker does not survive an exception out of it).
+
+**It works on air.** Against `m9psy-1.instance.ubersdr.org` on Tom's example 40 m plan (afsk300-il2pc 7.050300 / ardop 7.050950 / bpsk300 7.051600, dial computed at 7.049450 USB), the station decoded real off-air traffic on both packet modems within minutes — including **`afsk300-il2pc`, which had no on-air validation at all before this**. See the [mode-validation ledger](mode-validation.md). Measured demodulated level off that instance is ≈ −26 dBFS RMS, so the default `gain` of 1.0 needs no help.
 
 ### 2026-08-01 — the daemon grows its own browser waterfall (Phase 2's display, without waiting for packet.net)
 

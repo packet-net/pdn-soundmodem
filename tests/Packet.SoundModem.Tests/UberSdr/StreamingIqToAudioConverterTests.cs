@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Packet.SoundModem.Ms110d;
 using Packet.SoundModem.UberSdr;
+using Packet.SoundModem.Iq;
 
 namespace Packet.SoundModem.Tests.UberSdr;
 
@@ -180,6 +181,77 @@ public class StreamingIqToAudioConverterTests
         Rms(lower.AsSpan(skip)).Should().BeLessThan(amplitude / 100.0,
             "a −2000 Hz baseband component is the sideband the complex bandpass exists to "
             + "reject; if it survives, the filter is selecting the wrong sideband");
+    }
+
+    /// <summary>
+    /// LSB is the same filter looking the other way. A receiver on the lower sideband must hear a
+    /// −2000 Hz baseband component at 2000 Hz of audio, and must not hear the +2000 Hz one — the
+    /// exact mirror of the USB case above, which is the only thing that makes "sideband" mean
+    /// anything.
+    /// </summary>
+    [Theory]
+    [InlineData(typeof(IqToAudioConverter))]
+    [InlineData(typeof(StreamingIqToAudioConverter))]
+    public void On_the_lower_sideband_it_keeps_the_lower_half_and_rejects_the_upper(Type converter)
+    {
+        var options = new IqToAudioOptions { Sideband = Sideband.Lower, NormalisePeak = 0f };
+        const double tone = 2000.0;
+        const double amplitude = 0.5;
+        int samples = Fs * 2;
+
+        float[] wanted = Convert(converter, ComplexTone(-tone, samples, amplitude), options);
+        float[] image = Convert(converter, ComplexTone(+tone, samples, amplitude), options);
+
+        int skip = 9600 / 4;
+        ToneAmplitude(wanted, tone, options.OutputRate, skip).Should().BeApproximately(amplitude, 0.02,
+            "on LSB the RF is dial − audio, so a −2000 Hz baseband component is 2000 Hz of audio");
+
+        Rms(image.AsSpan(skip)).Should().BeLessThan(amplitude / 100.0,
+            "the +2000 Hz component is the image LSB rejects; if it survives, \"sideband\" is "
+            + "being ignored rather than acted on");
+    }
+
+    /// <summary>
+    /// The 48 kHz mode families (fsk9600, c4fsk, freedv-*, ms110d-*) run their DSP at the IQ rate,
+    /// so the converter is asked to decimate by one. That path skips the anti-alias low-pass —
+    /// there is nothing to alias — and this pins that both converters skip it together, because
+    /// their agreement is what the equivalence test above rests on.
+    /// </summary>
+    [Fact]
+    public void Delivering_audio_at_the_iq_rate_needs_no_decimation_and_still_matches_the_reference()
+    {
+        short[] iq = NoisyIq(24000 + 61, seed: 21);
+        var options = new IqToAudioOptions { OutputRate = Fs, NormalisePeak = 0f };
+
+        float[] reference = new IqToAudioConverter(options).Convert(iq);
+        float[] streamed = Stream(iq, options, blockFrames: 4096);
+
+        streamed.Length.Should().Be(reference.Length);
+        var error = new float[reference.Length];
+        for (int k = 0; k < reference.Length; k++)
+        {
+            error[k] = streamed[k] - reference[k];
+        }
+
+        Rms(error).Should().BeLessThan(1e-6);
+    }
+
+    /// <summary>At factor 1 the passband must still be the one that was asked for — an anti-alias
+    /// filter left in the chain would round the top of it off by several hundred Hz.</summary>
+    [Theory]
+    [InlineData(500.0)]
+    [InlineData(3000.0)]
+    public void At_the_iq_rate_the_passband_is_the_one_that_was_asked_for(double tone)
+    {
+        var options = new IqToAudioOptions { OutputRate = Fs, NormalisePeak = 0f };
+        const double amplitude = 0.5;
+
+        float[] audio = Stream(ComplexTone(tone, Fs * 2, amplitude), options, blockFrames: 8192);
+
+        ToneAmplitude(audio, tone, options.OutputRate, skip: Fs / 4)
+            .Should().BeApproximately(amplitude, 0.02,
+                "{0} Hz is inside the 150-3450 Hz passband and nothing else should be attenuating it",
+                tone);
     }
 
     private static float[] Convert(Type converter, short[] iq, IqToAudioOptions options)

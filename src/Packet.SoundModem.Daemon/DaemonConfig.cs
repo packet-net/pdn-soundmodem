@@ -144,6 +144,44 @@ public sealed class FlexConfig
     public const string DefaultHeadlessDaxChannel = "2";
 }
 
+/// <summary>
+/// Stream parameters used only when Device is <c>ubersdr:&lt;instance&gt;</c> — a receive-only
+/// station listening to a public UberSDR web receiver's IQ. Ignored for every other device.
+/// Where to tune is not here: that comes from the band plan, as it does on a Flex.
+/// </summary>
+public sealed class UberSdrConfig
+{
+    /// <summary>The receiver's IQ mode. <c>iq48</c> (48 kHz complex, ±24 kHz) is what every
+    /// public instance offers; <c>iq96</c> where one allows it.</summary>
+    public string Mode { get; set; } = "iq48";
+
+    /// <summary>Password for a protected instance; null for a public one.</summary>
+    public string? Password { get; set; }
+
+    /// <summary>
+    /// Edges of the SSB filter to synthesise, in Hz above the dial. Holding the complex baseband
+    /// means the receive filter is ours to choose rather than a rig's, and the default (150–3450)
+    /// clears the whole 300–2700 Hz band the planner will place modems in.
+    /// </summary>
+    public double? SsbLowHz { get; set; }
+
+    /// <summary>Upper edge of the synthesised SSB filter, Hz above the dial. See
+    /// <see cref="SsbLowHz"/>.</summary>
+    public double? SsbHighHz { get; set; }
+
+    /// <summary>Audio discarded after each connect, in ms. The instances ramp their level over
+    /// the first ~1 s of a stream; the default second of guard keeps that out of the modems.</summary>
+    public int? StartupGuardMs { get; set; }
+
+    /// <summary>Linear gain on the demodulated audio; 1.0 (the default) is the receiver's own
+    /// scaling. For bringing a quiet instance up to soundcard-like levels on the waterfall.</summary>
+    public double? Gain { get; set; }
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
 /// <summary>Frame log: every frame heard, written to a SQLite file. Null = not kept.</summary>
 public sealed class FrameLogConfig
 {
@@ -250,6 +288,10 @@ public sealed class DaemonConfig
     /// <summary>Headless FlexRadio slice params (Device <c>flex:</c> with no <c>@station</c>);
     /// null = defaults. Ignored for ALSA devices and attach-mode Flex.</summary>
     public FlexConfig? Flex { get; set; }
+
+    /// <summary>UberSDR stream params (Device <c>ubersdr:</c>); null = defaults. Ignored for
+    /// every other device.</summary>
+    public UberSdrConfig? UberSdr { get; set; }
 
     /// <summary>Browser waterfall endpoint; null = disabled.</summary>
     public WaterfallConfig? Waterfall { get; set; }
@@ -370,6 +412,13 @@ public sealed class DaemonConfig
         {
             warnings.Add(
                 $"waterfall: \"{key}\" is not a setting this version knows, and is being "
+                + $"IGNORED. Check the spelling against {ConfigDocUrl}");
+        }
+
+        foreach (string key in config.UberSdr?.UnknownSettings?.Keys ?? Enumerable.Empty<string>())
+        {
+            warnings.Add(
+                $"ubersdr: \"{key}\" is not a setting this version knows, and is being "
                 + $"IGNORED. Check the spelling against {ConfigDocUrl}");
         }
 

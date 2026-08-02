@@ -1,0 +1,634 @@
+using System.Buffers;
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using M0LTE.Radio.Audio;
+using Packet.SoundModem.Iq;
+
+namespace Packet.SoundModem.UberSdr;
+
+/// <summary>
+/// A live UberSDR instance as an <see cref="IAudioInput"/>: the receiver's IQ stream, SSB
+/// demodulated to real audio at the channel's DSP rate, so every modem, the waterfall and the
+/// frame log attach to a KiwiSDR-style web receiver exactly as they attach to a sound card.
+/// </summary>
+/// <remarks>
+/// <para><b>Receive only.</b> There is no transmitter at the far end of a WebSocket, and the
+/// daemon refuses to pretend otherwise — see the <c>ubersdr:</c> device handling in the daemon.
+/// What this buys is a station wherever the antenna is good rather than wherever the operator
+/// is, at the cost of never answering anything it hears.</para>
+/// <para><b>Why IQ and not the instance's own audio.</b> UberSDR will demodulate SSB for us, but
+/// then its filter, its AGC and its resampler are all in the path and none of them is ours to
+/// choose. Taking <c>iq48</c> instead puts the whole ±24 kHz of complex baseband here, so the
+/// receive filter is the one the band plan asked for and the AGC is nobody's — which is what
+/// makes SNR figures off this path mean the same thing as SNR figures off a sound card. The
+/// instrument audit behind that (linear channel, no AGC on the IQ path, 12 dB of headroom, GPSDO
+/// locked) is in <c>docs/ms110d/evidence/2026-07-24-ota-c0/</c>.</para>
+/// <para><b>Sessions end.</b> Public instances cap a session at <c>max_session_time</c> (3 hours
+/// on the ones measured), and a modem is expected to run for months. The receive loop therefore
+/// treats a closed socket as ordinary and reconnects, discarding the
+/// <see cref="UberSdrTuning.StartupGuardMs"/> level ramp each time; only a receiver that stays
+/// unreachable for <see cref="ReconnectGiveUpAfter"/> raises <see cref="Lost"/>.</para>
+/// <para>Protocol per <c>docs/ms110d/ota-capture-client-plan.md</c>; the framing is decoded by
+/// <see cref="PcmBinaryDecoder"/>, which is a port from the upstream Go client.</para>
+/// </remarks>
+public sealed class UberSdrAudioInput : IAudioInput, IDisposable
+{
+    private const string UserAgent = "pdn-soundmodem (ubersdr: receive device)";
+
+    /// <summary>Reconnection attempts stop being hopeful and start being a fault after this
+    /// long, at which point <see cref="Lost"/> fires so the service can restart rather than sit
+    /// on a dead stream.</summary>
+    public static readonly TimeSpan ReconnectGiveUpAfter = TimeSpan.FromMinutes(5);
+
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
+
+    private readonly UberSdrEndpoint _endpoint;
+    private readonly UberSdrTuning _tuning;
+    private readonly Action<string>? _log;
+    private readonly CancellationTokenSource _stopping = new();
+    private readonly object _gate = new();
+    private readonly float[] _ring;
+    private readonly int _iqRate;
+
+    private int _head;
+    private int _tail;
+    private int _count;
+    private long _dropped;
+    private long _droppedReported;
+    private bool _ended;
+    private Task? _pump;
+    private ClientWebSocket? _first;
+
+    private UberSdrAudioInput(
+        UberSdrEndpoint endpoint,
+        UberSdrTuning tuning,
+        int iqRate,
+        ConnectionResponse connection,
+        string? receiverDescription,
+        Action<string>? log)
+    {
+        _endpoint = endpoint;
+        _tuning = tuning;
+        _iqRate = iqRate;
+        _log = log;
+        Connection = connection;
+        ReceiverDescription = receiverDescription;
+
+        // Eight seconds of slack. The daemon drains in 100 ms blocks, so this is not there to be
+        // used — it is there so a GC pause or a busy box costs latency rather than samples.
+        _ring = new float[tuning.OutputRate * 8];
+    }
+
+    /// <summary>Raised once when the receiver has been unreachable for
+    /// <see cref="ReconnectGiveUpAfter"/>, with a sentence saying so. The daemon stops on this,
+    /// so the service restarts and tries the instance afresh.</summary>
+    public event Action<string>? Lost;
+
+    /// <summary>The instance this is streaming from.</summary>
+    public UberSdrEndpoint Endpoint => _endpoint;
+
+    /// <summary>The pre-flight reply — session limits and the IQ modes on offer.</summary>
+    public ConnectionResponse Connection { get; }
+
+    /// <summary>A one-line summary of the receiver from <c>/api/description</c> (callsign,
+    /// site, antenna, frequency reference), or null when it would not say.</summary>
+    public string? ReceiverDescription { get; }
+
+    /// <inheritdoc />
+    public int SampleRate => _tuning.OutputRate;
+
+    /// <summary>Samples dropped because nothing drained the buffer in time. Non-zero means the
+    /// box cannot keep up, and is reported rather than hidden.</summary>
+    public long DroppedSamples => Interlocked.Read(ref _dropped);
+
+    /// <summary>
+    /// Connects to <paramref name="endpoint"/> and starts streaming. The pre-flight and the
+    /// first WebSocket connect happen here, so a wrong host, a refused mode or a password the
+    /// instance does not accept is an error at start-up rather than a silence later.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The receiver refused the connection or the
+    /// requested IQ mode; the message is written for an operator to act on.</exception>
+    public static async Task<UberSdrAudioInput> OpenAsync(
+        UberSdrEndpoint endpoint,
+        UberSdrTuning tuning,
+        Action<string>? log,
+        CancellationToken cancellation)
+    {
+        ArgumentNullException.ThrowIfNull(tuning);
+        int iqRate = IqRateFor(tuning.Mode);
+        if (iqRate % tuning.OutputRate != 0)
+        {
+            throw new InvalidOperationException(
+                $"{tuning.Mode} delivers {iqRate} Hz IQ, which is not a whole multiple of this "
+                + $"channel's {tuning.OutputRate} Hz DSP rate. Resampling by a fraction is not "
+                + "something this path does; the 12 kHz and 48 kHz mode families both divide "
+                + "48000, so an iq48 stream serves either.");
+        }
+
+        string sessionId = Guid.NewGuid().ToString();
+        ConnectionResponse connection = await PreflightAsync(endpoint, sessionId, tuning, cancellation)
+            .ConfigureAwait(false);
+        string? description = Describe(
+            await FetchDescriptionAsync(endpoint, cancellation).ConfigureAwait(false));
+
+        var input = new UberSdrAudioInput(endpoint, tuning, iqRate, connection, description, log);
+
+        // Prove the stream opens before returning: the daemon prints its start-up banner off the
+        // back of this, and a banner claiming a receiver we never reached is worse than an error.
+        input._first = await input.ConnectAsync(sessionId, cancellation).ConfigureAwait(false);
+        input._pump = Task.Run(() => input.PumpAsync(sessionId), CancellationToken.None);
+        return input;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>Blocks briefly for samples and returns 0 if none arrive, which is what the
+    /// daemon's receive loop expects of a device with nothing to say.</remarks>
+    public int Read(Span<float> destination)
+    {
+        lock (_gate)
+        {
+            while (_count == 0)
+            {
+                if (_ended)
+                {
+                    return 0;
+                }
+
+                if (!Monitor.Wait(_gate, TimeSpan.FromMilliseconds(100)))
+                {
+                    return 0;
+                }
+            }
+
+            int take = Math.Min(destination.Length, _count);
+            for (int i = 0; i < take; i++)
+            {
+                destination[i] = _ring[_tail];
+                if (++_tail == _ring.Length)
+                {
+                    _tail = 0;
+                }
+            }
+
+            _count -= take;
+            return take;
+        }
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        _stopping.Cancel();
+        lock (_gate)
+        {
+            _ended = true;
+            Monitor.PulseAll(_gate);
+        }
+
+        try
+        {
+            _pump?.Wait(TimeSpan.FromSeconds(2));
+        }
+        catch (AggregateException)
+        {
+            // Shutdown: the pump's own failures have already been logged.
+        }
+
+        _first?.Dispose();
+        _stopping.Dispose();
+    }
+
+    /// <summary>The complex sample rate an IQ mode name promises: <c>iq48</c> → 48000.</summary>
+    internal static int IqRateFor(string mode)
+    {
+        if (mode is not null
+            && mode.StartsWith("iq", StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(mode.AsSpan(2), out int kHz)
+            && kHz > 0)
+        {
+            return kHz * 1000;
+        }
+
+        throw new InvalidOperationException(
+            $"'{mode}' is not an UberSDR IQ mode. Use \"iq48\" (every instance) or \"iq96\" "
+            + "where the receiver offers it — this device streams complex baseband, not the "
+            + "instance's own demodulated audio.");
+    }
+
+    /// <summary>The reconnecting receive loop. Runs until disposed.</summary>
+    private async Task PumpAsync(string sessionId)
+    {
+        CancellationToken cancellation = _stopping.Token;
+        ClientWebSocket? socket = Interlocked.Exchange(ref _first, null);
+        TimeSpan backoff = TimeSpan.FromSeconds(1);
+        DateTimeOffset? downSince = null;
+
+        while (!cancellation.IsCancellationRequested)
+        {
+            if (socket is null)
+            {
+                try
+                {
+                    socket = await ConnectAsync(sessionId, cancellation).ConfigureAwait(false);
+                    downSince = null;
+                    backoff = TimeSpan.FromSeconds(1);
+                    _log?.Invoke($"ubersdr: reconnected to {_endpoint}");
+                }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    downSince ??= DateTimeOffset.UtcNow;
+                    TimeSpan down = DateTimeOffset.UtcNow - downSince.Value;
+                    if (down > ReconnectGiveUpAfter)
+                    {
+                        RaiseLost(
+                            $"{_endpoint} has been unreachable for {down.TotalMinutes:F0} minutes "
+                            + $"({e.Message}). Stopping so the service restarts and tries again.");
+                        return;
+                    }
+
+                    _log?.Invoke($"ubersdr: {_endpoint} unreachable ({e.Message}); "
+                        + $"retrying in {backoff.TotalSeconds:F0}s");
+                    try
+                    {
+                        await Task.Delay(backoff, cancellation).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+
+                    backoff = TimeSpan.FromSeconds(Math.Min(30, backoff.TotalSeconds * 2));
+                    continue;
+                }
+            }
+
+            try
+            {
+                await ReceiveAsync(socket, cancellation).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                socket.Dispose();
+                break;
+            }
+            catch (Exception e)
+            {
+                _log?.Invoke($"ubersdr: stream from {_endpoint} ended ({e.Message})");
+            }
+
+            socket.Dispose();
+            socket = null;
+            if (cancellation.IsCancellationRequested)
+            {
+                break;
+            }
+
+            // Ordinary: the instance caps a session at max_session_time, so an unremarkable
+            // stream ends every few hours and simply has to be picked up again.
+            _log?.Invoke($"ubersdr: reconnecting to {_endpoint}");
+
+            // A breath first. These are somebody else's receivers with a finite number of
+            // listener slots, and an instance that accepts and immediately closes — full,
+            // restarting, refusing us for a reason it does not state over the socket — must not
+            // be met with an unthrottled reconnect loop.
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellation).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        lock (_gate)
+        {
+            _ended = true;
+            Monitor.PulseAll(_gate);
+        }
+    }
+
+    /// <summary>Receives one session's worth of IQ, converting and buffering as it arrives.</summary>
+    private async Task ReceiveAsync(ClientWebSocket socket, CancellationToken cancellation)
+    {
+        // One converter per session: its filter state belongs to a contiguous stream, and a
+        // reconnect is a discontinuity by definition.
+        var converter = new StreamingIqToAudioConverter(new IqToAudioOptions
+        {
+            InputRate = _iqRate,
+            OutputRate = _tuning.OutputRate,
+            DialHz = 0, // the receiver is tuned to the dial, so the carrier is already at DC
+            Sideband = _tuning.Sideband,
+            SsbLowHz = _tuning.SsbLowHz,
+            SsbHighHz = _tuning.SsbHighHz,
+        });
+
+        using var decoder = new PcmBinaryDecoder { LastSampleRate = _iqRate, LastChannels = 2 };
+        var accumulator = new ArrayBufferWriter<byte>(64 * 1024);
+        byte[] receive = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        short[] iq = [];
+        float[] audio = [];
+        ulong firstPacketNs = 0;
+        ulong guardNs = (ulong)_tuning.StartupGuardMs * 1_000_000UL;
+
+        try
+        {
+            while (!cancellation.IsCancellationRequested)
+            {
+                accumulator.Clear();
+                WebSocketReceiveResult result;
+                do
+                {
+                    result = await socket.ReceiveAsync(receive, cancellation).ConfigureAwait(false);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        return;
+                    }
+
+                    accumulator.Write(receive.AsSpan(0, result.Count));
+                }
+                while (!result.EndOfMessage);
+
+                if (result.MessageType != WebSocketMessageType.Binary)
+                {
+                    continue; // text status frames say nothing an IQ stream needs
+                }
+
+                PcmPacket packet;
+                try
+                {
+                    packet = decoder.Decode(accumulator.WrittenSpan, isZstd: true);
+                }
+                catch (InvalidDataException)
+                {
+                    continue; // one unreadable packet is a glitch, not a reason to drop the stream
+                }
+
+                if (packet.GpsTimestampNanos == 0)
+                {
+                    continue;
+                }
+
+                if (firstPacketNs == 0)
+                {
+                    firstPacketNs = packet.GpsTimestampNanos;
+                }
+
+                // The level ramps over the first second of a stream. Feeding that to the modems
+                // would put a fade at the head of every session and a stripe on the waterfall.
+                if (packet.GpsTimestampNanos - firstPacketNs < guardNs)
+                {
+                    continue;
+                }
+
+                ReadOnlySpan<byte> pcm = packet.Pcm.Span;
+                int shorts = pcm.Length / 2;
+                if (iq.Length < shorts)
+                {
+                    iq = new short[shorts];
+                    audio = new float[converter.MaxOutputFor(shorts / 2) + 1];
+                }
+
+                // PcmBinaryDecoder hands back a little-endian payload (the wire is big-endian);
+                // read it as such rather than reinterpreting the bytes, so this does not quietly
+                // depend on the host's byte order.
+                for (int s = 0; s < shorts; s++)
+                {
+                    iq[s] = System.Buffers.Binary.BinaryPrimitives.ReadInt16LittleEndian(
+                        pcm.Slice(s * 2, 2));
+                }
+
+                int produced = converter.Process(iq.AsSpan(0, shorts - (shorts % 2)), audio);
+                Publish(audio.AsSpan(0, produced));
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(receive);
+        }
+    }
+
+    /// <summary>Copies converted audio into the ring, applying gain and complaining if a lagging
+    /// consumer is costing samples.</summary>
+    private void Publish(ReadOnlySpan<float> samples)
+    {
+        float gain = _tuning.Gain;
+        long dropped = 0;
+        lock (_gate)
+        {
+            foreach (float sample in samples)
+            {
+                if (_count == _ring.Length)
+                {
+                    // Bounded rather than unbounded: a consumer that has stopped draining is a
+                    // fault to be reported, not a reason to grow until the process dies.
+                    if (++_tail == _ring.Length)
+                    {
+                        _tail = 0;
+                    }
+
+                    _count--;
+                    dropped++;
+                }
+
+                _ring[_head] = sample * gain;
+                if (++_head == _ring.Length)
+                {
+                    _head = 0;
+                }
+
+                _count++;
+            }
+
+            Monitor.PulseAll(_gate);
+        }
+
+        if (dropped == 0)
+        {
+            return;
+        }
+
+        long total = Interlocked.Add(ref _dropped, dropped);
+        // Once a box is behind it stays behind for a while; one line per second of loss is
+        // enough to say so without burying the journal.
+        if (total - Interlocked.Read(ref _droppedReported) >= _tuning.OutputRate)
+        {
+            Interlocked.Exchange(ref _droppedReported, total);
+            _log?.Invoke(
+                $"ubersdr: WARNING — dropped {total} samples ({total / (double)_tuning.OutputRate:F1} s) "
+                + "because the receive buffer filled. The machine is not keeping up with the stream.");
+        }
+    }
+
+    private void RaiseLost(string reason)
+    {
+        lock (_gate)
+        {
+            _ended = true;
+            Monitor.PulseAll(_gate);
+        }
+
+        Lost?.Invoke(reason);
+    }
+
+    /// <summary>Opens the IQ WebSocket.</summary>
+    private async Task<ClientWebSocket> ConnectAsync(string sessionId, CancellationToken cancellation)
+    {
+        var query = new StringBuilder()
+            .Append("frequency=").Append(_tuning.FrequencyHz)
+            .Append("&mode=").Append(Uri.EscapeDataString(_tuning.Mode))
+            .Append("&user_session_id=").Append(sessionId)
+            .Append("&format=pcm-zstd");
+        if (!string.IsNullOrEmpty(_tuning.Password))
+        {
+            query.Append("&password=").Append(Uri.EscapeDataString(_tuning.Password));
+        }
+
+        var uri = new Uri($"{_endpoint.WebSocketScheme}://{_endpoint.Host}:{_endpoint.Port}/ws?{query}");
+        var socket = new ClientWebSocket();
+        socket.Options.SetRequestHeader("User-Agent", UserAgent);
+        if (!string.IsNullOrEmpty(_tuning.Password))
+        {
+            socket.Options.SetRequestHeader("X-Password", _tuning.Password);
+        }
+
+        try
+        {
+            await socket.ConnectAsync(uri, cancellation).ConfigureAwait(false);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+
+        return socket;
+    }
+
+    /// <summary>
+    /// <c>POST /connection</c>: whether we may stream at all, and whether the mode we want is on
+    /// offer. Asked before the WebSocket so a refusal arrives as a sentence rather than as a
+    /// socket that closes for no stated reason.
+    /// </summary>
+    private static async Task<ConnectionResponse> PreflightAsync(
+        UberSdrEndpoint endpoint, string sessionId, UberSdrTuning tuning, CancellationToken cancellation)
+    {
+        var body = new JsonObject { ["user_session_id"] = sessionId };
+        if (!string.IsNullOrEmpty(tuning.Password))
+        {
+            body["password"] = tuning.Password;
+        }
+
+        ConnectionResponse? reply;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{endpoint.HttpBase}/connection")
+            {
+                Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
+            };
+            request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+            using HttpResponseMessage response = await Http.SendAsync(request, cancellation)
+                .ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            await using Stream stream = await response.Content.ReadAsStreamAsync(cancellation)
+                .ConfigureAwait(false);
+            reply = await JsonSerializer.DeserializeAsync<ConnectionResponse>(
+                stream, cancellationToken: cancellation).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException)
+        {
+            throw new InvalidOperationException(
+                $"cannot reach the UberSDR instance at {endpoint.HttpBase}: {e.Message}", e);
+        }
+
+        if (reply is null)
+        {
+            throw new InvalidOperationException(
+                $"{endpoint.HttpBase}/connection returned nothing — is that an UberSDR instance?");
+        }
+
+        if (!reply.Allowed)
+        {
+            throw new InvalidOperationException(
+                $"{endpoint} refused the connection: {reply.Reason ?? "no reason given"}");
+        }
+
+        if (reply.AllowedIqModes is { Count: > 0 } modes
+            && !reply.Bypassed
+            && !modes.Contains(tuning.Mode, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"{endpoint} does not offer IQ mode '{tuning.Mode}' to this client — it allows "
+                + $"{string.Join(", ", modes)}. Set \"ubersdr\": {{ \"mode\": \"{modes[0]}\" }}, or "
+                + "ask the receiver's operator for access.");
+        }
+
+        return reply;
+    }
+
+    private static async Task<string?> FetchDescriptionAsync(
+        UberSdrEndpoint endpoint, CancellationToken cancellation)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{endpoint.HttpBase}/api/description");
+            request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+            using HttpResponseMessage response = await Http.SendAsync(request, cancellation)
+                .ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadAsStringAsync(cancellation).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+        {
+            return null; // who the receiver is is nice to know, not needed to receive
+        }
+    }
+
+    /// <summary>Boils <c>/api/description</c> down to the line worth printing: who is listening,
+    /// where, and whether their frequency reference is honest.</summary>
+    internal static string? Describe(string? descriptionJson)
+    {
+        if (string.IsNullOrWhiteSpace(descriptionJson))
+        {
+            return null;
+        }
+
+        // Every field here is the receiver operator's to fill in as they please, so nothing about
+        // its shape is guaranteed. A description that will not parse costs a line of the start-up
+        // banner, not the receiver.
+        try
+        {
+            if (JsonNode.Parse(descriptionJson) is not JsonObject document)
+            {
+                return null;
+            }
+
+            var parts = new List<string>();
+            if (document["receiver"] is JsonObject receiver)
+            {
+                foreach (string field in (string[])["callsign", "name", "location"])
+                {
+                    if (receiver[field]?.GetValue<string>() is { Length: > 0 } value)
+                    {
+                        parts.Add(value);
+                    }
+                }
+            }
+
+            if (document["frequency_reference"] is JsonObject reference
+                && reference["enabled"]?.GetValue<bool>() == true)
+            {
+                double offset = reference["frequency_offset"]?.GetValue<double>() ?? 0;
+                parts.Add($"reference offset {offset:F0} Hz");
+            }
+
+            return parts.Count == 0 ? null : string.Join(" · ", parts);
+        }
+        catch (Exception e) when (e is JsonException or InvalidOperationException or FormatException)
+        {
+            return null;
+        }
+    }
+}

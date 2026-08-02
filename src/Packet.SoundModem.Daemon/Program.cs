@@ -2,13 +2,16 @@ using System.Globalization;
 using Microsoft.Data.Sqlite;
 using System.Net;
 using System.Net.Sockets;
+using System.Net.WebSockets;
 using M0LTE.Radio.Audio;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
 using M0LTE.Dsp;
 using Packet.SoundModem.FlexRadio;
+using Packet.SoundModem.Iq;
 using Packet.SoundModem.Kiss;
+using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Waterfall;
 using Packet.SoundModem.Ms110d;
@@ -101,6 +104,20 @@ using Packet.SoundModem.Ms110d;
 // (default 1) for BOTH paths; a headless client sharing a box with SmartSDR must pick a channel
 // SmartSDR is not using (it grabs DAX 1). See docs/flex-integration.md §4/§8.
 
+// --device ubersdr:<instance> makes a RECEIVE-ONLY station out of a public UberSDR web
+// receiver: <instance> is a host (m9psy-1.instance.ubersdr.org), a host:port, or the https://
+// URL you would open in a browser. The daemon takes the receiver's IQ stream (iq48 — 48 kHz of
+// complex baseband, ±24 kHz around the tune frequency), demodulates SSB from it in-process and
+// hands the modems real audio, so every mode, the waterfall and the frame log work exactly as
+// they do on a sound card. IQ rather than the instance's own audio because holding the complex
+// baseband means the receive filter is the one the band plan asked for and there is no AGC in
+// the path — which is what makes SNR figures off this path comparable with a soundcard's.
+//
+// There is no transmitter at the far end of a WebSocket. --ptt is rejected, transmissions are
+// refused the moment they are queued (with that as the reason), and the band plan's dial is
+// used to tune the receiver rather than printed for the operator to dial in. The "ubersdr"
+// config section carries the stream's parameters (mode, password, SSB filter edges, gain).
+
 // 9600-family and freedv-* modems need 48 kHz DSP (the FreeDV engine is native 8 kHz, and
 // 48000 = 6·8000 while 12000 has no integer ratio); everything else runs at 12 kHz.
 
@@ -183,6 +200,7 @@ var modems = new List<ModemConfig>();
 PttConfig? pttConfig = null;
 PagingConfig? paging = null;
 FlexConfig? flexConfig = null;
+UberSdrConfig? uberSdrConfig = null;
 WaterfallConfig? waterfallConfig = null;
 
 if (configPath is not null)
@@ -214,6 +232,7 @@ if (configPath is not null)
     pttConfig = config.Ptt;
     paging = config.Paging;
     flexConfig = config.Flex;
+    uberSdrConfig = config.UberSdr;
     waterfallConfig = config.Waterfall;
     ardopPort ??= config.Ardop?.Port;
     Console.WriteLine($"config: {configPath}");
@@ -345,11 +364,26 @@ if (ardopModem is not null && DspRate != M0LTE.Ardop.ArdopModulator.SampleRate)
     return 2;
 }
 
-// A FlexRadio provides its own DAX sample clock (24/48 kHz auto-picked from the DSP rate),
-// so --capture-rate (an ALSA concept) does not apply.
+// A FlexRadio provides its own DAX sample clock (24/48 kHz auto-picked from the DSP rate), and
+// an UberSDR its own 48 kHz IQ clock, so --capture-rate (an ALSA concept) does not apply to
+// either.
 bool deviceIsFlex = FlexDevice.IsFlex(device);
+bool deviceIsUberSdr = UberSdrDevice.IsUberSdr(device);
+UberSdrEndpoint uberSdrEndpoint = default;
+if (deviceIsUberSdr)
+{
+    try
+    {
+        uberSdrEndpoint = UberSdrDevice.Parse(device);
+    }
+    catch (InvalidDataException malformed)
+    {
+        Console.Error.WriteLine(malformed.Message);
+        return 2;
+    }
+}
 
-if (!deviceIsFlex && captureRate % DspRate != 0)
+if (!deviceIsFlex && !deviceIsUberSdr && captureRate % DspRate != 0)
 {
     Console.Error.WriteLine($"--capture-rate must be a multiple of {DspRate}");
     return 2;
@@ -369,10 +403,22 @@ catch (InvalidDataException planFailure)
     return 2;
 }
 
+// Where a self-tuning receiver has to point. A band plan says it outright; failing that the
+// operator has to, because an SDR has no dial of its own to read a number off.
+double? receiveDialHz = bandPlan?.DialHz ?? dialFrequency;
+if (deviceIsUberSdr && receiveDialHz is null)
+{
+    Console.Error.WriteLine(
+        $"the UberSDR instance at {uberSdrEndpoint} has to be told where to listen. Give every "
+        + "modem an \"rfFrequency\" and the dial is worked out from them, or set "
+        + "\"dialFrequency\" to pin it — unlike a radio there is no dial already set to read off.");
+    return 2;
+}
+
 if (bandPlan is not null)
 {
     bool flexWillTune = deviceIsFlex && FlexDevice.Parse(device).Headless;
-    BandPlanner.Report(bandPlan, Console.Out, flexWillTune);
+    BandPlanner.Report(bandPlan, Console.Out, radioIsSelfTuning: flexWillTune || deviceIsUberSdr);
     foreach (string warning in bandPlan.Warnings)
     {
         Console.Error.WriteLine($"band plan: WARNING — {warning}");
@@ -408,6 +454,15 @@ if (bandPlan is not null)
 }
 
 var channel = new SoundModemChannel(DspRate);
+if (deviceIsUberSdr)
+{
+    // Said once, here, so every path that could put something on the air — KISS, paging, ARDOP —
+    // gets the same answer for the same reason, rather than each discovering it differently.
+    channel.ReceiveOnlyReason =
+        $"this station receives only: its audio comes from the UberSDR instance at "
+        + $"{uberSdrEndpoint}, which is a receiver and has no transmitter.";
+}
+
 // Channel access (TXDELAY, P, SLOTTIME, TXTAIL) belongs to the host, which sets it over KISS
 // at runtime — see KissTcpServer. The library's defaults stand until it does; there is
 // deliberately no configuration-file equivalent. --txdelay remains as a bench override for
@@ -556,11 +611,12 @@ if (waterfallConfig is not null)
         waterfallConfig.Port,
         new Packet.SoundModem.Waterfall.WaterfallOptions
         {
-            // The band plan already knows the dial; the waterfall's RF scale should not have
-            // to be told it a second time (and then disagree when one of them is edited).
+            // The band plan (or a pinned "dialFrequency") already knows the dial; the waterfall's
+            // RF scale should not have to be told it a second time, and then disagree when one of
+            // them is edited.
             DialFrequencyHz = waterfallConfig.DialFrequencyHz != 0
                 ? waterfallConfig.DialFrequencyHz
-                : bandPlan?.DialHz ?? 0,
+                : receiveDialHz ?? 0,
             Sideband = bandPlan?.Sideband ?? waterfallConfig.Sideband,
             LinesPerSecond = waterfallConfig.LinesPerSecond,
             FftSize = waterfallConfig.FftSize,
@@ -602,6 +658,14 @@ if (deviceIsFlex && (pttSpec is not null || pttConfig is not null))
 {
     Console.Error.WriteLine(
         "--device flex: keys the radio itself; remove the conflicting --ptt (serial:/cm108:)");
+    return 2;
+}
+
+if (deviceIsUberSdr && (pttSpec is not null || pttConfig is not null))
+{
+    Console.Error.WriteLine(
+        $"--device ubersdr: is a receive-only station — the instance at {uberSdrEndpoint} has no "
+        + "transmitter, so there is nothing for a PTT line to key. Remove \"ptt\".");
     return 2;
 }
 
@@ -675,7 +739,15 @@ if (modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
             + $"{modemConfig.Mode} only, as nibble 0)");
     }
 
-    if (!Equals(listenAddress, System.Net.IPAddress.Loopback))
+    if (channel.ReceiveOnlyReason is not null)
+    {
+        // The usual "anything that can reach this can transmit on your licence" warning is not
+        // true here, and saying it anyway would teach operators to ignore it where it is.
+        Console.WriteLine(
+            "kiss: this station receives only — frames arriving on these ports are refused, not "
+            + "transmitted. Everything the modems hear is still delivered.");
+    }
+    else if (!Equals(listenAddress, System.Net.IPAddress.Loopback))
     {
         Console.WriteLine(
             "kiss: WARNING — listening beyond loopback. KISS has no authentication: anything "
@@ -701,24 +773,46 @@ if (ardopModem is not null)
         Console.Error.WriteLine($"ardop: WARNING — {ardopConcern}");
     }
 
+    if (channel.ReceiveOnlyReason is not null)
+    {
+        Console.Error.WriteLine(
+            "ardop: WARNING — ARDOP is a connected-mode ARQ protocol and this station cannot "
+            + "transmit, so no session will ever complete: it will hear the channel and never "
+            + "answer. The host port is still served, and every frame it demodulates — including "
+            + "other stations' sessions — is still drawn and written down.");
+    }
+
     var ardopShift = ArdopChannelShift.For(ardopModem.Frequency, DspRate);
     var ardopTnc = new M0LTE.Ardop.Host.ArdopHostTnc(captureDevice: device, playbackDevice: device)
     {
-        Transmitter = audio => channel.EnqueueTransmit(
-            _ =>
+        // Awaited rather than fire-and-forget: the TNC's transmit worker does not survive an
+        // exception out of this delegate, and on a receive-only channel every burst is refused.
+        // Catching turns "ARDOP silently stops working" into a line saying why.
+        Transmitter = async audio =>
+        {
+            try
             {
-                var floats = new float[audio.Length];
-                for (int i = 0; i < audio.Length; i++)
-                {
-                    floats[i] = audio[i] / 32768f;
-                }
+                await channel.EnqueueTransmit(
+                    _ =>
+                    {
+                        var floats = new float[audio.Length];
+                        for (int i = 0; i < audio.Length; i++)
+                        {
+                            floats[i] = audio[i] / 32768f;
+                        }
 
-                return ardopShift.Transmit(floats);
-            },
-            rejected: null,
-            // ARDOP owns this channel's timing: its bursts wait on neither the inhibit nor
-            // the p-persistence roll.
-            ownsChannelTiming: true),
+                        return ardopShift.Transmit(floats);
+                    },
+                    rejected: null,
+                    // ARDOP owns this channel's timing: its bursts wait on neither the inhibit nor
+                    // the p-persistence roll.
+                    ownsChannelTiming: true).ConfigureAwait(false);
+            }
+            catch (Exception refused) when (refused is InvalidOperationException or ArgumentException)
+            {
+                Console.Error.WriteLine($"ardop: transmission dropped — {refused.Message}");
+            }
+        },
     };
     channel.AddReceiveTap(samples => ardopTnc.ProcessReceive(ardopShift.Receive(samples)));
 
@@ -784,11 +878,13 @@ if (paging is not null)
 }
 await using var pagingLifetime = pagingServer;
 
-// Audio + PTT: a FlexRadio DAX triplet (--device flex:…) or an ALSA card. The Flex
-// surfaces its DAX stream through the same IAudioInput/IAudioOutput/IPttControl the channel
-// already speaks, so KISS packet, POCSAG paging and ARDOP all get Flex support for free.
+// Audio + PTT: a FlexRadio DAX triplet (--device flex:…), an UberSDR web receiver's IQ stream
+// (--device ubersdr:…, receive only), or an ALSA card. Each surfaces through the same
+// IAudioInput/IAudioOutput/IPttControl the channel already speaks, so KISS packet, POCSAG
+// paging and ARDOP all get every transport for free.
 int flexPacketBuffer = ardopPort is null ? 3 : 6;
 FlexRuntime? flex = null;
+UberSdrAudioInput? uberSdr = null;
 IPttControl ptt;
 IAudioOutput playback;
 IAudioInput input;
@@ -807,6 +903,65 @@ if (wavLoopPath is not null)
     playback = new NullAudioOutput(DspRate);
     input = wavLoop;
     Console.WriteLine($"audio: wav-loop {wavLoopPath} {wavLoop.SampleRate} Hz → {DspRate} Hz");
+}
+else if (deviceIsUberSdr)
+{
+    string planSideband = bandPlan?.Sideband ?? sideband;
+    var uberSdrTuning = new UberSdrTuning
+    {
+        // The receiver is tuned to the dial itself, so the suppressed carrier lands at DC in the
+        // IQ and the demodulator's own NCO has nothing left to do.
+        FrequencyHz = (int)Math.Round(receiveDialHz!.Value),
+        Sideband = planSideband.Equals("lsb", StringComparison.OrdinalIgnoreCase)
+            ? Sideband.Lower
+            : Sideband.Upper,
+        OutputRate = DspRate,
+        Mode = uberSdrConfig?.Mode ?? "iq48",
+        Password = uberSdrConfig?.Password,
+        SsbLowHz = uberSdrConfig?.SsbLowHz ?? 150,
+        SsbHighHz = uberSdrConfig?.SsbHighHz ?? 3450,
+        StartupGuardMs = uberSdrConfig?.StartupGuardMs ?? 1000,
+        Gain = (float)(uberSdrConfig?.Gain ?? 1.0),
+    };
+
+    try
+    {
+        uberSdr = await UberSdrAudioInput.OpenAsync(
+            uberSdrEndpoint, uberSdrTuning, Console.Error.WriteLine, cancellation.Token);
+    }
+    catch (Exception e) when (e is InvalidOperationException or WebSocketException
+                                or HttpRequestException or IOException)
+    {
+        Console.Error.WriteLine(DeviceDiagnostics.UberSdr(device, configPath, e));
+        return 1;
+    }
+
+    ptt = new NullPtt();
+    playback = new NullAudioOutput(DspRate);
+    input = uberSdr;
+    Console.WriteLine(
+        $"audio: {uberSdrEndpoint} {uberSdrTuning.Mode} IQ at {RfPlan.Mhz(receiveDialHz.Value)} → "
+        + $"{planSideband.ToUpperInvariant()} {uberSdrTuning.SsbLowHz:F0}-{uberSdrTuning.SsbHighHz:F0} Hz "
+        + $"audio at {DspRate} Hz (RECEIVE ONLY)");
+    if (uberSdr.ReceiverDescription is string receiver)
+    {
+        Console.WriteLine($"ubersdr: {receiver}");
+        waterfallServer?.SetRadioStatus(receiver);
+    }
+
+    Console.WriteLine(
+        $"ubersdr: session limit {uberSdr.Connection.MaxSessionTime} s — the stream is picked up "
+        + "again each time the receiver ends one");
+
+    // A receiver that stays unreachable is not something to sit quietly on. Exit 1 so the unit
+    // restarts and tries afresh, exactly as for a Flex whose session dies (exit 2 is reserved
+    // for "your configuration is wrong", which restarting could never fix).
+    uberSdr.Lost += reason =>
+    {
+        Console.Error.WriteLine($"ubersdr: {reason}");
+        radioLost = true;
+        cancellation.Cancel();
+    };
 }
 else if (deviceIsFlex)
 {
