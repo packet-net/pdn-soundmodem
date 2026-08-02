@@ -253,11 +253,22 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _configMessage = BuildConfigMessage();
         _channel.AddReceiveTap(samples =>
         {
-            lock (_sourceLock)
+            // Not while our own transmission is still being painted. The two are separate audio
+            // streams and the transform has one accumulator: interleaved, a single window holds
+            // part of a burst and part of the band noise, and comes out broadband — a full-width
+            // haze over the back half of every keyup, with the line type flickering between the
+            // two ramps as it goes. Receive processing is gated during a keyup, but the paced
+            // painting outlives it whenever the audio device's Drain returns before the audio has
+            // actually left the radio, which is the normal case.
+            if (Volatile.Read(ref _transmitPendingSamples) == 0)
             {
-                source.Process(samples);
+                lock (_sourceLock)
+                {
+                    source.Process(samples);
+                }
             }
 
+            // The listener feed is a stream of its own and has nothing to do with the transform.
             BroadcastAudio(samples);
         });
 
@@ -348,7 +359,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         lock (_transmitLock)
         {
             _transmitPending.Enqueue(display);
-            _transmitPendingSamples += display.Length;
+            Volatile.Write(ref _transmitPendingSamples, _transmitPendingSamples + display.Length);
 
             if (_transmitPacer is not null)
             {
@@ -444,7 +455,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 due.Add(new ArraySegment<float>(head, _transmitPendingOffset, take));
 
                 budget -= take;
-                _transmitPendingSamples -= take;
+                Volatile.Write(ref _transmitPendingSamples, _transmitPendingSamples - take);
                 if (take == available)
                 {
                     _transmitPending.Dequeue();
@@ -861,7 +872,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             _transmitPacer?.Dispose();
             _transmitPacer = null;
             _transmitPending.Clear();
-            _transmitPendingSamples = 0;
+            Volatile.Write(ref _transmitPendingSamples, 0);
             _transmitPendingOffset = 0;
         }
 
