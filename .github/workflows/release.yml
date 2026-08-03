@@ -100,6 +100,21 @@ jobs:
       - name: Test
         run: dotnet test --configuration Release --no-restore -- --filter-not-trait "Category=Aspiration"
 
+      # Same reason as ci.yml: the runner prints only "Failed: N" and writes the names to a
+      # UTF-16 log on the runner that nobody downstream ever sees. A release that refuses to
+      # publish is the pipeline working — but it has to say what it refused over.
+      - name: Name the failures
+        if: failure()
+        run: |
+          found=0
+          while IFS= read -r f; do
+            found=1
+            echo "::group::$(basename "$f")"
+            iconv -f UTF-16LE -t UTF-8 "$f" 2>/dev/null | grep -vE "^\s*$" | head -200 || cat "$f"
+            echo "::endgroup::"
+          done < <(find tests -path '*/TestResults/*.log' -newermt '-30 minutes' 2>/dev/null)
+          [ "$found" = 1 ] || echo "::warning::no TestResults log found to report"
+
       - name: Pack NuGet package
         run: |
           dotnet pack src/Packet.SoundModem/Packet.SoundModem.csproj \

@@ -159,27 +159,30 @@ public sealed class SoundModemChannel
             return Task.FromException(new ArgumentException($"no modem on sub-channel {subChannel}"));
         }
 
-        Task sent = EnqueueTransmit(
-            txDelay => modem.Modulate(frame, txDelay),
-            rejection => TransmitRejected?.Invoke(subChannel, frame, rejection));
+        return SendAndAnnounceAsync(subChannel, frame, modem);
+    }
 
-        // Announce the frame once it has actually gone out, not when it was queued: a frame can
-        // wait behind CSMA or an ARQ session for seconds, and a log line claiming a transmission
-        // that has not happened yet is worse than none. Rejections have their own event, so a
-        // frame appears in exactly one of the two.
-        _ = sent.ContinueWith(
-            t =>
-            {
-                if (t.IsCompletedSuccessfully)
-                {
-                    FrameTransmitted?.Invoke(subChannel, frame);
-                }
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
+    /// <summary>
+    /// Sends the frame and then announces it, so that awaiting the transmission is enough to know
+    /// the announcement has happened.
+    /// </summary>
+    /// <remarks>
+    /// Announced after the send rather than when it was queued, because a frame can wait behind
+    /// CSMA or an ARQ session for seconds and a log line claiming a transmission that has not
+    /// happened yet is worse than none. Sequenced by <c>await</c> rather than a continuation: a
+    /// continuation lets the caller's own await resume first, so anything checking the event
+    /// immediately after awaiting the send is racing it — which it will lose on a loaded machine,
+    /// intermittently, in someone else's CI. A rejection throws out of the await, so a frame is
+    /// announced by exactly one of this and <see cref="TransmitRejected"/>, never both.
+    /// </remarks>
+    private async Task SendAndAnnounceAsync(int subChannel, byte[] frame, IModem modem)
+    {
+        await EnqueueTransmit(
+                txDelay => modem.Modulate(frame, txDelay),
+                rejection => TransmitRejected?.Invoke(subChannel, frame, rejection))
+            .ConfigureAwait(false);
 
-        return sent;
+        FrameTransmitted?.Invoke(subChannel, frame);
     }
 
     /// <summary>
