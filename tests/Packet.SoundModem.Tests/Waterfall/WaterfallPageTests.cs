@@ -65,6 +65,56 @@ public class WaterfallPageTests
         probe.StoppedLabel.Should().Be("Listen");
     }
 
+    /// <summary>
+    /// A station identification is tagged onto its burst and listed in the panel, and both say it
+    /// is an ident rather than ordinary traffic on the same slot.
+    /// </summary>
+    /// <remarks>
+    /// Page behaviour no server-side assertion can see: the server sends the same <c>frame</c>
+    /// message either way and only the <c>id</c> flag differs. The ordinary frame is driven
+    /// through the same two functions in the same run, so what an ident does is measured against
+    /// what a normal frame does rather than against an assumption.
+    /// </remarks>
+    [Fact]
+    public async Task An_Id_Beacon_Is_Tagged_And_Listed_As_An_Ident()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw while listing frames");
+        probe.Connected.Should().BeTrue("the page needs the config before it can tag anything");
+
+        // The waterfall: both tag, and the ident's says so. A ghost has no band of its own, so
+        // without the word an ident reads as a station sitting on the slot it identified beside.
+        //
+        // Two draws each, not one: the page writes every tag twice — once at its place in the
+        // scroll ring and once a ring-height up — so a tag straddling the wrap seam is whole on
+        // both sides of it. Asserted rather than deduplicated, because one draw would mean that
+        // seam handling had been lost.
+        probe.OrdinaryTag.Should().HaveCount(2).And.AllSatisfy(
+            tag => tag.Should().Contain("M0LTE").And.NotContain("ID"));
+        probe.IdentTag.Should().HaveCount(2).And.AllSatisfy(
+            tag => tag.Should().Contain("KK4HEJ").And.Contain("ID"));
+
+        // The panel, newest first — so the ident is the row prepended last.
+        probe.FrameRows.Should().HaveCount(2);
+        probe.FrameRows[0].Should().Contain("KK4HEJ").And.Contain("IDENT");
+        probe.FrameRows[0].Should().Contain(
+            "class=\"id\"", "an ident must be badged, or it reads as ordinary traffic");
+        probe.FrameRows[0].Should().Contain(">ID<");
+        probe.FrameRows[1].Should().Contain("M0LTE");
+        probe.FrameRows[1].Should().NotContain(
+            "class=\"id\"", "only idents carry the badge");
+    }
+
     private static void FeedTone(SoundModemChannel channel, CancellationToken token)
     {
         var block = new float[512];
@@ -156,5 +206,8 @@ public class WaterfallPageTests
         double PeakAmplitude,
         int BlocksAfterStop,
         string StoppedLabel,
+        string[] OrdinaryTag,
+        string[] IdentTag,
+        string[] FrameRows,
         string[] Thrown);
 }

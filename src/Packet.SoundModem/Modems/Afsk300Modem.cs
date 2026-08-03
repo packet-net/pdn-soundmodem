@@ -93,13 +93,22 @@ public sealed class Afsk300Modem : IModem
         _sampleRate = sampleRate;
         _centerFrequency = centerFrequency;
 
+        // Declared ahead of the deframers because their callbacks need it — the DCD edge below
+        // and, on both paths, the carrier-offset reading — while it in turn cannot be built
+        // until the bit sink that drives it exists. Nothing dereferences it until audio flows.
+        AfskDemodulator? demodulator = null;
         Action<int> bitSink;
+
         if (framing == Afsk300Framing.Ax25)
         {
             var deframer = new HdlcDeframer(frame =>
             {
                 frameReceived(frame);
-                FrameDecoded?.Invoke(frame, new FrameQuality(Mode, frame.Length, null, null));
+                FrameDecoded?.Invoke(frame, new FrameQuality(
+                    Mode, frame.Length, null, null,
+                    // Read at the end of the burst that carried the frame, while the slicer
+                    // envelopes it is derived from still describe that burst.
+                    FrequencyOffsetHz: demodulator!.CarrierOffsetHz));
             });
             var nrzi = new NrziDecoder();
             bitSink = level => deframer.PushBit(nrzi.Decode(level));
@@ -111,37 +120,31 @@ public sealed class Afsk300Modem : IModem
                 {
                     frameReceived(frame);
                     FrameDecoded?.Invoke(frame, new FrameQuality(
-                        Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
+                        Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                        FrequencyOffsetHz: demodulator!.CarrierOffsetHz));
                 },
                 crcMode: framing == Afsk300Framing.Il2pCrc);
             // Reset the deframer on the DCD falling edge — same rationale as BpskModem:
             // a carrier that drops mid-collection leaves the deframer consuming the next
             // transmission's sync word as phantom payload.
             bool previousDcd = false;
-            AfskDemodulator? demodulator = null;
-            demodulator = new AfskDemodulator(
-                sampleRate, bit =>
+            bitSink = bit =>
+            {
+                bool dcd = demodulator!.CarrierDetect;
+                if (previousDcd && !dcd)
                 {
-                    bool dcd = demodulator!.CarrierDetect;
-                    if (previousDcd && !dcd)
-                    {
-                        deframer.Reset();
-                    }
+                    deframer.Reset();
+                }
 
-                    previousDcd = dcd;
-                    deframer.PushBit(bit);
-                },
-                centerFrequency, Baud, bandPassHalfWidth, lowPassCutoff,
-                toneShift: ToneShift);
-            _demodulator = demodulator;
-            _modulator = new AfskModulator(
-                sampleRate, Baud, centerFrequency - ToneShift, centerFrequency + ToneShift);
-            return;
+                previousDcd = dcd;
+                deframer.PushBit(bit);
+            };
         }
 
-        _demodulator = new AfskDemodulator(
+        demodulator = new AfskDemodulator(
             sampleRate, bitSink, centerFrequency, Baud, bandPassHalfWidth, lowPassCutoff,
             toneShift: ToneShift);
+        _demodulator = demodulator;
         _modulator = new AfskModulator(
             sampleRate, Baud, centerFrequency - ToneShift, centerFrequency + ToneShift);
     }

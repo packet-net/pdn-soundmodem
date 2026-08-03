@@ -71,22 +71,55 @@ public class Afsk300MultiModemTests
         frames.Should().ContainSingle().Which.Should().Equal(Frame);
     }
 
-    [Fact]
-    public void The_Winning_Branch_Reports_An_Offset_On_The_Signal_Side()
+    [Theory]
+    [InlineData(-160)]
+    [InlineData(-140)]
+    [InlineData(-105)]
+    [InlineData(-70)]
+    [InlineData(-35)]
+    [InlineData(-17)]   // equidistant between two branches: neither is "the" branch
+    [InlineData(0)]
+    [InlineData(17)]
+    [InlineData(35)]
+    [InlineData(70)]
+    [InlineData(105)]
+    [InlineData(140)]
+    [InlineData(160)]
+    public void The_Reported_Offset_Is_A_Measurement_Of_The_Signal(int offsetHz)
     {
-        // Dedupe emits the FIRST branch to complete the frame. On a clean strong signal a
-        // branch a full tolerance-width below the carrier can still copy it, so the
-        // reported offset is a lower bound on the true offset, not a measurement — on
-        // marginal real signals only the near branches decode and the two converge. The
-        // contract worth pinning: the report lands on the correct side, within coverage.
+        // It used to be a branch index, and it read like one: this bank emitted the first branch
+        // to finish, which on a clean signal is a branch well below the carrier rather than the
+        // one nearest it, so a signal exactly on frequency reported −105 Hz and the number moved
+        // with buffer framing. Now every branch measures the carrier against its own centre (the
+        // slicer's envelope midpoint is that offset — see AfskDemodulator.CarrierOffsetHz), the
+        // best-matched one is chosen on the smallest residual, and branch + residual is the
+        // answer. Measured across the bank the worst error is ~2 Hz, so the whole span is pinned
+        // rather than one convenient point: a per-step regression would show up here as a ~35 Hz
+        // jump, which is what a return to naming branches would look like.
         var qualities = new List<FrameQuality>();
         var modem = new Afsk300MultiModem(SampleRate, _ => { });
         modem.FrameDecoded += (_, quality) => qualities.Add(quality);
 
-        modem.Process(OffTune(140));
+        modem.Process(OffTune(offsetHz));
 
         qualities.Should().ContainSingle()
-            .Which.FrequencyOffsetHz.Should().BeInRange(70, 175, "a +140 Hz signal is only decodable by high-side branches");
+            .Which.FrequencyOffsetHz.Should().BeApproximately(
+                offsetHz, 6, "the bank reports where the station actually was");
+    }
+
+    [Fact]
+    public void A_Single_Branch_Measures_The_Offset_Too()
+    {
+        // The measurement belongs to the demodulator, not to the bank — so a lone modem, which
+        // reported nothing at all before, now says where the station sat relative to it.
+        var qualities = new List<FrameQuality>();
+        var modem = new Afsk300Modem(SampleRate, _ => { });
+        modem.FrameDecoded += (_, quality) => qualities.Add(quality);
+
+        modem.Process(OffTune(35));
+
+        qualities.Should().ContainSingle()
+            .Which.FrequencyOffsetHz.Should().BeApproximately(35, 6);
     }
 
     [Fact]

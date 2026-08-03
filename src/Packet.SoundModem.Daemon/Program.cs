@@ -202,6 +202,7 @@ PagingConfig? paging = null;
 FlexConfig? flexConfig = null;
 UberSdrConfig? uberSdrConfig = null;
 WaterfallConfig? waterfallConfig = null;
+bool idBeacons = true;
 
 if (configPath is not null)
 {
@@ -234,6 +235,7 @@ if (configPath is not null)
     flexConfig = config.Flex;
     uberSdrConfig = config.UberSdr;
     waterfallConfig = config.Waterfall;
+    idBeacons = config.IdBeacons;
     ardopPort ??= config.Ardop?.Port;
     Console.WriteLine($"config: {configPath}");
 }
@@ -663,6 +665,77 @@ if (waterfallConfig is not null)
 }
 
 await using var waterfallLifetime = waterfallServer;
+
+// Ghost demodulators for the station identifications a NinoTNC sends alongside its PSK SSB data
+// modes rather than within them (300 AFSK AX.25, 200 Hz above the carrier — see IdBeaconGhost).
+// Without one, an ident is a recurring burst in the middle of the channel that every station can
+// see and none can read. Attached here because a ghost reports to the waterfall and the frame
+// log, and both have to exist first; the console line stands alone when neither is configured.
+//
+// Receive taps, not modems: no KISS sub-channel (a host asking for packet data should not have to
+// filter idents out of it), no contribution to carrier sense, and nothing drawn on the waterfall —
+// the ident rides on a modem that already has a band there.
+if (idBeacons)
+{
+    var ghostCentres = new HashSet<long>();
+    foreach (ModemConfig modemConfig in modems)
+    {
+        // Two PSK modems tuned to the same centre would hear the same TNC's ident twice and list
+        // it twice. A band plan gives them different centres, so this is insurance rather than
+        // the normal case — but the duplicate would be indistinguishable from two real beacons.
+        double centre = IdBeaconGhost.CentreHzFor(modemConfig.Frequency);
+        if (!IdBeaconGhost.AppliesTo(modemConfig.Mode) || !ghostCentres.Add((long)Math.Round(centre)))
+        {
+            continue;
+        }
+
+        IdBeaconGhost ghost = IdBeaconGhost.TryCreate(
+            modemConfig.SubChannel, modemConfig.Mode, modemConfig.Frequency, DspRate)!;
+
+        // The ident's RF frequency follows its audio offset from the modem it accompanies, so a
+        // band-planned station gets a real frequency in the log rather than a blank column.
+        double? ghostRfHz = modemConfig.RfFrequency + IdBeaconGhost.BeaconOffsetHz;
+        ghost.BeaconHeard += (frame, quality) =>
+        {
+            Ax25AddressParser.TryParse(frame, out string source, out string destination);
+
+            // Alongside the rx[N] lines, and distinct from them: this is a station saying who it
+            // is on a channel where its data is unreadable to us, which is worth its own word.
+            Console.WriteLine(
+                $"id[{ghost.SubChannel}] {(source.Length > 0 ? source : "?")}"
+                + $">{(destination.Length > 0 ? destination : "?")} {frame.Length} bytes");
+
+            waterfallServer?.ReportIdBeacon(
+                ghost.SubChannel,
+                quality.Mode,
+                string.IsNullOrWhiteSpace(source) ? null : source,
+                string.IsNullOrWhiteSpace(destination) ? null : destination,
+                frame.Length,
+                // How far the identifying station's dial sits from ours, measured off its carrier.
+                quality.FrequencyOffsetHz);
+
+            frameLog?.Record(
+                ghost.SubChannel, frame, quality, ghost.CentreHz, ghostRfHz,
+                modeName: $"ID beacon ({ModeNames.Display(quality.Mode)})");
+        };
+
+        channel.AddReceiveTap(ghost.Process);
+
+        // A tap is not one of the channel's modems, so the unkey sweep that resets them misses
+        // this: without it the demodulator carries its pre-keyup carrier state across the silence.
+        channel.TransmittingChanged += keyed =>
+        {
+            if (!keyed)
+            {
+                ghost.ResetCarrierState();
+            }
+        };
+
+        Console.WriteLine(
+            $"modem {modemConfig.SubChannel}: id beacons — listening in "
+            + $"{ghost.Mode} @ {ghost.CentreHz:0.#} Hz");
+    }
+}
 
 // The radio's transmit meters, when there is a radio that has them.
 M0LTE.Flex.FlexMeters? flexMeters = null;

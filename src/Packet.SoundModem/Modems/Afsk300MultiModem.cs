@@ -43,7 +43,15 @@ public sealed class Afsk300MultiModem : IModem
     private readonly FrameDeduper _deduper;
     private readonly int _dedupeChunk;
     private readonly Afsk300Framing _framing;
+    private readonly List<Candidate> _candidates = [];
     private long _samplesProcessed;
+
+    /// <summary>One branch's copy of a frame, held until the chunk ends and the branches can
+    /// be compared. <paramref name="ResidualHz"/> is that branch's own measurement of how far
+    /// the signal sat from <em>its</em> centre, so branch + residual is the station's offset
+    /// from the bank's centre however far out the branch that copied it happened to be.</summary>
+    private readonly record struct Candidate(
+        byte[] Frame, double BranchOffsetHz, double ResidualHz, FrameQuality Quality);
 
     /// <summary>Creates the bank.</summary>
     /// <param name="sampleRate">Channel DSP rate (multiple of 300).</param>
@@ -145,6 +153,7 @@ public sealed class Afsk300MultiModem : IModem
             }
 
             _samplesProcessed += slice.Length;
+            EmitBestOfChunk();
         }
     }
 
@@ -161,16 +170,70 @@ public sealed class Afsk300MultiModem : IModem
         }
     }
 
-    // Several branches usually decode the same transmission within a frame-time of each
-    // other; emit the first and drop content-identical repeats in the window.
-    private void OnFrame(byte[] frame, double offsetHz, FrameQuality quality)
-    {
-        if (!_deduper.ShouldEmit(frame, _samplesProcessed))
-        {
-            return;
-        }
+    // Several branches usually decode the same transmission within a frame-time of each other,
+    // which is well inside one chunk. Hold them all and let the chunk end decide, rather than
+    // emitting whichever finished first.
+    private void OnFrame(byte[] frame, double offsetHz, FrameQuality quality) =>
+        _candidates.Add(new Candidate(
+            frame, offsetHz, quality.FrequencyOffsetHz ?? 0, quality));
 
-        _frameReceived(frame);
-        FrameDecoded?.Invoke(frame, quality with { Mode = Mode, FrequencyOffsetHz = offsetHz });
+    /// <summary>
+    /// Emits one frame per distinct transmission seen this chunk, from the branch that was
+    /// actually tuned closest to it.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Why not simply the first branch to finish.</b> Branches are fed in ascending
+    /// order and a clean signal is copyable by branches well either side of it, so "first" means
+    /// "lowest-centred branch that could still read it" — which reported −105 Hz for a signal
+    /// exactly on frequency, and moved with buffer framing. That is fine for deciding *whether*
+    /// to emit (the bytes are identical either way; the deduper is content-based) and useless as
+    /// the frequency reading that reaches an operator's display.</para>
+    /// <para>So the branches are compared instead, on each one's own
+    /// <see cref="AfskDemodulator.CarrierOffsetHz"/> — how far it measured the signal from its
+    /// own centre. The smallest residual is the best-matched branch, and it is also the only
+    /// reading guaranteed honest: a branch more than ~40 Hz off has one discriminator peak
+    /// against the clamp, and with 35 Hz spacing the nearest branch is never more than half a
+    /// step out. Its <c>branch + residual</c> is the station's offset from the bank's centre.</para>
+    /// <para>The cost is that a frame waits for the end of its chunk — at most 100 ms, against
+    /// frames that take seconds at 300 baud.</para>
+    /// </remarks>
+    private void EmitBestOfChunk()
+    {
+        while (_candidates.Count > 0)
+        {
+            Candidate best = _candidates[0];
+            for (int i = 1; i < _candidates.Count; i++)
+            {
+                if (IsSameFrame(_candidates[i].Frame, best.Frame)
+                    && Math.Abs(_candidates[i].ResidualHz) < Math.Abs(best.ResidualHz))
+                {
+                    best = _candidates[i];
+                }
+            }
+
+            for (int i = _candidates.Count - 1; i >= 0; i--)
+            {
+                if (IsSameFrame(_candidates[i].Frame, best.Frame))
+                {
+                    _candidates.RemoveAt(i);
+                }
+            }
+
+            // Still deduped across chunks: a transmission straddling a chunk boundary reaches
+            // here twice, and the window is what stops the second copy being delivered.
+            if (!_deduper.ShouldEmit(best.Frame, _samplesProcessed))
+            {
+                continue;
+            }
+
+            _frameReceived(best.Frame);
+            FrameDecoded?.Invoke(best.Frame, best.Quality with
+            {
+                Mode = Mode,
+                FrequencyOffsetHz = best.BranchOffsetHz + best.ResidualHz,
+            });
+        }
     }
+
+    private static bool IsSameFrame(byte[] a, byte[] b) => a.AsSpan().SequenceEqual(b);
 }

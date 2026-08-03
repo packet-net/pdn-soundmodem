@@ -351,6 +351,71 @@ public class WaterfallWebServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_Id_Beacon_Is_Reported_As_One_So_Both_Views_Can_Say_What_It_Is()
+    {
+        // A NinoTNC idents in 300 AFSK alongside its PSK data mode. The message carries the flag
+        // the page uses to badge it in the panel and to write "ID" onto its burst — without it an
+        // ident and a data frame on the same slot read identically.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        (_, _) = await Receive(socket);   // the config message
+
+        _server.ReportIdBeacon(
+            subChannel: 1, mode: "afsk300-multi11", from: "KK4HEJ", to: "IDENT",
+            lengthBytes: 17, offsetHz: -35.0);
+
+        JsonDocument? frame = null;
+        while (frame is null)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind == WebSocketMessageType.Text)
+            {
+                frame = JsonDocument.Parse(payload);
+            }
+        }
+
+        frame.RootElement.GetProperty("type").GetString().Should().Be("frame");
+        frame.RootElement.GetProperty("id").GetBoolean().Should()
+            .BeTrue("this is what the page reads to badge it and mark its tag");
+        frame.RootElement.GetProperty("sub").GetInt32().Should()
+            .Be(1, "the ident is labelled with the modem it rode in on");
+        frame.RootElement.GetProperty("mode").GetString().Should()
+            .Be("afsk300-multi11", "the mode it was actually sent in, not the mode it accompanies");
+        frame.RootElement.GetProperty("from").GetString().Should().Be("KK4HEJ");
+        frame.RootElement.GetProperty("to").GetString().Should().Be("IDENT");
+        frame.RootElement.GetProperty("lenBytes").GetInt32().Should().Be(17);
+        frame.RootElement.GetProperty("snrDb").ValueKind.Should()
+            .Be(JsonValueKind.Null, "a ghost has no band tracker to measure one from");
+        frame.RootElement.GetProperty("offsetHz").GetDouble().Should()
+            .Be(-35.0, "the ghost measures the identifying station's carrier against its own centre");
+        frame.Dispose();
+    }
+
+    [Fact]
+    public async Task An_Ordinary_Frame_Carries_No_Id_Flag()
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        (_, _) = await Receive(socket);   // the config message
+
+        _server.ReportFrame(2, "ConReq500M", "M0LTE", "GB7RDG", 22, 14.0, true);
+
+        JsonDocument? frame = null;
+        while (frame is null)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind == WebSocketMessageType.Text)
+            {
+                frame = JsonDocument.Parse(payload);
+            }
+        }
+
+        frame.RootElement.GetProperty("id").ValueKind.Should()
+            .Be(JsonValueKind.Null, "only an ident is an ident");
+        frame.Dispose();
+    }
+
+    [Fact]
     public async Task Reporting_A_Frame_Before_The_Server_Starts_Is_Harmless()
     {
         // Start order is the daemon's business, not a reason to crash a receive thread.
@@ -358,8 +423,10 @@ public class WaterfallWebServerTests : IAsyncLifetime
             new SoundModemChannel(SampleRate, randomSeed: 3), FreePort());
 
         Action report = () => unstarted.ReportFrame(2, "IDFrame", "M0LTE", null, 0, null, true);
+        Action beacon = () => unstarted.ReportIdBeacon(1, "afsk300-multi11", "KK4HEJ", "IDENT", 17);
 
         report.Should().NotThrow();
+        beacon.Should().NotThrow();
     }
 
     private async Task<(WebSocketMessageType Kind, byte[] Payload)> Receive(ClientWebSocket socket)

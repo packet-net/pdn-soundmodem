@@ -122,6 +122,13 @@
   .fr .d { color: var(--muted); }
   .fr .d i { font-style: normal; }
   .fr .bad { color: #f27e7e; }
+  /* A station identification: heard by a ghost demodulator on a mode the data modem cannot
+     read, so it is listed here and never tagged onto the waterfall. */
+  .fr .id {
+    display: inline-block; margin-left: 6px; padding: 0 4px; border-radius: 2px;
+    font-size: 9px; font-weight: 700; letter-spacing: .08em; vertical-align: 1px;
+    color: #0c1016; background: var(--amber);
+  }
   #frames .empty { padding: 14px 12px; color: var(--muted); font-family: var(--sans); font-size: 12px; }
 
   @media (max-width: 900px) { #log { display: none; } }
@@ -603,6 +610,10 @@ function tagFrame(ev) {
   const hue = hueFor(modemIndex);
 
   const parts = [ev.from || ev.mode];
+  // A ghost has no band of its own, so an ident tags against the band of the modem it rides on.
+  // Saying so is the difference between "this station is on that slot" and "this station just
+  // identified next to it" — without the word they read identically.
+  if (ev.id) parts.push("ID");
   if (ev.snrDb != null) parts.push(ev.snrDb.toFixed(1) + " dB");
   if (ev.offsetHz != null) parts.push((ev.offsetHz >= 0 ? "+" : "") + ev.offsetHz.toFixed(0) + " Hz");
   const text = parts.join(" · ");
@@ -636,9 +647,10 @@ function logFrame(ev) {
   const row = document.createElement("div");
   row.className = "fr";
   const t = new Date().toTimeString().slice(0, 8);
-  const who = ev.from
+  const badge = ev.id ? `<span class="id" title="Station identification, heard on the mode the TNC idents in rather than the one it carries data in">ID</span>` : "";
+  const who = (ev.from
     ? `<span class="from">${ev.from}</span><span class="arrow">›</span><span class="to">${ev.to || "?"}</span>`
-    : `<span class="to">unattributed</span>`;
+    : `<span class="to">unattributed</span>`) + badge;
   const bits = [];
   bits.push(`${ev.sub}·${ev.mode}`);
   if (ev.snrDb != null) bits.push(`<i>${ev.snrDb.toFixed(1)} dB</i>`);

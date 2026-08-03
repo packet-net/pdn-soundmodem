@@ -635,9 +635,45 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             burstLines: null, offsetHz: null, corrected: null, crc: decodedOk);
     }
 
+    /// <summary>
+    /// Reports a station identification heard by an <see cref="Modems.IdBeaconGhost"/> — the 300
+    /// AFSK AX.25 ident a NinoTNC sends alongside, and not inside, its PSK SSB data mode.
+    /// </summary>
+    /// <remarks>
+    /// <para>Listed and tagged like anything else, and marked as an ident so both can say what it
+    /// is. What a ghost does not get is a <em>band</em>: it has no slot of its own to shade, being
+    /// a second listener on a modem that is already drawn. The tag therefore lands against the
+    /// band of the modem it accompanies, which is where the ident sits — a couple of hundred Hz
+    /// above it.</para>
+    /// <para>No SNR — a ghost has no <see cref="BandActivityTracker"/>, the trackers being keyed
+    /// by sub-channel and it sharing the base modem's. The offset is real: the ghost's
+    /// demodulator measures the carrier against its own centre, so it says how far the
+    /// identifying station's dial sits from ours.</para>
+    /// </remarks>
+    /// <param name="subChannel">The sub-channel of the modem the ghost accompanies, for the label.</param>
+    /// <param name="mode">The ghost's mode, as it reports itself.</param>
+    /// <param name="from">The identifying station.</param>
+    /// <param name="to">Its destination — <c>IDENT</c> on a NinoTNC.</param>
+    /// <param name="lengthBytes">Frame length.</param>
+    /// <param name="offsetHz">How far off our centre the ident arrived.</param>
+    public void ReportIdBeacon(
+        int subChannel, string mode, string? from, string? to, int lengthBytes, double? offsetHz = null)
+    {
+        if (_source is null)
+        {
+            return;   // not started; nobody to tell
+        }
+
+        BroadcastFrame(
+            subChannel, mode, from, to, lengthBytes, snrDb: null, burstLines: null,
+            offsetHz: offsetHz is { } offset ? Math.Round(offset, 1) : null,
+            corrected: null, crc: true, idBeacon: true);
+    }
+
     private void BroadcastFrame(
         int subChannel, string mode, string? from, string? to, int lengthBytes,
-        double? snrDb, int? burstLines, double? offsetHz, int? corrected, bool? crc)
+        double? snrDb, int? burstLines, double? offsetHz, int? corrected, bool? crc,
+        bool idBeacon = false)
     {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -653,6 +689,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             offsetHz,
             corrected,
             crc,
+            // True on an ident, null otherwise — same nullable-optional shape as the fields
+            // above, and the page tests it for truthiness either way.
+            id = idBeacon ? true : (bool?)null,
         }, Json);
         Broadcast(WebSocketMessageType.Text, message);
     }

@@ -15,7 +15,15 @@ const html = readFileSync(process.env.PAGE, "utf8");
 const script = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</script>"));
 
 const noop = () => {};
+
+// Text drawn on a canvas is captured, because "what did the page write onto the waterfall" is a
+// question about strings and needs no pixels to answer. Sampled either side of a synchronous
+// call, so nothing else can have drawn in between. fillText only — strokeText paints the same
+// string again as a halo, and counting it twice would make every assertion read oddly.
+const drawnText = [];
 const ctx2d = new Proxy({}, { get: (_, k) =>
+  k === "fillText" ? ((text) => { drawnText.push(String(text)); }) :
+  k === "strokeText" ? noop :
   ["measureText"].includes(k) ? (() => ({ width: 10 })) :
   ["createLinearGradient"].includes(k) ? (() => ({ addColorStop: noop })) :
   ["createImageData", "getImageData"].includes(k) ? (() => ({ data: new Uint8ClampedArray(4 * 4096) })) :
@@ -31,10 +39,17 @@ function el(id) {
     className: "", classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
     getContext: () => ctx2d, appendChild: noop, removeChild: noop, insertBefore: noop,
     addEventListener: noop, removeEventListener: noop, getBoundingClientRect: () => ({ width: 800, height: 300, left: 0, top: 0 }),
-    querySelector: () => el(id + "-q"), querySelectorAll: () => [], focus: noop, scrollTo: noop, remove: noop,
-    replaceChildren: noop, append: noop, prepend: noop, setAttribute: noop, getAttribute: () => null,
-    closest: () => null, contains: () => false, add: noop, options: [], selectedIndex: 0, firstChild: null, lastChild: null,
+    querySelector: () => el(id + "-q"), querySelectorAll: () => [], focus: noop, scrollTo: noop,
+    append: noop, setAttribute: noop, getAttribute: () => null,
+    closest: () => null, contains: () => false, add: noop, options: [], selectedIndex: 0,
     click() { this.onclick && this.onclick({ preventDefault: noop }); },
+    // Real enough for the decoded-frames panel, which builds rows with createElement, sets their
+    // innerHTML and prepends them — so the markup it produces can be read back and asserted on.
+    prepend(node) { node._parent = this; this.children.unshift(node); },
+    replaceChildren() { this.children.length = 0; },
+    remove() { const kids = this._parent?.children; const at = kids?.indexOf(this) ?? -1; if (at >= 0) kids.splice(at, 1); },
+    get firstChild() { return this.children[0] ?? null; },
+    get lastChild() { return this.children[this.children.length - 1] ?? null; },
   };
   els.set(id, e);
   return e;
@@ -81,6 +96,7 @@ const sandbox = {
   Intl, TextDecoder, TextEncoder, URL, URLSearchParams, Uint16Array, Int32Array, navigator: { userAgent: 'probe' },
   addEventListener: noop, localStorage: { getItem: () => null, setItem: noop },
   __stats: () => ({ played, peak }),
+  __text: () => [...drawnText],
 };
 sandbox.window = sandbox; sandbox.globalThis = sandbox; sandbox.self = sandbox;
 
@@ -111,7 +127,25 @@ run(`document.getElementById("listen").click()`);
 const at = sandbox.__stats().played;
 await wait(1200);
 
+// The decoded-frames panel and the waterfall tags, driven with the two kinds of frame event the
+// server sends. Text drawn on a canvas is captured rather than counted, so the tag can be read
+// back: an ident tags like anything else, and the only thing distinguishing it is what it says.
+const beforeOrdinary = sandbox.__text().length;
+run(`tagFrame({sub:0, mode:"afsk1200", from:"M0LTE", to:"GB7RDG", line:0, burstLines:12, snrDb:12.5})`);
+const ordinaryTag = sandbox.__text().slice(beforeOrdinary);
+run(`logFrame({sub:0, mode:"afsk1200", from:"M0LTE", to:"GB7RDG", lenBytes:24, snrDb:12.5})`);
+
+const beforeIdent = sandbox.__text().length;
+run(`tagFrame({sub:0, mode:"afsk300-multi11", from:"KK4HEJ", to:"IDENT", line:0, burstLines:12, offsetHz:-35, id:true})`);
+const identTag = sandbox.__text().slice(beforeIdent);
+run(`logFrame({sub:0, mode:"afsk300-multi11", from:"KK4HEJ", to:"IDENT", lenBytes:17, offsetHz:-35, id:true})`);
+
+const rows = sandbox.document.getElementById("frames").children.map(c => c.innerHTML);
+
 console.log(JSON.stringify({
+  ordinaryTag,
+  identTag,
+  frameRows: rows,
   connected,
   clickError,
   listening,

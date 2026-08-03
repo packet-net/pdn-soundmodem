@@ -35,6 +35,8 @@ public sealed class AfskDemodulator
     /// power) per sample point. Not for production paths.</summary>
     internal Action<float, float, float, float>? DiagnosticTap { get; set; }
     private readonly float _discriminatorLimit;
+    private readonly double _offsetHzPerUnit;
+    private readonly double _shiftCosine;
     private float _peakHigh;
     private float _peakLow;
     private float _previousExcess;
@@ -98,6 +100,53 @@ public sealed class AfskDemodulator
         // filter overshoot at transitions. See the clamp in Process for why this must
         // track the mode rather than be a constant.
         _discriminatorLimit = 1.4f * (float)Math.Sin(2 * 2 * Math.PI * toneShift / sampleRate);
+
+        // See CarrierOffsetHz. The discriminator maps a deviation f from centre onto
+        // sin(4πf/rate), so inverting it needs the rate/4π scale; the mark/space midpoint
+        // additionally carries a cos(4π·shift/rate) factor from summing the two tones.
+        _offsetHzPerUnit = sampleRate / (4 * Math.PI);
+        _shiftCosine = Math.Cos(4 * Math.PI * toneShift / sampleRate);
+    }
+
+    /// <summary>
+    /// How far the signal being received sits from this demodulator's centre, in Hz — positive
+    /// for a station above it. A real measurement, not an inference from which of a bank's
+    /// branches happened to decode.
+    /// </summary>
+    /// <remarks>
+    /// <para>The slicer already tracks it. Its threshold is the midpoint of the mark and space
+    /// envelopes, which is the discriminator's DC level, which is the carrier offset: summing the
+    /// two tones' discriminator outputs cancels the ±shift and leaves
+    /// <c>sin(4π·offset/rate)·cos(4π·shift/rate)</c>. Inverting that is the whole measurement —
+    /// no extra filter, no per-sample cost, and it is derived from the same envelopes the bit
+    /// decisions come from, so a frame that decoded has by construction a settled reading.</para>
+    /// <para>Min/max envelopes rather than a mean, which is what makes this survive an HDLC
+    /// preamble's 87.5 % mark duty cycle — the same reason the slicer uses them.</para>
+    /// <para><b>Honest to about ±40 Hz on the 300 baud modes</b> (±200 on Bell 202): that is where
+    /// the discriminator clamp — which exists to stop silence deafening the slicer — starts
+    /// truncating whichever peak is further out, and the reading compresses toward zero rather
+    /// than growing wilder. Measured on a tight 300 baud branch: 0/±18/±35 read within ~2 Hz,
+    /// ±53 reads ±45, ±70 reads ±53. It stays monotonic, so a diversity bank can still rank its
+    /// branches by it, and the bank's 35 Hz spacing keeps the best-matched branch inside the
+    /// honest zone anyway — see <see cref="Afsk300MultiModem"/>.</para>
+    /// <para>Meaningful only just after a decode. Between bursts the envelopes decay toward each
+    /// other and the reading drifts to nothing in particular; read it when a frame arrives.</para>
+    /// <para><b>The negation is not a mistake.</b> This chain mixes I from the sine and Q from
+    /// the cosine — the transpose of the usual convention — so its discriminator runs downward as
+    /// frequency runs up. Nothing noticed until now: the sign only sets which tone is mark, and
+    /// mark assignment is a free choice here (AX.25 rides NRZI, which is polarity-agnostic by
+    /// construction, and the IL2P receivers hunt sync in both polarities — see
+    /// <see cref="Afsk300Modem"/>). Measured on a 300 baud branch, a signal 35 Hz above centre
+    /// drove the midpoint to −35.3 Hz-equivalent and one 35 Hz below to +31.2, which is what this
+    /// sign turns the right way up.</para>
+    /// </remarks>
+    public double CarrierOffsetHz
+    {
+        get
+        {
+            double midpoint = (_peakHigh + _peakLow) * 0.5 / _shiftCosine;
+            return -Math.Asin(Math.Clamp(midpoint, -1, 1)) * _offsetHzPerUnit;
+        }
     }
 
     /// <summary>True while DPLL transition timing indicates a coherent packet signal.</summary>

@@ -53,6 +53,29 @@ SSB) are pinned in [mode-modulation-reference.md](mode-modulation-reference.md).
 | `c4fsk9600` | 4-level FSK (MMDVM-TNC Mode 2) | 9600 bps | IL2P+CRC | 48 kHz | no | FM (2.5 kHz dev) | NinoTNC (0011), MMDVM-TNC | **Bench** — July loop 8/8 both ways; corpus 3/3 incl. content the NinoTNC itself cannot replay-copy (adaptive equalizer, 2026-08-01); on-air deferred (#118) |
 | `c4fsk19200` | 4-level FSK | 19200 bps | IL2P+CRC | 48 kHz | no | FM (5.0 kHz dev) | NinoTNC (0001), MMDVM-TNC | **Bench** — as `c4fsk9600` |
 
+### Station identification on the PSK SSB modes
+
+A NinoTNC cannot identify itself inside 300 BPSK, 600 QPSK, 1200 BPSK or 2400 QPSK, so it
+idents alongside them: 300 AFSK AX.25 on 1600/1800 Hz tones, host callsign → `IDENT`, every
+9.5 minutes by default while the station is transmitting ([operator's
+manual](https://tarpn.net/t/nino-tnc/n9600a/n9600a_operation.html)). The three self-identifying
+modes — `afsk300`, `afsk300-il2pc`, `afsk1200` — send no such beacon.
+
+For every PSK SSB modem configured, the daemon attaches a receive-only *ghost* to catch these
+(`IdBeaconGhost`; `"idBeacons": false` turns them off). It sits 200 Hz above the modem it
+accompanies — Nino's PSK carrier is 1500 Hz and the beacon centre is 1700 — as an offset rather
+than an absolute frequency, so a retuned modem carries its ghost with it. The ghost is built
+through the catalogue's `afsk300` entry, so it is the narrow-branch diversity bank: selectivity
+matters more here than on a data slot, because a ghost sits beside a PSK carrier by construction.
+
+Idents are tagged onto their burst (`KK4HEJ · ID`), listed in the waterfall panel with an **ID**
+badge, and written to the frame log. They occupy no KISS sub-channel, do not affect carrier
+sense, and get no band of their own on the display — they ride on a modem that already has one.
+See [CONFIG.md](../CONFIG.md#idbeacons).
+
+The FM side of the same rule — where a NinoTNC idents in 1200 AFSK AX.25 — is not implemented
+yet.
+
 ## FreeDV DATAC (OFDM) modes
 
 Codec2 OFDM burst waveforms; payloads carry the family-standard IL2P+CRC bit stream (a
