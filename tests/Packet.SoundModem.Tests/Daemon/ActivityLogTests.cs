@@ -1,0 +1,116 @@
+using AwesomeAssertions;
+using Packet.SoundModem.Daemon;
+using Packet.SoundModem.Modems;
+
+namespace Packet.SoundModem.Tests.Daemon;
+
+/// <summary>
+/// The per-frame lines a running station writes to the journal.
+/// </summary>
+/// <remarks>
+/// `journalctl -u pdn-soundmodem -f` is the only view of a station most operators use — the
+/// waterfall needs a browser and the frame log needs SQL. These lines end up in grep pipelines and
+/// bug reports, so the text is an interface and is pinned here rather than left to interpolation
+/// nobody reads.
+/// </remarks>
+public class ActivityLogTests
+{
+    /// <summary>An AX.25 UI frame from M0LTE to GB7RDG-2, as the modems deliver one.</summary>
+    private static byte[] Frame(string source = "M0LTE", int sourceSsid = 0,
+                               string destination = "GB7RDG", int destSsid = 2)
+    {
+        var f = new byte[20];
+        Write(f, 0, destination, destSsid, last: false);
+        Write(f, 7, source, sourceSsid, last: true);
+        f[14] = 0x03;
+        f[15] = 0xF0;
+        return f;
+
+        static void Write(byte[] f, int at, string call, int ssid, bool last)
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                f[at + i] = (byte)((i < call.Length ? call[i] : ' ') << 1);
+            }
+
+            f[at + 6] = (byte)(0x60 | (ssid << 1) | (last ? 1 : 0));
+        }
+    }
+
+    [Fact]
+    public void A_Received_Frame_Names_The_Station_The_Mode_And_How_Well_It_Decoded()
+    {
+        string line = ActivityLog.Received(
+            0, Frame(), new FrameQuality("afsk300-il2pc", 20, CorrectedBytes: 0, CrcValid: true,
+                                         FrequencyOffsetHz: -35));
+
+        // "rx[0] afsk300-il2pc M0LTE>GB7RDG-2 20 bytes  crc ok  fec 0  -35 Hz"
+        line.Should().StartWith("rx[0] afsk300-il2pc M0LTE>GB7RDG-2 20 bytes");
+        line.Should().Contain("crc ok").And.Contain("fec 0").And.Contain("-35 Hz");
+    }
+
+    [Fact]
+    public void A_Bad_Crc_Is_Shouted_Rather_Than_Mentioned()
+    {
+        // The difference between "a frame" and "probably a frame" is the one thing an operator
+        // scanning a journal must not miss.
+        string line = ActivityLog.Received(
+            1, Frame(), new FrameQuality("bpsk300", 20, CorrectedBytes: 3, CrcValid: false));
+
+        line.Should().Contain("CRC BAD");
+        line.Should().NotContain("crc ok");
+    }
+
+    [Fact]
+    public void A_Mode_With_No_Crc_To_Check_Claims_Neither_Verdict()
+    {
+        string line = ActivityLog.Received(
+            0, Frame(), new FrameQuality("afsk1200", 20, CorrectedBytes: null, CrcValid: null));
+
+        line.Should().NotContain("crc").And.NotContain("CRC");
+        line.Should().NotContain("fec", "no FEC ran, so a correction count would be an invention");
+    }
+
+    [Fact]
+    public void A_Transmitted_Frame_Is_Logged_At_All()
+    {
+        // The gap this closes: the transmit side had only a rejection event, so a station's
+        // journal recorded every frame it failed to send and none of the ones it sent.
+        string line = ActivityLog.Transmitted(2, "qpsk2400", Frame(sourceSsid: 7));
+
+        line.Should().Be("tx[2] qpsk2400 M0LTE-7>GB7RDG-2 20 bytes");
+    }
+
+    [Fact]
+    public void A_Dropped_Frame_Says_Which_Frame_And_Why()
+    {
+        string line = ActivityLog.Dropped(
+            0, Frame(), new InvalidOperationException("this station receives only"));
+
+        line.Should().StartWith("tx[0] DROPPED M0LTE>GB7RDG-2 20 bytes: ");
+        line.Should().EndWith("this station receives only");
+    }
+
+    [Fact]
+    public void A_Frame_That_Is_Not_Ax25_Says_So_Instead_Of_Inventing_A_Callsign()
+    {
+        // A KISS host may send anything, and several modes carry payloads that are not AX.25 at
+        // all. A mangled callsign would be worse than admitting there is not one.
+        string line = ActivityLog.Received(
+            0, new byte[] { 1, 2, 3 }, new FrameQuality("fsk9600", 3, null, null));
+
+        line.Should().Contain("(no ax25 header)");
+    }
+
+    [Fact]
+    public void An_Untwisted_Signal_Does_Not_Report_Emphasis()
+    {
+        string quiet = ActivityLog.Received(
+            0, Frame(), new FrameQuality("afsk1200-multi", 20, 0, true, EmphasisDb: 0));
+        string twisted = ActivityLog.Received(
+            0, Frame(), new FrameQuality("afsk1200-multi", 20, 0, true, EmphasisDb: -6));
+
+        quiet.Should().NotContain("emph", "zero emphasis is the normal case and is noise in a log");
+        twisted.Should().Contain("emph -6 dB");
+    }
+}

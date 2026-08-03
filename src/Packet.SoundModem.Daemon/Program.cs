@@ -651,10 +651,22 @@ if (flexIsHeadless && txBands.Count > 0)
         + "everything the modems are placed across");
 }
 
-channel.FrameReceived += (subChannel, frame) =>
-    Console.WriteLine($"rx[{subChannel}] {frame.Length} bytes");
+// The transmit side has no per-frame quality to report the mode from, so it comes from the
+// configuration — the modem that owns the sub-channel.
+Dictionary<int, string> modeBySubChannel = modems
+    .Where(m => !DaemonConfig.IsArdop(m.Mode))
+    .ToDictionary(m => m.SubChannel, m => m.Mode);
+
+// What the station is doing, one line per frame, in the journal. FrameReceivedWithQuality
+// rather than FrameReceived: the mode, the CRC verdict, the FEC corrections and the frequency
+// offset are all already measured per frame, and they are what turn "something decoded" into
+// something an operator can act on.
+channel.FrameReceivedWithQuality += (subChannel, frame, quality) =>
+    Console.WriteLine(ActivityLog.Received(subChannel, frame, quality));
+channel.FrameTransmitted += (subChannel, frame) =>
+    Console.WriteLine(ActivityLog.Transmitted(subChannel, modeBySubChannel.GetValueOrDefault(subChannel, "?"), frame));
 channel.TransmitRejected += (subChannel, frame, reason) =>
-    Console.Error.WriteLine($"tx[{subChannel}] dropped {frame.Length} bytes: {reason.Message}");
+    Console.Error.WriteLine(ActivityLog.Dropped(subChannel, frame, reason));
 
 if (wavPath is not null)
 {
