@@ -317,6 +317,19 @@ public sealed class DaemonConfig
     public FrameLogConfig? FrameLog { get; set; }
 
     /// <summary>
+    /// Whether to listen for the station identifications a NinoTNC sends alongside its PSK SSB
+    /// data modes rather than within them — 300 AFSK AX.25, 200 Hz above the carrier. On by
+    /// default: it costs one cheap demodulator per PSK modem, changes nothing a host sees, and
+    /// turns a recurring unreadable burst in the middle of the channel into a callsign.
+    /// </summary>
+    /// <remarks>
+    /// Applies only to the four modes the TNC behaves this way in (<c>bpsk300</c>, <c>qpsk600</c>,
+    /// <c>bpsk1200</c>, <c>qpsk2400</c> and their aliases) — see
+    /// <see cref="Modems.IdBeaconGhost"/>. A station running none of them is unaffected either way.
+    /// </remarks>
+    public bool IdBeacons { get; set; } = true;
+
+    /// <summary>
     /// Settings present in the file that this version does not know. Kept so start-up can say
     /// so out loud: System.Text.Json drops unknown members silently, which turns a typo — or a
     /// setting that has since been withdrawn, like the old "csma" block — into a config that

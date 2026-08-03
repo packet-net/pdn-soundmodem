@@ -41,6 +41,7 @@ with `su -` and drop the prefix.)
 | `paging` | object | *(disabled)* | POCSAG paging endpoint — [below](#paging) |
 | `ardop` | object | *(disabled)* | ARDOP virtual TNC — [below](#ardop) |
 | `frameLog` | object | *(not kept)* | Record every frame heard to SQLite — [below](#framelog) |
+| `idBeacons` | bool | `true` | Listen for the NinoTNC idents sent alongside the PSK SSB modes — [below](#idbeacons) |
 | `flex` | object | see below | FlexRadio slice params — [below](#flex) |
 | `ubersdr` | object | see below | UberSDR stream params — [below](#ubersdr) |
 
@@ -446,6 +447,68 @@ Omit the section to disable it. `dialFrequencyHz` is only the page's opening def
 browser can retune its own copy, and it is inherited from a band plan when there is one. The
 waterfall binds to the top-level [`bind`](#kissport-and-bind) like everything else; there is no
 authentication, so opening it beyond loopback means a reverse proxy or VPN.
+
+## `idBeacons`
+
+A NinoTNC running one of the PSK SSB modes cannot identify itself in that mode — nothing else on
+the channel would be able to read it as speech or as anything a human recognises — so it idents
+*alongside* it instead. Per the [NinoTNC operator's
+manual](https://tarpn.net/t/nino-tnc/n9600a/n9600a_operation.html): in 300 BPSK, 600 QPSK, 1200
+BPSK and 2400 QPSK, "a beacon in 300 AFSK AX.25 (1600/1800 Hz tones) is sent", from the host's
+callsign to `IDENT`, every 9.5 minutes by default while the station is transmitting. (The modes
+that are already self-identifying — 300 AFSK AX.25, 300 AFSK IL2Pc, 1200 AFSK AX.25 — send no
+such beacon.)
+
+The consequence for everyone else on the channel is a burst every few minutes that they can see
+and cannot read: their data modem is a PSK demodulator and the ident is FSK. So for each PSK SSB
+modem you configure, the daemon attaches a *ghost* — a second, receive-only 300 AFSK receiver
+whose only job is that beacon:
+
+```json
+"idBeacons": true
+```
+
+Set it to `false` to turn them off. On by default; a station running none of those four modes is
+unaffected either way.
+
+**Where the ghost listens** follows the modem it accompanies. Nino's PSK modes phase-modulate a
+1500 Hz tone and the beacon tones are 1600/1800, so the ident sits 200 Hz above the carrier —
+*relative to the transmitting TNC's own audio layout*, which is the part that matters. Tune your
+modem to 1200 Hz because your dial sits 300 Hz above your neighbour's, and their ident arrives at
+your 1400 Hz, not at 1700. The daemon does that arithmetic; you do not place ghosts yourself. It
+prints where each one landed at start-up:
+
+```
+modem 0: bpsk300 @ 1500 Hz
+modem 0: id beacons — listening in afsk300-multi11 @ 1700 Hz
+```
+
+A ghost is whatever [`afsk300`](modes.md) currently means, which since 2026-08-02 is the
+narrow-branch frequency-diversity bank rather than one wide demodulator — and that matters more
+here than it does on a data slot. A ghost sits 200 Hz from a PSK carrier *by construction*, and a
+quadrature discriminator follows the strongest thing in its passband, so tight branches are what
+keep the neighbour it lives beside out of the ident. The bank's ±175 Hz of coverage also happens
+to be the right shape for the only error this placement really has — a dial that differs from the
+transmitting station's. (The offset from *their* carrier to *their* ident is fixed inside one TNC
+and cannot drift.)
+
+**What a ghost deliberately is not.** It takes no KISS sub-channel — beacons are not traffic, and
+a host asking for packet data should not have to filter idents out of it. It does not contribute
+to carrier sense, so channel access behaves exactly as it did without it. It never transmits:
+identifying *your* station is your host's job, and this is only a listener.
+
+Idents appear in the waterfall's decoded-frames panel with an **ID** badge, are tagged onto their
+burst on the waterfall like any other frame — reading `KK4HEJ · ID` — and land in the
+[`frameLog`](#framelog) as `ID beacon (AFSK300)`. What a ghost does *not* get is a **band** of its
+own: it has no slot to shade, riding as it does on a modem that is already drawn, so its tag lands
+against that modem's band, which is where the ident sits — a couple of hundred Hz above it. That
+is also why an ident's tag says `ID`: without the word it would read as a station sitting *on* the
+slot rather than identifying beside it.
+
+An ident carries no SNR figure — the waterfall's per-burst SNR comes from a band tracker, the
+trackers are keyed by modem, and a ghost shares its base modem's rather than having one. It does
+carry a **frequency offset**, which is a real measurement of the identifying station's carrier
+against the ghost's centre, so it tells you how far their dial sits from yours.
 
 ## `frameLog`
 
