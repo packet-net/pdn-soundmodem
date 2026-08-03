@@ -917,6 +917,15 @@ carrier or exceed what an audio path can carry.
 `FlexStation` reads the filter back and reports it (`TransmitFilter`); `TransmitFilterHighHz` sets it,
 defaulting to leaving it alone because it is global.
 
+**The daemon does not leave it alone, though — it works it out.** A global default of 3000 passes
+every audio-band packet mode but clips `ms110d-*`, which is a 3 kHz waveform at a fixed 1800 Hz
+centre and reaches ~3.2 kHz. So a headless station measures its modems (`TransmitFilterPlan`, using
+the same `ModemBandProbe` the waterfall and the band planner use) and states a high cut that clears
+the highest of them, or takes it from the band plan where there is one. `"flex": {
+"transmitFilterHighHz": N }` pins it; `0` restores the leave-it-alone behaviour. Either way the
+filter is read back at bring-up and any modem outside it is named — the low cut and the receive
+filter are still the operator's job, since the station API does not expose them.
+
 ### 10.3 Method note
 
 Both findings came from transmitting a known signal and *looking at a receiver* — not from checking

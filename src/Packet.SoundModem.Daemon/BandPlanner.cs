@@ -88,8 +88,17 @@ internal static class BandPlanner
     internal static int TransmitFilterHighHz(RfPlan.Result plan)
     {
         double highestEdge = plan.Modems.Max(m => m.AudioCentreHz + (m.Slot.BandwidthHz / 2));
-        return (int)(Math.Ceiling((highestEdge + MarginHz) / 50) * 50);
+        return HighCutClearing(highestEdge);
     }
+
+    /// <summary>
+    /// The high cut clearing an audio band that ends at <paramref name="highestEdgeHz"/>: a
+    /// little margin above it, rounded up to a 50 Hz step so the number reads like a setting
+    /// rather than a measurement. Shared with <see cref="TransmitFilterPlan"/>, which asks the
+    /// same question of a station placed by audio centre instead of by band plan.
+    /// </summary>
+    internal static int HighCutClearing(double highestEdgeHz) =>
+        (int)(Math.Ceiling((highestEdgeHz + MarginHz) / 50) * 50);
 
     /// <summary>Headroom above the highest modem, so the filter skirt is not on top of it.</summary>
     private const double MarginHz = 200;

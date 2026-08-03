@@ -354,6 +354,9 @@ silently transmitting nothing. Widening that is a job for the radio.
 In attach mode (`@station`) none of this happens: SmartSDR owns the slice, and the daemon would
 only be fighting it.
 
+A station placed by audio centre rather than by RF gets the same treatment, worked out from the
+modems instead of from a plan — see [the transmit filter](#the-transmit-filter).
+
 ## `ptt`
 
 How the radio is keyed. **Omit the whole section for VOX**, or when using a FlexRadio, which
@@ -637,6 +640,7 @@ the slice.
 | `mode` | string | `"DIGU"` | Slice demod mode |
 | `daxChannel` | string | `"2"` headless, `"1"` attach | DAX channel to claim — [below](#coexisting-with-smartsdr) |
 | `txPowerWatts` | number | unset | Transmit power in watts — [below](#transmit-power) |
+| `transmitFilterHighHz` | int | *derived* | TX filter high cut in Hz — [below](#the-transmit-filter). `0` leaves the radio's own |
 
 The headless path disables band persistence and explicitly tunes the slice, so it lands on the
 requested frequency regardless of the radio's last-used band.
@@ -680,6 +684,46 @@ FLEX-6500 (fw 4.2.20.41343, 2026-08-02). So while the daemon holds the slice, th
 only thing that *can* set the power, which is why it has to be configurable here.
 
 The setting persists on the radio after the daemon exits, like the transmit filter.
+
+### The transmit filter
+
+The radio's transmit filter decides how much of your audio reaches the air, and on a Flex it is a
+**global, persistent** setting rather than a slice one: it is whatever last touched the radio, it
+outlives the daemon, and anything wider than it goes out truncated with nothing said. So the
+daemon states it rather than inheriting it — measuring what the configured modems actually occupy
+and setting the high cut to clear the highest of them:
+
+```
+flex: setting the transmit filter high cut to 3400 Hz — modem 0 (ms110d-wn4) reaches 3199 Hz
+flex: transmit filter 0..3400 Hz (radio global — limits TX audio bandwidth)
+```
+
+**This matters most for the wide modes.** `ms110d-*` is a 3 kHz waveform at a fixed 1800 Hz
+centre, so it reaches past 3.1 kHz — a radio left on the usual 3000 Hz cut clips the top of every
+burst. The audio-band packet modes all fit inside 3000 Hz and end up *narrowing* the filter
+instead, which keeps transmitted noise off your neighbours' frequencies.
+
+The widths are measured off the modems themselves (the same probe the waterfall draws and the
+band planner fits with), so nothing has to be kept in step by hand.
+
+| `transmitFilterHighHz` | What happens |
+|---|---|
+| unset | Derived from the modems, as above — or from the [band plan](#band-plans-in-rf-terms) when there is one |
+| a number (500–10000) | Used as it stands; the band plan does not override it |
+| `0` | The radio's own filter is left alone |
+
+**Only the high cut is settable** through the station API — the low cut and the receive filter are
+not. A modem outside the filter either way is reported at start-up, so the one thing you may still
+have to fix at the rig is named rather than left to be discovered on the air:
+
+```
+flex: WARNING — modem 0 (ms110d-wn4) occupies 410-3199 Hz, outside the radio's 0..3000 Hz
+transmit filter — it will be clipped. Widen the high cut on the radio — this mode's centre is
+fixed by its spec.
+```
+
+**Headless only.** In attach mode SmartSDR owns the slice and the daemon does not touch the
+filter — but it still measures the modems and warns when the filter you are on would clip one.
 
 ### Coexisting with SmartSDR
 
@@ -775,6 +819,7 @@ enumerated yet at boot, for instance — still restarts on its own as usual.
 | `mode` not a known mode | `unknown mode 'X'` — with a **did you mean** for near misses, and a link to the mode table |
 | `frequency` on a fixed-centre mode | `mode 'X' has a fixed centre frequency — drop the frequency override …` |
 | `captureRate` not a multiple of the DSP rate | `--capture-rate must be a multiple of N` |
+| `flex.transmitFilterHighHz` outside 500–10000 (and not `0`) | `That is an audio cut-off in Hz … use 500-10000, 0 to leave the radio's own filter alone …` |
 | `ptt` alongside a `flex:` device | `--device flex: keys the radio itself; remove the conflicting --ptt …` |
 | `ptt` alongside a `ubersdr:` device | `--device ubersdr: is a receive-only station … Remove "ptt".` |
 | `ubersdr:` with no `rfFrequency` and no `dialFrequency` | `the UberSDR instance … has to be told where to listen` |

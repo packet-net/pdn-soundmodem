@@ -159,6 +159,23 @@ public sealed class FlexConfig
     /// left to the rig.</para>
     /// </remarks>
     public double? TxPowerWatts { get; set; }
+
+    /// <summary>
+    /// Transmit-filter high cut in Hz. Null (the default) derives it from the modems — the
+    /// highest one's upper edge plus a little margin. 0 leaves whatever the radio was already
+    /// set to.
+    /// </summary>
+    /// <remarks>
+    /// <para>The transmit filter is a global, persistent radio setting rather than a slice one,
+    /// so an inherited one from a previous session silently truncates anything wider than it —
+    /// which is why the daemon states it rather than hoping. The default 3000 Hz passes every
+    /// audio-band packet mode but clips the top of <c>ms110d-*</c> (a 3 kHz waveform at an 1800 Hz
+    /// centre reaches past 3.1 kHz).</para>
+    /// <para>Only the high cut is settable through the station API; the low cut and the receive
+    /// filter are not, so a modem below the radio's low cut is reported at start-up and has to be
+    /// fixed at the rig.</para>
+    /// </remarks>
+    public int? TransmitFilterHighHz { get; set; }
 }
 
 /// <summary>
@@ -412,6 +429,17 @@ public sealed class DaemonConfig
                 $"some modems have \"rfFrequency\" and some do not ({audioOnly}). Give every modem "
                 + "an \"rfFrequency\" or none of them: the dial is shared, so one pinned to an audio "
                 + "offset would sit at whatever RF the dial chosen for the others happens to put it.");
+        }
+
+        // 0 is the documented "leave the radio's own filter alone"; anything else has to be a
+        // filter an SSB transmitter could plausibly be set to, or the operator has typed a
+        // frequency (14100000) where a cut-off belongs and the radio would take it.
+        if (config.Flex?.TransmitFilterHighHz is int filterHigh && filterHigh is not 0 and (< 500 or > 10_000))
+        {
+            throw new InvalidDataException(
+                $"\"flex\".\"transmitFilterHighHz\" is {filterHigh}. That is an audio cut-off in Hz "
+                + "(3000 is a radio's usual default, 3400 clears ms110d) — use 500-10000, 0 to "
+                + "leave the radio's own filter alone, or remove it to have it set from the modems.");
         }
 
         if (ParseBind(config.Bind) is null)
