@@ -337,15 +337,21 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
             new Uri($"ws://127.0.0.1:{server.Url.Split(':')[^1].TrimEnd('/')}/ws"), _cancellation.Token);
         await ReceiveAsync(socket);   // config
 
-        var keyedAt = new TaskCompletionSource<long>();
-        var clock = Stopwatch.StartNew();
+        // Ordering, not stopwatch time: the property is that a line is drawn in the gap BETWEEN
+        // key-down and the first transmitted audio, which is exactly what this test is named
+        // after. Asserting "within 250 ms of key-down" measured the same thing on an idle machine
+        // and measured the machine's load on a busy one — it failed intermittently in CI for days
+        // while passing every local run.
+        var keyedDown = new TaskCompletionSource();
+        var firstAudio = new TaskCompletionSource();
         channel.TransmittingChanged += keyed =>
         {
             if (keyed)
             {
-                keyedAt.TrySetResult(clock.ElapsedMilliseconds);
+                keyedDown.TrySetResult();
             }
         };
+        channel.TransmittedAudio += _ => firstAudio.TrySetResult();
 
         channel.Csma.Persistence = 255;
         channel.Csma.TxDelayMilliseconds = 20;
@@ -355,8 +361,8 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         Task sending = channel.EnqueueTransmit(0, Payload(60));
 
         byte[] firstLine = await NextLineAsync(socket, 0x03, skip: 0);
-        long drawnAt = clock.ElapsedMilliseconds;
-        long keyed = await keyedAt.Task;
+        bool audioHadArrivedFirst = firstAudio.Task.IsCompleted;
+        await keyedDown.Task;
 
         await sending.WaitAsync(TimeSpan.FromSeconds(20));
         await stop.CancelAsync();
@@ -368,9 +374,10 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         {
         }
 
-        // Within a few line periods of key-down, not half a second later when the audio turns up.
-        (drawnAt - keyed).Should().BeLessThan(
-            250, "the display must not stall while the first frame is being modulated");
+        // Drawn while the frame was still being modulated — before any transmitted audio existed
+        // to draw. That is the stall this guards against, stated as an order rather than a deadline.
+        audioHadArrivedFirst.Should().BeFalse(
+            "the display must draw during the modulate gap, not wait for the audio to turn up");
         firstLine.Length.Should().BeGreaterThan(5, "and it must be a real line");
     }
 
