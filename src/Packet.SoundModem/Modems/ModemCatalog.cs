@@ -123,6 +123,34 @@ public static class ModemCatalog
         || mode.StartsWith("qpsk", StringComparison.Ordinal);
 
     /// <summary>
+    /// The audio centre a mode sits on when no override is given: the tone-pair midpoint, the PSK
+    /// carrier, or — for the spec-fixed families — the centre their standard pins them to. Null for
+    /// the baseband families (<c>fsk*</c>/<c>c4fsk*</c>), which occupy DC upwards and so have no
+    /// centre to speak of.
+    /// </summary>
+    /// <remarks>
+    /// Declared here rather than measured because it is used to choose a dial frequency, where a
+    /// spectrum estimate's few-Hz error would land in the answer. <c>ModemCentreFrequencyTests</c>
+    /// checks every declaration against the modem's own measured spectrum, so a modem that moves
+    /// its centre cannot leave this behind.
+    /// </remarks>
+    public static double? DefaultCentreFrequencyFor(string mode) => mode switch
+    {
+        _ when mode.StartsWith("afsk", StringComparison.Ordinal) => 1700,
+        "qpsk3600" => 1650,
+        _ when mode.StartsWith("bpsk", StringComparison.Ordinal)
+            || mode.StartsWith("qpsk", StringComparison.Ordinal) => 1500,
+        // MIL-STD-188-110D Table D-I: a 2400 Bd single carrier on an 1800 Hz sub-carrier.
+        _ when mode.StartsWith("ms110d-", StringComparison.Ordinal) => 1800,
+        // The datac modes nominally centre on 1500 Hz; the even-carrier-count ones land half a
+        // carrier below it by construction (M0LTE.Ofdm's per-mode CarrierCentreHz).
+        "freedv-datac4" => 1468.75,
+        "freedv-datac14" => 1472.2222222222222,
+        _ when mode.StartsWith("freedv-", StringComparison.Ordinal) => 1500,
+        _ => null,
+    };
+
+    /// <summary>
     /// The default PSK detector for a mode when the caller does not override it: differential for
     /// every PSK family. BPSK reversed to differential 2026-07-18 (issues #40/#42 — coherent's
     /// narrow Costas loop cannot acquire real carriers); QPSK followed 2026-07-31 on the studybox

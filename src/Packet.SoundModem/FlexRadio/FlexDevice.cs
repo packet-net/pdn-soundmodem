@@ -76,6 +76,22 @@ public sealed record FlexTuning
     /// </remarks>
     public int? TransmitFilterHighHz { get; init; }
 
+    /// <summary>
+    /// The slice's receive-filter edges in Hz; null leaves the slice's own. Headless only.
+    /// </summary>
+    /// <remarks>
+    /// The receive half of <see cref="TransmitFilterHighHz"/>, and unlike it a <b>slice</b> setting
+    /// rather than a global one, so it goes away with the slice instead of persisting on the radio.
+    /// A slice on an ordinary data filter delivers nothing above ~3 kHz to the modems however wide
+    /// the transmit filter is opened — which is the half of the problem that cannot be seen from
+    /// the transmit side. The radio's limit on receive width is unmeasured, so the station reads it
+    /// back and warns rather than assuming the request took.
+    /// </remarks>
+    public int? ReceiveFilterLowHz { get; init; }
+
+    /// <inheritdoc cref="ReceiveFilterLowHz" />
+    public int? ReceiveFilterHighHz { get; init; }
+
     /// <summary>The DAX channel the client claims (both headless and attach). Default "1". A
     /// headless client sharing a box with a running SmartSDR must pick a channel SmartSDR is not
     /// using (SmartSDR grabs DAX 1) — see docs/flex-integration.md §8.</summary>
@@ -201,6 +217,8 @@ public static class FlexDevice
             SliceMode = tuning.Mode,
             DaxChannel = tuning.DaxChannel,
             TransmitFilterHighHz = tuning.TransmitFilterHighHz,
+            ReceiveFilterLowHz = tuning.ReceiveFilterLowHz,
+            ReceiveFilterHighHz = tuning.ReceiveFilterHighHz,
             RfPower = tuning.TxPowerWatts is double watts ? ToRfPowerPercent(watts) : null,
         };
         FlexStation station = spec.Headless
