@@ -145,6 +145,17 @@ Levels and PSD were done during bring-up; the AGC and clipping audit was never f
 
 ## Standing rules for a session at the radio
 
+- **Measure the path with one tone BEFORE running a ladder.** `sm-ota tone --seconds 8` against the
+  receiver you will score with, and read its "SNR in 3 kHz". It costs 30 s and it is the difference
+  between a ladder and ten transmissions into a closed band. Measured on 2026-08-03: the same tone,
+  same power, same receiver read **−1.5 dB at 08:22 UTC and −7.7 dB at 09:36** — the 40 m path lost
+  ~14 dB of level in 75 minutes to rising D-layer absorption, which took a ladder that had been
+  bit-exact on every waveform to nothing at all. A tone survives that (all its power in one bin);
+  a 2.8 kHz burst does not, which is also why an operator watching a waterfall sees the ident and
+  not the data.
+- **Mid-morning is the wrong time for 40 m NVIS.** Prefer late afternoon/evening, or expect to be
+  measuring absorption rather than the modem.
+
 - **SWR abort threshold 1.5:1.** 1 kW dummy load, 100 W radio — it is there to catch a wrong or disconnected load, not to protect a PA in no danger.
 - **Power ceiling 30 W**, and it protects the *receiver's* ADC, not the transmitter. A clipped front end makes its own intermodulation, indistinguishable from ours.
 - **`--rf-power` has no default, by design.** A power level should be a decision, never an accident.
