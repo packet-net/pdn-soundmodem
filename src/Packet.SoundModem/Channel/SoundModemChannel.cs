@@ -159,10 +159,41 @@ public sealed class SoundModemChannel
             return Task.FromException(new ArgumentException($"no modem on sub-channel {subChannel}"));
         }
 
-        return EnqueueTransmit(
+        Task sent = EnqueueTransmit(
             txDelay => modem.Modulate(frame, txDelay),
             rejection => TransmitRejected?.Invoke(subChannel, frame, rejection));
+
+        // Announce the frame once it has actually gone out, not when it was queued: a frame can
+        // wait behind CSMA or an ARQ session for seconds, and a log line claiming a transmission
+        // that has not happened yet is worse than none. Rejections have their own event, so a
+        // frame appears in exactly one of the two.
+        _ = sent.ContinueWith(
+            t =>
+            {
+                if (t.IsCompletedSuccessfully)
+                {
+                    FrameTransmitted?.Invoke(subChannel, frame);
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+        return sent;
     }
+
+    /// <summary>
+    /// Raised once a KISS-addressed frame has been transmitted — after the audio has gone to the
+    /// device, not when the frame was queued.
+    /// </summary>
+    /// <remarks>
+    /// The receive side has had <see cref="FrameReceived"/> since the beginning and the transmit
+    /// side had only <see cref="TransmitRejected"/>, so a station's journal recorded every frame
+    /// it failed to send and none that it sent. Service transmitters that are not KISS modems
+    /// (paging, ARDOP) go through the delegate overload and are not announced here — they are not
+    /// frames on a sub-channel.
+    /// </remarks>
+    public event Action<int, byte[]>? FrameTransmitted;
 
     /// <summary>Queues an arbitrary transmission — the channel-access path (CSMA, PTT,
     /// pacing, TX-complete) for service transmitters that are not KISS-addressed modems

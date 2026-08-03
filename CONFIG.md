@@ -826,6 +826,31 @@ which is soundcard-like already. Raise it if a quiet instance makes the waterfal
 
 ---
 
+## Watching a station work
+
+`journalctl -u pdn-soundmodem -f` is the view most operators actually use — the waterfall needs a
+browser and the frame log needs SQL. Every frame the station hears or sends is one line:
+
+```
+rx[0] afsk300-il2pc-multi11 M0LTE>GB7IOW-1 15 bytes  crc ok  fec 0  -5 Hz
+tx[0] afsk1200 M0LTE>GB7RDG-2 28 bytes
+tx[0] DROPPED M0LTE>GB7RDG-2 28 bytes: this station receives only
+```
+
+| Field | Means |
+|---|---|
+| `rx[N]` / `tx[N]` | Direction and KISS sub-channel |
+| mode | What decoded it — a diversity bank names its branch count, so `afsk300-il2pc-multi11` is the 11-branch bank |
+| `SOURCE>DEST` | AX.25 addresses; `(no ax25 header)` where the payload is not AX.25, rather than a mangled callsign |
+| `crc ok` / `CRC BAD` | Only for modes that carry a CRC; a mode with none claims neither |
+| `fec N` | Bytes the FEC corrected. Rising counts mean the link is being carried by the FEC and is closer to the edge than a clean decode suggests |
+| `±N Hz` | Measured carrier offset — what to retune by |
+| `emph ±N dB` | Diversity banks only, and only when non-zero: the far station's TX audio is twisted |
+
+**A transmission is logged when it goes out, not when it is queued.** A frame can wait behind CSMA
+or an ARQ session for seconds. Frames that never made it appear once as `DROPPED` with the reason,
+and never as `tx`.
+
 ## What is rejected at start-up
 
 The daemon validates before it opens anything, and refuses to start rather than run in a state
