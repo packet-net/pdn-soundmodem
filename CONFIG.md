@@ -847,6 +847,20 @@ tx[0] DROPPED M0LTE>GB7RDG-2 28 bytes: this station receives only
 | `±N Hz` | Measured carrier offset — what to retune by |
 | `emph ±N dB` | Diversity banks only, and only when non-zero: the far station's TX audio is twisted |
 
+Host sessions are logged too, because a host that quietly drops its TCP connection stops passing
+traffic and — from the modem's side — looks exactly like a band that went quiet:
+
+```
+kiss[8105] 192.168.1.50:54312 connected — 2 clients (all modems)
+kiss[8101] 127.0.0.1:40000 disconnected — 0 clients (modem 3 only)
+kiss[8105] 192.168.1.50:54312 disconnected: Connection reset by peer. — 1 client (all modems)
+```
+
+Each line says which port, which host, how many sessions remain, and **which modems that port
+reaches** — the thing host software gets wrong. A clean close carries no reason; a host that
+vanished carries the transport's, because "the host closed" and "the host died" are different
+problems.
+
 **A transmission is logged when it goes out, not when it is queued.** A frame can wait behind CSMA
 or an ARQ session for seconds. Frames that never made it appear once as `DROPPED` with the reason,
 and never as `tx`.

@@ -1,0 +1,45 @@
+{
+  "Name": "fm-afsk1200-awgn",
+  "Mode": "afsk1200",
+  "DspRate": 12000,
+  "TargetDeviationHz": 3000,
+  "OffsetHz": 0,
+  "CaptureRate": 48000,
+  "Bursts": [
+    {
+      "Mode": "afsk1200",
+      "Seed": 1,
+      "SnrDb": 12,
+      "Channel": "Awgn",
+      "FrameBytes": 48,
+      "StartSeconds": 9,
+      "BurstSeconds": 0.5033333333333333
+    },
+    {
+      "Mode": "afsk1200",
+      "Seed": 2,
+      "SnrDb": 8,
+      "Channel": "Awgn",
+      "FrameBytes": 48,
+      "StartSeconds": 19.503333333333334,
+      "BurstSeconds": 0.5033333333333333
+    },
+    {
+      "Mode": "afsk1200",
+      "Seed": 3,
+      "SnrDb": 4,
+      "Channel": "Awgn",
+      "FrameBytes": 48,
+      "StartSeconds": 30.006666666666668,
+      "BurstSeconds": 0.5025
+    }
+  ],
+  "ModemRevision": "1d3768904261",
+  "WrittenUtc": "2026-07-28T07:40:45.9510643+00:00",
+  "Radio": "none (rehearsal)",
+  "FrequencyMHz": "18.106500",
+  "PassAudioGain": 0.37201109528541565,
+  "DialCorrectionHz": 0,
+  "CapturePath": "fm-ladder-dryrun.wav",
+  "CaptureSha256": "8d23ac889aac6be1cbf40d63f08adc806cc1092319b70d49f805733d4bc6e603"
+}

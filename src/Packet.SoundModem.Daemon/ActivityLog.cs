@@ -1,3 +1,4 @@
+using Packet.SoundModem.Kiss;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Waterfall;
 
@@ -61,6 +62,24 @@ internal static class ActivityLog
     /// <summary>A frame that never went out, and why.</summary>
     internal static string Dropped(int subChannel, ReadOnlySpan<byte> frame, Exception reason) =>
         $"tx[{subChannel}] DROPPED {Addresses(frame)} {frame.Length} bytes: {reason.Message}";
+
+    /// <summary>A host attached to a KISS port.</summary>
+    internal static string ClientConnected(int port, int? dedicatedSubChannel, KissClientEvent e) =>
+        $"kiss[{port}] {Host(e.Remote)} connected — {Clients(e.Clients)}{Serving(dedicatedSubChannel)}";
+
+    /// <summary>A host's KISS session ended; the reason is given where it was not a clean close.</summary>
+    internal static string ClientDisconnected(int port, int? dedicatedSubChannel, KissClientEvent e) =>
+        $"kiss[{port}] {Host(e.Remote)} disconnected"
+        + (e.Reason is { Length: > 0 } why ? $": {why}" : "")
+        + $" — {Clients(e.Clients)}{Serving(dedicatedSubChannel)}";
+
+    private static string Host(System.Net.EndPoint? remote) => remote?.ToString() ?? "(unknown host)";
+
+    private static string Clients(int count) => count == 1 ? "1 client" : $"{count} clients";
+
+    /// <summary>Which modems that port reaches — the thing a host operator gets wrong.</summary>
+    private static string Serving(int? dedicatedSubChannel) =>
+        dedicatedSubChannel is int sub ? $" (modem {sub} only)" : " (all modems)";
 
     /// <summary>
     /// <c>SOURCE&gt;DEST</c> where the frame is AX.25, else a marker. Not every mode carries AX.25
