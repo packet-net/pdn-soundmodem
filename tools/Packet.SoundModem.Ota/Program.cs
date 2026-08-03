@@ -1309,10 +1309,21 @@ internal static class Commands
         Console.WriteLine($"keyed {r.KeyUtc:HH:mm:ss.fff} → {r.UnkeyUtc:HH:mm:ss.fff} ({r.Duration.TotalSeconds:F2} s)");
         Console.WriteLine($"{r.Samples} complex samples, {r.PacketsReflected} buffers reflected, " +
                           $"{r.SamplesStarved} starved, drained={r.Drained}");
-        Console.WriteLine(r.PeakSwr is null
-            ? "SWR: no usable reading"
-            : $"peak SWR {r.PeakSwr:F2}   peak forward {r.PeakForwardDbm:F1} dBm " +
+        // Forward power and SWR are reported separately because they have different
+        // preconditions. SWR compares forward against reflected, so it needs a constant
+        // envelope — on a modulated burst the two samples describe different instants and the
+        // ratio is meaningless. Peak forward power has no such requirement: it is the highest
+        // instantaneous reading while keyed, and on a data burst it is exactly the number an
+        // operator needs, because the constant-envelope pre-flight tone reads the drive level
+        // rather than what the modulated waveform actually puts on the air. Printing it only
+        // alongside a valid SWR threw away the measurement on every burst.
+        Console.WriteLine(r.PeakForwardDbm is null
+            ? "forward power: no FWDPWR samples arrived while keyed"
+            : $"peak forward {r.PeakForwardDbm:F1} dBm " +
               $"({FlexMeters.DbmToWatts(r.PeakForwardDbm ?? 0):F1} W)");
+        Console.WriteLine(r.PeakSwr is null
+            ? "SWR: not evaluated (needs a constant envelope — see the pre-flight tone)"
+            : $"peak SWR {r.PeakSwr:F2}");
 
         // Which meters actually streamed while keyed — the diagnostic that distinguishes
         // "the radio never sent transmit meters" from "we failed to decode them".

@@ -18,8 +18,8 @@ Status: `todo` · `blocked` (waiting on someone/something else) · `done` (moved
 | A6 | Receiver front-end gain | Tom, and a shared-instrument decision | more TX power, more path margin | blocked |
 | A7 | Settle the Flex's supply for campaigns | Tom | reproducibility of every A2 number | blocked |
 | A8 | Two-tone IMD | real antenna + stable tap | §I3 completeness | blocked on A9 |
-| A9 | §E4 — real antenna | Tom, licence conditions | A8, A10 | todo |
-| A10 | m9psy as second site | M9PSY (operator green-light held) | §E4 two-site results | blocked on A9 |
+| A9 | §E4 — real antenna | Tom, licence conditions | A8, A10 | **done 2026-08-03** — see `evidence/2026-08-03-e4-first-on-air/` |
+| A10 | m9psy as second site | M9PSY (operator green-light held) | §E4 two-site results | todo — A9 is done; note m9psy was quota-blocked (429) on 2026-08-03, and M0XDK-1/M0EYT were characterised instead |
 | A11 | §I2 GPSDO cross-check via m9psy | m9psy, no transmit | confidence in A1's method | todo |
 | A12 | §E3 — IQ vs SSB A/B through DIGU | radio, 20 min | measuring what the TX SSB filter costs | todo |
 | A13 | §I1 receiver AGC/clipping audit, formally | receiver, no transmit | trusting levels at high power | todo |

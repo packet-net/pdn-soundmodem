@@ -37,7 +37,7 @@ dotnet test tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj -c Rele
 
 | Thing | Value |
 |---|---|
-| Radio | FlexRadio 6500 at `10.45.0.76`, dummy load on ANT1 |
+| Radio | FlexRadio 6500 at `10.45.0.76`. **ANT1 is a real antenna** (2026-08-03; it was a dummy load through Phase A/B, and much of this document still assumes that). ANT2 is the RSP1 pad chain — 5 W ceiling. |
 | Receiver | `ubersdr` (M0LTE, Reading), iq48 only, `max_session_time` 3600 s, **no GPSDO, no GPS** |
 | Receiver (alt) | **RSP1 on `studybox`** — `--capture rsp`, `rx_sdr` CF32 streamed over ssh. On Flex **ANT2** (ubersdr/dummy-load path is ANT1). Single-client device; no GPS. See the RSP1 section below |
 | Frequency | 17m: waveform centre **18.106500 MHz**, modem/tone at **+2000 Hz** → 18.1085 MHz |
