@@ -307,9 +307,44 @@ planner would otherwise reserve.
   happened to put it.
 - **One or the other.** A modem cannot set both `frequency` and `rfFrequency`; they say the same
   thing two ways.
-- **No dial, no start.** If the modems are spread wider than one SSB passband can carry, the
-  daemon says so — naming the span and the modems — rather than starting something that cannot
-  work. Nothing else can be done about it: that is a second-radio problem.
+- **No dial, no start.** If the modems are spread wider than one passband can carry, the daemon
+  says so — naming the span and the modems — rather than starting something that cannot work. On a
+  radio it cannot open up, that is a second-radio problem; on a headless Flex the window has
+  already been widened as far as the radio goes before you see this.
+- **A baseband mode cannot be band-planned.** `fsk9600` and the `c4fsk*` family occupy the audio
+  band from DC upwards rather than sitting on a centre frequency, so "put it at 7.0516 MHz" has no
+  meaning for them. Configure that channel by audio `frequency`.
+
+### Wide plans and the spec-fixed modes
+
+The passband is worked out, not configured. A plan that fits an ordinary 300–2700 Hz SSB window is
+placed in one, exactly as before — but on a **headless Flex**, whose transmit and receive filters
+the daemon sets itself, a plan that does not fit gets a wider window instead of a refusal, up to
+the radio's 10 kHz ceiling. It grows only as far as the modems need, because every extra Hz is
+noise bandwidth on receive and filter to open on transmit:
+
+```
+dial: 7.049800 MHz USB
+  modem 0 ms110d-wn4 at 7.051600 MHz = 1800 Hz audio
+  modem 1 bpsk300 at 7.054000 MHz = 4200 Hz audio
+  passband: 300-4470 Hz — wider than an ordinary 300-2700 Hz SSB window, because these modems do
+  not fit one; the radio's filters are set to suit
+flex: setting the transmit filter high cut to 4600 Hz
+flex: setting the slice receive filter to 200-4600 Hz
+```
+
+That is how `ms110d-*` becomes placeable in RF terms at all: a 3 kHz waveform does not fit inside
+2400 Hz of room however the dial is chosen.
+
+**A spec-fixed mode dictates the dial.** `ms110d-*` sits on 1800 Hz and `freedv-*` on its OFDM
+centre because their standards say so — they cannot be slid up or down to suit a dial chosen for
+everything else, so instead they choose it, and the movable modems are placed around them. Two
+consequences worth knowing:
+
+- On USB, **put the spec-fixed modem lowest** in your plan. Everything else has to sit above the
+  dial it fixes; a modem below it cannot be placed at all, and the daemon says so by name.
+- Two spec-fixed modems can share a dial only if their RF frequencies differ by exactly the
+  difference of their audio centres. Otherwise they want two dials, and one radio has one.
 
 ### Pinning the dial
 
@@ -712,9 +747,23 @@ band planner fits with), so nothing has to be kept in step by hand.
 | a number (500–10000) | Used as it stands; the band plan does not override it |
 | `0` | The radio's own filter is left alone |
 
-**Only the high cut is settable** through the station API — the low cut and the receive filter are
-not. A modem outside the filter either way is reported at start-up, so the one thing you may still
-have to fix at the rig is named rather than left to be discovered on the air:
+**The slice's receive filter is set too**, from the same measurement — the transmit filter decides
+what leaves the radio, but what reaches the modems is capped separately, per slice, so widening only
+the transmit side would give a wide signal out and an ordinary ~3 kHz window back in:
+
+```
+flex: setting the slice receive filter to 200-3400 Hz, to hear everything the modems are placed across
+flex: slice receive filter 200..3400 Hz (what the modems can hear)
+```
+
+Unlike the transmit filter this is slice state rather than a global radio setting, so it goes away
+with the slice. The radio's ceiling on receive width is **not measured** — the 10 kHz figure is the
+transmit filter's — so the daemon asks, reads back, and warns if the radio would not go that wide
+rather than leaving a modem quietly deaf.
+
+**Only the transmit high cut is settable** through the station API — the transmit *low* cut is not.
+A modem outside either filter is reported at start-up, so the one thing you may still have to fix at
+the rig is named rather than left to be discovered on the air:
 
 ```
 flex: WARNING — modem 0 (ms110d-wn4) occupies 410-3199 Hz, outside the radio's 0..3000 Hz

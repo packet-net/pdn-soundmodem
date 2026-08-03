@@ -422,7 +422,13 @@ if (!deviceIsFlex && !deviceIsUberSdr && captureRate % DspRate != 0)
 RfPlan.Result? bandPlan;
 try
 {
-    bandPlan = BandPlanner.Plan(modems, sideband, dialFrequency, DspRate);
+    // How far up the audio band this station can be planned. A rig the daemon cannot touch gets
+    // the nominal SSB window; a headless Flex, whose transmit and receive filters the daemon sets
+    // itself, gets the radio's own ceiling — which is what lets a 3 kHz waveform be planned at all,
+    // since one cannot fit inside an ordinary passband however the dial is chosen.
+    bandPlan = BandPlanner.Plan(
+        modems, sideband, dialFrequency, DspRate,
+        flexIsHeadless ? Passband.WideCeilingHz : null);
 }
 catch (InvalidDataException planFailure)
 {
@@ -624,6 +630,25 @@ if (flexIsHeadless && deriveTransmitFilter && flexTuning.TransmitFilterHighHz is
     Console.WriteLine(
         $"flex: setting the transmit filter high cut to {derivedFilterHigh} Hz — modem "
         + $"{widest.SubChannel} ({widest.Mode}) reaches {widest.HighHz:F0} Hz");
+}
+
+// The receive half of the same question, and the half that cannot be seen from the transmit side:
+// the slice's own filter decides what reaches the modems, so a slice left on an ordinary data
+// filter hears nothing above ~3 kHz however wide the transmit filter is opened. Slice state rather
+// than global, so unlike the transmit filter this one is ours to set without affecting anything
+// else the radio does.
+if (flexIsHeadless && txBands.Count > 0)
+{
+    int receiveLow = BandPlanner.LowCutClearing(txBands.Min(b => b.LowHz));
+    int receiveHigh = BandPlanner.HighCutClearing(txBands.Max(b => b.HighHz));
+    flexTuning = flexTuning with
+    {
+        ReceiveFilterLowHz = receiveLow,
+        ReceiveFilterHighHz = receiveHigh,
+    };
+    Console.WriteLine(
+        $"flex: setting the slice receive filter to {receiveLow}-{receiveHigh} Hz, to hear "
+        + "everything the modems are placed across");
 }
 
 channel.FrameReceived += (subChannel, frame) =>
@@ -1233,6 +1258,30 @@ else if (deviceIsFlex)
                 + $"{txFilterLow}..{txFilterHigh} Hz transmit filter — it will be clipped. "
                 + remedy);
         }
+    }
+
+    if (flex.Station.ReceiveFilter is (int rxFilterLow, int rxFilterHigh))
+    {
+        Console.WriteLine(
+            $"flex: slice receive filter {rxFilterLow}..{rxFilterHigh} Hz (what the modems can hear)");
+
+        // Deaf rather than clipped, and just as quiet about it: a modem outside the slice's filter
+        // decodes nothing at all and looks exactly like a dead band.
+        foreach (TransmitFilterPlan.Band band in txBands
+                     .Where(b => b.LowHz < rxFilterLow || b.HighHz > rxFilterHigh))
+        {
+            Console.Error.WriteLine(
+                $"flex: WARNING — modem {band.SubChannel} ({band.Mode}) occupies "
+                + $"{band.LowHz:F0}-{band.HighHz:F0} Hz, outside the slice's "
+                + $"{rxFilterLow}..{rxFilterHigh} Hz receive filter — it will hear nothing there.");
+        }
+    }
+
+    if (flex.Station.ReceiveFilterWarning is string receiveFilterWarning)
+    {
+        // The radio's ceiling on receive width is not measured, so this is how a radio that will
+        // not go as wide as asked says so, rather than the modem quietly going deaf.
+        Console.Error.WriteLine($"flex: WARNING — {receiveFilterWarning}");
     }
 }
 else

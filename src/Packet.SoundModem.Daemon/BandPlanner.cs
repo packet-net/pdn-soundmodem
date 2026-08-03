@@ -22,22 +22,54 @@ internal static class BandPlanner
     /// to the audio centre the plan calls for. Returns null when no modem is RF-addressed, which
     /// leaves the audio-centre configuration alone.
     /// </summary>
+    /// <param name="passbandCeilingHz">
+    /// How far up the audio band this station's radio can be opened. The nominal SSB figure for a
+    /// rig the daemon cannot touch; <see cref="Passband.WideCeilingHz"/> for one whose transmit and
+    /// receive filters it sets itself, which is what lets a 3 kHz waveform be planned at all.
+    /// </param>
     internal static RfPlan.Result? Plan(
-        IReadOnlyList<ModemConfig> modems, string sideband, double? pinnedDialHz, int dspRate)
+        IReadOnlyList<ModemConfig> modems, string sideband, double? pinnedDialHz, int dspRate,
+        double? passbandCeilingHz = null)
     {
         if (!modems.Any(m => m.RfFrequency is not null))
         {
             return null;
         }
 
+        // A mode with no audio centre at all cannot be placed on the band by one: fsk9600 and the
+        // c4fsk family are baseband, occupying DC upwards, so "put it at 7.0516 MHz" has no meaning
+        // for them. Said plainly here rather than left to produce a plan that cannot be built.
+        ModemConfig? baseband = modems.FirstOrDefault(
+            m => !DaemonConfig.IsArdop(m.Mode)
+                 && !ModemCatalog.AcceptsCentreFrequency(m.Mode)
+                 && ModemCatalog.DefaultCentreFrequencyFor(m.Mode) is null);
+        if (baseband is not null)
+        {
+            throw new InvalidDataException(
+                $"modem {baseband.SubChannel} ({baseband.Mode}) is a baseband mode — it occupies the "
+                + "audio band from DC upwards rather than sitting on a centre frequency, so it "
+                + "cannot be placed with \"rfFrequency\". Configure this channel by audio "
+                + "\"frequency\" instead, or give this modem a channel of its own.");
+        }
+
         var slots = modems
-            .Select(m => new RfSlot(m.SubChannel, m.Mode, m.RfFrequency!.Value, WidthOf(m, dspRate)))
+            .Select(m => new RfSlot(
+                m.SubChannel, m.Mode, m.RfFrequency!.Value, WidthOf(m, dspRate),
+                // ARDOP is shifted to wherever it is put, so it moves like a variable-centre mode.
+                FixedCentreHz: DaemonConfig.IsArdop(m.Mode) || ModemCatalog.AcceptsCentreFrequency(m.Mode)
+                    ? null
+                    : ModemCatalog.DefaultCentreFrequencyFor(m.Mode)))
             .ToList();
 
-        RfPlan.Result plan = RfPlan.Solve(slots, sideband, pinnedDialHz);
+        RfPlan.Result plan = RfPlan.Solve(
+            slots, sideband, pinnedDialHz,
+            Passband.Fit(slots, passbandCeilingHz ?? Passband.Nominal.HighHz));
 
-        // Hand the answer back to the modems as the audio centre each now needs.
-        foreach (PlannedModem planned in plan.Modems)
+        // Hand the answer back to the modems as the audio centre each now needs — except a modem
+        // whose centre was never ours to set. A spec-fixed mode is already on the centre the plan
+        // was built around, and writing one back would be rejected at start-up as an override of a
+        // centre that cannot be overridden.
+        foreach (PlannedModem planned in plan.Modems.Where(p => p.Slot.FixedCentreHz is null))
         {
             modems.Single(m => m.SubChannel == planned.Slot.SubChannel).Frequency = planned.AudioCentreHz;
         }
@@ -100,6 +132,14 @@ internal static class BandPlanner
     internal static int HighCutClearing(double highestEdgeHz) =>
         (int)(Math.Ceiling((highestEdgeHz + MarginHz) / 50) * 50);
 
+    /// <summary>
+    /// The counterpart below: the low cut clearing an audio band that starts at
+    /// <paramref name="lowestEdgeHz"/>, floored at zero because a negative cut-off is not a thing
+    /// and a modem sitting near DC only wants the filter out of its way.
+    /// </summary>
+    internal static int LowCutClearing(double lowestEdgeHz) =>
+        Math.Max(0, (int)(Math.Floor((lowestEdgeHz - MarginHz) / 50) * 50));
+
     /// <summary>Headroom above the highest modem, so the filter skirt is not on top of it.</summary>
     private const double MarginHz = 200;
 
@@ -118,6 +158,17 @@ internal static class BandPlanner
             output.WriteLine(
                 $"  modem {m.Slot.SubChannel} {m.Slot.Mode} at {RfPlan.Mhz(m.Slot.RfCentreHz)} "
                 + $"= {m.AudioCentreHz:F0} Hz audio");
+        }
+
+        // Only worth saying when it is not the ordinary SSB window: a plan that needed more room
+        // than a rig usually passes is one whose radio has to be opened up to match, and the
+        // operator should see that stated rather than infer it from a filter line further down.
+        if (!plan.Window.IsNominal)
+        {
+            output.WriteLine(
+                $"  passband: {plan.Window.LowHz:F0}-{plan.Window.HighHz:F0} Hz — wider than an "
+                + $"ordinary {Passband.Nominal.LowHz:F0}-{Passband.Nominal.HighHz:F0} Hz SSB "
+                + "window, because these modems do not fit one; the radio's filters are set to suit");
         }
     }
 }

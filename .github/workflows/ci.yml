@@ -16,8 +16,17 @@ jobs:
       # it explicitly or every test invocation dies with "You must install .NET".
       - name: Register .NET root for MTP apphosts
         run: echo "DOTNET_ROOT=$(dirname "$(readlink -f "$(which dotnet)")")" >> "$GITHUB_ENV"
+      # Restore past the HTTP cache, for the same reason release.yml does: these runners are
+      # self-hosted and keep their NuGet cache between jobs indefinitely, so a dependency
+      # published minutes ago is invisible here while nuget.org already serves it. That is every
+      # PR that bumps one of our own packages just after cutting it — the build then fails with
+      # "Unable to find package … Nearest version: <the one before>", which reads like a typo in
+      # the version rather than a stale index. An ephemeral runner would never see it; ours do,
+      # and there are several, each with a cache of its own.
+      - name: Restore (bypassing the NuGet HTTP cache)
+        run: dotnet restore --no-http-cache
       - name: Build
-        run: dotnet build --configuration Release
+        run: dotnet build --configuration Release --no-restore
       - name: Test
         run: dotnet test --configuration Release --no-build -- --filter-not-trait "Category=Aspiration"
       - name: Aspiration scoreboard (non-blocking — red here is a to-do, not a break)
