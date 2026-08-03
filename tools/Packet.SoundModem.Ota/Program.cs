@@ -945,7 +945,9 @@ internal static class Commands
             : 0;
         var capOpt = new UberSdrCaptureOptions
         {
-            Host = a.Req("capture-host"),
+            // Required only when we are opening a capture of our own; --no-capture transmits
+            // into one held elsewhere and must not demand a host it will never use.
+            Host = a.Has("no-capture") ? "" : a.Req("capture-host"),
             Port = a.Int("capture-port", ssl ? 443 : 80),
             Ssl = ssl,
             FrequencyHz = (int)Math.Round(centreHz + correction),
@@ -1384,7 +1386,7 @@ internal static class Commands
         // tens of milliseconds. The signal's own length is what went on the air — measured at
         // 2.02 s on air for a burst whose feed window read 0.03 s (2026-08-03 §E4 session).
         Console.WriteLine(
-            $"signal {r.Samples / 2 / (double)FlexIqTransmitter.SampleRate:F2} s on air; " +
+            $"signal {r.Samples / (double)FlexIqTransmitter.SampleRate:F2} s on air; " +
             $"fed {r.KeyUtc:HH:mm:ss.fff} → {r.UnkeyUtc:HH:mm:ss.fff} ({r.Duration.TotalSeconds:F2} s — " +
             "the feed window, not the transmission)");
         Console.WriteLine($"{r.Samples} complex samples, {r.PacketsReflected} buffers reflected, " +
