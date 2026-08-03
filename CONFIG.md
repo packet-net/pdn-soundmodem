@@ -861,6 +861,23 @@ reaches** — the thing host software gets wrong. A clean close carries no reaso
 vanished carries the transport's, because "the host closed" and "the host died" are different
 problems.
 
+When the sound device loses audio, that is reported too:
+
+```
+audio: 3 capture overruns, 1 playback underrun (4 since start) — each one is lost audio: a dropped
+frame on receive, a discontinuity in what we transmitted. This is the machine not scheduling the
+modem within the ~120 ms of buffer it has, not a radio problem; give it more CPU share, or fewer
+neighbours.
+```
+
+ALSA recovers from an overrun or underrun by restarting the stream, silently — so without this a
+station being starved of CPU is indistinguishable from a station on a quiet band. Reported as
+what was lost **since the last look**, every ten seconds at most, with the advice given once.
+
+Worth knowing if you run under LXC or Docker: a `Nice=` value inside a container does **not** rank
+you against other containers — that is the container's CPU weight, set from the host. If these
+lines appear on a shared box, that is the knob, or dedicated cores.
+
 **A transmission is logged when it goes out, not when it is queued.** A frame can wait behind CSMA
 or an ARQ session for seconds. Frames that never made it appear once as `DROPPED` with the reason,
 and never as `tx`.
