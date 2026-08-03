@@ -873,6 +873,17 @@ Console.CancelKeyPress += (_, e) =>
     cancellation.Cancel();
 };
 
+// Who is attached to a KISS port, in the journal. A host that quietly drops its TCP session
+// stops passing traffic, and from the modem's side that is indistinguishable from a quiet band —
+// so the attach and the loss both get a line, and the loss carries its reason where it had one.
+void WatchClients(KissTcpServer server)
+{
+    server.ClientConnected += e =>
+        Console.WriteLine(ActivityLog.ClientConnected(server.LocalPort, server.DedicatedSubChannel, e));
+    server.ClientDisconnected += e =>
+        Console.WriteLine(ActivityLog.ClientDisconnected(server.LocalPort, server.DedicatedSubChannel, e));
+}
+
 var kissServers = new List<KissTcpServer>();
 // KISS serves the packet modems, so it starts whenever there are any — ARDOP sharing the
 // channel is no longer a reason to withhold it. (It was, when an ARDOP channel carried nothing
@@ -885,6 +896,7 @@ if (modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
     // The shared port: every modem, addressed by nibble (the QtSoundModem multiplex model).
     var shared = new KissTcpServer(channel, kissPort, listenAddress);
     shared.EmitQualityFrames = qualityFrames;
+    WatchClients(shared);
     shared.Start();
     kissServers.Add(shared);
     if (qualityFrames)
@@ -903,6 +915,7 @@ if (modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
         var dedicated = new KissTcpServer(
             channel, modemConfig.Port!.Value, listenAddress, subChannel: modemConfig.SubChannel);
         dedicated.EmitQualityFrames = qualityFrames;
+        WatchClients(dedicated);
         dedicated.Start();
         kissServers.Add(dedicated);
         Console.WriteLine(

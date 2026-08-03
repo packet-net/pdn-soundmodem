@@ -56,6 +56,18 @@ public sealed class KissTcpServer : IAsyncDisposable
     /// <summary>The modem this server is dedicated to, or null when it is multiplexed.</summary>
     public int? DedicatedSubChannel => _dedicatedSubChannel;
 
+    /// <summary>A host opened a KISS session on this port.</summary>
+    /// <remarks>
+    /// Who is attached is operational information a station keeps no other record of: a node that
+    /// stops passing traffic because its host quietly dropped the TCP session looks identical, from
+    /// the modem's side, to a band that went quiet. Raised on the accept, before the client has
+    /// sent anything.
+    /// </remarks>
+    public event Action<KissClientEvent>? ClientConnected;
+
+    /// <summary>A host's KISS session ended, cleanly or otherwise.</summary>
+    public event Action<KissClientEvent>? ClientDisconnected;
+
     /// <summary>
     /// When true, each received data frame is followed by a <see cref="KissCommand.RxQuality"/>
     /// frame on the same port nibble carrying its decode diagnostics as UTF-8 JSON, e.g.
@@ -84,7 +96,11 @@ public sealed class KissTcpServer : IAsyncDisposable
                 client.NoDelay = true;
                 var id = Guid.NewGuid();
                 _clients[id] = client;
-                _ = ServeClientAsync(id, client);
+                // Read the endpoint now: after the socket is disposed there is nothing to ask, and
+                // the disconnect line is the half an operator most wants to attribute.
+                EndPoint? remote = client.Client.RemoteEndPoint;
+                ClientConnected?.Invoke(new KissClientEvent(remote, _clients.Count));
+                _ = ServeClientAsync(id, client, remote);
             }
         }
         catch (OperationCanceledException)
@@ -92,8 +108,9 @@ public sealed class KissTcpServer : IAsyncDisposable
         }
     }
 
-    private async Task ServeClientAsync(Guid id, TcpClient client)
+    private async Task ServeClientAsync(Guid id, TcpClient client, EndPoint? remote)
     {
+        string? reason = null;
         var decoder = new KissDecoder(frame => OnClientFrame(client, frame));
         var buffer = new byte[4096];
         try
@@ -110,14 +127,21 @@ public sealed class KissTcpServer : IAsyncDisposable
                 decoder.Push(buffer.AsSpan(0, got));
             }
         }
-        catch (Exception)
+        catch (OperationCanceledException)
         {
-            // Client errors only ever cost that client its connection.
+            // The server is shutting down, not the client misbehaving: a clean end.
+        }
+        catch (Exception e)
+        {
+            // Client errors only ever cost that client its connection — but say which and why,
+            // because "the host vanished" and "the host closed" are different problems.
+            reason = e.Message;
         }
         finally
         {
             _clients.TryRemove(id, out _);
             client.Dispose();
+            ClientDisconnected?.Invoke(new KissClientEvent(remote, _clients.Count, reason));
         }
     }
 
@@ -279,3 +303,12 @@ public sealed class KissTcpServer : IAsyncDisposable
         _stopping.Dispose();
     }
 }
+
+/// <summary>A host attaching to, or leaving, a KISS-over-TCP port.</summary>
+/// <param name="Remote">The host's address, or null if the socket was already gone.</param>
+/// <param name="Clients">How many clients hold a session on that port afterwards.</param>
+/// <param name="Reason">
+/// Why the session ended, when it did not end cleanly; null for a clean close and on connect.
+/// </param>
+public readonly record struct KissClientEvent(
+    System.Net.EndPoint? Remote, int Clients, string? Reason = null);

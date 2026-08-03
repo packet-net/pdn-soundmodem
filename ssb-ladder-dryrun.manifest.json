@@ -1,0 +1,43 @@
+{
+  "Name": "ssb-afsk300-awgn",
+  "Mode": "afsk300",
+  "OffsetHz": 2000,
+  "CaptureRate": 48000,
+  "Bursts": [
+    {
+      "Mode": "afsk300",
+      "Seed": 1,
+      "FrameBytes": 60,
+      "SnrDb": 8,
+      "Channel": "Awgn",
+      "StartSeconds": 9,
+      "BurstSeconds": 1.83775
+    },
+    {
+      "Mode": "afsk300",
+      "Seed": 2,
+      "FrameBytes": 60,
+      "SnrDb": 5,
+      "Channel": "Awgn",
+      "StartSeconds": 20.83775,
+      "BurstSeconds": 1.8344166666666666
+    },
+    {
+      "Mode": "afsk300",
+      "Seed": 3,
+      "FrameBytes": 60,
+      "SnrDb": 2,
+      "Channel": "Awgn",
+      "StartSeconds": 32.67216666666667,
+      "BurstSeconds": 1.83775
+    }
+  ],
+  "ModemRevision": "053307286568",
+  "WrittenUtc": "2026-07-28T06:49:09.7940633+00:00",
+  "Radio": "none (rehearsal)",
+  "FrequencyMHz": "18.106500",
+  "PassGain": 0.6947478652000427,
+  "DialCorrectionHz": 0,
+  "CapturePath": "ssb-ladder-dryrun.wav",
+  "CaptureSha256": "812e601f194005bed51eec657f0edc6ee42259d7f126eba56ecd119793e3fddb"
+}

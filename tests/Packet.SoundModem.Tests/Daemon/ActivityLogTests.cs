@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Packet.SoundModem.Daemon;
+using Packet.SoundModem.Kiss;
 using Packet.SoundModem.Modems;
 
 namespace Packet.SoundModem.Tests.Daemon;
@@ -112,5 +113,40 @@ public class ActivityLogTests
 
         quiet.Should().NotContain("emph", "zero emphasis is the normal case and is noise in a log");
         twisted.Should().Contain("emph -6 dB");
+    }
+
+    [Fact]
+    public void A_Kiss_Client_Line_Says_Which_Port_Which_Host_And_What_That_Port_Reaches()
+    {
+        var remote = new System.Net.IPEndPoint(System.Net.IPAddress.Parse("192.168.1.50"), 54312);
+
+        string shared = ActivityLog.ClientConnected(8105, null, new KissClientEvent(remote, 2));
+        string dedicated = ActivityLog.ClientConnected(8101, 3, new KissClientEvent(remote, 1));
+
+        shared.Should().Be("kiss[8105] 192.168.1.50:54312 connected — 2 clients (all modems)");
+        // Which modems a port reaches is the thing host operators get wrong, so it is on every line.
+        dedicated.Should().Be("kiss[8101] 192.168.1.50:54312 connected — 1 client (modem 3 only)");
+    }
+
+    [Fact]
+    public void A_Host_That_Vanished_Reads_Differently_From_One_That_Said_Goodbye()
+    {
+        var remote = new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 40000);
+
+        string clean = ActivityLog.ClientDisconnected(8105, null, new KissClientEvent(remote, 0));
+        string reset = ActivityLog.ClientDisconnected(
+            8105, null, new KissClientEvent(remote, 0, "Connection reset by peer."));
+
+        clean.Should().Be("kiss[8105] 127.0.0.1:40000 disconnected — 0 clients (all modems)");
+        reset.Should().Contain("disconnected: Connection reset by peer.");
+    }
+
+    [Fact]
+    public void A_Host_Whose_Socket_Had_Already_Gone_Is_Still_Reported()
+    {
+        // Better an unnamed host than a swallowed disconnect: the count is the part that matters.
+        string line = ActivityLog.ClientDisconnected(8105, null, new KissClientEvent(null, 0));
+
+        line.Should().Contain("(unknown host)").And.Contain("0 clients");
     }
 }
