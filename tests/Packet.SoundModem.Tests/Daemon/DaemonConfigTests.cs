@@ -488,6 +488,43 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void A_Transmit_Filter_Cut_Off_That_Is_Really_A_Frequency_Is_Rejected()
+    {
+        // The units are the trap: "transmitFilterHighHz" next to a "frequency" in MHz invites
+        // 14100000, which the radio would take and leave the operator wondering.
+        string path = WriteConfig("""{"device": "flex:mock", "flex": {"transmitFilterHighHz": 14100000}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("transmitFilterHighHz").And.Contain("500-10000");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void A_Transmit_Filter_Cut_Off_Of_Zero_Means_Leave_The_Radio_Alone()
+    {
+        string path = WriteConfig("""{"device": "flex:mock", "flex": {"transmitFilterHighHz": 0}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Flex!.TransmitFilterHighHz.Should().Be(0);
+    }
+
+    [Fact]
+    public void An_Unset_Transmit_Filter_Cut_Off_Is_Derived_Rather_Than_Defaulted()
+    {
+        string path = WriteConfig("""{"device": "flex:mock", "flex": {"antenna": "ANT2"}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Flex!.TransmitFilterHighHz.Should().BeNull(
+            "null is what start-up reads as 'work it out from the modems'");
+    }
+
+    [Fact]
     public void A_Missing_File_Is_Reported_As_Configuration_Not_As_A_Crash()
     {
         string path = Path.Combine(_dir, "does-not-exist.json");

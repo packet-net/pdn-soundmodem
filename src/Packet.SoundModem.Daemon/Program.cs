@@ -274,7 +274,16 @@ var flexTuning = new FlexTuning
             ? FlexConfig.DefaultHeadlessDaxChannel
             : "1"),
     TxPowerWatts = flexConfig?.TxPowerWatts,
+    // A stated cut-off is used as it stands; 0 means "leave the radio's own filter alone", and
+    // unset (the usual case) is filled in below from what the modems actually occupy.
+    TransmitFilterHighHz = flexConfig?.TransmitFilterHighHz is > 0
+        ? flexConfig.TransmitFilterHighHz
+        : null,
 };
+
+// Nothing stated: the daemon works the transmit filter out rather than inheriting whatever the
+// radio was last left on.
+bool deriveTransmitFilter = flexConfig?.TransmitFilterHighHz is null;
 
 // Caught here rather than at the radio, which answers an out-of-range power with a bare
 // protocol code and no hint about which setting produced it.
@@ -382,6 +391,10 @@ if (ardopModem is not null && DspRate != M0LTE.Ardop.ArdopModulator.SampleRate)
 // an UberSDR its own 48 kHz IQ clock, so --capture-rate (an ALSA concept) does not apply to
 // either.
 bool deviceIsFlex = FlexDevice.IsFlex(device);
+// Headless is the deployment where the daemon owns the radio, and so the only one where it sets
+// the dial and the transmit filter — in attach mode SmartSDR owns the slice and we would be
+// fighting it.
+bool flexIsHeadless = deviceIsFlex && FlexDevice.Parse(device).Headless;
 bool deviceIsUberSdr = UberSdrDevice.IsUberSdr(device);
 UberSdrEndpoint uberSdrEndpoint = default;
 if (deviceIsUberSdr)
@@ -431,8 +444,7 @@ if (deviceIsUberSdr && receiveDialHz is null)
 
 if (bandPlan is not null)
 {
-    bool flexWillTune = deviceIsFlex && FlexDevice.Parse(device).Headless;
-    BandPlanner.Report(bandPlan, Console.Out, radioIsSelfTuning: flexWillTune || deviceIsUberSdr);
+    BandPlanner.Report(bandPlan, Console.Out, radioIsSelfTuning: flexIsHeadless || deviceIsUberSdr);
     foreach (string warning in bandPlan.Warnings)
     {
         Console.Error.WriteLine($"band plan: WARNING — {warning}");
@@ -442,7 +454,7 @@ if (bandPlan is not null)
     // only — in attach mode SmartSDR owns the slice and we would be fighting it. The transmit
     // filter is a global, persistent radio setting, so state its high cut from the plan or a
     // previous session's narrow filter silently truncates the top of the band.
-    if (flexWillTune)
+    if (flexIsHeadless)
     {
         // Overwriting a stated slice frequency without a word would leave someone upgrading a
         // working Flex config with a number that has quietly stopped meaning anything.
@@ -459,11 +471,14 @@ if (bandPlan is not null)
         flexTuning = flexTuning with
         {
             Frequency = (bandPlan.DialHz / 1_000_000).ToString("F6", CultureInfo.InvariantCulture),
-            TransmitFilterHighHz = filterHigh,
+            // A stated cut-off is the operator overruling the plan, which is theirs to do — the
+            // clipping check below still says so if it truncates a modem.
+            TransmitFilterHighHz = deriveTransmitFilter ? filterHigh : flexTuning.TransmitFilterHighHz,
         };
         Console.WriteLine(
-            $"flex: setting the slice to {RfPlan.Mhz(bandPlan.DialHz)} and the transmit filter "
-            + $"high cut to {filterHigh} Hz from the band plan");
+            $"flex: setting the slice to {RfPlan.Mhz(bandPlan.DialHz)}"
+            + (deriveTransmitFilter ? $" and the transmit filter high cut to {filterHigh} Hz" : "")
+            + " from the band plan");
     }
 }
 
@@ -582,6 +597,33 @@ if (modems.Any(m => m.Mode.StartsWith("qpsk", StringComparison.Ordinal)))
 {
     Console.WriteLine($"psk detector (qpsk): {qpskDetector.ToString().ToLowerInvariant()}"
         + (pskDetectorOverride is null ? " [default]" : " [--psk-detector]"));
+}
+
+// Where each modem sits in the audio band, for the radio's transmit filter: from the plan when
+// there is one, else measured off the modems as configured. Flex only — it is the one device
+// whose transmit filter the daemon can see, and the measurement costs a modulate per modem.
+IReadOnlyList<TransmitFilterPlan.Band> txBands = !deviceIsFlex
+    ? []
+    : bandPlan is not null
+        ? [.. bandPlan.Modems.Select(m => new TransmitFilterPlan.Band(
+            m.Slot.SubChannel, m.Slot.Mode,
+            m.AudioCentreHz - (m.Slot.BandwidthHz / 2),
+            m.AudioCentreHz + (m.Slot.BandwidthHz / 2)))]
+        : TransmitFilterPlan.Bands(modems, DspRate);
+
+// The transmit filter is a global, persistent radio setting — whatever last touched the radio —
+// so a station placed by audio centre inherits some previous session's filter, and a mode wider
+// than it (ms110d-* reaches past 3.1 kHz against a 3000 Hz default) is truncated on air with
+// nothing said. The band-planned path states the high cut above; this is the same for a station
+// with no plan to read it off.
+if (flexIsHeadless && deriveTransmitFilter && flexTuning.TransmitFilterHighHz is null
+    && TransmitFilterPlan.HighCutFor(txBands) is int derivedFilterHigh)
+{
+    TransmitFilterPlan.Band widest = txBands.MaxBy(b => b.HighHz);
+    flexTuning = flexTuning with { TransmitFilterHighHz = derivedFilterHigh };
+    Console.WriteLine(
+        $"flex: setting the transmit filter high cut to {derivedFilterHigh} Hz — modem "
+        + $"{widest.SubChannel} ({widest.Mode}) reaches {widest.HighHz:F0} Hz");
 }
 
 channel.FrameReceived += (subChannel, frame) =>
@@ -1169,24 +1211,27 @@ else if (deviceIsFlex)
     {
         Console.WriteLine($"flex: transmit filter {txFilterLow}..{txFilterHigh} Hz (radio global — limits TX audio bandwidth)");
 
-        // Only the high cut is settable through the station API, so the low cut is whatever the
-        // radio was left on. Compare it against the plan rather than assume: a modem sitting
-        // below the filter's low edge transmits nothing, and does so silently.
-        if (bandPlan is not null)
+        // What the filter passes is checked against where the modems actually are, rather than
+        // assumed: a modem outside it transmits a truncated signal, or nothing at all, and does
+        // so silently. The high cut we ask for can still come back narrower — it is a radio-wide
+        // setting and the radio has the last word — and in attach mode we never set it at all.
+        foreach (TransmitFilterPlan.Band band in txBands
+                     .Where(b => b.LowHz < txFilterLow || b.HighHz > txFilterHigh))
         {
-            var clipped = bandPlan.Modems
-                .Where(m => m.AudioCentreHz - (m.Slot.BandwidthHz / 2) < txFilterLow
-                         || m.AudioCentreHz + (m.Slot.BandwidthHz / 2) > txFilterHigh)
-                .ToList();
-            foreach (PlannedModem m in clipped)
-            {
-                Console.Error.WriteLine(
-                    $"flex: WARNING — modem {m.Slot.SubChannel} ({m.Slot.Mode}) occupies "
-                    + $"{m.AudioCentreHz - (m.Slot.BandwidthHz / 2):F0}-"
-                    + $"{m.AudioCentreHz + (m.Slot.BandwidthHz / 2):F0} Hz, outside the radio's "
-                    + $"{txFilterLow}..{txFilterHigh} Hz transmit filter — it will be clipped. "
-                    + "The low cut is not settable from here; widen it on the radio.");
-            }
+            // Only the high cut is settable through the station API, so a modem under the low
+            // edge is something only the operator can fix. Telling someone to move a modem that
+            // has nowhere to go — the freedv-*/ms110d-* centres are pinned by their specs — is
+            // worse than saying nothing.
+            string remedy = band.LowHz < txFilterLow
+                ? "The low cut is not settable from here; widen it on the radio."
+                : ModemCatalog.AcceptsCentreFrequency(band.Mode)
+                    ? "Widen the high cut on the radio, or move the modem down the passband."
+                    : "Widen the high cut on the radio — this mode's centre is fixed by its spec.";
+            Console.Error.WriteLine(
+                $"flex: WARNING — modem {band.SubChannel} ({band.Mode}) occupies "
+                + $"{band.LowHz:F0}-{band.HighHz:F0} Hz, outside the radio's "
+                + $"{txFilterLow}..{txFilterHigh} Hz transmit filter — it will be clipped. "
+                + remedy);
         }
     }
 }

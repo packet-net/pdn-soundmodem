@@ -15,6 +15,10 @@
   // different channel here (or use attach mode). See docs/flex-integration.md §8.
   // "flex": { "antenna": "ANT1" },   // mode defaults to DIGU; daxChannel defaults to 2 headless,
   //                                  which keeps out of a running SmartSDR's way (it takes 1)
+  // The radio's transmit filter is global and persistent, so a headless station sets its high
+  // cut from what the modems occupy rather than inheriting whatever the rig was left on (a 3000
+  // Hz default clips ms110d-*, which reaches ~3.2 kHz). "transmitFilterHighHz" pins it; 0 leaves
+  // the radio's own filter alone.
   // A public UberSDR web receiver is a device too: "ubersdr:<instance>" — a host, a host:port,
   // or the https:// URL you would open in a browser. The daemon takes the receiver's IQ stream
   // and demodulates SSB from it in-process, so every mode, the waterfall and the frame log work
