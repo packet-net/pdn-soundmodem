@@ -35,6 +35,10 @@ public sealed class AlsaAudioOutput : IAudioOutput, IDisposable
         _pcm.Write(_buffer.AsSpan(0, samples.Length));
     }
 
+    /// <summary>Xruns recovered so far (playback underruns) — see <see cref="AlsaPcm.Xruns"/>.
+    /// Every one is audio the transmitter did not send, recovered silently.</summary>
+    public int Xruns => _pcm.Xruns;
+
     /// <inheritdoc />
     public void Drain() => _pcm.Drain();
 

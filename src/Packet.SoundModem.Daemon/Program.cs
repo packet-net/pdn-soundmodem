@@ -1072,6 +1072,11 @@ UberSdrAudioInput? uberSdr = null;
 IPttControl ptt;
 IAudioOutput playback;
 IAudioInput input;
+// Set only on the ALSA path: the sound card is the one device with xrun counters, and they are
+// the difference between "the band is quiet" and "this machine will not schedule us".
+const int XrunPollMs = 10_000;
+AlsaAudioOutput? alsaOut = null;
+AlsaAudioInput? alsaIn = null;
 
 if (wavLoopPath is not null)
 {
@@ -1349,12 +1354,16 @@ else
     {
         // Transmit: modulate at the DSP rate; play at the card-native capture rate through the
         // image-rejecting upsampler (cards commonly refuse to open 12 kHz playback directly).
+        var alsaPlayback = new AlsaAudioOutput(device, captureRate == DspRate ? DspRate : captureRate);
+        alsaOut = alsaPlayback;
         playback = captureRate == DspRate
-            ? new AlsaAudioOutput(device, DspRate)
-            : new UpsamplingAudioOutput(new AlsaAudioOutput(device, captureRate), DspRate);
+            ? alsaPlayback
+            : new UpsamplingAudioOutput(alsaPlayback, DspRate);
         // Receive: capture at the card-native rate; ARDOP buffers more deeply (500 ms vs the
         // 120 ms default) to ride out device hiccups (snd-aloop re-locking mid-frame).
-        input = new AlsaAudioInput(device, captureRate, ardopPort is null ? 120_000 : 500_000);
+            var alsaInput = new AlsaAudioInput(device, captureRate, ardopPort is null ? 120_000 : 500_000);
+        alsaIn = alsaInput;
+        input = alsaInput;
     }
     catch (Exception e) when (e is IOException or UnauthorizedAccessException
                                 or InvalidOperationException or ArgumentException)
@@ -1382,12 +1391,25 @@ var rxDecimator = inputRate == DspRate ? null : new Decimator(inputRate, inputRa
 int blockSamples = ardopPort is null ? inputRate / 10 : inputRate / 50;
 var floatBuffer = new float[blockSamples];
 var dspBuffer = new float[rxDecimator?.MaxOutput(blockSamples) ?? blockSamples];
+var xrunWatch = new XrunWatch();
+long nextXrunPoll = Environment.TickCount64 + XrunPollMs;
 while (!cancellation.IsCancellationRequested)
 {
     int got = input.Read(floatBuffer);
     if (got == 0)
     {
         continue;
+    }
+
+    // Polled from the receive loop rather than a timer: this loop only turns when audio is
+    // flowing, which is exactly when an xrun means something, and it costs two field reads.
+    if ((alsaIn is not null || alsaOut is not null) && Environment.TickCount64 >= nextXrunPoll)
+    {
+        nextXrunPoll = Environment.TickCount64 + XrunPollMs;
+        if (xrunWatch.Poll(alsaIn?.Xruns ?? 0, alsaOut?.Xruns ?? 0) is string lost)
+        {
+            Console.Error.WriteLine(lost);
+        }
     }
 
     if (rxDecimator is null)
