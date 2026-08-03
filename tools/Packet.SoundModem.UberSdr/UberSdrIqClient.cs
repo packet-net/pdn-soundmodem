@@ -62,10 +62,44 @@ public sealed class UberSdrIqClient
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
 
     private readonly Action<string>? _log;
+    private readonly TaskCompletionSource _recording =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public UberSdrIqClient(Action<string>? log = null) => _log = log;
 
+    /// <summary>
+    /// Completes when the receiver has accepted the session and the socket is open — i.e. from
+    /// this moment the capture is recording — and faults with the reason if it never gets there.
+    /// </summary>
+    /// <remarks>
+    /// This exists so a transmitter can refuse to key until there is something listening. A
+    /// transmission nobody recorded is worse than no transmission: it occupies a frequency, it
+    /// spends the operator's licence, and it produces no measurement to show for either. Awaiting
+    /// a fixed delay instead — which is what the OTA harness used to do — keys straight through a
+    /// receiver that answered 503.
+    /// </remarks>
+    public Task Recording => _recording.Task;
+
     public async Task<CaptureResult> CaptureAsync(UberSdrCaptureOptions opt, CancellationToken ct)
+    {
+        try
+        {
+            return await CaptureCoreAsync(opt, ct);
+        }
+        catch (Exception e)
+        {
+            // Whatever went wrong, anyone waiting on Recording must learn of it rather than wait
+            // out their own timeout — the waiter is usually a transmitter deciding whether to key.
+            _recording.TrySetException(e);
+            throw;
+        }
+        finally
+        {
+            _recording.TrySetCanceled(ct);
+        }
+    }
+
+    private async Task<CaptureResult> CaptureCoreAsync(UberSdrCaptureOptions opt, CancellationToken ct)
     {
         string sessionId = Guid.NewGuid().ToString();
         string httpBase = $"{(opt.Ssl ? "https" : "http")}://{opt.Host}:{opt.Port}";
@@ -107,6 +141,7 @@ public sealed class UberSdrIqClient
         _log?.Invoke($"connecting to {wsUri.Scheme}://{opt.Host}:{opt.Port}/ws (mode {opt.Mode})…");
         await ws.ConnectAsync(wsUri, ct);
         _log?.Invoke($"connected; recording {opt.Mode} at {opt.FrequencyHz} Hz");
+        _recording.TrySetResult();
 
         return await ReceiveLoopAsync(ws, opt, sessionId, conn, description, ct);
     }
@@ -274,10 +309,65 @@ public sealed class UberSdrIqClient
         };
         req.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
         using var resp = await Http.SendAsync(req, ct);
-        resp.EnsureSuccessStatusCode();
-        await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return await JsonSerializer.DeserializeAsync<ConnectionResponse>(stream, cancellationToken: ct)
-               ?? throw new InvalidDataException("empty /connection response");
+
+        // Read the body BEFORE deciding the request failed. A refusal from this server is not a
+        // bare status code: /connection answers non-2xx with the same JSON it answers 200 with,
+        // carrying a `reason` that says which refusal this is — an exhausted daily allowance
+        // reads nothing like a full receiver, and both read nothing like a malformed request.
+        // EnsureSuccessStatusCode throws that explanation away and leaves "503 (Service
+        // Unavailable)", which sent a whole campaign looking at the wrong end of the link.
+        string text = await resp.Content.ReadAsStringAsync(ct);
+        ConnectionResponse? parsed = null;
+        try
+        {
+            parsed = JsonSerializer.Deserialize<ConnectionResponse>(text);
+        }
+        catch (JsonException)
+        {
+            // A proxy error page rather than the receiver's own answer; the status is all we have.
+        }
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            throw new UberSdrRefusedException(Explain(resp, parsed, text), (int)resp.StatusCode, parsed);
+        }
+
+        return parsed ?? throw new InvalidDataException("empty /connection response");
+    }
+
+    /// <summary>
+    /// Turns a refusal into something an operator can act on: what the receiver said, and what
+    /// that class of refusal means for the next move.
+    /// </summary>
+    private static string Explain(HttpResponseMessage resp, ConnectionResponse? parsed, string text)
+    {
+        int status = (int)resp.StatusCode;
+        string said = parsed?.Reason is { Length: > 0 } r
+            ? $"\"{r}\""
+            : text.Length is > 0 and < 200 ? $"\"{text.Trim()}\"" : "no reason given";
+
+        string advice = status switch
+        {
+            503 =>
+                "The receiver has no session slot free. Its sessions linger after a client "
+                + $"disconnects (this one reports session_timeout {parsed?.SessionTimeout.ToString() ?? "?"} s), "
+                + "so a rapid sequence of short captures exhausts an instance with your own stale "
+                + "sessions — hold ONE capture open across a run of transmissions instead of "
+                + "opening a session per burst, or wait out the timeout.",
+            429 =>
+                "Rate-limited or out of daily allowance"
+                + (parsed?.DailyTimeRemainingSecs is int left and >= 0
+                    ? $" ({left} s remaining today, {parsed?.DailyTimeUsedSecs} s used)"
+                    : "")
+                + ". Waiting is the only thing that lifts this; do not retry quickly.",
+            401 or 403 => "The receiver refused this client — a password may be required, or this "
+                          + "address is not permitted.",
+            >= 500 => "The receiver is unwell rather than refusing you specifically; retry later.",
+            _ => "The request itself was rejected, which usually means a malformed session id or "
+                 + "an option this instance does not offer.",
+        };
+
+        return $"HTTP {status} from /connection — {said}. {advice}";
     }
 
     private static async Task<string?> FetchDescriptionAsync(string httpBase, CancellationToken ct)
@@ -341,4 +431,34 @@ public sealed class UberSdrIqClient
 
     private static DateTime UnixNanosToUtc(ulong ns) =>
         DateTime.UnixEpoch.AddTicks((long)(ns / 100UL)); // 1 tick = 100 ns
+}
+
+/// <summary>
+/// A receiver refused the connection, with the receiver's own explanation preserved.
+/// </summary>
+/// <remarks>
+/// Carries the status and the parsed body so a caller can act on the *class* of refusal rather
+/// than on a string: <see cref="RefusedForNow"/> is the one that only time lifts, and is the one
+/// where retrying quickly is antisocial rather than merely useless.
+/// </remarks>
+public sealed class UberSdrRefusedException : Exception
+{
+    internal UberSdrRefusedException(string message, int status, ConnectionResponse? response)
+        : base(message)
+    {
+        StatusCode = status;
+        Response = response;
+    }
+
+    /// <summary>HTTP status the receiver answered with.</summary>
+    public int StatusCode { get; }
+
+    /// <summary>The receiver's parsed reply, when it sent one rather than a proxy error page.</summary>
+    public ConnectionResponse? Response { get; }
+
+    /// <summary>True when only time lifts this: an exhausted daily allowance, or a rate limit.</summary>
+    public bool RefusedForNow => StatusCode == 429 || Response?.RefusedForNow == true;
+
+    /// <summary>True when the receiver is simply full — retry after its session timeout.</summary>
+    public bool NoSessionFree => StatusCode == 503;
 }

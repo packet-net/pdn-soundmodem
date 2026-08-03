@@ -47,13 +47,14 @@ Method that works, and the one that does not:
 - **Works:** `sm-ota tone` with the capture tuned at the waveform centre, and read its own analyser's "tone 1: expected/found" line.
 - **Does not:** a hand-rolled differential of transmit-vs-control spectra over a wide window. Tried here, it locked onto a neighbouring carrier and produced a confident, precise, wrong answer of −517.8 Hz.
 
-## Harness defects found (not yet fixed)
+## Harness defects found (all fixed, same day)
 
-1. **`sm-ota burst` and `tone` key the transmitter even when the capture failed to start.** Three transmissions went out unmeasured when the receiver answered 503. Nothing should key until the receiver is confirmed recording.
+1. **`sm-ota burst` and `tone` keyed the transmitter even when the capture failed to start.** Three transmissions went out unmeasured when the receiver answered 503. **Fixed:** `UberSdrIqClient` exposes a `Recording` task that completes when the socket is open and faults with the receiver's reason otherwise; every transmit path now awaits it instead of a flat three-second delay, and refuses to key with "not transmitting: <host> is not recording — <reason>".
 2. **Peak forward power was computed and then discarded on every data burst** — `Report` printed it only alongside a valid SWR, and SWR is deliberately not evaluated on a modulated envelope. Fixed in this session: forward power and SWR now print independently, with their different preconditions stated. This is what finally showed the burst reaching 43–48 W.
-3. **The transmit report's keyed duration is wrong for the burst path** — it reported 0.03 s for a 1.4 s burst, while 30 FWDPWR samples at 20 fps prove ~1.5 s of key-down. Cosmetic, but it looks exactly like a fault and cost time.
-4. **`ladder` ignores `--rf-power-ceiling` and `--max-swr`**, so it aborts at the dummy-load-era 1.50 SWR limit and refuses power above 30 even when told otherwise.
-5. Rapid sequential bursts exhaust an UberSDR instance's session allowance (503). A campaign wanting many bursts should hold **one** capture open and transmit into it, scoring by timestamp.
+3. **The transmit report's keyed duration was measuring the wrong thing** — 0.03 s for a burst measured at **2.02 s on air** in its own capture. `Drain` returns once the radio has *taken* the samples, not once it has *radiated* them, so on a burst that fits the ring the key→unkey window is the feed window, not the transmission. Cosmetic but it reads exactly like a truncated transmission. **Fixed:** the report now prints the signal's own on-air length first and labels the other for what it is.
+4. **`ladder` ignored `--rf-power-ceiling` and `--max-swr`**, so it aborted at the dummy-load-era 1.50 SWR limit and refused power above 30 even when told otherwise. **Fixed:** both flags parsed, same names, meanings and defaults as `tone` and `burst`.
+5. Rapid sequential bursts exhausted an UberSDR instance's session allowance (503) — sessions linger ~240 s after use, so the refusals were our own stale sessions rather than the receiver being busy. **Fixed:** `sm-ota burst --no-capture` transmits into a capture held open elsewhere and prints its key-down UTC, so a run of bursts uses one session and is scored with `score --at`.
+6. **The IQ client threw away the receiver's explanation** — `EnsureSuccessStatusCode()` before reading a body that carries a `reason` field, turning a specific refusal into a bare "503 (Service Unavailable)". **Fixed:** the body is read first and classified into a typed `UberSdrRefusedException` (`RefusedForNow`, `NoSessionFree`) whose message quotes the receiver and says what that class of refusal means for the next move.
 
 ## Operating notes
 
