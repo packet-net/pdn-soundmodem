@@ -306,7 +306,13 @@ internal static class LadderCommand
             FrequencyMHz = a.Str("freq", "18.106500"),
             Antenna = a.Str("antenna", captureRsp ? "ANT2" : "ANT1"),
             RfPower = a.Int("rf-power", 0),
-            RfPowerCeiling = captureRsp ? 20 : 30,
+            // The ceiling and the SWR abort are both defaults sized for the RSP1/dummy-load rig,
+            // and both are overridable everywhere else in this tool — `ladder` silently ignoring
+            // them meant a real-antenna run aborted on a 1.50 SWR limit written for a dummy load,
+            // and refused power above 30 that the operator had explicitly authorised. Same flags,
+            // same meanings, same defaults as `tone` and `burst`.
+            RfPowerCeiling = a.Int("rf-power-ceiling", captureRsp ? 20 : 30),
+            MaxSwr = a.Dbl("max-swr", 1.5),
             MaxForwardWatts = maxWatts,
             IdMode = "MS110D",
         };

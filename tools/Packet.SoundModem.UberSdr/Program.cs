@@ -67,7 +67,8 @@ try
         $"done: {r.Frames} frames @ {r.SampleRate} Hz, sample0 {r.Sample0Utc:yyyy-MM-ddTHH:mm:ss.fffZ}, sha256 {r.WavSha256}");
     return 0;
 }
-catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or HttpRequestException or IOException)
+catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or HttpRequestException
+                           or IOException or UberSdrRefusedException)
 {
     Console.Error.WriteLine($"error: {ex.Message}");
     return 1;

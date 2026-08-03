@@ -278,10 +278,11 @@ internal static class Commands
                 DurationSeconds = captureSeconds,
             };
             Log($"capture: {capOpt.Host} at {capOpt.FrequencyHz} Hz for {captureSeconds} s");
-            capture = new UberSdrIqClient(m => Log($"[rx] {m}")).CaptureAsync(capOpt, captureCts.Token);
+            var captureClient = new UberSdrIqClient(m => Log($"[rx] {m}"));
+            capture = captureClient.CaptureAsync(capOpt, captureCts.Token);
 
             // Let the capture connect and clear its startup guard before any RF.
-            await Task.Delay(TimeSpan.FromSeconds(3));
+            await AwaitReceiverAsync(captureClient, capture, capOpt.Host);
         }
 
         try
@@ -418,8 +419,9 @@ internal static class Commands
         };
         Log($"capture: {capOpt.Host} at {capOpt.FrequencyHz} Hz for {captureSeconds} s");
         using var cts = new CancellationTokenSource();
-        Task<CaptureResult> capture = new UberSdrIqClient(m => Log($"[rx] {m}")).CaptureAsync(capOpt, cts.Token);
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        var captureClient = new UberSdrIqClient(m => Log($"[rx] {m}"));
+        Task<CaptureResult> capture = captureClient.CaptureAsync(capOpt, cts.Token);
+        await AwaitReceiverAsync(captureClient, capture, capOpt.Host);
 
         var results = new List<(double Step, DateTime Start, DateTime End, TransmitReport Report)>();
         foreach (double step in steps)
@@ -854,7 +856,16 @@ internal static class Commands
                   --seed <n>          payload PRNG seed, recorded for exact scoring (default 1)
                   --offset-hz <Hz>    modem offset from the waveform centre (default 2000)
                   --dial-correction   Hz to add to the capture frequency for the measured
-                                      reference error (see `sm-ota measure` against RWM)
+                                      reference error (see `sm-ota measure` against RWM).
+                                      RE-MEASURE PER RECEIVER, not merely per session: the
+                                      acquisition grid is ±75 Hz, and a receiver sitting near
+                                      its edge presents as a dead demodulator — nothing
+                                      acquires and the modem looks broken
+                  --no-capture        transmit only, into a capture held open elsewhere. A
+                                      session lingers ~240 s after use, so one capture per
+                                      burst exhausts a receiver with your own stale sessions;
+                                      for a run of bursts hold ONE sm-iqcapture open, fire
+                                      them with this, and score with `--at` off the key times
                   --radio/--freq/--antenna/--capture-* as for `tone`
                 """);
             return a is null ? 2 : 0;
@@ -942,14 +953,35 @@ internal static class Commands
             OutputDir = a.Str("out-dir", "."),
             DurationSeconds = (int)Math.Ceiling(burstSeconds + idSeconds + 6 + 10),
         };
-        Log($"capture: {capOpt.Host} at {capOpt.FrequencyHz} Hz for {capOpt.DurationSeconds} s");
+        // One session per burst exhausts a receiver: an UberSDR session lingers for its
+        // session_timeout (240 s on the instances measured) after the client disconnects, so a
+        // run of short bursts refuses itself with 503s that look like the receiver being busy.
+        // --no-capture transmits into a capture somebody else is holding open: run sm-iqcapture
+        // for the whole pass, fire the bursts, then score with `sm-ota score --at <seconds>`
+        // using the key times printed here.
         using var cts = new CancellationTokenSource();
-        Task<CaptureResult> capture = new UberSdrIqClient(m => Log($"[rx] {m}")).CaptureAsync(capOpt, cts.Token);
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        TransmitReport report;
+        if (a.Has("no-capture"))
+        {
+            Log("no capture of our own — transmitting into a capture held elsewhere; "
+                + "note the key time below and score with --at");
+            await tx.EnsureIdentifiedAsync();
+            await tx.PreflightAsync();
+            report = await tx.TransmitAsync(iq);
+            Report(report, tx);
+            Log($"burst key-down {report.KeyUtc:yyyy-MM-ddTHH:mm:ss.fffZ} — "
+                + $"subtract the capture's sample0 to get its --at offset");
+            return 0;
+        }
+
+        Log($"capture: {capOpt.Host} at {capOpt.FrequencyHz} Hz for {capOpt.DurationSeconds} s");
+        var captureClient = new UberSdrIqClient(m => Log($"[rx] {m}"));
+        Task<CaptureResult> capture = captureClient.CaptureAsync(capOpt, cts.Token);
+        await AwaitReceiverAsync(captureClient, capture, capOpt.Host);
 
         await tx.EnsureIdentifiedAsync();
         await tx.PreflightAsync();
-        TransmitReport report = await tx.TransmitAsync(iq);
+        report = await tx.TransmitAsync(iq);
         Report(report, tx);
 
         CaptureResult result = await capture;
@@ -1302,17 +1334,76 @@ internal static class Commands
         }
     }
 
+
+    /// <summary>
+    /// Blocks until the receiver is actually recording, or explains why nothing will be keyed.
+    /// </summary>
+    /// <remarks>
+    /// The harness used to wait a flat three seconds and then transmit regardless. When a receiver
+    /// answered 503 the capture task faulted during that window and the transmitter keyed anyway —
+    /// a transmission that occupied a frequency, spent the operator's licence and produced no
+    /// measurement. Waiting on the capture's own readiness signal makes "we are recording" a
+    /// precondition of key-down rather than an assumption about timing.
+    /// </remarks>
+    private static async Task AwaitReceiverAsync(UberSdrIqClient client, Task capture, string host)
+    {
+        Task ready = client.Recording;
+        Task done = await Task.WhenAny(ready, capture, Task.Delay(TimeSpan.FromSeconds(30)));
+        if (done == ready && ready.IsCompletedSuccessfully)
+        {
+            return;
+        }
+
+        // Surface the capture's own failure where there is one: it carries the receiver's reason.
+        if (capture.IsFaulted)
+        {
+            Exception reason = capture.Exception!.GetBaseException();
+            throw new InvalidOperationException(
+                $"not transmitting: {host} is not recording — {reason.Message}", reason);
+        }
+
+        if (ready.IsFaulted)
+        {
+            Exception reason = ready.Exception!.GetBaseException();
+            throw new InvalidOperationException(
+                $"not transmitting: {host} is not recording — {reason.Message}", reason);
+        }
+
+        throw new InvalidOperationException(
+            $"not transmitting: {host} did not start recording within 30 s. Nothing is listening, "
+            + "so a transmission now would measure nothing.");
+    }
+
     private static void Report(TransmitReport r, FlexIqTransmitter tx)
     {
         Console.WriteLine();
         Console.WriteLine("=== transmit report ===");
-        Console.WriteLine($"keyed {r.KeyUtc:HH:mm:ss.fff} → {r.UnkeyUtc:HH:mm:ss.fff} ({r.Duration.TotalSeconds:F2} s)");
+        // Two different durations, and conflating them reads as a truncated transmission. The
+        // key→unkey window is how long WE fed the radio: Drain returns once the radio has taken
+        // the samples, not once it has radiated them, so on a burst that fits the ring it can be
+        // tens of milliseconds. The signal's own length is what went on the air — measured at
+        // 2.02 s on air for a burst whose feed window read 0.03 s (2026-08-03 §E4 session).
+        Console.WriteLine(
+            $"signal {r.Samples / 2 / (double)FlexIqTransmitter.SampleRate:F2} s on air; " +
+            $"fed {r.KeyUtc:HH:mm:ss.fff} → {r.UnkeyUtc:HH:mm:ss.fff} ({r.Duration.TotalSeconds:F2} s — " +
+            "the feed window, not the transmission)");
         Console.WriteLine($"{r.Samples} complex samples, {r.PacketsReflected} buffers reflected, " +
                           $"{r.SamplesStarved} starved, drained={r.Drained}");
-        Console.WriteLine(r.PeakSwr is null
-            ? "SWR: no usable reading"
-            : $"peak SWR {r.PeakSwr:F2}   peak forward {r.PeakForwardDbm:F1} dBm " +
+        // Forward power and SWR are reported separately because they have different
+        // preconditions. SWR compares forward against reflected, so it needs a constant
+        // envelope — on a modulated burst the two samples describe different instants and the
+        // ratio is meaningless. Peak forward power has no such requirement: it is the highest
+        // instantaneous reading while keyed, and on a data burst it is exactly the number an
+        // operator needs, because the constant-envelope pre-flight tone reads the drive level
+        // rather than what the modulated waveform actually puts on the air. Printing it only
+        // alongside a valid SWR threw away the measurement on every burst.
+        Console.WriteLine(r.PeakForwardDbm is null
+            ? "forward power: no FWDPWR samples arrived while keyed"
+            : $"peak forward {r.PeakForwardDbm:F1} dBm " +
               $"({FlexMeters.DbmToWatts(r.PeakForwardDbm ?? 0):F1} W)");
+        Console.WriteLine(r.PeakSwr is null
+            ? "SWR: not evaluated (needs a constant envelope — see the pre-flight tone)"
+            : $"peak SWR {r.PeakSwr:F2}");
 
         // Which meters actually streamed while keyed — the diagnostic that distinguishes
         // "the radio never sent transmit meters" from "we failed to decode them".
