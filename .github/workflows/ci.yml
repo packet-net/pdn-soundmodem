@@ -41,7 +41,14 @@ jobs:
           while IFS= read -r f; do
             found=1
             echo "::group::$(basename "$f")"
-            iconv -f UTF-16LE -t UTF-8 "$f" 2>/dev/null | grep -vE "^\s*$" | head -200 || cat "$f"
+            # Failures first and in full: the log lists every skip too, and on this suite that
+            # is ~190 lines of them — enough to fill a head -200 on its own and push the actual
+            # failures off the end, which is exactly what happened and cost a reproduce-and-guess
+            # cycle. The tail is kept after them for context.
+            log="$(iconv -f UTF-16LE -t UTF-8 "$f" 2>/dev/null || cat "$f")"
+            grep -A 6 -E "^failed |^\s+failed " <<<"$log" | head -120 || true
+            echo "--- tail ---"
+            grep -vE "^\s*$" <<<"$log" | tail -40
             echo "::endgroup::"
           done < <(find tests -path '*/TestResults/*.log' -newermt '-30 minutes' 2>/dev/null)
           [ "$found" = 1 ] || echo "::warning::no TestResults log found to report"
