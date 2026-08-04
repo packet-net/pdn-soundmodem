@@ -11,7 +11,7 @@ namespace Packet.SoundModem.Daemon;
 /// <param name="FixedCentreHz">
 /// The audio centre this mode is pinned to by its own standard, or null where the centre is the
 /// planner's to choose. A pinned one turns the modem around: it cannot be moved to suit a dial, so
-/// it <i>is</i> the dial — the only one placing it on the RF frequency asked for.
+/// it <i>is</i> the dial - the only one placing it on the RF frequency asked for.
 /// </param>
 internal sealed record RfSlot(
     int SubChannel, string Mode, double RfCentreHz, double BandwidthHz, double? FixedCentreHz = null)
@@ -25,14 +25,14 @@ internal sealed record RfSlot(
 internal sealed record PlannedModem(RfSlot Slot, double AudioCentreHz);
 
 /// <summary>
-/// The audio window a plan has to fit inside — the usable part of the radio's passband.
+/// The audio window a plan has to fit inside - the usable part of the radio's passband.
 /// </summary>
 /// <param name="LowHz">Lower edge; no modem may sit below it.</param>
 /// <param name="HighHz">Upper edge; no modem may reach above it.</param>
 internal readonly record struct Passband(double LowHz, double HighHz)
 {
     /// <summary>
-    /// What an ordinary SSB rig passes. Nominal — the daemon cannot know an unknown rig's filter —
+    /// What an ordinary SSB rig passes. Nominal - the daemon cannot know an unknown rig's filter -
     /// but conservative enough that a plan fitting inside it works on ordinary gear.
     /// </summary>
     internal static Passband Nominal => new(300, 2700);
@@ -57,7 +57,7 @@ internal readonly record struct Passband(double LowHz, double HighHz)
     /// <remarks>
     /// Conventional first: anything that fits an ordinary SSB passband is planned in one, so a
     /// station that worked before this existed lands on exactly the same dial. Only a plan that
-    /// cannot fit — a 3 kHz waveform, or modems deliberately spread apart — reaches wider, and
+    /// cannot fit - a 3 kHz waveform, or modems deliberately spread apart - reaches wider, and
     /// then only as far as it has to, because every extra Hz of window is extra noise bandwidth on
     /// receive and a wider filter to open on transmit.
     /// </remarks>
@@ -78,13 +78,13 @@ internal readonly record struct Passband(double LowHz, double HighHz)
 
 /// <summary>
 /// Turns a set of absolute RF centres into a dial frequency and the audio centres that follow
-/// from it — the arithmetic an operator would otherwise do by hand, and the check they would
+/// from it - the arithmetic an operator would otherwise do by hand, and the check they would
 /// otherwise do by eye.
 /// </summary>
 /// <remarks>
 /// An SSB transceiver's dial is shared by everything in the passband, so the modems are not
 /// independent: one dial has to place all of them inside the radio's transmit filter. Given
-/// only the RF centres, the daemon can choose that dial — and choose it better than the
+/// only the RF centres, the daemon can choose that dial - and choose it better than the
 /// obvious round number, which tends to leave the lowest mode sitting on the filter's skirt.
 /// </remarks>
 internal static class RfPlan
@@ -93,7 +93,7 @@ internal static class RfPlan
     internal const double DialStepHz = 50.0;
 
     /// <param name="Window">
-    /// The audio window the plan was fitted into — <see cref="Passband.Nominal"/> unless the modems
+    /// The audio window the plan was fitted into - <see cref="Passband.Nominal"/> unless the modems
     /// needed more room than an ordinary SSB passband and the radio's filters are the daemon's to
     /// open. What the radio then has to be set to pass.
     /// </param>
@@ -120,11 +120,11 @@ internal static class RfPlan
     /// Chooses a dial for <paramref name="slots"/>, or explains why none exists.
     /// </summary>
     /// <param name="pinnedDialHz">
-    /// A dial the operator has fixed — a net frequency, or matching another application. When
+    /// A dial the operator has fixed - a net frequency, or matching another application. When
     /// given it is used as-is and merely checked, rather than chosen.
     /// </param>
     /// <param name="window">
-    /// The audio window to fit them into. Null takes <see cref="Passband.Nominal"/> — what an
+    /// The audio window to fit them into. Null takes <see cref="Passband.Nominal"/> - what an
     /// ordinary rig passes; callers whose radio they can open pass <see cref="Passband.Fit"/>.
     /// </param>
     internal static Result Solve(
@@ -158,7 +158,7 @@ internal static class RfPlan
         // A dial the daemon chose and that still does not fit means no dial fits, which is a
         // refusal. A dial the operator pinned is their call against a rig they can see and a
         // passband figure that is only nominal, so it is a warning.
-        // Which modem, if any, left no choice about the dial — needed to explain a failure, since
+        // Which modem, if any, left no choice about the dial - needed to explain a failure, since
         // "no dial fits" reads very differently when one of the modems chose the dial.
         RfSlot? dialFixer = pinnedDialHz is null
             ? slots.FirstOrDefault(s => s.FixedCentreHz is not null)
@@ -180,8 +180,8 @@ internal static class RfPlan
     /// The dial a spec-fixed modem leaves no choice about, or null when every modem can be moved.
     /// </summary>
     /// <remarks>
-    /// A mode whose audio centre is pinned by its standard — <c>ms110d-*</c> on 1800 Hz,
-    /// <c>freedv-*</c> on its OFDM centre — cannot be slid up or down to suit a dial the planner
+    /// A mode whose audio centre is pinned by its standard - <c>ms110d-*</c> on 1800 Hz,
+    /// <c>freedv-*</c> on its OFDM centre - cannot be slid up or down to suit a dial the planner
     /// picked for everything else. Only one dial puts it on the RF frequency it was asked for, so
     /// it dictates rather than follows, and the movable modems are then placed around it.
     /// </remarks>
@@ -210,7 +210,7 @@ internal static class RfPlan
                 + $"the RF frequencies asked for would need the dial at {Mhz(dial)} and "
                 + $"{Mhz(DialFor(disagrees))} at the same time. Two spec-fixed modes can share a "
                 + "dial only where their RF frequencies differ by exactly the difference of their "
-                + "audio centres — move one, or give it a channel of its own.");
+                + "audio centres - move one, or give it a channel of its own.");
         }
 
         return dial;
@@ -225,7 +225,7 @@ internal static class RfPlan
 
     /// <summary>
     /// Centres the whole ensemble in the passband, rather than jamming its lowest member
-    /// against the filter skirt — which is what the obvious round dial tends to do.
+    /// against the filter skirt - which is what the obvious round dial tends to do.
     /// </summary>
     private static double Choose(IReadOnlyList<RfSlot> slots, bool upper, Passband passband)
     {
@@ -262,7 +262,7 @@ internal static class RfPlan
             text.AppendLine(
                 $"with the dial pinned to {Mhz(dial)} {(upper ? "USB" : "LSB")}, these fall outside "
                 + $"the nominal {passband.LowHz:F0}-{passband.HighHz:F0} Hz passband. That is only a "
-                + "nominal figure — if your rig passes them, ignore this; omit \"dialFrequency\" "
+                + "nominal figure - if your rig passes them, ignore this; omit \"dialFrequency\" "
                 + "and the dial will be chosen to fit them:");
         }
         else if (span > room)
@@ -277,7 +277,7 @@ internal static class RfPlan
             text.AppendLine(
                 $"these modems span {span:F0} Hz of RF ({Mhz(slots.Min(s => s.LowEdgeHz))} to "
                 + $"{Mhz(slots.Max(s => s.HighEdgeHz))}), which is more than {ceiling}. No dial "
-                + "frequency can place them all on air at once — split them across separate "
+                + "frequency can place them all on air at once - split them across separate "
                 + "radios, or move them closer together:");
         }
         else
@@ -291,7 +291,7 @@ internal static class RfPlan
             text.AppendLine($"  {offender}");
         }
 
-        // A modem below the dial is not a passband problem at all — it is on the wrong side of the
+        // A modem below the dial is not a passband problem at all - it is on the wrong side of the
         // carrier, which reads as a nonsensical negative audio frequency unless it is named. It
         // happens when a spec-fixed modem, which dictates the dial, is not the lowest in the plan.
         if (dialFixer is not null && planned.Any(p => p.AudioCentreHz < 0))
@@ -302,7 +302,7 @@ internal static class RfPlan
             text.AppendLine(
                 $"  modem {dialFixer.SubChannel} ({dialFixer.Mode}) has its audio centre fixed at "
                 + $"{dialFixer.FixedCentreHz:F0} Hz by its own standard, so it is what puts the dial "
-                + $"at {Mhz(dial)} — and on {(upper ? "USB" : "LSB")} every other modem then has to "
+                + $"at {Mhz(dial)} - and on {(upper ? "USB" : "LSB")} every other modem then has to "
                 + $"sit {(upper ? "above" : "below")} that. {below} "
                 + $"{(below.Contains(',') ? "are" : "is")} on the wrong side of it. Put the "
                 + $"spec-fixed modem {(upper ? "lowest" : "highest")} in the plan.");

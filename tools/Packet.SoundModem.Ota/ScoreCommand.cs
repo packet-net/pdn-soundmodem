@@ -8,7 +8,7 @@ using M0LTE.Dsp;
 namespace Packet.SoundModem.Ota;
 
 /// <summary>
-/// <c>sm-ota score</c> — convert a captured IQ48 pass and score every burst in it.
+/// <c>sm-ota score</c> - convert a captured IQ48 pass and score every burst in it.
 /// </summary>
 /// <remarks>
 /// This is the offline half of a campaign pass and the only entry point that produces numbers
@@ -33,7 +33,7 @@ internal static class ScoreCommand
                   --ssb-high <Hz>      upper edge (default 3450); narrow these to emulate a
                                        tighter RX filter and measure what it costs
 
-                Schedule — what was transmitted, so the bits can be regenerated:
+                Schedule - what was transmitted, so the bits can be regenerated:
                   --wn <n>             waveform number (default 6)
                   --interleaver <k>    short|long (default short)
                   --constraint <7|9>   default 7
@@ -42,14 +42,14 @@ internal static class ScoreCommand
                   --seed <n>           payload seed of the first burst (default 1); each
                                        subsequent burst uses seed+1, as the transmitter does
                   --at <s,s,...>       expected start time of each burst, seconds into the
-                                       capture. Omit to match by order alone — but then a
+                                       capture. Omit to match by order alone - but then a
                                        missed burst cannot be told from a late one.
 
                 Output:
                   --csv <path>         one row per burst, for the campaign record
                   --audio <path>       also write the converted 9600 Hz audio
                   --diagnostics        print the demodulator's acquisition/WID trace under
-                                       each burst — an autopsy for bursts that never lock
+                                       each burst - an autopsy for bursts that never lock
 
                 Bursts are found by acquisition, never by slicing at the scheduled times: a
                 burst the receiver never heard is the result that matters most, and slicing
@@ -60,7 +60,7 @@ internal static class ScoreCommand
 
         string inPath = a.Req("in");
 
-        // A schedule file describes a mixed pass — different waveforms, seeds and SNRs — which
+        // A schedule file describes a mixed pass - different waveforms, seeds and SNRs - which
         // the flags below cannot. It also carries the burst positions the pass actually
         // achieved, so nothing has to be retyped from a log.
         if (a.Str("schedule", null) is { } schedulePath)
@@ -123,8 +123,8 @@ internal static class ScoreCommand
             Console.Error.WriteLine($"wrote {csvPath}");
         }
 
-        // Zero even when bursts were missed. A missed burst is a measurement result — at the
-        // bottom of an E2 ladder it is the expected one — and a non-zero exit would make every
+        // Zero even when bursts were missed. A missed burst is a measurement result - at the
+        // bottom of an E2 ladder it is the expected one - and a non-zero exit would make every
         // low-SNR pass look like the tool had failed.
         return 0;
     }
@@ -133,7 +133,7 @@ internal static class ScoreCommand
     /// bursts differ from one another, and their positions came from what actually happened.</summary>
     private static int ScoreAgainstSchedule(Args a, string inPath, string schedulePath)
     {
-        // A manifest is a superset of a schedule — take the burst positions from it when it is
+        // A manifest is a superset of a schedule - take the burst positions from it when it is
         // one, so a pass is scored where the transmissions really were.
         (CampaignSchedule schedule, IReadOnlyList<double>? starts, string revision) =
             CampaignFiles.LoadScheduleOrManifest(schedulePath);
@@ -156,7 +156,7 @@ internal static class ScoreCommand
         }).Score(Convert(inPath, options, a.Str("audio", null)));
 
         Console.WriteLine();
-        Console.WriteLine($"schedule \"{schedule.Name}\" — {schedule.Bursts.Count} burst(s), "
+        Console.WriteLine($"schedule \"{schedule.Name}\" - {schedule.Bursts.Count} burst(s), "
                           + $"modem {revision}");
         if (schedule.Notes is { Length: > 0 } notes)
         {
@@ -217,16 +217,16 @@ internal static class ScoreCommand
     private static void Report(string path, int wn, CaptureScore score)
     {
         Console.WriteLine();
-        Console.WriteLine($"=== score: {Path.GetFileName(path)} — {score.AudioSeconds:F1} s, WN{wn} ===");
+        Console.WriteLine($"=== score: {Path.GetFileName(path)} - {score.AudioSeconds:F1} s, WN{wn} ===");
         Console.WriteLine($"{"#",3} {"start s",9} {"WN",4} {"CFO Hz",8} {"SNR dB",8} " +
                           $"{"coded BER",11} {"uncoded BER",12} {"blocks",7}  end");
 
         foreach (BurstScore b in score.Bursts)
         {
-            string snr = b.Snr is null ? "—" : b.Snr.SnrDb.ToString("F1", CultureInfo.InvariantCulture);
+            string snr = b.Snr is null ? "-" : b.Snr.SnrDb.ToString("F1", CultureInfo.InvariantCulture);
             string coded = b.Scheduled ? Rate(b.CodedBer) : "unscheduled";
-            string uncoded = b.Scheduled ? Rate(b.UncodedBer) : "—";
-            string wid = b.WaveformNumber?.ToString(CultureInfo.InvariantCulture) ?? "—";
+            string uncoded = b.Scheduled ? Rate(b.UncodedBer) : "-";
+            string wid = b.WaveformNumber?.ToString(CultureInfo.InvariantCulture) ?? "-";
             Console.WriteLine($"{b.Index,3} {b.StartSeconds,9:F2} {wid,4} {b.CfoHz,8:F1} {snr,8} " +
                               $"{coded,11} {uncoded,12} {b.Blocks,7}  {b.Reason}"
                               + (b.Scheduled && !b.WidCorrect ? "  WID MISMATCH" : ""));
@@ -249,19 +249,19 @@ internal static class ScoreCommand
 
         // Pooled across every scored burst. That is the figure of merit for repeats at one
         // operating point and NOT a meaningful number for a ladder, where the bursts were
-        // deliberately sent at different SNRs — say so rather than let the row be quoted.
+        // deliberately sent at different SNRs - say so rather than let the row be quoted.
         if (payloadBits > 0)
         {
             Console.WriteLine($"coded   {payloadErrors}/{payloadBits} = {Rate(payloadErrors / (double)payloadBits)}"
-                              + (scored > 1 ? "   (pooled — per-burst rows above)" : ""));
+                              + (scored > 1 ? "   (pooled - per-burst rows above)" : ""));
         }
 
         if (uncodedBits > 0)
         {
             Console.WriteLine($"uncoded {uncodedErrors}/{uncodedBits} = {Rate(uncodedErrors / (double)uncodedBits)}"
-                              + (scored > 1 ? "   (pooled — per-burst rows above)" : "")
+                              + (scored > 1 ? "   (pooled - per-burst rows above)" : "")
                               + (uncodedErasures > 0
-                                  ? $"   ({uncodedErasures} erasure(s) excluded — see uncodedErasures)"
+                                  ? $"   ({uncodedErasures} erasure(s) excluded - see uncodedErasures)"
                                   : ""));
         }
 
@@ -275,12 +275,12 @@ internal static class ScoreCommand
         }
     }
 
-    /// <summary>The per-burst table, with the requested SNR beside the measured one — the
+    /// <summary>The per-burst table, with the requested SNR beside the measured one - the
     /// comparison a ladder exists to make, and one a bare score table cannot show.</summary>
     private static void ReportWithSchedule(string path, CampaignSchedule schedule, CaptureScore score)
     {
         Console.WriteLine();
-        Console.WriteLine($"=== score: {Path.GetFileName(path)} — {score.AudioSeconds:F1} s ===");
+        Console.WriteLine($"=== score: {Path.GetFileName(path)} - {score.AudioSeconds:F1} s ===");
         Console.WriteLine($"{"#",3} {"start s",9} {"WN",4} {"asked",7} {"got",7} {"CFO Hz",8} "
                           + $"{"coded BER",11} {"uncoded BER",12}  end");
 
@@ -290,13 +290,13 @@ internal static class ScoreCommand
             CampaignBurst? row = b.Scheduled && scheduleIndex < schedule.Bursts.Count
                 ? schedule.Bursts[scheduleIndex++]
                 : null;
-            string asked = row?.SnrDb is double s ? s.ToString("F1", CultureInfo.InvariantCulture) : "—";
-            string got = b.Snr is null ? "—" : b.Snr.SnrDb.ToString("F1", CultureInfo.InvariantCulture);
+            string asked = row?.SnrDb is double s ? s.ToString("F1", CultureInfo.InvariantCulture) : "-";
+            string got = b.Snr is null ? "-" : b.Snr.SnrDb.ToString("F1", CultureInfo.InvariantCulture);
             Console.WriteLine(
-                $"{b.Index,3} {b.StartSeconds,9:F2} {b.WaveformNumber?.ToString(CultureInfo.InvariantCulture) ?? "—",4} "
+                $"{b.Index,3} {b.StartSeconds,9:F2} {b.WaveformNumber?.ToString(CultureInfo.InvariantCulture) ?? "-",4} "
                 + $"{asked,7} {got,7} {b.CfoHz,8:F1} "
                 + $"{(b.Scheduled ? Rate(b.CodedBer) : "unscheduled"),11} "
-                + $"{(b.Scheduled ? Rate(b.UncodedBer) : "—"),12}  {b.Reason}"
+                + $"{(b.Scheduled ? Rate(b.UncodedBer) : "-"),12}  {b.Reason}"
                 + (b.Scheduled && !b.WidCorrect ? "  WID MISMATCH" : ""));
             foreach (string line in b.Diagnostics)
             {
@@ -308,14 +308,14 @@ internal static class ScoreCommand
         Console.WriteLine($"scored {score.Bursts.Count(b => b.Scheduled)} burst(s); "
                           + $"{score.Bursts.Count(b => !b.Scheduled)} unscheduled; {score.Missed.Count} MISSED");
 
-        // No pooled rate here — a ladder's bursts were sent at different SNRs, so pooling
+        // No pooled rate here - a ladder's bursts were sent at different SNRs, so pooling
         // would be a meaningless number. But the erasure exclusion must still surface at the
         // console, or the campaign path (this one) only shows it in the CSV.
         long uncodedErasures = score.Bursts.Where(b => b.Scheduled).Sum(b => b.UncodedErasures);
         if (uncodedErasures > 0)
         {
             Console.WriteLine($"{uncodedErasures} erasure(s) excluded from uncoded grading "
-                              + "— see the uncodedErasures CSV column");
+                              + "- see the uncodedErasures CSV column");
         }
 
         foreach (ScheduledBurst missed in score.Missed)
@@ -327,7 +327,7 @@ internal static class ScoreCommand
     }
 
     private static string Rate(double value)
-        => double.IsNaN(value) ? "—"
+        => double.IsNaN(value) ? "-"
             : value == 0 ? "0"
             : value.ToString("0.00E+00", CultureInfo.InvariantCulture);
 

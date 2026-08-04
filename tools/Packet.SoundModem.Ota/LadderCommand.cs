@@ -10,17 +10,17 @@ namespace Packet.SoundModem.Ota;
 /// <summary>Which transmit route a live ladder pass drives.</summary>
 internal enum LadderRoute
 {
-    /// <summary>DAX audio through the radio's own DIGU SSB modulator — the modem's real
+    /// <summary>DAX audio through the radio's own DIGU SSB modulator - the modem's real
     /// deployment path, and the ladder's default. See <see cref="FlexDaxTransmitter"/>.</summary>
     Dax,
 
-    /// <summary>Complex IQ through a headless waveform — the bench/instrument path that bypasses
+    /// <summary>Complex IQ through a headless waveform - the bench/instrument path that bypasses
     /// the radio's SSB modulator, ALC and TX DSP. See <see cref="FlexIqTransmitter"/>.</summary>
     Iq,
 }
 
 /// <summary>
-/// <c>sm-ota ladder</c> — the §E2 pass: the mask suite's own channel injected at the
+/// <c>sm-ota ladder</c> - the §E2 pass: the mask suite's own channel injected at the
 /// transmitter, sent through real hardware, and scored against the same reference bits.
 /// </summary>
 /// <remarks>
@@ -30,7 +30,7 @@ internal enum LadderRoute
 /// itself.</para>
 /// <para>Live, each point is transmitted as one keyed burst carrying its own noise lead-in, and
 /// the burst's position in the capture is recorded from the actual key-up time rather than from
-/// the plan — the schedule is what we asked for, the manifest is what happened.</para>
+/// the plan - the schedule is what we asked for, the manifest is what happened.</para>
 /// </remarks>
 internal static class LadderCommand
 {
@@ -40,7 +40,7 @@ internal static class LadderCommand
 
         // The ladder above is MS110D-coupled end to end (LadderPass → Ms110dModulator, BurstScorer →
         // Ms110dDemodulator). Selecting a FreeDV datac OFDM mode hands off to the OFDM sibling, which
-        // renders and scores through the datac engine instead — same `ladder --dry-run`/live shape,
+        // renders and scores through the datac engine instead - same `ladder --dry-run`/live shape,
         // a different waveform. Everything below this line stays exactly the MS110D path it was. The
         // routing predicate is the same one that maps the mode to the engine, so a name that routes
         // here can never be one the mapper then rejects.
@@ -50,8 +50,8 @@ internal static class LadderCommand
         }
 
         // The FM-native modes (afsk1200, fsk*, c4fsk*, qpsk3600) are carried as frequency modulation,
-        // so they hand off to the FM sibling — render → channel → FM-mod at the mode's target
-        // deviation → FM-demod → decode — rather than the MS110D SSB path below. Same
+        // so they hand off to the FM sibling - render → channel → FM-mod at the mode's target
+        // deviation → FM-demod → decode - rather than the MS110D SSB path below. Same
         // `ladder --dry-run`/live shape, a different transmit chain.
         if (a is not null && FmModeCatalog.IsFmMode(a.Str("mode", null)))
         {
@@ -59,10 +59,10 @@ internal static class LadderCommand
         }
 
         // The SSB audio-carrier modes (afsk300*/bpsk*/qpsk600/qpsk2400) place their carrier inside the
-        // audio, so they ride the same DAX SSB route as the deployment modes — the audio-carrier sibling
+        // audio, so they ride the same DAX SSB route as the deployment modes - the audio-carrier sibling
         // renders and scores through the IModem seam. Same `ladder --dry-run`/live shape as the MS110D
         // and datac paths; the MS110D path below is untouched. (qpsk3600 looks like one of these but is
-        // an FM mode, so IsSsbMode excludes it and it falls through — the FM coverage path owns it.)
+        // an FM mode, so IsSsbMode excludes it and it falls through - the FM coverage path owns it.)
         if (a is not null && SsbLadderCommand.IsSsbMode(a.Str("mode", null)))
         {
             return await SsbLadderCommand.RunAsync(a).ConfigureAwait(false);
@@ -86,7 +86,7 @@ internal static class LadderCommand
                 Rehearsal (no radio):
                   --dry-run             render the pass and write it, transmitting nothing
                   --out <iq.wav>        where to write it
-                  --rate <Hz>           render rate (default 48000 — the capture rate, so the
+                  --rate <Hz>           render rate (default 48000 - the capture rate, so the
                                         result can be fed straight to `sm-ota score`)
 
                 Live:
@@ -96,10 +96,10 @@ internal static class LadderCommand
                                         up-converter does on the iq route. iq is the bench
                                         instrument: software single-sideband IQ through a headless
                                         waveform, bypassing the radio's SSB modulator/ALC/TX DSP
-                  --rf-power <0-100>    REQUIRED to transmit — no default, by design
+                  --rf-power <0-100>    REQUIRED to transmit - no default, by design
                   --max-watts <W>       abort any burst whose measured forward power exceeds this.
                                         Defaults to 5 W (and caps the rfpower level) when --capture
-                                        rsp is selected — the RSP1 rig's strict off-air ceiling
+                                        rsp is selected - the RSP1 rig's strict off-air ceiling
                   --radio <ip|discover> default discover
                   --freq <MHz>          waveform slice centre (default 18.106500)
                   --offset-hz <Hz>      carrier offset from the centre (default 2000; iq route)
@@ -107,8 +107,8 @@ internal static class LadderCommand
                                         backs off the ALC; a sweep isolates ALC cost from the rest
                   --gap <s>             quiet between transmissions (default 3)
                   --antenna <port>      transmit port. Default ANT1, but selecting the RSP1
-                                        capture (below) defaults it to ANT2 — the RSP1 rig's
-                                        port — because ANT1 is the dummy-load/UberSDR path and
+                                        capture (below) defaults it to ANT2 - the RSP1 rig's
+                                        port - because ANT1 is the dummy-load/UberSDR path and
                                         keying it while capturing on ANT2 records nothing
                   --capture-host <h>    capture the pass on an UberSDR and score it
                   --capture rsp         instead capture on the RSP1/studybox SDR (rx_sdr streamed
@@ -145,8 +145,8 @@ internal static class LadderCommand
 
         // OffsetHz is a property of the transmit route, not a free knob. The IQ route applies a
         // software NCO offset (default 2000 Hz) to clear baseband DC in its software SSB; the DAX
-        // route applies NONE — the radio's DIGU modulator places the native 1800 Hz sub-carrier
-        // directly, already clear of DC — so its effective offset is 0. This one value flows both
+        // route applies NONE - the radio's DIGU modulator places the native 1800 Hz sub-carrier
+        // directly, already clear of DC - so its effective offset is 0. This one value flows both
         // to the IQ up-converter (which renders the dry-run's simulated capture, so a DAX rehearsal
         // places the signal exactly where a real DAX capture would) AND to the manifest, whose
         // OffsetHz the scorer uses as the down-shift that lands the sub-carrier at 1800 Hz audio
@@ -165,7 +165,7 @@ internal static class LadderCommand
             // audio off the ALC threshold; because the ladder is self-calibrating (signal and
             // injected noise scale together) and the RSP1's thermal floor is far below the signal,
             // the measured SNR is drive-independent EXCEPT for drive-dependent ALC/compression
-            // distortion — so a sweep of this isolates ALC cost from linear DIGU/rendering cost.
+            // distortion - so a sweep of this isolates ALC cost from linear DIGU/rendering cost.
             AudioAmplitude = a.Dbl("audio-amplitude", 0.9),
             PreambleSuperframes = a.Int("preamble", 3),
             TxSsbLowHz = a.Dbl("tx-ssb-low", 150),
@@ -239,7 +239,7 @@ internal static class LadderCommand
             }
         }
 
-        // The burst itself starts after its noise lead-in — that is the time the scorer matches.
+        // The burst itself starts after its noise lead-in - that is the time the scorer matches.
         var burstTimes = rendered.Select((p, k) => starts[k] + p.LeadInSeconds).ToArray();
         string manifestPath = Path.ChangeExtension(outPath, ".manifest.json");
         CampaignFiles.Save(manifestPath, new CampaignManifest(
@@ -275,8 +275,8 @@ internal static class LadderCommand
                 + "Add --dry-run to rehearse the pass without a radio.");
         }
 
-        // Both live routes work at 24 kHz — the waveform IQ rate and the reduced-bandwidth DAX
-        // rate are the same — so this guard holds for either. The DAX route resamples each point's
+        // Both live routes work at 24 kHz - the waveform IQ rate and the reduced-bandwidth DAX
+        // rate are the same - so this guard holds for either. The DAX route resamples each point's
         // 9600 Hz audio to that rate itself (below); the IQ was rendered there.
         if (rate != FlexIqTransmitter.SampleRate)
         {
@@ -286,18 +286,18 @@ internal static class LadderCommand
         }
 
         // The RSP1 rig lives on Flex ANT2 (ANT1 is the dummy-load/UberSDR path), so selecting the
-        // RSP1 capture flips the transmit antenna default to ANT2 — an explicit --antenna still
+        // RSP1 capture flips the transmit antenna default to ANT2 - an explicit --antenna still
         // wins. Keying ANT1 while capturing on ANT2 would record nothing and waste the session.
         bool captureRsp = string.Equals(a.Str("capture", ""), "rsp", StringComparison.OrdinalIgnoreCase);
 
-        // RSP1 rig transmit-power limits. The strict 5 W ceiling was relaxed (2026-07-27) — the
+        // RSP1 rig transmit-power limits. The strict 5 W ceiling was relaxed (2026-07-27) - the
         // radio now has its own 15 % (~15 W) hardware cap, and the attenuator chain (50 W/15 dB then
         // 5 W/10 dB pads: the 5 W pad sees TX−15 dB ≈ 0.5 W at 15 W) plus the RSP1 (−82 dBm at 15 W)
-        // are safe well beyond that — so 15 W is the working ceiling. Still enforced two ways: the
+        // are safe well beyond that - so 15 W is the working ceiling. Still enforced two ways: the
         // commanded rfpower LEVEL is capped, AND the measured-watts abort cuts the burst the instant
-        // FWDPWR exceeds --max-watts (the real guard, since rfpower is a 0–100 level, not watts).
+        // FWDPWR exceeds --max-watts (the real guard, since rfpower is a 0-100 level, not watts).
         // For higher-rate modes prefer more OUTPUT power here with the audio drive (--audio-amplitude)
-        // kept below the ALC knee, rather than more drive — high-PAPR modes compress sooner.
+        // kept below the ALC knee, rather than more drive - high-PAPR modes compress sooner.
         double? maxWatts = captureRsp || a.Has("max-watts") ? a.Dbl("max-watts", 15.0) : null;
 
         var options = new FlexTransmitterOptions
@@ -307,7 +307,7 @@ internal static class LadderCommand
             Antenna = a.Str("antenna", captureRsp ? "ANT2" : "ANT1"),
             RfPower = a.Int("rf-power", 0),
             // The ceiling and the SWR abort are both defaults sized for the RSP1/dummy-load rig,
-            // and both are overridable everywhere else in this tool — `ladder` silently ignoring
+            // and both are overridable everywhere else in this tool - `ladder` silently ignoring
             // them meant a real-antenna run aborted on a 1.50 SWR limit written for a dummy load,
             // and refused power above 30 that the operator had explicitly authorised. Same flags,
             // same meanings, same defaults as `tone` and `burst`.
@@ -322,18 +322,18 @@ internal static class LadderCommand
         Log($"transmit antenna: {options.Antenna}"
             + (captureRsp && !a.Has("antenna") ? "  (defaulted to ANT2 for the RSP1 capture rig)" : "")
             + (captureRsp && a.Has("antenna") && options.Antenna != "ANT2"
-                ? "  *** WARNING: RSP1 capture is on ANT2 — transmitting on a different port records nothing ***"
+                ? "  *** WARNING: RSP1 capture is on ANT2 - transmitting on a different port records nothing ***"
                 : ""));
         if (maxWatts is double mw)
         {
             Log($"transmit power ceiling: {mw:F1} W measured (rfpower level capped at {options.RfPowerCeiling}) "
-                + "— the interlock aborts any burst that exceeds it");
+                + "- the interlock aborts any burst that exceeds it");
         }
 
         double gap = a.Dbl("gap", 3);
 
-        // The route selector picks the transmitter; everything downstream — capture, timing,
-        // manifest — is route-independent and runs against the IOtaTransmitter seam. The DAX route
+        // The route selector picks the transmitter; everything downstream - capture, timing,
+        // manifest - is route-independent and runs against the IOtaTransmitter seam. The DAX route
         // is the modem's deployment path and the default; the IQ route is the bench instrument.
         Log($"route: {(route == LadderRoute.Dax ? "dax (deployment audio path)" : "iq (bench instrument)")}");
         await using FlexClient client = await FlexClient.ConnectAsync(options.Radio);
@@ -342,7 +342,7 @@ internal static class LadderCommand
             : await FlexIqTransmitter.AttachAsync(client, options, Log);
 
         // Capture the whole pass in one session, so every burst is scored from one timebase. The
-        // capture backend is selected here; everything downstream — timing, manifest, scoring —
+        // capture backend is selected here; everything downstream - timing, manifest, scoring -
         // is backend-independent because both return the same CaptureResult.
         double captureSeconds = rendered.Sum(p => (p.Iq.Length / 2.0 / rate) + gap) + 30;
         double centreHz = double.Parse(options.FrequencyMHz, CultureInfo.InvariantCulture) * 1e6;
@@ -399,7 +399,7 @@ internal static class LadderCommand
             // The only route-specific step: the IQ route sends the pre-scaled complex baseband as
             // rendered; the DAX route sends real audio, so it resamples the point's natural-scale
             // 9600 Hz audio to the DAX rate and applies the one pass audio gain here (post-resample,
-            // so the level the radio sees is the pass constant — see LadderPass.AudioGain).
+            // so the level the radio sees is the pass constant - see LadderPass.AudioGain).
             float[] payload = route == LadderRoute.Dax
                 ? ScaleInPlace(
                     Resample(point.Audio, LadderPass.Ms110dAudioRate, FlexDaxTransmitter.SampleRate),
@@ -409,7 +409,7 @@ internal static class LadderCommand
             keyed.Add(report.KeyUtc);
             if (report.Aborted)
             {
-                Log($"ABORTED: {report.AbortReason} — stopping the pass");
+                Log($"ABORTED: {report.AbortReason} - stopping the pass");
                 break;
             }
 
@@ -464,8 +464,8 @@ internal static class LadderCommand
     }
 
     /// <summary>
-    /// Resamples real audio through the same integer path <see cref="Ms110dIqUpconverter"/> uses —
-    /// ×5 to the 48 kHz intermediate, then ÷2 — for the DAX route. Just the resample: no bandpass
+    /// Resamples real audio through the same integer path <see cref="Ms110dIqUpconverter"/> uses -
+    /// ×5 to the 48 kHz intermediate, then ÷2 - for the DAX route. Just the resample: no bandpass
     /// and no NCO, because the radio's DIGU modulator does the sideband placement the up-converter
     /// does in software on the IQ route.
     /// </summary>
@@ -490,7 +490,7 @@ internal static class LadderCommand
         return n == outBuf.Length ? outBuf : outBuf[..n];
     }
 
-    /// <summary>Scales a buffer in place and returns it — the pass audio gain applied to the
+    /// <summary>Scales a buffer in place and returns it - the pass audio gain applied to the
     /// resampled DAX audio at transmit time.</summary>
     internal static float[] ScaleInPlace(float[] samples, float gain)
     {
@@ -502,7 +502,7 @@ internal static class LadderCommand
         return samples;
     }
 
-    /// <summary>Expands a leading <c>~/</c> to the user's home directory — the ssh key path is
+    /// <summary>Expands a leading <c>~/</c> to the user's home directory - the ssh key path is
     /// given the way an operator types it.</summary>
     internal static string ExpandUser(string path) =>
         path.StartsWith("~/", StringComparison.Ordinal)

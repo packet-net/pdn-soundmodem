@@ -1,7 +1,7 @@
 # Installing pdn-soundmodem
 
 The release pipeline publishes a `.deb` for each tagged version. The package is
-**self-contained** — it bundles the .NET runtime, so there is nothing else to install on
+**self-contained** - it bundles the .NET runtime, so there is nothing else to install on
 the target machine.
 
 | Architecture | Package | Typical host |
@@ -25,7 +25,7 @@ Using `apt` rather than `dpkg -i` lets it pull the handful of system libraries t
 depends on (`libasound2`, `libstdc++6` and friends).
 
 > **No `sudo` on your system?** Debian only installs it when you leave the root password
-> blank during setup, so plenty of Debian machines have no `sudo` at all — Ubuntu and
+> blank during setup, so plenty of Debian machines have no `sudo` at all - Ubuntu and
 > Raspberry Pi OS always do. If `sudo` is not there, become root (`su -`) and run every
 > command in this document without the `sudo` prefix.
 
@@ -42,14 +42,14 @@ N: Download is performed unsandboxed as root as file '/root/pdn-soundmodem_…de
    couldn't be accessed by user '_apt'. - pkgAcquire::Run (13: Permission denied)
 ```
 
-**This is harmless** — an `N:` notice, not an error, and the package installs correctly.
+**This is harmless** - an `N:` notice, not an error, and the package installs correctly.
 apt drops to the unprivileged `_apt` user to fetch files, and `/root` is mode `0700` so
 `_apt` cannot read it; apt says so and carries on as root. Keep the `.deb` somewhere
 world-readable such as `/tmp` and it does not appear.
 
 ## Configure
 
-**The service is enabled and started on install, and on a fresh install it will fail —
+**The service is enabled and started on install, and on a fresh install it will fail -
 that is expected.** A packet modem has no useful defaults: the seeded config names a sound
 device and PTT line that almost certainly don't match your machine.
 
@@ -62,7 +62,7 @@ lists what your machine actually has. Work through what it says, then restart.
 
 Installing seeds `/etc/pdn-soundmodem/soundmodem.json` from the shipped example
 (`/usr/share/pdn-soundmodem/soundmodem.example.json`). Open it as root in whichever editor
-you have — `nano` on a stock Raspberry Pi OS or Ubuntu, `vi` on a minimal Debian:
+you have - `nano` on a stock Raspberry Pi OS or Ubuntu, `vi` on a minimal Debian:
 
 ```sh
 sudo nano /etc/pdn-soundmodem/soundmodem.json
@@ -70,27 +70,27 @@ sudo nano /etc/pdn-soundmodem/soundmodem.json
 
 At minimum, set:
 
-- **`device`** — the ALSA capture/playback device. `arecord -l` lists what is available;
+- **`device`** - the ALSA capture/playback device. `arecord -l` lists what is available;
   `"default"` works for a single USB sound card. A FlexRadio over the LAN is also a device
-  here (`"flex:<radio>"`) — see [docs/flex-integration.md](docs/flex-integration.md) — as is a
+  here (`"flex:<radio>"`) - see [docs/flex-integration.md](docs/flex-integration.md) - as is a
   public UberSDR web receiver (`"ubersdr:<instance>"`), which needs no radio and no sound card
   at all but can only listen; see
   [CONFIG.md § Listening to a web receiver](CONFIG.md#listening-to-a-web-receiver).
-- **`modems`** — which mode runs on which KISS sub-channel, e.g.
+- **`modems`** - which mode runs on which KISS sub-channel, e.g.
   `{ "subChannel": 0, "mode": "afsk1200-multi" }`. The example config lists the full mode
   set in its comments.
-- **`ptt`** — how the radio is keyed. `serial` (RTS/DTR on `/dev/ttyUSB0`) or `cm108`
+- **`ptt`** - how the radio is keyed. `serial` (RTS/DTR on `/dev/ttyUSB0`) or `cm108`
   (a GPIO pin on a USB sound-card interface such as a DRA/RB-USB RIM). Omit it entirely
   for VOX or for a FlexRadio, which keys itself.
 
 Optionally, uncomment **`waterfall`** to serve a live spectrum and waterfall page on port
-8107 — useful for checking you are hearing the band at a sane level before you trust the
+8107 - useful for checking you are hearing the band at a sane level before you trust the
 decoder. It binds to loopback unless you set `"bind": "*"`.
 
 The file is JSON but comments are allowed, so the example's annotations can stay.
 
 > **Every setting, with defaults and validation rules, is documented in
-> [CONFIG.md](CONFIG.md)** — the four fields above are just the ones you need to get on the
+> [CONFIG.md](CONFIG.md)** - the four fields above are just the ones you need to get on the
 > air. CONFIG.md also covers POCSAG paging, the ARDOP virtual TNC, FlexRadio, CSMA timing,
 > and how command-line flags interact with the config file.
 
@@ -103,7 +103,7 @@ journalctl -u pdn-soundmodem -f
 ```
 
 It is already enabled at boot. If you would rather it didn't run, `sudo systemctl disable
---now pdn-soundmodem` — the setting survives package upgrades.
+--now pdn-soundmodem` - the setting survives package upgrades.
 
 KISS-over-TCP listens on port **8105** by default. Point LinBPQ, Direwolf-style APRS
 software, or the PDN node at it.
@@ -115,7 +115,7 @@ creates. The unit puts it in the `audio` group (for `/dev/snd/*`) and `dialout` 
 PTT on `/dev/ttyUSB*`).
 
 **CM108 PTT needs one extra step.** `/dev/hidraw*` nodes are root-only by default, so grant
-the `audio` group access to your interface with a udev rule — replace the IDs with your
+the `audio` group access to your interface with a udev rule - replace the IDs with your
 device's (`lsusb` will show them; `0d8c:013c` is a common C-Media interface):
 
 ```sh
@@ -168,7 +168,7 @@ packaging/build-deb.sh 0.7.0 amd64      # → artifacts/pdn-soundmodem_0.7.0_amd
 ```
 
 Needs `dpkg-deb` (`apt install dpkg-dev`) and the .NET 10 SDK. `arm64` and `armhf` build
-the same way — cross-compilation is handled by the .NET SDK, so any of the three can be
+the same way - cross-compilation is handled by the .NET SDK, so any of the three can be
 built from any host.
 
 `packaging/test-deb.sh` runs the package through install / enable / upgrade / purge in

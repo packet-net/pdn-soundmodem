@@ -3,7 +3,7 @@ using System.Globalization;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Pocsag;
 
-// sm-pocsag: offline POCSAG paging encoder/decoder — this project's companion to
+// sm-pocsag: offline POCSAG paging encoder/decoder - this project's companion to
 // sm-decode, for the DAPNET / pager waveform rather than the AX.25 modes.
 //
 //   sm-pocsag encode <out.wav> <page> [<page> ...] [--baud 512|1200|2400]

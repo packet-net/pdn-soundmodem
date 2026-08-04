@@ -3,7 +3,7 @@ using M0LTE.Ofdm;
 namespace Packet.SoundModem.Ota;
 
 /// <summary>
-/// The FreeDV datac engine primitives the harness drives the same way in more than one place — the
+/// The FreeDV datac engine primitives the harness drives the same way in more than one place - the
 /// mode map, a seeded packet, its clean float burst, the codec2 short front end, the one-packet
 /// decode loop, and the bit-error count. Factored here so the <see cref="DatacPacketProbe"/> (the
 /// sim baseline's packet probe), the <see cref="OfdmLadderPass"/> renderer, and the
@@ -12,7 +12,7 @@ namespace Packet.SoundModem.Ota;
 /// </summary>
 internal static class DatacEngine
 {
-    /// <summary>The six datac modes and their <see cref="OfdmMode"/> — the single mode→engine map.</summary>
+    /// <summary>The six datac modes and their <see cref="OfdmMode"/> - the single mode→engine map.</summary>
     /// <exception cref="ArgumentException"><paramref name="mode"/> is not a datac mode.</exception>
     public static OfdmMode Mode(string mode) => mode switch
     {
@@ -25,7 +25,7 @@ internal static class DatacEngine
         _ => throw new ArgumentException($"'{mode}' is not a FreeDV datac mode", nameof(mode)),
     };
 
-    /// <summary>Whether <paramref name="mode"/> is one of the six datac modes — the authoritative
+    /// <summary>Whether <paramref name="mode"/> is one of the six datac modes - the authoritative
     /// predicate the ladder dispatch shares with <see cref="Mode"/>, so routing and mapping can never
     /// disagree (a bare "freedv" prefix would route names the map then rejects).</summary>
     public static bool IsDatacMode(string? mode) => mode switch
@@ -35,7 +35,7 @@ internal static class DatacEngine
         _ => false,
     };
 
-    /// <summary>A seeded payload of one packet's worth of bytes for <paramref name="mode"/> — the
+    /// <summary>A seeded payload of one packet's worth of bytes for <paramref name="mode"/> - the
     /// reproduction key a manifest row carries.</summary>
     public static byte[] Payload(OfdmMode mode, int seed)
     {
@@ -46,7 +46,7 @@ internal static class DatacEngine
 
     /// <summary>Modulates one datac burst (preamble + one packet + postamble) to the engine's native
     /// 8&#160;kHz real audio on the channel's ±1.0 float convention (codec2's ±16384 scale, peak
-    /// ≈&#160;0.5). No leading or trailing silence — the caller's channel calibrates its noise against
+    /// ≈&#160;0.5). No leading or trailing silence - the caller's channel calibrates its noise against
     /// this active-burst power.</summary>
     public static float[] CleanBurst(OfdmMode mode, byte[] payload)
     {
@@ -62,7 +62,7 @@ internal static class DatacEngine
 
     /// <summary>Quantises real audio to codec2's ±32767 signed-16-bit scale (the format
     /// <see cref="DatacReceiver.Process(ReadOnlySpan{short})"/> consumes), applying an optional
-    /// absolute level scale — the <c>FreeDvDatacModem.FeedNative</c> front end, shared so every
+    /// absolute level scale - the <c>FreeDvDatacModem.FeedNative</c> front end, shared so every
     /// caller drives the engine identically.</summary>
     public static short[] ToShort(ReadOnlySpan<float> audio, float gain = 1f)
     {

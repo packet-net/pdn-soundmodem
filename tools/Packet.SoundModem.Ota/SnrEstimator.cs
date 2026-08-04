@@ -22,7 +22,7 @@ public sealed record SnrEstimate(
 /// the burst with that noise subtracted. Quoting an SNR measured any other way against the
 /// gate table would be comparing two different quantities.</para>
 /// <para>Noise density comes from the median of the periodogram rather than the mean, so a
-/// carrier sitting in the guard interval raises no more than one bin's worth — on a real band
+/// carrier sitting in the guard interval raises no more than one bin's worth - on a real band
 /// there is always something in the gap.</para>
 /// <para>This estimator is audited against the rig itself: bursts are generated at known SNRs
 /// and it must recover them. An unaudited estimator would quietly re-fit every over-the-air
@@ -39,21 +39,21 @@ public static class SnrEstimator
     /// signal-free noise from the same recording.
     /// </summary>
     /// <param name="burst">Real audio spanning the burst.</param>
-    /// <param name="noise">Real audio from a guard interval — no signal.</param>
+    /// <param name="noise">Real audio from a guard interval - no signal.</param>
     /// <param name="sampleRate">Sample rate of both.</param>
     /// <param name="bandwidthHz">Reference bandwidth; the rig's default is 3 kHz.</param>
     /// <param name="occupiedLowHz">Low edge of the band the recording actually contains signal
     /// and noise in. 0 with <paramref name="occupiedHighHz"/> means the whole band.</param>
     /// <param name="occupiedHighHz">High edge of that band.</param>
-    /// <returns>The estimate, or <see langword="null"/> when the measurement failed — the
+    /// <returns>The estimate, or <see langword="null"/> when the measurement failed - the
     /// noise estimate met or exceeded the burst power, so there is no signal to quote an SNR for
     /// (see the noise-subtraction note below). A failed measurement is <em>unmeasurable</em>, not
     /// a real, catastrophically low SNR; callers surface it as "no reading" and the self-cal
     /// aggregate skips it, rather than letting a −250 dB floor masquerade as delivered SNR.</returns>
     /// <remarks>
     /// <b>Pass the occupied band for anything that came through an SSB filter.</b> A captured
-    /// pass has been through the receive converter's passband (150–3450 Hz by default), so its
-    /// noise occupies about 3.3 kHz of the 4.8 kHz the audio spans — and treating the empty
+    /// pass has been through the receive converter's passband (150-3450 Hz by default), so its
+    /// noise occupies about 3.3 kHz of the 4.8 kHz the audio spans - and treating the empty
     /// third as though it held noise breaks the estimate twice over. The median bin drifts
     /// towards the stopband, and, worse, the noise subtracted from the burst is inflated by the
     /// ratio of the two bandwidths. That error is negligible where the signal dominates and
@@ -82,12 +82,12 @@ public static class SnrEstimator
         }
 
         // Noise power per Hz, from the guard interval. Median-based so a stray carrier in the
-        // gap moves one bin rather than the estimate — taken over the occupied band only.
+        // gap moves one bin rather than the estimate - taken over the occupied band only.
         double noiseDensity = MedianPowerDensity(noise, sampleRate, low, high);
         double noiseInBand = noiseDensity * bandwidthHz;
 
         // Total power over the burst, then remove the noise riding on it. The noise removed is
-        // the noise the recording actually holds — density across the OCCUPIED band, not across
+        // the noise the recording actually holds - density across the OCCUPIED band, not across
         // the whole of Nyquist, which would over-subtract by the ratio of the two.
         double total = 0;
         for (int k = 0; k < burst.Length; k++)
@@ -120,7 +120,7 @@ public static class SnrEstimator
     /// Median power spectral density of a real signal, in power per Hz.
     /// </summary>
     /// <remarks>Corrected for the fact that the median of an averaged periodogram approaches
-    /// its mean as segments accumulate — the same Wilson–Hilferty factor
+    /// its mean as segments accumulate - the same Wilson-Hilferty factor
     /// <see cref="IqSpectrum.NoiseVariance"/> uses, and for the same reason: applying the
     /// single-periodogram ln2 factor to an averaged spectrum biases the answer by up to
     /// 1.59 dB.</remarks>

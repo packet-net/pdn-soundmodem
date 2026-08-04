@@ -5,19 +5,19 @@ using Packet.SoundModem.UberSdr;
 namespace Packet.SoundModem.Ota;
 
 /// <summary>
-/// <c>sm-ota ladder --mode freedv-datac*</c> — the §E2 pass for the FreeDV datac OFDM modes: the sim
+/// <c>sm-ota ladder --mode freedv-datac*</c> - the §E2 pass for the FreeDV datac OFDM modes: the sim
 /// baseline's own channel injected at the transmitter, sent through real hardware on the DAX audio
 /// route, and scored with the OFDM demodulator against the same datac packets.
 /// </summary>
 /// <remarks>
 /// <para>This is the OFDM sibling of <see cref="LadderCommand"/>. The datac waveform is real audio, so
-/// its natural transmit route is DAX through the radio's own DIGU SSB modulator — the same route the
-/// MS110D ladder uses by default and the one the modem deploys on — so this command is DAX-only (there
+/// its natural transmit route is DAX through the radio's own DIGU SSB modulator - the same route the
+/// MS110D ladder uses by default and the one the modem deploys on - so this command is DAX-only (there
 /// is no software-IQ leg for it). Rendering drives the datac engine (<see cref="OfdmLadderPass"/>) and
 /// scoring drives the datac receiver (<see cref="OfdmBurstScorer"/>); nothing here touches the MS110D
 /// modulator or scorer.</para>
 /// <para><c>--dry-run</c> renders the whole pass, lays it out as an IQ capture would hold it, and scores
-/// it offline — render → channel → SSB → IQ → back to audio → decode, everything except the radio — so
+/// it offline - render → channel → SSB → IQ → back to audio → decode, everything except the radio - so
 /// the chain is proved before any power is applied. The rehearsal reports the delivered SNR the scorer
 /// measures beside the SNR the rig was asked to inject; if the two disagree the whole ladder is
 /// mis-plotted, so that agreement is the thing the rehearsal exists to show.</para>
@@ -25,7 +25,7 @@ namespace Packet.SoundModem.Ota;
 internal static class OfdmLadderCommand
 {
     /// <summary>The DAX route places audio f at dial+f directly (carrier suppressed at the dial), so
-    /// the datac band sits at its native ~1500 Hz audio centre and the offset is 0 — the value flows
+    /// the datac band sits at its native ~1500 Hz audio centre and the offset is 0 - the value flows
     /// both to the SSB placement of the rehearsal's simulated capture and to the scorer's down-shift.</summary>
     private const double DaxOffsetHz = 0.0;
 
@@ -38,7 +38,7 @@ internal static class OfdmLadderCommand
 
                 The FreeDV datac OFDM §E2 ladder. Renders a datac packet per rung, injects the sim
                 baseline's channel at a known SNR, transmits it on the DAX (DIGU) route, captures it,
-                and scores it with the OFDM demodulator — per-burst CRC, post-LDPC coded BER, LDPC
+                and scores it with the OFDM demodulator - per-burst CRC, post-LDPC coded BER, LDPC
                 margin, CFO, acquisition, and the delivered SNR measured against each burst's own
                 noise lead-in.
 
@@ -54,8 +54,8 @@ internal static class OfdmLadderCommand
                   --out <iq.wav>          where to write the simulated capture
                   --rate <Hz>             render/simulated-capture rate (default 48000)
 
-                Live (DAX route — audio through the radio's DIGU SSB modulator):
-                  --rf-power <0-100>      REQUIRED to transmit — no default, by design
+                Live (DAX route - audio through the radio's DIGU SSB modulator):
+                  --rf-power <0-100>      REQUIRED to transmit - no default, by design
                   --max-watts <W>         abort any burst whose forward power exceeds this (default
                                           15 W with --capture rsp, the RSP1 rig's ceiling)
                   --audio-amplitude <a>   DAX audio drive into DIGU, 0..1 (default 0.9)
@@ -73,7 +73,7 @@ internal static class OfdmLadderCommand
                   --out-dir <dir>         where the capture and manifest land
 
                 Each rung carries its own noise lead-in on the air, so the receiver measures the SNR
-                actually delivered rather than the one requested — the same self-calibrating method the
+                actually delivered rather than the one requested - the same self-calibrating method the
                 MS110D ladder uses.
                 """);
             return 0;
@@ -113,7 +113,7 @@ internal static class OfdmLadderCommand
     }
 
     /// <summary>Lays the pass out as an IQ capture would hold it, writes the manifest, and scores it
-    /// offline — the whole chain minus the radio.</summary>
+    /// offline - the whole chain minus the radio.</summary>
     private static int DryRun(
         Args a, string mode, SimChannelKind channel, IReadOnlyList<OfdmRenderedPoint> rendered,
         int rate, float audioGain)
@@ -151,7 +151,7 @@ internal static class OfdmLadderCommand
             Quiet(gapFrames);
             foreach (OfdmRenderedPoint point in rendered)
             {
-                // The active burst starts after its noise lead-in — that is the time the scorer
+                // The active burst starts after its noise lead-in - that is the time the scorer
                 // windows on and measures the delivered SNR from.
                 double startSeconds = (frames / (double)rate) + point.LeadInSeconds;
                 burstStarts.Add(startSeconds);
@@ -196,7 +196,7 @@ internal static class OfdmLadderCommand
         // The RSP1 rig's transmit ceiling: the commanded rfpower LEVEL is capped and the measured-watts
         // abort cuts a burst the instant FWDPWR exceeds --max-watts (the real guard). datac is a
         // high-PAPR OFDM waveform, so keep the audio drive below the ALC knee and take output power
-        // from rfpower rather than from drive — over-driving compresses the OFDM peaks first.
+        // from rfpower rather than from drive - over-driving compresses the OFDM peaks first.
         double? maxWatts = captureRsp || a.Has("max-watts") ? a.Dbl("max-watts", 15.0) : null;
 
         var options = new FlexTransmitterOptions
@@ -219,7 +219,7 @@ internal static class OfdmLadderCommand
             Log($"transmit power ceiling: {mw:F1} W measured (rfpower level capped at {options.RfPowerCeiling})");
         }
 
-        Log("route: dax (deployment audio path) — the datac waveform's natural route");
+        Log("route: dax (deployment audio path) - the datac waveform's natural route");
         double gap = a.Dbl("gap", 3);
 
         await using FlexClient client = await FlexClient.ConnectAsync(options.Radio);
@@ -262,7 +262,7 @@ internal static class OfdmLadderCommand
             Log($"{mode} {point.Point.SnrDb:+0.0;-0.0;0} dB {point.Point.Channel} seed {point.Point.Seed}");
 
             // Resample the native 8 kHz audio (channel + noise lead-in included) to the DAX rate and
-            // apply the one pass audio gain here — the same last-moment level policy the MS110D DAX
+            // apply the one pass audio gain here - the same last-moment level policy the MS110D DAX
             // route uses (LadderCommand), so signal power is a pass constant and only noise varies.
             float[] payload = LadderCommand.ScaleInPlace(
                 LadderCommand.Resample(point.Audio, OfdmLadderPass.NativeRate, FlexDaxTransmitter.SampleRate),
@@ -271,7 +271,7 @@ internal static class OfdmLadderCommand
             keyed.Add(report.KeyUtc);
             if (report.Aborted)
             {
-                Log($"ABORTED: {report.AbortReason} — stopping the pass");
+                Log($"ABORTED: {report.AbortReason} - stopping the pass");
                 break;
             }
 
@@ -354,7 +354,7 @@ internal static class OfdmLadderCommand
         string path, string mode, OfdmCampaignManifest manifest, OfdmCaptureScore score)
     {
         Console.WriteLine();
-        Console.WriteLine($"=== ofdm score: {Path.GetFileName(path)} — {score.AudioSeconds:F1} s, {mode} "
+        Console.WriteLine($"=== ofdm score: {Path.GetFileName(path)} - {score.AudioSeconds:F1} s, {mode} "
                           + $"({manifest.Bursts.Count} burst(s), modem {manifest.ModemRevision}) ===");
         Console.WriteLine($"{"#",3} {"start s",8} {"asked",7} {"got",7} {"d(dB)",6} {"CFO Hz",8} "
                           + $"{"acq",4} {"crc",4} {"codedBER",10} {"ldpc it/pc",11}");
@@ -365,8 +365,8 @@ internal static class OfdmLadderCommand
         int snrErrCount = 0;
         foreach (OfdmBurstScore b in score.Bursts)
         {
-            string got = b.Snr is null ? "—" : b.Snr.SnrDb.ToString("F1", CultureInfo.InvariantCulture);
-            string delta = b.Snr is null ? "—"
+            string got = b.Snr is null ? "-" : b.Snr.SnrDb.ToString("F1", CultureInfo.InvariantCulture);
+            string delta = b.Snr is null ? "-"
                 : (b.Snr.SnrDb - b.AskedSnrDb).ToString("+0.0;-0.0", CultureInfo.InvariantCulture);
             if (b.Snr is not null)
             {
@@ -378,7 +378,7 @@ internal static class OfdmLadderCommand
             crcOk += b.CrcOk ? 1 : 0;
             Console.WriteLine(
                 $"{b.Index,3} {b.StartSeconds,8:F2} {b.AskedSnrDb,7:F1} {got,7} {delta,6} {b.CfoHz,8:F1} "
-                + $"{(b.Acquired ? "yes" : "NO"),4} {(b.CrcOk ? "ok" : "—"),4} "
+                + $"{(b.Acquired ? "yes" : "NO"),4} {(b.CrcOk ? "ok" : "-"),4} "
                 + $"{Rate(b.CodedBer),10} {$"{b.LdpcIterations}/{b.ParityChecks}",11}");
         }
 
@@ -387,7 +387,7 @@ internal static class OfdmLadderCommand
         if (snrErrCount > 0)
         {
             Console.WriteLine($"mean |measured − asked| SNR: {snrErrSum / snrErrCount:F2} dB "
-                              + "(the self-calibration check — the ladder is only plotted correctly if this is small)");
+                              + "(the self-calibration check - the ladder is only plotted correctly if this is small)");
         }
 
         if (manifest.CapturePath is { } cap)
@@ -397,7 +397,7 @@ internal static class OfdmLadderCommand
     }
 
     private static string Rate(double value)
-        => double.IsNaN(value) ? "—"
+        => double.IsNaN(value) ? "-"
             : value == 0 ? "0"
             : value.ToString("0.00E+00", CultureInfo.InvariantCulture);
 }

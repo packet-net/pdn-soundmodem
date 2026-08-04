@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Tests.UberSdr;
 /// <summary>
 /// Parsing of the <c>--device ubersdr:&lt;instance&gt;</c> string. An operator reaching for this
 /// has an instance open in a browser, so the URL from the address bar has to work as readily as
-/// the bare hostname — this is where that promise is kept.
+/// the bare hostname - this is where that promise is kept.
 /// </summary>
 public sealed class UberSdrDeviceTests
 {

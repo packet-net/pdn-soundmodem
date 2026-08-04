@@ -8,7 +8,7 @@ namespace Packet.SoundModem.Tests.Ota;
 /// The Morse identification interval, verified by moving a clock rather than waiting on one.
 /// </summary>
 /// <remarks>
-/// <para>Identification is a licence condition, so "it probably still works" is not good enough —
+/// <para>Identification is a licence condition, so "it probably still works" is not good enough -
 /// but proving a ten-minute rule against the system clock costs ten minutes per assertion, and
 /// nobody runs a suite like that twice. With <see cref="FakeTimeProvider"/> the same proof is
 /// instant, which is the difference between a rule that is tested and a rule that is assumed.
@@ -16,7 +16,7 @@ namespace Packet.SoundModem.Tests.Ota;
 /// <para>The decision is asserted through <see cref="FlexIqTransmitter.IdentificationDue"/>
 /// rather than by keying the mock. That is deliberate, and it is what the injected clock made
 /// possible: <c>EnsureIdentifiedAsync</c> ends in a settle delay, and on a fake clock a delay
-/// nothing advances never completes — the first version of this test hung on exactly that. The
+/// nothing advances never completes - the first version of this test hung on exactly that. The
 /// fix was not to pump the clock from the test but to separate the policy from the mechanism,
 /// which is a better shape anyway: a ladder wants to know an identification is coming so it can
 /// place it in a gap, not discover it mid-pass.</para>
@@ -79,7 +79,7 @@ public sealed class IdentificationIntervalTests
 
             time.Advance(TimeSpan.FromMinutes(1));
             tx.IdentificationDue.Should().BeTrue(
-                "at ten minutes the station owes another identification — this is the licence "
+                "at ten minutes the station owes another identification - this is the licence "
                 + "condition, not a preference");
         }
     }

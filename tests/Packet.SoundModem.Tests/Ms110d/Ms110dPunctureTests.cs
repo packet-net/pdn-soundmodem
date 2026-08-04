@@ -7,7 +7,7 @@ public class Ms110dPunctureTests
 {
     public static TheoryData<string, int, int> AllRates()
     {
-        // rate string, numerator p, denominator q — every Table D-L row.
+        // rate string, numerator p, denominator q - every Table D-L row.
         return new TheoryData<string, int, int>
         {
             { "9/10", 9, 10 }, { "8/9", 8, 9 }, { "5/6", 5, 6 }, { "4/5", 4, 5 },
@@ -64,7 +64,7 @@ public class Ms110dPunctureTests
             {
                 if (mother[i] == 0f)
                 {
-                    continue; // erased position — puncture removed it
+                    continue; // erased position - puncture removed it
                 }
 
                 // Repetition sums same-sign copies, so magnitude ≥ 1 and the sign carries.

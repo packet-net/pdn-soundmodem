@@ -1,7 +1,7 @@
 namespace Packet.SoundModem.Kiss;
 
 /// <summary>A KISS frame: command nibble, port (sub-channel) nibble, payload.</summary>
-/// <param name="Port">Port / sub-channel (0–15) — this daemon's logical modem index.</param>
+/// <param name="Port">Port / sub-channel (0-15) - this daemon's logical modem index.</param>
 /// <param name="Command">Command nibble (<see cref="KissCommand"/>).</param>
 /// <param name="Payload">Command payload (frame bytes for <see cref="KissCommand.Data"/>).</param>
 public readonly record struct KissFrame(int Port, KissCommand Command, byte[] Payload);
@@ -15,7 +15,7 @@ public enum KissCommand
     /// <summary>TX delay, ×10 ms.</summary>
     TxDelay = 1,
 
-    /// <summary>Persistence parameter p (0–255 ≈ p·256−1).</summary>
+    /// <summary>Persistence parameter p (0-255 ≈ p·256−1).</summary>
     Persistence = 2,
 
     /// <summary>Slot time, ×10 ms.</summary>
@@ -37,8 +37,8 @@ public enum KissCommand
     /// <summary>
     /// Receive-quality report (this daemon's extension, TNC→host only, OFF by default):
     /// emitted after a data frame when the host opts in, carrying that frame's decode
-    /// diagnostics as UTF-8 JSON on the same port nibble. A distinct command — never a
-    /// synthetic data frame — so hosts that have not opted in ignore it as an unknown
+    /// diagnostics as UTF-8 JSON on the same port nibble. A distinct command - never a
+    /// synthetic data frame - so hosts that have not opted in ignore it as an unknown
     /// KISS command instead of parsing phantom traffic. (The NinoTNC's own habit of
     /// sending diagnostics as fake <c>TNC&gt;USB</c> data frames is the cautionary tale:
     /// every host needs a special case to avoid treating them as channel traffic.)

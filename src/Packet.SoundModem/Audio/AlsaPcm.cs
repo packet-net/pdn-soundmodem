@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 namespace Packet.SoundModem.Audio;
 
 /// <summary>
-/// Thin ALSA PCM wrapper over <c>libasound.so.2</c> P/Invoke — capture and playback of
+/// Thin ALSA PCM wrapper over <c>libasound.so.2</c> P/Invoke - capture and playback of
 /// interleaved S16_LE. Linux-only by design (headless Pi is the primary deployment; a
 /// cross-platform backend can join behind the same shape later). Uses
 /// <c>snd_pcm_set_params</c> for configuration; finer period control via hw_params can
@@ -45,7 +45,7 @@ public sealed class AlsaPcm : IDisposable
     /// <summary>Configured sample rate (the device may resample via the plug layer).</summary>
     public int SampleRate { get; }
 
-    /// <summary>Number of xruns recovered so far — capture overruns or playback
+    /// <summary>Number of xruns recovered so far - capture overruns or playback
     /// underruns. Recovery is silent and lossy: the stream restarts, so every xrun is a
     /// discontinuity in the sample stream and can corrupt a frame in flight. Non-zero
     /// here means the machine is not keeping up, and long frames (300 baud runs for
@@ -129,7 +129,7 @@ public sealed class AlsaPcm : IDisposable
         return total;
     }
 
-    /// <summary>Writes interleaved frames (playback PCM). Blocks until consumed —
+    /// <summary>Writes interleaved frames (playback PCM). Blocks until consumed -
     /// device-paced, which is exactly what sample-accurate PTT timing needs.
     /// Recovers from underruns transparently.</summary>
     public void Write(ReadOnlySpan<short> interleaved)
@@ -160,7 +160,7 @@ public sealed class AlsaPcm : IDisposable
         }
     }
 
-    /// <summary>Blocks until everything written has actually played (playback only) —
+    /// <summary>Blocks until everything written has actually played (playback only) -
     /// the sample-domain part of releasing PTT.</summary>
     public void Drain()
     {

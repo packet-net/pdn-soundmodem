@@ -5,11 +5,11 @@ namespace Packet.SoundModem.Tests.Modems;
 /// <summary>
 /// Loopback cover for the M0LTE.Il2p 0.1.1 fix: the IL2P+CRC trailer is computed over
 /// the original AX.25 frame, but Type 1 header translation is lossy (single C bit, PID
-/// canonicalisation), and receivers check the CRC against their reconstruction — so a
+/// canonicalisation), and receivers check the CRC against their reconstruction - so a
 /// v1-style both-C-bits-clear UI frame encoded as Type 1 failed the CRC at any
 /// conforming receiver and was silently dropped. Under 0.1.0 this killed the whole
 /// il2pc TX self-loopback for such frames (measured 0/N at every TXDELAY and length,
-/// 2026-07-31) while real NinoTNC captures — the TNC transmits Type 0 throughout —
+/// 2026-07-31) while real NinoTNC captures - the TNC transmits Type 0 throughout -
 /// decoded fine. 0.1.1 falls back to Type 0 whenever the header does not round-trip
 /// byte-exactly under an appended CRC, which is byte-exact under either convention.
 /// </summary>
@@ -21,7 +21,7 @@ public class Il2pCrcDegenerateHeaderTests
     [InlineData("afsk300-il2pc", 12000)]
     public void Both_C_Bits_Clear_Frames_Survive_The_Il2pc_Loopback(string mode, int rate)
     {
-        // QST > M0LTE-1 UI with both C bits clear — the exact framing style
+        // QST > M0LTE-1 UI with both C bits clear - the exact framing style
         // nino_capture.py transmits and the wire style observed from a real NinoTNC.
         byte[] frame =
         [

@@ -3,7 +3,7 @@ using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Iq;
 using M0LTE.Dsp;
 
-// sm-iqcapture — capture one IQ48 (or PCM) session from a ka9q_ubersdr / UberSDR instance to a
+// sm-iqcapture - capture one IQ48 (or PCM) session from a ka9q_ubersdr / UberSDR instance to a
 // 16-bit stereo WAV + JSON sidecar. One session per invocation; drive per-pass reconnect from a
 // script (a fresh process per ladder pass). See docs/ms110d/ota-capture-client-plan.md.
 //
@@ -19,7 +19,7 @@ var args2 = Args.Parse(args);
 if (args2 is null || args2.ContainsKey("help"))
 {
     Console.Error.WriteLine("""
-        sm-iqcapture — record IQ from a ka9q_ubersdr / UberSDR instance.
+        sm-iqcapture - record IQ from a ka9q_ubersdr / UberSDR instance.
 
         Usage:
           sm-iqcapture --host <h> [--port 443] [--no-ssl] --frequency <Hz>
@@ -55,7 +55,7 @@ try
     Console.CancelKeyPress += (_, e) =>
     {
         e.Cancel = true;
-        Console.Error.WriteLine("interrupt — finalising current capture…");
+        Console.Error.WriteLine("interrupt - finalising current capture…");
         cts.Cancel();
     };
 
@@ -90,7 +90,7 @@ static int RunConvert(string[] argv)
                        frequency); 0 when the RX is tuned exactly to our dial. Narrow the SSB
                        edges to emulate a tighter RX filter for comparison.
             --gain:    auto (default) makes a first pass to find the peak and scales it to 0.7,
-                       which is a PER-FILE scale — levels are then not comparable between files.
+                       which is a PER-FILE scale - levels are then not comparable between files.
                        Give a number instead when comparing captures. The peak, the gain applied
                        and any clipping are always reported.
             """);
@@ -145,7 +145,7 @@ static int RunConvert(string[] argv)
         long outFrames = inputFrames / (inputRate / outRate);
         Console.Error.WriteLine(
             $"converted {inputFrames} IQ frames @ {inputRate} Hz → {outFrames} audio samples @ " +
-            $"{outRate} Hz (dial {dialHz:F0} Hz, SSB {ssbLow:F0}–{ssbHigh:F0} Hz), " +
+            $"{outRate} Hz (dial {dialHz:F0} Hz, SSB {ssbLow:F0}-{ssbHigh:F0} Hz), " +
             $"gain {gain:G4}, peak out {peak:F4}" + (clipped > 0 ? $", CLIPPED {clipped} samples" : ""));
         Console.WriteLine(outPath);
         return 0;

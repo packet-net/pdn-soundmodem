@@ -11,16 +11,16 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// <summary>
 /// W1b matched-filter bound (wn8-program-plan §4, evidence 2026-07-31-wn8-w1b): coded
 /// BER of matched-filter detection on the EXACT recorded channel with every other
-/// symbol's interference cancelled exactly — an upper bound on any receiver-only
+/// symbol's interference cancelled exactly - an upper bound on any receiver-only
 /// architecture at the operating point. No demodulator involvement at all: the corpse
 /// is rebuilt bit-exactly (the autopsy rig's construction), the noiseless faded signal
 /// comes from a same-seed <see cref="WattersonChannel"/> at SNR=∞ (gains are drawn
-/// before noise — the B0 genie precedent), and the per-symbol statistic is bias-free by
+/// before noise - the B0 genie precedent), and the per-symbol statistic is bias-free by
 /// construction: ŷ_u = x_u + the noise projected onto the symbol's exact-channel
-/// templates, whitened by the per-symbol 2×2 Gram (exact elliptical pricing — fades
+/// templates, whitened by the per-symbol 2×2 Gram (exact elliptical pricing - fades
 /// price as honest erasures). The envelope LPF inside the channel is not modelled, so
-/// the projection is very slightly mismatched — a PESSIMISTIC bound, the safe
-/// direction for both registered reads. Not a gate — an instrument.
+/// the projection is very slightly mismatched - a PESSIMISTIC bound, the safe
+/// direction for both registered reads. Not a gate - an instrument.
 /// <c>MS110D_MFB=1</c>, <c>MS110D_MFB_WN</c> (default 8), <c>MS110D_MFB_SEED</c>
 /// (default 500+WN), <c>MS110D_MFB_WORKER</c>/<c>MS110D_MFB_BURST</c> (default 0),
 /// <c>MS110D_MFB_OUT</c> (default ".").
@@ -127,7 +127,7 @@ public class Ms110dMfbBound
 
         // Global symbol index of data symbol (b, f, u): preamble, the preamble-ending
         // probe, then [U data + K probe] frames, then the 32-chip EOT probe extension
-        // (settings default — Ms110dModulator.BuildSymbols/AppendProbe). Verified
+        // (settings default - Ms110dModulator.BuildSymbols/AppendProbe). Verified
         // exactly below against the wire symbol stream.
         int preambleLen = wireSymbols.Length - (txBlocks * il.Frames * (u256 + k32)) - k32 - 32;
         preambleLen.Should().BeGreaterThan(0);
@@ -146,7 +146,7 @@ public class Ms110dMfbBound
         }
 
         // The channel-static pulse templates: the modulator's SRRC (unit energy, 65
-        // taps, symbol n's pulse starting at audio sample 4n — Ms110dModulator.Shape)
+        // taps, symbol n's pulse starting at audio sample 4n - Ms110dModulator.Shape)
         // times the TX amplitude, fractionally delayed per path with the channel's own
         // windowed-sinc kernel. Real-valued; complex time variation rides on g_k.
         float[] basePulse = DesignPulse(settings.Amplitude);
@@ -365,7 +365,7 @@ public class Ms110dMfbBound
     /// <summary>The per-symbol statistic under a BELIEVED trajectory: the receiver's
     /// templates ê come from <paramref name="estGains"/>, so the true signal (templates
     /// from <paramref name="gains"/>) leaks through the estimated basis as a per-symbol
-    /// 2×2 distortion T — ŷ = T·x + M̂⁻¹·⟨r, ê⟩ — while pricing uses the believed Gram
+    /// 2×2 distortion T - ŷ = T·x + M̂⁻¹·⟨r, ê⟩ - while pricing uses the believed Gram
     /// M̂ (noise covariance σ²·M̂⁻¹). With estGains ≡ gains, T = I exactly and this is
     /// the banked W1b matched-filter statistic.</summary>
     private static (Cf Y, float M11, float M12, float M22) Project(
@@ -432,7 +432,7 @@ public class Ms110dMfbBound
 
     /// <summary>Label-free probe-anchor trajectory estimate: per probe, a 4-real-unknown
     /// LS for the two path gains over the probe's ISI-clean interior (samples ≥96 past
-    /// the probe start, so no data pulse — direct or delayed — reaches a row; the gains
+    /// the probe start, so no data pulse - direct or delayed - reaches a row; the gains
     /// are ~constant over the 3.3 ms window), linearly interpolated between probe
     /// centres onto the 96 Hz grid. Sees only rx and the known probe chips.</summary>
     private static Cf[][] EstimateFromProbes(

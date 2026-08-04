@@ -18,14 +18,14 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// with iterative reconstruction-and-cancellation seeded from its own decodes. Truth is
 /// used ONLY to score, plus one labelled calibration lane (truth-reconstruction
 /// residual) that validates templates and alignment without touching the honest rungs.
-/// Not a gate — an instrument. <c>MS110D_MFBRX=1</c>, <c>MS110D_MFBRX_SEED</c>
+/// Not a gate - an instrument. <c>MS110D_MFBRX=1</c>, <c>MS110D_MFBRX_SEED</c>
 /// (default 508), <c>MS110D_MFBRX_WORKER/BURST</c> (default 0), <c>MS110D_MFBRX_ITERS</c>
 /// (default 3), <c>MS110D_MFBRX_OUT</c> (default ".").
 /// </summary>
 public class Ms110dMfbFormReceiver
 {
     // Wide delay-profile scan bounds, T/2 half-chips. Acquisition centres the chip
-    // clock on whichever path is stronger during the preamble (the B3.5b lesson — the
+    // clock on whichever path is stronger during the preamble (the B3.5b lesson - the
     // W5a anatomy caught the disjoint specimen locked on the ECHO, putting the direct
     // path at −9.6 and outside a fixed one-sided window, with exactly half the signal
     // power unexplained). The scan finds the per-burst peaks inside these bounds and a
@@ -54,12 +54,12 @@ public class Ms110dMfbFormReceiver
         int burst = EnvInt("MS110D_MFBRX_BURST", 0);
         int iters = EnvInt("MS110D_MFBRX_ITERS", 3);
         bool soft = Environment.GetEnvironmentVariable("MS110D_MFBRX_SOFT") == "1";
-        // Schedule variant: soft cancellation for rungs < SOFTUNTIL, hard after — soft's
+        // Schedule variant: soft cancellation for rungs < SOFTUNTIL, hard after - soft's
         // fast wide-basin descent handing over to hard's exact fixed-point tail.
         int softUntil = EnvInt("MS110D_MFBRX_SOFTUNTIL", soft ? int.MaxValue : 0);
         // Decision-directed anchor re-fit: mid-frame anchors fitted on decision rows
         // (E[x]) triple the anchor density, attacking the trajectory-interpolation
-        // error through deep fades — "oracle-grade as labels improve", label-free by
+        // error through deep fades - "oracle-grade as labels improve", label-free by
         // construction (its labels are the loop's own). MS110D_MFBRX_REFITAT is a
         // comma list of rungs (default: the soft→hard handover when REFIT=1).
         bool refit = Environment.GetEnvironmentVariable("MS110D_MFBRX_REFIT") == "1";
@@ -127,7 +127,7 @@ public class Ms110dMfbFormReceiver
                 code, puncture, interleaver, txBits.AsSpan(b * il.InputBits, il.InputBits));
         }
 
-        // The per-frame scramble nibbles (register reset each data frame — identical
+        // The per-frame scramble nibbles (register reset each data frame - identical
         // sequence every frame).
         var nibs = new int[u256];
         var scrambler = new Ms110dScrambler();
@@ -162,7 +162,7 @@ public class Ms110dMfbFormReceiver
         spans.Count.Should().Be(txBlocks, "every block must acquire and be pulled");
 
         // Per-burst delay-profile scan: ridged wide LS on each of the first 8 probes of
-        // block 0, tap ENERGIES accumulated across probes (robust to fading — phases
+        // block 0, tap ENERGIES accumulated across probes (robust to fading - phases
         // decorrelate, delay positions don't). The detection window is placed over the
         // energy support.
         int lMin;
@@ -400,7 +400,7 @@ public class Ms110dMfbFormReceiver
             if (b == 0)
             {
                 // First-block anatomy for the anchor lane: ring power, per-anchor h
-                // energy, and the demod's lock view — enough to localize a bad fit.
+                // energy, and the demod's lock view - enough to localize a bad fit.
                 double ringPower = 0;
                 for (int i = 0; i < n; i++)
                 {
@@ -434,7 +434,7 @@ public class Ms110dMfbFormReceiver
                         $" lock={demod.Lock?.WaveformNumber}/{demod.Lock?.Interleaver}/K{demod.Lock?.ConstraintLength}@{demod.Lock?.CfoHz:F2}Hz"));
             }
 
-            // Per-chip interpolated response h(t) — per-tap linear between anchors.
+            // Per-chip interpolated response h(t) - per-tap linear between anchors.
             Complex[] HAt(double chip)
             {
                 int hi = anchorChip.FindIndex(ax => ax >= chip);
@@ -518,7 +518,7 @@ public class Ms110dMfbFormReceiver
             }
 
             // Calibration lane: residual of the TRUTH reconstruction over the data
-            // region — validates templates, alignment, and the interpolated h(t) in one
+            // region - validates templates, alignment, and the interpolated h(t) in one
             // label-exact number (compare against the anchor-fit noise floor).
             {
                 Complex[] recon = Reconstruct(truthWire);
@@ -547,7 +547,7 @@ public class Ms110dMfbFormReceiver
                 {
                     // Two mid-frame decision anchors per frame ([16,112) and [144,240)
                     // chips in), fitted on rows whose every source is a decided data
-                    // chip — the anchor grid triples and the interpolation gap through
+                    // chip - the anchor grid triples and the interpolation gap through
                     // deep fades drops from ~120 ms to ~40 ms. Each refit rebuilds from
                     // the probe anchors so repeated refits replace, not accumulate.
                     anchorChip = probeAnchorChip.ToList();
@@ -736,7 +736,7 @@ public class Ms110dMfbFormReceiver
                 {
                     // W5b1 soft cancellation: SISO per-bit posteriors → per-symbol E[x]
                     // (independent-bit approximation over the 16 numbers, nib-permuted).
-                    // Wrong decisions self-attenuate toward zero in the reconstruction —
+                    // Wrong decisions self-attenuate toward zero in the reconstruction -
                     // the B3.3 lesson in this architecture. The hard decode above still
                     // scores and detects convergence.
                     interleaver.Deinterleave(llrs, softPunctured);

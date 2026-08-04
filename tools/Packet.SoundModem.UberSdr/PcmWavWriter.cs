@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 namespace Packet.SoundModem.UberSdr;
 
 /// <summary>
-/// Streaming writer for 16-bit PCM WAV — the IQ48 capture container (2 channels, I = left,
+/// Streaming writer for 16-bit PCM WAV - the IQ48 capture container (2 channels, I = left,
 /// Q = right) and the converted-audio container (1 channel). Writes a placeholder 44-byte header
 /// up front and patches the two size fields on <see cref="Dispose"/>, so arbitrarily long
 /// captures never buffer in memory. Little-endian throughout; byte payloads must already be
@@ -44,7 +44,7 @@ public sealed class PcmWavWriter : IDisposable
     }
 
     /// <summary>Appends normalised float samples, clipped to −1..1. Returns how many of them
-    /// clipped — a converted capture that clips is a measurement fault rather than a cosmetic
+    /// clipped - a converted capture that clips is a measurement fault rather than a cosmetic
     /// one, so the caller is expected to report it rather than swallow it.</summary>
     public int WriteSamples(ReadOnlySpan<float> samples)
     {

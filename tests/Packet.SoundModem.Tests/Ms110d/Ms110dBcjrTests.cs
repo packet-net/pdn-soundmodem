@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Tests.Ms110d;
 
 /// <summary>
 /// Component tests for the max-log BCJR equalizer. Rewritten for issue #67: Gaussian noise
-/// (the channel model the LLR arithmetic assumes — the old tests used uniform), an ANALYTIC
+/// (the channel model the LLR arithmetic assumes - the old tests used uniform), an ANALYTIC
 /// calibration identity that pins the LLR scale (turbo trusts it; the #65 total-vs-per-dim
 /// noiseVar bug halved every LLR and this test would have caught it), and a measured
 /// ISI-exploitation comparison instead of a loose 80 % bound.
@@ -102,8 +102,8 @@ public class Ms110dBcjrTests
         }
 
         bcjrErrors.Should().BeLessThanOrEqualTo(4,
-            "the trellis must resolve a 0.6-amplitude echo at 13 dB Es/N0 (measured 0–1 with margin)");
+            "the trellis must resolve a 0.6-amplitude echo at 13 dB Es/N0 (measured 0-1 with margin)");
         bcjrErrors.Should().BeLessThan(isiBlindErrors,
-            "BCJR must beat the ISI-blind slicer on an ISI channel — the reason it exists");
+            "BCJR must beat the ISI-blind slicer on an ISI channel - the reason it exists");
     }
 }

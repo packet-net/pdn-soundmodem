@@ -7,18 +7,18 @@ namespace Packet.SoundModem.Tests.Modems;
 /// <summary>
 /// Aspiration scoreboard of real off-air frames we do not yet copy. Each case is a BPSK300
 /// IL2P+CRC frame the GB7RDG slot-3 NinoTNC decoded during the 2026-07-18/19 40 m benchmark that
-/// our differential frequency-diversity bank missed — and that still fails to decode from its own
+/// our differential frequency-diversity bank missed - and that still fails to decode from its own
 /// extracted audio, so it is genuinely hard rather than merely lost in the continuous 15-min
 /// stream (see the honest-split note below). The corpus is 12 kHz mono snippets in
 /// <c>samples/offair/misses-24h/</c>; <c>manifest.json</c> carries the expected AX.25 frame bytes.
 /// </summary>
 /// <remarks>
-/// Provenance and methodology — including why only 37 of the day's 74 misses live here and where
-/// the other 37 (frames that decode fine standalone but were dropped mid-stream) are tracked — are
+/// Provenance and methodology - including why only 37 of the day's 74 misses live here and where
+/// the other 37 (frames that decode fine standalone but were dropped mid-stream) are tracked - are
 /// in <c>samples/offair/misses-24h/README.md</c> and <c>docs/ninotnc-24h-continuous-losses.md</c>.
 /// Category <c>Aspiration</c>: excluded from the blocking run, executed as a non-blocking scoreboard
 /// (see <see cref="NinoTncAspirationTests"/>). When one starts copying, graduate it into
-/// <see cref="NinoTncParityTests"/> and delete its manifest row — do not loosen the assertion to
+/// <see cref="NinoTncParityTests"/> and delete its manifest row - do not loosen the assertion to
 /// make it pass.
 /// </remarks>
 [Trait("Category", "Aspiration")]
@@ -60,7 +60,7 @@ public class NinoTncMissCorpusAspirationTests
     }
 
     // Mirrors nino-compare's LoadDecimated for a channel-rate WAV: the snippets are already at the
-    // 12 kHz DSP rate, so there is no decimation — just the half-second flush tail that drains the
+    // 12 kHz DSP rate, so there is no decimation - just the half-second flush tail that drains the
     // final frame. Decoding a snippet here is byte-for-byte what `nino-compare decode` produced.
     private static float[] Load(string path)
     {

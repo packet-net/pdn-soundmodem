@@ -1,4 +1,4 @@
-# Figure D-9 — Constraint length 7, rate 1/2 convolutional encoder (doc page 219, PDF page 224)
+# Figure D-9 - Constraint length 7, rate 1/2 convolutional encoder (doc page 219, PDF page 224)
 
 Transcribed by eye from the page image (independent transcriber A), section
 D.5.3.2.1.

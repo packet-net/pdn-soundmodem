@@ -3,9 +3,9 @@ using Packet.SoundModem.Modems;
 namespace Packet.SoundModem.Tests.Modems;
 
 /// <summary>
-/// The measurement gate of issue #5, as regression tests: coherent (Costas) detection — the
-/// default, matching the NinoTNC — must recover noise margin over the differential opt-in it
-/// replaced. #5's rule was "do not merge on the theory — measure it"; these bake the measured
+/// The measurement gate of issue #5, as regression tests: coherent (Costas) detection - the
+/// default, matching the NinoTNC - must recover noise margin over the differential opt-in it
+/// replaced. #5's rule was "do not merge on the theory - measure it"; these bake the measured
 /// before/after so a regression that quietly gives the margin back turns the suite red.
 /// </summary>
 /// <remarks>
@@ -65,7 +65,7 @@ public class CoherentDetectionTests
 
     /// <summary>
     /// At a σ inside each mode's measured decode gap, coherent detection decodes strictly more
-    /// of the same noisy bursts than the differential detector — the ~1–2 dB margin #5 set out
+    /// of the same noisy bursts than the differential detector - the ~1-2 dB margin #5 set out
     /// to recover. σ per mode is chosen where the measured gap is wide and stable.
     /// </summary>
     [Theory]
@@ -87,7 +87,7 @@ public class CoherentDetectionTests
             mode, sigma, coherent, Trials, differential);
     }
 
-    /// <summary>Both detectors decode a clean frame for every PSK mode — the coherent default
+    /// <summary>Both detectors decode a clean frame for every PSK mode - the coherent default
     /// did not regress the easy case while chasing the noisy one.</summary>
     [Theory]
     [InlineData("bpsk300")]

@@ -108,11 +108,11 @@ public sealed class HdlcDeframer
     private void EndFrame()
     {
         // By the time the flag's final bit completes the 0x7E pattern, its first 7 bits
-        // have already passed through the byte assembler — so a byte-aligned frame always
+        // have already passed through the byte assembler - so a byte-aligned frame always
         // shows exactly 7 residual bits here. Anything else means a slip mid-frame.
         if (!_inFrame || _length < MinFrameBytes + 2 || _bitCount != 7)
         {
-            return; // no frame, runt, or a non-integral byte count — silently discard
+            return; // no frame, runt, or a non-integral byte count - silently discard
         }
 
         var content = _buffer.AsSpan(0, _length - 2);

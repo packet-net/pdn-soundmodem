@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Parallel mask test runner — fans out one process per WN point.
-# Uses MTP (Microsoft Testing Platform) via dotnet test — no testhost, no teardown hang.
+# Parallel mask test runner - fans out one process per WN point.
+# Uses MTP (Microsoft Testing Platform) via dotnet test - no testhost, no teardown hang.
 #
 # Usage:
 #   ./scripts/run-masks.sh awgn          # AWGN gate (10 parallel processes)
 #   ./scripts/run-masks.sh poor          # Poor, measured-not-gated (10 parallel processes)
 #   ./scripts/run-masks.sh "awgn poor"   # both sweeps in one invocation
-#   ./scripts/run-masks.sh awgn 500000   # AWGN smoke (500k bits — logs labelled SMOKE)
+#   ./scripts/run-masks.sh awgn 500000   # AWGN smoke (500k bits - logs labelled SMOKE)
 #   ./scripts/run-masks.sh all           # AWGN + Poor + Static + Doppler
-#   ./scripts/run-masks.sh offrig 500000 # off-rig direction checks (never in "all" — deliberate runs)
+#   ./scripts/run-masks.sh offrig 500000 # off-rig direction checks (never in "all" - deliberate runs)
 #
 # Environment passthrough: MS110D_MASK_WORKERS, MS110D_MASK_SEED_OFFSET and
 # MS110D_MASK_GENIE=1 (perfect-channel-observation bound; evidence lines get [GENIE])
@@ -18,7 +18,7 @@
 # its [mask] evidence line via the MS110D_MASK_LOG ledger hook (MTP does not relay test
 # output to stdout). A PASS is only reported when the point's own [mask] line is present,
 # so a run whose filter matched nothing (or whose theory case skipped) can never count as
-# a pass — and MTP itself fails an all-skipped process ("Zero tests ran" policy).
+# a pass - and MTP itself fails an all-skipped process ("Zero tests ran" policy).
 #
 # Requires: dotnet build first.
 # Results: /tmp/mask-results/<suite>-wn<N>.log
@@ -38,7 +38,7 @@ BITS_ENV=""
 
 # Intra-point workers (see Ms110dMaskTests.RunPoint): each point splits its bit budget
 # across disjoint-seed workers. Early in a sweep this oversubscribes the box (deliberate
-# — compute-bound threads time-slice fine); the payoff is the tail, where the low-rate
+# - compute-bound threads time-slice fine); the payoff is the tail, where the low-rate
 # points (WN0/1/2 = 10-40 ks of simulated audio each) would otherwise run single-threaded
 # on an idle box for hours. Override with MS110D_MASK_WORKERS=1 for strictly serial points.
 WORKERS="${MS110D_MASK_WORKERS:-4}"
@@ -151,11 +151,11 @@ for log in "$RESULTS_DIR"/*.log; do
     esac
     mask_line=$(grep -F "$want" "${log%.log}.mask" 2>/dev/null | tail -1)
     if ! grep -q "Passed!" "$log" 2>/dev/null; then
-        echo "  FAIL: $name — ${mask_line:-no [mask] line for this point}"
+        echo "  FAIL: $name - ${mask_line:-no [mask] line for this point}"
     elif [[ -z "$mask_line" ]]; then
-        echo "  VACUOUS: $name — process passed but this point's test never ran"
+        echo "  VACUOUS: $name - process passed but this point's test never ran"
     else
-        echo "  PASS: $name — ${mask_line#"[mask] "}"
+        echo "  PASS: $name - ${mask_line#"[mask] "}"
     fi
 done
 

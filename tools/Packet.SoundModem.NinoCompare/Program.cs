@@ -50,7 +50,7 @@ static int Usage()
 {
     Console.Error.WriteLine(
         """
-        nino-compare — compare our BPSK decode against a NinoTNC's MQTT frame feed.
+        nino-compare - compare our BPSK decode against a NinoTNC's MQTT frame feed.
 
           mqtt-capture --broker HOST[:PORT] --topic T [--out FILE] [--kiss] [--user U --pass P]
               Subscribe to the NinoTNC's frame topic; log each AX.25 frame as JSONL.
@@ -64,7 +64,7 @@ static int Usage()
               Decode every timestamped audio chunk, diff against the NinoTNC feed, and extract a
               WAV snippet around each frame the NinoTNC decoded but we missed (for deep-dive).
           shift --wav FILE --out FILE --from HZ --to HZ [--outrate 12000]
-              SSB-translate a slot's audio centre (M0LTE.Dsp.FrequencyShifter) and resample —
+              SSB-translate a slot's audio centre (M0LTE.Dsp.FrequencyShifter) and resample -
               e.g. --from 850 --to 1500 lifts slot-2 ARDOP to ardopcf's fixed 1500 Hz centre,
               since we cannot retune the receiver (slot-3's NinoTNC has a fixed tone centre).
           station-offsets --chunks DIR [--centre 1500] [--baud 300] [--pairs 4] [--step]
@@ -115,7 +115,7 @@ static async Task<int> MqttCapture(Dictionary<string, string> opts)
     await client.ConnectAsync(builder.Build(), CancellationToken.None);
     var subscribe = factory.CreateSubscribeOptionsBuilder().WithTopicFilter(f => f.WithTopic(topic)).Build();
     await client.SubscribeAsync(subscribe, CancellationToken.None);
-    Console.Error.WriteLine("subscribed — Ctrl-C to stop.");
+    Console.Error.WriteLine("subscribed - Ctrl-C to stop.");
 
     var stop = new TaskCompletionSource();
     Console.CancelKeyPress += (_, ev) => { ev.Cancel = true; stop.TrySetResult(); };
@@ -279,7 +279,7 @@ static int Analyse(Dictionary<string, string> opts)
         windowEnd = Math.Max(windowEnd, start + (samples.Length - dspRate / 2) / (double)dspRate);
     }
 
-    // Only compare against NinoTNC frames that fall within the analysed audio's time span — a
+    // Only compare against NinoTNC frames that fall within the analysed audio's time span - a
     // live nino.jsonl keeps growing, and frames received after the last chunk's audio ends (or
     // before the first begins) have no audio here and would be counted as false misses. A small
     // guard absorbs MQTT-vs-audio timestamp skew.
@@ -326,7 +326,7 @@ static int Analyse(Dictionary<string, string> opts)
             .FirstOrDefault();
         if (chunk is null)
         {
-            Console.WriteLine($"  MISS {Iso(t)} {miss.Summary} — no chunk covers this time");
+            Console.WriteLine($"  MISS {Iso(t)} {miss.Summary} - no chunk covers this time");
             continue;
         }
 
@@ -346,7 +346,7 @@ static int Analyse(Dictionary<string, string> opts)
         int to = Math.Min(loadedSamples!.Length, (int)((offset - preroll + window) * captureRate));
         if (to <= from)
         {
-            Console.WriteLine($"  MISS {Iso(t)} {miss.Summary} — outside chunk audio range");
+            Console.WriteLine($"  MISS {Iso(t)} {miss.Summary} - outside chunk audio range");
             continue;
         }
 
@@ -361,7 +361,7 @@ static int Analyse(Dictionary<string, string> opts)
 
     if (missed.Count > 0)
     {
-        Console.WriteLine($"\nextracted {extracted} miss snippet(s) to {outDir} — deep-dive with " +
+        Console.WriteLine($"\nextracted {extracted} miss snippet(s) to {outDir} - deep-dive with " +
             "`decode --wav <snippet> --detector …` and sweep centre/step until it copies.");
     }
 
@@ -437,7 +437,7 @@ static int Compare(Dictionary<string, string> opts)
 
     if (extra.Count > 0)
     {
-        Console.WriteLine("\n--- EXTRA (we decoded, NinoTNC did not — verify these are real) ---");
+        Console.WriteLine("\n--- EXTRA (we decoded, NinoTNC did not - verify these are real) ---");
         foreach (FrameRecord x in extra)
         {
             Console.WriteLine($"  {Time(x.TimeSeconds)}  {x.Summary}  [{x.Hex}]");

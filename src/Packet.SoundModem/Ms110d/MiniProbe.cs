@@ -3,13 +3,13 @@ using M0LTE.Ofdm;
 namespace Packet.SoundModem.Ms110d;
 
 /// <summary>
-/// Appendix D mini-probes (D.5.2.2, Table D-XXI — <c>docs/ms110d/tables/d21-miniprobes.csv</c>):
+/// Appendix D mini-probes (D.5.2.2, Table D-XXI - <c>docs/ms110d/tables/d21-miniprobes.csv</c>):
 /// each K-symbol probe is a base sequence cyclically extended to K. The probe following the
 /// second-to-last data block of each interleaver block is transmitted cyclically <b>shifted</b>
 /// by the Table D-XXI shift column, marking the interleaver boundary for broadcast late entry.
 /// </summary>
 /// <remarks>
-/// Shift convention (an interpretation — the rotation direction survives loopback either way
+/// Shift convention (an interpretation - the rotation direction survives loopback either way
 /// and is applied identically at both ends): the boundary probe starts <c>shift</c> symbols
 /// into the base sequence, i.e. <c>probe[i] = base[(i + shift) mod baseLength]</c>.
 /// </remarks>
@@ -25,7 +25,7 @@ public static class MiniProbe
 
     /// <summary>Returns the K-symbol probe (base, or boundary-shifted). 3 kHz lengths:
     /// 24 → base 13 shift 6, 32 → base 16 shift 8, 48 → base 25 shift 12.
-    /// The returned array is cached and shared — callers must not mutate it.</summary>
+    /// The returned array is cached and shared - callers must not mutate it.</summary>
     public static Cf[] Get(int k, bool boundary)
     {
         Cf[][] probes = boundary ? BoundaryProbes : BaseProbes;

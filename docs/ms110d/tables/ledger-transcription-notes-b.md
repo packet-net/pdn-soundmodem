@@ -1,4 +1,4 @@
-# MIL-STD-188-110D App D — §8 ledger transcription, transcriber B
+# MIL-STD-188-110D App D - §8 ledger transcription, transcriber B
 
 Source: `milstd110d.pdf` (MIL-STD-188-110D, 29 Dec 2017; permanent PDF ID
 `DB10F99E7B75A24BD5A10223B8A98086`). Document page = PDF page − 5 throughout.
@@ -10,8 +10,8 @@ against branch `ms110d-ledger-a` is the correctness gate.
 **Unclear-cell count: 0.** Every cell was legible at 300 dpi or on the 2x
 crop; no `[unclear:...]` markers were needed.
 
-**Text layers found (contra expectations):** doc p.167 (PDF 172) — the
-D.5.2.1.3.1/.3.2 downcount/WID mapping prose — has a real text layer and was
+**Text layers found (contra expectations):** doc p.167 (PDF 172) - the
+D.5.2.1.3.1/.3.2 downcount/WID mapping prose - has a real text layer and was
 extracted verbatim with `pdftotext` (quoted in full below). Design checklist
 item L8 calls the D.5.2.1.3.x prose "image-only (PDF pp.172-174)"; that is true
 only of PDF 173-174 (doc 168-169). All other pages touched here are image-only
@@ -51,21 +51,21 @@ only of PDF 173-174 (doc 168-169). All other pages touched here are image-only
 3. **w1-lsb conflict (the ledger's "w1-lsb oddity"), verbatim on both sides:**
    D.5.2.1.3.2 (doc 167, text layer) makes d2 a checksum bit
    (`d2 = d9 ^ d8 ^ d7`), while the D-XVII intro sentence (doc 168, image)
-   says "The lsb of w1 shall be 0" — and w1 = (d3, d2), so its lsb *is* d2.
+   says "The lsb of w1 shall be 0" - and w1 = (d3, d2), so its lsb *is* d2.
    Both statements transcribed; contradiction left open.
 4. **Stale cross-reference:** the D.5.3.3.2 worked example cites "Table
    D-XXXIII" for the 3 kHz WN-1 ultrashort parameters; they live in D-XXXVII.
    (Same family as the stale D-LII reference already recorded.)
 5. **Fig D-10 page prose:** D.5.3.2.3 (full-tail-biting) says the register
-   "should be filled with the last **seven** input data bits" — a K=7 constant
+   "should be filled with the last **seven** input data bits" - a K=7 constant
    in a section that otherwise says "(k-1)" and covers K=9 too.
 6. **Printed rounding oddities transcribed as printed:** D-VI symbol 6
    In-Phase is "0.0000000" (7 decimals; all other cells 6). D-XXV prints
    0.951056 at symbols 9/12/21 but 0.951057 at 6/13/17/18/24, and 0.309016 (not
-   ...17) at symbol 24 — float32-looking artifacts, kept verbatim.
-7. D.5.2.1.3's downcount paragraph reads "shall consists" — as printed.
+   ...17) at symbol 24 - float32-looking artifacts, kept verbatim.
+7. D.5.2.1.3's downcount paragraph reads "shall consists" - as printed.
 
-## Verbatim text-layer extract, doc p.167 (PDF 172) — D.5.2.1.3.1/.3.2
+## Verbatim text-layer extract, doc p.167 (PDF 172) - D.5.2.1.3.1/.3.2
 
 > D.5.2.1.3.1 Mapping of the downcount di-bits c3, c2, c1, and c0.
 > The 5 bit super-frame down count is initialized to M-1 where M is the number
@@ -129,8 +129,8 @@ D.5.2.1.4 (doc 169, image):
   (space after "D-" as printed). Cells I looked at twice: 6 kHz WN11/12 U=540
   (vs 544 for WN5-10); 24 kHz WN3/4 U=816; 36 kHz WN4 U=3072 while WN3=1152;
   42 kHz WN4 U=3456; D-XII 36 kHz WN3=576 vs WN4=384.
-- **d13** (doc 165): 8 rows only — see discrepancy 2.
-- **d14** (doc 166): 00→0000, 01→0404, **10→0044, 11→0440** — both previously
+- **d13** (doc 165): 8 rows only - see discrepancy 2.
+- **d14** (doc 166): 00→0000, 01→0404, **10→0044, 11→0440** - both previously
   provisional rows read clean at high zoom (L5 candidate closed pending A/B
   diff).
 - **d15/d16/d17** (doc 168-169): w4w3 is plain 4-bit binary of WN (machine
@@ -138,7 +138,7 @@ D.5.2.1.4 (doc 169, image):
   CSVs. D-XVI: "Ultra Short" as printed (D-XXXVII spells it "UltraShort").
 - **d18/d19** (doc 169): monospace C arrays, 8 lines x 32 values each,
   formatted to mirror `d20-widpn.txt`. Re-verified line-by-line on 2x crops.
-  **No structural oracle exists for these 512 digits** — the A/B diff is the
+  **No structural oracle exists for these 512 digits** - the A/B diff is the
   only gate.
 - **d22a/d23/d24/d25** (doc 172-177): each table's I/Q decimal formatting
   preserved as printed (D-XXII(a): "1.00000"/"0.0"; D-XXIII..D-XXV: 6 dp).
@@ -167,7 +167,7 @@ D.5.2.1.4 (doc 169, image):
    the 24-probe starting 6 into the base (validates the shift rule end-to-end).
 7. D-XXIII == Frank-16 (s[4q+r] = exp(−j2π·q·r/4)) exactly at 6 dp.
 8. D-XXIV: 19 ±1 values whose periodic autocorrelation is two-valued
-   (19 / −1 off-peak) — a perfect binary sequence, as expected for a probe.
+   (19 / −1 off-peak) - a perfect binary sequence, as expected for a probe.
 9. D-XXV == Frank-25 (s[5q+r] = exp(−j2π·q·r/5)) within printed rounding
    (max deviation 1.11e-06).
 10. D-XXXVII: input bits == size × code rate (3 kHz D-XLIX row) for all 55

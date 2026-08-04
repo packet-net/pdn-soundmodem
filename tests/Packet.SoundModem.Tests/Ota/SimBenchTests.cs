@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Tests.Ota;
 /// <summary>
 /// The generalized simulation harness (<c>sm-ota sim</c>): the mode-generic generate → channel →
 /// score loop that drives the FreeDV datac OFDM waterfalls, plus the raw-datac packet probe that
-/// backs the published-FreeDV cross-check. These guard the harness itself — that a burst round-trips
+/// backs the published-FreeDV cross-check. These guard the harness itself - that a burst round-trips
 /// through calibrated AWGN, that a very low SNR fails it, that the loop is mode-generic (not
 /// FreeDV-only), and that the Good channel profile stays the CCIR 0.5&#160;ms/0.1&#160;Hz pairing.
 /// </summary>
@@ -30,7 +30,7 @@ public class SimBenchTests(ITestOutputHelper output)
     public void Poor_Is_The_Mask_Suites_Own_Rig_Two_Ms_One_Hz()
     {
         // The sim Poor must be the exact WattersonChannel.Poor geometry the MS110D masks gate
-        // against — an OFDM Poor waterfall and an MS110D Poor waterfall must be one rig.
+        // against - an OFDM Poor waterfall and an MS110D Poor waterfall must be one rig.
         WattersonPath[] poor = SimChannel.Paths(SimChannelKind.Poor);
         poor.Should().BeEquivalentTo(WattersonChannel.Poor, "sim Poor is the mask suite's own Poor");
         poor.Should().HaveCount(2).And.OnlyContain(p => p.Fading && p.DopplerSpreadHz == 1);
@@ -48,7 +48,7 @@ public class SimBenchTests(ITestOutputHelper output)
     }
 
     // ---------------------------------------------------------------------------------------
-    // The frame layer — the mode-generic IModem path.
+    // The frame layer - the mode-generic IModem path.
     // ---------------------------------------------------------------------------------------
 
     [Fact]
@@ -96,7 +96,7 @@ public class SimBenchTests(ITestOutputHelper output)
     }
 
     // ---------------------------------------------------------------------------------------
-    // The packet layer — the FreeDV cross-check probe.
+    // The packet layer - the FreeDV cross-check probe.
     // ---------------------------------------------------------------------------------------
 
     [Fact]
@@ -135,7 +135,7 @@ public class SimBenchTests(ITestOutputHelper output)
     public void Absolute_Level_Scan_Is_Invariant_At_A_Healthy_Snr()
     {
         // The WN2-analogue probe: at a fixed, healthy SNR, scaling the absolute input level down
-        // must not change the decode — OFDM's pilot-based normalisation should make it level-blind
+        // must not change the decode - OFDM's pilot-based normalisation should make it level-blind
         // (unlike the un-normalised MS110D WN2 front end). A −20 dB quieter signal at the same SNR
         // must still decode every packet.
         SimPointResult nominal = SimBench.RunPoint(
@@ -147,7 +147,7 @@ public class SimBenchTests(ITestOutputHelper output)
 
         output.WriteLine($"nominal {nominal.Successes}/{nominal.Trials}, −20 dB {quiet.Successes}/{quiet.Trials}");
         nominal.Successes.Should().Be(nominal.Trials, "a healthy-SNR packet decodes at nominal level");
-        quiet.Successes.Should().Be(nominal.Successes, "and identically 20 dB quieter — level-invariant");
+        quiet.Successes.Should().Be(nominal.Successes, "and identically 20 dB quieter - level-invariant");
         quiet.LevelDb.Should().Be(-20);
     }
 

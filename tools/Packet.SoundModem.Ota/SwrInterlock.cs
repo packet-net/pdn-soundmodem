@@ -5,8 +5,8 @@ namespace Packet.SoundModem.Ota;
 /// <summary>
 /// The per-burst SWR interlock and meter recorder, shared by both transmit routes so the
 /// trust rules cannot quietly diverge between them: subscribe for the duration of one keyed
-/// transmission, and it collects every meter sample, tracks peak forward power, and — only
-/// when the burst's RF envelope is constant — derives SWR and raises
+/// transmission, and it collects every meter sample, tracks peak forward power, and - only
+/// when the burst's RF envelope is constant - derives SWR and raises
 /// <see cref="AbortReason"/> the moment it exceeds the limit.
 /// </summary>
 /// <remarks>
@@ -19,7 +19,7 @@ namespace Packet.SoundModem.Ota;
 /// read 1.30 into the same load; a data waveform, with real PAPR, would be worse. So the
 /// pre-flight carrier is the SWR check and modulated bursts do not attempt one.</item>
 /// <item><b>Only believe SWR at full output.</b> During the key-up/key-down ramps the same
-/// two-instants problem applies and the ratio reads high — a load measuring a steady 1.31
+/// two-instants problem applies and the ratio reads high - a load measuring a steady 1.31
 /// reported 1.56 purely because a ramp was included. Requiring the sample to sit within 3 dB
 /// of the burst's own peak forward power confines the measurement to the steady state.</item>
 /// </list>
@@ -40,14 +40,14 @@ internal sealed class SwrInterlock : IDisposable
     /// <summary>Arms the interlock: subscribes to <paramref name="meters"/> until disposed.</summary>
     /// <param name="meters">The session's meter telemetry.</param>
     /// <param name="maxSwr">Abort threshold.</param>
-    /// <param name="constantEnvelope">Whether the burst holds a constant RF envelope — the
+    /// <param name="constantEnvelope">Whether the burst holds a constant RF envelope - the
     /// precondition for the radio's forward/reflected samples to be comparable at all. False
     /// collects meters and peak forward power but never evaluates SWR.</param>
     /// <param name="maxForwardWatts">Hard forward-power ceiling in watts, or null for none. Unlike
-    /// SWR this needs no constant envelope — power is power — so it is checked on every FWDPWR
+    /// SWR this needs no constant envelope - power is power - so it is checked on every FWDPWR
     /// sample regardless, and abort fires the instant measured forward power exceeds it. This is
     /// the enforcement behind a strict transmit-power limit (e.g. the 5 W ceiling on the
-    /// attenuated RSP1 rig): the radio's <c>rfpower</c> is a 0–100 level, not watts, so the
+    /// attenuated RSP1 rig): the radio's <c>rfpower</c> is a 0-100 level, not watts, so the
     /// measured power is what the limit is held against, not the commanded setting.</param>
     public SwrInterlock(
         FlexMeters meters, double maxSwr, bool constantEnvelope, double? maxForwardWatts = null)
@@ -122,7 +122,7 @@ internal sealed class SwrInterlock : IDisposable
                 }
 
                 // The forward-power ceiling is enforced in measured watts and independently of the
-                // SWR path (no constant-envelope precondition — a modulated data burst still must
+                // SWR path (no constant-envelope precondition - a modulated data burst still must
                 // not exceed the limit). Abort the instant a sample is over.
                 if (_maxForwardWatts is double maxW
                     && FlexMeters.DbmToWatts(reading.Value) > maxW
@@ -135,7 +135,7 @@ internal sealed class SwrInterlock : IDisposable
             }
         }
 
-        // Derived SWR (forward/reflected, both dBm) is the trustworthy one — see
+        // Derived SWR (forward/reflected, both dBm) is the trustworthy one - see
         // FlexMeters.SwrFromPowers. Null simply means "not transmitting hard enough to
         // measure", which is not a fault.
         if (!_constantEnvelope)
@@ -149,7 +149,7 @@ internal sealed class SwrInterlock : IDisposable
             return;
         }
 
-        // The steady-state gate — see the class remarks.
+        // The steady-state gate - see the class remarks.
         if (!_meters.TryGet("FWDPWR", out FlexMeterReading fwdNow))
         {
             return;

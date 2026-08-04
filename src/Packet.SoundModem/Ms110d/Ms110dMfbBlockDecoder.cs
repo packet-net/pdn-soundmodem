@@ -10,15 +10,15 @@ namespace Packet.SoundModem.Ms110d;
 /// 2026-07-31-wn8-w5a/-w5b1/-w5b2): the measured successor to the §B3.4 turbo
 /// exclusion. Per burst, a ridged wide LS over the first block's probes accumulates a
 /// per-tap energy profile (phases decorrelate across fading, delays do not) and places
-/// a 26-tap detection window — acquisition centres the chip clock on whichever path
+/// a 26-tap detection window - acquisition centres the chip clock on whichever path
 /// wins the preamble (the §B3.5b phenomenon, measured at WN8 on the disjoint
 /// specimen), so the window cannot be fixed. Per block: label-free per-probe
 /// composite-FIR anchors on ISI-clean probe interiors, per-tap linear interpolation,
 /// per-symbol matched projection priced by the believed Gram, and the measured
-/// schedule — SISO-soft cancellation rungs (wrong decisions self-attenuate, the §B3.3
+/// schedule - SISO-soft cancellation rungs (wrong decisions self-attenuate, the §B3.3
 /// lesson in this architecture), one convergence-gated decision-directed anchor
 /// re-fit (mid-frame anchors from the loop's own decisions; the gate is the W5b1
-/// label-quality condition — an ungated re-fit on a still-poor block poisons it), then
+/// label-quality condition - an ungated re-fit on a still-poor block poisons it), then
 /// hard-cancellation rungs to an EXACT fixed point. No fixed point by the cap reverts
 /// to the first-pass decode (the §B3.3 revert principle). Constants are structural or
 /// cap-class (support arithmetic, percent-scale gates, wall-clock caps), documented in
@@ -27,17 +27,17 @@ namespace Packet.SoundModem.Ms110d;
 internal sealed class Ms110dMfbBlockDecoder
 {
     // Wide delay-profile scan bounds and the placed-window width, T/2 half-chips:
-    // ±(2.3 ms spread + raised-cosine tails) at 4800 Hz — support arithmetic, not
+    // ±(2.3 ms spread + raised-cosine tails) at 4800 Hz - support arithmetic, not
     // tuning. 38 ISI-clean rows per probe against 26 unknowns.
     private const int ScanMin = -18;
     private const int ScanMax = 19;
     private const int ScanLen = ScanMax - ScanMin;
     private const int WinLen = 26;
 
-    // Schedule caps (cap-class: they trade wall-clock, never correctness — the exact
+    // Schedule caps (cap-class: they trade wall-clock, never correctness - the exact
     // fixed point / cycle-accept / revert triple does the real termination) and the
     // re-fit gate: the W5b2 corpse measured refit-good handovers at ≤2% decode churn
-    // and the W5b1 poison case at ~30% — 5% sits in the measured gap with margin on
+    // and the W5b1 poison case at ~30% - 5% sits in the measured gap with margin on
     // both sides.
     private const int SoftCap = 30;
     // 72: the W5b2 corpse measured the three deep-fade-lottery blocks (canonical
@@ -128,7 +128,7 @@ internal sealed class Ms110dMfbBlockDecoder
     }
 
     /// <summary>Clears the per-burst window state (a new burst may lock on the other
-    /// path — the window must be re-scanned).</summary>
+    /// path - the window must be re-scanned).</summary>
     public void ResetBurst()
     {
         _windowSet = false;
@@ -213,7 +213,7 @@ internal sealed class Ms110dMfbBlockDecoder
         RebuildAnchors(midFrame: false, frameChips);
 
         // The measured schedule, with the W6a diversity fallback: the soft-first and
-        // hard-first basins differ per block (the W5b1 schedule table — hard solved
+        // hard-first basins differ per block (the W5b1 schedule table - hard solved
         // blocks soft left, and vice versa), so a block the shipped soft-first
         // schedule cannot terminate reruns once hard-first before the revert. Fires
         // only where the alternative is a coin-flip block.
@@ -249,7 +249,7 @@ internal sealed class Ms110dMfbBlockDecoder
             bool softPhase = softFirst && rung < SoftCap && !refitDone;
             if (!softPhase && !refitDone && rung >= SoftCap)
             {
-                refitDone = true; // handover — re-fit first if the gate admits it
+                refitDone = true; // handover - re-fit first if the gate admits it
                 handoverChurn = lastChurn;
                 if (haveDecisions && lastChurn <= (int)(RefitChurnGate * _il.InputBits))
                 {
@@ -285,7 +285,7 @@ internal sealed class Ms110dMfbBlockDecoder
                 if (softPhase)
                 {
                     // A stable soft decode is a handover signal, not the final fixed
-                    // point — force the re-fit + hard tail to confirm it exactly.
+                    // point - force the re-fit + hard tail to confirm it exactly.
                     refitDone = true;
                     handoverChurn = lastChurn;
                     if (lastChurn <= (int)(RefitChurnGate * _il.InputBits))
@@ -305,9 +305,9 @@ internal sealed class Ms110dMfbBlockDecoder
             }
 
             // An exact period-2 limit cycle in the hard tail: two near-identical
-            // decodes swapping forever (measured on the deep-fade-lottery blocks —
+            // decodes swapping forever (measured on the deep-fade-lottery blocks -
             // b3 canonical cycles at churn 53 with σ² alternating by 0.4%). Accept the
-            // cycle member whose reconstruction explains the ring better — a
+            // cycle member whose reconstruction explains the ring better - a
             // label-free likelihood selection. The §B3.4 confident-wrong attractor
             // cannot satisfy decode == decode-two-rungs-ago exactly, so the revert
             // protection stands for genuine wander.
@@ -315,7 +315,7 @@ internal sealed class Ms110dMfbBlockDecoder
                 _dec.AsSpan().SequenceEqual(_prevDec2))
             {
                 double sigmaB = _sigma2; // priced _prevDec's reconstruction this rung
-                SetDecisionsHard();      // from _dec — price the other cycle member
+                SetDecisionsHard();      // from _dec - price the other cycle member
                 double sigmaA = ReconResidual(frameChips, hc0, n, lMin);
                 if (sigmaB < sigmaA)
                 {
@@ -459,7 +459,7 @@ internal sealed class Ms110dMfbBlockDecoder
     private void RefitAnchors(IReadOnlyList<long> frameChips, long hc0)
     {
         // Two mid-frame decision anchors per frame, rows drawn wholly from decided
-        // data chips — the anchor grid triples and the interpolation gap through deep
+        // data chips - the anchor grid triples and the interpolation gap through deep
         // fades drops from ~120 ms to ~40 ms.
         int u = _mode.U;
         int lMin = _lMin;
@@ -573,7 +573,7 @@ internal sealed class Ms110dMfbBlockDecoder
 
     /// <summary>Rebuilds the block reconstruction from the current
     /// <see cref="_decisions"/> (probes always known) and returns the mean squared
-    /// residual per complex sample over the data span — the label-free noise price and
+    /// residual per complex sample over the data span - the label-free noise price and
     /// the likelihood proxy the cycle-accept selection uses.</summary>
     private double ReconResidual(IReadOnlyList<long> frameChips, long hc0, int n, int lMin)
     {

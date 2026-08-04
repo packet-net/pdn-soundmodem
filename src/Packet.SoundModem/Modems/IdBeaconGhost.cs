@@ -7,25 +7,25 @@ namespace Packet.SoundModem.Modems;
 /// <remarks>
 /// <para><b>The behaviour.</b> The TARPN NinoTNC N9600A Operator's Manual
 /// (<c>tarpn.net/t/nino-tnc/n9600a/n9600a_operation.html</c>, "ID beacon"): in the PSK SSB modes
-/// — 300 BPSK, 600 QPSK, 1200 BPSK, 2400 QPSK — the TNC identifies with "a beacon in 300 AFSK
+/// - 300 BPSK, 600 QPSK, 1200 BPSK, 2400 QPSK - the TNC identifies with "a beacon in 300 AFSK
 /// AX.25 (1600/1800 Hz tones)", from the host's callsign to <c>IDENT</c>, every 9.5 minutes by
 /// default while the station is actively transmitting. No beacon is sent in 300 AFSK AX.25, 300
 /// AFSK IL2Pc or 1200 AFSK AX.25, those modes being self-identifying already.</para>
 ///
 /// <para>So on a PSK channel there is a recurring transmission that every station on it can hear
 /// and none of them can decode: the data modem is a PSK demodulator and the ident is FSK. This
-/// closes that — a second demodulator, on the same audio, whose only job is that beacon.</para>
+/// closes that - a second demodulator, on the same audio, whose only job is that beacon.</para>
 ///
 /// <para><b>Where it listens.</b> Nino's PSK SSB modes are "phase modulation of a 1500 Hz tone"
 /// and the beacon's tones are 1600/1800, so the ident sits 200 Hz above the carrier it
-/// accompanies — <em>relative to the transmitting TNC's own audio layout</em>, which is what
+/// accompanies - <em>relative to the transmitting TNC's own audio layout</em>, which is what
 /// makes the offset and not the absolute 1700 Hz the thing to track. Tune the base modem to
 /// 1200 Hz because your dial sits 300 Hz above your neighbour's and their beacon arrives at your
 /// 1400 Hz, not at 1700. <see cref="CentreHzFor"/> is that arithmetic and the only placement rule
 /// there is.</para>
 ///
-/// <para><b>What it deliberately is not.</b> It occupies no KISS sub-channel — beacons are not
-/// traffic and a host asking for packet data should not have to filter idents out of it — and it
+/// <para><b>What it deliberately is not.</b> It occupies no KISS sub-channel - beacons are not
+/// traffic and a host asking for packet data should not have to filter idents out of it - and it
 /// contributes to neither <see cref="IModem.CarrierDetect"/> nor <see cref="IModem.ChannelBusy"/>,
 /// so channel access is unchanged by its presence. It never transmits: identifying ourselves is
 /// the host's business and this is a listener. That makes it a receive tap rather than a modem,
@@ -53,14 +53,14 @@ public sealed class IdBeaconGhost
 
     /// <summary>
     /// The mode the beacon is sent in, as a <see cref="ModemCatalog"/> key. The receiver built
-    /// from it is whatever that mode currently means — since 2026-08-02 the narrow-branch
+    /// from it is whatever that mode currently means - since 2026-08-02 the narrow-branch
     /// frequency-diversity bank rather than a single wide demodulator, which is why this names
     /// the catalogue entry and not a class.
     /// </summary>
     /// <remarks>
     /// That default is worth more here than it is on a data slot. A ghost listens 200 Hz from a
     /// PSK carrier by construction, and a quadrature discriminator follows the strongest thing in
-    /// its passband — tight branches are exactly what keeps the neighbour it sits beside out of
+    /// its passband - tight branches are exactly what keeps the neighbour it sits beside out of
     /// the ident. The bank's ±175 Hz of coverage is also the right shape for the only error this
     /// placement really has: a dial that differs from the transmitting station's.
     /// </remarks>
@@ -76,7 +76,7 @@ public sealed class IdBeaconGhost
         CentreHz = centreHz;
     }
 
-    /// <summary>The sub-channel of the modem this ghost accompanies — for labelling only; the
+    /// <summary>The sub-channel of the modem this ghost accompanies - for labelling only; the
     /// ghost is not addressable and delivers nothing to a KISS host.</summary>
     public int SubChannel { get; }
 
@@ -87,7 +87,7 @@ public sealed class IdBeaconGhost
     public double CentreHz { get; }
 
     /// <summary>
-    /// What the receiver reports itself as — <c>afsk300-multi11</c> for the catalogue default,
+    /// What the receiver reports itself as - <c>afsk300-multi11</c> for the catalogue default,
     /// not the bare <see cref="BeaconMode"/> key it was built from. Read off the modem so a
     /// change to what that key means shows up here rather than being quietly mislabelled.
     /// </summary>
@@ -97,13 +97,13 @@ public sealed class IdBeaconGhost
     public event Action<byte[], FrameQuality>? BeaconHeard;
 
     /// <summary>
-    /// Whether <paramref name="mode"/> is one a NinoTNC identifies alongside rather than within —
+    /// Whether <paramref name="mode"/> is one a NinoTNC identifies alongside rather than within -
     /// the four PSK SSB modes, and their aliases.
     /// </summary>
     /// <remarks>
     /// <c>qpsk3600</c> is excluded deliberately and is not an oversight: it is an FM mode
     /// (<c>docs/mode-modulation-reference.md</c>), and Nino identifies the FM modes in 1200 AFSK
-    /// AX.25 rather than 300 — a different ghost, not this one.
+    /// AX.25 rather than 300 - a different ghost, not this one.
     /// </remarks>
     public static bool AppliesTo(string mode) => mode switch
     {

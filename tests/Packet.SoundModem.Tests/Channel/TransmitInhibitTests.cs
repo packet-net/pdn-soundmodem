@@ -6,7 +6,7 @@ using Packet.SoundModem.Modems;
 namespace Packet.SoundModem.Tests.Channel;
 
 /// <summary>
-/// Keeping the packet modems off the air while something else owns the channel's timing — an
+/// Keeping the packet modems off the air while something else owns the channel's timing - an
 /// ARDOP ARQ session, whose turnarounds an AX.25 frame landing mid-sequence would break. This
 /// is what replaced the old rule that an ARDOP channel could carry nothing else.
 /// </summary>
@@ -105,7 +105,7 @@ public class TransmitInhibitTests : IAsyncLifetime
     public async Task A_Timing_Owner_Skips_The_Persistence_Roll_As_Well_As_The_Inhibit()
     {
         // ARDOP runs its own channel discipline against ARQ turnaround budgets, and the busy it
-        // would defer to is partly its own signal — a shifted centre sits inside a packet
+        // would defer to is partly its own signal - a shifted centre sits inside a packet
         // modem's passband and asserts that modem's busy detector. Deferring to yourself is
         // the bug this guards.
         _channel.Csma.Persistence = 0;          // never win the roll

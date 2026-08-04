@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Tests.Modems;
 
 /// <summary>
 /// What an operator reads on the waterfall. The modem's own mode string says more than they are
-/// choosing between — the framing it settled on and how many branches its diversity bank has —
+/// choosing between - the framing it settled on and how many branches its diversity bank has -
 /// so the label is a rendering of it, not the string itself.
 /// </summary>
 public class ModeNamesTests
@@ -67,7 +67,7 @@ public class ModeNamesTests
     [Fact]
     public void A_Bank_Suffix_Is_Only_Dropped_When_It_Is_One()
     {
-        // "multi" as a family, not a suffix, must survive — the rule is positional.
+        // "multi" as a family, not a suffix, must survive - the rule is positional.
         ModeNames.Display("multi1200").Should().Be("MULTI1200");
     }
 }

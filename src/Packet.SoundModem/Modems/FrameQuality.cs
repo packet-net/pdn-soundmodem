@@ -11,7 +11,7 @@ namespace Packet.SoundModem.Modems;
 /// (one flipped bit and eight flipped bits both cost one corrected symbol), and frames
 /// with more damage than the code can repair never decode at all, so they report nothing.
 /// What IS honest per frame: how many bytes FEC repaired. <see cref="CorrectedBytes"/>
-/// over the frame's on-air length is a floor on the channel's byte error rate — zero on a
+/// over the frame's on-air length is a floor on the channel's byte error rate - zero on a
 /// clean link, and any persistent non-zero value is a link that is quietly consuming its
 /// error budget and will start dropping frames when conditions worsen. That early-warning
 /// property is the operational point of surfacing this.
@@ -26,7 +26,7 @@ namespace Packet.SoundModem.Modems;
 /// <param name="FrameBytes">Decoded AX.25 frame length in bytes.</param>
 /// <param name="CorrectedBytes">Bytes repaired by forward error correction (Reed-Solomon,
 /// IL2P and FX.25 framings). <c>null</c> for unprotected framings (classic HDLC), where no
-/// error count exists — an FCS pass only proves zero residual errors.</param>
+/// error count exists - an FCS pass only proves zero residual errors.</param>
 /// <param name="CrcValid">IL2P trailing-CRC state: true/false when the link runs IL2P+CRC,
 /// <c>null</c> where the framing carries no trailer (plain IL2P, HDLC, FX.25).</param>
 /// <param name="FrequencyOffsetHz">For multi-decoder banks, the frequency offset of the
@@ -35,7 +35,7 @@ namespace Packet.SoundModem.Modems;
 /// <param name="EmphasisDb">For multi-decoder banks, the input pre-emphasis (dB/octave) of
 /// the winning branch; <c>null</c> for single decoders. Persistent non-zero = the far
 /// station's TX audio is twisted.</param>
-/// <param name="HeaderType">Which IL2P encapsulation the frame arrived in — Type 1 translated
+/// <param name="HeaderType">Which IL2P encapsulation the frame arrived in - Type 1 translated
 /// (the AX.25 header compressed into IL2P's own) or Type 0 transparent (the whole AX.25 frame
 /// in the payload); <c>null</c> for framings that are not IL2P. Surfaced because it is the
 /// first question worth asking about a frame that decoded cleanly and then would not yield

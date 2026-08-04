@@ -9,7 +9,7 @@ namespace Packet.SoundModem.Daemon;
 /// <remarks>
 /// Bandwidths come from the modems themselves via <see cref="ModemBandProbe"/> rather than a
 /// table, so the plan is checked against what the modes actually occupy. ARDOP is the one
-/// exception — it has no fixed width to measure, its bandwidth being negotiated per session —
+/// exception - it has no fixed width to measure, its bandwidth being negotiated per session -
 /// so it plans for the configured cap, or the widest it can reach.
 /// </remarks>
 internal static class BandPlanner
@@ -46,7 +46,7 @@ internal static class BandPlanner
         if (baseband is not null)
         {
             throw new InvalidDataException(
-                $"modem {baseband.SubChannel} ({baseband.Mode}) is a baseband mode — it occupies the "
+                $"modem {baseband.SubChannel} ({baseband.Mode}) is a baseband mode - it occupies the "
                 + "audio band from DC upwards rather than sitting on a centre frequency, so it "
                 + "cannot be placed with \"rfFrequency\". Configure this channel by audio "
                 + "\"frequency\" instead, or give this modem a channel of its own.");
@@ -65,7 +65,7 @@ internal static class BandPlanner
             slots, sideband, pinnedDialHz,
             Passband.Fit(slots, passbandCeilingHz ?? Passband.Nominal.HighHz));
 
-        // Hand the answer back to the modems as the audio centre each now needs — except a modem
+        // Hand the answer back to the modems as the audio centre each now needs - except a modem
         // whose centre was never ours to set. A spec-fixed mode is already on the centre the plan
         // was built around, and writing one back would be rejected at start-up as an override of a
         // centre that cannot be overridden.
@@ -79,7 +79,7 @@ internal static class BandPlanner
 
     /// <summary>
     /// How wide to plan for a modem: what it says, else what it measures, else a nominal figure
-    /// when it will not tell us. ARDOP is asked for nothing — it has no fixed answer to give.
+    /// when it will not tell us. ARDOP is asked for nothing - it has no fixed answer to give.
     /// </summary>
     private static double WidthOf(ModemConfig modem, int dspRate)
     {
@@ -152,7 +152,7 @@ internal static class BandPlanner
     {
         output.WriteLine(
             $"dial: {RfPlan.Mhz(plan.DialHz)} {plan.Sideband.ToUpperInvariant()}"
-            + (radioIsSelfTuning ? "" : " — set your radio to this"));
+            + (radioIsSelfTuning ? "" : " - set your radio to this"));
         foreach (PlannedModem m in plan.Modems)
         {
             output.WriteLine(
@@ -166,7 +166,7 @@ internal static class BandPlanner
         if (!plan.Window.IsNominal)
         {
             output.WriteLine(
-                $"  passband: {plan.Window.LowHz:F0}-{plan.Window.HighHz:F0} Hz — wider than an "
+                $"  passband: {plan.Window.LowHz:F0}-{plan.Window.HighHz:F0} Hz - wider than an "
                 + $"ordinary {Passband.Nominal.LowHz:F0}-{Passband.Nominal.HighHz:F0} Hz SSB "
                 + "window, because these modems do not fit one; the radio's filters are set to suit");
         }

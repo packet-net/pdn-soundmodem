@@ -7,8 +7,8 @@ namespace Packet.SoundModem.Daemon;
 /// in the audio band, and the high cut that clears the highest of them.
 /// </summary>
 /// <remarks>
-/// <para>The transmit filter is a <b>global, persistent</b> radio setting — whatever last touched
-/// the radio — so a station inherits some previous session's filter and a mode wider than it is
+/// <para>The transmit filter is a <b>global, persistent</b> radio setting - whatever last touched
+/// the radio - so a station inherits some previous session's filter and a mode wider than it is
 /// truncated on air with nothing said. A band-planned station states the high cut from the plan
 /// (<see cref="BandPlanner.TransmitFilterHighHz"/>); a station placed by audio centre has no plan
 /// to read it off, so the modems themselves are asked.</para>
@@ -50,7 +50,7 @@ internal static class TransmitFilterPlan
 
     /// <summary>
     /// The transmit-filter high cut these bands need, or null when none of them could be
-    /// measured — in which case the radio's own filter is left alone.
+    /// measured - in which case the radio's own filter is left alone.
     /// </summary>
     internal static int? HighCutFor(IReadOnlyList<Band> bands)
     {
@@ -63,7 +63,7 @@ internal static class TransmitFilterPlan
         band = default;
         if (DaemonConfig.IsArdop(modem.Mode))
         {
-            // Nothing to modulate a probe frame through — the engine is a whole TNC and its
+            // Nothing to modulate a probe frame through - the engine is a whole TNC and its
             // width is a per-session negotiation. Plan for the cap, or for the widest it can ask
             // for, exactly as BandPlanner does.
             double centre = modem.Frequency ?? ArdopChannelShift.NativeCentreHz;
@@ -76,7 +76,7 @@ internal static class TransmitFilterPlan
         {
             // Built at the centre this modem will actually transmit on: unlike the planner's
             // width-only question, where a band sits is the whole point here. A fixed-centre
-            // mode is built with no centre at all — passing one throws, and by this point the
+            // mode is built with no centre at all - passing one throws, and by this point the
             // start-up checks have already rejected a config that states one.
             IModem probe = ModemCatalog.Create(
                 modem.Mode, dspRate, static _ => { },

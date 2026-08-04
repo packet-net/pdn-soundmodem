@@ -31,28 +31,28 @@ using Packet.SoundModem.Ms110d;
 //                  [--ardop PORT]
 //                  [--waterfall PORT] [--dial HZ]
 //
-// Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, bpsk1200 — the BPSK modes are a
+// Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, bpsk1200 - the BPSK modes are a
 // differential frequency-diversity bank by default (parallel branches at stepped centres;
 // bpsk300-multi/bpsk1200-multi are aliases; offsetPairs/offsetStepHz tune it, offsetPairs:0 =
 // single modem; --psk-detector coherent forces coherent), qpsk2400, qpsk3600 (both IL2P+CRC),
 // fsk9600 (classic G3RUH), fsk9600-il2p (IL2P+CRC), freedv-datac0/1/3/4/13/14 (FreeDV datac
-// OFDM waveform; payloads carry the family-standard IL2P+CRC bit stream — a pdn convention,
+// OFDM waveform; payloads carry the family-standard IL2P+CRC bit stream - a pdn convention,
 // FreeDV defines no framing at the raw-data layer), ms110d-wn0/1/2/3/4/5/6/7/8/13
-// (MIL-STD-188-110D App D 3 kHz serial-tone, 75–3200 bps; same IL2P+CRC payload
-// convention; RX is autobaud — the wnN suffix selects the transmit waveform only).
+// (MIL-STD-188-110D App D 3 kHz serial-tone, 75-3200 bps; same IL2P+CRC payload
+// convention; RX is autobaud - the wnN suffix selects the transmit waveform only).
 // Multiple --modem options share the
 // audio channel and are addressed by the KISS port nibble (QtSoundModem multiplex model).
 //
 // The optional N:MODE:FREQ third field sets the modem's audio centre in Hz (both TX and
-// RX), QtSoundModem-style — e.g. --modem 0:bpsk300:1459 places 300 BPSK at 1459 Hz to
+// RX), QtSoundModem-style - e.g. --modem 0:bpsk300:1459 places 300 BPSK at 1459 Hz to
 // meet a peer that sits off the usual centre. It applies to the AFSK tone-pair modes
 // (afsk*, centre = mark/space midpoint, default 1700) and the BPSK/QPSK carrier modes
 // (bpsk*/qpsk*, default 1500, 1650 for qpsk3600). The baseband FSK families (fsk*/c4fsk*)
 // occupy DC-to-Nyquist and have no audio centre; the spec-fixed waveforms (freedv-*,
-// ms110d-*) are pinned by their standards — a :FREQ on any of these is an error, not
+// ms110d-*) are pinned by their standards - a :FREQ on any of these is an error, not
 // silently ignored.
 // --wav decodes a file instead of live audio (testing/corpus runs) and exits.
-// --wav-loop replays a file forever at wall-clock pace as if it were the capture device —
+// --wav-loop replays a file forever at wall-clock pace as if it were the capture device -
 // the whole live daemon (KISS, waterfall) runs off the recording; no soundcard needed.
 //
 // --waterfall serves the browser waterfall on PORT (default 8107 via the config section):
@@ -63,11 +63,11 @@ using Packet.SoundModem.Ms110d;
 // config section adds bind/sideband/rate knobs.
 // --psk-detector selects the BPSK/QPSK detection method: coherent (default, matches the
 // NinoTNC's Costas loop and noise margin) or differential (opt-in, acquires at zero preamble
-// at a ~1-2 dB noise cost — for short-preamble links). See issue #5.
+// at a ~1-2 dB noise cost - for short-preamble links). See issue #5.
 //
 // --paging starts the POCSAG paging endpoint (DAPNET/POCSAG-compatible waveform; local
 // paging API, pdn). Pages are not AX.25 frames, so they get a line-based TCP service of
-// their own instead of a KISS port — one UTF-8 command per line:
+// their own instead of a KISS port - one UTF-8 command per line:
 //
 //   PAGE <ric> <function> ALPHA <text…>     → OK <id> | ERR <reason>
 //   PAGE <ric> <function> NUMERIC <text…>
@@ -80,10 +80,10 @@ using Packet.SoundModem.Ms110d;
 // (Speaking the DAPNET-core transmitter protocol is a possible future follow-up.)
 //
 // --ardop starts the ARDOP virtual TNC: the ardopcf-compatible TCP host interface
-// (command port PORT, data port PORT+1 — Pat and other Winlink hosts connect
+// (command port PORT, data port PORT+1 - Pat and other Winlink hosts connect
 // unmodified). Per the dedicated-channel policy (docs/ardop-design.md §2.2) the ARDOP
 // channel carries only ARDOP: --ardop is exclusive with --modem/--paging, the KISS
-// server is not started, and CSMA persistence is forced to 255 — ARDOP runs its own
+// server is not started, and CSMA persistence is forced to 255 - ARDOP runs its own
 // channel discipline (ARQ timing budgets, negotiated leaders), which the daemon's
 // p-persistence roll must never delay. PTT keying and sample-domain TX-complete are
 // the channel's, exactly as for the packet modes.
@@ -91,29 +91,29 @@ using Packet.SoundModem.Ms110d;
 // --device flex:<radio>[:slice][@station] uses a FlexRadio 6000-series over the LAN as the
 // sound card + PTT: <radio> is `discover` (broadcast), an IP (host[:port]), a discovery spec
 // (serial=…/name=…), or `mock` (an in-process fake, for offline testing). <slice> is a
-// letter A–H (default A). The DAX transport is auto-picked from the DSP rate (24 kHz s16
+// letter A-H (default A). The DAX transport is auto-picked from the DSP rate (24 kHz s16
 // for the 12 kHz modes, 48 kHz float32 for the 48 kHz modes). The radio keys itself, so
 // --ptt is rejected alongside flex:.
 //
 // Selection policy: with no @station the daemon OWNS the radio and brings it up HEADLESS
-// (registers as a GUI client, creates its own slice — the "pdn at the radio, no SmartSDR"
+// (registers as a GUI client, creates its own slice - the "pdn at the radio, no SmartSDR"
 // deployment; the default). --flex-freq/--flex-ant/--flex-mode set the created slice's
 // working frequency (default 14.100000 MHz), antenna (ANT1) and mode (DIGU); the headless path
 // also disables band persistence and explicitly tunes the slice, so it lands on the requested
 // QRG regardless of the radio's last-used band. A trailing @station selects ATTACH mode:
 // coexist with a running SmartSDR by binding that station's existing slice (the slice params
-// are then ignored — SmartSDR configures it). --flex-daxch sets the DAX channel to claim
+// are then ignored - SmartSDR configures it). --flex-daxch sets the DAX channel to claim
 // (default 1) for BOTH paths; a headless client sharing a box with SmartSDR must pick a channel
 // SmartSDR is not using (it grabs DAX 1). See docs/flex-integration.md §4/§8.
 
 // --device ubersdr:<instance> makes a RECEIVE-ONLY station out of a public UberSDR web
 // receiver: <instance> is a host (m9psy-1.instance.ubersdr.org), a host:port, or the https://
-// URL you would open in a browser. The daemon takes the receiver's IQ stream (iq48 — 48 kHz of
+// URL you would open in a browser. The daemon takes the receiver's IQ stream (iq48 - 48 kHz of
 // complex baseband, ±24 kHz around the tune frequency), demodulates SSB from it in-process and
 // hands the modems real audio, so every mode, the waterfall and the frame log work exactly as
 // they do on a sound card. IQ rather than the instance's own audio because holding the complex
 // baseband means the receive filter is the one the band plan asked for and there is no AGC in
-// the path — which is what makes SNR figures off this path comparable with a soundcard's.
+// the path - which is what makes SNR figures off this path comparable with a soundcard's.
 //
 // There is no transmitter at the far end of a WebSocket. --ptt is rejected, transmissions are
 // refused the moment they are queued (with that as the reason), and the band plan's dial is
@@ -131,7 +131,7 @@ string sideband = "usb";
 bool sidebandWasStated = false;
 double? dialFrequency = null;
 FrameLogConfig? frameLogConfig = null;
-// 300 ms is a RADIO allowance, not a modem requirement — the modems themselves acquire
+// 300 ms is a RADIO allowance, not a modem requirement - the modems themselves acquire
 // from 0-20 ms TXDELAY in every mode (150 ms for qpsk2400 facing a NinoTNC), measured and
 // CI-enforced (NinoTncParityTests; docs/ninotnc-loop.md § How short can TXDELAY be?).
 // The default budgets for a real transmitter's PTT-to-RF settling, which the wired bench
@@ -148,7 +148,7 @@ bool qualityFrames = false;
 // PSK detection method. --psk-detector overrides it for every PSK mode; unset, the modes pick
 // their measured-best default: BPSK defaults to Differential (on real off-air HF, benchmarked
 // against a NinoTNC, differential + the frequency-diversity bank matches/beats coherent because
-// real carriers arrive off-frequency with short preambles — reversing the coherent default of
+// real carriers arrive off-frequency with short preambles - reversing the coherent default of
 // #5), while QPSK stays Coherent (its V.26A interop was validated coherent, #5/#6).
 PskDetector? pskDetectorOverride = null;
 string? pagingSpec = null;
@@ -156,7 +156,7 @@ int? ardopPort = null;
 var modemSpecs = new List<string>();
 // Headless FlexRadio slice params (--device flex: with no @station). Null = unset here;
 // resolved against the config's Flex section, then FlexTuning defaults. --flex-daxch applies
-// to both paths (headless and attach) — the DAX channel to claim.
+// to both paths (headless and attach) - the DAX channel to claim.
 string? flexFreq = null;
 string? flexAnt = null;
 string? flexMode = null;
@@ -221,7 +221,7 @@ if (configPath is not null)
 
     foreach (string warning in config.Warnings)
     {
-        Console.Error.WriteLine($"config: WARNING — {warning}");
+        Console.Error.WriteLine($"config: WARNING - {warning}");
     }
 
     device = config.Device;
@@ -295,7 +295,7 @@ if (flexTuning.TxPowerWatts is double requestedWatts
     && (requestedWatts < 0 || requestedWatts > FlexDevice.PaWatts))
 {
     Console.Error.WriteLine(
-        $"\"flex\".\"txPowerWatts\" is {requestedWatts:0.#} W, outside the 0–{FlexDevice.PaWatts:F0} W "
+        $"\"flex\".\"txPowerWatts\" is {requestedWatts:0.#} W, outside the 0-{FlexDevice.PaWatts:F0} W "
         + "a 6000-series PA can produce.");
     return 2;
 }
@@ -344,7 +344,7 @@ if (FlexDevice.IsFlex(device) && FlexDevice.Parse(device).Headless)
             Console.Error.WriteLine(
                 $"\"sideband\": \"{sideband}\" contradicts the Flex slice mode {flexTuning.Mode}, "
                 + $"which is {impliedSideband.ToUpperInvariant()}. Every modem would land mirrored "
-                + "about the dial. Drop \"sideband\" — the slice mode already says which it is.");
+                + "about the dial. Drop \"sideband\" - the slice mode already says which it is.");
             return 2;
         }
 
@@ -356,7 +356,7 @@ ModemConfig? ardopModem = modems.FirstOrDefault(m => DaemonConfig.IsArdop(m.Mode
 if (ardopModem is not null && ardopPort is not null)
 {
     Console.Error.WriteLine(
-        "ARDOP is configured twice — as a modem and with --ardop/\"ardop\". Keep the modem entry.");
+        "ARDOP is configured twice - as a modem and with --ardop/\"ardop\". Keep the modem entry.");
     return 2;
 }
 
@@ -396,7 +396,7 @@ if (ardopModem is not null && DspRate != M0LTE.Ardop.ArdopModulator.SampleRate)
 // either.
 bool deviceIsFlex = FlexDevice.IsFlex(device);
 // Headless is the deployment where the daemon owns the radio, and so the only one where it sets
-// the dial and the transmit filter — in attach mode SmartSDR owns the slice and we would be
+// the dial and the transmit filter - in attach mode SmartSDR owns the slice and we would be
 // fighting it.
 bool flexIsHeadless = deviceIsFlex && FlexDevice.Parse(device).Headless;
 bool deviceIsUberSdr = UberSdrDevice.IsUberSdr(device);
@@ -428,7 +428,7 @@ try
 {
     // How far up the audio band this station can be planned. A rig the daemon cannot touch gets
     // the nominal SSB window; a headless Flex, whose transmit and receive filters the daemon sets
-    // itself, gets the radio's own ceiling — which is what lets a 3 kHz waveform be planned at all,
+    // itself, gets the radio's own ceiling - which is what lets a 3 kHz waveform be planned at all,
     // since one cannot fit inside an ordinary passband however the dial is chosen.
     bandPlan = BandPlanner.Plan(
         modems, sideband, dialFrequency, DspRate,
@@ -448,7 +448,7 @@ if (deviceIsUberSdr && receiveDialHz is null)
     Console.Error.WriteLine(
         $"the UberSDR instance at {uberSdrEndpoint} has to be told where to listen. Give every "
         + "modem an \"rfFrequency\" and the dial is worked out from them, or set "
-        + "\"dialFrequency\" to pin it — unlike a radio there is no dial already set to read off.");
+        + "\"dialFrequency\" to pin it - unlike a radio there is no dial already set to read off.");
     return 2;
 }
 
@@ -457,11 +457,11 @@ if (bandPlan is not null)
     BandPlanner.Report(bandPlan, Console.Out, radioIsSelfTuning: flexIsHeadless || deviceIsUberSdr);
     foreach (string warning in bandPlan.Warnings)
     {
-        Console.Error.WriteLine($"band plan: WARNING — {warning}");
+        Console.Error.WriteLine($"band plan: WARNING - {warning}");
     }
 
     // A Flex is its own dial: rather than telling the operator to set it, set it. Headless
-    // only — in attach mode SmartSDR owns the slice and we would be fighting it. The transmit
+    // only - in attach mode SmartSDR owns the slice and we would be fighting it. The transmit
     // filter is a global, persistent radio setting, so state its high cut from the plan or a
     // previous session's narrow filter silently truncates the top of the band.
     if (flexIsHeadless)
@@ -471,7 +471,7 @@ if (bandPlan is not null)
         if (flexConfig?.Frequency is not null || flexFreq is not null)
         {
             Console.Error.WriteLine(
-                $"flex: WARNING — the slice frequency you set ({flexFreq ?? flexConfig!.Frequency}) "
+                $"flex: WARNING - the slice frequency you set ({flexFreq ?? flexConfig!.Frequency}) "
                 + "is superseded by the band plan, which computed "
                 + $"{RfPlan.Mhz(bandPlan.DialHz)}. Remove it, or remove the modems' "
                 + "\"rfFrequency\" if you meant to place them by audio centre.");
@@ -481,7 +481,7 @@ if (bandPlan is not null)
         flexTuning = flexTuning with
         {
             Frequency = (bandPlan.DialHz / 1_000_000).ToString("F6", CultureInfo.InvariantCulture),
-            // A stated cut-off is the operator overruling the plan, which is theirs to do — the
+            // A stated cut-off is the operator overruling the plan, which is theirs to do - the
             // clipping check below still says so if it truncates a modem.
             TransmitFilterHighHz = deriveTransmitFilter ? filterHigh : flexTuning.TransmitFilterHighHz,
         };
@@ -495,7 +495,7 @@ if (bandPlan is not null)
 var channel = new SoundModemChannel(DspRate);
 if (deviceIsUberSdr)
 {
-    // Said once, here, so every path that could put something on the air — KISS, paging, ARDOP —
+    // Said once, here, so every path that could put something on the air - KISS, paging, ARDOP -
     // gets the same answer for the same reason, rather than each discovering it differently.
     channel.ReceiveOnlyReason =
         $"this station receives only: its audio comes from the UberSDR instance at "
@@ -503,7 +503,7 @@ if (deviceIsUberSdr)
 }
 
 // Channel access (TXDELAY, P, SLOTTIME, TXTAIL) belongs to the host, which sets it over KISS
-// at runtime — see KissTcpServer. The library's defaults stand until it does; there is
+// at runtime - see KissTcpServer. The library's defaults stand until it does; there is
 // deliberately no configuration-file equivalent. --txdelay remains as a bench override for
 // runs with no host attached.
 if (txDelay is int txDelayOverride)
@@ -512,7 +512,7 @@ if (txDelay is int txDelayOverride)
 }
 
 // Where each modem sits, for the log's audio_hz/rf_hz columns. Declared out here because both
-// halves of the log — what was heard and what was sent — fill those columns from it, and the
+// halves of the log - what was heard and what was sent - fill those columns from it, and the
 // transmit side is wired further down with the rest of the activity reporting.
 var frameLogRfByModem = modems.ToDictionary(
     m => m.SubChannel,
@@ -587,7 +587,7 @@ foreach (ModemConfig modemConfig in modems)
     if (frequency is not null && !ModemCatalog.AcceptsCentreFrequency(mode))
     {
         Console.Error.WriteLine(
-            $"modem {subChannel}: mode '{mode}' has a fixed centre frequency — drop the " +
+            $"modem {subChannel}: mode '{mode}' has a fixed centre frequency - drop the " +
             "frequency override (only the afsk*/bpsk*/qpsk* modes accept one)");
         return 2;
     }
@@ -614,7 +614,7 @@ if (modems.Any(m => m.Mode.StartsWith("qpsk", StringComparison.Ordinal)))
 }
 
 // Where each modem sits in the audio band, for the radio's transmit filter: from the plan when
-// there is one, else measured off the modems as configured. Flex only — it is the one device
+// there is one, else measured off the modems as configured. Flex only - it is the one device
 // whose transmit filter the daemon can see, and the measurement costs a modulate per modem.
 IReadOnlyList<TransmitFilterPlan.Band> txBands = !deviceIsFlex
     ? []
@@ -625,7 +625,7 @@ IReadOnlyList<TransmitFilterPlan.Band> txBands = !deviceIsFlex
             m.AudioCentreHz + (m.Slot.BandwidthHz / 2)))]
         : TransmitFilterPlan.Bands(modems, DspRate);
 
-// The transmit filter is a global, persistent radio setting — whatever last touched the radio —
+// The transmit filter is a global, persistent radio setting - whatever last touched the radio -
 // so a station placed by audio centre inherits some previous session's filter, and a mode wider
 // than it (ms110d-* reaches past 3.1 kHz against a 3000 Hz default) is truncated on air with
 // nothing said. The band-planned path states the high cut above; this is the same for a station
@@ -636,7 +636,7 @@ if (flexIsHeadless && deriveTransmitFilter && flexTuning.TransmitFilterHighHz is
     TransmitFilterPlan.Band widest = txBands.MaxBy(b => b.HighHz);
     flexTuning = flexTuning with { TransmitFilterHighHz = derivedFilterHigh };
     Console.WriteLine(
-        $"flex: setting the transmit filter high cut to {derivedFilterHigh} Hz — modem "
+        $"flex: setting the transmit filter high cut to {derivedFilterHigh} Hz - modem "
         + $"{widest.SubChannel} ({widest.Mode}) reaches {widest.HighHz:F0} Hz");
 }
 
@@ -660,7 +660,7 @@ if (flexIsHeadless && txBands.Count > 0)
 }
 
 // The transmit side has no per-frame quality to report the mode from, so it comes from the
-// configuration — the modem that owns the sub-channel.
+// configuration - the modem that owns the sub-channel.
 Dictionary<int, string> modeBySubChannel = modems
     .Where(m => !DaemonConfig.IsArdop(m.Mode))
     .ToDictionary(m => m.SubChannel, m => m.Mode);
@@ -681,8 +681,8 @@ channel.FrameTransmitted += (subChannel, frame) =>
     // a logged row is a frame that actually went on air. Same placement lookup as the receive
     // side, so audio_hz/rf_hz mean the same thing in both directions.
     //
-    // The mode is the modem's own report of itself — what the waterfall stamps on its TX rows,
-    // and what the receive side already writes into this column — rather than the configured
+    // The mode is the modem's own report of itself - what the waterfall stamps on its TX rows,
+    // and what the receive side already writes into this column - rather than the configured
     // name the console line uses. It costs nothing and it keeps one modem's traffic under one
     // spelling, so "everything on bpsk300-il2pc today" is one query that includes our own.
     (double? audio, double? rf) = frameLogRfByModem.TryGetValue(subChannel, out var placement)
@@ -782,7 +782,7 @@ if (waterfallConfig is not null)
 await using var waterfallLifetime = waterfallServer;
 
 // The signal survey: watch the whole passband for transmissions this station cannot read, and
-// keep the ones worth looking at later (issue #206). Off unless configured — it writes audio to
+// keep the ones worth looking at later (issue #206). Off unless configured - it writes audio to
 // disk unattended for as long as the station runs.
 //
 // Its own spectrum feed rather than the waterfall's. The two compute the same transform at the
@@ -804,7 +804,7 @@ if (surveyConfig is not null)
 
     // ARDOP is a receive tap rather than an IModem, so nothing enumerable carries it and nothing
     // can probe it. Left out, every ARDOP burst on the channel would be reported as a signal
-    // nobody was listening to — which is the opposite of true.
+    // nobody was listening to - which is the opposite of true.
     foreach (ModemConfig ardop in modems.Where(m => DaemonConfig.IsArdop(m.Mode)))
     {
         double centre = ardop.Frequency ?? ArdopChannelShift.NativeCentreHz;
@@ -821,7 +821,7 @@ if (surveyConfig is not null)
         MarginSeconds = surveyConfig.MarginSeconds,
         MaxSeconds = surveyConfig.MaxSeconds,
         MinPeakSnrDb = surveyConfig.MinPeakSnrDb,
-        // The dial is what turns an audio centre into a band frequency in the sidecar — the whole
+        // The dial is what turns an audio centre into a band frequency in the sidecar - the whole
         // point of a capture is to say where on 40 m the thing was.
         DialFrequencyHz = waterfallConfig?.DialFrequencyHz is > 0
             ? waterfallConfig.DialFrequencyHz
@@ -866,7 +866,7 @@ if (surveyConfig is not null)
         survey = created;
 
         // The channel gates its receive tap while transmitting, so audio and lines stop together
-        // — which is the invariant the survey needs to map a burst back to the audio that carried
+        // - which is the invariant the survey needs to map a burst back to the audio that carried
         // it. Audio first: a line is stamped with the ring position at the moment it arrives.
         channel.AddReceiveTap(samples =>
         {
@@ -884,7 +884,7 @@ if (surveyConfig is not null)
         };
 
         // Onto the page: what the survey has kept, what a budget refused, and each capture as it
-        // lands — drawn where it happened, since a capture's frequency and time are exactly the
+        // lands - drawn where it happened, since a capture's frequency and time are exactly the
         // axes the waterfall already has.
         if (waterfallServer is { } display)
         {
@@ -926,13 +926,13 @@ if (surveyConfig is not null)
 using var surveyLifetime = new Disposer(() => survey?.Dispose());
 
 // Ghost demodulators for the station identifications a NinoTNC sends alongside its PSK SSB data
-// modes rather than within them (300 AFSK AX.25, 200 Hz above the carrier — see IdBeaconGhost).
+// modes rather than within them (300 AFSK AX.25, 200 Hz above the carrier - see IdBeaconGhost).
 // Without one, an ident is a recurring burst in the middle of the channel that every station can
 // see and none can read. Attached here because a ghost reports to the waterfall and the frame
 // log, and both have to exist first; the console line stands alone when neither is configured.
 //
 // Receive taps, not modems: no KISS sub-channel (a host asking for packet data should not have to
-// filter idents out of it), no contribution to carrier sense, and nothing drawn on the waterfall —
+// filter idents out of it), no contribution to carrier sense, and nothing drawn on the waterfall -
 // the ident rides on a modem that already has a band there.
 if (idBeacons)
 {
@@ -941,7 +941,7 @@ if (idBeacons)
     {
         // Two PSK modems tuned to the same centre would hear the same TNC's ident twice and list
         // it twice. A band plan gives them different centres, so this is insurance rather than
-        // the normal case — but the duplicate would be indistinguishable from two real beacons.
+        // the normal case - but the duplicate would be indistinguishable from two real beacons.
         double centre = IdBeaconGhost.CentreHzFor(modemConfig.Frequency);
         if (!IdBeaconGhost.AppliesTo(modemConfig.Mode) || !ghostCentres.Add((long)Math.Round(centre)))
         {
@@ -991,7 +991,7 @@ if (idBeacons)
         };
 
         Console.WriteLine(
-            $"modem {modemConfig.SubChannel}: id beacons — listening in "
+            $"modem {modemConfig.SubChannel}: id beacons - listening in "
             + $"{ghost.Mode} @ {ghost.CentreHz:0.#} Hz");
     }
 }
@@ -1004,7 +1004,7 @@ using var flexMetersLifetime = new Disposer(() => flexMeters?.Dispose());
 const double TransmitReadoutFloorWatts = 0.1;
 
 // The Flex owns keying (the slice PTT is an API command), so a conflicting --ptt /
-// configured PTT is rejected — matching how --device flex: implicitly keys the radio.
+// configured PTT is rejected - matching how --device flex: implicitly keys the radio.
 if (deviceIsFlex && (pttSpec is not null || pttConfig is not null))
 {
     Console.Error.WriteLine(
@@ -1015,7 +1015,7 @@ if (deviceIsFlex && (pttSpec is not null || pttConfig is not null))
 if (deviceIsUberSdr && (pttSpec is not null || pttConfig is not null))
 {
     Console.Error.WriteLine(
-        $"--device ubersdr: is a receive-only station — the instance at {uberSdrEndpoint} has no "
+        $"--device ubersdr: is a receive-only station - the instance at {uberSdrEndpoint} has no "
         + "transmitter, so there is nothing for a PTT line to key. Remove \"ptt\".");
     return 2;
 }
@@ -1040,7 +1040,7 @@ if (pttSpec is not null)
     }
 }
 
-// One bind for every listener — KISS, per-modem ports, waterfall, paging and ARDOP.
+// One bind for every listener - KISS, per-modem ports, waterfall, paging and ARDOP.
 System.Net.IPAddress listenAddress = DaemonConfig.ParseBind(bindAddress)!;
 
 // Set when the radio's session dies, so the exit code says "retry me" rather than "I am done".
@@ -1054,7 +1054,7 @@ Console.CancelKeyPress += (_, e) =>
 };
 
 // Who is attached to a KISS port, in the journal. A host that quietly drops its TCP session
-// stops passing traffic, and from the modem's side that is indistinguishable from a quiet band —
+// stops passing traffic, and from the modem's side that is indistinguishable from a quiet band -
 // so the attach and the loss both get a line, and the loss carries its reason where it had one.
 void WatchClients(KissTcpServer server)
 {
@@ -1065,7 +1065,7 @@ void WatchClients(KissTcpServer server)
 }
 
 var kissServers = new List<KissTcpServer>();
-// KISS serves the packet modems, so it starts whenever there are any — ARDOP sharing the
+// KISS serves the packet modems, so it starts whenever there are any - ARDOP sharing the
 // channel is no longer a reason to withhold it. (It was, when an ARDOP channel carried nothing
 // else; gating on the old top-level "ardop" setting would now silently leave the packet modems
 // with no host interface at all.)
@@ -1108,13 +1108,13 @@ if (modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
         // The usual "anything that can reach this can transmit on your licence" warning is not
         // true here, and saying it anyway would teach operators to ignore it where it is.
         Console.WriteLine(
-            "kiss: this station receives only — frames arriving on these ports are refused, not "
+            "kiss: this station receives only - frames arriving on these ports are refused, not "
             + "transmitted. Everything the modems hear is still delivered.");
     }
     else if (!Equals(listenAddress, System.Net.IPAddress.Loopback))
     {
         Console.WriteLine(
-            "kiss: WARNING — listening beyond loopback. KISS has no authentication: anything "
+            "kiss: WARNING - listening beyond loopback. KISS has no authentication: anything "
             + "that can reach these ports can transmit on your licence.");
     }
 }
@@ -1125,7 +1125,7 @@ M0LTE.Ardop.Host.ArdopHostServer? ardopServer = null;
 if (ardopModem is not null)
 {
     // ARDOP runs its own channel discipline (ARQ timing budgets, negotiated leaders), so its
-    // own bursts must never wait on a p-persistence roll — they go out through the channel's
+    // own bursts must never wait on a p-persistence roll - they go out through the channel's
     // inhibit-bypassing path. The packet modems keep normal CSMA among themselves; what keeps
     // them off an ARQ session is TransmitInhibit, set once the engine exists.
     // Bind the M0LTE.Ardop TNC to this daemon's channel: transmit bursts through the
@@ -1134,16 +1134,16 @@ if (ardopModem is not null)
     if (ardopModem.Frequency is double ardopCentre
         && ArdopChannelShift.Concern(ardopCentre, DspRate) is string ardopConcern)
     {
-        Console.Error.WriteLine($"ardop: WARNING — {ardopConcern}");
+        Console.Error.WriteLine($"ardop: WARNING - {ardopConcern}");
     }
 
     if (channel.ReceiveOnlyReason is not null)
     {
         Console.Error.WriteLine(
-            "ardop: WARNING — ARDOP is a connected-mode ARQ protocol and this station cannot "
+            "ardop: WARNING - ARDOP is a connected-mode ARQ protocol and this station cannot "
             + "transmit, so no session will ever complete: it will hear the channel and never "
-            + "answer. The host port is still served, and every frame it demodulates — including "
-            + "other stations' sessions — is still drawn and written down.");
+            + "answer. The host port is still served, and every frame it demodulates - including "
+            + "other stations' sessions - is still drawn and written down.");
     }
 
     var ardopShift = ArdopChannelShift.For(ardopModem.Frequency, DspRate);
@@ -1174,14 +1174,14 @@ if (ardopModem is not null)
             }
             catch (Exception refused) when (refused is InvalidOperationException or ArgumentException)
             {
-                Console.Error.WriteLine($"ardop: transmission dropped — {refused.Message}");
+                Console.Error.WriteLine($"ardop: transmission dropped - {refused.Message}");
             }
         },
     };
     channel.AddReceiveTap(samples => ardopTnc.ProcessReceive(ardopShift.Receive(samples)));
 
     // ARDOP demodulates inside the virtual TNC, so its frames never reach the channel event the
-    // waterfall and the frame log listen to — without this the ARDOP band is drawn and its
+    // waterfall and the frame log listen to - without this the ARDOP band is drawn and its
     // bursts paint, but nothing it hears is ever listed. M0LTE.Ardop 0.3.0 raises every frame
     // the demodulator recovers, including other stations' sessions and failed decodes, which is
     // what a monitor wants: "someone transmitted and we could not read them" is information.
@@ -1214,7 +1214,7 @@ if (ardopModem is not null)
     }
 
     // Hold the packet modems off the air for the length of an ARQ session. Their frames are
-    // queued, not discarded, until TransmitInhibitTimeout gives up on one — an AX.25 host will
+    // queued, not discarded, until TransmitInhibitTimeout gives up on one - an AX.25 host will
     // have retried long before a Winlink session ends.
     M0LTE.Ardop.Arq.ArdopArqEngine ardopEngine = ardopTnc.Engine;
     channel.TransmitInhibit = () => ardopEngine.IsConnected || ardopEngine.IsPending;
@@ -1271,7 +1271,7 @@ if (wavLoopPath is not null)
     ptt = new NullPtt();
     playback = new NullAudioOutput(DspRate);
     input = wavLoop;
-    Console.WriteLine($"audio: wav-loop {wavLoopPath} {wavLoop.SampleRate} Hz → {DspRate} Hz");
+    Console.WriteLine($"audio: wav-loop {wavLoopPath} {wavLoop.SampleRate} Hz -> {DspRate} Hz");
 }
 else if (deviceIsUberSdr)
 {
@@ -1309,7 +1309,7 @@ else if (deviceIsUberSdr)
     playback = new NullAudioOutput(DspRate);
     input = uberSdr;
     Console.WriteLine(
-        $"audio: {uberSdrEndpoint} {uberSdrTuning.Mode} IQ at {RfPlan.Mhz(receiveDialHz.Value)} → "
+        $"audio: {uberSdrEndpoint} {uberSdrTuning.Mode} IQ at {RfPlan.Mhz(receiveDialHz.Value)} -> "
         + $"{planSideband.ToUpperInvariant()} {uberSdrTuning.SsbLowHz:F0}-{uberSdrTuning.SsbHighHz:F0} Hz "
         + $"audio at {DspRate} Hz (RECEIVE ONLY)");
     if (uberSdr.ReceiverDescription is string receiver)
@@ -1328,7 +1328,7 @@ else if (deviceIsUberSdr)
     else
     {
         Console.WriteLine(
-            $"ubersdr: session limit {uberSdr.Connection.MaxSessionTime} s — the stream is picked up "
+            $"ubersdr: session limit {uberSdr.Connection.MaxSessionTime} s - the stream is picked up "
             + "again each time the receiver ends one");
     }
 
@@ -1353,18 +1353,18 @@ else if (deviceIsFlex)
         ? $"headless {flexTuning.Frequency} MHz {flexTuning.Antenna} {flexTuning.Mode}"
         : $"attach station '{flexSpec.Station}'";
     Console.WriteLine(
-        $"audio: {device} DAX {input.SampleRate} Hz → {DspRate} Hz "
+        $"audio: {device} DAX {input.SampleRate} Hz -> {DspRate} Hz "
         + $"(slice {flexSpec.SliceLetter}, dax {flexTuning.DaxChannel}, {flexModeDesc})");
     if (flex.Station.TuneWarning is string tuneWarning)
     {
         Console.Error.WriteLine($"flex: {tuneWarning}");
     }
 
-    // The radio's global transmit filter, read back at bring-up (Flex 0.7.0) — it, not the
+    // The radio's global transmit filter, read back at bring-up (Flex 0.7.0) - it, not the
     // slice, limits transmitted DAX audio bandwidth, and it is whatever last touched the radio
     // (a 300 Hz CW filter would silently crush a 3 kHz mode). We deliberately never set it;
-    // reporting it makes a stale value visible. Headless only — attach leaves it to SmartSDR.
-    // A radio that reboots, or a network that blips, ends the session — and nothing used to
+    // reporting it makes a stale value visible. Headless only - attach leaves it to SmartSDR.
+    // A radio that reboots, or a network that blips, ends the session - and nothing used to
     // notice. The modem then sat with a dead socket: no audio, no waterfall, and nothing said
     // why. Stop instead, with exit 1 so the unit restarts and rediscovers the radio rather
     // than staying down (exit 2 is reserved for "your configuration is wrong", which a restart
@@ -1372,7 +1372,7 @@ else if (deviceIsFlex)
     flex.Station.Client.Disconnected += () =>
     {
         Console.Error.WriteLine(
-            "flex: the radio's session ended — rebooted, dropped off the network, or closed the "
+            "flex: the radio's session ended - rebooted, dropped off the network, or closed the "
             + "connection. Stopping so the service restarts and rediscovers it.");
         radioLost = true;
         cancellation.Cancel();
@@ -1391,7 +1391,7 @@ else if (deviceIsFlex)
     }
 
     // What the transmitter is actually doing, live, in the page's top bar. The meters are the
-    // radio's own — forward power and SWR — so this reports the transmission rather than what we
+    // radio's own - forward power and SWR - so this reports the transmission rather than what we
     // asked for, which is the difference that matters when an antenna is wrong.
     if (waterfallServer is not null)
     {
@@ -1418,7 +1418,7 @@ else if (deviceIsFlex)
                 // never settles is harder to read than one that does.
                 double? swr = txMeters.SwrFromPowers();
                 string reading_ = swr is double s && !double.IsInfinity(s)
-                    ? $"TX {watts:F1} W · SWR {s:F1}"
+                    ? $"TX {watts:F1} W, SWR {s:F1}"
                     : $"TX {watts:F1} W";
                 waterfallServer.SetTransmitStatus(reading_);
             };
@@ -1426,7 +1426,7 @@ else if (deviceIsFlex)
         catch (Exception e) when (e is M0LTE.Flex.FlexProtocolException or IOException)
         {
             // A station that cannot read its meters still transmits perfectly well.
-            Console.Error.WriteLine($"flex: no transmit metering — {e.Message}");
+            Console.Error.WriteLine($"flex: no transmit metering - {e.Message}");
         }
     }
 
@@ -1444,28 +1444,28 @@ else if (deviceIsFlex)
 
     if (flex.Station.TransmitFilter is (int txFilterLow, int txFilterHigh))
     {
-        Console.WriteLine($"flex: transmit filter {txFilterLow}..{txFilterHigh} Hz (radio global — limits TX audio bandwidth)");
+        Console.WriteLine($"flex: transmit filter {txFilterLow}..{txFilterHigh} Hz (radio global - limits TX audio bandwidth)");
 
         // What the filter passes is checked against where the modems actually are, rather than
         // assumed: a modem outside it transmits a truncated signal, or nothing at all, and does
-        // so silently. The high cut we ask for can still come back narrower — it is a radio-wide
-        // setting and the radio has the last word — and in attach mode we never set it at all.
+        // so silently. The high cut we ask for can still come back narrower - it is a radio-wide
+        // setting and the radio has the last word - and in attach mode we never set it at all.
         foreach (TransmitFilterPlan.Band band in txBands
                      .Where(b => b.LowHz < txFilterLow || b.HighHz > txFilterHigh))
         {
             // Only the high cut is settable through the station API, so a modem under the low
             // edge is something only the operator can fix. Telling someone to move a modem that
-            // has nowhere to go — the freedv-*/ms110d-* centres are pinned by their specs — is
+            // has nowhere to go - the freedv-*/ms110d-* centres are pinned by their specs - is
             // worse than saying nothing.
             string remedy = band.LowHz < txFilterLow
                 ? "The low cut is not settable from here; widen it on the radio."
                 : ModemCatalog.AcceptsCentreFrequency(band.Mode)
                     ? "Widen the high cut on the radio, or move the modem down the passband."
-                    : "Widen the high cut on the radio — this mode's centre is fixed by its spec.";
+                    : "Widen the high cut on the radio - this mode's centre is fixed by its spec.";
             Console.Error.WriteLine(
-                $"flex: WARNING — modem {band.SubChannel} ({band.Mode}) occupies "
+                $"flex: WARNING - modem {band.SubChannel} ({band.Mode}) occupies "
                 + $"{band.LowHz:F0}-{band.HighHz:F0} Hz, outside the radio's "
-                + $"{txFilterLow}..{txFilterHigh} Hz transmit filter — it will be clipped. "
+                + $"{txFilterLow}..{txFilterHigh} Hz transmit filter - it will be clipped. "
                 + remedy);
         }
     }
@@ -1481,9 +1481,9 @@ else if (deviceIsFlex)
                      .Where(b => b.LowHz < rxFilterLow || b.HighHz > rxFilterHigh))
         {
             Console.Error.WriteLine(
-                $"flex: WARNING — modem {band.SubChannel} ({band.Mode}) occupies "
+                $"flex: WARNING - modem {band.SubChannel} ({band.Mode}) occupies "
                 + $"{band.LowHz:F0}-{band.HighHz:F0} Hz, outside the slice's "
-                + $"{rxFilterLow}..{rxFilterHigh} Hz receive filter — it will hear nothing there.");
+                + $"{rxFilterLow}..{rxFilterHigh} Hz receive filter - it will hear nothing there.");
         }
     }
 
@@ -1491,7 +1491,7 @@ else if (deviceIsFlex)
     {
         // The radio's ceiling on receive width is not measured, so this is how a radio that will
         // not go as wide as asked says so, rather than the modem quietly going deaf.
-        Console.Error.WriteLine($"flex: WARNING — {receiveFilterWarning}");
+        Console.Error.WriteLine($"flex: WARNING - {receiveFilterWarning}");
     }
 }
 else
@@ -1500,7 +1500,7 @@ else
 
     // Hardware the config names but the box does not have is the single most likely thing to
     // go wrong on a first install (the seeded config points at a CM108 on /dev/hidraw0). Say
-    // which setting, which file, and how to list what is really there — but exit 1, not 2, so
+    // which setting, which file, and how to list what is really there - but exit 1, not 2, so
     // the unit keeps retrying and comes up by itself if the device was only slow to appear.
     try
     {
@@ -1552,7 +1552,7 @@ else
         return 1;
     }
 
-    Console.WriteLine($"audio: {device} capture {captureRate} Hz → {DspRate} Hz");
+    Console.WriteLine($"audio: {device} capture {captureRate} Hz -> {DspRate} Hz");
 }
 
 await using var flexLifetime = flex;
@@ -1561,12 +1561,12 @@ Task transmitter = channel.RunTransmitterAsync(playback, ptt, cancellation.Token
 
 // Decimate the source to the DSP rate. When it already runs at the DSP rate (a 48 kHz
 // mode's full-bandwidth DAX, --capture-rate 12000, or a 12 kHz virtual card) there is
-// nothing to decimate — a Decimator with factor 1 is invalid, so feed samples straight
+// nothing to decimate - a Decimator with factor 1 is invalid, so feed samples straight
 // through.
 int inputRate = input.SampleRate;
 var rxDecimator = inputRate == DspRate ? null : new Decimator(inputRate, inputRate / DspRate);
 
-// 100 ms RX blocks for the packet modes; 20 ms when ARDOP runs — its ARQ timing budgets
+// 100 ms RX blocks for the packet modes; 20 ms when ARDOP runs - its ARQ timing budgets
 // (IRS ACK inside the ISS repeat window) want RX latency low.
 int blockSamples = ardopPort is null ? inputRate / 10 : inputRate / 50;
 var floatBuffer = new float[blockSamples];
@@ -1613,7 +1613,7 @@ if (!deviceIsFlex)
 
 return radioLost ? 1 : 0;
 
-/// <summary>Runs an action on scope exit — for state captured after its `using` must be declared.</summary>
+/// <summary>Runs an action on scope exit - for state captured after its `using` must be declared.</summary>
 internal sealed class Disposer(Action onDispose) : IDisposable
 {
     public void Dispose() => onDispose();

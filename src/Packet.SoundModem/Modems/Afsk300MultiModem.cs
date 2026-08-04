@@ -4,7 +4,7 @@ namespace Packet.SoundModem.Modems;
 /// Frequency-diversity 300 baud HF AFSK: 2·<c>offsetPairs</c>+1 parallel
 /// <see cref="Afsk300Modem"/> branches spaced <c>offsetHz</c> apart around the channel
 /// centre, each with a deliberately tight (±250 Hz) receive passband, with content-based
-/// deduplication across the bank — the <see cref="Afsk1200MultiModem"/>/
+/// deduplication across the bank - the <see cref="Afsk1200MultiModem"/>/
 /// <see cref="BpskMultiModem"/> multi-decoder model applied to the NinoTNC "SSB AFSK"
 /// family. Transmit uses the centre branch only.
 /// </summary>
@@ -13,12 +13,12 @@ namespace Packet.SoundModem.Modems;
 /// The bank exists for a different reason than the 1200 baud one. Bell 202's problem is
 /// twist; this mode's problem is <b>neighbours</b>. A 500 Hz-OBW slot on 40 m lives a
 /// couple of hundred Hz from other users, and a quadrature FM discriminator follows the
-/// strongest signal in its passband — so receive selectivity is worth real frames.
+/// strongest signal in its passband - so receive selectivity is worth real frames.
 /// Measured on off-air capture of the live 7.0503 MHz slot (m9psy-1 web receiver,
 /// 2026-08-02, a neighbouring QSO ~200 Hz below the slot): with the interferer at equal
 /// power, ±400 Hz filters needed the packet +6 dB above it, ±250 managed −3 dB. Tight
 /// filters, though, shrink the carrier-offset range each branch can serve (real stations
-/// on the slot measured up to ±35 Hz off, and the single-demod tolerance is ±60–70 Hz),
+/// on the slot measured up to ±35 Hz off, and the single-demod tolerance is ±60-70 Hz),
 /// so the bank steps narrow branches across the offset range instead of widening any one
 /// of them: selectivity per branch, coverage from diversity. On the first 30 minutes of
 /// captured traffic the shipped single modem decoded 3 of 13 frames; this bank shape
@@ -26,7 +26,7 @@ namespace Packet.SoundModem.Modems;
 /// </para>
 /// <para>
 /// No emphasis variants: across a 200 Hz tone spacing, real-world response tilt is
-/// fractions of a dB — the twist machinery that transforms Bell 202 has nothing to work
+/// fractions of a dB - the twist machinery that transforms Bell 202 has nothing to work
 /// on here.
 /// </para>
 /// </remarks>
@@ -57,7 +57,7 @@ public sealed class Afsk300MultiModem : IModem
     /// <param name="sampleRate">Channel DSP rate (multiple of 300).</param>
     /// <param name="frameReceived">Receives each unique decoded AX.25 frame once.</param>
     /// <param name="framing">Which of the three HF framings to run (NinoTNC modes 12/13/14).</param>
-    /// <param name="centerFrequency">Channel centre — the middle branch and TX.</param>
+    /// <param name="centerFrequency">Channel centre - the middle branch and TX.</param>
     /// <param name="offsetPairs">Extra branches either side of centre (0 = a single
     /// tight-filtered branch). The default ±5 spans ±175 Hz.</param>
     /// <param name="offsetHz">Frequency step between adjacent branches. The default 35 Hz
@@ -142,7 +142,7 @@ public sealed class Afsk300MultiModem : IModem
     public void Process(ReadOnlySpan<float> samples)
     {
         // Feed the bank in bounded chunks so the dedupe clock advances with the audio
-        // even when a caller hands over one huge buffer — otherwise a legitimate repeat
+        // even when a caller hands over one huge buffer - otherwise a legitimate repeat
         // later in the same buffer would be suppressed (mirrors the other banks).
         for (int position = 0; position < samples.Length; position += _dedupeChunk)
         {
@@ -184,17 +184,17 @@ public sealed class Afsk300MultiModem : IModem
     /// <remarks>
     /// <para><b>Why not simply the first branch to finish.</b> Branches are fed in ascending
     /// order and a clean signal is copyable by branches well either side of it, so "first" means
-    /// "lowest-centred branch that could still read it" — which reported −105 Hz for a signal
+    /// "lowest-centred branch that could still read it" - which reported −105 Hz for a signal
     /// exactly on frequency, and moved with buffer framing. That is fine for deciding *whether*
     /// to emit (the bytes are identical either way; the deduper is content-based) and useless as
     /// the frequency reading that reaches an operator's display.</para>
     /// <para>So the branches are compared instead, on each one's own
-    /// <see cref="AfskDemodulator.CarrierOffsetHz"/> — how far it measured the signal from its
+    /// <see cref="AfskDemodulator.CarrierOffsetHz"/> - how far it measured the signal from its
     /// own centre. The smallest residual is the best-matched branch, and it is also the only
     /// reading guaranteed honest: a branch more than ~40 Hz off has one discriminator peak
     /// against the clamp, and with 35 Hz spacing the nearest branch is never more than half a
     /// step out. Its <c>branch + residual</c> is the station's offset from the bank's centre.</para>
-    /// <para>The cost is that a frame waits for the end of its chunk — at most 100 ms, against
+    /// <para>The cost is that a frame waits for the end of its chunk - at most 100 ms, against
     /// frames that take seconds at 300 baud.</para>
     /// </remarks>
     private void EmitBestOfChunk()

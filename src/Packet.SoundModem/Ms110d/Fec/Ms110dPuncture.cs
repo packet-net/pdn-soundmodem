@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Ms110d.Fec;
 /// <see cref="KeepT2"/> are the two mask rows applied column-wise to the (repeated) pair
 /// stream; <see cref="RepeatFactor"/> repeats the rate-1/2 pair adjacently
 /// (T1,T2,T1,T2 per input bit for 2×) <b>before</b> the mask is applied (the worked 1/3
-/// example, doc p. 221 — repeat first, then puncture).
+/// example, doc p. 221 - repeat first, then puncture).
 /// </summary>
 /// <param name="KeepT1">Mask row for T1 (b0) bits, 1 = keep.</param>
 /// <param name="KeepT2">Mask row for T2 (b1) bits, 1 = keep.</param>
@@ -38,7 +38,7 @@ public sealed record PunctureSpec(byte[] KeepT1, byte[] KeepT2, int RepeatFactor
 /// <summary>
 /// Appendix D puncturing/repetition (D.5.3.2.4 + Table D-L). Puncturing happens after the
 /// tail-biting encoder and <b>before</b> interleaving (D.5.3.2). K=7 and K=9 masks differ for
-/// some rates (e.g. 3/4: 110/101 vs 111/100) — the tables are keyed by constraint length.
+/// some rates (e.g. 3/4: 110/101 vs 111/100) - the tables are keyed by constraint length.
 /// </summary>
 public static class Ms110dPuncture
 {

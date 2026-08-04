@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Modems;
 /// </summary>
 /// <remarks>
 /// <see cref="IModem.Mode"/> reports what the modem actually is, which is more than the mode
-/// name you configured: a BPSK modem says <c>bpsk300-il2pc-multi9</c> — the framing it settled
+/// name you configured: a BPSK modem says <c>bpsk300-il2pc-multi9</c> - the framing it settled
 /// on and how many branches its diversity bank has. That is the right thing for a log or a
 /// quality frame and the wrong thing for a label on a waterfall, where you want to read
 /// "BPSK300 IL2Pc" at a glance and the bank size is not what you are looking for.
@@ -56,7 +56,7 @@ public static class ModeNames
         return text.ToString();
     }
 
-    /// <summary><c>multi</c> or <c>multi9</c> — the bank's branch count.</summary>
+    /// <summary><c>multi</c> or <c>multi9</c> - the bank's branch count.</summary>
     private static bool IsBankSuffix(string part) =>
         part.StartsWith("multi", StringComparison.OrdinalIgnoreCase)
         && part.AsSpan(5).ToString().All(char.IsAsciiDigit);

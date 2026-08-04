@@ -10,11 +10,11 @@ namespace Packet.SoundModem.Survey;
 /// <param name="AudioCentreHz">Measured centre, in audio frequency.</param>
 /// <param name="AudioLowHz">Measured low edge.</param>
 /// <param name="AudioHighHz">Measured high edge.</param>
-/// <param name="WidthHz">Measured occupied width — the first thing a classifier wants.</param>
+/// <param name="WidthHz">Measured occupied width - the first thing a classifier wants.</param>
 /// <param name="DurationSeconds">How long it lasted.</param>
 /// <param name="PeakSnrDb">Best single-line SNR over the noise floor.</param>
 /// <param name="MeanSnrDb">Mean SNR over the burst.</param>
-/// <param name="RfCentreHz">Where it sat on the band, when the station knows its dial —
+/// <param name="RfCentreHz">Where it sat on the band, when the station knows its dial -
 /// null on a station running in audio frequencies only.</param>
 /// <param name="DialHz">The dial the RF figure was derived from.</param>
 /// <param name="Sideband">Which sideband, for the same reason.</param>
@@ -24,13 +24,13 @@ namespace Packet.SoundModem.Survey;
 /// <param name="SubChannel">The modem this concerns, where the verdict names one.</param>
 /// <param name="Mode">Its mode, where the verdict names one.</param>
 /// <param name="FrameHex">The decoded bytes, on an <see cref="SurveyVerdict.Unattributed"/>
-/// capture — the frame is readable, it is only its addresses that are not, so the payload is
+/// capture - the frame is readable, it is only its addresses that are not, so the payload is
 /// the evidence and belongs next to the audio.</param>
 /// <param name="Il2pHeaderType">Which IL2P encapsulation it arrived in, where the framing is
 /// IL2P. The first question worth asking about a frame that decoded cleanly and then would not
 /// yield callsigns: Type 1 translated and Type 0 transparent put the address field in different
 /// places.</param>
-/// <param name="AttributionNote">Why the addresses would not read, in a line — so the sidecar
+/// <param name="AttributionNote">Why the addresses would not read, in a line - so the sidecar
 /// answers the question instead of posing it.</param>
 public sealed record BurstCapture(
     DateTimeOffset CapturedAt,
@@ -54,8 +54,8 @@ public sealed record BurstCapture(
     string? AttributionNote = null);
 
 /// <summary>
-/// Writes captured bursts to disk — a WAV of the audio and a JSON sidecar of everything measured
-/// about it — on a background thread, under a budget.
+/// Writes captured bursts to disk - a WAV of the audio and a JSON sidecar of everything measured
+/// about it - on a background thread, under a budget.
 /// </summary>
 /// <remarks>
 /// <para><b>Background, like the frame log.</b> The receive path copies a burst out of the ring

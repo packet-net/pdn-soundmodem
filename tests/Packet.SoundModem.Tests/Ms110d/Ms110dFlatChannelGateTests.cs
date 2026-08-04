@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Tests.Ms110d;
 
 /// <summary>
 /// Quick diagnostic: verify the flat-channel turbo gate works at mask SNRs.
-/// Not gated by env vars — runs in normal CI.
+/// Not gated by env vars - runs in normal CI.
 /// </summary>
 public class Ms110dFlatChannelGateTests
 {
@@ -88,8 +88,8 @@ public class Ms110dFlatChannelGateTests
         demod.BlockDecoded += b => decoded.AddRange(b.Bits);
         demod.Process(audio);
 
-        // #67: the test asserts what its name claims — the Poor channel classifies as
-        // fading and the turbo path actually runs — and that the decode is correct,
+        // #67: the test asserts what its name claims - the Poor channel classifies as
+        // fading and the turbo path actually runs - and that the decode is correct,
         // not merely present (fixed seeds make this deterministic).
         (demod.TurboConverged + demod.TurboReverted + demod.TurboAborted).Should().BeGreaterThan(0,
             $"WN{wn} on Poor must take the turbo path (fading classification)");
@@ -104,7 +104,7 @@ public class Ms110dFlatChannelGateTests
             }
         }
 
-        // Measured on this fixed realization: 229/8192 (2.8 %) — a deep fade this short
+        // Measured on this fixed realization: 229/8192 (2.8 %) - a deep fade this short
         // two-block burst cannot interleave over, the exact gap Phase B closes (WN4 Poor
         // baseline 2.36E-5 vs the 1E-5 mask). The bound asserts "degraded, not broken";
         // tighten to 0 when B3 lands WN4 at mask.

@@ -4,7 +4,7 @@ namespace Packet.SoundModem.Ms110d;
 
 /// <summary>
 /// Fractionally-spaced (T/2) decision-feedback equalizer for the Appendix D serial-tone
-/// receiver — textbook DFE (Proakis, <i>Digital Communications</i>, ch. 9) with NLMS
+/// receiver - textbook DFE (Proakis, <i>Digital Communications</i>, ch. 9) with NLMS
 /// adaptation (Haykin, <i>Adaptive Filter Theory</i>); GPL-clean, designed from the spec's
 /// probe structure only. Tap counts per mini-probe class follow design §2.5:
 /// K=48 → 32 FF / 22 FB, K=32 → 24 FF / 12 FB, K=24 → 16 FF / 6 FB.
@@ -12,7 +12,7 @@ namespace Packet.SoundModem.Ms110d;
 /// <remarks>
 /// Convention: the feed-forward window holds T/2 input samples newest-first
 /// (<c>window[i] = x[2n + lead − i]</c>); the feedback window holds prior symbol decisions
-/// (<c>past[j] = d̂[n−1−j]</c>). Output y = Σ ff·window + Σ fb·past — feedback signs live in
+/// (<c>past[j] = d̂[n−1−j]</c>). Output y = Σ ff·window + Σ fb·past - feedback signs live in
 /// the taps. Initial taps come from a regularized least-squares solve over the known
 /// preamble tail + first probe (<see cref="BeginTraining"/>/
 /// <see cref="AddTrainingRow(ReadOnlySpan{Cf}, ReadOnlySpan{Cf}, Cf, float)"/>/
@@ -70,7 +70,7 @@ public sealed class Dfe
     /// <summary>Feed-forward (T/2) tap count.</summary>
     public int FfTaps => _ff.Length;
 
-    /// <summary>Diagnostic: Σ|ff|² of the current feed-forward taps — the equalizer's
+    /// <summary>Diagnostic: Σ|ff|² of the current feed-forward taps - the equalizer's
     /// white-noise power gain (§B3.3 fade-crossing corpse instrument).</summary>
     public float FfEnergy
     {
@@ -154,7 +154,7 @@ public sealed class Dfe
         taps[_ff.Length..].CopyTo(_fb);
     }
 
-    /// <summary>Installs the linear interpolation (1−α)·a + α·b of two snapshots — the
+    /// <summary>Installs the linear interpolation (1−α)·a + α·b of two snapshots - the
     /// per-symbol tap trajectory across a data block bracketed by two solved probes.</summary>
     public void LoadInterpolatedTaps(ReadOnlySpan<Cf> a, ReadOnlySpan<Cf> b, float alpha)
     {
@@ -254,7 +254,7 @@ public sealed class Dfe
 
     /// <summary>Adds one training row: the FF window and known past symbols observed when
     /// the known symbol <paramref name="desired"/> was current. <paramref name="weight"/>
-    /// scales the row's least-squares influence — known probe symbols get authoritative
+    /// scales the row's least-squares influence - known probe symbols get authoritative
     /// weight, decision-directed rows advisory weight (wrong decisions under a rotated
     /// constellation are self-confirming and must never outvote the probes).</summary>
     public void AddTrainingRow(ReadOnlySpan<Cf> window, ReadOnlySpan<Cf> past, Cf desired, float weight = 1f)
@@ -297,7 +297,7 @@ public sealed class Dfe
     /// whose <paramref name="past"/> entries are expectations E[x] rather than known
     /// symbols. The EM-correct Gram needs E[x·x̄] = |E[x]|² + Var on the feedback
     /// <b>diagonal</b> (cross terms factor under symbol independence; feed-forward columns
-    /// are received data, not latents) — <paramref name="pastVariance"/> supplies the
+    /// are received data, not latents) - <paramref name="pastVariance"/> supplies the
     /// per-entry variance added there. Zero variances reduce bit-identically to the base
     /// overload.</summary>
     public void AddTrainingRow(
@@ -314,11 +314,11 @@ public sealed class Dfe
     /// <summary>Solves the accumulated regularized normal equations and installs the taps.
     /// Returns false (leaving taps unchanged) if the system was degenerate.
     /// With <paramref name="anchorToCurrentTaps"/> the ridge pulls toward the CURRENT taps
-    /// instead of zero — the per-probe tracking update on fading channels (a Kalman-style
+    /// instead of zero - the per-probe tracking update on fading channels (a Kalman-style
     /// prior: K fresh rows dominate the directions the probe observed, the anchor carries
     /// everything else). <paramref name="ffNoisePower"/> (channel-truth genie only) adds
-    /// σ²·Σweight to the feed-forward Gram diagonal — the term noisy rows contribute
-    /// implicitly — so a solve over noise-free rows still yields the MMSE equalizer rather
+    /// σ²·Σweight to the feed-forward Gram diagonal - the term noisy rows contribute
+    /// implicitly - so a solve over noise-free rows still yields the MMSE equalizer rather
     /// than the zero-forcing one (feedback regressors are decisions, noise-free either way).</summary>
     public bool SolveTraining(float regularization = 1e-3f, bool anchorToCurrentTaps = false, float ffNoisePower = 0f)
     {
@@ -379,12 +379,12 @@ public sealed class Dfe
     }
 
     /// <summary>Result of <see cref="SolveTrainingTir"/>. <see cref="Lag"/> = 0 means the
-    /// null (full-inversion) candidate won — feed-forward taps installed, no designed echo.
+    /// null (full-inversion) candidate won - feed-forward taps installed, no designed echo.
     /// <see cref="Lag"/> &gt; 0 means the shortened solve was accepted: the post-FF response
     /// is ∝ x[u] + <see cref="Coefficient"/>·x[u−Lag] (+ <see cref="Coefficient2"/>·x[u−Lag2]
-    /// when <see cref="Lag2"/> &gt; 0 — the §B3.3 straddle pair, Lag2 = Lag ± 1) and the
+    /// when <see cref="Lag2"/> &gt; 0 - the §B3.3 straddle pair, Lag2 = Lag ± 1) and the
     /// echo model must carry those lags. Under the floating-gain solve the overall cursor
-    /// gain g is NOT normalized to 1 (§B3.3 eigen-TIR) — the coefficients here are the
+    /// gain g is NOT normalized to 1 (§B3.3 eigen-TIR) - the coefficients here are the
     /// c/g ratios, so their meaning is unchanged. <see cref="SseNull"/>/<see cref="SseTir"/>
     /// are the exact (unridged) residual sums for diagnostics.</summary>
     public readonly record struct TirSolve(
@@ -396,14 +396,14 @@ public sealed class Dfe
     /// and acceptance are MONIC, exactly as #82: the null candidate solves
     /// min |ff·window − x[u]|², every single-lag candidate adds one free coefficient
     /// (min |ff·window + b·x[u−d] − x[u]|²), and a candidate is accepted only when it
-    /// beats the null by 4·ln(L)·SSE₀/rows — 4× the noise-only expectation of the
-    /// best-of-L free-parameter reduction — so echo-free frames keep today's
+    /// beats the null by 4·ln(L)·SSE₀/rows - 4× the noise-only expectation of the
+    /// best-of-L free-parameter reduction - so echo-free frames keep today's
     /// full-inversion solve exactly. On the ACCEPTED lag set only, the installed FF is
     /// then re-solved with a FLOATING target gain
-    /// (min ‖ff·window − g·x[u] − c·x[u−d]‖², ‖(g, c)‖ = 1 — §B3.3 eigen-TIR): the monic
-    /// pinned unit cursor forces the FF to invert a faded cursor path — measured on the
+    /// (min ‖ff·window − g·x[u] − c·x[u−d]‖², ‖(g, c)‖ = 1 - §B3.3 eigen-TIR): the monic
+    /// pinned unit cursor forces the FF to invert a faded cursor path - measured on the
     /// WN7 corpse boosting the noise floor 5.3× and carrying ~74% of the oracle error
-    /// mass (the weak-cursor class) — where the unit-norm target shifts weight onto the
+    /// mass (the weak-cursor class) - where the unit-norm target shifts weight onto the
     /// strong echo column and lets the chain BCJR collect both paths in the trellis. The
     /// eigen solve is NOT used for selection: the target columns' post-projection
     /// residuals are mutually correlated through the shared window, giving λmin a
@@ -414,7 +414,7 @@ public sealed class Dfe
     /// <see cref="SolveTraining"/>. The accumulation is consumed either way.
     /// <c>onlyLag</c> &gt; 0 (§B3.7 E1′, the frozen pass's burst-consensus constrained
     /// solve) tests ONLY that lag and drops the margin to the single-candidate form
-    /// 4·ln 2·SSE₀/rows — no L-fold selection premium; 0 is the free search,
+    /// 4·ln 2·SSE₀/rows - no L-fold selection premium; 0 is the free search,
     /// bit-identical to before.</summary>
     public TirSolve SolveTrainingTir(float regularization, float ffNoisePower, int maxLag, bool allowPair = true, int onlyLag = 0)
     {
@@ -463,7 +463,7 @@ public sealed class Dfe
         var bestB2 = Cf.Zero;
         if (accept && !allowPair)
         {
-            // Pair candidates suppressed (§B3.3: label-trust gate — the demod's hard
+            // Pair candidates suppressed (§B3.3: label-trust gate - the demod's hard
             // iteration 0 cancels the adjacent tap with re-encoded labels that can be
             // ~half wrong, injecting unpriced observation error; measured flipping a
             // marginal WN6 block out of convergence at 146× the point's BER). The
@@ -477,7 +477,7 @@ public sealed class Dfe
             // free parameter over the accepted single-lag solve and only two candidates
             // (no L-fold search), so the margin drops the ln L factor: the noise-only
             // best-of-two reduction is ≈ (1 + ln 2)·SSE₀/rows and 4·SSE₀/rows keeps a
-            // >2× safety factor — the same construction as the single-lag acceptance.
+            // >2× safety factor - the same construction as the single-lag acceptance.
             float pairGate = bestSse - (4f * sseNull / _trainingRows);
             for (int side = -1; side <= 1; side += 2)
             {
@@ -513,7 +513,7 @@ public sealed class Dfe
         // §B3.3 eigen refit (fadecross note, Amendment 1): the monic machinery above
         // established the lag set and the acceptance evidence bit-identically to #82;
         // NOW float the target gain over the accepted columns so the FF stops inverting
-        // a faded cursor path (the weak-cursor noise boost — measured 5.3× on the WN7
+        // a faded cursor path (the weak-cursor noise boost - measured 5.3× on the WN7
         // corpse). Rejected and echo-free frames never reach here. The monic solution
         // stands if the refit degenerates numerically.
         var coeff = Cf.Zero;
@@ -546,7 +546,7 @@ public sealed class Dfe
                     Cf c2 = lag2 > 0 ? t[1 + (lag2 < bestLag ? 0 : 1)] : Cf.Zero;
 
                     // Floating coefficients sit on the TARGET side (ff·window ≈
-                    // g·x[u] + c·x[u−d]): the relative echo is c/g — the same
+                    // g·x[u] + c·x[u−d]): the relative echo is c/g - the same
                     // quantity the monic −b reports. A collapsed cursor gain (|g|²
                     // below gauge noise) reports the raw c; diagnostics only, the
                     // demod re-estimates the echo model by correlation either way.
@@ -574,7 +574,7 @@ public sealed class Dfe
 
     /// <summary>Prepares the floating-gain (§B3.3 eigen-TIR) candidate machinery: copies
     /// the feed-forward block of the live accumulation, adds the genie noise diagonal and
-    /// the same λ = reg·trace/f ridge the null candidate uses (toward ZERO — the
+    /// the same λ = reg·trace/f ridge the null candidate uses (toward ZERO - the
     /// tracking-tap anchor is a sequential-solve prior whose phase would pin the floating
     /// target), Cholesky-factorizes it into the shared scratch, and back-substitutes the
     /// shared first target column A⁻¹·(Wᴴx). The factor stays valid for every
@@ -635,7 +635,7 @@ public sealed class Dfe
     /// feed-forward taps into <paramref name="sol"/>[0..f) and the unit target into
     /// <paramref name="t"/>. Returns the exact unridged data residual
     /// Σw·‖targets·t − ff·window‖² (comparable with <see cref="SolveSubset"/>'s monic
-    /// residuals — the null target is also unit-norm), or NaN if degenerate.</summary>
+    /// residuals - the null target is also unit-norm), or NaN if degenerate.</summary>
     private float SolveFloatingCandidate(ReadOnlySpan<int> fbIndices, Cf[] sol, Span<Cf> t)
     {
         int f = _ff.Length;
@@ -691,7 +691,7 @@ public sealed class Dfe
 
         // Smallest eigenvector by inverse iteration on R + εI (R is PSD: the Schur
         // complement of a Gram matrix, and the ridge on A only raises it). Local
-        // lower-triangle factor — the shared scratch still holds the FF factor.
+        // lower-triangle factor - the shared scratch still holds the FF factor.
         double tr = 0;
         for (int a = 0; a < m; a++)
         {
@@ -805,7 +805,7 @@ public sealed class Dfe
         }
 
         // ff = Σ t_j·C_j, then the exact unridged data residual
-        // tᴴDt − 2·Re(ffᴴ·Bt) + ffᴴ·A₀·ff (A₀ = raw Wᴴ·W — ridge and genie noise
+        // tᴴDt − 2·Re(ffᴴ·Bt) + ffᴴ·A₀·ff (A₀ = raw Wᴴ·W - ridge and genie noise
         // diagonal backed out, matching SolveSubset's convention).
         for (int i = 0; i < f; i++)
         {
@@ -1031,7 +1031,7 @@ public sealed class Dfe
     }
 
     /// <summary>Seeds P from the inverse of the accumulated training Gram (MMSE-calibrated
-    /// initialization — design §2.5: "RLS subsumes the MMSE-init"). Falls back to scaled
+    /// initialization - design §2.5: "RLS subsumes the MMSE-init"). Falls back to scaled
     /// identity if the Gram is degenerate. <paramref name="ffNoisePower"/> as in
     /// <see cref="SolveTraining"/> (channel-truth genie only).</summary>
     public void SeedRlsFromTraining(float regularization, float pFallback = 1.0f, float ffNoisePower = 0f)
@@ -1069,7 +1069,7 @@ public sealed class Dfe
             }
         }
 
-        // Invert by solving each identity column against a single factorization — the
+        // Invert by solving each identity column against a single factorization - the
         // factor depends only on the matrix, so reusing it across columns is bit-identical
         // to refactorizing per column.
         bool ok = CholeskyFactor(gram, n);
@@ -1105,7 +1105,7 @@ public sealed class Dfe
     /// <summary>One recursive-least-squares update toward <paramref name="desired"/>;
     /// returns the pre-update equalizer output. <paramref name="weight"/> is the row's
     /// least-squares influence (probe rows authoritative, DD rows advisory) and enters the
-    /// recursion consistently — gain denominator AND P update — as weighted RLS requires;
+    /// recursion consistently - gain denominator AND P update - as weighted RLS requires;
     /// see the derivation comment in the body.</summary>
     public Cf RlsUpdate(ReadOnlySpan<Cf> window, ReadOnlySpan<Cf> past, Cf desired, float weight = 1f)
     {
@@ -1140,13 +1140,13 @@ public sealed class Dfe
         }
 
         // Weighted RLS. A row of weight w enters the exponentially-forgotten LS cost as
-        // w·|d − uᵀθ|², i.e. an effective regressor √w·u — so w must scale BOTH the gain
+        // w·|d − uᵀθ|², i.e. an effective regressor √w·u - so w must scale BOTH the gain
         // denominator and the P (inverse-correlation) update:
         //   denom = λ + w·uᵀPu*,  θ += w·e·Pu*/denom,  P ← λ⁻¹(P − w·(Pu*)(Pu*)ᴴ/denom).
         // The previous code scaled only the tap step and always applied the FULL P update,
         // so every advisory (w = 0.1) row shrank P as if a full-confidence row had arrived
         // and long static/AWGN spans progressively froze adaptation (issue #64). A
-        // consequence of the correct form: uniform weights cancel — all-0.1 rows adapt
+        // consequence of the correct form: uniform weights cancel - all-0.1 rows adapt
         // exactly like all-1.0 rows once the P0 prior washes out, as scale invariance of
         // least squares demands. w = 1 reduces bit-identically to textbook RLS.
         var uPx = Cf.Zero;
@@ -1190,8 +1190,8 @@ public sealed class Dfe
     }
 
     /// <summary>Enforces Hermitian symmetry on P and caps the diagonal to prevent
-    /// null-space divergence (the probe is rank-deficient — ≤16 distinct patterns for
-    /// 36+ taps — so P grows without bound in the unobserved subspace over long bursts).
+    /// null-space divergence (the probe is rank-deficient - ≤16 distinct patterns for
+    /// 36+ taps - so P grows without bound in the unobserved subspace over long bursts).
     /// Call once per frame.</summary>
     public void SymmetrizeP(float pMax = 10f)
     {

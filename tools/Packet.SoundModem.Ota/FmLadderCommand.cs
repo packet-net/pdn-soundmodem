@@ -6,7 +6,7 @@ using Packet.SoundModem.UberSdr;
 namespace Packet.SoundModem.Ota;
 
 /// <summary>
-/// <c>sm-ota ladder --mode &lt;fm-mode&gt;</c> — the §E2 pass for the FM-native modes (afsk1200,
+/// <c>sm-ota ladder --mode &lt;fm-mode&gt;</c> - the §E2 pass for the FM-native modes (afsk1200,
 /// fsk9600/4800, c4fsk, qpsk3600-over-FM): the sim baseline's own channel injected at the
 /// transmitter, frequency-modulated at the mode's <b>target peak deviation</b>, sent through real
 /// hardware on the DAX FM route, and scored with the mode's own demodulator behind an FM
@@ -14,8 +14,8 @@ namespace Packet.SoundModem.Ota;
 /// </summary>
 /// <remarks>
 /// <para><c>--dry-run</c> renders the pass, software-FM-modulates it at the target deviation, lays it
-/// out as an IQ capture would hold it, FM-discriminates it back and scores it — render → channel →
-/// FM-mod → FM-demod → decode, everything except the radio — so the chain is proved before any power
+/// out as an IQ capture would hold it, FM-discriminates it back and scores it - render → channel →
+/// FM-mod → FM-demod → decode, everything except the radio - so the chain is proved before any power
 /// is applied. It reports the delivered SNR the scorer measures beside the SNR the rig was asked to
 /// inject, and the achieved peak deviation beside the target.</para>
 /// <para><b>Deviation calibration is a radio step.</b> The software modulator hits the target
@@ -39,7 +39,7 @@ internal static class FmLadderCommand
                 The FM §E2 ladder. Renders a frame per rung, injects the sim baseline's channel at a
                 known SNR, frequency-modulates it at the mode's target peak deviation, transmits it on
                 the DAX FM route, captures it, FM-discriminates it and scores it with the mode's own
-                demodulator — per-burst frame decode, delivered SNR against each burst's noise lead-in,
+                demodulator - per-burst frame decode, delivered SNR against each burst's noise lead-in,
                 and the achieved peak deviation.
 
                 FM modes and their target peak deviation (docs/mode-modulation-reference.md):
@@ -64,8 +64,8 @@ internal static class FmLadderCommand
                   --out <iq.wav>          where to write the simulated capture
                   --rate <Hz>             render/simulated-capture rate (default 48000)
 
-                Live (DAX FM route — audio frequency-modulating the carrier):
-                  --rf-power <0-100>      REQUIRED to transmit — no default, by design
+                Live (DAX FM route - audio frequency-modulating the carrier):
+                  --rf-power <0-100>      REQUIRED to transmit - no default, by design
                   --max-watts <W>         abort any burst whose forward power exceeds this (default
                                           15 W with --capture rsp, the RSP1 rig's ceiling)
                   --audio-amplitude <a>   DAX FM drive, 0..1 (default 0.9). THIS is the deviation
@@ -78,14 +78,14 @@ internal static class FmLadderCommand
                   --capture rsp           capture on the RSP1/studybox SDR and score. RSP1 options:
                     --rsp-host <h>          default studybox
                     --rsp-freq <Hz>         RX tune (default: --freq centre + --dial-correction)
-                    --rsp-rate <Hz>         complex sample rate (default 48000 — the FM signal fits)
+                    --rsp-rate <Hz>         complex sample rate (default 48000 - the FM signal fits)
                     --rsp-gain <str>        rx_sdr -g string
                     --rsp-ssh-key <path>    ssh identity (default ~/.ssh/id_ed25519)
                   --dial-correction <Hz>  RE-MEASURE THIS EVERY SESSION (see the handover)
                   --out-dir <dir>         where the capture and manifest land
 
                 Each rung carries its own noise lead-in on the air, so the receiver measures the SNR
-                actually delivered — the same self-calibrating method the SSB and OFDM ladders use.
+                actually delivered - the same self-calibrating method the SSB and OFDM ladders use.
                 """);
             return 0;
         }
@@ -217,7 +217,7 @@ internal static class FmLadderCommand
 
         Log($"transmit antenna: {options.Antenna}"
             + (captureRsp && !a.Has("antenna") ? "  (defaulted to ANT2 for the RSP1 capture rig)" : ""));
-        Log($"slice mode: {options.SliceMode} (FM carrier); DAX FM drive {pass.AudioGain:G4} — "
+        Log($"slice mode: {options.SliceMode} (FM carrier); DAX FM drive {pass.AudioGain:G4} - "
             + $"CALIBRATE this so the achieved peak deviation is {targetDevHz / 1000:F1} kHz "
             + "(sm-ota fm-deviation on a test burst)");
         if (maxWatts is double mw)
@@ -264,7 +264,7 @@ internal static class FmLadderCommand
             Log($"{mode} {point.Point.SnrDb:+0.0;-0.0;0} dB {point.Point.Channel} seed {point.Point.Seed}");
 
             // Resample the mode's DSP-rate audio (channel + noise lead-in included) to the DAX rate
-            // and apply the one pass FM drive — the radio's FM modulator turns this into deviation.
+            // and apply the one pass FM drive - the radio's FM modulator turns this into deviation.
             float[] payload = LadderCommand.ScaleInPlace(
                 LadderCommand.Resample(point.Audio, point.DspRate, FlexDaxTransmitter.SampleRate),
                 pass.AudioGain);
@@ -272,7 +272,7 @@ internal static class FmLadderCommand
             keyed.Add(report.KeyUtc);
             if (report.Aborted)
             {
-                Log($"ABORTED: {report.AbortReason} — stopping the pass");
+                Log($"ABORTED: {report.AbortReason} - stopping the pass");
                 break;
             }
 
@@ -357,7 +357,7 @@ internal static class FmLadderCommand
         string path, string mode, double targetDevHz, FmCampaignManifest manifest, FmCaptureScore score)
     {
         Console.WriteLine();
-        Console.WriteLine($"=== fm score: {Path.GetFileName(path)} — {score.AudioSeconds:F1} s, {mode} "
+        Console.WriteLine($"=== fm score: {Path.GetFileName(path)} - {score.AudioSeconds:F1} s, {mode} "
                           + $"(target dev {targetDevHz / 1000:F1} kHz, {manifest.Bursts.Count} burst(s), "
                           + $"modem {manifest.ModemRevision}) ===");
         Console.WriteLine($"{"#",3} {"start s",8} {"asked",7} {"got",7} {"d(dB)",6} {"decode",7} "
@@ -368,8 +368,8 @@ internal static class FmLadderCommand
         int snrErrCount = 0;
         foreach (FmBurstScore b in score.Bursts)
         {
-            string got = b.Snr is null ? "—" : b.Snr.SnrDb.ToString("F1", CultureInfo.InvariantCulture);
-            string delta = b.Snr is null ? "—"
+            string got = b.Snr is null ? "-" : b.Snr.SnrDb.ToString("F1", CultureInfo.InvariantCulture);
+            string delta = b.Snr is null ? "-"
                 : (b.Snr.SnrDb - b.AskedSnrDb).ToString("+0.0;-0.0", CultureInfo.InvariantCulture);
             if (b.Snr is not null)
             {
@@ -388,7 +388,7 @@ internal static class FmLadderCommand
         if (snrErrCount > 0)
         {
             Console.WriteLine($"mean |measured − asked| SNR: {snrErrSum / snrErrCount:F2} dB "
-                              + "(the self-calibration check — the ladder is only plotted correctly if this is small)");
+                              + "(the self-calibration check - the ladder is only plotted correctly if this is small)");
         }
 
         if (manifest.CapturePath is { } cap)
@@ -398,7 +398,7 @@ internal static class FmLadderCommand
     }
 
     /// <summary>
-    /// <c>sm-ota fm-deviation</c> — measure the peak FM deviation of an IQ capture. The instrument
+    /// <c>sm-ota fm-deviation</c> - measure the peak FM deviation of an IQ capture. The instrument
     /// the on-air calibration uses: transmit a burst, run this, and adjust the drive until the peak
     /// deviation matches the mode's target.
     /// </summary>
@@ -411,7 +411,7 @@ internal static class FmLadderCommand
                 sm-ota fm-deviation --in <iq.wav> [options]
 
                 FM-discriminates a 2-channel IQ capture and prints the peak / RMS / mean instantaneous-
-                frequency deviation in kHz — the achieved deviation, for calibrating the drive to a
+                frequency deviation in kHz - the achieved deviation, for calibrating the drive to a
                 mode's target (docs/mode-modulation-reference.md).
 
                   --in <iq.wav>       the capture (interleaved I,Q 16-bit stereo)
@@ -421,7 +421,7 @@ internal static class FmLadderCommand
                   --dial-hz <Hz>      carrier offset within the baseband to remove first (default 0)
 
                 The mean is the residual carrier offset; a large mean means the capture is not tuned to
-                the carrier — pass --dial-hz to null it (or re-tune), then re-measure.
+                the carrier - pass --dial-hz to null it (or re-tune), then re-measure.
                 """);
             return a is null ? 2 : 0;
         }
@@ -439,7 +439,7 @@ internal static class FmLadderCommand
             : i.Length - start;
 
         // Remove the carrier offset first, so the deviation is measured about the carrier rather than
-        // about DC — the same NCO the discriminator applies.
+        // about DC - the same NCO the discriminator applies.
         var id = new double[count];
         var qd = new double[count];
         double dPhi = -2.0 * Math.PI * dialHz / rate;
@@ -463,7 +463,7 @@ internal static class FmLadderCommand
 
         FmDeviation dev = FmDeviationMeter.Measure(id, qd, rate);
         Console.WriteLine($"=== fm deviation: {Path.GetFileName(path)} ===");
-        Console.WriteLine($"window {from:F2}–{from + (count / (double)rate):F2} s @ {rate} Hz"
+        Console.WriteLine($"window {from:F2}-{from + (count / (double)rate):F2} s @ {rate} Hz"
                           + (dialHz != 0 ? $", dial −{dialHz:F0} Hz removed" : ""));
         Console.WriteLine($"peak  {dev.PeakHz / 1000:F3} kHz");
         Console.WriteLine($"rms   {dev.RmsHz / 1000:F3} kHz");

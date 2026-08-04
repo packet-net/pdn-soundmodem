@@ -65,7 +65,7 @@ public class IdBeaconGhostTests
     {
         // IdBeaconGhost.CentreHzFor treats an unconfigured modem as sitting on Nino's 1500 Hz
         // carrier, which is also the catalogue default. Should that default ever move, the ghost
-        // would quietly start listening 200 Hz from the wrong place — so the two are pinned
+        // would quietly start listening 200 Hz from the wrong place - so the two are pinned
         // together here rather than left to agree by coincidence.
         IModem modem = ModemCatalog.Create(mode, SampleRate, _ => { });
         ModemBandProbe.TryMeasure(modem, SampleRate, out double low, out double high)
@@ -103,7 +103,7 @@ public class IdBeaconGhostTests
     public void The_Modem_The_Ghost_Rides_On_Hears_Nothing_Of_It()
     {
         // The whole point: the ident is in a modulation the data modem cannot read. If the PSK
-        // modem could decode it there would be no need for any of this — and if it produced
+        // modem could decode it there would be no need for any of this - and if it produced
         // anything at all from that audio it would be delivering a phantom frame to the host.
         var delivered = new List<byte[]>();
         IModem psk = ModemCatalog.Create("bpsk300", SampleRate, delivered.Add);
@@ -145,7 +145,7 @@ public class IdBeaconGhostTests
         qualities[0].Mode.Should().Be(ghost.Mode);
         ghost.BaseMode.Should().Be("qpsk2400");
 
-        // The display name is what an operator reads, and it is the same either way — the bank's
+        // The display name is what an operator reads, and it is the same either way - the bank's
         // branch count is not something they chose.
         ModeNames.Display(ghost.Mode).Should().Be("AFSK300");
     }
@@ -174,7 +174,7 @@ public class IdBeaconGhostTests
     public void A_Beacon_Off_Our_Dial_Is_Still_Heard_Across_The_Bank(double dialErrorHz)
     {
         // The one error this placement really has is a dial that differs from the identifying
-        // station's — the offset from their PSK carrier to their ident is fixed inside one TNC
+        // station's - the offset from their PSK carrier to their ident is fixed inside one TNC
         // and cannot drift. Covering that span is the whole reason the ghost is a bank, so the
         // span is what gets tested, rather than one convenient point in the middle of it.
         IdBeaconGhost ghost = IdBeaconGhost.TryCreate(0, "bpsk300", null, SampleRate)!;
@@ -185,7 +185,7 @@ public class IdBeaconGhostTests
 
         qualities.Should().ContainSingle();
 
-        // How far the identifying station's dial sits from ours — a real reading now that the
+        // How far the identifying station's dial sits from ours - a real reading now that the
         // bank measures the carrier rather than naming whichever branch finished first.
         qualities[0].FrequencyOffsetHz.Should().BeApproximately(
             dialErrorHz, 8, "the ident says where the station actually was");

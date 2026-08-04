@@ -14,7 +14,7 @@
     <!-- Build against a local M0LTE.Flex checkout with
          `-p:FlexSourcePath=/path/to/M0LTE.Flex/src/M0LTE.Flex/M0LTE.Flex.csproj`.
          The Flex work here is co-developed with that library and the radio is the only
-         authority on how it behaves, so iterating means editing both and testing on air —
+         authority on how it behaves, so iterating means editing both and testing on air -
          a pack/publish round trip per change is friction with nothing to show for it.
          Unset (the default and what CI uses), the published package is consumed. -->
     <PackageReference Include="M0LTE.Flex" Condition="'$(FlexSourcePath)' == ''" />
@@ -41,7 +41,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The browser waterfall page, served whole by WaterfallWebServer — a single
+    <!-- The browser waterfall page, served whole by WaterfallWebServer - a single
          self-contained file, no external assets. -->
     <EmbeddedResource Include="Waterfall/wwwroot/waterfall.html" />
   </ItemGroup>

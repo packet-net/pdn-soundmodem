@@ -19,7 +19,7 @@ jobs:
       # Restore past the HTTP cache, for the same reason release.yml does: these runners are
       # self-hosted and keep their NuGet cache between jobs indefinitely, so a dependency
       # published minutes ago is invisible here while nuget.org already serves it. That is every
-      # PR that bumps one of our own packages just after cutting it — the build then fails with
+      # PR that bumps one of our own packages just after cutting it - the build then fails with
       # "Unable to find package … Nearest version: <the one before>", which reads like a typo in
       # the version rather than a stale index. An ephemeral runner would never see it; ours do,
       # and there are several, each with a cache of its own.
@@ -32,7 +32,7 @@ jobs:
 
       # A red build that does not name the test is a reproduce-and-guess cycle every time. The
       # MTP runner prints only "Failed: 1" and writes the names to a log on the runner, which is
-      # not this machine and is not uploaded — so surface it here. The file is UTF-16, which is
+      # not this machine and is not uploaded - so surface it here. The file is UTF-16, which is
       # why plain grep finds nothing in it, and it records only failures and skips.
       - name: Name the failures
         if: failure()
@@ -42,7 +42,7 @@ jobs:
             found=1
             echo "::group::$(basename "$f")"
             # Failures first and in full: the log lists every skip too, and on this suite that
-            # is ~190 lines of them — enough to fill a head -200 on its own and push the actual
+            # is ~190 lines of them - enough to fill a head -200 on its own and push the actual
             # failures off the end, which is exactly what happened and cost a reproduce-and-guess
             # cycle. The tail is kept after them for context.
             log="$(iconv -f UTF-16LE -t UTF-8 "$f" 2>/dev/null || cat "$f")"
@@ -52,14 +52,14 @@ jobs:
             echo "::endgroup::"
           done < <(find tests -path '*/TestResults/*.log' -newermt '-30 minutes' 2>/dev/null)
           [ "$found" = 1 ] || echo "::warning::no TestResults log found to report"
-      - name: Aspiration scoreboard (non-blocking — red here is a to-do, not a break)
+      - name: Aspiration scoreboard (non-blocking - red here is a to-do, not a break)
         continue-on-error: true
         env:
           NINOTNC_ASPIRATION: "1"
         run: dotnet test --configuration Release --no-build -- --filter-trait "Category=Aspiration"
 
       # Smoke-build the .deb so packaging breakage surfaces here rather than at the
-      # moment someone cuts a tag. amd64 only — the arch-specific part is one SDK flag.
+      # moment someone cuts a tag. amd64 only - the arch-specific part is one SDK flag.
       - name: Package smoke build (.deb)
         run: |
           set -euo pipefail

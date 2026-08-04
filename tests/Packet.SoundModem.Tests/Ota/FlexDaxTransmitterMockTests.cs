@@ -4,20 +4,20 @@ using Packet.SoundModem.Ota;
 namespace Packet.SoundModem.Tests.Ota;
 
 /// <summary>
-/// The DAX-audio transmit path end to end against <see cref="MockFlexRadio"/> — headless DIGU
+/// The DAX-audio transmit path end to end against <see cref="MockFlexRadio"/> - headless DIGU
 /// bring-up, DAX-as-transmit-source selection, transmit-filter open, key, push audio, drain,
-/// unkey — with no radio. The deployment-route counterpart of <see cref="FlexIqTransmitterMockTests"/>.
+/// unkey - with no radio. The deployment-route counterpart of <see cref="FlexIqTransmitterMockTests"/>.
 /// </summary>
 /// <remarks>
 /// <para>Unlike the reflection-driven waveform path, DAX is a <b>push</b> sink: the transmitter
 /// writes audio and the sink meters it out at the DAX sample rate, so there is no ring, no starve,
-/// and the failure modes worth an offline gate are the bring-up ones — a transmitter left pointed
+/// and the failure modes worth an offline gate are the bring-up ones - a transmitter left pointed
 /// at the mic (which keys and sends silence) and a transmit filter left truncating the top of the
 /// MS110D band.</para>
 /// <para>The mock models the headless DAX path, the <c>transmit set dax=1</c> selection and its
 /// read-back, the transmit filter, the meter surface and byte-exact DAX-TX capture. It does NOT
 /// model a transmitter that refuses the DAX selection, so the "bring-up throws on
-/// <c>TransmitSourceWarning</c>" path is not exercisable here — the mock always reports
+/// <c>TransmitSourceWarning</c>" path is not exercisable here - the mock always reports
 /// <c>dax=1</c> once told. That throw is covered by construction (it mirrors the main repo's
 /// <c>FlexDevice.OpenAsync</c>) and by the positive read-back asserted below.</para>
 /// </remarks>
@@ -70,7 +70,7 @@ public sealed class FlexDaxTransmitterMockTests
         {
             // The step whose absence produced a fully successful-looking transmission with no
             // modulation on it (Flex 0.7.0): the transmitter must be pointed at DAX, and the radio
-            // must agree — the transmitter surfaces the read-back.
+            // must agree - the transmitter surfaces the read-back.
             mock.CommandLog.Should().Contain("transmit set dax=1");
             mock.TransmitSourceIsDax.Should().BeTrue();
             tx.TransmitSourceIsDax.Should().BeTrue("the transmitter surfaces the radio's read-back");
@@ -85,7 +85,7 @@ public sealed class FlexDaxTransmitterMockTests
         await using (client)
         await using (tx)
         {
-            // The GLOBAL transmit filter — 3 kHz from the factory — is what caps transmitted audio
+            // The GLOBAL transmit filter - 3 kHz from the factory - is what caps transmitted audio
             // bandwidth, so the DAX route always states it to clear the MS110D band (skirts to
             // ≈3450 Hz on the 1800 Hz sub-carrier) rather than inherit whatever a previous session left.
             mock.CommandLog.Should().Contain(c => c.Contains("transmit set filter_high=3450"));
@@ -119,7 +119,7 @@ public sealed class FlexDaxTransmitterMockTests
 
             // What the radio was handed is a 1500 Hz real tone: its energy at 1500 Hz must
             // dominate an off-tone bin (DIGU places it at dial + 1500, but that is the radio's job,
-            // not ours — here we only assert the audio itself is intact).
+            // not ours - here we only assert the audio itself is intact).
             double onTone = Goertzel(captured, 1500.0, Rate);
             double offTone = Goertzel(captured, 600.0, Rate);
             onTone.Should().BeGreaterThan(offTone * 10.0, "the transmitted audio is a 1500 Hz tone");
@@ -152,7 +152,7 @@ public sealed class FlexDaxTransmitterMockTests
         await using (client)
         await using (tx)
         {
-            // Two tones at 0.7 each sum to a peak near 1.4 — over the DAX s16 full scale.
+            // Two tones at 0.7 each sum to a peak near 1.4 - over the DAX s16 full scale.
             float[] hot = ToneGenerator.Real([1500.0, 2000.0], 0.7, 0.1, Rate);
 
             Func<Task> transmit = () => tx.TransmitAsync(hot);

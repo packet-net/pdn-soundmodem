@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""dfesum.py — compress a verbose `sm-ota score --diagnostics` run into a per-burst DFE
+"""dfesum.py - compress a verbose `sm-ota score --diagnostics` run into a per-burst DFE
 summary. Reads score stdout on stdin (or a file arg) and, for each burst, prints the coded
 BER + end reason from the table row alongside the DFE fade-tracking signature parsed from
 the `frame@` diagnostic lines: first/min/median gain, the reference gain, peak `bad`-probe
@@ -33,7 +33,7 @@ def flush(b):
                f"gmin={gmin:.3f} gmed={gmed:.3f} badmax={badmax:3d} "
                f"pinned<0.10={pinned*100:4.0f}%")
     else:
-        dfe = "frames=  0 (no DFE trace — never reached tracking)"
+        dfe = "frames=  0 (no DFE trace - never reached tracking)"
     print(f"  #{b['idx']:<2} t={b['start']:>6}s asked={b['asked']:>5} "
           f"coded={b['coded']:>9} end={b['reason']:<13} | {dfe}")
 

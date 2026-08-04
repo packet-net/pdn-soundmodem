@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Tests.Daemon;
 /// <summary>
 /// The operator-facing half of configuration loading. These messages are what an admin reads in
 /// `journalctl` after the service refuses to start, so they are worth pinning: every failure must
-/// name the file, say what is wrong in words, and say what to do about it — never surface a raw
+/// name the file, say what is wrong in words, and say what to do about it - never surface a raw
 /// exception. See CONFIG.md § What is rejected at start-up.
 /// </summary>
 public class DaemonConfigTests : IDisposable
@@ -90,7 +90,7 @@ public class DaemonConfigTests : IDisposable
 
         config.Should().BeNull();
         error.Should().Contain("not valid JSON");
-        // Counted from 1, the way an editor does — System.Text.Json counts from 0.
+        // Counted from 1, the way an editor does - System.Text.Json counts from 0.
         error.Should().Contain("line 3", "the operator needs to be told where to look");
         ShouldGuideTheOperator(error, path);
     }
@@ -156,8 +156,8 @@ public class DaemonConfigTests : IDisposable
     [Fact]
     public void A_Setting_This_Version_Does_Not_Know_Is_Called_Out_Rather_Than_Silently_Ignored()
     {
-        // System.Text.Json drops unknown members without a word, so a typo — or a setting that
-        // has since been withdrawn — would look accepted and do nothing.
+        // System.Text.Json drops unknown members without a word, so a typo - or a setting that
+        // has since been withdrawn - would look accepted and do nothing.
         string path = WriteConfig("""
             {"device": "null", "csma": {"txDelayMilliseconds": 50, "persistence": 200}}
             """);
@@ -374,7 +374,7 @@ public class DaemonConfigTests : IDisposable
     public void Mixing_Rf_Addressed_And_Audio_Addressed_Modems_Is_Rejected()
     {
         // The dial is shared, so a modem pinned in audio terms would sit at whatever RF the
-        // dial chosen for the others happened to put it — silently, and differently each time
+        // dial chosen for the others happened to put it - silently, and differently each time
         // the plan changed.
         string path = WriteConfig("""
             {"device": "null", "modems": [

@@ -63,12 +63,12 @@ public sealed class SignalSurveyOptions
 /// and a sidecar. Three things are worth keeping, and the second is the most valuable:
 /// </para>
 /// <list type="bullet">
-/// <item><description><b>Unclaimed</b> — packet-shaped energy outside every configured band.
+/// <item><description><b>Unclaimed</b> - packet-shaped energy outside every configured band.
 /// Nobody was listening there.</description></item>
-/// <item><description><b>Missed</b> — packet-shaped energy <em>inside</em> a band, with nothing
+/// <item><description><b>Missed</b> - packet-shaped energy <em>inside</em> a band, with nothing
 /// decoded. The station was listening and could not read it, which is a receiver problem rather
 /// than a coverage one, and is invisible today unless somebody happens to be recording.</description></item>
-/// <item><description><b>Unattributed</b> — a frame that decoded but carried no readable AX.25
+/// <item><description><b>Unattributed</b> - a frame that decoded but carried no readable AX.25
 /// addresses. The bytes are in the frame log already; the audio goes beside them so the
 /// modulation can be re-examined against the payload.</description></item>
 /// </list>
@@ -76,7 +76,7 @@ public sealed class SignalSurveyOptions
 /// <b>Threading.</b> <see cref="AddAudio"/>, <see cref="AddLine"/> and <see cref="NoteDecode"/>
 /// are all called from the receive path and are not thread-safe with respect to each other. Only
 /// the disk write leaves that thread, and it goes to <see cref="BurstCaptureWriter"/>'s
-/// background writer — the receive path copies a burst out of the ring and returns.
+/// background writer - the receive path copies a burst out of the ring and returns.
 /// </para>
 /// </remarks>
 public sealed class SignalSurvey : IDisposable
@@ -99,7 +99,7 @@ public sealed class SignalSurvey : IDisposable
 
     /// <summary>Creates a survey over <paramref name="bands"/>, writing captures per
     /// <paramref name="options"/>.</summary>
-    /// <param name="options">Policy — where, how much, what counts.</param>
+    /// <param name="options">Policy - where, how much, what counts.</param>
     /// <param name="bands">The modems the station is running, so a burst can be told from a slot.</param>
     /// <param name="sampleRate">Channel DSP rate.</param>
     /// <param name="binWidthHz">Spectrum bin width of the lines that will be fed in.</param>
@@ -160,7 +160,7 @@ public sealed class SignalSurvey : IDisposable
     public string Directory => _options.Directory;
 
     /// <summary>
-    /// Raised whenever the counts move — a capture kept, or one the budget refused. What a
+    /// Raised whenever the counts move - a capture kept, or one the budget refused. What a
     /// station is skipping is invisible otherwise, and a week of unattended collection that
     /// quietly became a sample rather than the set is worse than one that says so.
     /// </summary>
@@ -178,7 +178,7 @@ public sealed class SignalSurvey : IDisposable
     public long SkippedForBudget => Interlocked.Read(ref _skippedForBudget);
 
     /// <summary>Feeds channel audio. Must be the same audio the spectrum lines are made from,
-    /// and must be gated the same way — nothing is surveyed while the station transmits.</summary>
+    /// and must be gated the same way - nothing is surveyed while the station transmits.</summary>
     public void AddAudio(ReadOnlySpan<float> samples) => _ring.Write(samples);
 
     /// <summary>Feeds one spectrum line.</summary>
@@ -206,7 +206,7 @@ public sealed class SignalSurvey : IDisposable
         // Worked out here, once, rather than left for somebody to reconstruct from a payload blob
         // later: the station noticed something it could not explain, so it writes down what it
         // noticed. A frame that decoded and then would not yield callsigns has already passed
-        // Reed-Solomon and the trailing CRC — the bits are right and the reading of them is not,
+        // Reed-Solomon and the trailing CRC - the bits are right and the reading of them is not,
         // which is the whole diagnosis and is lost by the time anyone opens the file.
         string? note = Waterfall.Ax25AttributionNote.For(frame);
         _decodes.Add(new Decode(
@@ -291,7 +291,7 @@ public sealed class SignalSurvey : IDisposable
         decode = null;
 
         // Duration is the discriminator that width is not. A voice over and a wide data burst
-        // occupy much the same 2.4–3 kHz, so width alone cannot separate them — but an over runs
+        // occupy much the same 2.4-3 kHz, so width alone cannot separate them - but an over runs
         // for tens of seconds and the longest frame these modes can carry does not.
         double seconds = (double)burst.Lines / _linesPerSecond;
         if (burst.EndedOnTimeout

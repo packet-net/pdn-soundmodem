@@ -6,7 +6,7 @@ using M0LTE.Ofdm;
 namespace Packet.SoundModem.Ms110d;
 
 /// <summary>
-/// Appendix D 3 kHz serial-tone receiver: autobaud — one receiver decodes the whole ladder
+/// Appendix D 3 kHz serial-tone receiver: autobaud - one receiver decodes the whole ladder
 /// (D.4). Native 9600 Hz in; complex baseband at T/2 (4800 Hz) behind an 1800 Hz mixer and
 /// the SRRC receive filter; matched-filter acquisition of the preamble Fixed subsection over
 /// a ±75 Hz coarse CFO grid; downcount/WID Walsh decode with checksum verification; then
@@ -16,9 +16,9 @@ namespace Packet.SoundModem.Ms110d;
 /// <remarks>
 /// Phase A limitations, stated: acquisition requires the 9-Walsh-symbol Fixed subsection,
 /// i.e. transmissions with M ≥ 2 super-frames (the M = 1 single-symbol preamble is generated
-/// on TX but not yet acquired); clock skew is followed by the slow per-probe timing tracker —
+/// on TX but not yet acquired); clock skew is followed by the slow per-probe timing tracker -
 /// measured (Ms110dClockSkewTests, 2026-07-23): ±50 ppm decodes bit-exact with wide margin
-/// (breaking points ±700 ppm on ~4 s bursts, ±300–400 ppm on ~11 s — tolerance is
+/// (breaking points ±700 ppm on ~4 s bursts, ±300-400 ppm on ~11 s - tolerance is
 /// burst-duration-dependent; longer transmissions unmeasured); WN 0 has no timing tracker at
 /// all (chip clock assumed nominal, as in loopback and the D.6 simulation rigs).
 /// </remarks>
@@ -45,12 +45,12 @@ public sealed class Ms110dDemodulator
     // sits far below the fade-averaged mask levels (which cluster near nominal because the
     // ~1 Hz fade averages out over the ~2 s window) and far above the −20 dB real-RF level, so
     // the AGC fires zero times in-family (masks byte-identical) yet catches the real-RF offset.
-    private const float AgcNominalLevel = 0.12f;  // boost target — the level the ridges were tuned for
+    private const float AgcNominalLevel = 0.12f;  // boost target - the level the ridges were tuned for
     private const float AgcLevelFloor = 0.04f;    // dead-zone edge: at/above this the gain is exactly 1.0
     private const float AgcMaxGain = 32f;
     private static readonly double[] BinsHz = [-75, -50, -25, 0, 25, 50, 75];
 
-    /// <summary>Encoded count words for every field value — the joint count vote's
+    /// <summary>Encoded count words for every field value - the joint count vote's
     /// per-candidate expected dibits (§B3.5 Amendment 1).</summary>
     private static readonly byte[][] CountWords = BuildCountWords();
 
@@ -82,8 +82,8 @@ public sealed class Ms110dDemodulator
     // Channel-truth genie (diagnostic instrument, phase-b-plan §B0). A noise-free copy of
     // the SAME channel realization runs through an identical front end (its own
     // filter/mixer state; the shared carrier/timing model applies to both), and the
-    // ESTIMATION reads — training rows, carrier refinement, probe timing, turbo channel
-    // estimation — come from this ring while DETECTION stays on the noisy one. A genie run
+    // ESTIMATION reads - training rows, carrier refinement, probe timing, turbo channel
+    // estimation - come from this ring while DETECTION stays on the noisy one. A genie run
     // is the achievability bound of the current detector under perfect channel
     // observation: genie ≪ measured says tracking/estimation is the deficit, genie ≈
     // measured says detection is. Acquisition and the WN 0 Walsh path take no estimation
@@ -96,8 +96,8 @@ public sealed class Ms110dDemodulator
     private bool _genieDecimateToggle;
     private long _genieWritten;
     // Measured per-T/2-sample additive-noise power: mean |noisy − clean|² between the two
-    // rings. Genie LS solves add σ²·Σweight to the FF Gram diagonal — the term the noisy
-    // rows contribute implicitly — so the genie computes the true-channel MMSE equalizer,
+    // rings. Genie LS solves add σ²·Σweight to the FF Gram diagonal - the term the noisy
+    // rows contribute implicitly - so the genie computes the true-channel MMSE equalizer,
     // not the zero-forcing one (first WN4 Poor genie run: ZF inverted the fading notches
     // and came out 30× WORSE than the baseline it is meant to bound).
     private double _genieNoiseSum;
@@ -105,7 +105,7 @@ public sealed class Ms110dDemodulator
 
     // Search state. The metric ring keeps recent per-candidate metrics so the accepted
     // peak can be moved back to the EARLIEST multipath arrival (design §2.6): on the
-    // D-LXV static channels the equalizer geometry only works cursor-first — echoes are
+    // D-LXV static channels the equalizer geometry only works cursor-first - echoes are
     // post-cursor for the feedback taps; locking a later path puts them outside the
     // feed-forward span.
     private double _bestMetric;
@@ -114,7 +114,7 @@ public sealed class Ms110dDemodulator
     private readonly double[] _metricRing = new double[256];
     private readonly byte[] _metricBinRing = new byte[256];
 
-    /// <summary>Highest matched-filter metric seen since construction/reset — an
+    /// <summary>Highest matched-filter metric seen since construction/reset - an
     /// acquisition diagnostic (normalized 0…1).</summary>
     public double PeakSearchMetric { get; private set; }
 
@@ -123,7 +123,7 @@ public sealed class Ms110dDemodulator
     private double _chip0;        // absolute T/2 position of chip 0 of the matched super-frame
     private double _tau;          // slow timing correction, T/2 units
     private double _omega;        // carrier phase increment per T/2 sample (residual CFO)
-    private double _omegaAcquired; // ω at data start — the tracking loop's clamp centre
+    private double _omegaAcquired; // ω at data start - the tracking loop's clamp centre
     private double _thetaBase;    // carrier phase at _chip0
     private Ms110dLockInfo? _lock;
     private Ms110dMode? _mode;
@@ -190,7 +190,7 @@ public sealed class Ms110dDemodulator
     // Fading detector state (see ProcessFrame). The per-frame statistic (CFO-immune
     // fractional tap change) has heavily overlapping LEVEL distributions between AWGN at
     // mask SNR and Poor between fades (measured WN4: AWGN median 0.045/max 0.12; Poor
-    // median 0.033/max 0.33) — the discriminator is temporal structure: fading recurs as
+    // median 0.033/max 0.33) - the discriminator is temporal structure: fading recurs as
     // excursions above a min-tracking noise floor (the EnergyBusyDetector pattern), AWGN
     // stays in a tight band. Enter on 2 excursions ≤ 24 frames apart (one 1 Hz fade event
     // spans several frames), exit after 32 excursion-free frames.
@@ -238,29 +238,29 @@ public sealed class Ms110dDemodulator
     public event Action<Cf>? DataSymbolEqualized;
 
     /// <summary>Diagnostic: one formatted line per processed frame (probe gain/MSE,
-    /// timing, carrier, fading state). Formatted only when subscribed — the library
+    /// timing, carrier, fading state). Formatted only when subscribed - the library
     /// itself writes no console output (issue #65); hosts that want the old
     /// <c>MS110D_DEBUG</c> stderr behaviour subscribe and print.</summary>
     public event Action<string>? FrameDiagnostics;
 
     /// <summary>Diagnostic: fires once per interleaver block BEFORE the first decode, with
     /// the block index and the first-pass wire-order LLRs (fetch order, pre-deinterleave,
-    /// pre-turbo). The buffer is reused per block — receivers must copy what they keep.
+    /// pre-turbo). The buffer is reused per block - receivers must copy what they keep.
     /// Comparing sign(LLR) against the re-encoded transmitted stream gives the uncoded
     /// channel-bit error rate, the §5.3 uncoded-vs-coded split (phase-b-plan §B0).</summary>
     public event Action<int, float[]>? FirstPassBlockLlrs;
 
     /// <summary>Diagnostic (phase-b-plan §B3.3 basin): fires once per interleaver block
     /// AFTER the turbo loop settles, with the block index and the wire-order LLRs of the
-    /// last turbo iterate — on converged blocks the fixed-point stream, on reverted blocks
+    /// last turbo iterate - on converged blocks the fixed-point stream, on reverted blocks
     /// the wander state the loop was in when the cap hit (the shipped DECODE on those
     /// blocks is the first-pass one; the stream here is what the loop believed). Does not
-    /// fire on skipped or aborted blocks. The buffer is reused per block — copy to keep.</summary>
+    /// fire on skipped or aborted blocks. The buffer is reused per block - copy to keep.</summary>
     public event Action<int, float[]>? TurboBlockLlrs;
 
     /// <summary>Diagnostic (phase-b-plan §B3.3): when set, FinishBlock runs ONE extra
-    /// turbo re-equalization trained on the returned TRUE info bits for the block —
-    /// oracle labels — after the normal pipeline has finished with the block. This
+    /// turbo re-equalization trained on the returned TRUE info bits for the block -
+    /// oracle labels - after the normal pipeline has finished with the block. This
     /// measures the ceiling a CONVERGED soft-feedback turbo could reach with the chain
     /// BCJR's channel/echo model: perfect labels, same estimation machinery. A null
     /// return skips the block. The shipped decode is never touched, and the demodulator
@@ -269,15 +269,15 @@ public sealed class Ms110dDemodulator
     public Func<int, byte[]?>? OracleInfo;
 
     /// <summary>Companion to <see cref="OracleInfo"/>: the block index, the oracle-pass
-    /// wire-order LLRs (buffer reused per block — copy to keep), and the Viterbi decode
+    /// wire-order LLRs (buffer reused per block - copy to keep), and the Viterbi decode
     /// of those LLRs.</summary>
     public event Action<int, float[], byte[]>? OracleBlockLlrs;
 
     /// <summary>W1 true-channel injection instrument (wn8-program-plan §4, evidence
     /// 2026-07-31-wn8-w1): when set alongside <see cref="OracleInfo"/>, FinishBlock runs
     /// one further re-equalization whose channel TIME VARIATION comes from the recorded
-    /// Watterson truth — per-symbol h(u) = a·g₁(u) + b·g₂(u) per model tap, with only
-    /// the static per-frame gauge constants LS-fitted on the true symbols — instead of
+    /// Watterson truth - per-symbol h(u) = a·g₁(u) + b·g₂(u) per model tap, with only
+    /// the static per-frame gauge constants LS-fitted on the true symbols - instead of
     /// the oracle's label-trained segment anchors. The delegate maps an absolute input
     /// sample position (9600 Hz domain, lead-in included) to the two recorded path gains
     /// at that instant: the rig owns lead-in/gain-rate alignment, the demodulator owns
@@ -286,17 +286,17 @@ public sealed class Ms110dDemodulator
     internal Func<double, (Cf G1, Cf G2)>? TruthGainsAtSample { get; set; }
 
     /// <summary>Companion to <see cref="TruthGainsAtSample"/>: block index, truth-pass
-    /// wire-order LLRs (buffer reused — copy to keep), and their Viterbi decode.</summary>
+    /// wire-order LLRs (buffer reused - copy to keep), and their Viterbi decode.</summary>
     internal event Action<int, float[], byte[]>? TruthBlockLlrs;
 
     /// <summary>W5a instrument seam: fires in FinishBlock with the block index and the
     /// block's frame-start chips while the block's samples are still resident, so a rig
     /// can pull the ring spans it needs synchronously (the ring wraps long before a
-    /// burst ends). Passive — null (the default) changes nothing.</summary>
+    /// burst ends). Passive - null (the default) changes nothing.</summary>
     internal Action<int, long[]>? InstrumentBlockReady { get; set; }
 
     /// <summary>The shipped CFO/timing-corrected T/2 ring read at 2·chip + δ half-chip
-    /// positions — used by the W5b2 MFB-form block decoder and the W5a instrument rig.
+    /// positions - used by the W5b2 MFB-form block decoder and the W5a instrument rig.
     /// Read-only.</summary>
     internal Cf RingReadT2(double halfChips)
     {
@@ -310,13 +310,13 @@ public sealed class Ms110dDemodulator
         FrameDiagnostics is null ? null : line => FrameDiagnostics?.Invoke(line);
 
     /// <summary>W2 V-split: gauge fits per frame partition (1 = the W1 whole-frame fit,
-    /// 2 = independent half-frame fits — prices within-frame gauge drift). Truth-pass
+    /// 2 = independent half-frame fits - prices within-frame gauge drift). Truth-pass
     /// instrument knob only.</summary>
     internal int TruthGaugeSplit { get; set; } = 1;
 
     /// <summary>W2 V-xtaps: adds cursor±1 tap pairs to the gauge basis (responses to
     /// x[u+1]/x[u−1]), soft-cancelled from the observation before the chains exactly
-    /// like the straddle — the 16QAM re-measurement of the B3.7 beyond-model revival
+    /// like the straddle - the 16QAM re-measurement of the B3.7 beyond-model revival
     /// condition. Truth-pass instrument knob only.</summary>
     internal bool TruthGaugeXtaps { get; set; }
 
@@ -324,17 +324,17 @@ public sealed class Ms110dDemodulator
     /// evidence/2026-07-26-phase-b35b-wn0genie): returns the TRUE transmitted di-bit for
     /// (blockIndex, symbolInBlock), or −1 for no-truth symbols (post-EOM), which fall
     /// back to the shipped DD path. When set, TrackWalsh detects with truth-derived
-    /// finger gains read from the genie stream (required — throws without one) and skips
+    /// finger gains read from the genie stream (required - throws without one) and skips
     /// the carrier PLL retune (the phase-error observable self-cancels under truth
     /// gains). Unset = the shipped path, bit-identical. Armed only by the autopsy rig.</summary>
     internal Func<int, int, int>? WalshOracleDibit { get; set; }
 
     /// <summary>§B3.5b companion: true = O-pole (shipped one-pole/warm-up with truth
-    /// innovations — keeps the 80 ms lag), false = O-inst (instantaneous truth).</summary>
+    /// innovations - keeps the 80 ms lag), false = O-inst (instantaneous truth).</summary>
     internal bool WalshOraclePole { get; set; }
 
     /// <summary>§B3.6 instrument (evidence/2026-07-26-phase-b36-wn7loop): replaces the
-    /// turbo loop's iteration-0 labels for one block — perturbed restarts (M1b) and
+    /// turbo loop's iteration-0 labels for one block - perturbed restarts (M1b) and
     /// staged seeding (M2b). Receives the block index and the first-pass decode; a null
     /// return leaves the start unchanged. Revert protection is untouched: the fallback
     /// stream remains the TRUE first pass. Unset = the shipped path, bit-identical.
@@ -342,7 +342,7 @@ public sealed class Ms110dDemodulator
     internal Func<int, byte[], byte[]?>? TurboStartOverride { get; set; }
 
     /// <summary>§B3.6 M1a instrument: when set (with <see cref="FrameDiagnostics"/>),
-    /// every TurboCore pass emits one <c>turbo-probe</c> line per block — the solved
+    /// every TurboCore pass emits one <c>turbo-probe</c> line per block - the solved
     /// channel priced on the frames' PRECEDING mini-probe rows (known symbols, the only
     /// training-domain evidence decode labels cannot launder). Rows keep their feedback
     /// history and TIR echo sources wholly inside the probe, mirroring the solve's own
@@ -351,7 +351,7 @@ public sealed class Ms110dDemodulator
 
     /// <summary>§B3.6 C2a stage (M2a measurement): when set (with
     /// <see cref="FrozenBlockLlrs"/> subscribed), FinishBlock runs one extra label-free
-    /// re-detection pass per block after the normal pipeline — probe-only TIR solve,
+    /// re-detection pass per block after the normal pipeline - probe-only TIR solve,
     /// probe-anchored h1, the solve's own shortening target as the chain echo model,
     /// probe-priced noise floor, chains as no-prior exact-MAP. No decode label touches
     /// any estimate (the anti-echo-chamber construction). The shipped decode is never
@@ -359,18 +359,18 @@ public sealed class Ms110dDemodulator
     internal bool TurboFrozenProbe { get; set; }
 
     /// <summary>§B3.6 companion: the block index, the frozen-pass wire-order LLRs
-    /// (buffer reused per block — copy to keep), and the Viterbi decode of those
+    /// (buffer reused per block - copy to keep), and the Viterbi decode of those
     /// LLRs.</summary>
     internal event Action<int, float[], byte[]>? FrozenBlockLlrs;
 
     /// <summary>§B3.7 M1a instrument: when set (with <see cref="FrameDiagnostics"/>),
     /// every frozen-pass frame ALSO runs a straddle-pair TIR solve on the same probe
-    /// rows and emits one <c>frozen-pair</c> line — log-only; the applied path stays
+    /// rows and emits one <c>frozen-pair</c> line - log-only; the applied path stays
     /// the single-lag solve, which runs last so its taps stand for the frame's
     /// Equalize calls. Unset = bit-identical.</summary>
     internal bool TurboFrozenPairDiag { get; set; }
 
-    /// <summary>§B3.7 E1′ (Amendment 1): burst-consensus constrained frozen solve — a
+    /// <summary>§B3.7 E1′ (Amendment 1): burst-consensus constrained frozen solve - a
     /// vote sweep of free probe-only solves picks the block's modal accepted lag, and
     /// every frame's applied solve then tests ONLY that lag under the single-candidate
     /// margin. Kills the ln L acceptance starvation and the 16-periodic-probe
@@ -381,15 +381,15 @@ public sealed class Ms110dDemodulator
     internal bool TurboFrozenConsensus { get; set; }
 
     /// <summary>§B3.7 E1″(a) (Amendment 2): on frozen-pass frames whose accepted lag
-    /// exceeds half the probe base period — the pre-cursor folded through the periodic
-    /// probe, NOT a causal echo — drop the chain echo model and price the pre-cursor
+    /// exceeds half the probe base period - the pre-cursor folded through the periodic
+    /// probe, NOT a causal echo - drop the chain echo model and price the pre-cursor
     /// into the noise floor. The solve, FF, anchors and floor stand (they fit the true
     /// response through the folded column); only the chain application changes.
     /// Frozen/salvage path only; unset = bit-identical.</summary>
     internal bool TurboFrozenAliasNull { get; set; }
 
     /// <summary>§B3.7 E1″(b), SHIPPED default (Amendment 3): on alias frames, run the
-    /// chains EXACTLY on the pre-cursor structure via the observation shift — o[u] =
+    /// chains EXACTLY on the pre-cursor structure via the observation shift - o[u] =
     /// y[u−d] couples x[u] (through the pre-cursor coefficient, which rides the cursor
     /// slot rotor-free) and x[u−d] (through h1), with d = period − lag. The last d
     /// data symbols are observed only through the pre-cursor coefficient (the mirror
@@ -400,10 +400,10 @@ public sealed class Ms110dDemodulator
 
     /// <summary>§B3.8 E3 (Amendments 1/3): the late-lock salvage rung. A causal
     /// acceptance with the echo above the cursor (late path dominant) can leave the
-    /// feedback-free FF unable to equalize the frame — the priced floor blows up
-    /// 30–80× and the chain drowns on honestly-priced garbage (the trio's bad-frame
+    /// feedback-free FF unable to equalize the frame - the priced floor blows up
+    /// 30-80× and the chain drowns on honestly-priced garbage (the trio's bad-frame
     /// class; the same physics rides cleanly on the natural pre-cursor frames). When
-    /// the STANDARD salvage fails (Amendment 3 — converging blocks are structurally
+    /// the STANDARD salvage fails (Amendment 3 - converging blocks are structurally
     /// untouched: a ceiling block's fixed point can wobble a few bits under ANY seed
     /// change, the w0/b0 b5 lesson), the salvage is retried with the frozen pass
     /// offering the late-lock geometry per causal-accept frame: re-train with the
@@ -419,11 +419,11 @@ public sealed class Ms110dDemodulator
     private bool _frozenRelockActive;
 
     /// <summary>§B3.8 Amendment 2: the late-lock offer adopts only when the shifted
-    /// geometry is decisively better — altVar &lt; margin·noiseVar. 1 = adopt on any
+    /// geometry is decisively better - altVar &lt; margin·noiseVar. 1 = adopt on any
     /// improvement (the pre-margin E3 form). Marginal adoptions within gauge noise of
     /// the two anchor passes are coin flips; the measured target class clears any
-    /// reasonable margin (floor improvements of 10–30×, trio adoption medians
-    /// 7–38×), so 0.5 keeps the decisive mass and drops the coin flips.</summary>
+    /// reasonable margin (floor improvements of 10-30×, trio adoption medians
+    /// 7-38×), so 0.5 keeps the decisive mass and drops the coin flips.</summary>
     internal float TurboFrozenRelockMargin { get; set; } = 0.5f;
 
     /// <summary>Diagnostic (phase-b-plan §B3.3 fade-crossing): while the oracle
@@ -439,7 +439,7 @@ public sealed class Ms110dDemodulator
     public int TurboReverted { get; private set; }
 
     /// <summary>§B3.6 salvage: revert-path blocks recovered by the frozen-probe
-    /// re-detection seed (8PSK only) — a fresh soft loop from a label-free start found
+    /// re-detection seed (8PSK only) - a fresh soft loop from a label-free start found
     /// a fixed point where the first-pass-seeded loop wandered. Salvaged blocks also
     /// count as converged.</summary>
     public int TurboSalvaged { get; private set; }
@@ -448,16 +448,16 @@ public sealed class Ms110dDemodulator
     public int TurboAborted { get; private set; }
 
     /// <summary>Blocks where the turbo gate declined to run (QAM16, non-resident samples,
-    /// or the WN 0 path — the flat-channel skip retired with the DFE-re-solve fallback,
+    /// or the WN 0 path - the flat-channel skip retired with the DFE-re-solve fallback,
     /// §B2.3).</summary>
     public int TurboSkipped { get; private set; }
 
     /// <summary>Fresh non-anchored probe re-solves after tracking collapse (phase-b-plan
-    /// §B2.1c; since construction/Reset). Zero on healthy runs — a nonzero count says
+    /// §B2.1c; since construction/Reset). Zero on healthy runs - a nonzero count says
     /// decision-directed tracking collapsed and was restarted from the probe alone.</summary>
     public int CollapseResolves { get; private set; }
 
-    /// <summary>Bursts whose input AGC fired (issue #101 — the receive level fell below the
+    /// <summary>Bursts whose input AGC fired (issue #101 - the receive level fell below the
     /// dead-zone floor and was normalized up). Zero on every nominal-or-stronger burst, so a
     /// zero total across a mask point proves the AGC was a strict no-op there (masks
     /// byte-identical); a nonzero count over real-RF Poor is the fix engaging.</summary>
@@ -521,11 +521,11 @@ public sealed class Ms110dDemodulator
 
     /// <summary>Channel-truth genie seam (diagnostic): feeds the noise-free copy of the
     /// same channel realization. Feed in bounded chunks interleaved with
-    /// <see cref="Process"/> — genie ahead of every read, but never more than ~1.7 s ahead
+    /// <see cref="Process"/> - genie ahead of every read, but never more than ~1.7 s ahead
     /// of the noisy stream (the rings are ~13.7 s circles and turbo re-reads whole
     /// interleaver blocks, so running far ahead would overwrite history both streams still
     /// need; this throws rather than silently wrap). While enabled, estimation reads use
-    /// this stream and detection keeps the noisy one — see the field comment.</summary>
+    /// this stream and detection keeps the noisy one - see the field comment.</summary>
     public void WriteGenie(ReadOnlySpan<float> samples)
     {
         if (_genieRing is null)
@@ -712,7 +712,7 @@ public sealed class Ms110dDemodulator
 
         // Earliest-arrival selection: walk back up to 9 ms (the widest D-LXV spread,
         // 21.6 symbols = 44 T/2 samples) and take the first candidate within −4.4 dB of
-        // the best — on equal-power multipath every arrival correlates comparably, and
+        // the best - on equal-power multipath every arrival correlates comparably, and
         // the DFE needs the cursor on the FIRST one. On a clean channel the matched-filter
         // response collapses within ±1 sample, so this is a no-op there.
         double floor = Math.Max(_options.SyncThreshold, 0.6 * _bestMetric);
@@ -742,7 +742,7 @@ public sealed class Ms110dDemodulator
         delta = Math.Clamp(delta, -1, 1);
 
         // Fine CFO from the phase progression across the nine 32-chip segment correlations
-        // (±37.5 Hz unambiguous — inside the 25 Hz grid residual).
+        // (±37.5 Hz unambiguous - inside the 25 Hz grid residual).
         var rotation = Cf.Zero;
         for (int k = 0; k < 8; k++)
         {
@@ -787,7 +787,7 @@ public sealed class Ms110dDemodulator
             $"count@{_chip0}: dibits={countDibits[0]}{countDibits[1]}{countDibits[2]}{countDibits[3]} count={count}");
 
         // §B3 WID vote (issue #69): the WID section repeats identically in every
-        // remaining preamble super-frame, all of which arrive BEFORE data start — so
+        // remaining preamble super-frame, all of which arrive BEFORE data start - so
         // soft-combining it across super-frames costs zero latency and rides out a
         // fade over any one of them. Read from a single super-frame, a −15 dB fade
         // corrupted the dibits AND beat the checksum twice in the WN1 Poor census:
@@ -797,7 +797,7 @@ public sealed class Ms110dDemodulator
         if (_written < (long)Math.Ceiling(
                 _chip0 + (2.0 * ChipsSuperframe * votes)) + (2 * InterpHalf) + 2)
         {
-            return; // wait for the vote span — still entirely pre-data
+            return; // wait for the vote span - still entirely pre-data
         }
 
         Span<double> widMags = stackalloc double[5 * 4];
@@ -841,7 +841,7 @@ public sealed class Ms110dDemodulator
 
         // Vote-confidence gate: a wrong acquisition (e.g. a −18 Hz CFO-bin miss, WN1
         // census burst w1/b28) turns every Walsh correlation to mush, and an argmax
-        // over summed noise beats the weak WID checksum ~1-in-8 — where the OLD
+        // over summed noise beats the weak WID checksum ~1-in-8 - where the OLD
         // single-read path failed the checksum per super-frame and fell back to
         // re-search, eventually re-acquiring the true peak. Keep that safety valve:
         // a mushy vote (mean winner-vs-runner-up margin below the floor) is a failed
@@ -860,7 +860,7 @@ public sealed class Ms110dDemodulator
 
         // §B3.5 Amendment 1: joint count vote over the same span the WID vote already
         // waits for. The count is the last single-read acquisition field (4 dibits,
-        // 3 check bits — corrupted reads beat the check 1-in-8), and a wrong count
+        // 3 check bits - corrupted reads beat the check 1-in-8), and a wrong count
         // places data start whole super-frames off behind a clean-looking lock (four
         // coin-flip bursts in the WN0 Poor census; the WID's Class-D failure, again).
         // The field decrements per super-frame, so the vote is decrement-aligned:
@@ -919,7 +919,7 @@ public sealed class Ms110dDemodulator
             !Ms110dInterleaverParams.Has3k(wn, il))
         {
             // Has3k: at low SNR a corrupted WID can pass its checksum yet name a
-            // (waveform, interleaver) pair Table D-XXXVII does not define — e.g.
+            // (waveform, interleaver) pair Table D-XXXVII does not define - e.g.
             // (WN 0, UltraShort). That is a failed acquisition candidate, not a
             // crash: Get3k throwing here killed the receiver mid-burst (found by
             // the Poor WN0 mask run at −1 dB, seed 500, ~2.8M bits in).
@@ -950,7 +950,7 @@ public sealed class Ms110dDemodulator
         _softMotherPost = new float[2 * _il.InputBits];
         _softWireLlrs = new float[_il.SizeBits];
         _softWireExt = new float[_il.SizeBits];
-        int blockSymbols = _il.Frames * _mode.U; // 0 for WN0 (Walsh) — turbo never runs there
+        int blockSymbols = _il.Frames * _mode.U; // 0 for WN0 (Walsh) - turbo never runs there
         _softExpected = new Cf[blockSymbols];
         _softVar = new float[blockSymbols];
         _turboExpected = new Cf[blockSymbols];
@@ -964,7 +964,7 @@ public sealed class Ms110dDemodulator
 
     /// <summary>How many trailing preamble super-frames the carrier re-fit may use: all
     /// the super-frames we know exist (from the matched one to data start), capped at 4
-    /// (~1 s — enough baseline to average Rayleigh phase drift out of the CFO fit).</summary>
+    /// (~1 s - enough baseline to average Rayleigh phase drift out of the CFO fit).</summary>
     private int TailRefineSuperframes()
     {
         return (int)Math.Clamp(_dataStartChip / ChipsSuperframe, 1, 4);
@@ -1006,7 +1006,7 @@ public sealed class Ms110dDemodulator
     }
 
     /// <summary>Adds the four Walsh-hypothesis correlation magnitudes for one preamble
-    /// dibit into <paramref name="mags"/> — the soft accumulator for the §B3 WID vote
+    /// dibit into <paramref name="mags"/> - the soft accumulator for the §B3 WID vote
     /// (magnitudes, not phasors: superframes a Rayleigh fade apart are not coherent).</summary>
     private void AccumulateWalshMags(int startChip, ReadOnlySpan<byte> pn, int pnOffset, Span<double> mags)
     {
@@ -1054,7 +1054,7 @@ public sealed class Ms110dDemodulator
     /// <summary>Fits the residual carrier phase/frequency over fully known preamble
     /// chips at <paramref name="baseChip"/> and re-tunes the carrier model anchored
     /// inside the measurement window. Longer windows (several super-frames) matter on
-    /// fading channels: a single 240 ms super-frame reads Rayleigh phase drift as CFO —
+    /// fading channels: a single 240 ms super-frame reads Rayleigh phase drift as CFO -
     /// a ~1 s baseline averages it out.</summary>
     private void RefineCarrier(long baseChip, byte[] knownChips)
     {
@@ -1103,20 +1103,20 @@ public sealed class Ms110dDemodulator
     }
 
     /// <summary>
-    /// Carrier phase/frequency fit over per-group correlation phasors — the fade-robust
+    /// Carrier phase/frequency fit over per-group correlation phasors - the fade-robust
     /// replacement for the weighted phase regression (§B3 tail autopsy, issue #69). The
     /// regression's sequential phase UNWRAP was its undoing: groups inside a deep fade
     /// carry pure noise phases, and although the regression downweighted them, they still
-    /// formed the unwrap chain — a &gt;200 ms fade let the chain random-walk several full
+    /// formed the unwrap chain - a &gt;200 ms fade let the chain random-walk several full
     /// turns, the post-fade groups re-entered on the wrong branch with strong weights,
     /// and the fit manufactured a multi-Hz CFO from a channel that had barely rotated
     /// (WN5 Poor census, burst w0/b3: −4.86 Hz fitted, burst dead end-to-end at SER 0.55
     /// while every probe statistic read healthy). Here the slope comes from weighted
-    /// lag products — arg Σ c[j+L]·c̄[j] — where a faded group self-suppresses
+    /// lag products - arg Σ c[j+L]·c̄[j] - where a faded group self-suppresses
     /// (the product magnitude vanishes) instead of poisoning its neighbours: lag 1 is
     /// unambiguous to ±π per group (±37.5 Hz), then a longer-lag pass sharpens the
     /// estimate with the lag-1 value resolving its branch. The intercept is the phase of
-    /// the coherent de-rotated sum — fade-robust for the same reason.
+    /// the coherent de-rotated sum - fade-robust for the same reason.
     /// </summary>
     /// <returns>False when the window carries no usable signal (keep the current
     /// carrier rather than retune on noise).</returns>
@@ -1206,7 +1206,7 @@ public sealed class Ms110dDemodulator
     }
 
     /// <summary>Estimation-side read: the genie ring when the genie is enabled, otherwise
-    /// the normal noisy read. Same carrier/timing model either way — the genie replaces
+    /// the normal noisy read. Same carrier/timing model either way - the genie replaces
     /// the DATA under the estimators, not the receiver's own state.</summary>
     private Cf ReadT2Est(double halfChips)
     {
@@ -1217,7 +1217,7 @@ public sealed class Ms110dDemodulator
 
         double pos = _chip0 + halfChips + _tau;
         // Bound by the NOISY stream's availability: the genie replaces sample values, not
-        // the receiver's causality — the interpolator's head truncation must be identical
+        // the receiver's causality - the interpolator's head truncation must be identical
         // in both rings or a genie run differs even when fed the noisy stream itself.
         var value = Interpolate(pos, _genieRing, Math.Min(_genieWritten, _written));
         double theta = _thetaBase + (_omega * (pos - _chip0));
@@ -1297,13 +1297,13 @@ public sealed class Ms110dDemodulator
 
     /// <summary>Fade-averaged global receive SIGNAL level (issue #101): coherently correlate
     /// the received Fixed subsection of each trailing preamble super-frame against the known
-    /// Fixed chips in 32-chip groups — noise averages out of each group, and |Σ y·k̄|/32 is
-    /// that group's signal amplitude — then average over all groups. Averaging several
-    /// super-frames (~1–2 s) averages the ~1 Hz Watterson fade out, so the result reflects the
-    /// GLOBAL level (a real-RF weak signal), not the instantaneous fade — the property that
+    /// Fixed chips in 32-chip groups - noise averages out of each group, and |Σ y·k̄|/32 is
+    /// that group's signal amplitude - then average over all groups. Averaging several
+    /// super-frames (~1-2 s) averages the ~1 Hz Watterson fade out, so the result reflects the
+    /// GLOBAL level (a real-RF weak signal), not the instantaneous fade - the property that
     /// lets the AGC no-op through a nominal fade yet catch a globally-low level. Reads at the
     /// current <see cref="_agcGain"/> (unity here, before the AGC is set), so it measures the
-    /// true level. Matched to the signal, NOT total power — total RMS tracks SNR, so a
+    /// true level. Matched to the signal, NOT total power - total RMS tracks SNR, so a
     /// total-power AGC would attenuate at low SNR and disturb the masks.</summary>
     private double EstimatePreambleLevel()
     {
@@ -1336,7 +1336,7 @@ public sealed class Ms110dDemodulator
         // #101 input signal-level AGC: estimate the global receive level and set the per-burst
         // normalization BEFORE the carrier refit and DFE training read the (now-normalized)
         // signal. _agcGain is unity here, so EstimatePreambleLevel measures the true level; the
-        // dead-zone keeps _agcGain = 1.0 for every nominal-or-stronger burst (a strict no-op —
+        // dead-zone keeps _agcGain = 1.0 for every nominal-or-stronger burst (a strict no-op -
         // acquisition already happened at unity and the sim masks are unchanged by
         // construction), and only a globally-low burst (real-RF) is scaled up to nominal.
         double agcLevel = EstimatePreambleLevel();
@@ -1361,13 +1361,13 @@ public sealed class Ms110dDemodulator
         // Tap counts per design §2.5. Leads are sized so the feed-forward window spans
         // roughly ±2 ms around the cursor: forward to collect echo energy (the 3 ms path
         // of the WID 2 static rig at K=48), and BACKWARD far enough that a path earlier
-        // than the locked one stays equalizable — on the fading Poor channel the lock can
+        // than the locked one stays equalizable - on the fading Poor channel the lock can
         // land on the later path while the earlier one is faded, and its return puts a
         // −2 ms (−9.6 T/2) pre-cursor into the window.
         (int ff, int fb, int lead, float initRidge, float trackRidge) = _mode!.K switch
         {
             // K=48 (WN1/2, rate 1/8 & 1/4, run at the −3/0 dB and 5 dB static gates) has the
-            // widest DFE — 32 FF + 22 FB = 54 complex taps — yet the FEWEST data symbols per
+            // widest DFE - 32 FF + 22 FB = 54 complex taps - yet the FEWEST data symbols per
             // frame (U=48) to excite them, at the LOWEST SNR of the ladder. A weak ridge lets
             // the off-cursor feed-forward taps fit noise (measured: WN1 AWGN 4.5E-5 vs the
             // 1E-5 gate; a shrunk 12-tap FF cleared AWGN but starved the static echo). The MMSE
@@ -1376,9 +1376,9 @@ public sealed class Ms110dDemodulator
             //
             // The per-probe TRACK ridge is stronger still (§B3.2, issue #69): the WN2 Poor
             // genie pair measured a flat estimation-noise tax (+0.02 SER in healthy frames,
-            // uniform — NOT fade-edge lag), and the anchor ridge is the solve's cross-frame
+            // uniform - NOT fade-edge lag), and the anchor ridge is the solve's cross-frame
             // memory. The measured sweep (WN2 +5 dB smoke): ridge 0.5/1/2/4/8/16 →
-            // 43/42/20/5/1/23 coded errors — an optimum at 8, where the anchored equalizer
+            // 43/42/20/5/1/23 coded errors - an optimum at 8, where the anchored equalizer
             // coasts instead of chasing fades with noisy solves. Uncoded SER RISES (lag) but
             // wrong-sign LLR mass drops 2.35×: where the channel deviates from the anchored
             // estimate the output amplitude collapses, so errors self-report low confidence
@@ -1427,12 +1427,12 @@ public sealed class Ms110dDemodulator
             _dfe.AddTrainingRow(window, past, _known[n]);
         }
 
-        // RLS forgetting policy — a DOCUMENTED DEVIATION from design §2.5 (issue #64):
+        // RLS forgetting policy - a DOCUMENTED DEVIATION from design §2.5 (issue #64):
         // λ = 1 − ln10/U ties the exponential window to the frame (memory U/ln10 ≈ 0.43·U
         // symbols, i.e. a 10× down-weight per data span), so the per-probe anchored batch
         // solve, not the RLS recursion, owns cross-frame memory. §2.5 specified a fixed
         // λ = 0.995 (≈200-symbol/83 ms memory, set by the 1 Hz coherence time); for U=48
-        // the frame-tied window is only ~21 symbols ≈ 8.7 ms — far shorter than the physics
+        // the frame-tied window is only ~21 symbols ≈ 8.7 ms - far shorter than the physics
         // needs, noisier than it has to be. Which policy wins is a measurement question:
         // the Phase B RLS-vs-NLMS A/B (phase-b-plan §B2.4) settles it; until then this is
         // the measured-baseline value, kept so evidence stays comparable.
@@ -1543,7 +1543,7 @@ public sealed class Ms110dDemodulator
         // two consecutive probes:
         //  - probe correlation below the Phase-A signal-lost discriminator's line
         //    (< max(0.10, 0.45·healthy reference)): correlation normalizes by the burst's
-        //    own healthy level, so this is SNR-invariant — WN1's −3 dB AWGN probes are
+        //    own healthy level, so this is SNR-invariant - WN1's −3 dB AWGN probes are
         //    noisy but correlated (an earlier absolute-MSE test misfired there and cost
         //    the AWGN gate), while a hard collapse kills correlation at any SNR, however
         //    early in the burst it strikes.
@@ -1552,7 +1552,7 @@ public sealed class Ms110dDemodulator
         //    fade, coasting on the anchor is right and a fresh solve would fit noise;
         //    a bad probe WITHOUT energy stays the fade/signal-lost path's business.
         //  - ARMED: one fresh solve per unhealthy episode. Re-arming requires an observed
-        //    healthy probe first — without this, a fresh solve whose ridge-shrunk solution
+        //    healthy probe first - without this, a fresh solve whose ridge-shrunk solution
         //    starts below the health line (K=48: ridge 1.0 over 26 rows for 54 taps)
         //    re-fires two frames later, the taps never rebuild, and the spiral rode
         //    straight into SignalLost (WN2 Poor measured BER 0.73 with 4 dead bursts).
@@ -1569,7 +1569,7 @@ public sealed class Ms110dDemodulator
             // Fresh non-anchored re-solve: discard the accumulator (the collapsed frame's
             // DD rows are poison), rebuild the probe-only rows, and zero the taps so the
             // anchored ridge degenerates to a plain ridge toward zero. The probe alone is
-            // rank-deficient; the ridge sends the unobserved directions to zero — a cold
+            // rank-deficient; the ridge sends the unobserved directions to zero - a cold
             // restart of tracking on the spot, with P re-seeded from the fresh Gram.
             dfe.BeginTraining();
             for (int i = dfe.FbTaps; i < mode.K; i++)
@@ -1594,13 +1594,13 @@ public sealed class Ms110dDemodulator
         dfe.SolveTraining(regularization: _trackRidge, anchorToCurrentTaps: true, ffNoisePower: GenieNoisePower());
 
         // §B2.1 per-probe phase re-anchor. The anchored ridge solve corrects the tap
-        // SHAPE only fractionally per probe — correct for slow shape drift, but for the
+        // SHAPE only fractionally per probe - correct for slow shape drift, but for the
         // channel's common rotation it leaves a steady-state phase lag θ·(1−α)/α that
         // scatter measurement showed parking WN7 in a half-locked limbo (probe gain ≈ 0.4,
         // preMse ≈ 0.75). Phase is a single parameter with ~K known symbols to estimate
         // it: re-equalize the probe with the post-solve taps and take out the residual
         // common phase error at gain 1. Gated on the same 0.10 absolute correlation floor
-        // as the signal-lost discriminator — below it the probe carries no usable phase
+        // as the signal-lost discriminator - below it the probe carries no usable phase
         // and rotating by its noise during a deep fade would break the coasting rule.
         var postPhase = Cf.Zero;
         for (int i = dfe.FbTaps; i < mode.K; i++)
@@ -1622,7 +1622,7 @@ public sealed class Ms110dDemodulator
         Cf[] endTaps = dfe.SnapshotTaps();
         if (freshSolve)
         {
-            // The old anchor is the collapsed solution — this frame's data span is
+            // The old anchor is the collapsed solution - this frame's data span is
             // equalized with the fresh solve held constant (no trajectory from garbage),
             // and the tap-rotation CFO trim below sees zero rotation.
             startTaps = endTaps;
@@ -1650,14 +1650,14 @@ public sealed class Ms110dDemodulator
         dfe.BeginTraining();
 
         // Fading statistic: fractional tap change per frame BEYOND the common rotation.
-        // Pure residual CFO rotates all taps together — after removing the common rotation
-        // the change is ≈ solve noise — while fading reshapes the tap vector. (The previous
+        // Pure residual CFO rotates all taps together - after removing the common rotation
+        // the change is ≈ solve noise - while fading reshapes the tap vector. (The previous
         // detector thresholded the rotation ANGLE itself, i.e. it was a residual-CFO
-        // detector that happened to separate the two simulation rigs — issue #64.)
+        // detector that happened to separate the two simulation rigs - issue #64.)
         // EWMA'd so one noisy solve cannot flip the mode, with hysteresis so per-frame
         // chatter cannot mix bidirectional and single-pass LLR statistics in one block.
         // A fresh re-solve frame is excluded outright: startTaps was reassigned to the
-        // fresh solution, so its tapChange is identically zero — folding that into the
+        // fresh solution, so its tapChange is identically zero - folding that into the
         // min-tracking floor would collapse the floor and turn every later frame into an
         // excursion.
         double tapChange = 0;
@@ -1682,7 +1682,7 @@ public sealed class Ms110dDemodulator
             }
             else
             {
-                // Min-tracking floor: drops instantly, recovers 5 %/frame — so a fade's own
+                // Min-tracking floor: drops instantly, recovers 5 %/frame - so a fade's own
                 // excursions cannot drag the floor up to meet them.
                 _fadeFloor = Math.Min(tapChange, (_fadeFloor * 1.05) + 1e-4);
             }
@@ -1707,7 +1707,7 @@ public sealed class Ms110dDemodulator
         // (minimal noise accumulation while still providing some adaptation).
         // Path selection LATCHES per burst (§B2.1): a channel that faded does not become
         // AWGN mid-burst, but the excursion detector chatters on continuous fading (the
-        // min-tracking floor never sees a quiet stretch to settle on — measured 40/130
+        // min-tracking floor never sees a quiet stretch to settle on - measured 40/130
         // WN7 Poor frames misclassified flat, running the 3-pass path mid-collapse). A
         // collapse latches too: two consecutive uncorrelated probes with signal present
         // cannot happen on a flat channel.
@@ -1720,11 +1720,11 @@ public sealed class Ms110dDemodulator
 
         // §B2.1a: probe-anchored retrospective tap trajectory for fading frames. startTaps
         // is anchored at the previous probe's centre (K/2 before the data span), endTaps at
-        // the following probe's centre (K/2 beyond it) — both known here, because the probe
+        // the following probe's centre (K/2 beyond it) - both known here, because the probe
         // AFTER the span is solved before any data symbol is equalized (the block-buffered
         // architecture's free non-causality). Fraction for data symbol u:
         // f(u) = (u + K/2)/(U + K). The common rotation φ between the anchors is applied as
-        // a phase ramp over linearly-interpolated de-rotated taps — chord interpolation of
+        // a phase ramp over linearly-interpolated de-rotated taps - chord interpolation of
         // a rotation understates amplitude (cos(φ/2) at midspan), and tens-of-degrees
         // per-frame rotation on the 1 Hz Poor channel is exactly the WN7/WN8 autopsy
         // mechanism, so the explicit phase ramp is the load-bearing part.
@@ -1775,7 +1775,7 @@ public sealed class Ms110dDemodulator
 
                 // Same decision-confidence gate as the interpolated fading path below:
                 // QAM16's tight regions make ungated DD updates the fastest way to
-                // self-destruct (WN8 autopsy — phase AND amplitude).
+                // self-destruct (WN8 autopsy - phase AND amplitude).
                 if ((y - clean).Cnorm() < ddGate)
                 {
                     dfe.RlsUpdate(row, _decisions, clean, weight: rlsWeight);
@@ -1880,9 +1880,9 @@ public sealed class Ms110dDemodulator
             // Fading channel (§B2.1a): single pass with the tap base interpolated between
             // the bracketing probe solves and the RLS deviation riding on top
             // (TranslateTaps tracks the residual only). Before Phase B2 this pass
-            // equalized the whole span from endTaps — the tail anchor applied statically
+            // equalized the whole span from endTaps - the tail anchor applied statically
             // to the head, the 107 ms staleness every U=256 mode pays and the WN7/WN8
-            // smear amplifier — and U≤96 fading frames took the 3-pass average, which
+            // smear amplifier - and U≤96 fading frames took the 3-pass average, which
             // mixes fading states.
             TapTrajectory(startTaps, trajectoryEnd, phi, FrameFraction(mode, 0), tapsCur);
             dfe.LoadTaps(tapsCur);
@@ -1911,7 +1911,7 @@ public sealed class Ms110dDemodulator
 
                 // Decision-confidence gate on BOTH the RLS update and the training row: an
                 // ungated weight-1.0 update on a wrong decision is precisely the DD
-                // self-destruction mechanism of the WN7 autopsy — measured on the scatter
+                // self-destruction mechanism of the WN7 autopsy - measured on the scatter
                 // rig, the §B2.1c fresh re-solve re-collapsed within ONE frame until the
                 // RLS update was gated. When decisions are unusable the interpolated base
                 // carries the channel; when they are trustworthy RLS tracks the residual.
@@ -1942,7 +1942,7 @@ public sealed class Ms110dDemodulator
             $"tapChange={tapChange:F4} floor={_fadeFloor:F4} fading={_fading}/{fading} " +
             $"preMse={preMse:F3} energy={probeEnergyMean:F3}/{_probeEnergyRef:F3} fresh={freshSolve} " +
             // §B3 autopsy fields: the pre-solve probe correlation PHASE (the incoming
-            // taps' rotation error — |Σy·p̄| alone is rotation-invariant, issue #69),
+            // taps' rotation error - |Σy·p̄| alone is rotation-invariant, issue #69),
             // the residual the re-anchor removed (or coasted on below the 0.10 floor),
             // and the slerp's common rotation φ for the data span that follows.
             $"phase={probePhase.Arg():F3} anchor={postPhase.Abs() / statRows:F3}@{postPhase.Arg():F3} " +
@@ -1951,10 +1951,10 @@ public sealed class Ms110dDemodulator
         if (probeGain < Math.Max(0.10, 0.45 * _probeGainRef))
         {
             // Signal-lost patience is WALL-CLOCK, not a probe count: a probe count
-            // scales the patience with frame length — 25 probes was 3 s at U=256
+            // scales the patience with frame length - 25 probes was 3 s at U=256
             // (never false-fired) but only 1 s at U=48, and the §B3 census measured
             // Poor-channel fades outliving it: WN1 abandoned 10/248 bursts and WN2
-            // 4/124 mid-fade, discarding the rest of each burst — 83% and 99% of those
+            // 4/124 mid-fade, discarding the rest of each burst - 83% and 99% of those
             // points' total errors. ~4 s covers the deep-fade tail at 1 Hz Doppler
             // spread; a real carrier drop still exits, just uniformly across modes.
             int badProbeLimit = (int)Math.Ceiling(
@@ -2048,13 +2048,13 @@ public sealed class Ms110dDemodulator
             return;
         }
 
-        // Slow slew only — real clock skew is ppm-scale; anything faster is estimator noise.
+        // Slow slew only - real clock skew is ppm-scale; anything faster is estimator noise.
         double delta = 0.5 * (magnitudes[0] - magnitudes[2]) / denom * 0.5;
         _tau += Math.Clamp(0.1 * delta, -0.03, 0.03);
     }
 
     /// <summary>Applies a phase/frequency correction with the phase model re-anchored at
-    /// <paramref name="halfChipsRef"/> — an ω change must not re-rotate history, only the
+    /// <paramref name="halfChipsRef"/> - an ω change must not re-rotate history, only the
     /// future (the loop is unstable otherwise, since the anchor sits at chip 0).</summary>
     private void RetuneCarrier(double halfChipsRef, double deltaTheta, double deltaOmega)
     {
@@ -2122,7 +2122,7 @@ public sealed class Ms110dDemodulator
         {
             // QAM16 LLRs come from the first-pass PushMaxLogLlrs call with the live 10.0
             // scale; routing QAM16 through here (historically scale 2.0) would silently
-            // drop LLR magnitudes 5× — refuse rather than mis-scale.
+            // drop LLR magnitudes 5× - refuse rather than mis-scale.
             throw new InvalidOperationException("QAM16 LLRs must use the first-pass PushMaxLogLlrs path");
         }
 
@@ -2268,8 +2268,8 @@ public sealed class Ms110dDemodulator
 
             // Decision-directed carrier: the MRC-combined winner statistic Σ ĝ*·corr
             // should be real and positive; its argument is the residual COMMON phase
-            // error (the fingers absorb per-path phase — §B3.5). Average over 8 channel
-            // symbols before applying the correction — the per-symbol phase estimate at
+            // error (the fingers absorb per-path phase - §B3.5). Average over 8 channel
+            // symbols before applying the correction - the per-symbol phase estimate at
             // the −6 dB operating point is too noisy to drive the frequency integrator
             // directly. During warm-up (cold gains) the combined statistic is near zero
             // and contributes nothing, which is the desired behaviour.
@@ -2307,7 +2307,7 @@ public sealed class Ms110dDemodulator
             // ratio ≈ 0.5 at the −6 dB mask point but ≈ 0.23 on noise alone (max over 7
             // causal fingers; the §B3.5b 13-finger window lifts the noise-side statistic
             // ~15%, margin watched via census end-reasons). Weak only when ALL fingers
-            // are weak — a finger-0-only test would false-fire on a direct-path fade
+            // are weak - a finger-0-only test would false-fire on a direct-path fade
             // with a strong echo, exactly the fades MRC rides (§B3.5). The energy window
             // stays the symbol's own 32 chips regardless of the finger span.
             double sumMag = 0;
@@ -2318,7 +2318,7 @@ public sealed class Ms110dDemodulator
 
             if (maxFingerAbs < 0.35 * sumMag)
             {
-                // ~1.2 s — long enough to ride a deep Poor-channel fade (see the DFE
+                // ~1.2 s - long enough to ride a deep Poor-channel fade (see the DFE
                 // path's discriminator for the rationale).
                 if (++_weakSymbols >= 90)
                 {
@@ -2356,13 +2356,13 @@ public sealed class Ms110dDemodulator
         var info = new byte[_il.InputBits];
         Ms110dFraming.DecodeBlock(_viterbi!, _puncture!, _interleaver!, _blockLlrs, info);
 
-        // Turbo re-equalization: SISO soft feedback (§B3.3) — a log-MAP pass over the
+        // Turbo re-equalization: SISO soft feedback (§B3.3) - a log-MAP pass over the
         // outer code turns the current block LLRs into per-symbol soft expectations for
-        // the chain-BCJR re-estimation, then decode again — for every DFE mode except
+        // the chain-BCJR re-estimation, then decode again - for every DFE mode except
         // QAM16. The §B3.4 exclusion is MEASURED, not a scale trap any more: the wiring
         // below supports QAM16 end-to-end (wire-domain chains, permuted priors, true
-        // second moments — the oracle instrument exercises it, ceiling 9.3E-4 on the
-        // w0/b0 corpse), but the shipped loop cannot bootstrap — the first decode is
+        // second moments - the oracle instrument exercises it, ceiling 9.3E-4 on the
+        // w0/b0 corpse), but the shipped loop cannot bootstrap - the first decode is
         // coin-flip (rank-starved first pass), and every label-free start measured
         // (probe-row solves, probe-anchored bootstrap chains, cap 96) descends into a
         // self-consistent wrong attractor whose decode is still 50% (banked:
@@ -2370,7 +2370,7 @@ public sealed class Ms110dDemodulator
         // when a model-front leg moves the bootstrap or the ceiling. The flat-channel
         // skip retired with the DFE-re-solve fallback that motivated it (§B2.3): on a
         // flat channel the chain BCJR degenerates to an exact soft-output matched
-        // filter — the reason BPSK U>48 was always allowed through — while the WN2
+        // filter - the reason BPSK U>48 was always allowed through - while the WN2
         // Poor λ A/B caught the skip misclassifying short-frame fading bursts as flat
         // (turbo 2c/158s, 7× BER cost): the excursion statistic is weakest exactly
         // where probes are densest.
@@ -2406,7 +2406,7 @@ public sealed class Ms110dDemodulator
             bool aborted = false;
             for (int iter = 0; iter < 24; iter++)
             {
-                // Hybrid bootstrap (§B3.3): iteration 0 trains on hard re-encoded labels —
+                // Hybrid bootstrap (§B3.3): iteration 0 trains on hard re-encoded labels -
                 // the first-pass LLR stream's fixed max-log scale is far too timid at high
                 // SNR (measured WN6 corpse: mean |LLR| 1.6 where the calibrated chain-BCJR
                 // output runs 12+), so a soft start spends three iterations rediscovering
@@ -2417,7 +2417,7 @@ public sealed class Ms110dDemodulator
                 // rare non-converging blocks. Measured on the WN6 w2/b2 corpse: one dead
                 // block reverted at cap 8 while still halving its decode-changes and
                 // converged at 9; the other rode out a mid-loop excursion (1490 → 2428 →
-                // 988 → 179 → 9 → 0) and converged at 15 — so the cap carries headroom
+                // 988 → 179 → 9 → 0) and converged at 15 - so the cap carries headroom
                 // over the worst measured path. Healthy blocks still exit on the first
                 // fixed point, almost always iteration 0 or 1.
                 if (iter == 0)
@@ -2472,8 +2472,8 @@ public sealed class Ms110dDemodulator
                 (TrySalvageRevert(info, prevInfo) || TrySalvageRelock(info, prevInfo)))
             {
                 // §B3.6 salvage (evidence/2026-07-26-phase-b36-wn7loop, Amendment 1):
-                // the wander states are scaffold-starved — too few frames with clean
-                // labels to anchor the label-trained solves — so a label-free frozen
+                // the wander states are scaffold-starved - too few frames with clean
+                // labels to anchor the label-trained solves - so a label-free frozen
                 // probe pass re-detects the block and a fresh soft loop runs from that
                 // seed. A fixed point there is accepted on the same converged ⇒ correct
                 // evidence as the primary loop (measured: zero wrong convergences across
@@ -2498,7 +2498,7 @@ public sealed class Ms110dDemodulator
             _blockFrameChips.Count == _il.Frames &&
             BlockSamplesResident())
         {
-            // W5b2 (wn8-program): the MFB-form block decoder — the measured successor
+            // W5b2 (wn8-program): the MFB-form block decoder - the measured successor
             // to the §B3.4 QAM16 exclusion above. The whole detection stack is
             // replaced for QAM16 blocks (composite-FIR probe anchors, per-burst
             // delay-profile window, matched projection, soft/hard cancellation
@@ -2527,7 +2527,7 @@ public sealed class Ms110dDemodulator
 
         // §B3.3 oracle-labels instrument: one extra chain-BCJR re-equalization trained
         // on the TRUE info bits, after the normal pipeline so the shipped decode above
-        // is untouched. Same gate as the turbo (minus DisableTurbo — the instrument
+        // is untouched. Same gate as the turbo (minus DisableTurbo - the instrument
         // composes with MS110D_AUTOPSY_NOTURBO).
         if (OracleInfo?.Invoke(_blockIndex) is byte[] oracleInfo &&
             _dfe is not null && _mode is not null &&
@@ -2551,7 +2551,7 @@ public sealed class Ms110dDemodulator
         // W1 true-channel injection (wn8-program): one further re-equalization with
         // truth time-variation, after the oracle pass so the two bounds land side by
         // side on the same block. The shipped decode above is untouched; the pass emits
-        // truth-frame diagnostics of its own (never turbo-frame — those stay oracle's).
+        // truth-frame diagnostics of its own (never turbo-frame - those stay oracle's).
         if (TruthGainsAtSample is not null &&
             OracleInfo?.Invoke(_blockIndex) is byte[] truthInfo &&
             _dfe is not null && _mode is not null &&
@@ -2571,7 +2571,7 @@ public sealed class Ms110dDemodulator
         }
 
         // §B3.6 C2a stage measurement (M2a): one label-free re-detection pass after the
-        // normal pipeline — see <see cref="TurboFrozenProbe"/>. The shipped decode above
+        // normal pipeline - see <see cref="TurboFrozenProbe"/>. The shipped decode above
         // is untouched.
         if (TurboFrozenProbe && FrozenBlockLlrs is not null &&
             _dfe is not null && _mode is not null &&
@@ -2590,7 +2590,7 @@ public sealed class Ms110dDemodulator
             _dfe.RestoreTraining();
         }
 
-        // W5a instrument seam (see InstrumentBlockReady) — after every shipped and
+        // W5a instrument seam (see InstrumentBlockReady) - after every shipped and
         // instrument pass, while the block's samples are still resident.
         if (InstrumentBlockReady is not null &&
             _blockFrameChips.Count == _il.Frames && BlockSamplesResident())
@@ -2625,7 +2625,7 @@ public sealed class Ms110dDemodulator
         // Turbo re-reads the whole block; a block that has outlived the ring would
         // silently train against overwritten samples (the head frames degrade to LLR
         // erasures the outer code must then bridge). Never trips for the 3 kHz set
-        // with RingBits = 16 — this is the backstop for wider future configs.
+        // with RingBits = 16 - this is the backstop for wider future configs.
         double oldest = PositionOfChip(_blockFrameChips[0]) - _dfe!.FfTaps - InterpHalf;
         return oldest > _written - RingSize;
     }
@@ -2723,7 +2723,7 @@ public sealed class Ms110dDemodulator
 
     /// <summary>Hard-label turbo re-equalization: re-encode <paramref name="info"/> and run
     /// the core on the exact expected wire symbols. This is the §B3.3 oracle instrument's
-    /// path (true info bits ⇒ the converged-soft-feedback ceiling) — the shipped turbo loop
+    /// path (true info bits ⇒ the converged-soft-feedback ceiling) - the shipped turbo loop
     /// uses <see cref="TurboReequalizeSoft"/> instead.</summary>
     private void TurboReequalize(byte[] info, bool trustedLabels = false, bool truthChannel = false)
     {
@@ -2745,7 +2745,7 @@ public sealed class Ms110dDemodulator
                 }
 
                 // QAM16 scrambling is an XOR label permutation (D.5.1.3), not a ring
-                // rotation — the expected wire symbol is the permuted constellation
+                // rotation - the expected wire symbol is the permuted constellation
                 // point directly (the modulator's own mapping: 4 fetched bits MSB-first
                 // ARE the symbol number, no transcode table).
                 _turboExpected[(f * mode.U) + u] = mode.Modulation switch
@@ -2768,10 +2768,10 @@ public sealed class Ms110dDemodulator
     /// outer tail-biting code turns the CURRENT block LLRs (first-pass DFE output on
     /// iteration 0, the previous chain-BCJR output afterwards) into per-coded-bit
     /// posteriors, and the core trains on the resulting per-symbol expectations E[x]
-    /// instead of hard re-encoded decisions. Uncertain symbols shrink toward 0 — exactly
+    /// instead of hard re-encoded decisions. Uncertain symbols shrink toward 0 - exactly
     /// the EM E-step for every estimation consumer (rows, h1/h2 correlations keep their
     /// /count normalizations because E[|x|²] = 1 on the PSK ring; QAM16 carries the true
-    /// second moment instead, §B3.4) — so mid-frame channel information flows from the
+    /// second moment instead, §B3.4) - so mid-frame channel information flows from the
     /// code without the 45%-garbage hard labels that stalled the WN13 fade-cluster
     /// specimen (§B3.2/§B3.3).</summary>
     private void TurboReequalizeSoft()
@@ -2786,11 +2786,11 @@ public sealed class Ms110dDemodulator
         _interleaver.Interleave(_softPunctured, _softWireLlrs);
 
         // Code EXTRINSICS (posterior − channel input, mother domain) → wire order: the
-        // chain-BCJR priors (§B3.3). Posterior would double-count — the detector's own
+        // chain-BCJR priors (§B3.3). Posterior would double-count - the detector's own
         // last-round output echoed back as prior locks the loop onto itself. _softMother
         // (the SISO input) is consumed here; repeated copies (rates < 1/2) share their
         // mother position's extrinsic, which excludes the sibling copies' channel LLRs
-        // too — conservative, and exact for the mask-only rates (repeat = 1).
+        // too - conservative, and exact for the mask-only rates (repeat = 1).
         for (int i = 0; i < _softMother.Length; i++)
         {
             _softMother[i] = _softMotherPost[i] - _softMother[i];
@@ -2800,7 +2800,7 @@ public sealed class Ms110dDemodulator
         _interleaver.Interleave(_softPunctured, _softWireExt);
 
         // Per-symbol soft expectations over the descrambled constellation, rotated onto
-        // the wire by the scrambler (Psk8[(s+r)&7] == Psk8[s]·Psk8[r] — NextPsk is an
+        // the wire by the scrambler (Psk8[(s+r)&7] == Psk8[s]·Psk8[r] - NextPsk is an
         // additive ring rotation). Variance 1−|E[x]|² feeds the core's noise estimate.
         // QAM16 (§B3.4) folds the XOR nibble inside the sum instead (the scramble is a
         // label permutation, not a rotation) and carries the TRUE second moment: XOR
@@ -2910,7 +2910,7 @@ public sealed class Ms110dDemodulator
     /// history wholly inside the probe), feedback-free application over the data span,
     /// h1 from the two probe anchors interpolated across the frame, the solve's own
     /// shortening target c·z^{-lag} as the chain echo model, and a probe-priced noise
-    /// floor — then the chain BCJR as a no-prior exact-MAP detector. No decode label
+    /// floor - then the chain BCJR as a no-prior exact-MAP detector. No decode label
     /// enters any estimate, so nothing here can have been laundered by a wrong decode
     /// (the §B3.6 anti-echo-chamber construction). LLRs land in the block buffer for
     /// the caller to decode; a mid-block sample shortfall aborts with a partial count,
@@ -2955,7 +2955,7 @@ public sealed class Ms110dDemodulator
         // inside the probe (i ≥ fb), mirroring the §B3.4 Amendment 1 probe-row
         // construction. The accumulation is consumed by each solve, so every solve
         // (vote, pair diagnostic, applied) re-runs this. §B3.8 E3: shift > 0 trains
-        // the same rows with the equalizer window advanced by that many chips — the
+        // the same rows with the equalizer window advanced by that many chips - the
         // late-lock geometry, where the cursor rides the delayed path and the early
         // path returns as the (aliased) pre-cursor; desired and history columns are
         // symbol-indexed and do not move.
@@ -2992,7 +2992,7 @@ public sealed class Ms110dDemodulator
         // §B3.7 E1′ (Amendment 1) vote sweep: each frame's FREE probe-only solve votes
         // with its accepted lag; the modal lag is the burst-level consensus the
         // detection sweep below constrains to. The echo delay is a physical constant
-        // of the burst — the per-frame free search pays an L-fold selection margin on
+        // of the burst - the per-frame free search pays an L-fold selection margin on
         // 2·(K−fb) rows (acceptance starvation) and, on the 16-periodic K=32 probe,
         // aliases the −d pre-cursor into causal lag K/2−d (M1a's lag-11 cluster).
         // Votes only; nothing is applied here.
@@ -3067,7 +3067,7 @@ public sealed class Ms110dDemodulator
             Cf h2Wire = tir.Lag > 0 ? tir.Coefficient : Cf.Zero;
 
             // Feedback-free application everywhere (ISI lives in the chain model): the
-            // data span, and the probe rows the anchors/noise floor are measured on —
+            // data span, and the probe rows the anchors/noise floor are measured on -
             // SAME domain as the chains will see.
             for (int j = 0; j < fb; j++)
             {
@@ -3138,15 +3138,15 @@ public sealed class Ms110dDemodulator
             float noiseVar = Math.Max(noiseRows > 0 ? 0.5f * noiseAcc / noiseRows : 1e-2f, 1e-6f);
 
             // §B3.8 E3 (Amendment 1): late-lock geometry offer. The causal accept can
-            // sit on a frame whose delayed path dominates the cursor (|c| ≳ 1) — the
+            // sit on a frame whose delayed path dominates the cursor (|c| ≳ 1) - the
             // feedback-free FF then fails to equalize the frame and the priced floor
-            // explodes 30–80×, drowning the frame in honestly-priced garbage LLRs,
+            // explodes 30-80×, drowning the frame in honestly-priced garbage LLRs,
             // while the identical physics rides cleanly in the late-lock geometry
             // (the natural pre-cursor frames' floors). Re-train with the window
             // shifted by the accepted lag (the shift performs the re-lock; the tap
             // shape carries over, so the ridge anchor stays approximately right in
             // shifted coordinates), solve only the aliased pre-cursor lag, price the
-            // shifted floor identically, and keep the geometry with the lower floor —
+            // shifted floor identically, and keep the geometry with the lower floor -
             // arbitration by the quantity the chain is actually priced with, no
             // threshold knob.
             int lockShift = 0;
@@ -3186,7 +3186,7 @@ public sealed class Ms110dDemodulator
 
                         if (have)
                         {
-                            // Anchors + floor in the shifted geometry — the same
+                            // Anchors + floor in the shifted geometry - the same
                             // construction as above; the folded subtraction
                             // probe[i − lag] is pre-cursor-correct through the
                             // periodic probe.
@@ -3256,7 +3256,7 @@ public sealed class Ms110dDemodulator
             }
 
             // §B3.7 E1″(a) (Amendment 2): an accepted lag beyond half the probe base
-            // period is the pre-cursor folded through the periodic probe — the causal
+            // period is the pre-cursor folded through the periodic probe - the causal
             // chain model at that lag is measurably worse than none (E1′ alias→0
             // class). The solve, FF, anchors and floor stand (they fit the true
             // response through the folded column); the CHAIN echo model is dropped and
@@ -3267,7 +3267,7 @@ public sealed class Ms110dDemodulator
             bool preCursorFrame = TurboFrozenPreCursor && aliasFrame && probePeriod - tir.Lag >= 1;
             if (preCursorFrame)
             {
-                // §B3.7 E1″(b): exact pre-cursor chains — assembly below shifts the
+                // §B3.7 E1″(b): exact pre-cursor chains - assembly below shifts the
                 // observation by d = period − lag and swaps the tap roles.
                 chainDelay = probePeriod - tir.Lag;
             }
@@ -3374,8 +3374,8 @@ public sealed class Ms110dDemodulator
     /// <summary>§B3.6 salvage (Amendment 1): on revert-at-cap, re-detect the block with
     /// the label-free frozen probe pass and run a fresh soft loop (same cap) from that
     /// seed. Returns true with <paramref name="info"/> holding the new fixed-point decode;
-    /// returns false — <paramref name="info"/> scribbled, caller restores the first
-    /// pass — when the pass aborts or the seeded loop finds no fixed point either.</summary>
+    /// returns false - <paramref name="info"/> scribbled, caller restores the first
+    /// pass - when the pass aborts or the seeded loop finds no fixed point either.</summary>
     private bool TrySalvageRevert(byte[] info, byte[] prevInfo)
     {
         TurboFrozenProbePass();
@@ -3424,7 +3424,7 @@ public sealed class Ms110dDemodulator
     }
 
     /// <summary>§B3.8 Amendment 3: the second salvage rung. Only when the standard
-    /// salvage fails does the frozen pass re-run with the late-lock offer active —
+    /// salvage fails does the frozen pass re-run with the late-lock offer active -
     /// blocks that converge anywhere along the existing path are structurally
     /// untouched (a ceiling block's fixed point can wobble a few bits under ANY seed
     /// change; no label-free arbitration can prefer one converged fixed point over
@@ -3451,14 +3451,14 @@ public sealed class Ms110dDemodulator
     /// on the expected symbols, per-segment h1, scrambler-exact single-lag echo, chain-BCJR
     /// detection. <paramref name="expectedAll"/> holds one expected wire symbol per data
     /// position (frame-major); <paramref name="symbolVar"/> is the per-symbol prior variance
-    /// 1−|E[x]|² for soft labels, or null for hard labels — null skips the variance terms
+    /// 1−|E[x]|² for soft labels, or null for hard labels - null skips the variance terms
     /// entirely, keeping the hard/oracle path bit-identical to the pre-§B3.3 code.</summary>
     private void TurboCore(Cf[] expectedAll, float[]? symbolVar, float[]? wireExtLlrs, bool allowPair, bool truthChannel = false)
     {
         var mode = _mode!;
         var dfe = _dfe!;
 
-        // Save DFE state — turbo must not corrupt tracking for future blocks.
+        // Save DFE state - turbo must not corrupt tracking for future blocks.
         Cf[] savedTaps = dfe.SnapshotTaps();
 
         int fb = dfe.FbTaps;
@@ -3468,7 +3468,7 @@ public sealed class Ms110dDemodulator
         bool genie = _genieRing is not null;
         Span<Cf> estWindow = stackalloc Cf[dfe.FfTaps];
         // 4 segments, measured: the banked #81 "16-segment h1 −10%" lever does NOT
-        // compose with TIR — at 16 the correlation windows (16 symbols per segment at
+        // compose with TIR - at 16 the correlation windows (16 symbols per segment at
         // U = 256, less after echo-lag guards) are too noisy for the pinned-echo model
         // and the WN7 corpse oracle regressed 209 → 495 with a lost convergence
         // (§B3.3 twolag note, step 3). That banked measurement was inversion-regime-
@@ -3478,7 +3478,7 @@ public sealed class Ms110dDemodulator
         Span<Cf> segH2 = stackalloc Cf[Segments];
         Span<Cf> segH2b = stackalloc Cf[Segments];
         Span<float> segCentre = stackalloc float[Segments];
-        // §B4.1 floor-estimator instrument (diagnostics ONLY — pricing stays the frame
+        // §B4.1 floor-estimator instrument (diagnostics ONLY - pricing stays the frame
         // constant): the assembly residual bucketed on the same u/segLen partition as the
         // channel anchors, so the corpse can measure within-frame heteroscedasticity and
         // score candidate estimators. The banked §B3.3 pricing consumed these buckets;
@@ -3520,7 +3520,7 @@ public sealed class Ms110dDemodulator
         bool qamWire = mode.Modulation == Ms110dModulation.Qam16;
 
         // §B3.3 turbo priors: outer-code extrinsics become per-symbol log-priors on the
-        // chain BCJR (descrambled labels — the scrambler never touches the bit→ring map).
+        // chain BCJR (descrambled labels - the scrambler never touches the bit→ring map).
         float[]? logPriors = wireExtLlrs is null ? null : new float[mode.U * constellation.Length];
         Span<float> lp0 = stackalloc float[4];
         Span<float> lp1 = stackalloc float[4];
@@ -3533,7 +3533,7 @@ public sealed class Ms110dDemodulator
                 symbolVar is null ? default : symbolVar.AsSpan(f * mode.U, mode.U);
 
             // §B3.4: per-symbol second moment E[|x|²] = |E[x]|² + Var for the QAM16
-            // correlation denominators below — the PSK-ring E[|x|²] = 1 identity that
+            // correlation denominators below - the PSK-ring E[|x|²] = 1 identity that
             // let them divide by symbol COUNTS does not hold across two rings. Bounded
             // below by the inner-ring energy 0.134, so the denominators stay
             // conditioned; PSK paths keep their count denominators bit-identically.
@@ -3552,7 +3552,7 @@ public sealed class Ms110dDemodulator
             // first `delay` chain-BCJR symbols (§B2.2). Frame f's preceding probe is the
             // one that FOLLOWED frame f−1, whose boundary flag was ((f−1)+2) % Frames == 0.
             // (For the first frame of the first block it is really the preamble-ending
-            // probe, boundary false — which (f+1) % Frames == 0 also yields for every
+            // probe, boundary false - which (f+1) % Frames == 0 also yields for every
             // multi-frame interleaver.)
             Cf[] precedingProbe = MiniProbe.Get(mode.K, boundary: (f + 1) % _il.Frames == 0);
 
@@ -3565,7 +3565,7 @@ public sealed class Ms110dDemodulator
                 if (!HaveSamplesForChip(frameChip + u + 2))
                 {
                     // Abort mid-block: restore taps AND leave a clean training
-                    // accumulator — a half-filled Gram would poison the next probe solve.
+                    // accumulator - a half-filled Gram would poison the next probe solve.
                     dfe.LoadTaps(savedTaps);
                     dfe.BeginTraining();
                     return;
@@ -3603,12 +3603,12 @@ public sealed class Ms110dDemodulator
             }
 
             // §B3.4 Amendment 1 (QAM16 only): the re-solve's data rows are LABEL rows,
-            // and at a coin-flip first decode the solve has no anchor in truth —
+            // and at a coin-flip first decode the solve has no anchor in truth -
             // measured as a strong initial pull that stalls into a wander plateau
             // (0c/11r, corpse w0/b0). The bounding mini-probes are label-free truth at
             // both ends of the frame: join their rows (those whose feedback history
             // lies wholly inside the probe) so the re-solved equalizer keeps a truth
-            // floor at every iteration — probe-grade at coin-flip labels, oracle-grade
+            // floor at every iteration - probe-grade at coin-flip labels, oracle-grade
             // as labels improve.
             if (qamWire)
             {
@@ -3651,7 +3651,7 @@ public sealed class Ms110dDemodulator
             // shipped hard iteration 0 re-encodes a first decode that is up to ~49%
             // wrong on deep-start blocks, and cancelling the adjacent tap with those
             // labels injects unpriced error into the very observation the chains
-            // equalize — measured flipping a marginal WN6 block out of convergence
+            // equalize - measured flipping a marginal WN6 block out of convergence
             // (11.4k errors in one block, 146× the point's BER) while the corpse and
             // every trusted-label consumer improved.
             Dfe.TirSolve tir = dfe.SolveTrainingTir(
@@ -3669,7 +3669,7 @@ public sealed class Ms110dDemodulator
                 }
             }
 
-            // §B3.6 M1a: price the solved channel on the preceding probe's rows — known
+            // §B3.6 M1a: price the solved channel on the preceding probe's rows - known
             // symbols whose feedback history and TIR echo sources stay wholly inside the
             // probe, mirroring the solve's own probe-row construction (§B3.4 Amendment 1).
             // A channel refit to wrong labels explains its label rows by construction;
@@ -3709,7 +3709,7 @@ public sealed class Ms110dDemodulator
             // Chain-BCJR re-equalization for every mode (§B2.2/§B2.3; QAM16 since §B3.4).
             // Channel estimation runs in the WIRE domain: the legacy path estimated the
             // echo tap on DESCRAMBLED quantities, where the scrambler's rotor product
-            // r(u−d)·r̄(u) phase-scrambles the lag correlation toward zero — the echo
+            // r(u−d)·r̄(u) phase-scrambles the lag correlation toward zero - the echo
             // model was scrambler-blind (issue #65). The scrambler re-enters the PSK
             // model exactly through the per-position h2 span below; QAM16 stays wire
             // end-to-end (nibbles permute priors and flip output LLR signs instead).
@@ -3748,9 +3748,9 @@ public sealed class Ms110dDemodulator
                 }
             }
 
-            // Per-segment h1 anchors (§B2.1b: per-position h instead of block constants —
+            // Per-segment h1 anchors (§B2.1b: per-position h instead of block constants -
             // issue #65). The re-encoded symbols are mid-frame references the probes can
-            // never provide, so the intra-frame trajectory is observable HERE — including
+            // never provide, so the intra-frame trajectory is observable HERE - including
             // through fade nulls, where phase moves fastest and the probe-anchored
             // first-pass interpolation is weakest.
             int segLen = (mode.U + Segments - 1) / Segments;
@@ -3787,7 +3787,7 @@ public sealed class Ms110dDemodulator
             if (tir.Lag > 0)
             {
                 // TIR accepted: the FF was solved to LEAVE the echo at this lag, so the
-                // estimation is pinned there and the significance floor does not apply —
+                // estimation is pinned there and the significance floor does not apply -
                 // the acceptance margin already established the echo on U rows of
                 // evidence, and the worst case would be an FF that deliberately left an
                 // echo in with a BCJR told there is none.
@@ -3834,7 +3834,7 @@ public sealed class Ms110dDemodulator
                 }
 
                 // §B3.3 straddle pair: the adjacent-lag coefficient, estimated on the
-                // doubly-subtracted residual (h1 and the dominant echo removed) — the
+                // doubly-subtracted residual (h1 and the dominant echo removed) - the
                 // scrambler decorrelates distinct lags on the PSK ring, so the direct
                 // correlation is consistent. Cancelled softly from the observation in the
                 // assembly loop below; the chain BCJR stays exact on the dominant lag.
@@ -3918,7 +3918,7 @@ public sealed class Ms110dDemodulator
                 }
 
                 // Significance floor: each noise-only lag estimate has variance ≈ σ²/U, so
-                // the max over ≤24 lags sits near 2·ln24·σ²/U — at the worst gated point
+                // the max over ≤24 lags sits near 2·ln24·σ²/U - at the worst gated point
                 // (WN3, U=96, ~4 dB Es/N0) that is ≈ 0.027·|h1|². Below 0.04·|h1|² the
                 // "echo" is a noise pick: run the chains echo-free (matched-filter mode).
                 if (h2Avg.Cnorm() < 0.04f * h1Avg.Cnorm())
@@ -3934,7 +3934,7 @@ public sealed class Ms110dDemodulator
             // are LS-fitted on this frame's true symbols, so labels supply only
             // 2·(1+echo+straddle) complex constants per frame while the fade motion is
             // per-symbol exact. The FF solve, rxWire, echo lags, pricing, and the chain
-            // call are the oracle path's own — the estimator's TIME MODEL is the only
+            // call are the oracle path's own - the estimator's TIME MODEL is the only
             // delta, which is precisely the W1 registration's question.
             Cf[]? tg1 = null, tg2 = null;
             Cf[]? truthFollow = null;
@@ -4100,9 +4100,9 @@ public sealed class Ms110dDemodulator
 
             // Assemble the descrambled-domain model: z[u] = rxWire[u]·r̄(u) leaves h1
             // unchanged (piecewise-linear through the segment centres) and puts the
-            // scrambler into the echo coefficient — h2·r(u−d)·r̄(u) for in-block echoes,
+            // scrambler into the echo coefficient - h2·r(u−d)·r̄(u) for in-block echoes,
             // h2·r̄(u) against the known wire chip for the pre-block ones. QAM16 (§B3.4)
-            // stays in the wire domain — no derotation, plain h2 — because its scramble
+            // stays in the wire domain - no derotation, plain h2 - because its scramble
             // is a label permutation, handled at the priors and the output LLR signs.
             var rxDesc = new Cf[mode.U];
             var h1Span = new Cf[mode.U];
@@ -4118,7 +4118,7 @@ public sealed class Ms110dDemodulator
             segResidCount.Clear();
             // §B4.1: per-position residual/|h1| capture for the oracle-pass reference
             // floor (label-true residuals; symbolVar is null and allowPair only on the
-            // oracle instrument's call). Diagnostic path only — never the shipped loop.
+            // oracle instrument's call). Diagnostic path only - never the shipped loop.
             bool residDump = _turboFrameDiag && FrameDiagnostics is not null
                 && symbolVar is null && allowPair;
             float[]? residPos = residDump ? new float[mode.U] : null;
@@ -4158,7 +4158,7 @@ public sealed class Ms110dDemodulator
                     : h2Avg;
                 if (truthFit)
                 {
-                    // W1/W2: the truth-gauge model replaces the segment interpolation —
+                    // W1/W2: the truth-gauge model replaces the segment interpolation -
                     // same taps, per-symbol-exact time variation (part-selected for the
                     // V-split variant).
                     Span<Cf> tp = truthGauge.Slice(
@@ -4169,7 +4169,7 @@ public sealed class Ms110dDemodulator
 
                 // §B3.3 straddle pair: soft-cancel the adjacent-lag component before the
                 // chains, at the segment-interpolated coefficient. x̂ is this iteration's
-                // expected symbol (truth on the oracle path — exact cancellation; E[x] on
+                // expected symbol (truth on the oracle path - exact cancellation; E[x] on
                 // soft iterations, whose uncertainty enters the noise below); pre-block
                 // sources are known probe chips.
                 if (delay2 > 0)
@@ -4212,7 +4212,7 @@ public sealed class Ms110dDemodulator
                 {
                     // EM-consistent noise estimate for soft labels: E|z − h·x|² =
                     // |z − h·E[x]|² + |h|²·(1 − |E[x]|²). The preceding-probe echo
-                    // sources (u < delay) are known exactly — variance 0. The cancelled
+                    // sources (u < delay) are known exactly - variance 0. The cancelled
                     // adjacent tap contributes its own cancellation uncertainty.
                     residual += h1u.Cnorm() * expectedVar[u];
                     if (u >= delay)
@@ -4248,9 +4248,9 @@ public sealed class Ms110dDemodulator
             // §B4.1 per-segment noise pricing (Amendment 2 variant ladder; SHIPPED
             // default = spikeup, "off" restores the frame constant). A segment's windowed
             // floor replaces the frame constant only beyond its own 3σ χ² band
-            // (thr = exp(3/√count) — dof-derived, never tuned; WN2's flat-floor truth
+            // (thr = exp(3/√count) - dof-derived, never tuned; WN2's flat-floor truth
             // cannot cross its 24-dof 2.4× band, so it stays frame-constant by
-            // construction). "spikeup" engages upward only — pricing can de-confidence a
+            // construction). "spikeup" engages upward only - pricing can de-confidence a
             // locally-bad span but never injects an over-confident low floor (the §B3.3
             // WN2 damage direction); "spike2s" engages both ways. Engaged values
             // interpolate through the segment centres like the channel spans (no cliffs).
@@ -4373,7 +4373,7 @@ public sealed class Ms110dDemodulator
 
                     for (int s = 0; s < m; s++)
                     {
-                        // QAM16: prior for WIRE symbol s = P(data nibble = s XOR n_u) —
+                        // QAM16: prior for WIRE symbol s = P(data nibble = s XOR n_u) -
                         // the extrinsics address DATA bits, so the label is permuted.
                         int label = labels.Length > 0 ? labels[s] : s;
                         if (qamWire)
@@ -4401,7 +4401,7 @@ public sealed class Ms110dDemodulator
 
             // QAM16: the chains emitted WIRE-bit LLRs (identity labels over the wire
             // constellation); data bit i = wire bit i XOR scramble bit i, so scramble
-            // bits flip signs — BEFORE the extrinsic subtraction, which lives in the
+            // bits flip signs - BEFORE the extrinsic subtraction, which lives in the
             // data domain.
             if (qamWire)
             {
@@ -4419,7 +4419,7 @@ public sealed class Ms110dDemodulator
             }
 
             // With priors in, the BCJR emits full posteriors; hand the outer code detector
-            // EXTRINSICS only (posterior − prior) — feeding its own opinion back to the
+            // EXTRINSICS only (posterior − prior) - feeding its own opinion back to the
             // SISO would double-count and lock the loop.
             if (wireExtLlrs is not null)
             {
@@ -4473,7 +4473,7 @@ public sealed class Ms110dDemodulator
         _il = null;
         _dfe = null;
         _walsh = null;
-        // W5b2: the next burst may lock on the other propagation path — the MFB
+        // W5b2: the next burst may lock on the other propagation path - the MFB
         // decoder's delay-profile window must be re-scanned per burst. The decoder
         // itself is mode-shaped, so a mode change rebuilds it.
         _mfb?.ResetBurst();

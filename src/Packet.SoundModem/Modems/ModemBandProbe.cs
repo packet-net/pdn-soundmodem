@@ -18,7 +18,7 @@ public static class ModemBandProbe
 {
     /// <summary>
     /// Measures <paramref name="modem"/>'s occupied band in Hz. False when the mode cannot
-    /// modulate the probe frame, or produces too little audio to meter — the caller then has
+    /// modulate the probe frame, or produces too little audio to meter - the caller then has
     /// no measurement rather than a bad one.
     /// </summary>
     public static bool TryMeasure(IModem modem, int sampleRate, out double lowHz, out double highHz)
@@ -44,7 +44,7 @@ public static class ModemBandProbe
         // One window's worth is the real requirement, and the fastest modes are the ones that fall
         // short of a fixed one: the probe frame is a fixed number of *bytes*, so at 3600 baud on a
         // 12 kHz channel it is over in well under 2048 samples. Refusing to measure there is worse
-        // than measuring coarsely — an unmeasured mode falls back to a nominal 500 Hz width, which
+        // than measuring coarsely - an unmeasured mode falls back to a nominal 500 Hz width, which
         // for qpsk3600 is out by the better part of a passband and lands in the band plan.
         int window = sampleRate >= 24000 ? 4096 : 1024;
         while (window > 256 && usable < window)
@@ -62,7 +62,7 @@ public static class ModemBandProbe
     }
 
     /// <summary>
-    /// A representative little frame: PDNSM&gt;PDNSM with a short payload — enough symbols for a
+    /// A representative little frame: PDNSM&gt;PDNSM with a short payload - enough symbols for a
     /// stable Welch estimate in every mode.
     /// </summary>
     private static byte[] BuildProbeFrame()

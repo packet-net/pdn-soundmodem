@@ -3,7 +3,7 @@ namespace Packet.SoundModem.Modems;
 /// <summary>
 /// Frequency-diversity BPSK: 2·<c>offsetPairs</c>+1 parallel <see cref="BpskModem"/> branches
 /// spaced <c>offsetHz</c> apart around the channel centre, with content-based deduplication
-/// across the bank — the QtSoundModem/UZ7HO multi-decoder model (see
+/// across the bank - the QtSoundModem/UZ7HO multi-decoder model (see
 /// <see cref="Afsk1200MultiModem"/>) applied to the PSK modes.
 /// </summary>
 /// <remarks>
@@ -13,7 +13,7 @@ namespace Packet.SoundModem.Modems;
 /// preamble, yet real carriers arrive tens of Hz off (dial resolution, TX tone tolerance, drift);
 /// a branch near the carrier acquires it without widening the loop (which would forfeit coherent's
 /// margin). For <b>differential</b> (the default detector), which already tolerates wide offset on
-/// one branch, the diversity still helps in multi-signal conditions — measured live on the GB7RDG
+/// one branch, the diversity still helps in multi-signal conditions - measured live on the GB7RDG
 /// 40 m channel, a single differential modem matched 116/117 NinoTNC frames while the bank matched
 /// 117/117 and decoded 2 more the NinoTNC missed (the extra frame was a beacon overlapping other
 /// traffic that an offset branch resolved). The reported carrier offset is the winning branch's
@@ -42,7 +42,7 @@ public sealed class BpskMultiModem : IModem
 
     /// <summary>One branch's copy of a frame, held until the chunk ends and the branches can be
     /// compared. <paramref name="ResidualHz"/> is that branch's own measurement of how far the
-    /// signal sat from <em>its</em> centre — null where the branch could not measure it — so
+    /// signal sat from <em>its</em> centre - null where the branch could not measure it - so
     /// branch + residual is the station's offset from the bank's centre however far out the
     /// branch that copied it happened to be.</summary>
     private readonly record struct Candidate(
@@ -52,7 +52,7 @@ public sealed class BpskMultiModem : IModem
     /// <param name="sampleRate">Channel DSP rate (multiple of <paramref name="baud"/>).</param>
     /// <param name="frameReceived">Receives each unique decoded AX.25 frame once.</param>
     /// <param name="crc">IL2P+CRC mode (both stations must agree). On for NinoTNC networks.</param>
-    /// <param name="centreFrequency">Channel centre — the middle branch and the TX carrier.</param>
+    /// <param name="centreFrequency">Channel centre - the middle branch and the TX carrier.</param>
     /// <param name="baud">Symbol rate: 300 (mode 8) or 1200 (mode 10).</param>
     /// <param name="offsetPairs">Extra branches either side of centre (0 = a single branch,
     /// i.e. a plain <see cref="BpskModem"/>).</param>
@@ -149,7 +149,7 @@ public sealed class BpskMultiModem : IModem
     public void Process(ReadOnlySpan<float> samples)
     {
         // Feed the bank in bounded chunks so the dedupe clock advances with the audio even when a
-        // caller hands over one huge buffer — otherwise a legitimate repeat later in the same
+        // caller hands over one huge buffer - otherwise a legitimate repeat later in the same
         // buffer would be suppressed (mirrors Afsk1200MultiModem).
         for (int position = 0; position < samples.Length; position += _dedupeChunk)
         {
@@ -191,20 +191,20 @@ public sealed class BpskMultiModem : IModem
     /// <para><b>Why not simply the first branch to finish.</b> Branches are fed in ascending
     /// order and the differential detector tolerates wide offset on any one branch, so a normal
     /// signal is copyable by branches well either side of it and "first" means "lowest-centred
-    /// branch that could still read it" — index 0 by iteration order alone. Reporting that
+    /// branch that could still read it" - index 0 by iteration order alone. Reporting that
     /// branch's nominal step as the carrier offset put 82 % of 431 frames from a GPSDO-locked
     /// station at exactly −30 Hz, the comb's most negative position, and had one station read
     /// +30, −30 and −15 Hz inside 23 seconds (issue #202). That is fine for deciding
-    /// <em>whether</em> to emit — the bytes are identical either way and the deduper is
-    /// content-based — and useless as a frequency reading.</para>
+    /// <em>whether</em> to emit - the bytes are identical either way and the deduper is
+    /// content-based - and useless as a frequency reading.</para>
     /// <para>So the branches are compared instead, on each one's own
-    /// <see cref="BpskDemodulator.CarrierOffsetHz"/> — how far it measured the signal from its
+    /// <see cref="BpskDemodulator.CarrierOffsetHz"/> - how far it measured the signal from its
     /// own centre. The smallest residual is the best-matched branch, and its
     /// <c>branch + residual</c> is the station's offset from the bank's centre. Where no branch
     /// could measure (nothing coherent enough in the window), the offset is reported as
     /// <c>null</c>: "we did not measure it" is the honest answer, and the comb position is not
     /// a substitute for one.</para>
-    /// <para>The cost is that a frame waits for the end of its chunk — at most 100 ms, against
+    /// <para>The cost is that a frame waits for the end of its chunk - at most 100 ms, against
     /// frames that take seconds at 300 baud (mirrors <see cref="Afsk300MultiModem"/>).</para>
     /// </remarks>
     private void EmitBestOfChunk()
@@ -249,7 +249,7 @@ public sealed class BpskMultiModem : IModem
 
     /// <summary>Ranks two branches' copies of the same frame: a measured branch beats an
     /// unmeasured one, the better-centred of two measured branches wins, and two unmeasured
-    /// copies are separated by FEC work then by distance from the bank centre — anything but
+    /// copies are separated by FEC work then by distance from the bank centre - anything but
     /// array order, which is the bias being removed.</summary>
     private static bool IsBetter(in Candidate candidate, in Candidate best)
     {

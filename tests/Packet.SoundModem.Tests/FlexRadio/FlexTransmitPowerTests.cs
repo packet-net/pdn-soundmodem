@@ -8,14 +8,14 @@ namespace Packet.SoundModem.Tests.FlexRadio;
 /// Transmit power configuration: <c>"flex": { "txPowerWatts": 30 }</c>.
 /// </summary>
 /// <remarks>
-/// <para>Watts, not the radio's 0–100 number, because watts is what an operator means and what
-/// a licence is written in. Every 6000-series model has a 100 W PA, so the two coincide there —
+/// <para>Watts, not the radio's 0-100 number, because watts is what an operator means and what
+/// a licence is written in. Every 6000-series model has a 100 W PA, so the two coincide there -
 /// the conversion exists to keep the config honest about its units, not because the arithmetic
 /// is hard.</para>
 /// <para>Why this is configured here at all rather than left to the rig: RF power is held per
 /// station and only the client owning the transmit slice can set it. In a headless station that
 /// client is the daemon, so with pdn-soundmodem running, an external tool's request is accepted
-/// by the radio and discarded — measured on a FLEX-6500, fw 4.2.20.41343.</para>
+/// by the radio and discarded - measured on a FLEX-6500, fw 4.2.20.41343.</para>
 /// </remarks>
 public class FlexTransmitPowerTests
 {

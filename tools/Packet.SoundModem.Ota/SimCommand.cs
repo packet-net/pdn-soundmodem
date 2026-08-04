@@ -4,10 +4,10 @@ using System.Globalization;
 namespace Packet.SoundModem.Ota;
 
 /// <summary>
-/// <c>sm-ota sim</c> — the pure-software BER-vs-SNR baseline: render a burst for any
+/// <c>sm-ota sim</c> - the pure-software BER-vs-SNR baseline: render a burst for any
 /// <c>ModemCatalog</c> mode, push it through calibrated AWGN or a Watterson fading channel at a
 /// known SNR, decode it, and tally frame/packet success. No radio, no capture, no self-calibrating
-/// noise lead-in — the SNR is injected directly, so a run is deterministic and fast.
+/// noise lead-in - the SNR is injected directly, so a run is deterministic and fast.
 /// </summary>
 /// <remarks>
 /// This is the sim half of the campaign methodology the MS110D <c>ladder</c> drives over the air:
@@ -27,7 +27,7 @@ internal static class SimCommand
                 sm-ota sim --mode <catalogue-mode> --snr <a,b,c> [options]
 
                 Renders bursts, injects a channel at a known SNR (3 kHz noise bandwidth), decodes,
-                and tallies frame/packet success — the software BER-vs-SNR baseline.
+                and tallies frame/packet success - the software BER-vs-SNR baseline.
 
                   --mode <name>        ModemCatalog mode (e.g. freedv-datac0 … freedv-datac14).
                                        Any catalogue mode works at the frame layer.
@@ -54,7 +54,7 @@ internal static class SimCommand
                                        FreeDV's own figures are measured at), else DspRateFor(mode).
                                        Pass 48000 to exercise the ×6/÷6 deployment path.
                   --seed <n>           first burst seed (default 1)
-                  --workers <n>        bounded parallelism (default 4 — shared box)
+                  --workers <n>        bounded parallelism (default 4 - shared box)
                   --csv <path>         write one row per point
                   --quiet              suppress the per-point progress lines
 
@@ -179,7 +179,7 @@ internal static class SimCommand
 
     /// <summary>
     /// The level-invariance verdict: for each (channel, SNR) with a level scan, the spread of the
-    /// success rate across the level axis. A level-robust receiver holds flat — max−min ≈ 0 across
+    /// success rate across the level axis. A level-robust receiver holds flat - max−min ≈ 0 across
     /// the whole non-clipping range; a level-sensitive one (the WN2 lesson: an un-normalised front
     /// end) sags at low level even though the SNR never moved. Clipping at high positive level is a
     /// separate, expected effect and is flagged, not counted against invariance.
@@ -195,7 +195,7 @@ internal static class SimCommand
             var scan = g.OrderBy(r => r.LevelDb).ToList();
             double min = scan.Min(r => r.SuccessRate);
             double max = scan.Max(r => r.SuccessRate);
-            // Invariant when every level holds within a burst-count-worth of the best — a couple of
+            // Invariant when every level holds within a burst-count-worth of the best - a couple of
             // trials of scatter is sampling noise, not level sensitivity.
             double slack = 3.0 / Math.Max(1, scan[0].Trials);
             string verdict = max - min <= slack ? "INVARIANT" : "LEVEL-DEP";
@@ -220,9 +220,9 @@ internal static class SimCommand
         }
     }
 
-    private static string Knee(double v) => double.IsNaN(v) ? "—" : v.ToString("+0.0;-0.0", CultureInfo.InvariantCulture);
+    private static string Knee(double v) => double.IsNaN(v) ? "-" : v.ToString("+0.0;-0.0", CultureInfo.InvariantCulture);
 
-    private static string Fmt(double v) => double.IsNaN(v) ? "—"
+    private static string Fmt(double v) => double.IsNaN(v) ? "-"
         : v == 0 ? "0"
         : v.ToString("0.00E+00", CultureInfo.InvariantCulture);
 

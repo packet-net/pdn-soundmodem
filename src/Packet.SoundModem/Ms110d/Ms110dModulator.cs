@@ -8,7 +8,7 @@ namespace Packet.SoundModem.Ms110d;
 /// <summary>
 /// Appendix D 3 kHz serial-tone transmitter: 2400 Bd single carrier on an 1800 Hz audio
 /// sub-carrier (Table D-I), SRRC 35 % pulse shaping (D.5.1.5), native 9600 Hz
-/// (4 samples/symbol — design §4.3). TX construction is byte-exact to spec: preamble
+/// (4 samples/symbol - design §4.3). TX construction is byte-exact to spec: preamble
 /// (D.5.2.1) → initial mini-probe → [U data + K probe] frames with per-frame scrambler reset
 /// (D.5.1.3) and the interleaver-boundary probe cyclically shifted (D.5.2.2); WN 0 sends
 /// continuous Walsh channel symbols with no probes (D.5.2).
@@ -18,7 +18,7 @@ public sealed class Ms110dModulator
     /// <summary>Native DSP rate: 9600 Hz = 4 samples/symbol at 2400 Bd.</summary>
     public const int NativeRate = 9600;
 
-    /// <summary>SRRC roll-off (D.5.1.5 recommended 0.35 — pinned here; see OBW tests).</summary>
+    /// <summary>SRRC roll-off (D.5.1.5 recommended 0.35 - pinned here; see OBW tests).</summary>
     public const double RollOff = 0.35;
 
     private const int PulseSpanSymbols = 16;   // ±8 symbols
@@ -52,7 +52,7 @@ public sealed class Ms110dModulator
     }
 
     /// <summary>Builds the full burst symbol stream (unit-magnitude, one entry per 2400 Bd
-    /// symbol) — exposed for hermetic tests that want the wire symbols pre-DSP.</summary>
+    /// symbol) - exposed for hermetic tests that want the wire symbols pre-DSP.</summary>
     internal Cf[] BuildSymbols(ReadOnlySpan<byte> payloadBits)
     {
         var preamble = new PreambleGenerator(_settings.TlcBlocks, _settings.PreambleSuperframes);
@@ -131,7 +131,7 @@ public sealed class Ms110dModulator
         return [.. symbols];
     }
 
-    /// <summary>Total burst duration for a payload, in seconds — preamble + frames.</summary>
+    /// <summary>Total burst duration for a payload, in seconds - preamble + frames.</summary>
     public double BurstSeconds(int payloadBitCount)
     {
         Ms110dInterleaverParams il = Ms110dInterleaverParams.Get3k(_mode.Wn, _settings.Interleaver);

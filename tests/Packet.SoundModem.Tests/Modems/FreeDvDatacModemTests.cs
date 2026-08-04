@@ -12,7 +12,7 @@ namespace Packet.SoundModem.Tests.Modems;
 /// <summary>
 /// The FreeDV datac modes through the <see cref="IModem"/> surface on the 48 kHz DSP path:
 /// Modulate (upsample ×6 inside) → audio → Process (decimate ÷6 inside) → frames. The
-/// payload content under test is the pdn convention — the family-standard IL2P+CRC bit
+/// payload content under test is the pdn convention - the family-standard IL2P+CRC bit
 /// stream packed into the fixed-size datac payloads (see <see cref="FreeDvDatacModem"/>).
 /// </summary>
 public class FreeDvDatacModemTests(ITestOutputHelper output)
@@ -48,7 +48,7 @@ public class FreeDvDatacModemTests(ITestOutputHelper output)
         _ => throw new ArgumentException(mode),
     };
 
-    /// <summary>Feeds audio in 100 ms blocks — the daemon's capture block size — so the
+    /// <summary>Feeds audio in 100 ms blocks - the daemon's capture block size - so the
     /// streaming (FIFO/Nin) path is what gets exercised, not one giant span.</summary>
     private static void FeedBlocks(IModem modem, ReadOnlySpan<float> samples, int rate)
     {
@@ -64,17 +64,17 @@ public class FreeDvDatacModemTests(ITestOutputHelper output)
     // ---------------------------------------------------------------------------------------
 
     [Theory]
-    [InlineData("freedv-datac0", 30)]    // IL2P wire 52 B spans 4 of datac0's 14-byte packets —
+    [InlineData("freedv-datac0", 30)]    // IL2P wire 52 B spans 4 of datac0's 14-byte packets -
                                          // the spanning capability the bit-stream framing exists for
     [InlineData("freedv-datac0", 60)]    // spans 6 packets
     [InlineData("freedv-datac3", 60)]    // typical UI frame, single 126-byte packet
     [InlineData("freedv-datac3", 124)]   // spans 2 packets
     [InlineData("freedv-datac1", 60)]    // single 510-byte packet
-    [InlineData("freedv-datac1", 508)]   // spans 2 packets — datac1's first end-to-end burst
-    [InlineData("freedv-datac1", 1000)]  // spans 3 packets — no hard frame cap below IL2P's own
+    [InlineData("freedv-datac1", 508)]   // spans 2 packets - datac1's first end-to-end burst
+    [InlineData("freedv-datac1", 1000)]  // spans 3 packets - no hard frame cap below IL2P's own
     [InlineData("freedv-datac4", 60)]    // narrow RX-BPF mode, spans 2 of datac4's 54-byte packets
     [InlineData("freedv-datac13", 60)]   // narrowest mode (200 Hz), spans 6 of its 14-byte packets
-    [InlineData("freedv-datac14", 60)]   // 3-byte packets — the extreme spanning case (~28 packets)
+    [InlineData("freedv-datac14", 60)]   // 3-byte packets - the extreme spanning case (~28 packets)
     public void Round_Trips_A_Frame_Through_The_IModem_Surface_At_48k(string mode, int frameBytes)
     {
         byte[] frame = SampleFrame(frameBytes);
@@ -110,7 +110,7 @@ public class FreeDvDatacModemTests(ITestOutputHelper output)
     [Fact]
     public void Round_Trips_Back_To_Back_Bursts_As_The_Channel_Sends_Them()
     {
-        // Two Modulate calls played back-to-back — the channel's one-keyup shape, where the
+        // Two Modulate calls played back-to-back - the channel's one-keyup shape, where the
         // second frame gets only a 30 ms token TXDELAY. The first burst's trailing guard
         // silence must cover the receiver's end-of-burst window so the second burst's
         // preamble is not eaten by a still-synced demodulator.
@@ -132,7 +132,7 @@ public class FreeDvDatacModemTests(ITestOutputHelper output)
     [Fact]
     public void Round_Trips_At_The_Native_8k_Rate_Without_Resamplers()
     {
-        // factor == 1: no decimator, no upsampler — the engine-native path.
+        // factor == 1: no decimator, no upsampler - the engine-native path.
         byte[] frame = SampleFrame(60);
         var received = new List<byte[]>();
 
@@ -171,7 +171,7 @@ public class FreeDvDatacModemTests(ITestOutputHelper output)
     public void Two_Frames_Inside_One_Packet_Payload_Both_Decode()
     {
         // The payload carries a bit stream, so nothing stops two small IL2P frames sharing
-        // one datac3 payload byte-aligned back-to-back — the deframer must emit both.
+        // one datac3 payload byte-aligned back-to-back - the deframer must emit both.
         byte[] first = SampleFrame(15);
         byte[] second = SampleFrame(16);
         byte[] wireA = [.. Il2pFramer.FrameBits(Il2pCodec.Encode(first, appendCrc: true), 0).Chunk(8).Select(PackByte)];
@@ -219,11 +219,11 @@ public class FreeDvDatacModemTests(ITestOutputHelper output)
     [Fact]
     public void A_Corrupted_Packet_Mid_Burst_Yields_No_Frame()
     {
-        // Bury one second of a 2-packet burst under full-scale noise — far beyond what the
+        // Bury one second of a 2-packet burst under full-scale noise - far beyond what the
         // rate-½ LDPC can repair (a first cut merely ZEROED 100 ms and the LDPC calmly
         // corrected it: near-zero samples are erasures, well inside the code's budget). The
         // damaged packet fails its LDPC/CRC (or sync), the bit stream has a hole, and
-        // IL2P's Reed-Solomon/CRC must reject the frame — corruption never surfaces as data.
+        // IL2P's Reed-Solomon/CRC must reject the frame - corruption never surfaces as data.
         byte[] frame = SampleFrame(124);
         var received = new List<byte[]>();
 
@@ -246,7 +246,7 @@ public class FreeDvDatacModemTests(ITestOutputHelper output)
     public void Oversize_And_Empty_Frames_Are_Rejected()
     {
         // The bounds are IL2P's own (Il2pCodec.Encode), exactly as the family's other
-        // il2pc modes reject — no mode-specific cap exists since frames span packets.
+        // il2pc modes reject - no mode-specific cap exists since frames span packets.
         var modem = FreeDvDatacModem.Datac1(DspRate, _ => { });
         var oversize = () => modem.Modulate(new byte[Il2pCodec.MaxPayloadBytes + 1], 0);
         oversize.Should().Throw<ArgumentException>().WithMessage("*exceeds the IL2P maximum*");
@@ -287,7 +287,7 @@ public class FreeDvDatacModemTests(ITestOutputHelper output)
     }
 
     // ---------------------------------------------------------------------------------------
-    // Channel wiring — mirrors ChannelLoopbackTests.
+    // Channel wiring - mirrors ChannelLoopbackTests.
     // ---------------------------------------------------------------------------------------
 
     [Fact]

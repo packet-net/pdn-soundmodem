@@ -11,12 +11,12 @@ namespace Packet.SoundModem.Tests.Ardop;
 /// <summary>
 /// The decisive Phase D live legs against a real ardopcf (git a7c9228) over
 /// snd-aloop:
-/// (1) host-protocol conformance — one command script run against ardopcf's host
+/// (1) host-protocol conformance - one command script run against ardopcf's host
 /// interface and ours, transcripts diffed byte-for-byte;
-/// (2) full-stack ARQ sessions through the real daemon binary — a byte-faithful
+/// (2) full-stack ARQ sessions through the real daemon binary - a byte-faithful
 /// scripted host reproducing Pat's exact command sequences (wl2k-go
 /// transport/ardop/tnc.go) drives our --ardop daemon against ardopcf, both roles;
-/// (3) RXO — our monitor decodes a third-party ardopcf↔ardopcf session running on a
+/// (3) RXO - our monitor decodes a third-party ardopcf↔ardopcf session running on a
 /// shared dmix/dsnoop channel.
 /// The real-Pat leg lives beside these (<c>Pat_Exchanges_A_Message…</c>), gated on a
 /// PAT binary.
@@ -24,7 +24,7 @@ namespace Packet.SoundModem.Tests.Ardop;
 /// <remarks>
 /// Gated on <c>ARDOPCF</c> (binary path) and <c>ARDOP_ALOOP_CARD</c> (snd-aloop card
 /// index); run under <c>sg audio</c>. The Pat leg additionally needs <c>PAT</c> (Pat
-/// binary path). One test at a time — xUnit serializes within the class.
+/// binary path). One test at a time - xUnit serializes within the class.
 /// </remarks>
 public class ArdopHostLiveTests(ITestOutputHelper output)
 {
@@ -44,7 +44,7 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
 
     // ------------------------------------------------------------------ plumbing
 
-    /// <summary>A host-side client of the ardop TCP host protocol — works against
+    /// <summary>A host-side client of the ardop TCP host protocol - works against
     /// ardopcf and against our server alike (that interchangeability is the point).</summary>
     private sealed class HostClient : IDisposable
     {
@@ -378,7 +378,7 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
 
     // ================================================== 1. transcript conformance
 
-    // Commands only — nothing here keys a transmitter on our side; ardopcf-side
+    // Commands only - nothing here keys a transmitter on our side; ardopcf-side
     // stray transmissions (the PING quirk) surface only as PTT lines, filtered
     // below as timing-dependent.
     private static readonly string[] ConformanceScript =
@@ -429,7 +429,7 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
     // Lines that are legitimately environment/timing dependent, not protocol
     // conformance: PTT keying (ardopcf transmits its RXO-quirk ping; we don't key in
     // a receive-only mode), INPUTPEAKS level telemetry, BUSY channel-detector
-    // notifications (our busy detector is unported — documented divergence).
+    // notifications (our busy detector is unported - documented divergence).
     private static bool IsEnvironmental(string line) =>
         line.StartsWith("PTT ", StringComparison.Ordinal)
         || line.StartsWith("INPUTPEAKS", StringComparison.Ordinal)
@@ -487,7 +487,7 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
 
     // =================================== 2. full stack through the daemon binary
 
-    // Pat's exact initialization sequence (wl2k-go transport/ardop tnc.go:126-170 —
+    // Pat's exact initialization sequence (wl2k-go transport/ardop tnc.go:126-170 -
     // init(), SetMycall, SetGridSquare, SetListenEnabled; booleans are Go %t
     // lowercase). The transcripts of a real `pat connect` show the same order.
     private static void PatInit(HostClient host, string mycall, string grid, bool listen)
@@ -636,7 +636,7 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
         using var daemon = StartDaemon(rig.Value.Card, ourPort);
 
         // Queue a P2P message for G8BBB in the connecting Pat's outbox (compose
-        // reads the body from stdin, mail(1) style — pipe it via the shell).
+        // reads the body from stdin, mail(1) style - pipe it via the shell).
         using (var compose = new ChildProcess(
             "/bin/sh", $"-c \"echo 'ARDOP Phase D acceptance message' | HOME={homeConnect} {pat} compose --p2p-only -s 'pdn phase D' G8BBB\""))
         {
@@ -692,7 +692,7 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
         Directory.CreateDirectory(configDir);
 
         // Pat gates connects on a Winlink CMS account check (promptUnconfirmedAccount,
-        // app/connect.go:46) — for a P2P bench session there is no Winlink account, so
+        // app/connect.go:46) - for a P2P bench session there is no Winlink account, so
         // pre-seed the rate-limit state file the check consults
         // (DoIfElapsed, app/winlink_api.go:23) to mark the account recently confirmed.
         string stateDir = Path.Combine(home, ".local/state/pat");
@@ -722,7 +722,7 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
 
     /// <summary>Builds an ALSA config letting a monitor overhear a two-station aloop
     /// link. The stations keep their proven direct playback pipes (A plays into
-    /// hw:card,0,0; B into hw:card,1,0 — ardopcf wedges mid-TX on a dmix playback,
+    /// hw:card,0,0; B into hw:card,1,0 - ardopcf wedges mid-TX on a dmix playback,
     /// so playback stays exclusive) while each station's capture goes through
     /// dsnoop, which lets the monitor attach to both pipes as an extra reader.
     /// <c>pdnboth</c> sums the two directions (multi + route), i.e. the composite
@@ -834,7 +834,7 @@ public class ArdopHostLiveTests(ITestOutputHelper output)
         monitor.Exchange("PROTOCOLMODE RXO").Should().Contain("PROTOCOLMODE now RXO");
 
         // The third-party session: A calls B, sends 128 bytes (8 data frames at the
-        // 16-byte 200.50S rung — plenty for the monitor even if one is marginal),
+        // 16-byte 200.50S rung - plenty for the monitor even if one is marginal),
         // disconnects.
         byte[] payload = new byte[128];
         new Random(17).NextBytes(payload);

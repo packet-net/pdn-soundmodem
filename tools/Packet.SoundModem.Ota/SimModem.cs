@@ -4,21 +4,21 @@ namespace Packet.SoundModem.Ota;
 
 /// <summary>
 /// The mode-generic half of the simulation harness: everything the sim ladder needs to know about a
-/// <see cref="ModemCatalog"/> mode — its id string, its DSP audio rate, how to render a burst
-/// carrying a known frame, and how to score a captured burst back to that frame — behind the mode
+/// <see cref="ModemCatalog"/> mode - its id string, its DSP audio rate, how to render a burst
+/// carrying a known frame, and how to score a captured burst back to that frame - behind the mode
 /// name alone.
 /// </summary>
 /// <remarks>
 /// <para>This is the generalization of the MS110D-coupled ladder: where <see cref="LadderPass"/>
 /// reaches straight into <c>Ms110dModulator</c>/<c>Ms110dReferenceBits</c>, this drives the mode
 /// entirely through the <see cref="IModem"/> seam that <see cref="ModemCatalog.Create"/> hands back,
-/// so the same generate → channel → score loop covers every catalogue mode — the FreeDV datac OFDM
+/// so the same generate → channel → score loop covers every catalogue mode - the FreeDV datac OFDM
 /// family above all, but AFSK/PSK/FSK/MS110D too. The MS110D <c>ladder</c>/<c>score</c> commands are
 /// untouched and keep their richer LLR/uncoded instrumentation; this path trades that for
 /// mode-independence, which is exactly what a cross-mode baseline needs.</para>
 /// <para><b>Frame-level figure of merit.</b> Every catalogue mode delivers whole AX.25 frames behind
 /// a CRC (IL2P+CRC for the datac family), so a burst either recovers its frame bit-exact or it does
-/// not — coded BER is degenerate (0 or "frame lost"). The honest metric at this layer is therefore
+/// not - coded BER is degenerate (0 or "frame lost"). The honest metric at this layer is therefore
 /// the <em>frame error rate</em>, which is what FreeDV itself publishes (packets-decoded / sent).
 /// Pre-FEC ("uncoded") BER is not observable through <see cref="IModem"/>; the raw datac
 /// <see cref="DatacPacketProbe"/> reaches one layer deeper for the packet-level coded BER the
@@ -59,11 +59,11 @@ internal sealed class SimModem
     /// </summary>
     /// <param name="frame">The AX.25 frame to carry.</param>
     /// <param name="txDelayMilliseconds">
-    /// TXDELAY — the flag/preamble run-in ahead of the frame, in milliseconds. Zero (the default,
+    /// TXDELAY - the flag/preamble run-in ahead of the frame, in milliseconds. Zero (the default,
     /// used by the datac/sim baseline) is fine for waveforms that carry their own sync (IL2P, OFDM)
     /// or acquire in a couple of symbols (AFSK 1200). The fast baseband FSK detectors (classic-HDLC
     /// <c>fsk9600</c>/<c>c4fsk9600</c> at 9600 baud) need a real run-in to lock clock and DCD before
-    /// the frame — 2 opening flags is not enough — so the over-the-air FM ladder renders with a
+    /// the frame - 2 opening flags is not enough - so the over-the-air FM ladder renders with a
     /// realistic TXDELAY. The run-in is signal, not silence, so it is not trimmed and does not
     /// dilute the SNR calibration.</param>
     public float[] RenderBurst(ReadOnlySpan<byte> frame, int txDelayMilliseconds = 0)
@@ -108,7 +108,7 @@ internal sealed class SimModem
     }
 
     /// <summary>A deterministic pseudo-random frame of <paramref name="bytes"/> bytes for
-    /// <paramref name="seed"/> — an AX.25-looking UI header then a seeded random body, so a point
+    /// <paramref name="seed"/> - an AX.25-looking UI header then a seeded random body, so a point
     /// reproduces from its seed and the body is incompressible (a fair load for the FEC).</summary>
     public static byte[] Frame(int bytes, int seed)
     {
@@ -148,7 +148,7 @@ internal sealed class SimModem
 }
 
 /// <summary>What one burst decoded to.</summary>
-/// <param name="FramesDecoded">Frames the receiver emitted (0, 1, or — spuriously — more).</param>
+/// <param name="FramesDecoded">Frames the receiver emitted (0, 1, or - spuriously - more).</param>
 /// <param name="Matched">Whether the sent frame came back bit-exact.</param>
 /// <param name="CorrectedBytes">FEC-repaired bytes on the matching frame (a channel-stress floor);
 /// 0 when nothing matched or the framing carries no correction count.</param>

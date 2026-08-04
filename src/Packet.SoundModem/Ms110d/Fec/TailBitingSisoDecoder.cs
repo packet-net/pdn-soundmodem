@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Ms110d.Fec;
 
 /// <summary>
 /// Soft-in/soft-out (log-MAP BCJR) decoder for the Appendix D tail-biting rate-1/2 mother
-/// codes — the outer half of the §B3.3 soft-feedback turbo. Where the Viterbi returns hard
+/// codes - the outer half of the §B3.3 soft-feedback turbo. Where the Viterbi returns hard
 /// info bits, this returns a posterior LLR for every <b>coded</b> (mother-lattice) position;
 /// the turbo re-punctures and re-interleaves those posteriors into per-symbol soft
 /// expectations E[x] for the chain-BCJR re-estimation. LLR convention matches
@@ -19,7 +19,7 @@ namespace Packet.SoundModem.Ms110d.Fec;
 /// Tail-biting is handled the same way as the Viterbi: circular wrap-extension with
 /// W = min(6·K, N) warm-up stages on each end and equal starting metrics, keeping only the
 /// middle N stages' outputs. max* uses a 128-entry log(1+e^−d) correction table (step 1/16,
-/// clamped at 8 — worst-case error &lt; 0.04, standard log-MAP practice).
+/// clamped at 8 - worst-case error &lt; 0.04, standard log-MAP practice).
 /// </remarks>
 public sealed class TailBitingSisoDecoder
 {
@@ -56,7 +56,7 @@ public sealed class TailBitingSisoDecoder
         int n = motherLlrs.Length / 2;
         if (motherPosteriors.Length != motherLlrs.Length || (motherLlrs.Length & 1) != 0)
         {
-            throw new ArgumentException("motherPosteriors must match motherLlrs, both 2·N long");
+            throw new ArgumentException("motherPosteriors must match motherLlrs, both 2*N long");
         }
 
         if (n < _code.K)

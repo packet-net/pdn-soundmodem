@@ -18,7 +18,7 @@ public sealed class ConnectionResponse
     /// <summary>Idle timeout in seconds.</summary>
     [JsonPropertyName("session_timeout")] public int SessionTimeout { get; init; }
 
-    /// <summary>How long one session may last, in seconds, before the receiver closes it —
+    /// <summary>How long one session may last, in seconds, before the receiver closes it -
     /// 10800 (3 h) on the public instances. A long-running receiver has to expect that and
     /// reconnect.</summary>
     [JsonPropertyName("max_session_time")] public int MaxSessionTime { get; init; }
@@ -32,11 +32,11 @@ public sealed class ConnectionResponse
     [JsonPropertyName("allowed_iq_modes")] public List<string>? AllowedIqModes { get; init; }
 
     /// <summary>Seconds of listening this address has used today, where the instance meters
-    /// it (the public instances allow 10800 s — 3 h — per address per day).</summary>
+    /// it (the public instances allow 10800 s - 3 h - per address per day).</summary>
     [JsonPropertyName("daily_time_used_secs")] public int DailyTimeUsedSecs { get; init; }
 
     /// <summary>Seconds of listening left today: −1 (or absent) when the instance does not
-    /// meter, 0 when the daily allowance is spent — the refusal that time, not
+    /// meter, 0 when the daily allowance is spent - the refusal that time, not
     /// configuration, fixes.</summary>
     [JsonPropertyName("daily_time_remaining_secs")] public int DailyTimeRemainingSecs { get; init; } = -1;
 

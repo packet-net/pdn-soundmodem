@@ -5,7 +5,7 @@
 
     <!-- FlexRadio 6000-series client (lifted out of this repo; AGPL-3.0-or-later). Adding it
          to the GPL-3.0 core is permitted by GPLv3 §13, which pulls AGPL §13 onto the combined
-         work — see docs/plan.md and PROVENANCE.md. -->
+         work - see docs/plan.md and PROVENANCE.md. -->
     <PackageVersion Include="M0LTE.Flex" Version="0.11.0" />
     <PackageVersion Include="M0LTE.Radio.Audio" Version="0.1.0" />
     <PackageVersion Include="M0LTE.Fec" Version="0.2.0" />
@@ -15,7 +15,7 @@
 
     <!-- DSP primitives (FFT/FIR/decimator/upsampler/frequency-shifter/spectrum/occupied-bandwidth
          and, from 0.2.0, SSB demodulation from complex baseband), the OFDM modem
-         (Cf/OfdmModulator/OfdmDemodulator/Datac*), and the LDPC codec — each lifted out of this
+         (Cf/OfdmModulator/OfdmDemodulator/Datac*), and the LDPC codec - each lifted out of this
          repo into its own package. -->
     <PackageVersion Include="M0LTE.Dsp" Version="0.2.0" />
     <PackageVersion Include="M0LTE.FecLdpc" Version="0.1.0" />
@@ -24,10 +24,10 @@
     <!-- Pure-managed zstd port for the ka9q_ubersdr / UberSDR IQ path (pcm-zstd WebSocket
          frames). MIT, so GPL-compatible per CLAUDE.md's licence rules. It was dev-tooling-only
          while the only consumer was the capture tool; the shipped package now carries the
-         `ubersdr:` receive device, so the wire decoder — and this — moved into the core. -->
+         `ubersdr:` receive device, so the wire decoder - and this - moved into the core. -->
     <PackageVersion Include="ZstdSharp.Port" Version="0.8.8" />
 
-    <!-- Dev tooling only (tools/Packet.SoundModem.NinoCompare) — the NinoTNC comparison harness.
+    <!-- Dev tooling only (tools/Packet.SoundModem.NinoCompare) - the NinoTNC comparison harness.
          All MIT-licensed; not referenced by the shipped pdn-soundmodem package. -->
     <!-- Frame log store. MIT (and SQLitePCLRaw's bundled SQLite is public domain), so
          GPL-compatible per CLAUDE.md's licence rules. -->
@@ -41,7 +41,7 @@
     <PackageVersion Include="Packet.Ax25" Version="0.23.0" />
     <PackageVersion Include="Packet.Core" Version="0.23.0" />
 
-    <!-- Testing — xUnit v3 with Microsoft Testing Platform (MTP) runner -->
+    <!-- Testing - xUnit v3 with Microsoft Testing Platform (MTP) runner -->
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <PackageVersion Include="AwesomeAssertions" Version="9.2.0" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.0.0" />

@@ -6,7 +6,7 @@ using Packet.SoundModem.Waterfall;
 namespace Packet.SoundModem.Daemon;
 
 /// <summary>
-/// Records every frame the station hears <i>and every frame it sends</i> to a SQLite file — what
+/// Records every frame the station hears <i>and every frame it sends</i> to a SQLite file - what
 /// it was, when, on which modem, from and to whom, and (for a receive) how well it decoded.
 /// </summary>
 /// <remarks>
@@ -14,8 +14,8 @@ namespace Packet.SoundModem.Daemon;
 /// path must never wait on a disk. If the disk goes away the queue is drained and dropped
 /// rather than allowed to grow without limit: a station that cannot log should keep decoding,
 /// and a station that cannot log should not eventually run out of memory either.</para>
-/// <para>The database is opened WAL, so a copy can be read — by a logbook, a dashboard, a
-/// `sqlite3` prompt — while the modem is still writing to it.</para>
+/// <para>The database is opened WAL, so a copy can be read - by a logbook, a dashboard, a
+/// `sqlite3` prompt - while the modem is still writing to it.</para>
 /// <para>The timestamp column is called <c>heard_at</c> for a transmitted row too, where it
 /// means "when it went out". Renaming it would be more honest about one row in ten and would
 /// silently break every query, dashboard and documented example written against the log so far,
@@ -44,7 +44,7 @@ internal sealed class FrameLog : IAsyncDisposable
 
     /// <summary>
     /// Opens (creating if needed) the log at <paramref name="path"/>. Throws with an
-    /// operator-facing message if the file cannot be opened — a station configured to keep a
+    /// operator-facing message if the file cannot be opened - a station configured to keep a
     /// log and silently not keeping one is worse than one that says so.
     /// </summary>
     internal static FrameLog Open(string path, TimeProvider? time = null)
@@ -101,7 +101,7 @@ internal sealed class FrameLog : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// <c>CREATE TABLE IF NOT EXISTS</c> does nothing to a table that already exists, and there
-    /// are deployed stations whose <c>frames</c> table predates the <c>direction</c> column — on
+    /// are deployed stations whose <c>frames</c> table predates the <c>direction</c> column - on
     /// those, every INSERT would fail and every frame would be silently dropped. The old rows are
     /// all receives, so <c>'rx'</c> is the truth about them rather than a guess, which is why the
     /// column can be added NOT NULL with a default and no backfill.
@@ -128,7 +128,7 @@ internal sealed class FrameLog : IAsyncDisposable
     /// </summary>
     /// <param name="modeName">
     /// Overrides the human-readable name derived from <see cref="FrameQuality.Mode"/>. ARDOP
-    /// uses it to name the frame type — "ARDOP ConReq500M" rather than a column of identical
+    /// uses it to name the frame type - "ARDOP ConReq500M" rather than a column of identical
     /// "ARDOP" rows, since with ARDOP the frame type is most of what the entry says.
     /// </param>
     internal void Record(
@@ -165,15 +165,15 @@ internal sealed class FrameLog : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// <para>A journal that records every frame received and none sent is half a record. There
-    /// is no <see cref="FrameQuality"/> to take the mode from — nothing measured a transmission —
+    /// is no <see cref="FrameQuality"/> to take the mode from - nothing measured a transmission -
     /// so the caller passes it, and <c>corrected</c>, <c>crc_valid</c> and <c>offset_hz</c> are
     /// left null rather than filled with plausible values: they are receive measurements, and
     /// inventing them for our own transmission would be inventing a measurement of ourselves.
     /// (Same reasoning as the waterfall's TX rows.)</para>
-    /// <para><c>heard_at</c> holds when it went out — see the note on the class.</para>
+    /// <para><c>heard_at</c> holds when it went out - see the note on the class.</para>
     /// </remarks>
     /// <param name="mode">
-    /// The mode string of the modem that sent it, as that modem reports itself — so the column
+    /// The mode string of the modem that sent it, as that modem reports itself - so the column
     /// reads the same for a frame we sent as for one the same modem heard.
     /// </param>
     internal void RecordTransmitted(
@@ -221,15 +221,15 @@ internal sealed class FrameLog : IAsyncDisposable
     }
 
     /// <summary>
-    /// The most recent <paramref name="count"/> frames — heard and sent alike, <b>oldest
-    /// first</b> — as the waterfall's decoded-frames panel opens with, so a browser arriving
+    /// The most recent <paramref name="count"/> frames - heard and sent alike, <b>oldest
+    /// first</b> - as the waterfall's decoded-frames panel opens with, so a browser arriving
     /// mid-afternoon sees what the channel has been doing rather than an empty list.
     /// </summary>
     /// <remarks>
     /// <para>Its own short-lived read-only connection, not the writer's: <see cref="SqliteConnection"/>
     /// is not thread-safe and this is called from whichever connection thread a browser turned
-    /// up on, while the writer thread is mid-INSERT. The database is WAL — which is why the
-    /// class docs promise it stays readable while the modem writes — so a reader takes no lock
+    /// up on, while the writer thread is mid-INSERT. The database is WAL - which is why the
+    /// class docs promise it stays readable while the modem writes - so a reader takes no lock
     /// the writer cares about. A connection per page visit costs nothing at that rate.</para>
     /// <para>Returns empty rather than throwing if the file has gone: a browser losing its
     /// backlog is not a reason to fault a station that is still decoding.</para>

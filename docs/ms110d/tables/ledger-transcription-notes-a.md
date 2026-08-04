@@ -1,4 +1,4 @@
-# MIL-STD-188-110D App D ledger transcription — notes (independent transcriber A)
+# MIL-STD-188-110D App D ledger transcription - notes (independent transcriber A)
 
 Source: `milstd110d.pdf` (MIL-STD-188-110D, 270 physical/PDF pages; document
 page = PDF page - 5). All values below were read by eye from page images
@@ -22,7 +22,7 @@ crop; no `[unclear:...]` markers were needed.
 | d12-known-miniprobe-symbols.csv | Table D-XII (full, all 12 bandwidths) | 164 | 169 |
 | d13-preamble-channel-symbol-length.csv | Table D-XIII | 165 | 170 |
 | d14-walsh-sync-sequences.csv | Table D-XIV | 166 | 171 |
-| preamble-fixed-tlc-prose.md | D.5.2.1–D.5.2.1.3.2 prose (Fixed di-bits, M=1, TLC=conjugate, count/WID mapping) | 165–167 | 170–172 |
+| preamble-fixed-tlc-prose.md | D.5.2.1-D.5.2.1.3.2 prose (Fixed di-bits, M=1, TLC=conjugate, count/WID mapping) | 165-167 | 170-172 |
 | d15-waveform-number-mapping.csv | Table D-XV | 168 | 173 |
 | d16-interleaver-selection-mapping.csv | Table D-XVI | 168 | 173 |
 | d17-constraint-length-voice-mode-mapping.csv | Table D-XVII | 169 | 174 |
@@ -56,7 +56,7 @@ plus the two figures and three prose files.
 - **Walsh data-sequence prose**: the ledger locates it at "D.5.1.2.1, doc
   145-146", but D.5.1.2.1 there is "PSK data symbols" (no Walsh content).
   The WID 0 Walsh data-path prose is the last paragraph of **D.5.2 Frame
-  structure, doc 163** — transcribed in walsh-data-sequence-prose.md.
+  structure, doc 163** - transcribed in walsh-data-sequence-prose.md.
 - **D-XIV 10/11 rows** (ledger had 10<->11 provisional): document reads
   10 -> 0044 and 11 -> 0440 (00 -> 0000, 01 -> 0404).
 
@@ -64,14 +64,14 @@ plus the two figures and three prose files.
 
 - Table D-VI, symbol 6 In-Phase is printed "0.0000000" (seven decimals,
   vs "0.000000" elsewhere). Transcribed verbatim.
-- Table D-XIII only has rows for bandwidths 3–24 kHz (8 rows); no rows for
-  30–48 kHz are printed.
-- Table D-XI, 6 kHz row: WN11/WN12 read **540** (not 544 like WN5–10).
+- Table D-XIII only has rows for bandwidths 3-24 kHz (8 rows); no rows for
+  30-48 kHz are printed.
+- Table D-XI, 6 kHz row: WN11/WN12 read **540** (not 544 like WN5-10).
 - w1-lsb oddity (ledger row D-XV/XVI/XVII), doc 168 verbatim: "The
   convolutional code constraint length shall be mapped into w1 as defined in
   Table D-XVII.  The lsb of w1 shall be 0." So w1 = (d3 d2) with d2 = 0 from
   the mapping, while d2 also participates in the 3-bit checksum d2 = d9^d8^d7
-  (D.5.2.1.3.2, doc 167) — both statements transcribed as printed.
+  (D.5.2.1.3.2, doc 167) - both statements transcribed as printed.
 - Table D-XXV trailing-digit quirks, verified at 300 dpi and kept verbatim:
   rows 9/12/21 Quadrature = 0.951056 but row 18 = 0.951057; rows 6/13/17/24
   Quadrature = -0.951057; row 24 In-Phase = **0.309016** (all other 0.309017).

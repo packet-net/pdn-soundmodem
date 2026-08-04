@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Tests.Modems;
 /// <summary>
 /// Regression cover for the c4fsk decision-directed equalizer. Real NinoTNC
 /// transmissions carry pattern-dependent ISI that squeezes outer symbols to
-/// 0.53–0.67 normalised at the decision instant — under the 2/3 slicing boundary —
+/// 0.53-0.67 normalised at the decision instant - under the 2/3 slicing boundary -
 /// so whole frames died on payload content alone (2026-07-31 bench corpus:
 /// 0011 txd50 decoded 0/3 and txd120 2/3 while txd250 decoded clean, from
 /// recordings with indistinguishable levels, spectra and DC; every error in the
@@ -86,11 +86,11 @@ public class C4fskEqualizerTests
 
         // The cutoff (0.63×/0.65× the symbol rate per mode) leaves the binary eye open
         // but drags 4-level outer symbols with opposite-going neighbours toward the
-        // inner band — the measured corpus failure mode, reproduced hermetically at
+        // inner band - the measured corpus failure mode, reproduced hermetically at
         // the tightest cutoff the equalizer still recovers. (0.62× passed before the
         // preamble adaptation freeze: pre-converging on the rank-deficient preamble
         // bought one extra hundredth of cutoff at the price of unbounded tap drift on
-        // long noisy run-ins — see the freeze comment in C4fskModem. The no-equalizer
+        // long noisy run-ins - see the freeze comment in C4fskModem. The no-equalizer
         // discrimination anchor for c4fsk9600 is the bench corpus: 45/45 with the
         // equalizer, 43/45 without; c4fsk19200's 0.65× row fails outright without it.)
         var channel = new FirFilter(FilterDesign.LowPass(cutoffFactor * symbolRate, rate, 48));

@@ -1,6 +1,6 @@
 namespace Packet.SoundModem.UberSdr;
 
-/// <summary>The receiver answered and said no for now — HTTP 429 on the stream upgrade.
+/// <summary>The receiver answered and said no for now - HTTP 429 on the stream upgrade.
 /// Carries no blame: quota and rate limits are the receiver's to enforce, and the right
 /// response is a long wait, not a restart.</summary>
 internal sealed class UberSdrRefusedException(string message, Exception inner)
@@ -10,7 +10,7 @@ internal sealed class UberSdrRefusedException(string message, Exception inner)
 /// attempt is concerned.</summary>
 internal enum UberSdrReconnectOutcome
 {
-    /// <summary>The session delivered real audio before ending — the ordinary
+    /// <summary>The session delivered real audio before ending - the ordinary
     /// max-session-time rollover. Reconnect promptly.</summary>
     Healthy,
 
@@ -19,13 +19,13 @@ internal enum UberSdrReconnectOutcome
     /// give-up-and-restart clock.</summary>
     Transient,
 
-    /// <summary>The receiver answered and said no for now — HTTP 429, or a daily listening
+    /// <summary>The receiver answered and said no for now - HTTP 429, or a daily listening
     /// quota shown as exhausted. Nothing on our side fixes this; only time does. Wait long,
     /// escalating to a cap sized for a limit that resets on a daily clock, and never treat
     /// it as a fault worth restarting the service over.</summary>
     Refused,
 
-    /// <summary>The socket opened but the session died before delivering meaningful audio —
+    /// <summary>The socket opened but the session died before delivering meaningful audio -
     /// an instance that accepts and immediately drops (full, restarting, quota enforcement
     /// at the stream rather than the door). Escalate; the fixed one-second breath this
     /// replaced hammered somebody else's receiver every second, indefinitely.</summary>

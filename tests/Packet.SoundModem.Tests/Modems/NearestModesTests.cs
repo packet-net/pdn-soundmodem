@@ -10,7 +10,7 @@ namespace Packet.SoundModem.Tests.Modems;
 public class NearestModesTests
 {
     [Theory]
-    // A dropped hyphen — the single most likely way to mistype these.
+    // A dropped hyphen - the single most likely way to mistype these.
     [InlineData("fsk9600il2p", "fsk9600-il2p")]
     [InlineData("afsk1200il2p", "afsk1200-il2p")]
     // A hyphen that should not be there.

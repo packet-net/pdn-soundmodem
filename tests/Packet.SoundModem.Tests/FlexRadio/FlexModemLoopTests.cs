@@ -10,7 +10,7 @@ namespace Packet.SoundModem.Tests.FlexRadio;
 /// <summary>
 /// The decisive offline proof: a real modem's audio out through the Flex TX path
 /// (<see cref="FlexAudioOutput"/> → mock DAX-TX capture), replayed back in as DAX-RX
-/// (<see cref="FlexAudioInput"/>), through the demodulator — byte-exact frame recovery,
+/// (<see cref="FlexAudioInput"/>), through the demodulator - byte-exact frame recovery,
 /// with no hardware, driven through the <b>headless</b> bring-up (the default
 /// <c>--device flex:</c> deployment: GUI-register + create-slice, no SmartSDR). Exercises the
 /// whole path end to end: the headless setup, the <c>IAudioInput</c> refactor, the VITA
@@ -62,7 +62,7 @@ public sealed class FlexModemLoopTests
         int dspRate, Func<Action<byte[]>, IModem> modemFactory, byte[] frame)
     {
         DaxStreamFormat format = DaxStreamFormat.ForDspRate(dspRate);
-        // Headless mock (no SmartSDR) — the default deployment. MockSetupMode.Headless is the
+        // Headless mock (no SmartSDR) - the default deployment. MockSetupMode.Headless is the
         // constructor default; spelled out here for clarity.
         var mock = new MockFlexRadio(format, MockRxMode.Silence, MockSetupMode.Headless);
         mock.Start();
@@ -76,7 +76,7 @@ public sealed class FlexModemLoopTests
         // rather than over real loopback UDP. A full OFDM burst is hundreds of DAX packets and
         // FreeDV has no per-packet retransmit, so one dropped datagram would break byte-exact
         // decode (~1-in-5 flake). The point under test is that the packetize/depacketize +
-        // rate-bridge is byte-correct — not that UDP is lossless — and the real
+        // rate-bridge is byte-correct - not that UDP is lossless - and the real
         // FlexAudioOutput/FlexAudioInput code (reorder ring included) is still exercised.
         mock.RxDelivery = client.DeliverVitaPacket;
         client.VitaSendHook = mock.DeliverTxPacket;

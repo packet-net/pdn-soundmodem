@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Tests.Ota;
 
 /// <summary>
 /// The FM baseband DSP: the software modulator sets a peak deviation, the deviation meter measures
-/// it back, and the discriminator recovers the modulating audio — the three primitives the FM OTA
+/// it back, and the discriminator recovers the modulating audio - the three primitives the FM OTA
 /// path rests on, each checked against an independent expectation rather than only against each other.
 /// </summary>
 public class FmBasebandTests
@@ -93,7 +93,7 @@ public class FmBasebandTests
     public void The_deviation_meter_reads_the_residual_carrier_offset_as_the_mean()
     {
         // A pure carrier offset (no modulation) reads as a mean equal to the offset and a peak equal
-        // to it too — the calibration reads this to know a capture is not tuned to the carrier.
+        // to it too - the calibration reads this to know a capture is not tuned to the carrier.
         float[] iq = Carrier(offsetHz: 700, seconds: 0.2, Rate);
 
         FmDeviation dev = FmDeviationMeter.Measure(iq, Rate);
@@ -147,7 +147,7 @@ public class FmBasebandTests
         return s;
     }
 
-    /// <summary>A pure complex carrier at a fixed offset — a constant instantaneous frequency.</summary>
+    /// <summary>A pure complex carrier at a fixed offset - a constant instantaneous frequency.</summary>
     private static float[] Carrier(double offsetHz, double seconds, int rate)
     {
         int n = (int)(seconds * rate);

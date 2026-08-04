@@ -7,17 +7,17 @@ namespace Packet.SoundModem.Tests.Modems;
 /// The performance criteria, as tests. The bar is a real NinoTNC (firmware 3.44), whose
 /// numbers come from the wired TNC-to-TNC TXDELAY survey of 2026-07-16: its receiver
 /// acquires from a single 16-bit word of preamble in 13 of 15 modes, and from ~6 words
-/// (10 ms) on 9600 GFSK AX.25. "Match or better NinoTNC performance" — Tom, 2026-07-16.
+/// (10 ms) on 9600 GFSK AX.25. "Match or better NinoTNC performance" - Tom, 2026-07-16.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Tests in this class PASS and must stay passing: each one is parity already achieved,
 /// and a red here means a regression below reference hardware. Criteria not yet met live
 /// in <see cref="NinoTncAspirationTests"/> under the <c>Aspiration</c> category, which CI
-/// runs non-blocking — a red there is a to-do, not a break.
+/// runs non-blocking - a red there is a to-do, not a break.
 /// </para>
 /// <para>
-/// All figures are clean-channel, our-TX to our-RX, cold receiver — the same conditions
+/// All figures are clean-channel, our-TX to our-RX, cold receiver - the same conditions
 /// as the offline sweep they encode. Hardware-facing criteria (the NinoTNC decoding our
 /// new training preamble at short TXDELAY, noise margin against its RX) belong to the
 /// bench rig, not unit tests.
@@ -93,10 +93,10 @@ public class NinoTncParityTests
 
     /// <summary>
     /// Modes where the NinoTNC's receiver acquires from its firmware-floor preamble
-    /// (one 16-bit word). Ours must decode every frame at TXDELAY 0 — cold receiver,
-    /// no traffic history — to claim parity. The PSK modes are NOT here: their coherent
+    /// (one 16-bit word). Ours must decode every frame at TXDELAY 0 - cold receiver,
+    /// no traffic history - to claim parity. The PSK modes are NOT here: their coherent
     /// (Costas) default needs preamble to pull the loop in after idle, exactly like the
-    /// NinoTNC — see <see cref="Coherent_Psk_Acquires_After_Idle_Within_Ninotnc_Preamble"/>
+    /// NinoTNC - see <see cref="Coherent_Psk_Acquires_After_Idle_Within_Ninotnc_Preamble"/>
     /// for the coherent criterion and <see cref="Differential_Psk_Acquires_At_Txdelay_Zero"/>
     /// for the differential opt-in that keeps the 0 ms property.
     /// </summary>
@@ -118,10 +118,10 @@ public class NinoTncParityTests
     }
 
     /// <summary>
-    /// The differential detector — the opt-in for short-preamble links (#5) — keeps the
+    /// The differential detector - the opt-in for short-preamble links (#5) - keeps the
     /// "decode at TXDELAY 0, cold" property for every PSK mode: no carrier recovery to pull
     /// in, so it acquires from the phase change directly. This is the trade the coherent
-    /// default gives up (a ~1–2 dB noise cost) to match the NinoTNC's margin; the opt-in
+    /// default gives up (a ~1-2 dB noise cost) to match the NinoTNC's margin; the opt-in
     /// buys the instant acquisition back where a link needs it.
     /// </summary>
     [Theory]
@@ -137,11 +137,11 @@ public class NinoTncParityTests
     }
 
     /// <summary>
-    /// The coherent (Costas) default — matching the NinoTNC's detection method and its noise
-    /// margin — acquires each PSK mode within the NinoTNC's own preamble (~100 ms for QPSK)
+    /// The coherent (Costas) default - matching the NinoTNC's detection method and its noise
+    /// margin - acquires each PSK mode within the NinoTNC's own preamble (~100 ms for QPSK)
     /// even from a cold receiver between idle gaps. Measured floors (10-frame survey, 0.5 s
     /// gaps): qpsk2400 full by 50 ms, qpsk3600 by 80 ms, the 300-baud and BPSK modes at 0 ms;
-    /// 100 ms clears them all. This is the deliberate, accepted trade of #5 — match the
+    /// 100 ms clears them all. This is the deliberate, accepted trade of #5 - match the
     /// NinoTNC, do not beat it on the acquisition axis that carries no operational value.
     /// </summary>
     [Theory]
@@ -158,7 +158,7 @@ public class NinoTncParityTests
 
     /// <summary>
     /// 9600 GFSK AX.25 is the one mode where the reference hardware itself needs a real
-    /// preamble: the NinoTNC decodes 40 % at TXDELAY 0 and 100 % from 10 ms — consistent
+    /// preamble: the NinoTNC decodes 40 % at TXDELAY 0 and 100 % from 10 ms - consistent
     /// with the G3RUH x¹⁷ scrambler needing more than 16 bits to flush. Parity is 10 ms.
     /// </summary>
     [Fact]
@@ -190,7 +190,7 @@ public class NinoTncParityTests
         for (int i = 0; i < Frames; i++)
         {
             audio.AddRange(tx.Modulate([0x96, 0x82, 0x64, 0x88, 0x8A, 0xAE, 0xE4, 0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6F, 0x03, 0xF0, 1, 2, 3, 4], 20));
-            audio.AddRange(new float[Rate * 4]);      // 4 s between bursts — always cold
+            audio.AddRange(new float[Rate * 4]);      // 4 s between bursts - always cold
         }
 
         float[] samples = audio.ToArray();
@@ -198,7 +198,7 @@ public class NinoTncParityTests
         {
             // Gaussian noise ~20 dB below the 0.8 peak signal. Determinism note: the only
             // stochastic input is this seeded sequence, and .NET reserves the right to
-            // change Random's algorithm across major versions — so the margin matters
+            // change Random's algorithm across major versions - so the margin matters
             // more than the seed. Measured 2026-07-16: the decode cliff is at sigma ~0.20
             // (9-6/10 across seeds 11/7/42/1/99; every seed 10/10 at <= 0.15), so this
             // assertion runs 4x amplitude (12 dB) inside it. Neither a different noise

@@ -5,7 +5,7 @@ using Packet.SoundModem.Modems;
 namespace Packet.SoundModem.Tests.Channel;
 
 /// <summary>
-/// A channel whose device cannot transmit — the <c>ubersdr:</c> web-receiver station. The point
+/// A channel whose device cannot transmit - the <c>ubersdr:</c> web-receiver station. The point
 /// of saying so on the channel rather than at each caller is that KISS, paging and ARDOP then
 /// all get the same answer, immediately, with the same explanation.
 /// </summary>

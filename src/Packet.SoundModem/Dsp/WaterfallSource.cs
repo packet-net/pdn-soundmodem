@@ -6,15 +6,15 @@ namespace Packet.SoundModem.Dsp;
 /// Produces display-rate waterfall lines from an audio stream: overlapping Hann-windowed
 /// FFTs at a fixed hop of <c>sampleRate / linesPerSecond</c> samples, one dB-scaled byte
 /// per bin covering 0 Hz to half the sample rate. Where <see cref="SpectrumSource"/> emits
-/// a line per whole FFT frame (~3/s at 12 kHz — sized for a low-rate telemetry feed), this
+/// a line per whole FFT frame (~3/s at 12 kHz - sized for a low-rate telemetry feed), this
 /// source overlaps transforms so the line rate is a smooth display rate (30/s by default)
 /// independent of the FFT length, which stays long for frequency resolution: 2048 points at
-/// 12 kHz, 8192 at 48 kHz — ~5.9 Hz/bin either way. ~30 kB/s per channel at 12 kHz.
+/// 12 kHz, 8192 at 48 kHz - ~5.9 Hz/bin either way. ~30 kB/s per channel at 12 kHz.
 /// </summary>
 /// <remarks>
 /// The dB scale is absolute, not auto-ranged: a full-scale sine peaks at 0 dBFS = 255 and
 /// the byte floor sits at <see cref="FloorDb"/>, so consumers can convert bytes back to
-/// dBFS (and compare power across lines — what a per-burst SNR readout needs). Zero
+/// dBFS (and compare power across lines - what a per-burst SNR readout needs). Zero
 /// steady-state allocation: the line buffer is reused, consumers must copy if they keep it.
 /// </remarks>
 public sealed class WaterfallSource
@@ -37,12 +37,12 @@ public sealed class WaterfallSource
 
     /// <summary>Creates a source delivering waterfall lines to <paramref name="lineSink"/>.</summary>
     /// <param name="sampleRate">Input sample rate (fixes <see cref="BinWidthHz"/>).</param>
-    /// <param name="lineSink">Receives (line index, line) once per hop — <see cref="LineLength"/>
+    /// <param name="lineSink">Receives (line index, line) once per hop - <see cref="LineLength"/>
     /// bytes, bin 0 = DC. The buffer is reused; consumers must copy if they keep it.</param>
     /// <param name="linesPerSecond">Display line rate; the hop is
     /// <c>sampleRate / linesPerSecond</c> samples (must divide evenly).</param>
     /// <param name="fftSize">Transform length (power of two, ≥ the hop). 0 picks the default
-    /// for the rate: 2048 below 24 kHz, 8192 at and above — ~5.9 Hz/bin at both DSP rates.</param>
+    /// for the rate: 2048 below 24 kHz, 8192 at and above - ~5.9 Hz/bin at both DSP rates.</param>
     public WaterfallSource(
         int sampleRate,
         Action<long, ReadOnlyMemory<byte>> lineSink,

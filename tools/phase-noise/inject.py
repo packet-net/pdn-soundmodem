@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""inject.py — post-process an sm-ota IQ capture WAV to test what breaks the MS110D DFE.
+"""inject.py - post-process an sm-ota IQ capture WAV to test what breaks the MS110D DFE.
 
 The capture is a 16-bit interleaved-stereo WAV that the sm-ota scorer reads as complex
 I/Q (left = I, right = Q). This tool reads it, perturbs the complex samples in one of the
 candidate ways below, and writes a new WAV the scorer reads identically. No modem code is
-touched — this is pure post-processing of a rendered sim capture, so the DFE is exercised
+touched - this is pure post-processing of a rendered sim capture, so the DFE is exercised
 against a controlled perturbation of a signal it is known to decode clean.
 
 Candidates (2026-07-27 phase-B DFE fade-tracking experiment):
@@ -20,7 +20,7 @@ Candidates (2026-07-27 phase-B DFE fade-tracking experiment):
               corner --corner-hz, scaled to a target RMS --phase-rms (rad). Models a bounded
               reference jitter with a chosen bandwidth rather than an unbounded random walk.
 
-  level       Pure amplitude scale by --factor (no phase perturbation) — the level/threshold
+  level       Pure amplitude scale by --factor (no phase perturbation) - the level/threshold
               candidate. --factor 0.02 is a 50x (−34 dB) drop.
 
 The Wiener/band-limited phase is applied to the WHOLE capture uniformly (the reference

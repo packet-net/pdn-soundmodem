@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Tests.Daemon;
 /// <summary>
 /// Working out what a radio's transmit filter has to pass for a set of modems placed by audio
 /// centre (the case with no band plan to read it off). The filter is a global, persistent radio
-/// setting, so an inherited one silently truncates anything wider than it — a 3 kHz waveform
+/// setting, so an inherited one silently truncates anything wider than it - a 3 kHz waveform
 /// against the 3000 Hz a rig is usually left on being the case this exists for.
 /// </summary>
 public class TransmitFilterPlanTests
@@ -17,7 +17,7 @@ public class TransmitFilterPlanTests
     private static ModemConfig Modem(int sub, string mode, double? frequency = null, double? bandwidth = null) =>
         new() { SubChannel = sub, Mode = mode, Frequency = frequency, Bandwidth = bandwidth };
 
-    /// <summary>The high cut these modems need — measure, then aggregate, as start-up does.</summary>
+    /// <summary>The high cut these modems need - measure, then aggregate, as start-up does.</summary>
     private static int? HighCut(int dspRate, params ModemConfig[] modems) =>
         TransmitFilterPlan.HighCutFor(TransmitFilterPlan.Bands(modems, dspRate));
 
@@ -51,14 +51,14 @@ public class TransmitFilterPlanTests
         int high = HighCut(AudioRate, Modem(0, "bpsk300", frequency: 2200))!.Value;
 
         // Measured at the centre each modem will actually transmit on, so where a modem sits
-        // changes the answer — the same mode 700 Hz up needs 700 Hz more filter.
+        // changes the answer - the same mode 700 Hz up needs 700 Hz more filter.
         (high - low).Should().BeInRange(650, 750);
     }
 
     [Fact]
     public void The_Highest_Reaching_Modem_Sets_The_Filter()
     {
-        // Not the highest centre — the highest edge. A 1200 baud AFSK modem centred at 1700 Hz
+        // Not the highest centre - the highest edge. A 1200 baud AFSK modem centred at 1700 Hz
         // reaches further up than a 300 baud BPSK one centred 500 Hz above it.
         ModemConfig[] all =
             [Modem(0, "bpsk300", frequency: 800), Modem(1, "bpsk300", frequency: 2200), Modem(2, "afsk1200", frequency: 1700)];
@@ -74,7 +74,7 @@ public class TransmitFilterPlanTests
     [Fact]
     public void Ardop_Plans_For_The_Width_It_Can_Negotiate()
     {
-        // Nothing to measure — ARDOP's bandwidth is a per-session negotiation — so the cap
+        // Nothing to measure - ARDOP's bandwidth is a per-session negotiation - so the cap
         // stands in, and without one, the widest session it could ask for.
         int widest = HighCut(AudioRate, Modem(0, "ardop", frequency: 1500))!.Value;
         int capped = HighCut(AudioRate, Modem(0, "ardop", frequency: 1500, bandwidth: 500))!.Value;
@@ -110,7 +110,7 @@ public class TransmitFilterPlanTests
     public void A_Fixed_Centre_Mode_Is_Measured_Rather_Than_Refused()
     {
         // ms110d-* and freedv-* reject a centre frequency, so the probe must be built without
-        // one — asking for a band must not throw the way ModemCatalog.Create would.
+        // one - asking for a band must not throw the way ModemCatalog.Create would.
         IReadOnlyList<TransmitFilterPlan.Band> bands = TransmitFilterPlan.Bands(
             [Modem(0, "ms110d-wn4"), Modem(1, "freedv-datac1")], WidebandRate);
 

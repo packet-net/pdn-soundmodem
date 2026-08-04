@@ -258,7 +258,7 @@ public class C4fskContentProbeTests
             string wav = $"/tmp/nino-corpus/0011-9600c4fsk-il2pc-{tier}.wav";
             var (samples, _) = Packet.SoundModem.Audio.WavFile.ReadMono(wav);
 
-            // 10 ms envelope split at 5% of peak with >=80 ms quiet gaps — the same
+            // 10 ms envelope split at 5% of peak with >=80 ms quiet gaps - the same
             // detector every python instrument in this investigation used.
             const int win = 480;
             int nw = samples.Length / win;
@@ -413,7 +413,7 @@ public class C4fskContentProbeTests
              ?? "/tmp/c4fsk-content-probe.txt") + ".nocrc");
 
         // crc:false makes the deframer collect four fewer wire bytes and emit frames
-        // without CRC enforcement — frames appearing here but not in the normal QC means
+        // without CRC enforcement - frames appearing here but not in the normal QC means
         // the bursts demodulate and RS-decode fine and die at the CRC gate; nothing
         // appearing means they die earlier (sync hunt / RS).
         foreach (string tier in new[] { "txd50ms", "txd120ms", "txd250ms" })

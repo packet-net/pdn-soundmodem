@@ -8,7 +8,7 @@ namespace Packet.SoundModem.Tests.Ota;
 /// </summary>
 /// <remarks>
 /// The spectral assertions matter as much as the timing. Hard-keying a carrier produces
-/// sidebands that decay at only 6 dB/octave — key clicks — and we are about to publish
+/// sidebands that decay at only 6 dB/octave - key clicks - and we are about to publish
 /// spectral measurements of our own transmitter, so the ID must not be the dirtiest thing
 /// we send.
 /// </remarks>
@@ -95,7 +95,7 @@ public class MorseGeneratorTests
     [Fact]
     public void A_full_session_id_is_short_enough_to_be_worth_sending_often()
     {
-        // "M0LTE MS110D" at 30 wpm — the airtime cost of identifying every ten minutes.
+        // "M0LTE MS110D" at 30 wpm - the airtime cost of identifying every ten minutes.
         double seconds = MorseGenerator.DurationSeconds(MorseGenerator.IdText("M0LTE", "MS110D"), 30);
 
         seconds.Should().BeInRange(2.0, 6.0);
@@ -146,7 +146,7 @@ public class MorseGeneratorTests
             }
 
             IqSpectrum s = IqAnalysis.Welch(i, q, Rate, 1024);
-            // Energy 1.5–4 kHz away from the carrier — where clicks live.
+            // Energy 1.5-4 kHz away from the carrier - where clicks live.
             double worst = 0;
             for (double f = 2500; f <= 5000; f += 100)
             {

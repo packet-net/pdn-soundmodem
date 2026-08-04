@@ -1,31 +1,31 @@
-# pocsag/ — POCSAG paging transmissions (multimon-ng cross-validation corpus)
+# pocsag/ - POCSAG paging transmissions (multimon-ng cross-validation corpus)
 
-Our POCSAG transmitter's output, one WAV per standard rate — mono 48 kHz 16-bit, the
+Our POCSAG transmitter's output, one WAV per standard rate - mono 48 kHz 16-bit, the
 rate the daemon actually transmits at. **Reproducible**: `sm-pocsag encode` regenerates
 them byte-for-byte (commands below). They are checked in as the fixed corpus behind the
 multimon-ng cross-validation results recorded here, and so the waveform can be played
 into receivers without building anything.
 
 POCSAG is implemented spec-first (CCIR Radiopaging Code No. 1 / ITU-R M.584-2);
-multimon-ng is the *cross-check*, not the source — see `PROVENANCE.md` § `Pocsag/*`.
+multimon-ng is the *cross-check*, not the source - see `PROVENANCE.md` § `Pocsag/*`.
 
 ## Files
 
 | file | rate | pages |
 |---|---|---|
-| `pocsag1200-mixed-48k.wav` | 1200 bd (DAPNET) | 5 — alpha, numeric, alpha (function 2), numeric at RIC 2097151, tone-only |
-| `pocsag512-48k.wav` | 512 bd | 2 — alpha + numeric |
-| `pocsag2400-48k.wav` | 2400 bd | 2 — alpha + numeric |
+| `pocsag1200-mixed-48k.wav` | 1200 bd (DAPNET) | 5 - alpha, numeric, alpha (function 2), numeric at RIC 2097151, tone-only |
+| `pocsag512-48k.wav` | 512 bd | 2 - alpha + numeric |
+| `pocsag2400-48k.wav` | 2400 bd | 2 - alpha + numeric |
 
 Addresses exercise the edges: RIC 8 (frame 0, smallest non-zero high bits), 133703 and
 2007287 (frame 7), 2097151 (the top of the 21-bit RIC space), 21 and 42 (mid frames).
 
-Polarity is the spec convention ('0' bit = high frequency = positive baseband sample) —
+Polarity is the spec convention ('0' bit = high frequency = positive baseband sample) -
 what multimon-ng expects with no flags, and what an FM discriminator feeding a DAPNET
 receiver produces. multimon-ng 1.3.0 (Debian/Ubuntu package) does **not** auto-detect
 inverted input (`-i` exists for that); our own `PocsagDecoder` auto-detects both.
 
-## Validation — multimon-ng 1.3.0, 2026-07-16
+## Validation - multimon-ng 1.3.0, 2026-07-16
 
 Every page decodes exactly (9/9 across the three files):
 
@@ -40,7 +40,7 @@ POCSAG1200: Address:      21  Function: 1
 ```
 
 (and likewise with `POCSAG512` / `POCSAG2400` for the other two files; the 512 alpha
-page shows one trailing `<NUL>` — the zero-bit padding completing the final codeword,
+page shows one trailing `<NUL>` - the zero-bit padding completing the final codeword,
 per the DAPNET encoder convention, and the numeric pages show trailing spaces from the
 0xC space-nibble padding.)
 
@@ -53,8 +53,8 @@ dotnet run --project tools/Packet.SoundModem.Pocsag -- decode samples/pocsag/poc
 ```
 
 **No independent known-good POCSAG *encoder* was installable** (multimon-ng ships no
-generator; UniPager needs a DAPNET core to drive it), so the reverse leg — foreign audio
-into our decoder — is covered only by our own encoder's output. The multimon-ng leg
+generator; UniPager needs a DAPNET core to drive it), so the reverse leg - foreign audio
+into our decoder - is covered only by our own encoder's output. The multimon-ng leg
 above carries the interop weight; first off-air DAPNET capture should be added here when
 one is taken (439.9875 MHz).
 

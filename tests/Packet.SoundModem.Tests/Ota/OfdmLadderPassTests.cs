@@ -7,7 +7,7 @@ using M0LTE.Dsp;
 namespace Packet.SoundModem.Tests.Ota;
 
 /// <summary>
-/// The FreeDV datac OFDM §E2 ladder, verified end to end with no radio in the loop — the OFDM
+/// The FreeDV datac OFDM §E2 ladder, verified end to end with no radio in the loop - the OFDM
 /// counterpart of <see cref="LadderPassTests"/>.
 /// </summary>
 /// <remarks>
@@ -27,7 +27,7 @@ public class OfdmLadderPassTests
     private static OfdmLadderPassOptions Options() => new()
     {
         // Render straight at the capture rate (no radio in this loop). OffsetHz stays at its 0
-        // default — the DAX route places the datac band at its native audio centre.
+        // default - the DAX route places the datac band at its native audio centre.
         OutputRate = CaptureRate,
     };
 
@@ -53,7 +53,7 @@ public class OfdmLadderPassTests
         Quiet(gapSeconds);
         foreach (OfdmRenderedPoint point in points)
         {
-            // The active burst starts after its noise lead-in — the time the scorer windows on.
+            // The active burst starts after its noise lead-in - the time the scorer windows on.
             starts.Add((iq.Count / 2.0 / CaptureRate) + point.LeadInSeconds);
             foreach (float v in point.Iq)
             {
@@ -171,7 +171,7 @@ public class OfdmLadderPassTests
 
         score.Bursts[0].CrcOk.Should().BeTrue("12 dB is well above datac0's AWGN cliff");
         score.Bursts[0].CodedBer.Should().Be(0);
-        score.Bursts[1].Acquired.Should().BeFalse("−12 dB is well below the cliff — the burst is lost");
+        score.Bursts[1].Acquired.Should().BeFalse("−12 dB is well below the cliff - the burst is lost");
         score.Bursts[1].CodedBer.Should().Be(1.0, "a lost packet counts every payload bit wrong");
     }
 

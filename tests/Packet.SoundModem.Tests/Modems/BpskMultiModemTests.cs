@@ -19,7 +19,7 @@ public class BpskMultiModemTests
 
     private static float[] OffTune(double offsetHz, int preambleBits = 45)
     {
-        // ~150 ms preamble (45 symbols at 300 baud) — realistic NinoTNC TXDELAY — at a carrier
+        // ~150 ms preamble (45 symbols at 300 baud) - realistic NinoTNC TXDELAY - at a carrier
         // offset from the 1500 Hz channel centre, then padded with lead-in/out silence.
         byte[] wire = Il2pCodec.Encode(Frame, appendCrc: true);
         byte[] bits = Il2pFramer.FrameBits(wire, preambleBits, Il2pFramer.PreambleStyle.Zeros);
@@ -78,7 +78,7 @@ public class BpskMultiModemTests
     /// The acceptance test for issue #202: on a swept-CFO grid the reported offset tracks the
     /// injected offset instead of snapping to a comb position. Every offset sits exactly half a
     /// step (3.75 Hz) from the nearest branch of the default 4 pairs × 7.5 Hz comb, so with a
-    /// 2 Hz tolerance no branch label — the old behaviour — can pass any of them.
+    /// 2 Hz tolerance no branch label - the old behaviour - can pass any of them.
     /// </summary>
     [Theory]
     [InlineData(-26.25)]
@@ -105,8 +105,8 @@ public class BpskMultiModemTests
     [Fact]
     public void A_Centred_Signal_Does_Not_Read_As_The_Most_Negative_Branch()
     {
-        // The bug: branches run in array order and several copy the same frame, so index 0 —
-        // −30 Hz on the default 4 pairs × 7.5 Hz comb — won by iteration order and 82 % of a
+        // The bug: branches run in array order and several copy the same frame, so index 0 -
+        // −30 Hz on the default 4 pairs × 7.5 Hz comb - won by iteration order and 82 % of a
         // live station's frames read exactly −30 Hz. A signal on frequency must read ~0.
         var qualities = new List<FrameQuality>();
         var modem = BpskMultiModem.Bpsk300(SampleRate, _ => { });
@@ -139,7 +139,7 @@ public class BpskMultiModemTests
         // The step/pairs tuneables exist for the COHERENT path, whose narrow loop only acquires a
         // carrier near a branch. A +26 Hz signal is outside a narrow bank (1 pair × 8 Hz = ±8 Hz)
         // but inside a wide one (4 pairs × 10 Hz = ±40 Hz). (Differential tolerates ±baud/4 on a
-        // single branch, so coverage is a coherent-only concern — hence the explicit detector.)
+        // single branch, so coverage is a coherent-only concern - hence the explicit detector.)
         float[] audio = OffTune(26);
 
         var narrow = new List<byte[]>();
@@ -157,7 +157,7 @@ public class BpskMultiModemTests
     public void Identical_Content_Later_Is_Not_Deduplicated()
     {
         float[] one = OffTune(0);
-        // Same frame content twice, 4 s apart — both must be delivered (the dedupe window is short).
+        // Same frame content twice, 4 s apart - both must be delivered (the dedupe window is short).
         var audio = new float[one.Length + 4 * SampleRate + one.Length];
         one.CopyTo(audio, 0);
         one.CopyTo(audio, one.Length + 4 * SampleRate);

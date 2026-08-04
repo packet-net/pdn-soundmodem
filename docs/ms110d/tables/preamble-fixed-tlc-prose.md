@@ -1,4 +1,4 @@
-# MIL-STD-188-110D Appendix D — preamble Fixed/TLC/count prose (doc pages 165–167, PDF pages 170–172)
+# MIL-STD-188-110D Appendix D - preamble Fixed/TLC/count prose (doc pages 165-167, PDF pages 170-172)
 
 Transcribed by eye from the page images (independent transcriber A). Prose is
 paraphrase-free where quoted; structure summarised where noted.
@@ -17,7 +17,7 @@ Figure D-8 layout: [TLC section][Super-frame][Super-frame]...[Data Modulation];
 each super-frame = [Fixed][4 Downcount symbols c3, c2, c1, c0][5 WID symbols
 w4, w3, w2, w1, w0].
 
-## D.5.2.1.1 4-ary Orthogonal Walsh Modulation in the preamble (doc 165–166)
+## D.5.2.1.1 4-ary Orthogonal Walsh Modulation in the preamble (doc 165-166)
 
 4-ary orthogonal Walsh modulation shall be used in the synchronization section
 of the preamble. The length of each channel symbol, in chips or symbols,

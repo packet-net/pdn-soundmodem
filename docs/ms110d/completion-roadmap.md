@@ -1,8 +1,8 @@
 # MS110D Modem Completion Roadmap
 
-> **Superseded (2026-07-23):** Phase A is formally closed — see
+> **Superseded (2026-07-23):** Phase A is formally closed - see
 > [phase-a-closeout.md](phase-a-closeout.md). The priorities below are now tracked as
-> GitHub issues #64–#67 (equalizer realism, turbo robustness, hot-path allocation, test
+> GitHub issues #64-#67 (equalizer realism, turbo robustness, hot-path allocation, test
 > coverage); this file is kept as the pre-closeout planning record.
 
 ## Current State (2026-07-21)
@@ -34,7 +34,7 @@ threshold → AWGN → revert to first-pass decode.
 
 ---
 
-## Priority 2: Poor Channel — QPSK BCJR (WN6, WN13)
+## Priority 2: Poor Channel - QPSK BCJR (WN6, WN13)
 
 **Problem**: WN6 (QPSK, +14 dB) gives BER 2.1E-1 on Poor. The current BCJR only
 handles BPSK (2 possible symbols per trellis transition). QPSK needs 4 possible
@@ -54,11 +54,11 @@ With 128 frames × 5 turbo iterations = ~250M operations. Feasible in C# (~1-2 s
 
 ---
 
-## Priority 3: Poor Channel — 16QAM Carrier Recovery (WN8)
+## Priority 3: Poor Channel - 16QAM Carrier Recovery (WN8)
 
 **Problem**: WN8 (16QAM, +23 dB) gives BER 5.0E-1 on Poor. The channel phase
 rotates by up to 43° over the 96-symbol frame (1 Hz Doppler × 40 ms). 16QAM's
-minimum angular separation is 30° — the rotation exceeds decision regions.
+minimum angular separation is 30° - the rotation exceeds decision regions.
 
 **Approach**: Data-aided carrier recovery before the BCJR:
 1. Use the probe (known symbols at frame boundary) to estimate phase at frame end

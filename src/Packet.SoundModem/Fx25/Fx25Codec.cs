@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Fx25;
 
 /// <summary>
 /// FX.25 (Stensat draft, 2006): wraps a normally bit-stuffed HDLC/AX.25 frame in a
-/// Reed-Solomon code block preceded by a 64-bit correlation tag, transparently — legacy
+/// Reed-Solomon code block preceded by a 64-bit correlation tag, transparently - legacy
 /// AX.25 receivers still decode the embedded frame; FX.25 receivers can repair errors
 /// first. Constants (tag values, block formats, RS fcr=1) match the spec as reproduced
 /// by Dire Wolf, the de-facto interop reference.
@@ -21,7 +21,7 @@ public static class Fx25Codec
     /// <param name="ParityBytes">RS check bytes (16/32/64).</param>
     public readonly record struct TagFormat(ulong Tag, int RadioDataBytes, int RsDataBytes, int ParityBytes);
 
-    /// <summary>Tag numbers 0x01–0x0B (index 0 = tag 0x01).</summary>
+    /// <summary>Tag numbers 0x01-0x0B (index 0 = tag 0x01).</summary>
     public static readonly TagFormat[] Formats =
     [
         new(0xB74DB7DF8A532F3E, 239, 239, 16),
@@ -159,7 +159,7 @@ public static class Fx25Codec
 
     private static void FillRotatingFlags(Span<byte> destination)
     {
-        // Continuous 0x7E bit pattern, LSB-first within each byte — byte value is 0x7E
+        // Continuous 0x7E bit pattern, LSB-first within each byte - byte value is 0x7E
         // again when byte-aligned, which it is here.
         destination.Fill(0x7E);
     }

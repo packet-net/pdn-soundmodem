@@ -2,12 +2,12 @@ namespace Packet.SoundModem.Modems;
 
 /// <summary>
 /// Builds the pre-flag training run for classic-HDLC transmissions: zero bits, which NRZI
-/// turns into a level change every bit — both tones, maximum transition density.
+/// turns into a level change every bit - both tones, maximum transition density.
 /// </summary>
 /// <remarks>
 /// An all-flags TXDELAY fill trains a receiver poorly: a flag is 87.5 % one tone, so the
 /// opposite tone appears as isolated 1-bit excursions that barely emerge from the receive
-/// low-pass, and a cold slicer/clock mis-reads exactly those bits — measured here as
+/// low-pass, and a cold slicer/clock mis-reads exactly those bits - measured here as
 /// periodic errors on every flag boundary for the first ~40 bits, which is why bare-HDLC
 /// AFSK needed ~100 ms of preamble while the IL2P modes (whose framer already sends an
 /// alternating preamble) acquired from 16 bits. Zeros before the opening flag are free:

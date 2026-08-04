@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Tests.Modems;
 
 /// <summary>
 /// Real off-air regression: decode the committed GB7RDG NinoTNC BPSK300 IL2P+CRC capture
-/// (<c>samples/offair/</c>) — the ground-truth interop evidence behind issues #40/#42. This is a
+/// (<c>samples/offair/</c>) - the ground-truth interop evidence behind issues #40/#42. This is a
 /// live-RF frame with a real carrier offset (~8 Hz here) and a short preamble, so it exercises the
 /// receiver against imperfections the synthetic loopback corpus never carries.
 /// </summary>
@@ -23,7 +23,7 @@ public class OffAirBpskTests
 {
     private const int DspRate = 12000;
 
-    // GB7RDG-2>EI0RSI-1, CRC-valid IL2P — the connected-mode frame in the capture.
+    // GB7RDG-2>EI0RSI-1, CRC-valid IL2P - the connected-mode frame in the capture.
     private static readonly byte[] ExpectedFrame = Convert.FromHexString("8A9260A4A692E28E846EA4888E6571");
 
     private static float[] Gb7rdgFixture()
@@ -77,8 +77,8 @@ public class OffAirBpskTests
     /// Real RF is where issue #202 was visible and where the fix has to hold: the bank used to
     /// report the winning branch's comb position, which for this frame would be a step of the
     /// 7.5 Hz comb rather than the ~8 Hz the carrier actually sits at. The two paths share no
-    /// selection logic — the estimator runs one centred chain over the whole file, the bank picks
-    /// a branch and adds its residual — so agreement between them is a real cross-check.
+    /// selection logic - the estimator runs one centred chain over the whole file, the bank picks
+    /// a branch and adds its residual - so agreement between them is a real cross-check.
     /// </remarks>
     [Fact]
     public void The_Bank_Reports_The_Measured_Offset_Of_A_Real_Off_Air_Frame()

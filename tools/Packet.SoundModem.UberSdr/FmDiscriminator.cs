@@ -9,7 +9,7 @@ public sealed class IqToFmAudioOptions
     /// <summary>IQ sample rate of the capture (iq48 = 48000, the RSP1 rig = 96000).</summary>
     public int InputRate { get; init; } = 48000;
 
-    /// <summary>Output audio rate — the mode's DSP rate. Must divide <see cref="InputRate"/>.</summary>
+    /// <summary>Output audio rate - the mode's DSP rate. Must divide <see cref="InputRate"/>.</summary>
     public int OutputRate { get; init; } = 48000;
 
     /// <summary>Frequency, within the IQ baseband, of the FM carrier (the dial). Set this to
@@ -23,7 +23,7 @@ public sealed class IqToFmAudioOptions
     /// in Hz (0 disables it). It keeps only the FM signal's occupied band before discrimination,
     /// which on a live capture rejects out-of-band thermal noise and adjacent signals. The dry-run
     /// injects its noise as audio before modulation, so there is nothing out of band to reject and
-    /// it defaults off — the mod/demod round trip then stays an exact identity.</summary>
+    /// it defaults off - the mod/demod round trip then stays an exact identity.</summary>
     public double RfBandwidthHz { get; init; }
 
     /// <summary>Taps in the complex pre-filter, when <see cref="RfBandwidthHz"/> is set.</summary>
@@ -31,7 +31,7 @@ public sealed class IqToFmAudioOptions
 
     /// <summary>
     /// When set (&gt;0), scale the recovered audio by <c>1/(2·DeviationHz)</c>, mapping a ±this-Hz
-    /// instantaneous-frequency excursion to ±0.5. This is a <b>fixed, data-independent</b> scale —
+    /// instantaneous-frequency excursion to ±0.5. This is a <b>fixed, data-independent</b> scale -
     /// the right one for a ladder, where <see cref="NormalisePeak"/> would let a low-SNR rung's noise
     /// excursion shrink every rung. It also makes the raw output recoverable in Hz (audio × 2 ×
     /// DeviationHz), which is how a burst's achieved peak deviation is read back off it. Takes
@@ -49,7 +49,7 @@ public sealed class IqToFmAudioOptions
 /// <summary>
 /// Turns a captured IQ stream (complex baseband centred near the FM carrier) into the real audio a
 /// mode's demodulator consumes, by <b>instantaneous-frequency (phase-derivative) discrimination</b>
-/// — the FM counterpart of <see cref="SsbDemodulator"/>, and the receive half of the FM OTA
+/// - the FM counterpart of <see cref="SsbDemodulator"/>, and the receive half of the FM OTA
 /// chain. The FM-native modes (afsk1200, fsk9600, c4fsk, qpsk3600 audio-over-FM) reach the air as
 /// frequency modulation, so the harness FM-demodulates the RSP1's IQ here and feeds the result to
 /// the mode's own demodulator exactly as the SSB path feeds it single-sideband audio.
@@ -103,7 +103,7 @@ public sealed class IqToFmAudioConverter
         }
 
         // 1. NCO: shift by −DialHz so the carrier sits at 0 Hz (incremental phasor, periodically
-        //    renormalised against drift — the same construction as the SSB converter).
+        //    renormalised against drift - the same construction as the SSB converter).
         var re = new double[n];
         var im = new double[n];
         double dPhi = -2.0 * Math.PI * _opt.DialHz / _opt.InputRate;
@@ -213,7 +213,7 @@ public sealed class IqToFmAudioConverter
     }
 
     /// <summary>Linear-phase real FIR with group-delay compensation, so the filtered signal stays
-    /// time-aligned — used for the optional complex pre-filter.</summary>
+    /// time-aligned - used for the optional complex pre-filter.</summary>
     private static double[] FirReal(double[] x, float[] taps)
     {
         int n = x.Length;

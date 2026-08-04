@@ -8,11 +8,11 @@ using Packet.SoundModem.Modems;
 //                          [--only <mode>] [--native-rate]
 //
 // Each file holds 10 UI frames of increasing payload (10..200 bytes) separated by silence,
-// rendered at 48 kHz mono — the card rate we actually transmit at, so the file is what
+// rendered at 48 kHz mono - the card rate we actually transmit at, so the file is what
 // goes on the wire, not an idealised version of it.
 //
 // --only <mode> renders just one mode; --native-rate writes at the modem's DSP rate (no
-// upsample) — e.g. 12 kHz for the audio-band PSK/AFSK modes, for the QtSM snd-aloop rig
+// upsample) - e.g. 12 kHz for the audio-band PSK/AFSK modes, for the QtSM snd-aloop rig
 // (docs/qtsm-loop.md), whose PSK modems run at 12 kHz. The default set (48 kHz, all modes)
 // is unchanged so samples/pdn regenerates byte-for-byte.
 

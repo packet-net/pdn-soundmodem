@@ -10,7 +10,7 @@ public enum FskFraming
     /// <summary>Classic G3RUH: HDLC, NRZI, free-running x¹⁷+x¹²+1 scrambler.</summary>
     ClassicHdlc,
 
-    /// <summary>IL2P with trailing CRC (NinoTNC "9600 GFSK IL2P+CRC"): raw bits — no
+    /// <summary>IL2P with trailing CRC (NinoTNC "9600 GFSK IL2P+CRC"): raw bits - no
     /// NRZI, no G3RUH scrambler (IL2P scrambles packet-synchronously itself).</summary>
     Il2pCrc,
 
@@ -70,7 +70,7 @@ public sealed class FskModem : IModem
             {
                 frameReceived(frame);
                 // HDLC has no FEC: an FCS pass proves zero residual errors, not how many
-                // the channel had — CorrectedBytes is honestly null.
+                // the channel had - CorrectedBytes is honestly null.
                 FrameDecoded?.Invoke(frame, new FrameQuality(Mode, frame.Length, null, null));
             });
             var descrambler = new G3ruhScrambler();
@@ -88,7 +88,7 @@ public sealed class FskModem : IModem
                         HeaderType: info.HeaderType));
                 },
                 crcMode: framing == FskFraming.Il2pCrc);
-            // Reset the deframer on the DCD falling edge — same rationale as BpskModem:
+            // Reset the deframer on the DCD falling edge - same rationale as BpskModem:
             // a carrier that drops mid-collection leaves the deframer consuming the next
             // transmission's sync word as phantom payload.
             bool previousDcd = false;
@@ -105,7 +105,7 @@ public sealed class FskModem : IModem
             };
         }
 
-        // At 48 kHz there are only 5 samples per bit at 9600 — each quantised DPLL nudge
+        // At 48 kHz there are only 5 samples per bit at 9600 - each quantised DPLL nudge
         // is ±10% of a bit. Dire Wolf's demod_9600 interpolates ×2 before its PLL for the
         // same reason ("upsample" in demod_9600.c); do likewise so timing corrections
         // land on a 10-points-per-bit grid. 4800 already has 10 samples/bit at 48 kHz, so
@@ -115,12 +115,12 @@ public sealed class FskModem : IModem
             baud, sampleRate * _upsample, bitSink, transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
     }
 
-    /// <summary>Creates the 9600 baud mode — NinoTNC mode 0 (classic AX.25) or 2
+    /// <summary>Creates the 9600 baud mode - NinoTNC mode 0 (classic AX.25) or 2
     /// (IL2P+CRC), 20 kHz OBW.</summary>
     public static FskModem Fsk9600(int sampleRate, Action<byte[]> frameReceived, FskFraming framing) =>
         new(sampleRate, frameReceived, framing, 9600);
 
-    /// <summary>Creates the 4800 baud mode — NinoTNC mode 4 (IL2P+CRC), 10 kHz OBW.</summary>
+    /// <summary>Creates the 4800 baud mode - NinoTNC mode 4 (IL2P+CRC), 10 kHz OBW.</summary>
     public static FskModem Fsk4800(
         int sampleRate, Action<byte[]> frameReceived, FskFraming framing = FskFraming.Il2pCrc) =>
         new(sampleRate, frameReceived, framing, 4800);
@@ -153,7 +153,7 @@ public sealed class FskModem : IModem
             for (int point = 1; point <= _upsample; point++)
             {
                 // Linear interpolation between successive filtered samples (point ==
-                // _upsample is the sample itself) — see the _upsample ctor note.
+                // _upsample is the sample itself) - see the _upsample ctor note.
                 float value = _previousFiltered
                     + (filtered - _previousFiltered) * point / _upsample;
 
@@ -208,12 +208,12 @@ public sealed class FskModem : IModem
         var shaper = new FirFilter(FilterDesign.LowPass(0.55 * _baud, _sampleRate, taps));
 
         // The shaper delays the signal by ~taps/2 samples, so the burst must run past the
-        // last bit to flush it — truncating at bits×samplesPerBit chops the final ~5 bits
+        // last bit to flush it - truncating at bits×samplesPerBit chops the final ~5 bits
         // of energy off the air. For IL2P that is the Hamming-coded CRC trailer, and
         // whether the mangled trailer is still correctable depends on frame content: the
         // bug presented as our receiver deterministically dropping *specific payloads*
         // (4/10 at any TXDELAY) while a NinoTNC decoded the same audio 10/10. Classic
-        // HDLC escapes by luck — its closing flags sit after the FCS as slack.
+        // HDLC escapes by luck - its closing flags sit after the FCS as slack.
         var samples = new float[(wireBits.Length * samplesPerBit) + taps];
         int position = 0;
         foreach (byte bit in wireBits)

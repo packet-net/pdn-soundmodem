@@ -5,7 +5,7 @@ using Packet.SoundModem.Ota;
 namespace Packet.SoundModem.Tests.Ota;
 
 /// <summary>
-/// The <see cref="SwrInterlock"/> measured-forward-power ceiling — the enforcement behind a strict
+/// The <see cref="SwrInterlock"/> measured-forward-power ceiling - the enforcement behind a strict
 /// transmit-power limit (the 5 W ceiling on the attenuated RSP1 rig). A FLEX meter packet carrying
 /// FWDPWR is pushed through the mock's in-process delivery, exactly as the radio would emit it, and
 /// the interlock must abort the instant the measured power is over the limit and stay quiet while it
@@ -14,7 +14,7 @@ namespace Packet.SoundModem.Tests.Ota;
 /// </summary>
 public sealed class SwrInterlockGuardTests
 {
-    // FWDPWR is meter id 6 in the mock's FLEX-6500 meter set, unit dBm, scaled raw/128 — so a raw of
+    // FWDPWR is meter id 6 in the mock's FLEX-6500 meter set, unit dBm, scaled raw/128 - so a raw of
     // dBm×128 yields that dBm, and DbmToWatts turns it into watts (37 dBm ≈ 5 W).
     private const int FwdPwrId = 6;
 
@@ -79,7 +79,7 @@ public sealed class SwrInterlockGuardTests
             using var interlock = new SwrInterlock(
                 meters, maxSwr: 99.0, constantEnvelope: false, maxForwardWatts: 5.0);
 
-            // 36 dBm ≈ 4.0 W and 30 dBm = 1 W — both under 5 W, neither may abort.
+            // 36 dBm ≈ 4.0 W and 30 dBm = 1 W - both under 5 W, neither may abort.
             mock.PushMeters((FwdPwrId, Dbm(30)));
             mock.PushMeters((FwdPwrId, Dbm(36)));
             await Task.Delay(200);

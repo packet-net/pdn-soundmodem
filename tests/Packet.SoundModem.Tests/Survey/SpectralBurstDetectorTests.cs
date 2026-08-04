@@ -77,7 +77,7 @@ public class SpectralBurstDetectorTests
         (List<SurveyBurst> bursts, SpectralBurstDetector detector) = Detector();
         long line = Warm(detector);
 
-        // 400 Hz wide at 1500 Hz centre for 2 s — a 300 baud packet's shape.
+        // 400 Hz wide at 1500 Hz centre for 2 s - a 300 baud packet's shape.
         byte[] signal = Line(lowHz: 1300, highHz: 1700);
         for (int i = 0; i < 60; i++)
         {
@@ -103,7 +103,7 @@ public class SpectralBurstDetectorTests
     [Fact]
     public void A_Narrow_Carrier_Is_Not_A_Burst()
     {
-        // One hot bin is a tuning whistle or a het, not a modulated signal — and capturing every
+        // One hot bin is a tuning whistle or a het, not a modulated signal - and capturing every
         // carrier on 40 m would bury everything that matters.
         (List<SurveyBurst> bursts, SpectralBurstDetector detector) = Detector();
         long line = Warm(detector);
@@ -127,7 +127,7 @@ public class SpectralBurstDetectorTests
     public void Something_That_Never_Stops_Is_Reported_As_A_Timeout_Rather_Than_Held_Forever()
     {
         // A steady carrier would otherwise hold a burst open for the life of the process and
-        // never be reported at all — so it is closed, and flagged so triage can drop it instead
+        // never be reported at all - so it is closed, and flagged so triage can drop it instead
         // of reading it as a packet nobody could classify.
         (List<SurveyBurst> bursts, SpectralBurstDetector detector) = Detector(maxSeconds: 2);
         long line = Warm(detector);
@@ -157,7 +157,7 @@ public class SpectralBurstDetectorTests
                 detector.AddLine(line++, signal);
             }
 
-            // Two lines under threshold — 67 ms, well inside the grace window.
+            // Two lines under threshold - 67 ms, well inside the grace window.
             detector.AddLine(line++, quiet);
             detector.AddLine(line++, quiet);
         }
@@ -205,7 +205,7 @@ public class SpectralBurstDetectorTests
         // The floor is the minimum over the last ~15 s. A signal that runs longer than that fills
         // the window with its own energy, and a naive floor then rises to meet it: the burst stops
         // looking like a burst and gets chopped in two. Measured before the fix, a 25 s over came
-        // out as a pair of ~13 s "bursts" — each one short enough to pass a duration gate and be
+        // out as a pair of ~13 s "bursts" - each one short enough to pass a duration gate and be
         // captured as a packet. Bins carrying signal are excluded from the floor, because a floor
         // is a measurement of noise and a bin carrying a transmission is not measuring any.
         (List<SurveyBurst> bursts, SpectralBurstDetector detector) = Detector(maxSeconds: 120);

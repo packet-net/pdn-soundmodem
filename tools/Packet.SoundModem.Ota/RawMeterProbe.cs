@@ -13,13 +13,13 @@ namespace Packet.SoundModem.Ota;
 /// </summary>
 /// <remarks>
 /// <para><b>Why it exists.</b> The transmit hardware meters (FWDPWR, REFPWR, SWR, HWALC) were
-/// never arriving under any transmit condition — waveform or plain DIGU tune, interlock
+/// never arriving under any transmit condition - waveform or plain DIGU tune, interlock
 /// confirmed <c>TRANSMITTING</c>. Six hypotheses were disproved without finding the cause,
 /// because every diagnostic ran <em>downstream</em> of the library's own packet handling and
 /// so could not distinguish "the radio never sent it" from "we discarded it before looking".
 /// An instrument built on the suspect component cannot exonerate it.</para>
 /// <para>This probe settled it in one run by logging <b>every datagram, whole and
-/// unfiltered</b> — the radio was sending all 25 meters, in one stream, in one packet shape
+/// unfiltered</b> - the radio was sending all 25 meters, in one stream, in one packet shape
 /// (<c>type=3 C=1 T=0 tsi=1 tsf=1</c>, a 28-byte preamble). The fault was a consumer applying
 /// <c>PayloadOffset</c> to an array that had already been sliced to the payload; see
 /// <c>VitaPacket</c> in <c>M0LTE.Flex</c>, whose whole purpose is now to make that
@@ -84,7 +84,7 @@ public static class RawMeterProbe
                     lengths[n] = lengths.TryGetValue(n, out long c) ? c + 1 : 1;
 
                     // Anything below the library's 20-byte floor is exactly what it would have
-                    // silently discarded — count it separately and print it in full.
+                    // silently discarded - count it separately and print it in full.
                     if (n < 20)
                     {
                         shortDatagrams++;
@@ -257,7 +257,7 @@ public static class RawMeterProbe
         }
     }
 
-    /// <summary>Parses a datagram far more permissively than the library does — no minimum
+    /// <summary>Parses a datagram far more permissively than the library does - no minimum
     /// length, and it reports what it found rather than discarding on doubt.</summary>
     private static void ParseAndTally(
         ReadOnlySpan<byte> data, Dictionary<ushort, long> byClass,
@@ -320,8 +320,8 @@ public static class RawMeterProbe
         }
 
         // Record the exact header shape carrying each group of ids. Two kinds of meter packet
-        // clearly exist (the id 1–9 hardware set arrives at a different rate from the 10+
-        // slice set), and the library receives only one of them — so whatever differs in
+        // clearly exist (the id 1-9 hardware set arrives at a different rate from the 10+
+        // slice set), and the library receives only one of them - so whatever differs in
         // these fields is the bug.
         string shape = $"type={packetType} C={(hasClassId ? 1 : 0)} T={(hasTrailer ? 1 : 0)} " +
                        $"tsi={tsi} tsf={tsf} stream=0x{streamId:X8} len={data.Length} " +

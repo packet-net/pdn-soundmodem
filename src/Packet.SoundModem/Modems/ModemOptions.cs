@@ -2,12 +2,12 @@ namespace Packet.SoundModem.Modems;
 
 /// <summary>
 /// Optional, mode-specific knobs for <see cref="ModemCatalog.Create"/>. Every field left
-/// <see langword="null"/> selects that mode's documented default — the same defaults the
-/// daemon and every other consumer get — so <c>default(ModemOptions)</c> is always valid.
+/// <see langword="null"/> selects that mode's documented default - the same defaults the
+/// daemon and every other consumer get - so <c>default(ModemOptions)</c> is always valid.
 /// </summary>
 /// <param name="CentreFrequencyHz">Audio-centre frequency for the variable-centre families
 /// (afsk tone-pair, bpsk/qpsk carrier). Must be <see langword="null"/> for the fixed-centre
-/// modes (fsk*/c4fsk*/freedv-*/ms110d-*); supplying one for those throws — see
+/// modes (fsk*/c4fsk*/freedv-*/ms110d-*); supplying one for those throws - see
 /// <see cref="ModemCatalog.AcceptsCentreFrequency"/>.</param>
 /// <param name="OffsetPairs">Frequency-diversity bank width for the <c>bpsk*</c> and
 /// <c>afsk300*</c> modes: <c>2·OffsetPairs+1</c> stepped branches (0 collapses to a plain

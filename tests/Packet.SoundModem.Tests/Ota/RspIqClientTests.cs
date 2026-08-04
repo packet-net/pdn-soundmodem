@@ -37,7 +37,7 @@ public class RspIqClientTests
     public void Full_scale_and_beyond_clamps_without_wrapping()
     {
         // Two frames: (I=+1, Q=−1) at the rails, then (I=+2, Q=−2) beyond them. The point is the
-        // over-range pair SATURATES — a wrap would turn +2 into a large negative and hand the
+        // over-range pair SATURATES - a wrap would turn +2 into a large negative and hand the
         // scorer a phantom sample.
         byte[] input = Cf32(1f, -1f, 2f, -2f);
         var output = new byte[8];
@@ -188,7 +188,7 @@ public class RspIqClientTests
     {
         // Live RX-only smoke test on the real RSP1 (studybox). It needs ssh to the rig, so it is
         // gated: set SM_OTA_RSP_HW=1 to run it on the bench box; unset (CI, other machines) it
-        // skips. There is no burst to decode — the point is that capture → WAV → PcmWavReader
+        // skips. There is no burst to decode - the point is that capture → WAV → PcmWavReader
         // works end to end on real hardware.
         Assert.SkipUnless(
             Environment.GetEnvironmentVariable("SM_OTA_RSP_HW") == "1",

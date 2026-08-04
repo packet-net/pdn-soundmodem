@@ -2,9 +2,9 @@
   // pdn-soundmodem example configuration (JSON with comments allowed).
   // Start with: pdn-soundmodem --config soundmodem.json
   "device": "default",
-  // A FlexRadio over the LAN is a device too: "flex:<radio>[:slice][@station]" — <radio> is
+  // A FlexRadio over the LAN is a device too: "flex:<radio>[:slice][@station]" - <radio> is
   // `discover`, an IP (host[:port]), a discovery spec (serial=…/name=…) or `mock`. With no
-  // @station the daemon OWNS the radio and brings it up headless (creates its own slice — the
+  // @station the daemon OWNS the radio and brings it up headless (creates its own slice - the
   // "flex" section below sets its frequency/antenna/mode). A trailing @station attaches to a
   // running SmartSDR's slice instead. The Flex keys itself, so omit "ptt". e.g.:
   //   "device": "flex:10.45.0.76",            // headless, slice A, 14.100000 MHz / ANT1 / DIGU
@@ -19,43 +19,43 @@
   // cut from what the modems occupy rather than inheriting whatever the rig was left on (a 3000
   // Hz default clips ms110d-*, which reaches ~3.2 kHz). "transmitFilterHighHz" pins it; 0 leaves
   // the radio's own filter alone.
-  // A public UberSDR web receiver is a device too: "ubersdr:<instance>" — a host, a host:port,
+  // A public UberSDR web receiver is a device too: "ubersdr:<instance>" - a host, a host:port,
   // or the https:// URL you would open in a browser. The daemon takes the receiver's IQ stream
   // and demodulates SSB from it in-process, so every mode, the waterfall and the frame log work
   // as they do on a sound card. It is RECEIVE ONLY: there is no transmitter, so omit "ptt", and
   // transmissions are refused rather than queued. Give the modems "rfFrequency" (or pin
-  // "dialFrequency") — that is what tunes the receiver. e.g.:
+  // "dialFrequency") - that is what tunes the receiver. e.g.:
   //   "device": "ubersdr:m9psy-1.instance.ubersdr.org",
   //   "ubersdr": { "mode": "iq48" },   // also: password, ssbLowHz/ssbHighHz, gain
   "captureRate": 48000,
-  // Modems can be placed by absolute RF frequency instead of audio centre — state the band
+  // Modems can be placed by absolute RF frequency instead of audio centre - state the band
   // plan the way you think of it and the daemon works out the dial, tells you what to set,
   // and refuses to start if no single dial can fit them all. See CONFIG.md.
   //   "sideband": "usb",            // or "lsb"; RF = dial + audio on USB
   //   "dialFrequency": 7049450,     // omit and the daemon chooses one that fits
   //   "modems": [ { "subChannel": 0, "mode": "bpsk300", "rfFrequency": 7051600 } ]
   // The shared KISS port: every modem, selected by the KISS port nibble. A modem can also be
-  // given a port to itself with "kissPort" in its entry below — that port carries only that
+  // given a port to itself with "kissPort" in its entry below - that port carries only that
   // modem, presented as nibble 0, which is what host software that hardcodes KISS channel 0
   // needs in order to reach a modem that is not sub-channel 0.
   "kissPort": 8105,
   // "frequency" (optional) sets a modem's audio centre in Hz, QtSoundModem-style, on both
-  // TX and RX — e.g. move 300 BPSK to 1459 to meet a peer sitting off the usual centre.
+  // TX and RX - e.g. move 300 BPSK to 1459 to meet a peer sitting off the usual centre.
   // It applies to the AFSK tone-pair modes (afsk*, default 1700) and the BPSK/QPSK carrier
   // modes (bpsk*/qpsk*, default 1500; 1650 for qpsk3600). The baseband FSK families
-  // (fsk*/c4fsk*) and the spec-fixed waveforms (freedv-*/ms110d-*) have no settable centre —
+  // (fsk*/c4fsk*) and the spec-fixed waveforms (freedv-*/ms110d-*) have no settable centre -
   // a "frequency" on those is rejected at start-up. Omit the field to use the mode default.
   //
-  // bpsk300/bpsk1200 default to a differential frequency-diversity bank — parallel decoder
+  // bpsk300/bpsk1200 default to a differential frequency-diversity bank - parallel decoder
   // branches at stepped centres (differential detection matches/beats coherent on real off-air
   // HF, benchmarked against a NinoTNC). "offsetPairs" (branches either side of centre) and
-  // "offsetStepHz" (Hz between branches) tune coverage — ±offsetPairs·offsetStepHz; omit for
+  // "offsetStepHz" (Hz between branches) tune coverage - ±offsetPairs·offsetStepHz; omit for
   // the defaults (4 pairs, baud/40 step). offsetPairs:0 gives a plain single modem.
   // --psk-detector coherent forces coherent (QPSK stays coherent regardless). bpsk300-multi /
   // bpsk1200-multi are aliases of bpsk300 / bpsk1200.
   //
   // The afsk300 family (afsk300/afsk300-il2p/afsk300-il2pc) also defaults to a diversity
-  // bank — tight ±250 Hz branches stepped across the offset range, because on a crowded HF
+  // bank - tight ±250 Hz branches stepped across the offset range, because on a crowded HF
   // band the receive filter has neighbours to reject, and narrow branches plus diversity
   // beat one wide filter (measured off-air 2026-08-02: 3/13 frames → 13/13 on the live 40 m
   // slot). Same knobs: defaults 5 pairs at 35 Hz (±175 Hz); offsetPairs:0 gives a single
@@ -73,23 +73,23 @@
   // "sideband" is "usb" or "lsb"; "bind" "*" opens it beyond loopback.
   // "waterfall": { "port": 8107, "dialFrequencyHz": 14105000, "sideband": "usb" },
   // POCSAG paging endpoint (optional; DAPNET/POCSAG-compatible waveform, local paging
-  // API — line-based TCP: "PAGE <ric> <function> ALPHA|NUMERIC|TONE [text]").
+  // API - line-based TCP: "PAGE <ric> <function> ALPHA|NUMERIC|TONE [text]").
   // "paging": { "port": 8106, "baud": 1200, "invertPolarity": false },
-  // ARDOP virtual TNC (optional; ardopcf-compatible TCP host interface — Pat and
+  // ARDOP virtual TNC (optional; ardopcf-compatible TCP host interface - Pat and
   // other Winlink hosts connect unmodified; data port is always port+1). The ARDOP
   // channel is dedicated: "ardop" is exclusive with "modems"/"paging", and the
   // channel must run at 12 kHz). Preferred form is a modem entry, which also takes a
   // "frequency" (ARDOP is pinned to 1500 Hz; the daemon shifts it) and shares the passband
-  // with the packet modes — while an ARQ session is up their transmissions are held:
+  // with the packet modes - while an ARQ session is up their transmissions are held:
   //   { "subChannel": 1, "mode": "ardop", "frequency": 950, "port": 8101 }
   // "port" there speaks the ardopcf host interface, not KISS, and reserves port+1 for data.
   // "ardop": { "port": 8515 },
-  // Channel access (TXDELAY, P, SLOTTIME, TXTAIL) is NOT configured here — it belongs to the
+  // Channel access (TXDELAY, P, SLOTTIME, TXTAIL) is NOT configured here - it belongs to the
   // host, which sets it at runtime with the KISS parameter commands 0x01-0x04. Until a host
   // does, the defaults are 300 ms / 63 / 100 ms / 20 ms. `--txdelay MS` overrides the TXDELAY
   // default for bench runs with no host attached.
   // One bind for every listener: KISS, the per-modem ports, the waterfall, paging and ARDOP.
-  // Loopback unless you say otherwise — KISS has no authentication.
+  // Loopback unless you say otherwise - KISS has no authentication.
   // Every frame heard, written to SQLite (WAL, so you can read it while the modem runs).
   // Omit and nothing is written down.
   // "frameLog": { "path": "/var/lib/pdn-soundmodem/frames.db" },

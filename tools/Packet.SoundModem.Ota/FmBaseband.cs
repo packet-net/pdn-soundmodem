@@ -5,19 +5,19 @@ namespace Packet.SoundModem.Ota;
 /// <summary>Knobs for <see cref="FmModulator"/>.</summary>
 public sealed class FmModulatorOptions
 {
-    /// <summary>Audio rate in — the mode's DSP rate (12000 or 48000).</summary>
+    /// <summary>Audio rate in - the mode's DSP rate (12000 or 48000).</summary>
     public int InputRate { get; init; } = 48000;
 
     /// <summary>Complex baseband rate out. Must be an integer multiple of <see cref="InputRate"/>
     /// (the modulator upsamples the audio first), and wide enough for the FM signal's Carson
-    /// bandwidth — the noise lead-in's deviation excursions run well past the signal's, and if the
+    /// bandwidth - the noise lead-in's deviation excursions run well past the signal's, and if the
     /// rate is too low they alias. 48 kHz clears every catalogue FM mode at its target deviation;
     /// the RSP1 captures at 96 kHz.</summary>
     public int OutputRate { get; init; } = 48000;
 
     /// <summary>
     /// The peak frequency deviation, in Hz, that <see cref="ReferenceAmplitude"/> of audio maps to.
-    /// This is the mode's <b>Tgt Dev</b> from <c>docs/mode-modulation-reference.md</c> — the whole
+    /// This is the mode's <b>Tgt Dev</b> from <c>docs/mode-modulation-reference.md</c> - the whole
     /// point of the FM path is that the drive is calibrated so the achieved peak deviation of the
     /// signal is this value, not the channel spacing.
     /// </summary>
@@ -25,7 +25,7 @@ public sealed class FmModulatorOptions
 
     /// <summary>The audio amplitude that maps to <see cref="PeakDeviationHz"/>. The FM ladder sets
     /// this to the worst point's clean-signal peak so the <em>signal</em> deviates to exactly the
-    /// target and the injected noise rides on top — the FM counterpart of the SSB ladder's one
+    /// target and the injected noise rides on top - the FM counterpart of the SSB ladder's one
     /// gain per pass. 1.0 for a stand-alone modulate-a-normalised-tone round trip.</summary>
     public double ReferenceAmplitude { get; init; } = 1.0;
 
@@ -40,7 +40,7 @@ public sealed class FmModulatorOptions
 /// <summary>
 /// A software FM modulator: real audio in, complex FM baseband out, at a <b>settable peak
 /// deviation</b>. The dry-run counterpart of the radio's FM modulator, and the transmit half of
-/// the FM OTA chain — it lets the whole FM modem chain (render → FM-mod at Tgt Dev → FM-demod →
+/// the FM OTA chain - it lets the whole FM modem chain (render → FM-mod at Tgt Dev → FM-demod →
 /// decode) be proved offline before any power is applied.
 /// </summary>
 /// <remarks>
@@ -51,7 +51,7 @@ public sealed class FmModulatorOptions
 /// amplitude, so audio at <see cref="FmModulatorOptions.ReferenceAmplitude"/> deviates the carrier
 /// by exactly <see cref="FmModulatorOptions.PeakDeviationHz"/>.</para>
 /// <para><b>Mod then discriminate is an identity on the audio</b> (up to filtering) when no RF
-/// noise is added — the phase difference the discriminator forms is exactly the phase increment
+/// noise is added - the phase difference the discriminator forms is exactly the phase increment
 /// this modulator accumulated. That is what makes the FM ladder self-calibrating: the noise is
 /// injected as audio <em>before</em> modulation (exactly as the on-air ladder transmits its noise
 /// lead-in through the radio's FM modulator), rides through the mod/demod round trip unchanged, and
@@ -77,7 +77,7 @@ public sealed class FmModulator
         }
     }
 
-    /// <summary>Hz of deviation per unit of input audio amplitude — <c>PeakDeviationHz /
+    /// <summary>Hz of deviation per unit of input audio amplitude - <c>PeakDeviationHz /
     /// ReferenceAmplitude</c>, the constant the phase accumulator uses.</summary>
     public double DeviationGainHzPerUnit => _opt.PeakDeviationHz / _opt.ReferenceAmplitude;
 
@@ -86,7 +86,7 @@ public sealed class FmModulator
     public float[] Modulate(ReadOnlySpan<float> audio)
     {
         // 1. Upsample the audio to the baseband rate so the FM spectrum has room. A ×1 factor
-        //    (audio already at the output rate — every 48 kHz mode) needs no filtering at all.
+        //    (audio already at the output rate - every 48 kHz mode) needs no filtering at all.
         int factor = _opt.OutputRate / _opt.InputRate;
         float[] wide;
         if (factor == 1)
@@ -131,17 +131,17 @@ public sealed class FmModulator
 }
 
 /// <summary>A measured FM deviation, in Hz.</summary>
-/// <param name="PeakHz">Peak instantaneous-frequency excursion — the number that must match the
+/// <param name="PeakHz">Peak instantaneous-frequency excursion - the number that must match the
 /// mode's Tgt Dev after calibration.</param>
-/// <param name="RmsHz">RMS deviation over the window (the modulating waveform's shape shows here —
+/// <param name="RmsHz">RMS deviation over the window (the modulating waveform's shape shows here -
 /// a two-tone AFSK signal has a lower RMS/peak ratio than white noise).</param>
-/// <param name="MeanHz">Mean instantaneous frequency — the residual carrier offset. Non-zero means
+/// <param name="MeanHz">Mean instantaneous frequency - the residual carrier offset. Non-zero means
 /// the capture is not tuned to the carrier (subtract it from Peak/RMS by passing the right DialHz),
 /// which on a live capture is exactly the dial error the calibration has to null.</param>
 public readonly record struct FmDeviation(double PeakHz, double RmsHz, double MeanHz);
 
 /// <summary>
-/// Measures the achieved <b>peak frequency deviation</b> of a complex FM signal — the instrument the
+/// Measures the achieved <b>peak frequency deviation</b> of a complex FM signal - the instrument the
 /// on-air calibration uses to set each mode's drive so the deviation hits its Tgt Dev.
 /// </summary>
 /// <remarks>
@@ -169,7 +169,7 @@ public static class FmDeviationMeter
         {
             double i = iqInterleaved[2 * k];
             double q = iqInterleaved[(2 * k) + 1];
-            // arg(z[k] · conj(z[k-1])) — the phase advanced over one sample.
+            // arg(z[k] · conj(z[k-1])) - the phase advanced over one sample.
             double dphi = Math.Atan2((q * prevI) - (i * prevQ), (i * prevI) + (q * prevQ));
             double f = dphi * scale;
             peak = Math.Max(peak, Math.Abs(f));

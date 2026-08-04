@@ -4,7 +4,7 @@ using M0LTE.Il2p;
 
 namespace Packet.SoundModem.Modems;
 
-/// <summary>Framing carried over the 300 baud HF AFSK baseband — one per NinoTNC "SSB
+/// <summary>Framing carried over the 300 baud HF AFSK baseband - one per NinoTNC "SSB
 /// AFSK" mode.</summary>
 public enum Afsk300Framing
 {
@@ -19,10 +19,10 @@ public enum Afsk300Framing
 }
 
 /// <summary>
-/// 300 baud HF AFSK — the NinoTNC "SSB AFSK" mode family (12 AX.25, 13 IL2P, 14
+/// 300 baud HF AFSK - the NinoTNC "SSB AFSK" mode family (12 AX.25, 13 IL2P, 14
 /// IL2P+CRC): 1600/1800 Hz tone FSK filtered to 500 Hz occupied bandwidth, per Nino's
 /// v3/4.43 mode-switch mapping in flashtnc's release-notes.txt. Same demodulator chain as
-/// the Bell 202 modes — a quadrature FM discriminator does not care about the shift — with
+/// the Bell 202 modes - a quadrature FM discriminator does not care about the shift - with
 /// per-mode filters and bit clock.
 /// </summary>
 /// <remarks>
@@ -38,11 +38,11 @@ public sealed class Afsk300Modem : IModem
     // Bench-tuned against recorded NinoTNC mode-12 audio (a 7×7 sweep of both values over
     // six real bursts): ±300 Hz band-pass, 300 Hz I/Q low-pass sits mid-plateau at a full
     // score. Nino filters these modes to 500 Hz OBW and the measured energy spans
-    // 1520–1870 Hz, so ±300 passes the signal whole with room for the filter's own
+    // 1520-1870 Hz, so ±300 passes the signal whole with room for the filter's own
     // transition width, while staying tight enough to keep the discriminator clean.
     //
     // These were shipped at 400 for a year of bench work, where the extra width cost
-    // nothing — one clean signal at high SNR. On the real 40 m channel it cost frames: a
+    // nothing - one clean signal at high SNR. On the real 40 m channel it cost frames: a
     // quadrature discriminator follows the strongest thing in its passband, and ±400
     // around the band-plan centre reaches far enough to swallow the neighbouring QSO that
     // in practice lives ~200 Hz below the slot (measured 2026-08-02 on m9psy-1 off-air
@@ -57,11 +57,11 @@ public sealed class Afsk300Modem : IModem
 
     /// <summary>
     /// Transmit band-limit. Nino publishes 500 Hz for these modes, but his own mode-12
-    /// transmission measures 305 Hz on the bench — so 500 is a ceiling, not what he
+    /// transmission measures 305 Hz on the bench - so 500 is a ceiling, not what he
     /// actually does, and filtering to it left us 10 % wider than the TNC we share the
     /// channel with. 400 Hz puts us at 325 Hz, inside the 305-328 Hz his own two 300 AFSK
     /// modes span, and the tones only need ±100 Hz. This is a floor set by the signal, not
-    /// the filter: 360 Hz reaches only 319 Hz and starts eating the modulation — our own
+    /// the filter: 360 Hz reaches only 319 Hz and starts eating the modulation - our own
     /// receiver stops decoding it.
     /// </summary>
     private const double ObwHz = 400;
@@ -79,7 +79,7 @@ public sealed class Afsk300Modem : IModem
     /// <param name="centerFrequency">Mark/space midpoint; 1700 Hz (tones 1600/1800).</param>
     /// <param name="bandPassHalfWidth">Receive band-pass half-width around the centre.
     /// Narrower rejects more of a crowded HF neighbourhood at the cost of carrier-offset
-    /// range — see the constant above; <see cref="Afsk300MultiModem"/> passes 250 here.</param>
+    /// range - see the constant above; <see cref="Afsk300MultiModem"/> passes 250 here.</param>
     /// <param name="lowPassCutoff">Receive I/Q low-pass cutoff, paired with
     /// <paramref name="bandPassHalfWidth"/>.</param>
     public Afsk300Modem(
@@ -93,8 +93,8 @@ public sealed class Afsk300Modem : IModem
         _sampleRate = sampleRate;
         _centerFrequency = centerFrequency;
 
-        // Declared ahead of the deframers because their callbacks need it — the DCD edge below
-        // and, on both paths, the carrier-offset reading — while it in turn cannot be built
+        // Declared ahead of the deframers because their callbacks need it - the DCD edge below
+        // and, on both paths, the carrier-offset reading - while it in turn cannot be built
         // until the bit sink that drives it exists. Nothing dereferences it until audio flows.
         AfskDemodulator? demodulator = null;
         Action<int> bitSink;
@@ -125,7 +125,7 @@ public sealed class Afsk300Modem : IModem
                         FrequencyOffsetHz: demodulator!.CarrierOffsetHz));
                 },
                 crcMode: framing == Afsk300Framing.Il2pCrc);
-            // Reset the deframer on the DCD falling edge — same rationale as BpskModem:
+            // Reset the deframer on the DCD falling edge - same rationale as BpskModem:
             // a carrier that drops mid-collection leaves the deframer consuming the next
             // transmission's sync word as phantom payload.
             bool previousDcd = false;
@@ -189,7 +189,7 @@ public sealed class Afsk300Modem : IModem
     /// <summary>
     /// Band-limits the transmission to the mode's 500 Hz occupied bandwidth. Nino's notes
     /// describe these modes as "filtered for 500 Hz occupied bandwidth" and his own
-    /// transmissions are visibly filtered — raw phase-continuous FSK on these tones
+    /// transmissions are visibly filtered - raw phase-continuous FSK on these tones
     /// measures ~519 Hz, just over. Cheap to do and it keeps us inside a spec written for
     /// crowded HF.
     /// </summary>

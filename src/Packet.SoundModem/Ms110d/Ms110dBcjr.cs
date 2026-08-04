@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Ms110d;
 /// <summary>
 /// Max-log BCJR equalizer for a 2-path frequency-selective fading channel: the
 /// forward-backward recursions on a 2^L-state trellis (L = echo delay in symbols), with
-/// max in place of log-sum-exp throughout — the standard max-log approximation, NOT exact
+/// max in place of log-sum-exp throughout - the standard max-log approximation, NOT exact
 /// MAP (an earlier version of this header claimed exact posteriors; issue #65). LLRs are
 /// best-path metric differences: well calibrated when <c>noiseVar</c> is honest, slightly
 /// over-confident where competing paths run close.
@@ -33,7 +33,7 @@ internal static class Ms110dBcjr
         float invTwoSigma2 = 1f / (2f * noiseVar);
 
         // Forward recursion (log domain). Trellis scratch comes from the shared pool
-        // (rented arrays may be oversized — all indexing stays within [0, total)).
+        // (rented arrays may be oversized - all indexing stays within [0, total)).
         int total = (n + 1) * nStates;
         float[] logAlpha = ArrayPool<float>.Shared.Rent(total);
         Array.Fill(logAlpha, NegInf, 0, total);

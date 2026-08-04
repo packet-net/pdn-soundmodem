@@ -7,7 +7,7 @@ public class Ms110dFramingTests
     [Fact]
     public void Eom_Is_Appended_Leftmost_Bit_First()
     {
-        // D.5.4.3 (checklist L7): 0x4B65A5B2, "left most bit is sent first" —
+        // D.5.4.3 (checklist L7): 0x4B65A5B2, "left most bit is sent first" -
         // 0100 1011 0110 0101 1010 0101 1011 0010.
         byte[] bits = Ms110dFraming.BuildTxBits(new byte[8], appendEom: true, inputBits: 48);
         bits.Length.Should().Be(48);

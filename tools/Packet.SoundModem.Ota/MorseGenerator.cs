@@ -11,7 +11,7 @@ namespace Packet.SoundModem.Ota;
 /// human-readable identification, so the station has to say who it is in a form anyone
 /// listening can decode without our software. Sending the mode name alongside the callsign
 /// also tells a listener what the unfamiliar signal they just heard actually was.</para>
-/// <para><b>Edges are shaped, deliberately.</b> Hard-keying a carrier splatters — the
+/// <para><b>Edges are shaped, deliberately.</b> Hard-keying a carrier splatters - the
 /// transform of a rectangular envelope has sidelobes decaying at only 6 dB/octave, which on
 /// the air is key clicks either side of the signal. A raised-cosine rise and fall of a few
 /// milliseconds costs nothing and removes them. This matters more here than for an ordinary
@@ -148,7 +148,7 @@ public static class MorseGenerator
     }
 
     /// <summary>
-    /// Renders a message as interleaved I,Q — a carrier at <paramref name="toneHz"/> keyed by
+    /// Renders a message as interleaved I,Q - a carrier at <paramref name="toneHz"/> keyed by
     /// the message, with raised-cosine edges.
     /// </summary>
     /// <param name="text">The message, e.g. <c>"M0LTE MS110D"</c>.</param>
@@ -229,11 +229,11 @@ public static class MorseGenerator
     }
 
     /// <summary>
-    /// Renders a message as mono real audio — a cosine tone at <paramref name="toneHz"/> keyed by
+    /// Renders a message as mono real audio - a cosine tone at <paramref name="toneHz"/> keyed by
     /// the message, with raised-cosine edges. The DAX-audio counterpart of <see cref="Complex"/>.
     /// </summary>
     /// <remarks>On the DAX route the radio's own DIGU SSB modulator carries this audio onto the
-    /// air (dial + <paramref name="toneHz"/>), so there is no complex baseband — the keyed carrier
+    /// air (dial + <paramref name="toneHz"/>), so there is no complex baseband - the keyed carrier
     /// is a real tone. The shaped edges matter for exactly the same reason as the complex version:
     /// hard-keying splatters, and we are about to publish spectral measurements of our own
     /// transmitter.</remarks>

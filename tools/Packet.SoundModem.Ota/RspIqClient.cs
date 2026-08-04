@@ -16,7 +16,7 @@ namespace Packet.SoundModem.Ota;
 internal sealed class RspCaptureOptions
 {
     /// <summary>Called with every block as it is written, after the startup guard and the trim to
-    /// the target duration — exactly what the WAV holds. Runs on the read loop, so it must not
+    /// the target duration - exactly what the WAV holds. Runs on the read loop, so it must not
     /// block or the capture falls behind real time. Parity with <see cref="UberSdrCaptureOptions"/>.</summary>
     public IqBlockHandler? OnBlock { get; init; }
 
@@ -46,7 +46,7 @@ internal sealed class RspCaptureOptions
     /// the startup guard, so the file holds this many seconds of settled samples.</summary>
     public int DurationSeconds { get; init; }
 
-    /// <summary>Discard this much of the stream after connect before opening the file — the
+    /// <summary>Discard this much of the stream after connect before opening the file - the
     /// SDRplay front-end settles over the first samples after tune. 1 s clears it, matching the
     /// UberSDR client's guard.</summary>
     public int StartupGuardMs { get; init; } = 1000;
@@ -57,7 +57,7 @@ internal sealed class RspCaptureOptions
 
 /// <summary>
 /// Captures an IQ stream from the RSP1 on studybox to a 16-bit stereo (interleaved I/Q) WAV plus
-/// a JSON sidecar — the same <see cref="CaptureResult"/> and file format as
+/// a JSON sidecar - the same <see cref="CaptureResult"/> and file format as
 /// <see cref="UberSdrIqClient"/>, so a capture drops straight into <c>sm-ota score</c> with no
 /// scorer change. Where the UberSDR client reads a websocket, this runs <c>rx_sdr</c> remotely
 /// over SSH and reads its <c>CF32</c> stdout in real time; the streaming structure (startup
@@ -68,16 +68,16 @@ internal sealed class RspIqClient
 {
     /// <summary>Default rx_sdr <c>-g</c> string: AGC off with a fixed IFGR/RFGR, so the receive
     /// level is deterministic rather than AGC-controlled. <c>AGC=false</c> disables automatic gain
-    /// via <c>setGainMode</c>, and the fixed IFGR/RFGR are then honoured — this needs the patched
+    /// via <c>setGainMode</c>, and the fixed IFGR/RFGR are then honoured - this needs the patched
     /// rx_sdr on studybox (fork <c>github.com/M0LTE/rx_tools</c>, branch <c>agc-gainmode</c>, which
     /// teaches <c>-g</c> an <c>AGC=</c> pseudo-element). Stock rx_tools has no such handling, leaves
     /// AGC on and ignores IFGR (logging <c>Not updating IFGR gain because AGC is enabled</c>).
     /// <para>Measured determinism at 18.1 MHz (AGC off, RFGR=0, noise-floor RMS): IFGR 20 → −48,
-    /// 25 → −53, 30 → −58, 40 → −67, 50 → −75, 59 → −78 dBFS — about 1 dB per IFGR unit in the
+    /// 25 → −53, 30 → −58, 40 → −67, 50 → −75, 59 → −78 dBFS - about 1 dB per IFGR unit in the
     /// working region. AGC on self-levels to ~−48 dBFS regardless of IFGR, i.e. the level the old
     /// AGC-pinned campaign actually ran at, which equals fixed IFGR=20. The default is IFGR=20:
     /// two live passes at 18.1 MHz decoded WN4 clean there with the capture peaking ~−22 dBFS
-    /// (22 dB clipping headroom) and the signal ~22 dB over the floor — the validated operating
+    /// (22 dB clipping headroom) and the signal ~22 dB over the floor - the validated operating
     /// point, now deterministic. A higher IFGR (quieter) buys clipping headroom but pushes the
     /// delivered signal toward the RSP1's own in-band noise, worsening the low-SNR self-calibration;
     /// go quieter only if a burst is at risk of clipping. Override with <c>--rsp-gain</c>.</para></summary>
@@ -88,7 +88,7 @@ internal sealed class RspIqClient
     private readonly Action<string>? _log;
 
     // rx_sdr echoes its own PID (via `exec`) before it opens the device; captured here so the
-    // remote process can be killed by PID on stop — closing the SSH channel does NOT stop it.
+    // remote process can be killed by PID on stop - closing the SSH channel does NOT stop it.
     private readonly TaskCompletionSource<int> _remotePid =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -173,7 +173,7 @@ internal sealed class RspIqClient
 
                 if (wav is null)
                 {
-                    // Sample0Utc is the wall clock at the first sample KEPT — a real timestamp, not
+                    // Sample0Utc is the wall clock at the first sample KEPT - a real timestamp, not
                     // a guess at rx_sdr's remote start latency. This is why the stream is read live
                     // rather than captured remotely and copied back afterwards.
                     sample0Utc = DateTime.UtcNow;
@@ -204,7 +204,7 @@ internal sealed class RspIqClient
             if (wav is null)
             {
                 throw new InvalidOperationException(
-                    "no data captured (never passed the startup guard — did rx_sdr open the device?)");
+                    "no data captured (never passed the startup guard - did rx_sdr open the device?)");
             }
 
             long frames = wav.FramesWritten;
@@ -240,7 +240,7 @@ internal sealed class RspIqClient
 
     /// <summary>The remote shell line: report the PID, then <c>exec</c> rx_sdr streaming CF32 to
     /// stdout. <c>exec</c> makes rx_sdr inherit the shell's PID, so the PID echoed first is
-    /// rx_sdr's own — which is what <see cref="StopRemoteAsync"/> kills, because rx_sdr survives a
+    /// rx_sdr's own - which is what <see cref="StopRemoteAsync"/> kills, because rx_sdr survives a
     /// closed SSH channel and would otherwise hold the single-client RSP1 and block every later
     /// capture. With a fixed duration an <c>-n</c> sample count is added as a backstop, so even a
     /// missed kill self-terminates.</summary>
@@ -298,7 +298,7 @@ internal sealed class RspIqClient
                 {
                     agcWarned = true;
                     _log?.Invoke("WARNING: AGC is enabled, so rx_sdr is ignoring the fixed IFGR and the level " +
-                                 "is AGC-controlled — pass AGC=false for a deterministic level (the patched " +
+                                 "is AGC-controlled - pass AGC=false for a deterministic level (the patched " +
                                  "studybox rx_sdr honours it; see RspIqClient.DefaultGain)");
                 }
 
@@ -315,7 +315,7 @@ internal sealed class RspIqClient
         }
     }
 
-    /// <summary>Kills the local ssh child, then the remote rx_sdr by the PID it reported —
+    /// <summary>Kills the local ssh child, then the remote rx_sdr by the PID it reported -
     /// belt-and-braces, because an orphaned rx_sdr holds the single-client RSP1.</summary>
     private async Task StopRemoteAsync(Process proc, RspCaptureOptions opt)
     {
@@ -447,7 +447,7 @@ internal sealed class RspIqClient
 /// Converts a stream of interleaved float32 I/Q (SoapySDR CF32, normalised to about ±1) into
 /// interleaved int16 stereo PCM (I = left, Q = right), the WAV payload
 /// <see cref="PcmWavWriter"/> writes and <see cref="PcmWavReader"/> reads. Each float scales by
-/// 32767 and CLAMPS to the int16 range — a hot signal saturates, it never wraps. Trailing bytes
+/// 32767 and CLAMPS to the int16 range - a hot signal saturates, it never wraps. Trailing bytes
 /// shorter than one 8-byte complex frame are carried to the next call, so a frame split across two
 /// reads is not lost.
 /// </summary>
@@ -507,7 +507,7 @@ internal sealed class Cf32ToInt16Stereo
         return 4;
     }
 
-    /// <summary>Scales by full scale and clamps — never wraps.</summary>
+    /// <summary>Scales by full scale and clamps - never wraps.</summary>
     internal static short ToInt16(float v) =>
         (short)Math.Clamp((int)MathF.Round(v * 32767f), short.MinValue, short.MaxValue);
 }

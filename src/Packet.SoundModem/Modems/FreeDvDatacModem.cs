@@ -5,7 +5,7 @@ using M0LTE.Ofdm;
 namespace Packet.SoundModem.Modems;
 
 /// <summary>
-/// FreeDV datac OFDM (all six datac modes) as an <see cref="IModem"/> — the codec2 burst waveform
+/// FreeDV datac OFDM (all six datac modes) as an <see cref="IModem"/> - the codec2 burst waveform
 /// carrying IL2P+CRC-framed AX.25. Each <see cref="Modulate"/> call emits one burst,
 /// <c>[TXDELAY silence][preamble][packet × N][postamble][guard silence]</c>, exactly as
 /// codec2's <c>freedv_data_raw_tx</c> frames a transmission; receive runs
@@ -14,25 +14,25 @@ namespace Packet.SoundModem.Modems;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Payload content — IL2P+CRC (the family-standard framing; a pdn convention at this
+/// <b>Payload content - IL2P+CRC (the family-standard framing; a pdn convention at this
 /// layer).</b> The datac payload is FIXED-size (datac0 14 B, datac1 510 B, datac3 126 B,
 /// datac4 54 B, datac13 14 B, datac14 3 B per packet) and FreeDV defines NO framing at the
-/// raw-data layer — FreeDATA layers its own ARQ protocol on top. Rather than invent one,
+/// raw-data layer - FreeDATA layers its own ARQ protocol on top. Rather than invent one,
 /// this modem fills the payloads with
 /// exactly what every NinoTNC-lineage mode in this library puts on the wire:
 /// <see cref="Il2pCodec"/> IL2P+CRC (<c>Encode(frame, appendCrc: true)</c>) behind the
-/// 24-bit IL2P sync word (<see cref="Il2pFramer"/> with <c>preambleBits: 0</c> — the
+/// 24-bit IL2P sync word (<see cref="Il2pFramer"/> with <c>preambleBits: 0</c> - the
 /// payload is a clean byte pipe, so the sync word alone delimits; no training preamble is
-/// needed). The bit stream is packed MSB-first into as many payloads as the frame needs —
-/// sizes are exact, IL2P being unstuffed — and unused payload space is zero fill, which
+/// needed). The bit stream is packed MSB-first into as many payloads as the frame needs -
+/// sizes are exact, IL2P being unstuffed - and unused payload space is zero fill, which
 /// the sync hunt ignores by design (the PSK modes' preamble is zeros for the same reason).
 /// Receive concatenates a burst's decoded payloads into one bit stream through an
 /// <see cref="Il2pDeframer"/> (<c>crcMode: true</c>), giving frames that span packet
 /// boundaries (essential on datac0, whose 14-byte payload is smaller than any AX.25
 /// frame), several frames per packet, and the family's per-frame
 /// <see cref="FrameQuality"/> (Reed-Solomon corrected bytes + trailing-CRC state). The
-/// <em>waveform</em> is fully FreeDV-compatible — a stock <c>freedv_data_raw_rx</c>
-/// recovers the payload bytes unchanged — but their <em>interpretation</em> is pdn's own:
+/// <em>waveform</em> is fully FreeDV-compatible - a stock <c>freedv_data_raw_rx</c>
+/// recovers the payload bytes unchanged - but their <em>interpretation</em> is pdn's own:
 /// two pdn-soundmodem stations interoperate; FreeDATA or other raw-data peers would see
 /// an IL2P bit stream. Frame size limits are IL2P's (≈1023-byte payload;
 /// <see cref="Il2pCodec.Encode"/> rejects beyond it and the channel drops the frame
@@ -45,7 +45,7 @@ namespace Packet.SoundModem.Modems;
 /// + a CRC backstop in <see cref="DatacReceiver"/>). The trailing guard silence covers
 /// that detection window (the UW check runs <c>Nuwframes</c> frames into the phantom
 /// packet after the postamble) so back-to-back bursts in one key-up do not land their
-/// preamble inside a still-synced receiver — far shorter than the two packets of silence
+/// preamble inside a still-synced receiver - far shorter than the two packets of silence
 /// codec2's own file tools append. Caveat, datac1: its 16-bit unique word gives the
 /// end-of-burst check a ~10&#160;% chance per burst of lingering one phantom packet (the
 /// CRC backstop then ends it); a back-to-back burst inside that ~4&#160;s window would be
@@ -53,15 +53,15 @@ namespace Packet.SoundModem.Modems;
 /// </para>
 /// <para>
 /// <b>Rate bridge:</b> the OFDM engine is native 8&#160;kHz; this modem runs on the
-/// 48&#160;kHz DSP path (48000 = 6·8000 — integer both ways): receive decimates ÷6 through
+/// 48&#160;kHz DSP path (48000 = 6·8000 - integer both ways): receive decimates ÷6 through
 /// the anti-aliased <see cref="Decimator"/>, transmit renders the burst at 8&#160;kHz and
 /// upsamples ×6 through the image-rejecting <see cref="Upsampler"/>. The 12&#160;kHz path
 /// is unusable (8000&#160;∤&#160;12000). Any integer multiple of 8&#160;kHz is accepted,
-/// including 8&#160;kHz itself (no resampling — the native/test path).
+/// including 8&#160;kHz itself (no resampling - the native/test path).
 /// </para>
 /// <para>
 /// <b>DCD:</b> <see cref="CarrierDetect"/> is the demodulator's burst sync state
-/// (Trial/Synced — a preamble/postamble correlation confirmed by the unique word). It is
+/// (Trial/Synced - a preamble/postamble correlation confirmed by the unique word). It is
 /// honest but late: it asserts about one modem frame (~110&#160;ms) into a burst, once the
 /// preamble correlator fires, and it never sees a burst it fails to acquire.
 /// <see cref="EnergyBusyDetector"/> on the decimated 8&#160;kHz band is the practical
@@ -71,7 +71,7 @@ namespace Packet.SoundModem.Modems;
 /// </remarks>
 public sealed class FreeDvDatacModem : IModem
 {
-    /// <summary>The engine's native sample rate — 8 kHz for every datac mode.</summary>
+    /// <summary>The engine's native sample rate - 8 kHz for every datac mode.</summary>
     private const int NativeRate = 8000;
 
     private readonly Action<byte[]> _frameReceived;
@@ -105,7 +105,7 @@ public sealed class FreeDvDatacModem : IModem
         {
             throw new ArgumentException(
                 $"sample rate must be an integer multiple of {NativeRate} (the engine's native " +
-                "rate); use the 48 kHz DSP path — 12 kHz has no integer ratio to 8 kHz",
+                "rate); use the 48 kHz DSP path - 12 kHz has no integer ratio to 8 kHz",
                 nameof(sampleRate));
         }
 
@@ -148,31 +148,31 @@ public sealed class FreeDvDatacModem : IModem
         _fifo = new short[(4 * mode.SamplesPerFrame) + 1024];
     }
 
-    /// <summary>Creates the datac0 mode — 500 Hz OBW, 14-byte packets; every AX.25 frame
+    /// <summary>Creates the datac0 mode - 500 Hz OBW, 14-byte packets; every AX.25 frame
     /// spans several packets of its burst.</summary>
     public static FreeDvDatacModem Datac0(int sampleRate, Action<byte[]> frameReceived) =>
         new(sampleRate, frameReceived, OfdmMode.Datac0);
 
-    /// <summary>Creates the datac1 mode — 1700 Hz OBW, 510-byte packets, the throughput
+    /// <summary>Creates the datac1 mode - 1700 Hz OBW, 510-byte packets, the throughput
     /// workhorse.</summary>
     public static FreeDvDatacModem Datac1(int sampleRate, Action<byte[]> frameReceived) =>
         new(sampleRate, frameReceived, OfdmMode.Datac1);
 
-    /// <summary>Creates the datac3 mode — 500 Hz OBW, 126-byte packets, low-SNR.</summary>
+    /// <summary>Creates the datac3 mode - 500 Hz OBW, 126-byte packets, low-SNR.</summary>
     public static FreeDvDatacModem Datac3(int sampleRate, Action<byte[]> frameReceived) =>
         new(sampleRate, frameReceived, OfdmMode.Datac3);
 
-    /// <summary>Creates the datac4 mode — 250 Hz OBW, 54-byte packets, very low SNR
+    /// <summary>Creates the datac4 mode - 250 Hz OBW, 54-byte packets, very low SNR
     /// (RX band-pass filtered).</summary>
     public static FreeDvDatacModem Datac4(int sampleRate, Action<byte[]> frameReceived) =>
         new(sampleRate, frameReceived, OfdmMode.Datac4);
 
-    /// <summary>Creates the datac13 mode — 200 Hz OBW, 14-byte packets, the narrowest mode
+    /// <summary>Creates the datac13 mode - 200 Hz OBW, 14-byte packets, the narrowest mode
     /// (RX band-pass filtered).</summary>
     public static FreeDvDatacModem Datac13(int sampleRate, Action<byte[]> frameReceived) =>
         new(sampleRate, frameReceived, OfdmMode.Datac13);
 
-    /// <summary>Creates the datac14 mode — 250 Hz OBW, 3-byte packets, short-burst signalling
+    /// <summary>Creates the datac14 mode - 250 Hz OBW, 3-byte packets, short-burst signalling
     /// (RX band-pass filtered; every AX.25 frame spans many packets).</summary>
     public static FreeDvDatacModem Datac14(int sampleRate, Action<byte[]> frameReceived) =>
         new(sampleRate, frameReceived, OfdmMode.Datac14);
@@ -210,14 +210,14 @@ public sealed class FreeDvDatacModem : IModem
     /// <inheritdoc />
     public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds)
     {
-        // The family-standard framing, composed exactly as the other il2pc modes do —
+        // The family-standard framing, composed exactly as the other il2pc modes do -
         // except preambleBits: 0 (a clean byte pipe needs no training bits; the sync word
         // delimits). Il2pCodec rejects empty/oversize frames; the channel drops those.
         byte[] wire = Il2pCodec.Encode(ax25Frame, appendCrc: true);
         byte[] bits = Il2pFramer.FrameBits(wire, preambleBits: 0);
 
         // Pack MSB-first (the order Il2pDeframer consumes) into exactly as many payloads as
-        // needed — IL2P is unstuffed, so the size is deterministic. Unused space stays
+        // needed - IL2P is unstuffed, so the size is deterministic. Unused space stays
         // zero: safe fill the sync hunt ignores, like the PSK modes' zero preamble.
         int bitsPerPacket = _tx.PayloadBytes * 8;
         int packets = (bits.Length + bitsPerPacket - 1) / bitsPerPacket;
@@ -237,7 +237,7 @@ public sealed class FreeDvDatacModem : IModem
 
         Cf[] burst = _tx.ModulateBurst(payloads);
 
-        // TXDELAY is leading silence — the radio's PTT-to-RF allowance; the burst brings
+        // TXDELAY is leading silence - the radio's PTT-to-RF allowance; the burst brings
         // its own acquisition preamble. The guard tail covers the receiver's end-of-burst
         // window (see the constructor).
         int delaySamples = NativeRate * Math.Max(0, txDelayMilliseconds) / 1000;
@@ -272,7 +272,7 @@ public sealed class FreeDvDatacModem : IModem
         _fifoEnd = 0;
     }
 
-    /// <summary>Packets the largest IL2P frame can occupy — the receiver's packets-per-burst
+    /// <summary>Packets the largest IL2P frame can occupy - the receiver's packets-per-burst
     /// ceiling; real bursts end early via the UW/CRC end-of-burst detection.</summary>
     private static int MaxPacketsPerBurst(DatacTransmitter tx)
     {
@@ -331,10 +331,10 @@ public sealed class FreeDvDatacModem : IModem
 
     /// <summary>Streams one decoded datac packet's payload bits (MSB-first, the IL2P wire
     /// order) into the IL2P deframer, which emits any completed frames. Each burst begins a
-    /// fresh IL2P stream, so packet 0 resets the deframer — otherwise a frame truncated by
+    /// fresh IL2P stream, so packet 0 resets the deframer - otherwise a frame truncated by
     /// a lost packet at the end of one burst would consume the head of the next burst as
     /// its missing body. CRC-failed packets contribute nothing; the hole makes the affected
-    /// frame fail Reed-Solomon or its trailing CRC — the family's standard loss semantics.</summary>
+    /// frame fail Reed-Solomon or its trailing CRC - the family's standard loss semantics.</summary>
     private void Deliver(in DatacRxResult result)
     {
         if (!result.CrcOk)

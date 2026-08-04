@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Tests.Ardop;
 /// <summary>
 /// Occupied-bandwidth guard for the ARDOP transmitter, per bandwidth class
 /// (docs/ardop-design.md §6.3): the reference is not the spec's nominal figure but
-/// ardopcf's own transmit audio — the checked-in oracle fixture for the same frame
+/// ardopcf's own transmit audio - the checked-in oracle fixture for the same frame
 /// type and payload, measured with the same meter. Ours must never be wider than the
 /// reference's own skirts (the honest bar; same discipline as the NinoTNC OBW tests).
 /// </summary>

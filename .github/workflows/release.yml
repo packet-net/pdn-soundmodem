@@ -5,7 +5,7 @@ name: release
 # attach the .debs to a GitHub Release, and push the package to nuget.org.
 #
 # workflow_dispatch runs build everything and leave it as workflow artifacts without
-# releasing anything — a full dry run of the pipeline. Set `publish: true` to also cut the
+# releasing anything - a full dry run of the pipeline. Set `publish: true` to also cut the
 # GitHub Release and push to NuGet.
 #
 # Runs as a single job on purpose: the runner is self-hosted and memory-bounded, so the
@@ -52,9 +52,9 @@ jobs:
       - name: Preflight
         run: |
           # dpkg-deb ships in the Essential `dpkg` package, so this only trips if the
-          # runner is not Debian-family — in which case it cannot build .debs at all.
+          # runner is not Debian-family - in which case it cannot build .debs at all.
           command -v dpkg-deb >/dev/null || {
-            echo "::error::dpkg-deb is missing — this job needs a Debian-family runner"
+            echo "::error::dpkg-deb is missing - this job needs a Debian-family runner"
             exit 1
           }
           command -v gh >/dev/null || { echo "::error::gh CLI is missing on this runner"; exit 1; }
@@ -92,7 +92,7 @@ jobs:
 
       # Restore past the HTTP cache. This runner is self-hosted and keeps its NuGet cache
       # between jobs forever, so a dependency published minutes ago is invisible to it while
-      # nuget.org already serves the package — which is every release that bumps a dependency
+      # nuget.org already serves the package - which is every release that bumps a dependency
       # we just cut. An ephemeral runner never sees this; ours would see it every time.
       - name: Restore (bypassing the NuGet HTTP cache)
         run: dotnet restore --no-http-cache
@@ -102,7 +102,7 @@ jobs:
 
       # Same reason as ci.yml: the runner prints only "Failed: N" and writes the names to a
       # UTF-16 log on the runner that nobody downstream ever sees. A release that refuses to
-      # publish is the pipeline working — but it has to say what it refused over.
+      # publish is the pipeline working - but it has to say what it refused over.
       - name: Name the failures
         if: failure()
         run: |
@@ -110,7 +110,7 @@ jobs:
           while IFS= read -r f; do
             found=1
             echo "::group::$(basename "$f")"
-            # Failures first and in full — see the same step in ci.yml for why a head -200 of
+            # Failures first and in full - see the same step in ci.yml for why a head -200 of
             # the whole log shows nothing but skips.
             log="$(iconv -f UTF-16LE -t UTF-8 "$f" 2>/dev/null || cat "$f")"
             grep -A 6 -E "^failed |^\s+failed " <<<"$log" | head -120 || true
@@ -187,7 +187,7 @@ jobs:
           cat > /tmp/relnotes.md <<'NOTES'
           ### Install (Debian/Ubuntu/Raspberry Pi OS)
 
-          Download the `.deb` for your architecture and install it — the package is
+          Download the `.deb` for your architecture and install it - the package is
           self-contained, so no .NET runtime is needed on the target:
 
           ```
@@ -197,7 +197,7 @@ jobs:
           `amd64` for x86-64, `arm64` for a 64-bit Raspberry Pi OS, `armhf` for 32-bit.
 
           The systemd unit is enabled and started on install, and on a fresh install it
-          **will fail** — that is expected. The modem has no useful defaults, so the seeded
+          **will fail** - that is expected. The modem has no useful defaults, so the seeded
           config names a sound device and PTT line that won't match your machine. Edit it
           and restart:
 
@@ -207,12 +207,12 @@ jobs:
           systemctl status pdn-soundmodem
           ```
 
-          (Debian only installs `sudo` when the root password is left blank at setup — if you
+          (Debian only installs `sudo` when the root password is left blank at setup - if you
           do not have it, become root with `su -` and drop the `sudo` prefix.)
 
           KISS-over-TCP is on port 8105 by default. Verify downloads against `SHA256SUMS`.
 
-          Full instructions — config, PTT permissions, upgrading, uninstalling — are in
+          Full instructions - config, PTT permissions, upgrading, uninstalling - are in
           [INSTALL.md](https://github.com/packet-net/pdn-soundmodem/blob/main/INSTALL.md).
           NOTES
           sed -i "s/pdn-soundmodem_VERSION_ARCH/pdn-soundmodem_${VERSION}_<arch>/" /tmp/relnotes.md
@@ -221,7 +221,7 @@ jobs:
           if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then prerelease="--prerelease"; fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "release $TAG exists — replacing its assets"
+            echo "release $TAG exists - replacing its assets"
             gh release upload "$TAG" ./artifacts/*.deb ./artifacts/*.nupkg ./artifacts/SHA256SUMS --clobber
           else
             # --notes (not --notes-file) is the flag gh documents as prependable to
@@ -253,4 +253,4 @@ jobs:
 
       - name: Warn if NUGET_API_KEY missing
         if: steps.version.outputs.publish == 'true' && env.NUGET_API_KEY == ''
-        run: echo "::warning::NUGET_API_KEY is not visible to this repo — NuGet push skipped (the GitHub Release still has the .debs). Grant the org secret access to pdn-soundmodem."
+        run: echo "::warning::NUGET_API_KEY is not visible to this repo - NuGet push skipped (the GitHub Release still has the .debs). Grant the org secret access to pdn-soundmodem."

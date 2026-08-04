@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 namespace Packet.SoundModem.Audio;
 
 /// <summary>
-/// Minimal RIFF/WAVE reader and writer for 16-bit PCM — the offline harness for feeding
+/// Minimal RIFF/WAVE reader and writer for 16-bit PCM - the offline harness for feeding
 /// recorded audio through the modems and for writing test corpora. Not a general WAV
 /// library: 16-bit PCM only, unknown chunks are skipped on read.
 /// </summary>
@@ -33,7 +33,7 @@ public static class WavFile
             pos += 8;
             if (pos + size > data.Length)
             {
-                break; // truncated chunk — take what we have
+                break; // truncated chunk - take what we have
             }
 
             if (id.SequenceEqual("fmt "u8))

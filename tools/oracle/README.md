@@ -4,7 +4,7 @@
 TX vectors under [`samples/freedv/`](../../samples/freedv/) that
 `tests/Packet.SoundModem.Tests/Ofdm/OfdmModulatorOracleTests.cs` checks
 `Packet.SoundModem.Ofdm.OfdmModulator` against. It is a **build-time / one-off generator**, not
-part of the .NET build or the runtime — libcodec2 never appears on the `src/` reference graph
+part of the .NET build or the runtime - libcodec2 never appears on the `src/` reference graph
 (the checked-in `.s16`/`.f32` vectors are what the tests read).
 
 See [`samples/freedv/PROVENANCE.md`](../../samples/freedv/PROVENANCE.md) for the exact

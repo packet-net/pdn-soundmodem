@@ -5,8 +5,8 @@ namespace Packet.SoundModem.Tests.Ms110d;
 
 /// <summary>
 /// Design §5.4: D.5.1.5 only recommends SRRC α = 0.35, so the spectrum gate is ours and
-/// absolute — analytic 99 % OBW of the shaped 2400 Bd waveform ≈ 2.89 kHz about 1800 Hz.
-/// Pinned: 99 % OBW within [2700, 2950] Hz, −30 dB extent inside 170–3450 Hz, spectral
+/// absolute - analytic 99 % OBW of the shaped 2400 Bd waveform ≈ 2.89 kHz about 1800 Hz.
+/// Pinned: 99 % OBW within [2700, 2950] Hz, −30 dB extent inside 170-3450 Hz, spectral
 /// centroid 1800 ± 15 Hz.
 /// </summary>
 public class Ms110dObwTests

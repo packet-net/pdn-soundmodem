@@ -4,14 +4,14 @@ using Packet.SoundModem.Hdlc;
 using M0LTE.Il2p;
 using Packet.SoundModem.Modems;
 
-// sm-decode: offline WAV decoder — this project's equivalent of direwolf's `atest`,
+// sm-decode: offline WAV decoder - this project's equivalent of direwolf's `atest`,
 // for corpus benchmarking and cross-validation against other modems.
 //
 //   sm-decode <file.wav> [afsk1200|bpsk300|bpsk1200|qpsk600|qpsk2400|qpsk3600|
 //                         fsk9600|fsk9600-il2p|fsk4800|fsk4800-il2p] [--il2p] [--crc] [--quiet]
 //
 // afsk1200 (default): classic AX.25 (NRZI + HDLC), or IL2P-over-AFSK with --il2p
-// (per the IL2P symbol map AFSK carries raw bits — no NRZI — mark = '1').
+// (per the IL2P symbol map AFSK carries raw bits - no NRZI - mark = '1').
 // The bpsk/qpsk modes imply IL2P; pass --crc for the IL2P+CRC (NinoTNC) variants.
 // Prints one line per decoded frame and a final count.
 

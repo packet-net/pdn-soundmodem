@@ -9,7 +9,7 @@ public class Ms110dInterleaverTests
     public void Wire_Side_Sequence_Matches_The_D5332_Worked_Example()
     {
         // D.5.3.3.2 (docs/ms110d/tables/d5332-interleaver-load-example.md): WID 1 / 3 kHz /
-        // UltraShort — 192 bits, increment 25 — loads B(0…8) at 0, 25, 50, 75, 100, 125,
+        // UltraShort - 192 bits, increment 25 - loads B(0…8) at 0, 25, 50, 75, 100, 125,
         // 150, 175 and 8. Loopback-blind checklist L1: this asserts the WIRE side (after the
         // linear fetch, wire[(25·n) mod 192] == B(n)), not just a round-trip.
         var interleaver = new Ms110dInterleaver(192, 25);
@@ -68,7 +68,7 @@ public class Ms110dInterleaverTests
     [Fact]
     public void Every_Implemented_Increment_Is_A_Permutation()
     {
-        // WN 7/8 (Phase B, PR #60) included since issue #67 — the Table D-LI rows for
+        // WN 7/8 (Phase B, PR #60) included since issue #67 - the Table D-LI rows for
         // 8PSK/16QAM must be permutations exactly like the Phase A rows.
         foreach (int wn in new[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 13 })
         {

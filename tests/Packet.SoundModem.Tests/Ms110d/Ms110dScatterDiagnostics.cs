@@ -8,7 +8,7 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// Env-gated per-symbol scatter dump for the B1 autopsies (phase-b-plan §B1): one Poor
 /// burst at the mask SNR with every equalized data symbol, the per-frame tracking
 /// diagnostics, and the rig's tap trajectory written to files for offline analysis
-/// (rotation clustering, fade alignment, error localization). Not a gate — an instrument.
+/// (rotation clustering, fade alignment, error localization). Not a gate - an instrument.
 /// <c>MS110D_SCATTER=1</c>, <c>MS110D_SCATTER_WN</c> (default 7), <c>MS110D_SCATTER_SNR</c>
 /// (default the WN's Poor mask), <c>MS110D_SCATTER_SEED</c> (default 500+WN),
 /// <c>MS110D_SCATTER_OUT</c> (directory, default the current directory),

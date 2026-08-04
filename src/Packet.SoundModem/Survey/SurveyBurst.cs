@@ -17,7 +17,7 @@ namespace Packet.SoundModem.Survey;
 /// <param name="MeanSnrDb">Mean SNR over the burst.</param>
 /// <param name="EndedOnTimeout">
 /// True when the burst was closed because it ran past the detector's duration limit rather than
-/// because it stopped — a carrier, a long SSB over, or a data mode that is simply not packet.
+/// because it stopped - a carrier, a long SSB over, or a data mode that is simply not packet.
 /// Triage drops these; the flag is what stops that reading as "a packet we could not classify".
 /// </param>
 public readonly record struct SurveyBurst(

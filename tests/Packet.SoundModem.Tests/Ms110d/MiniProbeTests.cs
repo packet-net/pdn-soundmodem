@@ -69,7 +69,7 @@ public class MiniProbeTests
 
         peak.Should().BeApproximately(n, 0.01f);
 
-        // Probe bases are chosen for near-ideal periodic autocorrelation — the property the
+        // Probe bases are chosen for near-ideal periodic autocorrelation - the property the
         // per-frame channel estimator relies on. Bound: ≤ 15 % of the peak.
         worstSidelobe.Should().BeLessThan(0.15f * peak);
     }

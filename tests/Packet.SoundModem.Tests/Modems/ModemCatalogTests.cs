@@ -66,7 +66,7 @@ public class ModemCatalogTests
     public void DefaultDetectorFor_Is_Differential_For_Every_Psk_Family(string mode, PskDetector expected)
     {
         // BPSK reversed 2026-07-18 (#40/#42); QPSK followed 2026-07-31 on the studybox
-        // NinoTNC corpus — see DefaultDetectorFor's provenance comment.
+        // NinoTNC corpus - see DefaultDetectorFor's provenance comment.
         ModemCatalog.DefaultDetectorFor(mode).Should().Be(expected);
     }
 

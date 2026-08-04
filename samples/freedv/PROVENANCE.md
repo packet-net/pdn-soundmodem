@@ -12,16 +12,16 @@ Per mode (all six: `datac0`, `datac1`, `datac3`, `datac4`, `datac13`, `datac14`)
 | File | Content |
 |---|---|
 | `<mode>_packet.s16` | Full modem packet through `ofdm_mod` on a fresh struct: idft+CP → Hilbert clipper (amp_scale → clip_gain1 → clip → **TX BPF** → clip_gain2 → clip). Real part, `int16` (C `float`→`short` truncation, exactly `freedv_rawdatatx`). |
-| `<mode>_packet_nobpf.s16` | Same but with `tx_bpf_en=false` — the pre-BPF stage-2 output (amp_scale → clip_gain1 → clip → final clip). Real part, `int16`. |
+| `<mode>_packet_nobpf.s16` | Same but with `tx_bpf_en=false` - the pre-BPF stage-2 output (amp_scale → clip_gain1 → clip → final clip). Real part, `int16`. |
 | `<mode>_preamble_raw.f32` | The stored raw preamble frame `ofdm->tx_preamble` (LCG seed 2, `amp_scale=1`, no clip, no BPF): the pure idft+CP waveform. Interleaved `float32` re, im. |
-| `<mode>_meta.txt` | `bits_per_packet`, `samples_per_packet`, `samples_per_frame`, `tx_nlower`, `nuwbits`, `uw_ind_sym[]` — the exactly-reproducible integer checkpoints. |
+| `<mode>_meta.txt` | `bits_per_packet`, `samples_per_packet`, `samples_per_frame`, `tx_nlower`, `nuwbits`, `uw_ind_sym[]` - the exactly-reproducible integer checkpoints. |
 
 ## Payload
 
 The packet payload is the deterministic seed-1 LCG
 (`ofdm_generate_payload_data_bits` → `ofdm_rand_seed(r,n,1)`, bit = `r[i] > 16384`), which the
 C# side reproduces as `OfdmTxTables.LcgBits(bitsPerPacket, 1)`. No LDPC/interleaver/CRC is
-involved — these are raw `ofdm_mod` bits, isolating the modulator.
+involved - these are raw `ofdm_mod` bits, isolating the modulator.
 
 ## Exact reproduction
 
@@ -42,5 +42,5 @@ LD_LIBRARY_PATH=codec2-ref/build/src ./oracle_harness samples/freedv
 
 codec2 uses C `cosf`/`sinf`/`cabsf` whose last-ULP results differ from .NET `MathF`, so the
 `.s16` vectors are matched within a documented tolerance (max-abs LSB + RMS + cross-correlation),
-never literal equality — see `docs/ofdm-design.md` §1.3. The integer `_meta.txt` checkpoints ARE
+never literal equality - see `docs/ofdm-design.md` §1.3. The integer `_meta.txt` checkpoints ARE
 asserted exactly.

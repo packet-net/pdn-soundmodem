@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Daemon;
 /// <summary>One logical modem on the shared audio channel.</summary>
 public sealed class ModemConfig
 {
-    /// <summary>KISS sub-channel (port nibble), 0–15.</summary>
+    /// <summary>KISS sub-channel (port nibble), 0-15.</summary>
     public int SubChannel { get; set; }
 
     /// <summary>Mode name as accepted by --modem (afsk1200, afsk1200-multi, bpsk300,
@@ -15,7 +15,7 @@ public sealed class ModemConfig
 
     /// <summary>Audio centre/carrier frequency override in Hz, applied to both TX and RX
     /// (QtSoundModem-style per-modem tuning; mode default when null). Honoured by the
-    /// variable-centre modes only — the AFSK tone-pair modes (afsk*, default 1700) and the
+    /// variable-centre modes only - the AFSK tone-pair modes (afsk*, default 1700) and the
     /// BPSK/QPSK carrier modes (bpsk*/qpsk*, default 1500; 1650 for qpsk3600). The baseband
     /// FSK families (fsk*/c4fsk*) and the spec-fixed waveforms (freedv-*/ms110d-*) have no
     /// settable centre; setting one on those is rejected at start-up, not ignored.</summary>
@@ -40,7 +40,7 @@ public sealed class ModemConfig
     /// <remarks>
     /// <b>The protocol spoken here follows the mode.</b> A packet mode gets KISS: only this
     /// modem's frames, presented as nibble 0, and everything sent to it transmitted on this
-    /// modem whatever nibble was used — which is what host software that hardcodes KISS channel
+    /// modem whatever nibble was used - which is what host software that hardcodes KISS channel
     /// 0 needs to reach a modem that is not sub-channel 0. <c>ardop</c> instead gets the
     /// ardopcf host interface, command on this port and data always on the next one up, because
     /// an ARQ session has no KISS representation.
@@ -57,7 +57,7 @@ public sealed class ModemConfig
 
     /// <summary>
     /// How much room to plan for this modem, in Hz; measured from the modem itself when unset.
-    /// Meaningful mainly for <c>ardop</c>, which has no fixed width — its bandwidth is
+    /// Meaningful mainly for <c>ardop</c>, which has no fixed width - its bandwidth is
     /// negotiated per session, so the planner assumes the widest (2000 Hz) unless told
     /// otherwise. Setting it also caps what ARDOP will negotiate (200/500/1000/2000).
     /// </summary>
@@ -85,7 +85,7 @@ public sealed class PttConfig
 }
 
 /// <summary>POCSAG paging endpoint (DAPNET/POCSAG-compatible waveform; local paging
-/// API, pdn) — see PagingTcpServer for the line grammar.</summary>
+/// API, pdn) - see PagingTcpServer for the line grammar.</summary>
 public sealed class PagingConfig
 {
     /// <summary>Paging TCP listen port.</summary>
@@ -101,7 +101,7 @@ public sealed class PagingConfig
 
 /// <summary>ARDOP virtual TNC (ardopcf-compatible TCP host interface; Winlink/Pat).
 /// Per the dedicated-channel policy the ARDOP channel hosts no packet modems or
-/// paging — configuring this alongside Modems/Paging is rejected.</summary>
+/// paging - configuring this alongside Modems/Paging is rejected.</summary>
 public sealed class ArdopConfig
 {
     /// <summary>Host-interface command port (ardopcf convention 8515); the data port
@@ -110,14 +110,14 @@ public sealed class ArdopConfig
 }
 
 /// <summary>Headless FlexRadio slice-creation params (used when Device is
-/// <c>flex:&lt;radio&gt;</c> with no <c>@station</c> — the daemon owns the radio and creates
+/// <c>flex:&lt;radio&gt;</c> with no <c>@station</c> - the daemon owns the radio and creates
 /// its own slice). Ignored in attach mode (a <c>@station</c> device string). Defaults match
 /// docs/flex-integration.md §8.</summary>
 public sealed class FlexConfig
 {
     /// <summary>
     /// Slice frequency (MHz, six-decimal Flex form). Null takes the default, and a band plan
-    /// supersedes it entirely — with <c>rfFrequency</c> modems the dial is computed, so setting
+    /// supersedes it entirely - with <c>rfFrequency</c> modems the dial is computed, so setting
     /// this as well says two different things.
     /// </summary>
     public string? Frequency { get; set; }
@@ -134,7 +134,7 @@ public sealed class FlexConfig
     /// SmartSDR without being told to.
     /// </summary>
     /// <remarks>
-    /// A running SmartSDR grabs DAX channel 1 and the two contend (live finding, 2026-07-17 —
+    /// A running SmartSDR grabs DAX channel 1 and the two contend (live finding, 2026-07-17 -
     /// docs/flex-integration.md §8). Defaulting elsewhere means the order the two are started in
     /// stops mattering, which is the whole problem with picking 1 and hoping.
     /// </remarks>
@@ -147,11 +147,11 @@ public sealed class FlexConfig
     /// Transmit power in watts. Null (the default) leaves whatever the radio is already set to.
     /// </summary>
     /// <remarks>
-    /// <para>Watts rather than the radio's 0–100 percentage because that is what an operator
+    /// <para>Watts rather than the radio's 0-100 percentage because that is what an operator
     /// means; the daemon converts using the PA size the radio reports (100 W on the 6000
     /// series, so the two happen to coincide there).</para>
     /// <para>The radio <b>rejects</b> a power above its Max Power Level rather than reducing to
-    /// it, so a value above your ceiling fails at startup with a message naming both numbers —
+    /// it, so a value above your ceiling fails at startup with a message naming both numbers -
     /// it does not quietly transmit at less than you asked for.</para>
     /// <para>Only the client that owns the transmit slice can set this, which in a headless
     /// station is the daemon itself: with pdn-soundmodem holding the slice, an external tool's
@@ -161,13 +161,13 @@ public sealed class FlexConfig
     public double? TxPowerWatts { get; set; }
 
     /// <summary>
-    /// Transmit-filter high cut in Hz. Null (the default) derives it from the modems — the
+    /// Transmit-filter high cut in Hz. Null (the default) derives it from the modems - the
     /// highest one's upper edge plus a little margin. 0 leaves whatever the radio was already
     /// set to.
     /// </summary>
     /// <remarks>
     /// <para>The transmit filter is a global, persistent radio setting rather than a slice one,
-    /// so an inherited one from a previous session silently truncates anything wider than it —
+    /// so an inherited one from a previous session silently truncates anything wider than it -
     /// which is why the daemon states it rather than hoping. The default 3000 Hz passes every
     /// audio-band packet mode but clips the top of <c>ms110d-*</c> (a 3 kHz waveform at an 1800 Hz
     /// centre reaches past 3.1 kHz).</para>
@@ -179,7 +179,7 @@ public sealed class FlexConfig
 }
 
 /// <summary>
-/// Stream parameters used only when Device is <c>ubersdr:&lt;instance&gt;</c> — a receive-only
+/// Stream parameters used only when Device is <c>ubersdr:&lt;instance&gt;</c> - a receive-only
 /// station listening to a public UberSDR web receiver's IQ. Ignored for every other device.
 /// Where to tune is not here: that comes from the band plan, as it does on a Flex.
 /// </summary>
@@ -194,8 +194,8 @@ public sealed class UberSdrConfig
 
     /// <summary>
     /// Edges of the SSB filter to synthesise, in Hz above the dial. Holding the complex baseband
-    /// means the receive filter is ours to choose rather than a rig's, and the default (150–3450)
-    /// clears the whole 300–2700 Hz band the planner will place modems in.
+    /// means the receive filter is ours to choose rather than a rig's, and the default (150-3450)
+    /// clears the whole 300-2700 Hz band the planner will place modems in.
     /// </summary>
     public double? SsbLowHz { get; set; }
 
@@ -241,7 +241,7 @@ public sealed class FrameLogConfig
 /// </remarks>
 public sealed class SurveyConfig
 {
-    /// <summary>Where captures are written — a WAV and a JSON sidecar per burst. The packaged
+    /// <summary>Where captures are written - a WAV and a JSON sidecar per burst. The packaged
     /// service runs unprivileged, so the default sits under its own state directory.</summary>
     public string Path { get; set; } = "/var/lib/pdn-soundmodem/survey";
 
@@ -261,7 +261,7 @@ public sealed class SurveyConfig
     public double MarginSeconds { get; set; } = 1.0;
 
     /// <summary>Longest burst still plausibly a packet. This, not width, is what separates a
-    /// voice over from a wideband data burst — they occupy much the same 2.4 kHz.</summary>
+    /// voice over from a wideband data burst - they occupy much the same 2.4 kHz.</summary>
     public double MaxSeconds { get; set; } = 20;
 
     /// <summary>Weakest burst worth keeping, in dB over the noise floor.</summary>
@@ -306,7 +306,7 @@ public sealed class WaterfallConfig
 }
 
 /// <summary>pdn-soundmodem daemon configuration file. JSON, with comments and trailing
-/// commas accepted (see <see cref="Options"/>) and case-insensitive key matching — the
+/// commas accepted (see <see cref="Options"/>) and case-insensitive key matching - the
 /// shipped soundmodem.example.json relies on that and annotates itself. Full reference:
 /// CONFIG.md.</summary>
 public sealed class DaemonConfig
@@ -314,20 +314,20 @@ public sealed class DaemonConfig
     /// <summary>ALSA device for capture and playback.</summary>
     public string Device { get; set; } = "default";
 
-    /// <summary>Capture rate; card-native (48000) recommended — the daemon decimates.</summary>
+    /// <summary>Capture rate; card-native (48000) recommended - the daemon decimates.</summary>
     public int CaptureRate { get; set; } = 48000;
 
-    /// <summary>KISS TCP listen port — shared by every modem, addressed by sub-channel nibble.
+    /// <summary>KISS TCP listen port - shared by every modem, addressed by sub-channel nibble.
     /// Individual modems can also get a port to themselves; see <see cref="ModemConfig.KissPort"/>.</summary>
     public int KissPort { get; set; } = 8105;
 
     /// <summary>
-    /// Address every TCP listener binds to — KISS, the per-modem ports, the waterfall, paging
+    /// Address every TCP listener binds to - KISS, the per-modem ports, the waterfall, paging
     /// and ARDOP alike; "*" or "0.0.0.0" for all interfaces. One setting rather than one per
     /// service: they are all on the same machine facing the same network.
     /// </summary>
     /// <remarks>
-    /// Loopback by default because KISS has no authentication whatsoever — anything that can
+    /// Loopback by default because KISS has no authentication whatsoever - anything that can
     /// reach the port can transmit on your licence.
     /// </remarks>
     public string Bind { get; set; } = "127.0.0.1";
@@ -347,7 +347,7 @@ public sealed class DaemonConfig
     public bool SidebandWasStated { get; private set; }
 
     /// <summary>
-    /// Pins the dial instead of letting the daemon choose one — for a net frequency, or to
+    /// Pins the dial instead of letting the daemon choose one - for a net frequency, or to
     /// match another application. Only meaningful alongside <see cref="ModemConfig.RfFrequency"/>.
     /// Unset (the default) the daemon picks a dial that centres every modem in the passband and
     /// prints it; pinned, it is used as-is and merely checked, because you can see your radio
@@ -387,21 +387,21 @@ public sealed class DaemonConfig
 
     /// <summary>
     /// Whether to listen for the station identifications a NinoTNC sends alongside its PSK SSB
-    /// data modes rather than within them — 300 AFSK AX.25, 200 Hz above the carrier. On by
+    /// data modes rather than within them - 300 AFSK AX.25, 200 Hz above the carrier. On by
     /// default: it costs one cheap demodulator per PSK modem, changes nothing a host sees, and
     /// turns a recurring unreadable burst in the middle of the channel into a callsign.
     /// </summary>
     /// <remarks>
     /// Applies only to the four modes the TNC behaves this way in (<c>bpsk300</c>, <c>qpsk600</c>,
-    /// <c>bpsk1200</c>, <c>qpsk2400</c> and their aliases) — see
+    /// <c>bpsk1200</c>, <c>qpsk2400</c> and their aliases) - see
     /// <see cref="Modems.IdBeaconGhost"/>. A station running none of them is unaffected either way.
     /// </remarks>
     public bool IdBeacons { get; set; } = true;
 
     /// <summary>
     /// Settings present in the file that this version does not know. Kept so start-up can say
-    /// so out loud: System.Text.Json drops unknown members silently, which turns a typo — or a
-    /// setting that has since been withdrawn, like the old "csma" block — into a config that
+    /// so out loud: System.Text.Json drops unknown members silently, which turns a typo - or a
+    /// setting that has since been withdrawn, like the old "csma" block - into a config that
     /// looks accepted and does something else.
     /// </summary>
     [JsonExtensionData]
@@ -424,7 +424,7 @@ public sealed class DaemonConfig
     {
         var config = JsonSerializer.Deserialize<DaemonConfig>(File.ReadAllText(path), Options)
             ?? throw new InvalidDataException(
-                "the file contains only `null` — there is nothing to configure from. A minimal "
+                "the file contains only `null` - there is nothing to configure from. A minimal "
                 + "working file is {\"device\": \"default\", \"modems\": [{\"subChannel\": 0, "
                 + "\"mode\": \"afsk1200\"}]}");
         // ARDOP is no longer exclusive with the packet modems: it shares the channel, and the
@@ -434,14 +434,14 @@ public sealed class DaemonConfig
         if (ardopModems > 1)
         {
             throw new InvalidDataException(
-                "two modems have \"mode\": \"ardop\". One ARDOP TNC per channel — it is a whole "
+                "two modems have \"mode\": \"ardop\". One ARDOP TNC per channel - it is a whole "
                 + "virtual TNC with its own host interface, not a demodulator you can run twice.");
         }
 
         if (ardopModems > 0 && config.Ardop is not null)
         {
             throw new InvalidDataException(
-                "ARDOP is configured twice — once as a modem entry and once in the top-level "
+                "ARDOP is configured twice - once as a modem entry and once in the top-level "
                 + "\"ardop\" section. Keep the modem entry (it can also carry \"frequency\" and "
                 + "\"port\") and delete the \"ardop\" section.");
         }
@@ -456,7 +456,7 @@ public sealed class DaemonConfig
         {
             throw new InvalidDataException(
                 $"two modems share \"subChannel\": {duplicates[0].Key}. Each modem needs its own "
-                + "KISS sub-channel (0-15) — renumber one of them.");
+                + "KISS sub-channel (0-15) - renumber one of them.");
         }
 
         ModemConfig? bothWays = config.Modems.FirstOrDefault(
@@ -465,7 +465,7 @@ public sealed class DaemonConfig
         {
             throw new InvalidDataException(
                 $"modem {bothWays.SubChannel} sets both \"frequency\" ({bothWays.Frequency}) and "
-                + $"\"rfFrequency\" ({bothWays.RfFrequency}). Those say the same thing two ways — "
+                + $"\"rfFrequency\" ({bothWays.RfFrequency}). Those say the same thing two ways - "
                 + "\"frequency\" is an audio offset, \"rfFrequency\" is a place on the band. Keep one.");
         }
 
@@ -490,7 +490,7 @@ public sealed class DaemonConfig
         {
             throw new InvalidDataException(
                 $"\"flex\".\"transmitFilterHighHz\" is {filterHigh}. That is an audio cut-off in Hz "
-                + "(3000 is a radio's usual default, 3400 clears ms110d) — use 500-10000, 0 to "
+                + "(3000 is a radio's usual default, 3400 clears ms110d) - use 500-10000, 0 to "
                 + "leave the radio's own filter alone, or remove it to have it set from the modems.");
         }
 
@@ -628,7 +628,7 @@ public sealed class DaemonConfig
 
     /// <summary>
     /// Parses a bind setting; "*" means every interface. Null when it is not an address. Unset
-    /// or blank stays on loopback — the safe reading, since the alternative would silently put
+    /// or blank stays on loopback - the safe reading, since the alternative would silently put
     /// an unauthenticated transmit interface on every interface because a value was empty.
     /// </summary>
     internal static System.Net.IPAddress? ParseBind(string? bind) =>
@@ -642,7 +642,7 @@ public sealed class DaemonConfig
     /// </summary>
     /// <remarks>
     /// This is what the daemon calls. A bad config is an operator typo, not a bug, and the
-    /// person who has to act on it reads it in `journalctl` — a .NET stack trace there tells
+    /// person who has to act on it reads it in `journalctl` - a .NET stack trace there tells
     /// them nothing they can use, and buries the one line that names the problem.
     /// </remarks>
     public static DaemonConfig? TryLoad(string path, out string error)
@@ -679,7 +679,7 @@ public sealed class DaemonConfig
                 ? $"line {line + 1}, position {(e.BytePositionInLine ?? 0) + 1}: "
                 : "";
             string detail = e.Message.Split(" Path:")[0];
-            error = Describe(path, $"not valid JSON — {at}{detail}");
+            error = Describe(path, $"not valid JSON - {at}{detail}");
         }
         catch (InvalidDataException e)
         {

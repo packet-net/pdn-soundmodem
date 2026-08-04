@@ -7,7 +7,7 @@ public enum SurveyVerdict
     /// a carrier, a tuning whistle. Dropped.</summary>
     NotAPacket,
 
-    /// <summary>Inside a configured modem's band, and something decoded on it. Normal traffic —
+    /// <summary>Inside a configured modem's band, and something decoded on it. Normal traffic -
     /// the station already has this frame. Dropped.</summary>
     Decoded,
 
@@ -16,7 +16,7 @@ public enum SurveyVerdict
     Unclaimed,
 
     /// <summary>Packet-shaped, inside a configured band, and nothing decoded. The station was
-    /// listening and could not read it — the most useful capture there is, because it is a
+    /// listening and could not read it - the most useful capture there is, because it is a
     /// receiver problem rather than a coverage one.</summary>
     Missed,
 

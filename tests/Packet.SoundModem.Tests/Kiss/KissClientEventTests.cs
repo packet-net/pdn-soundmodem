@@ -12,7 +12,7 @@ namespace Packet.SoundModem.Tests.Kiss;
 /// </summary>
 /// <remarks>
 /// A host that quietly drops its TCP session stops passing traffic, and from the modem's side that
-/// is indistinguishable from a band that went quiet — the station keeps no other record of it. The
+/// is indistinguishable from a band that went quiet - the station keeps no other record of it. The
 /// reason matters as much as the event: "the host closed" and "the host vanished" are different
 /// problems with different fixes.
 /// </remarks>
@@ -77,7 +77,7 @@ public class KissClientEventTests
         await client.ConnectAsync(IPAddress.Loopback, server.LocalPort);
         await Task.Delay(100);
         // Abort rather than close: the host process dying, not saying goodbye. Set on the socket
-        // itself — LingerState on the TcpClient wrapper does not reach it before Close, and the
+        // itself - LingerState on the TcpClient wrapper does not reach it before Close, and the
         // server then sees an orderly EOF instead of the reset this is about.
         client.Client.SetSocketOption(
             SocketOptionLevel.Socket, SocketOptionName.Linger, new LingerOption(true, 0));

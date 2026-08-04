@@ -4,18 +4,18 @@ namespace Packet.SoundModem.Survey;
 
 /// <summary>
 /// Finds bursts of energy anywhere in the passband, from the same spectrum lines the waterfall
-/// draws — the whole-band generalisation of <see cref="Waterfall.BandActivityTracker"/>, which
+/// draws - the whole-band generalisation of <see cref="Waterfall.BandActivityTracker"/>, which
 /// measures one declared modem band.
 /// </summary>
 /// <remarks>
 /// <para>
 /// This is what lets a station notice a transmission it was never configured to decode. The
-/// alternative — a comb of decoders across the passband — fails for a reason that is not CPU:
+/// alternative - a comb of decoders across the passband - fails for a reason that is not CPU:
 /// the mode is unknown too, so brute force is centres × modes, and it is still silent when it
 /// guesses wrong. Energy, by contrast, is already being computed for the display.
 /// </para>
 /// <para>
-/// <b>Floor.</b> Per bin, the minimum half-second block average over the last ~15 s — the
+/// <b>Floor.</b> Per bin, the minimum half-second block average over the last ~15 s - the
 /// <see cref="Modems.EnergyBusyDetector"/> min-tracking idea, per bin rather than per band, so
 /// a signal parked in one part of the passband cannot raise the floor everywhere else. It is
 /// recomputed when a block closes, not per line: a floor that moved within a burst would chase
@@ -25,7 +25,7 @@ namespace Packet.SoundModem.Survey;
 /// <b>Bursts.</b> A run of adjacent bins standing <see cref="ThresholdDb"/> over their floors is
 /// a detection; runs on consecutive lines that overlap in frequency are the same burst. A burst
 /// is reported only once it <em>ends</em>, because "started and stopped" is most of what
-/// separates a transmission from a carrier — and because its width and duration are not known
+/// separates a transmission from a carrier - and because its width and duration are not known
 /// until then. Brief drop-outs are bridged (<c>graceLines</c>) so a fade does not split one
 /// transmission into three.
 /// </para>
@@ -49,7 +49,7 @@ public sealed class SpectralBurstDetector
     private readonly int _maxLines;
 
     // Per-bin floor machinery: block sums being accumulated, a ring of completed block averages,
-    // and the min over that ring — all preallocated, nothing per line.
+    // and the min over that ring - all preallocated, nothing per line.
     private readonly double[] _blockSum;
     private readonly int[] _blockCount;     // per bin: lines that contributed, hot ones excluded
     private readonly double[] _floorRing;   // _floorBlocks × _binCount, block-major
@@ -69,12 +69,12 @@ public sealed class SpectralBurstDetector
     /// <param name="linesPerSecond">The line source's line rate.</param>
     /// <param name="lineLength">Bins per line.</param>
     /// <param name="burstClosed">Called once per burst, when it ends.</param>
-    /// <param name="lowHz">Low edge of the range watched — below the audio passband is DC,
+    /// <param name="lowHz">Low edge of the range watched - below the audio passband is DC,
     /// rumble and the sound card's own noise, none of it a transmission.</param>
     /// <param name="highHz">High edge of the range watched.</param>
     /// <param name="minWidthHz">Narrowest run that counts. Below this is a carrier, a tuning
     /// whistle or a single hot bin, not a modulated signal.</param>
-    /// <param name="minSeconds">Shortest burst that counts, in seconds — a click is not a frame.</param>
+    /// <param name="minSeconds">Shortest burst that counts, in seconds - a click is not a frame.</param>
     /// <param name="maxSeconds">Longest a burst may run before it is closed as a timeout. A
     /// carrier would otherwise hold one open forever and never be reported at all.</param>
     /// <param name="graceSeconds">How long a burst may drop below threshold and still be the
@@ -117,19 +117,19 @@ public sealed class SpectralBurstDetector
     }
 
     /// <summary>True once a floor has been banked and detections mean anything. Before that the
-    /// detector is warming up and reports nothing — an honest silence rather than a burst
+    /// detector is warming up and reports nothing - an honest silence rather than a burst
     /// measured against a floor it does not have.</summary>
     public bool Ready => _floorRingFilled > 0;
 
     /// <summary>
-    /// Feeds one spectrum line. The source's own buffer is fine — nothing is retained.
+    /// Feeds one spectrum line. The source's own buffer is fine - nothing is retained.
     /// </summary>
     /// <param name="lineIndex">The source's monotonic line index, which is what burst extents
     /// are reported in and what the caller maps back to audio.</param>
     /// <param name="line">dB-scaled bytes, bin 0 = DC (see <see cref="WaterfallSource"/>).</param>
     public void AddLine(long lineIndex, ReadOnlySpan<byte> line)
     {
-        // A gap in the line clock means audio stopped reaching us — the station transmitted, or
+        // A gap in the line clock means audio stopped reaching us - the station transmitted, or
         // the device dried up. Everything open is abandoned rather than stretched across it.
         if (_lastLine >= 0 && lineIndex != _lastLine + 1)
         {
@@ -168,7 +168,7 @@ public sealed class SpectralBurstDetector
         AgeOut(lineIndex);
     }
 
-    /// <summary>Abandons everything in flight — nothing that straddles a break in the audio is a
+    /// <summary>Abandons everything in flight - nothing that straddles a break in the audio is a
     /// measurement of anything. Called when the station keys up.</summary>
     public void Reset()
     {
@@ -182,7 +182,7 @@ public sealed class SpectralBurstDetector
     /// <remarks>
     /// Bins that were carrying signal are excluded, and a bin hot for the whole block keeps the
     /// floor it had. Without that, a signal outlasting the floor's ~15 s memory fills the window
-    /// with its own energy, raises its own floor, and stops looking like a burst — so a 25-second
+    /// with its own energy, raises its own floor, and stops looking like a burst - so a 25-second
     /// SSB over reported as two 13-second "packets", each short enough to pass a duration gate.
     /// A floor is a measurement of noise, and a bin carrying a transmission is not measuring any.
     /// </remarks>
@@ -251,7 +251,7 @@ public sealed class SpectralBurstDetector
         foreach ((int low, int high) in _runs)
         {
             // Overlapping in frequency on consecutive lines is the same transmission. Edges
-            // wander by a bin or two as a signal fades, so overlap — not equality — is what
+            // wander by a bin or two as a signal fades, so overlap - not equality - is what
             // keeps a burst whole.
             Open? match = null;
             foreach (Open candidate in _open)

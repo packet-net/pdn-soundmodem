@@ -55,7 +55,7 @@ public class Ms110dModemTests
     [Fact]
     public void Receive_Is_Autobaud_Across_Waveform_Numbers()
     {
-        // A WN6-configured modem must decode a WN1 transmission — the WID announces it.
+        // A WN6-configured modem must decode a WN1 transmission - the WID announces it.
         byte[] frame = TestFrame(40, 5);
         var txModem = new Ms110dModem(9600, _ => { }, new Ms110dTxSettings { WaveformNumber = 1 });
         var received = new List<byte[]>();

@@ -11,19 +11,19 @@ namespace Packet.SoundModem.Ota;
 /// <remarks>
 /// <para>This is what makes an over-the-air pass measure something. Comparing decoded payload
 /// against transmitted payload gives coded BER, which on a good channel is 0 and on a bad one is
-/// 1 — it saturates at both ends and says almost nothing in between. The informative number is
+/// 1 - it saturates at both ends and says almost nothing in between. The informative number is
 /// the <em>uncoded</em> channel-bit error rate: sign(first-pass LLR) against the bit that was
 /// actually transmitted at that wire position. It degrades smoothly, it is comparable directly
 /// against the Watterson rig's own uncoded telemetry, and it separates "the channel was bad"
 /// from "the equaliser lost the plot".</para>
-/// <para>The encode path here is the production one — <see cref="Ms110dFraming"/>,
-/// <see cref="Ms110dPuncture"/>, <see cref="Ms110dInterleaver"/> — reached through
+/// <para>The encode path here is the production one - <see cref="Ms110dFraming"/>,
+/// <see cref="Ms110dPuncture"/>, <see cref="Ms110dInterleaver"/> - reached through
 /// <c>InternalsVisibleTo</c>, and assembled the same way <c>Ms110dMaskTests</c> assembles it.
 /// Reimplementing the wire order for the scorer would produce a scorer that grades the
 /// demodulator against its own reimplementation, which is the de-rigging failure this project
 /// has already paid for once.</para>
 /// <para>The payload is drawn from <see cref="Random"/> with the schedule's seed, one
-/// <c>Next(2)</c> per bit, which is the same construction the transmit side uses — so a manifest
+/// <c>Next(2)</c> per bit, which is the same construction the transmit side uses - so a manifest
 /// needs to record the seed and the length, not the payload.</para>
 /// </remarks>
 public sealed class Ms110dReferenceBits
@@ -64,7 +64,7 @@ public sealed class Ms110dReferenceBits
     }
 
     /// <summary>Payload bit count for a burst of <paramref name="blocks"/> whole interleaver
-    /// blocks — the largest payload that fits, less the 32-bit EOM.</summary>
+    /// blocks - the largest payload that fits, less the 32-bit EOM.</summary>
     public static int PayloadBitsForBlocks(int waveformNumber, Ms110dInterleaverKind interleaver, int blocks)
         => (blocks * Ms110dInterleaverParams.Get3k(waveformNumber, interleaver).InputBits) - 32;
 
@@ -80,7 +80,7 @@ public sealed class Ms110dReferenceBits
     /// <summary>Blocks the burst occupies, EOM included.</summary>
     public int BlockCount => _blocks.Length;
 
-    /// <summary>Channel bits of one block, in wire order — directly comparable, position for
+    /// <summary>Channel bits of one block, in wire order - directly comparable, position for
     /// position, against <c>Ms110dDemodulator.FirstPassBlockLlrs</c>.</summary>
     public ReadOnlySpan<byte> Block(int index) => _blocks[index];
 

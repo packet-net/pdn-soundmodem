@@ -26,7 +26,7 @@ case "$ARCH" in
 esac
 
 # dpkg-deb ships in the Essential `dpkg` package, so this only trips on a non-Debian host.
-command -v dpkg-deb >/dev/null || { echo "dpkg-deb not found — this needs a Debian-family host" >&2; exit 3; }
+command -v dpkg-deb >/dev/null || { echo "dpkg-deb not found - this needs a Debian-family host" >&2; exit 3; }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
@@ -69,7 +69,7 @@ install -m 0644 "$HERE/pdn-soundmodem.service" "$STAGE/root$UNITDIR/pdn-soundmod
 install -m 0644 "$HERE/copyright" "$STAGE/root$DOCDIR/copyright"
 # The seed config lives under /usr/share/pdn-soundmodem, NOT /usr/share/doc: Debian
 # permits /usr/share/doc to be stripped (the official Ubuntu images ship a dpkg
-# path-exclude for it), and postinst reads this file — a maintainer script that
+# path-exclude for it), and postinst reads this file - a maintainer script that
 # depends on a doc path fails to configure on those systems.
 install -m 0644 "$ROOT/soundmodem.example.json" "$STAGE/root$DATADIR/soundmodem.example.json"
 
@@ -117,7 +117,7 @@ EOF
 
 # --- maintainer scripts -------------------------------------------------------
 # The systemd stanzas follow dh_installsystemd's default output: enable the unit and
-# start it on install, restart it on upgrade. Note the consequence — the seeded config
+# start it on install, restart it on upgrade. Note the consequence - the seeded config
 # names a sound device and PTT line that will not exist on most machines, so the first
 # start after a fresh install is expected to fail until an admin edits it. That is the
 # Debian-conventional posture and a deliberate choice; `systemctl status` after install
@@ -142,7 +142,7 @@ case "$1" in
     fi
     echo "pdn-soundmodem: edit $CONFIG for your sound device and PTT, then"
     echo "                systemctl restart pdn-soundmodem. Until then the service will"
-    echo "                fail to start — systemctl status pdn-soundmodem says why."
+    echo "                fail to start - systemctl status pdn-soundmodem says why."
     ;;
 esac
 
@@ -201,7 +201,7 @@ if [ "$1" = "purge" ]; then
         deb-systemd-helper unmask 'pdn-soundmodem.service' >/dev/null || true
     fi
     # soundmodem.json is seeded by postinst, not shipped by dpkg, so dpkg will not
-    # remove it on purge — do it here.
+    # remove it on purge - do it here.
     rm -f /etc/pdn-soundmodem/soundmodem.json
     rmdir --ignore-fail-on-non-empty /etc/pdn-soundmodem 2>/dev/null || true
     if getent passwd pdn-soundmodem >/dev/null; then

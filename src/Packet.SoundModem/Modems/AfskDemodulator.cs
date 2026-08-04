@@ -11,9 +11,9 @@ namespace Packet.SoundModem.Modems;
 /// straight into <see cref="M0LTE.Il2p.Il2pDeframer"/> for IL2P.
 /// </summary>
 /// <remarks>
-/// The discriminator is plain quadrature FM, so it does not care what the tone shift is —
+/// The discriminator is plain quadrature FM, so it does not care what the tone shift is -
 /// only the filters and the bit clock are per-mode. Covers Bell 202 VHF tones (1200 baud,
-/// 1200/2200 Hz — NinoTNC modes 6/7) and Nino's HF tones (300 baud, 1600/1800 Hz — modes
+/// 1200/2200 Hz - NinoTNC modes 6/7) and Nino's HF tones (300 baud, 1600/1800 Hz - modes
 /// 12/13/14).
 /// </remarks>
 public sealed class AfskDemodulator
@@ -50,13 +50,13 @@ public sealed class AfskDemodulator
     /// both the Bell 202 tones and Nino's HF tones.</param>
     /// <param name="baud">Bit rate: 1200 (Bell 202) or 300 (HF).</param>
     /// <param name="bandPassHalfWidth">Half-width of the input band-pass around the
-    /// centre. Per-mode rather than derived — QtSoundModem carries per-mode filter tables
+    /// centre. Per-mode rather than derived - QtSoundModem carries per-mode filter tables
     /// for the same reason. 700 Hz is UZ7HOStuff.h's MODEM_1200 value; 250 Hz matches the
     /// 500 Hz OBW Nino filters the HF modes to.</param>
     /// <param name="lowPassCutoff">I/Q low-pass cutoff: must pass the tones (±shift) plus
     /// the modulation, and nothing else. 650 Hz is MODEM_1200's, and it embodies a real
     /// trade measured on both sides: a wider 750 Hz filter settles faster and takes a
-    /// NinoTNC's shortest flag fill (TXDELAY 20, one word) from 6/10 to 10/10 — but costs
+    /// NinoTNC's shortest flag fill (TXDELAY 20, one word) from 6/10 to 10/10 - but costs
     /// weak-signal margin, dropping WA8LMF Track 2 from 472 to 410. The default backs the
     /// weak-signal case: short-fill peers are a rare configuration (fills of ≥100 ms
     /// decode 10/10 either way), weak signals are the daily reality. A port that knows its
@@ -66,7 +66,7 @@ public sealed class AfskDemodulator
     /// a long one: 256 suits the wide Bell 202 band-pass, the 300 baud modes want ~4x
     /// that or the "filter" is mostly transition band.</param>
     /// <param name="lowPassTaps">I/Q low-pass length at 12 kHz (scaled with the rate).</param>
-    /// <param name="toneShift">Deviation of each tone from the centre — 500 Hz for Bell
+    /// <param name="toneShift">Deviation of each tone from the centre - 500 Hz for Bell
     /// 202 (1200/2200), 100 Hz for the HF tones (1600/1800). Sets the discriminator's
     /// legitimate output range, and so the clamp that keeps silence from deafening the
     /// slicer.</param>
@@ -88,14 +88,14 @@ public sealed class AfskDemodulator
 
         // The envelope tracker below runs per sample, but what it must keep up with is the
         // eye, which is per bit. Scale its rates so every mode tracks at the same rate per
-        // bit as the proven Bell 202 case (10 samples/bit at 12 kHz) — without this, 300
+        // bit as the proven Bell 202 case (10 samples/bit at 12 kHz) - without this, 300
         // baud (40 samples/bit) decays the opposite peak ~4x too fast between transitions
         // and drags the slice point off centre.
         float rateScale = 10f / (sampleRate / (float)baud);
         _envelopeAttack = 0.08f * rateScale;
         _envelopeDecay = 0.0008f * rateScale;
 
-        // Full deviation puts the discriminator at sin(2·2π·shift/rate) — everything
+        // Full deviation puts the discriminator at sin(2·2π·shift/rate) - everything
         // beyond that is not a frequency this mode can carry. 1.4x leaves headroom for
         // filter overshoot at transitions. See the clamp in Process for why this must
         // track the mode rather than be a constant.
@@ -109,7 +109,7 @@ public sealed class AfskDemodulator
     }
 
     /// <summary>
-    /// How far the signal being received sits from this demodulator's centre, in Hz — positive
+    /// How far the signal being received sits from this demodulator's centre, in Hz - positive
     /// for a station above it. A real measurement, not an inference from which of a bank's
     /// branches happened to decode.
     /// </summary>
@@ -117,25 +117,25 @@ public sealed class AfskDemodulator
     /// <para>The slicer already tracks it. Its threshold is the midpoint of the mark and space
     /// envelopes, which is the discriminator's DC level, which is the carrier offset: summing the
     /// two tones' discriminator outputs cancels the ±shift and leaves
-    /// <c>sin(4π·offset/rate)·cos(4π·shift/rate)</c>. Inverting that is the whole measurement —
+    /// <c>sin(4π·offset/rate)·cos(4π·shift/rate)</c>. Inverting that is the whole measurement -
     /// no extra filter, no per-sample cost, and it is derived from the same envelopes the bit
     /// decisions come from, so a frame that decoded has by construction a settled reading.</para>
     /// <para>Min/max envelopes rather than a mean, which is what makes this survive an HDLC
-    /// preamble's 87.5 % mark duty cycle — the same reason the slicer uses them.</para>
+    /// preamble's 87.5 % mark duty cycle - the same reason the slicer uses them.</para>
     /// <para><b>Honest to about ±40 Hz on the 300 baud modes</b> (±200 on Bell 202): that is where
-    /// the discriminator clamp — which exists to stop silence deafening the slicer — starts
+    /// the discriminator clamp - which exists to stop silence deafening the slicer - starts
     /// truncating whichever peak is further out, and the reading compresses toward zero rather
     /// than growing wilder. Measured on a tight 300 baud branch: 0/±18/±35 read within ~2 Hz,
     /// ±53 reads ±45, ±70 reads ±53. It stays monotonic, so a diversity bank can still rank its
     /// branches by it, and the bank's 35 Hz spacing keeps the best-matched branch inside the
-    /// honest zone anyway — see <see cref="Afsk300MultiModem"/>.</para>
+    /// honest zone anyway - see <see cref="Afsk300MultiModem"/>.</para>
     /// <para>Meaningful only just after a decode. Between bursts the envelopes decay toward each
     /// other and the reading drifts to nothing in particular; read it when a frame arrives.</para>
     /// <para><b>The negation is not a mistake.</b> This chain mixes I from the sine and Q from
-    /// the cosine — the transpose of the usual convention — so its discriminator runs downward as
+    /// the cosine - the transpose of the usual convention - so its discriminator runs downward as
     /// frequency runs up. Nothing noticed until now: the sign only sets which tone is mark, and
     /// mark assignment is a free choice here (AX.25 rides NRZI, which is polarity-agnostic by
-    /// construction, and the IL2P receivers hunt sync in both polarities — see
+    /// construction, and the IL2P receivers hunt sync in both polarities - see
     /// <see cref="Afsk300Modem"/>). Measured on a 300 baud branch, a signal 35 Hz above centre
     /// drove the midpoint to −35.3 Hz-equivalent and one 35 Hz below to +31.2, which is what this
     /// sign turns the right way up.</para>
@@ -185,19 +185,19 @@ public sealed class AfskDemodulator
 
             // Quadrature FM discriminator (QtSoundModem Mux3): instantaneous frequency
             // relative to the centre, sign selects mark vs space. Normalising by the
-            // instantaneous power stands in for QtSoundModem's AGC stage — without it the
+            // instantaneous power stands in for QtSoundModem's AGC stage - without it the
             // output scales with amplitude², and band-edge attenuation of the 1200 Hz mark
             // tone skews the slicer duty cycle badly.
             float power = _i1 * _i1 + _q1 * _q1;
 
-            // The normalisation floor is NOT a numerical nicety — it sets what happens
+            // The normalisation floor is NOT a numerical nicety - it sets what happens
             // when there is no signal. With a 1e-12 floor, the leading edge of a burst
             // (the ~19 bits it takes the 256+128-tap filters to fill) divides near-zero
             // by near-zero and emits full-scale garbage that the envelope trackers then
             // train on: observed slice midpoint 0.65 against a real eye of [0.2, 0.65],
             // which is why bare-HDLC AFSK needed ~100 ms of preamble while IL2P (which
-            // sync-hunts past the damage) ran at 16 bits. At 1e-5 — about -50 dB below
-            // nominal in-band power (~0.15 here) — sub-signal inputs produce sub-eye
+            // sync-hunts past the damage) ran at 16 bits. At 1e-5 - about -50 dB below
+            // nominal in-band power (~0.15 here) - sub-signal inputs produce sub-eye
             // output instead: attenuated, honest, and ignorable. Real signal is barely
             // touched (>= 90 % of full output from -40 dBFS up), and channel noise on
             // real captures (WA8LMF floor) sits far above it, so steady-state behaviour
@@ -206,30 +206,30 @@ public sealed class AfskDemodulator
 
             // Clamp to what this mode can physically produce: full deviation puts the
             // discriminator at sin(2·2π·shift/rate), and no real frequency it carries goes
-            // beyond that. The limit has to track the tone shift — a fixed ±1 is only ~2x
+            // beyond that. The limit has to track the tone shift - a fixed ±1 is only ~2x
             // the legitimate ±0.5 of Bell 202's ±500 Hz, but 10x the ±0.105 of the ±100 Hz
             // HF modes.
             discriminator = Math.Clamp(discriminator, -_discriminatorLimit, _discriminatorLimit);
 
-            // NEGATIVE RESULT — do not re-add a silence squelch here. Zeroing the
+            // NEGATIVE RESULT - do not re-add a silence squelch here. Zeroing the
             // discriminator when in-band power falls below a floor is intuitive (it stops
             // the trackers learning the garbage the normalisation makes out of near-zero
             // power) but measured worthless once the clamp above is correct: WA8LMF Track
             // 2 at 12 kHz scored 269 unclamped, 426 clamped, 270 squelched-only and 427
-            // with both — the clamp is the entire win. An earlier variant that gated on
+            // with both - the clamp is the entire win. An earlier variant that gated on
             // power *relative* to a tracked peak was actively catastrophic (972 → 65),
             // because that track's whole point is dynamic range: one loud frame parks the
             // tracker and squelches every weaker frame after it.
 
             // Envelope-based slicer threshold (fast attack, slow decay), midway between the
             // mark and space extremes. A mean tracker fails here: an HDLC flag preamble is
-            // 87.5 % mark (seven hold bits per flag), which drags a mean far off centre —
+            // 87.5 % mark (seven hold bits per flag), which drags a mean far off centre -
             // QtSoundModem's adaptive min/max thresholds exist for the same reason.
             //
-            // NEGATIVE RESULT — do not add a cold-start "warm-up" that runs both legs at
+            // NEGATIVE RESULT - do not add a cold-start "warm-up" that runs both legs at
             // attack speed. It was tried for fast acquisition and it converts this min/max
             // tracker into a mean-follower: during a flag's six-mark run both peaks chase
-            // the mark level and the midpoint loses all discrimination — the exact failure
+            // the mark level and the midpoint loses all discrimination - the exact failure
             // the asymmetric rates exist to avoid. With the normalisation floor above
             // keeping filter-fill garbage out of the trackers, cold start needs no help:
             // from zero, the midpoint sits at half the first tone's level, which the

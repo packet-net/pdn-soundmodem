@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Tests.Ota;
 /// analytic expectations.
 /// </summary>
 /// <remarks>
-/// Checking generator-against-analyser alone would be circular — a shared sign or scaling error
+/// Checking generator-against-analyser alone would be circular - a shared sign or scaling error
 /// would cancel. So every assertion here is anchored to a value derived from first principles:
 /// a unit-amplitude complex tone has mean-square power 1.0 (0 dBFS) whatever its frequency; a
 /// positive-frequency complex exponential has <em>no</em> negative-frequency content; injected
@@ -35,7 +35,7 @@ public class ToneAnalysisTests
     [InlineData(1000.0)]
     [InlineData(2000.0)]
     [InlineData(-3500.0)]
-    [InlineData(2000.5)]   // deliberately between bins — the power-sum must not care
+    [InlineData(2000.5)]   // deliberately between bins - the power-sum must not care
     public void A_generated_tone_measures_at_the_frequency_and_level_it_was_asked_for(double hz)
     {
         float[] iq = ToneGenerator.Complex([hz], amplitudePerTone: 1.0, seconds: 1.0, Rate, rampSeconds: 0);
@@ -146,7 +146,7 @@ public class ToneAnalysisTests
     [Fact]
     public void Two_equal_tones_peak_at_twice_a_single_tones_amplitude()
     {
-        // The envelope of an N-tone sum peaks at N × the per-tone amplitude — the reason the
+        // The envelope of an N-tone sum peaks at N × the per-tone amplitude - the reason the
         // transmitter checks peak magnitude rather than the requested amplitude.
         float[] one = ToneGenerator.Complex([1500.0], 0.4, 0.2, Rate, rampSeconds: 0);
         float[] two = ToneGenerator.Complex([1500.0, 2500.0], 0.4, 0.2, Rate, rampSeconds: 0);

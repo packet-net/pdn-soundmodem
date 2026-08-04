@@ -9,7 +9,7 @@ namespace Packet.SoundModem.Tests.Pocsag;
 /// <summary>
 /// The daemon's paging endpoint, end to end: grammar validation, and a page submitted
 /// over TCP going through the real channel-access path (CSMA, PTT, the transmit queue)
-/// into audio that decodes — with the HEARD broadcast closing the loop. The channel runs
+/// into audio that decodes - with the HEARD broadcast closing the loop. The channel runs
 /// at 22050 Hz so the same captured transmission also feeds multimon-ng unresampled.
 /// </summary>
 public class PagingTcpServerTests : IAsyncLifetime
@@ -150,7 +150,7 @@ public class PagingTcpServerTests : IAsyncLifetime
             float[] transmitted = await CaptureTransmissionAsync();
             _ptt.Events.Should().StartWith(["key", "unkey"], "the page keys the transmitter like any frame");
 
-            // Half-duplex loopback: play the transmission back into the channel — the
+            // Half-duplex loopback: play the transmission back into the channel - the
             // decoder tap hears it and every paging client gets the HEARD line.
             _channel.ProcessReceive([.. transmitted, .. new float[SampleRate / 2]]);
 

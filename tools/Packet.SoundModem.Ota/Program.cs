@@ -7,11 +7,11 @@ using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Iq;
 using M0LTE.Dsp;
 
-// sm-ota — the MS110D over-the-air harness. See docs/ms110d/ota-execution-plan.md.
+// sm-ota - the MS110D over-the-air harness. See docs/ms110d/ota-execution-plan.md.
 //
 // This increment is the tone-first bring-up (§E0.5): transmit a known tone through the Flex
 // waveform IQ path into the dummy load, capture it on the UberSDR, and measure what came
-// back. No modem, no scorer — deliberately, because a tone is a better detector of faults in
+// back. No modem, no scorer - deliberately, because a tone is a better detector of faults in
 // the (all new) transmit stack than a data burst, and because the receiver has to be trusted
 // before it can be used to judge a transmitter.
 
@@ -69,13 +69,13 @@ static int Unknown(string command)
 static int Usage()
 {
     Console.Error.WriteLine("""
-        sm-ota — MS110D over-the-air harness (tone bring-up stage).
+        sm-ota - MS110D over-the-air harness (tone bring-up stage).
 
         sm-ota tone     transmit a test tone through the Flex waveform IQ path, optionally
                         capturing it on an UberSDR and measuring the result in one go.
         sm-ota meters   dump the radio's meter list and watch live readings (no transmit).
         sm-ota measure  analyse an IQ capture WAV: levels, spectrum, tone, image, spurs, IMD.
-        sm-ota score    convert a captured pass and score every burst in it — acquisition,
+        sm-ota score    convert a captured pass and score every burst in it - acquisition,
                         WID, CFO, SNR, coded and uncoded BER, and what was MISSED.
         sm-ota sim      pure-software BER-vs-SNR baseline for any ModemCatalog mode: render a
                         burst, inject AWGN/Watterson at a known SNR, decode, tally frame/packet
@@ -89,8 +89,8 @@ static int Usage()
                         (afsk1200/fsk9600/…) runs the FM ladder (DAX FM route, discriminator
                         scorer); default (no --mode / --wn N) is the MS110D ladder.
         sm-ota fm-deviation  FM-discriminate an IQ capture and print the peak/RMS/mean deviation
-                        in kHz — the instrument for calibrating an FM mode's drive to its target.
-        sm-ota monitor  watch a receiver live — capture, convert, demodulate, print each burst
+                        in kHz - the instrument for calibrating an FM mode's drive to its target.
+        sm-ota monitor  watch a receiver live - capture, convert, demodulate, print each burst
                         as it lands. Receive-only; nothing here transmits.
 
         Run any command with --help for its options.
@@ -113,15 +113,15 @@ internal static class Commands
                 Radio:
                   --radio <ip|discover>     default discover
                   --freq <MHz>              where baseband 0 Hz lands on air, six decimals
-                                            (default 18.098000). The slice is DERIVED above it —
+                                            (default 18.098000). The slice is DERIVED above it -
                                             the waveform path transmits one sideband only
                   --obw <Hz>                declared occupied bandwidth above --freq (default
-                                            6000, hard max 10000 — the radio's filter clamp).
+                                            6000, hard max 10000 - the radio's filter clamp).
                                             Tones outside 0..obw cannot reach the air
                   --antenna <port>          default ANT1
-                  --rf-power <0-100>        REQUIRED — no default, by design
+                  --rf-power <0-100>        REQUIRED - no default, by design
                   --max-swr <ratio>         abort threshold (default 1.5)
-                  --rf-power-ceiling <n>    refuse above this (default 30) — protects the
+                  --rf-power-ceiling <n>    refuse above this (default 30) - protects the
                                             RECEIVER's ADC, not the transmitter
 
                 Tone:
@@ -140,7 +140,7 @@ internal static class Commands
                 power on the air. Keep --amplitude high and vary --rf-power for a power sweep,
                 or the two confound each other.
 
-                Capture (optional — omit to transmit only):
+                Capture (optional - omit to transmit only):
                   --capture-host <host>     e.g. ubersdr
                   --capture-freq <Hz>       RX tune frequency (default: slice centre + tone offset)
                   --capture-port <n>        default 80 with --capture-no-ssl, else 443
@@ -172,7 +172,7 @@ internal static class Commands
         double? tone2Hz = a.Has("tone2-hz") ? a.Dbl("tone2-hz", 0) : null;
         foreach (double? t in (double?[])[toneHz, tone2Hz])
         {
-            // The placed band is 0..obw above --freq, and only that span reaches the air —
+            // The placed band is 0..obw above --freq, and only that span reaches the air -
             // a tone outside it would be transmitted by no setting of anything.
             if (t is double hz && (hz <= 0 || hz >= options.OccupiedBandwidthHz))
             {
@@ -217,7 +217,7 @@ internal static class Commands
 
         await using FlexIqTransmitter tx = await FlexIqTransmitter.OpenAsync(options, Log);
 
-        // Read back what the radio thinks it is doing — a deaf transmitter cannot confirm its
+        // Read back what the radio thinks it is doing - a deaf transmitter cannot confirm its
         // own antenna port by listening.
         IReadOnlyDictionary<string, string> slice = tx.SliceState();
         foreach (string key in (string[])["index_letter", "RF_frequency", "mode", "ant", "rxant", "tx", "active"])
@@ -263,7 +263,7 @@ internal static class Commands
             // Tune the receiver to the BAND REFERENCE (--freq, where baseband 0 Hz lands), not
             // to the tone. That puts the tone at +tone-hz, any residual image at −tone-hz, and
             // LO/carrier leakage at +obw (the DERIVED slice sits at the top of the placed
-            // band) — distinct, separately measurable things. Tuning to the tone itself would
+            // band) - distinct, separately measurable things. Tuning to the tone itself would
             // sit it on the receiver's own DC, where a DC offset is indistinguishable from
             // signal.
             double centreHz = double.Parse(options.FrequencyMHz, CultureInfo.InvariantCulture) * 1e6;
@@ -345,13 +345,13 @@ internal static class Commands
     /// <remarks>
     /// This is the discriminator for "the hardware transmit meters (FWDPWR/REFPWR/SWR) never
     /// arrive". It removes the waveform, our IQ, and our reflection loop from the picture
-    /// entirely — a plain carrier the radio generates itself, on a normal-mode slice, with the
+    /// entirely - a plain carrier the radio generates itself, on a normal-mode slice, with the
     /// same client, the same subscription and the same decoder. If the meters appear here they
     /// are waveform-specific; if they are still absent the problem is in the client session.
     /// </remarks>
     /// <summary>
     /// Steps transmit power (or drive level) through a series of tones inside ONE capture,
-    /// then measures each step — the operating-point and linearity instrument (§I3).
+    /// then measures each step - the operating-point and linearity instrument (§I3).
     /// </summary>
     public static async Task<int> SweepAsync(string[] argv)
     {
@@ -368,8 +368,8 @@ internal static class Commands
                   --gap <s>              silence between steps (default 2)
                   --radio/--freq/--antenna/--tone-hz/--capture-*/--out-dir as for `tone`
 
-                One capture spans every step, so the dummy-load-to-loop coupling — which is
-                physical and uncalibrated — cannot drift between measurements and masquerade
+                One capture spans every step, so the dummy-load-to-loop coupling - which is
+                physical and uncalibrated - cannot drift between measurements and masquerade
                 as non-linearity.
                 """);
             return a is null ? 2 : 0;
@@ -449,7 +449,7 @@ internal static class Commands
         Console.WriteLine();
         Console.WriteLine($"=== sweep: {(sweepAmplitude ? "drive amplitude" : "rf power")} ===");
         // Supply voltage is in the table because on a battery a sagging rail compresses the
-        // PA at high power and would read as non-linearity — the two must be separable.
+        // PA at high power and would read as non-linearity - the two must be separable.
         Console.WriteLine($"{"step",6} {"fwd dBm",9} {"fwd W",8} {"SWR",6} {"volts",7} " +
                           $"{"rx dBFS",9} {"SNR/3k",8} {"starve",7}");
 
@@ -502,7 +502,7 @@ internal static class Commands
                             [--antenna ANT1] [--mode DIGU] [--seconds 3]
 
                 Keys the radio's own tune carrier (transmit tune on/off) on an ordinary slice
-                and reports which meters streamed. Diagnostic only — no waveform, no IQ.
+                and reports which meters streamed. Diagnostic only - no waveform, no IQ.
                 """);
             return a is null ? 2 : 0;
         }
@@ -597,7 +597,7 @@ internal static class Commands
         return 0;
     }
 
-    /// <summary>Raw-wire meter probe that uses none of M0LTE.Flex — see <see cref="RawMeterProbe"/>.</summary>
+    /// <summary>Raw-wire meter probe that uses none of M0LTE.Flex - see <see cref="RawMeterProbe"/>.</summary>
     public static async Task<int> RawMetersAsync(string[] argv)
     {
         var a = Args.Parse(argv);
@@ -620,7 +620,7 @@ internal static class Commands
         return 0;
     }
 
-    /// <summary>Dumps the radio-level status object — the radio's own account of its
+    /// <summary>Dumps the radio-level status object - the radio's own account of its
     /// settings, including any frequency-calibration offset.</summary>
     public static async Task<int> RadioStateAsync(string[] argv)
     {
@@ -682,7 +682,7 @@ internal static class Commands
 
                 Connects, runs `meter list`, subscribes, and prints live readings. Never keys
                 the transmitter. Use this to confirm the meter metadata parse and the value
-                scaling before trusting the safety interlock — TX meters read idle values
+                scaling before trusting the safety interlock - TX meters read idle values
                 until something transmits, but the descriptors and the packet decode are
                 fully exercised. --all prints every meter, not just the transmitter set.
                 """);
@@ -754,7 +754,7 @@ internal static class Commands
 
             double? derived = meters.SwrFromPowers();
             Console.WriteLine(derived is null
-                ? "derived SWR: unavailable (forward power below the trust floor — expected while idle)"
+                ? "derived SWR: unavailable (forward power below the trust floor - expected while idle)"
                 : $"derived SWR (from FWDPWR/REFPWR): {derived:F2}");
         }
 
@@ -762,13 +762,13 @@ internal static class Commands
     }
 
     /// <summary>
-    /// Modulates an MS110D burst, upconverts it, and writes the result as an IQ capture WAV —
+    /// Modulates an MS110D burst, upconverts it, and writes the result as an IQ capture WAV -
     /// a synthetic capture, with no radio and no receiver involved.
     /// </summary>
     /// <remarks>This is the offline gate the plan calls E0: the whole transmit chain and the
     /// whole scoring chain, exercised against a signal whose contents are known exactly. It is
     /// also the quickest way to look at what the upconverter actually emits, which is how the
-    /// band-placement bug was found — a bandpass selects, it does not translate.</remarks>
+    /// band-placement bug was found - a bandpass selects, it does not translate.</remarks>
     public static int Synth(string[] argv)
     {
         var a = Args.Parse(argv);
@@ -842,7 +842,7 @@ internal static class Commands
     /// transmit it, capture it, convert it back to audio, demodulate it, and score the bits.
     /// </summary>
     /// <remarks>Every stage that precedes this has an oracle of its own, so a failure here is
-    /// attributable rather than mysterious — which is the entire reason the tone, the meters,
+    /// attributable rather than mysterious - which is the entire reason the tone, the meters,
     /// the calibration and the upconverter were built first.</remarks>
     public static async Task<int> BurstAsync(string[] argv)
     {
@@ -859,7 +859,7 @@ internal static class Commands
                                       reference error (see `sm-ota measure` against RWM).
                                       RE-MEASURE PER RECEIVER, not merely per session: the
                                       acquisition grid is ±75 Hz, and a receiver sitting near
-                                      its edge presents as a dead demodulator — nothing
+                                      its edge presents as a dead demodulator - nothing
                                       acquires and the modem looks broken
                   --no-capture        transmit only, into a capture held open elsewhere. A
                                       session lingers ~240 s after use, so one capture per
@@ -965,13 +965,13 @@ internal static class Commands
         TransmitReport report;
         if (a.Has("no-capture"))
         {
-            Log("no capture of our own — transmitting into a capture held elsewhere; "
+            Log("no capture of our own - transmitting into a capture held elsewhere; "
                 + "note the key time below and score with --at");
             await tx.EnsureIdentifiedAsync();
             await tx.PreflightAsync();
             report = await tx.TransmitAsync(iq);
             Report(report, tx);
-            Log($"burst key-down {report.KeyUtc:yyyy-MM-ddTHH:mm:ss.fffZ} — "
+            Log($"burst key-down {report.KeyUtc:yyyy-MM-ddTHH:mm:ss.fffZ} - "
                 + $"subtract the capture's sample0 to get its --at offset");
             return 0;
         }
@@ -1023,7 +1023,7 @@ internal static class Commands
         Console.WriteLine("=== decode ===");
         if (locked is null)
         {
-            Console.WriteLine("NO ACQUISITION — the demodulator never locked.");
+            Console.WriteLine("NO ACQUISITION - the demodulator never locked.");
             Console.WriteLine($"peak search metric {demod.PeakSearchMetric:F3} (threshold 0.32)");
         }
         else
@@ -1113,7 +1113,7 @@ internal static class Commands
     /// Lists the strongest components close to a carrier, masking only the carrier itself.
     /// </summary>
     /// <remarks>The ordinary spur search masks a guard band either side of the tone so that
-    /// the carrier's own skirt is not reported as a spur — which also makes it blind to
+    /// the carrier's own skirt is not reported as a spur - which also makes it blind to
     /// close-in sidebands, the very things that make a carrier sound rough. A human listening
     /// to the transmission heard rasp that the spur figure did not show, so this exists to
     /// look where that measurement deliberately does not.</remarks>
@@ -1124,8 +1124,8 @@ internal static class Commands
         (float[] iFull, int rate) = WavFile.ReadMono(wavPath, channel: 0);
         (float[] qFull, _) = WavFile.ReadMono(wavPath, channel: 1);
 
-        // A time window, so a capture spanning a deliberate change — a cable pulled, a supply
-        // swapped — can be compared against itself rather than against a separate run.
+        // A time window, so a capture spanning a deliberate change - a cable pulled, a supply
+        // swapped - can be compared against itself rather than against a separate run.
         ReadOnlySpan<float> i = iFull;
         ReadOnlySpan<float> q = qFull;
         if (lengthSeconds > 0)
@@ -1134,7 +1134,7 @@ internal static class Commands
             int count = Math.Min((int)(lengthSeconds * rate), iFull.Length - start);
             i = iFull.AsSpan(start, count);
             q = qFull.AsSpan(start, count);
-            Console.WriteLine($"window {fromSeconds:F1}–{fromSeconds + (count / (double)rate):F1} s");
+            Console.WriteLine($"window {fromSeconds:F1}-{fromSeconds + (count / (double)rate):F1} s");
         }
 
         IqSpectrum spectrum = IqAnalysis.Welch(i, q, rate, fftSize);
@@ -1164,7 +1164,7 @@ internal static class Commands
             // No bin within ±500 Hz of where the carrier was said to be. Continuing would take
             // FrequencyOfBin(-1) and report a purity figure referenced to nothing.
             throw new ArgumentException(
-                $"no spectrum within ±500 Hz of {toneHz:F0} Hz — check --tone-hz against the "
+                $"no spectrum within ±500 Hz of {toneHz:F0} Hz - check --tone-hz against the "
                 + "capture's tune frequency, and that the window contains the transmission");
         }
 
@@ -1243,7 +1243,7 @@ internal static class Commands
         (float[] q, _) = WavFile.ReadMono(wavPath, channel: 1);
 
         // Restrict to the burst under measurement. A capture also holds the pre-flight tone,
-        // and averaging across both transmissions silently biases every level — it is what
+        // and averaging across both transmissions silently biases every level - it is what
         // made two equal-amplitude tones read 3.7 dB apart.
         string windowNote = "whole capture";
         if (window is (DateTime sample0, DateTime start, DateTime end))
@@ -1256,7 +1256,7 @@ internal static class Commands
             {
                 i = i[startSample..(startSample + count)];
                 q = q[startSample..(startSample + count)];
-                windowNote = $"burst window {from:F1}–{from + length:F1} s";
+                windowNote = $"burst window {from:F1}-{from + length:F1} s";
             }
         }
 
@@ -1269,14 +1269,14 @@ internal static class Commands
 
         IqLevels levels = IqAnalysis.Levels(i, q, rate);
         Console.WriteLine();
-        Console.WriteLine($"=== {Path.GetFileName(wavPath)} — {i.Length} samples @ {rate} Hz " +
+        Console.WriteLine($"=== {Path.GetFileName(wavPath)} - {i.Length} samples @ {rate} Hz " +
                           $"({i.Length / (double)rate:F2} s, {windowNote}) ===");
         Console.WriteLine($"peak {levels.PeakDbfs:F1} dBFS   rms {levels.RmsDbfs:F1} dBFS   " +
                           $"headroom {-levels.PeakDbfs:F1} dB");
         Console.WriteLine("per-second rms dBFS: " + string.Join(" ", levels.PerSecondRmsDbfs.Select(v => $"{v:F1}")));
         if (levels.PeakDbfs > -1.0)
         {
-            Console.WriteLine("WARNING: within 1 dB of full scale — the receiver's ADC may be clipping. " +
+            Console.WriteLine("WARNING: within 1 dB of full scale - the receiver's ADC may be clipping. " +
                               "Reduce TX power before trusting any number here.");
         }
 
@@ -1325,7 +1325,7 @@ internal static class Commands
         {
             Console.WriteLine();
             // Products must be computed from the MEASURED tone positions, not the commanded
-            // ones: a dial error shifts both tones — and therefore every product — by the same
+            // ones: a dial error shifts both tones - and therefore every product - by the same
             // amount, so looking at 2f1−f2 of the nominal frequencies just samples noise.
             Console.WriteLine($"intermodulation about the measured tones " +
                               $"({measured[0]:F1} / {measured[1]:F1} Hz), dBc vs the stronger:");
@@ -1342,7 +1342,7 @@ internal static class Commands
     /// </summary>
     /// <remarks>
     /// The harness used to wait a flat three seconds and then transmit regardless. When a receiver
-    /// answered 503 the capture task faulted during that window and the transmitter keyed anyway —
+    /// answered 503 the capture task faulted during that window and the transmitter keyed anyway -
     /// a transmission that occupied a frequency, spent the operator's licence and produced no
     /// measurement. Waiting on the capture's own readiness signal makes "we are recording" a
     /// precondition of key-down rather than an assumption about timing.
@@ -1361,14 +1361,14 @@ internal static class Commands
         {
             Exception reason = capture.Exception!.GetBaseException();
             throw new InvalidOperationException(
-                $"not transmitting: {host} is not recording — {reason.Message}", reason);
+                $"not transmitting: {host} is not recording - {reason.Message}", reason);
         }
 
         if (ready.IsFaulted)
         {
             Exception reason = ready.Exception!.GetBaseException();
             throw new InvalidOperationException(
-                $"not transmitting: {host} is not recording — {reason.Message}", reason);
+                $"not transmitting: {host} is not recording - {reason.Message}", reason);
         }
 
         throw new InvalidOperationException(
@@ -1383,17 +1383,17 @@ internal static class Commands
         // Two different durations, and conflating them reads as a truncated transmission. The
         // key→unkey window is how long WE fed the radio: Drain returns once the radio has taken
         // the samples, not once it has radiated them, so on a burst that fits the ring it can be
-        // tens of milliseconds. The signal's own length is what went on the air — measured at
+        // tens of milliseconds. The signal's own length is what went on the air - measured at
         // 2.02 s on air for a burst whose feed window read 0.03 s (2026-08-03 §E4 session).
         Console.WriteLine(
             $"signal {r.Samples / (double)FlexIqTransmitter.SampleRate:F2} s on air; " +
-            $"fed {r.KeyUtc:HH:mm:ss.fff} → {r.UnkeyUtc:HH:mm:ss.fff} ({r.Duration.TotalSeconds:F2} s — " +
+            $"fed {r.KeyUtc:HH:mm:ss.fff} → {r.UnkeyUtc:HH:mm:ss.fff} ({r.Duration.TotalSeconds:F2} s - " +
             "the feed window, not the transmission)");
         Console.WriteLine($"{r.Samples} complex samples, {r.PacketsReflected} buffers reflected, " +
                           $"{r.SamplesStarved} starved, drained={r.Drained}");
         // Forward power and SWR are reported separately because they have different
         // preconditions. SWR compares forward against reflected, so it needs a constant
-        // envelope — on a modulated burst the two samples describe different instants and the
+        // envelope - on a modulated burst the two samples describe different instants and the
         // ratio is meaningless. Peak forward power has no such requirement: it is the highest
         // instantaneous reading while keyed, and on a data burst it is exactly the number an
         // operator needs, because the constant-envelope pre-flight tone reads the drive level
@@ -1404,10 +1404,10 @@ internal static class Commands
             : $"peak forward {r.PeakForwardDbm:F1} dBm " +
               $"({FlexMeters.DbmToWatts(r.PeakForwardDbm ?? 0):F1} W)");
         Console.WriteLine(r.PeakSwr is null
-            ? "SWR: not evaluated (needs a constant envelope — see the pre-flight tone)"
+            ? "SWR: not evaluated (needs a constant envelope - see the pre-flight tone)"
             : $"peak SWR {r.PeakSwr:F2}");
 
-        // Which meters actually streamed while keyed — the diagnostic that distinguishes
+        // Which meters actually streamed while keyed - the diagnostic that distinguishes
         // "the radio never sent transmit meters" from "we failed to decode them".
         Console.WriteLine($"meter packets this session: {tx.Meters.PacketsReceived} " +
                           $"({tx.Meters.UnknownIdSamples} for unknown ids); " +

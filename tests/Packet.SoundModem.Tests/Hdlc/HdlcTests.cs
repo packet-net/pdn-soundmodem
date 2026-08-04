@@ -57,7 +57,7 @@ public class HdlcTests
 
         var bits = new List<int>();
         bits.AddRange(HdlcFramer.FrameBits(first, openingFlags: 3, closingFlags: 1).Select(b => (int)b));
-        // Second frame reuses the first's closing flag as its opener — legal HDLC.
+        // Second frame reuses the first's closing flag as its opener - legal HDLC.
         bits.AddRange(HdlcFramer.FrameBits(second, openingFlags: 1, closingFlags: 1).Select(b => (int)b).Skip(8 - 8));
         var received = RunThroughDeframer(bits);
 

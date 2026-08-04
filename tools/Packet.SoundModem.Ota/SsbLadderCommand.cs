@@ -5,26 +5,26 @@ using Packet.SoundModem.UberSdr;
 namespace Packet.SoundModem.Ota;
 
 /// <summary>
-/// <c>sm-ota ladder --mode afsk300|bpsk1200|qpsk600|…</c> — the §E2 pass for the SSB audio-carrier
+/// <c>sm-ota ladder --mode afsk300|bpsk1200|qpsk600|…</c> - the §E2 pass for the SSB audio-carrier
 /// modes: the sim baseline's own channel injected at the transmitter, sent through real hardware on
 /// the DAX audio route, and scored with the mode's own demodulator against the same frames.
 /// </summary>
 /// <remarks>
 /// <para>This is the SSB audio-carrier sibling of <see cref="LadderCommand"/> and
-/// <see cref="OfdmLadderCommand"/>. These modes place their carrier — a BPSK/QPSK carrier or an AFSK
-/// tone-pair — <em>inside</em> the audio, so they can go out two ways, both single-sideband:
+/// <see cref="OfdmLadderCommand"/>. These modes place their carrier - a BPSK/QPSK carrier or an AFSK
+/// tone-pair - <em>inside</em> the audio, so they can go out two ways, both single-sideband:
 /// (<c>qpsk3600</c> is an FM mode and is not one of these; see <see cref="SsbLadderPass.IsSsbMode"/>.)</para>
 /// <list type="bullet">
-/// <item><b><c>--route iq</c> (the default)</b> — the audio is up-converted to single-sideband IQ in
+/// <item><b><c>--route iq</c> (the default)</b> - the audio is up-converted to single-sideband IQ in
 /// software (<see cref="Ms110dIqUpconverter"/>, a fixed <c>--offset-hz</c> above the dial) and
 /// transmitted through a headless waveform via <see cref="FlexIqTransmitter"/>, <em>bypassing DIGU and
 /// its ALC</em>. This is the coverage/waterfall default because measured on the rig the DAX/DIGU route
-/// arrives ~5&#160;dB weaker at the receiver (DIGU conversion loss + ALC shaving) — only ~13&#160;dB
-/// headroom over the RSP1 floor — so the self-calibrating noise at the higher-SNR rungs lands down near
+/// arrives ~5&#160;dB weaker at the receiver (DIGU conversion loss + ALC shaving) - only ~13&#160;dB
+/// headroom over the RSP1 floor - so the self-calibrating noise at the higher-SNR rungs lands down near
 /// the floor and the delivered SNR reads low. The IQ route delivers the carrier at the full waveform
 /// level (~21&#160;dB headroom), so the self-cal works. The SSB modes ARE single-sideband, so software
 /// SSB is faithful to the on-air signal.</item>
-/// <item><b><c>--route dax</c></b> — real audio through the radio's own DIGU SSB modulator, the modem's
+/// <item><b><c>--route dax</c></b> - real audio through the radio's own DIGU SSB modulator, the modem's
 /// actual deployment path. Kept because it is deployment-realistic and it characterises the DIGU/ALC
 /// cost, but its lower headroom makes the self-cal unreliable, so it is not the default.</item>
 /// </list>
@@ -32,7 +32,7 @@ namespace Packet.SoundModem.Ota;
 /// (<see cref="SsbLadderPass"/>) and scoring drives the same seam (<see cref="SsbBurstScorer"/>);
 /// nothing here touches the MS110D or datac paths.</para>
 /// <para><c>--dry-run</c> renders the whole pass, lays it out as an IQ capture would hold it, and scores
-/// it offline — render → channel → SSB → IQ → back to audio → decode, everything except the radio — so
+/// it offline - render → channel → SSB → IQ → back to audio → decode, everything except the radio - so
 /// the chain is proved before any power is applied. The rehearsal reports the delivered SNR the scorer
 /// measures beside the SNR the rig was asked to inject; if the two disagree the whole ladder is
 /// mis-plotted, so that agreement is the thing the rehearsal exists to show.</para>
@@ -52,13 +52,13 @@ internal static class SsbLadderCommand
                 The SSB audio-carrier §E2 ladder. Renders a frame per rung on the mode's audio carrier
                 (AFSK tone-pair or BPSK/QPSK), injects the sim baseline's channel at a known SNR,
                 transmits it single-sideband (IQ by default, or DAX/DIGU), captures it, and scores it
-                with the mode's own demodulator — per-burst decode (frame-error rate), acquisition
+                with the mode's own demodulator - per-burst decode (frame-error rate), acquisition
                 (carrier detect), CFO, FEC-corrected bytes, and the delivered SNR measured against each
                 burst's own noise lead-in.
 
                 Ladder:
                   --mode <ssb audio mode> afsk300|afsk300-il2p|afsk300-il2pc|bpsk1200|qpsk600
-                                          (and bpsk300|qpsk2400 as a check). NOT qpsk3600 — that is an
+                                          (and bpsk300|qpsk2400 as a check). NOT qpsk3600 - that is an
                                           FM mode, handled by the FM coverage path
                   --snr <a,b,c>           SNR rungs in dB, 3 kHz reference bandwidth
                   --repeats <n>           passes over the rung list (default 1); rungs interleaved
@@ -74,15 +74,15 @@ internal static class SsbLadderCommand
                 Live:
                   --route iq|dax          transmit route (default iq). iq up-converts the audio to
                                           single-sideband IQ in software and transmits it through a
-                                          headless waveform, bypassing DIGU's ALC — ~21 dB headroom
+                                          headless waveform, bypassing DIGU's ALC - ~21 dB headroom
                                           over the RSP1 floor, so the self-cal works; it is the
                                           coverage/waterfall default. dax is real audio through the
-                                          radio's DIGU SSB modulator — deployment-realistic and it
+                                          radio's DIGU SSB modulator - deployment-realistic and it
                                           characterises the DIGU/ALC cost, but ~5 dB lossier (~13 dB
                                           headroom), so the delivered SNR reads low
                   --offset-hz <Hz>        iq route: carrier offset above the dial (default 2000), to
                                           clear baseband DC. The dax route places it at 0
-                  --rf-power <0-100>      REQUIRED to transmit — no default, by design
+                  --rf-power <0-100>      REQUIRED to transmit - no default, by design
                   --max-watts <W>         abort any burst whose forward power exceeds this (default
                                           15 W with --capture rsp, the RSP1 rig's ceiling)
                   --audio-amplitude <a>   dax route only: audio drive into DIGU, 0..1 (default 0.9).
@@ -101,7 +101,7 @@ internal static class SsbLadderCommand
                   --out-dir <dir>         where the capture and manifest land
 
                 Each rung carries its own noise lead-in on the air, so the receiver measures the SNR
-                actually delivered rather than the one requested — the same self-calibrating method the
+                actually delivered rather than the one requested - the same self-calibrating method the
                 MS110D and datac ladders use.
                 """);
             return 0;
@@ -122,15 +122,15 @@ internal static class SsbLadderCommand
 
         // OffsetHz is a property of the route, not a free knob. The IQ route applies a software NCO
         // offset (default 2000 Hz) so the occupied band clears baseband DC in its software SSB; the DAX
-        // route applies none — the radio's DIGU modulator places the audio carrier directly, already
-        // clear of DC — so its effective offset is 0. This one value flows to the SSB up-converter
+        // route applies none - the radio's DIGU modulator places the audio carrier directly, already
+        // clear of DC - so its effective offset is 0. This one value flows to the SSB up-converter
         // (which renders both the live IQ and the dry-run's simulated capture) AND to the manifest,
         // whose OffsetHz the scorer uses as the down-shift that lands the carrier back at its audio
         // centre. Getting it wrong misplaces every burst by the offset, so it is derived from the route.
         double offsetHz = route == LadderRoute.Dax ? 0.0 : a.Dbl("offset-hz", 2000);
 
         // Rehearsal renders the simulated capture at the capture rate; a live pass renders/transmits at
-        // the waveform rate (both live routes work at that rate — the IQ is rendered there and the DAX
+        // the waveform rate (both live routes work at that rate - the IQ is rendered there and the DAX
         // audio is resampled to it).
         int rate = a.Int("rate", dryRun ? 48000 : FlexIqTransmitter.SampleRate);
         if (!dryRun && rate != FlexIqTransmitter.SampleRate)
@@ -147,7 +147,7 @@ internal static class SsbLadderCommand
 
         // Render the SSB-IQ for the rehearsal (which lays it out as a capture) and for the live IQ
         // route (which transmits it); skip it on the live DAX route, which transmits the audio and
-        // would only throw the IQ away — the up-conversion is the dominant render cost.
+        // would only throw the IQ away - the up-conversion is the dominant render cost.
         var pass = new SsbLadderPass(new SsbLadderPassOptions
         {
             OutputRate = rate,
@@ -171,14 +171,14 @@ internal static class SsbLadderCommand
     }
 
     /// <summary>Lays the pass out as an IQ capture would hold it, writes the manifest, and scores it
-    /// offline — the whole chain minus the radio.</summary>
+    /// offline - the whole chain minus the radio.</summary>
     private static int DryRun(
         Args a, string mode, SimChannelKind channel, int nativeRate,
         IReadOnlyList<SsbRenderedPoint> rendered, int rate, double offsetHz, LadderRoute route,
         SsbLadderPass pass)
     {
         // The rehearsal always lays the pre-rendered SSB-IQ out as a capture, whichever live route the
-        // pass targets — the offset (and so the pass gain recorded) is the route's, so a DAX rehearsal
+        // pass targets - the offset (and so the pass gain recorded) is the route's, so a DAX rehearsal
         // places the carrier where a real DAX capture would and an IQ rehearsal where a real IQ one
         // would.
         float passGain = route == LadderRoute.Dax ? pass.AudioGain : pass.Gain;
@@ -215,7 +215,7 @@ internal static class SsbLadderCommand
             Quiet(gapFrames);
             foreach (SsbRenderedPoint point in rendered)
             {
-                // The active burst starts after its noise lead-in — that is the time the scorer
+                // The active burst starts after its noise lead-in - that is the time the scorer
                 // windows on and measures the delivered SNR from.
                 double startSeconds = (frames / (double)rate) + point.LeadInSeconds;
                 burstStarts.Add(startSeconds);
@@ -288,12 +288,12 @@ internal static class SsbLadderCommand
         }
 
         Log(route == LadderRoute.Iq
-            ? $"route: iq (bench instrument) — software SSB at +{offsetHz:F0} Hz, bypassing DIGU/ALC"
-            : "route: dax (deployment audio path) — audio through the radio's DIGU SSB modulator");
+            ? $"route: iq (bench instrument) - software SSB at +{offsetHz:F0} Hz, bypassing DIGU/ALC"
+            : "route: dax (deployment audio path) - audio through the radio's DIGU SSB modulator");
         double gap = a.Dbl("gap", 3);
 
-        // The route selector picks the transmitter; everything downstream — capture, timing, manifest,
-        // scoring — is route-independent and runs against the IOtaTransmitter seam.
+        // The route selector picks the transmitter; everything downstream - capture, timing, manifest,
+        // scoring - is route-independent and runs against the IOtaTransmitter seam.
         await using FlexClient client = await FlexClient.ConnectAsync(options.Radio);
         await using IOtaTransmitter tx = route == LadderRoute.Dax
             ? (IOtaTransmitter)await FlexDaxTransmitter.AttachAsync(client, options, Log)
@@ -338,7 +338,7 @@ internal static class SsbLadderCommand
             // The only route-specific step: the IQ route sends the pre-scaled complex baseband as
             // rendered; the DAX route resamples the point's natural-scale native-rate audio to the DAX
             // rate and applies the one pass audio gain here (post-resample, so the level the radio sees
-            // is the pass constant — the same last-moment policy the MS110D and datac DAX routes use).
+            // is the pass constant - the same last-moment policy the MS110D and datac DAX routes use).
             float[] payload = route == LadderRoute.Dax
                 ? LadderCommand.ScaleInPlace(
                     LadderCommand.Resample(point.Audio, nativeRate, FlexDaxTransmitter.SampleRate),
@@ -348,7 +348,7 @@ internal static class SsbLadderCommand
             keyed.Add(report.KeyUtc);
             if (report.Aborted)
             {
-                Log($"ABORTED: {report.AbortReason} — stopping the pass");
+                Log($"ABORTED: {report.AbortReason} - stopping the pass");
                 break;
             }
 
@@ -429,7 +429,7 @@ internal static class SsbLadderCommand
         string path, string mode, SsbCampaignManifest manifest, SsbCaptureScore score)
     {
         Console.WriteLine();
-        Console.WriteLine($"=== ssb score: {Path.GetFileName(path)} — {score.AudioSeconds:F1} s, {mode} "
+        Console.WriteLine($"=== ssb score: {Path.GetFileName(path)} - {score.AudioSeconds:F1} s, {mode} "
                           + $"({manifest.Bursts.Count} burst(s), modem {manifest.ModemRevision}) ===");
         Console.WriteLine($"{"#",3} {"start s",8} {"asked",7} {"got",7} {"d(dB)",6} {"CFO Hz",8} "
                           + $"{"acq",4} {"decode",7} {"corr B",7}");
@@ -440,8 +440,8 @@ internal static class SsbLadderCommand
         int snrErrCount = 0;
         foreach (SsbBurstScore b in score.Bursts)
         {
-            string got = b.Snr is null ? "—" : b.Snr.SnrDb.ToString("F1", CultureInfo.InvariantCulture);
-            string delta = b.Snr is null ? "—"
+            string got = b.Snr is null ? "-" : b.Snr.SnrDb.ToString("F1", CultureInfo.InvariantCulture);
+            string delta = b.Snr is null ? "-"
                 : (b.Snr.SnrDb - b.AskedSnrDb).ToString("+0.0;-0.0", CultureInfo.InvariantCulture);
             if (b.Snr is not null)
             {
@@ -451,7 +451,7 @@ internal static class SsbLadderCommand
 
             acquired += b.Acquired ? 1 : 0;
             decoded += b.Decoded ? 1 : 0;
-            string cfo = double.IsNaN(b.CfoHz) ? "—" : b.CfoHz.ToString("F1", CultureInfo.InvariantCulture);
+            string cfo = double.IsNaN(b.CfoHz) ? "-" : b.CfoHz.ToString("F1", CultureInfo.InvariantCulture);
             Console.WriteLine(
                 $"{b.Index,3} {b.StartSeconds,8:F2} {b.AskedSnrDb,7:F1} {got,7} {delta,6} {cfo,8} "
                 + $"{(b.Acquired ? "yes" : "NO"),4} {(b.Decoded ? "ok" : "LOST"),7} {b.CorrectedBytes,7}");
@@ -463,7 +463,7 @@ internal static class SsbLadderCommand
         if (snrErrCount > 0)
         {
             Console.WriteLine($"mean |measured − asked| SNR: {snrErrSum / snrErrCount:F2} dB "
-                              + "(the self-calibration check — the ladder is only plotted correctly if this is small)");
+                              + "(the self-calibration check - the ladder is only plotted correctly if this is small)");
         }
 
         if (manifest.CapturePath is { } cap)

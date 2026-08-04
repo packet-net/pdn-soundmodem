@@ -2,7 +2,7 @@ namespace Packet.SoundModem.Survey;
 
 /// <summary>
 /// A fixed window of the most recent channel audio, kept so that a burst can be written out
-/// <em>after</em> it has ended — which is the only time its extent is known.
+/// <em>after</em> it has ended - which is the only time its extent is known.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -12,7 +12,7 @@ namespace Packet.SoundModem.Survey;
 /// </para>
 /// <para>
 /// Preallocated and never resized: this is written from the receive path, which must not
-/// allocate. Single-threaded by contract — the writer and the reader are both the receive path,
+/// allocate. Single-threaded by contract - the writer and the reader are both the receive path,
 /// which copies a burst out synchronously and hands the copy to a background thread to write.
 /// </para>
 /// </remarks>
@@ -31,7 +31,7 @@ public sealed class AudioRingBuffer
     /// <summary>How much audio the ring holds.</summary>
     public int Capacity => _samples.Length;
 
-    /// <summary>Total samples ever written — the clock burst extents are resolved against.</summary>
+    /// <summary>Total samples ever written - the clock burst extents are resolved against.</summary>
     public long Written => _written;
 
     /// <summary>Appends a block. Audio older than <see cref="Capacity"/> is overwritten.</summary>
@@ -44,7 +44,7 @@ public sealed class AudioRingBuffer
             : block;
 
         // Where the *tail* starts, which is not where the block starts when the head was
-        // discarded above — getting this wrong silently shifts every later read by the
+        // discarded above - getting this wrong silently shifts every later read by the
         // difference, so the WAV would hold real audio from the wrong moment.
         int at = (int)((_written + (block.Length - tail.Length)) % _samples.Length);
         int first = Math.Min(tail.Length, _samples.Length - at);
@@ -56,7 +56,7 @@ public sealed class AudioRingBuffer
     /// <summary>
     /// Copies <paramref name="destination"/>.Length samples starting at absolute sample position
     /// <paramref name="from"/>. False when that range has already been overwritten or has not
-    /// been written yet — a capture that arrives too late is skipped, not filled with silence
+    /// been written yet - a capture that arrives too late is skipped, not filled with silence
     /// that would read as a dead channel.
     /// </summary>
     public bool TryCopy(long from, Span<float> destination)

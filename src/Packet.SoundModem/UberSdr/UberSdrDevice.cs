@@ -25,13 +25,13 @@ public readonly record struct UberSdrEndpoint(string Host, int Port, bool Ssl)
 public sealed record UberSdrTuning
 {
     /// <summary>Where to tune the receiver, in Hz. The IQ arrives centred here, so for SSB work
-    /// this is the dial frequency — ±24 kHz of complex baseband around it for <c>iq48</c>.</summary>
+    /// this is the dial frequency - ±24 kHz of complex baseband around it for <c>iq48</c>.</summary>
     public required int FrequencyHz { get; init; }
 
     /// <summary>Which sideband to demodulate. USB is the data-mode norm.</summary>
     public Sideband Sideband { get; init; } = Sideband.Upper;
 
-    /// <summary>The audio rate to deliver, Hz — the channel's DSP rate. Must divide the IQ
+    /// <summary>The audio rate to deliver, Hz - the channel's DSP rate. Must divide the IQ
     /// rate (48000 for <c>iq48</c>).</summary>
     public int OutputRate { get; init; } = 12000;
 
@@ -45,7 +45,7 @@ public sealed record UberSdrTuning
     /// <summary>Lower edge of the synthesised SSB passband, Hz above the dial.</summary>
     /// <remarks>
     /// Because we hold the complex baseband, <em>we</em> choose the receive filter rather than
-    /// inheriting a rig's. The default spans the daemon's nominal 300–2700 Hz band plan with
+    /// inheriting a rig's. The default spans the daemon's nominal 300-2700 Hz band plan with
     /// room either side, so nothing a plan can legally place gets clipped on the way in.
     /// </remarks>
     public double SsbLowHz { get; init; } = 150;
@@ -55,7 +55,7 @@ public sealed record UberSdrTuning
     public double SsbHighHz { get; init; } = 3450;
 
     /// <summary>Audio discarded after each connect, in milliseconds. The instances ramp their
-    /// level over the first ~0.7–1.0 s of a stream (measured 2026-07-24), so a second of guard
+    /// level over the first ~0.7-1.0 s of a stream (measured 2026-07-24), so a second of guard
     /// keeps that transient out of the modems and out of the waterfall.</summary>
     public int StartupGuardMs { get; init; } = 1000;
 
@@ -70,7 +70,7 @@ public sealed record UberSdrTuning
 /// <remarks>
 /// <para>The instance may be written as a bare host (<c>ubersdr:m9psy-1.instance.ubersdr.org</c>),
 /// a host and port (<c>…:8080</c>), or the URL an operator would paste out of a browser
-/// (<c>ubersdr:https://m9psy-1.instance.ubersdr.org/</c>) — all three name the same thing, and
+/// (<c>ubersdr:https://m9psy-1.instance.ubersdr.org/</c>) - all three name the same thing, and
 /// the third is the one that is actually to hand.</para>
 /// <para>HTTPS on 443 is assumed unless the string says otherwise, because that is what every
 /// public instance runs.</para>
@@ -85,7 +85,7 @@ public static class UberSdrDevice
 
     /// <summary>Splits a <c>ubersdr:</c> device string into its endpoint.</summary>
     /// <exception cref="ArgumentException">The string is not a <c>ubersdr:</c> device at all.</exception>
-    /// <exception cref="InvalidDataException">It is, but names no reachable instance — an
+    /// <exception cref="InvalidDataException">It is, but names no reachable instance - an
     /// operator's typo, phrased for them to act on.</exception>
     public static UberSdrEndpoint Parse(string device)
     {
@@ -111,14 +111,14 @@ public static class UberSdrDevice
                 || (url.Scheme != Uri.UriSchemeHttp && url.Scheme != Uri.UriSchemeHttps))
             {
                 throw new InvalidDataException(
-                    $"\"device\": \"{device}\" — '{rest}' is not an http:// or https:// URL. Give the "
+                    $"\"device\": \"{device}\" - '{rest}' is not an http:// or https:// URL. Give the "
                     + "receiver's address, or the URL you would open in a browser.");
             }
 
             return new UberSdrEndpoint(url.Host, url.Port, url.Scheme == Uri.UriSchemeHttps);
         }
 
-        // host[:port], HTTPS assumed — every public instance is behind TLS.
+        // host[:port], HTTPS assumed - every public instance is behind TLS.
         int colon = rest.LastIndexOf(':');
         if (colon < 0)
         {
@@ -129,7 +129,7 @@ public static class UberSdrDevice
         if (!int.TryParse(rest[(colon + 1)..], out int port) || port is < 1 or > 65535)
         {
             throw new InvalidDataException(
-                $"\"device\": \"{device}\" — '{rest[(colon + 1)..]}' is not a TCP port. Write the "
+                $"\"device\": \"{device}\" - '{rest[(colon + 1)..]}' is not a TCP port. Write the "
                 + "instance as host, host:port, or the https:// URL you would open in a browser.");
         }
 

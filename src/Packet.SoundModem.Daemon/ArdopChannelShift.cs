@@ -10,10 +10,10 @@ namespace Packet.SoundModem.Daemon;
 /// ARDOP's waveforms are pinned to a 1500 Hz centre and M0LTE.Ardop exposes no way to move
 /// them, so the shift happens outside it: transmitted audio is mixed up or down from 1500 Hz to
 /// the configured centre, and received audio is mixed back to 1500 Hz before the TNC ever sees
-/// it. The TNC is unaware, which is the point — nothing inside the ARQ engine has to change.
+/// it. The TNC is unaware, which is the point - nothing inside the ARQ engine has to change.
 ///
 /// The 1500 Hz figure is measured, not assumed: <c>ArdopModulator.TwoToneTest()</c> emits the
-/// ardopcf calibration pair, which lands on 1475.1 and 1524.9 Hz — a midpoint of 1500.0 Hz and
+/// ardopcf calibration pair, which lands on 1475.1 and 1524.9 Hz - a midpoint of 1500.0 Hz and
 /// the documented ±25 Hz spacing. <see cref="ArdopCentreFrequencyTests"/> re-measures it, so
 /// this constant cannot drift away from the package underneath us.
 /// </remarks>
@@ -29,7 +29,7 @@ internal sealed class ArdopChannelShift
     /// The nominal SSB transmit passband a shifted centre has to live inside. Nyquist is the
     /// wrong yardstick here: the channel would happily carry 3500 Hz, but the radio's SSB
     /// filter will not pass it, so a centre that only fits under Nyquist is still unusable.
-    /// A nominal window rather than a measured one — the daemon cannot know the rig's filter.
+    /// A nominal window rather than a measured one - the daemon cannot know the rig's filter.
     /// </summary>
     internal const double PassbandLowHz = 300.0;
     internal const double PassbandHighHz = 2700.0;

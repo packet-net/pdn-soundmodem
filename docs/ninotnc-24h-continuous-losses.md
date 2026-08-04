@@ -1,4 +1,4 @@
-# NinoTNC 24 h benchmark — continuous-decode losses
+# NinoTNC 24 h benchmark - continuous-decode losses
 
 _Recorded 2026-07-19 from the GB7RDG 40 m off-air benchmark (`~/gb7rdg-capture`)._
 
@@ -6,7 +6,7 @@ _Recorded 2026-07-19 from the GB7RDG 40 m off-air benchmark (`~/gb7rdg-capture`)
 
 Over the 22.9 h ring buffer our differential frequency-diversity bank copied **96.5 %** of the
 NinoTNC's 2 120 frames (matched 2 046, **missed 74**, plus **83** the NinoTNC itself missed). Of
-those 74 misses, **37 decode cleanly from their own extracted audio** — run
+those 74 misses, **37 decode cleanly from their own extracted audio** - run
 `nino-compare decode --wav <snippet> --detector differential --pairs 4` on the snippet and the frame
 copies, yet the whole-chunk `analyse` pass dropped it. They were **not** lost because the audio is
 hard; they were lost in the *continuous* 15-minute per-chunk decode.
@@ -23,13 +23,13 @@ It is **not** the offset step. `BpskMultiModem` uses a fixed step of `baud / 40 
 
 ## Likely mechanism (to investigate)
 
-A frame arriving mid-stream meets a receiver whose state was shaped by everything before it — prior
+A frame arriving mid-stream meets a receiver whose state was shaped by everything before it - prior
 transmissions, inter-frame noise, and collisions during the busy morning peak (42 of the 74 misses
-fall in 07–09 UTC). A fresh snippet start lets acquisition (timing/phase, AGC, DCD gating) settle
+fall in 07-09 UTC). A fresh snippet start lets acquisition (timing/phase, AGC, DCD gating) settle
 cleanly. Candidates, roughly in order:
 
-1. **DCD / squelch carry-over** — carrier-detect state from a preceding signal masking the new preamble.
-2. **AGC / level state** — gain wound to a prior (louder or quieter) signal.
+1. **DCD / squelch carry-over** - carrier-detect state from a preceding signal masking the new preamble.
+2. **AGC / level state** - gain wound to a prior (louder or quieter) signal.
 3. **Timing- or phase-recovery carry-over** between back-to-back transmissions.
 4. **`FrameDeduper` (3 s window)** collapsing a genuine frame against a near-simultaneous branch decode.
 

@@ -3,7 +3,7 @@ using System.Net.Sockets;
 using Packet.SoundModem.Kiss;
 
 // qtsm-bench: the QtSoundModem <-> pdn-soundmodem KISS-TCP interop driver
-// (docs/qtsm-loop.md). Pure KISS-over-TCP — no audio, no modems: it assumes the two
+// (docs/qtsm-loop.md). Pure KISS-over-TCP - no audio, no modems: it assumes the two
 // modems are already talking over an snd-aloop cable and each is serving KISS TCP, and it
 // only pushes frames in and counts what comes out the other side.
 //
@@ -93,7 +93,7 @@ return 0;
 // Sends `frames` frames into `sender` and counts how many surface on `receiver`.
 int RunDirection(string name, KissEndpoint sender, KissEndpoint receiver)
 {
-    Console.WriteLine($"— {name}: {frames} frames, {payloadLength}-byte payloads");
+    Console.WriteLine($"- {name}: {frames} frames, {payloadLength}-byte payloads");
     int ok = 0;
     for (int seq = 0; seq < frames; seq++)
     {
@@ -208,7 +208,7 @@ sealed class KissEndpoint : IDisposable
             }
             catch (Exception)
             {
-                // Socket torn down at shutdown — expected.
+                // Socket torn down at shutdown - expected.
             }
         })
         { IsBackground = true, Name = $"kiss-{_name}" };

@@ -8,7 +8,7 @@ namespace Packet.SoundModem.Ms110d;
 /// fill → per-interleaver-block tail-biting encode → puncture/repeat → interleave (TX), and
 /// the exact soft inverse (RX). Chain order per D.5.3 (encode → puncture → interleave; one
 /// code block == one interleaver block; D.5.3.1: the first fetched bit becomes the MSB of the
-/// first symbol — checklist L12).
+/// first symbol - checklist L12).
 /// </summary>
 internal static class Ms110dFraming
 {
@@ -43,7 +43,7 @@ internal static class Ms110dFraming
         if (written != interleaver.SizeBits)
         {
             // "the coded and punctured block shall still fit exactly within the interleaver"
-            // (D.5.3.2) — a mismatch is a table bug, not a runtime condition.
+            // (D.5.3.2) - a mismatch is a table bug, not a runtime condition.
             throw new InvalidOperationException(
                 $"punctured block ({written} bits) does not fill the interleaver ({interleaver.SizeBits} bits)");
         }

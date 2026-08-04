@@ -1,11 +1,11 @@
-// Drives the waterfall page's real script — the shipping text, in one shared classic-script
-// scope, in real V8 — against a real running WaterfallWebServer, and reports what it managed to
+// Drives the waterfall page's real script - the shipping text, in one shared classic-script
+// scope, in real V8 - against a real running WaterfallWebServer, and reports what it managed to
 // do as JSON on stdout. WaterfallPageTests starts the server and reads that back.
 //
 // This exists because two defects shipped that no server-side test could see: a `ws` binding that
 // wasn't in scope where the Listen handler needed it, and an Int16Array view onto a byte offset
 // that wasn't a multiple of the element size. Both are JavaScript semantics rather than pixels,
-// which is why a DOM shim costs nothing in fidelity — everything that mattered was in the engine.
+// which is why a DOM shim costs nothing in fidelity - everything that mattered was in the engine.
 //
 // Usage: PAGE=<html> PORT=<n> node page-probe.mjs
 import { readFileSync } from "node:fs";
@@ -17,7 +17,7 @@ const script = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</scri
 // Which border-left the shipping stylesheet actually gives a row, resolved as a browser resolves
 // it: every rule whose class chain the row matches, by specificity and then by source order. A
 // transmitted frame read back out of the log carries both `tx` and `hist`, whose rules set the
-// same property — so which one wins is a real question, and one the DOM shim above cannot answer
+// same property - so which one wins is a real question, and one the DOM shim above cannot answer
 // because it holds no styles. Only bare class chains are matched; the rules that decide this one
 // are all of that shape, and a fuller selector engine would be a second browser to maintain.
 const styleText = html.slice(html.indexOf("<style>") + 7, html.indexOf("</style>"))
@@ -43,7 +43,7 @@ const noop = () => {};
 
 // Text drawn on a canvas is captured, because "what did the page write onto the waterfall" is a
 // question about strings and needs no pixels to answer. Sampled either side of a synchronous
-// call, so nothing else can have drawn in between. fillText only — strokeText paints the same
+// call, so nothing else can have drawn in between. fillText only - strokeText paints the same
 // string again as a halo, and counting it twice would make every assertion read oddly.
 const drawnText = [];
 const ctx2d = new Proxy({}, { get: (_, k) =>
@@ -69,7 +69,7 @@ function el(id) {
     closest: () => null, contains: () => false, add: noop, options: [], selectedIndex: 0,
     click() { this.onclick && this.onclick({ preventDefault: noop }); },
     // Real enough for the decoded-frames panel, which builds rows with createElement, sets their
-    // innerHTML and prepends them — so the markup it produces can be read back and asserted on.
+    // innerHTML and prepends them - so the markup it produces can be read back and asserted on.
     prepend(node) { node._parent = this; this.children.unshift(node); },
     replaceChildren() { this.children.length = 0; },
     remove() { const kids = this._parent?.children; const at = kids?.indexOf(this) ?? -1; if (at >= 0) kids.splice(at, 1); },
@@ -131,7 +131,7 @@ vm.runInContext(script, sandbox, { filename: "waterfall.html" });
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const run = (expr) => { try { return vm.runInContext(expr, sandbox); } catch (e) { return "THREW: " + e; } };
 
-// Anything the page throws asynchronously — a bad typed-array view arrives this way — must fail
+// Anything the page throws asynchronously - a bad typed-array view arrives this way - must fail
 // the run rather than be lost to the event loop.
 const thrown = [];
 process.on("uncaughtException", e => thrown.push(String(e)));
@@ -165,7 +165,7 @@ run(`tagFrame({sub:0, mode:"afsk300-multi11", from:"KK4HEJ", to:"IDENT", line:0,
 const identTag = sandbox.__text().slice(beforeIdent);
 run(`logFrame({sub:0, mode:"afsk300-multi11", from:"KK4HEJ", to:"IDENT", lenBytes:17, offsetHz:-35, id:true})`);
 
-// Our own transmission, through the dispatch the socket handler uses — the point is what the
+// Our own transmission, through the dispatch the socket handler uses - the point is what the
 // page does with the event, not what the two drawing functions do when called by hand. Driven
 // against a received frame through the same entry point, so "listed but not tagged" is measured
 // rather than assumed.
@@ -194,7 +194,7 @@ const rows = frames.map(c => c.innerHTML);
 const rowClasses = frames.map(c => c.className);
 
 // The opening backlog out of the station's frame log. Driven last, and after the live rows are
-// captured above, so what it does to a panel that already has rows in it can be seen — which is
+// captured above, so what it does to a panel that already has rows in it can be seen - which is
 // the reconnect case. Timestamps: one from today so the row shows a clock time, one from a past
 // year so it has to show the date rather than a bare time that reads as this morning.
 const today = new Date();

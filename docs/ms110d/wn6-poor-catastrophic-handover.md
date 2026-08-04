@@ -1,9 +1,9 @@
-# WN6 Poor Channel Catastrophic Failure — Handover
+# WN6 Poor Channel Catastrophic Failure - Handover
 
 ## Problem
 
 WN6 (QPSK, rate 3/4, U=256, K=32) produces **BER 0.22** on the Poor channel
-(2-path Rayleigh, 0/2 ms, 1 Hz Doppler) at 14 dB SNR. This is catastrophic —
+(2-path Rayleigh, 0/2 ms, 1 Hz Doppler) at 14 dB SNR. This is catastrophic -
 essentially random output. The failure is **pre-existing** (present on commit
 `1a2615a` before the flat-channel turbo gate was added).
 
@@ -18,11 +18,11 @@ Result (both with and without the turbo gate fix):
 
 ```
 POOR (smoke) WN6 @ +14 dB: 540,608 bits, 120,348 errors, 2 bursts
-  (0 acquisition failures), 179 s simulated — BER 2.23E-001
+  (0 acquisition failures), 179 s simulated - BER 2.23E-001
 ```
 
 The test acquires (0 acquisition failures) and produces output, but the output
-is ~22% wrong. This is not a marginal SNR issue — 14 dB is well above what
+is ~22% wrong. This is not a marginal SNR issue - 14 dB is well above what
 QPSK rate-3/4 needs, and the same channel model works for WN4 (BPSK) at 10 dB
 with BER 1.4E-5.
 
@@ -40,7 +40,7 @@ with BER 1.4E-5.
 ### 1. QPSK turbo BCJR path interaction (most likely)
 
 The turbo's BCJR path is gated on `mode.Modulation == Bpsk && mode.U > 48`.
-WN6 is QPSK, so BCJR never runs — only the DFE fallback path. But the DFE
+WN6 is QPSK, so BCJR never runs - only the DFE fallback path. But the DFE
 re-solve still happens (line 1347: `SolveTraining` with expected QPSK symbols).
 
 On Poor, the QPSK expected symbols from a noisy first-pass decode may be
@@ -87,13 +87,13 @@ the turbo's `bit` counter advances by exactly `U * bitsPerSymbol` per frame.
 1. **Quick check**: disable turbo for QPSK only, re-run WN6 Poor smoke.
    If it passes → turbo DFE fallback is the culprit (candidates 1-3).
 2. **If turbo is the culprit**: add debug output in TurboReequalize for WN6
-   Poor — dump per-frame MSE between expected and received symbols. High MSE
+   Poor - dump per-frame MSE between expected and received symbols. High MSE
    means expected symbols are wrong (candidate 3 or 4). Low MSE means the
    re-solve is fine but LLR computation is wrong (candidate 2).
 3. **If turbo is NOT the culprit**: the issue is in the first-pass QPSK
    equalization on fading channels. Check RLS tracking stability for QPSK
    (the `rlsWeight` logic at line 803-804 uses tap rotation to detect
-   fading — maybe QPSK tap rotation is below the 0.005 rad threshold).
+   fading - maybe QPSK tap rotation is below the 0.005 rad threshold).
 
 ## Files
 
@@ -121,5 +121,5 @@ marginal at 400k bits due to Poisson confidence; WN8 status unknown).
 
 This was discovered while validating the flat-channel turbo gate
 (commit `0b9ca98`). The gate correctly skips turbo on AWGN and correctly
-runs turbo on Poor for BPSK modes. The WN6 Poor failure is orthogonal —
+runs turbo on Poor for BPSK modes. The WN6 Poor failure is orthogonal -
 it affects QPSK on fading channels regardless of the gate.

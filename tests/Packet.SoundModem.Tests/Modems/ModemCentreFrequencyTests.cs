@@ -10,7 +10,7 @@ namespace Packet.SoundModem.Tests.Modems;
 /// The declaration exists because the number is used to choose a dial frequency, and a spectrum
 /// estimate's few-Hz error would land in that answer. But a declaration nobody checks is a comment:
 /// these tests measure each modem's actual spectrum and hold the declaration to it, so a modem that
-/// moves its centre cannot leave the catalogue — and every band plan built on it — behind.
+/// moves its centre cannot leave the catalogue - and every band plan built on it - behind.
 /// </remarks>
 public class ModemCentreFrequencyTests
 {
@@ -39,7 +39,7 @@ public class ModemCentreFrequencyTests
     public void A_Spec_Fixed_Mode_Sits_Where_The_Catalogue_Says_It_Does(string mode)
     {
         // These are the ones that matter most: their centres cannot be overridden, so a band plan
-        // has no way to correct a wrong declaration — it would put the dial in the wrong place and
+        // has no way to correct a wrong declaration - it would put the dial in the wrong place and
         // the modem would simply be somewhere else on the band than the operator asked for.
         double? declared = ModemCatalog.DefaultCentreFrequencyFor(mode);
 
@@ -77,7 +77,7 @@ public class ModemCentreFrequencyTests
     public void A_Baseband_Mode_Declares_No_Centre_At_All(string mode)
     {
         // Not an oversight: these occupy the audio band from DC upwards, so there is no centre to
-        // place them by — which is exactly what the band planner needs to know to refuse the job
+        // place them by - which is exactly what the band planner needs to know to refuse the job
         // rather than invent a number.
         ModemCatalog.DefaultCentreFrequencyFor(mode).Should().BeNull();
     }

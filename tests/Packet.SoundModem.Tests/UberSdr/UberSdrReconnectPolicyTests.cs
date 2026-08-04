@@ -90,7 +90,7 @@ public class UberSdrReconnectPolicyTests
             """{"allowed":true,"daily_time_used_secs":0,"daily_time_remaining_secs":-1}""");
         unmetered!.RefusedForNow.Should().BeFalse();
 
-        // No daily fields at all — an instance that does not meter must not read as a quota
+        // No daily fields at all - an instance that does not meter must not read as a quota
         // refusal even when it refuses for a real (config) reason.
         var refusedNoMeter = JsonSerializer.Deserialize<ConnectionResponse>(
             """{"allowed":false,"reason":"password required"}""");
