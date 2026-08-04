@@ -55,7 +55,8 @@ public sealed class WaterfallOptions
     /// <remarks>
     /// <para>A panel that starts empty says nothing about a channel that has been busy all
     /// morning, and on a quiet band it is indistinguishable from a modem that is not working. The
-    /// station already writes every decode down; this is that record, shown.</para>
+    /// station already writes down every frame it hears and every frame it sends; this is that
+    /// record, shown — transmissions included, marked as ours.</para>
     /// <para>A delegate rather than a database handle because the log lives in the daemon and
     /// this server lives in the library, and because whatever provides it should be free to
     /// decide what "recent" means. It is called on the connection's own thread, so it should be
@@ -67,11 +68,15 @@ public sealed class WaterfallOptions
 
 /// <summary>
 /// One frame out of the station's log, for the decoded-frames panel's opening backlog. The
-/// receive-side subset of <see cref="Modems.FrameQuality"/> plus when it was heard, which is
+/// receive-side subset of <see cref="Modems.FrameQuality"/> plus when it happened, which is
 /// what a written-down frame has and a live one does not need.
 /// </summary>
-/// <param name="HeardAt">When the station decoded it (UTC); rendered in the viewer's zone.</param>
-/// <param name="SubChannel">Which modem heard it.</param>
+/// <param name="HeardAt">
+/// When the station decoded it, or — on a transmitted frame — when it sent it (UTC); rendered
+/// in the viewer's zone. The name matches the log's own <c>heard_at</c> column, which kept its
+/// name so that queries written against it kept working.
+/// </param>
+/// <param name="SubChannel">Which modem heard or sent it.</param>
 /// <param name="Mode">Its mode string, as the modem reported it.</param>
 /// <param name="From">Source callsign where the frame carried one.</param>
 /// <param name="To">Destination callsign where the frame carried one.</param>
@@ -79,6 +84,10 @@ public sealed class WaterfallOptions
 /// <param name="CorrectedBytes">Bytes FEC repaired, where the framing counts them.</param>
 /// <param name="CrcValid">CRC verdict, where the framing carries one.</param>
 /// <param name="OffsetHz">Measured carrier offset, where the decoder measured one.</param>
+/// <param name="Transmitted">
+/// True for a frame this station sent — badged TX in the panel rather than read as somebody
+/// heard. Defaults to false: a log with nothing to say about direction holds receives.
+/// </param>
 public sealed record LoggedFrame(
     DateTimeOffset HeardAt,
     int SubChannel,
@@ -88,7 +97,8 @@ public sealed record LoggedFrame(
     int LengthBytes,
     int? CorrectedBytes,
     bool? CrcValid,
-    double? OffsetHz);
+    double? OffsetHz,
+    bool Transmitted = false);
 
 /// <summary>A band the host declares rather than the waterfall measuring it.</summary>
 /// <param name="SubChannel">Which modem, for ordering and labels.</param>
@@ -1059,6 +1069,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 offsetHz = f.OffsetHz is { } offset ? Math.Round(offset, 1) : (double?)null,
                 corrected = f.CorrectedBytes,
                 crc = f.CrcValid,
+                // Same nullable-optional shape as a live frame's, so the page's one row builder
+                // badges a logged transmission TX exactly as it badges a live one.
+                tx = f.Transmitted ? true : (bool?)null,
                 hist = true,
             }),
         }, Json);

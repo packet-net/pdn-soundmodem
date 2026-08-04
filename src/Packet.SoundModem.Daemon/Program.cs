@@ -507,6 +507,13 @@ if (txDelay is int txDelayOverride)
     channel.Csma.TxDelayMilliseconds = txDelayOverride;
 }
 
+// Where each modem sits, for the log's audio_hz/rf_hz columns. Declared out here because both
+// halves of the log — what was heard and what was sent — fill those columns from it, and the
+// transmit side is wired further down with the rest of the activity reporting.
+var frameLogRfByModem = modems.ToDictionary(
+    m => m.SubChannel,
+    m => (Audio: m.Frequency, Rf: m.RfFrequency));
+
 // Every frame the station hears, written down. Subscribed to the same event the KISS servers
 // and the waterfall use, so it records what was actually decoded rather than a second opinion.
 FrameLog? frameLog = null;
@@ -526,9 +533,6 @@ if (frameLogConfig is not null)
         return 2;
     }
 
-    var frameLogRfByModem = modems.ToDictionary(
-        m => m.SubChannel,
-        m => (Audio: m.Frequency, Rf: m.RfFrequency));
     channel.FrameReceivedWithQuality += (sub, frame, quality) =>
     {
         (double? audio, double? rf) = frameLogRfByModem.TryGetValue(sub, out var placement)
@@ -664,7 +668,31 @@ Dictionary<int, string> modeBySubChannel = modems
 channel.FrameReceivedWithQuality += (subChannel, frame, quality) =>
     Console.WriteLine(ActivityLog.Received(subChannel, frame, quality));
 channel.FrameTransmitted += (subChannel, frame) =>
-    Console.WriteLine(ActivityLog.Transmitted(subChannel, modeBySubChannel.GetValueOrDefault(subChannel, "?"), frame));
+{
+    Console.WriteLine(ActivityLog.Transmitted(
+        subChannel, modeBySubChannel.GetValueOrDefault(subChannel, "?"), frame));
+
+    // And into the station's journal, alongside what it heard: a log that records every frame
+    // received and none sent is half a record. Raised after the audio has gone to the device, so
+    // a logged row is a frame that actually went on air. Same placement lookup as the receive
+    // side, so audio_hz/rf_hz mean the same thing in both directions.
+    //
+    // The mode is the modem's own report of itself — what the waterfall stamps on its TX rows,
+    // and what the receive side already writes into this column — rather than the configured
+    // name the console line uses. It costs nothing and it keeps one modem's traffic under one
+    // spelling, so "everything on bpsk300-il2pc today" is one query that includes our own.
+    (double? audio, double? rf) = frameLogRfByModem.TryGetValue(subChannel, out var placement)
+        ? placement
+        : (null, null);
+    frameLog?.RecordTransmitted(
+        subChannel,
+        frame,
+        channel.Modems.TryGetValue(subChannel, out IModem? sender)
+            ? sender.Mode
+            : modeBySubChannel.GetValueOrDefault(subChannel, "?"),
+        audio,
+        rf);
+};
 channel.TransmitRejected += (subChannel, frame, reason) =>
     Console.Error.WriteLine(ActivityLog.Dropped(subChannel, frame, reason));
 

@@ -55,6 +55,49 @@ public class FrameLogTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// A log in the schema exactly as it shipped before the <c>direction</c> column, holding one
+    /// heard frame — a database this code has never opened, which is what a deployed station has.
+    /// </summary>
+    private void WriteLogInTheOldSchema()
+    {
+        using (var old = new SqliteConnection($"Data Source={DbPath}"))
+        {
+            old.Open();
+            using SqliteCommand create = old.CreateCommand();
+            create.CommandText = """
+                CREATE TABLE frames (
+                    id          INTEGER PRIMARY KEY,
+                    heard_at    TEXT    NOT NULL,
+                    sub_channel INTEGER NOT NULL,
+                    mode        TEXT    NOT NULL,
+                    mode_name   TEXT    NOT NULL,
+                    source      TEXT,
+                    destination TEXT,
+                    length      INTEGER NOT NULL,
+                    corrected   INTEGER,
+                    crc_valid   INTEGER,
+                    offset_hz   REAL,
+                    audio_hz    REAL,
+                    rf_hz       REAL,
+                    payload     BLOB    NOT NULL
+                );
+                CREATE INDEX frames_heard_at ON frames(heard_at);
+                CREATE INDEX frames_source ON frames(source);
+                INSERT INTO frames
+                  (heard_at, sub_channel, mode, mode_name, source, destination,
+                   length, corrected, crc_valid, offset_hz, audio_hz, rf_hz, payload)
+                VALUES
+                  ('2026-07-30T08:00:00.0000000+00:00', 0, 'bpsk300-il2pc', 'BPSK300 IL2Pc',
+                   'G0OLD', 'GB7RDG', 4, 1, 1, -2.5, 1500.0, 7051600.0, X'01020304');
+                """;
+            create.ExecuteNonQuery();
+        }
+
+        // The handle above must be gone before the log opens the same file for writing.
+        SqliteConnection.ClearAllPools();
+    }
+
     private static FrameQuality Quality(string mode = "bpsk300-il2pc") =>
         new(mode, FrameBytes: 32, CorrectedBytes: 2, CrcValid: true,
             FrequencyOffsetHz: -3.5, EmphasisDb: null);
@@ -98,6 +141,7 @@ public class FrameLogTests : IDisposable
         row["sub_channel"].Should().Be(2L);
         row["mode"].Should().Be("bpsk300-il2pc");
         row["mode_name"].Should().Be("BPSK300 IL2Pc", "a log is read by people too");
+        row["direction"].Should().Be("rx", "the station heard this one");
         row["length"].Should().Be(32L);
         row["corrected"].Should().Be(2L);
         row["crc_valid"].Should().Be(1L);
@@ -106,6 +150,85 @@ public class FrameLogTests : IDisposable
         row["rf_hz"].Should().Be(7_051_600.0, "where it was heard on the band is the useful column");
         ((string)row["heard_at"]!).Should().StartWith("2026-08-02T14:30:00");
         ((byte[])row["payload"]!).Should().Equal(Frame(), "the frame itself must survive intact");
+    }
+
+    /// <summary>
+    /// A frame this station sent is written down like one it heard, marked as ours, and carries
+    /// no receive measurements — because there were none to take.
+    /// </summary>
+    /// <remarks>
+    /// A journal that records every frame received and none sent is half a record. What it must
+    /// not do is fill in the columns it cannot know: <c>corrected</c>, <c>crc_valid</c> and
+    /// <c>offset_hz</c> are measurements of somebody else's signal, and plausible values there
+    /// would be a measurement of ourselves.
+    /// </remarks>
+    [Fact]
+    public async Task A_Transmitted_Frame_Is_Written_As_Ours_With_No_Receive_Measurements()
+    {
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.RecordTransmitted(
+                1, Frame(from: "M0LTE", to: "GB7RDG"), "bpsk300-il2pc",
+                audioHz: 1500, rfHz: 7_051_600));
+
+        Dictionary<string, object?> row = rows.Should().ContainSingle().Subject;
+        row["direction"].Should().Be("tx", "the station's own frames must be tellable apart");
+        row["source"].Should().Be("M0LTE");
+        row["destination"].Should().Be("GB7RDG");
+        row["sub_channel"].Should().Be(1L);
+        row["mode"].Should().Be("bpsk300-il2pc");
+        row["mode_name"].Should().Be("BPSK300 IL2Pc");
+        row["length"].Should().Be(32L);
+        row["audio_hz"].Should().Be(1500.0);
+        row["rf_hz"].Should().Be(7_051_600.0, "where it went out is as useful as where one arrived");
+        ((byte[])row["payload"]!).Should().Equal(Frame(), "the frame sent is the evidence");
+
+        // heard_at on a transmitted row is when it went out. The column keeps its name so that
+        // every query already written against the log keeps working; the wart is documented.
+        ((string)row["heard_at"]!).Should().StartWith("2026-08-02T14:30:00");
+
+        row["corrected"].Should().BeNull("nothing corrected a frame we generated");
+        row["crc_valid"].Should().BeNull("we did not check a CRC, we wrote one");
+        row["offset_hz"].Should().BeNull("we did not measure our own carrier against itself");
+    }
+
+    /// <summary>
+    /// A log written before transmitted frames were recorded opens, keeps its rows, and reads
+    /// them back as receives.
+    /// </summary>
+    /// <remarks>
+    /// <c>CREATE TABLE IF NOT EXISTS</c> leaves an existing table alone, so a deployed station's
+    /// log would have gone on without the <c>direction</c> column and every INSERT would have
+    /// failed — a modem that silently stops logging. The old rows are all receives, so the
+    /// column's default is the truth about them rather than a guess.
+    /// </remarks>
+    [Fact]
+    public async Task A_Log_From_Before_The_Direction_Column_Is_Migrated_And_Keeps_Its_History()
+    {
+        WriteLogInTheOldSchema();
+
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.RecordTransmitted(0, Frame(), "bpsk300-il2pc", 1500, 7_051_600));
+
+        rows.Should().HaveCount(2, "a station's existing history must survive the upgrade");
+        rows[0]["source"].Should().Be("G0OLD");
+        rows[0]["direction"].Should().Be("rx", "everything logged before this was heard");
+        ((byte[])rows[0]["payload"]!).Should().Equal([1, 2, 3, 4], "the old rows are untouched");
+        rows[1]["direction"].Should().Be("tx", "and the log can now take what we send");
+    }
+
+    /// <summary>The migrated log reads back through the backlog query too — the waterfall panel
+    /// is the other consumer of these rows, and it asks for the columns by name.</summary>
+    [Fact]
+    public async Task The_Backlog_Reads_A_Migrated_Logs_Old_Rows_As_Received()
+    {
+        WriteLogInTheOldSchema();
+
+        await using FrameLog log = FrameLog.Open(DbPath, _time);
+        Packet.SoundModem.Waterfall.LoggedFrame old0 =
+            log.Recent(10).Should().ContainSingle().Subject;
+        old0.From.Should().Be("G0OLD");
+        old0.Transmitted.Should().BeFalse("a row written before the column existed was heard");
+        old0.OffsetHz.Should().Be(-2.5, "and the rest of it is read back unchanged");
     }
 
     [Fact]
@@ -219,6 +342,35 @@ public class FrameLogTests : IDisposable
         first.CrcValid.Should().BeTrue();
         first.OffsetHz.Should().Be(-3.5);
         first.HeardAt.Should().Be(new DateTimeOffset(2026, 8, 2, 14, 30, 0, TimeSpan.Zero));
+    }
+
+    /// <summary>
+    /// The backlog carries both kinds, in the order they happened, each saying which it was.
+    /// </summary>
+    /// <remarks>
+    /// The panel badges a transmission TX and styles it apart; if the direction were lost on the
+    /// way out of the log, a browser reloading would see its own beacons listed as stations
+    /// heard — which is worse than not showing them at all.
+    /// </remarks>
+    [Fact]
+    public async Task The_Backlog_Says_Which_Frames_The_Station_Sent()
+    {
+        await using FrameLog log = FrameLog.Open(DbPath, _time);
+        log.Record(0, Frame(from: "G0AAA"), Quality(), audioHz: 1500, rfHz: 7_051_600);
+        log.RecordTransmitted(0, Frame(from: "M0LTE"), "bpsk300-il2pc", 1500, 7_051_600);
+        log.Record(0, Frame(from: "G0BBB"), Quality(), audioHz: 1500, rfHz: 7_051_600);
+
+        for (int i = 0; i < 100 && log.Recent(10).Count < 3; i++)
+        {
+            await Task.Delay(20);
+        }
+
+        IReadOnlyList<Packet.SoundModem.Waterfall.LoggedFrame> recent = log.Recent(10);
+        recent.Select(f => f.From).Should().Equal("G0AAA", "M0LTE", "G0BBB");
+        recent.Select(f => f.Transmitted).Should().Equal(false, true, false);
+        recent[1].CrcValid.Should().BeNull("a transmission carries no receive measurements");
+        recent[1].OffsetHz.Should().BeNull();
+        recent[1].CorrectedBytes.Should().BeNull();
     }
 
     [Fact]

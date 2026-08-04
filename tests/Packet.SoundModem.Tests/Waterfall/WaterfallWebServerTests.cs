@@ -296,6 +296,53 @@ public class WaterfallWebServerTests : IAsyncLifetime
             JsonValueKind.Null, "an unmeasured offset stays unmeasured");
     }
 
+    /// <summary>
+    /// The backlog says which of its frames this station sent, so a reload shows the same TX
+    /// badge a live transmission gets.
+    /// </summary>
+    /// <remarks>
+    /// The station logs what it transmits as well as what it hears, so the panel's opening list
+    /// is a record of the whole channel — and a transmission listed as an ordinary decode would
+    /// have an operator reading their own beacon as somebody else's signal.
+    /// </remarks>
+    [Fact]
+    public async Task The_Backlog_Marks_The_Stations_Own_Transmissions()
+    {
+        var logged = new[]
+        {
+            new LoggedFrame(
+                new DateTimeOffset(2026, 8, 4, 9, 15, 0, TimeSpan.Zero),
+                0, "bpsk300-il2pc", "GB7RDG-2", "M0LTE", 31, 0, true, 8.6),
+            new LoggedFrame(
+                new DateTimeOffset(2026, 8, 4, 9, 16, 30, TimeSpan.Zero),
+                0, "bpsk300-il2pc", "M0LTE", "GB7RDG-2", 22, null, null, null,
+                Transmitted: true),
+        };
+
+        await using var server = new WaterfallWebServer(
+            new SoundModemChannel(SampleRate, randomSeed: 5),
+            FreePort(),
+            new WaterfallOptions { FrameHistory = _ => logged });
+        server.Start();
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(
+            new Uri($"ws://127.0.0.1:{server.Url.Split(':')[^1].TrimEnd('/')}/ws"), _cancellation.Token);
+
+        await Receive(socket);   // config
+        (_, byte[] second) = await Receive(socket);
+        using JsonDocument history = JsonDocument.Parse(second);
+        JsonElement frames = history.RootElement.GetProperty("frames");
+
+        frames[0].GetProperty("tx").ValueKind.Should().Be(
+            JsonValueKind.Null, "a frame the station heard is nobody's transmission but theirs");
+        frames[1].GetProperty("tx").GetBoolean().Should().BeTrue();
+        frames[1].GetProperty("hist").GetBoolean().Should().BeTrue(
+            "and it is still a backlog row: dimmed, and never tagged onto the waterfall");
+        frames[1].GetProperty("crc").ValueKind.Should().Be(
+            JsonValueKind.Null, "receive measurements stay unmeasured on our own frame");
+    }
+
     [Fact]
     public async Task A_Station_With_No_Frame_Log_Sends_No_Backlog()
     {

@@ -40,7 +40,7 @@ with `su -` and drop the prefix.)
 | `waterfall` | object | *(disabled)* | Browser spectrum/waterfall page — [below](#waterfall) |
 | `paging` | object | *(disabled)* | POCSAG paging endpoint — [below](#paging) |
 | `ardop` | object | *(disabled)* | ARDOP virtual TNC — [below](#ardop) |
-| `frameLog` | object | *(not kept)* | Record every frame heard to SQLite — [below](#framelog) |
+| `frameLog` | object | *(not kept)* | Record every frame heard and sent to SQLite — [below](#framelog) |
 | `idBeacons` | bool | `true` | Listen for the NinoTNC idents sent alongside the PSK SSB modes — [below](#idbeacons) |
 | `flex` | object | see below | FlexRadio slice params — [below](#flex) |
 | `ubersdr` | object | see below | UberSDR stream params — [below](#ubersdr) |
@@ -481,14 +481,16 @@ It is drawn only. Transmitted audio is kept out of the SNR trackers — measurin
 transmitter would report an enormous burst and attribute it to whatever decoded next — and is
 not sent to the audio stream.
 
-**The panel opens on what the station has already heard**, when a [`frameLog`](#framelog) is
-configured: the last 50 logged frames, dimmed apart from live traffic and stamped with the time
-they were heard rather than the time the page was opened. A panel that starts empty says nothing
-about a channel that has been busy all morning, and on a quiet band it is indistinguishable from
-a modem that is not working. Without a frame log the panel opens empty, as before — there is
-nothing written down to show. The backlog is listed, never tagged onto the waterfall: those
-frames were heard before the scroll on screen began and belong to no burst on it. Reconnecting
-rebuilds the panel from the log rather than stacking a second copy of the same frames.
+**The panel opens on what the station has already done**, when a [`frameLog`](#framelog) is
+configured: the last 50 logged frames — heard and sent alike — dimmed apart from live traffic and
+stamped with the time they happened rather than the time the page was opened. A panel that starts
+empty says nothing about a channel that has been busy all morning, and on a quiet band it is
+indistinguishable from a modem that is not working. Without a frame log the panel opens empty, as
+before — there is nothing written down to show. A backlogged transmission keeps its **TX** badge
+and its cyan edge as well as the dimming, so it reads as both: yours, and from before you opened
+the page. The backlog is listed, never tagged onto the waterfall: those frames happened before
+the scroll on screen began and belong to no burst on it. Reconnecting rebuilds the panel from the
+log rather than stacking a second copy of the same frames.
 
 **Your own frames are listed too**, in the decoded-frames panel, marked **TX** and styled apart
 so a transmission can never be misread as a station heard. The panel was a record of half the
@@ -568,31 +570,47 @@ against the ghost's centre, so it tells you how far their dial sits from yours.
 
 ## `frameLog`
 
-Everything the station hears, written to a SQLite file:
+Everything the station hears **and everything it sends**, written to a SQLite file:
 
 ```json
 "frameLog": { "path": "/var/lib/pdn-soundmodem/frames.db" }
 ```
 
-Omit the section and frames are heard and not written down. One row per decoded frame:
+Omit the section and frames come and go without being written down. One row per frame:
 
 | Column | What it holds |
 |---|---|
 | `heard_at` | UTC, ISO 8601 |
-| `sub_channel`, `mode`, `mode_name` | which modem heard it, and what it is — `bpsk300-il2pc` and `BPSK300 IL2Pc` |
+| `direction` | `rx` for a frame the station heard, `tx` for one it sent |
+| `sub_channel`, `mode`, `mode_name` | which modem carried it, and what it is — `bpsk300-il2pc` and `BPSK300 IL2Pc` |
 | `source`, `destination` | AX.25 callsigns where the frame carries them; null where it does not |
 | `length`, `corrected`, `crc_valid` | size, FEC corrections applied, whether the CRC checked |
 | `offset_hz` | how far off centre the sender actually was — measured, not the diversity branch that copied it; null where the decoder could not measure it |
 | `audio_hz`, `rf_hz` | where that modem sits — `rf_hz` filled in when you have given it an `rfFrequency` |
 | `payload` | the frame itself, as a blob |
 
-So "who have I heard on 40m today" is a query:
+**On a transmitted row, `heard_at` is when it went out.** The column keeps its name because
+renaming it would silently break every query, dashboard and example already written against this
+log — an ugly name is the smaller cost, and this is the note that stops it being a surprise. A
+transmitted row also leaves `corrected`, `crc_valid` and `offset_hz` **null**: those are receive
+measurements, and filling them in for our own transmission would be inventing a measurement of
+ourselves. Everything else — who to who, mode, length, where the modem sits, the payload — is
+recorded exactly as for a frame heard. A row is written once the audio has gone to the device, so
+a logged transmission is one that actually went on air.
+
+So "who have I heard on 40m today" is a query — and it now has to say that it means *heard*,
+since your own frames are in the table too:
 
 ```sql
 SELECT source, COUNT(*), MAX(heard_at)
-FROM frames WHERE rf_hz > 7000000 AND rf_hz < 7300000
+FROM frames WHERE direction = 'rx' AND rf_hz > 7000000 AND rf_hz < 7300000
 GROUP BY source ORDER BY 2 DESC;
 ```
+
+Drop the `direction` clause and you are asking who has been on the channel, yourself included,
+which is a fair question too — just not the same one. A log written by an earlier version is
+migrated in place on first open: the column is added with every existing row set to `rx`, which
+is what they all were.
 
 **It is written on a background thread** — the receive path queues and returns, so logging never
 delays a decode. If the disk fills or goes away the modem keeps decoding and drops log rows
@@ -602,9 +620,9 @@ at it while the modem is still running and writing.
 **The [`waterfall`](#waterfall) reads it too**: with a frame log configured, the decoded-frames
 panel opens on the last 50 rows instead of on nothing. That read takes its own short-lived
 connection, so a browser arriving never touches the writer, and a log that cannot be read costs
-that browser its backlog and nothing else. Only *heard* frames are in the log, so the backlog is
-receive-only — what this station sent appears in the panel live, marked TX, but is not written
-down and so is not there after a reload.
+that browser its backlog and nothing else. The backlog carries both directions: a transmitted row
+comes back marked **TX** and styled apart exactly as a live transmission is, so a reload shows
+what the station has been doing rather than only what it has been hearing.
 
 The packaged service runs unprivileged and the unit declares `StateDirectory=pdn-soundmodem`, so
 systemd creates `/var/lib/pdn-soundmodem/` owned by the service user and the default path just

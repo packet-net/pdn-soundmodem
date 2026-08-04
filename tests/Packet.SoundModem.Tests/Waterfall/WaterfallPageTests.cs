@@ -189,11 +189,12 @@ public class WaterfallPageTests
 
         // The probe drives the backlog last, over a panel that already holds four live rows —
         // which is the reconnect case, where the log by then holds those frames too. Rebuilt, not
-        // stacked: two rows, not six.
+        // stacked: three rows, not seven.
         probe.HistoryRows.Should().HaveCount(
-            2, "a re-sent backlog rebuilds the panel rather than duplicating it");
-        probe.HistoryRowClasses.Should().AllBe(
-            "fr hist", "a backlog must not read as a channel that is busy right now");
+            3, "a re-sent backlog rebuilds the panel rather than duplicating it");
+        probe.HistoryRowClasses.Should().AllSatisfy(
+            row => row.Should().Contain("hist"),
+            "a backlog must not read as a channel that is busy right now");
 
         // Newest on top, as for live frames — the page prepends and the server sends oldest first.
         probe.HistoryRows[0].Should().Contain("GB7RDG-2").And.Contain("EI0RSI-1");
@@ -210,6 +211,46 @@ public class WaterfallPageTests
         // And the rest of the row still reads as a frame.
         probe.HistoryRows[0].Should().Contain("31 B").And.Contain("+9 Hz");
         probe.HistoryRows[1].Should().Contain("fec 2").And.Contain("crc");
+    }
+
+    /// <summary>
+    /// A transmission read back out of the log is shown as both: ours, and from before the page
+    /// opened.
+    /// </summary>
+    /// <remarks>
+    /// The station logs what it sends as well as what it hears, so a backlog row can carry both
+    /// classes — and the two rules set the same <c>border-left</c>, with the history one declared
+    /// second. Left to source order the grey would win and a logged transmission would arrive
+    /// dimmed and unmarked down the edge, reading as a station heard. The colour asserted here is
+    /// resolved out of the shipping stylesheet the way a browser resolves it, by specificity then
+    /// source order, because the class list alone cannot say which rule won.
+    /// </remarks>
+    [Fact]
+    public async Task A_Logged_Transmission_Is_Shown_As_Both_Ours_And_History()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw while listing a backlog");
+
+        // Oldest last in a newest-first panel: the transmitted row is the one at the bottom.
+        probe.HistoryRows[2].Should().Contain("M0LTE").And.Contain(">TX<",
+            "a logged transmission carries the same badge a live one does");
+        probe.HistoryRowClasses[2].Should().Be("fr tx hist");
+        probe.HistoryRows[0].Should().NotContain(">TX<", "only our own frames are marked");
+
+        probe.TxBorder.Should().Contain("#31d2f2", "cyan is what says a row is ours");
+        probe.HistBorder.Should().NotContain("#31d2f2", "and grey is what says it is old");
+        probe.TxHistBorder.Should().Contain(
+            "#31d2f2", "a backlogged transmission must not lose the colour that says it is ours");
     }
 
     private static void FeedTone(SoundModemChannel channel, CancellationToken token)
@@ -312,5 +353,8 @@ public class WaterfallPageTests
         string[] HistoryTag,
         string[] HistoryRows,
         string[] HistoryRowClasses,
+        string? TxHistBorder,
+        string? TxBorder,
+        string? HistBorder,
         string[] Thrown);
 }

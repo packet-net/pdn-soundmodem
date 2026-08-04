@@ -6,8 +6,8 @@ using Packet.SoundModem.Waterfall;
 namespace Packet.SoundModem.Daemon;
 
 /// <summary>
-/// Records every frame the station hears to a SQLite file — what was heard, when, on which
-/// modem, from and to whom, and how well it decoded.
+/// Records every frame the station hears <i>and every frame it sends</i> to a SQLite file — what
+/// it was, when, on which modem, from and to whom, and (for a receive) how well it decoded.
 /// </summary>
 /// <remarks>
 /// <para>Writes happen on a background thread fed by an unbounded queue, because the receive
@@ -16,6 +16,10 @@ namespace Packet.SoundModem.Daemon;
 /// and a station that cannot log should not eventually run out of memory either.</para>
 /// <para>The database is opened WAL, so a copy can be read — by a logbook, a dashboard, a
 /// `sqlite3` prompt — while the modem is still writing to it.</para>
+/// <para>The timestamp column is called <c>heard_at</c> for a transmitted row too, where it
+/// means "when it went out". Renaming it would be more honest about one row in ten and would
+/// silently break every query, dashboard and documented example written against the log so far,
+/// so the wart is documented (CONFIG.md § frameLog) rather than fixed.</para>
 /// </remarks>
 internal sealed class FrameLog : IAsyncDisposable
 {
@@ -68,6 +72,7 @@ internal sealed class FrameLog : IAsyncDisposable
                 CREATE TABLE IF NOT EXISTS frames (
                     id          INTEGER PRIMARY KEY,
                     heard_at    TEXT    NOT NULL,
+                    direction   TEXT    NOT NULL DEFAULT 'rx',
                     sub_channel INTEGER NOT NULL,
                     mode        TEXT    NOT NULL,
                     mode_name   TEXT    NOT NULL,
@@ -87,7 +92,34 @@ internal sealed class FrameLog : IAsyncDisposable
             schema.ExecuteNonQuery();
         }
 
+        Migrate(connection);
         return new FrameLog(connection, time ?? TimeProvider.System) { Path = path };
+    }
+
+    /// <summary>
+    /// Brings a log written by an earlier version up to the current schema.
+    /// </summary>
+    /// <remarks>
+    /// <c>CREATE TABLE IF NOT EXISTS</c> does nothing to a table that already exists, and there
+    /// are deployed stations whose <c>frames</c> table predates the <c>direction</c> column — on
+    /// those, every INSERT would fail and every frame would be silently dropped. The old rows are
+    /// all receives, so <c>'rx'</c> is the truth about them rather than a guess, which is why the
+    /// column can be added NOT NULL with a default and no backfill.
+    /// </remarks>
+    private static void Migrate(SqliteConnection connection)
+    {
+        using SqliteCommand columns = connection.CreateCommand();
+        // PRAGMA table_info(frames) in its table-valued form, so the answer is one scalar.
+        columns.CommandText =
+            "SELECT COUNT(*) FROM pragma_table_info('frames') WHERE name = 'direction'";
+        if (Convert.ToInt64(columns.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) != 0)
+        {
+            return;
+        }
+
+        using SqliteCommand add = connection.CreateCommand();
+        add.CommandText = "ALTER TABLE frames ADD COLUMN direction TEXT NOT NULL DEFAULT 'rx'";
+        add.ExecuteNonQuery();
     }
 
     /// <summary>
@@ -103,17 +135,15 @@ internal sealed class FrameLog : IAsyncDisposable
         int subChannel, byte[] frame, FrameQuality quality, double? audioHz, double? rfHz,
         string? modeName = null)
     {
-        // A backlog means the disk cannot keep up with the air. Dropping the newest keeps the
-        // memory bounded and the loss visible, which is better than either alternative.
-        if (_pending.Count > 10_000)
+        if (Backlogged())
         {
-            Interlocked.Increment(ref _dropped);
             return;
         }
 
         Ax25AddressParser.TryParse(frame, out string source, out string destination);
         _pending.Add(new Entry(
             _time.GetUtcNow(),
+            Transmitted: false,
             subChannel,
             quality.Mode,
             modeName ?? ModeNames.Display(quality.Mode),
@@ -129,9 +159,71 @@ internal sealed class FrameLog : IAsyncDisposable
     }
 
     /// <summary>
-    /// The most recent <paramref name="count"/> frames, <b>oldest first</b> — what the
-    /// waterfall's decoded-frames panel opens with, so a browser arriving mid-afternoon sees
-    /// what the channel has been doing rather than an empty list.
+    /// Queues a frame this station sent. Returns immediately, like <see cref="Record"/>: called
+    /// from the transmit path once the audio has gone to the device, so a logged row is a frame
+    /// that actually went on air.
+    /// </summary>
+    /// <remarks>
+    /// <para>A journal that records every frame received and none sent is half a record. There
+    /// is no <see cref="FrameQuality"/> to take the mode from — nothing measured a transmission —
+    /// so the caller passes it, and <c>corrected</c>, <c>crc_valid</c> and <c>offset_hz</c> are
+    /// left null rather than filled with plausible values: they are receive measurements, and
+    /// inventing them for our own transmission would be inventing a measurement of ourselves.
+    /// (Same reasoning as the waterfall's TX rows.)</para>
+    /// <para><c>heard_at</c> holds when it went out — see the note on the class.</para>
+    /// </remarks>
+    /// <param name="mode">
+    /// The mode string of the modem that sent it, as that modem reports itself — so the column
+    /// reads the same for a frame we sent as for one the same modem heard.
+    /// </param>
+    internal void RecordTransmitted(
+        int subChannel, byte[] frame, string mode, double? audioHz, double? rfHz)
+    {
+        if (Backlogged())
+        {
+            return;
+        }
+
+        Ax25AddressParser.TryParse(frame, out string source, out string destination);
+        _pending.Add(new Entry(
+            _time.GetUtcNow(),
+            Transmitted: true,
+            subChannel,
+            mode,
+            ModeNames.Display(mode),
+            string.IsNullOrWhiteSpace(source) ? null : source,
+            string.IsNullOrWhiteSpace(destination) ? null : destination,
+            frame.Length,
+            Corrected: null,
+            CrcValid: null,
+            OffsetHz: null,
+            audioHz,
+            rfHz,
+            frame));
+    }
+
+    /// <summary>
+    /// Whether the queue has run away from the disk, counting the frame as dropped if it has.
+    /// </summary>
+    /// <remarks>
+    /// A backlog means the disk cannot keep up with the air. Dropping the newest keeps the memory
+    /// bounded and the loss visible, which is better than either alternative.
+    /// </remarks>
+    private bool Backlogged()
+    {
+        if (_pending.Count <= 10_000)
+        {
+            return false;
+        }
+
+        Interlocked.Increment(ref _dropped);
+        return true;
+    }
+
+    /// <summary>
+    /// The most recent <paramref name="count"/> frames — heard and sent alike, <b>oldest
+    /// first</b> — as the waterfall's decoded-frames panel opens with, so a browser arriving
+    /// mid-afternoon sees what the channel has been doing rather than an empty list.
     /// </summary>
     /// <remarks>
     /// <para>Its own short-lived read-only connection, not the writer's: <see cref="SqliteConnection"/>
@@ -163,7 +255,7 @@ internal sealed class FrameLog : IAsyncDisposable
             // query, and the panel wants them in the order they happened.
             query.CommandText = """
                 SELECT heard_at, sub_channel, mode, source, destination,
-                       length, corrected, crc_valid, offset_hz
+                       length, corrected, crc_valid, offset_hz, direction
                 FROM frames ORDER BY id DESC LIMIT $count
                 """;
             query.Parameters.AddWithValue("$count", count);
@@ -179,7 +271,10 @@ internal sealed class FrameLog : IAsyncDisposable
                     row.GetInt32(5),
                     row.IsDBNull(6) ? null : row.GetInt32(6),
                     row.IsDBNull(7) ? null : row.GetInt32(7) != 0,
-                    row.IsDBNull(8) ? null : row.GetDouble(8)));
+                    row.IsDBNull(8) ? null : row.GetDouble(8),
+                    // Anything that is not 'tx' is a receive, including a row from a log written
+                    // before the column existed: those were all heard.
+                    string.Equals(row.GetString(9), "tx", StringComparison.Ordinal)));
             }
         }
         catch (Exception e) when (e is SqliteException or IOException or FormatException)
@@ -196,16 +291,17 @@ internal sealed class FrameLog : IAsyncDisposable
         using SqliteCommand insert = _connection.CreateCommand();
         insert.CommandText = """
             INSERT INTO frames
-              (heard_at, sub_channel, mode, mode_name, source, destination,
+              (heard_at, direction, sub_channel, mode, mode_name, source, destination,
                length, corrected, crc_valid, offset_hz, audio_hz, rf_hz, payload)
             VALUES
-              ($heard_at, $sub, $mode, $mode_name, $source, $destination,
+              ($heard_at, $direction, $sub, $mode, $mode_name, $source, $destination,
                $length, $corrected, $crc, $offset, $audio, $rf, $payload)
             """;
         foreach (string name in new[]
                  {
-                     "$heard_at", "$sub", "$mode", "$mode_name", "$source", "$destination",
-                     "$length", "$corrected", "$crc", "$offset", "$audio", "$rf", "$payload",
+                     "$heard_at", "$direction", "$sub", "$mode", "$mode_name", "$source",
+                     "$destination", "$length", "$corrected", "$crc", "$offset", "$audio",
+                     "$rf", "$payload",
                  })
         {
             insert.Parameters.Add(new SqliteParameter(name, DBNull.Value));
@@ -216,6 +312,7 @@ internal sealed class FrameLog : IAsyncDisposable
             try
             {
                 insert.Parameters["$heard_at"].Value = entry.HeardAt.ToString("O");
+                insert.Parameters["$direction"].Value = entry.Transmitted ? "tx" : "rx";
                 insert.Parameters["$sub"].Value = entry.SubChannel;
                 insert.Parameters["$mode"].Value = entry.Mode;
                 insert.Parameters["$mode_name"].Value = entry.ModeName;
@@ -250,6 +347,7 @@ internal sealed class FrameLog : IAsyncDisposable
 
     private sealed record Entry(
         DateTimeOffset HeardAt,
+        bool Transmitted,
         int SubChannel,
         string Mode,
         string ModeName,
