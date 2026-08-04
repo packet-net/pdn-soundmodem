@@ -16,8 +16,9 @@ namespace Packet.SoundModem.Modems;
 /// one branch, the diversity still helps in multi-signal conditions — measured live on the GB7RDG
 /// 40 m channel, a single differential modem matched 116/117 NinoTNC frames while the bank matched
 /// 117/117 and decoded 2 more the NinoTNC missed (the extra frame was a beacon overlapping other
-/// traffic that an offset branch resolved). The branch's step reports the carrier offset. Transmit
-/// uses the centre branch only.
+/// traffic that an offset branch resolved). The reported carrier offset is the winning branch's
+/// step plus that branch's own measurement of the residual (see <see cref="EmitBestOfChunk"/>).
+/// Transmit uses the centre branch only.
 /// </para>
 /// <para>
 /// The step is sized to the single-branch offset tolerance, which scales with the symbol rate:
@@ -36,7 +37,16 @@ public sealed class BpskMultiModem : IModem
     private readonly int _dedupeChunk;
     private readonly int _baud;
     private readonly bool _crc;
+    private readonly List<Candidate> _candidates = [];
     private long _samplesProcessed;
+
+    /// <summary>One branch's copy of a frame, held until the chunk ends and the branches can be
+    /// compared. <paramref name="ResidualHz"/> is that branch's own measurement of how far the
+    /// signal sat from <em>its</em> centre — null where the branch could not measure it — so
+    /// branch + residual is the station's offset from the bank's centre however far out the
+    /// branch that copied it happened to be.</summary>
+    private readonly record struct Candidate(
+        byte[] Frame, double BranchOffsetHz, double? ResidualHz, FrameQuality Quality);
 
     /// <summary>Creates the bank.</summary>
     /// <param name="sampleRate">Channel DSP rate (multiple of <paramref name="baud"/>).</param>
@@ -150,6 +160,7 @@ public sealed class BpskMultiModem : IModem
             }
 
             _samplesProcessed += slice.Length;
+            EmitBestOfChunk();
         }
     }
 
@@ -166,16 +177,99 @@ public sealed class BpskMultiModem : IModem
         }
     }
 
-    // Several branches usually decode the same transmission within a frame-time of each other;
-    // emit the first and drop content-identical repeats in the window.
-    private void OnFrame(byte[] frame, double offsetHz, FrameQuality quality)
+    // Several branches usually decode the same transmission within a frame-time of each other,
+    // which is well inside one chunk. Hold them all and let the chunk end decide, rather than
+    // emitting whichever finished first.
+    private void OnFrame(byte[] frame, double offsetHz, FrameQuality quality) =>
+        _candidates.Add(new Candidate(frame, offsetHz, quality.FrequencyOffsetHz, quality));
+
+    /// <summary>
+    /// Emits one frame per distinct transmission seen this chunk, from the branch that was
+    /// actually tuned closest to it.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Why not simply the first branch to finish.</b> Branches are fed in ascending
+    /// order and the differential detector tolerates wide offset on any one branch, so a normal
+    /// signal is copyable by branches well either side of it and "first" means "lowest-centred
+    /// branch that could still read it" — index 0 by iteration order alone. Reporting that
+    /// branch's nominal step as the carrier offset put 82 % of 431 frames from a GPSDO-locked
+    /// station at exactly −30 Hz, the comb's most negative position, and had one station read
+    /// +30, −30 and −15 Hz inside 23 seconds (issue #202). That is fine for deciding
+    /// <em>whether</em> to emit — the bytes are identical either way and the deduper is
+    /// content-based — and useless as a frequency reading.</para>
+    /// <para>So the branches are compared instead, on each one's own
+    /// <see cref="BpskDemodulator.CarrierOffsetHz"/> — how far it measured the signal from its
+    /// own centre. The smallest residual is the best-matched branch, and its
+    /// <c>branch + residual</c> is the station's offset from the bank's centre. Where no branch
+    /// could measure (nothing coherent enough in the window), the offset is reported as
+    /// <c>null</c>: "we did not measure it" is the honest answer, and the comb position is not
+    /// a substitute for one.</para>
+    /// <para>The cost is that a frame waits for the end of its chunk — at most 100 ms, against
+    /// frames that take seconds at 300 baud (mirrors <see cref="Afsk300MultiModem"/>).</para>
+    /// </remarks>
+    private void EmitBestOfChunk()
     {
-        if (!_deduper.ShouldEmit(frame, _samplesProcessed))
+        while (_candidates.Count > 0)
         {
-            return;
+            Candidate best = _candidates[0];
+            for (int i = 1; i < _candidates.Count; i++)
+            {
+                if (IsSameFrame(_candidates[i].Frame, best.Frame)
+                    && IsBetter(_candidates[i], best))
+                {
+                    best = _candidates[i];
+                }
+            }
+
+            for (int i = _candidates.Count - 1; i >= 0; i--)
+            {
+                if (IsSameFrame(_candidates[i].Frame, best.Frame))
+                {
+                    _candidates.RemoveAt(i);
+                }
+            }
+
+            // Still deduped across chunks: a transmission straddling a chunk boundary reaches
+            // here twice, and the window is what stops the second copy being delivered.
+            if (!_deduper.ShouldEmit(best.Frame, _samplesProcessed))
+            {
+                continue;
+            }
+
+            _frameReceived(best.Frame);
+            FrameDecoded?.Invoke(best.Frame, best.Quality with
+            {
+                Mode = Mode,
+                FrequencyOffsetHz = best.ResidualHz is { } residual
+                    ? best.BranchOffsetHz + residual
+                    : null,
+            });
+        }
+    }
+
+    /// <summary>Ranks two branches' copies of the same frame: a measured branch beats an
+    /// unmeasured one, the better-centred of two measured branches wins, and two unmeasured
+    /// copies are separated by FEC work then by distance from the bank centre — anything but
+    /// array order, which is the bias being removed.</summary>
+    private static bool IsBetter(in Candidate candidate, in Candidate best)
+    {
+        if (candidate.ResidualHz is { } residual)
+        {
+            return best.ResidualHz is not { } bestResidual
+                || Math.Abs(residual) < Math.Abs(bestResidual);
         }
 
-        _frameReceived(frame);
-        FrameDecoded?.Invoke(frame, quality with { Mode = Mode, FrequencyOffsetHz = offsetHz });
+        if (best.ResidualHz is not null)
+        {
+            return false;
+        }
+
+        int corrected = candidate.Quality.CorrectedBytes ?? int.MaxValue;
+        int bestCorrected = best.Quality.CorrectedBytes ?? int.MaxValue;
+        return corrected != bestCorrected
+            ? corrected < bestCorrected
+            : Math.Abs(candidate.BranchOffsetHz) < Math.Abs(best.BranchOffsetHz);
     }
+
+    private static bool IsSameFrame(byte[] a, byte[] b) => a.AsSpan().SequenceEqual(b);
 }
