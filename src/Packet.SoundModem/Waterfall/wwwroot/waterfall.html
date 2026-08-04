@@ -105,6 +105,8 @@
     padding: 5px 8px; color: var(--ink); white-space: nowrap;
   }
   #tip .rf { color: var(--amber); }
+  #tip .bad { color: #f27e7e; }
+  #tip b { color: var(--amber); font-weight: 600; }
 
   #log {
     width: 320px; border-left: 1px solid var(--edge); background: var(--panel);
@@ -810,11 +812,27 @@ function logCapture(ev) {
 
 /* ---------- hover readout ---------- */
 const tip = $("tip");
+let copiedUntil = 0;          // while set, the readout is showing a copy confirmation
+
+function placeTip(clientX, clientY) {
+  tip.style.display = "block";
+  tip.style.left = Math.min(window.innerWidth - 170, clientX + 14) + "px";
+  tip.style.top = (clientY + 14) + "px";
+}
+
+// The audio frequency under the pointer, from the display's own geometry.
+function afAt(clientX) {
+  const r = $("display").getBoundingClientRect();
+  return (clientX - r.left) / r.width * spanHz();
+}
+
 function hookHover(el) {
   el.addEventListener("mousemove", e => {
     if (!cfg) return;
-    const r = $("display").getBoundingClientRect();
-    const af = (e.clientX - r.left) / r.width * spanHz();
+    // A copy confirmation survives the next twitch of the mouse; without this it is overwritten
+    // before it can be read, which reads as the copy having failed.
+    if (performance.now() < copiedUntil) { placeTip(e.clientX, e.clientY); return; }
+    const af = afAt(e.clientX);
     let db = "";
     if (lastBins) {
       const b = Math.min(binsInSpan() - 1, Math.round(af / cfg.binWidthHz));
@@ -822,13 +840,65 @@ function hookHover(el) {
     }
     tip.innerHTML = `AF ${Math.round(af)} Hz${db}` +
       (dialSet() ? `<br><span class="rf">RF ${fmtRfMhz(af)} MHz</span>` : "");
-    tip.style.display = "block";
-    tip.style.left = Math.min(window.innerWidth - 170, e.clientX + 14) + "px";
-    tip.style.top = (e.clientY + 14) + "px";
+    placeTip(e.clientX, e.clientY);
   });
   el.addEventListener("mouseleave", () => tip.style.display = "none");
 }
 hookHover(spec); hookHover(wf);
+
+/* ---------- right-click to copy the frequency under the pointer ---------- */
+// The number as the readout shows it — the band frequency in MHz once a dial is known, the audio
+// frequency in Hz otherwise — and nothing else: no label, no unit, because the point of it is
+// pasting somewhere that wants a number.
+function frequencyAt(clientX) {
+  const af = afAt(clientX);
+  return dialSet() ? fmtRfMhz(af) : String(Math.round(af));
+}
+
+// navigator.clipboard is SECURE-CONTEXT ONLY. This page is served over plain HTTP to a station on
+// the LAN, which is how it is actually reached, so on the machine that matters the Clipboard API
+// does not exist at all. The deprecated textarea path is not a legacy nicety here — it is the one
+// that runs, and testing only on localhost would have hidden that completely.
+function copyText(text) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.style.position = "fixed";
+  area.style.top = "-1000px";
+  document.body.appendChild(area);
+  area.select && area.select();
+  let copied = false;
+  try { copied = document.execCommand("copy"); } catch (e) { copied = false; }
+  document.body.removeChild(area);
+  if (copied) return true;
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text);
+    return true;
+  }
+
+  return false;
+}
+
+function copyFrequency(clientX, clientY) {
+  if (!cfg) return null;
+  const text = frequencyAt(clientX);
+  const copied = copyText(text);
+  tip.innerHTML = copied
+    ? `copied <b>${text}</b>`
+    : `<span class="bad">could not copy</span> ${text}`;
+  placeTip(clientX, clientY);
+  copiedUntil = performance.now() + 1400;
+  return copied ? text : null;
+}
+
+function hookCopy(el) {
+  el.addEventListener("contextmenu", e => {
+    if (!cfg) return;
+    e.preventDefault();          // the browser menu would land on top of the confirmation
+    copyFrequency(e.clientX, e.clientY);
+  });
+}
+hookCopy(spec); hookCopy(wf);
 
 /* ---------- socket ---------- */
 let ws = null;               // the live socket; toggleAudio needs to reach it

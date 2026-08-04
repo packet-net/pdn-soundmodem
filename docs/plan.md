@@ -234,6 +234,18 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-08-04 (later⁵) — right-click the waterfall for the frequency under the pointer
+
+Tom liked the hover readout and asked for the number on the clipboard. Small, and it had two ways to ship broken.
+
+**`navigator.clipboard` is secure-context only.** This page is served over plain HTTP to a station on the LAN, which is how it is actually reached, so on the machine that matters the Clipboard API does not exist at all — the deprecated `textarea` + `execCommand` path is not a legacy fallback here, it is the one that runs. Tried first for exactly that reason, with the modern API behind it. A test on localhost, or one that stubbed the modern API, would have hidden this completely and the feature would have worked on the dev box and nowhere else.
+
+**And the confirmation was wiped by the next twitch of the mouse**, because the hover handler repaints the readout on every `mousemove` — which reads as the copy having failed. It is held for 1.4 s now.
+
+Copies the band frequency in MHz where a dial is known and the audio frequency in Hz otherwise, matching what the readout shows, and only the number. The browser context menu is suppressed over the display, since it would otherwise open on top of the confirmation.
+
+Harness note: the `node:vm` DOM shim dropped every `addEventListener` on the floor, so the probe could only ever drive functions it could name — a right-click handler that is never dispatched to is one no test can tell from an absent one. The shim records listeners now and the probe fires a real `contextmenu`, which is what pins the `preventDefault` and the `execCommand` route rather than a re-implementation of them.
+
 ### 2026-08-04 (later⁴) — the survey comes up onto the page
 
 Tom asked what I thought about bringing the survey and its diagnostics onto the web UI. Three things, worth different amounts, and the smallest was the one I had missed: **the panel is where he saw the word "unattributed" in the first place**, and I had fixed the journal and the capture sidecar and left that surface saying it and stopping — the same complaint he had made, one layer up. It now carries the IL2P header type, the reason, and the frame's bytes laid out to be selected and pasted, which is the next thing anybody does with one. `Ax25AttributionNote` moved from `Survey` to `Waterfall`, beside the parser whose verdict it explains: the panel's use of it has nothing to do with surveying. The note quotes a character taken straight off the air, so the panel's `innerHTML` rows gained escaping and a test that a payload containing `<` arrives as text.
