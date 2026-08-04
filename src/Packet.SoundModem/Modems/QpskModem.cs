@@ -25,7 +25,8 @@ public sealed class QpskModem : IModem, IConstellationSource
             {
                 frameReceived(frame);
                 FrameDecoded?.Invoke(frame, new FrameQuality(
-                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
+                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                    HeaderType: info.HeaderType));
             },
             crc);
 

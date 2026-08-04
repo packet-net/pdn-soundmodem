@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Dsp;
+using Packet.SoundModem.Modems;
 using Packet.SoundModem.Survey;
 using Packet.SoundModem.Waterfall;
 
@@ -157,7 +158,7 @@ public class SignalSurveyTests : IDisposable
         // working channel would bury everything worth looking at.
         var survey = new SignalSurvey(Options(), Bands, SampleRate, BinWidthHz, LinesPerSecond, LineLength);
         Play(survey, 1950, 2350, burstLines: 60, atBurstEnd: _ =>
-            survey.NoteDecode(2, Ax25Frame("GB7RDG", "EI0RSI"), "bpsk300-il2pc"));
+            survey.NoteDecode(2, Ax25Frame("GB7RDG", "EI0RSI"), Quality("bpsk300-il2pc")));
         Settle(survey);
 
         Captures().Should().BeEmpty();
@@ -173,7 +174,7 @@ public class SignalSurveyTests : IDisposable
         var survey = new SignalSurvey(Options(), Bands, SampleRate, BinWidthHz, LinesPerSecond, LineLength);
         byte[] frame = [0x00, 0x01, 0x02, 0x03, .. new byte[114]];
         Play(survey, 1950, 2350, burstLines: 60, atBurstEnd: _ =>
-            survey.NoteDecode(2, frame, "bpsk300-il2pc-multi9"));
+            survey.NoteDecode(2, frame, Quality("bpsk300-il2pc-multi9")));
         Settle(survey);
 
         BurstCapture capture = Captures().Should().ContainSingle().Subject;
@@ -181,6 +182,14 @@ public class SignalSurveyTests : IDisposable
         capture.FrameHex.Should().NotBeNull().And.StartWith("00010203");
         capture.SubChannel.Should().Be(2);
         capture.Mode.Should().Be("bpsk300-il2pc-multi9");
+
+        // The sidecar answers the question rather than posing it: which IL2P encapsulation it
+        // arrived in — Type 1 and Type 0 put the address field in different places — and what
+        // specifically would not read. Without these, diagnosing one of these means pulling the
+        // payload blob out of the frame log by hand, which is what happened the first time.
+        capture.Il2pHeaderType.Should().Be("Type1");
+        capture.AttributionNote.Should().NotBeNull()
+            .And.Contain("byte 0").And.Contain("destination");
     }
 
     [Fact]
@@ -317,6 +326,10 @@ public class SignalSurveyTests : IDisposable
         Captures().Should().BeEmpty();
         skipped.Should().BeGreaterThan(0, "a capture that cannot be filled is counted, not faked");
     }
+
+    private static FrameQuality Quality(string mode) =>
+        new(mode, FrameBytes: 118, CorrectedBytes: 0, CrcValid: true,
+            HeaderType: M0LTE.Il2p.Il2pHeaderType.Type1);
 
     private static byte[] Ax25Frame(string from, string to)
     {

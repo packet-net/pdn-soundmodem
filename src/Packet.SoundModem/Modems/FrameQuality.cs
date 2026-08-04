@@ -35,10 +35,17 @@ namespace Packet.SoundModem.Modems;
 /// <param name="EmphasisDb">For multi-decoder banks, the input pre-emphasis (dB/octave) of
 /// the winning branch; <c>null</c> for single decoders. Persistent non-zero = the far
 /// station's TX audio is twisted.</param>
+/// <param name="HeaderType">Which IL2P encapsulation the frame arrived in — Type 1 translated
+/// (the AX.25 header compressed into IL2P's own) or Type 0 transparent (the whole AX.25 frame
+/// in the payload); <c>null</c> for framings that are not IL2P. Surfaced because it is the
+/// first question worth asking about a frame that decoded cleanly and then would not yield
+/// callsigns: the two types put the address field in different places, so which one it was
+/// decides whether the payload is unusual or the decode is.</param>
 public readonly record struct FrameQuality(
     string Mode,
     int FrameBytes,
     int? CorrectedBytes,
     bool? CrcValid,
     double? FrequencyOffsetHz = null,
-    int? EmphasisDb = null);
+    int? EmphasisDb = null,
+    M0LTE.Il2p.Il2pHeaderType? HeaderType = null);

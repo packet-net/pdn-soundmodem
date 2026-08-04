@@ -1,5 +1,6 @@
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.Modems;
+using Packet.SoundModem.Survey;
 using Packet.SoundModem.Waterfall;
 
 namespace Packet.SoundModem.Daemon;
@@ -50,6 +51,23 @@ internal static class ActivityLog
         if (quality.EmphasisDb is int emphasis and not 0)
         {
             text.Append($"  emph {emphasis:+0;-0} dB");
+        }
+
+        // A frame that decoded cleanly and then would not yield callsigns is the one line here
+        // that used to raise a question instead of answering one — "(no ax25 header)" and
+        // nothing more. It has already passed Reed-Solomon and, on an IL2P+CRC link, the CRC, so
+        // the bits are right and the reading of them is not; which encapsulation carried it is
+        // the first thing worth knowing, because Type 1 and Type 0 put the address field in
+        // different places. Said here as well as in a survey capture, because the survey is
+        // optional, budgeted, and may drop this one.
+        if (Ax25AttributionNote.For(frame) is { } note)
+        {
+            if (quality.HeaderType is { } headerType)
+            {
+                text.Append($"  il2p {headerType}");
+            }
+
+            text.Append($"  [{note}]");
         }
 
         return text.ToString();

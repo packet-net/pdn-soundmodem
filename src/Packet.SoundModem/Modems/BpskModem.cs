@@ -42,6 +42,7 @@ public sealed class BpskModem : IModem, IConstellationSource
                 frameReceived(frame);
                 FrameDecoded?.Invoke(frame, new FrameQuality(
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                    HeaderType: info.HeaderType,
                     // Read at the end of the burst that carried the frame, while the window it
                     // is measured over still describes that burst.
                     FrequencyOffsetHz: demodulator!.CarrierOffsetHz));

@@ -176,16 +176,27 @@ public sealed class SignalSurvey : IDisposable
     /// from one the station failed to read. A frame whose AX.25 addresses will not parse is noted
     /// as such, and its bytes travel with the capture.
     /// </summary>
-    public void NoteDecode(int subChannel, ReadOnlySpan<byte> frame, string mode)
+    public void NoteDecode(int subChannel, ReadOnlySpan<byte> frame, Modems.FrameQuality quality)
     {
         if (_lastLine < 0)
         {
             return;   // no line clock yet; nothing to attach it to
         }
 
-        bool attributed = Ax25AddressParser.TryParse(frame, out _, out _);
+        // Worked out here, once, rather than left for somebody to reconstruct from a payload blob
+        // later: the station noticed something it could not explain, so it writes down what it
+        // noticed. A frame that decoded and then would not yield callsigns has already passed
+        // Reed-Solomon and the trailing CRC — the bits are right and the reading of them is not,
+        // which is the whole diagnosis and is lost by the time anyone opens the file.
+        string? note = Ax25AttributionNote.For(frame);
         _decodes.Add(new Decode(
-            _lastLine, subChannel, mode, attributed, attributed ? null : Convert.ToHexString(frame)));
+            _lastLine,
+            subChannel,
+            quality.Mode,
+            note is null,
+            note is null ? null : Convert.ToHexString(frame),
+            quality.HeaderType?.ToString(),
+            note));
     }
 
     /// <summary>Abandons everything in flight. Called when the station keys up: a burst that
@@ -242,7 +253,9 @@ public sealed class SignalSurvey : IDisposable
                 _modemNames,
                 decode?.SubChannel,
                 decode?.Mode,
-                decode?.FrameHex),
+                decode?.FrameHex,
+                decode?.HeaderType,
+                decode?.AttributionNote),
             audio);
     }
 
@@ -295,7 +308,7 @@ public sealed class SignalSurvey : IDisposable
         {
             if (burst.CentreHz >= band.LowHz && burst.CentreHz <= band.HighHz)
             {
-                decode = new Decode(0, band.SubChannel, band.Mode, true, null);
+                decode = new Decode(0, band.SubChannel, band.Mode, true, null, null, null);
                 return SurveyVerdict.Missed;
             }
         }
@@ -394,5 +407,11 @@ public sealed class SignalSurvey : IDisposable
     }
 
     private sealed record Decode(
-        long Line, int SubChannel, string Mode, bool Attributed, string? FrameHex);
+        long Line,
+        int SubChannel,
+        string Mode,
+        bool Attributed,
+        string? FrameHex,
+        string? HeaderType,
+        string? AttributionNote);
 }

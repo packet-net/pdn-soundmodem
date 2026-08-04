@@ -84,7 +84,8 @@ public sealed class FskModem : IModem
                 {
                     frameReceived(frame);
                     FrameDecoded?.Invoke(frame, new FrameQuality(
-                        Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
+                        Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                        HeaderType: info.HeaderType));
                 },
                 crcMode: framing == FskFraming.Il2pCrc);
             // Reset the deframer on the DCD falling edge — same rationale as BpskModem:

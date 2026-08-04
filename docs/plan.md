@@ -234,6 +234,14 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-08-04 (later³) — an unattributed frame explains itself
+
+Tom, on being told to run a SQL query against his own frame log to find out why a frame had no callsigns: *"You should be capturing those details yourself."* Correct, and the tool had the information all along — a frame reaching the panel as unattributed has already passed Reed-Solomon and the IL2P trailing CRC, so the bits are right and the *reading* of them is not, and that distinction is the whole diagnosis. It was being thrown away at the point it was cheapest to keep.
+
+`FrameQuality` now carries `Il2pHeaderType`, plumbed from `Il2pDecodeInfo` through all six IL2P modems: Type 1 translated and Type 0 transparent put the AX.25 address field in different places, so which one carried a frame decides whether the payload is unusual or the decode is, and it is the first question worth asking. `Ax25AttributionNote` says in a line what would not read — a frame too short for an address field and control byte, or the exact byte, field and character that is not a shifted callsign character. Both land in an `unattributed` survey capture's sidecar beside the payload hex, and both land on the journal's `rx` line as well, because the survey is optional, budgeted, and may drop that particular burst. The live case — 118 bytes on `bpsk300-il2pc-multi9`, CRC-valid, zero corrections — now reads `il2p Type1 [byte 0 of the destination callsign is 0x00 → 0x00, not a shifted callsign character]` instead of `(no ax25 header)` and nothing more.
+
+Deliberately a diagnostic and not a parser: `Ax25AddressParser` still decides whether a frame is attributable and this only explains its verdict. Ordinary lines are unchanged and pinned by an equality assertion, these being text that ends up in other people's grep pipelines.
+
 ### 2026-08-04 (later²) — the station starts keeping the signals it cannot read
 
 Tom watched a packet-shaped burst slide past at 7.050594 on the live 40 m waterfall — in the 225 Hz hole between the afsk300 bank's top edge (7.050475) and ARDOP's bottom one (7.050700) — and asked the obvious question: we are not listening there, so how can we ever tell what it was? He ruled out the obvious answer himself ("seems a bit indulgent to run many many modems over the whole passband"), and he is right for a better reason than CPU: the *mode* is unknown too, so a comb is centres × modes and it is still silent when it guesses wrong. Energy, meanwhile, is already being computed thirty times a second for the display.

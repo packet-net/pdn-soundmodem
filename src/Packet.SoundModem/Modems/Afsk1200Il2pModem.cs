@@ -39,7 +39,8 @@ public sealed class Afsk1200Il2pModem : IModem
             {
                 frameReceived(frame);
                 FrameDecoded?.Invoke(frame, new FrameQuality(
-                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
+                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                    HeaderType: info.HeaderType));
             },
             crcMode: crc);
         // Reset the deframer on the DCD falling edge — same rationale as BpskModem:
