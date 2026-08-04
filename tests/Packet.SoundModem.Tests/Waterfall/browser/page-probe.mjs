@@ -176,6 +176,19 @@ const beforeTx = sandbox.__text().length;
 run(`onFrameEvent({sub:0, mode:"afsk1200", from:"M0LTE-9", to:"GB7RDG", line:0, lenBytes:24, tx:true})`);
 const txTag = sandbox.__text().slice(beforeTx);
 
+// A frame that decoded and would not yield callsigns: the panel is where an operator sees the
+// word "unattributed", so it is where the reason and the bytes have to appear. The reason quotes
+// a character straight off the air, so it is also where markup could arrive if nothing escaped it.
+run(`onFrameEvent({sub:2, mode:"bpsk300-il2pc-multi9", from:null, to:null, line:0, burstLines:9, lenBytes:118, snrDb:13.2, offsetHz:-13, crc:true, corrected:0, il2p:"Type1", why:"byte 0 of the destination callsign is 0x3C -> 0x1E ('<'), not a shifted callsign character", hex:"00010203DEADBEEF"})`);
+
+// A capture: tagged onto the waterfall where it happened, and listed with a link to its audio.
+const beforeCapture = sandbox.__text().length;
+run(`onCapture({verdict:"unclaimed", centreHz:1144, lowHz:944, highHz:1344, durationSeconds:2.1, snrDb:11.4, secondsAgo:0.4, file:"20260804-151909-1144hz-unclaimed.wav"})`);
+const captureTag = sandbox.__text().slice(beforeCapture);
+
+run(`setSurveyStatus({captured:7, skipped:2, bytes:12582912})`);
+const surveyStatus = sandbox.document.getElementById("survey").textContent;
+
 const frames = sandbox.document.getElementById("frames").children;
 const rows = frames.map(c => c.innerHTML);
 const rowClasses = frames.map(c => c.className);
@@ -205,6 +218,8 @@ console.log(JSON.stringify({
   txTag,
   frameRows: rows,
   frameRowClasses: rowClasses,
+  captureTag,
+  surveyStatus,
   historyTag,
   historyRows: afterHistory.map(c => c.innerHTML),
   historyRowClasses: afterHistory.map(c => c.className),

@@ -1,6 +1,5 @@
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.Modems;
-using Packet.SoundModem.Survey;
 using Packet.SoundModem.Waterfall;
 
 namespace Packet.SoundModem.Daemon;

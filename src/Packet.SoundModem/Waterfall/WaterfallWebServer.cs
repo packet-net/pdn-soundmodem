@@ -183,6 +183,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
     private WaterfallSource? _source;
     private string? _transmitStatus;
+    private byte[]? _surveyMessage;
+    private string _surveyDirectory = "";
     private volatile bool _keyed;
     private byte[] _configMessage = [];
     private Task? _acceptLoop;
@@ -261,6 +263,37 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
     /// <summary>The measured per-modem display bands (populated by <see cref="Start"/>).</summary>
     public IReadOnlyList<ModemBand> Bands => _bands;
+
+    /// <summary>
+    /// What the signal survey has been doing — captures kept, captures a budget refused, and the
+    /// disk it is using. Pushed rather than polled, and only on a change.
+    /// </summary>
+    /// <remarks>
+    /// The refusals are the reason this exists. A survey left running for a week silently becomes
+    /// a sample rather than the set when the channel is busier than its rate limit, and nothing
+    /// anywhere reported that: an operator would have had to count files per hour and notice the
+    /// number was exactly the cap. A count on the page answers it at a glance — and it is state
+    /// rather than an event, which is why it belongs on a display and not in a journal.
+    /// </remarks>
+    /// <param name="captured">Captures written to disk.</param>
+    /// <param name="skipped">Bursts worth keeping that a rate limit, cooldown or missing audio
+    /// refused.</param>
+    /// <param name="bytes">Bytes the capture directory holds.</param>
+    /// <param name="directory">Where they are, so their audio can be served from it.</param>
+    public void SetSurveyStatus(long captured, long skipped, long bytes, string directory)
+    {
+        _surveyDirectory = directory;
+        byte[] message = JsonSerializer.SerializeToUtf8Bytes(
+            new { type = "survey", captured, skipped, bytes }, Json);
+        if (_surveyMessage is { } previous && previous.AsSpan().SequenceEqual(message))
+        {
+            return;
+        }
+
+        _surveyMessage = message;
+        Broadcast(WebSocketMessageType.Text, message);
+    }
+
 
     /// <summary>
     /// Measures every modem's band, hooks the channel (receive tap + frame events) and
@@ -655,7 +688,16 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         BroadcastFrame(
             subChannel, quality.Mode, from, to, quality.FrameBytes, snrDb, burstLines,
             quality.FrequencyOffsetHz is { } offset ? Math.Round(offset, 1) : null,
-            quality.CorrectedBytes, quality.CrcValid);
+            quality.CorrectedBytes, quality.CrcValid,
+            // A frame that decoded and would not yield callsigns is where the panel used to pose
+            // a question instead of answering one: it said "unattributed" and stopped. It has
+            // already passed Reed-Solomon and, on an IL2P+CRC link, the CRC — so the bits are
+            // right and the reading of them is not, and which encapsulation carried it is the
+            // first thing worth knowing. The bytes come too, because the panel is where an
+            // operator notices one of these and the next thing they will want is to copy them.
+            note: Ax25AttributionNote.For(frame),
+            headerType: quality.HeaderType?.ToString(),
+            frameHex: from is null && to is null ? Convert.ToHexString(frame) : null);
     }
 
     /// <summary>Frame event (transmit thread): list what this station has just sent, so the
@@ -761,7 +803,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     private void BroadcastFrame(
         int subChannel, string mode, string? from, string? to, int lengthBytes,
         double? snrDb, int? burstLines, double? offsetHz, int? corrected, bool? crc,
-        bool idBeacon = false, bool transmitted = false)
+        bool idBeacon = false, bool transmitted = false,
+        string? note = null, string? headerType = null, string? frameHex = null)
     {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -783,6 +826,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // True on our own transmission: the page lists it and, unlike everything else,
             // does not tag it onto the waterfall (see OnFrameTransmitted).
             tx = transmitted ? true : (bool?)null,
+            // Only on a frame whose addresses would not read: why, which IL2P encapsulation
+            // carried it, and the bytes themselves.
+            why = note,
+            il2p = headerType,
+            hex = frameHex,
         }, Json);
         Broadcast(WebSocketMessageType.Text, message);
     }
@@ -930,6 +978,24 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 return;
             }
 
+            if (context.Request.HttpMethod == "GET"
+                && context.Request.Url?.AbsolutePath is { } path
+                && path.StartsWith("/survey/", StringComparison.Ordinal)
+                && TryResolveCapture(path["/survey/".Length..], out string file))
+            {
+                context.Response.ContentType = file.EndsWith(".wav", StringComparison.Ordinal)
+                    ? "audio/wav"
+                    : "application/json";
+                using (FileStream capture = File.OpenRead(file))
+                {
+                    context.Response.ContentLength64 = capture.Length;
+                    await capture.CopyToAsync(context.Response.OutputStream).ConfigureAwait(false);
+                }
+
+                context.Response.Close();
+                return;
+            }
+
             context.Response.StatusCode = 404;
             context.Response.Close();
         }
@@ -967,6 +1033,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         {
             await socket.SendAsync(_configMessage, WebSocketMessageType.Text, true, _stopping.Token)
                 .ConfigureAwait(false);
+            if (_surveyMessage is { } survey)
+            {
+                await socket.SendAsync(survey, WebSocketMessageType.Text, true, _stopping.Token)
+                    .ConfigureAwait(false);
+            }
+
             if (BuildHistoryMessage() is { } history)
             {
                 await socket.SendAsync(history, WebSocketMessageType.Text, true, _stopping.Token)
@@ -1090,6 +1162,92 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         catch (Exception)
         {
         }
+    }
+
+    /// <summary>
+    /// Resolves a capture file name to a path inside the survey directory, or refuses.
+    /// </summary>
+    /// <remarks>
+    /// Only the exact shape the writer produces — <c>20260804-151909-862hz-unclaimed.wav</c> — is
+    /// served, and only from the configured directory. A name is not a path: anything carrying a
+    /// separator, a drive or a <c>..</c> is refused before it reaches the filesystem, so this
+    /// route cannot be talked into reading the frame log, a key, or /etc/passwd.
+    /// </remarks>
+    private bool TryResolveCapture(string name, out string file)
+    {
+        file = "";
+        if (_surveyDirectory.Length == 0 || name.Length is 0 or > 128)
+        {
+            return false;
+        }
+
+        foreach (char c in name)
+        {
+            if (c is not ((>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '.'))
+            {
+                return false;
+            }
+        }
+
+        if (name.Contains("..", StringComparison.Ordinal)
+            || (!name.EndsWith(".wav", StringComparison.Ordinal)
+                && !name.EndsWith(".json", StringComparison.Ordinal)))
+        {
+            return false;
+        }
+
+        string candidate = Path.GetFullPath(Path.Combine(_surveyDirectory, name));
+        string root = Path.GetFullPath(_surveyDirectory);
+        if (!candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || !File.Exists(candidate))
+        {
+            return false;
+        }
+
+        file = candidate;
+        return true;
+    }
+
+    /// <summary>
+    /// Reports a survey capture — a burst this station could not read, kept for later.
+    /// </summary>
+    /// <remarks>
+    /// <para>Drawn where it happened. A capture has a frequency, a width and a time, which is
+    /// exactly what this display's two axes are, so "something we could not read went past
+    /// <em>there</em>" is a statement the waterfall can make and a list of filenames cannot.</para>
+    /// <para><b>Placed by age, not by line index.</b> The survey runs its own spectrum feed so it
+    /// keeps working on a station with nobody watching, and its line clock is therefore not this
+    /// one's. Seconds-ago is a quantity both agree on.</para>
+    /// </remarks>
+    /// <param name="verdict">Why it was kept — <c>unclaimed</c>, <c>missed</c>, <c>unattributed</c>.</param>
+    /// <param name="centreHz">Measured audio centre.</param>
+    /// <param name="lowHz">Measured low edge.</param>
+    /// <param name="highHz">Measured high edge.</param>
+    /// <param name="durationSeconds">How long the burst lasted.</param>
+    /// <param name="snrDb">Peak SNR over the noise floor.</param>
+    /// <param name="secondsAgo">How long ago it ended.</param>
+    /// <param name="file">Its audio file name, for the download link.</param>
+    public void ReportCapture(
+        string verdict, double centreHz, double lowHz, double highHz,
+        double durationSeconds, double snrDb, double secondsAgo, string file)
+    {
+        if (_source is null)
+        {
+            return;   // not started; nobody to tell
+        }
+
+        Broadcast(WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            type = "capture",
+            verdict,
+            centreHz = Math.Round(centreHz, 1),
+            lowHz = Math.Round(lowHz, 1),
+            highHz = Math.Round(highHz, 1),
+            durationSeconds = Math.Round(durationSeconds, 2),
+            snrDb = Math.Round(snrDb, 1),
+            secondsAgo = Math.Round(secondsAgo, 2),
+            file,
+        }, Json));
     }
 
     private static byte[] LoadPage()

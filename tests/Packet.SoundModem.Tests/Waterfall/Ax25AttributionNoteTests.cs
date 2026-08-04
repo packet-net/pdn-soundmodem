@@ -1,6 +1,6 @@
-using Packet.SoundModem.Survey;
+using Packet.SoundModem.Waterfall;
 
-namespace Packet.SoundModem.Tests.Survey;
+namespace Packet.SoundModem.Tests.Waterfall;
 
 /// <summary>
 /// Explaining an unattributed frame instead of leaving somebody to reconstruct it from a payload

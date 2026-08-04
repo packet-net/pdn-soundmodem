@@ -883,6 +883,33 @@ if (surveyConfig is not null)
             }
         };
 
+        // Onto the page: what the survey has kept, what a budget refused, and each capture as it
+        // lands — drawn where it happened, since a capture's frequency and time are exactly the
+        // axes the waterfall already has.
+        if (waterfallServer is { } display)
+        {
+            void PushStatus() => display.SetSurveyStatus(
+                created.Captured, created.SkippedForBudget, created.Bytes, created.Directory);
+
+            PushStatus();
+            created.StatusChanged += PushStatus;
+            created.CaptureWritten += (capture, wav) =>
+            {
+                display.ReportCapture(
+                    capture.Verdict.ToString().ToLowerInvariant(),
+                    capture.AudioCentreHz,
+                    capture.AudioLowHz,
+                    capture.AudioHighHz,
+                    capture.DurationSeconds,
+                    capture.PeakSnrDb,
+                    // Age rather than a line index: the survey's spectrum clock is its own, and
+                    // by the time a capture is on disk a moment more has passed.
+                    (DateTimeOffset.UtcNow - capture.CapturedAt).TotalSeconds,
+                    Path.GetFileName(wav));
+                PushStatus();
+            };
+        }
+
         Console.WriteLine($"survey: {surveyConfig.Path}");
     }
     catch (Exception e) when (e is IOException or UnauthorizedAccessException)

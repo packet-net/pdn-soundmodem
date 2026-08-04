@@ -77,6 +77,7 @@ public sealed class BurstCaptureWriter : IDisposable
     private readonly TimeProvider _time;
     private long _dropped;
     private long _written;
+    private long _bytes;
 
     /// <summary>Creates a writer over <paramref name="directory"/>, creating it if needed.</summary>
     /// <param name="directory">Where captures land.</param>
@@ -95,6 +96,15 @@ public sealed class BurstCaptureWriter : IDisposable
 
     /// <summary>Captures written to disk.</summary>
     public long Written => Interlocked.Read(ref _written);
+
+    /// <summary>Bytes the capture directory holds, as of the last write. What an operator wants
+    /// against the budget, and the only reading of it that costs nothing to keep.</summary>
+    public long Bytes => Interlocked.Read(ref _bytes);
+
+    /// <summary>Raised on the writer thread once a capture is on disk, with the path of its
+    /// audio. The station is the only thing that knows a capture happened at the moment it
+    /// happens; a display refreshing a directory listing would always be behind it.</summary>
+    public event Action<BurstCapture, string>? Captured;
 
     /// <summary>Captures dropped because the disk could not keep up, or would not take them.</summary>
     public long Dropped => Interlocked.Read(ref _dropped);
@@ -138,6 +148,7 @@ public sealed class BurstCaptureWriter : IDisposable
                     JsonSerializer.Serialize(item.Capture, JsonOptions));
                 Interlocked.Increment(ref _written);
                 Prune();
+                Captured?.Invoke(item.Capture, wav);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
@@ -157,6 +168,7 @@ public sealed class BurstCaptureWriter : IDisposable
             total += file.Length;
         }
 
+        Interlocked.Exchange(ref _bytes, total);
         if (total <= _maxBytes)
         {
             return;
@@ -176,6 +188,7 @@ public sealed class BurstCaptureWriter : IDisposable
                 long size = file.Length;
                 file.Delete();
                 total -= size;
+                Interlocked.Exchange(ref _bytes, total);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {

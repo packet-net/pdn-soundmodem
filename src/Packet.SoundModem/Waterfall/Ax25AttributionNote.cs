@@ -1,4 +1,4 @@
-namespace Packet.SoundModem.Survey;
+namespace Packet.SoundModem.Waterfall;
 
 /// <summary>
 /// Says, in a line, why a decoded frame yielded no callsigns.
@@ -12,7 +12,7 @@ namespace Packet.SoundModem.Survey;
 /// notices something it cannot explain should write down what it noticed.
 /// </para>
 /// <para>
-/// Deliberately a diagnostic and not a parser: <see cref="Waterfall.Ax25AddressParser"/> decides
+/// Deliberately a diagnostic and not a parser: <see cref="Ax25AddressParser"/> decides
 /// whether a frame is attributable and nothing here changes that verdict. This only explains it.
 /// </para>
 /// </remarks>
@@ -27,7 +27,7 @@ public static class Ax25AttributionNote
     /// </summary>
     public static string? For(ReadOnlySpan<byte> frame)
     {
-        if (Waterfall.Ax25AddressParser.TryParse(frame, out _, out _))
+        if (Ax25AddressParser.TryParse(frame, out _, out _))
         {
             return null;
         }

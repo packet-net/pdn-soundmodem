@@ -234,6 +234,18 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-08-04 (later⁴) — the survey comes up onto the page
+
+Tom asked what I thought about bringing the survey and its diagnostics onto the web UI. Three things, worth different amounts, and the smallest was the one I had missed: **the panel is where he saw the word "unattributed" in the first place**, and I had fixed the journal and the capture sidecar and left that surface saying it and stopping — the same complaint he had made, one layer up. It now carries the IL2P header type, the reason, and the frame's bytes laid out to be selected and pasted, which is the next thing anybody does with one. `Ax25AttributionNote` moved from `Survey` to `Waterfall`, beside the parser whose verdict it explains: the panel's use of it has nothing to do with surveying. The note quotes a character taken straight off the air, so the panel's `innerHTML` rows gained escaping and a test that a payload containing `<` arrives as text.
+
+**Captures are drawn where they happened.** A capture has a frequency, a width and a time, which is exactly what the waterfall's two axes are — "something we could not read went past *there*" is a statement that display can make and a list of filenames cannot, which is why this is a bracket on the scroll and not a captures browser. Placed by **age, not line index**: the survey runs its own spectrum feed so it keeps working on a station with nobody watching, and its line clock is therefore not the display's; seconds-ago is the quantity both agree on. Each is listed with links to its audio and sidecar, served by the one waterfall route that reads from disk — only the exact filename shape the writer produces, only out of the survey directory, refusals tested including percent-encoded traversal.
+
+**And the blind spot closed.** `SignalSurvey` counted bursts a rate limit, cooldown or missing audio refused, and nothing reported the number: a station left collecting for a week silently becomes a sample rather than the set, and the alternative was counting files per hour and noticing it equalled the cap. The panel header now carries `survey N · M skipped · X MB`, pushed on change rather than polled, and sent to a browser arriving mid-session. It is state, not an event, which is why it belongs on a display and not in a journal.
+
+Verified live end to end: the daemon on the m9psy fixture pushed `survey` on connect and again on each refusal, emitted a `capture` for a real burst, and served its 259 KB WAV and JSON over HTTP while refusing `../frames.db`, its percent-encoded form, and a bare `frames.db`. **No authentication on the waterfall** — operator-accepted, and now stated plainly in CONFIG.md rather than left as tidy-mindedness, because recorded audio is reachable over it.
+
+Instrument note: the page probe's row assertions were addressed by index, so adding two probe steps broke two unrelated tests. Rows are found by content now, with order asserted only where it means something.
+
 ### 2026-08-04 (later³) — an unattributed frame explains itself
 
 Tom, on being told to run a SQL query against his own frame log to find out why a frame had no callsigns: *"You should be capturing those details yourself."* Correct, and the tool had the information all along — a frame reaching the panel as unattributed has already passed Reed-Solomon and the IL2P trailing CRC, so the bits are right and the *reading* of them is not, and that distinction is the whole diagnosis. It was being thrown away at the point it was cheapest to keep.
