@@ -462,6 +462,10 @@ for confirming you are hearing the band at a sane level before trusting the deco
 | `linesPerSecond` | int | `30` | Waterfall line / display frame rate |
 | `fftSize` | int | `0` | 0 = rate default (2048 at 12 kHz, 8192 at 48 kHz) |
 
+**Right-click the waterfall to copy the frequency under the pointer** — the band frequency in MHz
+once a dial is known, the audio frequency in Hz otherwise, and only the number, so it pastes
+straight into whatever wanted one. The browser's own menu is suppressed over the display for it.
+
 **The page can play the received audio.** Press *Listen* in the top bar and the station's
 receive audio streams to the browser, so you can hear the channel you are watching — an SSB
 signal, a burst you are about to decode, or the noise floor you are arguing with. It is
