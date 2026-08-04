@@ -139,6 +139,11 @@
      backlog cannot be mistaken for a channel that is busy right now. Its timestamps are real,
      which is the other half of saying so. */
   .fr.hist { opacity: .62; border-left: 2px solid #2a3441; padding-left: 10px; }
+  /* A transmission read back out of the log is both: ours, and from before the page opened. The
+     rule above sets the same property and comes after .fr.tx, so without this the grey wins and
+     a backlogged transmission loses the cyan that says it is ours — dimmed like any other
+     history row, and then indistinguishable from a station heard. */
+  .fr.hist.tx { border-left-color: #31d2f2; }
   #frames .empty { padding: 14px 12px; color: var(--muted); font-family: var(--sans); font-size: 12px; }
 
   @media (max-width: 900px) { #log { display: none; } }

@@ -14,6 +14,31 @@ import vm from "node:vm";
 const html = readFileSync(process.env.PAGE, "utf8");
 const script = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</script>"));
 
+// Which border-left the shipping stylesheet actually gives a row, resolved as a browser resolves
+// it: every rule whose class chain the row matches, by specificity and then by source order. A
+// transmitted frame read back out of the log carries both `tx` and `hist`, whose rules set the
+// same property — so which one wins is a real question, and one the DOM shim above cannot answer
+// because it holds no styles. Only bare class chains are matched; the rules that decide this one
+// are all of that shape, and a fuller selector engine would be a second browser to maintain.
+const styleText = html.slice(html.indexOf("<style>") + 7, html.indexOf("</style>"))
+  .replace(/\/\*[\s\S]*?\*\//g, " ");   // comments first, or they arrive glued to the selector
+function borderLeft(className) {
+  const classes = className.split(" ").filter(Boolean);
+  let won = null, wonRank = -1;
+  for (const rule of styleText.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const declared = /border-left(?:-color)?\s*:\s*([^;]+)/.exec(rule[2]);
+    if (!declared) continue;
+    for (const selector of rule[1].split(",")) {
+      const sel = selector.trim();
+      if (!/^(\.[A-Za-z0-9_-]+)+$/.test(sel)) continue;
+      const want = sel.slice(1).split(".");
+      if (!want.every(c => classes.includes(c))) continue;
+      if (want.length >= wonRank) { wonRank = want.length; won = declared[1].trim(); }
+    }
+  }
+  return won;
+}
+
 const noop = () => {};
 
 // Text drawn on a canvas is captured, because "what did the page write onto the waterfall" is a
@@ -162,8 +187,11 @@ const rowClasses = frames.map(c => c.className);
 const today = new Date();
 const todayAt = new Date(Date.UTC(
   today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 9, 15, 0)).toISOString();
+// The station logs what it sends as well as what it hears, so the backlog carries both: the
+// transmitted one goes in oldest, where it lands at the bottom of a newest-first panel.
 const beforeHistory = sandbox.__text().length;
 run(`onHistory({frames: [
+  {at: "2024-11-03T20:00:00.000Z", sub: 0, mode: "bpsk300-il2pc", from: "M0LTE", to: "GB7RDG-2", lenBytes: 18, tx: true, hist: true},
   {at: "2024-11-03T21:04:00.000Z", sub: 1, mode: "afsk300-il2pc", from: "GB7BEX-15", to: "GB7IOW-1", lenBytes: 22, corrected: 2, crc: false, hist: true},
   {at: "${todayAt}", sub: 0, mode: "bpsk300-il2pc", from: "GB7RDG-2", to: "EI0RSI-1", lenBytes: 31, offsetHz: 8.6, corrected: 0, crc: true, hist: true}
 ]})`);
@@ -180,6 +208,11 @@ console.log(JSON.stringify({
   historyTag,
   historyRows: afterHistory.map(c => c.innerHTML),
   historyRowClasses: afterHistory.map(c => c.className),
+  // What the stylesheet makes of a row that is both ours and from before the page opened,
+  // against the two rows it is made of.
+  txHistBorder: borderLeft("fr tx hist"),
+  txBorder: borderLeft("fr tx"),
+  histBorder: borderLeft("fr hist"),
   connected,
   clickError,
   listening,
