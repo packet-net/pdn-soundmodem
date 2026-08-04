@@ -390,8 +390,18 @@ public sealed class SoundModemChannel
                     }
 
                     first = false;
-                    output.Write(samples);
+                    // Told before the write, not after it. A real device's Write blocks until its
+                    // buffer has room, so a burst longer than the buffer does not return from it
+                    // until most of the burst has already played — and a display told afterwards
+                    // spends the whole transmission painting silence and then paints the burst
+                    // over again, taking twice as long with the first half black. Measured on the
+                    // air and reproduced: 92 black lines ahead of 97 lines of signal.
+                    // What this costs the transmitter is one scale-and-copy of the burst before
+                    // the audio goes out, which is bounded, allocation-only and does not wait on
+                    // anything — the rule that the transmitter must never wait on a picture still
+                    // holds.
                     TransmittedAudio?.Invoke(samples);
+                    output.Write(samples);
                     output.Drain();
                     item.Done.TrySetResult();
                 }
@@ -401,8 +411,8 @@ public sealed class SoundModemChannel
                     // The tail is silence, but it is time we held the channel — a display that
                     // skips it under-reports how long the keyup actually was.
                     var tail = new float[SampleRate * Csma.TxTailMilliseconds / 1000];
-                    output.Write(tail);
                     TransmittedAudio?.Invoke(tail);
+                    output.Write(tail);
                 }
 
                 output.Drain();

@@ -431,6 +431,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// by two seconds of nothing at all — receive processing is gated off while transmitting, so
     /// there is no other line source during a keyup. That is the judder: a lurch at key-down and
     /// then a frozen display for the length of the transmission.</para>
+    /// <para>This is called <em>before</em> the audio is written to the device, which is what
+    /// makes the pacing below line up with reality. A device's write blocks until its buffer has
+    /// room, so being told afterwards meant the queue stayed empty for most of the transmission —
+    /// and the pacer painted silence throughout it and then the burst all over again. See
+    /// <see cref="Channel.SoundModemChannel.TransmittedAudio"/>.</para>
     /// <para>So it is queued and released by <see cref="PaceTransmitLines"/> at the rate real
     /// time passes, which is the rate the audio is leaving the radio. The pacing lives here and
     /// not in the channel because the transmitter must never wait on a picture — this returns
