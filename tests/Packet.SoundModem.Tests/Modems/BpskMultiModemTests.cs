@@ -7,7 +7,8 @@ namespace Packet.SoundModem.Tests.Modems;
 /// Frequency-diversity BPSK: the coherent detector's narrow tracking loop only pulls in a few Hz
 /// of carrier offset within a short preamble, so <see cref="BpskMultiModem"/> runs a bank of
 /// stock branches at stepped centres. These tests show the bank decoding off-frequency signals a
-/// single centred coherent modem misses, and deduping to one frame per transmission.
+/// single centred coherent modem misses, deduping to one frame per transmission, and reporting
+/// where the station actually was rather than which branch happened to copy it.
 /// </summary>
 public class BpskMultiModemTests
 {
@@ -16,7 +17,7 @@ public class BpskMultiModemTests
     private static readonly byte[] Frame =
         Convert.FromHexString("968264888AAEE4969668908A9465B8CF303132333435363738");
 
-    private static float[] OffTune(int offsetHz, int preambleBits = 45)
+    private static float[] OffTune(double offsetHz, int preambleBits = 45)
     {
         // ~150 ms preamble (45 symbols at 300 baud) — realistic NinoTNC TXDELAY — at a carrier
         // offset from the 1500 Hz channel centre, then padded with lead-in/out silence.
@@ -59,8 +60,10 @@ public class BpskMultiModemTests
     }
 
     [Fact]
-    public void The_Winning_Branch_Reports_Its_Frequency_Offset()
+    public void The_Coherent_Path_Reports_Its_Loop_Frequency_As_The_Residual()
     {
+        // Coherent has no differential product to measure; the Costas NCO's own frequency
+        // correction is the residual, and branch + that is the station's offset.
         var qualities = new List<FrameQuality>();
         var modem = BpskMultiModem.Bpsk300(SampleRate, _ => { }, crc: true, PskDetector.Coherent);
         modem.FrameDecoded += (_, quality) => qualities.Add(quality);
@@ -68,7 +71,66 @@ public class BpskMultiModemTests
         modem.Process(OffTune(24));
 
         qualities.Should().ContainSingle()
-            .Which.FrequencyOffsetHz.Should().BeApproximately(24, 8, "the branch step nearest +24 Hz wins");
+            .Which.FrequencyOffsetHz.Should().BeApproximately(24, 3, "the loop settles on the carrier");
+    }
+
+    /// <summary>
+    /// The acceptance test for issue #202: on a swept-CFO grid the reported offset tracks the
+    /// injected offset instead of snapping to a comb position. Every offset sits exactly half a
+    /// step (3.75 Hz) from the nearest branch of the default 4 pairs × 7.5 Hz comb, so with a
+    /// 2 Hz tolerance no branch label — the old behaviour — can pass any of them.
+    /// </summary>
+    [Theory]
+    [InlineData(-26.25)]
+    [InlineData(-18.75)]
+    [InlineData(-11.25)]
+    [InlineData(-3.75)]
+    [InlineData(3.75)]
+    [InlineData(11.25)]
+    [InlineData(18.75)]
+    [InlineData(26.25)]
+    public void The_Reported_Offset_Is_A_Measurement_Of_The_Signal(double offsetHz)
+    {
+        var qualities = new List<FrameQuality>();
+        var modem = BpskMultiModem.Bpsk300(SampleRate, _ => { });
+        modem.FrameDecoded += (_, quality) => qualities.Add(quality);
+
+        modem.Process(OffTune(offsetHz));
+
+        qualities.Should().ContainSingle()
+            .Which.FrequencyOffsetHz.Should().BeApproximately(
+                offsetHz, 2, "the bank reports where the station actually was, not which branch won");
+    }
+
+    [Fact]
+    public void A_Centred_Signal_Does_Not_Read_As_The_Most_Negative_Branch()
+    {
+        // The bug: branches run in array order and several copy the same frame, so index 0 —
+        // −30 Hz on the default 4 pairs × 7.5 Hz comb — won by iteration order and 82 % of a
+        // live station's frames read exactly −30 Hz. A signal on frequency must read ~0.
+        var qualities = new List<FrameQuality>();
+        var modem = BpskMultiModem.Bpsk300(SampleRate, _ => { });
+        modem.FrameDecoded += (_, quality) => qualities.Add(quality);
+
+        modem.Process(OffTune(0));
+
+        qualities.Should().ContainSingle()
+            .Which.FrequencyOffsetHz.Should().BeApproximately(0, 2, "the station was on frequency");
+    }
+
+    [Fact]
+    public void A_Single_Branch_Measures_The_Offset_Too()
+    {
+        // Not a bank property: one BpskModem measures its own residual, which is what makes
+        // branch + residual meaningful however far out the winning branch sits.
+        var qualities = new List<FrameQuality>();
+        var modem = BpskModem.Bpsk300(SampleRate, _ => { });
+        modem.FrameDecoded += (_, quality) => qualities.Add(quality);
+
+        modem.Process(OffTune(22));
+
+        qualities.Should().ContainSingle()
+            .Which.FrequencyOffsetHz.Should().BeApproximately(22, 2);
     }
 
     [Fact]

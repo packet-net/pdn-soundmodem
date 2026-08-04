@@ -32,12 +32,19 @@ public sealed class BpskModem : IModem, IConstellationSource
         ArgumentNullException.ThrowIfNull(frameReceived);
         _crc = crc;
         _baud = baud;
+        // Declared ahead of the deframer because its callback needs it — the carrier-offset
+        // reading below — while it in turn cannot be built until the bit sink that drives it
+        // exists. Nothing dereferences it until audio flows.
+        BpskDemodulator? demodulator = null;
         var deframer = new Il2pDeframer(
             (frame, info) =>
             {
                 frameReceived(frame);
                 FrameDecoded?.Invoke(frame, new FrameQuality(
-                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
+                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                    // Read at the end of the burst that carried the frame, while the window it
+                    // is measured over still describes that burst.
+                    FrequencyOffsetHz: demodulator!.CarrierOffsetHz));
             },
             crc);
 
@@ -53,7 +60,6 @@ public sealed class BpskModem : IModem, IConstellationSource
         // 24 symbol times (80 ms at 300 Bd) of the carrier stopping — well before the next
         // transmission's sync word arrives — so the reset is always in time.
         bool previousDcd = false;
-        BpskDemodulator? demodulator = null;
         demodulator = new BpskDemodulator(sampleRate, bit =>
         {
             bool dcd = demodulator!.CarrierDetect;

@@ -69,6 +69,31 @@ public class OffAirBpskTests
         DecodeAddress(frame, 7).Should().Be("GB7RDG-2"); // then source
     }
 
+    /// <summary>
+    /// The offset the shipping decode path puts on this frame agrees with the standalone
+    /// estimator's independent reading of the same audio.
+    /// </summary>
+    /// <remarks>
+    /// Real RF is where issue #202 was visible and where the fix has to hold: the bank used to
+    /// report the winning branch's comb position, which for this frame would be a step of the
+    /// 7.5 Hz comb rather than the ~8 Hz the carrier actually sits at. The two paths share no
+    /// selection logic — the estimator runs one centred chain over the whole file, the bank picks
+    /// a branch and adds its residual — so agreement between them is a real cross-check.
+    /// </remarks>
+    [Fact]
+    public void The_Bank_Reports_The_Measured_Offset_Of_A_Real_Off_Air_Frame()
+    {
+        var qualities = new List<FrameQuality>();
+        var modem = BpskMultiModem.Bpsk300(DspRate, _ => { });
+        modem.FrameDecoded += (_, quality) => qualities.Add(quality);
+
+        modem.Process(Gb7rdgFixture());
+
+        qualities.Should().ContainSingle()
+            .Which.FrequencyOffsetHz.Should().BeApproximately(
+                8, 4, "the captured GB7RDG carrier sits ~8 Hz above the 1500 Hz centre");
+    }
+
     [Fact]
     public void Estimated_Carrier_Offset_Is_About_Eight_Hz()
     {

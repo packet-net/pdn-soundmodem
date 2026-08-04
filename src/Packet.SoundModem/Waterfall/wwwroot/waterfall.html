@@ -129,6 +129,12 @@
     font-size: 9px; font-weight: 700; letter-spacing: .08em; vertical-align: 1px;
     color: #0c1016; background: var(--amber);
   }
+  /* Our own transmission: listed like anything else so the panel is a record of the whole
+     channel, in the cyan the rest of the page already uses for transmit so it can never be
+     misread as a station heard. */
+  .fr.tx { border-left: 2px solid #31d2f2; padding-left: 10px; }
+  .fr.tx .id { background: #7fe3f7; }
+  .fr.tx .from { color: #7fe3f7; }
   #frames .empty { padding: 14px 12px; color: var(--muted); font-family: var(--sans); font-size: 12px; }
 
   @media (max-width: 900px) { #log { display: none; } }
@@ -192,7 +198,7 @@
   </div>
   <aside id="log">
     <h2>Decoded frames</h2>
-    <div id="frames"><div class="empty">Nothing decoded yet. Frames appear here and as tags on the waterfall.</div></div>
+    <div id="frames"><div class="empty">Nothing decoded yet. Frames appear here and as tags on the waterfall; what this station sends is listed too, marked TX.</div></div>
   </aside>
 </main>
 <div id="tip"></div>
@@ -640,14 +646,25 @@ function tagFrame(ev) {
   presentWaterfall();
 }
 
+/* ---------- what to do with a frame event ---------- */
+// Ours is listed but not tagged: the burst it belongs to is painted from a queue in real time
+// while the event arrives as soon as the audio device took the audio, so a tag would land
+// somewhere up the burst rather than on it. Everything heard gets both.
+function onFrameEvent(ev) {
+  if (!ev.tx) tagFrame(ev);
+  logFrame(ev);
+}
+
 /* ---------- decode log panel ---------- */
 let logEmpty = true;
 function logFrame(ev) {
   if (logEmpty) { $("frames").replaceChildren(); logEmpty = false; }
   const row = document.createElement("div");
-  row.className = "fr";
+  row.className = ev.tx ? "fr tx" : "fr";
   const t = new Date().toTimeString().slice(0, 8);
-  const badge = ev.id ? `<span class="id" title="Station identification, heard on the mode the TNC idents in rather than the one it carries data in">ID</span>` : "";
+  const badge = ev.tx
+    ? `<span class="id" title="Sent by this station — listed once the audio has gone out">TX</span>`
+    : ev.id ? `<span class="id" title="Station identification, heard on the mode the TNC idents in rather than the one it carries data in">ID</span>` : "";
   const who = (ev.from
     ? `<span class="from">${ev.from}</span><span class="arrow">›</span><span class="to">${ev.to || "?"}</span>`
     : `<span class="to">unattributed</span>`) + badge;
@@ -715,7 +732,7 @@ function connect() {
       } else if (msg.type === "tx") {
         setTransmitStatus(msg.status);
       } else if (msg.type === "frame") {
-        tagFrame(msg); logFrame(msg);
+        onFrameEvent(msg);
       }
       return;
     }

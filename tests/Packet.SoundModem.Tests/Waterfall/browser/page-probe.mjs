@@ -140,12 +140,27 @@ run(`tagFrame({sub:0, mode:"afsk300-multi11", from:"KK4HEJ", to:"IDENT", line:0,
 const identTag = sandbox.__text().slice(beforeIdent);
 run(`logFrame({sub:0, mode:"afsk300-multi11", from:"KK4HEJ", to:"IDENT", lenBytes:17, offsetHz:-35, id:true})`);
 
-const rows = sandbox.document.getElementById("frames").children.map(c => c.innerHTML);
+// Our own transmission, through the dispatch the socket handler uses — the point is what the
+// page does with the event, not what the two drawing functions do when called by hand. Driven
+// against a received frame through the same entry point, so "listed but not tagged" is measured
+// rather than assumed.
+const beforeHeard = sandbox.__text().length;
+run(`onFrameEvent({sub:0, mode:"afsk1200", from:"GB7RDG", to:"M0LTE", line:0, burstLines:9, lenBytes:31, snrDb:9.5})`);
+const heardTag = sandbox.__text().slice(beforeHeard);
+const beforeTx = sandbox.__text().length;
+run(`onFrameEvent({sub:0, mode:"afsk1200", from:"M0LTE-9", to:"GB7RDG", line:0, lenBytes:24, tx:true})`);
+const txTag = sandbox.__text().slice(beforeTx);
+
+const frames = sandbox.document.getElementById("frames").children;
+const rows = frames.map(c => c.innerHTML);
 
 console.log(JSON.stringify({
   ordinaryTag,
   identTag,
+  heardTag,
+  txTag,
   frameRows: rows,
+  frameRowClasses: frames.map(c => c.className),
   connected,
   clickError,
   listening,

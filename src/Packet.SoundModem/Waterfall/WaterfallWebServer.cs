@@ -279,6 +279,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _channel.TransmittedAudio += OnTransmittedAudio;
         _channel.TransmittingChanged += OnTransmittingChanged;
         _channel.FrameReceivedWithQuality += OnFrame;
+        _channel.FrameTransmitted += OnFrameTransmitted;
         _listener.Start();
         _acceptLoop = AcceptLoopAsync();
     }
@@ -605,6 +606,41 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             quality.CorrectedBytes, quality.CrcValid);
     }
 
+    /// <summary>Frame event (transmit thread): list what this station has just sent, so the
+    /// panel is a record of the channel rather than of half of it.</summary>
+    /// <remarks>
+    /// <para>The burst is already drawn — transmitted audio is painted in its own style so a
+    /// keyup does not read as a strong station — but until now nothing said <em>what</em> it
+    /// was, and an operator watching their own beacon go out had to take it on trust. Raised
+    /// after the audio has left, so a listed frame is one that actually went on air.</para>
+    /// <para>No SNR, offset, FEC count or CRC: those are receive measurements, and inventing
+    /// them for our own transmission would be inventing a measurement of ourselves. No burst
+    /// tag either — a received frame's tag lands on the energy that carried it, but transmitted
+    /// audio is queued and repainted in real time while this fires as soon as the device has
+    /// taken it, so the tag would sit somewhere up the burst rather than on it.</para>
+    /// </remarks>
+    private void OnFrameTransmitted(int subChannel, byte[] frame)
+    {
+        if (_source is null)
+        {
+            return;   // not started; nobody to tell
+        }
+
+        string? from = null;
+        string? to = null;
+        if (Ax25AddressParser.TryParse(frame, out string source, out string destination))
+        {
+            from = source;
+            to = destination;
+        }
+
+        BroadcastFrame(
+            subChannel,
+            _channel.Modems.TryGetValue(subChannel, out IModem? modem) ? modem.Mode : "?",
+            from, to, frame.Length, snrDb: null, burstLines: null, offsetHz: null,
+            corrected: null, crc: null, transmitted: true);
+    }
+
     /// <summary>
     /// Reports a frame heard by a demodulator that is not one of the channel's sub-channel
     /// modems — ARDOP, whose demodulator is inside the virtual TNC and never raises
@@ -673,7 +709,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     private void BroadcastFrame(
         int subChannel, string mode, string? from, string? to, int lengthBytes,
         double? snrDb, int? burstLines, double? offsetHz, int? corrected, bool? crc,
-        bool idBeacon = false)
+        bool idBeacon = false, bool transmitted = false)
     {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -692,6 +728,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // True on an ident, null otherwise — same nullable-optional shape as the fields
             // above, and the page tests it for truthiness either way.
             id = idBeacon ? true : (bool?)null,
+            // True on our own transmission: the page lists it and, unlike everything else,
+            // does not tag it onto the waterfall (see OnFrameTransmitted).
+            tx = transmitted ? true : (bool?)null,
         }, Json);
         Broadcast(WebSocketMessageType.Text, message);
     }
@@ -949,6 +988,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     {
         await _stopping.CancelAsync().ConfigureAwait(false);
         _channel.FrameReceivedWithQuality -= OnFrame;
+        _channel.FrameTransmitted -= OnFrameTransmitted;
         _channel.TransmittedAudio -= OnTransmittedAudio;
         _channel.TransmittingChanged -= OnTransmittingChanged;
         lock (_transmitLock)
