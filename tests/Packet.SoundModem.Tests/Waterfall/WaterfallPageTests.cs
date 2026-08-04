@@ -104,15 +104,58 @@ public class WaterfallPageTests
         probe.IdentTag.Should().HaveCount(2).And.AllSatisfy(
             tag => tag.Should().Contain("KK4HEJ").And.Contain("ID"));
 
-        // The panel, newest first — so the ident is the row prepended last.
-        probe.FrameRows.Should().HaveCount(2);
-        probe.FrameRows[0].Should().Contain("KK4HEJ").And.Contain("IDENT");
-        probe.FrameRows[0].Should().Contain(
+        // The panel, newest first — the probe logs an ordinary frame, then the ident, then two
+        // more for the transmit check, so the ident sits directly above the ordinary one.
+        probe.FrameRows.Should().HaveCount(4);
+        probe.FrameRows[2].Should().Contain("KK4HEJ").And.Contain("IDENT");
+        probe.FrameRows[2].Should().Contain(
             "class=\"id\"", "an ident must be badged, or it reads as ordinary traffic");
-        probe.FrameRows[0].Should().Contain(">ID<");
-        probe.FrameRows[1].Should().Contain("M0LTE");
-        probe.FrameRows[1].Should().NotContain(
+        probe.FrameRows[2].Should().Contain(">ID<");
+        probe.FrameRows[3].Should().Contain("M0LTE");
+        probe.FrameRows[3].Should().NotContain(
             "class=\"id\"", "only idents carry the badge");
+    }
+
+    /// <summary>
+    /// A frame this station sent is listed in the panel and marked as ours, and — unlike
+    /// everything heard — is not tagged onto the waterfall.
+    /// </summary>
+    /// <remarks>
+    /// Both halves are page behaviour the server cannot see: it sends one <c>frame</c> message
+    /// either way and only the <c>tx</c> flag differs. The received frame is driven through the
+    /// same entry point in the same run, so "listed but not tagged" is measured against what a
+    /// heard frame does rather than against an assumption. Not tagged because the burst is
+    /// painted from a queue in real time while the event fires as soon as the audio device took
+    /// the audio — the tag would land somewhere up the burst rather than on it.
+    /// </remarks>
+    [Fact]
+    public async Task Our_Own_Transmission_Is_Listed_But_Not_Tagged()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw while listing frames");
+        probe.Connected.Should().BeTrue("the page needs the config before it can tag anything");
+
+        // Two draws for a heard frame (the tag is written twice, either side of the scroll ring's
+        // wrap seam), none at all for ours.
+        probe.HeardTag.Should().HaveCount(2).And.AllSatisfy(tag => tag.Should().Contain("GB7RDG"));
+        probe.TxTag.Should().BeEmpty("our own burst is drawn in its own style and needs no tag");
+
+        // Newest first, so ours is row 0 and the frame heard just before it is row 1.
+        probe.FrameRows[0].Should().Contain("M0LTE-9").And.Contain("GB7RDG").And.Contain(">TX<");
+        probe.FrameRowClasses[0].Should().Be(
+            "fr tx", "a transmission must be styled apart, or it reads as a station heard");
+        probe.FrameRows[1].Should().NotContain(">TX<", "only our own transmissions are marked");
+        probe.FrameRowClasses[1].Should().Be("fr");
     }
 
     private static void FeedTone(SoundModemChannel channel, CancellationToken token)
@@ -208,6 +251,9 @@ public class WaterfallPageTests
         string StoppedLabel,
         string[] OrdinaryTag,
         string[] IdentTag,
+        string[] HeardTag,
+        string[] TxTag,
         string[] FrameRows,
+        string[] FrameRowClasses,
         string[] Thrown);
 }

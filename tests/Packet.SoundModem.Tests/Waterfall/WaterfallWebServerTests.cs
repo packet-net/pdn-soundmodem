@@ -147,6 +147,92 @@ public class WaterfallWebServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Our_Own_Transmitted_Frame_Is_Listed_And_Marked_As_Ours()
+    {
+        // The panel was a record of half the channel: everything heard, nothing sent, so an
+        // operator watching their own beacon go out had only the burst to go on. Listed after
+        // the audio has left, so what is shown actually went on air, and marked so it can never
+        // read as a station heard.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        _channel.Csma.Persistence = 255;
+        _channel.Csma.TxDelayMilliseconds = 20;
+        using var transmitCancel = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var output = new Channel.FakeAudioOutput(SampleRate);
+        Task transmitter = _channel.RunTransmitterAsync(output, new NullPtt(), transmitCancel.Token);
+        await _channel.EnqueueTransmit(0, TestFrame()).WaitAsync(TimeSpan.FromSeconds(15));
+
+        JsonDocument? frame = null;
+        for (int i = 0; i < 40 && frame is null; i++)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind != WebSocketMessageType.Text)
+            {
+                continue;
+            }
+
+            JsonDocument message = JsonDocument.Parse(payload);
+            if (message.RootElement.GetProperty("type").GetString() == "frame")
+            {
+                frame = message;
+            }
+            else
+            {
+                message.Dispose();
+            }
+        }
+
+        frame.Should().NotBeNull("what this station sends belongs in the panel too");
+        frame!.RootElement.GetProperty("tx").GetBoolean().Should().BeTrue();
+        frame.RootElement.GetProperty("from").GetString().Should().Be("M0LTE-9");
+        frame.RootElement.GetProperty("to").GetString().Should().Be("GB7RDG");
+        frame.RootElement.GetProperty("sub").GetInt32().Should().Be(0);
+        frame.RootElement.GetProperty("mode").GetString().Should().Be("afsk1200");
+        frame.RootElement.GetProperty("lenBytes").GetInt32().Should().Be(TestFrame().Length);
+        // Receive measurements, and we did not receive this: reporting them would be reporting a
+        // measurement of ourselves.
+        frame.RootElement.GetProperty("snrDb").ValueKind.Should().Be(JsonValueKind.Null);
+        frame.RootElement.GetProperty("offsetHz").ValueKind.Should().Be(JsonValueKind.Null);
+        frame.RootElement.GetProperty("crc").ValueKind.Should().Be(JsonValueKind.Null);
+        frame.Dispose();
+
+        await transmitCancel.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    [Fact]
+    public async Task A_Received_Frame_Is_Not_Marked_As_Ours()
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        _server.ReportFrame(0, "afsk1200", "M0LTE", "GB7RDG", 22, 14.0, true);
+
+        JsonDocument? frame = null;
+        while (frame is null)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind == WebSocketMessageType.Text)
+            {
+                frame = JsonDocument.Parse(payload);
+            }
+        }
+
+        frame.RootElement.GetProperty("tx").ValueKind.Should()
+            .Be(JsonValueKind.Null, "only our own transmission is ours");
+        frame.Dispose();
+    }
+
+    [Fact]
     public async Task Receive_Audio_Is_Sent_Only_To_A_Browser_That_Asked_For_It()
     {
         // Opening the page to look at a waterfall must not quietly start pulling ~24 KB/s, and
