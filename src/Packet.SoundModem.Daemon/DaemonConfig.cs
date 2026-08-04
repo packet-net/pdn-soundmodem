@@ -230,6 +230,55 @@ public sealed class FrameLogConfig
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
+/// <summary>
+/// Signal survey: watch the whole passband for transmissions this station cannot read, and keep
+/// the ones worth looking at later. Null = not surveying.
+/// </summary>
+/// <remarks>
+/// Off unless configured, and budgeted when it is: this writes audio to disk unattended for as
+/// long as the station runs. See <see cref="Survey.SignalSurvey"/> for what counts as worth
+/// keeping and why.
+/// </remarks>
+public sealed class SurveyConfig
+{
+    /// <summary>Where captures are written — a WAV and a JSON sidecar per burst. The packaged
+    /// service runs unprivileged, so the default sits under its own state directory.</summary>
+    public string Path { get; set; } = "/var/lib/pdn-soundmodem/survey";
+
+    /// <summary>Byte budget for that directory. On reaching it the oldest captures are deleted
+    /// to make room, so a station left collecting for a week keeps its recent past rather than
+    /// stopping on day one and leaving an empty tail.</summary>
+    public long MaxBytes { get; set; } = 512L * 1024 * 1024;
+
+    /// <summary>Most captures in any rolling hour.</summary>
+    public int MaxPerHour { get; set; } = 30;
+
+    /// <summary>How long the same part of the spectrum is left alone after a capture. One station
+    /// working an unclaimed frequency is one discovery, not two hundred.</summary>
+    public double CooldownSeconds { get; set; } = 120;
+
+    /// <summary>Audio kept either side of the burst.</summary>
+    public double MarginSeconds { get; set; } = 1.0;
+
+    /// <summary>Longest burst still plausibly a packet. This, not width, is what separates a
+    /// voice over from a wideband data burst — they occupy much the same 2.4 kHz.</summary>
+    public double MaxSeconds { get; set; } = 20;
+
+    /// <summary>Weakest burst worth keeping, in dB over the noise floor.</summary>
+    public double MinPeakSnrDb { get; set; } = 6;
+
+    /// <summary>
+    /// Which verdicts to write out: <c>unclaimed</c> (outside every configured band),
+    /// <c>missed</c> (inside one, nothing decoded), <c>unattributed</c> (a frame decoded with no
+    /// readable AX.25 addresses). Empty = the default three.
+    /// </summary>
+    public string[]? Capture { get; set; }
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
 /// <summary>Browser waterfall endpoint (spectrum + waterfall + per-frame burst
 /// attribution); null = disabled. See WaterfallWebServer.</summary>
 public sealed class WaterfallConfig
@@ -332,6 +381,9 @@ public sealed class DaemonConfig
 
     /// <summary>Frame log; null = frames are heard and not written down.</summary>
     public FrameLogConfig? FrameLog { get; set; }
+
+    /// <summary>Signal survey; null = signals this station cannot read go unrecorded.</summary>
+    public SurveyConfig? Survey { get; set; }
 
     /// <summary>
     /// Whether to listen for the station identifications a NinoTNC sends alongside its PSK SSB
