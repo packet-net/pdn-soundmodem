@@ -57,7 +57,7 @@ public sealed class UberSdrAudioInputTests
             """;
 
         UberSdrAudioInput.Describe(json).Should().Be(
-            "M9PSY-1 · RX888 with 40m Full Wave Loop (GPSDO) · Dalgety Bay, Scotland, UK · "
+            "M9PSY-1, RX888 with 40m Full Wave Loop (GPSDO), Dalgety Bay, Scotland, UK, "
             + "reference offset 0 Hz");
     }
 
@@ -85,6 +85,6 @@ public sealed class UberSdrAudioInputTests
             }
             """;
 
-        UberSdrAudioInput.Describe(json).Should().Be("G0XXX · Reading, UK");
+        UberSdrAudioInput.Describe(json).Should().Be("G0XXX, Reading, UK");
     }
 }

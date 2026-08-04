@@ -46,7 +46,7 @@ internal static class BandPlanner
         if (baseband is not null)
         {
             throw new InvalidDataException(
-                $"modem {baseband.SubChannel} ({baseband.Mode}) is a baseband mode — it occupies the "
+                $"modem {baseband.SubChannel} ({baseband.Mode}) is a baseband mode - it occupies the "
                 + "audio band from DC upwards rather than sitting on a centre frequency, so it "
                 + "cannot be placed with \"rfFrequency\". Configure this channel by audio "
                 + "\"frequency\" instead, or give this modem a channel of its own.");
@@ -152,7 +152,7 @@ internal static class BandPlanner
     {
         output.WriteLine(
             $"dial: {RfPlan.Mhz(plan.DialHz)} {plan.Sideband.ToUpperInvariant()}"
-            + (radioIsSelfTuning ? "" : " — set your radio to this"));
+            + (radioIsSelfTuning ? "" : " - set your radio to this"));
         foreach (PlannedModem m in plan.Modems)
         {
             output.WriteLine(
@@ -166,7 +166,7 @@ internal static class BandPlanner
         if (!plan.Window.IsNominal)
         {
             output.WriteLine(
-                $"  passband: {plan.Window.LowHz:F0}-{plan.Window.HighHz:F0} Hz — wider than an "
+                $"  passband: {plan.Window.LowHz:F0}-{plan.Window.HighHz:F0} Hz - wider than an "
                 + $"ordinary {Passband.Nominal.LowHz:F0}-{Passband.Nominal.HighHz:F0} Hz SSB "
                 + "window, because these modems do not fit one; the radio's filters are set to suit");
         }

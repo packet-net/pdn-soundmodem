@@ -154,7 +154,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
                 && !modes.Contains(tuning.Mode, StringComparer.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException(
-                    $"{endpoint} does not offer IQ mode '{tuning.Mode}' to this client — it allows "
+                    $"{endpoint} does not offer IQ mode '{tuning.Mode}' to this client - it allows "
                     + $"{string.Join(", ", modes)}. Set \"ubersdr\": {{ \"mode\": \"{modes[0]}\" }}, or "
                     + "ask the receiver's operator for access.");
             }
@@ -257,7 +257,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
 
         throw new InvalidOperationException(
             $"'{mode}' is not an UberSDR IQ mode. Use \"iq48\" (every instance) or \"iq96\" "
-            + "where the receiver offers it — this device streams complex baseband, not the "
+            + "where the receiver offers it - this device streams complex baseband, not the "
             + "instance's own demodulated audio.");
     }
 
@@ -552,7 +552,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         {
             Interlocked.Exchange(ref _droppedReported, total);
             _log?.Invoke(
-                $"ubersdr: WARNING — dropped {total} samples ({total / (double)_tuning.OutputRate:F1} s) "
+                $"ubersdr: WARNING - dropped {total} samples ({total / (double)_tuning.OutputRate:F1} s) "
                 + "because the receive buffer filled. The machine is not keeping up with the stream.");
         }
     }
@@ -600,7 +600,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         catch (WebSocketException e) when (socket.HttpStatusCode == HttpStatusCode.TooManyRequests)
         {
             socket.Dispose();
-            throw new UberSdrRefusedException("HTTP 429 — rate limited or out of daily quota", e);
+            throw new UberSdrRefusedException("HTTP 429 - rate limited or out of daily quota", e);
         }
         catch
         {
@@ -645,7 +645,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
                 return new ConnectionResponse
                 {
                     Allowed = false,
-                    Reason = "HTTP 429 — rate limited",
+                    Reason = "HTTP 429 - rate limited",
                     DailyTimeRemainingSecs = 0,
                 };
             }
@@ -665,7 +665,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         if (reply is null)
         {
             throw new InvalidOperationException(
-                $"{endpoint.HttpBase}/connection returned nothing — is that an UberSDR instance?");
+                $"{endpoint.HttpBase}/connection returned nothing - is that an UberSDR instance?");
         }
 
         return reply;
@@ -727,7 +727,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
                 parts.Add($"reference offset {offset:F0} Hz");
             }
 
-            return parts.Count == 0 ? null : string.Join(" · ", parts);
+            return parts.Count == 0 ? null : string.Join(", ", parts);
         }
         catch (Exception e) when (e is JsonException or InvalidOperationException or FormatException)
         {

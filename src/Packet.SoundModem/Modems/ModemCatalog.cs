@@ -178,7 +178,7 @@ public static class ModemCatalog
         if (frequency is not null && !AcceptsCentreFrequency(mode))
         {
             throw new ArgumentException(
-                $"mode '{mode}' has a fixed centre frequency — drop the frequency override " +
+                $"mode '{mode}' has a fixed centre frequency - drop the frequency override " +
                 "(only the afsk*/bpsk*/qpsk* modes accept one)",
                 nameof(options));
         }

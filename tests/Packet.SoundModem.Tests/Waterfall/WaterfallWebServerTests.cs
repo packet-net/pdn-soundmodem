@@ -667,10 +667,10 @@ public class WaterfallWebServerTests : IAsyncLifetime
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
         (_, _) = await Receive(socket);   // config
 
-        _server.SetTransmitStatus("TX 29.4 W · SWR 1.2");
+        _server.SetTransmitStatus("TX 29.4 W, SWR 1.2");
         JsonDocument keyed = await NextTextAsync(socket);
         keyed.RootElement.GetProperty("type").GetString().Should().Be("tx");
-        keyed.RootElement.GetProperty("status").GetString().Should().Be("TX 29.4 W · SWR 1.2");
+        keyed.RootElement.GetProperty("status").GetString().Should().Be("TX 29.4 W, SWR 1.2");
         keyed.Dispose();
 
         _server.SetTransmitStatus(null);

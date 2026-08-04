@@ -105,7 +105,7 @@ public sealed class FreeDvDatacModem : IModem
         {
             throw new ArgumentException(
                 $"sample rate must be an integer multiple of {NativeRate} (the engine's native " +
-                "rate); use the 48 kHz DSP path — 12 kHz has no integer ratio to 8 kHz",
+                "rate); use the 48 kHz DSP path - 12 kHz has no integer ratio to 8 kHz",
                 nameof(sampleRate));
         }
 

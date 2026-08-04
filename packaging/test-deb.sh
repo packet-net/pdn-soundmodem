@@ -16,7 +16,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 DEBDIR="$(cd "${2:-$(dirname "$HERE")/artifacts}" && pwd)"
 DEB="pdn-soundmodem_${VERSION}_amd64.deb"
 
-[ -f "$DEBDIR/$DEB" ] || { echo "no $DEBDIR/$DEB — run packaging/build-deb.sh $VERSION amd64 first" >&2; exit 2; }
+[ -f "$DEBDIR/$DEB" ] || { echo "no $DEBDIR/$DEB - run packaging/build-deb.sh $VERSION amd64 first" >&2; exit 2; }
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 2; }
 
 WORK="$(mktemp -d)"
@@ -56,7 +56,7 @@ echo "== the binary runs from the packaged layout =="
 out=$(timeout 25 /usr/bin/pdn-soundmodem --device null --ptt serial:/dev/ttyNOPE0:rts --kiss 18201 2>&1)
 echo "$out" | grep -q 'DllNotFoundException' \
   && bad "native lib resolves (got DllNotFoundException)" \
-  || ok  "native lib resolves — no DllNotFoundException"
+  || ok  "native lib resolves - no DllNotFoundException"
 echo "$out" | grep -q 'kiss tcp' && ok "modem starts and binds KISS" || bad "modem did not bind KISS"
 
 echo
@@ -112,7 +112,7 @@ state=$(systemctl is-enabled pdn-soundmodem.service 2>&1)
 # matches the literal "-- No entries --" line and so passes when nothing ever started.)
 started=$(systemctl show pdn-soundmodem.service -p ExecMainStartTimestamp --value 2>/dev/null)
 [ -n "$started" ] && ok "postinst started it ($started)" \
-                  || bad "postinst did not start the unit — ExecMainStartTimestamp empty"
+                  || bad "postinst did not start the unit - ExecMainStartTimestamp empty"
 
 echo
 echo "== start =="
@@ -137,7 +137,7 @@ systemctl restart pdn-soundmodem >/dev/null 2>&1 || true
 sleep 9
 restarts=$(systemctl show pdn-soundmodem.service -p NRestarts --value 2>/dev/null)
 [ "$restarts" = "0" ] && ok "no restarts after a bad config (RestartPreventExitStatus=2)" \
-                      || bad "expected 0 restarts, got '$restarts' — a bad config is crash-looping"
+                      || bad "expected 0 restarts, got '$restarts' - a bad config is crash-looping"
 code=$(systemctl show pdn-soundmodem.service -p ExecMainStatus --value 2>/dev/null)
 [ "$code" = "2" ] && ok "exited 2 (the code the unit refuses to retry)" \
                   || bad "expected exit 2 for a bad config, got '$code'"

@@ -82,13 +82,13 @@ internal static class ActivityLog
 
     /// <summary>A host attached to a KISS port.</summary>
     internal static string ClientConnected(int port, int? dedicatedSubChannel, KissClientEvent e) =>
-        $"kiss[{port}] {Host(e.Remote)} connected — {Clients(e.Clients)}{Serving(dedicatedSubChannel)}";
+        $"kiss[{port}] {Host(e.Remote)} connected - {Clients(e.Clients)}{Serving(dedicatedSubChannel)}";
 
     /// <summary>A host's KISS session ended; the reason is given where it was not a clean close.</summary>
     internal static string ClientDisconnected(int port, int? dedicatedSubChannel, KissClientEvent e) =>
         $"kiss[{port}] {Host(e.Remote)} disconnected"
         + (e.Reason is { Length: > 0 } why ? $": {why}" : "")
-        + $" — {Clients(e.Clients)}{Serving(dedicatedSubChannel)}";
+        + $" - {Clients(e.Clients)}{Serving(dedicatedSubChannel)}";
 
     private static string Host(System.Net.EndPoint? remote) => remote?.ToString() ?? "(unknown host)";
 

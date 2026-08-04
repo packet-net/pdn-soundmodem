@@ -156,9 +156,9 @@ public class ActivityLogTests
         string shared = ActivityLog.ClientConnected(8105, null, new KissClientEvent(remote, 2));
         string dedicated = ActivityLog.ClientConnected(8101, 3, new KissClientEvent(remote, 1));
 
-        shared.Should().Be("kiss[8105] 192.168.1.50:54312 connected — 2 clients (all modems)");
+        shared.Should().Be("kiss[8105] 192.168.1.50:54312 connected - 2 clients (all modems)");
         // Which modems a port reaches is the thing host operators get wrong, so it is on every line.
-        dedicated.Should().Be("kiss[8101] 192.168.1.50:54312 connected — 1 client (modem 3 only)");
+        dedicated.Should().Be("kiss[8101] 192.168.1.50:54312 connected - 1 client (modem 3 only)");
     }
 
     [Fact]
@@ -170,7 +170,7 @@ public class ActivityLogTests
         string reset = ActivityLog.ClientDisconnected(
             8105, null, new KissClientEvent(remote, 0, "Connection reset by peer."));
 
-        clean.Should().Be("kiss[8105] 127.0.0.1:40000 disconnected — 0 clients (all modems)");
+        clean.Should().Be("kiss[8105] 127.0.0.1:40000 disconnected - 0 clients (all modems)");
         reset.Should().Contain("disconnected: Connection reset by peer.");
     }
 

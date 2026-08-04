@@ -210,7 +210,7 @@ internal static class RfPlan
                 + $"the RF frequencies asked for would need the dial at {Mhz(dial)} and "
                 + $"{Mhz(DialFor(disagrees))} at the same time. Two spec-fixed modes can share a "
                 + "dial only where their RF frequencies differ by exactly the difference of their "
-                + "audio centres — move one, or give it a channel of its own.");
+                + "audio centres - move one, or give it a channel of its own.");
         }
 
         return dial;
@@ -262,7 +262,7 @@ internal static class RfPlan
             text.AppendLine(
                 $"with the dial pinned to {Mhz(dial)} {(upper ? "USB" : "LSB")}, these fall outside "
                 + $"the nominal {passband.LowHz:F0}-{passband.HighHz:F0} Hz passband. That is only a "
-                + "nominal figure — if your rig passes them, ignore this; omit \"dialFrequency\" "
+                + "nominal figure - if your rig passes them, ignore this; omit \"dialFrequency\" "
                 + "and the dial will be chosen to fit them:");
         }
         else if (span > room)
@@ -277,7 +277,7 @@ internal static class RfPlan
             text.AppendLine(
                 $"these modems span {span:F0} Hz of RF ({Mhz(slots.Min(s => s.LowEdgeHz))} to "
                 + $"{Mhz(slots.Max(s => s.HighEdgeHz))}), which is more than {ceiling}. No dial "
-                + "frequency can place them all on air at once — split them across separate "
+                + "frequency can place them all on air at once - split them across separate "
                 + "radios, or move them closer together:");
         }
         else
@@ -302,7 +302,7 @@ internal static class RfPlan
             text.AppendLine(
                 $"  modem {dialFixer.SubChannel} ({dialFixer.Mode}) has its audio centre fixed at "
                 + $"{dialFixer.FixedCentreHz:F0} Hz by its own standard, so it is what puts the dial "
-                + $"at {Mhz(dial)} — and on {(upper ? "USB" : "LSB")} every other modem then has to "
+                + $"at {Mhz(dial)} - and on {(upper ? "USB" : "LSB")} every other modem then has to "
                 + $"sit {(upper ? "above" : "below")} that. {below} "
                 + $"{(below.Contains(',') ? "are" : "is")} on the wrong side of it. Put the "
                 + $"spec-fixed modem {(upper ? "lowest" : "highest")} in the plan.");

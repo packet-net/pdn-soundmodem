@@ -221,7 +221,7 @@ if (configPath is not null)
 
     foreach (string warning in config.Warnings)
     {
-        Console.Error.WriteLine($"config: WARNING — {warning}");
+        Console.Error.WriteLine($"config: WARNING - {warning}");
     }
 
     device = config.Device;
@@ -295,7 +295,7 @@ if (flexTuning.TxPowerWatts is double requestedWatts
     && (requestedWatts < 0 || requestedWatts > FlexDevice.PaWatts))
 {
     Console.Error.WriteLine(
-        $"\"flex\".\"txPowerWatts\" is {requestedWatts:0.#} W, outside the 0–{FlexDevice.PaWatts:F0} W "
+        $"\"flex\".\"txPowerWatts\" is {requestedWatts:0.#} W, outside the 0-{FlexDevice.PaWatts:F0} W "
         + "a 6000-series PA can produce.");
     return 2;
 }
@@ -344,7 +344,7 @@ if (FlexDevice.IsFlex(device) && FlexDevice.Parse(device).Headless)
             Console.Error.WriteLine(
                 $"\"sideband\": \"{sideband}\" contradicts the Flex slice mode {flexTuning.Mode}, "
                 + $"which is {impliedSideband.ToUpperInvariant()}. Every modem would land mirrored "
-                + "about the dial. Drop \"sideband\" — the slice mode already says which it is.");
+                + "about the dial. Drop \"sideband\" - the slice mode already says which it is.");
             return 2;
         }
 
@@ -356,7 +356,7 @@ ModemConfig? ardopModem = modems.FirstOrDefault(m => DaemonConfig.IsArdop(m.Mode
 if (ardopModem is not null && ardopPort is not null)
 {
     Console.Error.WriteLine(
-        "ARDOP is configured twice — as a modem and with --ardop/\"ardop\". Keep the modem entry.");
+        "ARDOP is configured twice - as a modem and with --ardop/\"ardop\". Keep the modem entry.");
     return 2;
 }
 
@@ -448,7 +448,7 @@ if (deviceIsUberSdr && receiveDialHz is null)
     Console.Error.WriteLine(
         $"the UberSDR instance at {uberSdrEndpoint} has to be told where to listen. Give every "
         + "modem an \"rfFrequency\" and the dial is worked out from them, or set "
-        + "\"dialFrequency\" to pin it — unlike a radio there is no dial already set to read off.");
+        + "\"dialFrequency\" to pin it - unlike a radio there is no dial already set to read off.");
     return 2;
 }
 
@@ -457,7 +457,7 @@ if (bandPlan is not null)
     BandPlanner.Report(bandPlan, Console.Out, radioIsSelfTuning: flexIsHeadless || deviceIsUberSdr);
     foreach (string warning in bandPlan.Warnings)
     {
-        Console.Error.WriteLine($"band plan: WARNING — {warning}");
+        Console.Error.WriteLine($"band plan: WARNING - {warning}");
     }
 
     // A Flex is its own dial: rather than telling the operator to set it, set it. Headless
@@ -471,7 +471,7 @@ if (bandPlan is not null)
         if (flexConfig?.Frequency is not null || flexFreq is not null)
         {
             Console.Error.WriteLine(
-                $"flex: WARNING — the slice frequency you set ({flexFreq ?? flexConfig!.Frequency}) "
+                $"flex: WARNING - the slice frequency you set ({flexFreq ?? flexConfig!.Frequency}) "
                 + "is superseded by the band plan, which computed "
                 + $"{RfPlan.Mhz(bandPlan.DialHz)}. Remove it, or remove the modems' "
                 + "\"rfFrequency\" if you meant to place them by audio centre.");
@@ -587,7 +587,7 @@ foreach (ModemConfig modemConfig in modems)
     if (frequency is not null && !ModemCatalog.AcceptsCentreFrequency(mode))
     {
         Console.Error.WriteLine(
-            $"modem {subChannel}: mode '{mode}' has a fixed centre frequency — drop the " +
+            $"modem {subChannel}: mode '{mode}' has a fixed centre frequency - drop the " +
             "frequency override (only the afsk*/bpsk*/qpsk* modes accept one)");
         return 2;
     }
@@ -636,7 +636,7 @@ if (flexIsHeadless && deriveTransmitFilter && flexTuning.TransmitFilterHighHz is
     TransmitFilterPlan.Band widest = txBands.MaxBy(b => b.HighHz);
     flexTuning = flexTuning with { TransmitFilterHighHz = derivedFilterHigh };
     Console.WriteLine(
-        $"flex: setting the transmit filter high cut to {derivedFilterHigh} Hz — modem "
+        $"flex: setting the transmit filter high cut to {derivedFilterHigh} Hz - modem "
         + $"{widest.SubChannel} ({widest.Mode}) reaches {widest.HighHz:F0} Hz");
 }
 
@@ -991,7 +991,7 @@ if (idBeacons)
         };
 
         Console.WriteLine(
-            $"modem {modemConfig.SubChannel}: id beacons — listening in "
+            $"modem {modemConfig.SubChannel}: id beacons - listening in "
             + $"{ghost.Mode} @ {ghost.CentreHz:0.#} Hz");
     }
 }
@@ -1015,7 +1015,7 @@ if (deviceIsFlex && (pttSpec is not null || pttConfig is not null))
 if (deviceIsUberSdr && (pttSpec is not null || pttConfig is not null))
 {
     Console.Error.WriteLine(
-        $"--device ubersdr: is a receive-only station — the instance at {uberSdrEndpoint} has no "
+        $"--device ubersdr: is a receive-only station - the instance at {uberSdrEndpoint} has no "
         + "transmitter, so there is nothing for a PTT line to key. Remove \"ptt\".");
     return 2;
 }
@@ -1108,13 +1108,13 @@ if (modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
         // The usual "anything that can reach this can transmit on your licence" warning is not
         // true here, and saying it anyway would teach operators to ignore it where it is.
         Console.WriteLine(
-            "kiss: this station receives only — frames arriving on these ports are refused, not "
+            "kiss: this station receives only - frames arriving on these ports are refused, not "
             + "transmitted. Everything the modems hear is still delivered.");
     }
     else if (!Equals(listenAddress, System.Net.IPAddress.Loopback))
     {
         Console.WriteLine(
-            "kiss: WARNING — listening beyond loopback. KISS has no authentication: anything "
+            "kiss: WARNING - listening beyond loopback. KISS has no authentication: anything "
             + "that can reach these ports can transmit on your licence.");
     }
 }
@@ -1134,16 +1134,16 @@ if (ardopModem is not null)
     if (ardopModem.Frequency is double ardopCentre
         && ArdopChannelShift.Concern(ardopCentre, DspRate) is string ardopConcern)
     {
-        Console.Error.WriteLine($"ardop: WARNING — {ardopConcern}");
+        Console.Error.WriteLine($"ardop: WARNING - {ardopConcern}");
     }
 
     if (channel.ReceiveOnlyReason is not null)
     {
         Console.Error.WriteLine(
-            "ardop: WARNING — ARDOP is a connected-mode ARQ protocol and this station cannot "
+            "ardop: WARNING - ARDOP is a connected-mode ARQ protocol and this station cannot "
             + "transmit, so no session will ever complete: it will hear the channel and never "
-            + "answer. The host port is still served, and every frame it demodulates — including "
-            + "other stations' sessions — is still drawn and written down.");
+            + "answer. The host port is still served, and every frame it demodulates - including "
+            + "other stations' sessions - is still drawn and written down.");
     }
 
     var ardopShift = ArdopChannelShift.For(ardopModem.Frequency, DspRate);
@@ -1174,7 +1174,7 @@ if (ardopModem is not null)
             }
             catch (Exception refused) when (refused is InvalidOperationException or ArgumentException)
             {
-                Console.Error.WriteLine($"ardop: transmission dropped — {refused.Message}");
+                Console.Error.WriteLine($"ardop: transmission dropped - {refused.Message}");
             }
         },
     };
@@ -1271,7 +1271,7 @@ if (wavLoopPath is not null)
     ptt = new NullPtt();
     playback = new NullAudioOutput(DspRate);
     input = wavLoop;
-    Console.WriteLine($"audio: wav-loop {wavLoopPath} {wavLoop.SampleRate} Hz → {DspRate} Hz");
+    Console.WriteLine($"audio: wav-loop {wavLoopPath} {wavLoop.SampleRate} Hz -> {DspRate} Hz");
 }
 else if (deviceIsUberSdr)
 {
@@ -1309,7 +1309,7 @@ else if (deviceIsUberSdr)
     playback = new NullAudioOutput(DspRate);
     input = uberSdr;
     Console.WriteLine(
-        $"audio: {uberSdrEndpoint} {uberSdrTuning.Mode} IQ at {RfPlan.Mhz(receiveDialHz.Value)} → "
+        $"audio: {uberSdrEndpoint} {uberSdrTuning.Mode} IQ at {RfPlan.Mhz(receiveDialHz.Value)} -> "
         + $"{planSideband.ToUpperInvariant()} {uberSdrTuning.SsbLowHz:F0}-{uberSdrTuning.SsbHighHz:F0} Hz "
         + $"audio at {DspRate} Hz (RECEIVE ONLY)");
     if (uberSdr.ReceiverDescription is string receiver)
@@ -1328,7 +1328,7 @@ else if (deviceIsUberSdr)
     else
     {
         Console.WriteLine(
-            $"ubersdr: session limit {uberSdr.Connection.MaxSessionTime} s — the stream is picked up "
+            $"ubersdr: session limit {uberSdr.Connection.MaxSessionTime} s - the stream is picked up "
             + "again each time the receiver ends one");
     }
 
@@ -1353,7 +1353,7 @@ else if (deviceIsFlex)
         ? $"headless {flexTuning.Frequency} MHz {flexTuning.Antenna} {flexTuning.Mode}"
         : $"attach station '{flexSpec.Station}'";
     Console.WriteLine(
-        $"audio: {device} DAX {input.SampleRate} Hz → {DspRate} Hz "
+        $"audio: {device} DAX {input.SampleRate} Hz -> {DspRate} Hz "
         + $"(slice {flexSpec.SliceLetter}, dax {flexTuning.DaxChannel}, {flexModeDesc})");
     if (flex.Station.TuneWarning is string tuneWarning)
     {
@@ -1372,7 +1372,7 @@ else if (deviceIsFlex)
     flex.Station.Client.Disconnected += () =>
     {
         Console.Error.WriteLine(
-            "flex: the radio's session ended — rebooted, dropped off the network, or closed the "
+            "flex: the radio's session ended - rebooted, dropped off the network, or closed the "
             + "connection. Stopping so the service restarts and rediscovers it.");
         radioLost = true;
         cancellation.Cancel();
@@ -1418,7 +1418,7 @@ else if (deviceIsFlex)
                 // never settles is harder to read than one that does.
                 double? swr = txMeters.SwrFromPowers();
                 string reading_ = swr is double s && !double.IsInfinity(s)
-                    ? $"TX {watts:F1} W · SWR {s:F1}"
+                    ? $"TX {watts:F1} W, SWR {s:F1}"
                     : $"TX {watts:F1} W";
                 waterfallServer.SetTransmitStatus(reading_);
             };
@@ -1426,7 +1426,7 @@ else if (deviceIsFlex)
         catch (Exception e) when (e is M0LTE.Flex.FlexProtocolException or IOException)
         {
             // A station that cannot read its meters still transmits perfectly well.
-            Console.Error.WriteLine($"flex: no transmit metering — {e.Message}");
+            Console.Error.WriteLine($"flex: no transmit metering - {e.Message}");
         }
     }
 
@@ -1444,7 +1444,7 @@ else if (deviceIsFlex)
 
     if (flex.Station.TransmitFilter is (int txFilterLow, int txFilterHigh))
     {
-        Console.WriteLine($"flex: transmit filter {txFilterLow}..{txFilterHigh} Hz (radio global — limits TX audio bandwidth)");
+        Console.WriteLine($"flex: transmit filter {txFilterLow}..{txFilterHigh} Hz (radio global - limits TX audio bandwidth)");
 
         // What the filter passes is checked against where the modems actually are, rather than
         // assumed: a modem outside it transmits a truncated signal, or nothing at all, and does
@@ -1461,11 +1461,11 @@ else if (deviceIsFlex)
                 ? "The low cut is not settable from here; widen it on the radio."
                 : ModemCatalog.AcceptsCentreFrequency(band.Mode)
                     ? "Widen the high cut on the radio, or move the modem down the passband."
-                    : "Widen the high cut on the radio — this mode's centre is fixed by its spec.";
+                    : "Widen the high cut on the radio - this mode's centre is fixed by its spec.";
             Console.Error.WriteLine(
-                $"flex: WARNING — modem {band.SubChannel} ({band.Mode}) occupies "
+                $"flex: WARNING - modem {band.SubChannel} ({band.Mode}) occupies "
                 + $"{band.LowHz:F0}-{band.HighHz:F0} Hz, outside the radio's "
-                + $"{txFilterLow}..{txFilterHigh} Hz transmit filter — it will be clipped. "
+                + $"{txFilterLow}..{txFilterHigh} Hz transmit filter - it will be clipped. "
                 + remedy);
         }
     }
@@ -1481,9 +1481,9 @@ else if (deviceIsFlex)
                      .Where(b => b.LowHz < rxFilterLow || b.HighHz > rxFilterHigh))
         {
             Console.Error.WriteLine(
-                $"flex: WARNING — modem {band.SubChannel} ({band.Mode}) occupies "
+                $"flex: WARNING - modem {band.SubChannel} ({band.Mode}) occupies "
                 + $"{band.LowHz:F0}-{band.HighHz:F0} Hz, outside the slice's "
-                + $"{rxFilterLow}..{rxFilterHigh} Hz receive filter — it will hear nothing there.");
+                + $"{rxFilterLow}..{rxFilterHigh} Hz receive filter - it will hear nothing there.");
         }
     }
 
@@ -1491,7 +1491,7 @@ else if (deviceIsFlex)
     {
         // The radio's ceiling on receive width is not measured, so this is how a radio that will
         // not go as wide as asked says so, rather than the modem quietly going deaf.
-        Console.Error.WriteLine($"flex: WARNING — {receiveFilterWarning}");
+        Console.Error.WriteLine($"flex: WARNING - {receiveFilterWarning}");
     }
 }
 else
@@ -1552,7 +1552,7 @@ else
         return 1;
     }
 
-    Console.WriteLine($"audio: {device} capture {captureRate} Hz → {DspRate} Hz");
+    Console.WriteLine($"audio: {device} capture {captureRate} Hz -> {DspRate} Hz");
 }
 
 await using var flexLifetime = flex;

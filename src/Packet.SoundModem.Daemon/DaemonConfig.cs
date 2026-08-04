@@ -424,7 +424,7 @@ public sealed class DaemonConfig
     {
         var config = JsonSerializer.Deserialize<DaemonConfig>(File.ReadAllText(path), Options)
             ?? throw new InvalidDataException(
-                "the file contains only `null` — there is nothing to configure from. A minimal "
+                "the file contains only `null` - there is nothing to configure from. A minimal "
                 + "working file is {\"device\": \"default\", \"modems\": [{\"subChannel\": 0, "
                 + "\"mode\": \"afsk1200\"}]}");
         // ARDOP is no longer exclusive with the packet modems: it shares the channel, and the
@@ -434,14 +434,14 @@ public sealed class DaemonConfig
         if (ardopModems > 1)
         {
             throw new InvalidDataException(
-                "two modems have \"mode\": \"ardop\". One ARDOP TNC per channel — it is a whole "
+                "two modems have \"mode\": \"ardop\". One ARDOP TNC per channel - it is a whole "
                 + "virtual TNC with its own host interface, not a demodulator you can run twice.");
         }
 
         if (ardopModems > 0 && config.Ardop is not null)
         {
             throw new InvalidDataException(
-                "ARDOP is configured twice — once as a modem entry and once in the top-level "
+                "ARDOP is configured twice - once as a modem entry and once in the top-level "
                 + "\"ardop\" section. Keep the modem entry (it can also carry \"frequency\" and "
                 + "\"port\") and delete the \"ardop\" section.");
         }
@@ -456,7 +456,7 @@ public sealed class DaemonConfig
         {
             throw new InvalidDataException(
                 $"two modems share \"subChannel\": {duplicates[0].Key}. Each modem needs its own "
-                + "KISS sub-channel (0-15) — renumber one of them.");
+                + "KISS sub-channel (0-15) - renumber one of them.");
         }
 
         ModemConfig? bothWays = config.Modems.FirstOrDefault(
@@ -465,7 +465,7 @@ public sealed class DaemonConfig
         {
             throw new InvalidDataException(
                 $"modem {bothWays.SubChannel} sets both \"frequency\" ({bothWays.Frequency}) and "
-                + $"\"rfFrequency\" ({bothWays.RfFrequency}). Those say the same thing two ways — "
+                + $"\"rfFrequency\" ({bothWays.RfFrequency}). Those say the same thing two ways - "
                 + "\"frequency\" is an audio offset, \"rfFrequency\" is a place on the band. Keep one.");
         }
 
@@ -490,7 +490,7 @@ public sealed class DaemonConfig
         {
             throw new InvalidDataException(
                 $"\"flex\".\"transmitFilterHighHz\" is {filterHigh}. That is an audio cut-off in Hz "
-                + "(3000 is a radio's usual default, 3400 clears ms110d) — use 500-10000, 0 to "
+                + "(3000 is a radio's usual default, 3400 clears ms110d) - use 500-10000, 0 to "
                 + "leave the radio's own filter alone, or remove it to have it set from the modems.");
         }
 
@@ -679,7 +679,7 @@ public sealed class DaemonConfig
                 ? $"line {line + 1}, position {(e.BytePositionInLine ?? 0) + 1}: "
                 : "";
             string detail = e.Message.Split(" Path:")[0];
-            error = Describe(path, $"not valid JSON — {at}{detail}");
+            error = Describe(path, $"not valid JSON - {at}{detail}");
         }
         catch (InvalidDataException e)
         {

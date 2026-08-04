@@ -48,6 +48,10 @@ row in the matrix. A fix isn't finished until the ledger records it.
   only — never `DateTime.Now`/`Stopwatch` in library code (inject `TimeProvider`).
 - DSP hot paths: zero steady-state allocation (preallocated buffers, `Span<T>`,
   `ArrayPool`), no LINQ in per-sample/per-block code.
+- Printable strings are ASCII: `-` not `—`, `->` not `→`, `,` not `·`. `journalctl`'s pager
+  under a C locale renders anything above 0x7F as `<E2><80><94>`, and a station's console is
+  not ours to configure. Comments and docs keep their em dashes and maths notation — this is
+  about what reaches a terminal. `JournalTextTests` enforces it over `src/`.
 - CI: every workflow job MUST target `[self-hosted, Linux, X64]` — no GitHub-hosted
   runners (no minutes budget). Same rule as packet.net.
 - PRs merge on locally-run green tests (`dotnet test`); fix forward.

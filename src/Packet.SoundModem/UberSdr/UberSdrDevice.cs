@@ -111,7 +111,7 @@ public static class UberSdrDevice
                 || (url.Scheme != Uri.UriSchemeHttp && url.Scheme != Uri.UriSchemeHttps))
             {
                 throw new InvalidDataException(
-                    $"\"device\": \"{device}\" — '{rest}' is not an http:// or https:// URL. Give the "
+                    $"\"device\": \"{device}\" - '{rest}' is not an http:// or https:// URL. Give the "
                     + "receiver's address, or the URL you would open in a browser.");
             }
 
@@ -129,7 +129,7 @@ public static class UberSdrDevice
         if (!int.TryParse(rest[(colon + 1)..], out int port) || port is < 1 or > 65535)
         {
             throw new InvalidDataException(
-                $"\"device\": \"{device}\" — '{rest[(colon + 1)..]}' is not a TCP port. Write the "
+                $"\"device\": \"{device}\" - '{rest[(colon + 1)..]}' is not a TCP port. Write the "
                 + "instance as host, host:port, or the https:// URL you would open in a browser.");
         }
 

@@ -26,7 +26,7 @@ case "$ARCH" in
 esac
 
 # dpkg-deb ships in the Essential `dpkg` package, so this only trips on a non-Debian host.
-command -v dpkg-deb >/dev/null || { echo "dpkg-deb not found — this needs a Debian-family host" >&2; exit 3; }
+command -v dpkg-deb >/dev/null || { echo "dpkg-deb not found - this needs a Debian-family host" >&2; exit 3; }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
@@ -142,7 +142,7 @@ case "$1" in
     fi
     echo "pdn-soundmodem: edit $CONFIG for your sound device and PTT, then"
     echo "                systemctl restart pdn-soundmodem. Until then the service will"
-    echo "                fail to start — systemctl status pdn-soundmodem says why."
+    echo "                fail to start - systemctl status pdn-soundmodem says why."
     ;;
 esac
 

@@ -76,7 +76,7 @@ public sealed class Ms110dInterleaver
         if (a != _perm.Length || b != _perm.Length)
         {
             throw new ArgumentException(
-                $"buffers must be exactly the interleaver size ({_perm.Length} bits) — " +
+                $"buffers must be exactly the interleaver size ({_perm.Length} bits) - " +
                 "the punctured block shall fit exactly within the interleaver (D.5.3.2)");
         }
     }

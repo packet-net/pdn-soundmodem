@@ -60,7 +60,7 @@ internal sealed class XrunWatch
         {
             _everReported = true;
             text.Append(
-                " — each one is lost audio: a dropped frame on receive, a discontinuity in what we "
+                " - each one is lost audio: a dropped frame on receive, a discontinuity in what we "
                 + "transmitted. This is the machine not scheduling the modem within the ~120 ms of "
                 + "buffer it has, not a radio problem; give it more CPU share, or fewer neighbours.");
         }

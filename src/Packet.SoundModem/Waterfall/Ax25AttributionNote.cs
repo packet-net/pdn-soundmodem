@@ -34,7 +34,7 @@ public static class Ax25AttributionNote
 
         if (frame.Length < AddressFieldLength + 1)
         {
-            return $"{frame.Length} bytes — shorter than an AX.25 address field and control byte "
+            return $"{frame.Length} bytes - shorter than an AX.25 address field and control byte "
                 + $"({AddressFieldLength + 1})";
         }
 
@@ -53,7 +53,7 @@ public static class Ax25AttributionNote
 
             string field = at < 7 ? "destination" : "source";
             string shown = c is >= ' ' and <= '~' ? $" ('{c}')" : "";
-            return $"byte {at} of the {field} callsign is 0x{frame[at]:X2} → 0x{frame[at] >> 1:X2}"
+            return $"byte {at} of the {field} callsign is 0x{frame[at]:X2} -> 0x{frame[at] >> 1:X2}"
                 + $"{shown}, not a shifted callsign character";
         }
 

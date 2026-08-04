@@ -68,7 +68,7 @@ public sealed record Ms110dMode(
             8 => new(8, Ms110dModulation.Qam16, 4, 256, 32, "3/4", 6400),
             13 => new(13, Ms110dModulation.Qpsk, 2, 256, 32, "9/16", 2400),
             _ => throw new ArgumentOutOfRangeException(
-                nameof(wn), wn, "Phase A/B implements 3 kHz waveform numbers 0–8 and 13"),
+                nameof(wn), wn, "Phase A/B implements 3 kHz waveform numbers 0-8 and 13"),
         };
     }
 }
@@ -101,7 +101,7 @@ public sealed record Ms110dInterleaverParams(int Frames, int SizeBits, int Input
             8 => (new[] { 1, 4, 16, 64 }, new[] { 1024, 4096, 16384, 65536 }, new[] { 768, 3072, 12288, 49152 }, new[] { 129, 513, 2049, 8321 }),
             13 => (new[] { 1, 4, 16, 64 }, new[] { 512, 2048, 8192, 32768 }, new[] { 288, 1152, 4608, 18432 }, new[] { 65, 257, 1025, 4161 }),
             _ => throw new ArgumentOutOfRangeException(
-                nameof(wn), wn, "Phase A/B implements 3 kHz waveform numbers 0–8 and 13"),
+                nameof(wn), wn, "Phase A/B implements 3 kHz waveform numbers 0-8 and 13"),
         };
 
         if (size[i] == 0)

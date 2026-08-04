@@ -60,7 +60,7 @@ public sealed class Ms110dModem : IModem
         {
             throw new ArgumentException(
                 $"sample rate must be an integer multiple of {NativeRate}; use the 48 kHz " +
-                "DSP path — 12 kHz has no integer ratio to 9600",
+                "DSP path - 12 kHz has no integer ratio to 9600",
                 nameof(sampleRate));
         }
 

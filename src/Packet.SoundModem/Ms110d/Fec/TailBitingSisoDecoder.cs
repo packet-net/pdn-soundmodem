@@ -56,7 +56,7 @@ public sealed class TailBitingSisoDecoder
         int n = motherLlrs.Length / 2;
         if (motherPosteriors.Length != motherLlrs.Length || (motherLlrs.Length & 1) != 0)
         {
-            throw new ArgumentException("motherPosteriors must match motherLlrs, both 2·N long");
+            throw new ArgumentException("motherPosteriors must match motherLlrs, both 2*N long");
         }
 
         if (n < _code.K)

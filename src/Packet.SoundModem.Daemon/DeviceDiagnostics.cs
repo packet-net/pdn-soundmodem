@@ -38,7 +38,7 @@ internal static class DeviceDiagnostics
           This is the ALSA device used for both capture and playback. List what this
           machine actually has:
             aplay -l ; arecord -l ; aplay -L
-          Prefer a stable name such as plughw:CARD=Device,DEV=0 over plughw:1,0 — card
+          Prefer a stable name such as plughw:CARD=Device,DEV=0 over plughw:1,0 - card
           numbers move when devices are re-plugged.
         {Retry}
         """;
@@ -58,7 +58,7 @@ internal static class DeviceDiagnostics
           This names a public UberSDR web receiver, which the station listens to instead of a
           sound card. Check it is up and serving IQ:
             curl -s https://<instance>/api/description | head -c 400
-          The address is the one you would open in a browser — the whole URL works as well as
+          The address is the one you would open in a browser - the whole URL works as well as
           the bare host. Session limits, IQ mode and any password live in the "ubersdr" section.
         {Retry}
         """;
@@ -73,7 +73,7 @@ internal static class DeviceDiagnostics
                   List what this machine actually has:
                     ls -l /dev/hidraw*
                   /dev/hidraw* is root-only by default, so the unprivileged service user cannot
-                  open it without a udev rule granting the audio group access — see the
+                  open it without a udev rule granting the audio group access - see the
                   Permissions section of INSTALL.md. "Permission denied" here almost always
                   means the rule is missing rather than the wrong device.
                 """,
