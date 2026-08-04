@@ -110,7 +110,12 @@ jobs:
           while IFS= read -r f; do
             found=1
             echo "::group::$(basename "$f")"
-            iconv -f UTF-16LE -t UTF-8 "$f" 2>/dev/null | grep -vE "^\s*$" | head -200 || cat "$f"
+            # Failures first and in full — see the same step in ci.yml for why a head -200 of
+            # the whole log shows nothing but skips.
+            log="$(iconv -f UTF-16LE -t UTF-8 "$f" 2>/dev/null || cat "$f")"
+            grep -A 6 -E "^failed |^\s+failed " <<<"$log" | head -120 || true
+            echo "--- tail ---"
+            grep -vE "^\s*$" <<<"$log" | tail -40
             echo "::endgroup::"
           done < <(find tests -path '*/TestResults/*.log' -newermt '-30 minutes' 2>/dev/null)
           [ "$found" = 1 ] || echo "::warning::no TestResults log found to report"

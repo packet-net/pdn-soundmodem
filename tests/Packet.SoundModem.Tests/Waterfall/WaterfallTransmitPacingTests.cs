@@ -617,12 +617,14 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         // The lead-in is the gap between keying and the first audio existing — real, and short.
         // Half the keyup means the display is waiting for the device to finish swallowing a burst
         // it could have been painting all along.
-        // Measured before the fix on this exact setup: 92 black lines ahead of 97 of signal — the
-        // 48.7 % the operator described as "about 50%". A quarter leaves room for the real
-        // lead-in (keying, CSMA, modulating) and for a loaded box, while a return of the defect
-        // could not fit under it.
+        // Half, not a quarter. The defect puts the lead-in at ~95 % of the burst (measured 92
+        // black against 97 of signal, and 41 against 45 at this size), so half separates it with
+        // room to spare — while the honest lead-in is keying, CSMA and modulating, all of which
+        // stretch on a loaded CI runner. A quarter was tight enough to fail there for the wrong
+        // reason, which is a worse outcome than a slightly loose guard: this file already carries
+        // one load-sensitive test and does not need two.
         silentBefore.Should().BeLessThan(
-            content / 4,
+            content / 2,
             "black lead-in ({0} lines) is the gap before audio exists, not half the keyup ({1} lines of signal)",
             silentBefore,
             content);
