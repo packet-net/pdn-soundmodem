@@ -516,6 +516,162 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         ModemCatalog.Create("afsk300-il2pc", SampleRate, _ => { },
             new ModemOptions(CentreFrequencyHz: CentreHz)).Modulate(frame, txDelayMilliseconds: 20);
 
+    /// <summary>
+    /// A keyup is painted starting when the audio goes out, not when the device has finished
+    /// taking it — so the burst does not arrive on screen behind a stretch of black as long as
+    /// itself.
+    /// </summary>
+    /// <remarks>
+    /// <para>Reported from the air: <em>"the radio keys up and the waterfall starts showing black
+    /// rows, then there is a pause of about 50% of the time the waterfall is not showing RX rows,
+    /// then the preamble, then the frame"</em>. That halving is the tell.</para>
+    /// <para>A real sound card's <see cref="IAudioOutput.Write"/> blocks until its buffer has room,
+    /// so writing a burst longer than the buffer does not return until most of it has played. The
+    /// display was told about the audio <em>after</em> that call returned, so the pacer spent the
+    /// whole transmission painting silence — the only thing it has while the queue is empty and the
+    /// channel is keyed — and then painted the actual burst over again afterwards. Twice the
+    /// duration, the first half black.</para>
+    /// <para>Every test double in this suite accepts instantly, which is exactly why nothing here
+    /// ever saw it. This one models the device: a small buffer, drained at real time.</para>
+    /// </remarks>
+    [Fact]
+    public async Task A_Keyup_Is_Painted_As_It_Goes_Out_Not_After_The_Device_Has_Swallowed_It()
+    {
+        using ClientWebSocket socket = await ConnectAsync();
+
+        _channel.Csma.Persistence = 255;
+        _channel.Csma.TxDelayMilliseconds = 20;
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var output = new RealTimeOutput(SampleRate, bufferMilliseconds: 150);
+        Task transmitter = _channel.RunTransmitterAsync(output, new NullPtt(), stop.Token);
+        // Short enough not to load the box for thirteen seconds — a neighbouring test in this
+        // suite measures wall-clock gaps between lines and this one is full of sleeps. The defect
+        // is a proportion, so it shows at any burst longer than the device buffer.
+        Task sending = _channel.EnqueueTransmit(0, Payload(16));
+
+        // Every transmit line until the pacer stops, sorted into silence and signal. Digital
+        // silence maps to byte 0 across the line, so the two are unambiguous.
+        // Nothing feeds receive audio here, so the socket simply goes quiet once the keyup has
+        // finished being painted. Quiet is the terminator.
+        int silentBefore = 0, content = 0;
+        bool seenContent = false;
+        var clock = Stopwatch.StartNew();
+        while (clock.Elapsed < TimeSpan.FromSeconds(30))
+        {
+            using var idle = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token);
+            idle.CancelAfter(TimeSpan.FromSeconds(2));
+            byte[] payload;
+            try
+            {
+                var buffer = new byte[64 * 1024];
+                WebSocketReceiveResult result = await socket.ReceiveAsync(buffer, idle.Token);
+                if (result.MessageType != WebSocketMessageType.Binary)
+                {
+                    continue;
+                }
+
+                payload = buffer[..result.Count];
+            }
+            catch (OperationCanceledException) when (!_cancellation.IsCancellationRequested)
+            {
+                break;   // two seconds without a line: the keyup is over
+            }
+
+            if (payload.Length < 6 || payload[0] != 0x03)
+            {
+                continue;
+            }
+
+            bool silent = true;
+            for (int i = 5; i < payload.Length && silent; i++)
+            {
+                silent = payload[i] == 0;
+            }
+
+            if (silent)
+            {
+                if (!seenContent)
+                {
+                    silentBefore++;
+                }
+            }
+            else
+            {
+                seenContent = true;
+                content++;
+            }
+        }
+
+        await sending.WaitAsync(TimeSpan.FromSeconds(20));
+        await stop.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        seenContent.Should().BeTrue("the transmission has to reach the display at all");
+
+        // The lead-in is the gap between keying and the first audio existing — real, and short.
+        // Half the keyup means the display is waiting for the device to finish swallowing a burst
+        // it could have been painting all along.
+        // Measured before the fix on this exact setup: 92 black lines ahead of 97 of signal — the
+        // 48.7 % the operator described as "about 50%". A quarter leaves room for the real
+        // lead-in (keying, CSMA, modulating) and for a loaded box, while a return of the defect
+        // could not fit under it.
+        silentBefore.Should().BeLessThan(
+            content / 4,
+            "black lead-in ({0} lines) is the gap before audio exists, not half the keyup ({1} lines of signal)",
+            silentBefore,
+            content);
+    }
+
+    /// <summary>
+    /// A sound card, as far as this matters: a buffer of fixed size that empties at the sample
+    /// rate, and a <see cref="Write"/> that blocks until it has room. Every other double in this
+    /// suite accepts instantly, which is why none of them could show what a real one does.
+    /// </summary>
+    private sealed class RealTimeOutput(int sampleRate, int bufferMilliseconds) : IAudioOutput
+    {
+        private readonly int _bufferSamples = sampleRate * bufferMilliseconds / 1000;
+        private readonly Stopwatch _clock = Stopwatch.StartNew();
+        private long _accepted;
+
+        public int SampleRate { get; } = sampleRate;
+
+        public void Write(ReadOnlySpan<float> samples)
+        {
+            long played = (long)(_clock.Elapsed.TotalSeconds * SampleRate);
+            long room = _bufferSamples - (_accepted - played);
+            int at = 0;
+            while (at < samples.Length)
+            {
+                if (room <= 0)
+                {
+                    Thread.Sleep(5);
+                    played = (long)(_clock.Elapsed.TotalSeconds * SampleRate);
+                    room = _bufferSamples - (_accepted - played);
+                    continue;
+                }
+
+                int take = (int)Math.Min(room, samples.Length - at);
+                _accepted += take;
+                at += take;
+                room -= take;
+            }
+        }
+
+        public void Drain()
+        {
+            while ((long)(_clock.Elapsed.TotalSeconds * SampleRate) < _accepted)
+            {
+                Thread.Sleep(5);
+            }
+        }
+    }
+
     private static byte[] Payload(int length)
     {
         var frame = new byte[length];

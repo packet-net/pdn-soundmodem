@@ -234,6 +234,20 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-08-04 (later⁷) — the transmit waterfall's dead half was an ordering bug, not a pacing one
+
+Tom described the symptom precisely enough to solve it: *"the radio keys up and the waterfall starts showing black rows, then there is a pause of about 50% of the time the waterfall is not showing RX rows, then the preamble, then the frame."* That halving is the whole diagnosis, and it ruled out the theory filed an hour earlier in **#213** — which had the dead time *after* key-up, as the queue drained. It is before, and it is silence.
+
+`SoundModemChannel` raised `TransmittedAudio` **after** `output.Write(samples)`. A real sound card's write blocks until its buffer has room, so a burst longer than the buffer does not return from that call until most of the burst has already played. The display was therefore told nothing for that whole stretch — and `PaceTransmitLines`, keyed with an empty queue, has exactly one thing to draw: silence. Then the write returned, the entire burst landed at once, and the pacer painted it all over again at real time. **Twice the duration, the first half black**, which is what he was looking at.
+
+Every audio-output double in the test suite accepts instantly, which is precisely why nothing ever saw this: `InstantDrainOutput` and `FakeAudioOutput` both return immediately from `Write`, so the ordering never mattered in a test. A new `RealTimeOutput` models the device — a fixed buffer, drained at the sample rate, blocking when full — and reproduced it first time at **92 black lines ahead of 97 lines of signal, 48.7 %**, against "about 50%" off the air.
+
+The fix is the swap: tell the display before the write. What it costs the transmitter is one scale-and-copy of the burst before the audio goes out — bounded, allocation-only, waiting on nothing — so the standing rule that the transmitter must never wait on a picture still holds. `A_Keyup_Is_Painted_As_It_Goes_Out_Not_After_The_Device_Has_Swallowed_It` guards it at a quarter, which leaves room for the genuine lead-in (keying, CSMA, modulating) and for a loaded box while a return of the defect could not fit under it.
+
+**Judder is not addressed** and #213 stays open for it: the 33 ms pacer timer is coarse under load and each tick turns a variable sample budget into a variable clump of lines. Worth re-measuring now the gross error is gone, because some of what looked like judder may simply have been the seam where the black gave way to the burst.
+
+Instrument lesson, third of the day and the same shape as the other two: **a double that never fails the way the real thing fails cannot test the thing that matters.** The clipboard shim always returned success; the `--wav-loop` fixture always repeated; these outputs always accepted instantly. In each case the test was green and the behaviour was broken.
+
 ### 2026-08-04 (later⁶) — right-click copy withdrawn; the test asserted its own stub
 
 Shipped in 0.22.1, reported not working, withdrawn in 0.22.2. Two failures worth keeping, and the second is the instrument one.
