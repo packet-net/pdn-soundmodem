@@ -723,6 +723,10 @@ if (waterfallConfig is not null)
                 DaemonConfig.IsArdop(m.Mode)
                     ? m.Bandwidth ?? ArdopChannelShift.WidestBandwidthHz
                     : null))],
+            // The decoded-frames panel opens on what the station has already written down, so a
+            // browser arriving mid-afternoon is shown the channel rather than an empty list. Null
+            // when there is no frame log: nothing to show, and nothing pretending otherwise.
+            FrameHistory = frameLog is null ? null : frameLog.Recent,
         },
         // One bind for every listener; the waterfall no longer carries its own.
         bindAddress);

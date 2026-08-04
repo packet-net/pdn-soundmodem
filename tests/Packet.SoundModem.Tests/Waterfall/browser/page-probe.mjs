@@ -153,6 +153,22 @@ const txTag = sandbox.__text().slice(beforeTx);
 
 const frames = sandbox.document.getElementById("frames").children;
 const rows = frames.map(c => c.innerHTML);
+const rowClasses = frames.map(c => c.className);
+
+// The opening backlog out of the station's frame log. Driven last, and after the live rows are
+// captured above, so what it does to a panel that already has rows in it can be seen — which is
+// the reconnect case. Timestamps: one from today so the row shows a clock time, one from a past
+// year so it has to show the date rather than a bare time that reads as this morning.
+const today = new Date();
+const todayAt = new Date(Date.UTC(
+  today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 9, 15, 0)).toISOString();
+const beforeHistory = sandbox.__text().length;
+run(`onHistory({frames: [
+  {at: "2024-11-03T21:04:00.000Z", sub: 1, mode: "afsk300-il2pc", from: "GB7BEX-15", to: "GB7IOW-1", lenBytes: 22, corrected: 2, crc: false, hist: true},
+  {at: "${todayAt}", sub: 0, mode: "bpsk300-il2pc", from: "GB7RDG-2", to: "EI0RSI-1", lenBytes: 31, offsetHz: 8.6, corrected: 0, crc: true, hist: true}
+]})`);
+const historyTag = sandbox.__text().slice(beforeHistory);
+const afterHistory = sandbox.document.getElementById("frames").children;
 
 console.log(JSON.stringify({
   ordinaryTag,
@@ -160,7 +176,10 @@ console.log(JSON.stringify({
   heardTag,
   txTag,
   frameRows: rows,
-  frameRowClasses: frames.map(c => c.className),
+  frameRowClasses: rowClasses,
+  historyTag,
+  historyRows: afterHistory.map(c => c.innerHTML),
+  historyRowClasses: afterHistory.map(c => c.className),
   connected,
   clickError,
   listening,

@@ -481,6 +481,15 @@ It is drawn only. Transmitted audio is kept out of the SNR trackers — measurin
 transmitter would report an enormous burst and attribute it to whatever decoded next — and is
 not sent to the audio stream.
 
+**The panel opens on what the station has already heard**, when a [`frameLog`](#framelog) is
+configured: the last 50 logged frames, dimmed apart from live traffic and stamped with the time
+they were heard rather than the time the page was opened. A panel that starts empty says nothing
+about a channel that has been busy all morning, and on a quiet band it is indistinguishable from
+a modem that is not working. Without a frame log the panel opens empty, as before — there is
+nothing written down to show. The backlog is listed, never tagged onto the waterfall: those
+frames were heard before the scroll on screen began and belong to no burst on it. Reconnecting
+rebuilds the panel from the log rather than stacking a second copy of the same frames.
+
 **Your own frames are listed too**, in the decoded-frames panel, marked **TX** and styled apart
 so a transmission can never be misread as a station heard. The panel was a record of half the
 channel until then: everything heard, nothing sent, so an operator watching their own beacon go
@@ -589,6 +598,13 @@ GROUP BY source ORDER BY 2 DESC;
 delays a decode. If the disk fills or goes away the modem keeps decoding and drops log rows
 rather than stopping. **The file is WAL**, so you can read it with `sqlite3` or point a dashboard
 at it while the modem is still running and writing.
+
+**The [`waterfall`](#waterfall) reads it too**: with a frame log configured, the decoded-frames
+panel opens on the last 50 rows instead of on nothing. That read takes its own short-lived
+connection, so a browser arriving never touches the writer, and a log that cannot be read costs
+that browser its backlog and nothing else. Only *heard* frames are in the log, so the backlog is
+receive-only — what this station sent appears in the panel live, marked TX, but is not written
+down and so is not there after a reload.
 
 The packaged service runs unprivileged and the unit declares `StateDirectory=pdn-soundmodem`, so
 systemd creates `/var/lib/pdn-soundmodem/` owned by the service user and the default path just

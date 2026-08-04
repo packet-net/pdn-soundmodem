@@ -233,6 +233,116 @@ public class WaterfallWebServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_Browser_Opens_On_The_Stations_Logged_Frames()
+    {
+        // A panel that starts empty says nothing about a channel that has been busy all morning,
+        // and on a quiet band it is indistinguishable from a modem that is not working.
+        var logged = new[]
+        {
+            new LoggedFrame(
+                new DateTimeOffset(2026, 8, 4, 9, 15, 0, TimeSpan.Zero),
+                0, "bpsk300-il2pc", "GB7RDG-2", "EI0RSI-1", 31, 0, true, 8.6),
+            new LoggedFrame(
+                new DateTimeOffset(2026, 8, 4, 9, 16, 30, TimeSpan.Zero),
+                1, "afsk300-il2pc", "GB7BEX-15", "GB7IOW-1", 22, 2, false, null),
+        };
+
+        int asked = 0;
+        await using var server = new WaterfallWebServer(
+            new SoundModemChannel(SampleRate, randomSeed: 5),
+            FreePort(),
+            new WaterfallOptions
+            {
+                FrameHistory = count =>
+                {
+                    asked = count;
+                    return logged;
+                },
+            });
+        server.Start();
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(
+            new Uri($"ws://127.0.0.1:{server.Url.Split(':')[^1].TrimEnd('/')}/ws"), _cancellation.Token);
+
+        (_, byte[] first) = await Receive(socket);
+        using JsonDocument config = JsonDocument.Parse(first);
+        config.RootElement.GetProperty("type").GetString().Should()
+            .Be("config", "the config still comes first — the page needs it to render anything");
+
+        (_, byte[] second) = await Receive(socket);
+        using JsonDocument history = JsonDocument.Parse(second);
+        history.RootElement.GetProperty("type").GetString().Should().Be("history");
+        asked.Should().BeGreaterThan(0, "the server decides how much of the log to open with");
+
+        JsonElement frames = history.RootElement.GetProperty("frames");
+        frames.GetArrayLength().Should().Be(2);
+        // Oldest first: the page prepends, so this is what puts the newest on top and leaves
+        // live frames landing above the lot.
+        frames[0].GetProperty("from").GetString().Should().Be("GB7RDG-2");
+        frames[0].GetProperty("sub").GetInt32().Should().Be(0);
+        frames[0].GetProperty("mode").GetString().Should().Be("bpsk300-il2pc");
+        frames[0].GetProperty("lenBytes").GetInt32().Should().Be(31);
+        frames[0].GetProperty("offsetHz").GetDouble().Should().Be(8.6);
+        frames[0].GetProperty("crc").GetBoolean().Should().BeTrue();
+        frames[0].GetProperty("hist").GetBoolean().Should().BeTrue();
+        DateTimeOffset.Parse(frames[0].GetProperty("at").GetString()!).Should()
+            .Be(logged[0].HeardAt, "a logged frame carries when it was heard, not when it was shown");
+
+        frames[1].GetProperty("from").GetString().Should().Be("GB7BEX-15");
+        frames[1].GetProperty("crc").GetBoolean().Should().BeFalse();
+        frames[1].GetProperty("corrected").GetInt32().Should().Be(2);
+        frames[1].GetProperty("offsetHz").ValueKind.Should().Be(
+            JsonValueKind.Null, "an unmeasured offset stays unmeasured");
+    }
+
+    [Fact]
+    public async Task A_Station_With_No_Frame_Log_Sends_No_Backlog()
+    {
+        // This fixture's server has no FrameHistory: the next message after config must be an
+        // ordinary one, not an empty history the page would clear its panel for.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        _server.ReportFrame(0, "afsk1200", "M0LTE", "GB7RDG", 22, 14.0, true);
+
+        JsonDocument? next = null;
+        while (next is null)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind == WebSocketMessageType.Text)
+            {
+                next = JsonDocument.Parse(payload);
+            }
+        }
+
+        next.RootElement.GetProperty("type").GetString().Should().Be("frame");
+        next.Dispose();
+    }
+
+    [Fact]
+    public async Task A_Log_That_Cannot_Be_Read_Costs_The_Browser_Its_Backlog_And_Nothing_Else()
+    {
+        // The station is still decoding; a browser losing its opening list is not a reason to
+        // drop its connection.
+        await using var server = new WaterfallWebServer(
+            new SoundModemChannel(SampleRate, randomSeed: 5),
+            FreePort(),
+            new WaterfallOptions { FrameHistory = _ => throw new InvalidOperationException("disk") });
+        server.Start();
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(
+            new Uri($"ws://127.0.0.1:{server.Url.Split(':')[^1].TrimEnd('/')}/ws"), _cancellation.Token);
+
+        (_, byte[] first) = await Receive(socket);
+        using JsonDocument config = JsonDocument.Parse(first);
+        config.RootElement.GetProperty("type").GetString().Should().Be("config");
+        socket.State.Should().Be(WebSocketState.Open, "the connection survives an unreadable log");
+    }
+
+    [Fact]
     public async Task Receive_Audio_Is_Sent_Only_To_A_Browser_That_Asked_For_It()
     {
         // Opening the page to look at a waterfall must not quietly start pulling ~24 KB/s, and

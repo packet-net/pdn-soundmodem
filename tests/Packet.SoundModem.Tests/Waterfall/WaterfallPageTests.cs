@@ -158,6 +158,60 @@ public class WaterfallPageTests
         probe.FrameRowClasses[1].Should().Be("fr");
     }
 
+    /// <summary>
+    /// The panel opens on the station's logged frames: listed, dimmed apart from live traffic,
+    /// never tagged onto the waterfall, and stamped with when they were heard.
+    /// </summary>
+    /// <remarks>
+    /// A panel that starts empty says nothing about a channel that has been busy all morning, and
+    /// on a quiet band it is indistinguishable from a modem that is not working. All of this is
+    /// page behaviour: the server sends one <c>history</c> message and everything below is what
+    /// the page decides to do with it.
+    /// </remarks>
+    [Fact]
+    public async Task The_Panel_Opens_On_The_Stations_Logged_Frames()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw while listing a backlog");
+
+        probe.HistoryTag.Should().BeEmpty(
+            "a logged frame was heard before the scroll on screen and belongs to no burst on it");
+
+        // The probe drives the backlog last, over a panel that already holds four live rows —
+        // which is the reconnect case, where the log by then holds those frames too. Rebuilt, not
+        // stacked: two rows, not six.
+        probe.HistoryRows.Should().HaveCount(
+            2, "a re-sent backlog rebuilds the panel rather than duplicating it");
+        probe.HistoryRowClasses.Should().AllBe(
+            "fr hist", "a backlog must not read as a channel that is busy right now");
+
+        // Newest on top, as for live frames — the page prepends and the server sends oldest first.
+        probe.HistoryRows[0].Should().Contain("GB7RDG-2").And.Contain("EI0RSI-1");
+        probe.HistoryRows[1].Should().Contain("GB7BEX-15");
+
+        // Stamped with when it was heard, not when it was shown. Today's frame gets a bare clock
+        // time; one from a past year must carry a date too, or it reads as this morning. The
+        // date's shape is the viewer's locale's business, so what is asserted is that it is not
+        // a bare time — that being the thing that would mislead.
+        probe.HistoryRows[0].Should().MatchRegex(@"<span class=""t"">\d\d:\d\d:\d\d</span>");
+        probe.HistoryRows[1].Should().NotMatchRegex(@"<span class=""t"">\d\d:\d\d:\d\d</span>");
+        probe.HistoryRows[1].Should().MatchRegex(@"<span class=""t"">.*\d\d:\d\d</span>");
+
+        // And the rest of the row still reads as a frame.
+        probe.HistoryRows[0].Should().Contain("31 B").And.Contain("+9 Hz");
+        probe.HistoryRows[1].Should().Contain("fec 2").And.Contain("crc");
+    }
+
     private static void FeedTone(SoundModemChannel channel, CancellationToken token)
     {
         var block = new float[512];
@@ -255,5 +309,8 @@ public class WaterfallPageTests
         string[] TxTag,
         string[] FrameRows,
         string[] FrameRowClasses,
+        string[] HistoryTag,
+        string[] HistoryRows,
+        string[] HistoryRowClasses,
         string[] Thrown);
 }

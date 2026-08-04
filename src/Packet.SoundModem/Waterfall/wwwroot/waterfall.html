@@ -135,6 +135,10 @@
   .fr.tx { border-left: 2px solid #31d2f2; padding-left: 10px; }
   .fr.tx .id { background: #7fe3f7; }
   .fr.tx .from { color: #7fe3f7; }
+  /* Read out of the station's frame log when the page opened, not heard since — dimmed so the
+     backlog cannot be mistaken for a channel that is busy right now. Its timestamps are real,
+     which is the other half of saying so. */
+  .fr.hist { opacity: .62; border-left: 2px solid #2a3441; padding-left: 10px; }
   #frames .empty { padding: 14px 12px; color: var(--muted); font-family: var(--sans); font-size: 12px; }
 
   @media (max-width: 900px) { #log { display: none; } }
@@ -655,13 +659,36 @@ function onFrameEvent(ev) {
   logFrame(ev);
 }
 
+// The station's frame log, oldest first — listed, never tagged: these were heard before the
+// scroll now on screen and belong to no burst on it. A reconnect re-sends the backlog, and by
+// then the log holds what was live before the drop too, so the panel is rebuilt from it rather
+// than stacking a second copy of the same frames underneath.
+function onHistory(msg) {
+  if (!msg.frames || !msg.frames.length) return;
+  $("frames").replaceChildren();
+  logEmpty = false;
+  for (const frame of msg.frames) logFrame(frame);
+}
+
 /* ---------- decode log panel ---------- */
 let logEmpty = true;
+// A live frame is stamped with now, because it just arrived. One out of the log carries the
+// time it was heard, which may be days ago — so a backlog row says the date as well, rather
+// than a bare clock time that reads as this morning.
+function stampFor(ev) {
+  if (!ev.at) return new Date().toTimeString().slice(0, 8);
+  const heard = new Date(ev.at);
+  if (isNaN(heard)) return "";
+  if (heard.toDateString() === new Date().toDateString()) return heard.toTimeString().slice(0, 8);
+  return heard.toLocaleDateString(undefined, { day: "2-digit", month: "short" })
+    + " " + heard.toTimeString().slice(0, 5);
+}
+
 function logFrame(ev) {
   if (logEmpty) { $("frames").replaceChildren(); logEmpty = false; }
   const row = document.createElement("div");
-  row.className = ev.tx ? "fr tx" : "fr";
-  const t = new Date().toTimeString().slice(0, 8);
+  row.className = "fr" + (ev.tx ? " tx" : "") + (ev.hist ? " hist" : "");
+  const t = stampFor(ev);
   const badge = ev.tx
     ? `<span class="id" title="Sent by this station — listed once the audio has gone out">TX</span>`
     : ev.id ? `<span class="id" title="Station identification, heard on the mode the TNC idents in rather than the one it carries data in">ID</span>` : "";
@@ -733,6 +760,8 @@ function connect() {
         setTransmitStatus(msg.status);
       } else if (msg.type === "frame") {
         onFrameEvent(msg);
+      } else if (msg.type === "history") {
+        onHistory(msg);
       }
       return;
     }

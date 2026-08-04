@@ -128,6 +128,69 @@ internal sealed class FrameLog : IAsyncDisposable
             frame));
     }
 
+    /// <summary>
+    /// The most recent <paramref name="count"/> frames, <b>oldest first</b> — what the
+    /// waterfall's decoded-frames panel opens with, so a browser arriving mid-afternoon sees
+    /// what the channel has been doing rather than an empty list.
+    /// </summary>
+    /// <remarks>
+    /// <para>Its own short-lived read-only connection, not the writer's: <see cref="SqliteConnection"/>
+    /// is not thread-safe and this is called from whichever connection thread a browser turned
+    /// up on, while the writer thread is mid-INSERT. The database is WAL — which is why the
+    /// class docs promise it stays readable while the modem writes — so a reader takes no lock
+    /// the writer cares about. A connection per page visit costs nothing at that rate.</para>
+    /// <para>Returns empty rather than throwing if the file has gone: a browser losing its
+    /// backlog is not a reason to fault a station that is still decoding.</para>
+    /// </remarks>
+    internal IReadOnlyList<LoggedFrame> Recent(int count)
+    {
+        if (count <= 0)
+        {
+            return [];
+        }
+
+        var frames = new List<LoggedFrame>(count);
+        try
+        {
+            using var reader = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = Path,
+                Mode = SqliteOpenMode.ReadOnly,
+            }.ToString());
+            reader.Open();
+            using SqliteCommand query = reader.CreateCommand();
+            // Newest first out of the index, then reversed: "the last N" is a descending
+            // query, and the panel wants them in the order they happened.
+            query.CommandText = """
+                SELECT heard_at, sub_channel, mode, source, destination,
+                       length, corrected, crc_valid, offset_hz
+                FROM frames ORDER BY id DESC LIMIT $count
+                """;
+            query.Parameters.AddWithValue("$count", count);
+            using SqliteDataReader row = query.ExecuteReader();
+            while (row.Read())
+            {
+                frames.Add(new LoggedFrame(
+                    DateTimeOffset.Parse(row.GetString(0), System.Globalization.CultureInfo.InvariantCulture),
+                    row.GetInt32(1),
+                    row.GetString(2),
+                    row.IsDBNull(3) ? null : row.GetString(3),
+                    row.IsDBNull(4) ? null : row.GetString(4),
+                    row.GetInt32(5),
+                    row.IsDBNull(6) ? null : row.GetInt32(6),
+                    row.IsDBNull(7) ? null : row.GetInt32(7) != 0,
+                    row.IsDBNull(8) ? null : row.GetDouble(8)));
+            }
+        }
+        catch (Exception e) when (e is SqliteException or IOException or FormatException)
+        {
+            return [];
+        }
+
+        frames.Reverse();
+        return frames;
+    }
+
     private void WriteLoop()
     {
         using SqliteCommand insert = _connection.CreateCommand();
