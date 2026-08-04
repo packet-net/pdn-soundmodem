@@ -250,4 +250,87 @@ public class SpectralBurstDetectorTests
 
         bursts.Should().BeEmpty("nothing that straddles the gap is a measurement of anything");
     }
+
+    [Fact]
+    public void A_Fade_Does_Not_Latch_The_Floor_Below_The_Noise_For_Good()
+    {
+        // The floor is a rolling minimum, and bins standing over it are held out of the average
+        // that feeds it. Those two together latch. Once a dip deeper than the 6 dB threshold
+        // enters the ring the floor follows it down; ordinary noise then stands over the lowered
+        // floor, so every line is "hot"; a block in which every line was hot has nothing to
+        // average, so it carries the previous ring entry forward - which is the dip. The low
+        // value recirculates and the floor can never come back up, because coming back up needs
+        // the noise to fall below a floor that is already below it.
+        //
+        // A fade of more than 6 dB is an ordinary quarter-minute on 40 m, and an audio dropout
+        // is deeper still. What it should cost is one ring-length of memory (~15 s), not the
+        // rest of the run.
+        (List<SurveyBurst> bursts, SpectralBurstDetector detector) = Detector();
+        long line = Warm(detector);
+
+        // One block - half a second - 10 dB down across part of the band. Nothing transmitted;
+        // the band went quiet.
+        byte[] fade = Line(lowHz: 1300, highHz: 1700, signalDb: -80);
+        for (int i = 0; i < LinesPerSecond / 2; i++)
+        {
+            detector.AddLine(line++, fade);
+        }
+
+        // A full minute of exactly the noise the detector was warmed on, four times the floor's
+        // own memory. Nothing is transmitting for any of it.
+        byte[] quiet = Line();
+        for (int i = 0; i < 60 * LinesPerSecond; i++)
+        {
+            detector.AddLine(line++, quiet);
+        }
+
+        bursts.Should().BeEmpty(
+            "the noise has not changed since the floor was banked, so there is nothing to report");
+    }
+
+    [Fact]
+    public void A_Signal_After_A_Fade_Is_Reported_At_The_Snr_It_Actually_Has()
+    {
+        // Two consequences on the operator's side of the latch above. SNR is measured against the
+        // floor, so a floor stuck 25 dB low adds 25 dB to every burst reported over it: on the
+        // live 40 m station this is what puts 40-55 dB against captures whose audio holds nothing
+        // that stands out from the noise at all, and an SNR that is not a measurement cannot be
+        // the thing a classifier or an operator sorts captures by. Worse, a latched band is hot
+        // on every line, so it holds one burst open indefinitely - and a real signal arriving in
+        // it is absorbed into that burst rather than reported, which is the survey going deaf in
+        // exactly the band where something once faded.
+        (List<SurveyBurst> bursts, SpectralBurstDetector detector) = Detector();
+        long line = Warm(detector);
+
+        byte[] dropout = Line(lowHz: 1300, highHz: 1700, signalDb: -95);
+        for (int i = 0; i < LinesPerSecond / 2; i++)
+        {
+            detector.AddLine(line++, dropout);
+        }
+
+        // Twenty seconds of unchanged noise - longer than the floor's memory, so a floor that
+        // tracks noise has forgotten the dropout by the end of it.
+        byte[] quiet = Line();
+        for (int i = 0; i < 20 * LinesPerSecond; i++)
+        {
+            detector.AddLine(line++, quiet);
+        }
+
+        // Then a real signal, 20 dB over the noise, for a second.
+        byte[] signal = Line(lowHz: 1300, highHz: 1700, signalDb: -50);
+        for (int i = 0; i < LinesPerSecond; i++)
+        {
+            detector.AddLine(line++, signal);
+        }
+
+        for (int i = 0; i < LinesPerSecond; i++)
+        {
+            detector.AddLine(line++, quiet);
+        }
+
+        SurveyBurst burst = bursts.Should().ContainSingle(
+            "one signal went past, and the twenty seconds of noise before it were not signals").Subject;
+        burst.EndedOnTimeout.Should().BeFalse();
+        burst.PeakSnrDb.Should().BeApproximately(20, 6, "that is how far over the noise it stood");
+    }
 }
