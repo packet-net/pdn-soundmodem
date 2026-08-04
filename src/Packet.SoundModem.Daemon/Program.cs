@@ -874,7 +874,7 @@ if (surveyConfig is not null)
             surveySource.Process(samples);
         });
         channel.FrameReceivedWithQuality += (sub, frame, quality) =>
-            created.NoteDecode(sub, frame, quality.Mode);
+            created.NoteDecode(sub, frame, quality);
         channel.TransmittingChanged += keyed =>
         {
             if (keyed)

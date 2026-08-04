@@ -118,7 +118,8 @@ public sealed class C4fskModem : IModem
             {
                 frameReceived(frame);
                 FrameDecoded?.Invoke(frame, new FrameQuality(
-                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid));
+                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                    HeaderType: info.HeaderType));
             },
             crcMode: crc, syncWord: SyncWord);
 

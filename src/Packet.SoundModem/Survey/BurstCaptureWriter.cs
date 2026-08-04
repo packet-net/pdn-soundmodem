@@ -26,6 +26,12 @@ namespace Packet.SoundModem.Survey;
 /// <param name="FrameHex">The decoded bytes, on an <see cref="SurveyVerdict.Unattributed"/>
 /// capture — the frame is readable, it is only its addresses that are not, so the payload is
 /// the evidence and belongs next to the audio.</param>
+/// <param name="Il2pHeaderType">Which IL2P encapsulation it arrived in, where the framing is
+/// IL2P. The first question worth asking about a frame that decoded cleanly and then would not
+/// yield callsigns: Type 1 translated and Type 0 transparent put the address field in different
+/// places.</param>
+/// <param name="AttributionNote">Why the addresses would not read, in a line — so the sidecar
+/// answers the question instead of posing it.</param>
 public sealed record BurstCapture(
     DateTimeOffset CapturedAt,
     SurveyVerdict Verdict,
@@ -43,7 +49,9 @@ public sealed record BurstCapture(
     IReadOnlyList<string> Modems,
     int? SubChannel = null,
     string? Mode = null,
-    string? FrameHex = null);
+    string? FrameHex = null,
+    string? Il2pHeaderType = null,
+    string? AttributionNote = null);
 
 /// <summary>
 /// Writes captured bursts to disk — a WAV of the audio and a JSON sidecar of everything measured

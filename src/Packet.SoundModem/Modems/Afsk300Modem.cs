@@ -121,6 +121,7 @@ public sealed class Afsk300Modem : IModem
                     frameReceived(frame);
                     FrameDecoded?.Invoke(frame, new FrameQuality(
                         Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                        HeaderType: info.HeaderType,
                         FrequencyOffsetHz: demodulator!.CarrierOffsetHz));
                 },
                 crcMode: framing == Afsk300Framing.Il2pCrc);

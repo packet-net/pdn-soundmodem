@@ -656,7 +656,7 @@ is already being computed for the display.
 |---|---|
 | `unclaimed` | Outside every configured modem's band. Nobody was listening there. |
 | `missed` | Inside one, and nothing decoded. **The most useful of the three** — the station was listening and could not read it, which is a receiver problem rather than a coverage one, and is invisible today unless you happen to be recording. |
-| `unattributed` | A frame decoded carrying no readable AX.25 addresses. Its bytes go into the sidecar beside the audio, so the payload and the modulation can be examined together. |
+| `unattributed` | A frame decoded carrying no readable AX.25 addresses. The sidecar carries its bytes, the IL2P encapsulation it arrived in (Type 1 translated or Type 0 transparent — they put the address field in different places) and a line saying exactly what would not read, so the payload, the reason and the modulation can be examined together. |
 
 Nothing is captured while the station transmits, and normal traffic on your own slots is not
 captured at all.
@@ -671,6 +671,10 @@ captured at all.
 | `maxSeconds` | number | `20` | Longest burst still plausibly a packet |
 | `minPeakSnrDb` | number | `6` | Weakest burst worth keeping, over the noise floor |
 | `capture` | array | all three | Which verdicts to write — `unclaimed`, `missed`, `unattributed` |
+
+The same explanation reaches the journal whether or not a survey is running — the `rx` line for
+such a frame carries `il2p Type1` and the reason in brackets, because the survey is optional and
+budgeted and may drop that particular burst.
 
 **On reaching the byte budget the oldest captures are deleted** to make room. That is a real
 choice, and the alternative is worse: stopping instead would mean a station left collecting for a
