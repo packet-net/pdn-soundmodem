@@ -481,6 +481,15 @@ It is drawn only. Transmitted audio is kept out of the SNR trackers — measurin
 transmitter would report an enormous burst and attribute it to whatever decoded next — and is
 not sent to the audio stream.
 
+**Your own frames are listed too**, in the decoded-frames panel, marked **TX** and styled apart
+so a transmission can never be misread as a station heard. The panel was a record of half the
+channel until then: everything heard, nothing sent, so an operator watching their own beacon go
+out had only the burst to go on. A frame is listed once its audio has left, so what is shown
+actually went on air. It carries no SNR, offset, FEC count or CRC verdict — those are receive
+measurements, and we did not receive it — and it is not tagged onto the waterfall: the burst is
+repainted from a queue in real time while the frame event fires as soon as the audio device took
+the audio, so a tag would land somewhere up the burst rather than on it.
+
 Omit the section to disable it. `dialFrequencyHz` is only the page's opening default — each
 browser can retune its own copy, and it is inherited from a band plan when there is one. The
 waterfall binds to the top-level [`bind`](#kissport-and-bind) like everything else; there is no
@@ -564,7 +573,7 @@ Omit the section and frames are heard and not written down. One row per decoded 
 | `sub_channel`, `mode`, `mode_name` | which modem heard it, and what it is — `bpsk300-il2pc` and `BPSK300 IL2Pc` |
 | `source`, `destination` | AX.25 callsigns where the frame carries them; null where it does not |
 | `length`, `corrected`, `crc_valid` | size, FEC corrections applied, whether the CRC checked |
-| `offset_hz` | how far off centre the sender actually was |
+| `offset_hz` | how far off centre the sender actually was — measured, not the diversity branch that copied it; null where the decoder could not measure it |
 | `audio_hz`, `rf_hz` | where that modem sits — `rf_hz` filled in when you have given it an `rfFrequency` |
 | `payload` | the frame itself, as a blob |
 

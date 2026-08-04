@@ -116,9 +116,11 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   measured off each modem's own modulator via the SM.443 OBW meter at start-up, operator-set
   dial frequency + sideband for an absolute-RF scale, and per-frame burst attribution
   (callsign parsed display-grade from the AX.25 address field, SNR + burst extent from
-  `BandActivityTracker` min-tracking over the display's own lines, offset from the winning
-  bank branch). Daemon `--waterfall PORT` / `--dial HZ` / `"waterfall"` config;
+  `BandActivityTracker` min-tracking over the display's own lines, carrier offset measured by
+  the winning bank branch). Daemon `--waterfall PORT` / `--dial HZ` / `"waterfall"` config;
   `--wav-loop FILE` replays a recording as the live capture device for hardware-free demos.
+  The decoded-frames panel lists this station's own transmissions too, marked **TX**
+  (2026-08-04).
 - ⬜ packet.net side: `kind: soundmodem` transport + `transport is ICarrierSense` probe at
   PortSupervisor (seam mapped in the research doc §5), spectrum + constellation SSE
   endpoints + waterfall/constellation UI (PdnPortTuningApi is the template; add to the SSE
@@ -230,6 +232,12 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   committed corpora don't yet).
 
 ## Amendment log
+
+### 2026-08-04 — the BPSK bank's carrier offset becomes a measurement, and the frame panel stops being half a record
+
+Two things Tom asked for in one leg. **Issue #202**: the `offset_hz` the frame log has been accumulating for every BPSK-family mode was not a frequency. `BpskMultiModem` reported the nominal comb position of whichever branch happened to emit a frame, branches run in array order, and the dedupe is first-wins — so on 26 hours of the GB7RDG 40 m channel, 431 frames from a GPSDO-locked station took nine values and nothing else, 82 % of them the most negative branch. Same defect as the 300 AFSK bank's (fixed 2026-08-02), same fix in shape and now in code: the differential detector was already forming the product whose discarded imaginary part *is* the carrier rotation, so `BpskDemodulator.CarrierOffsetHz` inlines `BpskCarrierOffsetEstimator`'s squaring trick over a decaying window rather than a peak hold (a peak hold would freeze on the first strong burst of a long session), the coherent path reads its Costas NCO instead, and the bank holds every branch's copy to the end of its dedupe chunk and emits the best-centred one as `branch + residual`. Where nothing could be measured it reports **null**, not a comb position. Clean loopback tracks to 0.09 Hz across ±33 Hz and 0.16 Hz across ±100 Hz at 1200 Bd; the real GB7RDG off-air capture comes out at +8.56 Hz against the standalone estimator's independent ~8. Detail and the AWGN numbers in the [mode-validation ledger](mode-validation.md); the offsets that entry corrects were quoted in this repo's own docs, so those are annotated rather than quietly edited.
+
+**And the waterfall's decoded-frames panel now lists what this station sends**, marked TX and styled apart. It was a record of half the channel — everything heard, nothing sent — so an operator watching their own beacon go out had only the burst to go on. Listed once the audio has left, so a listed frame is one that went on air; no SNR, offset, FEC count or CRC verdict, because those are receive measurements of somebody else; and not tagged onto the waterfall, because the burst is repainted from a queue in real time while the event fires as soon as the device took the audio, so the tag would land up the burst rather than on it. The page's frame dispatch became a named function so the node:vm probe can drive it, which is how "listed but not tagged" is asserted rather than assumed.
 
 ### 2026-08-03 (later) — one wide slice instead of two daemons: the passband is worked out, not configured
 
