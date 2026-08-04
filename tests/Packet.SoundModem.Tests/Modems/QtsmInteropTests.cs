@@ -5,9 +5,9 @@ namespace Packet.SoundModem.Tests.Modems;
 
 /// <summary>
 /// Deterministic QtSoundModem cross-validation: decode QtSM-generated reference WAVs
-/// (<c>samples/qtsm/</c>, captured off the snd-aloop rig from QtSoundModem 0.0.0.76 —
+/// (<c>samples/qtsm/</c>, captured off the snd-aloop rig from QtSoundModem 0.0.0.76 -
 /// docs/qtsm-loop.md) with our modems and assert the frames. This is the reproducible,
-/// checked-in half of the QtSM interop matrix — the <b>qtsm→ours</b> direction — mirroring
+/// checked-in half of the QtSM interop matrix - the <b>qtsm→ours</b> direction - mirroring
 /// <see cref="DirewolfCrossValidationTests"/> and <see cref="Dsp.OccupiedBandwidthTests"/>
 /// (which decode Dire Wolf / NinoTNC reference recordings at test time). The live headless
 /// QtSM rig stays manual (root, a patched build, the lossy 48 kHz path); only the WAV-corpus
@@ -22,10 +22,10 @@ namespace Packet.SoundModem.Tests.Modems;
 /// </para>
 /// <para>Two characterisation cases are pinned as regressions rather than clean interop:</para>
 /// <list type="bullet">
-///   <item><b>#6</b> — our V.26A <c>qpsk2400</c> decodes QtSM's <b>V26A/DW2400</b> (type 12)
+///   <item><b>#6</b> - our V.26A <c>qpsk2400</c> decodes QtSM's <b>V26A/DW2400</b> (type 12)
 ///     transmission but <b>not</b> its legacy "QPSK AX.25 2400bd" (type 10): different phase
 ///     maps. Both directions of the pinned pair are asserted.</item>
-///   <item><b>#10</b> — QtSM's <b>RUH-4800</b> transmission decodes on our 4800 GFSK receiver
+///   <item><b>#10</b> - QtSM's <b>RUH-4800</b> transmission decodes on our 4800 GFSK receiver
 ///     (the qtsm→ours 4800 direction, which always worked). The ours→QtSM 4800 direction is
 ///     verified live on the rig, not here (QtSM is not in-process).</item>
 /// </list>
@@ -104,7 +104,7 @@ public class QtsmInteropTests
     {
         // #10 (qtsm→ours direction): QtSM's Dire-Wolf RUH-4800 transmission decodes on our
         // NinoTNC-derived 4800 GFSK receiver. (The ours→QtSM 4800 direction is verified live
-        // on the rig — 10/10 under current code — not here; QtSM is not in-process.)
+        // on the rig - 10/10 under current code - not here; QtSM is not in-process.)
         List<byte[]> frames = Decode(
             "qtsm-ruh4800.wav", (rate, sink) => FskModem.Fsk4800(rate, sink));
 

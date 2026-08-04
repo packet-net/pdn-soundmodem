@@ -6,7 +6,7 @@ public enum Ms110dModulation
     /// <summary>WN 0: 32-chip 4-ary orthogonal Walsh channel symbols, no mini-probes.</summary>
     Walsh,
 
-    /// <summary>WN 1–5: binary PSK (transcoding Table D-III).</summary>
+    /// <summary>WN 1-5: binary PSK (transcoding Table D-III).</summary>
     Bpsk,
 
     /// <summary>WN 6 and 13: quaternary PSK (transcoding Table D-IV).</summary>
@@ -41,18 +41,18 @@ public enum Ms110dInterleaverKind
 /// (Table D-XLIX, <c>d49-code-rates.csv</c> row 3) and user data rate (Table D-II,
 /// <c>d02-rate-modulation.csv</c> row 3).
 /// </summary>
-/// <param name="Wn">Waveform number (0–13).</param>
+/// <param name="Wn">Waveform number (0-13).</param>
 /// <param name="Modulation">Data modulation.</param>
 /// <param name="BitsPerSymbol">Coded bits per data channel symbol (Walsh: per 32-chip symbol).</param>
-/// <param name="U">Unknown (data) symbols per frame (0 for WN 0 — continuous).</param>
-/// <param name="K">Known (mini-probe) symbols per frame (0 for WN 0 — no probes).</param>
+/// <param name="U">Unknown (data) symbols per frame (0 for WN 0 - continuous).</param>
+/// <param name="K">Known (mini-probe) symbols per frame (0 for WN 0 - no probes).</param>
 /// <param name="CodeRate">Code rate as printed ("3/4" etc.).</param>
 /// <param name="Bps">User data rate, bits/s.</param>
 public sealed record Ms110dMode(
     int Wn, Ms110dModulation Modulation, int BitsPerSymbol, int U, int K, string CodeRate, int Bps)
 {
-    /// <summary>3 kHz mode table for Phase A+B waveform numbers (0–8 and 13).
-    /// Higher-order QAM (WN 9–12) lands in Phase C.</summary>
+    /// <summary>3 kHz mode table for Phase A+B waveform numbers (0-8 and 13).
+    /// Higher-order QAM (WN 9-12) lands in Phase C.</summary>
     public static Ms110dMode Mode3k(int wn)
     {
         return wn switch
@@ -112,7 +112,7 @@ public sealed record Ms110dInterleaverParams(int Frames, int SizeBits, int Input
         return new Ms110dInterleaverParams(frames[i], size[i], input[i], inc[i]);
     }
 
-    /// <summary>Whether Table D-XXXVII defines this (waveform, interleaver) combination —
+    /// <summary>Whether Table D-XXXVII defines this (waveform, interleaver) combination -
     /// WN 0 has no UltraShort row. A noise-corrupted WID can survive its checksum and
     /// decode to an undefined combination, so acquisition must pre-validate with this
     /// rather than let <see cref="Get3k"/> throw out of the receive path.</summary>

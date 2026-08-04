@@ -1,12 +1,12 @@
 namespace Packet.SoundModem.Modems;
 
 /// <summary>
-/// A second-order decision-directed Costas loop — the coherent carrier-recovery front end
+/// A second-order decision-directed Costas loop - the coherent carrier-recovery front end
 /// the NinoTNC uses for its PSK modes. It drives a numerically-controlled oscillator to
 /// track the incoming carrier's absolute phase, so the mixed-down I/Q lands on the true
 /// constellation (not a phase-change of it). The data is still recovered by differentially
 /// decoding the <em>recovered absolute</em> symbols downstream, exactly as the NinoTNC does:
-/// the IL2P wire format is differential and untouched — only the receiver's detection method
+/// the IL2P wire format is differential and untouched - only the receiver's detection method
 /// changes. That resolves the M-PSK phase ambiguity (π for BPSK, π/2 for QPSK) the loop
 /// cannot on its own, and buys the coherent-detection noise margin the differential detector
 /// gives away.
@@ -32,7 +32,7 @@ public sealed class CostasLoop
     /// <param name="sampleRate">Input sample rate.</param>
     /// <param name="carrierFrequency">Nominal carrier centre the NCO starts at.</param>
     /// <param name="loopBandwidthHz">Loop noise bandwidth. Wider acquires faster and jitters
-    /// more; narrower tracks more quietly and pulls in slower — the coherent-vs-differential
+    /// more; narrower tracks more quietly and pulls in slower - the coherent-vs-differential
     /// trade lives here and is tuned per mode against measurement.</param>
     /// <param name="maxFreqDeviationHz">Clamp on the integrator's frequency correction, so a
     /// noise burst cannot walk the NCO off the carrier and hold it there.</param>
@@ -61,7 +61,7 @@ public sealed class CostasLoop
     /// positive frequency error rotates I toward Q).</summary>
     public float Sin => (float)(-Math.Sin(_phase));
 
-    /// <summary>The NCO's tracked frequency offset from nominal, in Hz — a lock/health
+    /// <summary>The NCO's tracked frequency offset from nominal, in Hz - a lock/health
     /// signal (settles near the true carrier offset once pulled in).</summary>
     public double FrequencyOffsetHz(int sampleRate) => _freq * sampleRate / (2 * Math.PI);
 

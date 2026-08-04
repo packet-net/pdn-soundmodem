@@ -16,7 +16,7 @@ public sealed class UberSdrCaptureOptions
 {
     /// <summary>
     /// Called with every block as it is recorded, after the startup guard and after any trim to
-    /// the target duration — so what the handler sees is exactly what the WAV holds.
+    /// the target duration - so what the handler sees is exactly what the WAV holds.
     /// </summary>
     /// <remarks>This is what lets a pass be watched live instead of only scored afterwards. It
     /// runs on the receive loop, so it must not block: anything slower than real time will stall
@@ -36,7 +36,7 @@ public sealed class UberSdrCaptureOptions
     public int DurationSeconds { get; init; }
 
     /// <summary>Discard this much audio after connect before opening the file. C0 found a
-    /// ~0.7–1.0 s level ramp at stream start (see the OTA capture-client plan); 1 s clears it.</summary>
+    /// ~0.7-1.0 s level ramp at stream start (see the OTA capture-client plan); 1 s clears it.</summary>
     public int StartupGuardMs { get; init; } = 1000;
 }
 
@@ -68,14 +68,14 @@ public sealed class UberSdrIqClient
     public UberSdrIqClient(Action<string>? log = null) => _log = log;
 
     /// <summary>
-    /// Completes when the receiver has accepted the session and the socket is open — i.e. from
-    /// this moment the capture is recording — and faults with the reason if it never gets there.
+    /// Completes when the receiver has accepted the session and the socket is open - i.e. from
+    /// this moment the capture is recording - and faults with the reason if it never gets there.
     /// </summary>
     /// <remarks>
     /// This exists so a transmitter can refuse to key until there is something listening. A
     /// transmission nobody recorded is worse than no transmission: it occupies a frequency, it
     /// spends the operator's licence, and it produces no measurement to show for either. Awaiting
-    /// a fixed delay instead — which is what the OTA harness used to do — keys straight through a
+    /// a fixed delay instead - which is what the OTA harness used to do - keys straight through a
     /// receiver that answered 503.
     /// </remarks>
     public Task Recording => _recording.Task;
@@ -89,7 +89,7 @@ public sealed class UberSdrIqClient
         catch (Exception e)
         {
             // Whatever went wrong, anyone waiting on Recording must learn of it rather than wait
-            // out their own timeout — the waiter is usually a transmitter deciding whether to key.
+            // out their own timeout - the waiter is usually a transmitter deciding whether to key.
             _recording.TrySetException(e);
             throw;
         }
@@ -218,7 +218,7 @@ public sealed class UberSdrIqClient
                 if (firstPacketNs == 0)
                 {
                     firstPacketNs = pkt.GpsTimestampNanos;
-                    _log?.Invoke($"first packet {UnixNanosToUtc(firstPacketNs):yyyy-MM-dd HH:mm:ss.fff} UTC — " +
+                    _log?.Invoke($"first packet {UnixNanosToUtc(firstPacketNs):yyyy-MM-dd HH:mm:ss.fff} UTC - " +
                                  $"skipping {opt.StartupGuardMs} ms startup guard");
                 }
 
@@ -312,7 +312,7 @@ public sealed class UberSdrIqClient
 
         // Read the body BEFORE deciding the request failed. A refusal from this server is not a
         // bare status code: /connection answers non-2xx with the same JSON it answers 200 with,
-        // carrying a `reason` that says which refusal this is — an exhausted daily allowance
+        // carrying a `reason` that says which refusal this is - an exhausted daily allowance
         // reads nothing like a full receiver, and both read nothing like a malformed request.
         // EnsureSuccessStatusCode throws that explanation away and leaves "503 (Service
         // Unavailable)", which sent a whole campaign looking at the wrong end of the link.
@@ -352,7 +352,7 @@ public sealed class UberSdrIqClient
                 "The receiver has no session slot free. Its sessions linger after a client "
                 + $"disconnects (this one reports session_timeout {parsed?.SessionTimeout.ToString() ?? "?"} s), "
                 + "so a rapid sequence of short captures exhausts an instance with your own stale "
-                + "sessions — hold ONE capture open across a run of transmissions instead of "
+                + "sessions - hold ONE capture open across a run of transmissions instead of "
                 + "opening a session per burst, or wait out the timeout.",
             429 =>
                 "Rate-limited or out of daily allowance"
@@ -360,14 +360,14 @@ public sealed class UberSdrIqClient
                     ? $" ({left} s remaining today, {parsed?.DailyTimeUsedSecs} s used)"
                     : "")
                 + ". Waiting is the only thing that lifts this; do not retry quickly.",
-            401 or 403 => "The receiver refused this client — a password may be required, or this "
+            401 or 403 => "The receiver refused this client - a password may be required, or this "
                           + "address is not permitted.",
             >= 500 => "The receiver is unwell rather than refusing you specifically; retry later.",
             _ => "The request itself was rejected, which usually means a malformed session id or "
                  + "an option this instance does not offer.",
         };
 
-        return $"HTTP {status} from /connection — {said}. {advice}";
+        return $"HTTP {status} from /connection - {said}. {advice}";
     }
 
     private static async Task<string?> FetchDescriptionAsync(string httpBase, CancellationToken ct)
@@ -382,7 +382,7 @@ public sealed class UberSdrIqClient
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            return null; // metadata is optional — capture proceeds without it
+            return null; // metadata is optional - capture proceeds without it
         }
     }
 
@@ -459,6 +459,6 @@ public sealed class UberSdrRefusedException : Exception
     /// <summary>True when only time lifts this: an exhausted daily allowance, or a rate limit.</summary>
     public bool RefusedForNow => StatusCode == 429 || Response?.RefusedForNow == true;
 
-    /// <summary>True when the receiver is simply full — retry after its session timeout.</summary>
+    /// <summary>True when the receiver is simply full - retry after its session timeout.</summary>
     public bool NoSessionFree => StatusCode == 503;
 }

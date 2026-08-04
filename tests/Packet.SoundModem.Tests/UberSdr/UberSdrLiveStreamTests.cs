@@ -11,7 +11,7 @@ namespace Packet.SoundModem.Tests.UberSdr;
 /// control.
 /// </summary>
 /// <remarks>
-/// Off by default — it needs the internet and somebody else's radio, and a receiver that is down
+/// Off by default - it needs the internet and somebody else's radio, and a receiver that is down
 /// for maintenance is not a regression in this repo. Run it with
 /// <c>UBERSDR_LIVE=&lt;instance&gt;</c> (a device string, or just the host):
 /// <code>UBERSDR_LIVE=m9psy-1.instance.ubersdr.org dotnet test</code>
@@ -65,7 +65,7 @@ public sealed class UberSdrLiveStreamTests
             audio.AddRange(buffer.AsSpan(0, input.Read(buffer)));
         }
 
-        // Six seconds of reading, less the one-second startup guard, is five seconds of audio —
+        // Six seconds of reading, less the one-second startup guard, is five seconds of audio -
         // and the point of the assertion is the rate, so it is bounded both ways. Too little
         // means the stream is stalling; too much would mean the audio rate is not what
         // SampleRate says it is, which would put every modem's timing out.

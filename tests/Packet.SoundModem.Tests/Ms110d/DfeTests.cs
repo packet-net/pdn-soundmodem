@@ -4,7 +4,7 @@ using Packet.SoundModem.Ms110d;
 namespace Packet.SoundModem.Tests.Ms110d;
 
 /// <summary>
-/// Targeted tests for the <see cref="Dfe"/> RLS recursion — chiefly the weighted-RLS
+/// Targeted tests for the <see cref="Dfe"/> RLS recursion - chiefly the weighted-RLS
 /// consistency property (issue #64): row weight must enter the gain denominator and the
 /// P update together, or sustained advisory-weight rows freeze adaptation.
 /// </summary>
@@ -37,7 +37,7 @@ public class DfeTests
     {
         // The issue-#64 freeze: converge at full weight, then invert the channel and offer
         // only advisory (0.1) rows. The old recursion scaled the tap step by the weight but
-        // applied the full-confidence P update, so P collapsed while the taps barely moved —
+        // applied the full-confidence P update, so P collapsed while the taps barely moved -
         // measured ~0.9 residual error after 150 post-flip rows. Consistent weighted RLS is
         // scale-invariant in the weight, so the advisory rows re-converge just like full ones.
         var dfe = new Dfe(ffTaps: 2, fbTaps: 0);
@@ -122,12 +122,12 @@ public class DfeTests
     {
         // §B2.1a: when the end anchor is the start anchor rotated by φ, the trajectory
         // must rotate at constant magnitude. Chord (plain linear) interpolation dips to
-        // cos(φ/2) at midspan — 6 % low at the 40°/frame rotations of the WN7 autopsy,
-        // far worse through fade swings — which is exactly why the phase ramp exists.
+        // cos(φ/2) at midspan - 6 % low at the 40°/frame rotations of the WN7 autopsy,
+        // far worse through fade swings - which is exactly why the phase ramp exists.
         Cf[] start = [new(1f, 0f), new(0.3f, -0.7f)];
         const float phi = 1.2f; // ~69°, a fade-swing-scale rotation
         Cf rotor = Cf.Cmplx(phi);
-        // The caller hands TapTrajectory the END taps DE-rotated by φ — for a pure
+        // The caller hands TapTrajectory the END taps DE-rotated by φ - for a pure
         // rotation that is the start taps again.
         var trajectory = new Cf[2];
         Ms110dDemodulator.TapTrajectory(start, start, phi, 0.5f, trajectory);
@@ -187,7 +187,7 @@ public class DfeTests
     }
 
     /// <summary>Accumulates rows for a symbol-spaced channel y[u] = x[u] + g·x[u−5] + n
-    /// through a 4-tap window — the lag-5 inverse is IIR (taps at 5, 10, …), so full
+    /// through a 4-tap window - the lag-5 inverse is IIR (taps at 5, 10, …), so full
     /// inversion is infeasible by construction and the shortened target 1 + c·z⁻⁵ is
     /// exact.</summary>
     private static void AccumulateEchoRows(Dfe dfe, float echoGain, float sigma, int noiseSeed)
@@ -240,7 +240,7 @@ public class DfeTests
     public void Tir_Solve_Rejects_The_Free_Parameter_On_An_Echo_Free_Channel()
     {
         // Every lag candidate's SSE gain is noise-fit only; the 4·ln(L)·SSE₀/rows margin
-        // must keep the null (full-inversion) solve — no fake designed echo.
+        // must keep the null (full-inversion) solve - no fake designed echo.
         var dfe = new Dfe(ffTaps: 4, fbTaps: 8);
         AccumulateEchoRows(dfe, echoGain: 0f, sigma: 0.2f, noiseSeed: 44);
         Dfe.TirSolve tir = dfe.SolveTrainingTir(regularization: 1e-3f, ffNoisePower: 0f, maxLag: 8);
@@ -250,7 +250,7 @@ public class DfeTests
         tir.Coefficient.Abs().Should().Be(0f);
     }
 
-    /// <summary>Rows for y[u] = x[u] + gₐ·x[u−5] + g_b·x[u−6] + n — a fractional-delay
+    /// <summary>Rows for y[u] = x[u] + gₐ·x[u−5] + g_b·x[u−6] + n - a fractional-delay
     /// echo's straddle pair on the symbol grid (§B3.3 two-adjacent-lag model).</summary>
     private static void AccumulateStraddleEchoRows(
         Dfe dfe, float gainMain, float gainAdjacent, float sigma, int noiseSeed)
@@ -301,7 +301,7 @@ public class DfeTests
     [Fact]
     public void Tir_Floating_Refit_Does_Not_Invert_A_Weak_Cursor()
     {
-        // §B3.3 eigen-TIR: cursor path faded to 0.3 while the echo path carries 1.0 —
+        // §B3.3 eigen-TIR: cursor path faded to 0.3 while the echo path carries 1.0 -
         // the monic solve would boost the FF by ~1/0.3 to manufacture unit cursor gain;
         // the floating refit must instead report the true echo-to-cursor ratio with a
         // matched-filter-scale FF.
@@ -317,7 +317,7 @@ public class DfeTests
             "the unit-norm target must not boost the FF toward inverting the 0.3 cursor");
     }
 
-    /// <summary>Rows for y[u] = g_c·x[u] + g_e·x[u−5] + n — a faded cursor path with a
+    /// <summary>Rows for y[u] = g_c·x[u] + g_e·x[u−5] + n - a faded cursor path with a
     /// dominant echo path (§B3.3 eigen-TIR weak-cursor case).</summary>
     private static void AccumulateWeakCursorEchoRows(
         Dfe dfe, float cursorGain, float echoGain, float sigma, int noiseSeed)
@@ -354,7 +354,7 @@ public class DfeTests
     [Fact]
     public void Tir_Pair_Is_Rejected_When_The_Echo_Is_A_Single_Lag()
     {
-        // The extra parameter's noise-only gain must not clear the 4·SSE₀/rows margin —
+        // The extra parameter's noise-only gain must not clear the 4·SSE₀/rows margin -
         // a clean single-lag echo keeps Lag2 = 0 and the cancellation path stays off.
         var dfe = new Dfe(ffTaps: 4, fbTaps: 8);
         AccumulateEchoRows(dfe, echoGain: 0.8f, sigma: 0.05f, noiseSeed: 43);
@@ -369,7 +369,7 @@ public class DfeTests
     public void Tir_Null_Candidate_Matches_The_Plain_Training_Solve()
     {
         // With no feedback columns the TIR method degenerates to the FF-only system that
-        // SolveTraining solves — same Gram, same ridge scale, same Cholesky.
+        // SolveTraining solves - same Gram, same ridge scale, same Cholesky.
         var plain = new Dfe(ffTaps: 4, fbTaps: 0);
         var tir = new Dfe(ffTaps: 4, fbTaps: 0);
         AccumulateEchoRows(plain, echoGain: 0.5f, sigma: 0.1f, noiseSeed: 45);

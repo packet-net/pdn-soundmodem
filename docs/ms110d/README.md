@@ -1,6 +1,6 @@
-# MIL-STD-188-110D Appendix D — transcribed interop tables
+# MIL-STD-188-110D Appendix D - transcribed interop tables
 
-The interop-critical tables of MIL-STD-188-110D Appendix D (WBHF — the public counterpart of
+The interop-critical tables of MIL-STD-188-110D Appendix D (WBHF - the public counterpart of
 the RESTRICTED STANAG 5069), transcribed from the standard because they are embedded as
 **images** in the PDF (no text layer). These values are load-bearing for any App D
 implementation: a single misread cell breaks interop silently.
@@ -10,7 +10,7 @@ implementation: a single misread cell breaks interop silently.
 - MIL-STD-188-110D, 29 December 2017, Distribution Statement A (approved for public release).
 - Downloaded 2026-07-16 from everyspec.com (MIL-STD-188-110D_55856).
 - SHA-256 of the transcription-time download: `c12ec2f6a4b9daf79e4bdcea1b618ba0c745f07ec24633c048702d0fe9847bc0`.
-  **Caveat (2026-07-16, design assembly):** this raw hash is *per-download* — everyspec's
+  **Caveat (2026-07-16, design assembly):** this raw hash is *per-download* - everyspec's
   `download.php` stamps a fresh random second half into the PDF trailer `/ID` on every
   download (verified by byte-diffing two downloads: 12,884,037 bytes each, exactly 30
   differing bytes, all inside the second `/ID` hex string). Canonical identity instead:
@@ -27,12 +27,12 @@ licensing barrier to vendoring it; this makes the transcription reproducible/re-
 without depending on everyspec staying up or serving the same file.
 
 Verified against this README before committing:
-- File size: 12,884,037 bytes — matches the transcription-time download exactly.
-- Permanent PDF ID `DB10F99E7B75A24BD5A10223B8A98086` — present in all three `/ID` trailer
+- File size: 12,884,037 bytes - matches the transcription-time download exactly.
+- Permanent PDF ID `DB10F99E7B75A24BD5A10223B8A98086` - present in all three `/ID` trailer
   entries in this download.
 - Page 1 text layer reads "MIL-STD-188-110D, 29 December 2017 ... DISTRIBUTION STATEMENT A:
   Approved for public release; distribution unlimited."
-- Raw SHA-256 of this download differs from the transcription-time raw hash (expected —
+- Raw SHA-256 of this download differs from the transcription-time raw hash (expected -
   per the caveat above, everyspec stamps a fresh random second `/ID` half per download).
 
 ## Verification: two independent transcriptions, diffed
@@ -40,7 +40,7 @@ Verified against this README before committing:
 Transcribed **twice, independently** (branches `ms110d-tables-a` and `ms110d-tables-b`,
 2026-07-16), by agents forbidden from consulting each other or external sources for values.
 Diff verdict across all ten table files: **six byte-identical** (including all four
-constellation tables and the mini-probes), **four differing only in header/comment formatting —
+constellation tables and the mini-probes), **four differing only in header/comment formatting -
 zero value conflicts** (confirmed by normalized field-level comparison for the one
 structurally-different file, d6x). The `ms110d-tables-a` branch is retained as the
 independent record; this directory carries the B transcription as canonical.
@@ -55,7 +55,7 @@ doubling pattern) cross-validates against D-XLIX's 2/7 rate.
 ## Structural notes (vs the scouting expectations)
 
 - The coordinate tables D-VII…D-X cover **16/32/64/256-QAM**; BPSK/QPSK/8PSK have no
-  coordinate tables — they are unit-circle PSK with transcoding tables (D-III…D-VI).
+  coordinate tables - they are unit-circle PSK with transcoding tables (D-III…D-VI).
 - The puncture patterns are a separate **Table D-L** (transcribed in full inside
   `tables/transcription-notes.md`).
 - Spec oddities recorded in the notes: a length-68 mini-probe; a "40 kHz"
@@ -66,7 +66,7 @@ doubling pattern) cross-validates against D-XLIX's 2/7 rate.
 These tables feed the App D design doc (task #7). Both build phases are now closed:
 Phase A (3 kHz framing + Walsh-75/BPSK/QPSK + DFE) closed 2026-07-23
 ([phase-a-closeout.md](phase-a-closeout.md)); Phase B (8PSK/16QAM + binding Poor-channel
-mask gating) closed 2026-07-27 ([phase-b-closeout.md](phase-b-closeout.md)) — WN0–6+13
+mask gating) closed 2026-07-27 ([phase-b-closeout.md](phase-b-closeout.md)) - WN0-6+13
 hard-gated at mask on Poor, WN7/WN8 closed with measured-only verdicts (closeout §4).
 
 ## Ledger clearance (2026-07-17)
@@ -74,7 +74,7 @@ hard-gated at mask on Poor, WN7/WN8 closed with measured-only verdicts (closeout
 The design doc's §8 transcription-debt ledger (13 rows) was cleared by the same
 dual-independent method: branches `ms110d-ledger-a` (fresh-run, checkpointed) and
 `ms110d-ledger-b`, transcribed from the PDF only, then value-diffed. **Every load-bearing
-value agrees** — 14 of 20 paired files numerically identical outright; the six formatting
+value agrees** - 14 of 20 paired files numerically identical outright; the six formatting
 differences carry identical values (verified per-pair: both 256-digit PN arrays identical in
 full; encoder polynomials 0o133/0o171 and 0o561/0o753 agree; the interleaver worked-example
 sequence byte-identical; d15/d16 differ only as "0 0" vs "00"). Ledger errata found by BOTH
@@ -95,14 +95,14 @@ convention), and the Watterson/App-E channel simulator + statistical mask harnes
 its file in this directory; nothing was re-transcribed.
 
 Interpretation choices this implementation records (loopback-consistent both ends,
-revisit at any future oracle — design §5.2):
+revisit at any future oracle - design §5.2):
 
-- **L6** — WN 0 data di-bit order: first fetched bit = di-bit MSB (the QPSK
+- **L6** - WN 0 data di-bit order: first fetched bit = di-bit MSB (the QPSK
   leftmost-is-older rule, D.5.1.2.1.2).
 - **Mini-probe boundary shift direction**: the shifted probe starts `shift` symbols into
   the base sequence (`probe[i] = base[(i + shift) mod N]`).
 - **Boundary-probe position with one frame per interleaver block** (WN 5/6/13 UltraShort):
-  "after the second-to-last data block of each interleaver frame" degenerates — every
+  "after the second-to-last data block of each interleaver frame" degenerates - every
   probe precedes a boundary and is transmitted shifted.
 - **O-1 (fixedPN wrap)**: wrap-around implemented; at 3 kHz the per-channel-symbol-restart
   reading coincides with it (8 × 32 chips = exactly 256), so no runtime switch is carried.
@@ -119,7 +119,7 @@ revisit at any future oracle — design §5.2):
 
 Phase A receiver limits, stated: acquisition needs M ≥ 2 super-frames (the M = 1
 single-Walsh-symbol preamble is transmitted but not acquired); mid-data broadcast late
-entry off the rotated boundary probe (known-WID-a-priori) is transmitted but not received —
+entry off the rotated boundary probe (known-WID-a-priori) is transmitted but not received -
 late entry works via the repeated preamble; clock-skew tolerance is the slow per-probe
-timing tracker only (WN 0 has none); 8PSK/QAM waveform numbers land in Phases B/C. Validation status: **spec-faithful + mask-passing, not interop-proven** — no
+timing tracker only (WN 0 has none); 8PSK/QAM waveform numbers land in Phases B/C. Validation status: **spec-faithful + mask-passing, not interop-proven** - no
 open App D implementation or off-air recording exists (pdn↔pdn only, design Q2).

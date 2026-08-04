@@ -11,18 +11,18 @@ namespace Packet.SoundModem.Ota;
 /// from the manifest alone.</param>
 internal sealed record OfdmLadderPoint(string Mode, double SnrDb, SimChannelKind Channel, int Seed);
 
-/// <summary>One rendered OFDM point: the two forms of the signal carrying its datac packet — the
+/// <summary>One rendered OFDM point: the two forms of the signal carrying its datac packet - the
 /// complex IQ a simulated capture holds (rehearsal only) and the real 8&#160;kHz audio the DAX route
 /// transmits.</summary>
-/// <param name="Point">The point this came from — its seed regenerates payload and channel alike.</param>
+/// <param name="Point">The point this came from - its seed regenerates payload and channel alike.</param>
 /// <param name="Iq">Interleaved complex baseband at the pass's output rate, <b>pre-scaled</b> by the
-/// pass IQ gain — what a simulated capture writes. Empty when the pass was rendered audio-only (the
+/// pass IQ gain - what a simulated capture writes. Empty when the pass was rendered audio-only (the
 /// live path, which never needs IQ).</param>
 /// <param name="Audio">The real post-channel audio at the engine-native 8&#160;kHz, noise lead-in and
-/// lead-out included — the same signal before SSB placement, what the DAX route transmits. <b>Natural
+/// lead-out included - the same signal before SSB placement, what the DAX route transmits. <b>Natural
 /// scale</b>: the DAX route resamples it and applies <see cref="OfdmLadderPass.AudioGain"/> at
 /// transmit time.</param>
-/// <param name="LeadInSeconds">Noise transmitted ahead of the active burst — the scorer's guard, and
+/// <param name="LeadInSeconds">Noise transmitted ahead of the active burst - the scorer's guard, and
 /// where the burst's own delivered SNR is measured from.</param>
 /// <param name="BurstSeconds">Length of the active modulated burst (preamble + packet + postamble),
 /// the region the channel calibrated its noise against and the scorer measures signal power over.</param>
@@ -41,20 +41,20 @@ internal sealed record OfdmLadderPassOptions
     public int OutputRate { get; init; } = 48000;
 
     /// <summary>Where the suppressed carrier lands relative to the transmit dial. The DAX route places
-    /// audio <c>f</c> at <c>dial + f</c> directly, so its offset is 0 — the datac band sits at its
+    /// audio <c>f</c> at <c>dial + f</c> directly, so its offset is 0 - the datac band sits at its
     /// native ~1500&#160;Hz audio centre and the scorer recovers it with <c>DialHz = 0</c>.</summary>
     public double OffsetHz { get; init; }
 
     /// <summary>Whether to render the simulated-capture IQ. On for a rehearsal (and the tests, which
     /// lay the IQ out as a capture); off for a live pass, which transmits the audio and would only
-    /// throw the IQ away — skipping it drops the SSB up-conversion, the dominant render cost.</summary>
+    /// throw the IQ away - skipping it drops the SSB up-conversion, the dominant render cost.</summary>
     public bool RenderIq { get; init; } = true;
 
     /// <summary>Peak real-audio amplitude of the <em>worst</em> point, which sets the DAX audio gain
-    /// for all — the level policy applied at transmit time.</summary>
+    /// for all - the level policy applied at transmit time.</summary>
     public double AudioAmplitude { get; init; } = 0.9;
 
-    /// <summary>Noise-only audio transmitted before each burst — what makes the ladder
+    /// <summary>Noise-only audio transmitted before each burst - what makes the ladder
     /// self-calibrating. It must cover the scorer's noise window with margin for the key-up ramp; it
     /// costs nothing into a dummy load. See <see cref="LadderPassOptions.LeadInSeconds"/>.</summary>
     public double LeadInSeconds { get; init; } = 6.0;
@@ -73,31 +73,31 @@ internal sealed record OfdmLadderPassOptions
 
 /// <summary>
 /// Renders a FreeDV datac OFDM §E2 ladder: datac packets put through the sim baseline's channel rig
-/// at a stated SNR, ready to go out over real hardware on the DAX route — the OFDM sibling of
+/// at a stated SNR, ready to go out over real hardware on the DAX route - the OFDM sibling of
 /// <see cref="LadderPass"/>.
 /// </summary>
 /// <remarks>
 /// <para>The channel injected here is literally the sim baseline's <see cref="SimChannel"/> (which is
 /// the mask suite's <see cref="Packet.SoundModem.Tests.Channel.WattersonChannel"/>), so an OFDM
 /// on-air ladder and its software waterfall are measured against one rig, not two. Rendering drives
-/// the datac engine at its native 8&#160;kHz through <see cref="DatacEngine"/> — the same primitives
-/// <see cref="DatacPacketProbe"/> grades on — then places the audio on a single sideband with
+/// the datac engine at its native 8&#160;kHz through <see cref="DatacEngine"/> - the same primitives
+/// <see cref="DatacPacketProbe"/> grades on - then places the audio on a single sideband with
 /// <see cref="Ms110dIqUpconverter"/> (a generic real-audio→SSB-IQ converter, despite its MS110D name)
 /// so a rehearsal's simulated capture lands exactly where a real DAX capture would.</para>
-/// <para><b>Level policy.</b> One gain for the whole pass, taken from the worst point — identical to
+/// <para><b>Level policy.</b> One gain for the whole pass, taken from the worst point - identical to
 /// <see cref="LadderPass"/>. Signal power is then identical at every rung and only the injected noise
 /// varies, which is the definition of a ladder; peak-normalising each point would add a second,
 /// uncalibrated dose of noise at the bottom where the measurement is most delicate.</para>
 /// <para><b>One packet per burst.</b> Each burst carries exactly one datac packet, so a rehearsal or
-/// pass scores per-packet CRC and post-LDPC coded BER — the terms FreeDV publishes its operating
-/// points in — with an unambiguous 0/1 result per burst.</para>
+/// pass scores per-packet CRC and post-LDPC coded BER - the terms FreeDV publishes its operating
+/// points in - with an unambiguous 0/1 result per burst.</para>
 /// </remarks>
 internal sealed class OfdmLadderPass
 {
     /// <summary>The datac engine's native sample rate; every datac mode runs at 8&#160;kHz.</summary>
     public const int NativeRate = 8000;
 
-    /// <summary>Peak IQ magnitude the worst point is scaled to when a simulated capture is rendered —
+    /// <summary>Peak IQ magnitude the worst point is scaled to when a simulated capture is rendered -
     /// full-scale headroom for the DAX s16 path, the audio-route counterpart of
     /// <see cref="AudioGain"/>. A constant, not a knob: the demodulator equalises level, so the only
     /// thing that matters is not clipping the rehearsal's WAV.</summary>
@@ -108,7 +108,7 @@ internal sealed class OfdmLadderPass
     public OfdmLadderPass(OfdmLadderPassOptions? options = null) =>
         _options = options ?? new OfdmLadderPassOptions();
 
-    /// <summary>Expands an SNR list into points, repeated, with seeds that never collide — repeats
+    /// <summary>Expands an SNR list into points, repeated, with seeds that never collide - repeats
     /// interleaved so a pass cut short still covers the whole ladder (see <see cref="LadderPass.Plan"/>).</summary>
     public static IReadOnlyList<OfdmLadderPoint> Plan(
         string mode, IReadOnlyList<double> snrsDb, int repeats,
@@ -157,7 +157,7 @@ internal sealed class OfdmLadderPass
             }
 
             // The IQ is only the rehearsal's simulated capture (SSB placement is done in hardware on a
-            // live pass and captured by the RSP), so render it only when asked — the up-conversion is
+            // live pass and captured by the RSP), so render it only when asked - the up-conversion is
             // the dominant render cost and a live pass throws it away.
             float[] iq = [];
             if (_options.RenderIq)

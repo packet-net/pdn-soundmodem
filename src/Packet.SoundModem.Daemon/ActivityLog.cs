@@ -10,8 +10,8 @@ namespace Packet.SoundModem.Daemon;
 /// <remarks>
 /// <para>This is the only view of a running station most operators ever have: the waterfall needs a
 /// browser and the frame log needs SQL, but <c>journalctl -u pdn-soundmodem -f</c> is what someone
-/// watches while they get a station working. It used to say <c>rx[0] 42 bytes</c> — which answers
-/// neither "who is that" nor "did it decode cleanly" — and said nothing at all about transmissions
+/// watches while they get a station working. It used to say <c>rx[0] 42 bytes</c> - which answers
+/// neither "who is that" nor "did it decode cleanly" - and said nothing at all about transmissions
 /// except when one was dropped, so a journal recorded every failure to transmit and no successes.
 /// </para>
 /// <para>Formatted as pure functions rather than inline interpolation so the exact text is pinned by
@@ -53,7 +53,7 @@ internal static class ActivityLog
         }
 
         // A frame that decoded cleanly and then would not yield callsigns is the one line here
-        // that used to raise a question instead of answering one — "(no ax25 header)" and
+        // that used to raise a question instead of answering one - "(no ax25 header)" and
         // nothing more. It has already passed Reed-Solomon and, on an IL2P+CRC link, the CRC, so
         // the bits are right and the reading of them is not; which encapsulation carried it is
         // the first thing worth knowing, because Type 1 and Type 0 put the address field in
@@ -94,13 +94,13 @@ internal static class ActivityLog
 
     private static string Clients(int count) => count == 1 ? "1 client" : $"{count} clients";
 
-    /// <summary>Which modems that port reaches — the thing a host operator gets wrong.</summary>
+    /// <summary>Which modems that port reaches - the thing a host operator gets wrong.</summary>
     private static string Serving(int? dedicatedSubChannel) =>
         dedicatedSubChannel is int sub ? $" (modem {sub} only)" : " (all modems)";
 
     /// <summary>
     /// <c>SOURCE&gt;DEST</c> where the frame is AX.25, else a marker. Not every mode carries AX.25
-    /// addresses — a KISS host may send anything — and printing a mangled callsign would be worse
+    /// addresses - a KISS host may send anything - and printing a mangled callsign would be worse
     /// than admitting there is not one.
     /// </summary>
     private static string Addresses(ReadOnlySpan<byte> frame) =>

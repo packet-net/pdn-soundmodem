@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Modems;
 /// a slowly-adapting noise-floor estimate, with assert/release hysteresis and a hold time.
 /// This is the deliberately display-decoupled replacement for QtSoundModem's spectral busy
 /// detector (which lives in its waterfall paint path and never runs headless). It flags
-/// non-packet energy — a carrier, voice, another mode — that the packet DCD cannot see;
+/// non-packet energy - a carrier, voice, another mode - that the packet DCD cannot see;
 /// channel busy for carrier-sense purposes is the OR of both.
 /// </summary>
 public sealed class EnergyBusyDetector
@@ -27,7 +27,7 @@ public sealed class EnergyBusyDetector
     /// <param name="blockMilliseconds">Power integration block. Sets detection latency.</param>
     /// <param name="assertDb">dB above the noise floor at which busy asserts.</param>
     /// <param name="releaseDb">dB above the floor below which busy releases (must be
-    /// below <paramref name="assertDb"/> — hysteresis).</param>
+    /// below <paramref name="assertDb"/> - hysteresis).</param>
     /// <param name="holdMilliseconds">Minimum busy time after the last over-threshold
     /// block, riding through flutter and PSK envelope dips.</param>
     public EnergyBusyDetector(
@@ -65,7 +65,7 @@ public sealed class EnergyBusyDetector
         if (_seedBlocksRemaining > 0)
         {
             // Warm-up: the front-end FIR starts from zeroed history, so the first blocks
-            // are artificially quiet — seeding the floor from them would flag plain noise
+            // are artificially quiet - seeding the floor from them would flag plain noise
             // as busy forever. Seed with the loudest warm-up block (conservative: a busy
             // cold start seeds high, and the fast downward adaptation recovers the true
             // floor as soon as the channel goes quiet).

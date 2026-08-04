@@ -1,4 +1,4 @@
-pdn-soundmodem — headless soundcard packet-radio modem
+pdn-soundmodem - headless soundcard packet-radio modem
 https://github.com/packet-net/pdn-soundmodem
 
 Copyright © 2026 Tom Fanning M0LTE and Packet.NET contributors
@@ -26,10 +26,10 @@ DERIVED WORK AND PROVENANCE
 
 pdn-soundmodem is GPL-3.0-or-later because it contains work derived from:
 
-  QtSoundModem — Copyright © Andrei Kopanchuk UZ7HO, ported to Qt by
+  QtSoundModem - Copyright © Andrei Kopanchuk UZ7HO, ported to Qt by
   John Wiseman G8BPQ.  Licensed GPL-3.0-or-later.
 
-  Dire Wolf — Copyright © John Langner WB2OSZ.  Licensed GPL-2.0-or-later,
+  Dire Wolf - Copyright © John Langner WB2OSZ.  Licensed GPL-2.0-or-later,
   used here under the "or later" clause as GPL-3.0.
 
 Every algorithm ported from those projects carries a comment at the port site

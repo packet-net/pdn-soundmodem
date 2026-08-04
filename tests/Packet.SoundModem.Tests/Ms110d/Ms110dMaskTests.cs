@@ -8,7 +8,7 @@ using Packet.SoundModem.Tests.Channel;
 namespace Packet.SoundModem.Tests.Ms110d;
 
 /// <summary>
-/// The design §5.3/§6 statistical mask runs — environment-gated (<c>MS110D_MASKS=1</c> for
+/// The design §5.3/§6 statistical mask runs - environment-gated (<c>MS110D_MASKS=1</c> for
 /// the AWGN gates, <c>MS110D_MASKS_POOR=1</c> for the measured-not-gated Poor channel),
 /// because a full point runs minutes of simulated signal and the suite hours; per §5.3 these
 /// are nightly/rotating runs, not per-PR CI. Conditions per D.6.1: coded BER ≤ 1.0E-5, Long
@@ -16,7 +16,7 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// (the implemented form of design §5.3, restated 2026-07-23): a fixed sample of ≥ 3×10⁶
 /// payload bits (fading gate points additionally ≥ 600 s simulated per D-LXV duration logic);
 /// with ≥ 30 errors the direct BER must be ≤ 1e-5, else the 97.5 % Poisson upper bound must
-/// clear 1e-5. Since §B4/§B4.1/§B3.5b (2026-07-26) the at-mask Poor points (WN0–WN6, WN13)
+/// clear 1e-5. Since §B4/§B4.1/§B3.5b (2026-07-26) the at-mask Poor points (WN0-WN6, WN13)
 /// are hard-gated by default; WN7/WN8 are measured-not-gated (open), and
 /// <c>MS110D_POOR_GATED=1</c> forces the gate everywhere. Override the bit budget with
 /// <c>MS110D_MASK_BITS</c> for smoke runs (reports are then labelled SMOKE, not gate evidence).
@@ -55,7 +55,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             "set MS110D_MASKS=1 for the statistical mask runs");
         string? wnFilter = Environment.GetEnvironmentVariable("MS110D_MASK_WN");
         Assert.SkipWhen(wnFilter is not null && wnFilter != wn.ToString(),
-            $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
+            $"MS110D_MASK_WN={wnFilter} - skipping WN{wn}");
 
         MaskRun run = RunPoint(wn, snrDb, [], TargetBits(), seed: 100 + wn + SeedOffset());
         Report($"AWGN WN{wn} @ {snrDb:+0;-0;0} dB{SeedTag()}", run);
@@ -68,11 +68,11 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_MASKS") != "1",
             "set MS110D_MASKS=1 for the statistical mask runs");
 
-        // Table D-LXV, 3 kHz: WID 2 → 3-path static (0.0, 3.0, 9.0 ms), equal power — the rig
+        // Table D-LXV, 3 kHz: WID 2 → 3-path static (0.0, 3.0, 9.0 ms), equal power - the rig
         // whose purpose (design §6) is to prove the K=48 DFE's 9 ms feedback span + probe-
         // training convergence WITHOUT fade tracking, not to hit a spec SNR.
         //
-        // House bar RESTATED (2026-07-17): the gate ran at 5 dB — a number BORROWED from the
+        // House bar RESTATED (2026-07-17): the gate ran at 5 dB - a number BORROWED from the
         // WN2 "Poor" (2-path/2 ms/1 Hz fading) mask, never a spec requirement (the D-LXV SNR
         // column was not transcribed; D.6.3 is "Not yet standardized"). 5 dB is unjustifiably
         // optimistic for this HARDER static channel (3 equal paths spread over 9 ms → deeper
@@ -80,7 +80,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         // fix (docs/ms110d/design.md §5.1; MS110D_MASK_BITS=500000): 5 dB → 8.3E-5, 7 dB → 7.8E-6
         // (knee), 9 dB → clean. The equalizer demonstrably spans the echo and reaches the 1E-5
         // mask by ~9 dB; the full FF span is load-bearing (shrinking FF 32→12 wrecks this
-        // channel to 3.2E-3). Gate restated to 9 dB — the lowest robustly-passing SNR — proving
+        // channel to 3.2E-3). Gate restated to 9 dB - the lowest robustly-passing SNR - proving
         // span+convergence with margin. Better-than-9 dB on this channel is Phase-B RLS scope
         // (design §2.5/§6), deliberately not chased here. Sweep via MS110D_STATIC_SNR.
         WattersonPath[] paths = [new(0), new(3.0), new(9.0)];
@@ -116,7 +116,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             "set MS110D_MASKS_POOR=1 for the Poor-channel mask runs");
         string? wnFilter = Environment.GetEnvironmentVariable("MS110D_MASK_WN");
         Assert.SkipWhen(wnFilter is not null && wnFilter != wn.ToString(),
-            $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
+            $"MS110D_MASK_WN={wnFilter} - skipping WN{wn}");
 
         // §B4 (2026-07-26): WN2/WN5/WN6's rates sit close enough to the mask that a 3M
         // sample is not §5.3-decidable (WN6 ≈8.8E-6 clears only the ≥30-error direct
@@ -129,16 +129,16 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             minSimSeconds: 600);
         Report($"POOR WN{wn} @ {snrDb:+0;-0;0} dB{SeedTag()}", run);
 
-        // §B4 (2026-07-26): the at-mask set is hard-gated by default — flip criterion and
+        // §B4 (2026-07-26): the at-mask set is hard-gated by default - flip criterion and
         // both-family gate-run evidence in evidence/2026-07-26-phase-b4-gate/. The open
         // points stay measured (WN7 attractor-bound, WN8 doubly blocked). §B4.1 (same
-        // day): WN6 joins the gated set — the SPIKE-UP per-segment pricing margin lever
+        // day): WN6 joins the gated set - the SPIKE-UP per-segment pricing margin lever
         // moved it from 57/57 (pooled bound 1.14E-5, AT THE LINE) to 35/39 both families
-        // (pooled 74/12.97M, bound 7.15E-6 — passes the B4 flip criterion;
-        // evidence/2026-07-26-phase-b41-wn6floor/). §B3.5b (same day): WN0 joins — the
+        // (pooled 74/12.97M, bound 7.15E-6 - passes the B4 flip criterion;
+        // evidence/2026-07-26-phase-b41-wn6floor/). §B3.5b (same day): WN0 joins - the
         // symmetric RAKE finger window ended the echo-lock lottery and took the point
         // from 5.99E-3/6.40E-3 to 0 and 3 errors per 3M family (bounds 1.22E-6/2.92E-6,
-        // pooled 1.46E-6 — passes all three B4 flip conditions;
+        // pooled 1.46E-6 - passes all three B4 flip conditions;
         // evidence/2026-07-26-phase-b35b-wn0genie/). MS110D_POOR_GATED=1 still forces
         // the gate everywhere (the chasing-leg tool for open points).
         bool gated = wn is 0 or 1 or 2 or 3 or 4 or 5 or 6 or 13
@@ -154,7 +154,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
     }
 
     // Off-rig discipline harness (phase-b-plan §B0): fading geometries the D.6.1 Poor rig
-    // does NOT use, run at the Poor mask SNRs as direction checks — measured, never gated —
+    // does NOT use, run at the Poor mask SNRs as direction checks - measured, never gated -
     // so no tuned constant can quietly encode the rig's exact 2 ms / 1 Hz numbers again
     // (the BCJR delay-5 lesson from the Phase A audit).
     public static TheoryData<string, double, double, int, double> OffRigPoints()
@@ -178,7 +178,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             "set MS110D_MASKS_OFFRIG=1 for the off-rig direction checks");
         string? wnFilter = Environment.GetEnvironmentVariable("MS110D_MASK_WN");
         Assert.SkipWhen(wnFilter is not null && wnFilter != wn.ToString(),
-            $"MS110D_MASK_WN={wnFilter} — skipping WN{wn}");
+            $"MS110D_MASK_WN={wnFilter} - skipping WN{wn}");
 
         WattersonPath[] paths =
         [
@@ -220,7 +220,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         Assert.SkipWhen(Environment.GetEnvironmentVariable("MS110D_MASKS_POOR") != "1",
             "set MS110D_MASKS_POOR=1");
 
-        // Same geometry as Poor (0ms, 2ms) but no fading — isolates multipath from fading.
+        // Same geometry as Poor (0ms, 2ms) but no fading - isolates multipath from fading.
         WattersonPath[] staticPoor =
         [
             new(0, Fading: false),
@@ -232,7 +232,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         run.Ber.Should().BeLessThanOrEqualTo(1e-5);
     }
 
-    // The complement of Static_2Path_Diagnostic: ONE Rayleigh path, no echo — isolates
+    // The complement of Static_2Path_Diagnostic: ONE Rayleigh path, no echo - isolates
     // fade/carrier tracking from ISI (B1 autopsy instrument; measured, not gated: the
     // whole point is reading the number for broken-tier points).
     [Theory]
@@ -272,11 +272,11 @@ public class Ms110dMaskTests(ITestOutputHelper output)
 
     // Intra-point parallelism: bursts are statistically independent (fresh demodulator,
     // fresh per-burst channel/noise realization), so a point's bit budget can split
-    // across MS110D_MASK_WORKERS workers on disjoint seed subspaces (+1e6 per worker —
+    // across MS110D_MASK_WORKERS workers on disjoint seed subspaces (+1e6 per worker -
     // far beyond the per-burst stride of 1000) and the counts summed; the fading
     // sim-time floor divides likewise (the statistical intent is ~600 independent fades
     // TOTAL, which N disjoint realizations of 600/N s each provide). Point wall-clock
-    // scales ~1/N — this is what keeps the low-rate points (WN0/1/2: 10–40 ks of
+    // scales ~1/N - this is what keeps the low-rate points (WN0/1/2: 10-40 ks of
     // simulated audio per 3M bits) from dominating a sweep on an otherwise idle box.
     private static int Workers()
     {
@@ -347,7 +347,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         Ms110dInterleaverParams il = Ms110dInterleaverParams.Get3k(wn, Ms110dInterleaverKind.Long);
 
         // Uncoded-vs-coded telemetry (§5.3, phase-b-plan §B0): re-encode the known TX
-        // stream per block and compare against sign(first-pass LLR) in wire order — the
+        // stream per block and compare against sign(first-pass LLR) in wire order - the
         // uncoded channel-bit error rate. Wire positions map to air time, so with the
         // rig's recorded gain trajectory each uncoded error is classified against the
         // composite channel power at its own air time (deep fade = composite < −6 dB).
@@ -373,7 +373,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         // MS110D_DEBUG moved host-side: the library fires FrameDiagnostics, the harness prints.
         bool debugTrace = Environment.GetEnvironmentVariable("MS110D_DEBUG") == "1";
         // MS110D_MASK_GENIE=1: feed the demodulator the SAME channel realization noise-free
-        // (identical seed at SNR = ∞ — the rig draws fading gains before noise, so the
+        // (identical seed at SNR = ∞ - the rig draws fading gains before noise, so the
         // realization is reproduced exactly). Estimation then runs on channel truth while
         // detection stays noisy: the perfect-channel-observation bound of the current
         // detector (phase-b-plan §B0). Always labelled, never performance evidence.
@@ -381,7 +381,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
 
         // §B3 tail-autopsy census (MS110D_MASK_BURST_LOG=prefix): one CSV line per burst,
         // one file per (wn, worker). The B3-entry re-baseline showed the sub-8PSK points
-        // are tail-dominated — a minority of bursts hold essentially all the errors — so
+        // are tail-dominated - a minority of bursts hold essentially all the errors - so
         // the first job is localizing WHICH bursts die. Every line carries the burst's
         // channel seed: with the worker seed and burst index the exact corpse is
         // reproducible in the autopsy rig (payload = sequential draws of Random(seed)).
@@ -450,7 +450,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
             {
                 if (blockIndex >= txBlocks)
                 {
-                    return; // surplus block (post-EOM noise decode) — no TX reference
+                    return; // surplus block (post-EOM noise decode) - no TX reference
                 }
 
                 byte[] fetched = fetchedBlocks[blockIndex];
@@ -547,7 +547,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
                 }
 
                 // Decode beyond the whole TX stream (payload + EOM + fill) means post-EOM
-                // false blocks — previously free, now errors (#67).
+                // false blocks - previously free, now errors (#67).
                 burstErrors += Math.Max(0, decoded.Count - txBits.Length);
             }
 
@@ -611,7 +611,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         string workersTag = Workers() > 1 ? $", {Workers()} workers" : "";
         string line =
             $"[mask] {label}: {run.Bits:N0} bits, {run.Errors} errors, {run.Bursts} bursts " +
-            $"({run.AcquisitionFailures} acquisition failures), {run.SimSeconds:F0} s simulated{workersTag} — {verdict}";
+            $"({run.AcquisitionFailures} acquisition failures), {run.SimSeconds:F0} s simulated{workersTag} - {verdict}";
         if (run.UncodedBits > 0)
         {
             line += $" | uncoded {(double)run.UncodedErrors / run.UncodedBits:E2}";
@@ -627,24 +627,24 @@ public class Ms110dMaskTests(ITestOutputHelper output)
 
         if (run.Bits < 3_000_000)
         {
-            line += " [SMOKE — below the §5.3 budget; not gate evidence]";
+            line += " [SMOKE - below the §5.3 budget; not gate evidence]";
         }
 
         if (GenieMode())
         {
-            line += " [GENIE — perfect-channel-observation bound; never performance evidence]";
+            line += " [GENIE - perfect-channel-observation bound; never performance evidence]";
         }
 
         string? lambda = Environment.GetEnvironmentVariable("MS110D_MASK_RLS_LAMBDA");
         if (lambda is not null)
         {
-            line += $" [RLS λ={lambda} — §B2.4 A/B run; report evidence only, never the gate table]";
+            line += $" [RLS λ={lambda} - §B2.4 A/B run; report evidence only, never the gate table]";
         }
 
         string? trackRidgeLabel = Environment.GetEnvironmentVariable("MS110D_MASK_TRACK_RIDGE");
         if (trackRidgeLabel is not null)
         {
-            line += $" [track ridge={trackRidgeLabel} — §B3.2 A/B run; report evidence only, never the gate table]";
+            line += $" [track ridge={trackRidgeLabel} - §B3.2 A/B run; report evidence only, never the gate table]";
         }
 
         output.WriteLine(line);
@@ -671,7 +671,7 @@ public class Ms110dMaskTests(ITestOutputHelper output)
     }
 
     /// <summary>97.5 % upper confidence bound on a Poisson mean given k observed events
-    /// (χ²(0.975, 2k+2)/2, Wilson–Hilferty approximation — ≤1 % error here).</summary>
+    /// (χ²(0.975, 2k+2)/2, Wilson-Hilferty approximation - ≤1 % error here).</summary>
     private static double PoissonUpper975(long k)
     {
         double nu = (2 * k) + 2;

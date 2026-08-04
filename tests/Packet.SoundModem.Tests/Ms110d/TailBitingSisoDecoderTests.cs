@@ -50,7 +50,7 @@ public class TailBitingSisoDecoderTests
     [InlineData(9)]
     public void Erased_Positions_Are_Filled_In_By_The_Code_On_Clean_Input(int k)
     {
-        // Erase the 3/4-puncture pattern's holes (the live WN5–8 configuration) — the code's
+        // Erase the 3/4-puncture pattern's holes (the live WN5-8 configuration) - the code's
         // posterior at an erased position comes purely from the trellis constraint and must
         // still carry the transmitted bit's sign everywhere.
         ConvolutionalCode code = k == 9 ? ConvolutionalCode.K9 : ConvolutionalCode.K7;
@@ -159,7 +159,7 @@ public class TailBitingSisoDecoderTests
     public void Decoder_Instance_Is_Reusable_Across_Block_Sizes()
     {
         // The demodulator holds one decoder per burst and block sizes vary by interleaver
-        // choice — a larger block after a smaller one must not read stale state.
+        // choice - a larger block after a smaller one must not read stale state.
         ConvolutionalCode code = ConvolutionalCode.K7;
         var siso = new TailBitingSisoDecoder(code);
         foreach (int n in new[] { 96, 384, 96, 768 })

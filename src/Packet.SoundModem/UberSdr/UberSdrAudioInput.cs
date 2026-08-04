@@ -17,13 +17,13 @@ namespace Packet.SoundModem.UberSdr;
 /// </summary>
 /// <remarks>
 /// <para><b>Receive only.</b> There is no transmitter at the far end of a WebSocket, and the
-/// daemon refuses to pretend otherwise — see the <c>ubersdr:</c> device handling in the daemon.
+/// daemon refuses to pretend otherwise - see the <c>ubersdr:</c> device handling in the daemon.
 /// What this buys is a station wherever the antenna is good rather than wherever the operator
 /// is, at the cost of never answering anything it hears.</para>
 /// <para><b>Why IQ and not the instance's own audio.</b> UberSDR will demodulate SSB for us, but
 /// then its filter, its AGC and its resampler are all in the path and none of them is ours to
 /// choose. Taking <c>iq48</c> instead puts the whole ±24 kHz of complex baseband here, so the
-/// receive filter is the one the band plan asked for and the AGC is nobody's — which is what
+/// receive filter is the one the band plan asked for and the AGC is nobody's - which is what
 /// makes SNR figures off this path mean the same thing as SNR figures off a sound card. The
 /// instrument audit behind that (linear channel, no AGC on the IQ path, 12 dB of headroom, GPSDO
 /// locked) is in <c>docs/ms110d/evidence/2026-07-24-ota-c0/</c>.</para>
@@ -80,7 +80,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         ReceiverDescription = receiverDescription;
 
         // Eight seconds of slack. The daemon drains in 100 ms blocks, so this is not there to be
-        // used — it is there so a GC pause or a busy box costs latency rather than samples.
+        // used - it is there so a GC pause or a busy box costs latency rather than samples.
         _ring = new float[tuning.OutputRate * 8];
     }
 
@@ -92,7 +92,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
     /// <summary>The instance this is streaming from.</summary>
     public UberSdrEndpoint Endpoint => _endpoint;
 
-    /// <summary>The pre-flight reply — session limits and the IQ modes on offer.</summary>
+    /// <summary>The pre-flight reply - session limits and the IQ modes on offer.</summary>
     public ConnectionResponse Connection { get; }
 
     /// <summary>A one-line summary of the receiver from <c>/api/description</c> (callsign,
@@ -134,8 +134,8 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         ConnectionResponse connection = await PreflightAsync(endpoint, sessionId, tuning, cancellation)
             .ConfigureAwait(false);
 
-        // A refusal that only time can lift — the address's daily listening allowance is spent,
-        // or the instance is rate-limiting — is not a start-up error. The station comes up (KISS,
+        // A refusal that only time can lift - the address's daily listening allowance is spent,
+        // or the instance is rate-limiting - is not a start-up error. The station comes up (KISS,
         // waterfall, silence) and the receive loop asks again patiently, exactly as it would had
         // the quota run out mid-afternoon instead of at boot. Everything else that is wrong with
         // the reply stays a start-up error, because a config typo retried forever is a silence
@@ -268,7 +268,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
     /// failures feed the give-up clock (a service restart can genuinely help there); an
     /// explicit refusal (HTTP 429, spent daily quota) waits on a long ladder and NEVER gives
     /// up, because restarting cannot mint quota and a crash-looping unit re-asks every
-    /// RestartSec — the exact hammering this loop exists to avoid; and a session that dies
+    /// RestartSec - the exact hammering this loop exists to avoid; and a session that dies
     /// before delivering real audio escalates too, because "accepts then instantly closes,
     /// forever" met a fixed one-second breath here once, and the result was a public receiver
     /// pelted all night.
@@ -382,7 +382,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
             Monitor.PulseAll(_gate);
         }
 
-        // False when the wait was cut short by disposal — the loop's only reason to stop waiting.
+        // False when the wait was cut short by disposal - the loop's only reason to stop waiting.
         async Task<bool> WaitAsync(TimeSpan delay)
         {
             try
@@ -584,8 +584,8 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         var uri = new Uri($"{_endpoint.WebSocketScheme}://{_endpoint.Host}:{_endpoint.Port}/ws?{query}");
         var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("User-Agent", UserAgent);
-        // Keep the upgrade's HTTP status so a 429 — the receiver rate-limiting or out of daily
-        // quota — is distinguishable from a transport failure; the two deserve very different
+        // Keep the upgrade's HTTP status so a 429 - the receiver rate-limiting or out of daily
+        // quota - is distinguishable from a transport failure; the two deserve very different
         // retry cadences.
         socket.Options.CollectHttpResponseDetails = true;
         if (!string.IsNullOrEmpty(_tuning.Password))
@@ -615,7 +615,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
     /// <c>POST /connection</c>: whether we may stream at all, and whether the mode we want is on
     /// offer. Asked before the WebSocket so a refusal arrives as a sentence rather than as a
     /// socket that closes for no stated reason. Refusals come back as the reply itself
-    /// (<see cref="ConnectionResponse.Allowed"/> false) — the caller decides which refusals are
+    /// (<see cref="ConnectionResponse.Allowed"/> false) - the caller decides which refusals are
     /// errors and which are "wait"; only an unreachable or non-UberSDR endpoint throws.
     /// </summary>
     private static async Task<ConnectionResponse> PreflightAsync(
@@ -640,7 +640,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
                 // The instance would not even discuss it. Same class as a spent daily quota:
-                // nothing on our side is wrong, only time helps — report it as such rather
+                // nothing on our side is wrong, only time helps - report it as such rather
                 // than as unreachability.
                 return new ConnectionResponse
                 {

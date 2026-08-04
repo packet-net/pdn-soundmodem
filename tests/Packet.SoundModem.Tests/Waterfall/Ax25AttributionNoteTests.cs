@@ -76,7 +76,7 @@ public class Ax25AttributionNoteTests
     [Fact]
     public void An_Ssid_Byte_Is_Not_Read_As_A_Callsign_Character()
     {
-        // Byte 6 and byte 13 carry the SSID and the flags, not text — reporting them as bad
+        // Byte 6 and byte 13 carry the SSID and the flags, not text - reporting them as bad
         // callsign characters would send somebody looking in the wrong place.
         byte[] frame = Frame("GB7RDG", "M0LTE");
         frame[6] = 0x7F;
@@ -88,7 +88,7 @@ public class Ax25AttributionNoteTests
     [Fact]
     public void An_Address_Field_Of_Spaces_Is_Reported_As_An_Empty_Callsign()
     {
-        // Every character legal, no callsign present — the one remaining way the parse fails
+        // Every character legal, no callsign present - the one remaining way the parse fails
         // with nothing specific to point at.
         byte[] frame = Frame("      ", "      ");
 

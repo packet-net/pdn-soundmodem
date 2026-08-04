@@ -18,7 +18,7 @@ public class MultiDecoderTests
 
     private static float[] OffTuneAudio(byte[] frame, double centerOffsetHz)
     {
-        // Synthesise mark/space shifted by the offset — an off-tuned transmitter.
+        // Synthesise mark/space shifted by the offset - an off-tuned transmitter.
         var modulator = new AfskModulator(SampleRate);
         byte[] bits = HdlcFramer.FrameBits(frame, openingFlags: 30, closingFlags: 2);
         float[] audio = modulator.Modulate(bits);
@@ -95,7 +95,7 @@ public class MultiDecoderTests
         var modulator = new AfskModulator(SampleRate);
         float[] one = modulator.Modulate(HdlcFramer.FrameBits(frame, openingFlags: 30, closingFlags: 2));
 
-        // Same frame content transmitted twice, 4 seconds apart — both must be delivered.
+        // Same frame content transmitted twice, 4 seconds apart - both must be delivered.
         var audio = new float[one.Length + 4 * SampleRate + one.Length + SampleRate];
         one.CopyTo(audio, 0);
         one.CopyTo(audio, one.Length + 4 * SampleRate);

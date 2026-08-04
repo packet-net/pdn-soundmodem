@@ -11,14 +11,14 @@ namespace Packet.SoundModem.Kiss;
 /// every client; data frames from any client queue for transmission; ACKMODE frames get
 /// their two-byte id echoed back to the originating client once the frame's audio has
 /// fully left the device (true TX-complete, not a timer guess). KISS parameter commands
-/// (TXDELAY, P, SLOTTIME, TXTAIL) update the channel's CSMA settings — unlike
+/// (TXDELAY, P, SLOTTIME, TXTAIL) update the channel's CSMA settings - unlike
 /// QtSoundModem, which silently ignores them.
 /// </summary>
 /// <remarks>
 /// Constructed with a <c>subChannel</c> the server is instead <b>dedicated</b> to one modem:
 /// it surfaces only that modem's frames, rewritten to nibble 0, and transmits everything it is
 /// given on that modem whatever nibble the client used. That exists for the large amount of
-/// host software which hardcodes KISS channel 0 and offers no way to set the nibble — on the
+/// host software which hardcodes KISS channel 0 and offers no way to set the nibble - on the
 /// multiplexed port such a host can only ever reach sub-channel 0, however many modems are
 /// configured. Several servers can share one channel, so a daemon can offer the multiplexed
 /// port and per-modem ports at the same time.
@@ -133,7 +133,7 @@ public sealed class KissTcpServer : IAsyncDisposable
         }
         catch (Exception e)
         {
-            // Client errors only ever cost that client its connection — but say which and why,
+            // Client errors only ever cost that client its connection - but say which and why,
             // because "the host vanished" and "the host closed" are different problems.
             reason = e.Message;
         }
@@ -194,7 +194,7 @@ public sealed class KissTcpServer : IAsyncDisposable
 
     /// <summary>
     /// Where a client's frame is transmitted. A dedicated server ignores the client's nibble
-    /// entirely — the whole point is to serve a host that can only ever send 0.
+    /// entirely - the whole point is to serve a host that can only ever send 0.
     /// </summary>
     private int TransmitSubChannel(int requested) => _dedicatedSubChannel ?? requested;
 

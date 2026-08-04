@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Modems;
 /// Packet-signal DCD by DPLL transition-quality scoring, after Dire Wolf 1.6's design
 /// (fsk_demod_state.h): every observed slicer transition is classified good when it lands
 /// near the expected instant (DPLL phase ≈ 0), and a 32-transition history asserts DCD at
-/// ≥ 30/32 good and drops it at ≤ 6/32 — hysteresis that ignores both random noise (which
+/// ≥ 30/32 good and drops it at ≤ 6/32 - hysteresis that ignores both random noise (which
 /// transitions everywhere) and brief fades. Unlike flag-pattern DCD this keeps working
 /// under FX.25/IL2P bit patterns, which legitimately contain long runs.
 /// </summary>

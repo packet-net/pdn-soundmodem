@@ -11,7 +11,7 @@ namespace Packet.SoundModem.Daemon;
 /// give the command that lists what is actually present.
 ///
 /// Unlike a malformed config these do NOT exit 2, because they are not always the operator's
-/// mistake — a USB interface may simply not have enumerated yet at boot. The service keeps
+/// mistake - a USB interface may simply not have enumerated yet at boot. The service keeps
 /// restarting so it comes up on its own once the hardware appears.
 /// </remarks>
 internal static class DeviceDiagnostics
@@ -21,7 +21,7 @@ internal static class DeviceDiagnostics
         + "  appearing (a USB interface can still be enumerating at boot).";
 
     /// <summary>
-    /// Where the setting lives — the config file if there is one, else the CLI flag. On its own
+    /// Where the setting lives - the config file if there is one, else the CLI flag. On its own
     /// line: a full /etc path plus prose wraps mid-sentence in the journal and reads badly.
     /// </summary>
     private static string Source(string? configPath, string key, string flag) =>
@@ -46,7 +46,7 @@ internal static class DeviceDiagnostics
     /// <summary>
     /// An UberSDR instance that would not stream. Same "keep retrying" treatment as a sound card:
     /// a web receiver is reachable over the internet, so it can be rebooting, saturated with
-    /// listeners, or simply behind a link that is down for a minute — none of which is the
+    /// listeners, or simply behind a link that is down for a minute - none of which is the
     /// operator's mistake and all of which clear on their own.
     /// </summary>
     internal static string UberSdr(string device, string? configPath, Exception error) =>

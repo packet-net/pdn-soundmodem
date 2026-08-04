@@ -3,7 +3,7 @@ using Packet.SoundModem.Kiss;
 namespace Packet.SoundModem.Daemon;
 
 /// <summary>
-/// Owns the daemon's KISS listeners — the shared multiplexed port plus any per-modem ports —
+/// Owns the daemon's KISS listeners - the shared multiplexed port plus any per-modem ports -
 /// so a single <c>await using</c> shuts all of them down.
 /// </summary>
 internal sealed class KissServerSet(IReadOnlyList<KissTcpServer> servers) : IAsyncDisposable

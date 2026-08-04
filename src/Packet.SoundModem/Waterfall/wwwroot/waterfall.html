@@ -115,7 +115,7 @@
     font-weight: 600; padding: 8px 12px 6px; border-bottom: 1px solid var(--edge);
     display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
   }
-  /* What the survey has kept and — the reason this is here at all — what a budget refused.
+  /* What the survey has kept and - the reason this is here at all - what a budget refused.
      A station left collecting for a week silently becomes a sample rather than the set when
      the channel is busier than its rate limit, and nothing else anywhere says so. */
   #survey { font-family: var(--mono); letter-spacing: 0; text-transform: none; color: var(--muted); }
@@ -145,12 +145,12 @@
   .fr.tx { border-left: 2px solid #31d2f2; padding-left: 10px; }
   .fr.tx .id { background: #7fe3f7; }
   .fr.tx .from { color: #7fe3f7; }
-  /* Read out of the station's frame log when the page opened, not heard since — dimmed so the
+  /* Read out of the station's frame log when the page opened, not heard since - dimmed so the
      backlog cannot be mistaken for a channel that is busy right now. Its timestamps are real,
      which is the other half of saying so. */
   .fr.hist { opacity: .62; border-left: 2px solid #2a3441; padding-left: 10px; }
   /* A frame that decoded and would not yield callsigns. The panel is where an operator notices
-     one, so it is where the answer belongs — and the bytes are laid out to be selected and
+     one, so it is where the answer belongs - and the bytes are laid out to be selected and
      pasted, because that is the next thing anybody does with one. */
   .fr .why { display: block; color: #f0b45a; margin-top: 2px; }
   .fr .hex {
@@ -160,7 +160,7 @@
   }
   /* A transmission read back out of the log is both: ours, and from before the page opened. The
      rule above sets the same property and comes after .fr.tx, so without this the grey wins and
-     a backlogged transmission loses the cyan that says it is ours — dimmed like any other
+     a backlogged transmission loses the cyan that says it is ours - dimmed like any other
      history row, and then indistinguishable from a station heard. */
   .fr.hist.tx { border-left-color: #31d2f2; }
   #frames .empty { padding: 14px 12px; color: var(--muted); font-family: var(--sans); font-size: 12px; }
@@ -180,7 +180,7 @@
   <div class="ctl">
     <label for="dial">Dial · MHz</label>
     <div class="ctl-row">
-      <input id="dial" inputmode="decimal" spellcheck="false" placeholder="—">
+      <input id="dial" inputmode="decimal" spellcheck="false" placeholder="-">
       <div class="seg" id="sideband">
         <button data-sb="usb">USB</button><button data-sb="lsb">LSB</button>
       </div>
@@ -253,7 +253,7 @@ let lineIsTx = false;        // is the line being drawn one of ours?
 let fpsCount = 0, fpsShown = 0;
 
 // Categorical identity hues for modem markers, fixed order, validated (OKLCH dark band,
-// CVD + normal-vision ΔE, ≥3:1 on the surface) — identity is never color-alone: every
+// CVD + normal-vision ΔE, ≥3:1 on the surface) - identity is never color-alone: every
 // marker ships with its sub-channel + mode text.
 const MODEM_HUES = ["#31d2f2", "#3ee686", "#7aa2ff", "#ff5fd2"];
 const hueFor = i => MODEM_HUES[i % MODEM_HUES.length];
@@ -272,7 +272,7 @@ for (let i = 0; i < 256; i++) {
   for (let k = 0; k < 3; k++) LUT[i * 3 + k] = c0[k] + (c1[k] - c0[k]) * f;
 }
 
-// Our own transmission gets its own ramp — a cyan-to-white ridge rather than inferno's
+// Our own transmission gets its own ramp - a cyan-to-white ridge rather than inferno's
 // black-red-yellow. Identity is never colour alone: TX rows are also marked in the stats line
 // and the ruler, but a burst of your own must not look like a strong station at a glance.
 const TX_RAMP = [[6,18,26],[10,44,60],[12,74,96],[16,110,134],[26,150,172],
@@ -295,7 +295,7 @@ const spanHz = () => Math.min(ui.spanHz, nyquist());
 const binsInSpan = () => Math.min(cfg.lineLength, Math.round(spanHz() / cfg.binWidthHz));
 const afToX = (af, w) => af / spanHz() * w;
 // The reference line reads as a warning when the radio is not running on what it was told to
-// use — that is the case an operator has to act on, and it should not look like the good one.
+// use - that is the case an operator has to act on, and it should not look like the good one.
 // Only visible while keyed. A high SWR turns it red, because that is the one reading here an
 // operator has to stop and act on.
 function setTransmitStatus(status) {
@@ -319,7 +319,7 @@ function setRadioStatus(status) {
 
 // ---------------------------------------------------------------- receive audio (opt-in)
 // Blocks carry no timestamps and are played in arrival order. Nothing is received while the
-// station transmits, so the stream simply stops for the length of a keyup — that has to sound
+// station transmits, so the stream simply stops for the length of a keyup - that has to sound
 // like silence, which it does: playback runs dry and the next block starts a fresh schedule.
 let audioCtx = null, audioNext = 0, audioGain = null;
 const AUDIO_LEAD = 0.12;   // seconds of scheduling lead; below this, jitter is audible
@@ -485,7 +485,7 @@ function renderChips() {
     const rf = dialSet() ? ` <span class="rf">${fmtRfMhz(m.centreHz)}</span>` : "";
     chip.innerHTML = `<i style="background:${hueFor(i)}"></i>` +
       `<span><b>${m.sub} · ${m.modeName || m.mode}</b> ${Math.round(m.centreHz)} Hz${rf}</span>`;
-    chip.title = `${m.mode}\nband ${Math.round(m.lowHz)}–${Math.round(m.highHz)} Hz`;
+    chip.title = `${m.mode}\nband ${Math.round(m.lowHz)}-${Math.round(m.highHz)} Hz`;
     return chip;
   }));
 }
@@ -646,7 +646,7 @@ function tagFrame(ev) {
   const parts = [ev.from || ev.mode];
   // A ghost has no band of its own, so an ident tags against the band of the modem it rides on.
   // Saying so is the difference between "this station is on that slot" and "this station just
-  // identified next to it" — without the word they read identically.
+  // identified next to it" - without the word they read identically.
   if (ev.id) parts.push("ID");
   if (ev.snrDb != null) parts.push(ev.snrDb.toFixed(1) + " dB");
   if (ev.offsetHz != null) parts.push((ev.offsetHz >= 0 ? "+" : "") + ev.offsetHz.toFixed(0) + " Hz");
@@ -689,7 +689,7 @@ function onFrameEvent(ev) {
   logFrame(ev);
 }
 
-// The station's frame log, oldest first — listed, never tagged: these were heard before the
+// The station's frame log, oldest first - listed, never tagged: these were heard before the
 // scroll now on screen and belong to no burst on it. A reconnect re-sends the backlog, and by
 // then the log holds what was live before the drop too, so the panel is rebuilt from it rather
 // than stacking a second copy of the same frames underneath.
@@ -701,7 +701,7 @@ function onHistory(msg) {
 }
 
 // A burst the station could not read, kept for later. Tagged onto the waterfall where it
-// happened — a capture has a frequency and a time, which is what these two axes are — and listed
+// happened - a capture has a frequency and a time, which is what these two axes are - and listed
 // with a link to the audio. Placed by age rather than line index: the survey runs its own
 // spectrum feed so it works with nobody watching, and its line clock is not this one's.
 function onCapture(ev) {
@@ -722,7 +722,7 @@ function setSurveyStatus(ev) {
 /* ---------- decode log panel ---------- */
 let logEmpty = true;
 // A live frame is stamped with now, because it just arrived. One out of the log carries the
-// time it was heard, which may be days ago — so a backlog row says the date as well, rather
+// time it was heard, which may be days ago - so a backlog row says the date as well, rather
 // than a bare clock time that reads as this morning.
 function stampFor(ev) {
   if (!ev.at) return new Date().toTimeString().slice(0, 8);
@@ -739,7 +739,7 @@ function logFrame(ev) {
   row.className = "fr" + (ev.tx ? " tx" : "") + (ev.hist ? " hist" : "");
   const t = stampFor(ev);
   const badge = ev.tx
-    ? `<span class="id" title="Sent by this station — listed once the audio has gone out">TX</span>`
+    ? `<span class="id" title="Sent by this station - listed once the audio has gone out">TX</span>`
     : ev.id ? `<span class="id" title="Station identification, heard on the mode the TNC idents in rather than the one it carries data in">ID</span>` : "";
   const who = (ev.from
     ? `<span class="from">${ev.from}</span><span class="arrow">›</span><span class="to">${ev.to || "?"}</span>`
@@ -752,7 +752,7 @@ function logFrame(ev) {
   if (ev.corrected > 0) bits.push(`<i>fec ${ev.corrected}</i>`);
   if (ev.crc === false) bits.push(`<span class="bad">crc✗</span>`);
   if (ev.il2p) bits.push(`<i>il2p ${esc(ev.il2p)}</i>`);
-  // Why it would not read, then the bytes — one click-and-drag from the panel to a bug report.
+  // Why it would not read, then the bytes - one click-and-drag from the panel to a bug report.
   const why = ev.why ? `<span class="why">${esc(ev.why)}</span>` : "";
   const hex = ev.hex ? `<span class="hex" title="Select to copy">${esc(ev.hex)}</span>` : "";
   row.innerHTML = `<span class="t">${t}</span> ${who}<br><span class="d">${bits.join(" · ")}</span>${why}${hex}`;

@@ -8,12 +8,12 @@ using M0LTE.Dsp;
 namespace Packet.SoundModem.Ota;
 
 /// <summary>
-/// <c>sm-ota monitor</c> — watch a receiver live: capture → convert → demodulate, printing each
+/// <c>sm-ota monitor</c> - watch a receiver live: capture → convert → demodulate, printing each
 /// burst as it lands.
 /// </summary>
 /// <remarks>
 /// <para>Receive-only. Nothing here transmits, so it is safe to point at a receiver at any time
-/// and it is the cheapest way to answer "is anything reaching us at all" during a session —
+/// and it is the cheapest way to answer "is anything reaching us at all" during a session -
 /// a question that otherwise waits for the capture to finish and be scored.</para>
 /// <para>It is the same chain a scored pass uses, driven from the socket instead of a file. That
 /// matters more than the convenience: if what is printed live disagrees with what the scorer says
@@ -40,7 +40,7 @@ internal static class MonitorCommand
                   --out-dir <dir>      the capture is recorded as well as watched
                   --name <label>       filename stem
 
-                Receive-only — nothing here keys a transmitter. The capture is still written, so
+                Receive-only - nothing here keys a transmitter. The capture is still written, so
                 a monitored session can be scored afterwards with `sm-ota score`.
                 """);
             return a is null ? 2 : 0;
@@ -77,7 +77,7 @@ internal static class MonitorCommand
         };
 
         // Converted audio is produced on the receive loop, so the buffers are allocated once and
-        // the per-block work stays bounded — a monitor that falls behind stalls the socket.
+        // the per-block work stays bounded - a monitor that falls behind stalls the socket.
         const int maxFrames = 1 << 16;
         var iq = new short[maxFrames * 2];
         var audio = new float[converter.MaxOutputFor(maxFrames) + converter.MaxFlushOutput];
@@ -122,13 +122,13 @@ internal static class MonitorCommand
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
-            Console.Error.WriteLine("interrupt — finalising…");
+            Console.Error.WriteLine("interrupt - finalising…");
             cts.Cancel();
         };
 
         Console.Error.WriteLine(
             $"monitoring {options.Host} at {options.FrequencyHz} Hz, dial {a.Dbl("dial-hz", 2000):F0} Hz "
-            + "— receive only");
+            + "- receive only");
 
         CaptureResult result = await new UberSdrIqClient(m => Console.Error.WriteLine($"[rx] {m}"))
             .CaptureAsync(options, cts.Token).ConfigureAwait(false);

@@ -160,8 +160,8 @@ public class DcdTests
     {
         // Transition scoring alone can only drop DCD when it *sees* badly-timed
         // transitions, i.e. it leans on receiver noise to notice a signal has stopped.
-        // Feed pure digital silence after the burst — a squelched radio, or a wired
-        // bench loop — and DCD must still release. It used to latch on for ever.
+        // Feed pure digital silence after the burst - a squelched radio, or a wired
+        // bench loop - and DCD must still release. It used to latch on for ever.
         float[] burst = PacketAudio();
         var audio = new float[burst.Length + 2 * SampleRate];
         burst.CopyTo(audio, 0); // rest stays exactly 0.0
@@ -186,7 +186,7 @@ public class DcdTests
     public void Silence_Does_Not_Deafen_The_Slicer_For_The_Next_Burst()
     {
         // With no signal the discriminator's power normalisation divides noise by ~zero
-        // power, and if that garbage reaches the envelope trackers they pin — so a burst
+        // power, and if that garbage reaches the envelope trackers they pin - so a burst
         // arriving after silence opens with its slice point off centre. This is written
         // against the 300 baud HF mode deliberately: its ±100 Hz shift puts the real
         // signal 10x below a full-scale spike, where the effect is fatal, whereas Bell

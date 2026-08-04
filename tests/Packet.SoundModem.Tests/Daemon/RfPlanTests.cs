@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Tests.Daemon;
 
 /// <summary>
 /// Turning a band plan expressed in RF into a dial and the audio centres that follow. An SSB
-/// dial is shared by everything in the passband, so the modems are not independent — one dial
+/// dial is shared by everything in the passband, so the modems are not independent - one dial
 /// has to place all of them, and the arithmetic is exactly what an operator would otherwise do
 /// by hand and check by eye.
 /// </summary>
@@ -43,7 +43,7 @@ public class RfPlanTests
     [Fact]
     public void The_Chosen_Dial_Keeps_Everything_Clear_Of_The_Filter_Skirts()
     {
-        // The obvious round dial (7050.000) puts afsk300 at 300 Hz — half of it below where a
+        // The obvious round dial (7050.000) puts afsk300 at 300 Hz - half of it below where a
         // typical SSB filter starts. Choosing the dial should do better than the round number.
         RfPlan.Result plan = RfPlan.Solve(FortyMetres(), "usb");
 
@@ -141,7 +141,7 @@ public class RfPlanTests
     public void The_Obvious_Round_Dial_Is_The_One_That_Puts_Afsk300_On_The_Filter_Skirt()
     {
         // 7050.000 is what you reach for by hand, and it gives the tidy-looking 300/950/1600.
-        // But afsk300 then occupies 150-450 Hz, half of it below where an SSB filter starts —
+        // But afsk300 then occupies 150-450 Hz, half of it below where an SSB filter starts -
         // the exact hazard that made choosing the dial worth doing at all. Warned, not refused:
         // the passband figure is nominal and the operator asked for this dial.
         RfPlan.Result plan = RfPlan.Solve(FortyMetres(), "usb", pinnedDialHz: 7_050_000);

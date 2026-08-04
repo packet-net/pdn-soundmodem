@@ -14,12 +14,12 @@ namespace Packet.SoundModem.Tests.Ota;
 /// <remarks>
 /// <para>Renders a ladder exactly as it would go to the transmitter, lays it out as a capture
 /// would record it, and puts it back through the real receive converter and the real scorer. The
-/// only thing between the two ends that is not the production path is the radio itself — so
+/// only thing between the two ends that is not the production path is the radio itself - so
 /// everything except the hardware is proved before any power is applied, which is the whole
 /// reason the harness is built this way round.</para>
 /// <para>The assertion that matters is that the SNR the scorer <em>measures</em> matches the SNR
 /// the rig was <em>asked</em> to inject. If those two disagree, every E2 point is plotted at the
-/// wrong place on the comparison curve and the campaign quietly re-fits itself — the failure
+/// wrong place on the comparison curve and the campaign quietly re-fits itself - the failure
 /// this project has already paid for once.</para>
 /// </remarks>
 public class LadderPassTests
@@ -95,7 +95,7 @@ public class LadderPassTests
     public void The_signal_power_is_identical_at_every_rung_and_only_the_noise_moves()
     {
         // The level policy, asserted directly on what would be transmitted. If a low-SNR point
-        // came out quieter, the leakage path's own fixed noise would be a larger share of it —
+        // came out quieter, the leakage path's own fixed noise would be a larger share of it -
         // a second, uncalibrated dose of noise exactly where the ladder is most delicate.
         IReadOnlyList<LadderPoint> plan = LadderPass.Plan(
             waveformNumber: 6, snrsDb: [20, 10, 0], repeats: 1);
@@ -192,7 +192,7 @@ public class LadderPassTests
     [Fact]
     public void The_poor_channel_is_the_mask_suites_own_rig()
     {
-        // Not a new implementation of Poor — the same one, so the E2 differential is hardware
+        // Not a new implementation of Poor - the same one, so the E2 differential is hardware
         // against simulation rather than one rig against another.
         IReadOnlyList<RenderedPoint> poor = new LadderPass(Options()).Render(
             LadderPass.Plan(6, [10], 1, LadderChannel.Poor, firstSeed: 7));
@@ -200,7 +200,7 @@ public class LadderPassTests
             LadderPass.Plan(6, [10], 1, LadderChannel.Awgn, firstSeed: 7));
 
         typeof(LadderPass).Assembly.Should().BeSameAs(typeof(WattersonChannel).Assembly,
-            "the rig is compiled into the OTA tool from the test project's copy — one definition, "
+            "the rig is compiled into the OTA tool from the test project's copy - one definition, "
             + "or the comparison measures the gap between two rigs");
         Power(poor[0].Iq).Should().BeGreaterThan(0);
         poor[0].Iq.Should().NotEqual(awgn[0].Iq, "a fading channel is not the ideal path");

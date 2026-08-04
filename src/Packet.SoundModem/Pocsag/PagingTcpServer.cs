@@ -11,8 +11,8 @@ namespace Packet.SoundModem.Pocsag;
 /// <summary>
 /// The daemon's paging endpoint: a line-based TCP service (UTF-8, one command per line)
 /// through which local clients submit POCSAG pages for transmission and hear pages
-/// decoded off the channel. Pages are deliberately NOT exposed as KISS frames — paging
-/// is a one-way medium carrying pages, not AX.25 — but transmission goes through the
+/// decoded off the channel. Pages are deliberately NOT exposed as KISS frames - paging
+/// is a one-way medium carrying pages, not AX.25 - but transmission goes through the
 /// same channel-access path as every other mode (CSMA, PTT, TXDELAY, sample-domain
 /// TX-complete) via <see cref="SoundModemChannel.EnqueueTransmit(Func{int,float[]},Action{Exception},bool)"/>.
 /// </summary>
@@ -27,7 +27,7 @@ namespace Packet.SoundModem.Pocsag;
 /// 240 characters; ALPHA is 7-bit ASCII, NUMERIC the POCSAG numeric set). <c>OK</c>
 /// means queued for transmission, not yet on air.</para>
 /// <para>Server → every connected client, for each page the decoder hears on channel
-/// (the label follows the function-bit convention — 0 reads as numeric, else alpha —
+/// (the label follows the function-bit convention - 0 reads as numeric, else alpha -
 /// and control characters in decoded text are replaced with spaces):</para>
 /// <code>
 /// HEARD &lt;ric&gt; &lt;function&gt; ALPHA|NUMERIC &lt;text…&gt;

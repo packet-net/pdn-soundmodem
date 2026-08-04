@@ -4,7 +4,7 @@ Living roadmap of open work. Snapshot committed 2026-07-17. Complements
 [`docs/plan.md`](plan.md) (the phase plan + §17 amendment log) and
 [`docs/waveform-roadmap.md`](waveform-roadmap.md) (the approved modem build order and the
 standing quality/OBW directives). Where those disagree with this file, the amendment log in
-`plan.md` §17 is authoritative — update all three together.
+`plan.md` §17 is authoritative - update all three together.
 
 Standing directives that gate everything here: **proven reliable, not "only just working"**
 (bit-exact vs oracle → channel models → real radio loop before "done"); **OBW never exceeds the
@@ -16,14 +16,14 @@ suite + re-run any flaky test in isolation) before merging.
 
 ## Done (context)
 
-- **FreeDV datac OFDM** — all six modes (datac0/1/3/4/13/14), TX+RX, pure-managed C# port
+- **FreeDV datac OFDM** - all six modes (datac0/1/3/4/13/14), TX+RX, pure-managed C# port
   validated bit-exact-equivalent to codec2; interoperates with stock `freedv_data_raw_tx/rx`
   both directions; burst acquisition; KISS modes `freedv-datac*` carrying IL2P+CRC; OBW
   never-wider-than-FreeDV CI-enforced.
-- **POCSAG** — spec-first, multimon-ng-validated; daemon `--paging` endpoint + `HEARD` feed.
-- **ARDOP** — software-complete at ardopcf parity (see #6 below for what's left).
-- **MIL-STD-188-110D App D** — Phase A landed, mask-gated (see #7).
-- **FlexRadio 6500** — offline client + hardware bring-up proven; live off-air RX (see #11).
+- **POCSAG** - spec-first, multimon-ng-validated; daemon `--paging` endpoint + `HEARD` feed.
+- **ARDOP** - software-complete at ardopcf parity (see #6 below for what's left).
+- **MIL-STD-188-110D App D** - Phase A landed, mask-gated (see #7).
+- **FlexRadio 6500** - offline client + hardware bring-up proven; live off-air RX (see #11).
 - Roadmap/design docs, the dual-verified 110D tables, the ARDOP spec-as-Markdown, HF-loop and
   Flex-integration procedures, and one real off-air regression fixture
   (`samples/offair/gb7rdg-ninotnc-bpsk300-il2pc.wav`).
@@ -32,78 +32,78 @@ suite + re-run any flaky test in isolation) before merging.
 
 ## Open work
 
-### #4 — FreeDV datac: HF-loop validation *(in progress)*
+### #4 - FreeDV datac: HF-loop validation *(in progress)*
 The datac modes are KISS-integrated and tested through the IModem surface; **only real-radio
-validation remains**. Procedure written: [`docs/freedv-hf-loop.md`](freedv-hf-loop.md) — the 8
+validation remains**. Procedure written: [`docs/freedv-hf-loop.md`](freedv-hf-loop.md) - the 8
 radio-only unknowns, rig recipe, drive commands, pass criteria. Needs an HF radio loop (Tom can
-supply; a **Flex variant** of the procedure is now viable — see #11). Feeds results back into the
+supply; a **Flex variant** of the procedure is now viable - see #11). Feeds results back into the
 doc + `plan.md` §17 to close.
 
-### #6 — ARDOP: on-air acceptance *(in progress)*
-Phases A–D complete at ardopcf parity — 4FSK/PSK/16QAM (0 dB noise-knee delta), the ARQ engine
+### #6 - ARDOP: on-air acceptance *(in progress)*
+Phases A-D complete at ardopcf parity - 4FSK/PSK/16QAM (0 dB noise-knee delta), the ARQ engine
 live both roles, byte-identical host interface with a **real Pat B2F message** proven, RXO
-monitor. **Remaining: the on-air acceptance** — peer-to-peer ARDOP on the 40m UK packet channel
+monitor. **Remaining: the on-air acceptance** - peer-to-peer ARDOP on the 40m UK packet channel
 from **GB7RDG's HF port** (operate as M0LTE), where ARDOP stations already run. Winlink gateway
 session is optional gravy (Pat works via the host interface for free). Write the on-air bench doc
 before the session; add the busy-detector port if channel-sharing needs it on air.
 
-### #7 — MIL-STD-188-110D App D *(Phases A+B complete; WN8 redesign program live)*
-Phase A (Walsh-75/BPSK/QPSK + DFE) closed 2026-07-23 — all mask points 0 errors at full
+### #7 - MIL-STD-188-110D App D *(Phases A+B complete; WN8 redesign program live)*
+Phase A (Walsh-75/BPSK/QPSK + DFE) closed 2026-07-23 - all mask points 0 errors at full
 statistical budget, KISS-integrated (`ms110d-wn*`); `docs/ms110d/phase-a-closeout.md`.
 - **Phase B closed 2026-07-27** (`docs/ms110d/phase-b-closeout.md`): 8PSK (WN7) / 16QAM (WN8)
-  landed and the Poor-channel gating went binding — WN0–6+13 hard-gated at mask. WN7/WN8 close
-  measured-only: WN7 at the waveform's own fade-lottery floor (needs added information —
-  diversity/ARQ/outer coding — outside the demodulator); WN8 at coin-flip behind a true-label
-  model ceiling and a bootstrap basin (needs waveform-processing redesign — now the live
+  landed and the Poor-channel gating went binding - WN0-6+13 hard-gated at mask. WN7/WN8 close
+  measured-only: WN7 at the waveform's own fade-lottery floor (needs added information -
+  diversity/ARQ/outer coding - outside the demodulator); WN8 at coin-flip behind a true-label
+  model ceiling and a bootstrap basin (needs waveform-processing redesign - now the live
   **WN8 redesign program**, `docs/ms110d/wn8-program-plan.md`).
 - On-air (2026-07-27/28): every masked waveform meets its mask over the real rig
   (`docs/ms110d/evidence/2026-07-27-110d-full-campaign/`); WN7/WN8 Poor masks sit above the
-  rig's ~15–16 dB ceiling, so those Poor points are sim-only.
-- **Phase C** — 32/64/256-QAM, WN9–12 (groundwave-gated, high-SNR) — not started.
+  rig's ~15-16 dB ceiling, so those Poor points are sim-only.
+- **Phase C** - 32/64/256-QAM, WN9-12 (groundwave-gated, high-SNR) - not started.
 - Validation is pdn↔pdn + on-air self-consistency (no external App D oracle exists).
 
-### #8 — Own FM OFDM *(pending)*
+### #8 - Own FM OFDM *(pending)*
 Greenfield speed play through an FM voice channel (VARA FM is the only incumbent, and closed).
 Reuses the FreeDV OFDM engine. **Needs Tom's FM radio loop** (PAPR / pre-emphasis / deviation
 can't be fully simulated). OBW-critical by design.
 
-### #9 — Own HF OFDM *(pending, blocked by #8)*
+### #9 - Own HF OFDM *(pending, blocked by #8)*
 Narrower HF-SSB OFDM aiming to beat FreeDV datac on throughput/robustness. Wants the shared
 engine + the FM work first.
 
-### #10 — R-1: codec2 LGPL→GPL port licence analysis *(pending)*
+### #10 - R-1: codec2 LGPL→GPL port licence analysis *(pending)*
 Critical analysis of the legal basis for the managed codec2 port (LGPL-2.1 → GPL-3.0-or-later
 via §3 relicensing) + attribution (Rowe/Valenti/Cowley). Scheduled by Tom as a roadmap task;
-not a blocker, not ours to bless — needs a real FOSS-licence sanity check.
+not a blocker, not ours to bless - needs a real FOSS-licence sanity check.
 
-### #12 — 2G ALE in software *(planned, not started)*
+### #12 - 2G ALE in software *(planned, not started)*
 MIL-STD-188-141A Appendix A link establishment, so an MS110D station can find a working channel
 and a listening correspondent unattended. Plan: [`docs/ale/plan.md`](ale/plan.md). Prompted by the
-Kenwood TK-90 assessment — its ALE needs a KPE-2 board that cannot be obtained, and doing it in
+Kenwood TK-90 assessment - its ALE needs a KPE-2 board that cannot be obtained, and doing it in
 software removes the dependency on any particular radio, makes LQA our own measured SNR rather
 than a vendor's opaque score, and is a smaller job than the modem already built (8-FSK, no
 equaliser, no turbo decoder). **Deliberately unscheduled**: MS110D's Poor gate is open and §E2 has
-never run on hardware. One exception worth taking early — decoding real off-air 2G ALE needs no
+never run on hardware. One exception worth taking early - decoding real off-air 2G ALE needs no
 transmit licence, no partner and no hardware this project does not already own, and it would
 verify the waveform constants empirically.
 
-### #11 — FlexRadio 6500 integration *(in progress — nearly done)*
+### #11 - FlexRadio 6500 integration *(in progress - nearly done)*
 Pure-managed client: discovery + TCP session + VITA-49 DAX RX/TX → `IAudioInput`/`IAudioOutput`/
-`IPttControl`, `--device flex:<radio>`. Offline Phases 0–2 merged (mock radio, byte-exact loop).
+`IPttControl`, `--device flex:<radio>`. Offline Phases 0-2 merged (mock radio, byte-exact loop).
 **Hardware proven on M0LTE's 6500**: discovery, session, headless GUI-client + slice, DAX RX
-(0 loss) / TX, PTT (139 ms settle). **Live off-air RX proven** — decoded GB7RDG's NinoTNC BPSK300
+(0 loss) / TX, PTT (139 ms settle). **Live off-air RX proven** - decoded GB7RDG's NinoTNC BPSK300
 through the Flex's DAX audio, no sound card in path.
 - **Software-complete (PR #44 merged):** headless setup + the band-persistence tune fix
-  (`EnsureTunedAsync` — a headless slice otherwise stays on the wrong band) + `--flex-daxch`
+  (`EnsureTunedAsync` - a headless slice otherwise stays on the wrong band) + `--flex-daxch`
   DAX-channel coexistence, mock-validated (949/0). The tune fix is HW-proven on the 6500.
 - **Remaining:** shipped-daemon final hardware confirmation (a FreeDV-datac / ARDOP frame into the
   dummy load), and a **Flex variant of the HF-loop** (folds into #4/#6). OBW self-capture is NOT
-  viable on the 6500's public API (panadapter TX trace is leakage) — bench/second-RX stays the
+  viable on the 6500's public API (panadapter TX trace is leakage) - bench/second-RX stays the
   OBW path.
-- **IQ interfaces (Tom's prompt) — researched + TX proven, 2026-07-17** (see
+- **IQ interfaces (Tom's prompt) - researched + TX proven, 2026-07-17** (see
   [flex-integration.md §9](flex-integration.md)): **RX** = DAX-IQ, wideband complex baseband, but
   **receive-only** (K3TZR: no IQ-TX via DAX). Good for multi-channel monitoring + wide own-mode RX.
-  **TX** = the SmartSDR **Waveform API** — the *only* IQ-TX door on a Flex, and it is **GPL-3.0**
+  **TX** = the SmartSDR **Waveform API** - the *only* IQ-TX door on a Flex, and it is **GPL-3.0**
   (port, don't depend), **runs off-radio on a network host** (headless-friendly), and is **proven
   end-to-end on the 6500**: a from-scratch client registered a custom waveform over TCP, owned a
   headless slice in that mode, keyed, and the radio pulled 224 TX-IQ packets from us
@@ -111,10 +111,10 @@ through the Flex's DAX audio, no sound card in path.
   (#8/#9): achievable on-air TX **bandwidth** (24 kHz-rate but USB-routed; `underlying_mode=RAW/IQ`
   and wide `tx_filter` accepted). Bandwidth **MEASURED on air 2026-07-18** (via M0LTE's UberSDR
   hearing the dummy-load leakage): **`underlying_mode=RAW` gives true wideband complex IQ→RF**
-  (both sidebands, ~14–20 kHz, capped by the 24 kHz waveform rate); USB/IQ are SSB-limited. So the
+  (both sidebands, ~14-20 kHz, capped by the 24 kHz waveform rate); USB/IQ are SSB-limited. So the
   Waveform API is a genuine wideband-TX path for own-modes (#8/#9), not an SSB dead-end. (Second-
-  slice DAX-IQ self-capture was confirmed non-viable — RX blanked during TX.) Multi-channel RX
-  (DAX-IQ + DDC) is the low-risk near-term win — **front-end built** (`src/Packet.SoundModem/Iq/`,
+  slice DAX-IQ self-capture was confirmed non-viable - RX blanked during TX.) Multi-channel RX
+  (DAX-IQ + DDC) is the low-risk near-term win - **front-end built** (`src/Packet.SoundModem/Iq/`,
   concurrent 2-channel AFSK decode) **and the real DAX-IQ transport now landed + hardware-validated**
   (`FlexRadio/FlexDaxIqSource.cs` over the M0LTE.Flex `VitaPacketReceived` event; 238k IQ samples/2s,
   0 loss on the 6500). Remaining: daemon/CLI wiring to select channels and place their offsets.
@@ -123,26 +123,26 @@ through the Flex's DAX audio, no sound card in path.
 
 ## Cross-cutting follow-ups (issues from live-RF validation, 2026-07-17)
 
-- **#42 — NinoTNC BPSK is DEBPSK; our Coherent detector can't decode it.** Real off-air GB7RDG
+- **#42 - NinoTNC BPSK is DEBPSK; our Coherent detector can't decode it.** Real off-air GB7RDG
   decodes with `Differential` only; `Coherent` (the default from #5) fails even strong + centred,
   because the NinoTNC uses coherent Costas demod **with** differential encoding to beat the 180°
   ambiguity, and our coherent path omits the differential-decode step. **Fix:** add a
   differential-decode step after coherent carrier recovery (match the NinoTNC's modified Costas
   loop), or default HF BPSK to Differential; re-examine the #5 bench result. Highest-value modem
-  fix in the queue — it's a real NinoTNC-interop gap. Fixture committed.
-- **#40** — the general coherent-vs-differential off-air finding (now explained by #42).
-- **#39 — RESOLVED** (2026-07-18): the narrow modem tone/carrier centre is now variable per-mode
+  fix in the queue - it's a real NinoTNC-interop gap. Fixture committed.
+- **#40** - the general coherent-vs-differential off-air finding (now explained by #42).
+- **#39 - RESOLVED** (2026-07-18): the narrow modem tone/carrier centre is now variable per-mode
   (QtSoundModem-style), on both TX and RX, via `--modem N:MODE:FREQ` / config `"frequency"`. Covers
   the AFSK tone-pair modes (afsk*, default 1700) and the BPSK/QPSK carrier modes (bpsk*/qpsk*,
   default 1500; 1650 for qpsk3600). Completing the plumbing exposed + fixed a real bug: all three
   AFSK1200 modems' modulators were hardcoded to the Bell-202 1200/2200 tones, so their TX ignored
-  the centre (the demod already honoured it) — now both sides shift together. The PSK factories
+  the centre (the demod already honoured it) - now both sides shift together. The PSK factories
   (Bpsk1200/Qpsk600/2400/3600) gained a `carrierFrequency` param. Baseband FSK (fsk*/c4fsk*, no
-  audio centre) and the spec-fixed waveforms (freedv-*/ms110d-*/POCSAG/ARDOP) stay fixed — a
+  audio centre) and the spec-fixed waveforms (freedv-*/ms110d-*/POCSAG/ARDOP) stay fixed - a
   `:FREQ` on any of those is now rejected at start-up, not silently ignored. `CentreFrequencyTests`
   locks in the round-trip-at-a-shifted-centre behaviour; README/config/DaemonConfig document the
   coverage. The GB7RDG-was-~41-Hz-off case (#40) is now correctable in the field.
-- **#33** — flaky ARDOP host TCP test under full-suite load (races on port bind); harden the test.
+- **#33** - flaky ARDOP host TCP test under full-suite load (races on port bind); harden the test.
 
 ---
 
@@ -151,20 +151,20 @@ through the Flex's DAX audio, no sound card in path.
 These are the concrete steps that can't be done in software alone. None is blocking; each is
 self-contained and can be picked up standalone. Operate as **M0LTE**.
 
-1. **Flex daemon live confirmation** (#11) — *~2 min, radio already on the bench.* Run the
+1. **Flex daemon live confirmation** (#11) - *~2 min, radio already on the bench.* Run the
    shipped daemon against the 6500 and push one real frame into the ANT1 dummy load:
    `pdn-soundmodem --device flex:10.45.0.76 --flex-freq <MHz> --flex-ant ANT1 --modem 0:freedv-datac3 --kiss 8105`
    (or `--ardop 8515` for ARDOP). Success = `interlock=TRANSMITTING`, RF on the dummy load, no
    setup errors. Closes the last Flex item.
-2. **FreeDV datac HF-loop validation** (#4) — *needs an HF rig, or the Flex path.* Follow
+2. **FreeDV datac HF-loop validation** (#4) - *needs an HF rig, or the Flex path.* Follow
    [`docs/freedv-hf-loop.md`](freedv-hf-loop.md) (rig recipe, the 8 radio-only unknowns, drive
    commands, pass criteria). Record results back into that doc + `plan.md` §17. Closes #4.
-3. **ARDOP on-air acceptance** (#6) — *needs GB7RDG's HF port on 40m.* Peer-to-peer ARDOP with
+3. **ARDOP on-air acceptance** (#6) - *needs GB7RDG's HF port on 40m.* Peer-to-peer ARDOP with
    the stations already on the UK 40m packet channel; Winlink/Pat gateway session optional. Write
    the on-air bench doc first (à la the FreeDV one). Closes #6.
-4. **Own FM OFDM — an FM radio loop** (#8) — *later, when the #8 build starts.* Required to
+4. **Own FM OFDM - an FM radio loop** (#8) - *later, when the #8 build starts.* Required to
    validate PAPR / pre-emphasis / deviation, which simulation can't fully capture.
-5. **GB7RDG traffic on request** — *optional, opportunistic.* Once the #42 coherent+differential
+5. **GB7RDG traffic on request** - *optional, opportunistic.* Once the #42 coherent+differential
    fix lands, capture more live NinoTNC BPSK300 off-air through the Flex to confirm the fix on
    real signals (this is how #39/#40/#42 were found). A long carrier tone + a frame is the ideal
    calibration transmission.
@@ -174,6 +174,6 @@ transceiver couples into it), an HF rig / GB7RDG's HF port, and an FM radio loop
 
 ## Parked / non-goals
 
-- **M17** — parked (Tom): kept in the survey, not on the build path.
-- **VARA HF/FM, PACTOR II–IV, P25, NXDN, System Fusion/C4FM, FLEX** — proprietary, cannot implement.
-- **FreeDV voice coexistence** — a non-goal (data and voice never share a channel).
+- **M17** - parked (Tom): kept in the survey, not on the build path.
+- **VARA HF/FM, PACTOR II-IV, P25, NXDN, System Fusion/C4FM, FLEX** - proprietary, cannot implement.
+- **FreeDV voice coexistence** - a non-goal (data and voice never share a channel).

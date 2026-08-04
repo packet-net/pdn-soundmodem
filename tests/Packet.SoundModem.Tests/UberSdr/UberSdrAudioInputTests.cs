@@ -27,7 +27,7 @@ public sealed class UberSdrAudioInputTests
     public void A_mode_that_is_not_an_iq_stream_is_refused_by_name(string mode)
     {
         // Asking a receiver for demodulated audio would work, and would quietly put its filter
-        // and its AGC in the path — the two things taking IQ exists to keep out. Better to say
+        // and its AGC in the path - the two things taking IQ exists to keep out. Better to say
         // so than to accept it.
         Action rate = () => UberSdrAudioInput.IqRateFor(mode);
 

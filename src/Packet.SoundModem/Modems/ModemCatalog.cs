@@ -40,7 +40,7 @@ public static class ModemCatalog
 
     /// <summary>
     /// Mode names closest to <paramref name="mode"/>, for a "did you mean" on a typo. A
-    /// case-insensitive hit wins outright — the catalogue is ordinal, so <c>AFSK1200</c> is a
+    /// case-insensitive hit wins outright - the catalogue is ordinal, so <c>AFSK1200</c> is a
     /// miss and naming the cased spelling is the whole answer. Otherwise the nearest by edit
     /// distance, closest first. Empty when nothing is near enough to be a useful guess.
     /// </summary>
@@ -112,8 +112,8 @@ public static class ModemCatalog
         || mode.StartsWith("ms110d-", StringComparison.Ordinal) ? 48000 : 12000;
 
     /// <summary>
-    /// Whether a mode has a settable audio-centre frequency. Only the variable-centre families —
-    /// the AFSK tone-pair and the BPSK/QPSK carrier — do. The baseband fsk*/c4fsk* (DC-to-Nyquist)
+    /// Whether a mode has a settable audio-centre frequency. Only the variable-centre families -
+    /// the AFSK tone-pair and the BPSK/QPSK carrier - do. The baseband fsk*/c4fsk* (DC-to-Nyquist)
     /// and the spec-fixed freedv-*/ms110d- waveforms do not: passing a centre frequency to
     /// <see cref="Create"/> for one of those throws (issue #39).
     /// </summary>
@@ -124,7 +124,7 @@ public static class ModemCatalog
 
     /// <summary>
     /// The audio centre a mode sits on when no override is given: the tone-pair midpoint, the PSK
-    /// carrier, or — for the spec-fixed families — the centre their standard pins them to. Null for
+    /// carrier, or - for the spec-fixed families - the centre their standard pins them to. Null for
     /// the baseband families (<c>fsk*</c>/<c>c4fsk*</c>), which occupy DC upwards and so have no
     /// centre to speak of.
     /// </summary>
@@ -152,12 +152,12 @@ public static class ModemCatalog
 
     /// <summary>
     /// The default PSK detector for a mode when the caller does not override it: differential for
-    /// every PSK family. BPSK reversed to differential 2026-07-18 (issues #40/#42 — coherent's
+    /// every PSK family. BPSK reversed to differential 2026-07-18 (issues #40/#42 - coherent's
     /// narrow Costas loop cannot acquire real carriers); QPSK followed 2026-07-31 on the studybox
-    /// NinoTNC corpus: coherent copied 0–2 of 3 real NinoTNC frames per capture even on a wired
-    /// audio loop (knife-edge timing over multi-second bursts, ±5–8 Hz CFO walls — issues #11/#116/
-    /// #144), while differential — V.26A is differentially encoded by construction — copies 9/9
-    /// QPSK corpus files and widens the CFO half-widths ×4–7, for 0.4–3.5 dB at the AWGN knee
+    /// NinoTNC corpus: coherent copied 0-2 of 3 real NinoTNC frames per capture even on a wired
+    /// audio loop (knife-edge timing over multi-second bursts, ±5-8 Hz CFO walls - issues #11/#116/
+    /// #144), while differential - V.26A is differentially encoded by construction - copies 9/9
+    /// QPSK corpus files and widens the CFO half-widths ×4-7, for 0.4-3.5 dB at the AWGN knee
     /// (`docs/bench/ninotnc-corpus-2026-07-31.md`, `docs/cfo/evidence/`). Coherent remains
     /// selectable via <see cref="ModemOptions.Detector"/>.
     /// </summary>
@@ -196,7 +196,7 @@ public static class ModemCatalog
             "afsk1200-il2p" => new Afsk1200Il2pModem(dspRate, frameReceived, crc: true, frequency ?? 1700),
             "afsk1200-il2p-nocrc" => new Afsk1200Il2pModem(dspRate, frameReceived, crc: false, frequency ?? 1700),
             // The 300 baud HF AFSK family defaults to the narrow-branch frequency-diversity
-            // bank — on the live 40 m slot the single wide modem lost most frames to a
+            // bank - on the live 40 m slot the single wide modem lost most frames to a
             // neighbouring QSO inside its passband (see Afsk300MultiModem). offsetPairs/
             // offsetStepHz tune it (offsetPairs:0 gives a single tight-filtered modem).
             "afsk300" => new Afsk300MultiModem(dspRate, frameReceived, Afsk300Framing.Ax25,
@@ -205,7 +205,7 @@ public static class ModemCatalog
                 frequency ?? 1700, offsetPairs ?? 5, offsetStepHz),
             "afsk300-il2pc" => new Afsk300MultiModem(dspRate, frameReceived, Afsk300Framing.Il2pCrc,
                 frequency ?? 1700, offsetPairs ?? 5, offsetStepHz),
-            // BPSK defaults to the differential frequency-diversity bank — offsetPairs/offsetStepHz
+            // BPSK defaults to the differential frequency-diversity bank - offsetPairs/offsetStepHz
             // tune it (offsetPairs:0 gives a plain single modem).
             "bpsk300" or "bpsk300-multi" => new BpskMultiModem(dspRate, frameReceived, crc: true, frequency ?? 1500,
                 baud: 300, offsetPairs: offsetPairs ?? 4, offsetHz: offsetStepHz, detector: detector),

@@ -13,8 +13,8 @@ namespace Packet.SoundModem.Tests.Kiss;
 /// KISS channel 0 and offers no way to set the port nibble. On the shared port such a host can
 /// only ever reach sub-channel 0, however many modems are configured.
 ///
-/// The two modems here are deliberately different framings at the same baud — AX.25 HDLC on
-/// sub-channel 0, IL2P on sub-channel 1 — so which modem actually handled a frame is decidable
+/// The two modems here are deliberately different framings at the same baud - AX.25 HDLC on
+/// sub-channel 0, IL2P on sub-channel 1 - so which modem actually handled a frame is decidable
 /// from the audio, rather than assumed from the code path.
 /// </summary>
 public class KissDedicatedPortTests : IAsyncLifetime
@@ -199,7 +199,7 @@ public class KissDedicatedPortTests : IAsyncLifetime
     [Fact]
     public async Task A_Frame_Sent_To_A_Dedicated_Port_As_Channel_Zero_Goes_To_That_Modem()
     {
-        // Sent as nibble 0 — what a host that cannot set the nibble would send — but it must
+        // Sent as nibble 0 - what a host that cannot set the nibble would send - but it must
         // leave on sub-channel 1's modem. Decided by decoding the audio, not by inspection:
         // only an IL2P receiver can read it, so only the IL2P modem can have sent it.
         byte[] frame = SampleFrame(9);

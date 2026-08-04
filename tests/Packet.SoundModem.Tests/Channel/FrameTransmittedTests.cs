@@ -9,7 +9,7 @@ namespace Packet.SoundModem.Tests.Channel;
 /// </summary>
 /// <remarks>
 /// The channel has raised <see cref="SoundModemChannel.FrameReceived"/> since the beginning and, on
-/// the transmit side, only <see cref="SoundModemChannel.TransmitRejected"/> — so a station's journal
+/// the transmit side, only <see cref="SoundModemChannel.TransmitRejected"/> - so a station's journal
 /// recorded every frame it failed to send and none that it sent. The timing matters as much as the
 /// event: a frame can wait behind CSMA or an ARQ session for seconds, and a line claiming a
 /// transmission that has not happened yet is worse than no line.
@@ -49,7 +49,7 @@ public class FrameTransmittedTests
     public async Task A_Refused_Frame_Is_Not_Announced_As_Sent()
     {
         // A receive-only station refuses every frame. It must appear in the journal as a drop and
-        // nowhere else — a frame belongs to exactly one of the two events.
+        // nowhere else - a frame belongs to exactly one of the two events.
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7)
         {
             ReceiveOnlyReason = "this station receives only",

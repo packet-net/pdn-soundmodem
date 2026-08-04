@@ -16,7 +16,7 @@ public class Ms110dModeTests
     [InlineData(13)]
     public void Bps_Arithmetic_Reproduces_Table_DII(int wn)
     {
-        // 2400 · U/(U+K) · bits/symbol · code rate must equal the Table D-II user rate —
+        // 2400 · U/(U+K) · bits/symbol · code rate must equal the Table D-II user rate -
         // the cross-check that ties D-XI/D-XII, D-XLIX and D-II together (design §2.4).
         Ms110dMode mode = Ms110dMode.Mode3k(wn);
         (int p, int q) = ParseRate(mode.CodeRate);

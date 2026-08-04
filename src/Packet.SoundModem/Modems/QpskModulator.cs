@@ -4,7 +4,7 @@ namespace Packet.SoundModem.Modems;
 
 /// <summary>
 /// Differential QPSK modulator per the IL2P symbol map (spec draft v0.6): bits are taken
-/// as dibits (left bit first) and each dibit selects a carrier phase *change* —
+/// as dibits (left bit first) and each dibit selects a carrier phase *change* -
 /// 11 → 0°, 10 → +90°, 01 → +270°, 00 → +180°. A zeros preamble therefore produces
 /// continuous reversals. The symbol map is bench-confirmed against a NinoTNC (QtSM history
 /// shows QPSK phase maps were pairwise-negotiated; ours interoperates as-is).
@@ -14,7 +14,7 @@ namespace Packet.SoundModem.Modems;
 /// trajectory. Direct phase synthesis at constant envelope is the intuitive construction
 /// and is what this modulator did first, but its transitions are far too fast: it measured
 /// 5344 Hz of 99 % occupied bandwidth at 1200 sym/s where a NinoTNC's own mode-11 signal
-/// measures 1887 Hz and Nino's published figure is 2400 Hz — i.e. it would have splattered
+/// measures 1887 Hz and Nino's published figure is 2400 Hz - i.e. it would have splattered
 /// a channel either side. Pulses are summed in continuous time so that fractional
 /// samples-per-symbol rates (1800 Bd at 12 kHz = 6⅔) need no resampling.
 /// </remarks>
@@ -112,8 +112,8 @@ public sealed class QpskModulator
         return samples;
     }
 
-    /// <summary>Scales to the requested peak. RRC shaping is not constant-envelope — the
-    /// peak depends on the symbol sequence — so normalise rather than let the level wander
+    /// <summary>Scales to the requested peak. RRC shaping is not constant-envelope - the
+    /// peak depends on the symbol sequence - so normalise rather than let the level wander
     /// with the payload.</summary>
     private static void Normalise(float[] samples, float amplitude)
     {

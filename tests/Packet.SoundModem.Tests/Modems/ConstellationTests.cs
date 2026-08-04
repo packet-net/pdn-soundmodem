@@ -7,8 +7,8 @@ namespace Packet.SoundModem.Tests.Modems;
 /// <summary>
 /// The per-symbol constellation side channel (issue #9): the PSK demodulators expose their
 /// decision points via <see cref="IConstellationSource"/>, and <see cref="ConstellationSource"/>
-/// batches them into scope frames. These assert the geometry a clean signal must produce —
-/// the diagnostic's whole value is that a healthy constellation looks healthy — plus the
+/// batches them into scope frames. These assert the geometry a clean signal must produce -
+/// the diagnostic's whole value is that a healthy constellation looks healthy - plus the
 /// batching/encoding contract and that the channel wires it only for the PSK modes.
 /// </summary>
 public class ConstellationTests
@@ -24,7 +24,7 @@ public class ConstellationTests
     }
 
     /// <summary>The well-formed symbols: those whose matched-filter output is within 60 % of
-    /// the burst peak. Gating on a fraction of the peak (not the median) is deliberate —
+    /// the burst peak. Gating on a fraction of the peak (not the median) is deliberate -
     /// genuinely low-amplitude symbols carry real per-symbol phase noise and belong to the
     /// smear the diagnostic is meant to reveal, so the "is the core tight?" assertion should
     /// look at the strong symbols that define the cluster centres.</summary>
@@ -38,7 +38,7 @@ public class ConstellationTests
     // The differential product plots phase *changes* landing on exact multiples of 90° and so
     // clusters tightest (>0.94); the coherent detector plots the recovered *absolute*
     // constellation, whose four diagonal points carry the Costas loop's residual phase jitter
-    // and so cluster a little looser (~0.87–0.91) — both far above the ~0.05 of phase noise.
+    // and so cluster a little looser (~0.87-0.91) - both far above the ~0.05 of phase noise.
     [Theory]
     [InlineData(2400, PskDetector.Differential, 0.90)]
     [InlineData(3600, PskDetector.Differential, 0.90)]
@@ -99,7 +99,7 @@ public class ConstellationTests
         var strong = StrongPoints(points);
         strong.Count.Should().BeGreaterThan(50);
 
-        // Both rails present (random data visits both) and the magnitude is consistent —
+        // Both rails present (random data visits both) and the magnitude is consistent -
         // a clean eye, not a smear toward zero.
         strong.Should().Contain(p => p.I > 0).And.Contain(p => p.I < 0);
         double meanAbs = strong.Average(p => Math.Abs(p.I));

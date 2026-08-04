@@ -6,7 +6,7 @@ using M0LTE.Dsp;
 namespace Packet.SoundModem.Ota;
 
 /// <summary>What one burst in a capture did.</summary>
-/// <param name="Index">Position in the capture, from 0 — the order bursts were detected in.</param>
+/// <param name="Index">Position in the capture, from 0 - the order bursts were detected in.</param>
 /// <param name="StartSeconds">Where in the capture the burst's first data block appeared.</param>
 /// <param name="EndSeconds">Where the burst ended.</param>
 /// <param name="Acquired">Whether the demodulator locked at all.</param>
@@ -14,13 +14,13 @@ namespace Packet.SoundModem.Ota;
 /// <param name="Interleaver">Interleaver the WID announced.</param>
 /// <param name="CfoHz">Carrier frequency offset at lock.</param>
 /// <param name="Scheduled">Whether this burst matched a schedule entry. If not, everything
-/// below is unscored — there is nothing to score it against.</param>
+/// below is unscored - there is nothing to score it against.</param>
 /// <param name="WidCorrect">Whether the WID matched what was scheduled.</param>
 /// <param name="PayloadBits">Payload bits expected.</param>
 /// <param name="PayloadErrors">Payload bits wrong, missing ones included.</param>
-/// <param name="UncodedBits">Channel bits compared against the re-encoded reference —
+/// <param name="UncodedBits">Channel bits compared against the re-encoded reference -
 /// erasures (exactly-zero LLRs, where the soft-output path expressed no opinion) excluded.</param>
-/// <param name="UncodedErrors">Channel bits wrong — the informative rate.</param>
+/// <param name="UncodedErrors">Channel bits wrong - the informative rate.</param>
 /// <param name="UncodedErasures">Channel bits excluded as erasures (exactly-zero LLR). WN0
 /// erases its first di-bit of every burst by design, so 2 is structural there; any other
 /// count on any waveform is an LLR path gone quiet, and because it is recorded here it
@@ -32,7 +32,7 @@ namespace Packet.SoundModem.Ota;
 /// <param name="TurboAborted">Turbo passes aborted during this burst.</param>
 /// <param name="Snr">SNR of the burst against the quiet before it, in the rig's convention.</param>
 /// <param name="Diagnostics">The demodulator's <see cref="Ms110dDemodulator.FrameDiagnostics"/>
-/// lines emitted while this burst was live — the acquisition/WID trace, time-prefixed. Empty
+/// lines emitted while this burst was live - the acquisition/WID trace, time-prefixed. Empty
 /// unless <see cref="BurstScorerOptions.CaptureDiagnostics"/> is set; the event is
 /// fire-and-forget, so collecting it cannot change what the demodulator decoded.</param>
 public sealed record BurstScore(
@@ -62,7 +62,7 @@ public sealed record BurstScore(
     /// <see cref="UncodedBer"/> rather than on its own.</summary>
     public double CodedBer => PayloadBits == 0 ? double.NaN : PayloadErrors / (double)PayloadBits;
 
-    /// <summary>Uncoded channel-bit error rate — the number that degrades smoothly and is
+    /// <summary>Uncoded channel-bit error rate - the number that degrades smoothly and is
     /// directly comparable with the Watterson rig's own telemetry.</summary>
     public double UncodedBer => UncodedBits == 0 ? double.NaN : UncodedErrors / (double)UncodedBits;
 }
@@ -75,7 +75,7 @@ public sealed record ScheduledBurst(Ms110dReferenceBits Reference, double Expect
 
 /// <summary>Everything a capture produced.</summary>
 /// <param name="Bursts">One entry per burst the demodulator found, in order.</param>
-/// <param name="Missed">Scheduled bursts nothing was detected for — a headline metric, not an
+/// <param name="Missed">Scheduled bursts nothing was detected for - a headline metric, not an
 /// error condition.</param>
 /// <param name="AudioSeconds">Length of the audio scored.</param>
 public sealed record CaptureScore(
@@ -109,11 +109,11 @@ public sealed record BurstScorerOptions
     public Ms110dDemodOptions? Demodulator { get; init; }
 
     /// <summary>
-    /// The band the converted audio actually occupies — the receive converter's SSB passband.
+    /// The band the converted audio actually occupies - the receive converter's SSB passband.
     /// </summary>
     /// <remarks>Must match whatever <c>SsbDemodulatorOptions.SsbLowHz</c>/<c>SsbHighHz</c> the capture
     /// was converted with. The noise in a converted pass lives only inside that passband, and an
-    /// estimator that assumes it fills the whole audio band over-subtracts noise from the burst —
+    /// estimator that assumes it fills the whole audio band over-subtracts noise from the burst -
     /// harmless at high SNR, 2.6 dB out at 0 dB. See <see cref="SnrEstimator.Estimate"/>.</remarks>
     public double OccupiedLowHz { get; init; } = 150;
 
@@ -121,7 +121,7 @@ public sealed record BurstScorerOptions
     public double OccupiedHighHz { get; init; } = 3450;
 
     /// <summary>Collect the demodulator's <see cref="Ms110dDemodulator.FrameDiagnostics"/> trace
-    /// per burst into <see cref="BurstScore.Diagnostics"/>. Off by default — this is an acquisition
+    /// per burst into <see cref="BurstScore.Diagnostics"/>. Off by default - this is an acquisition
     /// autopsy tool, not part of scoring, and the event is fire-and-forget so subscribing to it
     /// leaves the decoded bits byte-identical.</summary>
     public bool CaptureDiagnostics { get; init; }
@@ -132,8 +132,8 @@ public sealed record BurstScorerOptions
 /// </summary>
 /// <remarks>
 /// <para><b>Bursts are found by acquisition, not by the clock.</b> Slicing a capture at the
-/// scheduled times and demodulating each slice would conceal the failure that matters most — a
-/// burst the receiver never acquired — because it hands the demodulator a window already known
+/// scheduled times and demodulating each slice would conceal the failure that matters most - a
+/// burst the receiver never acquired - because it hands the demodulator a window already known
 /// to contain a signal. Here the demodulator sweeps the whole capture as a real receiver would,
 /// and a scheduled burst with nothing detected near it comes back in
 /// <see cref="CaptureScore.Missed"/>. Time is used only to match what was found against what
@@ -145,7 +145,7 @@ public sealed record BurstScorerOptions
 /// <para>SNR comes from a quiet stretch shortly before each burst, in the rig's own convention
 /// (see <see cref="SnrEstimator"/>), so an over-the-air point can be laid against the
 /// simulation's curve at a matched SNR rather than a nominal one. The gap between that stretch
-/// and the burst has to clear the preamble — see
+/// and the burst has to clear the preamble - see
 /// <see cref="BurstScorerOptions.NoiseLeadSeconds"/>.</para>
 /// <para>Memory is bounded by the longest burst, not by the capture: the only audio retained is
 /// the current burst and a few seconds of rolling quiet behind it.</para>
@@ -192,7 +192,7 @@ public sealed class BurstScorer
         int turboC0 = 0, turboR0 = 0, turboA0 = 0;
 
         // Acquisition/WID autopsy, opt-in. Each FrameDiagnostics line is stamped with the sample
-        // it fired at, so a burst later claims the lines that fell inside its span — the
+        // it fired at, so a burst later claims the lines that fell inside its span - the
         // acquisition trace fires between carrier-detect and lock, which is inside it. The event
         // is fire-and-forget, so subscribing changes nothing the demodulator decodes.
         List<(long Sample, string Message)>? diagnostics =
@@ -204,7 +204,7 @@ public sealed class BurstScorer
 
         Ms110dReferenceBits? MatchSchedule(double startSeconds)
         {
-            // Order first — bursts arrive in the order they were sent. Time is the cross-check:
+            // Order first - bursts arrive in the order they were sent. Time is the cross-check:
             // if the nth detection is nowhere near the nth remaining slot, the schedule has
             // slipped, and matching purely by order would score against the wrong reference.
             for (int k = scheduleCursor; k < _schedule.Count; k++)
@@ -225,14 +225,14 @@ public sealed class BurstScorer
 
                 if (candidate.ExpectedSeconds > startSeconds + _options.MatchWindowSeconds)
                 {
-                    break; // detected earlier than any remaining slot — this one is unscheduled
+                    break; // detected earlier than any remaining slot - this one is unscheduled
                 }
             }
 
             return null;
         }
 
-        // Burst start comes from the demodulator's carrier detect, polled per chunk — NOT from
+        // Burst start comes from the demodulator's carrier detect, polled per chunk - NOT from
         // the first block event. A block event fires only once the whole block has arrived, so
         // treating it as the start puts the burst's start at its end: measured, that made
         // StartSeconds equal EndSeconds and left no burst audio to estimate SNR from.
@@ -270,7 +270,7 @@ public sealed class BurstScorer
             {
                 // An exactly-zero LLR is an erasure: the soft-output path expressed no
                 // opinion (WN0's cold-start RAKE erases its first symbol of every burst by
-                // design), so the position is neither a compared bit nor an error — and it
+                // design), so the position is neither a compared bit nor an error - and it
                 // is counted, so a quiet LLR path shows in campaign output instead of
                 // silently shrinking the denominator. The exact match is load-bearing:
                 // structural zeros are identically 0f, and any tolerance would start
@@ -396,7 +396,7 @@ public sealed class BurstScorer
             }
             else if (!active && burstStartSample >= 0)
             {
-                // Carrier came and went with no burst — a false acquisition. Drop it and go
+                // Carrier came and went with no burst - a false acquisition. Drop it and go
                 // back to collecting quiet, rather than leaving the guard frozen for good.
                 burstStartSample = -1;
                 burstNoise = null;

@@ -3,7 +3,7 @@ using M0LTE.Radio.Audio;
 
 namespace Packet.SoundModem.Channel;
 
-/// <summary>PTT via a serial control line (RTS and/or DTR) — the classic homebrew
+/// <summary>PTT via a serial control line (RTS and/or DTR) - the classic homebrew
 /// interface and half of the CM108-alternative story (CM108 HID PTT follows).</summary>
 public sealed class SerialPtt : IPttControl, IDisposable
 {

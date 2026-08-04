@@ -8,7 +8,7 @@ namespace Packet.SoundModem.Tests.Ota;
 
 /// <summary>
 /// The SSB audio-carrier §E2 ladder (AFSK 300, BPSK, QPSK over DIGU SSB), verified end to end with no
-/// radio in the loop — the audio-carrier counterpart of <see cref="OfdmLadderPassTests"/> and
+/// radio in the loop - the audio-carrier counterpart of <see cref="OfdmLadderPassTests"/> and
 /// <see cref="LadderPassTests"/>.
 /// </summary>
 /// <remarks>
@@ -58,7 +58,7 @@ public class SsbLadderPassTests
         Quiet(gapSeconds);
         foreach (SsbRenderedPoint point in points)
         {
-            // The active burst starts after its noise lead-in — the time the scorer windows on.
+            // The active burst starts after its noise lead-in - the time the scorer windows on.
             starts.Add((iq.Count / 2.0 / CaptureRate) + point.LeadInSeconds);
             foreach (float v in point.Iq)
             {
@@ -197,7 +197,7 @@ public class SsbLadderPassTests
 
         score.Bursts[0].Decoded.Should().BeTrue("20 dB is well above qpsk600's AWGN cliff");
         score.Bursts[0].CodedBer.Should().Be(0);
-        score.Bursts[1].Decoded.Should().BeFalse("0 dB is below the cliff — the frame is lost");
+        score.Bursts[1].Decoded.Should().BeFalse("0 dB is below the cliff - the frame is lost");
         score.Bursts[1].Acquired.Should().BeFalse("nothing to lock onto at 0 dB for this mode");
         score.Bursts[1].CodedBer.Should().Be(1.0, "a lost frame counts every payload bit wrong");
     }
@@ -247,7 +247,7 @@ public class SsbLadderPassTests
     }
 
     [Theory]
-    [InlineData("qpsk3600")]     // an FM mode — belongs to the FM coverage path, not this ladder
+    [InlineData("qpsk3600")]     // an FM mode - belongs to the FM coverage path, not this ladder
     [InlineData("freedv-datac0")] // the OFDM ladder's job
     [InlineData("ms110d-wn6")]    // the MS110D ladder's job
     [InlineData("afsk1200")]      // the classic VHF-FM mode, not an SSB HF mode

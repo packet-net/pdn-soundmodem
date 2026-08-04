@@ -8,12 +8,12 @@ namespace Packet.SoundModem.Ota;
 /// <para>The tone is the first thing on the air (ota-execution-plan §E0.5) and it is
 /// deliberately the <em>only</em> instrument in that session: it needs no modem, no
 /// upconverter and no scorer, and it is a far better detector of faults in the new
-/// transmit stack than a modem burst. A waveform is reflection-driven — the radio pulls one
-/// TX buffer at a time while keyed — so a dropped, starved or duplicated buffer produces a
+/// transmit stack than a modem burst. A waveform is reflection-driven - the radio pulls one
+/// TX buffer at a time while keyed - so a dropped, starved or duplicated buffer produces a
 /// <b>phase discontinuity</b>, which around an otherwise pure carrier is visible as spectral
 /// splatter. The same fault inside a data burst would only read as "bad decode".</para>
 /// <para>Phase is accumulated per tone and wrapped every sample, so a long tone stays
-/// exactly on frequency rather than drifting with floating-point error — the point being
+/// exactly on frequency rather than drifting with floating-point error - the point being
 /// that any discontinuity we <em>do</em> see is the radio's, not ours.</para>
 /// </remarks>
 public static class ToneGenerator
@@ -33,7 +33,7 @@ public static class ToneGenerator
     /// N-tone sum peaks at N × this, so check <see cref="PeakMagnitude"/> before
     /// transmitting.</param>
     /// <param name="seconds">Duration of the tone itself (ramps included).</param>
-    /// <param name="sampleRate">Complex sample rate — 24000 for the Flex waveform path.</param>
+    /// <param name="sampleRate">Complex sample rate - 24000 for the Flex waveform path.</param>
     /// <param name="rampSeconds">Raised-cosine taper at each end.</param>
     public static float[] Complex(
         IReadOnlyList<double> frequenciesHz,
@@ -109,19 +109,19 @@ public static class ToneGenerator
     }
 
     /// <summary>
-    /// Generates a sum of real cosines as mono samples — the DAX-audio counterpart of
+    /// Generates a sum of real cosines as mono samples - the DAX-audio counterpart of
     /// <see cref="Complex"/>.
     /// </summary>
     /// <remarks>The DAX route hands the radio real audio and the radio's own DIGU SSB modulator
     /// places it: a tone at <paramref name="frequenciesHz"/> lands at dial + that frequency, so
-    /// there is no analytic baseband, no image to reject and no NCO — the point of the DAX path
+    /// there is no analytic baseband, no image to reject and no NCO - the point of the DAX path
     /// versus the IQ one. Phase is accumulated and wrapped per tone for the same reason the
     /// complex version does it: a long tone stays exactly on frequency.</remarks>
     /// <param name="frequenciesHz">Audio tone frequencies (Hz). On DIGU each lands at dial + f.</param>
     /// <param name="amplitudePerTone">Peak amplitude of each tone. An N-tone sum peaks at N × this;
     /// check <see cref="PeakReal"/> before transmitting.</param>
     /// <param name="seconds">Duration of the tone itself (ramps included).</param>
-    /// <param name="sampleRate">Audio sample rate — 24000 for the reduced-bandwidth DAX path.</param>
+    /// <param name="sampleRate">Audio sample rate - 24000 for the reduced-bandwidth DAX path.</param>
     /// <param name="rampSeconds">Raised-cosine taper at each end.</param>
     public static float[] Real(
         IReadOnlyList<double> frequenciesHz,
@@ -190,7 +190,7 @@ public static class ToneGenerator
         return audio;
     }
 
-    /// <summary>Interleaved I,Q silence — the lead-in that absorbs the PTT settle
+    /// <summary>Interleaved I,Q silence - the lead-in that absorbs the PTT settle
     /// (139 ms measured on the 6500) and the lead-out that lets the tail drain before
     /// unkeying.</summary>
     public static float[] Silence(double seconds, int sampleRate)
@@ -203,7 +203,7 @@ public static class ToneGenerator
         return new float[2 * (int)Math.Round(seconds * sampleRate)];
     }
 
-    /// <summary>Mono silence — the DAX-route lead-in/lead-out, one sample per frame rather than
+    /// <summary>Mono silence - the DAX-route lead-in/lead-out, one sample per frame rather than
     /// the interleaved I,Q pair <see cref="Silence"/> returns.</summary>
     public static float[] SilenceReal(double seconds, int sampleRate)
     {
@@ -236,7 +236,7 @@ public static class ToneGenerator
         return result;
     }
 
-    /// <summary>Largest |I + jQ| in an interleaved buffer — the clipping check before a
+    /// <summary>Largest |I + jQ| in an interleaved buffer - the clipping check before a
     /// burst goes anywhere near the radio.</summary>
     public static double PeakMagnitude(ReadOnlySpan<float> interleavedIq)
     {
@@ -254,7 +254,7 @@ public static class ToneGenerator
         return Math.Sqrt(peak);
     }
 
-    /// <summary>Largest |sample| in a mono buffer — the DAX-route clipping check, the real-audio
+    /// <summary>Largest |sample| in a mono buffer - the DAX-route clipping check, the real-audio
     /// counterpart of <see cref="PeakMagnitude"/>. The radio's s16 DAX transport clamps at ±1.0,
     /// so anything above that is clipped before it reaches the SSB modulator.</summary>
     public static double PeakReal(ReadOnlySpan<float> audio)

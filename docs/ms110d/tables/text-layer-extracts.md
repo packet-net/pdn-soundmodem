@@ -1,4 +1,4 @@
-# MIL-STD-188-110D Appendix D — text-layer extracts (golden pieces)
+# MIL-STD-188-110D Appendix D - text-layer extracts (golden pieces)
 
 Source: milstd110d.pdf (MIL-STD-188-110D, 29 Dec 2017). These sections have a real
 text layer in the PDF and were extracted programmatically (pypdf), verbatim except
@@ -9,7 +9,7 @@ physical pages; document page numbers are PDF minus 5.
 Note: the Table D-XX widPN[256] sync array (document page 170, PDF page 175) is in
 `tables/d20-widpn.txt`, extracted the same way.
 
-## D.5.1.3 Data scrambling — scrambler description and init (document pages 160-161, PDF pages 165-166)
+## D.5.1.3 Data scrambling - scrambler description and init (document pages 160-161, PDF pages 165-166)
 
 ```text
 D.5.1.3  Data scrambling.
@@ -54,7 +54,7 @@ times, although in terms of symbols, there will be no repetition.
 ```
 
 
-## D.5.1.4 Waveform ID 0 Walsh Orthogonal Modulation Data scrambling — init state, generator code, and worked example (document pages 161-162, PDF pages 166-167)
+## D.5.1.4 Waveform ID 0 Walsh Orthogonal Modulation Data scrambling - init state, generator code, and worked example (document pages 161-162, PDF pages 166-167)
 
 ```text
 D.5.1.4  Waveform ID 0 Walsh Orthogonal Modulation Data scrambling.

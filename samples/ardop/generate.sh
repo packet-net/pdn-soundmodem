@@ -6,7 +6,7 @@
 # Usage: ARDOPCF=/path/to/ardopcf sh generate.sh
 #
 # Each WAV is one TXFRAME transmission (leader 240 ms, trailer 20 ms, drive 100)
-# written via ardopcf's null-device TX path (--writetxwav, NOSOUND audio) — no sound
+# written via ardopcf's null-device TX path (--writetxwav, NOSOUND audio) - no sound
 # card involved. Payloads live in txframe-manifest.txt, regenerated alongside.
 set -eu
 

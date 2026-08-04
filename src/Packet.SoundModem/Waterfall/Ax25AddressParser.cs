@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Waterfall;
 /// <summary>
 /// Display-grade AX.25 address extraction for the waterfall's per-burst attribution: source
 /// and destination callsigns (with SSID) plus the digipeater path, straight off the shifted
-/// address field. This is a label maker, not a protocol codec — nothing on the wire path
+/// address field. This is a label maker, not a protocol codec - nothing on the wire path
 /// depends on it, and frames it cannot read are simply shown unattributed. (The full AX.25
 /// codec lives in packet.net; the daemon deliberately keeps its shipped dependency set to
 /// the M0LTE.* packages, and fourteen shifted bytes do not justify another one.)

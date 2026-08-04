@@ -7,16 +7,16 @@ namespace Packet.SoundModem.Modems;
 /// (per the IL2P symbol map: 1 = phase repeat, 0 = reversal). Two detection methods share the
 /// chain (see <see cref="PskDetector"/>): the default <b>coherent</b> path recovers the
 /// carrier phase with a <see cref="CostasLoop"/> (locking the constellation to the real axis)
-/// and differentially decodes consecutive <em>absolute</em> symbols — what the NinoTNC does;
+/// and differentially decodes consecutive <em>absolute</em> symbols - what the NinoTNC does;
 /// the <b>differential</b> path multiplies by the conjugate of the one-symbol-delayed
 /// baseband, whose real part is positive on a phase repeat and negative on a reversal,
 /// tolerant of small frequency offsets and acquiring instantly. Emits logical bits once per
-/// symbol — feed straight into <see cref="M0LTE.Il2p.Il2pDeframer"/>. Covers the NinoTNC 300
+/// symbol - feed straight into <see cref="M0LTE.Il2p.Il2pDeframer"/>. Covers the NinoTNC 300
 /// (mode 8) and 1200 (mode 10) BPSK symbol rates.
 /// </summary>
 public sealed class BpskDemodulator
 {
-    /// <summary>Memory of the carrier-offset window, per contributing sample — ~1000 samples,
+    /// <summary>Memory of the carrier-offset window, per contributing sample - ~1000 samples,
     /// so the reading describes roughly the last tenth of a second of signal rather than the
     /// whole burst. See <see cref="CarrierOffsetHz"/>.</summary>
     private const double OffsetWindowRate = 0.001;
@@ -76,7 +76,7 @@ public sealed class BpskDemodulator
 
         _detector = detector;
         // QtSoundModem's P300 filter set, scaled by symbol rate: band-pass ±baud (which
-        // lands on Nino's published OBW at both rates — 500 Hz at 300 Bd, 2400 Hz at
+        // lands on Nino's published OBW at both rates - 500 Hz at 300 Bd, 2400 Hz at
         // 1200 Bd), I/Q low-pass at ⅔·baud.
         _bandPass = new FirFilter(FilterDesign.BandPass(
             carrierFrequency - baud, carrierFrequency + baud, sampleRate, 256 * sampleRate / 12000));
@@ -127,7 +127,7 @@ public sealed class BpskDemodulator
     /// copied a frame happened to be: branch step + this residual is the station's offset from
     /// the bank's centre (see issue #202).</para>
     /// <para><b>Differential.</b> The detector has already formed z·conj(z one symbol ago) to
-    /// decide the bit — its real part <em>is</em> the decision. That product's angle is the
+    /// decide the bit - its real part <em>is</em> the decision. That product's angle is the
     /// per-symbol carrier rotation plus a 0-or-π data step, so squaring the normalised product
     /// removes the data and leaves a phasor at twice the offset; the estimate rides for free on
     /// arithmetic the detector was doing anyway. This is
@@ -135,12 +135,12 @@ public sealed class BpskDemodulator
     /// standalone way to measure a channel without decoding it), with one difference that
     /// matters here: it peak-holds since the last reset, which would freeze on the first strong
     /// burst of a 26-hour session, whereas this windows the recent signal so a frame's reading
-    /// describes <em>that</em> frame. Unambiguous over ±baud/4 — ±75 Hz at 300 Bd, far wider
+    /// describes <em>that</em> frame. Unambiguous over ±baud/4 - ±75 Hz at 300 Bd, far wider
     /// than any bank's span.</para>
     /// <para><b>Coherent.</b> The Costas NCO is already tracking the carrier, so its frequency
     /// correction is the residual directly; it is only trustworthy while the loop is on a
     /// signal, hence the DCD gate.</para>
-    /// <para>Read it when a frame arrives — between bursts the window decays into the noise and
+    /// <para>Read it when a frame arrives - between bursts the window decays into the noise and
     /// this goes null, which is the honest answer to "how far off was the station" when there
     /// is no station.</para>
     /// </remarks>
@@ -202,7 +202,7 @@ public sealed class BpskDemodulator
 
     // Coherent: the Costas NCO tracks the carrier phase, so I lands on the real axis (±A) and
     // Q on zero; the sign of I is the absolute symbol, differentially decoded in the DPLL
-    // sink. The loop's π ambiguity is harmless — it only flips the decode of the reference
+    // sink. The loop's π ambiguity is harmless - it only flips the decode of the reference
     // symbol, which the sync hunt discards.
     private void ProcessCoherent(float filtered)
     {
@@ -266,7 +266,7 @@ public sealed class BpskDemodulator
     /// Working at symbol spacing is what tolerates the all-reversal training preamble: a
     /// per-sample squarer reads those reversals as a tone at ±baud/2 and false-locks to it,
     /// whereas one symbol apart they are a constant π step the squaring removes. Samples whose
-    /// magnitude is below its running mean — the amplitude nulls a reversal sweeps through —
+    /// magnitude is below its running mean - the amplitude nulls a reversal sweeps through -
     /// are dropped, so only full-amplitude symbol centres contribute.
     /// </remarks>
     private void TrackCarrierOffset(double real, double imaginary)
@@ -275,7 +275,7 @@ public sealed class BpskDemodulator
         _averageDiffMagnitude += OffsetWindowRate * (magnitude - _averageDiffMagnitude);
         if (magnitude <= _averageDiffMagnitude || magnitude < 1e-9)
         {
-            return;   // a reversal null — no reliable phase here
+            return;   // a reversal null - no reliable phase here
         }
 
         double normalisedReal = real / magnitude;

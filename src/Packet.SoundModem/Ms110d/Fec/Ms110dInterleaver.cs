@@ -1,7 +1,7 @@
 namespace Packet.SoundModem.Ms110d.Fec;
 
 /// <summary>
-/// Appendix D block interleaver (D.5.3.3.1–.3, doc pp. 222–223): a single 1-D array of
+/// Appendix D block interleaver (D.5.3.3.1-.3, doc pp. 222-223): a single 1-D array of
 /// "Interleaver Size in Bits". TX <b>loads</b> punctured bit B(n) at
 /// (n × increment) mod size and <b>fetches</b> linearly 0,1,2,…; RX inverts with
 /// llr[n] = rx[(n·increment) mod size]. Sizes and increments for 3 kHz come from Tables

@@ -8,7 +8,7 @@ namespace Packet.SoundModem.Tests.Channel;
 /// tap. Static taps carry a fixed seed-derived phase (the spec's static tests fix the
 /// geometry, not the phases).</param>
 /// <param name="DopplerSpreadHz">Two-sigma Doppler (frequency) spread of the fading process
-/// — ITU-R F.1487 "Poor" = 1 Hz. Ignored for static taps.</param>
+/// - ITU-R F.1487 "Poor" = 1 Hz. Ignored for static taps.</param>
 /// <param name="DopplerShiftHz">Constant per-path Doppler shift. Rarely used; 0 default.</param>
 public sealed record WattersonPath(
     double DelayMs, bool Fading = false, double DopplerSpreadHz = 1.0, double DopplerShiftHz = 0);
@@ -17,13 +17,13 @@ public sealed record WattersonPath(
 /// Watterson HF channel simulator per MIL-STD-188-110D Appendix E: a tapped delay line on the
 /// complex envelope with per-tap independent complex-Gaussian gains filtered to a Gaussian
 /// Doppler spectrum (E.5.3/E.5.4), plus AWGN calibrated as SNR in a 3 kHz noise bandwidth.
-/// Runs at the modem's native 9600 Hz — ≥4× the 2400 Bd symbol rate as E.5.1 requires, so
+/// Runs at the modem's native 9600 Hz - ≥4× the 2400 Bd symbol rate as E.5.1 requires, so
 /// Rung-2 tests are resampler-free (design §4.3/§5.1). Equal-power paths (the D-LXIV/D-LXV
 /// test geometries); total mean output power is normalized to the input's.
 /// </summary>
 /// <remarks>
 /// "Poor" (D.6.1 / ITU-R F.1487 Mid-Latitude Disturbed): two independent equal-power Rayleigh
-/// paths, 2 ms apart, 1 Hz two-sigma fade — <see cref="Poor"/>. The D-LXV 3 kHz static rigs:
+/// paths, 2 ms apart, 1 Hz two-sigma fade - <see cref="Poor"/>. The D-LXV 3 kHz static rigs:
 /// WID 2 → (0, 3, 9 ms), WID 10 → (0, 2, 4.5), WID 12 → (0, 1.5), equal power, non-fading.
 /// </remarks>
 public sealed class WattersonChannel
@@ -39,7 +39,7 @@ public sealed class WattersonChannel
     private readonly Random _random;
 
     /// <summary>When set before <see cref="Apply"/>, the per-path tap-gain trajectory of
-    /// the run is kept in <see cref="LastPathGains"/> — the fade envelope for
+    /// the run is kept in <see cref="LastPathGains"/> - the fade envelope for
     /// error-correlation telemetry and the channel-truth genie (phase-b-plan §B0).</summary>
     public bool RecordGains { get; set; }
 
@@ -49,7 +49,7 @@ public sealed class WattersonChannel
     public IReadOnlyList<Cf[]>? LastPathGains { get; private set; }
 
     /// <summary>Creates the channel. No paths = the ideal direct path (AWGN-only, passband
-    /// passthrough — the D-LXIV AWGN channel).</summary>
+    /// passthrough - the D-LXIV AWGN channel).</summary>
     public WattersonChannel(int sampleRate, int seed, params WattersonPath[] paths)
     {
         _sampleRate = sampleRate;
@@ -188,13 +188,13 @@ public sealed class WattersonChannel
     }
 
     /// <summary>Generates a fading-gain sequence (unit mean-square, Gaussian Doppler
-    /// spectrum of standard deviation <paramref name="sigmaHz"/>) at the output rate —
+    /// spectrum of standard deviation <paramref name="sigmaHz"/>) at the output rate -
     /// exposed for the channel self-tests.</summary>
     internal Cf[] FadingGains(int count, double sigmaHz)
     {
         // White complex Gaussian at the low gain rate, filtered by the Gaussian-shaped
         // filter h(t) ∝ exp(−4π²σ²t²) (|H(f)|² = Gaussian PSD), then linearly
-        // interpolated to the sample rate — the process changes on ~1/σ second scales.
+        // interpolated to the sample rate - the process changes on ~1/σ second scales.
         double sigmaT = 1.0 / (2.0 * Math.PI * sigmaHz * Math.Sqrt(2.0));
         int half = (int)Math.Ceiling(4 * sigmaT * GainRate);
         var filter = new double[(2 * half) + 1];

@@ -1,12 +1,12 @@
 namespace Packet.SoundModem.Ms110d;
 
 /// <summary>
-/// Transmit configuration for the Appendix D 3 kHz waveform — the TX half of the D.5.4.6
+/// Transmit configuration for the Appendix D 3 kHz waveform - the TX half of the D.5.4.6
 /// remote-control parameter list (bandwidth is fixed at 3 kHz in Phase A).
 /// </summary>
 public sealed record Ms110dTxSettings
 {
-    /// <summary>Waveform number (Phase A: 0–6 and 13). Default WN 6 (3200 bps QPSK).</summary>
+    /// <summary>Waveform number (Phase A: 0-6 and 13). Default WN 6 (3200 bps QPSK).</summary>
     public int WaveformNumber { get; init; } = 6;
 
     /// <summary>Interleaver length option (WID d5d4). Default Short.</summary>
@@ -15,15 +15,15 @@ public sealed record Ms110dTxSettings
     /// <summary>Convolutional constraint length, 7 or 9 (WID d3). Default 7.</summary>
     public int ConstraintLength { get; init; } = 7;
 
-    /// <summary>Preamble super-frame repeats M, 1–32 (D.5.2.1.3). Default 3. The D.6
+    /// <summary>Preamble super-frame repeats M, 1-32 (D.5.2.1.3). Default 3. The D.6
     /// performance tests use 20.</summary>
     public int PreambleSuperframes { get; init; } = 3;
 
-    /// <summary>TLC section blocks N, 0–255 (D.5.2.1.2; 0 omits the section). Default 0 —
+    /// <summary>TLC section blocks N, 0-255 (D.5.2.1.2; 0 omits the section). Default 0 -
     /// the TLC exists for radio AGC/TGC settling, which loopback and simulation skip.</summary>
     public int TlcBlocks { get; init; }
 
-    /// <summary>Append the 32-bit EOM (D.5.4.3) after the data. Default on — burst framing
+    /// <summary>Append the 32-bit EOM (D.5.4.3) after the data. Default on - burst framing
     /// depends on it (the ARQ-off case).</summary>
     public bool AppendEom { get; init; } = true;
 

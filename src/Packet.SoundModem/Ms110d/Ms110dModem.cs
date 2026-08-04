@@ -5,7 +5,7 @@ using Packet.SoundModem.Modems;
 namespace Packet.SoundModem.Ms110d;
 
 /// <summary>
-/// MIL-STD-188-110D Appendix D 3 kHz serial-tone waveform as an <see cref="IModem"/> —
+/// MIL-STD-188-110D Appendix D 3 kHz serial-tone waveform as an <see cref="IModem"/> -
 /// autobaud HF single-carrier carrying IL2P+CRC-framed AX.25. Each <see cref="Modulate"/>
 /// call emits one App D burst (preamble → data frames → EOM → EOT); receive is fully
 /// autobaud, so one modem instance decodes any Phase A waveform number regardless of its
@@ -15,7 +15,7 @@ namespace Packet.SoundModem.Ms110d;
 /// <para><b>Payload framing.</b> App D carries an unframed bitstream, so (exactly as
 /// <see cref="FreeDvDatacModem"/> does for the FreeDV raw-data layer) the family-standard
 /// pdn convention applies: <see cref="Il2pCodec"/> IL2P+CRC behind the 24-bit IL2P sync
-/// word, no training preamble (<c>preambleBits: 0</c> — the App D preamble already
+/// word, no training preamble (<c>preambleBits: 0</c> - the App D preamble already
 /// delimits), one KISS transmission per burst, the EOM terminating it. Decoded block bits
 /// stream through an <see cref="Il2pDeframer"/>, giving frames spanning block boundaries
 /// and per-frame <see cref="FrameQuality"/>.</para>
@@ -23,7 +23,7 @@ namespace Packet.SoundModem.Ms110d;
 /// 48000 = 5 × 9600 bridges integer both ways through <see cref="Decimator"/> /
 /// <see cref="Upsampler"/>. The 12 kHz path is rejected (12000/9600 is not an integer).</para>
 /// <para><b>Interop status.</b> Spec-faithful + mask-passing, not interop-proven: no open
-/// App D implementation or off-air recording exists to test against (design §1.2; Q2 —
+/// App D implementation or off-air recording exists to test against (design §1.2; Q2 -
 /// pdn↔pdn only).</para>
 /// </remarks>
 public sealed class Ms110dModem : IModem

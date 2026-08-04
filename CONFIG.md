@@ -7,7 +7,7 @@ start with [INSTALL.md](INSTALL.md).
 
 | | |
 |---|---|
-| Read from | `--config <path>` — the packaged systemd unit passes `/etc/pdn-soundmodem/soundmodem.json` |
+| Read from | `--config <path>` - the packaged systemd unit passes `/etc/pdn-soundmodem/soundmodem.json` |
 | Format | JSON, with `//` and `/* */` **comments allowed** and trailing commas tolerated |
 | Keys | case-insensitive (`kissPort`, `KissPort` and `kissport` are the same key) |
 | Seeded from | `/usr/share/pdn-soundmodem/soundmodem.example.json` on first install |
@@ -15,36 +15,36 @@ start with [INSTALL.md](INSTALL.md).
 Every key is optional. An empty `{}` is a valid config and gives you one `afsk1200` modem on
 KISS sub-channel 0, ALSA device `default`, 48 kHz capture, KISS on port 8105.
 
-Applying a change means restarting the service — the file is read once at start-up:
+Applying a change means restarting the service - the file is read once at start-up:
 
 ```sh
 sudo systemctl restart pdn-soundmodem
 ```
 
 (Commands here are written with `sudo`, as on Ubuntu and Raspberry Pi OS. Debian only
-installs `sudo` when the root password is left blank at setup — without it, become root
+installs `sudo` when the root password is left blank at setup - without it, become root
 with `su -` and drop the prefix.)
 
 ## Top-level keys
 
 | Key | Type | Default | What it does |
 |---|---|---|---|
-| `device` | string | `"default"` | Sound device (or FlexRadio) — [below](#device) |
-| `captureRate` | int | `48000` | ALSA capture/playback rate in Hz — [below](#capturerate) |
-| `kissPort` | int | `8105` | Shared KISS-over-TCP port, all modems by nibble — [below](#kissport-and-kissbind) |
+| `device` | string | `"default"` | Sound device (or FlexRadio) - [below](#device) |
+| `captureRate` | int | `48000` | ALSA capture/playback rate in Hz - [below](#capturerate) |
+| `kissPort` | int | `8105` | Shared KISS-over-TCP port, all modems by nibble - [below](#kissport-and-kissbind) |
 | `bind` | string | `"127.0.0.1"` | Address **every** listener binds to; `"*"` or `"0.0.0.0"` for all |
-| `sideband` | string | `"usb"` | Which sideband the radio is on — [below](#band-plans-in-rf-terms) |
-| `dialFrequency` | number | *(computed)* | Pin the dial instead of letting the daemon choose — [below](#band-plans-in-rf-terms) |
-| `modems` | array | one `afsk1200` on sub-channel 0 | The modems sharing the channel — [below](#modems) |
-| `ptt` | object | *(none — VOX)* | How the radio is keyed — [below](#ptt) |
-| `waterfall` | object | *(disabled)* | Browser spectrum/waterfall page — [below](#waterfall) |
-| `paging` | object | *(disabled)* | POCSAG paging endpoint — [below](#paging) |
-| `ardop` | object | *(disabled)* | ARDOP virtual TNC — [below](#ardop) |
-| `frameLog` | object | *(not kept)* | Record every frame heard and sent to SQLite — [below](#framelog) |
-| `survey` | object | *(not surveying)* | Keep signals this station cannot read, for analysis — [below](#survey) |
-| `idBeacons` | bool | `true` | Listen for the NinoTNC idents sent alongside the PSK SSB modes — [below](#idbeacons) |
-| `flex` | object | see below | FlexRadio slice params — [below](#flex) |
-| `ubersdr` | object | see below | UberSDR stream params — [below](#ubersdr) |
+| `sideband` | string | `"usb"` | Which sideband the radio is on - [below](#band-plans-in-rf-terms) |
+| `dialFrequency` | number | *(computed)* | Pin the dial instead of letting the daemon choose - [below](#band-plans-in-rf-terms) |
+| `modems` | array | one `afsk1200` on sub-channel 0 | The modems sharing the channel - [below](#modems) |
+| `ptt` | object | *(none - VOX)* | How the radio is keyed - [below](#ptt) |
+| `waterfall` | object | *(disabled)* | Browser spectrum/waterfall page - [below](#waterfall) |
+| `paging` | object | *(disabled)* | POCSAG paging endpoint - [below](#paging) |
+| `ardop` | object | *(disabled)* | ARDOP virtual TNC - [below](#ardop) |
+| `frameLog` | object | *(not kept)* | Record every frame heard and sent to SQLite - [below](#framelog) |
+| `survey` | object | *(not surveying)* | Keep signals this station cannot read, for analysis - [below](#survey) |
+| `idBeacons` | bool | `true` | Listen for the NinoTNC idents sent alongside the PSK SSB modes - [below](#idbeacons) |
+| `flex` | object | see below | FlexRadio slice params - [below](#flex) |
+| `ubersdr` | object | see below | UberSDR stream params - [below](#ubersdr) |
 
 ---
 
@@ -57,31 +57,31 @@ your machine has.
 "device": "default"
 ```
 
-- **`"default"`** — the system default. Fine when there is exactly one USB sound card.
-- **`"plughw:1,0"`** — a specific card and device. Prefer `plughw:` over `hw:` — it lets ALSA
+- **`"default"`** - the system default. Fine when there is exactly one USB sound card.
+- **`"plughw:1,0"`** - a specific card and device. Prefer `plughw:` over `hw:` - it lets ALSA
   convert sample formats, which most USB interfaces need. Card numbers move around when
   devices are re-plugged; `plughw:CARD=Device,DEV=0` (see `aplay -L`) is stable.
-- **`"null"`** — ALSA's null device: the modem runs and serves KISS but hears and transmits
+- **`"null"`** - ALSA's null device: the modem runs and serves KISS but hears and transmits
   nothing. Useful for checking a config parses and the daemon starts.
-- **`"flex:<radio>[:slice][@station]"`** — a FlexRadio 6000-series over the LAN as both sound
+- **`"flex:<radio>[:slice][@station]"`** - a FlexRadio 6000-series over the LAN as both sound
   card *and* PTT.
-- **`"ubersdr:<instance>"`** — a public UberSDR web receiver, **receive only** —
+- **`"ubersdr:<instance>"`** - a public UberSDR web receiver, **receive only** -
   [below](#listening-to-a-web-receiver).
 
 For the Flex form, `<radio>` is `discover` (broadcast), an IP (`host[:port]`), a discovery
 spec (`serial=…` / `name=…`), or `mock` (an in-process fake for offline testing). `<slice>` is
-a letter `A`–`H`, default `A`.
+a letter `A`-`H`, default `A`.
 
 With **no** `@station` the daemon owns the radio and brings it up headless, creating its own
 slice from the [`flex`](#flex) section. A trailing `@station` attaches to a running SmartSDR's
 existing slice instead, and the `flex` slice params are ignored because SmartSDR configures
-it. Either way the radio keys itself, so **`ptt` must be omitted** — configuring both is
+it. Either way the radio keys itself, so **`ptt` must be omitted** - configuring both is
 rejected at start-up. See [docs/flex-integration.md](docs/flex-integration.md).
 
 ### Listening to a web receiver
 
 A station needs an antenna in a quiet place, and most of us do not have one. `ubersdr:` points
-the whole modem at somebody who does — a public [UberSDR](https://github.com/madpsy/ka9q_ubersdr)
+the whole modem at somebody who does - a public [UberSDR](https://github.com/madpsy/ka9q_ubersdr)
 instance, of which there are many, on far better antennas than a suburban garden allows:
 
 ```json
@@ -98,7 +98,7 @@ instance, of which there are many, on far better antennas than a suburban garden
 ```
 
 That is an ordinary config with an ordinary band plan. Every mode works, the waterfall works,
-the frame log works, KISS works — the device is the only thing that changed:
+the frame log works, KISS works - the device is the only thing that changed:
 
 ```
 dial: 7.049450 MHz USB
@@ -110,28 +110,28 @@ ubersdr: M9PSY-1 · RX888 with 40m Full Wave Loop (GPSDO) · Dalgety Bay, Scotla
 ```
 
 **Write the instance however you have it.** `ubersdr:m9psy-1.instance.ubersdr.org`,
-`ubersdr:host:8443`, or the whole URL out of the browser's address bar —
-`ubersdr:https://m9psy-1.instance.ubersdr.org/` — all name the same receiver. HTTPS on 443 is
+`ubersdr:host:8443`, or the whole URL out of the browser's address bar -
+`ubersdr:https://m9psy-1.instance.ubersdr.org/` - all name the same receiver. HTTPS on 443 is
 assumed, because that is what public instances run.
 
 **It receives and cannot transmit.** There is no transmitter at the far end of a WebSocket, so:
 
-- `ptt` alongside it is rejected at start-up — there is nothing for a PTT line to key;
+- `ptt` alongside it is rejected at start-up - there is nothing for a PTT line to key;
 - anything sent to a KISS port is refused immediately, with that as the reason, rather than
   queued against a transmitter that will never appear;
 - `ardop` still loads and still hears the channel, but no ARQ session can ever complete. The
   daemon says so at start-up rather than leaving you to work it out from a Winlink timeout.
-  It is not pointless there: every frame ARDOP demodulates — other stations' sessions included —
+  It is not pointless there: every frame ARDOP demodulates - other stations' sessions included -
   is still drawn on the waterfall and written to the frame log.
 
-**The dial is not yours to set, so the daemon sets it.** Give the modems `rfFrequency` — or pin
-`dialFrequency` — and the receiver is tuned there, exactly as a headless Flex is. Without either
+**The dial is not yours to set, so the daemon sets it.** Give the modems `rfFrequency` - or pin
+`dialFrequency` - and the receiver is tuned there, exactly as a headless Flex is. Without either
 it refuses to start: unlike a radio there is no dial already set to read a number off.
 
 **It takes IQ, not the instance's demodulated audio.** UberSDR will demodulate SSB for you, but
 then its filter, its AGC and its resampler are all in the path and none of them is yours. Taking
 `iq48` puts the whole ±24 kHz of complex baseband here, so the receive filter is the one your
-band plan asked for and there is no AGC anywhere — which is what makes an SNR figure off this
+band plan asked for and there is no AGC anywhere - which is what makes an SNR figure off this
 path mean the same thing as one off a sound card. `captureRate` does not apply; the stream
 brings its own 48 kHz clock.
 
@@ -139,7 +139,7 @@ brings its own 48 kHz clock.
 measured, reported at start-up), and a modem is expected to run for months. A closed stream is
 treated as ordinary and reconnected, losing about a second each time to the receiver's
 start-of-stream level ramp. Only an instance that stays unreachable for five minutes stops the
-service — with exit 1, so systemd restarts it and tries afresh.
+service - with exit 1, so systemd restarts it and tries afresh.
 
 **Be a good guest.** These are somebody else's receivers, run at their expense, with a limited
 number of listener slots. One long session is kinder than repeated reconnects, and a station you
@@ -152,7 +152,7 @@ intend to leave running for weeks is worth mentioning to the operator.
 ```
 
 The rate the sound card runs at. The daemon decimates internally to the DSP rate the modes
-need, so the card's native rate is the right answer — 48000 for essentially all USB audio.
+need, so the card's native rate is the right answer - 48000 for essentially all USB audio.
 
 **It must be an integer multiple of the DSP rate**, or the daemon refuses to start with
 `--capture-rate must be a multiple of N`. The DSP rate is decided by your modes:
@@ -173,9 +173,9 @@ Mixing families is fine: if *any* configured mode needs 48 kHz, the whole channe
 ```
 
 `kissPort` is the **shared** port: every modem is reachable on it, selected by the KISS port
-nibble — the QtSoundModem multiplex model, and what Direwolf does on 8001.
+nibble - the QtSoundModem multiplex model, and what Direwolf does on 8001.
 
-`bind` is the address **every** listener uses — the shared KISS port, the per-modem ports, the
+`bind` is the address **every** listener uses - the shared KISS port, the per-modem ports, the
 waterfall, paging and ARDOP alike. One setting rather than one per service: they are all on the
 same machine facing the same network. `"*"` or `"0.0.0.0"` opens them to all interfaces.
 
@@ -186,7 +186,7 @@ same machine facing the same network. `"*"` or `"0.0.0.0"` opens them to all int
 
 ### A port per modem
 
-The nibble only helps if your host software lets you set it, and a good deal of it does not —
+The nibble only helps if your host software lets you set it, and a good deal of it does not -
 it assumes KISS channel 0 and offers nowhere to say otherwise. On the shared port such a host
 can only ever reach `subChannel: 0`, however many modems you have configured.
 
@@ -208,7 +208,7 @@ A dedicated port carries **only** that modem, and presents it as **nibble 0**:
 
 So a host that only speaks channel 0 talks to port 8111 and works `bpsk300` without ever
 knowing a multiplex exists. The shared port keeps working alongside, still reporting true
-nibbles — you can run both at once.
+nibbles - you can run both at once.
 
 Two services asking for the same TCP port is rejected at start-up, naming both, rather than
 left to whichever listener happens to bind second.
@@ -216,7 +216,7 @@ left to whichever listener happens to bind second.
 ## `modems`
 
 The logical modems sharing the one audio channel, each addressed by its KISS port nibble.
-This is the QtSoundModem multiplex model — your host software picks a modem by KISS port.
+This is the QtSoundModem multiplex model - your host software picks a modem by KISS port.
 
 ```json
 "modems": [
@@ -227,29 +227,29 @@ This is the QtSoundModem multiplex model — your host software picks a modem by
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `subChannel` | int | `0` | KISS port nibble, 0–15. Must be unique — duplicates are rejected at start-up |
-| `mode` | string | `"afsk1200"` | See [docs/modes.md](docs/modes.md) for all 38 modes, plus `ardop` — [below](#ardop) |
+| `subChannel` | int | `0` | KISS port nibble, 0-15. Must be unique - duplicates are rejected at start-up |
+| `mode` | string | `"afsk1200"` | See [docs/modes.md](docs/modes.md) for all 38 modes, plus `ardop` - [below](#ardop) |
 | `frequency` | number | mode default | Audio centre in Hz, TX **and** RX |
-| `rfFrequency` | number | *(none)* | Where on the band it sits, in absolute Hz — [below](#band-plans-in-rf-terms) |
-| `bandwidth` | number | measured | How much room to plan for; mainly for `ardop` — [below](#band-plans-in-rf-terms) |
+| `rfFrequency` | number | *(none)* | Where on the band it sits, in absolute Hz - [below](#band-plans-in-rf-terms) |
+| `bandwidth` | number | measured | How much room to plan for; mainly for `ardop` - [below](#band-plans-in-rf-terms) |
 | `offsetPairs` | int | `4` | Diversity-bank modes only |
 | `offsetStepHz` | number | baud/40 | Diversity-bank modes only |
-| `port` | int | *(none)* | A TCP port carrying this modem alone — KISS, or the ardopcf host interface for `ardop` — [below](#a-port-per-modem) |
+| `port` | int | *(none)* | A TCP port carrying this modem alone - KISS, or the ardopcf host interface for `ardop` - [below](#a-port-per-modem) |
 
 Omit `modems` entirely and you get one `afsk1200` on sub-channel 0.
 
 ### `frequency`
 
-Moves a modem's audio centre, QtSoundModem-style — for meeting a peer who sits off the usual
+Moves a modem's audio centre, QtSoundModem-style - for meeting a peer who sits off the usual
 centre. Only the **variable-centre families** accept it:
 
 | Family | Default centre | Accepts `frequency`? |
 |---|---|---|
 | `afsk*` | 1700 Hz | yes |
 | `bpsk*`, `qpsk*` | 1500 Hz (1650 for `qpsk3600`) | yes |
-| `ardop` | 1500 Hz | yes — shifted outside the TNC, [see below](#ardop) |
-| `fsk*`, `c4fsk*` | — occupies DC-to-Nyquist | **no** |
-| `freedv-*`, `ms110d-*` | — pinned by their specs | **no** |
+| `ardop` | 1500 Hz | yes - shifted outside the TNC, [see below](#ardop) |
+| `fsk*`, `c4fsk*` | - occupies DC-to-Nyquist | **no** |
+| `freedv-*`, `ms110d-*` | - pinned by their specs | **no** |
 
 Setting one on a fixed-centre mode is an error at start-up, not silently ignored.
 
@@ -281,24 +281,24 @@ daemon `rfFrequency` instead and it works the dial out for you:
 At start-up it tells you what to set:
 
 ```
-dial: 7.049450 MHz USB — set your radio to this
+dial: 7.049450 MHz USB - set your radio to this
   modem 0 afsk300-il2pc at 7.050300 MHz = 850 Hz audio
   modem 1 ardop at 7.050950 MHz = 1500 Hz audio
   modem 2 bpsk300 at 7.051600 MHz = 2150 Hz audio
 ```
 
 **It picks a better dial than you would by hand.** The obvious round number for that plan is
-7050.000, giving a tidy-looking 300/950/1600 Hz — but `afsk300` then occupies 150–450 Hz, half of
+7050.000, giving a tidy-looking 300/950/1600 Hz - but `afsk300` then occupies 150-450 Hz, half of
 it below where an SSB filter starts. The daemon centres the whole ensemble in the passband
 instead, which is how 7.049450 falls out.
 
 `sideband` is `"usb"` (RF = dial + audio, the data-mode norm) or `"lsb"` (RF = dial − audio).
 
 **Bandwidths are measured, not assumed.** Each modem is asked to modulate a probe frame and the
-occupied width is metered off it — the same measurement the waterfall draws its overlays from, so
+occupied width is metered off it - the same measurement the waterfall draws its overlays from, so
 the two can never disagree. `ardop` is the exception: its bandwidth is negotiated per session, so
 the planner assumes the widest (2000 Hz) unless `bandwidth` says otherwise. Setting it also caps
-what ARDOP negotiates (200/500/1000/2000), which is worth doing — it reclaims the room the
+what ARDOP negotiates (200/500/1000/2000), which is worth doing - it reclaims the room the
 planner would otherwise reserve.
 
 ### Rules
@@ -309,7 +309,7 @@ planner would otherwise reserve.
 - **One or the other.** A modem cannot set both `frequency` and `rfFrequency`; they say the same
   thing two ways.
 - **No dial, no start.** If the modems are spread wider than one passband can carry, the daemon
-  says so — naming the span and the modems — rather than starting something that cannot work. On a
+  says so - naming the span and the modems - rather than starting something that cannot work. On a
   radio it cannot open up, that is a second-radio problem; on a headless Flex the window has
   already been widened as far as the radio goes before you see this.
 - **A baseband mode cannot be band-planned.** `fsk9600` and the `c4fsk*` family occupy the audio
@@ -318,8 +318,8 @@ planner would otherwise reserve.
 
 ### Wide plans and the spec-fixed modes
 
-The passband is worked out, not configured. A plan that fits an ordinary 300–2700 Hz SSB window is
-placed in one, exactly as before — but on a **headless Flex**, whose transmit and receive filters
+The passband is worked out, not configured. A plan that fits an ordinary 300-2700 Hz SSB window is
+placed in one, exactly as before - but on a **headless Flex**, whose transmit and receive filters
 the daemon sets itself, a plan that does not fit gets a wider window instead of a refusal, up to
 the radio's 10 kHz ceiling. It grows only as far as the modems need, because every extra Hz is
 noise bandwidth on receive and filter to open on transmit:
@@ -328,7 +328,7 @@ noise bandwidth on receive and filter to open on transmit:
 dial: 7.049800 MHz USB
   modem 0 ms110d-wn4 at 7.051600 MHz = 1800 Hz audio
   modem 1 bpsk300 at 7.054000 MHz = 4200 Hz audio
-  passband: 300-4470 Hz — wider than an ordinary 300-2700 Hz SSB window, because these modems do
+  passband: 300-4470 Hz - wider than an ordinary 300-2700 Hz SSB window, because these modems do
   not fit one; the radio's filters are set to suit
 flex: setting the transmit filter high cut to 4600 Hz
 flex: setting the slice receive filter to 200-4600 Hz
@@ -338,7 +338,7 @@ That is how `ms110d-*` becomes placeable in RF terms at all: a 3 kHz waveform do
 2400 Hz of room however the dial is chosen.
 
 **A spec-fixed mode dictates the dial.** `ms110d-*` sits on 1800 Hz and `freedv-*` on its OFDM
-centre because their standards say so — they cannot be slid up or down to suit a dial chosen for
+centre because their standards say so - they cannot be slid up or down to suit a dial chosen for
 everything else, so instead they choose it, and the movable modems are placed around them. Two
 consequences worth knowing:
 
@@ -356,8 +356,8 @@ Set `dialFrequency` for a net frequency, or to match another application, and it
 "sideband": "usb"
 ```
 
-A pinned dial that puts a modem outside the nominal 300–2700 Hz passband **warns and starts**
-rather than refusing — that figure is nominal, the daemon cannot see your rig's filter, and you
+A pinned dial that puts a modem outside the nominal 300-2700 Hz passband **warns and starts**
+rather than refusing - that figure is nominal, the daemon cannot see your rig's filter, and you
 asked for this dial. Omit `dialFrequency` and it will be chosen to fit.
 
 The waterfall inherits the computed dial and sideband, so its RF scale is right without being
@@ -366,7 +366,7 @@ told twice.
 ### On a FlexRadio, it just does it
 
 For a headless `flex:` device the daemon owns the radio, so rather than telling you the dial it
-**sets** it — the slice goes to the computed frequency, and the transmit filter's high cut is
+**sets** it - the slice goes to the computed frequency, and the transmit filter's high cut is
 opened to clear the highest modem:
 
 ```
@@ -377,21 +377,21 @@ dial: 7.049450 MHz USB
 flex: setting the slice to 7.049450 MHz and the transmit filter high cut to 2550 Hz from the band plan
 ```
 
-That matters because **the transmit filter is a global, persistent radio setting** — whatever
+That matters because **the transmit filter is a global, persistent radio setting** - whatever
 last touched the radio. A 300 Hz CW filter left over from another session would quietly truncate
 the top of a band plan, and nothing would say so.
 
 **Only the high cut can be set from here.** The transmit filter's *low* cut and the slice's
 *receive* filter are not exposed by the station API, so they stay as the radio has them. The
 daemon reads the transmit filter back at bring-up and warns, per modem, if the plan falls outside
-what the radio will actually pass — so a modem sitting below the low cut is reported rather than
+what the radio will actually pass - so a modem sitting below the low cut is reported rather than
 silently transmitting nothing. Widening that is a job for the radio.
 
 In attach mode (`@station`) none of this happens: SmartSDR owns the slice, and the daemon would
 only be fighting it.
 
 A station placed by audio centre rather than by RF gets the same treatment, worked out from the
-modems instead of from a plan — see [the transmit filter](#the-transmit-filter).
+modems instead of from a plan - see [the transmit filter](#the-transmit-filter).
 
 ## `ptt`
 
@@ -413,16 +413,16 @@ keys itself.
 | `gpio` | int | `3` | CM108 only: the GPIO pin driven |
 
 **CM108 needs a udev rule.** `/dev/hidraw*` is root-only by default, so the service's
-unprivileged user cannot open it — see [INSTALL.md § Permissions](INSTALL.md#permissions).
+unprivileged user cannot open it - see [INSTALL.md § Permissions](INSTALL.md#permissions).
 Serial PTT works out of the box because the unit already joins the `dialout` group.
 
-Which `/dev/hidraw*` node is yours is worth confirming rather than assuming — the number
+Which `/dev/hidraw*` node is yours is worth confirming rather than assuming - the number
 moves with what else is plugged in. `ls -l /sys/class/hidraw/*/device/` maps them to USB IDs.
 
 ## Channel access is the host's, not the config's
 
 There is deliberately **no `csma` section**. TXDELAY, P (persistence), SLOTTIME and TXTAIL are
-the host's to set, and it sets them at runtime with the standard KISS parameter commands —
+the host's to set, and it sets them at runtime with the standard KISS parameter commands -
 `0x01`, `0x02`, `0x03` and `0x04`. The daemon honours all four the moment they arrive, which
 QtSoundModem does not.
 
@@ -430,7 +430,7 @@ Until a host sends them, these are in force:
 
 | Parameter | Default | Notes |
 |---|---|---|
-| TXDELAY | 300 ms | Key-up to first data. A *radio* allowance — the modems themselves acquire from 0–20 ms; 300 ms budgets a real transmitter's PTT-to-RF settling, which FM gear routinely needs |
+| TXDELAY | 300 ms | Key-up to first data. A *radio* allowance - the modems themselves acquire from 0-20 ms; 300 ms budgets a real transmitter's PTT-to-RF settling, which FM gear routinely needs |
 | P (persistence) | 63 | ≈ 25 % chance of transmitting per slot |
 | SLOTTIME | 100 ms | Gap between persistence rolls |
 | TXTAIL | 20 ms | Carrier held after the last bit |
@@ -446,7 +446,7 @@ and with several clients connected the last one to send a parameter frame wins.
 
 ## `waterfall`
 
-A live spectrum and waterfall page — 30 fps, every modem's measured band overlaid, each
+A live spectrum and waterfall page - 30 fps, every modem's measured band overlaid, each
 decoded frame tagged on its burst with callsign, SNR and frequency offset. Genuinely useful
 for confirming you are hearing the band at a sane level before trusting the decoder.
 
@@ -463,7 +463,7 @@ for confirming you are hearing the band at a sane level before trusting the deco
 | `fftSize` | int | `0` | 0 = rate default (2048 at 12 kHz, 8192 at 48 kHz) |
 
 **The page can play the received audio.** Press *Listen* in the top bar and the station's
-receive audio streams to the browser, so you can hear the channel you are watching — an SSB
+receive audio streams to the browser, so you can hear the channel you are watching - an SSB
 signal, a burst you are about to decode, or the noise floor you are arguing with. It is
 per-viewer and **off until asked for**, so opening the page to look at a waterfall does not
 quietly start pulling ~24 KB/s, and several viewers cost nothing unless they each ask.
@@ -471,23 +471,23 @@ quietly start pulling ~24 KB/s, and several viewers cost nothing unless they eac
 Nothing is received while the station transmits, so the audio stops for the length of a keyup.
 That is silence, not a dropout.
 
-**Your own transmissions are drawn.** Receive processing is gated off while transmitting — half
-duplex — so the waterfall used to freeze for the length of every keyup, which quietly compressed
+**Your own transmissions are drawn.** Receive processing is gated off while transmitting - half
+duplex - so the waterfall used to freeze for the length of every keyup, which quietly compressed
 its time axis: a three-second transmission left no gap, and signals either side of it ended up
 drawn adjacent. Transmitted audio is now fed to the display too, in its own colour ramp, so a
 keyup occupies its real duration and reads as *yours* rather than as a strong station. The stats
 line says `transmitting` from knowing rather than from guessing at silence.
 
-It is drawn only. Transmitted audio is kept out of the SNR trackers — measuring your own
-transmitter would report an enormous burst and attribute it to whatever decoded next — and is
+It is drawn only. Transmitted audio is kept out of the SNR trackers - measuring your own
+transmitter would report an enormous burst and attribute it to whatever decoded next - and is
 not sent to the audio stream.
 
 **The panel opens on what the station has already done**, when a [`frameLog`](#framelog) is
-configured: the last 50 logged frames — heard and sent alike — dimmed apart from live traffic and
+configured: the last 50 logged frames - heard and sent alike - dimmed apart from live traffic and
 stamped with the time they happened rather than the time the page was opened. A panel that starts
 empty says nothing about a channel that has been busy all morning, and on a quiet band it is
 indistinguishable from a modem that is not working. Without a frame log the panel opens empty, as
-before — there is nothing written down to show. A backlogged transmission keeps its **TX** badge
+before - there is nothing written down to show. A backlogged transmission keeps its **TX** badge
 and its cyan edge as well as the dimming, so it reads as both: yours, and from before you opened
 the page. The backlog is listed, never tagged onto the waterfall: those frames happened before
 the scroll on screen began and belong to no burst on it. Reconnecting rebuilds the panel from the
@@ -497,30 +497,30 @@ log rather than stacking a second copy of the same frames.
 so a transmission can never be misread as a station heard. The panel was a record of half the
 channel until then: everything heard, nothing sent, so an operator watching their own beacon go
 out had only the burst to go on. A frame is listed once its audio has left, so what is shown
-actually went on air. It carries no SNR, offset, FEC count or CRC verdict — those are receive
-measurements, and we did not receive it — and it is not tagged onto the waterfall: the burst is
+actually went on air. It carries no SNR, offset, FEC count or CRC verdict - those are receive
+measurements, and we did not receive it - and it is not tagged onto the waterfall: the burst is
 repainted from a queue in real time while the frame event fires as soon as the audio device took
 the audio, so a tag would land somewhere up the burst rather than on it.
 
-Omit the section to disable it. `dialFrequencyHz` is only the page's opening default — each
+Omit the section to disable it. `dialFrequencyHz` is only the page's opening default - each
 browser can retune its own copy, and it is inherited from a band plan when there is one. The
 waterfall binds to the top-level [`bind`](#kissport-and-bind) like everything else; there is no
 authentication, so opening it beyond loopback means a reverse proxy or VPN.
 
 ## `idBeacons`
 
-A NinoTNC running one of the PSK SSB modes cannot identify itself in that mode — nothing else on
-the channel would be able to read it as speech or as anything a human recognises — so it idents
+A NinoTNC running one of the PSK SSB modes cannot identify itself in that mode - nothing else on
+the channel would be able to read it as speech or as anything a human recognises - so it idents
 *alongside* it instead. Per the [NinoTNC operator's
 manual](https://tarpn.net/t/nino-tnc/n9600a/n9600a_operation.html): in 300 BPSK, 600 QPSK, 1200
 BPSK and 2400 QPSK, "a beacon in 300 AFSK AX.25 (1600/1800 Hz tones) is sent", from the host's
 callsign to `IDENT`, every 9.5 minutes by default while the station is transmitting. (The modes
-that are already self-identifying — 300 AFSK AX.25, 300 AFSK IL2Pc, 1200 AFSK AX.25 — send no
+that are already self-identifying - 300 AFSK AX.25, 300 AFSK IL2Pc, 1200 AFSK AX.25 - send no
 such beacon.)
 
 The consequence for everyone else on the channel is a burst every few minutes that they can see
 and cannot read: their data modem is a PSK demodulator and the ident is FSK. So for each PSK SSB
-modem you configure, the daemon attaches a *ghost* — a second, receive-only 300 AFSK receiver
+modem you configure, the daemon attaches a *ghost* - a second, receive-only 300 AFSK receiver
 whose only job is that beacon:
 
 ```json
@@ -531,7 +531,7 @@ Set it to `false` to turn them off. On by default; a station running none of tho
 unaffected either way.
 
 **Where the ghost listens** follows the modem it accompanies. Nino's PSK modes phase-modulate a
-1500 Hz tone and the beacon tones are 1600/1800, so the ident sits 200 Hz above the carrier —
+1500 Hz tone and the beacon tones are 1600/1800, so the ident sits 200 Hz above the carrier -
 *relative to the transmitting TNC's own audio layout*, which is the part that matters. Tune your
 modem to 1200 Hz because your dial sits 300 Hz above your neighbour's, and their ident arrives at
 your 1400 Hz, not at 1700. The daemon does that arithmetic; you do not place ghosts yourself. It
@@ -539,32 +539,32 @@ prints where each one landed at start-up:
 
 ```
 modem 0: bpsk300 @ 1500 Hz
-modem 0: id beacons — listening in afsk300-multi11 @ 1700 Hz
+modem 0: id beacons - listening in afsk300-multi11 @ 1700 Hz
 ```
 
 A ghost is whatever [`afsk300`](modes.md) currently means, which since 2026-08-02 is the
-narrow-branch frequency-diversity bank rather than one wide demodulator — and that matters more
+narrow-branch frequency-diversity bank rather than one wide demodulator - and that matters more
 here than it does on a data slot. A ghost sits 200 Hz from a PSK carrier *by construction*, and a
 quadrature discriminator follows the strongest thing in its passband, so tight branches are what
 keep the neighbour it lives beside out of the ident. The bank's ±175 Hz of coverage also happens
-to be the right shape for the only error this placement really has — a dial that differs from the
+to be the right shape for the only error this placement really has - a dial that differs from the
 transmitting station's. (The offset from *their* carrier to *their* ident is fixed inside one TNC
 and cannot drift.)
 
-**What a ghost deliberately is not.** It takes no KISS sub-channel — beacons are not traffic, and
+**What a ghost deliberately is not.** It takes no KISS sub-channel - beacons are not traffic, and
 a host asking for packet data should not have to filter idents out of it. It does not contribute
 to carrier sense, so channel access behaves exactly as it did without it. It never transmits:
 identifying *your* station is your host's job, and this is only a listener.
 
 Idents appear in the waterfall's decoded-frames panel with an **ID** badge, are tagged onto their
-burst on the waterfall like any other frame — reading `KK4HEJ · ID` — and land in the
+burst on the waterfall like any other frame - reading `KK4HEJ · ID` - and land in the
 [`frameLog`](#framelog) as `ID beacon (AFSK300)`. What a ghost does *not* get is a **band** of its
 own: it has no slot to shade, riding as it does on a modem that is already drawn, so its tag lands
-against that modem's band, which is where the ident sits — a couple of hundred Hz above it. That
+against that modem's band, which is where the ident sits - a couple of hundred Hz above it. That
 is also why an ident's tag says `ID`: without the word it would read as a station sitting *on* the
 slot rather than identifying beside it.
 
-An ident carries no SNR figure — the waterfall's per-burst SNR comes from a band tracker, the
+An ident carries no SNR figure - the waterfall's per-burst SNR comes from a band tracker, the
 trackers are keyed by modem, and a ghost shares its base modem's rather than having one. It does
 carry a **frequency offset**, which is a real measurement of the identifying station's carrier
 against the ghost's centre, so it tells you how far their dial sits from yours.
@@ -583,23 +583,23 @@ Omit the section and frames come and go without being written down. One row per 
 |---|---|
 | `heard_at` | UTC, ISO 8601 |
 | `direction` | `rx` for a frame the station heard, `tx` for one it sent |
-| `sub_channel`, `mode`, `mode_name` | which modem carried it, and what it is — `bpsk300-il2pc` and `BPSK300 IL2Pc` |
+| `sub_channel`, `mode`, `mode_name` | which modem carried it, and what it is - `bpsk300-il2pc` and `BPSK300 IL2Pc` |
 | `source`, `destination` | AX.25 callsigns where the frame carries them; null where it does not |
 | `length`, `corrected`, `crc_valid` | size, FEC corrections applied, whether the CRC checked |
-| `offset_hz` | how far off centre the sender actually was — measured, not the diversity branch that copied it; null where the decoder could not measure it |
-| `audio_hz`, `rf_hz` | where that modem sits — `rf_hz` filled in when you have given it an `rfFrequency` |
+| `offset_hz` | how far off centre the sender actually was - measured, not the diversity branch that copied it; null where the decoder could not measure it |
+| `audio_hz`, `rf_hz` | where that modem sits - `rf_hz` filled in when you have given it an `rfFrequency` |
 | `payload` | the frame itself, as a blob |
 
 **On a transmitted row, `heard_at` is when it went out.** The column keeps its name because
 renaming it would silently break every query, dashboard and example already written against this
-log — an ugly name is the smaller cost, and this is the note that stops it being a surprise. A
+log - an ugly name is the smaller cost, and this is the note that stops it being a surprise. A
 transmitted row also leaves `corrected`, `crc_valid` and `offset_hz` **null**: those are receive
 measurements, and filling them in for our own transmission would be inventing a measurement of
-ourselves. Everything else — who to who, mode, length, where the modem sits, the payload — is
+ourselves. Everything else - who to who, mode, length, where the modem sits, the payload - is
 recorded exactly as for a frame heard. A row is written once the audio has gone to the device, so
 a logged transmission is one that actually went on air.
 
-So "who have I heard on 40m today" is a query — and it now has to say that it means *heard*,
+So "who have I heard on 40m today" is a query - and it now has to say that it means *heard*,
 since your own frames are in the table too:
 
 ```sql
@@ -609,11 +609,11 @@ GROUP BY source ORDER BY 2 DESC;
 ```
 
 Drop the `direction` clause and you are asking who has been on the channel, yourself included,
-which is a fair question too — just not the same one. A log written by an earlier version is
+which is a fair question too - just not the same one. A log written by an earlier version is
 migrated in place on first open: the column is added with every existing row set to `rx`, which
 is what they all were.
 
-**It is written on a background thread** — the receive path queues and returns, so logging never
+**It is written on a background thread** - the receive path queues and returns, so logging never
 delays a decode. If the disk fills or goes away the modem keeps decoding and drops log rows
 rather than stopping. **The file is WAL**, so you can read it with `sqlite3` or point a dashboard
 at it while the modem is still running and writing.
@@ -627,7 +627,7 @@ what the station has been doing rather than only what it has been hearing.
 
 The packaged service runs unprivileged and the unit declares `StateDirectory=pdn-soundmodem`, so
 systemd creates `/var/lib/pdn-soundmodem/` owned by the service user and the default path just
-works. If you move it, the service user has to be able to write to wherever you move it to — the
+works. If you move it, the service user has to be able to write to wherever you move it to - the
 daemon says so plainly at start-up rather than running without a log you asked for.
 
 ## `survey`
@@ -645,8 +645,8 @@ happens today: they paint on the waterfall and are lost. This turns "something w
 
 **Why not simply run more modems.** The obvious answer is a comb of decoders across the passband,
 and it fails for a reason that is not CPU: the mode is unknown too, so brute force is centres ×
-modes — afsk300 in three framings, bpsk300, 850 Hz FSK, 150 Hz-shift FSK, non-NinoTNC soundmodems
-— at every centre you might try, and it is still silent when it guesses wrong. Energy, meanwhile,
+modes - afsk300 in three framings, bpsk300, 850 Hz FSK, 150 Hz-shift FSK, non-NinoTNC soundmodems -
+at every centre you might try, and it is still silent when it guesses wrong. Energy, meanwhile,
 is already being computed for the display.
 
 **What it keeps.** A burst is packet-shaped if it started, stopped, and was neither too narrow
@@ -655,8 +655,8 @@ is already being computed for the display.
 | Verdict | What it means |
 |---|---|
 | `unclaimed` | Outside every configured modem's band. Nobody was listening there. |
-| `missed` | Inside one, and nothing decoded. **The most useful of the three** — the station was listening and could not read it, which is a receiver problem rather than a coverage one, and is invisible today unless you happen to be recording. |
-| `unattributed` | A frame decoded carrying no readable AX.25 addresses. The sidecar carries its bytes, the IL2P encapsulation it arrived in (Type 1 translated or Type 0 transparent — they put the address field in different places) and a line saying exactly what would not read, so the payload, the reason and the modulation can be examined together. |
+| `missed` | Inside one, and nothing decoded. **The most useful of the three** - the station was listening and could not read it, which is a receiver problem rather than a coverage one, and is invisible today unless you happen to be recording. |
+| `unattributed` | A frame decoded carrying no readable AX.25 addresses. The sidecar carries its bytes, the IL2P encapsulation it arrived in (Type 1 translated or Type 0 transparent - they put the address field in different places) and a line saying exactly what would not read, so the payload, the reason and the modulation can be examined together. |
 
 Nothing is captured while the station transmits, and normal traffic on your own slots is not
 captured at all.
@@ -670,13 +670,13 @@ captured at all.
 | `marginSeconds` | number | `1.0` | Audio kept either side of the burst |
 | `maxSeconds` | number | `20` | Longest burst still plausibly a packet |
 | `minPeakSnrDb` | number | `6` | Weakest burst worth keeping, over the noise floor |
-| `capture` | array | all three | Which verdicts to write — `unclaimed`, `missed`, `unattributed` |
+| `capture` | array | all three | Which verdicts to write - `unclaimed`, `missed`, `unattributed` |
 
 All three reach the **waterfall's decoded-frames panel** too, which is where an operator sees the
 word "unattributed" in the first place: the row carries the IL2P type, the reason, and the frame's
 bytes laid out to be selected and pasted.
 
-The same explanation reaches the journal whether or not a survey is running — the `rx` line for
+The same explanation reaches the journal whether or not a survey is running - the `rx` line for
 such a frame carries `il2p Type1` and the reason in brackets, because the survey is optional and
 budgeted and may drop that particular burst.
 
@@ -685,19 +685,19 @@ choice, and the alternative is worse: stopping instead would mean a station left
 week quietly stops on day one and you find an empty tail. A flight recorder keeps the recent past;
 so does this. Raise `maxBytes` if you would rather keep more of it.
 
-**Duration, not width, is what separates a voice contact from a wideband data burst** — both
+**Duration, not width, is what separates a voice contact from a wideband data burst** - both
 occupy much the same 2.4 kHz. An over runs for tens of seconds and the longest frame these modes
 can carry does not, so `maxSeconds` is the knob that matters if voice is getting through.
 
 **It is audio, not IQ.** On a Flex the daemon receives demodulated SSB over DAX; the complex
-baseband is gone before the modem sees it. That is fine and is the right artefact — the channel
+baseband is gone before the modem sees it. That is fine and is the right artefact - the channel
 audio *is* the whole configured passband, it is exactly what every modem sees, and it
 re-demodulates offline at any centre inside it.
 
 **With a [`waterfall`](#waterfall) configured, captures appear on the page.** Each one is bracketed
-on the scroll at the frequencies and for the duration it actually occupied — a capture has a
+on the scroll at the frequencies and for the duration it actually occupied - a capture has a
 frequency and a time, which is exactly what that display's two axes are, so "something we could not
-read went past *there*" is a statement the waterfall can make and a list of filenames cannot — and
+read went past *there*" is a statement the waterfall can make and a list of filenames cannot - and
 listed in the panel with links to its audio and its sidecar. The panel header also carries a running
 `survey N · M skipped · X MB`, which is the only place the **skipped** count appears: a station left
 collecting for a week silently becomes a sample rather than the set when the channel is busier than
@@ -705,7 +705,7 @@ collecting for a week silently becomes a sample rather than the set when the cha
 
 Serving those files is the one route on the waterfall that reads from disk. Only the exact
 `YYYYMMDD-HHMMSS-NNNNhz-verdict.wav|json` shape the writer produces is served, and only out of the
-survey directory — a name is not a path. There is still no authentication on the waterfall, so the
+survey directory - a name is not a path. There is still no authentication on the waterfall, so the
 reverse-proxy or VPN advice in that section is load-bearing rather than tidy-minded now that
 recorded audio is reachable over it.
 
@@ -718,7 +718,7 @@ centre and the verdict:
 ```
 
 The sidecar records the measured centre, edges, width, duration and SNR, the RF frequency where
-the dial is known, the sample rate, and which modems the station was running at the time — so a
+the dial is known, the sample rate, and which modems the station was running at the time - so a
 capture read months later still says what "unclaimed" meant. Point `sm-decode` at the WAV, or any
 mode's demodulator at the sidecar's centre, to find out what it was.
 
@@ -737,7 +737,7 @@ get a line-based TCP service of their own rather than a KISS port.
 | `baud` | int | `1200` | `512`, `1200` (DAPNET) or `2400` |
 | `invertPolarity` | bool | `false` | For radios whose data path inverts |
 
-The grammar is one UTF-8 command per line — `PAGE <ric> <function> ALPHA|NUMERIC|TONE [text]`,
+The grammar is one UTF-8 command per line - `PAGE <ric> <function> ALPHA|NUMERIC|TONE [text]`,
 replying `OK <id>` or `ERR <reason>`. Every page heard on channel is broadcast to all
 connected clients as a `HEARD …` line. Transmissions share the CSMA/PTT path with the packet
 modems.
@@ -745,7 +745,7 @@ modems.
 ## `ardop`
 
 An ARDOP virtual TNC with an ardopcf-compatible host interface, so Pat, Winlink Express,
-ARIM/gARIM and hamChat connect unmodified. **It is a modem entry like any other** — it shares
+ARIM/gARIM and hamChat connect unmodified. **It is a modem entry like any other** - it shares
 the passband with the packet modes rather than excluding them:
 
 ```json
@@ -762,19 +762,19 @@ Three modes in one 3 kHz passband on one radio, each on its own centre and its o
 **`port` here speaks ardopcf, not KISS.** ARDOP is a connected-mode ARQ protocol with session
 semantics; there is no way to express a session over KISS, which carries AX.25 frames and knows
 nothing of connections. So the entry gets the ardopcf host interface: **command on `port`, data
-always on `port + 1`.** That reservation is real and the daemon enforces it — `8103` above is
+always on `port + 1`.** That reservation is real and the daemon enforces it - `8103` above is
 not a typo, because `8102` belongs to ARDOP's data port.
 
 **`frequency` moves it off 1500 Hz.** ARDOP's waveforms are pinned to a 1500 Hz centre and the
 underlying library exposes no way to move them, so the daemon shifts the audio outside the TNC:
 transmitted audio is mixed from 1500 Hz to your centre, and received audio mixed back before the
-TNC sees it. The TNC never knows. Choose the centre with ARDOP's *negotiated* bandwidth in mind
-— up to 2000 Hz — and the daemon warns at start-up when a centre cannot fit the widest session
-inside a nominal 300–2700 Hz SSB passband.
+TNC sees it. The TNC never knows. Choose the centre with ARDOP's *negotiated* bandwidth in mind -
+up to 2000 Hz - and the daemon warns at start-up when a centre cannot fit the widest session
+inside a nominal 300-2700 Hz SSB passband.
 
 **Sharing the radio with an ARQ session.** ARDOP owns the channel's timing while a session is
 up: an AX.25 frame landing mid-turnaround breaks it. So while the ARQ engine is connected or
-connecting, packet transmissions are **held** — queued, not discarded. A frame held longer than
+connecting, packet transmissions are **held** - queued, not discarded. A frame held longer than
 30 seconds is then rejected rather than escaping minutes late as a duplicate, since an AX.25
 host will have retried long before a Winlink session ends. Receive is unaffected throughout:
 every modem and ARDOP hear the channel simultaneously.
@@ -783,7 +783,7 @@ every modem and ARDOP hear the channel simultaneously.
 `qpsk*`) but not with the 48 kHz families (`fsk9600`, `c4fsk*`, `freedv-*`, `ms110d-*`);
 configuring both is rejected at start-up naming the offending modes.
 
-One ARDOP TNC per channel — it is a whole virtual TNC, not a demodulator you can run twice.
+One ARDOP TNC per channel - it is a whole virtual TNC, not a demodulator you can run twice.
 
 > The older top-level form still works and is folded into a modem entry at start-up:
 > ```json
@@ -796,7 +796,7 @@ See [docs/ardop-design.md](docs/ardop-design.md).
 
 ## `flex`
 
-Slice parameters used **only** when `device` is a headless `flex:` string — that is, `flex:`
+Slice parameters used **only** when `device` is a headless `flex:` string - that is, `flex:`
 with no `@station`. Ignored for ALSA devices and for attach-mode Flex, where SmartSDR owns
 the slice.
 
@@ -806,19 +806,19 @@ the slice.
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `frequency` | string | `"14.100000"` | MHz, six-decimal Flex form — a **string**, not a number. Superseded by a band plan |
+| `frequency` | string | `"14.100000"` | MHz, six-decimal Flex form - a **string**, not a number. Superseded by a band plan |
 | `antenna` | string | `"ANT1"` | RX/TX antenna |
 | `mode` | string | `"DIGU"` | Slice demod mode |
-| `daxChannel` | string | `"2"` headless, `"1"` attach | DAX channel to claim — [below](#coexisting-with-smartsdr) |
-| `txPowerWatts` | number | unset | Transmit power in watts — [below](#transmit-power) |
-| `transmitFilterHighHz` | int | *derived* | TX filter high cut in Hz — [below](#the-transmit-filter). `0` leaves the radio's own |
+| `daxChannel` | string | `"2"` headless, `"1"` attach | DAX channel to claim - [below](#coexisting-with-smartsdr) |
+| `txPowerWatts` | number | unset | Transmit power in watts - [below](#transmit-power) |
+| `transmitFilterHighHz` | int | *derived* | TX filter high cut in Hz - [below](#the-transmit-filter). `0` leaves the radio's own |
 
 The headless path disables band persistence and explicitly tunes the slice, so it lands on the
 requested frequency regardless of the radio's last-used band.
 
 **The slice mode states the sideband**, so do not also set `sideband`: `DIGU` is USB, `DIGL` is
 LSB, and the daemon takes it from the slice. Setting a `sideband` that contradicts the slice mode
-is rejected — silently accepting it would mirror every modem about the dial.
+is rejected - silently accepting it would mirror every modem about the dial.
 
 **A band plan supersedes `frequency`.** With `rfFrequency` modems the dial is computed, so a slice
 frequency here would be saying two different things; the daemon warns and uses the plan.
@@ -829,11 +829,11 @@ frequency here would be saying two different things; the daemon warns and uses t
 "flex": { "antenna": "ANT1", "txPowerWatts": 30 }
 ```
 
-Watts, not the radio's 0–100 number, because watts is what your licence is written in. Every
-6000-series model has a 100 W PA, so on that family the two happen to coincide — the daemon
+Watts, not the radio's 0-100 number, because watts is what your licence is written in. Every
+6000-series model has a 100 W PA, so on that family the two happen to coincide - the daemon
 converts using the PA size regardless, so the config stays honest about its units.
 
-**Unset, the radio's own setting is left alone** — the station transmits at whatever the rig is
+**Unset, the radio's own setting is left alone** - the station transmits at whatever the rig is
 on, exactly as it did before this setting existed. Either way the daemon prints what is in force
 at startup, because an inherited power shapes every transmission just as much as a configured one:
 
@@ -843,13 +843,13 @@ flex: transmit power 9 W, limit 50 W (radio's own setting)
 ```
 
 **Above your Max Power Level, the radio refuses rather than reduces.** Asking for 30 W against a
-15 W ceiling is an error — not 15 W, and not some fraction of it. The daemon reads the ceiling
+15 W ceiling is an error - not 15 W, and not some fraction of it. The daemon reads the ceiling
 first and fails at startup naming both numbers, so raise the limit at the rig (Settings →
 Transmit → Max Power Level) or ask for less.
 
 **Why this is here at all, rather than left to the rig.** RF power is held *per station*, and
 only the client that owns the transmit slice can set it. In a headless station that client is
-pdn-soundmodem. Anything else — SmartSDR on another machine, a command-line tool — has its
+pdn-soundmodem. Anything else - SmartSDR on another machine, a command-line tool - has its
 request answered `err=0` and silently discarded, and the value never moves. Measured on a
 FLEX-6500 (fw 4.2.20.41343, 2026-08-02). So while the daemon holds the slice, the daemon is the
 only thing that *can* set the power, which is why it has to be configurable here.
@@ -861,16 +861,16 @@ The setting persists on the radio after the daemon exits, like the transmit filt
 The radio's transmit filter decides how much of your audio reaches the air, and on a Flex it is a
 **global, persistent** setting rather than a slice one: it is whatever last touched the radio, it
 outlives the daemon, and anything wider than it goes out truncated with nothing said. So the
-daemon states it rather than inheriting it — measuring what the configured modems actually occupy
+daemon states it rather than inheriting it - measuring what the configured modems actually occupy
 and setting the high cut to clear the highest of them:
 
 ```
-flex: setting the transmit filter high cut to 3400 Hz — modem 0 (ms110d-wn4) reaches 3199 Hz
-flex: transmit filter 0..3400 Hz (radio global — limits TX audio bandwidth)
+flex: setting the transmit filter high cut to 3400 Hz - modem 0 (ms110d-wn4) reaches 3199 Hz
+flex: transmit filter 0..3400 Hz (radio global - limits TX audio bandwidth)
 ```
 
 **This matters most for the wide modes.** `ms110d-*` is a 3 kHz waveform at a fixed 1800 Hz
-centre, so it reaches past 3.1 kHz — a radio left on the usual 3000 Hz cut clips the top of every
+centre, so it reaches past 3.1 kHz - a radio left on the usual 3000 Hz cut clips the top of every
 burst. The audio-band packet modes all fit inside 3000 Hz and end up *narrowing* the filter
 instead, which keeps transmitted noise off your neighbours' frequencies.
 
@@ -879,11 +879,11 @@ band planner fits with), so nothing has to be kept in step by hand.
 
 | `transmitFilterHighHz` | What happens |
 |---|---|
-| unset | Derived from the modems, as above — or from the [band plan](#band-plans-in-rf-terms) when there is one |
-| a number (500–10000) | Used as it stands; the band plan does not override it |
+| unset | Derived from the modems, as above - or from the [band plan](#band-plans-in-rf-terms) when there is one |
+| a number (500-10000) | Used as it stands; the band plan does not override it |
 | `0` | The radio's own filter is left alone |
 
-**The slice's receive filter is set too**, from the same measurement — the transmit filter decides
+**The slice's receive filter is set too**, from the same measurement - the transmit filter decides
 what leaves the radio, but what reaches the modems is capped separately, per slice, so widening only
 the transmit side would give a wide signal out and an ordinary ~3 kHz window back in:
 
@@ -893,27 +893,27 @@ flex: slice receive filter 200..3400 Hz (what the modems can hear)
 ```
 
 Unlike the transmit filter this is slice state rather than a global radio setting, so it goes away
-with the slice. The radio's ceiling on receive width is **not measured** — the 10 kHz figure is the
-transmit filter's — so the daemon asks, reads back, and warns if the radio would not go that wide
+with the slice. The radio's ceiling on receive width is **not measured** - the 10 kHz figure is the
+transmit filter's - so the daemon asks, reads back, and warns if the radio would not go that wide
 rather than leaving a modem quietly deaf.
 
-**Only the transmit high cut is settable** through the station API — the transmit *low* cut is not.
+**Only the transmit high cut is settable** through the station API - the transmit *low* cut is not.
 A modem outside either filter is reported at start-up, so the one thing you may still have to fix at
 the rig is named rather than left to be discovered on the air:
 
 ```
-flex: WARNING — modem 0 (ms110d-wn4) occupies 410-3199 Hz, outside the radio's 0..3000 Hz
-transmit filter — it will be clipped. Widen the high cut on the radio — this mode's centre is
+flex: WARNING - modem 0 (ms110d-wn4) occupies 410-3199 Hz, outside the radio's 0..3000 Hz
+transmit filter - it will be clipped. Widen the high cut on the radio - this mode's centre is
 fixed by its spec.
 ```
 
 **Headless only.** In attach mode SmartSDR owns the slice and the daemon does not touch the
-filter — but it still measures the modems and warns when the filter you are on would clip one.
+filter - but it still measures the modems and warns when the filter you are on would clip one.
 
 ### Coexisting with SmartSDR
 
 A running SmartSDR grabs **DAX channel 1**, and a headless client on the same channel contends
-with it (live finding, 2026-07-17). So an unset `daxChannel` puts a *headless* client on **2** —
+with it (live finding, 2026-07-17). So an unset `daxChannel` puts a *headless* client on **2** -
 which means it does not matter whether SmartSDR was started before or after the modem. Attach
 mode keeps 1, because there it is SmartSDR's slice by definition.
 
@@ -921,15 +921,15 @@ Set `daxChannel` explicitly if you have other DAX users to work around.
 
 > **There is no IQ / raw-waveform option here, by design.** The daemon reaches a Flex over
 > **DAX audio** only: it hands real audio to the radio's own DIGU SSB modulator, so the signal
-> goes through the same TX chain a user's would. The software-IQ route — single-sideband IQ
-> through a headless waveform, bypassing the radio's SSB modulator, ALC and TX DSP — exists
+> goes through the same TX chain a user's would. The software-IQ route - single-sideband IQ
+> through a headless waveform, bypassing the radio's SSB modulator, ALC and TX DSP - exists
 > only in the OTA bench harness (`sm-ota ladder --route iq`), and exists precisely *because*
 > it bypasses that chain, which makes it a measurement instrument rather than a deployment
 > path. See [docs/flex-integration.md](docs/flex-integration.md) § 2.3.
 
 ## `ubersdr`
 
-Stream parameters used **only** when `device` is `ubersdr:<instance>` — see
+Stream parameters used **only** when `device` is `ubersdr:<instance>` - see
 [Listening to a web receiver](#listening-to-a-web-receiver) for what that is and how it behaves.
 Ignored for every other device. Where to tune is *not* here: that comes from the band plan, as
 it does on a Flex.
@@ -948,12 +948,12 @@ it does on a Flex.
 | `gain` | number | `1.0` | Linear gain on the demodulated audio |
 
 **`ssbLowHz`/`ssbHighHz` are the receive filter**, and unlike a rig's they are actually yours to
-choose — holding the complex baseband is what makes that possible. The default clears the whole
-300–2700 Hz band a plan can place modems in, with room either side, so nothing legal gets
+choose - holding the complex baseband is what makes that possible. The default clears the whole
+300-2700 Hz band a plan can place modems in, with room either side, so nothing legal gets
 clipped on the way in. Narrowing them emulates a tighter rig for comparison.
 
 **`startupGuardMs` covers a real transient.** Instances ramp their level over the first
-0.7–1.0 s of a stream (measured 2026-07-24), which would otherwise put a fade at the head of
+0.7-1.0 s of a stream (measured 2026-07-24), which would otherwise put a fade at the head of
 every session and a stripe on the waterfall. It costs about a second per reconnect.
 
 **`gain` is for the display, not the decoders.** Everything downstream is floating point and
@@ -964,7 +964,7 @@ which is soundcard-like already. Raise it if a quiet instance makes the waterfal
 
 ## Watching a station work
 
-`journalctl -u pdn-soundmodem -f` is the view most operators actually use — the waterfall needs a
+`journalctl -u pdn-soundmodem -f` is the view most operators actually use - the waterfall needs a
 browser and the frame log needs SQL. Every frame the station hears or sends is one line:
 
 ```
@@ -976,42 +976,42 @@ tx[0] DROPPED M0LTE>GB7RDG-2 28 bytes: this station receives only
 | Field | Means |
 |---|---|
 | `rx[N]` / `tx[N]` | Direction and KISS sub-channel |
-| mode | What decoded it — a diversity bank names its branch count, so `afsk300-il2pc-multi11` is the 11-branch bank |
+| mode | What decoded it - a diversity bank names its branch count, so `afsk300-il2pc-multi11` is the 11-branch bank |
 | `SOURCE>DEST` | AX.25 addresses; `(no ax25 header)` where the payload is not AX.25, rather than a mangled callsign |
 | `crc ok` / `CRC BAD` | Only for modes that carry a CRC; a mode with none claims neither |
 | `fec N` | Bytes the FEC corrected. Rising counts mean the link is being carried by the FEC and is closer to the edge than a clean decode suggests |
-| `±N Hz` | Measured carrier offset — what to retune by |
+| `±N Hz` | Measured carrier offset - what to retune by |
 | `emph ±N dB` | Diversity banks only, and only when non-zero: the far station's TX audio is twisted |
 
 Host sessions are logged too, because a host that quietly drops its TCP connection stops passing
-traffic and — from the modem's side — looks exactly like a band that went quiet:
+traffic and - from the modem's side - looks exactly like a band that went quiet:
 
 ```
-kiss[8105] 192.168.1.50:54312 connected — 2 clients (all modems)
-kiss[8101] 127.0.0.1:40000 disconnected — 0 clients (modem 3 only)
-kiss[8105] 192.168.1.50:54312 disconnected: Connection reset by peer. — 1 client (all modems)
+kiss[8105] 192.168.1.50:54312 connected - 2 clients (all modems)
+kiss[8101] 127.0.0.1:40000 disconnected - 0 clients (modem 3 only)
+kiss[8105] 192.168.1.50:54312 disconnected: Connection reset by peer. - 1 client (all modems)
 ```
 
 Each line says which port, which host, how many sessions remain, and **which modems that port
-reaches** — the thing host software gets wrong. A clean close carries no reason; a host that
+reaches** - the thing host software gets wrong. A clean close carries no reason; a host that
 vanished carries the transport's, because "the host closed" and "the host died" are different
 problems.
 
 When the sound device loses audio, that is reported too:
 
 ```
-audio: 3 capture overruns, 1 playback underrun (4 since start) — each one is lost audio: a dropped
+audio: 3 capture overruns, 1 playback underrun (4 since start) - each one is lost audio: a dropped
 frame on receive, a discontinuity in what we transmitted. This is the machine not scheduling the
 modem within the ~120 ms of buffer it has, not a radio problem; give it more CPU share, or fewer
 neighbours.
 ```
 
-ALSA recovers from an overrun or underrun by restarting the stream, silently — so without this a
+ALSA recovers from an overrun or underrun by restarting the stream, silently - so without this a
 station being starved of CPU is indistinguishable from a station on a quiet band. Reported as
 what was lost **since the last look**, every ten seconds at most, with the advice given once.
 
 Worth knowing if you run under LXC or Docker: a `Nice=` value inside a container does **not** rank
-you against other containers — that is the container's CPU weight, set from the host. If these
+you against other containers - that is the container's CPU weight, set from the host. If these
 lines appear on a shared box, that is the knob, or dedicated cores.
 
 **A transmission is logged when it goes out, not when it is queued.** A frame can wait behind CSMA
@@ -1021,12 +1021,12 @@ and never as `tx`.
 ## What is rejected at start-up
 
 The daemon validates before it opens anything, and refuses to start rather than run in a state
-you did not ask for. Every configuration problem is reported the same way — the file, what is
-wrong in plain words, and what to do — and exits with status **2**:
+you did not ask for. Every configuration problem is reported the same way - the file, what is
+wrong in plain words, and what to do - and exits with status **2**:
 
 ```
 configuration error in /etc/pdn-soundmodem/soundmodem.json
-  not valid JSON — line 7, position 3: ',' is an invalid start of a value.
+  not valid JSON - line 7, position 3: ',' is an invalid start of a value.
 
   The service will not start until this is fixed. As root, to start
   from a known-good file:
@@ -1046,21 +1046,21 @@ journalctl -u pdn-soundmodem -n 30       # the whole message
 **A rejected config does not crash-loop.** The unit sets `RestartPreventExitStatus=2`, so
 systemd leaves the service stopped after a configuration error and the journal holds one
 readable explanation rather than a copy every five seconds. Fix the file and
-`systemctl restart pdn-soundmodem`. Any *other* failure — a USB sound card that has not
-enumerated yet at boot, for instance — still restarts on its own as usual.
+`systemctl restart pdn-soundmodem`. Any *other* failure - a USB sound card that has not
+enumerated yet at boot, for instance - still restarts on its own as usual.
 
 | Condition | What you get |
 |---|---|
 | File missing, unreadable, or in a missing directory | `no such file` / `no such directory` / `permission denied reading the file` |
 | File empty | `the file is empty` |
-| File contains the literal `null` | `the file contains only \`null\`` — with a minimal working config to copy |
-| Malformed JSON | `not valid JSON — line L, position P: …` (counted from 1, as your editor does) |
+| File contains the literal `null` | `the file contains only \`null\`` - with a minimal working config to copy |
+| Malformed JSON | `not valid JSON - line L, position P: …` (counted from 1, as your editor does) |
 | Two modems on the same `subChannel` | `two modems share "subChannel": N … renumber one of them` |
 | `ardop` alongside `modems` or `paging` | `"ardop" cannot be combined with … keep "ardop" and delete the others, or delete "ardop"` |
-| `mode` not a known mode | `unknown mode 'X'` — with a **did you mean** for near misses, and a link to the mode table |
-| `frequency` on a fixed-centre mode | `mode 'X' has a fixed centre frequency — drop the frequency override …` |
+| `mode` not a known mode | `unknown mode 'X'` - with a **did you mean** for near misses, and a link to the mode table |
+| `frequency` on a fixed-centre mode | `mode 'X' has a fixed centre frequency - drop the frequency override …` |
 | `captureRate` not a multiple of the DSP rate | `--capture-rate must be a multiple of N` |
-| `flex.transmitFilterHighHz` outside 500–10000 (and not `0`) | `That is an audio cut-off in Hz … use 500-10000, 0 to leave the radio's own filter alone …` |
+| `flex.transmitFilterHighHz` outside 500-10000 (and not `0`) | `That is an audio cut-off in Hz … use 500-10000, 0 to leave the radio's own filter alone …` |
 | `ptt` alongside a `flex:` device | `--device flex: keys the radio itself; remove the conflicting --ptt …` |
 | `ptt` alongside a `ubersdr:` device | `--device ubersdr: is a receive-only station … Remove "ptt".` |
 | `ubersdr:` with no `rfFrequency` and no `dialFrequency` | `the UberSDR instance … has to be told where to listen` |
@@ -1077,8 +1077,8 @@ modem 0: unknown mode 'fsk9600il2p'
 ### Hardware the config names but the machine does not have
 
 Different case, deliberately handled differently. A config that is *structurally* fine but
-points at a sound card or PTT line that will not open — the usual first-install experience,
-since the seeded config names a CM108 on `/dev/hidraw0` — exits **1**, not 2, so the service
+points at a sound card or PTT line that will not open - the usual first-install experience,
+since the seeded config names a CM108 on `/dev/hidraw0` - exits **1**, not 2, so the service
 **keeps restarting**. That is on purpose: a USB interface may simply not have enumerated yet
 at boot, and the service should come up by itself when it does rather than stay down waiting
 for a human.
@@ -1095,7 +1095,7 @@ cannot open the cm108 PTT device "/dev/hidraw0"
   List what this machine actually has:
     ls -l /dev/hidraw*
   /dev/hidraw* is root-only by default, so the unprivileged service user cannot
-  open it without a udev rule granting the audio group access — see the
+  open it without a udev rule granting the audio group access - see the
   Permissions section of INSTALL.md. …
 ```
 
@@ -1111,9 +1111,9 @@ config file:
 pdn-soundmodem --device plughw:1,0 --modem 0:afsk1200 --kiss 8105 --ptt serial:/dev/ttyUSB0:rts
 ```
 
-**When `--config` is given, the file wins for most settings** — it overwrites `device`,
+**When `--config` is given, the file wins for most settings** - it overwrites `device`,
 `captureRate`, `kissPort`, `bind`, `ptt`, `paging`, `flex` and `waterfall`, so a
-`--device` passed alongside `--config` is silently discarded (`--txdelay` still applies —
+`--device` passed alongside `--config` is silently discarded (`--txdelay` still applies -
 it has no config equivalent). The exceptions:
 
 | Flag | Behaviour with `--config` |
@@ -1124,13 +1124,13 @@ it has no config equivalent). The exceptions:
 | `--paging PORT[:BAUD]` | Replaces the file's `paging` section |
 | `--ardop PORT` | Used only if the file has no `ardop` section |
 
-Some options are command-line only and have no config equivalent — `--wav FILE` and
+Some options are command-line only and have no config equivalent - `--wav FILE` and
 `--wav-loop FILE` (decode a recording instead of live audio), `--quality-frames`, and
 `--psk-detector coherent|differential`.
 
 ## Worked examples
 
-**VHF packet, one AFSK modem, serial PTT** — the common node case:
+**VHF packet, one AFSK modem, serial PTT** - the common node case:
 
 ```json
 {
@@ -1156,7 +1156,7 @@ Some options are command-line only and have no config equivalent — `--wav FILE
 }
 ```
 
-**9600 baud** — note `captureRate` must be a multiple of 48000 here:
+**9600 baud** - note `captureRate` must be a multiple of 48000 here:
 
 ```json
 {
@@ -1167,7 +1167,7 @@ Some options are command-line only and have no config equivalent — `--wav FILE
 }
 ```
 
-**Winlink over HF via ARDOP, sharing 40m with two packet modes** — one radio, one passband:
+**Winlink over HF via ARDOP, sharing 40m with two packet modes** - one radio, one passband:
 
 ```json
 {
@@ -1184,7 +1184,7 @@ Some options are command-line only and have no config equivalent — `--wav FILE
 
 Point Pat at 8101 (data 8102), and your packet host at 8100 and 8103.
 
-**A monitoring station on somebody else's antenna** — no radio, no sound card, no PTT; it hears
+**A monitoring station on somebody else's antenna** - no radio, no sound card, no PTT; it hears
 40 m from Scotland and writes down everything it decodes:
 
 ```json
@@ -1199,7 +1199,7 @@ Point Pat at 8101 (data 8102), and your packet host at 8100 and 8103.
 }
 ```
 
-**A FlexRadio over the LAN, no sound card at all** — no `ptt`, the radio keys itself:
+**A FlexRadio over the LAN, no sound card at all** - no `ptt`, the radio keys itself:
 
 ```json
 {
@@ -1211,7 +1211,7 @@ Point Pat at 8101 (data 8102), and your packet host at 8100 and 8103.
 
 ## See also
 
-- [INSTALL.md](INSTALL.md) — installing the package and first-run setup
-- [docs/modes.md](docs/modes.md) — every mode, its capabilities and verification level
-- [docs/flex-integration.md](docs/flex-integration.md) — FlexRadio headless and attach modes
-- [docs/ardop-design.md](docs/ardop-design.md) — the ARDOP implementation
+- [INSTALL.md](INSTALL.md) - installing the package and first-run setup
+- [docs/modes.md](docs/modes.md) - every mode, its capabilities and verification level
+- [docs/flex-integration.md](docs/flex-integration.md) - FlexRadio headless and attach modes
+- [docs/ardop-design.md](docs/ardop-design.md) - the ARDOP implementation

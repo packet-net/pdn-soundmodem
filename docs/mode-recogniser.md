@@ -1,4 +1,4 @@
-# Unknown-mode recogniser — design and feasibility
+# Unknown-mode recogniser - design and feasibility
 
 **Status: design only, nothing implemented.** This is the answer to "there is something else
 transmitting over us; have a guess as to what it is."
@@ -7,7 +7,7 @@ transmitting over us; have a guess as to what it is."
 
 Feasible, and most of the value is cheap, because we do not have to demodulate to classify.
 Amateur HF/VHF digital modes separate cleanly in a small feature space that we can measure from
-the FFT we are already computing for the waterfall. The expensive part is not the recognition —
+the FFT we are already computing for the waterfall. The expensive part is not the recognition -
 it is being honest about confidence.
 
 The design below is deliberately tiered so each tier ships and earns its keep alone. Tier 0 is
@@ -15,16 +15,16 @@ useful on its own and is nearly free.
 
 ## What we already have to build on
 
-- `WaterfallSource` — a running FFT over the passband at the configured line rate, 1024 bins.
+- `WaterfallSource` - a running FFT over the passband at the configured line rate, 1024 bins.
   The recogniser should consume the same lines the display draws, for the same reason
   `BandActivityTracker` does: the numbers then always agree with what the operator can see.
-- `BandActivityTracker` — per-band noise floor by min-tracking over ~15 s, and burst detection
+- `BandActivityTracker` - per-band noise floor by min-tracking over ~15 s, and burst detection
   as a run of lines ≥ 6 dB over that floor, with mean SNR and run length. Burst segmentation is
   therefore already written; it is currently scoped to a declared modem band rather than to the
   whole passband.
 - Working demodulators for AFSK1200, BPSK300, QPSK2400/3600, GFSK9600, FreeDV datac1/datac3,
-  ARDOP and POCSAG — which matters for tier 3.
-- `ModemBandProbe` — measures a modem's occupied bandwidth off its own modulator. The same
+  ARDOP and POCSAG - which matters for tier 3.
+- `ModemBandProbe` - measures a modem's occupied bandwidth off its own modulator. The same
   measurement, applied to a heard burst instead of a synthesised one, is the primary feature.
 - A `TimeProvider`, and with a Flex a disciplined one. This turns out to matter more than any
   spectral feature (see "UTC phase" below).
@@ -34,20 +34,20 @@ useful on its own and is nearly free.
 Ordered by how much they buy per unit of work.
 
 **1. Occupied bandwidth (−26 dB) and centre.** The single most separating feature. 200 Hz-class
-(PSK31, FT8, FT4), 500 Hz-class (ARDOP 500, Olivia 500, Pactor 1/2), 2000–2400 Hz-class (ARDOP
+(PSK31, FT8, FT4), 500 Hz-class (ARDOP 500, Olivia 500, Pactor 1/2), 2000-2400 Hz-class (ARDOP
 2000, VARA HF, Pactor 3/4), and the packet widths we already know. Measured directly off the
 averaged burst spectrum.
 
 **2. Burst duration and duty cycle.** FT8 transmits for 12.64 s; WSPR for 110.6 s; JS8 for 12.6
-or 5.6 s depending on speed. AX.25 packet bursts are 0.1–3 s and irregular. ARQ protocols
+or 5.6 s depending on speed. AX.25 packet bursts are 0.1-3 s and irregular. ARQ protocols
 ping-pong with characteristic turnaround gaps.
 
-**3. UTC phase.** The whole WSJT-X family starts on a hard slot boundary — FT8 every 15 s, FT4
+**3. UTC phase.** The whole WSJT-X family starts on a hard slot boundary - FT8 every 15 s, FT4
 every 7.5 s, WSPR every 2 minutes on the even minute. A burst that starts within ±0.5 s of a
 15 s boundary and lasts 12.6 s is FT8 and essentially nothing else. This is one cheap comparison
 against the clock and it removes an entire family from the search space with near-certainty. It
 is also the feature most likely to be *wrong* on a station with a bad clock, so it should
-degrade to "unknown" rather than mislead when the clock is not disciplined — which the Flex
+degrade to "unknown" rather than mislead when the clock is not disciplined - which the Flex
 reference status already tells us.
 
 **4. Carrier count and spacing.** The cepstrum (or autocorrelation) of the averaged burst
@@ -94,25 +94,25 @@ ML here is strong and wrong:
 
 ## Tiers
 
-**Tier 0 — measure, do not guess.** Detect bursts across the whole passband and report
+**Tier 0 - measure, do not guess.** Detect bursts across the whole passband and report
 bandwidth, centre, duration and SNR. Display "unidentified, 480 Hz @ 7051.2, 1.2 s". This is
-already useful — it answers "is something sitting on us?" which is most of the operational
-question — and it is close to what `BandActivityTracker` does today. Report it on the waterfall
+already useful - it answers "is something sitting on us?" which is most of the operational
+question - and it is close to what `BandActivityTracker` does today. Report it on the waterfall
 as an untinted band with a measurement label.
 
-**Tier 1 — the signature table over features 1–4.** Confidently identifies the WSJT-X family,
+**Tier 1 - the signature table over features 1-4.** Confidently identifies the WSJT-X family,
 separates packet from ARQ, and places signals in the right bandwidth class. This is where the
 bulk of the value sits for the effort.
 
-**Tier 2 — cyclostationary features 5–6.** Needs the raw-audio ring buffer. Separates BPSK300
+**Tier 2 - cyclostationary features 5-6.** Needs the raw-audio ring buffer. Separates BPSK300
 from FSK300 and narrows the ARQ protocols.
 
-**Tier 3 — speculative demodulation.** On burst end, run our existing demodulators over the
-captured audio. If BPSK300 IL2Pc decodes it, it is not a guess any more — and the result should
+**Tier 3 - speculative demodulation.** On burst end, run our existing demodulators over the
+captured audio. If BPSK300 IL2Pc decodes it, it is not a guess any more - and the result should
 be presented differently from a signature match, because it is a different kind of claim. This
 is the step that turns the recogniser from a guesser into a witness.
 
-## Costs and limits — the honest part
+## Costs and limits - the honest part
 
 - **Overlapping signals defeat feature extraction.** Two bursts overlapping in time and
   frequency give a bandwidth and a carrier spacing that belong to neither. The segmenter must
@@ -126,11 +126,11 @@ is the step that turns the recogniser from a guesser into a witness.
 - **A wrong ID is worse than no ID** if anything automatic ever consumes this. If a future
   version backs off transmitting because it thinks it heard a Winlink session, a
   misclassification becomes an operational bug on a shared channel. Recommendation: the
-  recogniser stays advisory — it informs the operator and the log, and does not gate the PTT —
+  recogniser stays advisory - it informs the operator and the log, and does not gate the PTT -
   unless and until a specific mode's identification is validated on air against known traffic.
-- **CPU.** Tiers 0–1 reuse the existing FFT and cost essentially nothing. Tier 2 adds a few
+- **CPU.** Tiers 0-1 reuse the existing FFT and cost essentially nothing. Tier 2 adds a few
   seconds of ring buffer (12 kHz × 4 bytes × 5 s ≈ 240 kB) and per-burst analysis off the audio
-  thread. Tier 3 is a demod pass per candidate, on burst end only — the expensive tier, and the
+  thread. Tier 3 is a demod pass per candidate, on burst end only - the expensive tier, and the
   one to gate behind a config switch.
 
 ## Validation

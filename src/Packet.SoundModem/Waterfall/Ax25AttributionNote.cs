@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Waterfall;
 /// <remarks>
 /// <para>
 /// A frame reaching the panel as "unattributed" has already passed Reed-Solomon and, on an
-/// IL2P+CRC link, the trailing CRC — the bits are right and it is the <em>reading</em> of them
+/// IL2P+CRC link, the trailing CRC - the bits are right and it is the <em>reading</em> of them
 /// that failed. That distinction is the whole diagnosis, and until now the only way to get at it
 /// was to pull the payload blob out of the frame log by hand and stare at it. A station that
 /// notices something it cannot explain should write down what it noticed.
@@ -57,7 +57,7 @@ public static class Ax25AttributionNote
                 + $"{shown}, not a shifted callsign character";
         }
 
-        // Every character is legal but the parse still failed — the remaining way that happens is
+        // Every character is legal but the parse still failed - the remaining way that happens is
         // a field that is all spaces, i.e. an empty callsign.
         return "the address field holds legal characters but an empty callsign";
     }

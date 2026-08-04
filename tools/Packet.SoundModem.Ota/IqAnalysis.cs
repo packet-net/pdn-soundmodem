@@ -3,8 +3,8 @@ using M0LTE.Dsp;
 namespace Packet.SoundModem.Ota;
 
 /// <summary>An averaged (Welch) power spectrum of a complex baseband capture.</summary>
-/// <remarks>Bins are in raw FFT order — bin <c>k &lt; N/2</c> is <c>+k·fs/N</c>, bin
-/// <c>k ≥ N/2</c> is <c>(k−N)·fs/N</c> — so no fftshift is needed anywhere; use
+/// <remarks>Bins are in raw FFT order - bin <c>k &lt; N/2</c> is <c>+k·fs/N</c>, bin
+/// <c>k ≥ N/2</c> is <c>(k−N)·fs/N</c> - so no fftshift is needed anywhere; use
 /// <see cref="BinForFrequency"/> and <see cref="FrequencyOfBin"/>.</remarks>
 public sealed class IqSpectrum
 {
@@ -49,7 +49,7 @@ public sealed class IqSpectrum
     /// window main lobe. Full scale (unit-magnitude complex tone) is 1.0.
     /// </summary>
     /// <remarks>By Parseval, Σ|X[k]|² over the lobe = N·|A|²·Σw[n]² for a tone of amplitude A,
-    /// so summing power rather than reading the peak bin removes scalloping loss entirely — a
+    /// so summing power rather than reading the peak bin removes scalloping loss entirely - a
     /// tone sitting between bins measures the same as one sitting on a bin.</remarks>
     public double TonePower(double hz, int lobeBins = 3)
     {
@@ -69,14 +69,14 @@ public sealed class IqSpectrum
     /// </summary>
     /// <remarks>
     /// <para>The median is used rather than the mean so that signals anywhere in the span do
-    /// not inflate the floor — but a median needs converting back to a mean, and the factor
+    /// not inflate the floor - but a median needs converting back to a mean, and the factor
     /// depends on how many segments were averaged.</para>
     /// <para>A single periodogram bin of Gaussian noise is exponentially distributed, whose
     /// median is ln2 ≈ 0.693 of its mean. Averaging <c>S</c> Welch segments gives
-    /// <c>μ·χ²(2S)/(2S)</c>, whose median rises rapidly towards the mean — 0.98 at 22
+    /// <c>μ·χ²(2S)/(2S)</c>, whose median rises rapidly towards the mean - 0.98 at 22
     /// segments. Applying the single-periodogram ln2 factor to an averaged spectrum
     /// therefore over-corrects by up to 1.59 dB, which would bias every SNR the harness ever
-    /// reports. The Wilson–Hilferty approximation <c>median(χ²_k) ≈ k(1 − 2/(9k))³</c> gives
+    /// reports. The Wilson-Hilferty approximation <c>median(χ²_k) ≈ k(1 − 2/(9k))³</c> gives
     /// the right factor for any segment count, and degrades to ln2 at S = 1.</para>
     /// </remarks>
     public double NoiseVariance()
@@ -137,7 +137,7 @@ public sealed class IqSpectrum
 /// <summary>Time-domain level statistics of a capture.</summary>
 /// <param name="PeakDbfs">Largest |I+jQ| in dBFS.</param>
 /// <param name="RmsDbfs">Overall RMS in dBFS.</param>
-/// <param name="PerSecondRmsDbfs">RMS per one-second block — a flat trace is evidence the
+/// <param name="PerSecondRmsDbfs">RMS per one-second block - a flat trace is evidence the
 /// receiver is not applying AGC, a trace that moves with the signal is evidence it is.</param>
 public sealed record IqLevels(double PeakDbfs, double RmsDbfs, IReadOnlyList<double> PerSecondRmsDbfs);
 
@@ -145,7 +145,7 @@ public sealed record IqLevels(double PeakDbfs, double RmsDbfs, IReadOnlyList<dou
 /// <remarks>
 /// The measurement half of the tone bring-up (ota-execution-plan §E0.5/§I): it answers "can we
 /// hear it, at what level, on what frequency, how clean" with no modem involved. Every number
-/// here is a <em>ratio</em> or a frequency — deliberately, because the dummy-load-to-loop
+/// here is a <em>ratio</em> or a frequency - deliberately, because the dummy-load-to-loop
 /// coupling factor is physical and uncalibrated, so absolute received level is never evidence.
 /// </remarks>
 public static class IqAnalysis
@@ -208,7 +208,7 @@ public static class IqAnalysis
     }
 
     /// <summary>
-    /// Averaged periodogram of one time window of a capture — the segment analyser a stepped
+    /// Averaged periodogram of one time window of a capture - the segment analyser a stepped
     /// sweep needs.
     /// </summary>
     /// <remarks>Measuring every step inside a <em>single</em> capture is what makes a sweep
@@ -307,7 +307,7 @@ public static class IqAnalysis
     }
 
     /// <summary>
-    /// Mean power in contiguous slots across the whole span — a band survey, for picking an
+    /// Mean power in contiguous slots across the whole span - a band survey, for picking an
     /// operating frequency that is actually clear rather than nominally clear.
     /// </summary>
     /// <remarks>Reports both the mean and the peak in each slot: a slot can have a low mean

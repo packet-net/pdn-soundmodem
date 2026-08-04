@@ -10,25 +10,25 @@ namespace Packet.SoundModem.Tests.Ardop;
 
 /// <summary>
 /// The decisive live tests: full ARQ sessions between our engine and a live ardopcf
-/// (git a7c9228) over the snd-aloop virtual audio cable, both roles — both ends
+/// (git a7c9228) over the snd-aloop virtual audio cable, both roles - both ends
 /// FSKONLY (the Phase B exit, docs/ardop-design.md §6.2 rung 3 / §7) and unrestricted
 /// mixed-mode where the gearshift must climb into the PSK/QAM rungs (the Phase C
 /// exit). ardopcf runs its own ALSA on loopback device 0 and is driven over its TCP
 /// host interface; our side is the same <see cref="ArdopArqStation"/> the hermetic
-/// tests use, pumped by a real 20 ms ALSA duplex loop on device 1 — the audio clock,
+/// tests use, pumped by a real 20 ms ALSA duplex loop on device 1 - the audio clock,
 /// not the virtual one.
 /// </summary>
 /// <remarks>
 /// Gated on two environment variables so CI stays hermetic: <c>ARDOPCF</c> (path to the
 /// ardopcf binary) and <c>ARDOP_ALOOP_CARD</c> (the snd-aloop card index, e.g. 4).
 /// ALSA device access needs the audio group: run under <c>sg audio</c>
-/// (docs/qtsm-loop.md). One ardopcf instance at a time — the tests are serialized by
+/// (docs/qtsm-loop.md). One ardopcf instance at a time - the tests are serialized by
 /// xUnit's per-class collection.
 /// </remarks>
 public class ArdopArdopcfLiveSessionTests(ITestOutputHelper output)
 {
     // Fresh port pair per run: a crashed earlier run can leave an ardopcf squatting
-    // the previous ports (observed live — a stale instance made both legs fail).
+    // the previous ports (observed live - a stale instance made both legs fail).
     private static readonly int HostPort = 8600 + (Environment.ProcessId % 200);
 
     private static (string Binary, int Card)? Rig()
@@ -266,7 +266,7 @@ public class ArdopArdopcfLiveSessionTests(ITestOutputHelper output)
         }
     }
 
-    /// <summary>Our station pumped by a real ALSA duplex loop in 20 ms blocks — the
+    /// <summary>Our station pumped by a real ALSA duplex loop in 20 ms blocks - the
     /// audio-clock driver of the same engine the hermetic tests run.</summary>
     private sealed class LiveStation : IDisposable
     {
@@ -355,12 +355,12 @@ public class ArdopArdopcfLiveSessionTests(ITestOutputHelper output)
             {
                 try
                 {
-                    _capture.Read(rx);  // blocks 20 ms — the audio clock
+                    _capture.Read(rx);  // blocks 20 ms - the audio clock
                 }
                 catch (InvalidOperationException)
                 {
                     // snd-aloop invalidates a running capture with EIO whenever the
-                    // linked playback re-opens with fresh hw params — which ardopcf
+                    // linked playback re-opens with fresh hw params - which ardopcf
                     // does per transmission (SHARECAPTURE, ALSASound.c:27). Reopen
                     // and continue; the ≥240 ms leader absorbs the gap, and pacing
                     // falls to the playback side meanwhile.

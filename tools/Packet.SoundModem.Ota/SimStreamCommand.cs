@@ -6,7 +6,7 @@ using Packet.SoundModem.Tests.Channel;
 namespace Packet.SoundModem.Ota;
 
 /// <summary>
-/// <c>sm-ota sim-stream</c> — the <b>continuous-stream</b> counterpart to <see cref="SimCommand"/>'s
+/// <c>sm-ota sim-stream</c> - the <b>continuous-stream</b> counterpart to <see cref="SimCommand"/>'s
 /// independent-burst packet layer, and the seam that lets codec2's own <c>ch</c> channel simulator
 /// carry the FreeDV datac waveform. It exists to re-anchor the datac Poor/MPP thresholds against
 /// codec2's published operating points by separating two confounded effects the #104 baseline could
@@ -25,13 +25,13 @@ namespace Packet.SoundModem.Ota;
 /// <list type="bullet">
 ///   <item><description>applies <em>one</em> managed <see cref="WattersonChannel"/> realisation over
 ///   the whole stream (the continuous-fade methodology on <em>our</em> channel), or</description></item>
-///   <item><description>emits the clean concatenated int16 stream to a file so an external process —
-///   codec2's real <c>ch --mpp</c> — is the channel, then decodes what comes back
+///   <item><description>emits the clean concatenated int16 stream to a file so an external process -
+///   codec2's real <c>ch --mpp</c> - is the channel, then decodes what comes back
 ///   (<c>--emit-raw</c> / <c>--decode-raw</c>).</description></item>
 /// </list>
 /// <para>Either way the receive side is our own <see cref="DatacReceiver"/> in single-packet burst
 /// mode, driven <c>Nin</c>-at-a-time exactly as the deployment modem drives it, scoring each recovered
-/// CRC-OK packet against the transmitted payloads — codec2's "packet received" currency. No modem code
+/// CRC-OK packet against the transmitted payloads - codec2's "packet received" currency. No modem code
 /// is touched; this is pure measurement scaffolding.</para>
 /// </remarks>
 internal static class SimStreamCommand
@@ -64,7 +64,7 @@ internal static class SimStreamCommand
 
                 Common:
                   --bursts <n>          single-packet bursts in the run (default 100)
-                  --gap-ms <n>          inter-burst silence, ms (default 400) — long enough for the
+                  --gap-ms <n>          inter-burst silence, ms (default 400) - long enough for the
                                         receiver to end-of-burst and re-acquire the next preamble
                   --seed <n>            first burst seed (default 1); burst k uses seed+k
                   --csv <path>          append one row per SNR point (managed mode)
@@ -90,7 +90,7 @@ internal static class SimStreamCommand
             return DecodeRaw(mode, a.Req("decode-raw"), a.Req("manifest"), quiet);
         }
 
-        // Build the run once — the payloads and the clean burst audio are shared by every role.
+        // Build the run once - the payloads and the clean burst audio are shared by every role.
         StreamBuild build = BuildStream(mode, modeName, bursts, gapSamples, firstSeed);
 
         if (a.Has("emit-raw"))
@@ -153,7 +153,7 @@ internal static class SimStreamCommand
         /// <summary>Clean concatenated real audio (±1.0 float, 8 kHz), lead-in gap + bursts + gaps.</summary>
         public required float[] Clean { get; init; }
 
-        /// <summary>Total non-silent (burst) samples — the power/SNR is calibrated against these.</summary>
+        /// <summary>Total non-silent (burst) samples - the power/SNR is calibrated against these.</summary>
         public required int ActiveSamples { get; init; }
 
         /// <summary>Mean power of the active (burst) samples of the clean stream.</summary>
@@ -239,7 +239,7 @@ internal static class SimStreamCommand
     }
 
     /// <summary>Drives the multi-burst receiver over a channel-processed int16 stream and counts the
-    /// distinct transmitted payloads recovered CRC-OK — codec2's packets-received/sent.</summary>
+    /// distinct transmitted payloads recovered CRC-OK - codec2's packets-received/sent.</summary>
     private static int ScoreStream(OfdmMode mode, short[] samples, StreamBuild build)
     {
         // Distinct-payload matching, so a spurious decode or a re-decoded packet cannot inflate the
@@ -330,7 +330,7 @@ internal static class SimStreamCommand
                 + $"({(double)ok / payloads.Length:P0}) snr_offset {snrOffset:+0.00;-0.00} dB");
         }
 
-        // stdout is machine-readable: ok N snrOffsetDb — the shell reads this alongside ch's SNR3k.
+        // stdout is machine-readable: ok N snrOffsetDb - the shell reads this alongside ch's SNR3k.
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"{ok} {payloads.Length} {snrOffset:F4}"));
         return 0;

@@ -10,7 +10,7 @@ namespace Packet.SoundModem.Ota;
 /// <param name="WaveformNumber">MS110D waveform.</param>
 /// <param name="Interleaver">Short or Long.</param>
 /// <param name="Blocks">Interleaver blocks in the burst.</param>
-/// <param name="Seed">Payload seed — and, for an injected channel, the channel realisation too,
+/// <param name="Seed">Payload seed - and, for an injected channel, the channel realisation too,
 /// so this row alone reproduces the exact transmission.</param>
 /// <param name="SnrDb">SNR the rig was asked to inject, or null for no injection.</param>
 /// <param name="Channel">Injected channel geometry, when <paramref name="SnrDb"/> is set.</param>
@@ -46,11 +46,11 @@ public sealed record CampaignBurst(
         WaveformNumber, Interleaver, SnrDb ?? double.PositiveInfinity, Channel, Seed, Blocks);
 }
 
-/// <summary>What a pass intends to do. The request, not the record — see <see cref="CampaignManifest"/>.</summary>
+/// <summary>What a pass intends to do. The request, not the record - see <see cref="CampaignManifest"/>.</summary>
 /// <param name="Name">Short label; ends up in filenames and in the evidence log.</param>
 /// <param name="OffsetHz">Carrier offset from the waveform centre.</param>
 /// <param name="Bursts">In transmit order.</param>
-/// <param name="Notes">Why this pass exists — free text, for whoever reads it later.</param>
+/// <param name="Notes">Why this pass exists - free text, for whoever reads it later.</param>
 public sealed record CampaignSchedule(
     string Name,
     double OffsetHz,
@@ -83,12 +83,12 @@ public sealed record CampaignSchedule(
 /// <param name="DialCorrectionHz">The session's measured dial correction.</param>
 /// <param name="CapturePath">Capture file, if one was recorded.</param>
 /// <param name="CaptureSha256">Its hash.</param>
-/// <param name="CaptureSample0Utc">Timestamp of the capture's first sample — the timebase every
+/// <param name="CaptureSample0Utc">Timestamp of the capture's first sample - the timebase every
 /// burst position is measured against.</param>
 /// <param name="ReceiverHost">Which receiver.</param>
 /// <param name="BurstStartSeconds">Where each burst's modulated section starts in the capture,
 /// derived from actual key-up times rather than from the plan.</param>
-/// <param name="SupplyNote">Battery, filtered mains, whatever — the operator's word for it.</param>
+/// <param name="SupplyNote">Battery, filtered mains, whatever - the operator's word for it.</param>
 public sealed record CampaignManifest(
     CampaignSchedule Schedule,
     string ModemRevision,
@@ -129,7 +129,7 @@ public static class CampaignFiles
     /// <remarks><b>The shape is decided by inspection, not by a failed parse.</b>
     /// <c>System.Text.Json</c> does not object to missing members, so deserialising a bare
     /// schedule into a <see cref="CampaignManifest"/> succeeds and hands back one whose
-    /// <c>Schedule</c> is null — a try/catch fallback would never fire and the caller would get a
+    /// <c>Schedule</c> is null - a try/catch fallback would never fire and the caller would get a
     /// null reference or, worse, an empty pass scored as though nothing had been sent.</remarks>
     public static (CampaignSchedule Schedule, IReadOnlyList<double>? StartSeconds, string Revision)
         LoadScheduleOrManifest(string path)
@@ -145,13 +145,13 @@ public static class CampaignFiles
         {
             CampaignSchedule bare = JsonSerializer.Deserialize<CampaignSchedule>(text, Json)
                 ?? throw new InvalidDataException($"{path} is not a schedule or a manifest");
-            return (Validate(bare, path), null, "—");
+            return (Validate(bare, path), null, "-");
         }
 
         CampaignManifest manifest = JsonSerializer.Deserialize<CampaignManifest>(text, Json)
             ?? throw new InvalidDataException($"{path} is not a manifest");
         return (Validate(manifest.Schedule, path), manifest.BurstStartSeconds,
-                manifest.ModemRevision ?? "—");
+                manifest.ModemRevision ?? "-");
     }
 
     private static CampaignSchedule Validate(CampaignSchedule? schedule, string path)
@@ -185,11 +185,11 @@ public static class CampaignFiles
     /// </summary>
     /// <remarks>
     /// <para>Stamped at build time rather than read from git at run time, so it describes the
-    /// code that actually ran rather than whatever the working tree says now — the two diverge
+    /// code that actually ran rather than whatever the working tree says now - the two diverge
     /// the moment anyone edits a file mid-pass, which during development is most of the time.
     /// </para>
     /// <para>Read from <em>this</em> assembly, not the entry assembly. Under a test runner the
-    /// entry assembly is the test host, which carries somebody else's version — the first
+    /// entry assembly is the test host, which carries somebody else's version - the first
     /// version of this returned a 40-character hash from the runner and would have written that
     /// into manifests wherever the harness was hosted rather than run directly.</para>
     /// </remarks>
@@ -201,7 +201,7 @@ public static class CampaignFiles
         return plus >= 0 ? informational![(plus + 1)..] : "unknown";
     }
 
-    /// <summary>SHA-256 of a capture, streamed — these files are hundreds of megabytes.</summary>
+    /// <summary>SHA-256 of a capture, streamed - these files are hundreds of megabytes.</summary>
     public static string Sha256(string path)
     {
         using FileStream stream = File.OpenRead(path);

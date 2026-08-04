@@ -4,7 +4,7 @@ using M0LTE.Il2p;
 namespace Packet.SoundModem.Modems;
 
 /// <summary>
-/// Coherent 4-level FSK baseband ("C4FSK") — the NinoTNC modes 1 (19200 bps, 9600 sym/s)
+/// Coherent 4-level FSK baseband ("C4FSK") - the NinoTNC modes 1 (19200 bps, 9600 sym/s)
 /// and 3 (9600 bps, 4800 sym/s), both IL2P+CRC, added upstream in firmware 3/4.42. Like
 /// the GFSK modes this is a direct baseband for an FM radio's 9600 port: a 4-PAM pulse
 /// train (levels ±1, ±⅓) carrying two bits per symbol, shaped to 20 kHz / 10 kHz OBW.
@@ -14,7 +14,7 @@ namespace Packet.SoundModem.Modems;
 /// Wire truth from a real NinoTNC (firmware 3.44, CM108 loop, 2026-07-16): symbol-instant
 /// k-means of its mode-3 transmission shows four levels at ratios −0.99/−0.37/+0.42/+1.00
 /// with near-equal occupancy, and an outer-pair preamble (+1,+1,−1,−1 repeating). The
-/// dibit→level mapping was established by brute force against those recordings — every
+/// dibit→level mapping was established by brute force against those recordings - every
 /// candidate mapping was run over captured bursts with known content and the IL2P
 /// CRC arbitrated; see the C4FSK mapping test.
 /// </para>
@@ -47,7 +47,7 @@ public sealed class C4fskModem : IModem
     // normalised values (NLMS, centre-tap identity start, decisions delayed two
     // symbols). Real NinoTNC transmissions leave pattern-dependent ISI that a plain
     // centre-sample slicer cannot survive: outer symbols squeezed by opposite-going
-    // neighbours sample at 0.53-0.67 normalised — under the 2/3 boundary — so whole
+    // neighbours sample at 0.53-0.67 normalised - under the 2/3 boundary - so whole
     // frames die on payload content alone (2026-07-31 bench corpus: txd50 0/3 and
     // txd120 2/3 from recordings whose levels/spectra/DC are indistinguishable from
     // the txd250 capture that decodes clean; every error in the instrumented trace
@@ -108,7 +108,7 @@ public sealed class C4fskModem : IModem
         _crc = crc;
         // 1.5× the symbol rate, NOT the 0.55× the binary FSK modes use: a 4-level eye is
         // three times tighter, and the extra ISI of a tight low-pass on the already
-        // Gaussian-shaped signal collapses the inner levels — measured on real NinoTNC
+        // Gaussian-shaped signal collapses the inner levels - measured on real NinoTNC
         // recordings as 0/8 at 0.55×, 7-8/8 from 1.0× up. 1.5× keeps some noise rejection.
         _rxFilter = new FirFilter(FilterDesign.LowPass(1.5 * symbolRate, sampleRate, 48 * sampleRate / 48000));
         _energyBusy = new EnergyBusyDetector(sampleRate);
@@ -128,11 +128,11 @@ public sealed class C4fskModem : IModem
         ResetFfe();
     }
 
-    /// <summary>Creates the 9600 bps mode — NinoTNC mode 3 (4800 sym/s, 10 kHz OBW).</summary>
+    /// <summary>Creates the 9600 bps mode - NinoTNC mode 3 (4800 sym/s, 10 kHz OBW).</summary>
     public static C4fskModem C4fsk9600(int sampleRate, Action<byte[]> frameReceived) =>
         new(sampleRate, frameReceived, 4800);
 
-    /// <summary>Creates the 19200 bps mode — NinoTNC mode 1 (9600 sym/s, 20 kHz OBW).</summary>
+    /// <summary>Creates the 19200 bps mode - NinoTNC mode 1 (9600 sym/s, 20 kHz OBW).</summary>
     public static C4fskModem C4fsk19200(int sampleRate, Action<byte[]> frameReceived) =>
         new(sampleRate, frameReceived, 9600);
 
@@ -158,11 +158,11 @@ public sealed class C4fskModem : IModem
 
             // No signal, no bits. On silence this slicer saturates to the outer levels
             // (the envelope collapses and the normalised value rails), producing 1-heavy
-            // garbage — and the Mode-2 sync is 18/24 ones, so the deframer false-locks
+            // garbage - and the Mode-2 sync is 18/24 ones, so the deframer false-locks
             // continuously between bursts and is mid-garbage-frame when a real sync
             // arrives (measured: ~12k near-sync hits in one recording's silence). The
-            // 2-level modes survive the same silence by statistics — balanced garbage
-            // rarely matches a balanced sync — but here the bit stream must simply stop
+            // 2-level modes survive the same silence by statistics - balanced garbage
+            // rarely matches a balanced sync - but here the bit stream must simply stop
             // when the channel is idle. The energy detector's hold keeps bits flowing
             // through the tail of a burst, so nothing real is lost.
             if (!_energyBusy.Busy)
@@ -170,7 +170,7 @@ public sealed class C4fskModem : IModem
                 // Reset the deframer on the energy-gate falling edge: if it was
                 // mid-collection when the carrier stopped, abandon the phantom frame so
                 // the next burst's sync word is not consumed as payload. The equalizer
-                // resets with it — its taps model the burst that just ended.
+                // resets with it - its taps model the burst that just ended.
                 if (_previousEnergyBusy)
                 {
                     _deframer.Reset();
@@ -192,7 +192,7 @@ public sealed class C4fskModem : IModem
                 // ±⅔ of the half-swing around the midpoint.
                 // Decay is 20× slower than the binary modes': the envelope's job here is
                 // to HOLD the outer reference through inner-heavy scrambled stretches, not
-                // to track — at 2e-4 it sagged toward the inner levels mid-frame and the
+                // to track - at 2e-4 it sagged toward the inner levels mid-frame and the
                 // ⅔ threshold ate them (5/8; 7-8/8 at 1e-5, measured on the same bursts).
                 _peakHigh += (value - _peakHigh) * (value > _peakHigh ? 0.08f : 0.00001f);
                 _peakLow += (value - _peakLow) * (value < _peakLow ? 0.08f : 0.00001f);
@@ -203,9 +203,9 @@ public sealed class C4fskModem : IModem
                 // Symbol clock. The shared BitDpll cannot be used as-is for 4-PAM: it
                 // nudges on EVERY level change, and an outer-to-outer transition sweeps
                 // through the inner thresholds mid-flight, injecting nudges half a symbol
-                // off — measured as total clock collapse (0 frames from a recording that
+                // off - measured as total clock collapse (0 frames from a recording that
                 // decodes with 1 symbol error in 316 at a fixed phase). Only the middle
-                // threshold's crossings — sign changes — land at symbol boundaries, so
+                // threshold's crossings - sign changes - land at symbol boundaries, so
                 // only they steer the clock; the 4-level decision is taken at the wrap,
                 // through the equalizer.
                 _clockPhase += _clockIncrement;
@@ -238,15 +238,15 @@ public sealed class C4fskModem : IModem
                         };
 
                         // Our own 0x77 preamble alternates ±outer every symbol, so each
-                        // neighbour is exactly the negated centre — rank-deficient
+                        // neighbour is exactly the negated centre - rank-deficient
                         // training in which any taps with w[c] − w[c−1] − w[c+1] = 1
                         // fit the preamble perfectly, and noise random-walks the taps
                         // along that null space for the whole run-in. Measured as an
                         // INVERTED preamble trend in the sim (25 dB AWGN: txd20 12/12 →
                         // txd250 4/12; clean at 60 dB where nothing drives the walk).
                         // Cure: freeze adaptation while the decision stream is an outer
-                        // alternation, with hysteresis both ways — 8 conforming
-                        // decisions freeze, 4 consecutive non-conforming unfreeze — so
+                        // alternation, with hysteresis both ways - 8 conforming
+                        // decisions freeze, 4 consecutive non-conforming unfreeze - so
                         // an isolated noisy preamble decision cannot restart the drift
                         // (at 5 samples/symbol the 19200 mode's preamble decisions are
                         // noisy enough that a single-run gate leaked: txd250 3/12 vs
@@ -256,7 +256,7 @@ public sealed class C4fskModem : IModem
                         // real-capture behaviour is untouched. NO identity leak: a
                         // leak's few-per-cent tap bias measurably costs the most
                         // marginal real capture (corpus txd50 burst 1 sits at exactly
-                        // its RS budget of 8 bad bytes — 45/45 without leak, 44/45
+                        // its RS budget of 8 bad bytes - 45/45 without leak, 44/45
                         // with 0.002).
                         if (level is 0 or 3 && level == 3 - _previousLevel)
                         {
@@ -318,7 +318,7 @@ public sealed class C4fskModem : IModem
         // Floor of ~20 ms of preamble regardless of TXDELAY: the receive side's energy
         // gate takes a block or two to assert from silence, and bits emitted before it
         // opens never reach the deframer. At 2 bytes (8 symbols ≈ 2 ms) the entire
-        // preamble died inside that latency — cold acquisition failed at TXDELAY 0 while
+        // preamble died inside that latency - cold acquisition failed at TXDELAY 0 while
         // 20 ms decodes 10/10. The NinoTNC's own C4FSK floor is one 16-bit word, but it
         // has no such gate; ours buys silence immunity (12k false sync locks per
         // recording without it) at the price of this minimum.

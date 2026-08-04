@@ -41,8 +41,8 @@ skipped entirely, preserving the optimal first-pass decode.
 | h2 threshold (|h2|² > 0.04) | h2 noise on AWGN (~0.01) overlaps with Poor (~0.09). False positives. |
 | LLR magnitude threshold (avg |LLR| > N) | AWGN avg |LLR| ≈ 4 for BPSK, ≈ 2.8 for QPSK. Overlaps with Poor. No clean separator. |
 | LLR confidence comparison (turbo vs first-pass) | BCJR LLRs use different scale (1/noiseVar) than first-pass (4*Re). Comparison unreliable. |
-| No re-solve (use first-pass taps) | Breaks loopback — per-frame taps are necessary for multi-frame blocks. |
-| Very high regularization (100.0) | Breaks loopback — taps too conservative for some modes (WN7 K=9). |
+| No re-solve (use first-pass taps) | Breaks loopback - per-frame taps are necessary for multi-frame blocks. |
+| Very high regularization (100.0) | Breaks loopback - taps too conservative for some modes (WN7 K=9). |
 | Residual variance detection | AWGN residual ≈ noise power ≈ 0.1 at +10 dB. Overlaps with Poor. |
 
 ## Open Issue: WN6 Poor Catastrophic Failure
@@ -79,15 +79,15 @@ that <400k bits with 0 errors won't clear the Poisson confidence bound).
 
 Quick diagnostic tests (loopback, unit tests, `Ms110dFlatChannelGateTests`) provide
 fast functional validation but do NOT constitute proof of correctness. The statistical
-mask gates are the ground truth — they exercise the modem at the exact spec SNRs with
+mask gates are the ground truth - they exercise the modem at the exact spec SNRs with
 enough bits to bound BER with 95% confidence.
 
 **Before declaring any equalizer/demodulator change "done":**
 
-1. Run loopback (40/40) and unit tests (93/93) — fast, catches regressions.
-2. Run `Ms110dFlatChannelGateTests` — fast, catches AWGN/Poor gate issues.
-3. Run the full AWGN mask suite (`MS110D_MASKS=1`, default 3M bits) — MUST be 10/10.
-4. Run the Poor channel mask suite (`MS110D_MASKS_POOR=1`) — check against known
+1. Run loopback (40/40) and unit tests (93/93) - fast, catches regressions.
+2. Run `Ms110dFlatChannelGateTests` - fast, catches AWGN/Poor gate issues.
+3. Run the full AWGN mask suite (`MS110D_MASKS=1`, default 3M bits) - MUST be 10/10.
+4. Run the Poor channel mask suite (`MS110D_MASKS_POOR=1`) - check against known
    baseline (WN6 Poor is a known pre-existing failure as of `1a349ad`).
 5. Run Static WID2 and Doppler offset checks.
 
@@ -111,8 +111,8 @@ results. Do not break the chain.
 
 ## Files
 
-- `src/Packet.SoundModem/Ms110d/Ms110dDemodulator.cs` — TurboReequalize, IsFlatChannel
-- `src/Packet.SoundModem/Ms110d/Ms110dBcjr.cs` — BCJR MAP equalizer
-- `tests/Packet.SoundModem.Tests/Ms110d/Ms110dMaskTests.cs` — mask test definitions
-- `tests/Packet.SoundModem.Tests/Ms110d/Ms110dFlatChannelGateTests.cs` — fast diagnostic
-- `docs/ms110d/wn6-poor-catastrophic-handover.md` — WN6 Poor investigation guide
+- `src/Packet.SoundModem/Ms110d/Ms110dDemodulator.cs` - TurboReequalize, IsFlatChannel
+- `src/Packet.SoundModem/Ms110d/Ms110dBcjr.cs` - BCJR MAP equalizer
+- `tests/Packet.SoundModem.Tests/Ms110d/Ms110dMaskTests.cs` - mask test definitions
+- `tests/Packet.SoundModem.Tests/Ms110d/Ms110dFlatChannelGateTests.cs` - fast diagnostic
+- `docs/ms110d/wn6-poor-catastrophic-handover.md` - WN6 Poor investigation guide

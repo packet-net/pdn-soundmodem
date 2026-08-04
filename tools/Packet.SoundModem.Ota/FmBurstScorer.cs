@@ -6,11 +6,11 @@ namespace Packet.SoundModem.Ota;
 /// <param name="Index">Position in the pass.</param>
 /// <param name="Mode">The mode.</param>
 /// <param name="StartSeconds">Where the active burst began in the capture.</param>
-/// <param name="AskedSnrDb">SNR the rig was asked to inject — beside the measured one.</param>
+/// <param name="AskedSnrDb">SNR the rig was asked to inject - beside the measured one.</param>
 /// <param name="Decoded">Whether the mode's demodulator emitted the sent frame bit-exact.</param>
 /// <param name="FramesDecoded">Frames the receiver emitted from the burst window (0, 1, or more).</param>
 /// <param name="Snr">The delivered SNR measured from the burst against its own noise lead-in.</param>
-/// <param name="PeakDeviationHz">The achieved peak FM deviation measured over the burst window — the
+/// <param name="PeakDeviationHz">The achieved peak FM deviation measured over the burst window - the
 /// signal's deviation at high SNR, the signal-plus-noise excursion at low SNR.</param>
 /// <param name="CorrectedBytes">FEC-repaired bytes on the matched frame (a channel-stress floor).</param>
 internal sealed record FmBurstScore(
@@ -30,7 +30,7 @@ internal sealed record FmBurstScore(
 internal sealed record FmCaptureScore(double AudioSeconds, IReadOnlyList<FmBurstScore> Bursts);
 
 /// <summary>
-/// Scores a captured (or rehearsed) FM pass — the FM counterpart of <see cref="OfdmBurstScorer"/>.
+/// Scores a captured (or rehearsed) FM pass - the FM counterpart of <see cref="OfdmBurstScorer"/>.
 /// The capture's IQ is FM-demodulated to the mode's DSP-rate audio with
 /// <see cref="IqToFmAudioConverter"/> (the discriminator scaled so ±target-deviation → ±0.5, a
 /// fixed scale so no rung rescales another), then each burst is scored in its own window: a fresh
@@ -43,7 +43,7 @@ internal sealed record FmCaptureScore(double AudioSeconds, IReadOnlyList<FmBurst
 internal sealed class FmBurstScorer
 {
     // Recovered audio has been through the discriminator's decimation low-pass (when the capture
-    // rate exceeds the DSP rate), so its noise occupies that band — the SNR estimator must be told,
+    // rate exceeds the DSP rate), so its noise occupies that band - the SNR estimator must be told,
     // or it over-subtracts noise at the bottom of the ladder. At a ×1 factor there is no decimation
     // and the noise fills the whole band.
     private const double OccupiedLowHz = 50;
@@ -80,7 +80,7 @@ internal sealed class FmBurstScorer
     /// <param name="capturePath">The 2-channel IQ capture.</param>
     /// <param name="dialHz">Down-shift that lands the FM carrier at 0&#160;Hz (0 when tuned to it).</param>
     /// <param name="dspRate">The mode's DSP audio rate.</param>
-    /// <param name="targetDeviationHz">The mode's target peak deviation — the discriminator's fixed
+    /// <param name="targetDeviationHz">The mode's target peak deviation - the discriminator's fixed
     /// scale and the factor the achieved-deviation read-back multiplies back by.</param>
     public static FmBurstScorer FromCapture(
         string capturePath, double dialHz, int dspRate, double targetDeviationHz)
@@ -95,10 +95,10 @@ internal sealed class FmBurstScorer
         {
             throw new InvalidDataException(
                 $"capture rate {reader.SampleRate} Hz is not an integer multiple of the {dspRate} Hz "
-                + "DSP rate — the discriminator's decimation needs one");
+                + "DSP rate - the discriminator's decimation needs one");
         }
 
-        // Read the whole capture, then discriminate in one pass — the reference-style whole-array
+        // Read the whole capture, then discriminate in one pass - the reference-style whole-array
         // path (a ladder pass is minutes, not the hour-long campaign the streaming SSB converter
         // exists for). A live pass captured at 48 kHz keeps this comfortably in memory.
         var samples = new short[reader.FrameCount * 2];

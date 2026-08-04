@@ -203,7 +203,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
     public async Task Our_Own_Transmission_Is_Drawn_But_Marked_As_Ours()
     {
         // Receive processing is gated off while transmitting, so without this the display simply
-        // stops for the length of every keyup and its time axis stops meaning anything. Drawn —
+        // stops for the length of every keyup and its time axis stops meaning anything. Drawn -
         // but under its own line type, because a burst of your own must not read as a strong
         // station.
         using var socket = new ClientWebSocket();
@@ -306,7 +306,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
     [Fact]
     public async Task A_Frame_Whose_Addresses_Will_Not_Read_Says_Why_And_Carries_Its_Bytes()
     {
-        // The panel is where an operator sees the word "unattributed" — it said that and stopped,
+        // The panel is where an operator sees the word "unattributed" - it said that and stopped,
         // which is where this whole diagnosis was missing. The frame here is the live 40 m shape:
         // decoded, CRC-valid, and its first bytes are not a shifted AX.25 address field.
         using var socket = new ClientWebSocket();
@@ -425,7 +425,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
         (_, byte[] first) = await Receive(socket);
         using JsonDocument config = JsonDocument.Parse(first);
         config.RootElement.GetProperty("type").GetString().Should()
-            .Be("config", "the config still comes first — the page needs it to render anything");
+            .Be("config", "the config still comes first - the page needs it to render anything");
 
         (_, byte[] second) = await Receive(socket);
         using JsonDocument history = JsonDocument.Parse(second);
@@ -459,7 +459,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
     /// </summary>
     /// <remarks>
     /// The station logs what it transmits as well as what it hears, so the panel's opening list
-    /// is a record of the whole channel — and a transmission listed as an ordinary decode would
+    /// is a record of the whole channel - and a transmission listed as an ordinary decode would
     /// have an operator reading their own beacon as somebody else's signal.
     /// </remarks>
     [Fact]
@@ -754,7 +754,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
     public async Task An_Id_Beacon_Is_Reported_As_One_So_Both_Views_Can_Say_What_It_Is()
     {
         // A NinoTNC idents in 300 AFSK alongside its PSK data mode. The message carries the flag
-        // the page uses to badge it in the panel and to write "ID" onto its burst — without it an
+        // the page uses to badge it in the panel and to write "ID" onto its burst - without it an
         // ident and a data frame on the same slot read identically.
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);

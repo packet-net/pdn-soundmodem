@@ -13,7 +13,7 @@ namespace Packet.SoundModem.Tests.Waterfall;
 /// <remarks>
 /// <para>Everything else in this suite tests the server. That left a gap the size of the whole
 /// browser: the Listen button once shipped completely non-functional while every server-side
-/// assertion stayed green, because both defects lived in the page — a socket that wasn't in scope
+/// assertion stayed green, because both defects lived in the page - a socket that wasn't in scope
 /// where the click handler needed it, and a 16-bit view onto an odd byte offset, which is illegal
 /// and throws. The bytes on the wire were correct throughout.</para>
 /// <para>So the page script is executed here, as the browser executes it, by Node. Skipped when
@@ -56,7 +56,7 @@ public class WaterfallPageTests
         probe.BlocksPlayed.Should().BeGreaterThan(20, "audio must actually reach the speakers");
 
         // The decisive assertion. A block that arrives but is read at the wrong offset, or scaled
-        // wrongly, still counts as "played" — only the amplitude proves the samples came through
+        // wrongly, still counts as "played" - only the amplitude proves the samples came through
         // intact, and it is the amplitude that was fed in.
         probe.PeakAmplitude.Should().BeApproximately(
             ToneAmplitude, 0.02, "the tone must arrive at the level it was transmitted at");
@@ -95,8 +95,8 @@ public class WaterfallPageTests
         // The waterfall: both tag, and the ident's says so. A ghost has no band of its own, so
         // without the word an ident reads as a station sitting on the slot it identified beside.
         //
-        // Two draws each, not one: the page writes every tag twice — once at its place in the
-        // scroll ring and once a ring-height up — so a tag straddling the wrap seam is whole on
+        // Two draws each, not one: the page writes every tag twice - once at its place in the
+        // scroll ring and once a ring-height up - so a tag straddling the wrap seam is whole on
         // both sides of it. Asserted rather than deduplicated, because one draw would mean that
         // seam handling had been lost.
         probe.OrdinaryTag.Should().HaveCount(2).And.AllSatisfy(
@@ -116,8 +116,8 @@ public class WaterfallPageTests
     }
 
     /// <summary>
-    /// A frame this station sent is listed in the panel and marked as ours, and — unlike
-    /// everything heard — is not tagged onto the waterfall.
+    /// A frame this station sent is listed in the panel and marked as ours, and - unlike
+    /// everything heard - is not tagged onto the waterfall.
     /// </summary>
     /// <remarks>
     /// Both halves are page behaviour the server cannot see: it sends one <c>frame</c> message
@@ -125,7 +125,7 @@ public class WaterfallPageTests
     /// same entry point in the same run, so "listed but not tagged" is measured against what a
     /// heard frame does rather than against an assumption. Not tagged because the burst is
     /// painted from a queue in real time while the event fires as soon as the audio device took
-    /// the audio — the tag would land somewhere up the burst rather than on it.
+    /// the audio - the tag would land somewhere up the burst rather than on it.
     /// </remarks>
     [Fact]
     public async Task Our_Own_Transmission_Is_Listed_But_Not_Tagged()
@@ -189,7 +189,7 @@ public class WaterfallPageTests
         probe.HistoryTag.Should().BeEmpty(
             "a logged frame was heard before the scroll on screen and belongs to no burst on it");
 
-        // The probe drives the backlog last, over a panel that already holds four live rows —
+        // The probe drives the backlog last, over a panel that already holds four live rows -
         // which is the reconnect case, where the log by then holds those frames too. Rebuilt, not
         // stacked: three rows, not seven.
         probe.HistoryRows.Should().HaveCount(
@@ -198,14 +198,14 @@ public class WaterfallPageTests
             row => row.Should().Contain("hist"),
             "a backlog must not read as a channel that is busy right now");
 
-        // Newest on top, as for live frames — the page prepends and the server sends oldest first.
+        // Newest on top, as for live frames - the page prepends and the server sends oldest first.
         probe.HistoryRows[0].Should().Contain("GB7RDG-2").And.Contain("EI0RSI-1");
         probe.HistoryRows[1].Should().Contain("GB7BEX-15");
 
         // Stamped with when it was heard, not when it was shown. Today's frame gets a bare clock
         // time; one from a past year must carry a date too, or it reads as this morning. The
         // date's shape is the viewer's locale's business, so what is asserted is that it is not
-        // a bare time — that being the thing that would mislead.
+        // a bare time - that being the thing that would mislead.
         probe.HistoryRows[0].Should().MatchRegex(@"<span class=""t"">\d\d:\d\d:\d\d</span>");
         probe.HistoryRows[1].Should().NotMatchRegex(@"<span class=""t"">\d\d:\d\d:\d\d</span>");
         probe.HistoryRows[1].Should().MatchRegex(@"<span class=""t"">.*\d\d:\d\d</span>");
@@ -221,7 +221,7 @@ public class WaterfallPageTests
     /// </summary>
     /// <remarks>
     /// The station logs what it sends as well as what it hears, so a backlog row can carry both
-    /// classes — and the two rules set the same <c>border-left</c>, with the history one declared
+    /// classes - and the two rules set the same <c>border-left</c>, with the history one declared
     /// second. Left to source order the grey would win and a logged transmission would arrive
     /// dimmed and unmarked down the edge, reading as a station heard. The colour asserted here is
     /// resolved out of the shipping stylesheet the way a browser resolves it, by specificity then
@@ -276,7 +276,7 @@ public class WaterfallPageTests
         probe.Thrown.Should().BeEmpty("the page must not throw on a capture");
 
         // Drawn twice, like every tag, so one straddling the scroll ring's wrap seam is whole on
-        // both sides of it — and saying what it is and how wide, which is what a classifier wants
+        // both sides of it - and saying what it is and how wide, which is what a classifier wants
         // and what a list of filenames could never put on the frequency axis.
         probe.CaptureTag.Should().HaveCount(2).And.AllSatisfy(
             tag => tag.Should().Contain("unclaimed").And.Contain("400 Hz"));
@@ -287,12 +287,12 @@ public class WaterfallPageTests
             .And.Contain("/survey/20260804-151909-1144hz-unclaimed.json", "the sidecar too");
         probe.FrameRowClasses[capture].Should().Be("fr cap");
 
-        // The refusals are the reason the strip exists — an operator has no other way to see them.
+        // The refusals are the reason the strip exists - an operator has no other way to see them.
         probe.SurveyStatus.Should().Contain("7").And.Contain("2 skipped").And.Contain("12 MB");
     }
 
     /// <summary>
-    /// A frame that decoded and would not yield callsigns explains itself in the panel — which is
+    /// A frame that decoded and would not yield callsigns explains itself in the panel - which is
     /// where an operator sees the word "unattributed" in the first place.
     /// </summary>
     [Fact]
@@ -323,7 +323,7 @@ public class WaterfallPageTests
 
     /// <summary>
     /// Finds a panel row by something only it contains. Rows were addressed by index, which made
-    /// every test depend on how many other things the probe happened to drive first — adding one
+    /// every test depend on how many other things the probe happened to drive first - adding one
     /// step broke two unrelated tests. Order still matters and is asserted where it means
     /// something (newest first), but identity is by content.
     /// </summary>
@@ -375,7 +375,7 @@ public class WaterfallPageTests
 
     /// <summary>
     /// The page the server serves is an embedded resource; the probe needs it as a file. Writing
-    /// the embedded copy out — rather than reaching into the source tree — keeps this testing what
+    /// the embedded copy out - rather than reaching into the source tree - keeps this testing what
     /// ships, not what happens to be sitting next to it.
     /// </summary>
     private static string PageOnDisk()

@@ -9,7 +9,7 @@ namespace Packet.SoundModem.Tests.Daemon;
 /// The per-frame lines a running station writes to the journal.
 /// </summary>
 /// <remarks>
-/// `journalctl -u pdn-soundmodem -f` is the only view of a station most operators use — the
+/// `journalctl -u pdn-soundmodem -f` is the only view of a station most operators use - the
 /// waterfall needs a browser and the frame log needs SQL. These lines end up in grep pipelines and
 /// bug reports, so the text is an interface and is pinned here rather than left to interpolation
 /// nobody reads.
@@ -108,7 +108,7 @@ public class ActivityLogTests
     {
         // The line that used to raise a question instead of answering one. This is the live 40 m
         // case: a 118-byte bpsk300 frame, CRC-valid and zero corrections, whose payload is not an
-        // AX.25 address field — so the bits are right and the reading of them is not. Diagnosing
+        // AX.25 address field - so the bits are right and the reading of them is not. Diagnosing
         // one of these meant pulling the payload blob out of the frame log by hand.
         byte[] frame = [0x00, 0x01, 0x02, 0x03, .. new byte[114]];
 
@@ -128,7 +128,7 @@ public class ActivityLogTests
     [Fact]
     public void An_Ordinary_Frame_Carries_No_Attribution_Note()
     {
-        // The note is for the frames that need explaining. Every other line stays as it was —
+        // The note is for the frames that need explaining. Every other line stays as it was -
         // these end up in other people's grep pipelines.
         string line = ActivityLog.Received(
             0, Frame(), new FrameQuality("bpsk300-il2pc", 20, 0, true));

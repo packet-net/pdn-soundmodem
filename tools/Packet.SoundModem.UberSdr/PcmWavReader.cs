@@ -3,14 +3,14 @@ using System.Buffers.Binary;
 namespace Packet.SoundModem.UberSdr;
 
 /// <summary>
-/// Chunked reader for 16-bit PCM WAV — the read counterpart of <see cref="PcmWavWriter"/>, for
+/// Chunked reader for 16-bit PCM WAV - the read counterpart of <see cref="PcmWavWriter"/>, for
 /// captures too large to hold in memory.
 /// </summary>
 /// <remarks>
 /// <para><see cref="Packet.SoundModem.Audio.WavFile.ReadMono"/> reads the whole file into a byte
 /// array and then materialises one float per frame per channel. An hour of iq48 is 691 MB on
 /// disk and 172.8 M frames, so reading I and Q that way costs the file twice over plus two
-/// 1.4 GB <c>double[]</c> downstream — it runs out of memory on this box long before it runs out
+/// 1.4 GB <c>double[]</c> downstream - it runs out of memory on this box long before it runs out
 /// of patience. This reader hands out fixed-size blocks instead and never grows with the
 /// file.</para>
 /// <para>Only what the capture format actually is: RIFF/WAVE, PCM, 16-bit, 1 or 2 channels.

@@ -4,7 +4,7 @@ namespace Packet.SoundModem.Modems;
 
 /// <summary>
 /// Estimates the carrier-frequency offset of a BPSK signal from a nominal centre without decoding
-/// it — for characterising how far off-frequency the stations on a channel actually sit (and so
+/// it - for characterising how far off-frequency the stations on a channel actually sit (and so
 /// how to size a <see cref="BpskMultiModem"/> bank's step and span).
 /// </summary>
 /// <remarks>
@@ -70,7 +70,7 @@ public sealed class BpskCarrierOffsetEstimator
     }
 
     /// <summary>Estimated carrier offset from the nominal centre, in Hz (positive = above centre),
-    /// taken at the point of peak coherence since the last <see cref="Reset"/> — so a brief burst is
+    /// taken at the point of peak coherence since the last <see cref="Reset"/> - so a brief burst is
     /// not washed out by long idle either side of it. Meaningful once <see cref="HasEstimate"/> is
     /// true; 0 before any signal.</summary>
     public double OffsetHz => _peakOffsetHz;
@@ -79,7 +79,7 @@ public sealed class BpskCarrierOffsetEstimator
     /// at its strongest. A real signal drives it toward ~0.9; band-limited noise averages toward 0.</summary>
     public double Confidence => _peakCoherence;
 
-    /// <summary>True once a stretch of coherent signal has been seen (peak coherence ≥ 0.5 —
+    /// <summary>True once a stretch of coherent signal has been seen (peak coherence ≥ 0.5 -
     /// comfortably above the noise floor, well below a clean signal's ~0.9).</summary>
     public bool HasEstimate => _peakCoherence >= 0.5;
 
@@ -119,7 +119,7 @@ public sealed class BpskCarrierOffsetEstimator
             _averageDiffMagnitude += 0.001 * (diffMagnitude - _averageDiffMagnitude);
             if (diffMagnitude <= _averageDiffMagnitude || diffMagnitude < 1e-9)
             {
-                continue; // a reversal null — no reliable phase here
+                continue; // a reversal null - no reliable phase here
             }
 
             double normReal = diffReal / diffMagnitude;
@@ -128,7 +128,7 @@ public sealed class BpskCarrierOffsetEstimator
             double squaredImag = 2 * normReal * normImag;
 
             // Exponential window (~1000-sample memory) started from zero: its resultant length is the
-            // coherence over the recent signal — climbs toward 1 through a burst (consistent phasors
+            // coherence over the recent signal - climbs toward 1 through a burst (consistent phasors
             // reinforce), stays near 0 in idle noise (random phasors cancel). Starting from zero,
             // not the first phasor, keeps a lone early sample from reading as full coherence.
             const double rate = 0.001;

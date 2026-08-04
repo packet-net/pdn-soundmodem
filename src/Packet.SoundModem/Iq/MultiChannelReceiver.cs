@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Iq;
 /// <summary>
 /// Fans one wideband <see cref="IIqSource"/> out into several independent narrowband channels,
 /// each surfaced as an <c>IAudioInput</c> so an existing demodulator (or a whole
-/// <c>SoundModemChannel</c>) attaches unchanged — the "decode N packet channels at once from one
+/// <c>SoundModemChannel</c>) attaches unchanged - the "decode N packet channels at once from one
 /// slice" capability the DAX-IQ RX path unlocks (docs/flex-integration.md §9.1/§9.6).
 /// </summary>
 /// <remarks>

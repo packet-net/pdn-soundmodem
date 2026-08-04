@@ -31,7 +31,7 @@
   <!-- Stamp the repository revision into the binary, so every manifest a pass writes records
        which demodulator produced the scores. The demodulator changes daily and a score without a
        revision is uninterpretable six weeks later; asking the operator to write it down by hand
-       is asking for it to be wrong. Failures here are non-fatal (ContinueOnError) — a build from
+       is asking for it to be wrong. Failures here are non-fatal (ContinueOnError) - a build from
        a tarball with no git still works, it just records "unknown" and says so. -->
   <Target Name="StampRepositoryRevision" BeforeTargets="GetAssemblyAttributes">
     <Exec Command="git -C $(MSBuildProjectDirectory) rev-parse --short=12 HEAD"

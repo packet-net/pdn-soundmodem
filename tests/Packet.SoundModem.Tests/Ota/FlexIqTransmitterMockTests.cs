@@ -4,25 +4,25 @@ using Packet.SoundModem.Ota;
 namespace Packet.SoundModem.Tests.Ota;
 
 /// <summary>
-/// The transmit path end to end against <see cref="MockFlexRadio"/> — waveform bring-up, key,
-/// reflect, drain, unkey — with no radio.
+/// The transmit path end to end against <see cref="MockFlexRadio"/> - waveform bring-up, key,
+/// reflect, drain, unkey - with no radio.
 /// </summary>
 /// <remarks>
 /// <para>This is the gate that has to be green before the tone goes on the air
 /// (ota-execution-plan §E0.5). A waveform is <em>reflection-driven</em>: the radio streams TX
 /// buffers while keyed and expects exactly one back per buffer, so the failure mode that
-/// matters is a starve — the ring not having samples when the radio asks. Offline that shows
+/// matters is a starve - the ring not having samples when the radio asks. Offline that shows
 /// up as a non-zero <c>SamplesStarved</c>; on the air it is a phase discontinuity and
 /// therefore spectral splatter around what should be a pure carrier.</para>
 /// <para>The assertion is not merely "it ran": the samples the mock captured are spectrally
 /// analysed and must contain the tone we asked for, at the right frequency and level, with no
-/// image — i.e. what the radio was handed is what we intended to transmit.</para>
+/// image - i.e. what the radio was handed is what we intended to transmit.</para>
 /// </remarks>
 public sealed class FlexIqTransmitterMockTests
 {
     private const int Rate = FlexIqTransmitter.SampleRate;
 
-    /// <summary>The declared band width — the samples' 0..obw span is what reaches the air.</summary>
+    /// <summary>The declared band width - the samples' 0..obw span is what reaches the air.</summary>
     private const int Obw = 6000;
 
     private static FlexTransmitterOptions Options() => new()
@@ -141,14 +141,14 @@ public sealed class FlexIqTransmitterMockTests
             log.Should().Contain(c => c.Contains("waveform create") && c.Contains("underlying_mode=RAW"));
 
             // The slice is DERIVED, not the requested frequency: with the band's lower edge at
-            // 18.098000 and a 6000 Hz width, the slice belongs at the band's top edge —
-            // 18.104000 — because RF = slice + (negative) baseband. The band-persistence fix
+            // 18.098000 and a 6000 Hz width, the slice belongs at the band's top edge -
+            // 18.104000 - because RF = slice + (negative) baseband. The band-persistence fix
             // (`slice create freq=` alone is ignored by a real 6500) must land there too.
             log.Should().Contain(c => c.StartsWith("slice t ", StringComparison.Ordinal)
                 && c.Contains("18.104000"));
 
-            // And the GLOBAL transmit filter — the setting that actually caps occupied
-            // bandwidth, 3 kHz from the factory — must have been opened to the declared width.
+            // And the GLOBAL transmit filter - the setting that actually caps occupied
+            // bandwidth, 3 kHz from the factory - must have been opened to the declared width.
             log.Should().Contain(c => c.Contains("transmit set filter_high=6000"));
             mock.TransmitFilter.High.Should().Be(Obw);
         }
@@ -162,7 +162,7 @@ public sealed class FlexIqTransmitterMockTests
         await using (client)
         await using (tx)
         {
-            // Two tones at 0.7 each peak at 1.4 — over full scale.
+            // Two tones at 0.7 each peak at 1.4 - over full scale.
             float[] hot = ToneGenerator.Complex([1500.0, 2500.0], 0.7, 0.2, Rate);
 
             Func<Task> transmit = () => tx.TransmitAsync(hot);

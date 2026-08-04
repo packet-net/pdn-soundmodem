@@ -5,9 +5,9 @@ namespace Packet.SoundModem.Modems;
 /// <summary>
 /// UZ7HO-style multi-decoder AFSK: 2·pairs+1 parallel demodulators spaced at
 /// <c>offsetHz</c> steps around the channel centre (SoundModem's celebrated
-/// off-frequency tolerance — QtSoundModem runs up to 16 such decoders per channel at
+/// off-frequency tolerance - QtSoundModem runs up to 16 such decoders per channel at
 /// 30 Hz spacing), optionally multiplied by three emphasis variants (flat, +6 dB/oct,
-/// +12 dB/oct input pre-filters — QtSM's <c>emph_all</c>, the counter to real-world
+/// +12 dB/oct input pre-filters - QtSM's <c>emph_all</c>, the counter to real-world
 /// pre/de-emphasis "twist" where one tone arrives much weaker than the other), with
 /// content-based deduplication across the bank. Off-tune and tone-imbalanced
 /// transmitters decode on whichever branch fits best. Transmit uses the centre
@@ -35,8 +35,8 @@ public sealed class Afsk1200MultiModem : IModem
     /// decoder; QtSoundModem default spacing is 30 Hz).</param>
     /// <param name="offsetHz">Frequency step between adjacent decoders.</param>
     /// <param name="centerFrequency">Channel centre for the middle decoder and TX.</param>
-    /// <param name="emphasisVariants">Run each frequency branch three times — flat,
-    /// +6 dB/oct and +12 dB/oct input pre-emphasis — to decode tone-imbalanced
+    /// <param name="emphasisVariants">Run each frequency branch three times - flat,
+    /// +6 dB/oct and +12 dB/oct input pre-emphasis - to decode tone-imbalanced
     /// transmitters (QtSM's emph_all). Triples CPU for a large real-world decode gain.</param>
     public Afsk1200MultiModem(
         int sampleRate,
@@ -89,7 +89,7 @@ public sealed class Afsk1200MultiModem : IModem
     public void Process(ReadOnlySpan<float> samples)
     {
         // Feed the bank in bounded chunks so the dedupe clock (_samplesProcessed)
-        // advances with the audio even when a caller hands over one huge buffer —
+        // advances with the audio even when a caller hands over one huge buffer -
         // otherwise a legitimate repeat later in the same buffer would be suppressed.
         int chunk = Math.Max(1, _dedupeChunk);
         for (int position = 0; position < samples.Length; position += chunk)
@@ -127,7 +127,7 @@ public sealed class Afsk1200MultiModem : IModem
     }
 
     /// <summary>Streaming first-difference pre-emphasis of order 0/1/2 (flat, +6, +12
-    /// dB/oct) — QtSM applies exactly these as parallel decode attempts.</summary>
+    /// dB/oct) - QtSM applies exactly these as parallel decode attempts.</summary>
     private sealed class EmphasisFilter(int order)
     {
         private float _previous1;

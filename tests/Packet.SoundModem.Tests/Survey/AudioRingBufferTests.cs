@@ -50,7 +50,7 @@ public class AudioRingBufferTests
     public void A_Block_That_Wrapped_Several_Times_Leaves_Its_Tail_At_The_Right_Position()
     {
         // The head of an over-long block is dropped, so the tail does not start where the block
-        // does. Getting that offset wrong shifts every later read by the difference — real audio
+        // does. Getting that offset wrong shifts every later read by the difference - real audio
         // from the wrong moment, which is worse than none, because nothing about it looks wrong.
         var ring = new AudioRingBuffer(1000);
         ring.Write(Ramp(0, 1500));
@@ -65,7 +65,7 @@ public class AudioRingBufferTests
     public void Audio_That_Has_Been_Overwritten_Is_Refused_Rather_Than_Guessed()
     {
         // A capture that arrives too late must be skipped. Returning stale or zeroed audio would
-        // put a WAV of the wrong signal — or of silence, reading as a dead channel — beside a
+        // put a WAV of the wrong signal - or of silence, reading as a dead channel - beside a
         // sidecar describing a real burst.
         var ring = new AudioRingBuffer(1000);
         ring.Write(Ramp(0, 2000));

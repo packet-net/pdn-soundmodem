@@ -57,7 +57,7 @@ public class FrameLogTests : IDisposable
 
     /// <summary>
     /// A log in the schema exactly as it shipped before the <c>direction</c> column, holding one
-    /// heard frame — a database this code has never opened, which is what a deployed station has.
+    /// heard frame - a database this code has never opened, which is what a deployed station has.
     /// </summary>
     private void WriteLogInTheOldSchema()
     {
@@ -154,7 +154,7 @@ public class FrameLogTests : IDisposable
 
     /// <summary>
     /// A frame this station sent is written down like one it heard, marked as ours, and carries
-    /// no receive measurements — because there were none to take.
+    /// no receive measurements - because there were none to take.
     /// </summary>
     /// <remarks>
     /// A journal that records every frame received and none sent is half a record. What it must
@@ -198,7 +198,7 @@ public class FrameLogTests : IDisposable
     /// <remarks>
     /// <c>CREATE TABLE IF NOT EXISTS</c> leaves an existing table alone, so a deployed station's
     /// log would have gone on without the <c>direction</c> column and every INSERT would have
-    /// failed — a modem that silently stops logging. The old rows are all receives, so the
+    /// failed - a modem that silently stops logging. The old rows are all receives, so the
     /// column's default is the truth about them rather than a guess.
     /// </remarks>
     [Fact]
@@ -216,7 +216,7 @@ public class FrameLogTests : IDisposable
         rows[1]["direction"].Should().Be("tx", "and the log can now take what we send");
     }
 
-    /// <summary>The migrated log reads back through the backlog query too — the waterfall panel
+    /// <summary>The migrated log reads back through the backlog query too - the waterfall panel
     /// is the other consumer of these rows, and it asks for the columns by name.</summary>
     [Fact]
     public async Task The_Backlog_Reads_A_Migrated_Logs_Old_Rows_As_Received()
@@ -249,7 +249,7 @@ public class FrameLogTests : IDisposable
     public async Task A_Frame_With_No_Ax25_Addresses_Is_Still_Recorded()
     {
         // IL2P and the OFDM waveforms carry AX.25 inside, but a frame that will not parse must
-        // not be dropped from the log — the payload is the evidence and it is still there.
+        // not be dropped from the log - the payload is the evidence and it is still there.
         List<Dictionary<string, object?>> rows = await ReadBackAsync(
             log => log.Record(0, [1, 2, 3, 4], Quality("freedv-datac1"), null, null));
 
@@ -263,7 +263,7 @@ public class FrameLogTests : IDisposable
     public async Task An_Ardop_Frame_Is_Logged_Under_Its_Frame_Type()
     {
         // Every ARDOP entry would otherwise read "ARDOP", which says nothing: the frame type is
-        // the interesting part — a connect request and a data frame are different events.
+        // the interesting part - a connect request and a data frame are different events.
         List<Dictionary<string, object?>> rows = await ReadBackAsync(
             log => log.Record(
                 2, [7, 7, 7], new FrameQuality(
@@ -350,7 +350,7 @@ public class FrameLogTests : IDisposable
     /// <remarks>
     /// The panel badges a transmission TX and styles it apart; if the direction were lost on the
     /// way out of the log, a browser reloading would see its own beacons listed as stations
-    /// heard — which is worse than not showing them at all.
+    /// heard - which is worse than not showing them at all.
     /// </remarks>
     [Fact]
     public async Task The_Backlog_Says_Which_Frames_The_Station_Sent()
@@ -377,7 +377,7 @@ public class FrameLogTests : IDisposable
     public async Task Reading_The_Backlog_Does_Not_Disturb_The_Writer()
     {
         // Called from whichever connection thread a browser turned up on, while the writer
-        // thread is mid-INSERT on its own connection — which is not thread-safe, hence the
+        // thread is mid-INSERT on its own connection - which is not thread-safe, hence the
         // separate short-lived reader. Frames recorded after the read must still land.
         await using FrameLog log = FrameLog.Open(DbPath, _time);
         log.Record(0, Frame(from: "G0AAA"), Quality(), null, null);

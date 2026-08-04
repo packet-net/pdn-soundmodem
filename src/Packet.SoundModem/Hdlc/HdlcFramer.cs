@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Hdlc;
 /// Builds the transmit-side HDLC bit stream for an AX.25 frame: opening flags (the
 /// TXDELAY preamble), the frame with its CRC-16/X-25 FCS appended (low byte first),
 /// zero-stuffing after five consecutive ones, and closing flags. Output bits are
-/// logical HDLC bits — NRZI encoding is applied downstream by the modulator chain.
+/// logical HDLC bits - NRZI encoding is applied downstream by the modulator chain.
 /// </summary>
 public static class HdlcFramer
 {

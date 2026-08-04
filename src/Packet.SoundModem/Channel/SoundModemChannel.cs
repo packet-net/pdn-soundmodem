@@ -12,7 +12,7 @@ public sealed class CsmaParameters
     /// <summary>Preamble length in milliseconds. Default 300.</summary>
     public int TxDelayMilliseconds { get; set; } = 300;
 
-    /// <summary>p-persistence parameter, 0–255 (p = (value+1)/256). Default 63 (p=0.25).</summary>
+    /// <summary>p-persistence parameter, 0-255 (p = (value+1)/256). Default 63 (p=0.25).</summary>
     public int Persistence { get; set; } = 63;
 
     /// <summary>Slot time in milliseconds. Default 100.</summary>
@@ -30,7 +30,7 @@ public delegate void ReceiveTap(ReadOnlySpan<float> samples);
 /// <summary>
 /// One audio channel hosting up to 16 logical modems (the QtSoundModem multiplex model,
 /// addressed by KISS sub-channel): fans received audio into every modem plus the spectrum
-/// source, aggregates carrier sense, and runs the transmit side — classic AX.25 §6
+/// source, aggregates carrier sense, and runs the transmit side - classic AX.25 §6
 /// p-persistent CSMA gated on the aggregated <see cref="ChannelBusy"/>, PTT keying, and
 /// device-paced audio with a drain before unkey (sample-domain TX-complete).
 /// </summary>
@@ -52,7 +52,7 @@ public sealed class SoundModemChannel
     /// <param name="spectrumSink">Optional waterfall line sink (see
     /// <see cref="SpectrumSource"/>).</param>
     /// <param name="constellationSink">Optional per-symbol constellation-frame sink
-    /// (sub-channel, frame). Wired to any PSK modem added to the channel — see
+    /// (sub-channel, frame). Wired to any PSK modem added to the channel - see
     /// <see cref="ConstellationSource"/>; a no-op for the non-PSK modes.</param>
     /// <param name="randomSeed">Seed for the p-persistence roll (tests); null = random.</param>
     public SoundModemChannel(
@@ -84,12 +84,12 @@ public sealed class SoundModemChannel
     public event Action<int, byte[]>? FrameReceived;
 
     /// <summary>Per-frame receive diagnostics (sub-channel, frame, quality), raised
-    /// alongside <see cref="FrameReceived"/> for every decoded frame — FEC corrections,
+    /// alongside <see cref="FrameReceived"/> for every decoded frame - FEC corrections,
     /// CRC state, winning decoder branch. See <see cref="Modems.FrameQuality"/>.</summary>
     public event Action<int, byte[], Modems.FrameQuality>? FrameReceivedWithQuality;
 
     /// <summary>Raised when a queued frame is dropped because its modem refused to
-    /// modulate it (sub-channel, frame, reason) — e.g. a frame beyond the mode's size
+    /// modulate it (sub-channel, frame, reason) - e.g. a frame beyond the mode's size
     /// bound. The frame's <see cref="EnqueueTransmit(int, byte[])"/> task faults with
     /// the same exception; the transmitter keeps running.</summary>
     public event Action<int, byte[], Exception>? TransmitRejected;
@@ -103,7 +103,7 @@ public sealed class SoundModemChannel
     /// <summary>The modems keyed by sub-channel.</summary>
     public IReadOnlyDictionary<int, IModem> Modems => _modems;
 
-    /// <summary>Adds a modem on a KISS sub-channel (0–15).</summary>
+    /// <summary>Adds a modem on a KISS sub-channel (0-15).</summary>
     public void AddModem(int subChannel, Func<Action<byte[]>, IModem> factory)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(subChannel);
@@ -120,7 +120,7 @@ public sealed class SoundModemChannel
         _modems.Add(subChannel, modem);
     }
 
-    /// <summary>Adds a non-KISS receive listener — a service decoder (e.g. POCSAG
+    /// <summary>Adds a non-KISS receive listener - a service decoder (e.g. POCSAG
     /// paging) that shares the channel's audio without occupying a KISS sub-channel.
     /// Called with the same half-duplex-gated samples the modems get.</summary>
     public void AddReceiveTap(ReceiveTap tap)
@@ -171,7 +171,7 @@ public sealed class SoundModemChannel
     /// CSMA or an ARQ session for seconds and a log line claiming a transmission that has not
     /// happened yet is worse than none. Sequenced by <c>await</c> rather than a continuation: a
     /// continuation lets the caller's own await resume first, so anything checking the event
-    /// immediately after awaiting the send is racing it — which it will lose on a loaded machine,
+    /// immediately after awaiting the send is racing it - which it will lose on a loaded machine,
     /// intermittently, in someone else's CI. A rejection throws out of the await, so a frame is
     /// announced by exactly one of this and <see cref="TransmitRejected"/>, never both.
     /// </remarks>
@@ -186,19 +186,19 @@ public sealed class SoundModemChannel
     }
 
     /// <summary>
-    /// Raised once a KISS-addressed frame has been transmitted — after the audio has gone to the
+    /// Raised once a KISS-addressed frame has been transmitted - after the audio has gone to the
     /// device, not when the frame was queued.
     /// </summary>
     /// <remarks>
     /// The receive side has had <see cref="FrameReceived"/> since the beginning and the transmit
     /// side had only <see cref="TransmitRejected"/>, so a station's journal recorded every frame
     /// it failed to send and none that it sent. Service transmitters that are not KISS modems
-    /// (paging, ARDOP) go through the delegate overload and are not announced here — they are not
+    /// (paging, ARDOP) go through the delegate overload and are not announced here - they are not
     /// frames on a sub-channel.
     /// </remarks>
     public event Action<int, byte[]>? FrameTransmitted;
 
-    /// <summary>Queues an arbitrary transmission — the channel-access path (CSMA, PTT,
+    /// <summary>Queues an arbitrary transmission - the channel-access path (CSMA, PTT,
     /// pacing, TX-complete) for service transmitters that are not KISS-addressed modems
     /// (e.g. POCSAG paging). The delegate receives the TXDELAY budget in milliseconds
     /// (full on the keyup's first transmission, a token 30 ms after) and returns the
@@ -207,11 +207,11 @@ public sealed class SoundModemChannel
     /// thrown here drops the item and faults the returned task, as for frames.</param>
     /// <param name="rejected">Optional observer for such a rejection.</param>
     /// <param name="ownsChannelTiming">
-    /// True for a transmitter that owns the channel's timing rather than sharing it — an ARDOP
+    /// True for a transmitter that owns the channel's timing rather than sharing it - an ARDOP
     /// ARQ session, whose turnarounds are what <see cref="TransmitInhibit"/> protects. Such a
     /// transmission skips <b>both</b> the inhibit and the p-persistence roll: it is not one of
     /// the stations contending for the channel, it is the one running it, and deferring would
-    /// mean deferring partly to its own signal — a shifted ARDOP centre sits inside a packet
+    /// mean deferring partly to its own signal - a shifted ARDOP centre sits inside a packet
     /// modem's passband and trips its busy detector. Everything else leaves this false.
     /// </param>
     public Task EnqueueTransmit(
@@ -240,7 +240,7 @@ public sealed class SoundModemChannel
     /// </summary>
     /// <remarks>
     /// This is not <see cref="TransmitInhibit"/>, which holds a transmission back until the
-    /// channel frees up. Nothing here ever frees up — a web receiver has no transmitter — so
+    /// channel frees up. Nothing here ever frees up - a web receiver has no transmitter - so
     /// queueing would only turn "cannot" into a 30-second wait ending in the wrong explanation.
     /// It also bypasses <c>ownsChannelTiming</c>: ARDOP owning the timing of a channel it cannot
     /// key changes nothing about whether the frame goes out.
@@ -248,7 +248,7 @@ public sealed class SoundModemChannel
     public string? ReceiveOnlyReason { get; set; }
 
     /// <summary>
-    /// Raised with each block of audio as it is handed to the sound device — the station's own
+    /// Raised with each block of audio as it is handed to the sound device - the station's own
     /// transmission, at the channel rate.
     /// </summary>
     /// <remarks>
@@ -257,7 +257,7 @@ public sealed class SoundModemChannel
     /// of every keyup and its time axis quietly stops meaning anything.
     ///
     /// Raised at the moment the samples are written, which is slightly ahead of them leaving the
-    /// device — there is a buffer and a drain behind this. Close enough for a display; not a
+    /// device - there is a buffer and a drain behind this. Close enough for a display; not a
     /// timing reference.
     /// </remarks>
     public event Action<ReadOnlyMemory<float>>? TransmittedAudio;
@@ -268,14 +268,14 @@ public sealed class SoundModemChannel
     /// <remarks>
     /// For a display. Receive processing stops the moment this goes true, but the first
     /// transmitted audio does not exist until the frame has been modulated and handed to the
-    /// device — so anything drawing the channel needs to know a keyup has begun rather than
+    /// device - so anything drawing the channel needs to know a keyup has begun rather than
     /// inferring it from audio that has not arrived yet, or it simply stops for that gap.
     /// </remarks>
     public event Action<bool>? TransmittingChanged;
 
     /// <summary>
     /// Consulted before a shared transmission is queued; while it returns true the transmission
-    /// waits. Set by a host that has to keep a stretch of the channel clear — an ARDOP ARQ
+    /// waits. Set by a host that has to keep a stretch of the channel clear - an ARDOP ARQ
     /// session, whose timing an AX.25 frame landing mid-turnaround would break. Null (the
     /// default) means nothing is holding the channel and every transmission queues immediately.
     /// </summary>
@@ -346,7 +346,7 @@ public sealed class SoundModemChannel
             //
             // A transmission that owns the channel's timing skips all of it. ARDOP runs its own
             // channel discipline against ARQ turnaround budgets, and the busy it would be
-            // deferring to is partly its own signal — at a shifted centre it sits inside a
+            // deferring to is partly its own signal - at a shifted centre it sits inside a
             // packet modem's passband and asserts that modem's busy detector.
             while (!(reader.TryPeek(out var next) && next.OwnsTiming))
             {
@@ -382,7 +382,7 @@ public sealed class SoundModemChannel
                     catch (ArgumentException rejection)
                     {
                         // A frame the modem refuses (oversize for the mode, empty) is
-                        // dropped — it must not kill the transmitter loop. The enqueuer's
+                        // dropped - it must not kill the transmitter loop. The enqueuer's
                         // task faults so ACKMODE hosts see the loss.
                         item.Done.TrySetException(rejection);
                         item.Rejected?.Invoke(rejection);
@@ -392,13 +392,13 @@ public sealed class SoundModemChannel
                     first = false;
                     // Told before the write, not after it. A real device's Write blocks until its
                     // buffer has room, so a burst longer than the buffer does not return from it
-                    // until most of the burst has already played — and a display told afterwards
+                    // until most of the burst has already played - and a display told afterwards
                     // spends the whole transmission painting silence and then paints the burst
                     // over again, taking twice as long with the first half black. Measured on the
                     // air and reproduced: 92 black lines ahead of 97 lines of signal.
                     // What this costs the transmitter is one scale-and-copy of the burst before
                     // the audio goes out, which is bounded, allocation-only and does not wait on
-                    // anything — the rule that the transmitter must never wait on a picture still
+                    // anything - the rule that the transmitter must never wait on a picture still
                     // holds.
                     TransmittedAudio?.Invoke(samples);
                     output.Write(samples);
@@ -408,7 +408,7 @@ public sealed class SoundModemChannel
 
                 if (Csma.TxTailMilliseconds > 0)
                 {
-                    // The tail is silence, but it is time we held the channel — a display that
+                    // The tail is silence, but it is time we held the channel - a display that
                     // skips it under-reports how long the keyup actually was.
                     var tail = new float[SampleRate * Csma.TxTailMilliseconds / 1000];
                     TransmittedAudio?.Invoke(tail);

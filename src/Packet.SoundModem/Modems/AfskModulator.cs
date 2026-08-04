@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Modems;
 /// <summary>
 /// AFSK modulator: synthesises phase-continuous mark/space tones. Phase continuity across
 /// tone changes is what keeps the spectrum tight; there is no per-bit phase reset.
-/// Defaults are Bell 202 (1200 baud, 1200/2200 Hz — NinoTNC modes 6/7); Nino's HF modes
+/// Defaults are Bell 202 (1200 baud, 1200/2200 Hz - NinoTNC modes 6/7); Nino's HF modes
 /// (12/13/14) are 300 baud on 1600/1800 Hz.
 /// </summary>
 public sealed class AfskModulator
@@ -49,7 +49,7 @@ public sealed class AfskModulator
         return ModulateLevels(levels, amplitude);
     }
 
-    /// <summary>Modulates line levels directly — 1 = mark, 0 = space, no NRZI. The IL2P
+    /// <summary>Modulates line levels directly - 1 = mark, 0 = space, no NRZI. The IL2P
     /// bit layer uses this: its transparency comes from packet-synchronous scrambling and
     /// its bits go on the wire raw (Dire Wolf's IL2P receiver likewise taps the
     /// pre-NRZI-decode bit).</summary>

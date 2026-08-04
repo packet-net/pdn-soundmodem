@@ -6,8 +6,8 @@ namespace Packet.SoundModem.Daemon;
 /// <summary>
 /// Replays a WAV file as if it were a live capture device: reads pace out at wall-clock
 /// rate and the file repeats forever with a half-second silence gap between passes. Where
-/// <c>--wav</c> decodes a file flat-out and exits, this drives the whole live daemon —
-/// KISS, waterfall, the lot — from a recording, with no soundcard or radio involved
+/// <c>--wav</c> decodes a file flat-out and exits, this drives the whole live daemon -
+/// KISS, waterfall, the lot - from a recording, with no soundcard or radio involved
 /// (demos, UI work, bench boxes).
 /// </summary>
 internal sealed class WavLoopAudioInput : IAudioInput

@@ -7,7 +7,7 @@ namespace Packet.SoundModem.Tests.Modems;
 /// <summary>
 /// Env-gated QC pass over a NinoTNC capture corpus (the studybox bench,
 /// docs/ninotnc-loop.md): every WAV decodes through its paired catalog mode, expecting
-/// the number of frames the capture driver transmitted. Not a gate — an instrument for
+/// the number of frames the capture driver transmitted. Not a gate - an instrument for
 /// corpus quality control. <c>NINO_CORPUS_DIR</c> points at the corpus,
 /// <c>NINO_CORPUS_FRAMES</c> (default 3) the expected per-file frame count.
 /// </summary>
@@ -95,7 +95,7 @@ public class NinoCorpusQcTests
         int expected = int.TryParse(
             Environment.GetEnvironmentVariable("NINO_CORPUS_FRAMES"), out int e) ? e : 3;
 
-        // MTP does not relay test stdout — the per-file verdicts go to a report file
+        // MTP does not relay test stdout - the per-file verdicts go to a report file
         // (the MS110D_MASK_LOG pattern).
         using StreamWriter? report =
             Environment.GetEnvironmentVariable("NINO_CORPUS_REPORT") is { } rp
@@ -142,8 +142,8 @@ public class NinoCorpusQcTests
             {
                 // Split at silence gaps and decode each burst with a FRESH modem: the
                 // inter-burst-state discriminator (continuous-processing misses that
-                // vanish here indict the demod's burst-to-burst recovery — DCD
-                // release/AGC — not the recording).
+                // vanish here indict the demod's burst-to-burst recovery - DCD
+                // release/AGC - not the recording).
                 foreach ((int start, int end) in SplitBursts(padded, rate))
                 {
                     int lead = rate / 5;

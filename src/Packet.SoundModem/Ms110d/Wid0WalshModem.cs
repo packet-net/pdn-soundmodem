@@ -4,13 +4,13 @@ namespace Packet.SoundModem.Ms110d;
 
 /// <summary>
 /// Waveform-ID 0 Walsh orthogonal data modulation (75 bps): after the preamble, WN 0 sends
-/// no mini-probes — each channel symbol is a 32-chip Walsh sequence carrying one coded and
+/// no mini-probes - each channel symbol is a 32-chip Walsh sequence carrying one coded and
 /// interleaved di-bit (D.5.2 final paragraph, <c>docs/ms110d/tables/walsh-data-sequence-prose.md</c>),
 /// chip-wise modulo-8 combined with the Trinomial (159, 31) scramble sequence (D.5.1.4).
 /// </summary>
 /// <remarks>
 /// Di-bit order within a channel symbol is not stated by the spec for the data path; the QPSK
-/// rule (leftmost = older = fetched first, D.5.1.2.1.2) is adopted — checklist L6, recorded
+/// rule (leftmost = older = fetched first, D.5.1.2.1.2) is adopted - checklist L6, recorded
 /// open interpretation. The Table D-XIV map itself is dual-transcribed (10→0044, 11→0440).
 /// </remarks>
 public sealed class Wid0WalshModem
@@ -19,10 +19,10 @@ public sealed class Wid0WalshModem
     public const int ChipsPerSymbol = 32;
 
     /// <summary>RAKE finger count for <see cref="DemodulateRake"/>: integer chip delays
-    /// −6..+6 — T-spaced (≈ decorrelated under the chip pulse). Symmetric since §B3.5b
+    /// −6..+6 - T-spaced (≈ decorrelated under the chip pulse). Symmetric since §B3.5b
     /// rung G: acquisition anchors whichever Poor path is stronger during the preamble
     /// (the echo-lock lottery, ~31% of bursts land on the LATER path), so the other
-    /// path's 2 ms (4.8-chip) offset must be covered on BOTH sides — fingers ±(4,5).
+    /// path's 2 ms (4.8-chip) offset must be covered on BOTH sides - fingers ±(4,5).
     /// The original causal 0..6 window (§B3.5) made echo-locked bursts single-path:
     /// the whole census error tail, 18/18 concordance
     /// (evidence/2026-07-26-phase-b35b-wn0genie Amendment 1).</summary>
@@ -38,14 +38,14 @@ public sealed class Wid0WalshModem
     /// [−NegFingers, ChipsPerSymbol + Fingers − 1 − NegFingers) around the symbol).</summary>
     public const int RakeChips = ChipsPerSymbol + Fingers - 1;
 
-    private const float GainAlpha = 1f / 6; // ≈80 ms one-pole — inside the 1 Hz fade coherence time
+    private const float GainAlpha = 1f / 6; // ≈80 ms one-pole - inside the 1 Hz fade coherence time
     private const int WarmupSymbols = 8;    // noncoherent selection while the DD gains are cold
 
     private readonly Trinomial159Scrambler _scrambler = new();
     private readonly Cf[] _gains = new Cf[Fingers];
     private int _symbolsSeen;
 
-    /// <summary>Resets the scramble sequence — call at every interleaver boundary. The
+    /// <summary>Resets the scramble sequence - call at every interleaver boundary. The
     /// DD finger gains deliberately survive: the channel is continuous across blocks;
     /// only the scrambler restarts (§B3.5).</summary>
     public void Reset()
@@ -53,8 +53,8 @@ public sealed class Wid0WalshModem
         _scrambler.Reset();
     }
 
-    /// <summary>Modulates fetched (interleaved) bits — two per channel symbol, first bit =
-    /// MSB of the di-bit — into scrambled 8PSK chips
+    /// <summary>Modulates fetched (interleaved) bits - two per channel symbol, first bit =
+    /// MSB of the di-bit - into scrambled 8PSK chips
     /// (<paramref name="psk8Chips"/>.Length = fetchedBits.Length × 16).</summary>
     public void Modulate(ReadOnlySpan<byte> fetchedBits, Span<byte> psk8Chips)
     {
@@ -77,7 +77,7 @@ public sealed class Wid0WalshModem
 
     /// <summary>Demodulates one received 32-chip channel symbol (complex, carrier-corrected)
     /// into two max-log LLRs (positive ⇒ bit 0; [0] = di-bit MSB). The instance's own
-    /// scramble sequence is consumed — feed symbols in order and <see cref="Reset"/> at
+    /// scramble sequence is consumed - feed symbols in order and <see cref="Reset"/> at
     /// interleaver boundaries. Also reports the winning di-bit and its correlation, for
     /// decision-directed carrier tracking.</summary>
     public void Demodulate(ReadOnlySpan<Cf> chips, Span<float> llrs, out int bestDibit, out Cf bestCorrelation)
@@ -134,7 +134,7 @@ public sealed class Wid0WalshModem
     /// carrier-corrected chips starting <see cref="NegFingers"/> chips before the symbol
     /// boundary (finger k's window = chips[k..k+32], delay k − NegFingers); the symbol's
     /// 32 scramble rotors apply to every window. <paramref name="combined"/> is
-    /// Σ ĝ*·corr(winner) — real-positive when locked; its argument drives the common-CFO
+    /// Σ ĝ*·corr(winner) - real-positive when locked; its argument drives the common-CFO
     /// PLL. <paramref name="maxFingerAbs"/> is max over fingers of |corr(winner)| for the
     /// all-fingers-weak discriminator.</summary>
     public void DemodulateRake(
@@ -210,7 +210,7 @@ public sealed class Wid0WalshModem
         }
 
         // LLRs always from the MRC statistic: during warm-up they are near-zero
-        // (self-erasure — 8 of 576 symbols per block, the code absorbs it).
+        // (self-erasure - 8 of 576 symbols per block, the code absorbs it).
         llrs[0] = Math.Max(d[0], d[1]) - Math.Max(d[2], d[3]);
         llrs[1] = Math.Max(d[0], d[2]) - Math.Max(d[1], d[3]);
 
@@ -232,17 +232,17 @@ public sealed class Wid0WalshModem
         _symbolsSeen++;
     }
 
-    /// <summary>§B3.5b genie-gain oracle variant (instrument, never the shipped path —
+    /// <summary>§B3.5b genie-gain oracle variant (instrument, never the shipped path -
     /// evidence/2026-07-26-phase-b35b-wn0genie): detection runs on the noisy
     /// <paramref name="chips"/> exactly as <see cref="DemodulateRake"/>, but the finger
-    /// gains come from <paramref name="cleanChips"/> — the genie's noise-free copy of the
-    /// same realization — correlated against the TRUE Walsh row
+    /// gains come from <paramref name="cleanChips"/> - the genie's noise-free copy of the
+    /// same realization - correlated against the TRUE Walsh row
     /// (<paramref name="trueDibit"/>): zero additive noise, zero decision errors.
     /// <paramref name="pole"/> false = O-inst (instantaneous truth, no lag, no warm-up);
-    /// true = O-pole (the shipped one-pole/α/warm-up with the truth as innovation —
+    /// true = O-pole (the shipped one-pole/α/warm-up with the truth as innovation -
     /// keeps the 80 ms lag, isolating it from the noise+decision component). The
     /// carrier-PLL observable self-cancels under truth gains (registered mechanism
-    /// note 1) — the caller skips RetuneCarrier in oracle mode.</summary>
+    /// note 1) - the caller skips RetuneCarrier in oracle mode.</summary>
     public void DemodulateRakeOracle(
         ReadOnlySpan<Cf> chips, ReadOnlySpan<Cf> cleanChips, int trueDibit, bool pole,
         Span<float> llrs, out int bestDibit, out Cf combined, out double maxFingerAbs)
@@ -258,7 +258,7 @@ public sealed class Wid0WalshModem
             rot[i] = Ms110dTables.Psk8[_scrambler.Next()].Conj();
         }
 
-        // Noisy candidate correlations — the same quarter-phase construction as shipped.
+        // Noisy candidate correlations - the same quarter-phase construction as shipped.
         Span<Cf> corr = stackalloc Cf[Fingers * 4];
         Span<Cf> q = stackalloc Cf[4];
         byte[] trueWalsh = Ms110dTables.Walsh[trueDibit];

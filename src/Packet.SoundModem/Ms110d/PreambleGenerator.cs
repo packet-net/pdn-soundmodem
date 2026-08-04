@@ -1,7 +1,7 @@
 namespace Packet.SoundModem.Ms110d;
 
 /// <summary>
-/// Appendix D autobaud synchronization preamble (D.5.2.1, doc pp. 165–170): a TLC section of
+/// Appendix D autobaud synchronization preamble (D.5.2.1, doc pp. 165-170): a TLC section of
 /// N 32-chip blocks, then M super-frames of [Fixed (9 Walsh channel symbols, or 1 when M=1)]
 /// [4 downcount symbols c3…c0][5 WID symbols w4…w0], all 8PSK chips at 2400 Bd. Walsh
 /// expansion and PN scrambling per D.5.2.1.1 (Tables D-XIV, D-XVIII/XIX/XX); prose anchored in
@@ -9,7 +9,7 @@ namespace Packet.SoundModem.Ms110d;
 /// </summary>
 /// <remarks>
 /// Open point O-1 (design §2.3): the 3 kHz Fixed subsection is 288 chips against the 256-entry
-/// fixedPN. The wrap-around reading (<c>fixedPN[chip mod 256]</c>) is implemented — and at
+/// fixedPN. The wrap-around reading (<c>fixedPN[chip mod 256]</c>) is implemented - and at
 /// 3 kHz the per-channel-symbol-restart reading coincides with it, because 8 channel symbols =
 /// exactly 256 chips, so symbol 9 starts at fixedPN[0] under either reading. The two readings
 /// only diverge at bandwidths whose chips-per-symbol × 8 ≠ 256 (none of Table D-XIII's), so no
@@ -20,8 +20,8 @@ public sealed class PreambleGenerator
     private readonly int _tlcBlocks;
     private readonly int _superframes;
 
-    /// <summary>Creates a generator for N TLC blocks (0–255; 0 omits the section) and
-    /// M super-frames (1–32).</summary>
+    /// <summary>Creates a generator for N TLC blocks (0-255; 0 omits the section) and
+    /// M super-frames (1-32).</summary>
     public PreambleGenerator(int tlcBlocks, int superframes)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(tlcBlocks, 0);
@@ -39,7 +39,7 @@ public sealed class PreambleGenerator
     /// <summary>Fixed-subsection channel symbols: 9, or 1 when M = 1 (D.5.2.1.3).</summary>
     public int FixedSymbolCount => _superframes == 1 ? 1 : 9;
 
-    /// <summary>Generates the whole preamble as 8PSK chip numbers 0–7.</summary>
+    /// <summary>Generates the whole preamble as 8PSK chip numbers 0-7.</summary>
     public byte[] Generate(int wn, Ms110dInterleaverKind interleaver, int constraintLength)
     {
         byte[] wid = EncodeWid(wn, interleaver, constraintLength);
@@ -47,7 +47,7 @@ public sealed class PreambleGenerator
         var chips = new List<byte>((_tlcBlocks * chipsPerSym) + (_superframes * SuperframeChips));
 
         // TLC: N 32-chip blocks, complex conjugate of the Fixed-section Table D-XVIII
-        // sequence (D.5.2.1.2) — conjugate of 8PSK symbol s is (8 − s) mod 8.
+        // sequence (D.5.2.1.2) - conjugate of 8PSK symbol s is (8 − s) mod 8.
         for (int i = 0; i < _tlcBlocks * chipsPerSym; i++)
         {
             chips.Add((byte)((8 - Ms110dTables.FixedPn[i % 256]) & 7));
@@ -118,7 +118,7 @@ public sealed class PreambleGenerator
     }
 
     /// <summary>Decodes w4…w0 back to (WN, interleaver, K); false if the 3-bit checksum
-    /// fails or the WN is reserved (14–15).</summary>
+    /// fails or the WN is reserved (14-15).</summary>
     internal static bool TryDecodeWid(
         ReadOnlySpan<byte> dibits, out int wn, out Ms110dInterleaverKind interleaver, out int constraintLength)
     {

@@ -19,13 +19,13 @@ public sealed class Ms110dIqUpconverterOptions
     /// </summary>
     /// <remarks>Non-zero by default so the occupied band sits clear of baseband 0 Hz, where
     /// any DC term in our own IQ ends up on air. The radio's LO/carrier leakage (measured at
-    /// −27 dBc on a real 6500) lands at the <em>derived slice</em> — the top edge of the
-    /// placed band, above the modem's passband — so both artefacts stay outside the occupied
+    /// −27 dBc on a real 6500) lands at the <em>derived slice</em> - the top edge of the
+    /// placed band, above the modem's passband - so both artefacts stay outside the occupied
     /// band.</remarks>
     public double OffsetHz { get; init; } = 2000;
 
     /// <summary>SSB passband edges above the suppressed carrier. The default clears the full
-    /// MS110D occupied band (≈180–3420 Hz about the 1800 Hz sub-carrier).</summary>
+    /// MS110D occupied band (≈180-3420 Hz about the 1800 Hz sub-carrier).</summary>
     public double SsbLowHz { get; init; } = 150;
 
     /// <summary>Upper passband edge.</summary>
@@ -35,7 +35,7 @@ public sealed class Ms110dIqUpconverterOptions
     public int BandpassTaps { get; init; } = 401;
 
     /// <summary>Peak magnitude of the emitted IQ. Kept near full scale so radiated power is
-    /// set by the radio's <c>rfpower</c> rather than by drive level — the two multiply.</summary>
+    /// set by the radio's <c>rfpower</c> rather than by drive level - the two multiply.</summary>
     public double Amplitude { get; init; } = 0.9;
 
     /// <summary>
@@ -43,7 +43,7 @@ public sealed class Ms110dIqUpconverterOptions
     /// the modem's own level is arbitrary and only the dynamic range matters.
     /// </summary>
     /// <remarks><b>Set false for a §E2 ladder.</b> Peak-normalising each point separately would
-    /// make the transmitted <em>signal</em> power vary with the injected noise — a low-SNR point
+    /// make the transmitted <em>signal</em> power vary with the injected noise - a low-SNR point
     /// is mostly noise, so normalising its peak turns the signal down. The path contributes its
     /// own noise at a fixed absolute level, so a signal that quietens at the bottom of the ladder
     /// gets a second, uncalibrated dose of noise exactly where the measurement is most delicate.
@@ -61,12 +61,12 @@ public sealed class Ms110dIqUpconverterOptions
 /// <para>Chain: resample 9600 → 24000 Hz (×5 then ÷2, both integer), then a complex bandpass
 /// keeping only the upper sideband, which is what makes the result analytic. Taking a real
 /// audio signal and keeping only its positive frequencies synthesises an ideal SSB
-/// transmitter — no SSB filter, no ALC, no uncharacterised TX DSP. That is the point: it
+/// transmitter - no SSB filter, no ALC, no uncharacterised TX DSP. That is the point: it
 /// removes every impairment except our own, so the first bring-up measures the harness
 /// rather than the radio's modulator (ota-execution-plan §T1).</para>
 /// <para><b>This shares no code with the receive-side converter, deliberately.</b> A shared
-/// filter kernel would cancel its own errors in a loopback — recover the payload perfectly
-/// while both ends were wrong together — so the two are independent implementations and the
+/// filter kernel would cancel its own errors in a loopback - recover the payload perfectly
+/// while both ends were wrong together - so the two are independent implementations and the
 /// tests check this one against analytic expectations (image rejection, band placement,
 /// flatness) as well as against round-trip recovery.</para>
 /// </remarks>
@@ -106,7 +106,7 @@ public sealed class Ms110dIqUpconverter
 
         // 2. Complex bandpass: a real low-pass prototype of half the passband width, modulated
         //    up to the passband centre. Applied to a real signal it keeps only the positive
-        //    frequencies — the analytic signal — which is precisely single-sideband.
+        //    frequencies - the analytic signal - which is precisely single-sideband.
         //
         //    The filter is centred on where the audio ACTUALLY sits, not where we want it to
         //    end up: a bandpass selects, it does not translate. Centring it on
@@ -132,8 +132,8 @@ public sealed class Ms110dIqUpconverter
             //
             // Worth recording how this was found: the round-trip test passed regardless,
             // because the receive-side converter uses the same indexing convention and the
-            // two inversions cancelled. Only the spectral assertions — measured against where
-            // the energy is supposed to be, not against the other converter — caught it. That
+            // two inversions cancelled. Only the spectral assertions - measured against where
+            // the energy is supposed to be, not against the other converter - caught it. That
             // is the entire reason those tests exist.
             him[m] = -proto[m] * Math.Sin(ph);
         }
@@ -192,7 +192,7 @@ public sealed class Ms110dIqUpconverter
         // 4. Scale to the requested peak. The modem's own level is arbitrary and the
         //    demodulator equalises it, so the only thing that matters here is using the
         //    waveform's dynamic range without clipping. A ladder turns this off and scales the
-        //    whole pass by one gain instead — see PeakNormalise.
+        //    whole pass by one gain instead - see PeakNormalise.
         peak = Math.Sqrt(peak);
         if (_opt.PeakNormalise && peak > 1e-12)
         {

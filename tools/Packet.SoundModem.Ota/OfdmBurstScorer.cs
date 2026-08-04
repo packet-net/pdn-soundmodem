@@ -9,9 +9,9 @@ namespace Packet.SoundModem.Ota;
 /// <param name="Index">Position in the pass.</param>
 /// <param name="Mode">The datac mode.</param>
 /// <param name="StartSeconds">Where the active burst began in the capture.</param>
-/// <param name="AskedSnrDb">SNR the rig was asked to inject — beside the measured one.</param>
+/// <param name="AskedSnrDb">SNR the rig was asked to inject - beside the measured one.</param>
 /// <param name="Acquired">Whether the demodulator recovered a packet from the burst window.</param>
-/// <param name="CrcOk">Whether the recovered packet's own CRC passed — FreeDV's "packet received"
+/// <param name="CrcOk">Whether the recovered packet's own CRC passed - FreeDV's "packet received"
 /// criterion.</param>
 /// <param name="CfoHz">The demodulator's carrier-frequency-offset estimate at decode.</param>
 /// <param name="Snr">The delivered SNR measured from the burst against its own noise lead-in.</param>
@@ -33,7 +33,7 @@ internal sealed record OfdmBurstScore(
     int LdpcIterations,
     int ParityChecks)
 {
-    /// <summary>Post-LDPC coded bit-error rate — the number FreeDV cross-checks are quoted in.</summary>
+    /// <summary>Post-LDPC coded bit-error rate - the number FreeDV cross-checks are quoted in.</summary>
     public double CodedBer => PayloadBits == 0 ? double.NaN : (double)PayloadBitErrors / PayloadBits;
 }
 
@@ -43,7 +43,7 @@ internal sealed record OfdmBurstScore(
 internal sealed record OfdmCaptureScore(double AudioSeconds, IReadOnlyList<OfdmBurstScore> Bursts);
 
 /// <summary>
-/// Scores a captured (or rehearsed) FreeDV datac pass with the OFDM demodulator — the OFDM
+/// Scores a captured (or rehearsed) FreeDV datac pass with the OFDM demodulator - the OFDM
 /// counterpart of <see cref="BurstScorer"/>, driving the library's own <see cref="DatacReceiver"/>
 /// rather than the MS110D demodulator.
 /// </summary>
@@ -57,12 +57,12 @@ internal sealed record OfdmCaptureScore(double AudioSeconds, IReadOnlyList<OfdmB
 /// it, giving an unambiguous 0/1 result per burst (a missed burst is the result that matters most at
 /// the bottom of a ladder, and per-window scoring can never mis-attribute one), and the delivered
 /// SNR is measured from the burst against its own transmitted noise lead-in with
-/// <see cref="SnrEstimator"/> — the same convention, and the same instrument, the MS110D ladder is
+/// <see cref="SnrEstimator"/> - the same convention, and the same instrument, the MS110D ladder is
 /// audited on. Nominal SNR is never trusted: the injected figure is the request, this is the
 /// measurement, and the two are compared.</para>
 /// <para><b>Coded, not uncoded, BER.</b> The datac engine exposes post-LDPC packet bytes per packet,
-/// not the pre-LDPC hard bits, so — like <see cref="DatacPacketProbe"/>, the codebase's existing
-/// OFDM probe — the figure of merit here is the coded BER plus the LDPC iteration / parity-check
+/// not the pre-LDPC hard bits, so - like <see cref="DatacPacketProbe"/>, the codebase's existing
+/// OFDM probe - the figure of merit here is the coded BER plus the LDPC iteration / parity-check
 /// margin, which is exactly the quantity FreeDV publishes its datac operating points in.</para>
 /// </remarks>
 internal sealed class OfdmBurstScorer
@@ -94,7 +94,7 @@ internal sealed class OfdmBurstScorer
 
     /// <summary>Converts a capture WAV's IQ to 8&#160;kHz audio and builds a scorer over it.</summary>
     /// <param name="capturePath">The 2-channel IQ capture.</param>
-    /// <param name="dialHz">Down-shift that lands the suppressed carrier at 0&#160;Hz — the pass
+    /// <param name="dialHz">Down-shift that lands the suppressed carrier at 0&#160;Hz - the pass
     /// offset (0 for DAX).</param>
     public static OfdmBurstScorer FromCapture(string capturePath, double dialHz)
     {
@@ -109,7 +109,7 @@ internal sealed class OfdmBurstScorer
         {
             throw new InvalidDataException(
                 $"capture rate {reader.SampleRate} Hz is not an integer multiple of the datac "
-                + $"native {NativeRate} Hz — the IQ→audio decimation needs one");
+                + $"native {NativeRate} Hz - the IQ→audio decimation needs one");
         }
 
         var converter = new StreamingSsbDemodulator(new SsbDemodulatorOptions

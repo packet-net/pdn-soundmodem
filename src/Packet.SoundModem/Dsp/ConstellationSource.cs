@@ -6,14 +6,14 @@ namespace Packet.SoundModem.Dsp;
 /// <summary>
 /// Batches a demodulator's per-symbol decision points (see
 /// <see cref="IConstellationSource"/>) into fixed-size scope frames for a constellation /
-/// eye display — the spectrum waterfall's counterpart for the phase-shift-keyed modes.
+/// eye display - the spectrum waterfall's counterpart for the phase-shift-keyed modes.
 /// Each frame is <c>pointsPerFrame</c> points, two signed bytes apiece (I then Q), so a
 /// frame is <see cref="FrameLength"/> bytes; at qpsk2400's 1200 sym/s the default 256-point
 /// frame emits ≈ 5 times a second, the same few-kB/s order as <see cref="SpectrumSource"/>.
 /// </summary>
 /// <remarks>
 /// Frames are auto-scaled: each is normalised to its own peak component so the constellation
-/// <em>shape</em> — how tightly symbols cluster at the expected phases — reads the same
+/// <em>shape</em> - how tightly symbols cluster at the expected phases - reads the same
 /// regardless of absolute signal level, exactly as a scope's auto-range would. That trades
 /// away cross-frame amplitude comparison, which the shape-focused diagnostic does not need.
 /// A silent frame (peak below <see cref="SilenceFloor"/>) emits all-zero bytes rather than
@@ -77,7 +77,7 @@ public sealed class ConstellationSource
         _filled = 0;
 
         // Auto-range to the frame's peak component (I or Q) so the cluster geometry, not the
-        // absolute level, sets the scale — the differential product's magnitude tracks the
+        // absolute level, sets the scale - the differential product's magnitude tracks the
         // matched-filter output amplitude, which is not normalised to 1.
         float peak = 0;
         for (int n = 0; n < _pointsPerFrame; n++)

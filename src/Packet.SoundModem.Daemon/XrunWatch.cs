@@ -8,7 +8,7 @@ namespace Packet.SoundModem.Daemon;
 /// every xrun is a hole where audio should have been. Capture holes drop frames that were on the
 /// air; playback holes put a discontinuity in what we transmitted. Both were counted and neither
 /// was ever reported, so a station losing audio to a machine that will not schedule it looked
-/// exactly like a station on a quiet band — the same blindness the per-frame lines removed.</para>
+/// exactly like a station on a quiet band - the same blindness the per-frame lines removed.</para>
 /// <para>Reported as deltas on a poll rather than an event per xrun: they arrive in bursts when a
 /// machine is contended, and one line per hole would bury the journal at the moment it most needs
 /// reading. The state and the wording are here, apart from the timer, so both are testable without

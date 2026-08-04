@@ -101,7 +101,7 @@ public class Ms110dLoopbackTests
     [InlineData(13, Ms110dInterleaverKind.UltraShort, 7)]
     [InlineData(13, Ms110dInterleaverKind.Medium, 7)]
     [InlineData(13, Ms110dInterleaverKind.Long, 7)]
-    // K=9 at the default (Short) interleaver — WN13's 9/16 puncture with K=9 especially.
+    // K=9 at the default (Short) interleaver - WN13's 9/16 puncture with K=9 especially.
     // (5,S,9) and (8,S,9) already sit in the hand-picked rows above; WN2's K=9 default
     // slot is carried by (2,US,9) plus (2,S,9) here.
     [InlineData(0, Ms110dInterleaverKind.Short, 9)]
@@ -147,7 +147,7 @@ public class Ms110dLoopbackTests
     public void Cold_Start_Mid_Preamble_Still_Acquires(double superframesMissed)
     {
         // Late entry into the repeated preamble: chop whole+fractional super-frames off the
-        // front — the receiver must lock on a later repeat and count down correctly.
+        // front - the receiver must lock on a later repeat and count down correctly.
         var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = 6, PreambleSuperframes = 5 });
         byte[] payload = RandomBits(400, 40);
         float[] audio = tx.Modulate(payload);
@@ -282,7 +282,7 @@ public class Ms110dLoopbackTests
 
         (Ms110dBurst? burst, _) = RunLoopback(truncated, silence: 0);
         (burst?.Reason == Ms110dBurstEndReason.Eom).Should().BeFalse(
-            "the EOM block was cut off — a clean EOM burst would be a false decode");
+            "the EOM block was cut off - a clean EOM burst would be a false decode");
     }
 
     [Fact]

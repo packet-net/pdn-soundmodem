@@ -24,10 +24,10 @@ public readonly record struct PcmPacket(
 ///
 /// <para>Hybrid header strategy (after zstd decompression, if any):</para>
 /// <list type="bullet">
-/// <item>Full header — magic <c>"PC"</c> (0x5043), 29 bytes: [2] magic · [1] version ·
+/// <item>Full header - magic <c>"PC"</c> (0x5043), 29 bytes: [2] magic · [1] version ·
 ///   [1] format · [8] RTP ts u64-LE · [8] wallclock u64-LE (deprecated) · [4] sample-rate
 ///   u32-LE · [1] channels u8 · [4] reserved; GPS timestamp is the u64-LE at offset 4.</item>
-/// <item>Minimal header — magic <c>"PM"</c> (0x504D), 13 bytes: [2] magic · [1] version ·
+/// <item>Minimal header - magic <c>"PM"</c> (0x504D), 13 bytes: [2] magic · [1] version ·
 ///   [8] GPS ts u64-LE (offset 3) · [2] reserved; reuses the last full header's rate/channels.</item>
 /// </list>
 /// <para>The PCM payload is big-endian int16 and is byte-swapped to little-endian here.</para>

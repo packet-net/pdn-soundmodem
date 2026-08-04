@@ -4,7 +4,7 @@ namespace Packet.SoundModem.Waterfall;
 
 /// <summary>
 /// Measures per-modem burst SNR and extent from the same <see cref="WaterfallSource"/>
-/// lines the display draws — one tracker per modem band. Each line contributes the band's
+/// lines the display draws - one tracker per modem band. Each line contributes the band's
 /// mean linear power; the noise floor is the minimum half-second block average over the
 /// last ~15 s (the <see cref="Modems.EnergyBusyDetector"/> min-tracking idea, on spectral
 /// rather than time-domain power); a burst is a run of lines ≥ 6 dB over that floor. When
@@ -52,7 +52,7 @@ public sealed class BandActivityTracker
         _floorRing = new double[30]; // 30 half-second blocks ≈ 15 s of floor memory
     }
 
-    /// <summary>Feeds one waterfall line (the reused source buffer is fine — nothing is kept).</summary>
+    /// <summary>Feeds one waterfall line (the reused source buffer is fine - nothing is kept).</summary>
     public void AddLine(ReadOnlySpan<byte> line)
     {
         double sum = 0;
@@ -100,7 +100,7 @@ public sealed class BandActivityTracker
     /// The burst behind a just-decoded frame: mean band SNR over the run and its length in
     /// lines. True while a burst is in progress or within two seconds of one ending (decode
     /// completes at burst end; the grace covers deframer flush latency). False when the band
-    /// has been quiet — the frame cannot be attributed to visible energy.
+    /// has been quiet - the frame cannot be attributed to visible energy.
     /// </summary>
     public bool TryMeasureBurst(out double snrDb, out int burstLines)
     {
@@ -128,7 +128,7 @@ public sealed class BandActivityTracker
     {
         if (_floorRingFilled == 0)
         {
-            // Warm-up: nothing banked yet — treat the current level as the floor (matches
+            // Warm-up: nothing banked yet - treat the current level as the floor (matches
             // EnergyBusyDetector's warm-up seeding; a burst in the first half second will
             // under-read, honestly, rather than fabricate a floor).
             return Math.Max(fallback, 1e-12);

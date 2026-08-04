@@ -129,7 +129,7 @@ var serialPump = new Thread(() =>
         }
         catch (TimeoutException)
         {
-            // ReadTimeout elapsed with no traffic — keep listening.
+            // ReadTimeout elapsed with no traffic - keep listening.
         }
         catch (Exception)
         {
@@ -189,7 +189,7 @@ string? GetAll(string label)
 }
 
 // PreamblCnt (register 0B) is a readback of the configured preamble in 16-bit words, so
-// it says what TXDELAY the firmware ACTUALLY applied — the only honest check that a
+// it says what TXDELAY the firmware ACTUALLY applied - the only honest check that a
 // KISS TXDELAY landed, and in which units.
 void ReportPreamble(string diag)
 {
@@ -234,7 +234,7 @@ byte? RunningMode(string diag)
     return firmwareByteToMode.TryGetValue((byte)(v & 0xFF), out byte m) ? m : (byte)255;
 }
 
-// Set mode (SETHW payload = mode + 16 => applied without touching flash — upstream: "To
+// Set mode (SETHW payload = mode + 16 => applied without touching flash - upstream: "To
 // prevent an immediate flash memory write, add 16"), let the modem settle, then TXDELAY.
 //
 // VERIFY the mode took. SETHW is fire-and-forget and has been observed to silently not
@@ -257,7 +257,7 @@ for (int attempt = 1; attempt <= 3 && !modeOk; attempt++)
     {
         Console.Error.WriteLine(
             $"  !! SETHW did not take: asked for mode {ninoMode}, TNC reports " +
-            $"{(running is null or 255 ? "unknown" : running.ToString())} — retrying");
+            $"{(running is null or 255 ? "unknown" : running.ToString())} - retrying");
     }
 }
 
@@ -296,7 +296,7 @@ var capturePump = new Thread(() =>
     }
     catch (Exception) when (!pumpRunning)
     {
-        // Torn down mid-read (the main thread disposed the PCM) — expected at exit.
+        // Torn down mid-read (the main thread disposed the PCM) - expected at exit.
     }
 
     void Pump()
@@ -389,8 +389,8 @@ if (levelCheckOnly)
     lock (receivedGate) { decoded = received.Count; }
     string verdict = peak switch
     {
-        < 0.05 => "TOO LOW — raise NinoTNC TX-DEV pot (or our capture gain)",
-        > 0.90 => "CLIPPING — lower NinoTNC TX-DEV pot (or our capture gain)",
+        < 0.05 => "TOO LOW - raise NinoTNC TX-DEV pot (or our capture gain)",
+        > 0.90 => "CLIPPING - lower NinoTNC TX-DEV pot (or our capture gain)",
         _ => "GOOD",
     };
     Console.WriteLine($"level-check: capture peak {peak:F3} full-scale -> {verdict}; decoded {decoded}/1");
@@ -402,7 +402,7 @@ if (levelCheckOnly)
 }
 
 // ---- Direction B: NinoTNC -> us (with DCD timing) ----
-Console.WriteLine($"— NinoTNC -> us: {frames} frames");
+Console.WriteLine($"- NinoTNC -> us: {frames} frames");
 int okB = 0;
 var dcdAssertLagsMs = new List<double>();
 var dcdReleaseLagsMs = new List<double>();
@@ -460,7 +460,7 @@ for (int seq = 0; seq < frames; seq++)
 }
 
 // ---- Direction A: us -> NinoTNC ----
-Console.WriteLine($"— us -> NinoTNC: {frames} frames, our preamble {ourTxDelayMs ?? txDelayMs} ms");
+Console.WriteLine($"- us -> NinoTNC: {frames} frames, our preamble {ourTxDelayMs ?? txDelayMs} ms");
 GetAll("before-A");
 int okA = 0;
 for (int seq = 100; seq < 100 + frames; seq++)

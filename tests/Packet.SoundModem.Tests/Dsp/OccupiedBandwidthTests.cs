@@ -17,7 +17,7 @@ namespace Packet.SoundModem.Tests.Dsp;
 /// <list type="number">
 ///   <item>Never exceed the published figure for the equivalent NinoTNC mode
 ///         (release-notes.txt, "MODE SWITCH MAPPING v3/4.43"). Where Nino publishes none,
-///         the limit is the voice channel the mode rides through (3 kHz) — stated, not
+///         the limit is the voice channel the mode rides through (3 kHz) - stated, not
 ///         inferred.</item>
 ///   <item><b>Never be wider than a NinoTNC actually is for the same mode.</b> The
 ///         published figures are ceilings, not descriptions: mode 12 is published at
@@ -26,7 +26,7 @@ namespace Packet.SoundModem.Tests.Dsp;
 /// </list>
 /// <para>
 /// The reference numbers in <see cref="NinoTncMeasured"/> are from a real NinoTNC
-/// (firmware 3.44) recorded on the CM108 bench loop — see docs/ninotnc-loop.md. They are
+/// (firmware 3.44) recorded on the CM108 bench loop - see docs/ninotnc-loop.md. They are
 /// measured through a 48 kHz codec, which does nothing to a 300-2500 Hz signal, and at
 /// ~40 dB SNR, where noise sits far below the 0.5 % tails, so they compare fairly with our
 /// synthesised waveform.
@@ -59,14 +59,14 @@ public class OccupiedBandwidthTests
 
     public static TheoryData<string, double> PublishedLimits => new()
     {
-        // NinoTNC "SSB AFSK" modes 12/13/14 — Nino: "Filtered for 500 Hz occupied
+        // NinoTNC "SSB AFSK" modes 12/13/14 - Nino: "Filtered for 500 Hz occupied
         // bandwidth". Ours needs its own band-limiting to hold this; raw phase-continuous
         // FSK on these tones measures ~519 Hz.
         { "afsk300", 500 },
         { "afsk300-il2p", 500 },
         { "afsk300-il2pc", 500 },
 
-        // "SHAPED PSK MODES" — Nino: "300 BPSK, 600 QPSK send 300 symbols/sec, 500 Hz
+        // "SHAPED PSK MODES" - Nino: "300 BPSK, 600 QPSK send 300 symbols/sec, 500 Hz
         // OBW. 1200 BPSK, 2400 QPSK send 1200 symbols/sec, 2400 Hz OBW."
         { "bpsk300", 500 },
         { "qpsk600", 500 },
@@ -118,7 +118,7 @@ public class OccupiedBandwidthTests
     /// <summary>
     /// The modes and NinoTNC reference recordings for the never-wider rule. The reference
     /// is MEASURED FROM THE CHECKED-IN RECORDING AT TEST TIME (samples/ninotnc/, firmware
-    /// 3.44 on the CM108 loop) rather than pinned as a constant — and, critically, both
+    /// 3.44 on the CM108 loop) rather than pinned as a constant - and, critically, both
     /// sides are measured the same way: whole burst, same 40-byte bench frame the
     /// recording carries, same TXDELAY. The first version of this table compared our
     /// data-section spectrum against the highest-energy window of his short frames (mostly
@@ -220,7 +220,7 @@ public class OccupiedBandwidthTests
     }
 
     /// <summary>Whole-burst 99 % OBW. The FFT size scales with the rate so both sides
-    /// are measured at the same ~12 Hz bin resolution — comparing spectra measured at
+    /// are measured at the same ~12 Hz bin resolution - comparing spectra measured at
     /// different resolutions is the same class of error this test exists to prevent.</summary>
     private static double WholeBurstObw(float[] burst, int rate) =>
         OccupiedBandwidth.Measure(burst, rate, fftSize: rate == 48000 ? 4096 : 1024).WidthHz;
@@ -241,7 +241,7 @@ public class OccupiedBandwidthTests
     {
         // Guards the measurement itself: a meter that reads low would pass every test
         // above while we splattered. A pure tone occupies ~nothing; two tones 400 Hz apart
-        // occupy ~400 Hz. Validated in the field too — this method reads a real NinoTNC's
+        // occupy ~400 Hz. Validated in the field too - this method reads a real NinoTNC's
         // mode-11 transmission at 1887 Hz against its published 2400 Hz.
         var tone = new float[SampleRate];
         var pair = new float[SampleRate];
@@ -272,7 +272,7 @@ public class OccupiedBandwidthTests
             ("fsk9600", FskModem.Fsk9600(48000, _ => { }, FskFraming.ClassicHdlc), 9600, 0.75),
             ("fsk4800", FskModem.Fsk4800(48000, _ => { }), 4800, 0.75),
             // C4FSK is shaped at 1.0x its SYMBOL rate (a 4-level eye cannot take the
-            // 0.55x squeeze — measured 0/8 vs 8/8), so its bound is per symbol rate.
+            // 0.55x squeeze - measured 0/8 vs 8/8), so its bound is per symbol rate.
             ("c4fsk9600", C4fskModem.C4fsk9600(48000, _ => { }), 4800, 1.4),
             ("c4fsk19200", C4fskModem.C4fsk19200(48000, _ => { }), 9600, 1.4),
         })

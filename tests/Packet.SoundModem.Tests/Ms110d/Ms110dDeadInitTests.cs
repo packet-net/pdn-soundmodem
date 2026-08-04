@@ -5,21 +5,21 @@ using Packet.SoundModem.Tests.Channel;
 namespace Packet.SoundModem.Tests.Ms110d;
 
 /// <summary>
-/// Regression rig for issue #101 — the WN2 (BPSK r1/4, K=48) DFE dead-init edge and the input
+/// Regression rig for issue #101 - the WN2 (BPSK r1/4, K=48) DFE dead-init edge and the input
 /// signal-level AGC that fixes it. There is no AGC upstream of this modem, so a globally-low
 /// receive level (the real-RF Poor capture, ~20 dB below the sim's nominal) leaves the K=48
 /// cold-restart LS solves over-regularised → the equalizer initialises dead → SignalLost. The
 /// fix normalizes the global receive level (estimated from a fade-averaged preamble SIGNAL
 /// correlation) up to nominal ahead of the equalizer; it is a dead-zone no-op at the sim's
 /// nominal level (masks unchanged) and lifts only globally-low bursts. Reproduced by the
-/// issue's own method — scale a clean-sim WN2 Poor burst down ~−20 dB (init gain 0.081 → 0.014,
+/// issue's own method - scale a clean-sim WN2 Poor burst down ~−20 dB (init gain 0.081 → 0.014,
 /// matching the OTA capture's ref≈0.014).
 /// </summary>
 public class Ms110dDeadInitTests
 {
     // A deterministic WN2 Poor burst, built exactly as Ms110dMaskTests.RunPointWorker builds
     // theirs (Long interleaver, K=7, 20-super-frame preamble). Bespoke seed, outside the gated
-    // mask families — a robustness fixture, not a mask point.
+    // mask families - a robustness fixture, not a mask point.
     private const int FixtureSeed = 424_242;
     private const double Wn2PoorSnrDb = 5.0;
 
@@ -113,14 +113,14 @@ public class Ms110dDeadInitTests
     }
 
     // The red test (issue #101): a WN2 Poor burst that decodes cleanly at full receive level
-    // dies SignalLost once the level is scaled down ~−20 dB — the K=48 init solve initialises
+    // dies SignalLost once the level is scaled down ~−20 dB - the K=48 init solve initialises
     // dead. RED on `main` (SignalLost, init gain ≈ 0.014); GREEN with the input AGC (the global
     // level-normalization lifts it back to nominal so the equalizer initialises and tracks
-    // normally — same SNR as full level, so it decodes clean).
+    // normally - same SNR as full level, so it decodes clean).
     [Fact]
     public void Wn2_Poor_Dead_Init_Recovers_At_Low_Receive_Level()
     {
-        // −20 dB — the issue's own controlled reproduction (real path level offset).
+        // −20 dB - the issue's own controlled reproduction (real path level offset).
         (float[] rx, byte[] payload) = BuildWn2PoorBurst(FixtureSeed, FixtureSeed + 1, scale: 0.1);
         DecodeResult r = RunBurst(rx, payload);
 
@@ -134,8 +134,8 @@ public class Ms110dDeadInitTests
             0, "scaling is level-only (SNR unchanged), so a normalized burst decodes cleanly");
     }
 
-    // The full-level control: the SAME burst at nominal level must be a strict AGC no-op —
-    // gain exactly 1.0 — so the sim masks are unchanged by construction.
+    // The full-level control: the SAME burst at nominal level must be a strict AGC no-op -
+    // gain exactly 1.0 - so the sim masks are unchanged by construction.
     [Fact]
     public void Wn2_Poor_Full_Level_Is_Agc_No_Op()
     {
@@ -167,7 +167,7 @@ public class Ms110dDeadInitTests
     }
 
     // Calibration (env-gated): the AGC level over the gated WN2 Poor mask seed families
-    // (canonical 502 + disjoint 10502, workers 0..3, bursts 0..61) — reports the MIN level, so
+    // (canonical 502 + disjoint 10502, workers 0..3, bursts 0..61) - reports the MIN level, so
     // the AgcLevelFloor dead-zone can be set strictly below it (guaranteeing the AGC never
     // fires in-family → mask byte-identical). Level depends on the channel realization, not the
     // payload.

@@ -2,8 +2,8 @@ using M0LTE.Il2p;
 
 namespace Packet.SoundModem.Modems;
 
-/// <summary>QPSK carrying IL2P — the NinoTNC 600 (300 baud, 1500 Hz), 2400 (1200 baud,
-/// 1500 Hz) and 3600 (1800 baud, 1650 Hz) mode family — as an <see cref="IModem"/>.
+/// <summary>QPSK carrying IL2P - the NinoTNC 600 (300 baud, 1500 Hz), 2400 (1200 baud,
+/// 1500 Hz) and 3600 (1800 baud, 1650 Hz) mode family - as an <see cref="IModem"/>.
 /// Symbol rates and carriers are Nino's, per the v3/4.43 mode-switch mapping in
 /// flashtnc's release-notes.txt.</summary>
 public sealed class QpskModem : IModem, IConstellationSource
@@ -30,7 +30,7 @@ public sealed class QpskModem : IModem, IConstellationSource
             },
             crc);
 
-        // Reset the deframer on the DCD falling edge — same rationale as BpskModem: a
+        // Reset the deframer on the DCD falling edge - same rationale as BpskModem: a
         // carrier that drops mid-collection leaves the deframer consuming the next
         // transmission's preamble and sync word as phantom payload.
         bool previousDcd = false;
@@ -58,7 +58,7 @@ public sealed class QpskModem : IModem, IConstellationSource
     /// <inheritdoc />
     public event Action<ConstellationPoint>? SymbolPlotted;
 
-    /// <summary>Creates the 600 bps mode (300 baud, 1500 Hz centre) — NinoTNC mode 9,
+    /// <summary>Creates the 600 bps mode (300 baud, 1500 Hz centre) - NinoTNC mode 9,
     /// an SSB-friendly 500 Hz-OBW mode sharing its symbol rate with 300 BPSK.</summary>
     /// <remarks>Roll-off 0.20 rather than the default: it puts us at 322 Hz, just inside
     /// the 328 Hz a NinoTNC's own mode-9 transmission measures on the bench. The rule is
@@ -74,7 +74,7 @@ public sealed class QpskModem : IModem, IConstellationSource
     /// <remarks>
     /// Keeps the default 0.35, deliberately NOT copying the NinoTNC here: its own mode-11
     /// signal measures 1852 Hz where ours is 1400 Hz, so matching it would mean widening
-    /// for no gain. Bench evidence agrees — sweeping our roll-off up toward its width made
+    /// for no gain. Bench evidence agrees - sweeping our roll-off up toward its width made
     /// its decode of us worse, not better (0.35 → 4/6, 0.6 → 0/6, 0.9 → 0/6 at a short
     /// preamble). <paramref name="carrierFrequency"/> (1500 Hz convention) moves the modem
     /// within the audio passband, QtSoundModem-style.
@@ -88,9 +88,9 @@ public sealed class QpskModem : IModem, IConstellationSource
     /// <summary>Creates the 3600 bps mode (1800 baud; the conventional 1650 Hz centre).</summary>
     /// <remarks>
     /// <para>
-    /// Roll-off 0.25 — tighter than the other modes, matching the NinoTNC's own mode-5
+    /// Roll-off 0.25 - tighter than the other modes, matching the NinoTNC's own mode-5
     /// signal, which sits near the Nyquist floor for 1800 sym/s (how 3600 bps fits a
-    /// voice channel). Measured like-for-like (whole burst, same frame — issue #2 fixed
+    /// voice channel). Measured like-for-like (whole burst, same frame - issue #2 fixed
     /// an earlier window mismatch that mis-read this mode as "9 % wider"), we transmit
     /// 1808 Hz against the TNC's 1887 Hz: narrower, and CI-enforced against the
     /// checked-in reference recording.
@@ -98,7 +98,7 @@ public sealed class QpskModem : IModem, IConstellationSource
     /// <para>
     /// 0.25 remains a receiver limit rather than a free choice: ~0.10 shaping is
     /// decodable by the NinoTNC (bench: 10/10) but not by our own demodulator at 6⅔
-    /// samples per symbol — bench-swept, 0.10 fails a clean loopback, 0.15/0.20 fail
+    /// samples per symbol - bench-swept, 0.10 fails a clean loopback, 0.15/0.20 fail
     /// under noise. A matched receive filter or a higher DSP rate for this mode would
     /// buy margin, but with our TX already narrower than the reference hardware there is
     /// no compliance need.

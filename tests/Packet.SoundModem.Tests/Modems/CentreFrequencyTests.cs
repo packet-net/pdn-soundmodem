@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Tests.Modems;
 /// Locks in issue #39: the narrow modes' audio centre is settable per modem
 /// (QtSoundModem-style), on BOTH transmit and receive. Each case transmits a clean frame
 /// at a non-default centre and asserts it (a) round-trips when the receiver shares that
-/// centre, and (b) does NOT decode at the mode's default centre — proving the override
+/// centre, and (b) does NOT decode at the mode's default centre - proving the override
 /// genuinely moves the signal rather than only relabelling it. The AFSK1200 modulator
 /// honouring the centre is the regression this guards: its TX previously stayed on the
 /// fixed Bell-202 tones no matter the requested centre.
@@ -67,7 +67,7 @@ public class CentreFrequencyTests
     }
 
     // Only the PSK carrier modes get the stricter "must not decode at the default centre"
-    // check. The AFSK tone modes' discriminators — and especially the multi-decoder bank —
+    // check. The AFSK tone modes' discriminators - and especially the multi-decoder bank -
     // are deliberately tolerant of a few hundred Hz of offset (the bank exists precisely to
     // catch mistuned peers), so a moved AFSK signal legitimately still decodes at the
     // default centre. The matched-centre round-trip above is what proves AFSK TX honours

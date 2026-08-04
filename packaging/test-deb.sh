@@ -107,7 +107,7 @@ verify=$(systemd-analyze verify /usr/lib/systemd/system/pdn-soundmodem.service 2
 state=$(systemctl is-enabled pdn-soundmodem.service 2>&1)
 [ "$state" = "enabled" ] && ok "enabled on install" || bad "expected enabled on install, got '$state'"
 # postinst starts it too. There is no sound card in here so it will not stay up, but
-# systemd must have actually executed it — assert on a timestamp systemd only sets once
+# systemd must have actually executed it - assert on a timestamp systemd only sets once
 # the main process has run. (`journalctl | grep -q .` is NOT a valid check here: it
 # matches the literal "-- No entries --" line and so passes when nothing ever started.)
 started=$(systemctl show pdn-soundmodem.service -p ExecMainStartTimestamp --value 2>/dev/null)

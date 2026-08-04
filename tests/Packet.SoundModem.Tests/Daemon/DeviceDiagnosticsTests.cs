@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Tests.Daemon;
 
 /// <summary>
 /// The message a fresh install produces. The seeded config names a CM108 on /dev/hidraw0, so on
-/// most machines this is literally the first thing an admin ever reads about pdn-soundmodem —
+/// most machines this is literally the first thing an admin ever reads about pdn-soundmodem -
 /// it has to name the setting, name the file, and give the command that lists what is really
 /// there. See CONFIG.md § What is rejected at start-up.
 /// </summary>
@@ -69,7 +69,7 @@ public class DeviceDiagnosticsTests
     [Fact]
     public void Device_Failures_Never_Read_As_Permanent_Because_The_Unit_Keeps_Retrying()
     {
-        // These exit 1, not 2 — RestartPreventExitStatus=2 must not catch them, so the message
+        // These exit 1, not 2 - RestartPreventExitStatus=2 must not catch them, so the message
         // must not tell the operator the service has given up.
         string audio = DeviceDiagnostics.Audio("x", ConfigPath, new IOException("boom"));
         string ptt = DeviceDiagnostics.Ptt(

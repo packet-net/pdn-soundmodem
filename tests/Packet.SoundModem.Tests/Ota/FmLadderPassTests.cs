@@ -5,7 +5,7 @@ using Packet.SoundModem.UberSdr;
 namespace Packet.SoundModem.Tests.Ota;
 
 /// <summary>
-/// The FM §E2 ladder, verified end to end with no radio in the loop — the FM counterpart of
+/// The FM §E2 ladder, verified end to end with no radio in the loop - the FM counterpart of
 /// <see cref="OfdmLadderPassTests"/>. Renders an FM ladder exactly as it would go to the DAX FM
 /// transmitter, lays it out as an IQ capture would record it, FM-discriminates it back and scores it
 /// with the mode's own demodulator, so the whole chain (render → channel → FM-mod at the target
@@ -132,7 +132,7 @@ public class FmLadderPassTests
     {
         // The rehearsal: several healthy rungs, laid out as a capture, scored in one pass. Every burst
         // must recover its frame, its measured SNR must track the request, and its peak deviation must
-        // land near the mode's target — the calibration the FM path exists to verify.
+        // land near the mode's target - the calibration the FM path exists to verify.
         double[] snrs = [40, 30];
         (FmCaptureScore score, FmLadderPass pass) = RunLadder(mode, snrs, seed: 41);
 
@@ -146,7 +146,7 @@ public class FmLadderPassTests
         }
 
         // The near-clean top rung's peak deviation is the signal's, which the drive was calibrated to
-        // the target — within the FSK transition overshoot / worst-point reference margin.
+        // the target - within the FSK transition overshoot / worst-point reference margin.
         score.Bursts[0].PeakDeviationHz.Should().BeApproximately(targetDevHz, targetDevHz * 0.2,
             "the top rung's peak deviation is the signal deviating to its calibrated target");
     }
@@ -159,7 +159,7 @@ public class FmLadderPassTests
         (FmCaptureScore score, _) = RunLadder("fsk9600", [40, -15], seed: 55);
 
         score.Bursts[0].Decoded.Should().BeTrue("40 dB is well above the cliff");
-        score.Bursts[1].Decoded.Should().BeFalse("−15 dB is well below the cliff — the burst is lost");
+        score.Bursts[1].Decoded.Should().BeFalse("−15 dB is well below the cliff - the burst is lost");
     }
 
     [Fact]

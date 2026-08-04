@@ -16,9 +16,9 @@ namespace Packet.SoundModem.Tests.UberSdr;
 /// here (that is the mask suite); these run at high SNR to isolate the conversion chain.
 /// </summary>
 /// <remarks>
-/// The demodulators themselves live in <c>M0LTE.Dsp</c>, and the tests that pin <em>them</em> —
+/// The demodulators themselves live in <c>M0LTE.Dsp</c>, and the tests that pin <em>them</em> -
 /// streaming-versus-reference equivalence, block-boundary independence, sideband selection at
-/// absolute frequencies, decimation by one — live there with them, because they are properties of
+/// absolute frequencies, decimation by one - live there with them, because they are properties of
 /// the filter and need no modem to state. What stays here is the question only this repo can
 /// ask: whether a real burst survives the round trip and still decodes to the bit.
 /// </remarks>
@@ -110,7 +110,7 @@ public class SsbDemodulatorMs110dLoopbackTests
 
     [Theory]
     [InlineData(2, 0.0)]      // BPSK, RX tuned on dial
-    [InlineData(2, 1200.0)]   // BPSK, RX tuned 1.2 kHz off — NCO must correct
+    [InlineData(2, 1200.0)]   // BPSK, RX tuned 1.2 kHz off - NCO must correct
     [InlineData(6, 0.0)]      // QPSK
     [InlineData(6, -900.0)]   // QPSK, negative dial offset
     [InlineData(0, 750.0)]    // Walsh/BPSK WN0

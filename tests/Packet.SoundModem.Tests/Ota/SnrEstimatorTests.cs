@@ -11,7 +11,7 @@ namespace Packet.SoundModem.Tests.Ota;
 /// <para>This is the blocking test the plan calls §S3. Every over-the-air result is a
 /// comparison against the rig's prediction <em>at a stated SNR</em>, so an estimator with a
 /// bias would shift every point along the curve and quietly re-fit the whole campaign to
-/// itself — the campaign-audit failure this project has already paid for once. The only
+/// itself - the campaign-audit failure this project has already paid for once. The only
 /// defence is to generate signals at SNRs the rig chose and require them back.</para>
 /// <para>The rig's convention (<c>WattersonChannel.AddNoise</c>) is mean burst power against
 /// noise in a 3 kHz bandwidth, so that is what is asserted. Nothing here compares the
@@ -43,7 +43,7 @@ public class SnrEstimatorTests
         float[] clean = tx.Modulate(payload);
 
         // The rig pads with noise-only lead-in/lead-out, which is exactly the guard interval a
-        // scheduled OTA burst provides — so the estimator is handed the same shape of data it
+        // scheduled OTA burst provides - so the estimator is handed the same shape of data it
         // will see on the air.
         const int guard = 4 * Rate;
         float[] noisy = new WattersonChannel(Rate, seed + 1)
@@ -100,7 +100,7 @@ public class SnrEstimatorTests
     {
         // The property that matters for this chain specifically. The dummy-load-to-loop
         // coupling is physical and uncalibrated, and the receiver's gain is not ours to set,
-        // so a capture's absolute level carries no information — move a cable and it changes.
+        // so a capture's absolute level carries no information - move a cable and it changes.
         // An SNR estimate must be invariant to it, or session-to-session comparisons measure
         // the room rather than the modem.
         //
@@ -134,7 +134,7 @@ public class SnrEstimatorTests
     {
         // The first-burst warm-up failure from issue #121. The noise lead-in sits in the capture's
         // settling region (rx_sdr/RSP1/DC), so the measured noise floor is momentarily louder than
-        // the burst. There is no signal left after removing that noise — a FAILED measurement, which
+        // the burst. There is no signal left after removing that noise - a FAILED measurement, which
         // must come back as null (no reading), NOT as the ≈ −250 dB delivered SNR a signal floored to
         // an epsilon would produce and which then drags the per-run self-cal aggregate to tens of dB.
         var random = new Random(4242);

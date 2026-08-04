@@ -71,7 +71,7 @@ public class ArdopChannelShiftTests
     [Fact]
     public void Ardops_Native_Centre_Really_Is_The_Constant_We_Shift_From()
     {
-        // ArdopChannelShift.NativeCentreHz is measured, not assumed — M0LTE.Ardop exposes no
+        // ArdopChannelShift.NativeCentreHz is measured, not assumed - M0LTE.Ardop exposes no
         // centre constant. If the package ever moves its waveforms, this fails rather than
         // silently mis-centring every shifted station.
         List<double> tones = Tones(TwoTone());

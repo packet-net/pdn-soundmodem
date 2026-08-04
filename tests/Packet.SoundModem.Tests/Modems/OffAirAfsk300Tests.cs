@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Tests.Modems;
 
 /// <summary>
 /// Guards afsk300-il2pc against a real off-air capture of the live 40 m slot
-/// (<c>samples/offair/m9psy-40m-afsk300-il2pc-qrm.wav</c> — provenance in that folder's
+/// (<c>samples/offair/m9psy-40m-afsk300-il2pc-qrm.wav</c> - provenance in that folder's
 /// README). The clip carries an M0LTE SABM through the slot's everyday interference: a
 /// neighbouring QSO ~200 Hz below the packet centre, inside a ±400 Hz receive passband
 /// but outside a ±300 one. The ±400 filters this mode shipped with for its first year
@@ -17,7 +17,7 @@ public class OffAirAfsk300Tests
 {
     private const string Fixture = "samples/offair/m9psy-40m-afsk300-il2pc-qrm.wav";
 
-    // M0LTE>GB7IOW-1 SABM+P — one of the connect attempts the capture caught.
+    // M0LTE>GB7IOW-1 SABM+P - one of the connect attempts the capture caught.
     private static readonly byte[] Expected =
         Convert.FromHexString("8E846E929EAEE29A6098A88A40613F");
 

@@ -53,7 +53,7 @@ public class Ms110dGenieTests
     {
         // The strongest seam check: with the genie ring holding EXACTLY the noisy samples,
         // every redirected estimation read returns the same values a normal run reads, so
-        // the decode must be bit-identical — the plumbing changes data sourcing, nothing else.
+        // the decode must be bit-identical - the plumbing changes data sourcing, nothing else.
         var tx = new Ms110dModulator(new Ms110dTxSettings { WaveformNumber = 4, PreambleSuperframes = 5 });
         Ms110dInterleaverParams il = Ms110dInterleaverParams.Get3k(4, Ms110dInterleaverKind.Long);
         byte[] payload = RandomBits(il.InputBits * 2, seed: 21);

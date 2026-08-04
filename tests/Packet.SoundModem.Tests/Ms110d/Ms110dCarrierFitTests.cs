@@ -8,7 +8,7 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// replaced the weighted phase regression in RefineCarrier. The central test reproduces
 /// the measured killer: a deep fade inside the fit window whose noise phases random-walk
 /// a sequential unwrap several turns, which made the old regression fit −4.86 Hz on a
-/// channel that had barely rotated (WN5 Poor burst w0/b3 — dead end-to-end at SER 0.55).
+/// channel that had barely rotated (WN5 Poor burst w0/b3 - dead end-to-end at SER 0.55).
 /// The lag-product estimator must read the same window as ≈0 Hz.
 /// </summary>
 public class Ms110dCarrierFitTests
@@ -86,7 +86,7 @@ public class Ms110dCarrierFitTests
     [Fact]
     public void An_Empty_Window_Refuses_To_Fit()
     {
-        var groups = new Cf[40]; // all zero — no signal at all
+        var groups = new Cf[40]; // all zero - no signal at all
         Ms110dDemodulator.EstimateCarrierFit(groups, out _, out _)
             .Should().BeFalse("retuning the carrier on pure noise is worse than keeping it");
     }

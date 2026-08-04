@@ -20,8 +20,8 @@ public class Afsk300MultiModemTests
 
     private static float[] OffTune(int offsetHz, Afsk300Framing framing = Afsk300Framing.Il2pCrc)
     {
-        // A transmitter whose audio centre sits offsetHz from the 1700 Hz channel centre —
-        // how an off-dial station arrives — with a realistic 240 ms preamble, padded with
+        // A transmitter whose audio centre sits offsetHz from the 1700 Hz channel centre -
+        // how an off-dial station arrives - with a realistic 240 ms preamble, padded with
         // lead-in/out silence.
         var transmitter = new Afsk300Modem(SampleRate, _ => { }, framing, 1700 + offsetHz);
         float[] audio = transmitter.Modulate(Frame, txDelayMilliseconds: 240);
@@ -91,7 +91,7 @@ public class Afsk300MultiModemTests
         // to finish, which on a clean signal is a branch well below the carrier rather than the
         // one nearest it, so a signal exactly on frequency reported −105 Hz and the number moved
         // with buffer framing. Now every branch measures the carrier against its own centre (the
-        // slicer's envelope midpoint is that offset — see AfskDemodulator.CarrierOffsetHz), the
+        // slicer's envelope midpoint is that offset - see AfskDemodulator.CarrierOffsetHz), the
         // best-matched one is chosen on the smallest residual, and branch + residual is the
         // answer. Measured across the bank the worst error is ~2 Hz, so the whole span is pinned
         // rather than one convenient point: a per-step regression would show up here as a ~35 Hz
@@ -110,7 +110,7 @@ public class Afsk300MultiModemTests
     [Fact]
     public void A_Single_Branch_Measures_The_Offset_Too()
     {
-        // The measurement belongs to the demodulator, not to the bank — so a lone modem, which
+        // The measurement belongs to the demodulator, not to the bank - so a lone modem, which
         // reported nothing at all before, now says where the station sat relative to it.
         var qualities = new List<FrameQuality>();
         var modem = new Afsk300Modem(SampleRate, _ => { });
@@ -140,7 +140,7 @@ public class Afsk300MultiModemTests
     public void Identical_Content_Later_Is_Not_Deduplicated()
     {
         float[] one = OffTune(0);
-        // Same frame content twice, 4 s apart — both must be delivered (the dedupe window is short).
+        // Same frame content twice, 4 s apart - both must be delivered (the dedupe window is short).
         var audio = new float[one.Length + 4 * SampleRate + one.Length];
         one.CopyTo(audio, 0);
         one.CopyTo(audio, one.Length + 4 * SampleRate);

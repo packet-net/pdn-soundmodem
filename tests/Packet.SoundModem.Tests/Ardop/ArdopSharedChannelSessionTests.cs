@@ -10,7 +10,7 @@ namespace Packet.SoundModem.Tests.Ardop;
 
 /// <summary>
 /// Two pdn stations holding a real ARQ session with each other over a channel they share with a
-/// packet modem, at a centre ARDOP itself cannot reach — the arrangement <c>becbdde</c> built and
+/// packet modem, at a centre ARDOP itself cannot reach - the arrangement <c>becbdde</c> built and
 /// could until now only test in pieces (the shift measured on a two-tone signal, the transmit
 /// inhibit against a synthetic predicate).
 /// </summary>
@@ -28,11 +28,11 @@ namespace Packet.SoundModem.Tests.Ardop;
 /// shipped CSMA parameters, so ARDOP's bursts contend for the channel exactly as they do on air.
 /// The only substitution is the sound card, and it is substituted faithfully: transmission is
 /// paced at real time in 20 ms blocks and capture delivers 20 ms blocks continuously, silence
-/// included — the modems' busy detectors are sample-clocked and a bench that only fed them audio
+/// included - the modems' busy detectors are sample-clocked and a bench that only fed them audio
 /// during bursts would leave them latched (which is how the first cut of this bench failed).</para>
 /// <para><b>What the bench found.</b> ARDOP's own bursts bypass <c>TransmitInhibit</c> but still
 /// go through the channel's p-persistent CSMA, so they wait on the packet modems' channel-busy
-/// state — and a shifted centre puts ARDOP's signal inside the packet modem's passband, where its
+/// state - and a shifted centre puts ARDOP's signal inside the packet modem's passband, where its
 /// energy busy detector sees it. It survives (the detector releases ~100 ms after the signal
 /// stops), but a session at 950 Hz alongside an afsk1200 modem measured ~20 % slower at the
 /// shipped p=63 than with the roll disabled. Nothing here asserts on that; it is why the bench
@@ -43,8 +43,8 @@ namespace Packet.SoundModem.Tests.Ardop;
 /// measurement: at 2× and 4× the sessions became intermittent, because the bench's own thread
 /// scheduling is the one thing that does not scale and it eats the turnaround margin. A slow test
 /// that always passes beats a quick one that sometimes does. Even at real time the bench is
-/// load-sensitive — one run in seven stalled a transfer past its wait on a box busy with another
-/// build — so the waits are patient (90 s against a ~25 s session, ARQTIMEOUT at its 240 s
+/// load-sensitive - one run in seven stalled a transfer past its wait on a box busy with another
+/// build - so the waits are patient (90 s against a ~25 s session, ARQTIMEOUT at its 240 s
 /// maximum): the assertions are unchanged, the bench is just allowed to ride out a stall.</para>
 /// </remarks>
 public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
@@ -59,7 +59,7 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
     /// <summary>Where the packet modem sits; ARDOP shares the same passband with it.</summary>
     private const int PacketSubChannel = 0;
 
-    /// <summary>The centre from the worked config in <c>becbdde</c> — ARDOP low in the passband
+    /// <summary>The centre from the worked config in <c>becbdde</c> - ARDOP low in the passband
     /// with packet modes above it.</summary>
     private const double ShiftedCentreHz = 950;
 
@@ -67,7 +67,7 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
 
     /// <summary>
     /// The playback device: hands each 20 ms block to the air as it plays and returns when the
-    /// audio has really left, which is what the ARQ engine takes as the end of playout — the
+    /// audio has really left, which is what the ARQ engine takes as the end of playout - the
     /// instant its repeat window opens. Paced against a deadline rather than by summing sleeps so
     /// a late thread-pool wake-up does not accumulate into drift.
     /// </summary>
@@ -387,7 +387,7 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
         return predicate();
     }
 
-    /// <summary>An AX.25 UI frame — the packet traffic that must stay off the air during a
+    /// <summary>An AX.25 UI frame - the packet traffic that must stay off the air during a
     /// session.</summary>
     private static byte[] PacketFrame()
     {
@@ -407,14 +407,14 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
     [InlineData(ShiftedCentreHz)]
     public async Task An_Arq_Session_Carries_Data_Both_Ways_And_Holds_Packet_Traffic_Until_It_Ends(double? centreHz)
     {
-        // Opt-in: this bench is timing-sensitive and currently flaky — measured 2 of 4 runs
+        // Opt-in: this bench is timing-sensitive and currently flaky - measured 2 of 4 runs
         // failing on 2026-08-02, against 6 of 7 green when it was written. The failures are
         // sessions that do not establish ("CONNECT TO … FAILED"), never wrong data.
         //
         // The suspected cause is a real behaviour change, not a bad test: the two stations here
         // share one simulated channel, and until ARDOP was given ownsChannelTiming (#171) CSMA
-        // kept them from transmitting over each other. Real ardopcf stations have no CSMA — ARQ
-        // owns its own turnaround timing — so the bench is now exposing collision behaviour it
+        // kept them from transmitting over each other. Real ardopcf stations have no CSMA - ARQ
+        // owns its own turnaround timing - so the bench is now exposing collision behaviour it
         // was previously shielded from. Whether that is the bench's cross-connect being
         // unrealistic or a genuine timing margin problem is unresolved, and is the open
         // question, not the flake itself.
@@ -454,7 +454,7 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
 
         // With the session up and quiet, offer the packet modem a frame. TransmitInhibitTests
         // proves the mechanism against a synthetic predicate; this is it against the thing the
-        // daemon actually points it at — a live ARQ engine, mid-session, on a channel the packet
+        // daemon actually points it at - a live ARQ engine, mid-session, on a channel the packet
         // modem really is sharing.
         bench.Listener.PacketFrameCount().Should().Be(0, "no packet traffic has been offered yet");
         Task packet = bench.Caller.Channel.EnqueueTransmit(PacketSubChannel, PacketFrame());

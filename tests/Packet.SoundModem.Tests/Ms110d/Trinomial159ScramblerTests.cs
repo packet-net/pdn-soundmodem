@@ -6,7 +6,7 @@ public class Trinomial159ScramblerTests
 {
     // D.5.1.4 printed golden vector (text-layer verbatim,
     // docs/ms110d/tables/text-layer-extracts.md): "the first 32 symbols of the scramble
-    // sequence are" —
+    // sequence are" -
     private static readonly int[] PrintedFirst32 =
     [
         5, 6, 2, 1, 7, 3, 1, 1, 6, 0, 5, 4, 0, 7, 7, 0,

@@ -84,7 +84,7 @@ public class PreambleGeneratorTests
     public void Wid_Section_Chips_Are_Walsh_Plus_WidPn_Modulo_8()
     {
         // Wire-side anchor (checklist L2): recompute the expected chips here with
-        // independent expansion arithmetic — di-bit w4 of WN 6/Short/K7 (d9d8 = 01 → 1),
+        // independent expansion arithmetic - di-bit w4 of WN 6/Short/K7 (d9d8 = 01 → 1),
         // Walsh(1) = 0404 repeated 8×, plus widPN[0..31] mod 8.
         byte[] chips = PreambleGenerator.WidSectionChips(6, Ms110dInterleaverKind.Short, 7);
         chips.Length.Should().Be(5 * 32);
@@ -154,14 +154,14 @@ public class PreambleGeneratorTests
     [Fact]
     public void Fixed_Section_Pn_Wraps_At_256_Chips()
     {
-        // O-1: chips 256–287 of the 288-chip Fixed subsection reuse fixedPN[0..31] (at
+        // O-1: chips 256-287 of the 288-chip Fixed subsection reuse fixedPN[0..31] (at
         // 3 kHz the wrap and per-symbol-restart readings coincide; see PreambleGenerator).
         var generator = new PreambleGenerator(0, 2);
         byte[] fixedSection = generator.FixedSectionChips();
         byte[][] walshRows = [[0, 0, 0, 0], [0, 4, 0, 4], [0, 0, 4, 4], [0, 4, 4, 0]];
         for (int i = 256; i < 288; i++)
         {
-            // Chips 256–287 belong to the 9th fixed symbol (di-bit 3, the last transmitted).
+            // Chips 256-287 belong to the 9th fixed symbol (di-bit 3, the last transmitted).
             int expected = (walshRows[3][i % 4] + Ms110dTables.FixedPn[i - 256]) % 8;
             fixedSection[i].Should().Be((byte)expected);
         }
@@ -172,7 +172,7 @@ public class PreambleGeneratorTests
     {
         // A noise-corrupted WID can pass its 3-dibit checksum yet name (WN 0, UltraShort),
         // which has no Table D-XXXVII row; acquisition pre-validates with Has3k instead of
-        // letting Get3k throw out of the receive path — the un-validated combination
+        // letting Get3k throw out of the receive path - the un-validated combination
         // crashed the receiver mid-burst on the Poor WN0 mask run (−1 dB, seed 500).
         Ms110dInterleaverParams.Has3k(0, Ms110dInterleaverKind.UltraShort).Should().BeFalse();
         Ms110dInterleaverParams.Has3k(9, Ms110dInterleaverKind.Long).Should().BeFalse();

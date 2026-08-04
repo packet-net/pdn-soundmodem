@@ -5,37 +5,37 @@ namespace Packet.SoundModem.Ota;
 internal enum SimLayer
 {
     /// <summary>The full <see cref="SimModem"/> path: an IL2P+CRC AX.25 frame through the mode's
-    /// <c>IModem</c>, scored on whether the frame came back — the deployment reality, and the
+    /// <c>IModem</c>, scored on whether the frame came back - the deployment reality, and the
     /// generalization that drives any catalogue mode.</summary>
     Frame,
 
     /// <summary>The raw datac packet through <see cref="DatacPacketProbe"/>, scored on the packet's
-    /// own CRC and post-LDPC coded BER — the layer FreeDV publishes its operating points in.</summary>
+    /// own CRC and post-LDPC coded BER - the layer FreeDV publishes its operating points in.</summary>
     Packet,
 }
 
 /// <summary>One waterfall point: everything one (mode, channel, layer, SNR, level) cell measured.</summary>
 /// <param name="Trials">Bursts run.</param>
 /// <param name="Successes">Frames matched (frame layer) or packets CRC-OK (packet layer).</param>
-/// <param name="BitErrors">Coded bit errors — a lost frame/packet counts all its bits wrong.</param>
+/// <param name="BitErrors">Coded bit errors - a lost frame/packet counts all its bits wrong.</param>
 /// <param name="TotalBits">Bits compared.</param>
 /// <param name="Margin">Frame layer: mean FEC-corrected bytes on matched frames. Packet layer: mean
-/// LDPC parity checks satisfied — a soft distance-from-the-cliff indicator either way.</param>
+/// LDPC parity checks satisfied - a soft distance-from-the-cliff indicator either way.</param>
 /// <param name="LevelDb">Absolute input-level scale applied to the post-channel signal+noise before
 /// the receiver, in dB. 0 is the nominal level; the SNR is unchanged (signal and noise scale
-/// together) — the level-invariance axis. A level-sensitive front end degrades here at fixed SNR.</param>
+/// together) - the level-invariance axis. A level-sensitive front end degrades here at fixed SNR.</param>
 internal sealed record SimPointResult(
     string Mode, SimChannelKind Channel, SimLayer Layer, double SnrDb,
     int Trials, int Successes, long BitErrors, long TotalBits, double Margin, double LevelDb = 0, double CfoHz = 0)
 {
-    /// <summary>Fraction of bursts that delivered — the number FreeDV's "N/100" is quoted as.</summary>
+    /// <summary>Fraction of bursts that delivered - the number FreeDV's "N/100" is quoted as.</summary>
     public double SuccessRate => Trials == 0 ? 0 : (double)Successes / Trials;
 
     /// <summary>Frame/packet error rate.</summary>
     public double Fer => 1 - SuccessRate;
 
     /// <summary>Coded bit-error rate (lost bursts saturate it toward 0.5). At the frame layer this
-    /// tracks the FER — IL2P+CRC is all-or-nothing — so read the FER there; the packet layer's coded
+    /// tracks the FER - IL2P+CRC is all-or-nothing - so read the FER there; the packet layer's coded
     /// BER is the smoothly-degrading post-LDPC number.</summary>
     public double CodedBer => TotalBits == 0 ? double.NaN : (double)BitErrors / TotalBits;
 
@@ -45,8 +45,8 @@ internal sealed record SimPointResult(
 
 /// <summary>Runs the generate → channel → score loop over a grid, with bounded parallelism.</summary>
 /// <remarks>
-/// <para>Each burst is a fully independent trial — its own payload, its own fade and noise
-/// realisation from its seed — so bursts parallelise cleanly and a point reproduces from
+/// <para>Each burst is a fully independent trial - its own payload, its own fade and noise
+/// realisation from its seed - so bursts parallelise cleanly and a point reproduces from
 /// (mode, channel, SNR, first-seed, count). Parallelism is bounded by the caller because the box is
 /// a shared 16&#160;GB LXC that may be running another heavy sim battery; each in-flight burst holds
 /// a burst's worth of audio and channel scratch, so a handful of workers is the safe envelope.</para>
@@ -132,7 +132,7 @@ internal static class SimBench
     }
 
     /// <summary>The SNR (dB) where the success rate crosses <paramref name="target"/>, by linear
-    /// interpolation between the bracketing points — the waterfall "knee". <see cref="double.NaN"/>
+    /// interpolation between the bracketing points - the waterfall "knee". <see cref="double.NaN"/>
     /// if the curve never crosses (all points above, or all below, the target).</summary>
     public static double Threshold(IReadOnlyList<SimPointResult> curve, double target = 0.5)
     {
@@ -165,7 +165,7 @@ internal static class SimBench
 /// <summary>Binomial statistics for the waterfalls.</summary>
 internal static class SimStats
 {
-    /// <summary>Wilson score interval for a binomial proportion — well-behaved at the 0/1 tails a
+    /// <summary>Wilson score interval for a binomial proportion - well-behaved at the 0/1 tails a
     /// waterfall lives in, unlike the normal approximation (which gives [0,0] at zero errors and
     /// pretends to certainty).</summary>
     public static (double Lo, double Hi) Wilson(int successes, int trials, double z = 1.96)

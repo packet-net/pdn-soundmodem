@@ -1,10 +1,10 @@
-# FreeDV `datac` OFDM in pdn-soundmodem — Phase 1 design
+# FreeDV `datac` OFDM in pdn-soundmodem - Phase 1 design
 
 Status: design, implementation-ready. Target: `.NET 10`, pure-managed, **GPL-3.0-or-later**, matching pdn-soundmodem idioms. This document becomes `docs/ofdm-design.md`.
 
-**Source provenance.** Every codec2 citation below is to the shallow reference clone used during design — **codec2 1.2.0, git `310777b1c6f1af0bc7c72f5b32f80f6fd9136962`** — cited as `file:line` / `file:function` relative to its `src/`. pdn-soundmodem citations are relative to `src/Packet.SoundModem/` and `tests/Packet.SoundModem.Tests/`. Do **not** re-clone or rebuild codec2 to read these; the line numbers are pinned to that commit.
+**Source provenance.** Every codec2 citation below is to the shallow reference clone used during design - **codec2 1.2.0, git `310777b1c6f1af0bc7c72f5b32f80f6fd9136962`** - cited as `file:line` / `file:function` relative to its `src/`. pdn-soundmodem citations are relative to `src/Packet.SoundModem/` and `tests/Packet.SoundModem.Tests/`. Do **not** re-clone or rebuild codec2 to read these; the line numbers are pinned to that commit.
 
-The six `datac{0,1,3,4,13,14}` modes are all **OFDM** with **QPSK per subcarrier** (`config->bps = 2`, `ofdm_mode.c:35`), **Fs = 8000 Hz** (`ofdm_mode.c:33`), **tx/rx centre 1500 Hz** (`ofdm_mode.c:31-32`), `ns = 5`, `edge_pilots = 0`, `txtbits = 0`, `state_machine = "data"`, `data_mode = "streaming"`. "QPSK @ 8000/1500" is the per-carrier constellation — these are **not** single-carrier QPSK, so the existing `Modems/QpskModem` is **not** reused.
+The six `datac{0,1,3,4,13,14}` modes are all **OFDM** with **QPSK per subcarrier** (`config->bps = 2`, `ofdm_mode.c:35`), **Fs = 8000 Hz** (`ofdm_mode.c:33`), **tx/rx centre 1500 Hz** (`ofdm_mode.c:31-32`), `ns = 5`, `edge_pilots = 0`, `txtbits = 0`, `state_machine = "data"`, `data_mode = "streaming"`. "QPSK @ 8000/1500" is the per-carrier constellation - these are **not** single-carrier QPSK, so the existing `Modems/QpskModem` is **not** reused.
 
 ---
 
@@ -20,28 +20,28 @@ We **transliterate** the codec2 DSP into managed C#; libcodec2 is used **only** 
 
 | | Port (chosen) | Wrap libcodec2 |
 |---|---|---|
-| Runtime dep | none — pure managed | native `libcodec2.so` in every `.deb`/NuGet |
+| Runtime dep | none - pure managed | native `libcodec2.so` in every `.deb`/NuGet |
 | Cross-platform | trivially (managed) | per-arch native builds, P/Invoke marshalling |
-| Fits pdn idioms | yes (`IModem`, `Dsp/*`, `Fec/*`) | foreign — no other modem wraps native |
+| Fits pdn idioms | yes (`IModem`, `Dsp/*`, `Fec/*`) | foreign - no other modem wraps native |
 | Greenfield reuse (§2) | engine is ours to re-parameterise | opaque |
-| Cost | high — must reproduce float DSP exactly | low |
+| Cost | high - must reproduce float DSP exactly | low |
 | Interop risk | mitigated by the oracle (§7) | n/a |
 
-The port carries a real cost — reproducing single-precision float DSP — which the oracle (§7) and the tiered tolerance policy (§7.5) exist to contain.
+The port carries a real cost - reproducing single-precision float DSP - which the oracle (§7) and the tiered tolerance policy (§7.5) exist to contain.
 
-### 1.3 Interop-exactness — what "bit-for-bit" actually means (honest caveat)
+### 1.3 Interop-exactness - what "bit-for-bit" actually means (honest caveat)
 
 Bit-for-bit is achievable in **algorithm, constants, table values, and arithmetic ordering**, but **not** as literal IEEE-754 equality of intermediate floats, because codec2 uses C `cosf`/`sinf`/`cabsf`/`cargf`/`atan2f`/`hypotf` (`ofdm_internal.h:51-52` `cmplx`/`cmplxconj`) whose last-ULP results differ from .NET `MathF`. Therefore the exactness contract is **tiered** (defined once, §7.5, applied everywhere):
 
-- **Integer layers are exact, no tolerance:** framing, MSB-first pack/unpack, CRC-16, UW placement, `uw_ind_sym[]`, interleaver indices, all sample counts, returned-byte-count, `rx_status`, and — critically — **decoded payload bytes + CRC-valid decision on high-SNR clean input.**
+- **Integer layers are exact, no tolerance:** framing, MSB-first pack/unpack, CRC-16, UW placement, `uw_ind_sym[]`, interleaver indices, all sample counts, returned-byte-count, `rx_status`, and - critically - **decoded payload bytes + CRC-valid decision on high-SNR clean input.**
 - **Float waveforms/LLRs are tolerance-matched:** TX `.s16` within a named per-mode LSB/xcorr tolerance; `rx_np`/`rx_amp`/LLR within relative tolerance.
 - **Noisy/faded inputs are statistical only:** never sample- or bit-exact (a single differently-rounded float can flip a marginal LLR sign → different hard decision). Assert CRC-valid + PER within a binomial CI.
 
-### 1.4 LGPL-2.1 lineage — flag for legal review
+### 1.4 LGPL-2.1 lineage - flag for legal review
 
 - FreeDV API + codec2 DSP are **LGPL-2.1** (`freedv_api.h:22-31`, `freedv_api.c`, `ofdm.c` headers). pdn-soundmodem is **GPL-3.0-or-later**.
 - **Test-only dynamic linking** of `libcodec2.so` from the test assembly is unambiguously fine (GPL-3 is a compatible downstream of LGPL-2.1; nothing vendored/redistributed).
-- **The port itself is the legal question:** transliterating LGPL-2.1 algorithms/tables into GPL-3.0-or-later source produces a **derivative work of LGPL-2.1 code**. GPL-3-or-later is a permitted relicensing target for LGPL-2.1 (LGPL-2.1 §3 → GPL-2-or-later → GPL-3), so this is very likely clean — **but it must be reviewed and the relicensing basis recorded** before merge, with per-file provenance headers citing the codec2 source file + commit and the LGPL-2.1→GPL relicensing clause. **Open item R-1 (§10).**
+- **The port itself is the legal question:** transliterating LGPL-2.1 algorithms/tables into GPL-3.0-or-later source produces a **derivative work of LGPL-2.1 code**. GPL-3-or-later is a permitted relicensing target for LGPL-2.1 (LGPL-2.1 §3 → GPL-2-or-later → GPL-3), so this is very likely clean - **but it must be reviewed and the relicensing basis recorded** before merge, with per-file provenance headers citing the codec2 source file + commit and the LGPL-2.1→GPL relicensing clause. **Open item R-1 (§10).**
 - No codec2 `.c`/`.h` is copied into the repo; we transliterate and cite. Checked-in `.s16`/fading vectors are *generated output* (facts/measurements), committed like the existing NinoTNC/Dire Wolf WAV fixtures, with a `PROVENANCE.md` row (codec2 SHA + exact commands).
 
 ### 1.5 Goals / non-goals
@@ -69,7 +69,7 @@ Bit-for-bit is achievable in **algorithm, constants, table values, and arithmeti
 
 ---
 
-## 2. Architecture — the shared OFDM engine
+## 2. Architecture - the shared OFDM engine
 
 ### 2.1 Component boundary
 
@@ -94,34 +94,34 @@ A single OFDM engine drives all six modes via an `OfdmMode`/`OfdmModeConfig` rec
 
 These are written mode-agnostic so a future greenfield FM/HF OFDM waveform can re-parameterise them:
 
-- **Direct per-symbol DFT/iDFT** over `Nc+2` occupied bins (`ofdm.c:642-692`) — **not** a radix-2 FFT (§3.0).
+- **Direct per-symbol DFT/iDFT** over `Nc+2` occupied bins (`ofdm.c:642-692`) - **not** a radix-2 FFT (§3.0).
 - **Pilot-correlation timing** `EstTiming` + `TimingNorm` normalisation (§4.6a); **coarse-freq DFT-peak** `EstFreqOffsetPilotCorr` (§4.6c).
-- **Known-sequence burst detector** `est_timing_and_freq` (§4.7) — generic joint timing+freq matched filter.
-- **Per-carrier pilot phase/channel estimation**, both `high_bw` and `low_bw` (§4.8d) — the Doppler-vs-SNR knob (`PhaseEstBandwidth`).
-- **Integer sample-clock tracking** (§4.8f) — no fractional interpolator; robustness "for free".
-- **QPSK soft-demap** `Demod2D`/`Somap`/`MaxStar0` (§4.11) + **golden-prime interleaver** (§6.4) — code-agnostic.
+- **Known-sequence burst detector** `est_timing_and_freq` (§4.7) - generic joint timing+freq matched filter.
+- **Per-carrier pilot phase/channel estimation**, both `high_bw` and `low_bw` (§4.8d) - the Doppler-vs-SNR knob (`PhaseEstBandwidth`).
+- **Integer sample-clock tracking** (§4.8f) - no fractional interpolator; robustness "for free".
+- **QPSK soft-demap** `Demod2D`/`Somap`/`MaxStar0` (§4.11) + **golden-prime interleaver** (§6.4) - code-agnostic.
 - **Sync state machine** `Search/Trial/Synced` with UW confirmation (§4.12).
-- **`ComplexBandpassFir`** (`quisk_cfTune`/`quisk_ccfFilter` port) — shared by tx BPF (§3.7) and rx BPF (§4.9).
+- **`ComplexBandpassFir`** (`quisk_cfTune`/`quisk_ccfFilter` port) - shared by tx BPF (§3.7) and rx BPF (§4.9).
 
-### 2.4 Greenfield FM/HF reuse — what changes
+### 2.4 Greenfield FM/HF reuse - what changes
 
 **Reuse as-is (re-parameterise via config):** the DFT/iDFT engine (any `Nc,M`), pilot timing + coarse-freq, per-carrier phase est, integer clock tracking, QPSK soft-demap, GP interleaver, burst detector, sync skeleton, Es/No & SNR estimators (`ofdm.c:1967-2007`).
-**Must change per greenfield mode:** the `{−40,0,+40}` coarse-freq grid and 40 Hz `wval` table (tuned to HF drift on 8 kHz/62.5 Hz-Rs — collapse to `fcoarse=0` for crystal-stable FM); LDPC codes; the `filtP*` BPF prototypes (HF-narrowband); the `edge_pilots=0`/`pilotvalues` choice and exact UW (FreeDV-interop constraints — a greenfield mode picks its own, but then keep the code paths separate so FreeDV compatibility is not silently broken).
+**Must change per greenfield mode:** the `{−40,0,+40}` coarse-freq grid and 40 Hz `wval` table (tuned to HF drift on 8 kHz/62.5 Hz-Rs - collapse to `fcoarse=0` for crystal-stable FM); LDPC codes; the `filtP*` BPF prototypes (HF-narrowband); the `edge_pilots=0`/`pilotvalues` choice and exact UW (FreeDV-interop constraints - a greenfield mode picks its own, but then keep the code paths separate so FreeDV compatibility is not silently broken).
 **The 8 kHz↔channel-rate resampler (§8.3, fix 7) is a per-deployment concern**, not part of the engine.
 
 ---
 
 ## 3. Modulator
 
-### 3.0 The IFFT is **not** pdn's `Fft` — port the direct iDFT
+### 3.0 The IFFT is **not** pdn's `Fft` - port the direct iDFT
 
 codec2 modulates with a hand-rolled inverse DFT, `idft` (`ofdm.c:642-667`), summing over only `Nc+2` occupied bins with a per-row phasor recurrence (`c *= delta`), called from `ofdm_txframe` (`ofdm.c:1004`). Port **that**, not a radix-2 FFT:
 
-1. **Correctness:** `Dsp/Fft.Forward` (`Dsp/Fft.cs:11`) throws for non-power-of-two lengths. Five modes have `M=128`, but **datac14 has `M=144`** — a radix-2 IFFT cannot do it.
+1. **Correctness:** `Dsp/Fft.Forward` (`Dsp/Fft.cs:11`) throws for non-power-of-two lengths. Five modes have `M=128`, but **datac14 has `M=144`** - a radix-2 IFFT cannot do it.
 2. **Bit-exactness:** even at `M=128`, a butterfly cascade produces a different float rounding sequence than codec2's `sum += vector[col]*c; c *= delta` accumulation over ≤29 bins.
 3. **Cost is a non-issue:** `O(M·(Nc+2))` with `Nc+2 ≤ 29` beats a 128-point FFT over a mostly-zero spectrum.
 
-`Dsp/Fft.Forward` is still correct for the OBW meter and any analysis path — but it is **not** the oracle path. An `Fft`-based iDFT helper (conjugate trick) is provided for OB measurement/prototyping only, flagged non-oracle and unusable for datac14.
+`Dsp/Fft.Forward` is still correct for the OBW meter and any analysis path - but it is **not** the oracle path. An `Fft`-based iDFT helper (conjugate trick) is provided for OB measurement/prototyping only, flagged non-oracle and unusable for datac14.
 
 ### 3.1 Component boundary
 
@@ -162,7 +162,7 @@ Fixed for all six (`ofdm_mode.c` + `ofdm_create`); RX-only fields carried for pa
 
 ### 3.3 Carrier → bin mapping (exact)
 
-`ofdm_create` (`ofdm.c:374-376`): `doc = 2π/M`; `tx_nlower = roundf(tx_centre/Rs − Nc/2) − 1` (C `roundf` = half-away-from-zero). `idft` (`ofdm.c:655`) places column `col∈[0,Nc+1]` at bin `k = tx_nlower+col`, audio `f = k·Rs`. `col 0` and `col Nc+1` are edge pilots — **zeroed** (`edge_pilots=0`, `ofdm.c:369-370`); data/pilot energy in `cols 1..Nc`.
+`ofdm_create` (`ofdm.c:374-376`): `doc = 2π/M`; `tx_nlower = roundf(tx_centre/Rs − Nc/2) − 1` (C `roundf` = half-away-from-zero). `idft` (`ofdm.c:655`) places column `col∈[0,Nc+1]` at bin `k = tx_nlower+col`, audio `f = k·Rs`. `col 0` and `col Nc+1` are edge pilots - **zeroed** (`edge_pilots=0`, `ofdm.c:369-370`); data/pilot energy in `cols 1..Nc`.
 
 | Mode | tx_nlower | data bins | data freqs (Hz) | group centre |
 |---|---|---|---|---|
@@ -172,9 +172,9 @@ Fixed for all six (`ofdm_mode.c` + `ofdm_create`); RX-only fields carried for pa
 | datac13 | 22 | 23…25 | 1437.5…1562.5 | 1500 |
 | datac14 | 24 | 25…28 | 1388.9…1555.6 | 1472.2 |
 
-The **even-`Nc` half-bin offset** (datac4, datac14 sit ½ carrier below 1500) is exactly what `roundf(…)−1` yields — reproduce, don't "correct".
+The **even-`Nc` half-bin offset** (datac4, datac14 sit ½ carrier below 1500) is exactly what `roundf(…)−1` yields - reproduce, don't "correct".
 
-### 3.4 Class design (with the `AwayFromZero` fix baked in — fix 13)
+### 3.4 Class design (with the `AwayFromZero` fix baked in - fix 13)
 
 ```csharp
 namespace Packet.SoundModem.Ofdm;
@@ -286,22 +286,22 @@ Preserve the `c *= delta` recurrence and accumulation order exactly. **CP + conc
 
 `ofdm_clip` (`ofdm.c:2683`): soft magnitude clip `if |sam|>thresh: sam *= thresh/|sam|` (uses `cabsf`).
 
-**`ComplexBandpassFir` — port `quisk_cfTune` + `quisk_ccfFilter` (`filter.c:232-247,263-288`). This class is shared with the rx BPF (§4.9, fix 1).**
+**`ComplexBandpassFir` - port `quisk_cfTune` + `quisk_ccfFilter` (`filter.c:232-247,263-288`). This class is shared with the rx BPF (§4.9, fix 1).**
 
 - **Init** (`quisk_filt_cfInit`, `filter.c:50-53`): copies `dCoefs` **verbatim, no normalisation** (`:50`) and **zeroes `cSamples`** (`:53`). Port the 100 taps as-is.
 - **Tune once** (`filter.c:243-246`): `cpxCoefs[i] = cmplx(2π·freq·(i−D)) · dCoefs[i]`, `D = (nTaps−1)/2 = 49.5`, `freq = centre/Fs`.
-  - **centre — fix 12:** datac0/1/3 tune to **literal `TxCentre = 1500.0`** (`find_carrier_centre` is only called for datac4/13/14 — `allocate_rx_bpf` asserts otherwise, `ofdm.c:585-593`). datac4/13/14 tune to `find_carrier_centre` (`ofdm.c:570-575`), which is a **float summation** `Σ_{c=0..Nc+1}(tx_nlower+c)·doc`, `×(Fs/2π)/(Nc+2)` — **replicate the summation, not the algebraically-equal closed form**, so the tuned `cpxCoefs` match in the low bits. Numerically: datac4 ≈ 1468.75, datac13 ≈ 1500, datac14 ≈ 1472.22 Hz.
-- **Filter — fix 11 (corrected rationale):** `quisk_ccfFilter` (`filter.c:263-288`) is a stateful complex FIR over a circular history (newest at `ptcSamp`, walk `k` backward over samples, forward over coefs). It equals ordinary convolution `y[n] = Σ_k cpxCoefs[k]·x[n−k]` **because of that circular-buffer index arithmetic with zero-initialised history — NOT because the coefficients are symmetric** (the tuned `cpxCoefs` are not symmetric; do not add a symmetry "optimization"). Implement as a new `ComplexBandpassFir` mirroring `Dsp/FirFilter.cs`'s circular buffer, but complex-in/out with complex taps.
+  - **centre - fix 12:** datac0/1/3 tune to **literal `TxCentre = 1500.0`** (`find_carrier_centre` is only called for datac4/13/14 - `allocate_rx_bpf` asserts otherwise, `ofdm.c:585-593`). datac4/13/14 tune to `find_carrier_centre` (`ofdm.c:570-575`), which is a **float summation** `Σ_{c=0..Nc+1}(tx_nlower+c)·doc`, `×(Fs/2π)/(Nc+2)` - **replicate the summation, not the algebraically-equal closed form**, so the tuned `cpxCoefs` match in the low bits. Numerically: datac4 ≈ 1468.75, datac13 ≈ 1500, datac14 ≈ 1472.22 Hz.
+- **Filter - fix 11 (corrected rationale):** `quisk_ccfFilter` (`filter.c:263-288`) is a stateful complex FIR over a circular history (newest at `ptcSamp`, walk `k` backward over samples, forward over coefs). It equals ordinary convolution `y[n] = Σ_k cpxCoefs[k]·x[n−k]` **because of that circular-buffer index arithmetic with zero-initialised history - NOT because the coefficients are symmetric** (the tuned `cpxCoefs` are not symmetric; do not add a symmetry "optimization"). Implement as a new `ComplexBandpassFir` mirroring `Dsp/FirFilter.cs`'s circular buffer, but complex-in/out with complex taps.
 
 **tx BPF prototypes to port verbatim (100 floats each, `filter.h:42-47` declares `[100]`):** `filtP400S600` (`filter_coef.h:95`, datac0/3), `filtP900S1100` (`filter_coef.h:186`, datac1), `filtP200S400` (`filter_coef.h:279`, datac4/13/14).
 
-**State persistence is interop-critical (§3.9):** one persistent `ComplexBandpassFir` per direction; the ~49-sample group-delay tail is never flushed between segments — that asymmetry is part of the reference waveform.
+**State persistence is interop-critical (§3.9):** one persistent `ComplexBandpassFir` per direction; the ~49-sample group-delay tail is never flushed between segments - that asymmetry is part of the reference waveform.
 
 ### 3.8 Preamble / postamble (exact)
 
 `ofdm_create:532-538` builds them once via `ofdm_generate_preamble(ofdm, buf, seed)`, **seed 2 (preamble)**, **seed 3 (postamble)**. `ofdm_generate_preamble` (`ofdm.c:2592-2609`): force `Np=1`, generate `bitsperframe` bits from the LCG (`ofdm_rand_seed`, `ofdm.c:2574-2578`): `seed = (1103515245·seed + 12345) % 32768; bit = seed > 16384` (64-bit intermediate), then run `ofdm_mod` with `amp_scale=1, tx_bpf_en=false, clip_en=false` → the stored frame is the **raw idft+CP output**, length `SamplesPerFrame`. Content is deterministic per mode; store both raw `Cf[SamplesPerFrame]`.
 
-**At emit** (`freedv_api.c:519-591`): the stored raw frame is re-run through the **real** `ofdm_hilbert_clipper` (full scale/clip/**persistent BPF**/gain2/final clip) — preamble/postamble come out at the same level and through the same filter as data.
+**At emit** (`freedv_api.c:519-591`): the stored raw frame is re-run through the **real** `ofdm_hilbert_clipper` (full scale/clip/**persistent BPF**/gain2/final clip) - preamble/postamble come out at the same level and through the same filter as data.
 
 ### 3.9 Burst assembly + BPF state
 
@@ -331,7 +331,7 @@ In `ofdm_demod_core`, `ofdm.c:1859-1860` **unconditionally** overwrite the per-c
 1859    aphase_est_pilot[i] = cargf(aphase_est_pilot_rect);
 1860    aamp_est_pilot[i]   = cabsf(aphase_est_pilot_rect);
 ```
-So `amp_est_mode` is **dead code** in this revision — amplitude is always `|aphase_est_pilot_rect|` and phase always `arg(aphase_est_pilot_rect)`, where `rect` is the `low_bw` 12-pilot or `high_bw` 2-pilot average. A "faithful" reading of the `amp_est_mode==1` block would silently diverge. Reproduce: compute the branch, then overwrite. (Also note `cabsf(a)+cabsf(b)/2.0` at `:1854-1855` is `|a|+|b|/2`, not an average — but dead anyway.) **Verified `ofdm.c:1855-1862`.**
+So `amp_est_mode` is **dead code** in this revision - amplitude is always `|aphase_est_pilot_rect|` and phase always `arg(aphase_est_pilot_rect)`, where `rect` is the `low_bw` 12-pilot or `high_bw` 2-pilot average. A "faithful" reading of the `amp_est_mode==1` block would silently diverge. Reproduce: compute the branch, then overwrite. (Also note `cabsf(a)+cabsf(b)/2.0` at `:1854-1855` is `|a|+|b|/2`, not an average - but dead anyway.) **Verified `ofdm.c:1855-1862`.**
 
 ### 4.1 Exact mode parameter table (RX view)
 
@@ -385,7 +385,7 @@ public sealed class OfdmPacketAssembler
 }
 ```
 
-`float`/`Cf` hot path throughout — never `System.Numerics.Complex` (double promotion breaks interop).
+`float`/`Cf` hot path throughout - never `System.Numerics.Complex` (double promotion breaks interop).
 
 ### 4.4 Direct DFT/iDFT (per-symbol, not FFT)
 
@@ -402,15 +402,15 @@ static void Dft(OfdmMode c, Span<Cf> result /*nc+2*/, ReadOnlySpan<Cf> vec /*m*/
 ```
 **Pilot init** (`ofdm.c:495-528`): `Idft(pilots)→temp[m]`; `PilotSamples[0..Ncp)=0`; `PilotSamples[Ncp..SpS)=temp`; `TimingNorm = SamplesPerSymbol · Σ|PilotSamples[i]|²`.
 
-### 4.5 Buffer model (exact — enables `Nin==0`)
+### 4.5 Buffer model (exact - enables `Nin==0`)
 
-Persistent `Cf[] rxbuf` length `NrxBuf`, window start `rxbufst`, `nin`. `NrxBufHistory=(np+2)·SamplesPerFrame`, `NrxBufMin=3·SamplesPerFrame+3·SamplesPerSymbol`, `NrxBuf=History+Min`; `rxbufst₀=History`, `nin₀=SamplesPerFrame` (`ofdm.c:305-326,423`). Feed: left-shift by `nin`, append `nin` new. End of `Demod` (`ofdm.c:1956-1961`): `if (rxbufst+nin+NrxBufMin <= NrxBuf) { rxbufst += nin; nin = 0; }` — **`nin=0` drains multiple frames from history with no new input**; the channel wrapper (and oracle §7.3) must honour `Nin==0`.
+Persistent `Cf[] rxbuf` length `NrxBuf`, window start `rxbufst`, `nin`. `NrxBufHistory=(np+2)·SamplesPerFrame`, `NrxBufMin=3·SamplesPerFrame+3·SamplesPerSymbol`, `NrxBuf=History+Min`; `rxbufst₀=History`, `nin₀=SamplesPerFrame` (`ofdm.c:305-326,423`). Feed: left-shift by `nin`, append `nin` new. End of `Demod` (`ofdm.c:1956-1961`): `if (rxbufst+nin+NrxBufMin <= NrxBuf) { rxbufst += nin; nin = 0; }` - **`nin=0` drains multiple frames from history with no new input**; the channel wrapper (and oracle §7.3) must honour `Nin==0`.
 
 ### 4.6 Streaming acquisition (the datac default)
 
 FreeDV opens datac as `data_mode="streaming"` (`freedv_700.c:453-459`) → `ofdm_sync_search_stream` (`ofdm.c:1394-1464`), acquisition on the **pilot waveform**, not a preamble.
 
-**4.6a `est_timing` (`ofdm.c:794-923`):** window search over `Ncorr = length−(SamplesPerFrame+SamplesPerSymbol)`. `avLevel = 1/(2·sqrt(TimingNorm·Σ|rx|²/length)+ε)`; `wvec_pilot[j]` = `conj(pilot)` at `fcoarse=0`, `Wval[j]·conj(pilot)` at +40, `conj(Wval[j]·pilot)` at −40. `corr[i]=(|Σ rx·w @i|+|Σ rx·w @i+SpF|)·avLevel`. **Dot product is non-conjugating** (`ofdm_complex_dot_product`, `ofdm.c:726-782` — conj pre-baked into `w`; port the scalar `#else` branch `:776-778`, the reference order). `timing_valid = |rx[est]|>0 && timing_mx > TimingMxThresh`.
+**4.6a `est_timing` (`ofdm.c:794-923`):** window search over `Ncorr = length−(SamplesPerFrame+SamplesPerSymbol)`. `avLevel = 1/(2·sqrt(TimingNorm·Σ|rx|²/length)+ε)`; `wvec_pilot[j]` = `conj(pilot)` at `fcoarse=0`, `Wval[j]·conj(pilot)` at +40, `conj(Wval[j]·pilot)` at −40. `corr[i]=(|Σ rx·w @i|+|Σ rx·w @i+SpF|)·avLevel`. **Dot product is non-conjugating** (`ofdm_complex_dot_product`, `ofdm.c:726-782` - conj pre-baked into `w`; port the scalar `#else` branch `:776-778`, the reference order). `timing_valid = |rx[est]|>0 && timing_mx > TimingMxThresh`.
 
 **4.6b Coarse-freq grid + fine (`ofdm.c:1394-1463`):** search `fcoarse∈{−40,0,+40}` (step 2), keep max `timing_mx`; `coarse_foff = EstFreqOffsetPilotCorr(...) + fcoarse`. If `timing_valid`: `nin=ct_est; timing_est=0; foff_est_hz=coarse_foff`, else `nin=SamplesPerFrame`.
 
@@ -428,19 +428,19 @@ Entered only if the app calls `freedv_set_frames_per_burst` → `ofdm_sync_searc
 
 **4.8c Foff tracking (`:1747-1769`):** `freq_err_rect = conj(Σrx_sym[1]) · Σrx_sym[ns+1] + 1e-6`; `freq_err_hz = arg·Rs/(2π·Ns)`; `FoffEstHz += 0.1·freq_err_hz` (`foff_limiter=false` for datac → no ±1 Hz clamp). **Keep the `+1e-6`.**
 
-**4.8d Phase/channel est (`:1771-1861`) — with §4.0 overwrite:** for `i∈[1,nc+1)`: `high_bw` (default; **datac never switches to low_bw** — the streaming machine never sets it, §4.12): `rect=(rx_sym[1][i]+rx_sym[ns+1][i])·conj(pilots[i])/2`. `low_bw`: 4 pilots × 3 neighbours /12. **Then unconditionally** `aphase_est_pilot[i]=arg(rect); aamp_est_pilot[i]=|rect|`. Equalisation is **phase-only** de-rotation; magnitude carried as `rx_amp` for LLR weighting.
+**4.8d Phase/channel est (`:1771-1861`) - with §4.0 overwrite:** for `i∈[1,nc+1)`: `high_bw` (default; **datac never switches to low_bw** - the streaming machine never sets it, §4.12): `rect=(rx_sym[1][i]+rx_sym[ns+1][i])·conj(pilots[i])/2`. `low_bw`: 4 pilots × 3 neighbours /12. **Then unconditionally** `aphase_est_pilot[i]=arg(rect); aamp_est_pilot[i]=|rect|`. Equalisation is **phase-only** de-rotation; magnitude carried as `rx_amp` for LLR weighting.
 
 **4.8e Equalise → symbols/bits (`:1873-1928`):** `rx_np[rr·nc+(i-1)] = rx_sym[rr+2][i]·cmplxconj(aphase_est_pilot[i])`; `rx_amp[...] = aamp_est_pilot[i]`; `qpsk_demod` (`ofdm.c:115-120`): `rot=sym·cmplx(π/4); bit0=Re(rot)≤0; bit1=Im(rot)≤0`. `mean_amp = 0.9·mean_amp + 0.1·mean(amp)`.
 
-**4.8f Sample-clock tracking (`:1937-1961`) — integer only, no resampler:** `nin=SamplesPerFrame`; if `timing_est > SpS/8: nin=SpF+SpS/4; timing_est-=SpS/4`; symmetric below `−SpS/8`. `clock_offset_counter` feeds only a reported ppm estimate (`ofdm.c:2354-2358`). Robustness to clock error is inherited "for free".
+**4.8f Sample-clock tracking (`:1937-1961`) - integer only, no resampler:** `nin=SamplesPerFrame`; if `timing_est > SpS/8: nin=SpF+SpS/4; timing_est-=SpS/4`; symmetric below `−SpS/8`. `clock_offset_counter` feeds only a reported ppm estimate (`ofdm.c:2354-2358`). Robustness to clock error is inherited "for free".
 
-### 4.9 RX BPF for datac4/13/14 — **exact port required (fix 1, blocker)**
+### 4.9 RX BPF for datac4/13/14 - **exact port required (fix 1, blocker)**
 
-Verified: `rx_bpf` is applied **in place** to the freshly-arrived `nin` samples at the rxbuf tail (`&rxbuf[nrxbuf-nin]`) via the single persistent `ofdm->rx_bpf`, **before** `est_timing`/`est_freq` run — in **both** `ofdm_sync_search_core` (`ofdm.c:1467-1471`) and `ofdm_demod_core` (`ofdm.c:1535-1539`). It is therefore in the acquisition + fine-timing + down-convert path: **any deviation shifts `timing_est`/`ct_est`/`foff` and changes the decoded bits deterministically for datac4/13/14, not just at low SNR.** An approximate biquad/`FilterDesign.BandPass` will never match libcodec2.
+Verified: `rx_bpf` is applied **in place** to the freshly-arrived `nin` samples at the rxbuf tail (`&rxbuf[nrxbuf-nin]`) via the single persistent `ofdm->rx_bpf`, **before** `est_timing`/`est_freq` run - in **both** `ofdm_sync_search_core` (`ofdm.c:1467-1471`) and `ofdm_demod_core` (`ofdm.c:1535-1539`). It is therefore in the acquisition + fine-timing + down-convert path: **any deviation shifts `timing_est`/`ct_est`/`foff` and changes the decoded bits deterministically for datac4/13/14, not just at low SNR.** An approximate biquad/`FilterDesign.BandPass` will never match libcodec2.
 
-**Port `quisk_cfTune`+`quisk_ccfFilter` exactly** (the `ComplexBandpassFir` of §3.7): 100-tap `filtP200S400` tuned to `find_carrier_centre` (float summation, §3.7), history zero-initialised (`filter.c:53`), applied once per `nin`-batch at the rxbuf tail in both `SyncSearch` and `Demod`, sharing one persistent instance — identical treatment to the tx BPF. **No approximation is admissible.** (datac0/1/3 have `rx_bpf_en=false`; nothing to do.)
+**Port `quisk_cfTune`+`quisk_ccfFilter` exactly** (the `ComplexBandpassFir` of §3.7): 100-tap `filtP200S400` tuned to `find_carrier_centre` (float summation, §3.7), history zero-initialised (`filter.c:53`), applied once per `nin`-batch at the rxbuf tail in both `SyncSearch` and `Demod`, sharing one persistent instance - identical treatment to the tx BPF. **No approximation is admissible.** (datac0/1/3 have `rx_bpf_en=false`; nothing to do.)
 
-### 4.10 Packet assembly → LLRs (`freedv_700.c:490-506`) — **fix 8**
+### 4.10 Packet assembly → LLRs (`freedv_700.c:490-506`) - **fix 8**
 
 Per decoded frame, roll `rx_syms`/`rx_amps` (slide left by `Nsymsperframe`, append). When `modem_frame==np−1`: call **`ofdm_disassemble_qpsk_modem_packet_with_text_amps`** (the datac RX path, `freedv_700.c:493`), then **deinterleave BOTH symbols and amps** with the same `b`:
 ```c
@@ -448,18 +448,18 @@ gp_deinterleave_comp (payload_syms_de,  payload_syms,  Npayloadsymsperpacket);  
 gp_deinterleave_float(payload_amps_de,  payload_amps,  Npayloadsymsperpacket);   // :501
 symbols_to_llrs(llr, payload_syms_de, payload_amps_de, EsNo=3.0, mean_amp, N);   // :506
 ```
-`rx_amp` feeds `symbols_to_llrs`' per-symbol weighting (`mpdecode_core.c:581-584`), so the amp deinterleave is **load-bearing**. (For datac `ntxtbits=0`, so the `with_text_amps` and plain variants are behaviourally identical — but cite/use the `with_text_amps` reference and never omit the amp deinterleave.) Add a test that a non-uniform `rx_amp` pattern round-trips through interleave/deinterleave.
+`rx_amp` feeds `symbols_to_llrs`' per-symbol weighting (`mpdecode_core.c:581-584`), so the amp deinterleave is **load-bearing**. (For datac `ntxtbits=0`, so the `with_text_amps` and plain variants are behaviourally identical - but cite/use the `with_text_amps` reference and never omit the amp deinterleave.) Add a test that a non-uniform `rx_amp` pattern round-trips through interleave/deinterleave.
 
 ### 4.11 `symbols_to_llrs` = Demod2D + Somap + max_star0 (`mpdecode_core.c:567-650`)
 
 ```
-Demod2D (581-585, all float — matches C):
+Demod2D (581-585, all float - matches C):
   tempsr = amp[i]*S[j].Re/meanAmp; tempsi = amp[i]*S[j].Im/meanAmp;
   Er = sym[i].Re/meanAmp - tempsr; Ei = sym[i].Im/meanAmp - tempsi;
   symLik[i*4+j] = -EsNo*(Er*Er + Ei*Ei);
 Somap (bps=2): mask 2 then 1; num/den[k] via MaxStar0; bitLik=num-den; llr = -bitLik.
 ```
-**`MaxStar0` — fix 2 (double promotion):** `AJIAN`/`TJIAN` are C `double` literals; `diff` is float; `delta2 + AJIAN*(diff − TJIAN)` promotes to double, narrows to float on return.
+**`MaxStar0` - fix 2 (double promotion):** `AJIAN`/`TJIAN` are C `double` literals; `diff` is float; `delta2 + AJIAN*(diff − TJIAN)` promotes to double, narrows to float on return.
 ```csharp
 const double AJIAN = -0.24904163195436, TJIAN = 2.50681740420944;
 static float MaxStar0(float d1, float d2) {
@@ -470,9 +470,9 @@ static float MaxStar0(float d1, float d2) {
                     : (float)((double)d1 - AJIAN * (diff + TJIAN));
 }
 ```
-**LLR bit order (interop-critical):** `k=0`(mask 2)↔`bit1`, `k=1`(mask 1)↔`bit0`, matching `(bits[1]<<1)|bits[0]`. Feed straight to LDPC. `EsNo=3.0f` is hard-coded (`ofdm_demod.c:411`, `freedv_700.c:451`) — do not "improve".
+**LLR bit order (interop-critical):** `k=0`(mask 2)↔`bit1`, `k=1`(mask 1)↔`bit0`, matching `(bits[1]<<1)|bits[0]`. Feed straight to LDPC. `EsNo=3.0f` is hard-coded (`ofdm_demod.c:411`, `freedv_700.c:451`) - do not "improve".
 
-### 4.12 Sync state machine — data streaming (`ofdm.c:2101-2151`)
+### 4.12 Sync state machine - data streaming (`ofdm.c:2101-2151`)
 
 Dispatched by `state_machine=="data"` + `data_mode=="streaming"` (the datac default):
 ```
@@ -487,7 +487,7 @@ Synced: modem_frame++; if ≥ np { modem_frame=0; packet_count++;
 
 ### 4.13 Interop-exactness checklist
 
-`float` hot path; `cmplx/cmplxconj` per `ofdm_internal.h:51-52`; non-conjugating dot product; `roundf` = AwayFromZero; the §4.0 overwrite; the `+1e-6`/`+1e-12` guards; `EsNo=3.0f`; absolute-index phase ramps; scalar dot-product order (`ofdm.c:776-778`) — validate against generated audio→bits within the tiered tolerance (§7.5), not literal float equality.
+`float` hot path; `cmplx/cmplxconj` per `ofdm_internal.h:51-52`; non-conjugating dot product; `roundf` = AwayFromZero; the §4.0 overwrite; the `+1e-6`/`+1e-12` guards; `EsNo=3.0f`; absolute-index phase ramps; scalar dot-product order (`ofdm.c:776-778`) - validate against generated audio→bits within the tiered tolerance (§7.5), not literal float equality.
 
 ### 4.14 Sample-rate bridge
 
@@ -512,17 +512,17 @@ Mode→codename is in `ofdm_mode.c`; shortening `data_bits = bitsperpacket − n
 | datac13 | H_256_512_4 | 256 | 256 | 512 | **128** | **yes** | 128 | 384 |
 | datac14 | HRA_56_56 | 56 | 56 | 112 | **40** | **yes** | 16 | 96 |
 
-Cross-check: `data/8 − 2 = {14,510,126,54,14,3}` payload bytes, matching README. All five satisfy `NumberRowsHcols == NumberParityBits == CodeLength/2` ⇒ `run_ldpc_decoder` (`mpdecode_core.c:480-486`) `shift=0`, `H1=1` — the **RA/dual-diagonal branch**. Target exactly that branch (assert it). Scalars: `dec_type=0`, `q/r_scale_factor=1` (**dead** — the multiplies are commented out, `mpdecode_core.c:398,400,423`), `max_iter=100`.
+Cross-check: `data/8 − 2 = {14,510,126,54,14,3}` payload bytes, matching README. All five satisfy `NumberRowsHcols == NumberParityBits == CodeLength/2` ⇒ `run_ldpc_decoder` (`mpdecode_core.c:480-486`) `shift=0`, `H1=1` - the **RA/dual-diagonal branch**. Target exactly that branch (assert it). Scalars: `dec_type=0`, `q/r_scale_factor=1` (**dead** - the multiplies are commented out, `mpdecode_core.c:398,400,423`), `max_iter=100`.
 
 ### 5.2 Sparse H storage
 
-Both flat `uint16_t[]`, **column-major, 1-based, 0=pad**: `H_rows` length `M·max_row_weight` (systematic data-column indices per parity row); `H_cols` length `K·max_col_weight` (parity-row indices per data column). Parity part implicit in the `H1` dual-diagonal. `_input[N]`/`_detected_data[N]` present in four `.c` files (a built-in decode oracle) — **absent from `H_1024_2048_4f.c`** (verified: `grep` finds no `_input[]`), i.e. **datac3 AND datac4 have no standalone vector** (§5.9, §8.4).
+Both flat `uint16_t[]`, **column-major, 1-based, 0=pad**: `H_rows` length `M·max_row_weight` (systematic data-column indices per parity row); `H_cols` length `K·max_col_weight` (parity-row indices per data column). Parity part implicit in the `H1` dual-diagonal. `_input[N]`/`_detected_data[N]` present in four `.c` files (a built-in decode oracle) - **absent from `H_1024_2048_4f.c`** (verified: `grep` finds no `_input[]`), i.e. **datac3 AND datac4 have no standalone vector** (§5.9, §8.4).
 
 ### 5.3 Transliteration script (nothing hand-copied)
 
 `tools/gen-ldpc-tables/gen.py` (~60 lines, run once, output committed): regex the seven defines from each `.h`; slurp brace bodies from each `.c`; **assert** `len(H_rows)==M·max_row_weight` and `len(H_cols)==K·max_col_weight` (build guard); emit `src/Packet.SoundModem/Fec/Ldpc/LdpcTables.g.cs` (`internal static class {Name}` with `ushort[] HRows/HCols`) and `tests/.../Fec/Ldpc/LdpcOracle.g.cs` (`float[] Input`, `byte[] Detected` for the four codes that have them). phi0 is hand-ported (§5.4). A checked-in SHA / regenerate-and-diff `[Fact]` guards drift.
 
-### 5.4 `Phi0` — exact fixed-point port (`phi0.c`; the default build uses the table, `mpdecode_core.c:17-19`)
+### 5.4 `Phi0` - exact fixed-point port (`phi0.c`; the default build uses the table, `mpdecode_core.c:17-19`)
 
 ```csharp
 private static int Si16(float f) => (int)(f * 65536f);   // float multiply then truncate-toward-zero
@@ -536,7 +536,7 @@ public static float Compute(float xf) {                  // xf >= 0
 ```
 Bit-exactness needs: `Si16` in **float** then truncate; all 10+64+32 constants transcribed; the `≥10→0` and fall-through `→10.0f` edges. Pin with a boundary golden test at {0, 0.000086, 0.007812, 0.088388, 0.25, 0.5, 0.707107, 1.0, 4.9375, 5.0, 9.5, 10.0}.
 
-### 5.5 Encoder — RA accumulator (`mpdecode_core.c:68-87`)
+### 5.5 Encoder - RA accumulator (`mpdecode_core.c:68-87`)
 
 ```csharp
 internal static void Encode(LdpcCode c, ReadOnlySpan<byte> ibits /*K*/, Span<byte> pbits /*M*/) {
@@ -551,9 +551,9 @@ internal static void Encode(LdpcCode c, ReadOnlySpan<byte> ibits /*K*/, Span<byt
 }
 ```
 
-### 5.6 Decoder — log-domain sum-product (`mpdecode_core.c:355-450`) with **verbatim graph (fix 3)**
+### 5.6 Decoder - log-domain sum-product (`mpdecode_core.c:355-450`) with **verbatim graph (fix 3)**
 
-**Tanner graph built once per code, cached** — transliterate `init_c_v_nodes` (`mpdecode_core.c:142-353`) **verbatim for the `H1=1/shift=0` branch** (the only one datac hits), including socket cross-references and **edge append order** (systematic `H_rows` edges first, then the two dual-diagonal parity edges at `sub[degree-2]/sub[degree-1]`, plus reciprocal sockets). `SumProduct` accumulates `phi_sum`/`Qi` in sub-array order, so the float sum order is fixed by this construction — **any reordering silently changes rounding and can flip marginal decodes.** Cite the exact lines:
+**Tanner graph built once per code, cached** - transliterate `init_c_v_nodes` (`mpdecode_core.c:142-353`) **verbatim for the `H1=1/shift=0` branch** (the only one datac hits), including socket cross-references and **edge append order** (systematic `H_rows` edges first, then the two dual-diagonal parity edges at `sub[degree-2]/sub[degree-1]`, plus reciprocal sockets). `SumProduct` accumulates `phi_sum`/`Qi` in sub-array order, so the float sum order is fixed by this construction - **any reordering silently changes rounding and can flip marginal decodes.** Cite the exact lines:
 
 - c-node degree (`:151-167`): `count` nonzero `HRows[i+j*M]`; `degree = (i==0)? count+1 : count+2`.
 - c-node subs (`:189-211`): j∈[0,deg-3)←`HRows[i+j*M]-1`; `i==0`→sub[deg-2]=last systematic; `i>0`→sub[deg-2]=`(N-M)+i-1`, sub[deg-1]=`(N-M)+i`.
@@ -568,7 +568,7 @@ public int Decode(ReadOnlySpan<float> input /*N*/, Span<byte> decoded /*N*/, out
     int M = _c.NumberParityBits, result = _c.MaxIter;
     for (int iter = 0; iter < _c.MaxIter; iter++) {
         decoded.Clear(); int ssum = 0;
-        // r: check→variable (mpdecode_core.c:375-402) — phi_sum in sub order, sign xor
+        // r: check→variable (mpdecode_core.c:375-402) - phi_sum in sub order, sign xor
         for (int j = 0; j < M; j++) {
             ref var s0 = ... bool sign = v0.Sign; float phiSum = v0.Message;
             for (i=1..) { phiSum += vp.Message; sign ^= vp.Sign; }
@@ -623,7 +623,7 @@ phi0 boundary golden; encoder golden (RA recurrence) + clean-channel round-trip;
 
 ---
 
-## 6. Framing — interleaver / UW / preamble / CRC / shortening
+## 6. Framing - interleaver / UW / preamble / CRC / shortening
 
 Namespace `Packet.SoundModem.FreeDv`. Types: `FreeDvCrc16`, `GoldenPrimeInterleaver`, `DatacModeParams`, `DatacBurstFramer`.
 
@@ -656,9 +656,9 @@ public sealed record DatacModeParams(string Name, int Nc, int Ns, int Np, int Nu
 }
 ```
 
-### 6.3 CRC-16 — `freedv_gen_crc16` (`freedv_api.c:1616-1628`)
+### 6.3 CRC-16 - `freedv_gen_crc16` (`freedv_api.c:1616-1628`)
 
-**CRC-16/CCITT-FALSE** (poly 0x1021, init 0xFFFF, refin/refout=false, xorout 0x0000). **NOT `Fec/Crc16X25`** (reflected 0x8408, xorout 0xFFFF) — a new class. Computed over payload only; result big-endian in the last two bytes (`freedv_data_raw_tx.c:379-382`).
+**CRC-16/CCITT-FALSE** (poly 0x1021, init 0xFFFF, refin/refout=false, xorout 0x0000). **NOT `Fec/Crc16X25`** (reflected 0x8408, xorout 0xFFFF) - a new class. Computed over payload only; result big-endian in the last two bytes (`freedv_data_raw_tx.c:379-382`).
 ```csharp
 public static class FreeDvCrc16 {
     public static ushort Compute(ReadOnlySpan<byte> data) {
@@ -675,11 +675,11 @@ Self-check: `"123456789"` → `0x29B1`.
 
 ### 6.4 Golden-prime interleaver (`gp_interleaver.c`)
 
-datac uses **`gp_interleave_comp`** over `N = coded_bits/2` symbols (not `gp_interleave_bits`). `choose_interleaver_b`: `b = next_prime(floor(N/1.62))` — **the literal constant is `1.62`, NOT φ=1.618…** (`gp_interleaver.c:57`); the header comment says "Golden section" but the code uses `1.62`; a "correction" breaks interop. `next_prime` = smallest prime strictly greater (`:50-54`); `is_prime` = trial division. Formulas: `interleaved[(b·i) % N] = frame[i]`; `frame[i] = interleaved[(b·i) % N]`. `b` per §6.2 table (pin with a test). Widen `b·i` to `long` before `%` (identical for these N, future-proof). Provide `Interleave/Deinterleave` for both `Complex[]` and `float[]` (the amp path, fix 8).
+datac uses **`gp_interleave_comp`** over `N = coded_bits/2` symbols (not `gp_interleave_bits`). `choose_interleaver_b`: `b = next_prime(floor(N/1.62))` - **the literal constant is `1.62`, NOT φ=1.618…** (`gp_interleaver.c:57`); the header comment says "Golden section" but the code uses `1.62`; a "correction" breaks interop. `next_prime` = smallest prime strictly greater (`:50-54`); `is_prime` = trial division. Formulas: `interleaved[(b·i) % N] = frame[i]`; `frame[i] = interleaved[(b·i) % N]`. `b` per §6.2 table (pin with a test). Widen `b·i` to `long` before `%` (identical for these N, future-proof). Provide `Interleave/Deinterleave` for both `Complex[]` and `float[]` (the amp path, fix 8).
 
 ### 6.5 Unique word
 
-**6.5a Resolved bit arrays** (`ofdm_mode.c`; base 16-bit `A={1,1,0,0,1,0,1,0,1,1,1,1,0,0,0,0}`, 24-bit `B=A++{1,1,1,1,0,0,0,0}`) — ship the **resolved** arrays, assert length == `NuwBits`, don't reproduce the memcpy overlap logic:
+**6.5a Resolved bit arrays** (`ofdm_mode.c`; base 16-bit `A={1,1,0,0,1,0,1,0,1,1,1,1,0,0,0,0}`, 24-bit `B=A++{1,1,1,1,0,0,0,0}`) - ship the **resolved** arrays, assert length == `NuwBits`, don't reproduce the memcpy overlap logic:
 - datac0 (32): `A` then 16 zeros.
 - datac1 (16): `A`.
 - datac3 (40): `B` @0, `B` @16 (overlap 16..23 second wins).
@@ -689,7 +689,7 @@ datac uses **`gp_interleave_comp`** over `N = coded_bits/2` symbols (not `gp_int
 
 **6.5b UW→symbol** (`ofdm.c:475-480`): `s = qpsk[(tx_uw[2s]<<1)|tx_uw[2s+1]]`.
 
-**6.5c `uw_ind_sym[]`** (`ofdm.c:445-463`, **all C integer division** — the `floorf` wraps an int result, a no-op): `uw_step=nc+1` (the `>=` fallback to `nc-1` never fires for any datac mode); `uw_ind_sym[i]=((i+1)*uw_step)/2`. Resolved: datac0 step10→{5,10,…,80}; datac1 step28→{14,28,…,112}; datac3 step10→{5,…,100}; datac4/datac14 step5→{2,5,7,10,…,40}; datac13 step4→{2,4,…,48}. RX `nuwframes = ceil((uw_ind_sym[last]+1)/((ns-1)·nc))` = {3,2,3,3,5,3}.
+**6.5c `uw_ind_sym[]`** (`ofdm.c:445-463`, **all C integer division** - the `floorf` wraps an int result, a no-op): `uw_step=nc+1` (the `>=` fallback to `nc-1` never fires for any datac mode); `uw_ind_sym[i]=((i+1)*uw_step)/2`. Resolved: datac0 step10→{5,10,…,80}; datac1 step28→{14,28,…,112}; datac3 step10→{5,…,100}; datac4/datac14 step5→{2,5,7,10,…,40}; datac13 step4→{2,4,…,48}. RX `nuwframes = ceil((uw_ind_sym[last]+1)/((ns-1)·nc))` = {3,2,3,3,5,3}.
 
 **6.5d Insertion** (`ofdm.c:2412-2440`): weave UW at `uw_ind_sym`, payload elsewhere; assert `u==NuwSyms`, `pay==PayloadSyms`.
 
@@ -721,9 +721,9 @@ Mode IDs (`freedv_api.h:59-64`): DATAC1=10, DATAC3=12, DATAC0=14, DATAC4=18, DAT
 
 ### 7.2 Build + P/Invoke
 
-CMake: `-DBUILD_SHARED_LIBS=ON -DLPCNET=OFF -DUNITTEST=OFF` → `libcodec2.so`. Record `git rev-parse HEAD` (`310777b1…`) + `freedv_get_version/hash` in every manifest. `LibCodec2.cs`: `[DllImport("codec2")]` mirroring `Audio/AlsaPcm.cs`; a `NativeLibrary.SetDllImportResolver` honouring `PDN_LIBCODEC2` then `libcodec2.so.1.2`/`libcodec2.so`; `IsAvailable` gate. Bind the **real int16** path (`freedv_rawdata{,preamble,postamble}tx`, `freedv_nin`, `freedv_rawdatarx`, `freedv_get_rx_status`, geometry getters, `freedv_gen_crc16`/`freedv_pack`/`freedv_unpack`) — not the COMP variants.
+CMake: `-DBUILD_SHARED_LIBS=ON -DLPCNET=OFF -DUNITTEST=OFF` → `libcodec2.so`. Record `git rev-parse HEAD` (`310777b1…`) + `freedv_get_version/hash` in every manifest. `LibCodec2.cs`: `[DllImport("codec2")]` mirroring `Audio/AlsaPcm.cs`; a `NativeLibrary.SetDllImportResolver` honouring `PDN_LIBCODEC2` then `libcodec2.so.1.2`/`libcodec2.so`; `IsAvailable` gate. Bind the **real int16** path (`freedv_rawdata{,preamble,postamble}tx`, `freedv_nin`, `freedv_rawdatarx`, `freedv_get_rx_status`, geometry getters, `freedv_gen_crc16`/`freedv_pack`/`freedv_unpack`) - not the COMP variants.
 
-### 7.3 Managed wrapper — with `nin==0` handling (fix 10)
+### 7.3 Managed wrapper - with `nin==0` handling (fix 10)
 
 `FreeDvOracle` (disposable) carries managed `Crc16Ccitt`/pack/unpack (proven == `freedv_*` in Tier B before the shipped lib trusts them). `Modulate` builds the silence-free `[preamble][data][postamble]` burst. **`Demodulate` must mirror `freedv_data_raw_rx`'s own `nin` loop:** the OFDM demod deliberately returns `nin=0` to drain buffered frames (`ofdm.c:1956-1961`); a `while (pos+nin <= len)` loop with `nin==0` copies 0 samples and never advances. Fix:
 ```csharp
@@ -740,19 +740,19 @@ while (true) {
 }
 ```
 
-### 7.4 Vector generation — one provenance (fix 6)
+### 7.4 Vector generation - one provenance (fix 6)
 
 **Standardise on the API-built, silence-free burst** (`freedv_rawdatapreambletx + freedv_rawdatatx + freedv_rawdatapostambletx`), matching modulator §3.9 `EmitBurst`. The CLI `freedv_data_raw_tx --testframes 1` prepends **`2·n_nom_modem_samples` leading silence** and appends trailing silence (verified `freedv_data_raw_tx.c:344-355,395-404`), which would offset a TX-parity comparator by ~2 frames and mismatch everywhere. Record the chosen provenance in `PROVENANCE.md`; if the CLI file is ever used, strip leading/trailing `n_nom = samplesperframe` (`freedv_700.c:246`) silence explicitly. Per mode, fixed seeded payload cases (all-zero, all-0xFF, incrementing, 3× seeded random); emit `datacN-tx-<case>.s16` (LE mono int16) + `.json` manifest (mode, IDs, version/hash, sample counts, payloadHex, frameHex, crc16, sha256) and an RX manifest recording `Demodulate`'s frames/status. Optionally a fixed-AWGN-seed noisy `.s16` to exercise the CRC-reject path (statistical only, §7.5).
 
-### 7.5 Tiered exactness contract (fix 4 — the named tolerance policy)
+### 7.5 Tiered exactness contract (fix 4 - the named tolerance policy)
 
-- **(a) Integer layers — exact, zero tolerance:** framing, pack/unpack, CRC, UW/`uw_ind_sym`/interleaver indices, sample counts, returned-byte-count, `rx_status`; **and payload bytes + CRC-valid decision on clean high-SNR input.**
-- **(b) Clean golden `.s16` (high SNR):** `rx_np`/`rx_amp` within relative tol (e.g. 1e-4) AND payload bytes bit-identical AND CRC-valid; TX `.s16` `maxAbs` LSB tolerance (goal 0, start ≤2) + RMS bound + xcorr ≥ 0.99999. The tolerance is a **named, documented knob** per mode, tightened toward 0 as the port matures — not an ad-hoc fudge.
-- **(c) Noisy/AWGN/MPP:** assert **only** CRC-valid + PER within a binomial CI — **never** sample- or bit-exact (a single differently-rounded float can flip a marginal LLR → different hard decision/CRC).
+- **(a) Integer layers - exact, zero tolerance:** framing, pack/unpack, CRC, UW/`uw_ind_sym`/interleaver indices, sample counts, returned-byte-count, `rx_status`; **and payload bytes + CRC-valid decision on clean high-SNR input.**
+- **(b) Clean golden `.s16` (high SNR):** `rx_np`/`rx_amp` within relative tol (e.g. 1e-4) AND payload bytes bit-identical AND CRC-valid; TX `.s16` `maxAbs` LSB tolerance (goal 0, start ≤2) + RMS bound + xcorr ≥ 0.99999. The tolerance is a **named, documented knob** per mode, tightened toward 0 as the port matures - not an ad-hoc fudge.
+- **(c) Noisy/AWGN/MPP:** assert **only** CRC-valid + PER within a binomial CI - **never** sample- or bit-exact (a single differently-rounded float can flip a marginal LLR → different hard decision/CRC).
 
 ### 7.6 Three-tier CI
 
-- **Tier A (default filter, no libcodec2):** checked-in vectors — TX parity, RX parity (recovered payload + byte count + CRC-valid status), layer parity (managed CRC/pack/unpack vs manifest). Gates every PR on the self-hosted runner.
+- **Tier A (default filter, no libcodec2):** checked-in vectors - TX parity, RX parity (recovered payload + byte count + CRC-valid status), layer parity (managed CRC/pack/unpack vs manifest). Gates every PR on the self-hosted runner.
 - **Tier B (`[SkippableFact]`, `Skip.IfNot(IsAvailable)`):** vector-integrity regen + hash check; helper equivalence (`Crc16Ccitt`==`freedv_gen_crc16`, pack/unpack); cross round-trips (our TX→ref RX, ref TX→our RX).
 - **Tier C (`[Trait("Category","OracleGen")]`, manual):** regenerate fixtures on an intentional codec2 bump; record version/hash in manifests + `PROVENANCE.md`.
 
@@ -774,36 +774,36 @@ Namespace `Packet.SoundModem.Modems.FreeDv`. `FreeDvDataModem : IModem, IConstel
 
 The §3.2/§4.1 constants + payload/OBW/SNR columns from `README_data.md:144-149`: OBW {500,1700,500,250,200,250} Hz; MPP test {70,92,74,90,90,90}/100; operating SNR {0,5,0,−4,−4,−2} dB. `Fs=8000` const, never swept. Engine seam (from §3/§4/§5): `OfdmModulator`, `OfdmDemodulator` (`Sync`, `FoffEstHz`, per-packet callback), `LdpcFrameCodec`.
 
-### 8.3 Sample-rate integration (fix 7 — the resampler is NOT in the bit-exact envelope)
+### 8.3 Sample-rate integration (fix 7 - the resampler is NOT in the bit-exact envelope)
 
-The OFDM core always runs at **8000** internally; `FreeDvDataModem` owns integer resamplers and requires `sampleRate % 8000 == 0`. The daemon forces `DspRate=48000` whenever any `freedv-*` modem is configured (extend `Program.cs:105`), 48000/8000=6 exact. **But codec2's real RX resamples rig audio to 8 k with `quisk_cfInterpDecim`/`quiskFilt120t480` — a *different* filter than pdn's `Dsp/Decimator`.** So the daemon's real-radio RX path is **not** the path the oracle proves. Two honest options, pick one before shipping datac on real radios (**R-2, §10**):
+The OFDM core always runs at **8000** internally; `FreeDvDataModem` owns integer resamplers and requires `sampleRate % 8000 == 0`. The daemon forces `DspRate=48000` whenever any `freedv-*` modem is configured (extend `Program.cs:105`), 48000/8000=6 exact. **But codec2's real RX resamples rig audio to 8 k with `quisk_cfInterpDecim`/`quiskFilt120t480` - a *different* filter than pdn's `Dsp/Decimator`.** So the daemon's real-radio RX path is **not** the path the oracle proves. Two honest options, pick one before shipping datac on real radios (**R-2, §10**):
 - **(A) faithful:** port `quisk_cfInterpDecim` + `quiskFilt120t480` for the 48 k→8 k RX stage, keeping the whole chain reference-faithful; or
-- **(B) scoped tolerance:** explicitly declare the resampler a tolerance stage and make **§8.6 Leg-3 (cross-decode of a real reference-FreeDV transmission through the daemon)** a **required** gate — and stop describing the daemon path as bit-exact.
+- **(B) scoped tolerance:** explicitly declare the resampler a tolerance stage and make **§8.6 Leg-3 (cross-decode of a real reference-FreeDV transmission through the daemon)** a **required** gate - and stop describing the daemon path as bit-exact.
 For the OBW test and the oracle, construct the modem **at 8000 directly** (no resampler) so the compared samples are the pure codec2 waveform.
 
 ### 8.4 KISS payload contract
 
-One KISS frame ↔ one FreeDV packet. `Modulate`: reject/log-drop over-length (no silent fragmentation — segmentation is the ARQ layer); zero-pad to `PayloadBytes`; append CRC-16 (§6.3); LDPC-encode; OFDM-modulate one burst @8000; upsample; prepend `txDelayMs` of **silence** (PTT settling only — the FreeDV preamble is the acquisition aid, so the burst stays byte-identical to codec2). `Process`: decimate→8000, demod+sync; on each packet LDPC-decode + re-check CRC; **CRC pass** → emit leading `PayloadBytes` (CRC stripped); CRC-fail dropped (matches `freedv_data_raw_rx`). Fixed-size zero-pad means variable length does not round-trip its own length — inherent to FreeDV raw data, and why ARQ is a required higher layer (FreeDATA/Mercury). **datac3/datac4 (no LDPC vector, §5.9) rely on this end-to-end oracle as their required interop gate.**
+One KISS frame ↔ one FreeDV packet. `Modulate`: reject/log-drop over-length (no silent fragmentation - segmentation is the ARQ layer); zero-pad to `PayloadBytes`; append CRC-16 (§6.3); LDPC-encode; OFDM-modulate one burst @8000; upsample; prepend `txDelayMs` of **silence** (PTT settling only - the FreeDV preamble is the acquisition aid, so the burst stays byte-identical to codec2). `Process`: decimate→8000, demod+sync; on each packet LDPC-decode + re-check CRC; **CRC pass** → emit leading `PayloadBytes` (CRC stripped); CRC-fail dropped (matches `freedv_data_raw_rx`). Fixed-size zero-pad means variable length does not round-trip its own length - inherent to FreeDV raw data, and why ARQ is a required higher layer (FreeDATA/Mercury). **datac3/datac4 (no LDPC vector, §5.9) rely on this end-to-end oracle as their required interop gate.**
 
 Daemon (`Program.cs`): add `freedv-datac0/1/3` switch cases (Phase 2: datac4/13/14); force 48000 + `captureRate % 48000 == 0` guard; document modes. `SoundModemChannel`/`KissTcpServer`/`--wav` need no changes.
 
-### 8.5 OBW per mode — pin to **measured golden**, not README (fix 5)
+### 8.5 OBW per mode - pin to **measured golden**, not README (fix 5)
 
-Extend `tests/.../Dsp/OccupiedBandwidthTests.cs`, reusing `OccupiedBandwidth.Measure` (ITU 99%). Construct each modem **at 8000** (Fs/2=4000 > widest edge 2350 Hz). The README figures {500,1700,500,250,200,250} are **nominal**, not the measured ITU-99% OBW of the clipped+BPF'd waveform — e.g. datac0's outer-carrier span alone is 8·62.5=500 Hz and the OFDM sinc skirts push true 99% OBW higher (~1.12×), which would false-fail a `≤1.05×` ceiling; a `−20%` floor is too loose to catch clipper splatter. **Fix:** measure the codec2 golden `.s16` DATA section (post amp_scale→clip_gain1→ofdm_clip→BPF→clip_gain2→clip) with the **same** `OccupiedBandwidth` meter and pin the C# waveform to **that measured value ± a tight tolerance**; keep the README number only as a sanity ballpark. This proves "matches the reference spectrum", not "matches a round number", and remains the guard that historically caught 1200-QPSK splatter. `fftSize` 4096 (long modes), 2048 (datac14). Include the meter self-test (`OccupiedBandwidthTests.The_Meter_Agrees_With_A_Known_Signal`).
+Extend `tests/.../Dsp/OccupiedBandwidthTests.cs`, reusing `OccupiedBandwidth.Measure` (ITU 99%). Construct each modem **at 8000** (Fs/2=4000 > widest edge 2350 Hz). The README figures {500,1700,500,250,200,250} are **nominal**, not the measured ITU-99% OBW of the clipped+BPF'd waveform - e.g. datac0's outer-carrier span alone is 8·62.5=500 Hz and the OFDM sinc skirts push true 99% OBW higher (~1.12×), which would false-fail a `≤1.05×` ceiling; a `−20%` floor is too loose to catch clipper splatter. **Fix:** measure the codec2 golden `.s16` DATA section (post amp_scale→clip_gain1→ofdm_clip→BPF→clip_gain2→clip) with the **same** `OccupiedBandwidth` meter and pin the C# waveform to **that measured value ± a tight tolerance**; keep the README number only as a sanity ballpark. This proves "matches the reference spectrum", not "matches a round number", and remains the guard that historically caught 1200-QPSK splatter. `fftSize` 4096 (long modes), 2048 (datac14). Include the meter self-test (`OccupiedBandwidthTests.The_Meter_Agrees_With_A_Known_Signal`).
 
 ### 8.6 Channel-model validation (AWGN + MPP)
 
 Port codec2's `ch` tool → `tests/.../Channel/Codec2Channel.cs`, exact order (`ch.c:102,330-508`): Hilbert→complex → magnitude-clip → freq-shift → multipath fade → AWGN → SSB filter → real int16. Hilbert `ht_coeff.h` (`HT_N=257`); MPP two paths `nhfdelay=floor(2.0·8000/1000)=16` (`ch.c:45,282`); AWGN `No=10^(NodB/10)·1e6`, `variance=Fs·No`, Box-Muller complex noise (`ch.c:57-67`); SSB `ssbfilt_coeff.h` (`SSBFILT_N=100`, centre 1500). **Fading = bit-exact** by reusing codec2's own generated MPP file (`unittest/fading_files.sh` on the build host, checked into `samples/freedv/`; same file → same realisation). **AWGN = statistical** (C `rand()` not reproducible in C#; substitute a seeded xoshiro with the same variance → Monte-Carlo parity with a CI, not sample-exact).
 
-**Validation runs (tiered per §7.5):** MPP parity — ~100 packets through `Codec2Channel(MPP, operatingSnr)`, accept if packets-received ≥ published within a **one-sided binomial CI** of the published p̂ (never bit-exact). AWGN sweep — PER/BER knee within ~1 dB of codec2's published curves. Plus OBW ≤ measured golden (§8.5). `Codec2Channel` self-test: unity HT, `nhfdelay=16`, measured SNR3k matches set NodB.
+**Validation runs (tiered per §7.5):** MPP parity - ~100 packets through `Codec2Channel(MPP, operatingSnr)`, accept if packets-received ≥ published within a **one-sided binomial CI** of the published p̂ (never bit-exact). AWGN sweep - PER/BER knee within ~1 dB of codec2's published curves. Plus OBW ≤ measured golden (§8.5). `Codec2Channel` self-test: unity HT, `nhfdelay=16`, measured SNR3k matches set NodB.
 
 ### 8.7 "Proven reliable" acceptance (all three legs green)
 
-- **Leg 1 — oracle / bit-exact (§7.5(a)+(b)):** RX recovers exact payload + CRC-valid from clean high-SNR codec2 golden bursts (zero payload errors); TX matches golden ≤ tol (LSB/xcorr); upstream `freedv_data_raw_rx` decodes our TX (manual provenance run).
-- **Leg 2 — channel-model parity (§8.6, statistical):** MPP packets-received ≥ published within a binomial CI at the mode's operating SNR; AWGN knee within ~1 dB; OBW within the measured-golden tolerance.
-- **Leg 3 — real HF loop (`[Trait("Category","HardwareLoop")]`):** bidirectional over a real SSB path through the daemon KISS↔KISS at the operating SNR, **and** a cross-decode against reference FreeDV on air (our TX decoded by `freedv_data_raw_rx`, FreeDV's TX decoded by us). **Required** (not optional) if resampler option (B) is chosen (§8.3). Honours the "validate full flow, remote==local" bench discipline.
+- **Leg 1 - oracle / bit-exact (§7.5(a)+(b)):** RX recovers exact payload + CRC-valid from clean high-SNR codec2 golden bursts (zero payload errors); TX matches golden ≤ tol (LSB/xcorr); upstream `freedv_data_raw_rx` decodes our TX (manual provenance run).
+- **Leg 2 - channel-model parity (§8.6, statistical):** MPP packets-received ≥ published within a binomial CI at the mode's operating SNR; AWGN knee within ~1 dB; OBW within the measured-golden tolerance.
+- **Leg 3 - real HF loop (`[Trait("Category","HardwareLoop")]`):** bidirectional over a real SSB path through the daemon KISS↔KISS at the operating SNR, **and** a cross-decode against reference FreeDV on air (our TX decoded by `freedv_data_raw_rx`, FreeDV's TX decoded by us). **Required** (not optional) if resampler option (B) is chosen (§8.3). Honours the "validate full flow, remote==local" bench discipline.
 
-Legs 1–2 are CI-enforceable on the self-hosted runner; Leg 3 is the manual hardware gate that flips a mode from "oracle-correct" to "proven reliable".
+Legs 1-2 are CI-enforceable on the self-hosted runner; Leg 3 is the manual hardware gate that flips a mode from "oracle-correct" to "proven reliable".
 
 ---
 
@@ -811,22 +811,22 @@ Legs 1–2 are CI-enforceable on the self-hosted runner; Leg 3 is the manual har
 
 ### 9.1 Phasing (grounded in README use-cases + fixtures)
 
-1. **datac0 — first light.** Shortest burst (0.44 s), smallest FEC (256,128), Nc=9, 14-byte payload → fastest end-to-end (modulate+LDPC+framing+demod+CRC+oracle) with least engine surface.
-2. **datac1 — workhorse.** Forward-link mode (Nc=27, 510 bytes, largest LDPC 8192,4096); second because the real off-air `test_datac1_006.raw` capture gives a **free real-world RX oracle** no other mode has, and 1700 Hz OBW is the headline compliance number.
-3. **datac3 — low-SNR forward link.** Reuses datac0's Nc=9 geometry, exercises a second LDPC code (2048,1024) — and forces the datac3/datac4 end-to-end oracle gate (§5.9/§8.4) since `H_1024_2048_4f` has no built-in vector.
+1. **datac0 - first light.** Shortest burst (0.44 s), smallest FEC (256,128), Nc=9, 14-byte payload → fastest end-to-end (modulate+LDPC+framing+demod+CRC+oracle) with least engine surface.
+2. **datac1 - workhorse.** Forward-link mode (Nc=27, 510 bytes, largest LDPC 8192,4096); second because the real off-air `test_datac1_006.raw` capture gives a **free real-world RX oracle** no other mode has, and 1700 Hz OBW is the headline compliance number.
+3. **datac3 - low-SNR forward link.** Reuses datac0's Nc=9 geometry, exercises a second LDPC code (2048,1024) - and forces the datac3/datac4 end-to-end oracle gate (§5.9/§8.4) since `H_1024_2048_4f` has no built-in vector.
 
-**Phase 2:** datac4/13/14 — the `filtP200S400` tx BPF + **`rx_bpf` regime (fix 1, §4.9)** + narrow-mode thresholds (0.45–0.5), a distinct engine regime best batched after Phase 1 proves the architecture.
+**Phase 2:** datac4/13/14 - the `filtP200S400` tx BPF + **`rx_bpf` regime (fix 1, §4.9)** + narrow-mode thresholds (0.45-0.5), a distinct engine regime best batched after Phase 1 proves the architecture.
 
 ### 9.2 Files
 
-**Engine (§3–§5):**
+**Engine (§3-§5):**
 ```
 src/Packet.SoundModem/Ofdm/OfdmMode.cs                    §3.4/§4.3 mode record (6 factories, AwayFromZero fix)
 src/Packet.SoundModem/Ofdm/Cf.cs                          float complex struct
 src/Packet.SoundModem/Ofdm/OfdmModulator.cs               §3 (idft, CP, hilbert-clipper, preamble/postamble, burst)
 src/Packet.SoundModem/Ofdm/OfdmDemodulator.cs             §4 (DFT, sync-search, demod-core, state machine)
 src/Packet.SoundModem/Ofdm/OfdmPacketAssembler.cs         §4.10 (disassemble_with_text_amps + amp deinterleave)
-src/Packet.SoundModem/Ofdm/ComplexBandpassFir.cs          §3.7 quisk_cfTune/ccfFilter — SHARED tx+rx BPF
+src/Packet.SoundModem/Ofdm/ComplexBandpassFir.cs          §3.7 quisk_cfTune/ccfFilter - SHARED tx+rx BPF
 src/Packet.SoundModem/Ofdm/OfdmTables.g.cs                pilotvalues[64], wval, qpsk, filtP* (100-tap each)
 src/Packet.SoundModem/Fec/Ldpc/LdpcTables.g.cs            §5.3 generated H_rows/H_cols (5 codes)
 src/Packet.SoundModem/Fec/Ldpc/Phi0.cs                    §5.4 hand-ported table
@@ -867,14 +867,14 @@ Constraints: pure-managed .NET 10; GPL-3.0-or-later + per-port provenance header
 
 **R-2 (interop, blocks real-radio datac). RX resampler faithfulness (fix 7, §8.3).** The oracle proves only the native-8 k core; codec2's real RX uses `quisk_cfInterpDecim`/`quiskFilt120t480`, not pdn's decimator. Decide **(A)** port that resampler (fully faithful) or **(B)** scope it as a tolerance stage and make Leg-3 cross-decode a required gate. Until decided, do not describe the daemon path as bit-exact.
 
-**R-3 (float determinism). Literal IEEE-754 identity is unproven.** Algorithm/constants/tables/ordering are fully specified, so decoded bits + iteration counts should match on clean input; intermediate-sum bit-identity is unproven without running (barred here). Contained by the tiered tolerance policy (§7.5) — but the first oracle run may reveal a tolerance that must be widened; treat the per-mode LSB knob as data, tighten as the port matures.
+**R-3 (float determinism). Literal IEEE-754 identity is unproven.** Algorithm/constants/tables/ordering are fully specified, so decoded bits + iteration counts should match on clean input; intermediate-sum bit-identity is unproven without running (barred here). Contained by the tiered tolerance policy (§7.5) - but the first oracle run may reveal a tolerance that must be widened; treat the per-mode LSB knob as data, tighten as the port matures.
 
 **Not determinable from the source read (flagged, do not confabulate):**
-- **`quiskFilt120t480` / `quisk_cfInterpDecim` taps** — not transcribed (R-2).
-- **datac4/13/14 payload-vs-codeword** (`Npayloadsyms` < codeword symbols) implies puncturing in `ldpc_mode_specific_setup`/`count_errors_protection_mode` — not read in full; an LDPC-layer concern. The demod→LLR interface must emit exactly `BitsPerPacket − nuwbits − txtbits` LLRs and let the LDPC component handle framing.
-- **Exact `ht_coeff.h` (257) / `ssbfilt_coeff.h` (100) tap values** — sizes/defines confirmed, arrays not transcribed (needed only for the channel model, §8.6; the recommendation reuses codec2's generated fading file to keep it bit-exact).
-- **`octave/doppler_spread.m` `fir2`/`resample` numerics** are Octave-specific — hence reusing codec2's generated `fast_fading_samples.float` rather than re-implementing the generator.
-- **`fdmdv_freq_shift_coh`** (channel foff injection, `fdmdv.c`) — not read.
-- **`freedv_set_tx_amp` insertion point** — confirmed a no-op for datac (FSK-only), so excluded from the modulator; not traced further.
+- **`quiskFilt120t480` / `quisk_cfInterpDecim` taps** - not transcribed (R-2).
+- **datac4/13/14 payload-vs-codeword** (`Npayloadsyms` < codeword symbols) implies puncturing in `ldpc_mode_specific_setup`/`count_errors_protection_mode` - not read in full; an LDPC-layer concern. The demod→LLR interface must emit exactly `BitsPerPacket − nuwbits − txtbits` LLRs and let the LDPC component handle framing.
+- **Exact `ht_coeff.h` (257) / `ssbfilt_coeff.h` (100) tap values** - sizes/defines confirmed, arrays not transcribed (needed only for the channel model, §8.6; the recommendation reuses codec2's generated fading file to keep it bit-exact).
+- **`octave/doppler_spread.m` `fir2`/`resample` numerics** are Octave-specific - hence reusing codec2's generated `fast_fading_samples.float` rather than re-implementing the generator.
+- **`fdmdv_freq_shift_coh`** (channel foff injection, `fdmdv.c`) - not read.
+- **`freedv_set_tx_amp` insertion point** - confirmed a no-op for datac (FSK-only), so excluded from the modulator; not traced further.
 
-**Deferred critique items:** none. All 13 findings are folded in (§1.6 traceability); the two that touch things outside the pure port — R-1 (legal) and R-2 (resampler) — are carried as explicit open risks with a required decision, not silently dropped.
+**Deferred critique items:** none. All 13 findings are folded in (§1.6 traceability); the two that touch things outside the pure port - R-1 (legal) and R-2 (resampler) - are carried as explicit open risks with a required decision, not silently dropped.

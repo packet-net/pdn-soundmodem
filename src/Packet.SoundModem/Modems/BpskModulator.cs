@@ -4,7 +4,7 @@ namespace Packet.SoundModem.Modems;
 
 /// <summary>
 /// BPSK modulator per the IL2P symbol map (spec draft v0.6): a '1' bit is no change in
-/// carrier phase, a '0' bit is a 180° change — differential encoding is inherent in the
+/// carrier phase, a '0' bit is a 180° change - differential encoding is inherent in the
 /// symbol map, not applied separately. Covers the NinoTNC 300 (mode 8) and 1200 (mode 10)
 /// BPSK symbol rates, both on a 1500 Hz carrier.
 /// </summary>
@@ -12,7 +12,7 @@ namespace Packet.SoundModem.Modems;
 /// Symbols are root-raised-cosine pulse-shaped rather than keyed with a cosine amplitude
 /// ramp through each reversal. The ramp was the UZ7HO approach and it is not enough: it
 /// measured 1245 Hz of 99 % occupied bandwidth at 300 sym/s against Nino's published
-/// 500 Hz for the mode — 2.5x over, i.e. it would have splattered either side on the HF
+/// 500 Hz for the mode - 2.5x over, i.e. it would have splattered either side on the HF
 /// channels these modes exist for. RRC occupies about symbolRate·(1 + roll-off).
 /// </remarks>
 public sealed class BpskModulator

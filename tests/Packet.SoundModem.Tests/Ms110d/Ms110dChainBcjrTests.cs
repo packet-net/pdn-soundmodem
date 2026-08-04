@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Tests.Ms110d;
 
 /// <summary>
 /// Component tests for the chain-decomposed exact BCJR (phase-b-plan §B2.2). The central
-/// claim — chain decomposition is EXACT MAP under the two-tap model — is pinned by brute
+/// claim - chain decomposition is EXACT MAP under the two-tap model - is pinned by brute
 /// force: enumerating every symbol sequence and marginalizing must reproduce the chain
 /// LLRs to numerical tolerance, echoes and known preceding symbols included. The other
 /// tests pin the analytic BPSK calibration identity (LLR scale, the turbo contract), the
@@ -131,8 +131,8 @@ public class Ms110dChainBcjrTests
     {
         // The exactness proof. n = 6 QPSK symbols, delay 2, complex-valued taps varying
         // per position, KNOWN preceding symbols feeding the first branch of each chain:
-        // enumerate all 4^6 sequences, marginalize per bit, compare. Any modelling error —
-        // chain split, preceding handling, label mapping, log-sum-exp — breaks this.
+        // enumerate all 4^6 sequences, marginalize per bit, compare. Any modelling error -
+        // chain split, preceding handling, label mapping, log-sum-exp - breaks this.
         const int n = 6;
         const int delay = 2;
         const float noiseVar = 0.3f;
@@ -263,7 +263,7 @@ public class Ms110dChainBcjrTests
     [Fact]
     public void Echo_Beyond_The_Legacy_Trellis_Ceiling_Decodes()
     {
-        // Delay 21 symbols — the D-LXV 9 ms static spread. The legacy trellis would need
+        // Delay 21 symbols - the D-LXV 9 ms static spread. The legacy trellis would need
         // 2^21 states (issue #64's ceiling capped it at 8); each chain here still has 2.
         const int n = 210;
         const int delay = 21;
@@ -303,6 +303,6 @@ public class Ms110dChainBcjrTests
         }
 
         errors.Should().BeLessThanOrEqualTo(4,
-            "a 21-symbol echo must decode as cheaply as a 4-symbol one — the ceiling is gone");
+            "a 21-symbol echo must decode as cheaply as a 4-symbol one - the ceiling is gone");
     }
 }

@@ -48,8 +48,8 @@ public class FrameQualityTests
 
         float[] audio = modem.Modulate(SampleFrame(), 100);
         // Null out one byte-time of carrier mid-payload. The physical damage is wider
-        // than the hole — differential detection doubles it and the 6-symbol RRC pulse
-        // span smears it — so one erased byte-time costs several corrected bytes, and a
+        // than the hole - differential detection doubles it and the 6-symbol RRC pulse
+        // span smears it - so one erased byte-time costs several corrected bytes, and a
         // bigger hole overruns the 8-bytes-per-block budget entirely (empirically: a
         // 2-byte hole kills the frame). What matters here: repairs happened and were
         // REPORTED, not the exact count.
@@ -79,7 +79,7 @@ public class FrameQualityTests
 
         qualities.Should().ContainSingle();
         qualities[0].CorrectedBytes.Should().BeNull(
-            "HDLC has no FEC — an FCS pass proves zero residual errors, not an error count");
+            "HDLC has no FEC - an FCS pass proves zero residual errors, not an error count");
         qualities[0].CrcValid.Should().BeNull();
     }
 
@@ -99,7 +99,7 @@ public class FrameQualityTests
 
         qualities.Should().ContainSingle("the deduper emits one frame however many branches decode");
         // On a CLEAN signal several branches decode and the deduper takes whichever
-        // finished first, so the offset is populated but not directionally meaningful —
+        // finished first, so the offset is populated but not directionally meaningful -
         // it only points at the transmitter's error when the signal is marginal enough
         // that just the matching branch decodes. Assert the plumbing, not direction.
         qualities[0].FrequencyOffsetHz.Should().NotBeNull();

@@ -18,16 +18,16 @@ A headless (no GUI) soundcard packet modem in C#/.NET 10, serving both the PDN n
 - **Provenance discipline**: any algorithm ported from QtSoundModem or Dire Wolf gets a
   comment naming the source file/function. FEC/protocol layers are implemented from the
   published specs (IL2P v0.6, FX.25) with the spec's test vectors; reference C sources are
-  used to pin constants the spec leaves in figures — say so in comments when you do.
+  used to pin constants the spec leaves in figures - say so in comments when you do.
 - New dependencies must be GPL-compatible (MIT/Apache-2.0/BSD/LGPL are fine). AGPL-3.0 is
   also permitted (GPLv3 §13 allows the combination), but pulls AGPL §13's network-source
-  requirement onto the combined work — so weigh it before adding one. The `M0LTE.Flex`
+  requirement onto the combined work - so weigh it before adding one. The `M0LTE.Flex`
   package (the extracted FlexRadio client) is one such AGPL-3.0 dependency, Tom-approved.
 
 ## Interop ground truth
 
 The live network this modem must serve is NinoTNC IL2P+CRC (300 BPSK / 2400 QPSK /
-3600 QPSK / 9600 GFSK) — **spec + NinoTNC behaviour is ground truth**, QtSoundModem is a
+3600 QPSK / 9600 GFSK) - **spec + NinoTNC behaviour is ground truth**, QtSoundModem is a
 cross-check. Known wire nuance: the spec v0.6 example packets leave the RESERVED (ex-FEC)
 header bit clear; Dire Wolf sets it. We encode it clear and ignore it on receive.
 
@@ -35,24 +35,30 @@ header bit clear; Dire Wolf sets it. We encode it clear and ignore it on receive
 
 [docs/mode-validation.md](docs/mode-validation.md) is the living record of every mode/submode's
 validation status (simulation + on-air) and its provenance. **Standing rule: whenever you prove a
-modem/mode works — especially one that was *not* working before — add a dated entry to the ledger**
+modem/mode works - especially one that was *not* working before - add a dated entry to the ledger**
 naming the mode, the broken→working transition, and the commit/PR/issue that did it, and update its
 row in the matrix. A fix isn't finished until the ledger records it.
 
 ## Conventions (mirror packet.net)
 
 - net10.0, C# latest, nullable + warnings-as-errors, Central Package Management
-  (`Directory.Packages.props` — no `Version=` on `PackageReference`).
+  (`Directory.Packages.props` - no `Version=` on `PackageReference`).
 - Tests: xunit + AwesomeAssertions (never FluentAssertions), test names
   `Snake_Case_Like_Sentences`, one test project per library. Wall-clock via `TimeProvider`
-  only — never `DateTime.Now`/`Stopwatch` in library code (inject `TimeProvider`).
+  only - never `DateTime.Now`/`Stopwatch` in library code (inject `TimeProvider`).
 - DSP hot paths: zero steady-state allocation (preallocated buffers, `Span<T>`,
   `ArrayPool`), no LINQ in per-sample/per-block code.
-- Printable strings are ASCII: `-` not `—`, `->` not `→`, `,` not `·`. `journalctl`'s pager
+- **No em dashes or en dashes, anywhere.** Not in code, comments, docs, commit messages or
+  PR bodies. Use a hyphen, a comma, a semicolon or a full stop. This is Tom's house style and
+  it is not negotiable: he has never typed one. Every one that was in this repo got there from
+  an agent, starting with the scaffold commit. Frozen evidence bundles
+  (`docs/ms110d/evidence/`) and verbatim transcriptions (`docs/refs/`) are records, so they
+  keep whatever they were written with.
+- Printable strings are ASCII: `->` not an arrow, `,` not a middle dot. `journalctl`'s pager
   under a C locale renders anything above 0x7F as `<E2><80><94>`, and a station's console is
-  not ours to configure. Comments and docs keep their em dashes and maths notation — this is
-  about what reaches a terminal. `JournalTextTests` enforces it over `src/`.
-- CI: every workflow job MUST target `[self-hosted, Linux, X64]` — no GitHub-hosted
+  not ours to configure. Maths notation (pi, sigma, plus-minus, section marks) is fine in
+  comments, which are never printed. `SourceTextTests` enforces both rules.
+- CI: every workflow job MUST target `[self-hosted, Linux, X64]` - no GitHub-hosted
   runners (no minutes budget). Same rule as packet.net.
 - PRs merge on locally-run green tests (`dotnet test`); fix forward.
 
@@ -63,8 +69,8 @@ src/Packet.SoundModem/       the core library (NuGet: pdn-soundmodem)
   Fec/                       CRC-16/X-25, Hamming(7,4), Reed-Solomon GF(2^8)
   Il2p/                      IL2P frame codec (spec draft v0.6, incl. IL2P+CRC)
 tests/Packet.SoundModem.Tests/
-docs/plan.md                 phase plan + status — keep it current as you work
+docs/plan.md                 phase plan + status - keep it current as you work
 ```
 
 The architecture/design rationale lives in the founding research doc in packet.net
-(`docs/research/headless-soundmodem.md`) — this repo's plan.md §Decisions is the binding summary.
+(`docs/research/headless-soundmodem.md`) - this repo's plan.md §Decisions is the binding summary.

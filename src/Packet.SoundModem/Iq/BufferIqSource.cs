@@ -4,7 +4,7 @@ namespace Packet.SoundModem.Iq;
 
 /// <summary>
 /// An <see cref="IIqSource"/> that replays a fixed in-memory buffer of interleaved
-/// <c>I, Q</c> floats, block by block — the offline/test source (and a natural fit for
+/// <c>I, Q</c> floats, block by block - the offline/test source (and a natural fit for
 /// replaying a recorded IQ capture). Not for hot-path production streaming; a real transport
 /// implements <see cref="IIqSource"/> directly.
 /// </summary>

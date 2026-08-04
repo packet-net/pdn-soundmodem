@@ -12,7 +12,7 @@ namespace Packet.SoundModem.Tests.Ota;
 /// <remarks>
 /// The gate here is deliberately three-part, and only one part is a round trip. Recovering the
 /// payload through the receive-side converter proves the pair are consistent, <b>not</b> that
-/// either is correct — a sign or scaling error made at both ends cancels perfectly and the
+/// either is correct - a sign or scaling error made at both ends cancels perfectly and the
 /// bits still arrive. So the spectral assertions below are anchored to analytic expectations
 /// instead: an ideal SSB signal has its energy in one band, essentially nothing on the image
 /// side, and nothing at the suppressed carrier.
@@ -65,7 +65,7 @@ public class Ms110dIqUpconverterTests
 
         IqSpectrum spectrum = IqAnalysis.Welch(i, q, WaveformRate, 4096);
 
-        // MS110D occupies roughly 180–3420 Hz about its 1800 Hz sub-carrier, so with a
+        // MS110D occupies roughly 180-3420 Hz about its 1800 Hz sub-carrier, so with a
         // +2000 Hz offset the energy belongs between about 2.2 and 5.4 kHz.
         double inBand = 0;
         double outOfBand = 0;

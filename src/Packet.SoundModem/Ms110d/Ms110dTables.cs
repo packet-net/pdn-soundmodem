@@ -5,7 +5,7 @@ namespace Packet.SoundModem.Ms110d;
 /// <summary>
 /// MIL-STD-188-110D Appendix D constants for the 3 kHz serial-tone waveform. Every array here
 /// is transcribed from the dual-verified tables in <c>docs/ms110d/tables/</c> (see
-/// <c>docs/ms110d/README.md</c> § Ledger clearance) — nothing is re-derived. File names cited
+/// <c>docs/ms110d/README.md</c> § Ledger clearance) - nothing is re-derived. File names cited
 /// per member.
 /// </summary>
 public static class Ms110dTables
@@ -24,7 +24,7 @@ public static class Ms110dTables
     /// (D.5.4.3, doc p. 236, text-layer verified).</summary>
     public const uint Eom = 0x4B65A5B2;
 
-    /// <summary>Table D-XVIII fixedPN[256] (<c>d18-fixedpn.txt</c>) — TLC / Fixed
+    /// <summary>Table D-XVIII fixedPN[256] (<c>d18-fixedpn.txt</c>) - TLC / Fixed
     /// synchronization preamble scrambling sequence, 8PSK symbol numbers.</summary>
     public static ReadOnlySpan<byte> FixedPn =>
     [
@@ -38,7 +38,7 @@ public static class Ms110dTables
         0, 5, 2, 4, 2, 2, 4, 5, 4, 6, 6, 6, 3, 2, 1, 0, 3, 2, 6, 0, 6, 2, 4, 0, 6, 4, 1, 3, 3, 5, 3, 6,
     ];
 
-    /// <summary>Table D-XIX cntPN[256] (<c>d19-cntpn.txt</c>) — Count synchronization
+    /// <summary>Table D-XIX cntPN[256] (<c>d19-cntpn.txt</c>) - Count synchronization
     /// preamble scrambling sequence.</summary>
     public static ReadOnlySpan<byte> CntPn =>
     [
@@ -52,7 +52,7 @@ public static class Ms110dTables
         4, 6, 3, 3, 0, 5, 1, 5, 5, 4, 3, 2, 0, 3, 0, 4, 7, 4, 5, 1, 5, 5, 7, 7, 6, 2, 4, 3, 5, 2, 2, 4,
     ];
 
-    /// <summary>Table D-XX widPN[256] (<c>d20-widpn.txt</c>, PDF text-layer verbatim) —
+    /// <summary>Table D-XX widPN[256] (<c>d20-widpn.txt</c>, PDF text-layer verbatim) -
     /// Waveform-ID synchronization preamble scrambling sequence.</summary>
     public static ReadOnlySpan<byte> WidPn =>
     [
@@ -67,7 +67,7 @@ public static class Ms110dTables
     ];
 
     /// <summary>Table D-XIV 4-ary Walsh sequences (<c>d14-walsh-sync-sequences.csv</c>,
-    /// dual-transcribed — the provisional 10↔11 swap is resolved): di-bit →
+    /// dual-transcribed - the provisional 10↔11 swap is resolved): di-bit →
     /// {00→0000, 01→0404, 10→0044, 11→0440}, repeated to the Table D-XIII length.</summary>
     public static readonly byte[][] Walsh =
     [
@@ -155,7 +155,7 @@ public static class Ms110dTables
     ];
 
     /// <summary>Table D-XXIV: 19-symbol mini-probe base sequence
-    /// (<c>d24-base19-miniprobe.csv</c>) — not used at 3 kHz; carried for completeness.</summary>
+    /// (<c>d24-base19-miniprobe.csv</c>) - not used at 3 kHz; carried for completeness.</summary>
     public static readonly Cf[] Base19 =
     [
         new(1, 0), new(-1, 0), new(1, 0), new(1, 0), new(-1, 0), new(-1, 0), new(-1, 0),

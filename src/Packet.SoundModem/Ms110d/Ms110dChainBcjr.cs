@@ -9,13 +9,13 @@ namespace Packet.SoundModem.Ms110d;
 /// to x[t−d] and per-symbol metrics do not cross residue classes, the symbol dependency
 /// graph splits into d independent memory-1 chains {c, c+d, c+2d, …}: each chain's BCJR
 /// carries M states (M = constellation size) instead of the shift-register trellis's
-/// M^delay, so cost is O(n·M²) regardless of the delay — the 2^delay echo ceiling of
+/// M^delay, so cost is O(n·M²) regardless of the delay - the 2^delay echo ceiling of
 /// <see cref="Ms110dBcjr"/> (issue #64) is gone and QPSK/8PSK cost the same per state as
 /// BPSK. Exact MAP under the two-tap model: true log-sum-exp, no max-log approximation.
 /// The d symbols BEFORE the block (the preceding probe's tail, descrambled) enter as
 /// known constants in each chain's first branch metric. Data symbols in the final d
 /// positions get no echo observation from the following probe region (their y[t+d] lies
-/// outside the block) — the same truncation the shift-register trellis makes.
+/// outside the block) - the same truncation the shift-register trellis makes.
 /// </summary>
 internal static class Ms110dChainBcjr
 {
@@ -41,11 +41,11 @@ internal static class Ms110dChainBcjr
     /// <param name="symbolLogPriors">Optional per-symbol log-priors from the outer code's
     /// extrinsics (§B3.3 turbo priors), log P(x[t] = constellation[s]) at [t·M + s] up to a
     /// per-symbol constant; empty runs prior-free. Each symbol's prior enters its branch
-    /// metric exactly once (forward AND backward), so the output LLRs are full posteriors —
+    /// metric exactly once (forward AND backward), so the output LLRs are full posteriors -
     /// the caller subtracts the per-bit prior back out to hand the outer code detector
     /// extrinsics only.</param>
     /// <param name="noiseVarPerSymbol">Optional per-position noise variance (per complex
-    /// dimension, length rx.Length) overriding <paramref name="noiseVar"/> — §B4.1
+    /// dimension, length rx.Length) overriding <paramref name="noiseVar"/> - §B4.1
     /// per-segment noise pricing: within fade-crossing frames the residual is
     /// heteroscedastic, and a frame-constant floor over-confidences exactly the spans
     /// where the model is worst. Empty broadcasts the scalar.</param>

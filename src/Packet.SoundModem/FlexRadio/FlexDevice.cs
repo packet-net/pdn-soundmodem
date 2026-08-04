@@ -28,7 +28,7 @@ public sealed class FlexRuntime : IAsyncDisposable
     /// <summary>The DAX-RX audio source (at the DAX rate).</summary>
     public IAudioInput Input { get; }
 
-    /// <summary>The DAX-TX audio sink (at the DSP rate — upsampled internally when needed).</summary>
+    /// <summary>The DAX-TX audio sink (at the DSP rate - upsampled internally when needed).</summary>
     public IAudioOutput Output { get; }
 
     /// <summary>The slice PTT.</summary>
@@ -49,7 +49,7 @@ public sealed class FlexRuntime : IAsyncDisposable
 
 /// <summary>Flex slice/DAX parameters the daemon passes to the bring-up. The
 /// frequency/antenna/mode configure the <b>headless</b> slice the daemon creates (ignored in
-/// attach mode — SmartSDR owns the slice there); <see cref="DaxChannel"/> applies to
+/// attach mode - SmartSDR owns the slice there); <see cref="DaxChannel"/> applies to
 /// <b>both</b> paths (the DAX channel the client claims). Defaults match
 /// docs/flex-integration.md §8 (14.100000 MHz / ANT1 / DIGU / DAX 1).</summary>
 public sealed record FlexTuning
@@ -68,7 +68,7 @@ public sealed record FlexTuning
     /// Transmit-filter high cut in Hz; null leaves whatever the radio already had. Headless only.
     /// </summary>
     /// <remarks>
-    /// The transmit filter is a <b>global, persistent</b> radio setting, not a slice one — it is
+    /// The transmit filter is a <b>global, persistent</b> radio setting, not a slice one - it is
     /// whatever last touched the radio, so a previous session's narrow filter will quietly
     /// truncate the top of a wide band plan. Stating it at bring-up is the only way to know what
     /// it is. Only the high cut is settable through the station API; the low cut and the receive
@@ -83,7 +83,7 @@ public sealed record FlexTuning
     /// The receive half of <see cref="TransmitFilterHighHz"/>, and unlike it a <b>slice</b> setting
     /// rather than a global one, so it goes away with the slice instead of persisting on the radio.
     /// A slice on an ordinary data filter delivers nothing above ~3 kHz to the modems however wide
-    /// the transmit filter is opened — which is the half of the problem that cannot be seen from
+    /// the transmit filter is opened - which is the half of the problem that cannot be seen from
     /// the transmit side. The radio's limit on receive width is unmeasured, so the station reads it
     /// back and warns rather than assuming the request took.
     /// </remarks>
@@ -94,7 +94,7 @@ public sealed record FlexTuning
 
     /// <summary>The DAX channel the client claims (both headless and attach). Default "1". A
     /// headless client sharing a box with a running SmartSDR must pick a channel SmartSDR is not
-    /// using (SmartSDR grabs DAX 1) — see docs/flex-integration.md §8.</summary>
+    /// using (SmartSDR grabs DAX 1) - see docs/flex-integration.md §8.</summary>
     public string DaxChannel { get; init; } = "1";
 
     /// <summary>Transmit power in watts. Null leaves the radio's own setting alone.</summary>
@@ -108,7 +108,7 @@ public sealed record FlexTuning
 /// for the 12 kHz modes) and a <see cref="FlexPtt"/>. <c>radio</c> is <c>discover</c>, an IP
 /// (<c>host[:port]</c>), a discovery spec (<c>serial=…</c>/<c>name=…</c>), or <c>mock</c>
 /// (an in-process fake). <b>Selection policy:</b> with no <c>@station</c> the daemon owns the
-/// radio and brings it up <b>headless</b> (register as a GUI client, create its own slice —
+/// radio and brings it up <b>headless</b> (register as a GUI client, create its own slice -
 /// the "pdn at the radio, no SmartSDR" deployment, the default). A trailing <c>@station</c>
 /// selects <b>attach</b> mode: coexist with a running SmartSDR by binding that station's
 /// existing slice. See docs/flex-integration.md §4/§8.
@@ -128,14 +128,14 @@ public static class FlexDevice
     /// or null for the headless default.</param>
     public readonly record struct FlexSpec(string RadioSpec, string SliceLetter, string? Station)
     {
-        /// <summary>True when no <c>@station</c> was given — the daemon owns the radio and
+        /// <summary>True when no <c>@station</c> was given - the daemon owns the radio and
         /// brings it up headless.</summary>
         public bool Headless => Station is null;
     }
 
     /// <summary>Splits a <c>flex:</c> device string into its radio, slice and station parts. A
     /// trailing <c>@station</c> (anywhere after the radio) selects attach mode and names the
-    /// SmartSDR station; a trailing single letter A–H is the slice; everything else is the
+    /// SmartSDR station; a trailing single letter A-H is the slice; everything else is the
     /// radio.</summary>
     public static FlexSpec Parse(string device)
     {
@@ -166,7 +166,7 @@ public static class FlexDevice
     /// Ignored in attach mode.</param>
     /// <param name="cancellation">Cancels the connect + bring-up.</param>
     /// <exception cref="InvalidOperationException">Headless bring-up could not point the
-    /// transmitter at DAX (<see cref="FlexStation.TransmitSourceWarning"/>) — the modem would
+    /// transmitter at DAX (<see cref="FlexStation.TransmitSourceWarning"/>) - the modem would
     /// key and transmit silence.</exception>
     public static async Task<FlexRuntime> OpenAsync(
         string device, int dspRate, int packetBuffer, FlexTuning? tuning, CancellationToken cancellation)
@@ -226,11 +226,11 @@ public static class FlexDevice
             : await FlexStation.SetUpAsync(client, format, options, cancellation).ConfigureAwait(false);
 
         // Headless bring-up points the transmitter at DAX (`transmit set dax=1`, Flex 0.7.0) and
-        // reads the selection back — on a real radio every DAX enable step returns err=0 whether
+        // reads the selection back - on a real radio every DAX enable step returns err=0 whether
         // or not the transmitter is listening to DAX, so without the read-back a mic-sourced
         // transmitter keys and sends silence. That is a dead modem, not a degraded one: fail the
-        // bring-up loudly rather than run with it. (Attach mode never selects the source —
-        // SmartSDR owns the transmitter there — so its warning stays null and this never fires.)
+        // bring-up loudly rather than run with it. (Attach mode never selects the source -
+        // SmartSDR owns the transmitter there - so its warning stays null and this never fires.)
         if (station.TransmitSourceWarning is string transmitWarning)
         {
             await station.DisposeAsync().ConfigureAwait(false); // disposes the shared client too
@@ -243,7 +243,7 @@ public static class FlexDevice
         }
 
         // Flex's audio/PTT types implement the M0LTE.Radio.Audio seams directly (Flex 0.2.0),
-        // which is this modem's seam too — no adapter needed.
+        // which is this modem's seam too - no adapter needed.
         IAudioInput input = station.CreateAudioInput(packetBuffer);
         FlexAudioOutput flexOutput = station.CreateAudioOutput(paceRealTime: true);
         IAudioOutput output = format.SampleRate == dspRate
@@ -264,15 +264,15 @@ public static class FlexDevice
 
     /// <summary>
     /// The 6000-series PA size. Every model in the family is 100 W, which the radio confirms as
-    /// <c>slice N max_internal_pa_power</c> — so on this family watts and the radio's 0–100 power
+    /// <c>slice N max_internal_pa_power</c> - so on this family watts and the radio's 0-100 power
     /// number coincide, and the conversion exists to keep the config in the units an operator
     /// thinks in rather than because the arithmetic is hard.
     /// </summary>
     public const double PaWatts = 100.0;
 
-    /// <summary>Converts watts to the radio's 0–100 transmit power number.</summary>
+    /// <summary>Converts watts to the radio's 0-100 transmit power number.</summary>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// The request is negative or above what the PA can produce — a config error worth catching
+    /// The request is negative or above what the PA can produce - a config error worth catching
     /// before it reaches the radio, which would answer with a bare protocol code.
     /// </exception>
     public static int ToRfPowerPercent(double watts)

@@ -9,7 +9,7 @@ namespace Packet.SoundModem.Daemon;
 /// <remarks>
 /// Bandwidths come from the modems themselves via <see cref="ModemBandProbe"/> rather than a
 /// table, so the plan is checked against what the modes actually occupy. ARDOP is the one
-/// exception — it has no fixed width to measure, its bandwidth being negotiated per session —
+/// exception - it has no fixed width to measure, its bandwidth being negotiated per session -
 /// so it plans for the configured cap, or the widest it can reach.
 /// </remarks>
 internal static class BandPlanner
@@ -65,7 +65,7 @@ internal static class BandPlanner
             slots, sideband, pinnedDialHz,
             Passband.Fit(slots, passbandCeilingHz ?? Passband.Nominal.HighHz));
 
-        // Hand the answer back to the modems as the audio centre each now needs — except a modem
+        // Hand the answer back to the modems as the audio centre each now needs - except a modem
         // whose centre was never ours to set. A spec-fixed mode is already on the centre the plan
         // was built around, and writing one back would be rejected at start-up as an override of a
         // centre that cannot be overridden.
@@ -79,7 +79,7 @@ internal static class BandPlanner
 
     /// <summary>
     /// How wide to plan for a modem: what it says, else what it measures, else a nominal figure
-    /// when it will not tell us. ARDOP is asked for nothing — it has no fixed answer to give.
+    /// when it will not tell us. ARDOP is asked for nothing - it has no fixed answer to give.
     /// </summary>
     private static double WidthOf(ModemConfig modem, int dspRate)
     {

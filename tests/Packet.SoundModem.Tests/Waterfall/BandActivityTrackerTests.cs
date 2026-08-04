@@ -87,7 +87,7 @@ public class BandActivityTrackerTests
     {
         var tracker = Tracker();
         Feed(tracker, Line(NoiseByte, NoiseByte), LinesPerSecond * 3);
-        // A strong signal at 2500–3000 Hz, outside this tracker's 1200–1800 band.
+        // A strong signal at 2500-3000 Hz, outside this tracker's 1200-1800 band.
         Feed(tracker, Line(NoiseByte, SignalByte, lowHz: 2500, highHz: 3000), 30);
 
         tracker.TryMeasureBurst(out _, out _).Should().BeFalse();

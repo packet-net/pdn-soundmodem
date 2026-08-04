@@ -19,7 +19,7 @@ public class SignalSurveyTests : IDisposable
     private const int LinesPerSecond = 30;
     private const int LineLength = 1024;
 
-    // The live plan: afsk300 at 850 Hz audio, ARDOP at 1500, bpsk300 at 2150 — and the gap
+    // The live plan: afsk300 at 850 Hz audio, ARDOP at 1500, bpsk300 at 2150 - and the gap
     // between the first two, where the operator saw a signal nobody was listening to.
     private static readonly ModemBand[] Bands =
     [
@@ -169,7 +169,7 @@ public class SignalSurveyTests : IDisposable
     {
         // The operator's other sighting: "unattributed · 2·bpsk300-il2pc-multi9 · 118 B". The
         // frame passed RS and the IL2P CRC, so the bytes are right and it is the AX.25 addresses
-        // that are not there — which means the payload is the evidence, and it travels with the
+        // that are not there - which means the payload is the evidence, and it travels with the
         // audio so the modulation can be re-examined against it.
         var survey = new SignalSurvey(Options(), Bands, SampleRate, BinWidthHz, LinesPerSecond, LineLength);
         byte[] frame = [0x00, 0x01, 0x02, 0x03, .. new byte[114]];
@@ -184,7 +184,7 @@ public class SignalSurveyTests : IDisposable
         capture.Mode.Should().Be("bpsk300-il2pc-multi9");
 
         // The sidecar answers the question rather than posing it: which IL2P encapsulation it
-        // arrived in — Type 1 and Type 0 put the address field in different places — and what
+        // arrived in - Type 1 and Type 0 put the address field in different places - and what
         // specifically would not read. Without these, diagnosing one of these means pulling the
         // payload blob out of the frame log by hand, which is what happened the first time.
         capture.Il2pHeaderType.Should().Be("Type1");
@@ -197,7 +197,7 @@ public class SignalSurveyTests : IDisposable
     {
         // Capturing every voice contact on 40 m would fill the disk with the one thing this
         // facility is not for. Note what does the separating: a voice over and a wide data burst
-        // occupy much the same 2.4 kHz, so width alone cannot tell them apart — an over runs for
+        // occupy much the same 2.4 kHz, so width alone cannot tell them apart - an over runs for
         // tens of seconds and the longest frame these modes can carry does not.
         var survey = new SignalSurvey(Options(), Bands, SampleRate, BinWidthHz, LinesPerSecond, LineLength);
         Play(survey, 300, 2700, burstLines: 25 * LinesPerSecond);

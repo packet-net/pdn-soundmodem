@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Modems;
 /// 1200 baud AFSK carrying IL2P (NinoTNC mode 7 "1200 AFSK IL2P+CRC") as an
 /// <see cref="IModem"/>. Same Bell-202 tones and demodulator as
 /// <see cref="Afsk1200Modem"/>, but the bit layer is IL2P: demodulated levels feed the
-/// deframer raw — no NRZI — matching Dire Wolf, whose IL2P receiver taps the bit before
+/// deframer raw - no NRZI - matching Dire Wolf, whose IL2P receiver taps the bit before
 /// NRZI decoding (hdlc_rec_bit), and the proven 9600 IL2P framing choice here.
 /// Transparency comes from IL2P's packet-synchronous scrambler, not bit stuffing.
 /// </summary>
@@ -25,7 +25,7 @@ public sealed class Afsk1200Il2pModem : IModem
     /// <summary>Creates the modem.</summary>
     /// <param name="sampleRate">Channel DSP rate.</param>
     /// <param name="frameReceived">Receives each decoded AX.25 frame.</param>
-    /// <param name="crc">Expect/emit the Hamming-protected trailing CRC ("IL2P+CRC" —
+    /// <param name="crc">Expect/emit the Hamming-protected trailing CRC ("IL2P+CRC" -
     /// what the NinoTNC modes use).</param>
     /// <param name="centerFrequency">Mark/space midpoint; 1700 Hz standard.</param>
     public Afsk1200Il2pModem(
@@ -43,7 +43,7 @@ public sealed class Afsk1200Il2pModem : IModem
                     HeaderType: info.HeaderType));
             },
             crcMode: crc);
-        // Reset the deframer on the DCD falling edge — same rationale as BpskModem:
+        // Reset the deframer on the DCD falling edge - same rationale as BpskModem:
         // a carrier that drops mid-collection leaves the deframer consuming the next
         // transmission's sync word as phantom payload.
         bool previousDcd = false;

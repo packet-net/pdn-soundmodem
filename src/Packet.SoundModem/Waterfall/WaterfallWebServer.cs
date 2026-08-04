@@ -15,7 +15,7 @@ namespace Packet.SoundModem.Waterfall;
 public sealed class WaterfallOptions
 {
     /// <summary>Rig dial (suppressed-carrier) frequency in Hz, the default the page opens
-    /// with — each browser can retune its own copy. 0 = not set: the page shows audio
+    /// with - each browser can retune its own copy. 0 = not set: the page shows audio
     /// frequencies only until the operator enters a dial.</summary>
     public double DialFrequencyHz { get; set; }
 
@@ -37,18 +37,18 @@ public sealed class WaterfallOptions
     /// </summary>
     /// <remarks>
     /// <para><b>The centre.</b> Probing gives measured band edges, and their midpoint is a few
-    /// Hz off the centre the operator asked for — enough that a modem placed at 7051600 renders
+    /// Hz off the centre the operator asked for - enough that a modem placed at 7051600 renders
     /// as 7.05159 and reads like a bug. The configured centre is the truth for a label; the
     /// measured edges remain the truth for the drawn band.</para>
-    /// <para><b>Bands that cannot be probed.</b> ARDOP is not an <see cref="IModem"/> — it is a
-    /// receive tap with its own transmitter — so nothing enumerable carries it and it was
+    /// <para><b>Bands that cannot be probed.</b> ARDOP is not an <see cref="IModem"/> - it is a
+    /// receive tap with its own transmitter - so nothing enumerable carries it and it was
     /// simply absent from the display. Declared here, it is drawn from its centre and width
     /// like anything else.</para>
     /// </remarks>
     public IReadOnlyList<DeclaredBand> DeclaredBands { get; set; } = [];
 
     /// <summary>
-    /// Where the decoded-frames panel's opening backlog comes from — the station's frame log,
+    /// Where the decoded-frames panel's opening backlog comes from - the station's frame log,
     /// when it keeps one. Called once per browser that connects, with the number of frames
     /// wanted; returns them <b>oldest first</b>. Null (the default) opens the panel empty.
     /// </summary>
@@ -56,11 +56,11 @@ public sealed class WaterfallOptions
     /// <para>A panel that starts empty says nothing about a channel that has been busy all
     /// morning, and on a quiet band it is indistinguishable from a modem that is not working. The
     /// station already writes down every frame it hears and every frame it sends; this is that
-    /// record, shown — transmissions included, marked as ours.</para>
+    /// record, shown - transmissions included, marked as ours.</para>
     /// <para>A delegate rather than a database handle because the log lives in the daemon and
     /// this server lives in the library, and because whatever provides it should be free to
     /// decide what "recent" means. It is called on the connection's own thread, so it should be
-    /// quick and must not throw — an exception here costs the browser its backlog, which is
+    /// quick and must not throw - an exception here costs the browser its backlog, which is
     /// caught and shrugged off, but it should not be the way that is discovered.</para>
     /// </remarks>
     public Func<int, IReadOnlyList<LoggedFrame>>? FrameHistory { get; set; }
@@ -72,7 +72,7 @@ public sealed class WaterfallOptions
 /// what a written-down frame has and a live one does not need.
 /// </summary>
 /// <param name="HeardAt">
-/// When the station decoded it, or — on a transmitted frame — when it sent it (UTC); rendered
+/// When the station decoded it, or - on a transmitted frame - when it sent it (UTC); rendered
 /// in the viewer's zone. The name matches the log's own <c>heard_at</c> column, which kept its
 /// name so that queries written against it kept working.
 /// </param>
@@ -85,7 +85,7 @@ public sealed class WaterfallOptions
 /// <param name="CrcValid">CRC verdict, where the framing carries one.</param>
 /// <param name="OffsetHz">Measured carrier offset, where the decoder measured one.</param>
 /// <param name="Transmitted">
-/// True for a frame this station sent — badged TX in the panel rather than read as somebody
+/// True for a frame this station sent - badged TX in the panel rather than read as somebody
 /// heard. Defaults to false: a log with nothing to say about direction holds receives.
 /// </param>
 public sealed record LoggedFrame(
@@ -123,7 +123,7 @@ public readonly record struct ModemBand(int SubChannel, string Mode, double LowH
 /// draws the shared audio passband as a spectrum view over a scrolling waterfall, overlays
 /// every configured modem's measured band (audio offset and rig-dial-derived RF centre),
 /// and tags each decoded frame's energy burst with its source callsign, band SNR and
-/// frequency offset — so a burst on screen reads directly as "who".
+/// frequency offset - so a burst on screen reads directly as "who".
 /// </summary>
 /// <remarks>
 /// Modem bands are measured, not tabulated: at <see cref="Start"/> each modem modulates a
@@ -131,7 +131,7 @@ public readonly record struct ModemBand(int SubChannel, string Mode, double LowH
 /// band the page shades. A new mode gets a correct overlay with no table to maintain.
 /// Per-frame SNR/extent come from <see cref="BandActivityTracker"/> over the same lines the
 /// display draws. Call <see cref="Start"/> before audio flows (it registers the channel
-/// receive tap); received-side only — during transmit the display pauses, as half-duplex
+/// receive tap); received-side only - during transmit the display pauses, as half-duplex
 /// hearing does.
 /// </remarks>
 public sealed class WaterfallWebServer : IAsyncDisposable
@@ -148,7 +148,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     private readonly List<WaterfallClient> _clients = [];
     private readonly List<short> _audioBlock = [];
 
-    // The spectrum source is fed from two threads — the receive loop and the transmitter — and
+    // The spectrum source is fed from two threads - the receive loop and the transmitter - and
     // is not itself thread-safe. Half duplex keeps them apart in practice, but not across the
     // instant the transmit flag flips, which is exactly when both are live.
     private readonly object _sourceLock = new();
@@ -203,7 +203,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         Port = port;
         _listener = new HttpListener();
         // HttpListener wants "+" for "every interface" and rejects the literal 0.0.0.0 that a
-        // TcpListener is perfectly happy with — the daemon uses one bind setting for both, so
+        // TcpListener is perfectly happy with - the daemon uses one bind setting for both, so
         // translate here rather than make the operator know which listener wants which spelling.
         bool everyInterface = bind is "*" or "0.0.0.0" or "::" or "[::]";
         _listener.Prefixes.Add($"http://{(everyInterface ? "+" : bind)}:{port}/");
@@ -217,7 +217,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     public string Url { get; }
 
     /// <summary>
-    /// What the transmitter is doing right now — forward power and SWR — or null when it is not
+    /// What the transmitter is doing right now - forward power and SWR - or null when it is not
     /// keyed. Shown next to the radio status and cleared on key-up.
     /// </summary>
     /// <remarks>
@@ -238,7 +238,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// A line about the radio for the page's top bar — the frequency reference on a FlexRadio.
+    /// A line about the radio for the page's top bar - the frequency reference on a FlexRadio.
     /// Null means there is nothing to say (no radio that reports one), and the page shows
     /// nothing rather than an empty label.
     /// </summary>
@@ -265,14 +265,14 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     public IReadOnlyList<ModemBand> Bands => _bands;
 
     /// <summary>
-    /// What the signal survey has been doing — captures kept, captures a budget refused, and the
+    /// What the signal survey has been doing - captures kept, captures a budget refused, and the
     /// disk it is using. Pushed rather than polled, and only on a change.
     /// </summary>
     /// <remarks>
     /// The refusals are the reason this exists. A survey left running for a week silently becomes
     /// a sample rather than the set when the channel is busier than its rate limit, and nothing
     /// anywhere reported that: an operator would have had to count files per hour and notice the
-    /// number was exactly the cap. A count on the page answers it at a glance — and it is state
+    /// number was exactly the cap. A count on the page answers it at a glance - and it is state
     /// rather than an event, which is why it belongs on a display and not in a journal.
     /// </remarks>
     /// <param name="captured">Captures written to disk.</param>
@@ -322,7 +322,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             AddBand(band, source);
         }
 
-        // Bands nothing enumerable carries — ARDOP, which is a tap rather than a modem.
+        // Bands nothing enumerable carries - ARDOP, which is a tap rather than a modem.
         foreach (DeclaredBand declared in _options.DeclaredBands
                      .Where(d => !_channel.Modems.ContainsKey(d.SubChannel) && d.BandwidthHz is > 0)
                      .OrderBy(d => d.SubChannel))
@@ -342,7 +342,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         {
             // Not while our own transmission is still being painted. The two are separate audio
             // streams and the transform has one accumulator: interleaved, a single window holds
-            // part of a burst and part of the band noise, and comes out broadband — a full-width
+            // part of a burst and part of the band noise, and comes out broadband - a full-width
             // haze over the back half of every keyup, with the line type flickering between the
             // two ramps as it goes. Receive processing is gated during a keyup, but the paced
             // painting outlives it whenever the audio device's Drain returns before the audio has
@@ -371,7 +371,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
     /// <summary>
     /// Measures a modem's occupied band for the overlay. Delegates to
-    /// <see cref="ModemBandProbe"/>, which the RF band planner uses too — one measurement, so
+    /// <see cref="ModemBandProbe"/>, which the RF band planner uses too - one measurement, so
     /// what the waterfall draws and what the planner fits can never disagree.
     /// </summary>
     internal static bool TryMeasureBand(int subChannel, IModem modem, int sampleRate, out ModemBand band)
@@ -428,17 +428,17 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// <para>The whole keyup arrives here in one call: the modulator produces the burst as a
     /// single array long before the sound card has played a sample of it. Painting it on arrival
     /// put a two-second burst on the display as sixty lines inside a few milliseconds, followed
-    /// by two seconds of nothing at all — receive processing is gated off while transmitting, so
+    /// by two seconds of nothing at all - receive processing is gated off while transmitting, so
     /// there is no other line source during a keyup. That is the judder: a lurch at key-down and
     /// then a frozen display for the length of the transmission.</para>
     /// <para>This is called <em>before</em> the audio is written to the device, which is what
     /// makes the pacing below line up with reality. A device's write blocks until its buffer has
-    /// room, so being told afterwards meant the queue stayed empty for most of the transmission —
+    /// room, so being told afterwards meant the queue stayed empty for most of the transmission -
     /// and the pacer painted silence throughout it and then the burst all over again. See
     /// <see cref="Channel.SoundModemChannel.TransmittedAudio"/>.</para>
     /// <para>So it is queued and released by <see cref="PaceTransmitLines"/> at the rate real
     /// time passes, which is the rate the audio is leaving the radio. The pacing lives here and
-    /// not in the channel because the transmitter must never wait on a picture — this returns
+    /// not in the channel because the transmitter must never wait on a picture - this returns
     /// immediately however long the burst is.</para>
     /// </remarks>
     /// <summary>
@@ -448,8 +448,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// Receive processing stops the instant the transmitter takes the channel, but the first
     /// transmitted audio does not exist until the frame has been modulated and handed to the
     /// device. Nothing at all is drawn in between, so the waterfall visibly stalls as the PTT
-    /// engages. Starting here means the time axis keeps moving through that gap — and through
-    /// the gaps between frames in one keyup — with silence, which is what was on the air.
+    /// engages. Starting here means the time axis keeps moving through that gap - and through
+    /// the gaps between frames in one keyup - with silence, which is what was on the air.
     /// </remarks>
     private void OnTransmittingChanged(bool keyed)
     {
@@ -501,7 +501,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// How far our own transmission is turned down before it is drawn.
     /// </summary>
     /// <remarks>
-    /// <para>A modulator emits around −5 dBFS rms — some 35 dB hotter than anything the display
+    /// <para>A modulator emits around −5 dBFS rms - some 35 dB hotter than anything the display
     /// ever sees on receive, and the page's window is −95..−35 dB. Drawn as-is, the transform's
     /// own leakage skirt (40 dB below the peak, buried in the noise for a received signal) lands
     /// well above the display floor and smears across the full span: measured, 1021 of 1024 bins
@@ -509,7 +509,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// 562 and 79 % for a genuinely strong received station.</para>
     /// <para><b>A fixed gain, deliberately, and not a normalisation to a target level.</b>
     /// Normalising each buffer is an automatic gain control, and an AGC's whole purpose is to
-    /// make quiet things loud — so the quiet buffers in a keyup (a ramp-down, a tail, an idle
+    /// make quiet things loud - so the quiet buffers in a keyup (a ramp-down, a tail, an idle
     /// stretch of a shifted ARDOP burst) get multiplied by an enormous gain and their noise floor
     /// fills the entire span. Measured: near-silence at −65 dBFS rms normalised to −40 lights
     /// 1011 of 1024 bins. That is the same full-width haze as the original bug, arrived at from
@@ -525,7 +525,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// Our own transmit level is not a measurement of anything the display can show: it is
     /// whatever the modulator happens to emit, which differs per mode and which no receiver would
     /// ever see at that strength. Drawing it literally does not produce a hot signal, it produces
-    /// a saturated one. Purely a gain — the spectrum's shape, and so the bandwidth and placement
+    /// a saturated one. Purely a gain - the spectrum's shape, and so the bandwidth and placement
     /// the operator reads off it, is untouched, and quiet stays quiet.
     /// </remarks>
     internal static float[] ForDisplay(ReadOnlySpan<float> samples)
@@ -546,10 +546,10 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// <para>Paced by elapsed time rather than by counting ticks, because a timer that fires late
-    /// — and at a 33 ms period on a busy box it will — must still paint the right amount rather
+    /// - and at a 33 ms period on a busy box it will - must still paint the right amount rather
     /// than fall progressively behind the transmission it is drawing. That also removes any need
     /// to detect and correct a backlog: a late tick simply releases proportionally more.</para>
-    /// <para>The queue is not a backlog. It is audio that has not gone out yet — the display is
+    /// <para>The queue is not a backlog. It is audio that has not gone out yet - the display is
     /// meant to trail the modulator by exactly as much as the sound card does.</para>
     /// </remarks>
     private void PaceTransmitLines()
@@ -589,7 +589,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 }
             }
 
-            // Still keyed with nothing queued — the gap between key-down and the first modulated
+            // Still keyed with nothing queued - the gap between key-down and the first modulated
             // frame, or between frames. Silence is what is on the air, and drawing it is what
             // keeps the time axis moving instead of stalling until audio turns up.
             if (due.Count == 0 && _keyed && budget > 0)
@@ -660,7 +660,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
 
         var message = new byte[5 + bins.Length];
-        // 0x01 heard, 0x03 transmitted — the page draws them differently, because a burst of
+        // 0x01 heard, 0x03 transmitted - the page draws them differently, because a burst of
         // your own must not read as a strong station.
         message[0] = transmit ? (byte)0x03 : (byte)0x01;
         BinaryPrimitives.WriteUInt32LittleEndian(message.AsSpan(1), (uint)index);
@@ -669,8 +669,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
 
     /// <summary>Frame event (receive thread): attribute the just-decoded frame to its burst
-    /// — callsigns off the frame, SNR/extent off the band tracker, offset off the winning
-    /// decoder branch — and fan it out as JSON.</summary>
+    /// - callsigns off the frame, SNR/extent off the band tracker, offset off the winning
+    /// decoder branch - and fan it out as JSON.</summary>
     private void OnFrame(int subChannel, byte[] frame, FrameQuality quality)
     {
         double? snrDb = null;
@@ -696,7 +696,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             quality.CorrectedBytes, quality.CrcValid,
             // A frame that decoded and would not yield callsigns is where the panel used to pose
             // a question instead of answering one: it said "unattributed" and stopped. It has
-            // already passed Reed-Solomon and, on an IL2P+CRC link, the CRC — so the bits are
+            // already passed Reed-Solomon and, on an IL2P+CRC link, the CRC - so the bits are
             // right and the reading of them is not, and which encapsulation carried it is the
             // first thing worth knowing. The bytes come too, because the panel is where an
             // operator notices one of these and the next thing they will want is to copy them.
@@ -708,13 +708,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// <summary>Frame event (transmit thread): list what this station has just sent, so the
     /// panel is a record of the channel rather than of half of it.</summary>
     /// <remarks>
-    /// <para>The burst is already drawn — transmitted audio is painted in its own style so a
-    /// keyup does not read as a strong station — but until now nothing said <em>what</em> it
+    /// <para>The burst is already drawn - transmitted audio is painted in its own style so a
+    /// keyup does not read as a strong station - but until now nothing said <em>what</em> it
     /// was, and an operator watching their own beacon go out had to take it on trust. Raised
     /// after the audio has left, so a listed frame is one that actually went on air.</para>
     /// <para>No SNR, offset, FEC count or CRC: those are receive measurements, and inventing
     /// them for our own transmission would be inventing a measurement of ourselves. No burst
-    /// tag either — a received frame's tag lands on the energy that carried it, but transmitted
+    /// tag either - a received frame's tag lands on the energy that carried it, but transmitted
     /// audio is queued and repainted in real time while this fires as soon as the device has
     /// taken it, so the tag would sit somewhere up the burst rather than on it.</para>
     /// </remarks>
@@ -742,7 +742,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
     /// <summary>
     /// Reports a frame heard by a demodulator that is not one of the channel's sub-channel
-    /// modems — ARDOP, whose demodulator is inside the virtual TNC and never raises
+    /// modems - ARDOP, whose demodulator is inside the virtual TNC and never raises
     /// <see cref="SoundModemChannel.FrameReceivedWithQuality"/>.
     /// </summary>
     /// <remarks>
@@ -771,16 +771,16 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// Reports a station identification heard by an <see cref="Modems.IdBeaconGhost"/> — the 300
+    /// Reports a station identification heard by an <see cref="Modems.IdBeaconGhost"/> - the 300
     /// AFSK AX.25 ident a NinoTNC sends alongside, and not inside, its PSK SSB data mode.
     /// </summary>
     /// <remarks>
     /// <para>Listed and tagged like anything else, and marked as an ident so both can say what it
     /// is. What a ghost does not get is a <em>band</em>: it has no slot of its own to shade, being
     /// a second listener on a modem that is already drawn. The tag therefore lands against the
-    /// band of the modem it accompanies, which is where the ident sits — a couple of hundred Hz
+    /// band of the modem it accompanies, which is where the ident sits - a couple of hundred Hz
     /// above it.</para>
-    /// <para>No SNR — a ghost has no <see cref="BandActivityTracker"/>, the trackers being keyed
+    /// <para>No SNR - a ghost has no <see cref="BandActivityTracker"/>, the trackers being keyed
     /// by sub-channel and it sharing the base modem's. The offset is real: the ghost's
     /// demodulator measures the carrier against its own centre, so it says how far the
     /// identifying station's dial sits from ours.</para>
@@ -788,7 +788,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// <param name="subChannel">The sub-channel of the modem the ghost accompanies, for the label.</param>
     /// <param name="mode">The ghost's mode, as it reports itself.</param>
     /// <param name="from">The identifying station.</param>
-    /// <param name="to">Its destination — <c>IDENT</c> on a NinoTNC.</param>
+    /// <param name="to">Its destination - <c>IDENT</c> on a NinoTNC.</param>
     /// <param name="lengthBytes">Frame length.</param>
     /// <param name="offsetHz">How far off our centre the ident arrived.</param>
     public void ReportIdBeacon(
@@ -825,7 +825,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             offsetHz,
             corrected,
             crc,
-            // True on an ident, null otherwise — same nullable-optional shape as the fields
+            // True on an ident, null otherwise - same nullable-optional shape as the fields
             // above, and the page tests it for truthiness either way.
             id = idBeacon ? true : (bool?)null,
             // True on our own transmission: the page lists it and, unlike everything else,
@@ -878,8 +878,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// Receive audio to whoever asked for it, as [0x02][s16 LE mono] at the channel rate.
     /// </summary>
     /// <remarks>
-    /// Nothing is received while transmitting — the channel gates its receive tap on half
-    /// duplex — so the stream simply stops for the length of a keyup. The browser hears that as
+    /// Nothing is received while transmitting - the channel gates its receive tap on half
+    /// duplex - so the stream simply stops for the length of a keyup. The browser hears that as
     /// silence, which is what it is, rather than as a glitch or a desync: blocks carry no
     /// timestamps and are played in arrival order, so a gap costs nothing to recover from.
     /// </remarks>
@@ -1100,12 +1100,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// <summary>
     /// The decoded-frames panel's opening backlog, or null when there is no log to draw it from.
     /// Sent once per connection, straight after the config and before the send loop starts, so
-    /// it can never be interleaved with — or land on top of — live frames decoded meanwhile.
+    /// it can never be interleaved with - or land on top of - live frames decoded meanwhile.
     /// </summary>
     /// <remarks>
     /// Oldest first: the page prepends each row, so the newest ends up on top, and a live frame
     /// arriving during the handshake is queued behind this and lands above it. Marked
-    /// <c>hist</c>, so the page lists it without tagging it onto the waterfall — these frames
+    /// <c>hist</c>, so the page lists it without tagging it onto the waterfall - these frames
     /// were heard before the scroll on screen began and belong to no burst on it.
     /// </remarks>
     private byte[]? BuildHistoryMessage()
@@ -1173,7 +1173,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// Resolves a capture file name to a path inside the survey directory, or refuses.
     /// </summary>
     /// <remarks>
-    /// Only the exact shape the writer produces — <c>20260804-151909-862hz-unclaimed.wav</c> — is
+    /// Only the exact shape the writer produces - <c>20260804-151909-862hz-unclaimed.wav</c> - is
     /// served, and only from the configured directory. A name is not a path: anything carrying a
     /// separator, a drive or a <c>..</c> is refused before it reaches the filesystem, so this
     /// route cannot be talked into reading the frame log, a key, or /etc/passwd.
@@ -1214,7 +1214,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// Reports a survey capture — a burst this station could not read, kept for later.
+    /// Reports a survey capture - a burst this station could not read, kept for later.
     /// </summary>
     /// <remarks>
     /// <para>Drawn where it happened. A capture has a frequency, a width and a time, which is
@@ -1224,7 +1224,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// keeps working on a station with nobody watching, and its line clock is therefore not this
     /// one's. Seconds-ago is a quantity both agree on.</para>
     /// </remarks>
-    /// <param name="verdict">Why it was kept — <c>unclaimed</c>, <c>missed</c>, <c>unattributed</c>.</param>
+    /// <param name="verdict">Why it was kept - <c>unclaimed</c>, <c>missed</c>, <c>unattributed</c>.</param>
     /// <param name="centreHz">Measured audio centre.</param>
     /// <param name="lowHz">Measured low edge.</param>
     /// <param name="highHz">Measured high edge.</param>

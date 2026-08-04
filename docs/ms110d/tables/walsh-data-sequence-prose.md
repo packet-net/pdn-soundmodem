@@ -1,16 +1,16 @@
-# WID 0 Walsh data-sequence prose (doc page 163, PDF page 168 — section D.5.2)
+# WID 0 Walsh data-sequence prose (doc page 163, PDF page 168 - section D.5.2)
 
 Transcribed by eye from the page image (independent transcriber A).
 
 Ledger note: the ledger row calls this "Walsh data-sequence prose (D.5.1.2.1),
 doc 145-146". In the document, D.5.1.2.1 (doc 145) is "PSK data symbols"
-(BPSK/QPSK/8PSK transcoding — see d03/d04/d05 CSVs) and contains no Walsh
+(BPSK/QPSK/8PSK transcoding - see d03/d04/d05 CSVs) and contains no Walsh
 material. The prose that actually defines the WID 0 Walsh data path is the
 final paragraph of **D.5.2 Frame structure** on doc page 163, quoted below,
 together with Table D-XIV (di-bit -> Walsh sequence, doc 166) and the
 D.5.1.4 WID 0 scrambling section (text-layer-anchored, already extracted).
 
-## D.5.2 Frame structure — Waveform 0 paragraph (doc 163, verbatim)
+## D.5.2 Frame structure - Waveform 0 paragraph (doc 163, verbatim)
 
 > Waveform 0 uses a different structure after the Synchronization Preamble, in
 > which data "frames" are 32-symbol Walsh sequences (channel symbols), each

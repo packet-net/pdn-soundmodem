@@ -11,13 +11,13 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// Env-gated corpse-reproduction rig for the B3 catastrophic-burst tail autopsy
 /// (phase-b-plan §B3, issue #69). The mask harness's per-burst census
 /// (<c>MS110D_MASK_BURST_LOG</c>) localizes which bursts die; this rig rebuilds ONE such
-/// burst bit-exactly — same payload draw sequence, same channel seed, same settings as
-/// <see cref="Ms110dMaskTests"/> — and dumps every first-pass equalized data symbol
+/// burst bit-exactly - same payload draw sequence, same channel seed, same settings as
+/// <see cref="Ms110dMaskTests"/> - and dumps every first-pass equalized data symbol
 /// NEXT TO ITS TRUE transmitted constellation point, so the death mechanism (rotation
 /// lock, fade misalignment, timing walk-off…) is measurable instead of guessed.
-/// Not a gate — an instrument. <c>MS110D_AUTOPSY=1</c>, <c>MS110D_AUTOPSY_WN</c>
+/// Not a gate - an instrument. <c>MS110D_AUTOPSY=1</c>, <c>MS110D_AUTOPSY_WN</c>
 /// (default 5), <c>MS110D_AUTOPSY_SNR</c> (default the WN's Poor mask),
-/// <c>MS110D_AUTOPSY_SEED</c> (base seed, default 500+WN — add any census seed offset
+/// <c>MS110D_AUTOPSY_SEED</c> (base seed, default 500+WN - add any census seed offset
 /// yourself), <c>MS110D_AUTOPSY_WORKER</c> (default 0), <c>MS110D_AUTOPSY_BURST</c>
 /// (default 0), <c>MS110D_AUTOPSY_OUT</c> (directory, default "."),
 /// <c>MS110D_AUTOPSY_GENIE=1</c> for the genie-aided companion dump.
@@ -105,7 +105,7 @@ public class Ms110dTailAutopsy
             RecordGains = true,
         };
 
-        // MS110D_AUTOPSY_CLEAN=1: no channel at all — no fading, no noise, just the
+        // MS110D_AUTOPSY_CLEAN=1: no channel at all - no fading, no noise, just the
         // lead-in/out padding. Isolates systematic first-pass error (equalizer bias,
         // probe/data geometry) from everything channel-induced.
         bool clean = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_CLEAN") == "1";
@@ -138,7 +138,7 @@ public class Ms110dTailAutopsy
             int bit = 0;
             if (qam16)
             {
-                // QAM16 truth lives in the WIRE domain (the demod emits wire-domain y —
+                // QAM16 truth lives in the WIRE domain (the demod emits wire-domain y -
                 // descrambling happens inside PushMaxLogLlrs via the XOR nibble): symbol
                 // number = 4 fetched bits MSB-first, wire index = number XOR the scramble
                 // nibble, register reset at each data frame start (D.5.1.3).
@@ -169,7 +169,7 @@ public class Ms110dTailAutopsy
         // W1 (wn8-program) true-channel injection: the oracle-pass structure with the
         // channel's time variation from recorded Watterson truth instead of the
         // label-trained segment anchors (Ms110dDemodulator.TruthGainsAtSample). Implies
-        // the oracle pass — the two bounds land side by side on every block.
+        // the oracle pass - the two bounds land side by side on every block.
         bool truth = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TRUTH") == "1";
         if (truth && clean)
         {
@@ -180,12 +180,12 @@ public class Ms110dTailAutopsy
         oracle |= truth;
 
         // §B3.5b WN0 genie-gain oracle: "inst" | "pole" (evidence/2026-07-26-phase-
-        // b35b-wn0genie). Implies genie feeding — the truth gains are read from the
+        // b35b-wn0genie). Implies genie feeding - the truth gains are read from the
         // clean stream.
         string? walshOracle = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_WALSH_ORACLE");
         genie |= walshOracle is not null;
 
-        // §B3.6 M1b perturbed-restart instrument: "p,k" — flip each iteration-0 label
+        // §B3.6 M1b perturbed-restart instrument: "p,k" - flip each iteration-0 label
         // with probability p under a deterministic per-block xorshift seeded by k
         // (registered: p = 0.02, k = 1..8; evidence/2026-07-26-phase-b36-wn7loop).
         string? turboPerturb = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_TURBO_PERTURB");
@@ -268,7 +268,7 @@ public class Ms110dTailAutopsy
         };
 
         // §B3.2b instrument: per-block uncoded SER and signed-LLR-mass stats for the
-        // first-pass LLR stream — the error-CONFIDENCE view the WN2 anchor-ridge autopsy
+        // first-pass LLR stream - the error-CONFIDENCE view the WN2 anchor-ridge autopsy
         // established (wrong-sign LLR mass is what the Viterbi actually pays, and the
         // ratio against a genie corpse locates a block relative to the decode cliff).
         void WriteLlrStats(string pass, int blockIndex, float[] llrs)
@@ -300,7 +300,7 @@ public class Ms110dTailAutopsy
 
         demod.FirstPassBlockLlrs += (blockIndex, llrs) => WriteLlrStats("first", blockIndex, llrs);
 
-        // §B3.3 basin instrument: the FIRST DECODE's per-block info errors — the quantity
+        // §B3.3 basin instrument: the FIRST DECODE's per-block info errors - the quantity
         // the basin boundary is measured in (llrstats `first` counts raw stream signs,
         // which per-frame LLR weighting cannot change; the Viterbi decode is what it
         // changes). Decoded rig-side so the demod's own pipeline is untouched.
@@ -324,12 +324,12 @@ public class Ms110dTailAutopsy
             firstDecodeErrs.Add($"b{blockIndex}:{errs}");
         };
 
-        // §B3.3 basin instrument: the stream the turbo settled on — the missing middle of
+        // §B3.3 basin instrument: the stream the turbo settled on - the missing middle of
         // the first→final→oracle walk. On reverted blocks this is the wander state at the
         // cap, which is exactly the view the basin mechanism analysis needs.
         demod.TurboBlockLlrs += (blockIndex, llrs) => WriteLlrStats("final", blockIndex, llrs);
 
-        // §B3.4 instrument: the final stream's INFO decode — what the revert-at-cap
+        // §B3.4 instrument: the final stream's INFO decode - what the revert-at-cap
         // discards. PSK wander states measured worse-than-first (the revert is right);
         // the QAM16 climb-from-bootstrap may floor far better than its coin-flip first
         // decode, and this number decides whether the revert logic fits QAM16.
@@ -353,7 +353,7 @@ public class Ms110dTailAutopsy
         };
 
         // §B3.3 oracle-labels ceiling (MS110D_AUTOPSY_ORACLE=1): the demod runs one
-        // extra chain-BCJR turbo pass per block trained on the TRUE info bits — the
+        // extra chain-BCJR turbo pass per block trained on the TRUE info bits - the
         // upper bound a converged soft-feedback turbo could reach with this channel
         // model. Per-block oracle coded errors land in the summary; the oracle LLR
         // stream lands in llrstats as pass "oracle".
@@ -367,7 +367,7 @@ public class Ms110dTailAutopsy
             {
                 WriteLlrStats("oracle", blockIndex, llrs);
 
-                // §B3.3 model-front instrument: WHERE the oracle stream is wrong — the
+                // §B3.3 model-front instrument: WHERE the oracle stream is wrong - the
                 // positions localize the residual (fade nulls vs echo regions vs uniform).
                 byte[] fetchedTruth = fetchedBlocks[blockIndex];
                 int cmp = Math.Min(llrs.Length, fetchedTruth.Length);
@@ -389,7 +389,7 @@ public class Ms110dTailAutopsy
         }
 
         // W1 truth wiring: the rig owns lead-in/gain-rate alignment (input sample →
-        // channel-span position → 96 Hz trajectory index, linearly interpolated — the
+        // channel-span position → 96 Hz trajectory index, linearly interpolated - the
         // same interpolation the channel itself applied between gain samples); the demod
         // owns chip→sample. The constant RX front-end group delay is deliberately NOT
         // compensated: a few ms against a 1 Hz fade is a sub-percent trajectory error,
@@ -635,7 +635,7 @@ public class Ms110dTailAutopsy
             "the corpse must at least acquire for the dump to mean anything");
     }
 
-    /// <summary>Truth-gain lookup at a fractional 96 Hz trajectory index — linear
+    /// <summary>Truth-gain lookup at a fractional 96 Hz trajectory index - linear
     /// interpolation matching the channel's own gain application; endpoints clamped
     /// (only ever reached by lead-in/lead-out positions no data chip maps to).</summary>
     private static Cf InterpGain(Cf[] trajectory, double x)

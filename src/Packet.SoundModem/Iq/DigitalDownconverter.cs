@@ -7,14 +7,14 @@ namespace Packet.SoundModem.Iq;
 /// Digital down-converter: shifts one channel from a frequency offset (relative to the
 /// IQ centre) down to complex baseband with an NCO mix, band-limits it with an anti-alias
 /// low-pass, and decimates by an integer factor to the channel's DSP rate. This is the front
-/// end that turns one wide DAX-IQ stream into per-channel baseband — run several in parallel for
+/// end that turns one wide DAX-IQ stream into per-channel baseband - run several in parallel for
 /// multi-channel receive (<see cref="MultiChannelReceiver"/>).
 /// </summary>
 /// <remarks>
-/// Textbook NCO + decimating FIR — no ported code. The FIR is designed at construction by the
+/// Textbook NCO + decimating FIR - no ported code. The FIR is designed at construction by the
 /// existing windowed-sinc <see cref="FilterDesign.LowPass(double, double, int)"/>; the per-sample
 /// path allocates nothing (pre-sized complex history, scalar MACs, an FIR evaluated only at output
-/// instants — the polyphase-equivalent cost, mirroring <see cref="Decimator"/>). The NCO uses a
+/// instants - the polyphase-equivalent cost, mirroring <see cref="Decimator"/>). The NCO uses a
 /// wrapped <see cref="double"/> phase accumulator with per-sample <see cref="MathF"/> trig rather
 /// than a recursive phasor, so it neither drifts in frequency nor decays in amplitude over a long
 /// stream.

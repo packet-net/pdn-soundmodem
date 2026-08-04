@@ -1,12 +1,12 @@
 namespace Packet.SoundModem.Ms110d;
 
 /// <summary>
-/// Waveform-ID 0 Walsh data scrambler (D.5.1.4, doc pp. 161–162): a Trinomial (159, 31)
+/// Waveform-ID 0 Walsh data scrambler (D.5.1.4, doc pp. 161-162): a Trinomial (159, 31)
 /// bit shift register with the printed 159-bit initialization, iterated 16 times per
 /// generated 8PSK scramble symbol, output <c>(b2&lt;&lt;2)|(b1&lt;&lt;1)|b0</c>. The C code,
 /// the init state, the printed first-32 sequence and the worked combine row are all
 /// text-layer verbatim in <c>docs/ms110d/tables/text-layer-extracts.md</c> and mutually
-/// consistent (machine-checked at transcription) — the implementation follows the printed
+/// consistent (machine-checked at transcription) - the implementation follows the printed
 /// <c>tri()</c> exactly. The sequence wraps at the 2048-symbol boundary and resets to the
 /// initialization value at each interleaver boundary.
 /// </summary>
@@ -36,7 +36,7 @@ public sealed class Trinomial159Scrambler
         Reset();
     }
 
-    /// <summary>Resets to the printed initialization value — call at every interleaver
+    /// <summary>Resets to the printed initialization value - call at every interleaver
     /// boundary (D.5.1.4 final sentence).</summary>
     public void Reset()
     {

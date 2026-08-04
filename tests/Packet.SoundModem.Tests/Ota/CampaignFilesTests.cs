@@ -38,7 +38,7 @@ public sealed class CampaignFilesTests : IDisposable
 
         CampaignSchedule back = CampaignFiles.Load<CampaignSchedule>(path);
 
-        // Records compare by value, but Bursts is a list and lists compare by reference — so
+        // Records compare by value, but Bursts is a list and lists compare by reference - so
         // `back.Should().Be(original)` would fail on two identical schedules. Compare the parts.
         back.Name.Should().Be("wn6-awgn");
         back.OffsetHz.Should().Be(2000);
@@ -46,7 +46,7 @@ public sealed class CampaignFilesTests : IDisposable
         back.Bursts.Should().Equal(Schedule().Bursts);
 
         File.ReadAllText(path).Should().Contain("\"Poor\"")
-            .And.Contain("\"Long\"", "enums are written as names — a schedule is read by people");
+            .And.Contain("\"Long\"", "enums are written as names - a schedule is read by people");
     }
 
     [Fact]
@@ -74,19 +74,19 @@ public sealed class CampaignFilesTests : IDisposable
         // System.Text.Json does not object to missing members, so deserialising a bare schedule
         // into a manifest SUCCEEDS and yields one whose Schedule is null. A try/catch fallback
         // would never fire, and the caller would score an empty pass as though nothing had been
-        // transmitted — a silent wrong answer, which is the only kind worth writing a test for.
+        // transmitted - a silent wrong answer, which is the only kind worth writing a test for.
         string schedulePath = Path("bare.json");
         CampaignFiles.Save(schedulePath, Schedule());
 
         CampaignManifest mistaken = CampaignFiles.Load<CampaignManifest>(schedulePath);
-        mistaken.Schedule.Should().BeNull("this is exactly the trap — it parsed, and it is empty");
+        mistaken.Schedule.Should().BeNull("this is exactly the trap - it parsed, and it is empty");
 
         (CampaignSchedule schedule, IReadOnlyList<double>? starts, string revision) =
             CampaignFiles.LoadScheduleOrManifest(schedulePath);
 
         schedule.Bursts.Should().HaveCount(3, "the loader must recognise a bare schedule");
         starts.Should().BeNull("a schedule does not know where the bursts ended up");
-        revision.Should().Be("—");
+        revision.Should().Be("-");
     }
 
     [Fact]
@@ -141,7 +141,7 @@ public sealed class CampaignFilesTests : IDisposable
     [Fact]
     public void The_binary_knows_which_revision_built_it()
     {
-        // A score without a revision is uninterpretable — the demodulator changes daily — and
+        // A score without a revision is uninterpretable - the demodulator changes daily - and
         // asking an operator to write it down by hand is asking for it to be wrong.
         string revision = CampaignFiles.ModemRevision();
 
@@ -151,7 +151,7 @@ public sealed class CampaignFilesTests : IDisposable
             + "Packet.SoundModem.Ota.csproj has stopped working and every manifest from now on "
             + "would silently say 'unknown'");
         // TrimEnd(char[]) would also eat a trailing hex digit that happened to be d, e, i, r,
-        // t or y — strip the suffix, not the characters in it.
+        // t or y - strip the suffix, not the characters in it.
         string sha = revision.EndsWith("-dirty", StringComparison.Ordinal)
             ? revision[..^"-dirty".Length]
             : revision;
