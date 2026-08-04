@@ -221,7 +221,6 @@ public sealed class SignalSurvey : IDisposable
             return;
         }
 
-        double seconds = (double)audio.Length / _sampleRate;
         _writer.Write(
             new BurstCapture(
                 now,
@@ -230,7 +229,10 @@ public sealed class SignalSurvey : IDisposable
                 burst.LowHz,
                 burst.HighHz,
                 burst.WidthHz,
-                Math.Round(seconds - (2 * _options.MarginSeconds), 3),
+                // The burst's own length, not the WAV's less its margins: when the trailing
+                // margin has not been recorded yet the file is short, and subtracting a margin
+                // that was never written reported a burst as lasting −0.2 seconds.
+                Math.Round((double)burst.Lines / _linesPerSecond, 3),
                 Math.Round(burst.PeakSnrDb, 1),
                 Math.Round(burst.MeanSnrDb, 1),
                 RfOf(burst.CentreHz),

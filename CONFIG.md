@@ -41,6 +41,7 @@ with `su -` and drop the prefix.)
 | `paging` | object | *(disabled)* | POCSAG paging endpoint — [below](#paging) |
 | `ardop` | object | *(disabled)* | ARDOP virtual TNC — [below](#ardop) |
 | `frameLog` | object | *(not kept)* | Record every frame heard and sent to SQLite — [below](#framelog) |
+| `survey` | object | *(not surveying)* | Keep signals this station cannot read, for analysis — [below](#survey) |
 | `idBeacons` | bool | `true` | Listen for the NinoTNC idents sent alongside the PSK SSB modes — [below](#idbeacons) |
 | `flex` | object | see below | FlexRadio slice params — [below](#flex) |
 | `ubersdr` | object | see below | UberSDR stream params — [below](#ubersdr) |
@@ -628,6 +629,75 @@ The packaged service runs unprivileged and the unit declares `StateDirectory=pdn
 systemd creates `/var/lib/pdn-soundmodem/` owned by the service user and the default path just
 works. If you move it, the service user has to be able to write to wherever you move it to — the
 daemon says so plainly at start-up rather than running without a log you asked for.
+
+## `survey`
+
+Watch the whole passband for transmissions this station cannot read, and keep the ones worth
+looking at later:
+
+```json
+"survey": { "path": "/var/lib/pdn-soundmodem/survey" }
+```
+
+Omit the section and signals you are not configured to decode go unrecorded, which is what
+happens today: they paint on the waterfall and are lost. This turns "something went past on
+7.050594 and I will never know what it was" into a WAV and a JSON sidecar.
+
+**Why not simply run more modems.** The obvious answer is a comb of decoders across the passband,
+and it fails for a reason that is not CPU: the mode is unknown too, so brute force is centres ×
+modes — afsk300 in three framings, bpsk300, 850 Hz FSK, 150 Hz-shift FSK, non-NinoTNC soundmodems
+— at every centre you might try, and it is still silent when it guesses wrong. Energy, meanwhile,
+is already being computed for the display.
+
+**What it keeps.** A burst is packet-shaped if it started, stopped, and was neither too narrow
+(a carrier or a het) nor too long (see `maxSeconds` below). Three kinds are written out:
+
+| Verdict | What it means |
+|---|---|
+| `unclaimed` | Outside every configured modem's band. Nobody was listening there. |
+| `missed` | Inside one, and nothing decoded. **The most useful of the three** — the station was listening and could not read it, which is a receiver problem rather than a coverage one, and is invisible today unless you happen to be recording. |
+| `unattributed` | A frame decoded carrying no readable AX.25 addresses. Its bytes go into the sidecar beside the audio, so the payload and the modulation can be examined together. |
+
+Nothing is captured while the station transmits, and normal traffic on your own slots is not
+captured at all.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `path` | string | `/var/lib/pdn-soundmodem/survey` | Where captures are written |
+| `maxBytes` | number | `536870912` (512 MB) | Byte budget for that directory |
+| `maxPerHour` | int | `30` | Captures in any rolling hour |
+| `cooldownSeconds` | number | `120` | How long the same part of the spectrum is left alone after a capture |
+| `marginSeconds` | number | `1.0` | Audio kept either side of the burst |
+| `maxSeconds` | number | `20` | Longest burst still plausibly a packet |
+| `minPeakSnrDb` | number | `6` | Weakest burst worth keeping, over the noise floor |
+| `capture` | array | all three | Which verdicts to write — `unclaimed`, `missed`, `unattributed` |
+
+**On reaching the byte budget the oldest captures are deleted** to make room. That is a real
+choice, and the alternative is worse: stopping instead would mean a station left collecting for a
+week quietly stops on day one and you find an empty tail. A flight recorder keeps the recent past;
+so does this. Raise `maxBytes` if you would rather keep more of it.
+
+**Duration, not width, is what separates a voice contact from a wideband data burst** — both
+occupy much the same 2.4 kHz. An over runs for tens of seconds and the longest frame these modes
+can carry does not, so `maxSeconds` is the knob that matters if voice is getting through.
+
+**It is audio, not IQ.** On a Flex the daemon receives demodulated SSB over DAX; the complex
+baseband is gone before the modem sees it. That is fine and is the right artefact — the channel
+audio *is* the whole configured passband, it is exactly what every modem sees, and it
+re-demodulates offline at any centre inside it.
+
+Each capture is a `.wav` and a `.json` of the same name, stamped with the time, the measured
+centre and the verdict:
+
+```
+20260804-151909-862hz-unclaimed.wav
+20260804-151909-862hz-unclaimed.json
+```
+
+The sidecar records the measured centre, edges, width, duration and SNR, the RF frequency where
+the dial is known, the sample rate, and which modems the station was running at the time — so a
+capture read months later still says what "unclaimed" meant. Point `sm-decode` at the WAV, or any
+mode's demodulator at the sidecar's centre, to find out what it was.
 
 ## `paging`
 

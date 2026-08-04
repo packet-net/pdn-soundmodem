@@ -250,12 +250,12 @@ public sealed class SpectralBurstDetector
     {
         foreach ((int low, int high) in _runs)
         {
+            // Overlapping in frequency on consecutive lines is the same transmission. Edges
+            // wander by a bin or two as a signal fades, so overlap — not equality — is what
+            // keeps a burst whole.
             Open? match = null;
             foreach (Open candidate in _open)
             {
-                // Overlapping in frequency on consecutive lines is the same transmission. Edges
-                // wander by a bin or two as a signal fades, so overlap — not equality — is what
-                // keeps a burst whole.
                 if (low < candidate.HighBin && high > candidate.LowBin)
                 {
                     match = candidate;

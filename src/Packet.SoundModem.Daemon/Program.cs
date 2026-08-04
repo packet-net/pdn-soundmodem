@@ -8,11 +8,13 @@ using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
 using M0LTE.Dsp;
+using Packet.SoundModem.Dsp;
 using Packet.SoundModem.FlexRadio;
 using Packet.SoundModem.Iq;
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Modems;
+using Packet.SoundModem.Survey;
 using Packet.SoundModem.Waterfall;
 using Packet.SoundModem.Ms110d;
 
@@ -202,6 +204,7 @@ PagingConfig? paging = null;
 FlexConfig? flexConfig = null;
 UberSdrConfig? uberSdrConfig = null;
 WaterfallConfig? waterfallConfig = null;
+SurveyConfig? surveyConfig = null;
 bool idBeacons = true;
 
 if (configPath is not null)
@@ -235,6 +238,7 @@ if (configPath is not null)
     flexConfig = config.Flex;
     uberSdrConfig = config.UberSdr;
     waterfallConfig = config.Waterfall;
+    surveyConfig = config.Survey;
     idBeacons = config.IdBeacons;
     ardopPort ??= config.Ardop?.Port;
     Console.WriteLine($"config: {configPath}");
@@ -776,6 +780,123 @@ if (waterfallConfig is not null)
 }
 
 await using var waterfallLifetime = waterfallServer;
+
+// The signal survey: watch the whole passband for transmissions this station cannot read, and
+// keep the ones worth looking at later (issue #206). Off unless configured — it writes audio to
+// disk unattended for as long as the station runs.
+//
+// Its own spectrum feed rather than the waterfall's. The two compute the same transform at the
+// same rate and it is cheap (a 2048-point FFT thirty times a second), and the alternative is a
+// survey that only works when somebody has also asked for a browser page, plus a shared
+// accumulator fed from two places. What they do share is the band probe below, so what the
+// waterfall draws and what the survey calls "ours" can never disagree.
+SignalSurvey? survey = null;
+if (surveyConfig is not null)
+{
+    var surveyBands = new List<ModemBand>();
+    foreach ((int sub, IModem modem) in channel.Modems.OrderBy(m => m.Key))
+    {
+        if (ModemBandProbe.TryMeasure(modem, DspRate, out double low, out double high))
+        {
+            surveyBands.Add(new ModemBand(sub, modem.Mode, low, high, (low + high) / 2));
+        }
+    }
+
+    // ARDOP is a receive tap rather than an IModem, so nothing enumerable carries it and nothing
+    // can probe it. Left out, every ARDOP burst on the channel would be reported as a signal
+    // nobody was listening to — which is the opposite of true.
+    foreach (ModemConfig ardop in modems.Where(m => DaemonConfig.IsArdop(m.Mode)))
+    {
+        double centre = ardop.Frequency ?? ArdopChannelShift.NativeCentreHz;
+        double half = (ardop.Bandwidth ?? ArdopChannelShift.WidestBandwidthHz) / 2;
+        surveyBands.Add(new ModemBand(ardop.SubChannel, "ardop", centre - half, centre + half, centre));
+    }
+
+    var surveyOptions = new SignalSurveyOptions
+    {
+        Directory = surveyConfig.Path,
+        MaxBytes = surveyConfig.MaxBytes,
+        MaxPerHour = surveyConfig.MaxPerHour,
+        CooldownSeconds = surveyConfig.CooldownSeconds,
+        MarginSeconds = surveyConfig.MarginSeconds,
+        MaxSeconds = surveyConfig.MaxSeconds,
+        MinPeakSnrDb = surveyConfig.MinPeakSnrDb,
+        // The dial is what turns an audio centre into a band frequency in the sidecar — the whole
+        // point of a capture is to say where on 40 m the thing was.
+        DialFrequencyHz = waterfallConfig?.DialFrequencyHz is > 0
+            ? waterfallConfig.DialFrequencyHz
+            : receiveDialHz ?? 0,
+        Sideband = bandPlan?.Sideband ?? waterfallConfig?.Sideband ?? "usb",
+    };
+
+    if (surveyConfig.Capture is { Length: > 0 } wanted)
+    {
+        var verdicts = new List<SurveyVerdict>();
+        foreach (string name in wanted)
+        {
+            if (Enum.TryParse(name, ignoreCase: true, out SurveyVerdict verdict))
+            {
+                verdicts.Add(verdict);
+            }
+            else
+            {
+                Console.Error.WriteLine(
+                    $"survey: ignoring unknown capture kind \"{name}\" "
+                    + "(unclaimed, missed, unattributed)");
+            }
+        }
+
+        if (verdicts.Count > 0)
+        {
+            surveyOptions.Capture = verdicts;
+        }
+    }
+
+    try
+    {
+        // The source has to exist before the survey (it reports the geometry the survey is built
+        // from) and the survey before the source's sink can use it; nothing runs until audio flows.
+        SignalSurvey? pending = null;
+        var surveySource = new WaterfallSource(
+            DspRate, (index, line) => pending?.AddLine(index, line.Span), 30, 0);
+        var created = new SignalSurvey(
+            surveyOptions, surveyBands, DspRate,
+            surveySource.BinWidthHz, surveySource.LinesPerSecond, surveySource.LineLength);
+        pending = created;
+        survey = created;
+
+        // The channel gates its receive tap while transmitting, so audio and lines stop together
+        // — which is the invariant the survey needs to map a burst back to the audio that carried
+        // it. Audio first: a line is stamped with the ring position at the moment it arrives.
+        channel.AddReceiveTap(samples =>
+        {
+            created.AddAudio(samples);
+            surveySource.Process(samples);
+        });
+        channel.FrameReceivedWithQuality += (sub, frame, quality) =>
+            created.NoteDecode(sub, frame, quality.Mode);
+        channel.TransmittingChanged += keyed =>
+        {
+            if (keyed)
+            {
+                created.Reset();
+            }
+        };
+
+        Console.WriteLine($"survey: {surveyConfig.Path}");
+    }
+    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+    {
+        Console.Error.WriteLine(
+            $"cannot open the survey directory at {surveyConfig.Path}\n"
+            + $"  {e.Message}\n"
+            + "  Set by \"survey\".\"path\". The service user must be able to write to it;\n"
+            + "  remove the \"survey\" section to run without one.");
+        return 2;
+    }
+}
+
+using var surveyLifetime = new Disposer(() => survey?.Dispose());
 
 // Ghost demodulators for the station identifications a NinoTNC sends alongside its PSK SSB data
 // modes rather than within them (300 AFSK AX.25, 200 Hz above the carrier — see IdBeaconGhost).
