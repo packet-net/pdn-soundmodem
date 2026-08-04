@@ -327,48 +327,6 @@ public class WaterfallPageTests
     /// step broke two unrelated tests. Order still matters and is asserted where it means
     /// something (newest first), but identity is by content.
     /// </summary>
-    /// <summary>
-    /// Right-clicking the waterfall copies the frequency under the pointer — the number and
-    /// nothing else, because the point of it is pasting somewhere that wants one.
-    /// </summary>
-    /// <remarks>
-    /// Driven through the page's real <c>contextmenu</c> listener rather than by calling the
-    /// handler's body under another name, because the two things that make this work at all live
-    /// in that handler: suppressing the browser menu, which would otherwise land on top of the
-    /// confirmation, and copying through <c>execCommand</c>. <c>navigator.clipboard</c> is
-    /// <b>secure-context only</b> and this page is served over plain HTTP to a station on the LAN,
-    /// so on the machine that matters the Clipboard API does not exist — a test on localhost, or
-    /// one that stubbed the modern API, would have hidden that completely.
-    /// </remarks>
-    [Fact]
-    public async Task Right_Clicking_The_Waterfall_Copies_The_Frequency_Under_The_Pointer()
-    {
-        string node = ResolveNode();
-        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
-
-        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
-        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
-        await using var server = new WaterfallWebServer(channel, port);
-        server.Start();
-
-        Probe probe = await RunProbeAsync(node, port);
-
-        probe.Thrown.Should().BeEmpty("the page must not throw on a right-click");
-        probe.ContextMenuSuppressed.Should().BeTrue(
-            "the browser's own menu would open on top of the confirmation");
-
-        // Half way across an 800 px display spanning the default 3 kHz.
-        probe.CopiedAudio.Should().Be("1500", "with no dial known, the audio frequency, in Hz");
-        probe.CopiedRf.Should().Be(
-            "7.05095", "with a dial known, the band frequency in MHz — and only the number");
-
-        // Snapshot from the first click, before a dial was known.
-        probe.TipAfterCopy.Should().Contain("copied").And.Contain("1500");
-        probe.TipAfterNudge.Should().Contain(
-            "copied", "a confirmation wiped by the next twitch of the mouse reads as a failure");
-    }
-
     private static int RowWith(string[] rows, string marker)
     {
         int at = Array.FindIndex(rows, row => row.Contains(marker, StringComparison.Ordinal));
@@ -473,11 +431,6 @@ public class WaterfallPageTests
         string[] TxTag,
         string[] FrameRows,
         string[] FrameRowClasses,
-        string CopiedAudio,
-        string CopiedRf,
-        bool ContextMenuSuppressed,
-        string TipAfterCopy,
-        string TipAfterNudge,
         string[] CaptureTag,
         string SurveyStatus,
         string[] HistoryTag,

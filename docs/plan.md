@@ -234,17 +234,15 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
-### 2026-08-04 (later⁵) — right-click the waterfall for the frequency under the pointer
+### 2026-08-04 (later⁶) — right-click copy withdrawn; the test asserted its own stub
 
-Tom liked the hover readout and asked for the number on the clipboard. Small, and it had two ways to ship broken.
+Shipped in 0.22.1, reported not working, withdrawn in 0.22.2. Two failures worth keeping, and the second is the instrument one.
 
-**`navigator.clipboard` is secure-context only.** This page is served over plain HTTP to a station on the LAN, which is how it is actually reached, so on the machine that matters the Clipboard API does not exist at all — the deprecated `textarea` + `execCommand` path is not a legacy fallback here, it is the one that runs. Tried first for exactly that reason, with the modern API behind it. A test on localhost, or one that stubbed the modern API, would have hidden this completely and the feature would have worked on the dev box and nowhere else.
+**The diagnosis in that entry was incomplete.** `navigator.clipboard` being secure-context only is true and is why the `execCommand` path was reached — but `execCommand("copy")` needs **transient user activation**, and per the HTML spec the activation-triggering input events are keydown, mousedown, pointerdown, pointerup and touchend. `contextmenu` is not one, and Chrome does not grant activation for a secondary-button press. So on the machine this was built for, *neither* route can copy: the modern API is unavailable and the older one is unauthorised. Right-click was the wrong gesture, not merely the wrong API — and the entry above confidently explained one of those and missed the other.
 
-**And the confirmation was wiped by the next twitch of the mouse**, because the hover handler repaints the readout on every `mousemove` — which reads as the copy having failed. It is held for 1.4 s now.
+**The test passed because it asserted the shim.** The `node:vm` DOM shim's `execCommand` was written for this feature and returned `true` unconditionally, so `Right_Clicking_The_Waterfall_Copies_The_Frequency_Under_The_Pointer` verified that a stub returns what it was written to return. Every part of the mechanism that could actually fail — user activation, the secure-context gate, whether an off-screen textarea can be selected — lives in the browser and was stubbed out of existence. The harness improvement made in the same commit (recording listeners so a real `contextmenu` could be dispatched) was real and made the test *look* more convincing while testing nothing new. Same lesson as 2026-08-03's cross-decode and the `--wav-loop` duplicate: **a fixture that always agrees is not evidence**, and a shim written alongside the feature it tests will agree by construction.
 
-Copies the band frequency in MHz where a dial is known and the audio frequency in Hz otherwise, matching what the readout shows, and only the number. The browser context menu is suppressed over the display, since it would otherwise open on top of the confirmation.
-
-Harness note: the `node:vm` DOM shim dropped every `addEventListener` on the floor, so the probe could only ever drive functions it could name — a right-click handler that is never dispatched to is one no test can tell from an absent one. The shim records listeners now and the probe fires a real `contextmenu`, which is what pins the `preventDefault` and the `execCommand` route rather than a re-implementation of them.
+What would work, if it is wanted: a plain left-click, which does grant activation, with the older route (no secure context needed). Not shipped — the operator asked for it backed out, and the next attempt should be verified in the browser it is for rather than in a shim.
 
 ### 2026-08-04 (later⁴) — the survey comes up onto the page
 

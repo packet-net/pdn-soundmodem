@@ -63,14 +63,8 @@ function el(id) {
     width: 800, height: 300, style: {}, children: [], dataset: {},
     className: "", classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
     getContext: () => ctx2d, appendChild: noop, removeChild: noop, insertBefore: noop,
-    // Listeners are kept, not dropped: a right-click handler that is never dispatched to is a
-    // handler no test can tell from an absent one.
-    addEventListener(type, fn) { (this._on ||= {})[type] = fn; },
-    removeEventListener(type) { this._on && delete this._on[type]; },
-    dispatch(type, event) { this._on && this._on[type] && this._on[type](event); },
-    getBoundingClientRect: () => ({ width: 800, height: 300, left: 0, top: 0 }),
+    addEventListener: noop, removeEventListener: noop, getBoundingClientRect: () => ({ width: 800, height: 300, left: 0, top: 0 }),
     querySelector: () => el(id + "-q"), querySelectorAll: () => [], focus: noop, scrollTo: noop,
-    select() { lastSelected = this.value; },
     append: noop, setAttribute: noop, getAttribute: () => null,
     closest: () => null, contains: () => false, add: noop, options: [], selectedIndex: 0,
     click() { this.onclick && this.onclick({ preventDefault: noop }); },
@@ -89,11 +83,7 @@ const document_ = {
   getElementById: el, createElement: tag => el("new-" + tag + "-" + Math.random()),
   querySelector: () => el("q"), querySelectorAll: () => [], addEventListener: noop,
   body: el("body"), documentElement: el("html"), title: "", visibilityState: "visible",
-  // What actually runs over plain HTTP, where navigator.clipboard does not exist.
-  execCommand(command) { if (command === "copy") { copied.push(lastSelected); return true; } return false; },
 };
-const copied = [];
-let lastSelected = "";
 
 // A real-enough AudioContext: it must accept the decoded block and report its length, because
 // the point of the check is that a block gets that far at all.
@@ -131,7 +121,6 @@ const sandbox = {
   Intl, TextDecoder, TextEncoder, URL, URLSearchParams, Uint16Array, Int32Array, navigator: { userAgent: 'probe' },
   addEventListener: noop, localStorage: { getItem: () => null, setItem: noop },
   __stats: () => ({ played, peak }),
-  __copied: () => [...copied],
   __text: () => [...drawnText],
 };
 sandbox.window = sandbox; sandbox.globalThis = sandbox; sandbox.self = sandbox;
@@ -200,27 +189,6 @@ const captureTag = sandbox.__text().slice(beforeCapture);
 run(`setSurveyStatus({captured:7, skipped:2, bytes:12582912})`);
 const surveyStatus = sandbox.document.getElementById("survey").textContent;
 
-// Right-click on the waterfall copies the frequency under the pointer. Dispatched as a real
-// contextmenu through the page's own listener, because the two things that make this work — the
-// browser menu being suppressed, and the copy going through execCommand rather than the
-// secure-context-only Clipboard API — both live in that handler.
-let prevented = false;
-sandbox.__prevent = () => { prevented = true; };
-const clickAt = (x) =>
-  run(`document.getElementById("wf").dispatch("contextmenu", {clientX: ${x}, clientY: 120, preventDefault: __prevent})`);
-
-clickAt(400);                                    // no dial set: audio frequency, in Hz
-const copiedAudio = sandbox.__copied().at(-1);
-const tipAfterCopy = sandbox.document.getElementById("tip").innerHTML;
-
-run(`ui.dialHz = 7049450; ui.sideband = "usb"`); // dial known: the band frequency, in MHz
-clickAt(400);
-const copiedRf = sandbox.__copied().at(-1);
-
-// The confirmation has to survive the next twitch of the mouse, or it reads as a failed copy.
-run(`document.getElementById("wf").dispatch("mousemove", {clientX: 401, clientY: 121})`);
-const tipAfterNudge = sandbox.document.getElementById("tip").innerHTML;
-
 const frames = sandbox.document.getElementById("frames").children;
 const rows = frames.map(c => c.innerHTML);
 const rowClasses = frames.map(c => c.className);
@@ -252,11 +220,6 @@ console.log(JSON.stringify({
   frameRowClasses: rowClasses,
   captureTag,
   surveyStatus,
-  copiedAudio,
-  copiedRf,
-  contextMenuSuppressed: prevented,
-  tipAfterCopy,
-  tipAfterNudge,
   historyTag,
   historyRows: afterHistory.map(c => c.innerHTML),
   historyRowClasses: afterHistory.map(c => c.className),
