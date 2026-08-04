@@ -46,7 +46,49 @@ public sealed class WaterfallOptions
     /// like anything else.</para>
     /// </remarks>
     public IReadOnlyList<DeclaredBand> DeclaredBands { get; set; } = [];
+
+    /// <summary>
+    /// Where the decoded-frames panel's opening backlog comes from — the station's frame log,
+    /// when it keeps one. Called once per browser that connects, with the number of frames
+    /// wanted; returns them <b>oldest first</b>. Null (the default) opens the panel empty.
+    /// </summary>
+    /// <remarks>
+    /// <para>A panel that starts empty says nothing about a channel that has been busy all
+    /// morning, and on a quiet band it is indistinguishable from a modem that is not working. The
+    /// station already writes every decode down; this is that record, shown.</para>
+    /// <para>A delegate rather than a database handle because the log lives in the daemon and
+    /// this server lives in the library, and because whatever provides it should be free to
+    /// decide what "recent" means. It is called on the connection's own thread, so it should be
+    /// quick and must not throw — an exception here costs the browser its backlog, which is
+    /// caught and shrugged off, but it should not be the way that is discovered.</para>
+    /// </remarks>
+    public Func<int, IReadOnlyList<LoggedFrame>>? FrameHistory { get; set; }
 }
+
+/// <summary>
+/// One frame out of the station's log, for the decoded-frames panel's opening backlog. The
+/// receive-side subset of <see cref="Modems.FrameQuality"/> plus when it was heard, which is
+/// what a written-down frame has and a live one does not need.
+/// </summary>
+/// <param name="HeardAt">When the station decoded it (UTC); rendered in the viewer's zone.</param>
+/// <param name="SubChannel">Which modem heard it.</param>
+/// <param name="Mode">Its mode string, as the modem reported it.</param>
+/// <param name="From">Source callsign where the frame carried one.</param>
+/// <param name="To">Destination callsign where the frame carried one.</param>
+/// <param name="LengthBytes">Decoded frame length.</param>
+/// <param name="CorrectedBytes">Bytes FEC repaired, where the framing counts them.</param>
+/// <param name="CrcValid">CRC verdict, where the framing carries one.</param>
+/// <param name="OffsetHz">Measured carrier offset, where the decoder measured one.</param>
+public sealed record LoggedFrame(
+    DateTimeOffset HeardAt,
+    int SubChannel,
+    string Mode,
+    string? From,
+    string? To,
+    int LengthBytes,
+    int? CorrectedBytes,
+    bool? CrcValid,
+    double? OffsetHz);
 
 /// <summary>A band the host declares rather than the waterfall measuring it.</summary>
 /// <param name="SubChannel">Which modem, for ordering and labels.</param>
@@ -915,6 +957,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         {
             await socket.SendAsync(_configMessage, WebSocketMessageType.Text, true, _stopping.Token)
                 .ConfigureAwait(false);
+            if (BuildHistoryMessage() is { } history)
+            {
+                await socket.SendAsync(history, WebSocketMessageType.Text, true, _stopping.Token)
+                    .ConfigureAwait(false);
+            }
+
             Task send = SendLoopAsync(socket, queue);
             var buffer = new byte[1024];
             while (socket.State == WebSocketState.Open && !_stopping.IsCancellationRequested)
@@ -955,6 +1003,65 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             queue.Writer.TryComplete();
             socket.Dispose();
         }
+    }
+
+    /// <summary>How much of the station's log a browser opens with. Half the panel's own
+    /// 100-row cap: enough to say what the channel has been doing, and not so much that the
+    /// backlog pushes out live traffic before the operator has read any.</summary>
+    private const int HistoryFrames = 50;
+
+    /// <summary>
+    /// The decoded-frames panel's opening backlog, or null when there is no log to draw it from.
+    /// Sent once per connection, straight after the config and before the send loop starts, so
+    /// it can never be interleaved with — or land on top of — live frames decoded meanwhile.
+    /// </summary>
+    /// <remarks>
+    /// Oldest first: the page prepends each row, so the newest ends up on top, and a live frame
+    /// arriving during the handshake is queued behind this and lands above it. Marked
+    /// <c>hist</c>, so the page lists it without tagging it onto the waterfall — these frames
+    /// were heard before the scroll on screen began and belong to no burst on it.
+    /// </remarks>
+    private byte[]? BuildHistoryMessage()
+    {
+        if (_options.FrameHistory is not { } source)
+        {
+            return null;
+        }
+
+        IReadOnlyList<LoggedFrame> frames;
+        try
+        {
+            frames = source(HistoryFrames);
+        }
+        catch (Exception)
+        {
+            // A log that cannot be read costs this browser its backlog and nothing else. The
+            // station is still decoding, and the panel still fills from the air.
+            return null;
+        }
+
+        if (frames.Count == 0)
+        {
+            return null;
+        }
+
+        return JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            type = "history",
+            frames = frames.Select(f => new
+            {
+                at = f.HeardAt.ToUniversalTime().ToString("O"),
+                sub = f.SubChannel,
+                mode = f.Mode,
+                from = f.From,
+                to = f.To,
+                lenBytes = f.LengthBytes,
+                offsetHz = f.OffsetHz is { } offset ? Math.Round(offset, 1) : (double?)null,
+                corrected = f.CorrectedBytes,
+                crc = f.CrcValid,
+                hist = true,
+            }),
+        }, Json);
     }
 
     private async Task SendLoopAsync(WebSocket socket, Channel<(WebSocketMessageType Kind, byte[] Payload)> queue)

@@ -193,6 +193,69 @@ public class FrameLogTests : IDisposable
     }
 
     [Fact]
+    public async Task The_Newest_Frames_Come_Back_Oldest_First_For_The_Waterfall_Panel()
+    {
+        // The decoded-frames panel's opening backlog: the last N heard, in the order they
+        // happened, so the page's newest-on-top prepend lands the right way up.
+        await using (FrameLog writing = FrameLog.Open(DbPath, _time))
+        {
+            foreach (string call in new[] { "G0AAA", "G0BBB", "G0CCC", "G0DDD", "G0EEE" })
+            {
+                writing.Record(1, Frame(from: call), Quality(), audioHz: 1500, rfHz: 7_051_600);
+            }
+        }
+
+        await using FrameLog log = FrameLog.Open(DbPath, _time);
+        IReadOnlyList<Packet.SoundModem.Waterfall.LoggedFrame> recent = log.Recent(3);
+
+        // The last three heard, oldest first.
+        recent.Select(f => f.From).Should().Equal("G0CCC", "G0DDD", "G0EEE");
+        Packet.SoundModem.Waterfall.LoggedFrame first = recent[0];
+        first.SubChannel.Should().Be(1);
+        first.Mode.Should().Be("bpsk300-il2pc");
+        first.To.Should().Be("GB7RDG");
+        first.LengthBytes.Should().Be(32);
+        first.CorrectedBytes.Should().Be(2);
+        first.CrcValid.Should().BeTrue();
+        first.OffsetHz.Should().Be(-3.5);
+        first.HeardAt.Should().Be(new DateTimeOffset(2026, 8, 2, 14, 30, 0, TimeSpan.Zero));
+    }
+
+    [Fact]
+    public async Task Reading_The_Backlog_Does_Not_Disturb_The_Writer()
+    {
+        // Called from whichever connection thread a browser turned up on, while the writer
+        // thread is mid-INSERT on its own connection — which is not thread-safe, hence the
+        // separate short-lived reader. Frames recorded after the read must still land.
+        await using FrameLog log = FrameLog.Open(DbPath, _time);
+        log.Record(0, Frame(from: "G0AAA"), Quality(), null, null);
+
+        for (int i = 0; i < 100 && log.Recent(10).Count == 0; i++)
+        {
+            await Task.Delay(20);
+        }
+
+        log.Recent(10).Should().ContainSingle().Which.From.Should().Be("G0AAA");
+
+        log.Record(0, Frame(from: "G0BBB"), Quality(), null, null);
+        for (int i = 0; i < 100 && log.Recent(10).Count < 2; i++)
+        {
+            await Task.Delay(20);
+        }
+
+        log.Recent(10).Select(f => f.From).Should().Equal("G0AAA", "G0BBB");
+        log.Dropped.Should().Be(0, "nothing was lost to the concurrent read");
+    }
+
+    [Fact]
+    public async Task An_Empty_Log_Has_No_Backlog_To_Offer()
+    {
+        await using FrameLog log = FrameLog.Open(DbPath, _time);
+        log.Recent(50).Should().BeEmpty();
+        log.Recent(0).Should().BeEmpty("asking for none is not a query worth running");
+    }
+
+    [Fact]
     public async Task Recording_Does_Not_Wait_On_The_Disk()
     {
         // The receive path calls this between bursts; it has to return at memory speed.
