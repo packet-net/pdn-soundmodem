@@ -672,6 +672,10 @@ captured at all.
 | `minPeakSnrDb` | number | `6` | Weakest burst worth keeping, over the noise floor |
 | `capture` | array | all three | Which verdicts to write — `unclaimed`, `missed`, `unattributed` |
 
+All three reach the **waterfall's decoded-frames panel** too, which is where an operator sees the
+word "unattributed" in the first place: the row carries the IL2P type, the reason, and the frame's
+bytes laid out to be selected and pasted.
+
 The same explanation reaches the journal whether or not a survey is running — the `rx` line for
 such a frame carries `il2p Type1` and the reason in brackets, because the survey is optional and
 budgeted and may drop that particular burst.
@@ -689,6 +693,21 @@ can carry does not, so `maxSeconds` is the knob that matters if voice is getting
 baseband is gone before the modem sees it. That is fine and is the right artefact — the channel
 audio *is* the whole configured passband, it is exactly what every modem sees, and it
 re-demodulates offline at any centre inside it.
+
+**With a [`waterfall`](#waterfall) configured, captures appear on the page.** Each one is bracketed
+on the scroll at the frequencies and for the duration it actually occupied — a capture has a
+frequency and a time, which is exactly what that display's two axes are, so "something we could not
+read went past *there*" is a statement the waterfall can make and a list of filenames cannot — and
+listed in the panel with links to its audio and its sidecar. The panel header also carries a running
+`survey N · M skipped · X MB`, which is the only place the **skipped** count appears: a station left
+collecting for a week silently becomes a sample rather than the set when the channel is busier than
+`maxPerHour`, and counting files by hand was the alternative.
+
+Serving those files is the one route on the waterfall that reads from disk. Only the exact
+`YYYYMMDD-HHMMSS-NNNNhz-verdict.wav|json` shape the writer produces is served, and only out of the
+survey directory — a name is not a path. There is still no authentication on the waterfall, so the
+reverse-proxy or VPN advice in that section is load-bearing rather than tidy-minded now that
+recorded audio is reachable over it.
 
 Each capture is a `.wav` and a `.json` of the same name, stamped with the time, the measured
 centre and the verdict:

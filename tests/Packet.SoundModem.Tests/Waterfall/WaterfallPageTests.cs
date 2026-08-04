@@ -104,16 +104,15 @@ public class WaterfallPageTests
         probe.IdentTag.Should().HaveCount(2).And.AllSatisfy(
             tag => tag.Should().Contain("KK4HEJ").And.Contain("ID"));
 
-        // The panel, newest first — the probe logs an ordinary frame, then the ident, then two
-        // more for the transmit check, so the ident sits directly above the ordinary one.
-        probe.FrameRows.Should().HaveCount(4);
-        probe.FrameRows[2].Should().Contain("KK4HEJ").And.Contain("IDENT");
-        probe.FrameRows[2].Should().Contain(
-            "class=\"id\"", "an ident must be badged, or it reads as ordinary traffic");
-        probe.FrameRows[2].Should().Contain(">ID<");
-        probe.FrameRows[3].Should().Contain("M0LTE");
-        probe.FrameRows[3].Should().NotContain(
-            "class=\"id\"", "only idents carry the badge");
+        // The panel, newest first: the ident is logged after the ordinary frame, so it sits above.
+        int ident = RowWith(probe.FrameRows, "KK4HEJ");
+        int ordinary = RowWith(probe.FrameRows, "12.5 dB");
+        ident.Should().BeLessThan(ordinary, "the panel is newest first");
+        probe.FrameRows[ident].Should().Contain("IDENT")
+            .And.Contain("class=\"id\"", "an ident must be badged, or it reads as ordinary traffic")
+            .And.Contain(">ID<");
+        probe.FrameRows[ordinary].Should().Contain("M0LTE")
+            .And.NotContain("class=\"id\"", "only idents carry the badge");
     }
 
     /// <summary>
@@ -150,12 +149,15 @@ public class WaterfallPageTests
         probe.HeardTag.Should().HaveCount(2).And.AllSatisfy(tag => tag.Should().Contain("GB7RDG"));
         probe.TxTag.Should().BeEmpty("our own burst is drawn in its own style and needs no tag");
 
-        // Newest first, so ours is row 0 and the frame heard just before it is row 1.
-        probe.FrameRows[0].Should().Contain("M0LTE-9").And.Contain("GB7RDG").And.Contain(">TX<");
-        probe.FrameRowClasses[0].Should().Be(
+        // Newest first: ours is logged after the frame heard just before it, so it sits above.
+        int ours = RowWith(probe.FrameRows, ">TX<");
+        int heard = RowWith(probe.FrameRows, "9.5 dB");
+        ours.Should().BeLessThan(heard, "the panel is newest first");
+        probe.FrameRows[ours].Should().Contain("M0LTE-9").And.Contain("GB7RDG");
+        probe.FrameRowClasses[ours].Should().Be(
             "fr tx", "a transmission must be styled apart, or it reads as a station heard");
-        probe.FrameRows[1].Should().NotContain(">TX<", "only our own transmissions are marked");
-        probe.FrameRowClasses[1].Should().Be("fr");
+        probe.FrameRows[heard].Should().NotContain(">TX<", "only our own transmissions are marked");
+        probe.FrameRowClasses[heard].Should().Be("fr");
     }
 
     /// <summary>
@@ -251,6 +253,85 @@ public class WaterfallPageTests
         probe.HistBorder.Should().NotContain("#31d2f2", "and grey is what says it is old");
         probe.TxHistBorder.Should().Contain(
             "#31d2f2", "a backlogged transmission must not lose the colour that says it is ours");
+    }
+
+    /// <summary>
+    /// The survey on the page: a capture tagged where it happened and listed with its audio, and
+    /// the status strip that says what a budget has been refusing.
+    /// </summary>
+    [Fact]
+    public async Task A_Capture_Is_Tagged_Where_It_Happened_And_Listed_With_Its_Audio()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw on a capture");
+
+        // Drawn twice, like every tag, so one straddling the scroll ring's wrap seam is whole on
+        // both sides of it — and saying what it is and how wide, which is what a classifier wants
+        // and what a list of filenames could never put on the frequency axis.
+        probe.CaptureTag.Should().HaveCount(2).And.AllSatisfy(
+            tag => tag.Should().Contain("unclaimed").And.Contain("400 Hz"));
+
+        int capture = RowWith(probe.FrameRows, "unclaimed");
+        probe.FrameRows[capture].Should()
+            .Contain("/survey/20260804-151909-1144hz-unclaimed.wav")
+            .And.Contain("/survey/20260804-151909-1144hz-unclaimed.json", "the sidecar too");
+        probe.FrameRowClasses[capture].Should().Be("fr cap");
+
+        // The refusals are the reason the strip exists — an operator has no other way to see them.
+        probe.SurveyStatus.Should().Contain("7").And.Contain("2 skipped").And.Contain("12 MB");
+    }
+
+    /// <summary>
+    /// A frame that decoded and would not yield callsigns explains itself in the panel — which is
+    /// where an operator sees the word "unattributed" in the first place.
+    /// </summary>
+    [Fact]
+    public async Task An_Unreadable_Frame_Shows_Its_Reason_And_Its_Bytes()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty();
+
+        string row = probe.FrameRows[RowWith(probe.FrameRows, "il2p Type1")];
+        row.Should().Contain("il2p Type1").And.Contain("byte 0 of the destination callsign");
+        row.Should().Contain("00010203DEADBEEF", "the bytes are what an operator copies out");
+
+        // The reason quotes a character taken straight off the air. A payload that happens to
+        // contain "<" is not markup, and a panel built with innerHTML has to say so.
+        row.Should().NotContain("('<')", "the quoted character must arrive escaped");
+        row.Should().Contain("&lt;");
+    }
+
+    /// <summary>
+    /// Finds a panel row by something only it contains. Rows were addressed by index, which made
+    /// every test depend on how many other things the probe happened to drive first — adding one
+    /// step broke two unrelated tests. Order still matters and is asserted where it means
+    /// something (newest first), but identity is by content.
+    /// </summary>
+    private static int RowWith(string[] rows, string marker)
+    {
+        int at = Array.FindIndex(rows, row => row.Contains(marker, StringComparison.Ordinal));
+        at.Should().BeGreaterThanOrEqualTo(0, "no panel row contains \"{0}\"", marker);
+        return at;
     }
 
     private static void FeedTone(SoundModemChannel channel, CancellationToken token)
@@ -350,6 +431,8 @@ public class WaterfallPageTests
         string[] TxTag,
         string[] FrameRows,
         string[] FrameRowClasses,
+        string[] CaptureTag,
+        string SurveyStatus,
         string[] HistoryTag,
         string[] HistoryRows,
         string[] HistoryRowClasses,

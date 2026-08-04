@@ -81,6 +81,101 @@ public class WaterfallWebServerTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_Captures_Audio_Can_Be_Fetched_And_Nothing_Else_Can()
+    {
+        // The one route that reads from disk, so the one worth being careful about. A name is not
+        // a path: only the exact shape the capture writer produces, only out of the survey
+        // directory. There is no authentication on this page, which makes the refusals load-bearing
+        // rather than tidy-minded.
+        string dir = Directory.CreateTempSubdirectory("pdnsm-captures").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "20260804-151909-862hz-unclaimed.wav"), "RIFFfake");
+            File.WriteAllText(Path.Combine(dir, "20260804-151909-862hz-unclaimed.json"), "{}");
+            File.WriteAllText(Path.Combine(Path.GetDirectoryName(dir)!, "secrets.wav"), "no");
+
+            _server.SetSurveyStatus(captured: 1, skipped: 0, bytes: 8, dir);
+            using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{_port}") };
+
+            (await http.GetStringAsync("/survey/20260804-151909-862hz-unclaimed.wav", _cancellation.Token))
+                .Should().Be("RIFFfake");
+            HttpResponseMessage sidecar =
+                await http.GetAsync("/survey/20260804-151909-862hz-unclaimed.json", _cancellation.Token);
+            sidecar.StatusCode.Should().Be(HttpStatusCode.OK);
+            sidecar.Content.Headers.ContentType!.MediaType.Should().Be("application/json");
+
+            foreach (string refused in new[]
+                     {
+                         "/survey/../secrets.wav",
+                         "/survey/%2e%2e%2fsecrets.wav",
+                         "/survey/20260804-151909-862hz-unclaimed.txt",
+                         "/survey/frames.db",
+                         "/survey/",
+                     })
+            {
+                HttpResponseMessage response = await http.GetAsync(refused, _cancellation.Token);
+                response.StatusCode.Should().Be(
+                    HttpStatusCode.NotFound, "{0} must not be served", refused);
+            }
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+            File.Delete(Path.Combine(Path.GetDirectoryName(dir)!, "secrets.wav"));
+        }
+    }
+
+    [Fact]
+    public async Task The_Survey_Status_Reaches_A_Browser_And_Only_Changes_Are_Sent()
+    {
+        // What a budget has been refusing is the number an operator has no other way to see.
+        _server.SetSurveyStatus(captured: 7, skipped: 2, bytes: 12_582_912, "/tmp/none");
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        JsonDocument first = await NextTextAsync(socket);
+        first.RootElement.GetProperty("type").GetString().Should()
+            .Be("survey", "a browser arriving mid-session is told where the survey has got to");
+        first.RootElement.GetProperty("captured").GetInt64().Should().Be(7);
+        first.RootElement.GetProperty("skipped").GetInt64().Should().Be(2);
+        first.Dispose();
+
+        _server.SetSurveyStatus(captured: 7, skipped: 2, bytes: 12_582_912, "/tmp/none");
+        _server.SetSurveyStatus(captured: 8, skipped: 2, bytes: 14_000_000, "/tmp/none");
+
+        JsonDocument next = await NextTextAsync(socket);
+        next.RootElement.GetProperty("captured").GetInt64().Should()
+            .Be(8, "the repeat must not have been sent");
+        next.Dispose();
+    }
+
+    [Fact]
+    public async Task A_Capture_Is_Reported_With_Its_Age_Rather_Than_A_Line_Index()
+    {
+        // The survey runs its own spectrum feed so it keeps working with nobody watching, and its
+        // line clock is therefore not the display's. Seconds-ago is what both agree on.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        _server.ReportCapture(
+            "unclaimed", centreHz: 1144, lowHz: 944, highHz: 1344,
+            durationSeconds: 2.1, snrDb: 11.4, secondsAgo: 0.42,
+            file: "20260804-151909-1144hz-unclaimed.wav");
+
+        JsonDocument message = await NextTextAsync(socket);
+        message.RootElement.GetProperty("type").GetString().Should().Be("capture");
+        message.RootElement.GetProperty("verdict").GetString().Should().Be("unclaimed");
+        message.RootElement.GetProperty("centreHz").GetDouble().Should().Be(1144);
+        message.RootElement.GetProperty("secondsAgo").GetDouble().Should().Be(0.42);
+        message.RootElement.GetProperty("file").GetString().Should()
+            .Be("20260804-151909-1144hz-unclaimed.wav");
+        message.Dispose();
+    }
+
+    [Fact]
     public async Task Unknown_paths_return_404()
     {
         using var http = new HttpClient();
@@ -206,6 +301,68 @@ public class WaterfallWebServerTests : IAsyncLifetime
         catch (OperationCanceledException)
         {
         }
+    }
+
+    [Fact]
+    public async Task A_Frame_Whose_Addresses_Will_Not_Read_Says_Why_And_Carries_Its_Bytes()
+    {
+        // The panel is where an operator sees the word "unattributed" — it said that and stopped,
+        // which is where this whole diagnosis was missing. The frame here is the live 40 m shape:
+        // decoded, CRC-valid, and its first bytes are not a shifted AX.25 address field.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        var transmitter = new Afsk1200Modem(SampleRate, _ => { });
+        byte[] frame = [0x00, 0x01, 0x02, 0x03, .. new byte[24]];
+        _channel.ProcessReceive(transmitter.Modulate(frame, txDelayMilliseconds: 100));
+        _channel.ProcessReceive(new float[SampleRate / 4]);
+
+        JsonDocument? message = null;
+        while (message is null)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind == WebSocketMessageType.Text)
+            {
+                message = JsonDocument.Parse(payload);
+            }
+        }
+
+        message.RootElement.GetProperty("from").ValueKind.Should().Be(JsonValueKind.Null);
+        message.RootElement.GetProperty("why").GetString().Should()
+            .Contain("byte 0").And.Contain("destination");
+        message.RootElement.GetProperty("hex").GetString().Should()
+            .StartWith("00010203", "the bytes are what an operator wants to copy out of the panel");
+        message.Dispose();
+    }
+
+    [Fact]
+    public async Task An_Ordinary_Frame_Carries_No_Diagnosis_And_No_Payload()
+    {
+        // The diagnosis is for the frames that need explaining; every other row stays as it was,
+        // and a panel full of hex would be worse than useless.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        var transmitter = new Afsk1200Modem(SampleRate, _ => { });
+        _channel.ProcessReceive(transmitter.Modulate(TestFrame(), txDelayMilliseconds: 100));
+        _channel.ProcessReceive(new float[SampleRate / 4]);
+
+        JsonDocument? message = null;
+        while (message is null)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+            if (kind == WebSocketMessageType.Text)
+            {
+                message = JsonDocument.Parse(payload);
+            }
+        }
+
+        message.RootElement.GetProperty("from").GetString().Should().Be("M0LTE-9");
+        message.RootElement.GetProperty("why").ValueKind.Should().Be(JsonValueKind.Null);
+        message.RootElement.GetProperty("hex").ValueKind.Should().Be(JsonValueKind.Null);
+        message.Dispose();
     }
 
     [Fact]

@@ -113,7 +113,17 @@
   #log h2 {
     font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
     font-weight: 600; padding: 8px 12px 6px; border-bottom: 1px solid var(--edge);
+    display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
   }
+  /* What the survey has kept and — the reason this is here at all — what a budget refused.
+     A station left collecting for a week silently becomes a sample rather than the set when
+     the channel is busier than its rate limit, and nothing else anywhere says so. */
+  #survey { font-family: var(--mono); letter-spacing: 0; text-transform: none; color: var(--muted); }
+  #survey.busy { color: var(--amber); }
+  .fr.cap { border-left: 2px solid #b07de8; padding-left: 10px; }
+  .fr.cap .from { color: #cba3f0; }
+  .fr .dl { color: #7fb6e8; text-decoration: none; border-bottom: 1px dotted #47617d; }
+  .fr .dl:hover { color: #a9d2f5; }
   #frames { flex: 1; overflow-y: auto; font-family: var(--mono); font-size: 11px; }
   .fr { padding: 5px 12px; border-bottom: 1px solid #141a23; line-height: 1.55; }
   .fr .t { color: var(--muted); }
@@ -139,6 +149,15 @@
      backlog cannot be mistaken for a channel that is busy right now. Its timestamps are real,
      which is the other half of saying so. */
   .fr.hist { opacity: .62; border-left: 2px solid #2a3441; padding-left: 10px; }
+  /* A frame that decoded and would not yield callsigns. The panel is where an operator notices
+     one, so it is where the answer belongs — and the bytes are laid out to be selected and
+     pasted, because that is the next thing anybody does with one. */
+  .fr .why { display: block; color: #f0b45a; margin-top: 2px; }
+  .fr .hex {
+    display: block; margin-top: 3px; padding: 3px 5px; border-radius: 2px;
+    background: #0a0e14; border: 1px solid #1c2431; color: #8fa3b8;
+    font-size: 10px; line-height: 1.45; word-break: break-all; user-select: all; cursor: text;
+  }
   /* A transmission read back out of the log is both: ours, and from before the page opened. The
      rule above sets the same property and comes after .fr.tx, so without this the grey wins and
      a backlogged transmission loses the cyan that says it is ours — dimmed like any other
@@ -206,7 +225,7 @@
     </div>
   </div>
   <aside id="log">
-    <h2>Decoded frames</h2>
+    <h2>Decoded frames<span id="survey" hidden></span></h2>
     <div id="frames"><div class="empty">Nothing decoded yet. Frames appear here and as tags on the waterfall; what this station sends is listed too, marked TX.</div></div>
   </aside>
 </main>
@@ -656,6 +675,12 @@ function tagFrame(ev) {
 }
 
 /* ---------- what to do with a frame event ---------- */
+// Rows are built with innerHTML and some of what goes into them arrives off the air. A payload
+// that happens to contain "<" is not markup and must not be treated as any.
+function esc(text) {
+  return String(text).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+}
+
 // Ours is listed but not tagged: the burst it belongs to is painted from a queue in real time
 // while the event arrives as soon as the audio device took the audio, so a tag would land
 // somewhere up the burst rather than on it. Everything heard gets both.
@@ -673,6 +698,25 @@ function onHistory(msg) {
   $("frames").replaceChildren();
   logEmpty = false;
   for (const frame of msg.frames) logFrame(frame);
+}
+
+// A burst the station could not read, kept for later. Tagged onto the waterfall where it
+// happened — a capture has a frequency and a time, which is what these two axes are — and listed
+// with a link to the audio. Placed by age rather than line index: the survey runs its own
+// spectrum feed so it works with nobody watching, and its line clock is not this one's.
+function onCapture(ev) {
+  const rowsAgo = Math.max(0, Math.round(ev.secondsAgo * (cfg ? cfg.linesPerSecond : 30)));
+  tagCapture(ev, rowsAgo);
+  logCapture(ev);
+}
+
+function setSurveyStatus(ev) {
+  const el = $("survey");
+  el.hidden = false;
+  const mb = (ev.bytes / (1024 * 1024)).toFixed(0);
+  el.textContent = `survey ${ev.captured}` + (ev.skipped ? ` · ${ev.skipped} skipped` : "") + ` · ${mb} MB`;
+  // Amber once anything has been refused: that is the number an operator has no other way to see.
+  el.classList.toggle("busy", ev.skipped > 0);
 }
 
 /* ---------- decode log panel ---------- */
@@ -707,7 +751,58 @@ function logFrame(ev) {
   bits.push(`${ev.lenBytes} B`);
   if (ev.corrected > 0) bits.push(`<i>fec ${ev.corrected}</i>`);
   if (ev.crc === false) bits.push(`<span class="bad">crc✗</span>`);
-  row.innerHTML = `<span class="t">${t}</span> ${who}<br><span class="d">${bits.join(" · ")}</span>`;
+  if (ev.il2p) bits.push(`<i>il2p ${esc(ev.il2p)}</i>`);
+  // Why it would not read, then the bytes — one click-and-drag from the panel to a bug report.
+  const why = ev.why ? `<span class="why">${esc(ev.why)}</span>` : "";
+  const hex = ev.hex ? `<span class="hex" title="Select to copy">${esc(ev.hex)}</span>` : "";
+  row.innerHTML = `<span class="t">${t}</span> ${who}<br><span class="d">${bits.join(" · ")}</span>${why}${hex}`;
+  const list = $("frames");
+  list.prepend(row);
+  while (list.children.length > 100) list.lastChild.remove();
+}
+
+// The capture's own bracket on the waterfall, in the purple nothing else uses, spanning the
+// frequencies it actually occupied rather than a band edge.
+function tagCapture(ev, rowsAgo) {
+  const d = dpr(), w = ring.width, h = ring.height, rowH = Math.max(1, Math.round(d));
+  const xLow = afToX(ev.lowHz, w), xHigh = afToX(ev.highHz, w);
+  const len = Math.max(rowH * 3, Math.round(ev.durationSeconds * (cfg ? cfg.linesPerSecond : 30)) * rowH);
+  const ringY = (head + rowsAgo * rowH) % h;
+  const text = `${ev.verdict} · ${Math.round(ev.highHz - ev.lowHz)} Hz`;
+  for (const yBase of [ringY, ringY - h]) {
+    const y = yBase + 2 * d;
+    gctx.strokeStyle = "#b07de8"; gctx.lineWidth = d;
+    gctx.beginPath();
+    gctx.moveTo(xLow, y + len); gctx.lineTo(xLow, y);
+    gctx.lineTo(xHigh, y); gctx.lineTo(xHigh, y + len);
+    gctx.stroke();
+    gctx.font = `${10 * d}px ui-monospace, monospace`;
+    gctx.textAlign = "left"; gctx.textBaseline = "bottom";
+    gctx.lineWidth = 3 * d; gctx.strokeStyle = "rgba(0,0,0,.85)";
+    gctx.strokeText(text, xLow + 3 * d, y - 1 * d);
+    gctx.fillStyle = "#cba3f0";
+    gctx.fillText(text, xLow + 3 * d, y - 1 * d);
+  }
+
+  presentWaterfall();
+}
+
+function logCapture(ev) {
+  if (logEmpty) { $("frames").replaceChildren(); logEmpty = false; }
+  const row = document.createElement("div");
+  row.className = "fr cap";
+  const t = new Date(Date.now() - ev.secondsAgo * 1000).toTimeString().slice(0, 8);
+  const rf = dialSet() ? ` · ${fmtRfMhz(ev.centreHz)} MHz` : "";
+  const bits = [
+    `${Math.round(ev.centreHz)} Hz${rf}`,
+    `${Math.round(ev.highHz - ev.lowHz)} Hz wide`,
+    `${ev.durationSeconds.toFixed(1)} s`,
+    `<i>${ev.snrDb.toFixed(1)} dB</i>`,
+  ];
+  row.innerHTML = `<span class="t">${t}</span> <span class="from">${esc(ev.verdict)}</span>`
+    + `<span class="arrow">·</span><a class="dl" href="/survey/${encodeURIComponent(ev.file)}" download>audio</a>`
+    + `<span class="arrow">·</span><a class="dl" href="/survey/${encodeURIComponent(ev.file.replace(/\.wav$/, ".json"))}" target="_blank">details</a>`
+    + `<br><span class="d">${bits.join(" · ")}</span>`;
   const list = $("frames");
   list.prepend(row);
   while (list.children.length > 100) list.lastChild.remove();
@@ -767,6 +862,10 @@ function connect() {
         onFrameEvent(msg);
       } else if (msg.type === "history") {
         onHistory(msg);
+      } else if (msg.type === "capture") {
+        onCapture(msg);
+      } else if (msg.type === "survey") {
+        setSurveyStatus(msg);
       }
       return;
     }

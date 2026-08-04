@@ -153,6 +153,26 @@ public sealed class SignalSurvey : IDisposable
     /// <summary>Captures written.</summary>
     public long Captured => _writer.Written;
 
+    /// <summary>Bytes the capture directory holds, against the budget.</summary>
+    public long Bytes => _writer.Bytes;
+
+    /// <summary>Where captures are written.</summary>
+    public string Directory => _options.Directory;
+
+    /// <summary>
+    /// Raised whenever the counts move — a capture kept, or one the budget refused. What a
+    /// station is skipping is invisible otherwise, and a week of unattended collection that
+    /// quietly became a sample rather than the set is worse than one that says so.
+    /// </summary>
+    public event Action? StatusChanged;
+
+    /// <summary>Raised once a capture is on disk, with the path of its audio.</summary>
+    public event Action<BurstCapture, string>? CaptureWritten
+    {
+        add => _writer.Captured += value;
+        remove => _writer.Captured -= value;
+    }
+
     /// <summary>Bursts worth keeping that were not, because a budget said no. Non-zero means the
     /// station is seeing more than it was told to record, which is worth an operator knowing.</summary>
     public long SkippedForBudget => Interlocked.Read(ref _skippedForBudget);
@@ -188,7 +208,7 @@ public sealed class SignalSurvey : IDisposable
         // noticed. A frame that decoded and then would not yield callsigns has already passed
         // Reed-Solomon and the trailing CRC — the bits are right and the reading of them is not,
         // which is the whole diagnosis and is lost by the time anyone opens the file.
-        string? note = Ax25AttributionNote.For(frame);
+        string? note = Waterfall.Ax25AttributionNote.For(frame);
         _decodes.Add(new Decode(
             _lastLine,
             subChannel,
@@ -223,12 +243,14 @@ public sealed class SignalSurvey : IDisposable
         if (!Allowed(burst, now))
         {
             Interlocked.Increment(ref _skippedForBudget);
+            StatusChanged?.Invoke();
             return;
         }
 
         if (!TryCopyAudio(burst, out float[]? audio))
         {
             Interlocked.Increment(ref _skippedForBudget);
+            StatusChanged?.Invoke();
             return;
         }
 
@@ -257,6 +279,7 @@ public sealed class SignalSurvey : IDisposable
                 decode?.HeaderType,
                 decode?.AttributionNote),
             audio);
+        StatusChanged?.Invoke();
     }
 
     /// <summary>
