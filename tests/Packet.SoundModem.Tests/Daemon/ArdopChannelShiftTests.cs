@@ -134,6 +134,38 @@ public class ArdopChannelShiftTests
     }
 
     [Fact]
+    public void A_Real_Frame_Survives_The_Round_Trip_And_Still_Decodes()
+    {
+        // The two-tone round trip says the energy comes back. This says the frame does, which is
+        // a different claim: a shift that left the constellation smeared would pass the first and
+        // fail the second. It is also the property the signal survey leans on off-air - a burst
+        // in the ARDOP slot gets run back through the demodulator afterwards to answer "was that
+        // ARDOP?", and a shift that quietly wrecked the modulation would answer no every time and
+        // read as an ARDOP slot full of signals nobody can identify.
+        var shift = ArdopChannelShift.For(1713, Rate);
+        byte[] payload = "ROUND TRIP THROUGH A SHIFTED CENTRE 0123456789"u8.ToArray();
+        short[] pcm = new ArdopModulator().Modulate(
+            ArdopFrameCodec.EncodeDataFrame(0x70, payload, 0xFF));
+
+        // Silence either side, so the demodulator sees the leader arrive rather than starting
+        // mid-frame, and the shifters' filters have somewhere to put their transients.
+        var audio = new float[pcm.Length + Rate];
+        for (int i = 0; i < pcm.Length; i++)
+        {
+            audio[i + (Rate / 2)] = pcm[i] / 32768f;
+        }
+
+        var decoded = new List<ArdopDecodedFrame>();
+        var demodulator = new ArdopDemodulator();
+        demodulator.FrameDecoded += decoded.Add;
+        demodulator.ProcessSamples(shift.Receive(shift.Transmit(audio)));
+
+        ArdopDecodedFrame frame = decoded.Should().ContainSingle().Subject;
+        frame.Ok.Should().BeTrue();
+        frame.Data.Should().Equal(payload);
+    }
+
+    [Fact]
     public void No_Configured_Centre_Is_A_Pass_Through_Not_A_Filter()
     {
         var shift = ArdopChannelShift.For(null, Rate);
