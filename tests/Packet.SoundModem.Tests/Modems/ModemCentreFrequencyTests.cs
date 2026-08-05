@@ -38,13 +38,27 @@ public class ModemCentreFrequencyTests
     [InlineData("freedv-datac14")]
     public void A_Spec_Fixed_Mode_Sits_Where_The_Catalogue_Says_It_Does(string mode)
     {
-        // These are the ones that matter most: their centres cannot be overridden, so a band plan
-        // has no way to correct a wrong declaration - it would put the dial in the wrong place and
-        // the modem would simply be somewhere else on the band than the operator asked for.
+        // The declared default is where the unmoved modem really sits. Since the
+        // FrequencyShiftedModem decorator these modes can be moved, but every shift is computed
+        // FROM this declaration - so a wrong one still lands every placement somewhere else on
+        // the band than the operator asked for.
         double? declared = ModemCatalog.DefaultCentreFrequencyFor(mode);
 
         declared.Should().NotBeNull($"{mode} has a centre fixed by its own standard");
         MeasuredCentre(mode).Should().BeApproximately(declared!.Value, ToleranceHz);
+    }
+
+    [Theory]
+    // The band planner places these anywhere in a wide passband now; the probe is the same
+    // measurement the waterfall draws, so this pins that a moved modem really transmits where
+    // the plan put it.
+    [InlineData("ms110d-wn6", 3000)]
+    [InlineData("ms110d-wn6", 5000)]
+    [InlineData("freedv-datac3", 2500)]
+    public void A_Spec_Fixed_Mode_Follows_An_Override_Through_The_Shift_Decorator(
+        string mode, double requested)
+    {
+        MeasuredCentre(mode, requested).Should().BeApproximately(requested, ToleranceHz);
     }
 
     [Theory]

@@ -14,10 +14,11 @@ public sealed class ModemConfig
     public string Mode { get; set; } = "afsk1200";
 
     /// <summary>Audio centre/carrier frequency override in Hz, applied to both TX and RX
-    /// (QtSoundModem-style per-modem tuning; mode default when null). Honoured by the
-    /// variable-centre modes only - the AFSK tone-pair modes (afsk*, default 1700) and the
-    /// BPSK/QPSK carrier modes (bpsk*/qpsk*, default 1500; 1650 for qpsk3600). The baseband
-    /// FSK families (fsk*/c4fsk*) and the spec-fixed waveforms (freedv-*/ms110d-*) have no
+    /// (QtSoundModem-style per-modem tuning; mode default when null). Honoured by the AFSK
+    /// tone-pair modes (afsk*, default 1700), the BPSK/QPSK carrier modes (bpsk*/qpsk*,
+    /// default 1500; 1650 for qpsk3600), and the spec-fixed waveforms (freedv-*/ms110d-*,
+    /// moved by frequency translation around their unchanged DSP - see
+    /// <c>FrequencyShiftedModem</c>). The baseband FSK families (fsk*/c4fsk*) have no
     /// settable centre; setting one on those is rejected at start-up, not ignored.</summary>
     public double? Frequency { get; set; }
 

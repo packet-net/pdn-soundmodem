@@ -51,8 +51,10 @@ public class ModemCatalogTests
     [InlineData("qpsk3600", true)]
     [InlineData("fsk9600", false)]
     [InlineData("c4fsk9600", false)]
-    [InlineData("freedv-datac0", false)]
-    [InlineData("ms110d-wn6", false)]
+    // The spec-fixed families accept one since the FrequencyShiftedModem decorator: their DSP
+    // stays on its native centre, the audio is translated either side.
+    [InlineData("freedv-datac0", true)]
+    [InlineData("ms110d-wn6", true)]
     public void AcceptsCentreFrequency_Matches_Family(string mode, bool expected)
     {
         ModemCatalog.AcceptsCentreFrequency(mode).Should().Be(expected);
@@ -80,13 +82,11 @@ public class ModemCatalogTests
     [Theory]
     [InlineData("fsk9600")]
     [InlineData("c4fsk9600")]
-    [InlineData("freedv-datac0")]
-    [InlineData("ms110d-wn0")]
-    public void Create_Rejects_A_Centre_Frequency_On_A_Fixed_Centre_Mode(string mode)
+    public void Create_Rejects_A_Centre_Frequency_On_A_Baseband_Mode(string mode)
     {
         Action act = () => ModemCatalog.Create(
             mode, ModemCatalog.DspRateFor(mode), Sink, new ModemOptions(CentreFrequencyHz: 1500));
-        act.Should().Throw<ArgumentException>().WithMessage("*fixed centre frequency*");
+        act.Should().Throw<ArgumentException>().WithMessage("*no centre frequency to move*");
     }
 
     [Fact]
@@ -95,6 +95,40 @@ public class ModemCatalogTests
         Action act = () => ModemCatalog.Create(
             "bpsk300", 12000, Sink, new ModemOptions(CentreFrequencyHz: 1600));
         act.Should().NotThrow();
+    }
+
+    [Theory]
+    [InlineData("ms110d-wn6", 3000)]
+    [InlineData("freedv-datac3", 2500)]
+    public void Create_Wraps_A_Spec_Fixed_Mode_Asked_Off_Its_Native_Centre(string mode, double centre)
+    {
+        IModem modem = ModemCatalog.Create(
+            mode, ModemCatalog.DspRateFor(mode), Sink, new ModemOptions(CentreFrequencyHz: centre));
+        modem.Should().BeOfType<FrequencyShiftedModem>();
+        modem.Mode.Should().Be(
+            ModemCatalog.Create(mode, ModemCatalog.DspRateFor(mode), Sink).Mode,
+            "moving a modem does not rename its mode");
+    }
+
+    [Fact]
+    public void Create_Skips_The_Wrapper_When_The_Asked_For_Centre_Is_The_Native_One()
+    {
+        // A config that spells out the default must be bit-identical to one that omits it.
+        IModem modem = ModemCatalog.Create(
+            "ms110d-wn6", 48000, Sink, new ModemOptions(CentreFrequencyHz: 1800));
+        modem.Should().NotBeOfType<FrequencyShiftedModem>();
+    }
+
+    [Theory]
+    // Down: ms110d's band reaches 170 Hz at its native 1800; another 200 down folds into DC.
+    [InlineData("ms110d-wn6", 1600)]
+    // Up: past the 24 kHz Nyquist guard at a 48 kHz channel rate.
+    [InlineData("ms110d-wn6", 23000)]
+    public void Create_Refuses_A_Centre_That_Folds_The_Band_Over(string mode, double centre)
+    {
+        Action act = () => ModemCatalog.Create(
+            mode, ModemCatalog.DspRateFor(mode), Sink, new ModemOptions(CentreFrequencyHz: centre));
+        act.Should().Throw<ArgumentException>().WithMessage("*not clear of*");
     }
 
     [Theory]

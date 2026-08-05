@@ -46,11 +46,13 @@ using Packet.SoundModem.Ms110d;
 // The optional N:MODE:FREQ third field sets the modem's audio centre in Hz (both TX and
 // RX), QtSoundModem-style - e.g. --modem 0:bpsk300:1459 places 300 BPSK at 1459 Hz to
 // meet a peer that sits off the usual centre. It applies to the AFSK tone-pair modes
-// (afsk*, centre = mark/space midpoint, default 1700) and the BPSK/QPSK carrier modes
-// (bpsk*/qpsk*, default 1500, 1650 for qpsk3600). The baseband FSK families (fsk*/c4fsk*)
-// occupy DC-to-Nyquist and have no audio centre; the spec-fixed waveforms (freedv-*,
-// ms110d-*) are pinned by their standards - a :FREQ on any of these is an error, not
-// silently ignored.
+// (afsk*, centre = mark/space midpoint, default 1700), the BPSK/QPSK carrier modes
+// (bpsk*/qpsk*, default 1500, 1650 for qpsk3600), and the spec-fixed waveforms (freedv-*,
+// ms110d-*), which keep their standard centre as the default (1800 for ms110d, the OFDM
+// centre for datac) and are moved by frequency translation around their unchanged DSP -
+// interop is set by the RF centre, so a moved waveform is still standard on air. The
+// baseband FSK families (fsk*/c4fsk*) occupy DC-to-Nyquist and have no audio centre; a
+// :FREQ on those is an error, not silently ignored.
 // --wav decodes a file instead of live audio (testing/corpus runs) and exits.
 // --wav-loop replays a file forever at wall-clock pace as if it were the capture device -
 // the whole live daemon (KISS, waterfall) runs off the recording; no soundcard needed.
