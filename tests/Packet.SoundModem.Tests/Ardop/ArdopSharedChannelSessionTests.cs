@@ -23,7 +23,7 @@ namespace Packet.SoundModem.Tests.Ardop;
 /// it runs: an <see cref="ArdopHostTnc"/> whose <c>Transmitter</c> is the channel's
 /// inhibit-bypassing transmit path, whose receive comes off
 /// <see cref="SoundModemChannel.AddReceiveTap"/>, whose audio is moved to the configured centre by
-/// <see cref="ArdopChannelShift"/> going out and back coming in, and which sets
+/// <see cref="ArdopChannelBridge"/> going out and back coming in, and which sets
 /// <c>TransmitInhibit</c> to the engine's <c>IsConnected || IsPending</c>. The channel keeps its
 /// shipped CSMA parameters, so ARDOP's bursts contend for the channel exactly as they do on air.
 /// The only substitution is the sound card, and it is substituted faithfully: transmission is
@@ -49,10 +49,9 @@ namespace Packet.SoundModem.Tests.Ardop;
 /// </remarks>
 public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
 {
+    /// <summary>ARDOP's engine rate. The channel may run wider (the 48 kHz case), in which case
+    /// the bridge resamples either side of the TNC exactly as the daemon does.</summary>
     private const int SampleRate = 12000;
-
-    /// <summary>The 20 ms block the daemon captures and plays in.</summary>
-    private const int BlockSamples = SampleRate / 50;
 
     private const int BlockMs = 20;
 
@@ -73,15 +72,17 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
     /// </summary>
     private sealed class PacedSink(int sampleRate, Action<float[]> onBlock) : IAudioOutput, IPttControl
     {
+        private readonly int _blockSamples = sampleRate * BlockMs / 1000;
+
         public int SampleRate => sampleRate;
 
         public void Write(ReadOnlySpan<float> samples)
         {
             var elapsed = Stopwatch.StartNew();
             long played = 0;
-            for (int i = 0; i < samples.Length; i += BlockSamples)
+            for (int i = 0; i < samples.Length; i += _blockSamples)
             {
-                int count = Math.Min(BlockSamples, samples.Length - i);
+                int count = Math.Min(_blockSamples, samples.Length - i);
                 onBlock(samples.Slice(i, count).ToArray());
                 played += count;
                 int wait = (int)((played * 1000 / sampleRate) - elapsed.ElapsedMilliseconds);
@@ -109,20 +110,20 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
     /// daemon wires them.</summary>
     private sealed class Station : IAsyncDisposable
     {
-        private readonly ArdopChannelShift _shift;
+        private readonly ArdopChannelBridge _shift;
         private readonly Task _transmitter;
         private readonly Task _poll;
         private readonly CancellationTokenSource _stopTransmitter = new();
         private readonly CancellationTokenSource _stopPoll = new();
         private readonly Queue<float[]> _inbound = new();
 
-        public Station(string call, double? centreHz, int csmaSeed, Action<float[]> onBlock)
+        public Station(string call, double? centreHz, int channelRate, int csmaSeed, Action<float[]> onBlock)
         {
             Call = call;
             // Independent p-persistence seeds: two real stations do not roll in lock step, and
             // sharing a seed here made them collide in step.
-            Channel = new SoundModemChannel(SampleRate, randomSeed: csmaSeed);
-            Channel.AddModem(PacketSubChannel, sink => ModemCatalog.Create("afsk1200", SampleRate, sink));
+            Channel = new SoundModemChannel(channelRate, randomSeed: csmaSeed);
+            Channel.AddModem(PacketSubChannel, sink => ModemCatalog.Create("afsk1200", channelRate, sink));
             Channel.FrameReceived += (_, frame) =>
             {
                 lock (PacketFrames)
@@ -131,7 +132,7 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
                 }
             };
 
-            _shift = ArdopChannelShift.For(centreHz, SampleRate);
+            _shift = ArdopChannelBridge.For(centreHz, SampleRate, channelRate);
             Tnc = new ArdopHostTnc(captureDevice: "bench", playbackDevice: "bench")
             {
                 // Program.cs's transmitter: ARDOP's own bursts bypass the inhibit they set.
@@ -171,7 +172,7 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
             };
 
             _transmitter = Channel.RunTransmitterAsync(
-                new PacedSink(SampleRate, onBlock), new PacedSink(SampleRate, onBlock), _stopTransmitter.Token);
+                new PacedSink(channelRate, onBlock), new PacedSink(channelRate, onBlock), _stopTransmitter.Token);
             _poll = PollAsync(_stopPoll.Token);
         }
 
@@ -306,11 +307,14 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _capture;
 
-        public Bench(double? centreHz)
+        private readonly int _channelRate;
+
+        public Bench(double? centreHz, int channelRate)
         {
+            _channelRate = channelRate;
             Station[] stations = new Station[2];
-            stations[0] = new Station("M0AAA", centreHz, 11, block => stations[1].Deliver(block));
-            stations[1] = new Station("G8BBB", centreHz, 29, block => stations[0].Deliver(block));
+            stations[0] = new Station("M0AAA", centreHz, channelRate, 11, block => stations[1].Deliver(block));
+            stations[1] = new Station("G8BBB", centreHz, channelRate, 29, block => stations[0].Deliver(block));
             _stations = stations;
             _capture = CaptureAsync(_stop.Token);
         }
@@ -327,7 +331,7 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
         private async Task CaptureAsync(CancellationToken cancellation)
         {
             var elapsed = Stopwatch.StartNew();
-            var quiet = new float[BlockSamples];
+            var quiet = new float[_channelRate * BlockMs / 1000];
             long delivered = 0;
             try
             {
@@ -403,9 +407,13 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
     [Theory]
     // The control: ARDOP's own centre, nothing in the path but a pass-through. If this fails too,
     // the bench is at fault rather than the shift.
-    [InlineData(null)]
-    [InlineData(ShiftedCentreHz)]
-    public async Task An_Arq_Session_Carries_Data_Both_Ways_And_Holds_Packet_Traffic_Until_It_Ends(double? centreHz)
+    [InlineData(null, SampleRate)]
+    [InlineData(ShiftedCentreHz, SampleRate)]
+    // The 48 kHz channel: the bridge resampling either side of the TNC, shifted, exactly the
+    // wiring a station sharing its channel with an ms110d/freedv modem gets.
+    [InlineData(ShiftedCentreHz, 48000)]
+    public async Task An_Arq_Session_Carries_Data_Both_Ways_And_Holds_Packet_Traffic_Until_It_Ends(
+        double? centreHz, int channelRate)
     {
         // Opt-in: this bench is timing-sensitive and currently flaky - measured 2 of 4 runs
         // failing on 2026-08-02, against 6 of 7 green when it was written. The failures are
@@ -425,7 +433,7 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
             Environment.GetEnvironmentVariable("ARDOP_SESSION_BENCH") == "1",
             "set ARDOP_SESSION_BENCH=1 for the pdn-to-pdn ARQ session bench (slow, timing-sensitive)");
 
-        await using var bench = new Bench(centreHz);
+        await using var bench = new Bench(centreHz, channelRate);
         bench.Caller.Configure(listen: false);
         bench.Listener.Configure(listen: true);
 
@@ -476,7 +484,8 @@ public class ArdopSharedChannelSessionTests(ITestOutputHelper output)
         bench.Listener.FirstPacketFrame().Should().Equal(PacketFrame(), "and arrive intact at the far station");
 
         output.WriteLine(
-            $"centre {centreHz?.ToString("F0") ?? "1500 (native)"} Hz: connected at {sessionBandwidth} Hz, "
+            $"centre {centreHz?.ToString("F0") ?? "1500 (native)"} Hz, channel {channelRate} Hz: "
+            + $"connected at {sessionBandwidth} Hz, "
             + $"{outbound.Length} bytes out and {inbound.Length} back, both byte-exact; a packet frame "
             + "offered mid-session waited the session out and was decoded at the far station after it; "
             + "orderly disconnect.");

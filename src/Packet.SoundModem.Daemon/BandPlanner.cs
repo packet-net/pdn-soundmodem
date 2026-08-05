@@ -15,7 +15,7 @@ namespace Packet.SoundModem.Daemon;
 internal static class BandPlanner
 {
     /// <summary>ARDOP's widest negotiable session, and so what it must be planned for by default.</summary>
-    private const double ArdopWidestHz = ArdopChannelShift.WidestBandwidthHz;
+    private const double ArdopWidestHz = ArdopChannelBridge.WidestBandwidthHz;
 
     /// <summary>
     /// Plans <paramref name="modems"/>, mutating each entry's <see cref="ModemConfig.Frequency"/>

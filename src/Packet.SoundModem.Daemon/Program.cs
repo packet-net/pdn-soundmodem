@@ -378,18 +378,10 @@ if (modems.Count == 0)
     modems.Add(new ModemConfig());
 }
 
-// ARDOP's engine is native 12 kHz, so it cannot share a channel with the 48 kHz families.
+// ARDOP's engine is native 12 kHz; on a 48 kHz channel (any fsk9600/c4fsk/freedv/ms110d
+// modem present) ArdopChannelBridge decimates its receive audio down and upsamples its
+// bursts back up, so it shares the channel either way.
 int DspRate = modems.Any(m => ModemCatalog.DspRateFor(m.Mode) == 48000) ? 48000 : 12000;
-if (ardopModem is not null && DspRate != M0LTE.Ardop.ArdopModulator.SampleRate)
-{
-    string wideband = string.Join(", ", modems
-        .Where(m => ModemCatalog.DspRateFor(m.Mode) == 48000).Select(m => m.Mode).Distinct());
-    Console.Error.WriteLine(
-        $"ardop needs a {M0LTE.Ardop.ArdopModulator.SampleRate} Hz channel, but {wideband} "
-        + "runs at 48000 Hz. ARDOP can share a channel with the 12 kHz modes (afsk*, bpsk*, "
-        + "qpsk*) but not with the 9600/c4fsk/freedv/ms110d families.");
-    return 2;
-}
 
 // A FlexRadio provides its own DAX sample clock (24/48 kHz auto-picked from the DSP rate), and
 // an UberSDR its own 48 kHz IQ clock, so --capture-rate (an ALSA concept) does not apply to
@@ -776,9 +768,9 @@ if (waterfallConfig is not null)
             DeclaredBands = [.. modems.Select(m => new DeclaredBand(
                 m.SubChannel,
                 DaemonConfig.IsArdop(m.Mode) ? "ardop" : m.Mode,
-                m.Frequency ?? (DaemonConfig.IsArdop(m.Mode) ? ArdopChannelShift.NativeCentreHz : 0),
+                m.Frequency ?? (DaemonConfig.IsArdop(m.Mode) ? ArdopChannelBridge.NativeCentreHz : 0),
                 DaemonConfig.IsArdop(m.Mode)
-                    ? m.Bandwidth ?? ArdopChannelShift.WidestBandwidthHz
+                    ? m.Bandwidth ?? ArdopChannelBridge.WidestBandwidthHz
                     : null))],
             // The decoded-frames panel opens on what the station has already written down, so a
             // browser arriving mid-afternoon is shown the channel rather than an empty list. Null
@@ -832,8 +824,8 @@ if (surveyConfig is not null)
     // nobody was listening to - which is the opposite of true.
     foreach (ModemConfig ardop in modems.Where(m => DaemonConfig.IsArdop(m.Mode)))
     {
-        double centre = ardop.Frequency ?? ArdopChannelShift.NativeCentreHz;
-        double half = (ardop.Bandwidth ?? ArdopChannelShift.WidestBandwidthHz) / 2;
+        double centre = ardop.Frequency ?? ArdopChannelBridge.NativeCentreHz;
+        double half = (ardop.Bandwidth ?? ArdopChannelBridge.WidestBandwidthHz) / 2;
         surveyBands.Add(new ModemBand(ardop.SubChannel, "ardop", centre - half, centre + half, centre));
     }
 
@@ -1156,8 +1148,11 @@ if (ardopModem is not null)
     // Bind the M0LTE.Ardop TNC to this daemon's channel: transmit bursts through the
     // channel-access path, receive audio via a channel tap (the old ForChannel glue,
     // now that the package is audio-device-agnostic).
+    // The engine rate, not the channel rate: the centre shift runs at the engine rate however
+    // wide the channel is, so its Nyquist is the bound that matters.
     if (ardopModem.Frequency is double ardopCentre
-        && ArdopChannelShift.Concern(ardopCentre, DspRate) is string ardopConcern)
+        && ArdopChannelBridge.Concern(ardopCentre, M0LTE.Ardop.ArdopModulator.SampleRate)
+            is string ardopConcern)
     {
         Console.Error.WriteLine($"ardop: WARNING - {ardopConcern}");
     }
@@ -1171,7 +1166,8 @@ if (ardopModem is not null)
             + "other stations' sessions - is still drawn and written down.");
     }
 
-    var ardopShift = ArdopChannelShift.For(ardopModem.Frequency, DspRate);
+    var ardopShift = ArdopChannelBridge.For(
+        ardopModem.Frequency, M0LTE.Ardop.ArdopModulator.SampleRate, DspRate);
     var ardopTnc = new M0LTE.Ardop.Host.ArdopHostTnc(captureDevice: device, playbackDevice: device)
     {
         // Awaited rather than fire-and-forget: the TNC's transmit worker does not survive an
@@ -1219,7 +1215,7 @@ if (ardopModem is not null)
     if (waterfallServer is not null || frameLog is not null || survey is not null)
     {
         int ardopSub = ardopModem.SubChannel;
-        double? ardopAudioHz = ardopModem.Frequency ?? ArdopChannelShift.NativeCentreHz;
+        double? ardopAudioHz = ardopModem.Frequency ?? ArdopChannelBridge.NativeCentreHz;
         double? ardopRfHz = ardopModem.RfFrequency;
         ardopTnc.FrameDecoded += frame =>
         {
@@ -1283,7 +1279,9 @@ await using var pagingLifetime = pagingServer;
 // (--device ubersdr:…, receive only), or an ALSA card. Each surfaces through the same
 // IAudioInput/IAudioOutput/IPttControl the channel already speaks, so KISS packet, POCSAG
 // paging and ARDOP all get every transport for free.
-int flexPacketBuffer = ardopPort is null ? 3 : 6;
+// Keyed off the modem entry, not the legacy --ardop flag: a station configuring ARDOP the
+// documented way (a "mode": "ardop" modem entry) wants the deeper buffer just as much.
+int flexPacketBuffer = ardopModem is null ? 3 : 6;
 FlexRuntime? flex = null;
 UberSdrAudioInput? uberSdr = null;
 IPttControl ptt;
@@ -1578,7 +1576,7 @@ else
             : new UpsamplingAudioOutput(alsaPlayback, DspRate);
         // Receive: capture at the card-native rate; ARDOP buffers more deeply (500 ms vs the
         // 120 ms default) to ride out device hiccups (snd-aloop re-locking mid-frame).
-            var alsaInput = new AlsaAudioInput(device, captureRate, ardopPort is null ? 120_000 : 500_000);
+            var alsaInput = new AlsaAudioInput(device, captureRate, ardopModem is null ? 120_000 : 500_000);
         alsaIn = alsaInput;
         input = alsaInput;
     }
@@ -1605,7 +1603,7 @@ var rxDecimator = inputRate == DspRate ? null : new Decimator(inputRate, inputRa
 
 // 100 ms RX blocks for the packet modes; 20 ms when ARDOP runs - its ARQ timing budgets
 // (IRS ACK inside the ISS repeat window) want RX latency low.
-int blockSamples = ardopPort is null ? inputRate / 10 : inputRate / 50;
+int blockSamples = ardopModem is null ? inputRate / 10 : inputRate / 50;
 var floatBuffer = new float[blockSamples];
 var dspBuffer = new float[rxDecimator?.MaxOutput(blockSamples) ?? blockSamples];
 var xrunWatch = new XrunWatch();

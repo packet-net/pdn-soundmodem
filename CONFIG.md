@@ -834,9 +834,12 @@ connecting, packet transmissions are **held** - queued, not discarded. A frame h
 host will have retried long before a Winlink session ends. Receive is unaffected throughout:
 every modem and ARDOP hear the channel simultaneously.
 
-**ARDOP is 12 kHz.** It can share a channel with the other 12 kHz modes (`afsk*`, `bpsk*`,
-`qpsk*`) but not with the 48 kHz families (`fsk9600`, `c4fsk*`, `freedv-*`, `ms110d-*`);
-configuring both is rejected at start-up naming the offending modes.
+**ARDOP shares any channel.** Its engine is native 12 kHz, and on a 12 kHz channel (only
+`afsk*`/`bpsk*`/`qpsk*` alongside it) that is the end of it. When a 48 kHz mode (`fsk9600`,
+`c4fsk*`, `freedv-*`, `ms110d-*`) puts the whole channel at 48 kHz, the daemon bridges: ARDOP's
+receive audio is decimated down to 12 kHz and its bursts upsampled back, outside the TNC, which
+never knows. The start-up line says when this is happening
+(`engine 12000 Hz bridged to the 48000 Hz channel`).
 
 One ARDOP TNC per channel - it is a whole virtual TNC, not a demodulator you can run twice.
 
