@@ -66,8 +66,8 @@ internal static class TransmitFilterPlan
             // Nothing to modulate a probe frame through - the engine is a whole TNC and its
             // width is a per-session negotiation. Plan for the cap, or for the widest it can ask
             // for, exactly as BandPlanner does.
-            double centre = modem.Frequency ?? ArdopChannelShift.NativeCentreHz;
-            double half = (modem.Bandwidth ?? ArdopChannelShift.WidestBandwidthHz) / 2;
+            double centre = modem.Frequency ?? ArdopChannelBridge.NativeCentreHz;
+            double half = (modem.Bandwidth ?? ArdopChannelBridge.WidestBandwidthHz) / 2;
             band = new Band(modem.SubChannel, modem.Mode, centre - half, centre + half);
             return true;
         }

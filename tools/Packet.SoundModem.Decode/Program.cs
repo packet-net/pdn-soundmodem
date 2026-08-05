@@ -161,7 +161,7 @@ static int DecodeArdop(float[] audio, int sampleRate, double? centreHz, bool qui
         return 2;
     }
 
-    // 1500 Hz is measured rather than assumed - see ArdopChannelShift, which does the same job
+    // 1500 Hz is measured rather than assumed - see ArdopChannelBridge, which does the same job
     // on the live channel and whose constant ArdopCentreFrequencyTests re-measures.
     const double nativeCentreHz = 1500.0;
     if (centreHz is double centre && centre != nativeCentreHz)
