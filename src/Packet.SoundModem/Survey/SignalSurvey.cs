@@ -196,7 +196,16 @@ public sealed class SignalSurvey : IDisposable
     /// from one the station failed to read. A frame whose AX.25 addresses will not parse is noted
     /// as such, and its bytes travel with the capture.
     /// </summary>
-    public void NoteDecode(int subChannel, ReadOnlySpan<byte> frame, Modems.FrameQuality quality)
+    /// <param name="subChannel">The modem that decoded it.</param>
+    /// <param name="frame">The decoded frame.</param>
+    /// <param name="quality">The modem's own report of the decode.</param>
+    /// <param name="ax25">Whether the frame is AX.25 at all. False for a waveform that carries
+    /// something else - ARDOP's are Winlink sessions and ID frames, not AX.25 - where asking
+    /// whether the first fourteen bytes are shifted callsigns is a question about a different
+    /// protocol, and a complaint that they are not would file a perfectly good decode under
+    /// "unattributed". Such a frame is simply one the station read.</param>
+    public void NoteDecode(
+        int subChannel, ReadOnlySpan<byte> frame, Modems.FrameQuality quality, bool ax25 = true)
     {
         if (_lastLine < 0)
         {
@@ -208,7 +217,7 @@ public sealed class SignalSurvey : IDisposable
         // noticed. A frame that decoded and then would not yield callsigns has already passed
         // Reed-Solomon and the trailing CRC - the bits are right and the reading of them is not,
         // which is the whole diagnosis and is lost by the time anyone opens the file.
-        string? note = Waterfall.Ax25AttributionNote.For(frame);
+        string? note = ax25 ? Waterfall.Ax25AttributionNote.For(frame) : null;
         _decodes.Add(new Decode(
             _lastLine,
             subChannel,

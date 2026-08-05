@@ -1185,7 +1185,13 @@ if (ardopModem is not null)
     // bursts paint, but nothing it hears is ever listed. M0LTE.Ardop 0.3.0 raises every frame
     // the demodulator recovers, including other stations' sessions and failed decodes, which is
     // what a monitor wants: "someone transmitted and we could not read them" is information.
-    if (waterfallServer is not null || frameLog is not null)
+    // The survey listens on the same event and for the same reason. It judges a burst against
+    // what the station read, and it learns that from NoteDecode on the channel's decode event -
+    // which ARDOP does not raise either. Without this, every ARDOP transmission the station
+    // successfully copies is still filed as a burst inside a configured band that nothing
+    // decoded: "missed". On the live 40 m station that was 15 of 33 misses, the whole ARDOP
+    // slot reading as a modem that does not work.
+    if (waterfallServer is not null || frameLog is not null || survey is not null)
     {
         int ardopSub = ardopModem.SubChannel;
         double? ardopAudioHz = ardopModem.Frequency ?? ArdopChannelShift.NativeCentreHz;
@@ -1201,15 +1207,21 @@ if (ardopModem is not null)
             waterfallServer?.ReportFrame(
                 ardopSub, frame.Name, from, to, data.Length, frame.SnDb, frame.Ok);
 
+            var quality = new FrameQuality(
+                "ardop", data.Length, CorrectedBytes: null, CrcValid: frame.Ok,
+                FrequencyOffsetHz: null, EmphasisDb: null);
+
             frameLog?.Record(
-                ardopSub,
-                data,
-                new FrameQuality(
-                    "ardop", data.Length, CorrectedBytes: null, CrcValid: frame.Ok,
-                    FrequencyOffsetHz: null, EmphasisDb: null),
-                ardopAudioHz,
-                ardopRfHz,
+                ardopSub, data, quality, ardopAudioHz, ardopRfHz,
                 modeName: $"ARDOP {frame.Name}");
+
+            // Only a frame that actually decoded says the station read the burst. A failed
+            // decode is exactly the case the survey exists to catch, and telling it otherwise
+            // would hide the one thing worth capturing in this band.
+            if (frame.Ok)
+            {
+                survey?.NoteDecode(ardopSub, data, quality, ax25: false);
+            }
         };
     }
 

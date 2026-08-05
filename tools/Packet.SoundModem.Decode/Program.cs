@@ -8,16 +8,22 @@ using Packet.SoundModem.Modems;
 // for corpus benchmarking and cross-validation against other modems.
 //
 //   sm-decode <file.wav> [afsk1200|bpsk300|bpsk1200|qpsk600|qpsk2400|qpsk3600|
-//                         fsk9600|fsk9600-il2p|fsk4800|fsk4800-il2p] [--il2p] [--crc] [--quiet]
+//                         fsk9600|fsk9600-il2p|fsk4800|fsk4800-il2p|ardop]
+//                        [--il2p] [--crc] [--centre HZ] [--quiet]
 //
 // afsk1200 (default): classic AX.25 (NRZI + HDLC), or IL2P-over-AFSK with --il2p
 // (per the IL2P symbol map AFSK carries raw bits - no NRZI - mark = '1').
 // The bpsk/qpsk modes imply IL2P; pass --crc for the IL2P+CRC (NinoTNC) variants.
+// ardop reports what the ARDOP demodulator recovers rather than AX.25 frames, which is what
+// answers "was that burst in the ARDOP slot ARDOP?" about a signal survey capture. ARDOP's
+// waveforms are pinned to a 1500 Hz centre, so --centre says where the signal actually sits
+// and the audio is mixed from there down to 1500 before the demodulator sees it.
 // Prints one line per decoded frame and a final count.
 
 if (args.Length < 1)
 {
-    Console.Error.WriteLine("usage: sm-decode <file.wav> [afsk1200|bpsk300] [--il2p] [--crc] [--quiet]");
+    Console.Error.WriteLine(
+        "usage: sm-decode <file.wav> [afsk1200|bpsk300|ardop] [--il2p] [--crc] [--centre HZ] [--quiet]");
     return 2;
 }
 
@@ -30,7 +36,31 @@ bool crc = args.Contains("--crc");
 bool fx25 = args.Contains("--fx25");
 bool quiet = args.Contains("--quiet");
 
+double? centreHz = null;
+int centreAt = Array.IndexOf(args, "--centre");
+if (centreAt >= 0)
+{
+    if (centreAt + 1 >= args.Length || !double.TryParse(args[centreAt + 1], out double parsed))
+    {
+        Console.Error.WriteLine("--centre needs a frequency in Hz");
+        return 2;
+    }
+
+    centreHz = parsed;
+}
+
 var (samples, sampleRate) = WavFile.ReadMono(path);
+
+if (mode == "ardop")
+{
+    return DecodeArdop(samples, sampleRate, centreHz, quiet);
+}
+
+if (centreHz is not null)
+{
+    Console.Error.WriteLine("--centre is only implemented for ardop");
+    return 2;
+}
 
 // Flush tail: a file can end flush with the last closing flag, which would otherwise be
 // stranded inside the demodulator's FIR pipeline (a live stream never "ends").
@@ -118,6 +148,50 @@ switch (mode)
 
 Console.WriteLine($"{count} frames decoded from {Path.GetFileName(path)} ({mode}{(il2p ? " il2p" : "")})");
 return 0;
+
+// ARDOP decodes frames itself rather than handing up a bit stream, and what it recovers is not
+// AX.25, so it does not fit the deframer plumbing above and reports its own shape: the frame
+// type ARDOP names, whether it passed, and the SN the demodulator measured.
+static int DecodeArdop(float[] audio, int sampleRate, double? centreHz, bool quiet)
+{
+    if (sampleRate != M0LTE.Ardop.ArdopModulator.SampleRate)
+    {
+        Console.Error.WriteLine(
+            $"ardop needs {M0LTE.Ardop.ArdopModulator.SampleRate} Hz audio, this file is {sampleRate} Hz");
+        return 2;
+    }
+
+    // 1500 Hz is measured rather than assumed - see ArdopChannelShift, which does the same job
+    // on the live channel and whose constant ArdopCentreFrequencyTests re-measures.
+    const double nativeCentreHz = 1500.0;
+    if (centreHz is double centre && centre != nativeCentreHz)
+    {
+        var shifted = new float[audio.Length];
+        new M0LTE.Dsp.FrequencyShifter(sampleRate, nativeCentreHz - centre).Process(audio, shifted);
+        audio = shifted;
+    }
+
+    int decoded = 0;
+    var demodulator = new M0LTE.Ardop.ArdopDemodulator();
+    demodulator.FrameDecoded += frame =>
+    {
+        decoded++;
+        if (quiet)
+        {
+            return;
+        }
+
+        string from = string.IsNullOrWhiteSpace(frame.Caller) ? "" : $" {frame.Caller}";
+        string to = string.IsNullOrWhiteSpace(frame.Target) ? "" : $">{frame.Target}";
+        Console.WriteLine(
+            $"[{decoded}] {frame.Name}{from}{to} {(frame.Ok ? "ok" : "FAILED")} "
+            + $"{frame.SnDb:F1} dB, {(frame.Data?.Length ?? 0)} B");
+    };
+
+    demodulator.ProcessSamples(audio);
+    Console.WriteLine($"{decoded} ardop frames recovered");
+    return 0;
+}
 
 internal static class Monitor
 {

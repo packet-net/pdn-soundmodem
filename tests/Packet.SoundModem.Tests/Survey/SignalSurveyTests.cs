@@ -165,6 +165,23 @@ public class SignalSurveyTests : IDisposable
     }
 
     [Fact]
+    public void A_Decode_From_A_Waveform_That_Is_Not_Ax25_Is_A_Frame_The_Station_Read()
+    {
+        // ARDOP carries Winlink sessions and ID frames, not AX.25, so running its payload past
+        // the address parser asks a question about a different protocol - and the parser's "byte
+        // 0 is not a shifted callsign character" would file a perfectly good decode as
+        // unattributed and capture it. Worse than noise in the directory: it would say the ARDOP
+        // modem cannot read anything, on a station where it is working.
+        var survey = new SignalSurvey(Options(), Bands, SampleRate, BinWidthHz, LinesPerSecond, LineLength);
+        byte[] session = [0x02, 0x40, 0x1F, .. "FC EM ARQ"u8.ToArray()];
+        Play(survey, 1300, 1700, burstLines: 60, atBurstEnd: _ =>
+            survey.NoteDecode(1, session, Quality("ardop"), ax25: false));
+        Settle(survey);
+
+        Captures().Should().BeEmpty("the station read it, whatever protocol it was carrying");
+    }
+
+    [Fact]
     public void A_Frame_That_Decoded_Without_Readable_Callsigns_Is_Captured_With_Its_Bytes()
     {
         // The operator's other sighting: "unattributed · 2·bpsk300-il2pc-multi9 · 118 B". The
