@@ -59,10 +59,15 @@ public sealed class BpskMultiModem : IModem
     /// <param name="offsetHz">Frequency step between adjacent branches; defaults to baud/40,
     /// sized to the single-branch offset tolerance.</param>
     /// <param name="detector">Differential (default) or coherent detection.</param>
+    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
+    /// trailing CRC (off by default, and inert unless <paramref name="crc"/> is on) - see
+    /// <see cref="Il2pReceiver"/>. Every branch reads both ways; the bank's content dedupe is
+    /// what keeps a transmission two branches read differently to one delivery.</param>
     public BpskMultiModem(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
         double centreFrequency = 1500, int baud = 300, int offsetPairs = 4,
-        double? offsetHz = null, PskDetector detector = PskDetector.Differential)
+        double? offsetHz = null, PskDetector detector = PskDetector.Differential,
+        bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         ArgumentOutOfRangeException.ThrowIfNegative(offsetPairs);
@@ -84,7 +89,8 @@ public sealed class BpskMultiModem : IModem
             // Drive everything off FrameDecoded (which carries the CRC/FEC quality); the required
             // frame sink is a no-op so each decode reaches the deduper exactly once.
             _branches[i] = new BpskModem(
-                sampleRate, static _ => { }, crc, centreFrequency + offset, baud, detector: detector);
+                sampleRate, static _ => { }, crc, centreFrequency + offset, baud, detector: detector,
+                acceptPlainIl2p: acceptPlainIl2p);
             _branches[i].FrameDecoded += (frame, quality) => OnFrame(frame, offset, quality);
         }
 

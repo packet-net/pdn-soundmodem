@@ -82,11 +82,16 @@ public sealed class Afsk300Modem : IModem
     /// range - see the constant above; <see cref="Afsk300MultiModem"/> passes 250 here.</param>
     /// <param name="lowPassCutoff">Receive I/Q low-pass cutoff, paired with
     /// <paramref name="bandPassHalfWidth"/>.</param>
+    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
+    /// trailing CRC (off by default, and inert unless <paramref name="framing"/> is
+    /// <see cref="Afsk300Framing.Il2pCrc"/>) - see <see cref="Il2pReceiver"/> for what that buys
+    /// and what it costs.</param>
     public Afsk300Modem(
         int sampleRate, Action<byte[]> frameReceived, Afsk300Framing framing = Afsk300Framing.Il2pCrc,
         double centerFrequency = 1700,
         double bandPassHalfWidth = DefaultBandPassHalfWidth,
-        double lowPassCutoff = DefaultLowPassCutoff)
+        double lowPassCutoff = DefaultLowPassCutoff,
+        bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _framing = framing;
@@ -115,7 +120,7 @@ public sealed class Afsk300Modem : IModem
         }
         else
         {
-            var deframer = new Il2pDeframer(
+            var deframer = new Il2pReceiver(
                 (frame, info) =>
                 {
                     frameReceived(frame);
@@ -124,7 +129,7 @@ public sealed class Afsk300Modem : IModem
                         HeaderType: info.HeaderType,
                         FrequencyOffsetHz: demodulator!.CarrierOffsetHz));
                 },
-                crcMode: framing == Afsk300Framing.Il2pCrc);
+                crcMode: framing == Afsk300Framing.Il2pCrc, acceptPlainIl2p: acceptPlainIl2p);
             // Reset the deframer on the DCD falling edge - same rationale as BpskModem:
             // a carrier that drops mid-collection leaves the deframer consuming the next
             // transmission's sync word as phantom payload.

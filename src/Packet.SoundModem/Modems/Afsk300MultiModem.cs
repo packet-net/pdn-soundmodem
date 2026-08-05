@@ -63,13 +63,19 @@ public sealed class Afsk300MultiModem : IModem
     /// <param name="offsetHz">Frequency step between adjacent branches. The default 35 Hz
     /// keeps the worst-case residual (half a step) well inside a tight branch's measured
     /// ~±35 Hz range.</param>
+    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
+    /// trailing CRC (off by default, and inert unless <paramref name="framing"/> is
+    /// <see cref="Afsk300Framing.Il2pCrc"/>) - see <see cref="Il2pReceiver"/>. Every branch reads
+    /// both ways; the bank's content dedupe is what keeps a transmission two branches read
+    /// differently to one delivery.</param>
     public Afsk300MultiModem(
         int sampleRate,
         Action<byte[]> frameReceived,
         Afsk300Framing framing = Afsk300Framing.Il2pCrc,
         double centerFrequency = 1700,
         int offsetPairs = 5,
-        double? offsetHz = null)
+        double? offsetHz = null,
+        bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         ArgumentOutOfRangeException.ThrowIfNegative(offsetPairs);
@@ -91,7 +97,8 @@ public sealed class Afsk300MultiModem : IModem
             // required frame sink is a no-op so each decode reaches the deduper exactly once.
             _branches[i] = new Afsk300Modem(
                 sampleRate, static _ => { }, framing, centerFrequency + offset,
-                bandPassHalfWidth: BranchFilterHz, lowPassCutoff: BranchFilterHz);
+                bandPassHalfWidth: BranchFilterHz, lowPassCutoff: BranchFilterHz,
+                acceptPlainIl2p: acceptPlainIl2p);
             _branches[i].FrameDecoded += (frame, quality) => OnFrame(frame, offset, quality);
         }
 

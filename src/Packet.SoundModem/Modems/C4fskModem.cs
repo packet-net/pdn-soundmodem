@@ -31,7 +31,7 @@ public sealed class C4fskModem : IModem
     private readonly int _symbolRate;
     private readonly bool _crc;
     private readonly FirFilter _rxFilter;
-    private readonly Il2pDeframer _deframer;
+    private readonly Il2pReceiver _deframer;
     private readonly PacketDcd _packetDcd = new();
     private readonly EnergyBusyDetector _energyBusy;
     private readonly int _upsample;
@@ -94,7 +94,12 @@ public sealed class C4fskModem : IModem
     /// <param name="frameReceived">Receives each decoded AX.25 frame.</param>
     /// <param name="symbolRate">4800 (mode 3, 9600 bps) or 9600 (mode 1, 19200 bps).</param>
     /// <param name="crc">IL2P+CRC (both NinoTNC C4FSK modes run CRC).</param>
-    public C4fskModem(int sampleRate, Action<byte[]> frameReceived, int symbolRate = 4800, bool crc = true)
+    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
+    /// trailing CRC (off by default, and inert unless <paramref name="crc"/> is on) - see
+    /// <see cref="Il2pReceiver"/> for what that buys and what it costs.</param>
+    public C4fskModem(
+        int sampleRate, Action<byte[]> frameReceived, int symbolRate = 4800, bool crc = true,
+        bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(symbolRate, 0);
@@ -113,7 +118,7 @@ public sealed class C4fskModem : IModem
         _rxFilter = new FirFilter(FilterDesign.LowPass(1.5 * symbolRate, sampleRate, 48 * sampleRate / 48000));
         _energyBusy = new EnergyBusyDetector(sampleRate);
 
-        _deframer = new Il2pDeframer(
+        _deframer = new Il2pReceiver(
             (frame, info) =>
             {
                 frameReceived(frame);
@@ -121,7 +126,7 @@ public sealed class C4fskModem : IModem
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                     HeaderType: info.HeaderType));
             },
-            crcMode: crc, syncWord: SyncWord);
+            crcMode: crc, acceptPlainIl2p: acceptPlainIl2p, syncWord: SyncWord);
 
         _upsample = sampleRate / symbolRate < 8 ? 2 : 1;
         _clockIncrement = (double)symbolRate / (sampleRate * _upsample);
@@ -129,12 +134,14 @@ public sealed class C4fskModem : IModem
     }
 
     /// <summary>Creates the 9600 bps mode - NinoTNC mode 3 (4800 sym/s, 10 kHz OBW).</summary>
-    public static C4fskModem C4fsk9600(int sampleRate, Action<byte[]> frameReceived) =>
-        new(sampleRate, frameReceived, 4800);
+    public static C4fskModem C4fsk9600(
+        int sampleRate, Action<byte[]> frameReceived, bool acceptPlainIl2p = false) =>
+        new(sampleRate, frameReceived, 4800, acceptPlainIl2p: acceptPlainIl2p);
 
     /// <summary>Creates the 19200 bps mode - NinoTNC mode 1 (9600 sym/s, 20 kHz OBW).</summary>
-    public static C4fskModem C4fsk19200(int sampleRate, Action<byte[]> frameReceived) =>
-        new(sampleRate, frameReceived, 9600);
+    public static C4fskModem C4fsk19200(
+        int sampleRate, Action<byte[]> frameReceived, bool acceptPlainIl2p = false) =>
+        new(sampleRate, frameReceived, 9600, acceptPlainIl2p: acceptPlainIl2p);
 
     /// <inheritdoc />
     public event Action<byte[], FrameQuality>? FrameDecoded;

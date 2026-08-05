@@ -98,6 +98,64 @@ public class ModemCatalogTests
     }
 
     [Theory]
+    [MemberData(nameof(AllModes))]
+    public void RunsIl2pCrc_Agrees_With_The_Modem_The_Catalogue_Actually_Builds(string mode)
+    {
+        // Cross-checked against the modem rather than restating the switch: every IL2P modem that
+        // has both framings spells which one it is in its own Mode string, so that is an
+        // independent answer. freedv-*/ms110d-* have one framing each (IL2P+CRC) and do not spell
+        // it, and the AX.25/FX.25 modes carry no IL2P at all.
+        IModem modem = ModemCatalog.Create(mode, ModemCatalog.DspRateFor(mode), Sink);
+        bool expected = modem.Mode.Contains("-il2pc", StringComparison.Ordinal)
+            || mode.StartsWith("freedv-", StringComparison.Ordinal)
+            || mode.StartsWith("ms110d-", StringComparison.Ordinal);
+
+        ModemCatalog.RunsIl2pCrc(mode).Should().Be(
+            expected, "'{0}' builds a modem calling itself '{1}'", mode, modem.Mode);
+    }
+
+    [Theory]
+    [InlineData("afsk1200")]        // no IL2P at all
+    [InlineData("fsk9600")]         // classic HDLC despite being a NinoTNC mode
+    [InlineData("bpsk300-nocrc")]   // already reads plain IL2P
+    [InlineData("afsk300-il2p")]
+    [InlineData("afsk1200-il2p-nocrc")]
+    public void Create_Rejects_Plain_Il2p_Tolerance_On_A_Mode_With_No_Crc_To_Relax(string mode)
+    {
+        // Refused rather than ignored, on the same reasoning as the centre frequency above: the
+        // operator who asked for it believes their modem got more tolerant.
+        Action act = () => ModemCatalog.Create(
+            mode, ModemCatalog.DspRateFor(mode), Sink, new ModemOptions(AcceptPlainIl2p: true));
+        act.Should().Throw<ArgumentException>().WithMessage("*does not run IL2P+CRC*");
+    }
+
+    [Theory]
+    [InlineData("bpsk300")]
+    [InlineData("afsk300-il2pc")]
+    [InlineData("qpsk2400")]
+    [InlineData("fsk4800-il2p")]
+    [InlineData("c4fsk9600")]
+    [InlineData("freedv-datac0")]
+    [InlineData("ms110d-wn0")]
+    public void Create_Accepts_Plain_Il2p_Tolerance_On_An_Il2p_Crc_Mode(string mode)
+    {
+        Action act = () => ModemCatalog.Create(
+            mode, ModemCatalog.DspRateFor(mode), Sink, new ModemOptions(AcceptPlainIl2p: true));
+        act.Should().NotThrow();
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void Create_Leaves_Every_Mode_Alone_When_Plain_Il2p_Tolerance_Is_Not_Asked_For(string mode)
+    {
+        // The option is opt-in, so an unset one has to be buildable everywhere - including on the
+        // modes where asking for it would throw.
+        Action act = () => ModemCatalog.Create(
+            mode, ModemCatalog.DspRateFor(mode), Sink, new ModemOptions(AcceptPlainIl2p: null));
+        act.Should().NotThrow();
+    }
+
+    [Theory]
     [InlineData(0, "multi1")]  // 2·0+1 = 1 branch: a plain single modem
     [InlineData(2, "multi5")]  // 2·2+1 = 5 branches
     public void Create_Threads_OffsetPairs_Into_The_Bpsk_Bank(int offsetPairs, string expectedSuffix)
