@@ -42,8 +42,9 @@ public class SpectralBurstDetectorTests
         return (bursts, detector);
     }
 
-    /// <summary>Feeds enough quiet lines that a noise floor has been banked.</summary>
-    private static long Warm(SpectralBurstDetector detector, long from = 0, int lines = 60)
+    /// <summary>Feeds enough quiet lines that a noise floor has been seeded. Three seconds
+    /// rather than the two the seed takes, so a test is not sitting on the boundary.</summary>
+    private static long Warm(SpectralBurstDetector detector, long from = 0, int lines = 90)
     {
         byte[] quiet = Line();
         for (int i = 0; i < lines; i++)
@@ -249,6 +250,64 @@ public class SpectralBurstDetectorTests
         }
 
         bursts.Should().BeEmpty("nothing that straddles the gap is a measurement of anything");
+    }
+
+    [Fact]
+    public void A_Signal_Only_Just_Over_The_Noise_Is_Still_Found()
+    {
+        // The other half of the bargain. Tracking the floor up to the noise rather than down to
+        // its minimum raises the bar every signal has to clear, and a survey that answers the
+        // false positives by going deaf has not been fixed. Eight dB over the noise is two dB
+        // over the threshold and near the weakest thing worth calling a burst; it has to survive
+        // both the tracker and the five hundred lines of noise that preceded it.
+        (List<SurveyBurst> bursts, SpectralBurstDetector detector) = Detector();
+        long line = Warm(detector, lines: 500);
+
+        byte[] weak = Line(lowHz: 1300, highHz: 1700, signalDb: -62);
+        for (int i = 0; i < 2 * LinesPerSecond; i++)
+        {
+            detector.AddLine(line++, weak);
+        }
+
+        byte[] quiet = Line();
+        for (int i = 0; i < LinesPerSecond; i++)
+        {
+            detector.AddLine(line++, quiet);
+        }
+
+        SurveyBurst burst = bursts.Should().ContainSingle().Subject;
+        burst.CentreHz.Should().BeApproximately(1500, 25);
+        burst.PeakSnrDb.Should().BeApproximately(8, 2, "the floor is the noise, so the SNR is the truth");
+    }
+
+    [Fact]
+    public void Five_Minutes_Of_Nothing_But_Noise_Reports_Nothing()
+    {
+        // The station-side symptom this whole family of tests exists for is a survey directory
+        // filling up with captures of noise, so the flat-line case deserves a test with noise
+        // that behaves like noise rather than a constant. Power in one bin of one line is
+        // exponentially distributed (Rayleigh magnitude), which is a spread of about 5.6 dB -
+        // single bins go 6 dB over the mean about one line in fifty, and the width and duration
+        // gates are what have to turn that into silence.
+        (List<SurveyBurst> bursts, SpectralBurstDetector detector) = Detector();
+        var random = new Random(20260805);
+
+        byte ToByte(double db) => (byte)Math.Clamp(
+            (db - WaterfallSource.FloorDb) * (255 / -WaterfallSource.FloorDb), 0, 255);
+
+        var line = new byte[LineLength];
+        for (int i = 0; i < 300 * LinesPerSecond; i++)
+        {
+            for (int bin = 0; bin < LineLength; bin++)
+            {
+                // -70 dB mean, exponentially distributed about it.
+                line[bin] = ToByte(-70 + (10 * Math.Log10(-Math.Log(1 - random.NextDouble()))));
+            }
+
+            detector.AddLine(i, line);
+        }
+
+        bursts.Should().BeEmpty("noise is not a transmission, for as long as you care to watch it");
     }
 
     [Fact]
