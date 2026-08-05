@@ -63,11 +63,12 @@ public sealed class Afsk300MultiModem : IModem
     /// <param name="offsetHz">Frequency step between adjacent branches. The default 35 Hz
     /// keeps the worst-case residual (half a step) well inside a tight branch's measured
     /// ~±35 Hz range.</param>
-    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
-    /// trailing CRC (off by default, and inert unless <paramref name="framing"/> is
-    /// <see cref="Afsk300Framing.Il2pCrc"/>) - see <see cref="Il2pReceiver"/>. Every branch reads
-    /// both ways; the bank's content dedupe is what keeps a transmission two branches read
-    /// differently to one delivery.</param>
+    /// <param name="acceptPlainIl2p">Pass frames that arrive as plain IL2P, with no trailing CRC,
+    /// to <paramref name="frameReceived"/> as well as reporting them (off by default, and inert
+    /// unless <paramref name="framing"/> is <see cref="Afsk300Framing.Il2pCrc"/>). They are read
+    /// either way - see <see cref="Il2pReceiver"/>. Every branch reads both ways; the bank's
+    /// content dedupe is what keeps a transmission two branches read differently to one
+    /// delivery.</param>
     public Afsk300MultiModem(
         int sampleRate,
         Action<byte[]> frameReceived,
@@ -211,8 +212,7 @@ public sealed class Afsk300MultiModem : IModem
             Candidate best = _candidates[0];
             for (int i = 1; i < _candidates.Count; i++)
             {
-                if (IsSameFrame(_candidates[i].Frame, best.Frame)
-                    && Math.Abs(_candidates[i].ResidualHz) < Math.Abs(best.ResidualHz))
+                if (IsSameFrame(_candidates[i].Frame, best.Frame) && IsBetter(_candidates[i], best))
                 {
                     best = _candidates[i];
                 }
@@ -227,13 +227,22 @@ public sealed class Afsk300MultiModem : IModem
             }
 
             // Still deduped across chunks: a transmission straddling a chunk boundary reaches
-            // here twice, and the window is what stops the second copy being delivered.
-            if (!_deduper.ShouldEmit(best.Frame, _samplesProcessed))
+            // here twice, and the window is what stops the second copy being delivered. A copy
+            // that is only being shown says so, so that it cannot swallow the host's copy of a
+            // retransmission a second later - see FrameDeduper.
+            if (!_deduper.ShouldEmit(best.Frame, _samplesProcessed, !best.Quality.MonitorOnly))
             {
                 continue;
             }
 
-            _frameReceived(best.Frame);
+            // A monitor-only copy is reported and not handed on, exactly as a single branch would
+            // do with it. IsBetter has already preferred a deliverable copy where one of the
+            // branches produced one, so this asks the winner rather than the group.
+            if (!best.Quality.MonitorOnly)
+            {
+                _frameReceived(best.Frame);
+            }
+
             FrameDecoded?.Invoke(best.Frame, best.Quality with
             {
                 Mode = Mode,
@@ -241,6 +250,14 @@ public sealed class Afsk300MultiModem : IModem
             });
         }
     }
+
+    /// <summary>Ranks two branches' copies of the same frame: a copy the link's own reading
+    /// claimed beats one only the plain reading produced, and otherwise the better-centred branch
+    /// wins. See <see cref="BpskMultiModem"/> for why the delivery test comes first.</summary>
+    private static bool IsBetter(in Candidate candidate, in Candidate best) =>
+        candidate.Quality.MonitorOnly != best.Quality.MonitorOnly
+            ? !candidate.Quality.MonitorOnly
+            : Math.Abs(candidate.ResidualHz) < Math.Abs(best.ResidualHz);
 
     private static bool IsSameFrame(byte[] a, byte[] b) => a.AsSpan().SequenceEqual(b);
 }

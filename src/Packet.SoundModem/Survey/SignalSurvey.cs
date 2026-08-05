@@ -196,6 +196,16 @@ public sealed class SignalSurvey : IDisposable
     /// from one the station failed to read. A frame whose AX.25 addresses will not parse is noted
     /// as such, and its bytes travel with the capture.
     /// </summary>
+    /// <remarks>
+    /// Fed from the monitor path (<see cref="Channel.SoundModemChannel.FrameReceivedWithQuality"/>), so a
+    /// frame the station read and did not pass to its host counts here as a decode: its burst is
+    /// marked <c>Decoded</c> and is no longer captured as <c>Missed</c>. That is the wanted answer
+    /// rather than an accident of the wiring. The survey's question is "did this station read that
+    /// burst", not "did a host get it", and a plain-IL2P neighbour was exactly what filled the
+    /// 40 m station's survey with unreadable captures - a badged row in the panel naming the
+    /// sender answers the operator's question, where another WAV of the same beacon every ten
+    /// minutes only spends the capture budget that the next unexplained burst needs.
+    /// </remarks>
     /// <param name="subChannel">The modem that decoded it.</param>
     /// <param name="frame">The decoded frame.</param>
     /// <param name="quality">The modem's own report of the decode.</param>

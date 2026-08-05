@@ -277,6 +277,27 @@ public class FrameLogTests : IDisposable
     }
 
     [Fact]
+    public async Task A_Frame_The_Station_Read_And_Withheld_Is_Still_Written_Down()
+    {
+        // The log is fed from the monitor path, so a frame shown to the operator and not passed
+        // to the host is recorded like any other. That is the point of it: it is the record of
+        // what the station heard, not of what its host was given, and crc_valid being nullable
+        // already says the honest thing about this one - no CRC was checked.
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.Record(
+                0, Frame(), new FrameQuality(
+                    "bpsk300-il2pc-multi9", FrameBytes: 46, CorrectedBytes: 0, CrcValid: null,
+                    PlainIl2p: true, MonitorOnly: true),
+                audioHz: 2150, rfHz: 7_051_600));
+
+        Dictionary<string, object?> row = rows.Should().ContainSingle(
+            "a burst the station read is a burst the station read").Subject;
+        row["crc_valid"].Should().BeNull("no CRC was checked");
+        row["mode"].Should().Be("bpsk300-il2pc-multi9");
+        row["length"].Should().Be(46L);
+    }
+
+    [Fact]
     public async Task Reopening_An_Existing_Log_Appends_Rather_Than_Starting_Again()
     {
         await using (FrameLog first = FrameLog.Open(DbPath, _time))

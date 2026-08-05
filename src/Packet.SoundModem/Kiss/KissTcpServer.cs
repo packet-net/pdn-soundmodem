@@ -225,7 +225,12 @@ public sealed class KissTcpServer : IAsyncDisposable
 
     private void OnFrameQuality(int subChannel, byte[] frame, Modems.FrameQuality quality)
     {
-        if (!EmitQualityFrames || PublishNibble(subChannel) is not int nibble)
+        // A frame the station read and did not pass on has no data frame here for this to
+        // describe, so describing it would be a report of something the client never received.
+        // Asked of the quality itself rather than inferred from whether OnFrameReceived fired:
+        // the two events arrive from the same synchronous decode, so ordering looks like a usable
+        // signal right up to the frame where one of them simply does not come.
+        if (!EmitQualityFrames || quality.MonitorOnly || PublishNibble(subChannel) is not int nibble)
         {
             return;
         }

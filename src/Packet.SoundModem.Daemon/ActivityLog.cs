@@ -35,6 +35,19 @@ internal static class ActivityLog
             text.Append(crc ? "  crc ok" : "  CRC BAD");
         }
 
+        // Same question, the other answer: there was no CRC to check because the frame came in as
+        // plain IL2P, so Reed-Solomon is the whole of what stands behind it. Said out loud
+        // because the mode column next to it says -il2pc and an operator reading that line has
+        // every reason to assume the frame was checked. Whether it also went to the host is the
+        // second half of the fact and is worth as much: a row nobody's node ever saw is a very
+        // different thing from a delivery, and nothing else in the journal says which it was.
+        if (quality.PlainIl2p)
+        {
+            text.Append(quality.MonitorOnly
+                ? "  plain il2p (rs only, not passed to host)"
+                : "  plain il2p (rs only)");
+        }
+
         // Corrections are the headroom reading: zero means the FEC was not needed, a rising count
         // means the link is being carried by it and is closer to the edge than the frame suggests.
         if (quality.CorrectedBytes is int corrected)

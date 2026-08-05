@@ -587,14 +587,14 @@ foreach (ModemConfig modemConfig in modems)
     }
 
     // Refused rather than ignored, same as the frequency override above: an operator who wrote
-    // this down believes their modem got more tolerant, and on a mode with no IL2P+CRC check to
-    // relax it never will be. Named modes rather than a pattern, because fsk9600-il2p and
-    // fsk4800-il2p do run the CRC despite their names.
+    // this down believes their modem changed behaviour, and on a mode with no second plain
+    // reading to release there is nothing for it to change. Named modes rather than a pattern,
+    // because fsk9600-il2p and fsk4800-il2p do run the CRC despite their names.
     if (modemConfig.AcceptPlainIl2p && !ModemCatalog.RunsIl2pCrc(mode))
     {
         Console.Error.WriteLine(
-            $"modem {subChannel}: mode '{mode}' does not run IL2P+CRC, so it has no CRC check "
-            + "to relax - drop \"acceptPlainIl2p\"");
+            $"modem {subChannel}: mode '{mode}' does not run IL2P+CRC, so it has no separate "
+            + "plain-IL2P reading to release - drop \"acceptPlainIl2p\"");
         Console.Error.WriteLine(
             "  it applies to the IL2P+CRC modes: afsk300-il2pc, afsk1200-il2p, bpsk*, qpsk*, "
             + "fsk9600-il2p, fsk4800-il2p, c4fsk*, freedv-*, ms110d-*");
@@ -611,11 +611,13 @@ foreach (ModemConfig modemConfig in modems)
     Console.WriteLine($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");
     if (modemConfig.AcceptPlainIl2p)
     {
-        // Said out loud because it relaxes the one check that separates a frame from noise the
-        // FEC happened to like, and nothing downstream will say so afterwards - a frame that
-        // arrives this way is logged with crc_valid null, which is easy to miss.
+        // Said out loud because it removes the one check that separates a frame from noise the
+        // FEC happened to like, and a host has no way to know: such a frame arrives as an
+        // ordinary KISS data frame like any other. Nothing is printed in the default case, where
+        // the same frames are read and shown and simply not handed on, because that costs the
+        // host nothing and would be a line on every IL2P+CRC modem on the station.
         Console.WriteLine(
-            "  also accepting plain IL2P (no trailing CRC): those frames are checked by "
+            "  passing plain IL2P (no trailing CRC) to the host: those frames are checked by "
             + "Reed-Solomon alone");
     }
 }

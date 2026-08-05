@@ -145,6 +145,13 @@
   .fr.tx { border-left: 2px solid #31d2f2; padding-left: 10px; }
   .fr.tx .id { background: #7fe3f7; }
   .fr.tx .from { color: #7fe3f7; }
+  /* A frame read as plain IL2P: Reed-Solomon corrected it and nothing checked the result, which
+     is the entire reason the +CRC variant exists. The mode beside it says -il2pc, so without this
+     the panel quietly implies a check that never ran. The warning orange the .why line already
+     uses, rather than the red of crc✗ two fields along: that one is a check that failed, this is
+     a check that was never there, and they must not read as the same event. Written as .id.rs so
+     it outranks .fr.tx .id on the one row that could carry both. */
+  .fr .id.rs { background: #f0b45a; }
   /* Read out of the station's frame log when the page opened, not heard since - dimmed so the
      backlog cannot be mistaken for a channel that is busy right now. Its timestamps are real,
      which is the other half of saying so. */
@@ -741,9 +748,19 @@ function logFrame(ev) {
   const badge = ev.tx
     ? `<span class="id" title="Sent by this station - listed once the audio has gone out">TX</span>`
     : ev.id ? `<span class="id" title="Station identification, heard on the mode the TNC idents in rather than the one it carries data in">ID</span>` : "";
+  // Plain IL2P: no trailing CRC behind this frame, so Reed-Solomon alone decided it was a frame,
+  // and RS invents corrections rather than merely detecting errors. Appended rather than folded
+  // into the ternary above because it answers a different question from TX/ID and a row can
+  // honestly need both. The title carries the half an operator cannot see: whether their own
+  // configuration passed this frame to the host or stopped it here.
+  const plain = ev.plain
+    ? `<span class="id rs" title="${ev.monitorOnly
+        ? "Plain IL2P: no trailing CRC, so Reed-Solomon alone stood behind this frame. Shown here and NOT passed to the KISS host - set acceptPlainIl2p on this modem if you want these delivered."
+        : "Plain IL2P: no trailing CRC, so Reed-Solomon alone stood behind this frame. Passed to the KISS host, because this modem sets acceptPlainIl2p."}">RS ONLY</span>`
+    : "";
   const who = (ev.from
     ? `<span class="from">${ev.from}</span><span class="arrow">›</span><span class="to">${ev.to || "?"}</span>`
-    : `<span class="to">unattributed</span>`) + badge;
+    : `<span class="to">unattributed</span>`) + badge + plain;
   const bits = [];
   bits.push(`${ev.sub}·${ev.mode}`);
   if (ev.snrDb != null) bits.push(`<i>${ev.snrDb.toFixed(1)} dB</i>`);

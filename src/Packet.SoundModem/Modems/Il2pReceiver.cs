@@ -3,11 +3,25 @@ using M0LTE.Il2p;
 namespace Packet.SoundModem.Modems;
 
 /// <summary>
+/// What the receiver decided about a frame, handed to the sink alongside the frame itself.
+/// </summary>
+/// <remarks>
+/// Two facts, deliberately separate, and copied verbatim onto <see cref="FrameQuality"/> by every
+/// modem that owns one of these: what the decode was, and where the frame is allowed to go. They
+/// answer different questions and a display wants the first while the KISS host path wants the
+/// second.
+/// </remarks>
+/// <param name="PlainIl2p">The reading that produced this frame had no trailing CRC behind it.</param>
+/// <param name="MonitorOnly">This frame must not be passed to the host - see
+/// <see cref="FrameQuality.MonitorOnly"/>.</param>
+internal readonly record struct Il2pDelivery(bool PlainIl2p, bool MonitorOnly);
+
+/// <summary>
 /// The IL2P receive seam. Every IL2P-carrying modem pushes its demodulated bits through one of
 /// these rather than straight into an <see cref="Il2pDeframer"/>, so that the one thing that
-/// varies between them - whether a link running IL2P+CRC will <em>also</em> accept plain IL2P,
-/// which is off unless an operator asks for it - lives in a single place instead of being
-/// bolted onto each of the eight modems that end up at <c>crcMode: true</c>.
+/// varies between them - what a link running IL2P+CRC does about plain IL2P - lives in a single
+/// place instead of being bolted onto each of the eight modems that end up at
+/// <c>crcMode: true</c>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -22,26 +36,40 @@ namespace Packet.SoundModem.Modems;
 /// Right frequency, right modulation, right baud, wrong IL2P variant.
 /// </para>
 /// <para>
+/// <b>The second reading always runs; only its destination is configurable.</b> An IL2P+CRC link
+/// reads its bits both ways whatever the operator asked for, because a station that cannot read a
+/// neighbour cannot tell you it is there, and "nothing decoded" and "a CRC-less neighbour you are
+/// structurally deaf to" look identical from the outside. What <c>acceptPlainIl2p</c> decides is
+/// narrower and is the only part an operator should have to think about: whether such a frame is
+/// <em>passed to the host</em>. Off (the default) it is <see cref="Il2pDelivery.MonitorOnly"/> -
+/// it reaches the display, the frame log, the journal and the survey, and stops there. IL2P+CRC
+/// exists precisely because Reed-Solomon alone was letting too much corrupt traffic through, so a
+/// host that asked for IL2P+CRC gets IL2P+CRC; seeing what the band is doing is a different
+/// question from feeding it to a node.
+/// </para>
+/// <para>
 /// <b>Why the two readings cannot simply both be delivered.</b> Measured against M0LTE.Il2p 0.1.2
 /// (<c>Il2pReceiverTests</c>, which pins it): a <c>crcMode: false</c> deframer handed a well-formed
 /// IL2P+CRC frame emits the same AX.25 frame, byte for byte, exactly
 /// <c>Il2pCodec.TrailingCrcWireLength * 8</c> = 32 bits <em>before</em> the <c>crcMode: true</c>
 /// one does, at every payload size. It sizes the payload from the header, decodes it and goes back
 /// to hunting, leaving the four trailer bytes to be hunted through as though they were channel
-/// noise. So running both deframers naively would deliver every ordinary frame on the channel
-/// twice, plain copy first - far worse than the bug being fixed. Instead the plain reading is
+/// noise. So running both deframers naively would emit every ordinary frame on the channel twice,
+/// plain copy first - far worse than the bug being fixed, and now that the second reading runs on
+/// every IL2P+CRC link it would be far worse on every one of them. Instead the plain reading is
 /// <em>held</em> for those 32 bits: if the link's own reading emits the same bytes within them it
 /// wins and the held copy is dropped; otherwise the held copy is released, and that is the plain
-/// IL2P frame this option is here for.
+/// IL2P frame all of this is here for.
 /// </para>
 /// <para>
-/// <b>What it costs.</b> A plain IL2P frame is validated by Reed-Solomon alone - there is no CRC
+/// <b>What a plain frame is worth.</b> It is validated by Reed-Solomon alone - there is no CRC
 /// behind it, which is the entire reason the +CRC variant exists. RS will occasionally "correct"
 /// noise into a plausible-looking frame, and on this path nothing catches that. Frames that arrive
-/// this way carry <c>CrcValid: null</c> (the honest answer: no CRC was checked) rather than
-/// <c>true</c>. There is also no way to tell a plain frame from an IL2P+CRC frame whose trailer
-/// was corrupted, so with the option on, the latter is delivered too instead of being counted as
-/// a CRC failure.
+/// this way carry <c>CrcValid: null</c> (the honest answer: no CRC was checked) and
+/// <c>PlainIl2p: true</c> (the badge-able one: nothing but RS stood behind it). There is also no
+/// way to tell a plain frame from an IL2P+CRC frame whose trailer was corrupted, so the latter
+/// comes through here too rather than being counted as a CRC failure - which is a good reason to
+/// look at such a row and a poor reason to hand it to a node.
 /// </para>
 /// <para>
 /// Nothing here allocates per bit: the held frame is the array the deframer had already allocated
@@ -75,9 +103,11 @@ internal sealed class Il2pReceiver
     private static readonly long LateReadingGuardBits =
         (Il2pCodec.HeaderWireLength + Il2pBlockLayout.Compute(Il2pCodec.MaxPayloadBytes).WireLength) * 8;
 
-    private readonly Action<byte[], Il2pDecodeInfo> _frameReceived;
+    private readonly Action<byte[], Il2pDecodeInfo, Il2pDelivery> _frameReceived;
     private readonly Il2pDeframer _deframer;
     private readonly Il2pDeframer? _plainDeframer;
+    private readonly Il2pDelivery _ownReading;
+    private readonly Il2pDelivery _plainReading;
     private long _bitsPushed;
     private byte[]? _heldFrame;
     private Il2pDecodeInfo _heldInfo;
@@ -87,25 +117,40 @@ internal sealed class Il2pReceiver
 
     /// <summary>Creates the receiver.</summary>
     /// <param name="frameReceived">Called synchronously from <see cref="PushBit"/> with each
-    /// decoded AX.25 frame and its decode diagnostics, exactly as
-    /// <see cref="Il2pDeframer"/> would call it.</param>
+    /// decoded AX.25 frame, its decode diagnostics and where the frame is allowed to go, much as
+    /// <see cref="Il2pDeframer"/> would call it. A caller that ignores the
+    /// <see cref="Il2pDelivery"/> passes plain IL2P frames straight to its host, which is
+    /// precisely what the default must not do.</param>
     /// <param name="crcMode">True when the link runs IL2P+CRC (both stations must agree).</param>
-    /// <param name="acceptPlainIl2p">Also read the same bits as plain IL2P, for a neighbour that
-    /// sends IL2P without the trailing CRC. Off by default, and inert unless
-    /// <paramref name="crcMode"/> is on: a link already reading plain IL2P reads it with the one
-    /// deframer it has.</param>
+    /// <param name="acceptPlainIl2p">Pass plain IL2P frames - a neighbour that sends IL2P without
+    /// the trailing CRC - on to the host as well as to the display. Off by default, in which case
+    /// they are still read, and still reported, but marked
+    /// <see cref="Il2pDelivery.MonitorOnly"/>. Inert unless <paramref name="crcMode"/> is on: a
+    /// link already reading plain IL2P reads it with the one deframer it has, and its frames are
+    /// its own traffic rather than a second opinion.</param>
     /// <param name="syncWord">Non-standard 24-bit sync word (the MMDVM-TNC "Mode 2" C4FSK
     /// framing the NinoTNC C4FSK modes inherit); null for IL2P's own.</param>
     public Il2pReceiver(
-        Action<byte[], Il2pDecodeInfo> frameReceived, bool crcMode,
+        Action<byte[], Il2pDecodeInfo, Il2pDelivery> frameReceived, bool crcMode,
         bool acceptPlainIl2p = false, int? syncWord = null)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _frameReceived = frameReceived;
+
+        // On a crcMode: false link the one deframer IS the plain reading, and its frames are the
+        // link's own traffic: RS-only, so worth badging, and delivered, because that is the mode
+        // the operator configured.
+        _ownReading = new Il2pDelivery(PlainIl2p: !crcMode, MonitorOnly: false);
+        _plainReading = new Il2pDelivery(PlainIl2p: true, MonitorOnly: !acceptPlainIl2p);
         _deframer = syncWord is { } sync
             ? new Il2pDeframer(OnDeframed, crcMode, sync)
             : new Il2pDeframer(OnDeframed, crcMode);
-        if (acceptPlainIl2p && crcMode)
+
+        // Unconditional on an IL2P+CRC link, where it used to wait for acceptPlainIl2p. The
+        // option now decides where a plain frame goes, not whether it is read at all, and a
+        // station cannot report a neighbour it never demodulated. See the remarks for the CPU
+        // this costs and why it is worth it.
+        if (crcMode)
         {
             _plainDeframer = syncWord is { } plainSync
                 ? new Il2pDeframer(OnPlainDeframed, crcMode: false, plainSync)
@@ -113,8 +158,13 @@ internal sealed class Il2pReceiver
         }
     }
 
-    /// <summary>Whether this receiver is also reading the bits as plain IL2P.</summary>
-    public bool AcceptsPlainIl2p => _plainDeframer is not null;
+    /// <summary>Whether this receiver runs a second, plain reading alongside the link's own -
+    /// true on every IL2P+CRC link, false on one that is already reading plain IL2P.</summary>
+    public bool ReadsPlainIl2p => _plainDeframer is not null;
+
+    /// <summary>Whether a frame that only the plain reading produced is passed to the host, as
+    /// opposed to being reported and withheld.</summary>
+    public bool DeliversPlainIl2p => !_plainReading.MonitorOnly;
 
     /// <summary>Pushes one received bit (0/1) through both readings.</summary>
     public void PushBit(int bit)
@@ -153,7 +203,7 @@ internal sealed class Il2pReceiver
         _plainDeframer?.Reset();
     }
 
-    /// <summary>The link's own reading produced a frame: deliver it, and drop any held plain copy
+    /// <summary>The link's own reading produced a frame: emit it, and drop any held plain copy
     /// of the same bytes, which is this same transmission read a second time.</summary>
     private void OnDeframed(byte[] frame, Il2pDecodeInfo info)
     {
@@ -164,7 +214,7 @@ internal sealed class Il2pReceiver
 
         _lastDelivered = frame;
         _lastDeliveredAtBit = _bitsPushed;
-        _frameReceived(frame, info);
+        _frameReceived(frame, info, _ownReading);
     }
 
     /// <summary>The plain reading produced a frame: hold it until the link's own reading has had
@@ -189,8 +239,9 @@ internal sealed class Il2pReceiver
         _releaseHeldAtBit = _bitsPushed + CrcTrailerBits;
     }
 
-    /// <summary>Delivers the held plain frame, if there is one. The field is cleared before the
-    /// sink is called so that a sink which pushes more bits cannot see it twice.</summary>
+    /// <summary>Emits the held plain frame, if there is one, marked as the plain reading's and
+    /// with the operator's answer about where it may go. The field is cleared before the sink is
+    /// called so that a sink which pushes more bits cannot see it twice.</summary>
     private void ReleaseHeld()
     {
         if (_heldFrame is not { } frame)
@@ -200,6 +251,6 @@ internal sealed class Il2pReceiver
 
         Il2pDecodeInfo info = _heldInfo;
         _heldFrame = null;
-        _frameReceived(frame, info);
+        _frameReceived(frame, info, _plainReading);
     }
 }

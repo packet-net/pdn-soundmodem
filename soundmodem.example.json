@@ -61,12 +61,13 @@
   // slot). Same knobs: defaults 5 pairs at 35 Hz (±175 Hz); offsetPairs:0 gives a single
   // tight-filtered modem.
   //
-  // An IL2P+CRC modem can also be told to accept plain IL2P (no trailing CRC), for a
-  // neighbour that sends the CRC-less variant - a BPQ32 node, typically, which is otherwise a
-  // perfectly demodulated burst that produces nothing at all. Receive only: it does not change
-  // what you transmit. It is not free - those frames are checked by Reed-Solomon alone with no
-  // CRC behind it, so expect the occasional frame of rubbish on a noisy channel, and they are
-  // logged with crc_valid null. Off unless asked for, per modem:
+  // Every IL2P+CRC modem also reads plain IL2P (no trailing CRC), for a neighbour that sends
+  // the CRC-less variant - a BPQ32 node, typically, which was otherwise a perfectly
+  // demodulated burst that produced nothing at all. Those frames are always shown: badged
+  // "RS ONLY" on the waterfall panel, in the frame log with crc_valid null, and on the journal
+  // line. They are NOT passed to the KISS host unless you ask, because Reed-Solomon alone is
+  // what IL2P+CRC exists to improve on - expect the occasional frame of rubbish on a noisy
+  // channel. Receive only either way; it does not change what you transmit. Per modem:
   //   { "subChannel": 1, "mode": "bpsk300", "frequency": 2150, "acceptPlainIl2p": true }
   "modems": [
     { "subChannel": 0, "mode": "afsk1200-multi", "frequency": 1700 },

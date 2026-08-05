@@ -23,8 +23,9 @@ public sealed class BpskModem : IModem, IConstellationSource
     /// symbol.</param>
     /// <param name="rollOff">RRC roll-off.</param>
     /// <param name="detector">Differential (default) or coherent detection.</param>
-    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
-    /// trailing CRC (off by default, and inert unless <paramref name="crc"/> is on) - see
+    /// <param name="acceptPlainIl2p">Pass frames that arrive as plain IL2P, with no trailing CRC,
+    /// to <paramref name="frameReceived"/> as well as reporting them (off by default, and inert
+    /// unless <paramref name="crc"/> is on). They are read either way - see
     /// <see cref="Il2pReceiver"/> for what that buys and what it costs.</param>
     public BpskModem(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
@@ -41,15 +42,21 @@ public sealed class BpskModem : IModem, IConstellationSource
         // exists. Nothing dereferences it until audio flows.
         BpskDemodulator? demodulator = null;
         var deframer = new Il2pReceiver(
-            (frame, info) =>
+            (frame, info, delivery) =>
             {
-                frameReceived(frame);
+                if (!delivery.MonitorOnly)
+                {
+                    frameReceived(frame);
+                }
+
                 FrameDecoded?.Invoke(frame, new FrameQuality(
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                     HeaderType: info.HeaderType,
                     // Read at the end of the burst that carried the frame, while the window it
                     // is measured over still describes that burst.
-                    FrequencyOffsetHz: demodulator!.CarrierOffsetHz));
+                    FrequencyOffsetHz: demodulator!.CarrierOffsetHz,
+                    PlainIl2p: delivery.PlainIl2p,
+                    MonitorOnly: delivery.MonitorOnly));
             },
             crc, acceptPlainIl2p);
 

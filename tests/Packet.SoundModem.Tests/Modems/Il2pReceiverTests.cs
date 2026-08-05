@@ -56,20 +56,31 @@ public class Il2pReceiverTests
     }
 
     [Fact]
-    public void A_Plain_Il2p_Frame_Is_Dropped_By_An_Il2p_Crc_Link_By_Default()
+    public void A_Plain_Il2p_Frame_Is_Read_And_Withheld_From_The_Host_By_Default()
     {
-        // The GB7BPQ case as it stands today, and the default this change must not disturb.
-        List<byte[]> got = Push(FrameBits(Gb7bpqBeacon(), crc: false), crcMode: true, acceptPlainIl2p: false);
+        // The GB7BPQ case, and the split the operator asked for: the station reads the frame
+        // whatever its configuration says, because it cannot report a neighbour it never
+        // demodulated, and then does not hand an RS-only frame to a host that asked for IL2P+CRC.
+        byte[] beacon = Gb7bpqBeacon();
 
-        got.Should().BeEmpty("IL2P+CRC is the interop ground truth and nothing else gets in");
+        (List<byte[]> got, List<Il2pDecodeInfo> info, List<Il2pDelivery> delivery) = PushWithInfo(
+            FrameBits(beacon, crc: false), crcMode: true, acceptPlainIl2p: false);
+
+        got.Should().ContainSingle("the burst is read even with the option off")
+            .Which.Should().Equal(beacon);
+        info[0].CrcValid.Should().BeNull("there was no CRC to check");
+        delivery[0].PlainIl2p.Should().BeTrue(
+            "the fact a display badges: Reed-Solomon alone stood behind this frame");
+        delivery[0].MonitorOnly.Should().BeTrue(
+            "IL2P+CRC is the interop ground truth, so the host does not see this one");
     }
 
     [Fact]
-    public void A_Plain_Il2p_Frame_Is_Delivered_Once_When_The_Link_Accepts_Them()
+    public void A_Plain_Il2p_Frame_Reaches_The_Host_Once_When_The_Link_Accepts_Them()
     {
         byte[] beacon = Gb7bpqBeacon();
 
-        (List<byte[]> got, List<Il2pDecodeInfo> info) = PushWithInfo(
+        (List<byte[]> got, List<Il2pDecodeInfo> info, List<Il2pDelivery> delivery) = PushWithInfo(
             FrameBits(beacon, crc: false), crcMode: true, acceptPlainIl2p: true);
 
         got.Should().ContainSingle("the frame the station could not read is now delivered, once")
@@ -77,21 +88,30 @@ public class Il2pReceiverTests
         info[0].CrcValid.Should().BeNull(
             "no CRC was checked, and null is the honest way to say so - Reed-Solomon alone stood "
             + "behind this frame");
+        delivery[0].PlainIl2p.Should().BeTrue(
+            "the badge is about the decode, so it is there whether or not the option is on");
+        delivery[0].MonitorOnly.Should().BeFalse("the option is what passes it to the host");
     }
 
-    [Fact]
-    public void An_Il2p_Crc_Frame_Is_Delivered_Once_When_The_Link_Also_Accepts_Plain_Il2p()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void An_Il2p_Crc_Frame_Reaches_The_Host_Exactly_Once_Either_Way(bool acceptPlainIl2p)
     {
-        // The hazard the whole seam exists to avoid: both readings decode this frame, so a naive
-        // pair of deframers would deliver every ordinary frame on the channel twice.
+        // The hazard the whole seam exists to avoid, and now the hazard on every IL2P+CRC link
+        // rather than on the handful that opted in: both readings decode this frame, so a naive
+        // pair of deframers would hand every ordinary frame on the channel up twice. Run with the
+        // option both ways, because it no longer decides whether the second reading exists.
         byte[] beacon = Gb7bpqBeacon();
 
-        (List<byte[]> got, List<Il2pDecodeInfo> info) = PushWithInfo(
-            FrameBits(beacon, crc: true), crcMode: true, acceptPlainIl2p: true);
+        (List<byte[]> got, List<Il2pDecodeInfo> info, List<Il2pDelivery> delivery) = PushWithInfo(
+            FrameBits(beacon, crc: true), crcMode: true, acceptPlainIl2p);
 
         got.Should().ContainSingle("the IL2P+CRC reading wins and the plain copy of it is dropped")
             .Which.Should().Equal(beacon);
         info[0].CrcValid.Should().BeTrue("the delivered copy is the one that had its CRC checked");
+        delivery[0].PlainIl2p.Should().BeFalse("a CRC stood behind this one");
+        delivery[0].MonitorOnly.Should().BeFalse("and an ordinary frame always goes to the host");
     }
 
     [Fact]
@@ -102,7 +122,8 @@ public class Il2pReceiverTests
         // nothing to release and the reset must not conjure a second copy.
         byte[] beacon = Gb7bpqBeacon();
         var got = new List<byte[]>();
-        var receiver = new Il2pReceiver((frame, _) => got.Add(frame), crcMode: true, acceptPlainIl2p: true);
+        var receiver = new Il2pReceiver(
+            (frame, _, _) => got.Add(frame), crcMode: true, acceptPlainIl2p: true);
         foreach (byte bit in FrameBits(beacon, crc: true))
         {
             receiver.PushBit(bit);
@@ -121,7 +142,8 @@ public class Il2pReceiverTests
         // BPSK link DCD drops about 24 bit times after the last symbol, which is inside the hold.
         byte[] beacon = Gb7bpqBeacon();
         var got = new List<byte[]>();
-        var receiver = new Il2pReceiver((frame, _) => got.Add(frame), crcMode: true, acceptPlainIl2p: true);
+        var receiver = new Il2pReceiver(
+            (frame, _, _) => got.Add(frame), crcMode: true, acceptPlainIl2p: true);
         foreach (byte bit in FrameBits(beacon, crc: false))
         {
             receiver.PushBit(bit);
@@ -142,7 +164,8 @@ public class Il2pReceiverTests
         byte[] beacon = Gb7bpqBeacon();
         byte[] bits = FrameBits(beacon, crc: true);
         var got = new List<byte[]>();
-        var receiver = new Il2pReceiver((frame, _) => got.Add(frame), crcMode: true, acceptPlainIl2p: true);
+        var receiver = new Il2pReceiver(
+            (frame, _, _) => got.Add(frame), crcMode: true, acceptPlainIl2p: true);
         for (int i = 0; i < bits.Length - 1; i++)
         {
             receiver.PushBit(bits[i]);
@@ -158,14 +181,33 @@ public class Il2pReceiverTests
     public void Accepting_Plain_Il2p_Does_Nothing_To_A_Link_That_Is_Already_Crcless()
     {
         // A -nocrc/-il2p mode reads plain IL2P with the one deframer it has, so there is nothing
-        // to switch on and - importantly - no second reading to deliver the same frame twice.
+        // to switch on and - importantly - no second reading to hand the same frame up twice.
         byte[] beacon = Gb7bpqBeacon();
-        var receiver = new Il2pReceiver((_, _) => { }, crcMode: false, acceptPlainIl2p: true);
-        receiver.AcceptsPlainIl2p.Should().BeFalse();
+        var receiver = new Il2pReceiver((_, _, _) => { }, crcMode: false, acceptPlainIl2p: true);
+        receiver.ReadsPlainIl2p.Should().BeFalse();
 
-        List<byte[]> got = Push(FrameBits(beacon, crc: false), crcMode: false, acceptPlainIl2p: true);
+        (List<byte[]> got, _, List<Il2pDelivery> delivery) = PushWithInfo(
+            FrameBits(beacon, crc: false), crcMode: false, acceptPlainIl2p: true);
 
         got.Should().ContainSingle().Which.Should().Equal(beacon);
+        delivery[0].MonitorOnly.Should().BeFalse(
+            "this is the link's own traffic, not a second opinion about somebody else's");
+        delivery[0].PlainIl2p.Should().BeTrue(
+            "and it is still RS-only, which is the question the badge asks - a frame on a "
+            + "CRC-less mode has exactly as little behind it as one read off an IL2P+CRC link");
+    }
+
+    [Fact]
+    public void An_Il2p_Crc_Link_Always_Runs_The_Second_Reading()
+    {
+        // The point of the change, stated as a property rather than inferred from behaviour: the
+        // option decides where a plain frame goes, not whether the station can read one.
+        new Il2pReceiver((_, _, _) => { }, crcMode: true, acceptPlainIl2p: false)
+            .ReadsPlainIl2p.Should().BeTrue("a station cannot report a neighbour it never read");
+        new Il2pReceiver((_, _, _) => { }, crcMode: true, acceptPlainIl2p: false)
+            .DeliversPlainIl2p.Should().BeFalse("and off means the host is not told");
+        new Il2pReceiver((_, _, _) => { }, crcMode: true, acceptPlainIl2p: true)
+            .DeliversPlainIl2p.Should().BeTrue();
     }
 
     [Fact]
@@ -187,16 +229,18 @@ public class Il2pReceiverTests
     private static List<byte[]> Push(byte[] bits, bool crcMode, bool acceptPlainIl2p) =>
         PushWithInfo(bits, crcMode, acceptPlainIl2p).Frames;
 
-    private static (List<byte[]> Frames, List<Il2pDecodeInfo> Info) PushWithInfo(
-        byte[] bits, bool crcMode, bool acceptPlainIl2p)
+    private static (List<byte[]> Frames, List<Il2pDecodeInfo> Info, List<Il2pDelivery> Delivery)
+        PushWithInfo(byte[] bits, bool crcMode, bool acceptPlainIl2p)
     {
         var frames = new List<byte[]>();
         var info = new List<Il2pDecodeInfo>();
+        var delivery = new List<Il2pDelivery>();
         var receiver = new Il2pReceiver(
-            (frame, decode) =>
+            (frame, decode, routing) =>
             {
                 frames.Add(frame);
                 info.Add(decode);
+                delivery.Add(routing);
             },
             crcMode, acceptPlainIl2p);
         foreach (byte bit in bits)
@@ -209,7 +253,7 @@ public class Il2pReceiverTests
             receiver.PushBit(0);
         }
 
-        return (frames, info);
+        return (frames, info, delivery);
     }
 
     private static byte[] FrameBits(byte[] ax25, bool crc) =>

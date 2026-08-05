@@ -79,13 +79,23 @@ public sealed class SoundModemChannel
     /// <summary>Channel-access tunables (KISS parameter commands update these).</summary>
     public CsmaParameters Csma { get; } = new();
 
-    /// <summary>Raised for every received frame, with the sub-channel that decoded it.
-    /// Called from the receive-processing thread.</summary>
+    /// <summary>Raised for every received frame a modem passes up, with the sub-channel that
+    /// decoded it. Called from the receive-processing thread. This is the <b>host</b> path: it
+    /// comes from each modem's constructor frame sink, and it is what a KISS client is sent.
+    /// Not every frame the station reads arrives here - see
+    /// <see cref="FrameReceivedWithQuality"/>.</summary>
     public event Action<int, byte[]>? FrameReceived;
 
-    /// <summary>Per-frame receive diagnostics (sub-channel, frame, quality), raised
-    /// alongside <see cref="FrameReceived"/> for every decoded frame - FEC corrections,
-    /// CRC state, winning decoder branch. See <see cref="Modems.FrameQuality"/>.</summary>
+    /// <summary>Per-frame receive diagnostics (sub-channel, frame, quality) for every frame the
+    /// station decoded - FEC corrections, CRC state, winning decoder branch. See
+    /// <see cref="Modems.FrameQuality"/>.</summary>
+    /// <remarks>
+    /// The <b>monitor</b> path, from <see cref="IModem.FrameDecoded"/>: display, frame log,
+    /// journal and survey hang off this. It is a superset of <see cref="FrameReceived"/>, not a
+    /// companion to it - a frame marked <see cref="Modems.FrameQuality.MonitorOnly"/> is raised
+    /// here and never there, which is how a station shows an operator traffic it is deliberately
+    /// not handing to its host.
+    /// </remarks>
     public event Action<int, byte[], Modems.FrameQuality>? FrameReceivedWithQuality;
 
     /// <summary>Raised when a queued frame is dropped because its modem refused to

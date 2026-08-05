@@ -97,9 +97,10 @@ public sealed class FreeDvDatacModem : IModem
     /// (48000 on the daemon's 48 kHz path; 8000 runs the engine natively).</param>
     /// <param name="frameReceived">Receives each decoded AX.25 frame.</param>
     /// <param name="mode">Any of the six datac modes (datac0/1/3/4/13/14).</param>
-    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
-    /// trailing CRC (off by default) - see <see cref="Il2pReceiver"/> for what that buys and what
-    /// it costs.</param>
+    /// <param name="acceptPlainIl2p">Pass frames that arrive as plain IL2P, with no trailing CRC,
+    /// to <paramref name="frameReceived"/> as well as reporting them (off by default). They are
+    /// read either way - see <see cref="Il2pReceiver"/> for what that buys and what it
+    /// costs.</param>
     public FreeDvDatacModem(
         int sampleRate, Action<byte[]> frameReceived, OfdmMode mode, bool acceptPlainIl2p = false)
     {
@@ -119,12 +120,18 @@ public sealed class FreeDvDatacModem : IModem
         _tx = new DatacTransmitter(mode);
         _rx = new DatacReceiver(mode, MaxPacketsPerBurst(_tx), endOfBurstDetection: true);
         _deframer = new Il2pReceiver(
-            (frame, info) =>
+            (frame, info, delivery) =>
             {
-                _frameReceived(frame);
+                if (!delivery.MonitorOnly)
+                {
+                    _frameReceived(frame);
+                }
+
                 FrameDecoded?.Invoke(frame, new FrameQuality(
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
-                    FrequencyOffsetHz: _rx.Demod.FoffEstHz));
+                    FrequencyOffsetHz: _rx.Demod.FoffEstHz,
+                    PlainIl2p: delivery.PlainIl2p,
+                    MonitorOnly: delivery.MonitorOnly));
             },
             crcMode: true, acceptPlainIl2p: acceptPlainIl2p);
         _energyBusy = new EnergyBusyDetector(NativeRate);

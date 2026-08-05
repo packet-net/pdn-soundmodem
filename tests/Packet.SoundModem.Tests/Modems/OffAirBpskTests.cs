@@ -83,15 +83,55 @@ public class OffAirBpskTests
     [Fact]
     public void The_Bank_Reports_The_Measured_Offset_Of_A_Real_Off_Air_Frame()
     {
+        var host = new List<byte[]>();
         var qualities = new List<FrameQuality>();
-        var modem = BpskMultiModem.Bpsk300(DspRate, _ => { });
+        var modem = BpskMultiModem.Bpsk300(DspRate, host.Add);
         modem.FrameDecoded += (_, quality) => qualities.Add(quality);
 
         modem.Process(Gb7rdgFixture());
 
-        qualities.Should().ContainSingle()
-            .Which.FrequencyOffsetHz.Should().BeApproximately(
-                8, 4, "the captured GB7RDG carrier sits ~8 Hz above the 1500 Hz centre");
+        host.Should().ContainSingle("only the first burst verifies, and only it is the host's")
+            .Which.Should().Equal(ExpectedFrame);
+        qualities[0].MonitorOnly.Should().BeFalse();
+        qualities[0].FrequencyOffsetHz.Should().BeApproximately(
+            8, 4, "the captured GB7RDG carrier sits ~8 Hz above the 1500 Hz centre");
+    }
+
+    /// <summary>
+    /// The capture holds the connected-mode frame <em>twice</em>, 12.5 seconds apart, and only the
+    /// first one's trailing CRC verifies. The second is now reported and withheld rather than
+    /// discarded in silence.
+    /// </summary>
+    /// <remarks>
+    /// <para>This is the change of behaviour on real RF, on audio that has been committed here
+    /// since issue #40 and was until now believed to hold one frame. Every branch demodulates the
+    /// second burst perfectly - identical bytes, zero FEC corrections - and no branch can make its
+    /// four trailer bytes check out, so an IL2P+CRC modem threw it away and nothing anywhere said
+    /// a burst had been read and dropped. A station's own retransmission with a damaged trailer
+    /// and a CRC-less neighbour are indistinguishable at the receiver, which is exactly why the
+    /// frame is shown rather than delivered.</para>
+    /// <para>Two identical frames 12.5 s apart are also not a duplicate to be deduped: that is
+    /// ordinary AX.25 retry behaviour, and the bank's content dedupe window is deliberately a few
+    /// seconds wide for the same reason.</para>
+    /// </remarks>
+    [Fact]
+    public void The_Second_Burst_In_The_Capture_Is_Reported_As_Plain_And_Withheld()
+    {
+        var host = new List<byte[]>();
+        var qualities = new List<FrameQuality>();
+        var modem = BpskMultiModem.Bpsk300(DspRate, host.Add);
+        modem.FrameDecoded += (_, quality) => qualities.Add(quality);
+
+        modem.Process(Gb7rdgFixture());
+
+        qualities.Should().HaveCount(2, "the capture holds the frame twice");
+        FrameQuality second = qualities[1];
+        second.CrcValid.Should().BeNull("its trailer would not check out on any branch");
+        second.CorrectedBytes.Should().Be(0, "the burst itself demodulated perfectly");
+        second.PlainIl2p.Should().BeTrue("Reed-Solomon alone stood behind this reading");
+        second.MonitorOnly.Should().BeTrue(
+            "so the operator sees it and the host does not, which is the whole split");
+        host.Should().ContainSingle("the host is told about the burst that verified, and no other");
     }
 
     [Fact]

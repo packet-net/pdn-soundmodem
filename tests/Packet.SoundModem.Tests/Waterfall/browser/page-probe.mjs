@@ -39,6 +39,38 @@ function borderLeft(className) {
   return won;
 }
 
+// The same question one level down, for a badge inside a row: which background the shipping
+// stylesheet gives `<span class="X">` sitting inside `<div class="Y">`. The badge rules are
+// descendant selectors (.fr .id, .fr.tx .id, .fr .id.rs) rather than the bare chains above, and
+// which of them wins is a real question - a plain-IL2P badge and a transmit badge both match .id,
+// and the answer decides whether the RS-only warning survives on a row that is also something
+// else. Specificity is the total class count, ties broken by source order, as a browser does.
+// var(--name) is looked up in the same stylesheet so the answer is a colour rather than a token.
+function badgeBackground(rowClassName, badgeClassName) {
+  const rowClasses = rowClassName.split(" ").filter(Boolean);
+  const badgeClasses = badgeClassName.split(" ").filter(Boolean);
+  const chain = /^(\.[A-Za-z0-9_-]+)+$/;
+  let won = null, wonRank = -1;
+  for (const rule of styleText.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const declared = /(?:^|;)\s*background\s*:\s*([^;]+)/.exec(rule[2]);
+    if (!declared) continue;
+    for (const selector of rule[1].split(",")) {
+      const parts = selector.trim().split(/\s+/);
+      if (parts.length !== 2 || !parts.every(p => chain.test(p))) continue;
+      const [ancestor, element] = parts.map(p => p.slice(1).split("."));
+      if (!ancestor.every(c => rowClasses.includes(c))) continue;
+      if (!element.every(c => badgeClasses.includes(c))) continue;
+      const rank = ancestor.length + element.length;
+      if (rank >= wonRank) { wonRank = rank; won = declared[1].trim(); }
+    }
+  }
+
+  const variable = won && /^var\(\s*(--[A-Za-z0-9_-]+)\s*\)$/.exec(won);
+  if (!variable) return won;
+  const value = new RegExp(`${variable[1]}\\s*:\\s*([^;]+)`).exec(styleText);
+  return value ? value[1].trim() : won;
+}
+
 const noop = () => {};
 
 // Text drawn on a canvas is captured, because "what did the page write onto the waterfall" is a
@@ -176,6 +208,14 @@ const beforeTx = sandbox.__text().length;
 run(`onFrameEvent({sub:0, mode:"afsk1200", from:"M0LTE-9", to:"GB7RDG", line:0, lenBytes:24, tx:true})`);
 const txTag = sandbox.__text().slice(beforeTx);
 
+// A frame read as plain IL2P on a link that runs IL2P+CRC: nothing but Reed-Solomon behind it,
+// and by default not passed to the host. Driven twice - withheld and, on a modem told to accept
+// them, delivered - because the badge must be there either way and only the explanation changes.
+// Ahead of the unattributed frame below, which is addressed by an "il2p Type1" these also carry:
+// the panel is newest first, so whatever is driven last is the one found first.
+run(`onFrameEvent({sub:0, mode:"bpsk300-il2pc-multi9", from:"GB7BPQ", to:"BEACON", line:0, burstLines:9, lenBytes:46, corrected:0, crc:null, il2p:"Type1", plain:true, monitorOnly:true})`);
+run(`onFrameEvent({sub:0, mode:"bpsk300-il2pc-multi9", from:"PD4R-11", to:"BEACON", line:0, burstLines:9, lenBytes:46, corrected:0, crc:null, il2p:"Type1", plain:true})`);
+
 // A frame that decoded and would not yield callsigns: the panel is where an operator sees the
 // word "unattributed", so it is where the reason and the bytes have to appear. The reason quotes
 // a character straight off the air, so it is also where markup could arrive if nothing escaped it.
@@ -228,6 +268,11 @@ console.log(JSON.stringify({
   txHistBorder: borderLeft("fr tx hist"),
   txBorder: borderLeft("fr tx"),
   histBorder: borderLeft("fr hist"),
+  // And what it makes of the RS-only badge, against the ident badge it shares a shape with and
+  // against the transmit rule that also claims .id.
+  rsBadgeBackground: badgeBackground("fr", "id rs"),
+  identBadgeBackground: badgeBackground("fr", "id"),
+  rsBadgeOnTxRowBackground: badgeBackground("fr tx", "id rs"),
   connected,
   clickError,
   listening,
