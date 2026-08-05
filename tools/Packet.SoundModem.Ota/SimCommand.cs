@@ -33,7 +33,11 @@ internal static class SimCommand
                                        Any catalogue mode works at the frame layer.
                   --snr <a,b,c>        SNR rungs in dB (3 kHz), ascending
                   --channel <list>     awgn|good|poor, comma-separated (default awgn)
-                  --cfo <list>         carrier-offset Hz, comma-separated sweep axis (default 0)\n                  --detector <name>    coherent|differential override for bpsk*/qpsk* modes
+                  --cfo <list>         carrier-offset Hz, comma-separated sweep axis (default 0)
+                  --detector <name>    coherent|differential override for bpsk*/qpsk* modes
+                  --centre <Hz>        audio-centre override for the modes that take one,
+                                       including ms110d-*/freedv-* via the shift decorator -
+                                       the A/B instrument for the moved-modem BER gate
                   --layer frame|packet frame = full IL2P+CRC frame through the IModem surface
                                        (the deployment metric, any mode). packet = one raw datac
                                        packet through the library's own DatacReceiver, scored on
@@ -83,6 +87,7 @@ internal static class SimCommand
         PskDetector? detector = a.Str("detector", null) is { } d
             ? d.StartsWith('d') ? PskDetector.Differential : PskDetector.Coherent
             : null;
+        double? centreHz = a.Has("centre") ? a.Dbl("centre", 0) : null;
         bool quiet = a.Has("quiet");
 
         // Native 8 kHz is the right default for the datac family: it is codec2's own rate and what
@@ -116,7 +121,7 @@ internal static class SimCommand
                     {
                     SimPointResult r = SimBench.RunPoint(
                         mode, rateArg, layer, kind, snr, bursts, frameBytes, firstSeed, workers, level,
-                        txDelayMs, cfo, detector);
+                        txDelayMs, cfo, detector, centreHz);
                     rows.Add(r);
                     if (level == 0)
                     {

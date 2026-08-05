@@ -180,10 +180,14 @@ internal static class RfPlan
     /// The dial a spec-fixed modem leaves no choice about, or null when every modem can be moved.
     /// </summary>
     /// <remarks>
-    /// A mode whose audio centre is pinned by its standard - <c>ms110d-*</c> on 1800 Hz,
-    /// <c>freedv-*</c> on its OFDM centre - cannot be slid up or down to suit a dial the planner
-    /// picked for everything else. Only one dial puts it on the RF frequency it was asked for, so
-    /// it dictates rather than follows, and the movable modems are then placed around it.
+    /// A mode whose audio centre is truly pinned cannot be slid up or down to suit a dial the
+    /// planner picked for everything else: only one dial puts it on the RF frequency it was
+    /// asked for, so it dictates rather than follows, and the movable modems are then placed
+    /// around it. No shipped catalogue mode is pinned any longer - <c>ms110d-*</c> and
+    /// <c>freedv-*</c>, the modes this was built for, became movable when
+    /// <c>FrequencyShiftedModem</c> let them be translated off their spec centres - but the
+    /// machinery stays: it is what a genuinely unmovable future mode needs, and
+    /// <c>RfPlanTests</c> keeps it honest against hand-built pinned slots.
     /// </remarks>
     /// <exception cref="InvalidDataException">
     /// Two fixed-centre modems want different dials, which no single radio can satisfy.

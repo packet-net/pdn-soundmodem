@@ -242,17 +242,26 @@ Omit `modems` entirely and you get one `afsk1200` on sub-channel 0.
 ### `frequency`
 
 Moves a modem's audio centre, QtSoundModem-style - for meeting a peer who sits off the usual
-centre. Only the **variable-centre families** accept it:
+centre, or (for the wide waveforms) placing them anywhere in a wide passband:
 
 | Family | Default centre | Accepts `frequency`? |
 |---|---|---|
 | `afsk*` | 1700 Hz | yes |
 | `bpsk*`, `qpsk*` | 1500 Hz (1650 for `qpsk3600`) | yes |
 | `ardop` | 1500 Hz | yes - shifted outside the TNC, [see below](#ardop) |
+| `ms110d-*` | 1800 Hz (MIL-STD-188-110D) | yes - shifted around its unchanged DSP |
+| `freedv-*` | 1500 Hz (datac4/14 fractionally below) | yes - same mechanism |
 | `fsk*`, `c4fsk*` | - occupies DC-to-Nyquist | **no** |
-| `freedv-*`, `ms110d-*` | - pinned by their specs | **no** |
 
-Setting one on a fixed-centre mode is an error at start-up, not silently ignored.
+Setting one on a baseband mode is an error at start-up, not silently ignored.
+
+**Moving a spec-fixed waveform does not make it non-standard on air.** The `ms110d-*` and
+`freedv-*` waveforms keep their spec centres as defaults, and an override translates the audio
+around the modem's unchanged DSP (the same analytic shift ARDOP uses). What a peer receives is
+set by the RF centre alone, so a moved waveform interoperates exactly as an unmoved one; the
+1800 Hz figure only matters to a peer whose modem cannot be told the dial (a MIL radio on a
+voice plug), and staying on the default preserves that case. A centre that would fold the
+waveform's skirts into DC or Nyquist is refused at start-up with the numbers.
 
 ### `offsetPairs` / `offsetStepHz`
 
@@ -385,22 +394,21 @@ dial: 7.049800 MHz USB
   modem 1 bpsk300 at 7.054000 MHz = 4200 Hz audio
   passband: 300-4470 Hz - wider than an ordinary 300-2700 Hz SSB window, because these modems do
   not fit one; the radio's filters are set to suit
-flex: setting the transmit filter high cut to 4600 Hz
-flex: setting the slice receive filter to 200-4600 Hz
+flex: setting the slice to 7.049800 MHz and the transmit filter high cut to 4600 Hz from the band plan
+flex: setting the slice receive filter to 200-4600 Hz, to hear everything the modems are placed across
 ```
 
 That is how `ms110d-*` becomes placeable in RF terms at all: a 3 kHz waveform does not fit inside
 2400 Hz of room however the dial is chosen.
 
-**A spec-fixed mode dictates the dial.** `ms110d-*` sits on 1800 Hz and `freedv-*` on its OFDM
-centre because their standards say so - they cannot be slid up or down to suit a dial chosen for
-everything else, so instead they choose it, and the movable modems are placed around them. Two
-consequences worth knowing:
-
-- On USB, **put the spec-fixed modem lowest** in your plan. Everything else has to sit above the
-  dial it fixes; a modem below it cannot be placed at all, and the daemon says so by name.
-- Two spec-fixed modems can share a dial only if their RF frequencies differ by exactly the
-  difference of their audio centres. Otherwise they want two dials, and one radio has one.
+**Every mode is movable now, so no mode dictates the dial.** `ms110d-*` and `freedv-*` used to:
+their audio centres were pinned by their standards, so only one dial could put them on the RF
+frequency asked for, and on USB everything else then had to sit above them. Since the
+frequency-shift decorator they are placed like any other modem - the planner chooses the dial
+for the whole ensemble and each spec-fixed modem is shifted to wherever that puts it, with the
+RF placement exact either way. An existing config with an `rfFrequency` on one of these modes
+keeps its RF placement to the Hz but may see a **different dial** in the start-up report, since
+the planner now centres the ensemble instead of obeying the pinned mode.
 
 ### Pinning the dial
 

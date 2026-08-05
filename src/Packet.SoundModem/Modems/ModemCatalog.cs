@@ -112,15 +112,28 @@ public static class ModemCatalog
         || mode.StartsWith("ms110d-", StringComparison.Ordinal) ? 48000 : 12000;
 
     /// <summary>
-    /// Whether a mode has a settable audio-centre frequency. Only the variable-centre families -
-    /// the AFSK tone-pair and the BPSK/QPSK carrier - do. The baseband fsk*/c4fsk* (DC-to-Nyquist)
-    /// and the spec-fixed freedv-*/ms110d- waveforms do not: passing a centre frequency to
-    /// <see cref="Create"/> for one of those throws (issue #39).
+    /// Whether a mode has a settable audio-centre frequency. The variable-centre families - the
+    /// AFSK tone-pair and the BPSK/QPSK carrier - take one natively. The spec-fixed families
+    /// (<c>ms110d-*</c>, <c>freedv-*</c>) take one by decoration: their validated DSP stays on
+    /// its native centre and <see cref="FrequencyShiftedModem"/> translates the audio either
+    /// side, which is what lets a band plan place them anywhere in a wide passband instead of
+    /// letting them dictate the dial. On air nothing changes - interop is set by the RF centre.
+    /// Only the baseband fsk*/c4fsk* families (DC-to-Nyquist, no centre to speak of) refuse one:
+    /// passing a centre frequency to <see cref="Create"/> for those throws (issue #39).
     /// </summary>
     public static bool AcceptsCentreFrequency(string mode) =>
         mode.StartsWith("afsk", StringComparison.Ordinal)
         || mode.StartsWith("bpsk", StringComparison.Ordinal)
-        || mode.StartsWith("qpsk", StringComparison.Ordinal);
+        || mode.StartsWith("qpsk", StringComparison.Ordinal)
+        || IsShiftedCentre(mode);
+
+    /// <summary>
+    /// The modes whose centre override is honoured by wrapping them in
+    /// <see cref="FrequencyShiftedModem"/> rather than re-parameterising their own DSP.
+    /// </summary>
+    private static bool IsShiftedCentre(string mode) =>
+        mode.StartsWith("ms110d-", StringComparison.Ordinal)
+        || mode.StartsWith("freedv-", StringComparison.Ordinal);
 
     /// <summary>
     /// The audio centre a mode sits on when no override is given: the tone-pair midpoint, the PSK
@@ -204,9 +217,20 @@ public static class ModemCatalog
         if (frequency is not null && !AcceptsCentreFrequency(mode))
         {
             throw new ArgumentException(
-                $"mode '{mode}' has a fixed centre frequency - drop the frequency override " +
-                "(only the afsk*/bpsk*/qpsk* modes accept one)",
+                $"mode '{mode}' occupies the audio band from DC upwards and has no centre " +
+                "frequency to move - drop the frequency override (the afsk*/bpsk*/qpsk* and " +
+                "spec-fixed ms110d-*/freedv-* modes accept one)",
                 nameof(options));
+        }
+
+        // The spec-fixed families take the override by decoration: the modem is built on its
+        // native centre exactly as ever, and the wrapper translates the audio either side. The
+        // switch below must therefore never see the override for these modes.
+        double? shiftedCentre = null;
+        if (frequency is double asked && IsShiftedCentre(mode))
+        {
+            shiftedCentre = asked;
+            frequency = null;
         }
 
         // Refused rather than ignored, on the same reasoning as the centre frequency above: the
@@ -225,7 +249,7 @@ public static class ModemCatalog
         double? offsetStepHz = options.OffsetStepHz;
         PskDetector detector = options.Detector ?? DefaultDetectorFor(mode);
 
-        return mode switch
+        IModem modem = mode switch
         {
             "afsk1200" => new Afsk1200Modem(dspRate, frameReceived, frequency ?? 1700),
             "afsk1200-fx25" => new Afsk1200Modem(dspRate, frameReceived, frequency ?? 1700, Fx25Mode.TransmitReceive),
@@ -279,5 +303,11 @@ public static class ModemCatalog
                     acceptPlainIl2p: acceptPlainIl2p),
             _ => throw new ArgumentException($"unknown mode '{mode}'", nameof(mode)),
         };
+
+        // Asked-for centre equal to the native one included: Wrap returns the bare modem then,
+        // so a config that spells out the default is bit-identical to one that omits it.
+        return shiftedCentre is double centre
+            ? FrequencyShiftedModem.Wrap(modem, dspRate, centre, DefaultCentreFrequencyFor(mode)!.Value)
+            : modem;
     }
 }
