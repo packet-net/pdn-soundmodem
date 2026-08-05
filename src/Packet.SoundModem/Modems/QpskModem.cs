@@ -16,11 +16,12 @@ public sealed class QpskModem : IModem, IConstellationSource
     private QpskModem(
         int sampleRate, int baud, double carrier, Action<byte[]> frameReceived, bool crc,
         double rollOff = QpskModulator.DefaultRollOff,
-        PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null)
+        PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null,
+        bool acceptPlainIl2p = false)
     {
         _bitRate = baud * 2;
         _crc = crc;
-        var deframer = new Il2pDeframer(
+        var deframer = new Il2pReceiver(
             (frame, info) =>
             {
                 frameReceived(frame);
@@ -28,7 +29,7 @@ public sealed class QpskModem : IModem, IConstellationSource
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                     HeaderType: info.HeaderType));
             },
-            crc);
+            crc, acceptPlainIl2p);
 
         // Reset the deframer on the DCD falling edge - same rationale as BpskModem: a
         // carrier that drops mid-collection leaves the deframer consuming the next
@@ -67,8 +68,10 @@ public sealed class QpskModem : IModem, IConstellationSource
     /// audio passband, QtSoundModem-style.</remarks>
     public static QpskModem Qpsk600(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true, double rollOff = 0.20,
-        PskDetector detector = PskDetector.Coherent, double carrierFrequency = 1500) =>
-        new(sampleRate, 300, carrierFrequency, frameReceived, crc, rollOff, detector);
+        PskDetector detector = PskDetector.Coherent, double carrierFrequency = 1500,
+        bool acceptPlainIl2p = false) =>
+        new(sampleRate, 300, carrierFrequency, frameReceived, crc, rollOff, detector,
+            acceptPlainIl2p: acceptPlainIl2p);
 
     /// <summary>Creates the 2400 bps mode (1200 baud, 1500 Hz centre).</summary>
     /// <remarks>
@@ -82,8 +85,10 @@ public sealed class QpskModem : IModem, IConstellationSource
     public static QpskModem Qpsk2400(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
         double rollOff = QpskModulator.DefaultRollOff,
-        PskDetector detector = PskDetector.Coherent, double carrierFrequency = 1500) =>
-        new(sampleRate, 1200, carrierFrequency, frameReceived, crc, rollOff, detector);
+        PskDetector detector = PskDetector.Coherent, double carrierFrequency = 1500,
+        bool acceptPlainIl2p = false) =>
+        new(sampleRate, 1200, carrierFrequency, frameReceived, crc, rollOff, detector,
+            acceptPlainIl2p: acceptPlainIl2p);
 
     /// <summary>Creates the 3600 bps mode (1800 baud; the conventional 1650 Hz centre).</summary>
     /// <remarks>
@@ -111,12 +116,13 @@ public sealed class QpskModem : IModem, IConstellationSource
     public static QpskModem Qpsk3600(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true, double rollOff = 0.25,
         PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null,
-        double carrierFrequency = 1650) =>
+        double carrierFrequency = 1650, bool acceptPlainIl2p = false) =>
         // The Costas loop is narrower here than the 6 % default: at 6⅔ samples/symbol and
         // the 0.25 roll-off, the wider loop tracks noise instead of carrier and loses even
         // at low SNR (bench: 0.06×baud scored 25/40 at σ0.08 where 0.03×baud scored 40/40).
         // 54 Hz keeps the coherent noise win and still pulls in a ~5 Hz offset.
-        new(sampleRate, 1800, carrierFrequency, frameReceived, crc, rollOff, detector, loopBandwidthHz ?? 1800 * 0.03);
+        new(sampleRate, 1800, carrierFrequency, frameReceived, crc, rollOff, detector,
+            loopBandwidthHz ?? 1800 * 0.03, acceptPlainIl2p);
 
     /// <inheritdoc />
     public event Action<byte[], FrameQuality>? FrameDecoded;

@@ -34,6 +34,25 @@ public sealed class ModemConfig
     public double? OffsetStepHz { get; set; }
 
     /// <summary>
+    /// IL2P+CRC modes only: also hand up frames that arrive as plain IL2P, with no trailing CRC.
+    /// Off by default, because IL2P+CRC is the interop ground truth on the networks this serves
+    /// and every mode's default behaviour is Nino's.
+    /// </summary>
+    /// <remarks>
+    /// <para>For a neighbour that sends the CRC-less variant. A BPQ32 node on the live 40 m slot
+    /// does exactly that: a station running <c>bpsk300-il2pc</c> logged its bursts as unreadable
+    /// for weeks, and one of the survey captures decoded offline as
+    /// <c>bpsk300-nocrc @ 2116 Hz -> GB7BPQ&gt;BEACON</c> - right frequency, right modulation,
+    /// right baud, wrong IL2P variant.</para>
+    /// <para>It is not free. A plain IL2P frame is checked by Reed-Solomon alone, and RS will
+    /// occasionally turn noise into a plausible-looking frame, which is the whole reason the
+    /// +CRC variant exists. Those frames are logged with <c>crc_valid</c> null rather than true.
+    /// Setting it on a mode that does not run IL2P+CRC is refused at start-up rather than
+    /// ignored.</para>
+    /// </remarks>
+    public bool AcceptPlainIl2p { get; set; }
+
+    /// <summary>
     /// A TCP port dedicated to this modem alone; null (the default) means a packet modem is
     /// reachable only through the shared <see cref="DaemonConfig.KissPort"/> by its nibble.
     /// </summary>

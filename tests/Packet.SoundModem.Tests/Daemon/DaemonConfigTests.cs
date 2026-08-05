@@ -335,6 +335,28 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void A_Modem_Can_Be_Told_To_Accept_Plain_Il2p_As_Well()
+    {
+        // The 40 m station hearing the BPQ32 node next door (see ModemConfig.AcceptPlainIl2p).
+        // It has to be a key the daemon knows - an ignored one would leave the operator believing
+        // their modem got more tolerant while the frames kept being dropped.
+        string path = WriteConfig("""
+            {"device": "null", "captureRate": 12000, "modems": [
+              {"subChannel": 0, "mode": "bpsk300", "frequency": 2150, "acceptPlainIl2p": true},
+              {"subChannel": 1, "mode": "bpsk300", "frequency": 1500}
+            ]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Warnings.Should().BeEmpty();
+        config.Modems[0].AcceptPlainIl2p.Should().BeTrue();
+        config.Modems[1].AcceptPlainIl2p.Should().BeFalse(
+            "it is per modem: a station may want it on the BPSK slot and nowhere else");
+    }
+
+    [Fact]
     public void A_Band_Plan_In_Rf_Terms_Loads()
     {
         string path = WriteConfig("""

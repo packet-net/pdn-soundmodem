@@ -151,6 +151,31 @@ public static class ModemCatalog
     };
 
     /// <summary>
+    /// Whether a mode's receiver runs IL2P+CRC, and so has something for
+    /// <see cref="ModemOptions.AcceptPlainIl2p"/> to switch on. False for the AX.25/FX.25 modes
+    /// (no IL2P at all) and for the modes that already read plain IL2P, where the tolerance is
+    /// what they do anyway.
+    /// </summary>
+    /// <remarks>
+    /// Spelled out mode by mode rather than pattern-matched on the name, because the names lie:
+    /// <c>fsk9600-il2p</c> and <c>fsk4800-il2p</c> both run IL2P+<em>CRC</em> (they are
+    /// <c>FskFraming.Il2pCrc</c>, NinoTNC modes 2 and 4), while <c>afsk300-il2p</c> and
+    /// <c>afsk1200-il2p-nocrc</c> really are CRC-less. <c>ModemCatalogTests</c> checks each answer
+    /// against the modem this catalogue actually builds.
+    /// </remarks>
+    public static bool RunsIl2pCrc(string mode) => mode switch
+    {
+        "afsk1200-il2p" or "afsk300-il2pc" => true,
+        "bpsk300" or "bpsk300-multi" or "bpsk1200" or "bpsk1200-multi" => true,
+        "qpsk600" or "qpsk2400" or "qpsk3600" => true,
+        "fsk9600-il2p" or "fsk4800-il2p" => true,
+        "c4fsk9600" or "c4fsk19200" => true,
+        _ when mode.StartsWith("freedv-", StringComparison.Ordinal) => true,
+        _ when mode.StartsWith("ms110d-", StringComparison.Ordinal) => true,
+        _ => false,
+    };
+
+    /// <summary>
     /// The default PSK detector for a mode when the caller does not override it: differential for
     /// every PSK family. BPSK reversed to differential 2026-07-18 (issues #40/#42 - coherent's
     /// narrow Costas loop cannot acquire real carriers); QPSK followed 2026-07-31 on the studybox
@@ -169,8 +194,9 @@ public static class ModemCatalog
     /// per-mode knobs (centre frequency, BPSK bank width/step, PSK detector); omit it for defaults.
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// <paramref name="mode"/> is not a known mode, or a centre frequency was supplied for a
-    /// fixed-centre mode (see <see cref="AcceptsCentreFrequency"/>).
+    /// <paramref name="mode"/> is not a known mode, a centre frequency was supplied for a
+    /// fixed-centre mode (see <see cref="AcceptsCentreFrequency"/>), or plain-IL2P tolerance was
+    /// asked of a mode that does not run IL2P+CRC (see <see cref="RunsIl2pCrc"/>).
     /// </exception>
     public static IModem Create(string mode, int dspRate, Action<byte[]> frameReceived, ModemOptions options = default)
     {
@@ -180,6 +206,18 @@ public static class ModemCatalog
             throw new ArgumentException(
                 $"mode '{mode}' has a fixed centre frequency - drop the frequency override " +
                 "(only the afsk*/bpsk*/qpsk* modes accept one)",
+                nameof(options));
+        }
+
+        // Refused rather than ignored, on the same reasoning as the centre frequency above: the
+        // operator who set it believes their modem got more tolerant, and on a mode with no
+        // IL2P+CRC check to relax it never will be.
+        bool acceptPlainIl2p = options.AcceptPlainIl2p ?? false;
+        if (acceptPlainIl2p && !RunsIl2pCrc(mode))
+        {
+            throw new ArgumentException(
+                $"mode '{mode}' does not run IL2P+CRC, so it has no CRC check to relax - drop " +
+                "the plain-IL2P tolerance (the modes that accept it are the IL2P+CRC ones)",
                 nameof(options));
         }
 
@@ -193,7 +231,7 @@ public static class ModemCatalog
             "afsk1200-fx25" => new Afsk1200Modem(dspRate, frameReceived, frequency ?? 1700, Fx25Mode.TransmitReceive),
             "afsk1200-fx25rx" => new Afsk1200Modem(dspRate, frameReceived, frequency ?? 1700, Fx25Mode.Receive),
             "afsk1200-multi" => new Afsk1200MultiModem(dspRate, frameReceived, offsetPairs: 3, centerFrequency: frequency ?? 1700),
-            "afsk1200-il2p" => new Afsk1200Il2pModem(dspRate, frameReceived, crc: true, frequency ?? 1700),
+            "afsk1200-il2p" => new Afsk1200Il2pModem(dspRate, frameReceived, crc: true, frequency ?? 1700, acceptPlainIl2p),
             "afsk1200-il2p-nocrc" => new Afsk1200Il2pModem(dspRate, frameReceived, crc: false, frequency ?? 1700),
             // The 300 baud HF AFSK family defaults to the narrow-branch frequency-diversity
             // bank - on the live 40 m slot the single wide modem lost most frames to a
@@ -204,34 +242,41 @@ public static class ModemCatalog
             "afsk300-il2p" => new Afsk300MultiModem(dspRate, frameReceived, Afsk300Framing.Il2p,
                 frequency ?? 1700, offsetPairs ?? 5, offsetStepHz),
             "afsk300-il2pc" => new Afsk300MultiModem(dspRate, frameReceived, Afsk300Framing.Il2pCrc,
-                frequency ?? 1700, offsetPairs ?? 5, offsetStepHz),
+                frequency ?? 1700, offsetPairs ?? 5, offsetStepHz, acceptPlainIl2p),
             // BPSK defaults to the differential frequency-diversity bank - offsetPairs/offsetStepHz
             // tune it (offsetPairs:0 gives a plain single modem).
             "bpsk300" or "bpsk300-multi" => new BpskMultiModem(dspRate, frameReceived, crc: true, frequency ?? 1500,
-                baud: 300, offsetPairs: offsetPairs ?? 4, offsetHz: offsetStepHz, detector: detector),
+                baud: 300, offsetPairs: offsetPairs ?? 4, offsetHz: offsetStepHz, detector: detector,
+                acceptPlainIl2p: acceptPlainIl2p),
             "bpsk300-nocrc" => new BpskMultiModem(dspRate, frameReceived, crc: false, frequency ?? 1500,
                 baud: 300, offsetPairs: offsetPairs ?? 4, offsetHz: offsetStepHz, detector: detector),
             "bpsk1200" or "bpsk1200-multi" => new BpskMultiModem(dspRate, frameReceived, crc: true, frequency ?? 1500,
-                baud: 1200, offsetPairs: offsetPairs ?? 4, offsetHz: offsetStepHz, detector: detector),
-            "qpsk600" => QpskModem.Qpsk600(dspRate, frameReceived, detector: detector, carrierFrequency: frequency ?? 1500),
-            "qpsk2400" => QpskModem.Qpsk2400(dspRate, frameReceived, detector: detector, carrierFrequency: frequency ?? 1500),
-            "qpsk3600" => QpskModem.Qpsk3600(dspRate, frameReceived, detector: detector, carrierFrequency: frequency ?? 1650),
+                baud: 1200, offsetPairs: offsetPairs ?? 4, offsetHz: offsetStepHz, detector: detector,
+                acceptPlainIl2p: acceptPlainIl2p),
+            "qpsk600" => QpskModem.Qpsk600(dspRate, frameReceived, detector: detector,
+                carrierFrequency: frequency ?? 1500, acceptPlainIl2p: acceptPlainIl2p),
+            "qpsk2400" => QpskModem.Qpsk2400(dspRate, frameReceived, detector: detector,
+                carrierFrequency: frequency ?? 1500, acceptPlainIl2p: acceptPlainIl2p),
+            "qpsk3600" => QpskModem.Qpsk3600(dspRate, frameReceived, detector: detector,
+                carrierFrequency: frequency ?? 1650, acceptPlainIl2p: acceptPlainIl2p),
             "fsk9600" => FskModem.Fsk9600(dspRate, frameReceived, FskFraming.ClassicHdlc),
-            "fsk9600-il2p" => new FskModem(dspRate, frameReceived, FskFraming.Il2pCrc),
-            "fsk4800-il2p" => FskModem.Fsk4800(dspRate, frameReceived),
-            "c4fsk9600" => C4fskModem.C4fsk9600(dspRate, frameReceived),
-            "c4fsk19200" => C4fskModem.C4fsk19200(dspRate, frameReceived),
-            "freedv-datac0" => FreeDvDatacModem.Datac0(dspRate, frameReceived),
-            "freedv-datac1" => FreeDvDatacModem.Datac1(dspRate, frameReceived),
-            "freedv-datac3" => FreeDvDatacModem.Datac3(dspRate, frameReceived),
-            "freedv-datac4" => FreeDvDatacModem.Datac4(dspRate, frameReceived),
-            "freedv-datac13" => FreeDvDatacModem.Datac13(dspRate, frameReceived),
-            "freedv-datac14" => FreeDvDatacModem.Datac14(dspRate, frameReceived),
+            "fsk9600-il2p" => new FskModem(dspRate, frameReceived, FskFraming.Il2pCrc,
+                acceptPlainIl2p: acceptPlainIl2p),
+            "fsk4800-il2p" => FskModem.Fsk4800(dspRate, frameReceived, acceptPlainIl2p: acceptPlainIl2p),
+            "c4fsk9600" => C4fskModem.C4fsk9600(dspRate, frameReceived, acceptPlainIl2p),
+            "c4fsk19200" => C4fskModem.C4fsk19200(dspRate, frameReceived, acceptPlainIl2p),
+            "freedv-datac0" => FreeDvDatacModem.Datac0(dspRate, frameReceived, acceptPlainIl2p),
+            "freedv-datac1" => FreeDvDatacModem.Datac1(dspRate, frameReceived, acceptPlainIl2p),
+            "freedv-datac3" => FreeDvDatacModem.Datac3(dspRate, frameReceived, acceptPlainIl2p),
+            "freedv-datac4" => FreeDvDatacModem.Datac4(dspRate, frameReceived, acceptPlainIl2p),
+            "freedv-datac13" => FreeDvDatacModem.Datac13(dspRate, frameReceived, acceptPlainIl2p),
+            "freedv-datac14" => FreeDvDatacModem.Datac14(dspRate, frameReceived, acceptPlainIl2p),
             "ms110d-wn0" or "ms110d-wn1" or "ms110d-wn2" or "ms110d-wn3" or "ms110d-wn4"
                 or "ms110d-wn5" or "ms110d-wn6" or "ms110d-wn7" or "ms110d-wn8"
                 or "ms110d-wn13" => new Ms110dModem(
                     dspRate, frameReceived,
-                    new Ms110dTxSettings { WaveformNumber = int.Parse(mode["ms110d-wn".Length..]) }),
+                    new Ms110dTxSettings { WaveformNumber = int.Parse(mode["ms110d-wn".Length..]) },
+                    acceptPlainIl2p: acceptPlainIl2p),
             _ => throw new ArgumentException($"unknown mode '{mode}'", nameof(mode)),
         };
     }

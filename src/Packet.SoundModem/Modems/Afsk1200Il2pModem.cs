@@ -28,13 +28,16 @@ public sealed class Afsk1200Il2pModem : IModem
     /// <param name="crc">Expect/emit the Hamming-protected trailing CRC ("IL2P+CRC" -
     /// what the NinoTNC modes use).</param>
     /// <param name="centerFrequency">Mark/space midpoint; 1700 Hz standard.</param>
+    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
+    /// trailing CRC (off by default, and inert unless <paramref name="crc"/> is on) - see
+    /// <see cref="Il2pReceiver"/> for what that buys and what it costs.</param>
     public Afsk1200Il2pModem(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
-        double centerFrequency = 1700)
+        double centerFrequency = 1700, bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _crc = crc;
-        var deframer = new Il2pDeframer(
+        var deframer = new Il2pReceiver(
             (frame, info) =>
             {
                 frameReceived(frame);
@@ -42,7 +45,7 @@ public sealed class Afsk1200Il2pModem : IModem
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                     HeaderType: info.HeaderType));
             },
-            crcMode: crc);
+            crcMode: crc, acceptPlainIl2p: acceptPlainIl2p);
         // Reset the deframer on the DCD falling edge - same rationale as BpskModem:
         // a carrier that drops mid-collection leaves the deframer consuming the next
         // transmission's sync word as phantom payload.

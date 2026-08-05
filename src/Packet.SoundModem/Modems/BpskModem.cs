@@ -23,11 +23,15 @@ public sealed class BpskModem : IModem, IConstellationSource
     /// symbol.</param>
     /// <param name="rollOff">RRC roll-off.</param>
     /// <param name="detector">Differential (default) or coherent detection.</param>
+    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
+    /// trailing CRC (off by default, and inert unless <paramref name="crc"/> is on) - see
+    /// <see cref="Il2pReceiver"/> for what that buys and what it costs.</param>
     public BpskModem(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
         double carrierFrequency = 1500, int baud = 300,
         double rollOff = BpskModulator.DefaultRollOff,
-        PskDetector detector = PskDetector.Differential)
+        PskDetector detector = PskDetector.Differential,
+        bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _crc = crc;
@@ -36,7 +40,7 @@ public sealed class BpskModem : IModem, IConstellationSource
         // reading below - while it in turn cannot be built until the bit sink that drives it
         // exists. Nothing dereferences it until audio flows.
         BpskDemodulator? demodulator = null;
-        var deframer = new Il2pDeframer(
+        var deframer = new Il2pReceiver(
             (frame, info) =>
             {
                 frameReceived(frame);
@@ -47,7 +51,7 @@ public sealed class BpskModem : IModem, IConstellationSource
                     // is measured over still describes that burst.
                     FrequencyOffsetHz: demodulator!.CarrierOffsetHz));
             },
-            crc);
+            crc, acceptPlainIl2p);
 
         // Reset the deframer on the DCD falling edge. Without this, a frame whose carrier
         // drops mid-collection (the preceding transmission ends, a collision corrupts the

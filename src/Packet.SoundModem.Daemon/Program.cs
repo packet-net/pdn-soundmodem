@@ -592,13 +592,38 @@ foreach (ModemConfig modemConfig in modems)
         return 2;
     }
 
+    // Refused rather than ignored, same as the frequency override above: an operator who wrote
+    // this down believes their modem got more tolerant, and on a mode with no IL2P+CRC check to
+    // relax it never will be. Named modes rather than a pattern, because fsk9600-il2p and
+    // fsk4800-il2p do run the CRC despite their names.
+    if (modemConfig.AcceptPlainIl2p && !ModemCatalog.RunsIl2pCrc(mode))
+    {
+        Console.Error.WriteLine(
+            $"modem {subChannel}: mode '{mode}' does not run IL2P+CRC, so it has no CRC check "
+            + "to relax - drop \"acceptPlainIl2p\"");
+        Console.Error.WriteLine(
+            "  it applies to the IL2P+CRC modes: afsk300-il2pc, afsk1200-il2p, bpsk*, qpsk*, "
+            + "fsk9600-il2p, fsk4800-il2p, c4fsk*, freedv-*, ms110d-*");
+        return 2;
+    }
+
     channel.AddModem(subChannel, sink => ModemCatalog.Create(mode, DspRate, sink,
         new ModemOptions(
             CentreFrequencyHz: frequency,
             OffsetPairs: modemConfig.OffsetPairs,
             OffsetStepHz: modemConfig.OffsetStepHz,
-            Detector: pskDetectorOverride)));
+            Detector: pskDetectorOverride,
+            AcceptPlainIl2p: modemConfig.AcceptPlainIl2p)));
     Console.WriteLine($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");
+    if (modemConfig.AcceptPlainIl2p)
+    {
+        // Said out loud because it relaxes the one check that separates a frame from noise the
+        // FEC happened to like, and nothing downstream will say so afterwards - a frame that
+        // arrives this way is logged with crc_valid null, which is easy to miss.
+        Console.WriteLine(
+            "  also accepting plain IL2P (no trailing CRC): those frames are checked by "
+            + "Reed-Solomon alone");
+    }
 }
 
 if (modems.Any(m => m.Mode.StartsWith("bpsk", StringComparison.Ordinal)))

@@ -17,8 +17,15 @@ namespace Packet.SoundModem.Modems;
 /// <param name="Detector">PSK detection method for <c>bpsk*</c>/<c>qpsk*</c>. Null ⇒ the
 /// per-family default from <see cref="ModemCatalog.DefaultDetectorFor"/> (BPSK differential,
 /// QPSK coherent).</param>
+/// <param name="AcceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no trailing
+/// CRC, on a mode whose link runs IL2P+CRC - for a neighbour (a BPQ32 node, say) that sends the
+/// CRC-less variant. Null ⇒ false, the interop ground truth: IL2P+CRC modes accept IL2P+CRC and
+/// nothing else. Only the IL2P+CRC modes have anything to switch on, so <see langword="true"/>
+/// for any other mode throws - see <see cref="ModemCatalog.RunsIl2pCrc"/> and, for what the
+/// tolerance costs, <see cref="Il2pReceiver"/>.</param>
 public readonly record struct ModemOptions(
     double? CentreFrequencyHz = null,
     int? OffsetPairs = null,
     double? OffsetStepHz = null,
-    PskDetector? Detector = null);
+    PskDetector? Detector = null,
+    bool? AcceptPlainIl2p = null);

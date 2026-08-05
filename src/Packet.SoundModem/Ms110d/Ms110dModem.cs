@@ -34,7 +34,7 @@ public sealed class Ms110dModem : IModem
     private readonly Action<byte[]> _frameReceived;
     private readonly Ms110dModulator _tx;
     private readonly Ms110dDemodulator _rx;
-    private readonly Il2pDeframer _deframer;
+    private readonly Il2pReceiver _deframer;
     private readonly EnergyBusyDetector _energyBusy;
     private readonly FirFilter _busyBandpass;
     private readonly Decimator? _decimator;
@@ -49,11 +49,15 @@ public sealed class Ms110dModem : IModem
     /// <param name="tx">Transmit configuration (waveform number, interleaver, K, M, TLC,
     /// EOM/EOT). Default: WN 6, Short, K7, M 3.</param>
     /// <param name="rx">Receiver options.</param>
+    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
+    /// trailing CRC (off by default) - see <see cref="Modems.Il2pReceiver"/> for what that buys
+    /// and what it costs.</param>
     public Ms110dModem(
         int sampleRate,
         Action<byte[]> frameReceived,
         Ms110dTxSettings? tx = null,
-        Ms110dDemodOptions? rx = null)
+        Ms110dDemodOptions? rx = null,
+        bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         if (sampleRate < NativeRate || sampleRate % NativeRate != 0)
@@ -68,7 +72,7 @@ public sealed class Ms110dModem : IModem
         _sampleRate = sampleRate;
         _tx = new Ms110dModulator(tx ?? new Ms110dTxSettings());
         _rx = new Ms110dDemodulator(rx);
-        _deframer = new Il2pDeframer(
+        _deframer = new Il2pReceiver(
             (frame, info) =>
             {
                 _frameReceived(frame);
@@ -76,7 +80,7 @@ public sealed class Ms110dModem : IModem
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                     FrequencyOffsetHz: _rx.Lock?.CfoHz));
             },
-            crcMode: true);
+            crcMode: true, acceptPlainIl2p: acceptPlainIl2p);
         _rx.BlockDecoded += block =>
         {
             foreach (byte bit in block.Bits)

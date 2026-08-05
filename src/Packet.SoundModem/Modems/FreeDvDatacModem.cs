@@ -77,7 +77,7 @@ public sealed class FreeDvDatacModem : IModem
     private readonly Action<byte[]> _frameReceived;
     private readonly DatacTransmitter _tx;
     private readonly DatacReceiver _rx;
-    private readonly Il2pDeframer _deframer;
+    private readonly Il2pReceiver _deframer;
     private readonly EnergyBusyDetector _energyBusy;
     private readonly Decimator? _decimator;
     private readonly float[] _decimated;
@@ -97,7 +97,11 @@ public sealed class FreeDvDatacModem : IModem
     /// (48000 on the daemon's 48 kHz path; 8000 runs the engine natively).</param>
     /// <param name="frameReceived">Receives each decoded AX.25 frame.</param>
     /// <param name="mode">Any of the six datac modes (datac0/1/3/4/13/14).</param>
-    public FreeDvDatacModem(int sampleRate, Action<byte[]> frameReceived, OfdmMode mode)
+    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
+    /// trailing CRC (off by default) - see <see cref="Il2pReceiver"/> for what that buys and what
+    /// it costs.</param>
+    public FreeDvDatacModem(
+        int sampleRate, Action<byte[]> frameReceived, OfdmMode mode, bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         ArgumentNullException.ThrowIfNull(mode);
@@ -114,7 +118,7 @@ public sealed class FreeDvDatacModem : IModem
         _factor = sampleRate / NativeRate;
         _tx = new DatacTransmitter(mode);
         _rx = new DatacReceiver(mode, MaxPacketsPerBurst(_tx), endOfBurstDetection: true);
-        _deframer = new Il2pDeframer(
+        _deframer = new Il2pReceiver(
             (frame, info) =>
             {
                 _frameReceived(frame);
@@ -122,7 +126,7 @@ public sealed class FreeDvDatacModem : IModem
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                     FrequencyOffsetHz: _rx.Demod.FoffEstHz));
             },
-            crcMode: true);
+            crcMode: true, acceptPlainIl2p: acceptPlainIl2p);
         _energyBusy = new EnergyBusyDetector(NativeRate);
 
         // Guard silence appended after the postamble: the receiver's end-of-burst UW check
@@ -150,32 +154,38 @@ public sealed class FreeDvDatacModem : IModem
 
     /// <summary>Creates the datac0 mode - 500 Hz OBW, 14-byte packets; every AX.25 frame
     /// spans several packets of its burst.</summary>
-    public static FreeDvDatacModem Datac0(int sampleRate, Action<byte[]> frameReceived) =>
-        new(sampleRate, frameReceived, OfdmMode.Datac0);
+    public static FreeDvDatacModem Datac0(
+        int sampleRate, Action<byte[]> frameReceived, bool acceptPlainIl2p = false) =>
+        new(sampleRate, frameReceived, OfdmMode.Datac0, acceptPlainIl2p);
 
     /// <summary>Creates the datac1 mode - 1700 Hz OBW, 510-byte packets, the throughput
     /// workhorse.</summary>
-    public static FreeDvDatacModem Datac1(int sampleRate, Action<byte[]> frameReceived) =>
-        new(sampleRate, frameReceived, OfdmMode.Datac1);
+    public static FreeDvDatacModem Datac1(
+        int sampleRate, Action<byte[]> frameReceived, bool acceptPlainIl2p = false) =>
+        new(sampleRate, frameReceived, OfdmMode.Datac1, acceptPlainIl2p);
 
     /// <summary>Creates the datac3 mode - 500 Hz OBW, 126-byte packets, low-SNR.</summary>
-    public static FreeDvDatacModem Datac3(int sampleRate, Action<byte[]> frameReceived) =>
-        new(sampleRate, frameReceived, OfdmMode.Datac3);
+    public static FreeDvDatacModem Datac3(
+        int sampleRate, Action<byte[]> frameReceived, bool acceptPlainIl2p = false) =>
+        new(sampleRate, frameReceived, OfdmMode.Datac3, acceptPlainIl2p);
 
     /// <summary>Creates the datac4 mode - 250 Hz OBW, 54-byte packets, very low SNR
     /// (RX band-pass filtered).</summary>
-    public static FreeDvDatacModem Datac4(int sampleRate, Action<byte[]> frameReceived) =>
-        new(sampleRate, frameReceived, OfdmMode.Datac4);
+    public static FreeDvDatacModem Datac4(
+        int sampleRate, Action<byte[]> frameReceived, bool acceptPlainIl2p = false) =>
+        new(sampleRate, frameReceived, OfdmMode.Datac4, acceptPlainIl2p);
 
     /// <summary>Creates the datac13 mode - 200 Hz OBW, 14-byte packets, the narrowest mode
     /// (RX band-pass filtered).</summary>
-    public static FreeDvDatacModem Datac13(int sampleRate, Action<byte[]> frameReceived) =>
-        new(sampleRate, frameReceived, OfdmMode.Datac13);
+    public static FreeDvDatacModem Datac13(
+        int sampleRate, Action<byte[]> frameReceived, bool acceptPlainIl2p = false) =>
+        new(sampleRate, frameReceived, OfdmMode.Datac13, acceptPlainIl2p);
 
     /// <summary>Creates the datac14 mode - 250 Hz OBW, 3-byte packets, short-burst signalling
     /// (RX band-pass filtered; every AX.25 frame spans many packets).</summary>
-    public static FreeDvDatacModem Datac14(int sampleRate, Action<byte[]> frameReceived) =>
-        new(sampleRate, frameReceived, OfdmMode.Datac14);
+    public static FreeDvDatacModem Datac14(
+        int sampleRate, Action<byte[]> frameReceived, bool acceptPlainIl2p = false) =>
+        new(sampleRate, frameReceived, OfdmMode.Datac14, acceptPlainIl2p);
 
     /// <inheritdoc />
     public event Action<byte[], FrameQuality>? FrameDecoded;

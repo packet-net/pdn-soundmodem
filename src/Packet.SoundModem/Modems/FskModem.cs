@@ -48,7 +48,13 @@ public sealed class FskModem : IModem
     /// <param name="frameReceived">Receives each decoded AX.25 frame.</param>
     /// <param name="framing">Wire framing (classic G3RUH vs IL2P).</param>
     /// <param name="baud">Baseband symbol rate: 9600 (modes 0/2) or 4800 (mode 4).</param>
-    public FskModem(int sampleRate, Action<byte[]> frameReceived, FskFraming framing, int baud = 9600)
+    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
+    /// trailing CRC (off by default, and inert unless <paramref name="framing"/> is
+    /// <see cref="FskFraming.Il2pCrc"/>) - see <see cref="Il2pReceiver"/> for what that buys and
+    /// what it costs.</param>
+    public FskModem(
+        int sampleRate, Action<byte[]> frameReceived, FskFraming framing, int baud = 9600,
+        bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
@@ -79,7 +85,7 @@ public sealed class FskModem : IModem
         }
         else
         {
-            var deframer = new Il2pDeframer(
+            var deframer = new Il2pReceiver(
                 (frame, info) =>
                 {
                     frameReceived(frame);
@@ -87,7 +93,7 @@ public sealed class FskModem : IModem
                         Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                         HeaderType: info.HeaderType));
                 },
-                crcMode: framing == FskFraming.Il2pCrc);
+                crcMode: framing == FskFraming.Il2pCrc, acceptPlainIl2p: acceptPlainIl2p);
             // Reset the deframer on the DCD falling edge - same rationale as BpskModem:
             // a carrier that drops mid-collection leaves the deframer consuming the next
             // transmission's sync word as phantom payload.
@@ -122,8 +128,9 @@ public sealed class FskModem : IModem
 
     /// <summary>Creates the 4800 baud mode - NinoTNC mode 4 (IL2P+CRC), 10 kHz OBW.</summary>
     public static FskModem Fsk4800(
-        int sampleRate, Action<byte[]> frameReceived, FskFraming framing = FskFraming.Il2pCrc) =>
-        new(sampleRate, frameReceived, framing, 4800);
+        int sampleRate, Action<byte[]> frameReceived, FskFraming framing = FskFraming.Il2pCrc,
+        bool acceptPlainIl2p = false) =>
+        new(sampleRate, frameReceived, framing, 4800, acceptPlainIl2p);
 
     /// <inheritdoc />
     public event Action<byte[], FrameQuality>? FrameDecoded;
