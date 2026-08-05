@@ -1283,7 +1283,9 @@ await using var pagingLifetime = pagingServer;
 // (--device ubersdr:…, receive only), or an ALSA card. Each surfaces through the same
 // IAudioInput/IAudioOutput/IPttControl the channel already speaks, so KISS packet, POCSAG
 // paging and ARDOP all get every transport for free.
-int flexPacketBuffer = ardopPort is null ? 3 : 6;
+// Keyed off the modem entry, not the legacy --ardop flag: a station configuring ARDOP the
+// documented way (a "mode": "ardop" modem entry) wants the deeper buffer just as much.
+int flexPacketBuffer = ardopModem is null ? 3 : 6;
 FlexRuntime? flex = null;
 UberSdrAudioInput? uberSdr = null;
 IPttControl ptt;
@@ -1578,7 +1580,7 @@ else
             : new UpsamplingAudioOutput(alsaPlayback, DspRate);
         // Receive: capture at the card-native rate; ARDOP buffers more deeply (500 ms vs the
         // 120 ms default) to ride out device hiccups (snd-aloop re-locking mid-frame).
-            var alsaInput = new AlsaAudioInput(device, captureRate, ardopPort is null ? 120_000 : 500_000);
+            var alsaInput = new AlsaAudioInput(device, captureRate, ardopModem is null ? 120_000 : 500_000);
         alsaIn = alsaInput;
         input = alsaInput;
     }
@@ -1605,7 +1607,7 @@ var rxDecimator = inputRate == DspRate ? null : new Decimator(inputRate, inputRa
 
 // 100 ms RX blocks for the packet modes; 20 ms when ARDOP runs - its ARQ timing budgets
 // (IRS ACK inside the ISS repeat window) want RX latency low.
-int blockSamples = ardopPort is null ? inputRate / 10 : inputRate / 50;
+int blockSamples = ardopModem is null ? inputRate / 10 : inputRate / 50;
 var floatBuffer = new float[blockSamples];
 var dspBuffer = new float[rxDecimator?.MaxOutput(blockSamples) ?? blockSamples];
 var xrunWatch = new XrunWatch();
