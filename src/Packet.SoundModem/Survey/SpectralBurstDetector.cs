@@ -15,11 +15,23 @@ namespace Packet.SoundModem.Survey;
 /// guesses wrong. Energy, by contrast, is already being computed for the display.
 /// </para>
 /// <para>
-/// <b>Floor.</b> Per bin, the minimum half-second block average over the last ~15 s - the
-/// <see cref="Modems.EnergyBusyDetector"/> min-tracking idea, per bin rather than per band, so
-/// a signal parked in one part of the passband cannot raise the floor everywhere else. It is
-/// recomputed when a block closes, not per line: a floor that moved within a burst would chase
-/// the burst.
+/// <b>Floor.</b> Per bin, <see cref="Modems.EnergyBusyDetector"/>'s asymmetric one-pole
+/// tracker - down fast, up slowly, but always up - run per bin rather than per band, so a
+/// signal parked in one part of the passband cannot raise the floor everywhere else. It moves
+/// when a block closes, not per line: a floor that moved within a burst would chase the burst.
+/// </para>
+/// <para>
+/// It was a rolling minimum over the last ~15 s until 2026-08-05, and that latched. A dip
+/// deeper than <see cref="ThresholdDb"/> entered the window and took the floor with it;
+/// ordinary noise then stood over the lowered floor, so every line in those bins read as hot;
+/// a block with no unhot line to average carried the previous value forward, which was the
+/// dip. The low value recirculated and the floor could not climb back, because climbing back
+/// needed the noise to fall below a floor already beneath it. A station left collecting on
+/// 40 m for five hours wrote 95 captures of which 29 held anything that stood out from the
+/// noise, at SNRs that barely correlated with whether there was a signal there at all
+/// (r = +0.27, the inflation being the depth of whatever fade had latched the bin); the
+/// honest ones clustered in the minute after each restart, where the floor was still new.
+/// A tracker cannot latch: every block moves it, and the only question is how far.
 /// </para>
 /// <para>
 /// <b>Bursts.</b> A run of adjacent bins standing <see cref="ThresholdDb"/> over their floors is
@@ -36,6 +48,25 @@ public sealed class SpectralBurstDetector
     /// <see cref="Waterfall.BandActivityTracker"/> so the two agree about what a burst is.</summary>
     public const double ThresholdDb = 6;
 
+    // The three rates the floor moves at, per half-second block. Down is quick, because a
+    // channel that has genuinely gone quieter is a fact about the noise and the sooner the
+    // floor says so the sooner a weak signal over it can be seen. Up is slower, because most
+    // of what raises a bin's power is somebody transmitting on it. Which of the two upward
+    // rates applies is decided by whether any line in the block was under threshold: a block
+    // with quiet lines in it is noise that has come up and the floor should follow it over
+    // ten seconds or so, while a block where every line was hot may be a transmission sitting
+    // on the bin and the floor must barely move - but it must still move, because a bin that
+    // is hot for ever is not a transmission, it is a floor that is wrong.
+    private const double DownRate = 0.25;
+    private const double UpRate = 0.05;
+    private const double StuckUpRate = 0.004;
+
+    // Blocks averaged before detections mean anything, taking the loudest as the seed. Same
+    // reasoning as EnergyBusyDetector's: a cold start seeds high, which costs a couple of
+    // seconds of deafness, where seeding low costs every bin reading as busy until the floor
+    // has climbed all the way back.
+    private const int SeedBlocks = 4;
+
     private static readonly double[] ByteToLinearPower = BuildLut();
 
     private readonly Action<SurveyBurst> _burstClosed;
@@ -48,16 +79,15 @@ public sealed class SpectralBurstDetector
     private readonly int _graceLines;
     private readonly int _maxLines;
 
-    // Per-bin floor machinery: block sums being accumulated, a ring of completed block averages,
-    // and the min over that ring - all preallocated, nothing per line.
-    private readonly double[] _blockSum;
-    private readonly int[] _blockCount;     // per bin: lines that contributed, hot ones excluded
-    private readonly double[] _floorRing;   // _floorBlocks × _binCount, block-major
+    // Per-bin floor machinery: the block being accumulated and the tracked floor itself - all
+    // preallocated, nothing per line. Two sums, because the floor wants the quiet lines when
+    // there are any and needs to know what the loud ones measured when there are not.
+    private readonly double[] _blockSum;    // per bin: unhot lines only
+    private readonly int[] _blockCount;     // per bin: lines that contributed to _blockSum
+    private readonly double[] _blockAllSum; // per bin: every line, hot or not
     private readonly double[] _floor;
     private readonly bool[] _hot;
-    private readonly int _floorBlocks;
-    private int _floorRingIndex;
-    private int _floorRingFilled;
+    private int _seedBlocksRemaining = SeedBlocks;
     private int _blockFilled;
 
     private readonly List<Open> _open = [];
@@ -103,7 +133,6 @@ public sealed class SpectralBurstDetector
         int highBin = Math.Clamp((int)Math.Ceiling(highHz / binWidthHz), _lowBin + 1, lineLength);
         _binCount = highBin - _lowBin;
         _blockLines = Math.Max(1, linesPerSecond / 2);
-        _floorBlocks = 30;                                  // 30 half-second blocks ≈ 15 s
         _minRunBins = Math.Max(1, (int)Math.Round(minWidthHz / binWidthHz));
         _minLines = Math.Max(1, (int)Math.Round(minSeconds * linesPerSecond));
         _maxLines = Math.Max(_minLines + 1, (int)Math.Round(maxSeconds * linesPerSecond));
@@ -111,15 +140,15 @@ public sealed class SpectralBurstDetector
 
         _blockSum = new double[_binCount];
         _blockCount = new int[_binCount];
-        _floorRing = new double[_floorBlocks * _binCount];
+        _blockAllSum = new double[_binCount];
         _floor = new double[_binCount];
         _hot = new bool[_binCount];
     }
 
-    /// <summary>True once a floor has been banked and detections mean anything. Before that the
+    /// <summary>True once a floor has been seeded and detections mean anything. Before that the
     /// detector is warming up and reports nothing - an honest silence rather than a burst
     /// measured against a floor it does not have.</summary>
-    public bool Ready => _floorRingFilled > 0;
+    public bool Ready => _seedBlocksRemaining == 0;
 
     /// <summary>
     /// Feeds one spectrum line. The source's own buffer is fine - nothing is retained.
@@ -146,6 +175,7 @@ public sealed class SpectralBurstDetector
         {
             double power = ByteToLinearPower[line[_lowBin + n]];
             _hot[n] = ready && power >= _floor[n] * ratio;
+            _blockAllSum[n] += power;
             if (!_hot[n])
             {
                 _blockSum[n] += power;
@@ -177,42 +207,54 @@ public sealed class SpectralBurstDetector
     }
 
     /// <summary>
-    /// Banks this block's per-bin averages and recomputes the floor.
+    /// Averages this block per bin and moves each bin's floor towards it.
     /// </summary>
     /// <remarks>
-    /// Bins that were carrying signal are excluded, and a bin hot for the whole block keeps the
-    /// floor it had. Without that, a signal outlasting the floor's ~15 s memory fills the window
-    /// with its own energy, raises its own floor, and stops looking like a burst - so a 25-second
-    /// SSB over reported as two 13-second "packets", each short enough to pass a duration gate.
-    /// A floor is a measurement of noise, and a bin carrying a transmission is not measuring any.
+    /// <para>
+    /// Bins carrying signal are held out of the average, because a floor is a measurement of
+    /// noise and a bin carrying a transmission is not measuring any. Without that, a signal
+    /// outlasting the floor's memory fills it with its own energy, raises its own floor, and
+    /// stops looking like a burst - a 25-second SSB over reported as two 13-second "packets",
+    /// each short enough to pass a duration gate.
+    /// </para>
+    /// <para>
+    /// A block where every line was hot has no such average to offer, and what it must not do
+    /// is keep the floor it had: that was the latch, because the floor it had was what made
+    /// every line hot. It moves towards what the block actually measured instead, at a rate
+    /// slow enough that a real transmission shifts it by well under a dB over the longest it
+    /// could plausibly run, and fast enough that a bin held hot by nothing but a wrong floor
+    /// climbs out within the minute.
+    /// </para>
     /// </remarks>
     private void CloseBlock()
     {
-        int at = _floorRingIndex * _binCount;
-        int previous = ((_floorRingIndex + _floorBlocks - 1) % _floorBlocks) * _binCount;
         for (int n = 0; n < _binCount; n++)
         {
-            _floorRing[at + n] = _blockCount[n] > 0
-                ? _blockSum[n] / _blockCount[n]
-                : _floorRingFilled > 0 ? _floorRing[previous + n] : _floor[n];
+            bool everyLineHot = _blockCount[n] == 0;
+            double power = everyLineHot
+                ? _blockAllSum[n] / _blockLines
+                : _blockSum[n] / _blockCount[n];
+
             _blockSum[n] = 0;
             _blockCount[n] = 0;
-        }
+            _blockAllSum[n] = 0;
 
-        _floorRingIndex = (_floorRingIndex + 1) % _floorBlocks;
-        _floorRingFilled = Math.Min(_floorRingFilled + 1, _floorBlocks);
-        _blockFilled = 0;
-
-        for (int n = 0; n < _binCount; n++)
-        {
-            double min = double.MaxValue;
-            for (int block = 0; block < _floorRingFilled; block++)
+            if (_seedBlocksRemaining > 0)
             {
-                min = Math.Min(min, _floorRing[block * _binCount + n]);
+                _floor[n] = Math.Max(_floor[n], Math.Max(power, 1e-12));
+                continue;
             }
 
-            _floor[n] = Math.Max(min, 1e-12);
+            double rate = power < _floor[n] ? DownRate : everyLineHot ? StuckUpRate : UpRate;
+            _floor[n] = Math.Max(_floor[n] + ((power - _floor[n]) * rate), 1e-12);
         }
+
+        if (_seedBlocksRemaining > 0)
+        {
+            _seedBlocksRemaining--;
+        }
+
+        _blockFilled = 0;
     }
 
     /// <summary>Contiguous runs of bins standing over their floors, wide enough to be a signal.</summary>
