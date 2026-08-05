@@ -251,13 +251,17 @@ public sealed class Afsk300MultiModem : IModem
         }
     }
 
-    /// <summary>Ranks two branches' copies of the same frame: a copy the link's own reading
-    /// claimed beats one only the plain reading produced, and otherwise the better-centred branch
-    /// wins. See <see cref="BpskMultiModem"/> for why the delivery test comes first.</summary>
-    private static bool IsBetter(in Candidate candidate, in Candidate best) =>
-        candidate.Quality.MonitorOnly != best.Quality.MonitorOnly
-            ? !candidate.Quality.MonitorOnly
+    /// <summary>Ranks two branches' copies of the same frame: the best-evidenced reading wins
+    /// (<see cref="DecodeEvidence"/>), and otherwise the better-centred branch does. See
+    /// <see cref="BpskMultiModem"/> for why the evidence test comes first.</summary>
+    private static bool IsBetter(in Candidate candidate, in Candidate best)
+    {
+        int evidence = DecodeEvidence.RankOf(candidate.Quality);
+        int bestEvidence = DecodeEvidence.RankOf(best.Quality);
+        return evidence != bestEvidence
+            ? evidence > bestEvidence
             : Math.Abs(candidate.ResidualHz) < Math.Abs(best.ResidualHz);
+    }
 
     private static bool IsSameFrame(byte[] a, byte[] b) => a.AsSpan().SequenceEqual(b);
 }

@@ -264,26 +264,31 @@ public sealed class BpskMultiModem : IModem
         }
     }
 
-    /// <summary>Ranks two branches' copies of the same frame: a copy the link's own reading
-    /// claimed beats one only the plain reading produced, then a measured branch beats an
-    /// unmeasured one, the better-centred of two measured branches wins, and two unmeasured
-    /// copies are separated by FEC work then by distance from the bank centre - anything but
-    /// array order, which is the bias being removed.</summary>
+    /// <summary>Ranks two branches' copies of the same frame: the best-evidenced reading wins
+    /// (<see cref="DecodeEvidence"/>), then a measured branch beats an unmeasured one, the
+    /// better-centred of two measured branches wins, and two unmeasured copies are separated by
+    /// FEC work then by distance from the bank centre - anything but array order, which is the
+    /// bias being removed.</summary>
     /// <remarks>
-    /// The delivery test comes first, ahead of the centring that the rest of this exists for,
+    /// The evidence test comes first, ahead of the centring that the rest of this exists for,
     /// because the two facts are not the same size. A branch whose IL2P+CRC reading claimed the
     /// frame has <em>checked</em> it; a branch that only managed a plain reading of the same bytes
     /// has an intact frame with a trailer that would not verify there, and there is no way to tell
     /// that from a genuinely CRC-less neighbour. When both happen at once the station did verify
-    /// those bytes, so the frame goes to the host and is reported as checked. The cost is that the
-    /// frequency reading then comes from the branch that verified it rather than the best-centred
-    /// one, which is a few Hz on a rare case against getting a real frame's provenance right.
+    /// those bytes, so that is the copy delivered and the quality reported - whichever branch
+    /// produced it and whatever <c>acceptPlainIl2p</c> says, so the answer cannot depend on which
+    /// branch happened to be nearest. The cost is that the frequency reading then comes from the
+    /// branch that verified it rather than the best-centred one; on the GB7RDG capture that is
+    /// 8.56 Hz against 8.37 Hz, which is nothing set beside reporting a verified frame as
+    /// standing on Reed-Solomon alone.
     /// </remarks>
     private static bool IsBetter(in Candidate candidate, in Candidate best)
     {
-        if (candidate.Quality.MonitorOnly != best.Quality.MonitorOnly)
+        int evidence = DecodeEvidence.RankOf(candidate.Quality);
+        int bestEvidence = DecodeEvidence.RankOf(best.Quality);
+        if (evidence != bestEvidence)
         {
-            return !candidate.Quality.MonitorOnly;
+            return evidence > bestEvidence;
         }
 
         if (candidate.ResidualHz is { } residual)

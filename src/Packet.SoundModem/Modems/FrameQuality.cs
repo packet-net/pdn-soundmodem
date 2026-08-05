@@ -68,3 +68,39 @@ public readonly record struct FrameQuality(
     M0LTE.Il2p.Il2pHeaderType? HeaderType = null,
     bool PlainIl2p = false,
     bool MonitorOnly = false);
+
+/// <summary>
+/// How much a reading of a transmission actually established, for choosing between two decoder
+/// branches' copies of the same frame.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A diversity bank routinely has several branches copy the same transmission, and since every
+/// IL2P+CRC branch reads its bits both ways, they do not all establish the same thing about it.
+/// One branch's IL2P+CRC reading may verify the trailer while another branch, closer to the
+/// carrier and copying identical bytes, cannot - which is not hypothetical: on the committed
+/// GB7RDG off-air capture the five low branches verify the frame and the four nearest the carrier
+/// only manage the plain reading (<c>OffAirBpskTests</c>).
+/// </para>
+/// <para>
+/// So the copy to report and deliver is the best-evidenced one, and nothing else gets to
+/// outrank that: which branch happened to be best centred is a question about our receiver, and
+/// whether the far station's CRC checked out is a question about the frame. Ranking on
+/// <see cref="FrameQuality.MonitorOnly"/> instead looks equivalent and is not - that is the
+/// operator's routing choice, identical across every branch of one bank, so with
+/// <c>acceptPlainIl2p</c> on it says nothing at all and a verified frame gets reported as
+/// RS-only by whichever branch was nearest.
+/// </para>
+/// </remarks>
+internal static class DecodeEvidence
+{
+    /// <summary>Ranks a copy by what its reading proved, highest first: the trailing CRC verified,
+    /// then the link's own reading with a trailer that did not verify, then a plain reading with
+    /// no trailer behind it at all.</summary>
+    internal static int RankOf(in FrameQuality quality) => quality switch
+    {
+        { CrcValid: true } => 2,
+        { PlainIl2p: false } => 1,
+        _ => 0,
+    };
+}

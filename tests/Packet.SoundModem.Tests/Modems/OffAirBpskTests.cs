@@ -134,6 +134,57 @@ public class OffAirBpskTests
         host.Should().ContainSingle("the host is told about the burst that verified, and no other");
     }
 
+    /// <summary>
+    /// A frame whose trailing CRC verified is reported as verified, whichever branch produced it
+    /// and whatever <c>acceptPlainIl2p</c> is set to. Turning the option on must not downgrade a
+    /// good frame's provenance.
+    /// </summary>
+    /// <remarks>
+    /// <para>This is a real defect this capture caught and a synthetic frame cannot. Every branch
+    /// of the bank copies this transmission, and they do not all establish the same thing about
+    /// it: the five branches from −30 to 0 Hz verify the trailing CRC, while the four nearest the
+    /// carrier (+7.5 to +30 Hz, and the carrier sits at ~+8.4 Hz) manage only the plain reading.
+    /// Branch +7.5 therefore has the smallest residual, 0.87 Hz, and wins any comparison made on
+    /// centring.</para>
+    /// <para>Ranking the branches on whether the copy was withheld from the host hid that, because
+    /// with the option <em>on</em> no copy is withheld and the test says nothing - so the
+    /// best-centred branch won and a verified frame came out marked
+    /// <see cref="FrameQuality.PlainIl2p"/>, with <c>crc_valid</c> null in the station's own frame
+    /// log and an <c>RS ONLY</c> badge on every ordinary frame of any port that had asked to see
+    /// CRC-less traffic. The ranking is on what each reading proved instead
+    /// (<c>DecodeEvidence</c>), which cannot depend on which branch happened to be nearest. A
+    /// clean synthetic frame decodes on-centre and never exercises it.</para>
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_Verified_Frame_Is_Reported_As_Verified_Whatever_The_Option_Says(bool acceptPlainIl2p)
+    {
+        var host = new List<byte[]>();
+        var qualities = new List<FrameQuality>();
+        IModem modem = ModemCatalog.Create(
+            "bpsk300", DspRate, host.Add,
+            new ModemOptions(CentreFrequencyHz: 1500, AcceptPlainIl2p: acceptPlainIl2p));
+        modem.FrameDecoded += (_, quality) => qualities.Add(quality);
+
+        modem.Process(Gb7rdgFixture());
+
+        FrameQuality verified = qualities[0];
+        verified.CrcValid.Should().BeTrue(
+            "a branch did verify this frame's trailer, so that is the reading to report");
+        verified.PlainIl2p.Should().BeFalse(
+            "the badge means Reed-Solomon alone stood behind the frame, and here it did not");
+        verified.MonitorOnly.Should().BeFalse();
+        host[0].Should().Equal(ExpectedFrame, "and the verified copy is the one handed on");
+
+        // The option decides routing and nothing else. The second burst is the one no branch can
+        // verify, so it is the only frame whose destination the option moves.
+        qualities.Should().HaveCount(2);
+        qualities[1].PlainIl2p.Should().BeTrue();
+        qualities[1].MonitorOnly.Should().Be(!acceptPlainIl2p);
+        host.Should().HaveCount(acceptPlainIl2p ? 2 : 1);
+    }
+
     [Fact]
     public void Estimated_Carrier_Offset_Is_About_Eight_Hz()
     {
