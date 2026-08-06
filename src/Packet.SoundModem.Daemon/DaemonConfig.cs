@@ -102,6 +102,10 @@ public sealed class PttConfig
 
     /// <summary>CM108 GPIO pin (default 3).</summary>
     public int? Gpio { get; set; }
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
 /// <summary>POCSAG paging endpoint (DAPNET/POCSAG-compatible waveform; local paging
@@ -117,6 +121,10 @@ public sealed class PagingConfig
     /// <summary>Invert the TX baseband polarity (for radios whose data path inverts;
     /// the spec convention '0' = high frequency is the default).</summary>
     public bool InvertPolarity { get; set; }
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
 /// <summary>ARDOP virtual TNC (ardopcf-compatible TCP host interface; Winlink/Pat).
@@ -127,6 +135,10 @@ public sealed class ArdopConfig
     /// <summary>Host-interface command port (ardopcf convention 8515); the data port
     /// always listens on the next port up.</summary>
     public int Port { get; set; } = 8515;
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
 /// <summary>Headless FlexRadio slice-creation params (used when Device is
@@ -214,6 +226,10 @@ public sealed class FlexConfig
     /// always was.
     /// </summary>
     public bool Arbitration { get; set; }
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
 /// <summary>
@@ -549,35 +565,34 @@ public sealed class DaemonConfig
     private static List<string> CollectWarnings(DaemonConfig config)
     {
         var warnings = new List<string>();
-        foreach (string key in config.UnknownSettings?.Keys ?? Enumerable.Empty<string>())
+
+        // Every section that captures unknown keys is reported here. frameLog and survey used
+        // to capture theirs and never surface them - the doc's "reported at start-up" promise
+        // held for some sections and quietly not for others - and ptt/paging/ardop/flex did not
+        // capture at all, so a typo there vanished into the deserialiser.
+        void Unknown(string? section, Dictionary<string, JsonElement>? settings)
         {
-            warnings.Add(
-                $"\"{key}\" is not a setting this version knows, and is being IGNORED. Check "
-                + $"the spelling against {ConfigDocUrl}");
+            foreach (string key in settings?.Keys ?? Enumerable.Empty<string>())
+            {
+                string prefix = section is null ? "" : $"{section}: ";
+                warnings.Add(
+                    $"{prefix}\"{key}\" is not a setting this version knows, and is being "
+                    + $"IGNORED. Check the spelling against {ConfigDocUrl}");
+            }
         }
 
-        foreach (string key in config.Waterfall?.UnknownSettings?.Keys ?? Enumerable.Empty<string>())
-        {
-            warnings.Add(
-                $"waterfall: \"{key}\" is not a setting this version knows, and is being "
-                + $"IGNORED. Check the spelling against {ConfigDocUrl}");
-        }
-
-        foreach (string key in config.UberSdr?.UnknownSettings?.Keys ?? Enumerable.Empty<string>())
-        {
-            warnings.Add(
-                $"ubersdr: \"{key}\" is not a setting this version knows, and is being "
-                + $"IGNORED. Check the spelling against {ConfigDocUrl}");
-        }
-
+        Unknown(null, config.UnknownSettings);
+        Unknown("waterfall", config.Waterfall?.UnknownSettings);
+        Unknown("ubersdr", config.UberSdr?.UnknownSettings);
+        Unknown("frameLog", config.FrameLog?.UnknownSettings);
+        Unknown("survey", config.Survey?.UnknownSettings);
+        Unknown("ptt", config.Ptt?.UnknownSettings);
+        Unknown("paging", config.Paging?.UnknownSettings);
+        Unknown("ardop", config.Ardop?.UnknownSettings);
+        Unknown("flex", config.Flex?.UnknownSettings);
         foreach (ModemConfig modem in config.Modems)
         {
-            foreach (string key in modem.UnknownSettings?.Keys ?? Enumerable.Empty<string>())
-            {
-                warnings.Add(
-                    $"modem {modem.SubChannel}: \"{key}\" is not a setting this version knows, and "
-                    + $"is being IGNORED. Check the spelling against {ConfigDocUrl}");
-            }
+            Unknown($"modem {modem.SubChannel}", modem.UnknownSettings);
         }
 
         return warnings;

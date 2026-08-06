@@ -49,7 +49,10 @@ internal sealed class ArdopChannelBridge
     /// so real skirts sit in the flat passband.</summary>
     private const double ReceiveBandpassMarginHz = 300.0;
 
-    private readonly FrequencyShifter? _transmit;
+    /// <summary>Hilbert length of the per-burst transmit shifter - the package default,
+    /// which the persistent shifter this replaces also ran.</summary>
+    private const int TransmitHilbertTaps = 129;
+
     private readonly FrequencyShifter? _receive;
 
     /// <summary>Bandpass to the on-air band, applied BEFORE the receive unshift - and that
@@ -95,7 +98,6 @@ internal sealed class ArdopChannelBridge
         double delta = centreHz - NativeCentreHz;
         if (delta != 0)
         {
-            _transmit = new FrequencyShifter(engineRate, delta);
             _receive = new FrequencyShifter(engineRate, -delta);
             _receiveBandpass = new FirFilter(FilterDesign.BandPass(
                 Math.Max(50, centreHz - (WidestBandwidthHz / 2) - ReceiveBandpassMarginHz),
@@ -117,7 +119,7 @@ internal sealed class ArdopChannelBridge
         new(centreHz ?? NativeCentreHz, engineRate, channelRate);
 
     /// <summary>Whether the centre shift is doing anything.</summary>
-    internal bool IsShifted => _transmit is not null;
+    internal bool IsShifted => _receive is not null;
 
     /// <summary>Whether the rate bridge is doing anything.</summary>
     internal bool IsBridged => _factor > 1;
@@ -129,10 +131,20 @@ internal sealed class ArdopChannelBridge
     internal float[] Transmit(float[] audio)
     {
         float[] shifted = audio;
-        if (_transmit is not null)
+        if (IsShifted)
         {
-            shifted = new float[audio.Length];
-            _transmit.Process(audio, shifted);
+            // A fresh shifter per burst, fed one group delay of zeros so the delayed tail
+            // flushes - the same treatment FrequencyShiftedModem.Modulate and the per-burst
+            // upsampler below get, and for the same reason. The persistent shifter this
+            // replaces truncated the last (taps-1)/2 samples of every burst (~5.3 ms of
+            // ARDOP's trailer tones never went on air) and carried them in its filter state
+            // to emerge at the START of the next burst, inside its leader.
+            const int groupDelay = (TransmitHilbertTaps - 1) / 2;
+            var shifter = new FrequencyShifter(
+                _engineRate, _centreHz - NativeCentreHz, TransmitHilbertTaps);
+            shifted = new float[audio.Length + groupDelay];
+            shifter.Process(audio, shifted.AsSpan(0, audio.Length));
+            shifter.Process(new float[groupDelay], shifted.AsSpan(audio.Length));
         }
 
         if (_factor == 1)

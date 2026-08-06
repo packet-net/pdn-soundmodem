@@ -63,6 +63,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
     private bool _ended;
     private Task? _pump;
     private ClientWebSocket? _first;
+    private readonly TimeProvider _time;
 
     private UberSdrAudioInput(
         UberSdrEndpoint endpoint,
@@ -70,12 +71,14 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         int iqRate,
         ConnectionResponse connection,
         string? receiverDescription,
-        Action<string>? log)
+        Action<string>? log,
+        TimeProvider time)
     {
         _endpoint = endpoint;
         _tuning = tuning;
         _iqRate = iqRate;
         _log = log;
+        _time = time;
         Connection = connection;
         ReceiverDescription = receiverDescription;
 
@@ -117,7 +120,8 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         UberSdrEndpoint endpoint,
         UberSdrTuning tuning,
         Action<string>? log,
-        CancellationToken cancellation)
+        CancellationToken cancellation,
+        TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(tuning);
         int iqRate = IqRateFor(tuning.Mode);
@@ -163,27 +167,39 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         string? description = Describe(
             await FetchDescriptionAsync(endpoint, cancellation).ConfigureAwait(false));
 
-        var input = new UberSdrAudioInput(endpoint, tuning, iqRate, connection, description, log);
+        var input = new UberSdrAudioInput(
+            endpoint, tuning, iqRate, connection, description, log, time ?? TimeProvider.System);
 
-        if (refusedForNow)
+        try
         {
-            log?.Invoke(
-                $"ubersdr: {endpoint} is refusing us for now "
-                + $"({connection.Reason ?? "daily listening allowance exhausted"}, "
-                + $"{connection.DailyTimeUsedSecs} s used today). The stream will be retried "
-                + "patiently; audio starts when the receiver lets us back in.");
-        }
-        else
-        {
-            // Prove the stream opens before returning: the daemon prints its start-up banner off
-            // the back of this, and a banner claiming a receiver we never reached is worse than
-            // an error.
-            input._first = await input.ConnectAsync(sessionId, cancellation).ConfigureAwait(false);
-        }
+            if (refusedForNow)
+            {
+                log?.Invoke(
+                    $"ubersdr: {endpoint} is refusing us for now "
+                    + $"({connection.Reason ?? "daily listening allowance exhausted"}, "
+                    + $"{connection.DailyTimeUsedSecs} s used today). The stream will be retried "
+                    + "patiently; audio starts when the receiver lets us back in.");
+            }
+            else
+            {
+                // Prove the stream opens before returning: the daemon prints its start-up banner
+                // off the back of this, and a banner claiming a receiver we never reached is
+                // worse than an error.
+                input._first = await input.ConnectAsync(sessionId, cancellation).ConfigureAwait(false);
+            }
 
-        input._pump = Task.Run(
-            () => input.PumpAsync(sessionId, startRefused: refusedForNow), CancellationToken.None);
-        return input;
+            input._pump = Task.Run(
+                () => input.PumpAsync(sessionId, startRefused: refusedForNow), CancellationToken.None);
+            return input;
+        }
+        catch
+        {
+            // The half-built instance was abandoned here before: nothing faulted visibly (the
+            // caller gets the exception either way), but its cancellation source - and any
+            // socket a future edit stores before the throw - leaked for the process lifetime.
+            input.Dispose();
+            throw;
+        }
     }
 
     /// <inheritdoc />
@@ -278,7 +294,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         CancellationToken cancellation = _stopping.Token;
         ClientWebSocket? socket = Interlocked.Exchange(ref _first, null);
         var policy = new UberSdrReconnectPolicy();
-        DateTimeOffset? downSince = null;
+        long? downSince = null;
 
         if (startRefused && !await WaitAsync(policy.After(UberSdrReconnectOutcome.Refused)))
         {
@@ -314,8 +330,11 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
                 }
                 catch (Exception e)
                 {
-                    downSince ??= DateTimeOffset.UtcNow;
-                    TimeSpan down = DateTimeOffset.UtcNow - downSince.Value;
+                    // The injected clock's monotonic timestamps, not UtcNow: an NTP step during
+                    // an outage used to inflate the outage's apparent length and could trip the
+                    // give-up restart early (or, stepping back, defer it indefinitely).
+                    downSince ??= _time.GetTimestamp();
+                    TimeSpan down = _time.GetElapsedTime(downSince.Value);
                     if (down > ReconnectGiveUpAfter)
                     {
                         RaiseLost(
@@ -387,7 +406,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         {
             try
             {
-                await Task.Delay(delay, cancellation).ConfigureAwait(false);
+                await Task.Delay(delay, _time, cancellation).ConfigureAwait(false);
                 return true;
             }
             catch (OperationCanceledException)
