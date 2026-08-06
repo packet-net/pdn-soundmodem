@@ -3,8 +3,8 @@ using Packet.SoundModem.Ota;
 namespace Packet.SoundModem.Tests.Ota;
 
 /// <summary>
-/// Watterson performance masks for the audio modems - rx-roadmap workstream 0, the MS110D
-/// programme's mask idea extended to the packet modes. Every point runs through
+/// Watterson performance masks for the non-FM modems - rx-roadmap workstream 0, the MS110D
+/// programme's mask idea extended across the catalogue. Every point runs through
 /// <see cref="SimBench.RunPoint"/>, the same rig <c>sm-ota sim</c> drives, so a mask number
 /// and a CLI number are the same measurement; every point is deterministic in
 /// (mode, channel, SNR, CFO, first seed, burst count), so a mask failure reproduces exactly
@@ -26,6 +26,14 @@ namespace Packet.SoundModem.Tests.Ota;
 /// Watterson sim carries no static crashes, no SSB filter tilt, no AGC, and our own transmit
 /// shaping rather than a NinoTNC's; the 40 m capture campaign (docs/rx-roadmap.md) stays the
 /// truth about the band. Two instruments, two jobs.</para>
+/// <para><b>Coverage rule.</b> Every non-FM mode the mode-generic sim rig can drive gets a
+/// mask: the NinoTNC SSB lineage (afsk300-il2pc, bpsk300/1200, qpsk600/2400) and the FreeDV
+/// datac OFDM family. Deliberately absent: <b>ms110d-*</b>, which carries its own, richer
+/// mask suite (this file is that suite's idea generalised); <b>ardop</b>, a session TNC
+/// rather than a catalogue <c>IModem</c>, which the frame-layer rig structurally cannot
+/// drive - rx-roadmap workstream 0 records that gap rather than papering over it; and the
+/// FM modes (afsk1200, fsk*, c4fsk*, qpsk3600), outside this suite's channel model, except
+/// the single fsk9600 AWGN anchor kept because it is nearly free.</para>
 /// </remarks>
 public class WattersonMaskTests(ITestOutputHelper output)
 {
@@ -63,10 +71,18 @@ public class WattersonMaskTests(ITestOutputHelper output)
     [InlineData("afsk300-il2pc", "awgn", 0.0, 0.0, 30)] // measured 39/40
     [InlineData("qpsk600", "awgn", 4.0, 0.0, 30)]      // measured 39/40
     [InlineData("qpsk2400", "awgn", 11.0, 0.0, 32)]    // measured 40/40
+    [InlineData("freedv-datac0", "awgn", 0.0, 0.0, 20, 25)]  // measured 25/25
+    [InlineData("freedv-datac1", "awgn", 3.0, 0.0, 20, 25)]  // measured 25/25
+    [InlineData("freedv-datac3", "awgn", 0.0, 0.0, 20, 25)]  // measured 25/25
+    [InlineData("freedv-datac3", "good", 3.0, 0.0, 13, 25)]  // measured 21/25 - the OFDM
+                                                             // family's fading capability
+                                                             // is exactly what it is for
+    [InlineData("freedv-datac1", "good", 9.0, 0.0, 14, 25)]  // measured 22/25
     public void Smoke_Mask_Holds(
-        string mode, string channel, double snrDb, double cfoHz, int floor)
+        string mode, string channel, double snrDb, double cfoHz, int floor,
+        int bursts = SmokeBursts)
     {
-        SimPointResult result = Point(mode, SimChannel.Parse(channel), snrDb, cfoHz);
+        SimPointResult result = Point(mode, SimChannel.Parse(channel), snrDb, cfoHz, bursts);
 
         result.Successes.Should().BeGreaterThanOrEqualTo(
             floor,
