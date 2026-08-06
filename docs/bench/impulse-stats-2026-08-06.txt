@@ -1,0 +1,28 @@
+40 chunks, 9.4 h analysed
+175954 events >6x background in 2500-2950 Hz (312.44/min); 67410 (38 %) coincident in 300-700 Hz (broadband atmospherics)
+
+broadband-impulse rate by half hour (UTC):
+  13:30  21.70/min   median 18.7 dB over bg, median  19.7 ms
+  14:00  123.47/min   median 18.7 dB over bg, median  21.9 ms
+  14:30  91.27/min   median 18.2 dB over bg, median  20.3 ms
+  15:00  70.43/min   median 17.5 dB over bg, median  14.2 ms
+  15:30  105.73/min   median 17.8 dB over bg, median  16.5 ms
+  16:00  133.77/min   median 18.1 dB over bg, median  18.4 ms
+  16:30  86.23/min   median 17.6 dB over bg, median  15.2 ms
+  17:00  95.93/min   median 17.9 dB over bg, median  16.8 ms
+  17:30  110.37/min   median 17.8 dB over bg, median  15.7 ms
+  18:00  211.40/min   median 19.9 dB over bg, median  31.2 ms
+  18:30  218.27/min   median 19.3 dB over bg, median  22.8 ms
+  19:00  108.73/min   median 18.3 dB over bg, median  20.6 ms
+  19:30  165.53/min   median 18.4 dB over bg, median  21.6 ms
+  20:00  166.27/min   median 18.2 dB over bg, median  18.9 ms
+  20:30  121.97/min   median 17.9 dB over bg, median  17.2 ms
+  21:00  103.87/min   median 17.4 dB over bg, median  13.5 ms
+  21:30  58.73/min   median 18.7 dB over bg, median  29.2 ms
+  22:00  105.13/min   median 17.3 dB over bg, median  10.8 ms
+  22:30  96.23/min   median 17.6 dB over bg, median  14.7 ms
+  23:00  51.97/min   median 17.3 dB over bg, median  11.1 ms
+
+broadband amplitude over background (dB): p50 18.1, p90 23.8, p99 34.7, max 73.0
+broadband duration (ms): p50 19.0, p90 102.3, p99 1835.0, max 14354
+span at 300 Bd (symbols): p50 5.70, p90 30.70, p99 550.5

@@ -273,6 +273,22 @@ effort:
    and burst shape from the raw chunks' real summer-evening QRN rather than inventing a
    Middleton model, then the blanker or clipped-metric fix, sized by what the instrument
    shows. Possibly the most real-world dB per line of code on this list.
+
+   **First measurement, 2026-08-06 (the campaign's opening evening, 9.4 h).** Methodology
+   that survived its own first contact: a naive full-band envelope detector counted packet
+   transmissions as impulses (near-full-scale "events" with durations chopped by its own
+   adaptive background); the honest detector runs on the *out-of-slot* audio - the slice
+   passband measures 0-3 kHz with the slots at 850/2150 Hz, so 2500-2950 Hz is in-passband
+   but signal-free - with a 20th-percentile background the sparse events cannot pollute,
+   and a 300-700 Hz coincidence gate separating broadband atmospherics from band-limited
+   interference (38 % of quiet-band events were broadband). Measured: **60-220 broadband
+   crashes/min** across the evening, peaking 18:00-20:00 UTC; median crash **15-30 ms
+   (~5-7 symbols at 300 Bd)** at median **~18 dB over the quiet-band floor**; heavy tail
+   p90 24 dB / p99 35 dB / max 73 dB, with second-long crash trains at p99 duration. Known
+   limits, recorded: slice AGC compresses absolute amplitudes (rates and durations robust,
+   the amplitude tail a lower bound), and the rate counts every sferic tick above 6x the
+   quiet floor - the modem-relevant subset is the strong tail. Next: correlate crash times
+   against frame-log misses to size what a blanker would actually buy.
 3. **Slow CFO drift + phase noise.** The exact impairment that walled qpsk2400 (#116) and
    the RSP1 coherent modes (#102): a Hz-per-minute ramp plus a 1/f phase process. Cheap (a
    time-varying rotation in the channel), and it is what the undisciplined-radio aspiration
