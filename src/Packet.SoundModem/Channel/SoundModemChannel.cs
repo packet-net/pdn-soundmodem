@@ -423,52 +423,81 @@ public sealed class SoundModemChannel
                 }
 
                 bool first = true;
-                while (reader.TryRead(out var item))
+                (Func<int, float[]> Modulate, TaskCompletionSource Done, Action<Exception>? Rejected, bool OwnsTiming)? inFlight = null;
+                try
                 {
-                    // Subsequent frames in one keyup need only a token preamble.
-                    int txDelay = first ? Csma.TxDelayMilliseconds : 30;
-                    float[] samples;
-                    try
+                    while (reader.TryRead(out var item))
                     {
-                        samples = item.Modulate(txDelay);
-                    }
-                    catch (ArgumentException rejection)
-                    {
-                        // A frame the modem refuses (oversize for the mode, empty) is
-                        // dropped - it must not kill the transmitter loop. The enqueuer's
-                        // task faults so ACKMODE hosts see the loss.
-                        item.Done.TrySetException(rejection);
-                        item.Rejected?.Invoke(rejection);
-                        continue;
+                        inFlight = item;
+                        // Subsequent frames in one keyup need only a token preamble.
+                        int txDelay = first ? Csma.TxDelayMilliseconds : 30;
+                        float[] samples;
+                        try
+                        {
+                            samples = item.Modulate(txDelay);
+                        }
+                        catch (ArgumentException rejection)
+                        {
+                            // A frame the modem refuses (oversize for the mode, empty) is
+                            // dropped - it must not kill the transmitter loop. The enqueuer's
+                            // task faults so ACKMODE hosts see the loss.
+                            item.Done.TrySetException(rejection);
+                            item.Rejected?.Invoke(rejection);
+                            inFlight = null;
+                            continue;
+                        }
+
+                        first = false;
+                        // Told before the write, not after it. A real device's Write blocks until its
+                        // buffer has room, so a burst longer than the buffer does not return from it
+                        // until most of the burst has already played - and a display told afterwards
+                        // spends the whole transmission painting silence and then paints the burst
+                        // over again, taking twice as long with the first half black. Measured on the
+                        // air and reproduced: 92 black lines ahead of 97 lines of signal.
+                        // What this costs the transmitter is one scale-and-copy of the burst before
+                        // the audio goes out, which is bounded, allocation-only and does not wait on
+                        // anything - the rule that the transmitter must never wait on a picture still
+                        // holds.
+                        TransmittedAudio?.Invoke(samples);
+                        output.Write(samples);
+                        output.Drain();
+                        item.Done.TrySetResult();
+                        inFlight = null;
                     }
 
-                    first = false;
-                    // Told before the write, not after it. A real device's Write blocks until its
-                    // buffer has room, so a burst longer than the buffer does not return from it
-                    // until most of the burst has already played - and a display told afterwards
-                    // spends the whole transmission painting silence and then paints the burst
-                    // over again, taking twice as long with the first half black. Measured on the
-                    // air and reproduced: 92 black lines ahead of 97 lines of signal.
-                    // What this costs the transmitter is one scale-and-copy of the burst before
-                    // the audio goes out, which is bounded, allocation-only and does not wait on
-                    // anything - the rule that the transmitter must never wait on a picture still
-                    // holds.
-                    TransmittedAudio?.Invoke(samples);
-                    output.Write(samples);
+                    if (Csma.TxTailMilliseconds > 0)
+                    {
+                        // The tail is silence, but it is time we held the channel - a display that
+                        // skips it under-reports how long the keyup actually was.
+                        var tail = new float[SampleRate * Csma.TxTailMilliseconds / 1000];
+                        TransmittedAudio?.Invoke(tail);
+                        output.Write(tail);
+                    }
+
                     output.Drain();
-                    item.Done.TrySetResult();
                 }
-
-                if (Csma.TxTailMilliseconds > 0)
+                catch (Exception deviceFailure) when (deviceFailure is not OperationCanceledException)
                 {
-                    // The tail is silence, but it is time we held the channel - a display that
-                    // skips it under-reports how long the keyup actually was.
-                    var tail = new float[SampleRate * Csma.TxTailMilliseconds / 1000];
-                    TransmittedAudio?.Invoke(tail);
-                    output.Write(tail);
-                }
+                    // The output device failed mid-keyup (an unplugged USB card, a dead ALSA
+                    // handle). Everything queued gets a definite answer first - the in-flight
+                    // frame's enqueuer would otherwise wait forever on a Done nobody will ever
+                    // complete - and then the fault propagates: the task's owner decides what a
+                    // station without a transmitter does, rather than this loop quietly dying
+                    // and leaving a healthy-looking receive-only station.
+                    if (inFlight is { } dying)
+                    {
+                        dying.Done.TrySetException(deviceFailure);
+                        dying.Rejected?.Invoke(deviceFailure);
+                    }
 
-                output.Drain();
+                    while (reader.TryRead(out var queued))
+                    {
+                        queued.Done.TrySetException(deviceFailure);
+                        queued.Rejected?.Invoke(deviceFailure);
+                    }
+
+                    throw;
+                }
             }
             finally
             {
@@ -488,12 +517,21 @@ public sealed class SoundModemChannel
                     }
                 }
 
-                _transmitting = false;
-                TransmittingChanged?.Invoke(false);
+                // Receive is still gated: sweep the demodulators clean of our own transmission
+                // BEFORE handing the channel back. The other order re-opened receive first, so
+                // the audio thread could re-enter modem.Process concurrently with this loop's
+                // ResetCarrierState - torn filter and DCD state exactly when the first reply
+                // after our transmission arrives. (IModem documents ResetCarrierState as a call
+                // for while the channel transmits.) TransmittingChanged's own subscribers that
+                // reset receive taps - the id-beacon ghosts - get the same still-gated
+                // guarantee, which is why the event too fires before the gate opens.
                 foreach (IModem modem in _modems.Values)
                 {
                     modem.ResetCarrierState();
                 }
+
+                TransmittingChanged?.Invoke(false);
+                _transmitting = false;
             }
         }
     }

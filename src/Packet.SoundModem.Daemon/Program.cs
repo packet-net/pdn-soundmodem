@@ -1647,6 +1647,24 @@ channel.PttFailed += failure => Console.Error.WriteLine($"ptt: {failure.Message}
 
 Task transmitter = channel.RunTransmitterAsync(playback, ptt, cancellation.Token);
 
+// A transmitter that dies (the output device failed mid-keyup) must stop the daemon, not
+// leave it running as a healthy-looking receive-only station for the rest of the process's
+// life - which is what discarding the task's fault used to do, silently. Exit 1 so the
+// unit restarts: a device that comes back is exactly what a restart fixes, and exit 2
+// stays reserved for "your configuration is wrong".
+_ = transmitter.ContinueWith(
+    t =>
+    {
+        Console.Error.WriteLine(
+            $"transmit: the audio output failed - {t.Exception!.GetBaseException().Message}. "
+            + "Stopping so the service restarts.");
+        radioLost = true;
+        cancellation.Cancel();
+    },
+    CancellationToken.None,
+    TaskContinuationOptions.OnlyOnFaulted,
+    TaskScheduler.Default);
+
 // Decimate the source to the DSP rate. When it already runs at the DSP rate (a 48 kHz
 // mode's full-bandwidth DAX, --capture-rate 12000, or a 12 kHz virtual card) there is
 // nothing to decimate - a Decimator with factor 1 is invalid, so feed samples straight
@@ -1691,7 +1709,19 @@ while (!cancellation.IsCancellationRequested)
     }
 }
 
-await transmitter.ContinueWith(_ => { }, TaskScheduler.Default);
+try
+{
+    await transmitter;
+}
+catch (OperationCanceledException)
+{
+    // The normal shutdown path: the loop ends by cancellation.
+}
+catch (Exception)
+{
+    // Already journalled (and turned into exit 1) by the fault observer above.
+}
+
 if (!deviceIsFlex)
 {
     (ptt as IDisposable)?.Dispose();
