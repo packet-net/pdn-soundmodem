@@ -143,10 +143,11 @@ payload-RS-limited (5 cases never demodulate, 10 fail only on obliterated traile
 header deliberately gets no erasure rescue (its 2-parity code cannot afford speculative
 erasures without hallucinating collections). What remains of this workstream, in value order:
 **CRC-arbitrated chase** (bit-flip retries on the least-confident bits, which handles the
-scattered-error pattern erasures cannot and is the header's only rescue), and a look at
-whether the **DCD-falling deframer reset kills fade-straddling frames** before erasures even
-see them - a clean-dip probe showed the chain rides amplitude alone easily, so the Good
-channel's losses are phase/timing collapse plus that reset, not byte damage.
+scattered-error pattern erasures cannot and is the header's only rescue), and the DCD-falling
+reset question, now **answered in the negative** (2026-08-06 evening): disabling the reset
+entirely changed nothing on Good (identical to the burst) and 0-4 points on Moderate, inside
+the confidence intervals - fading losses are acquisition or RS-budget failures, not
+collection aborts, so the reset stays exactly as it is and the suspicion is retired.
 
 ### 2. Trailer corroboration - LANDED 2026-08-06
 
