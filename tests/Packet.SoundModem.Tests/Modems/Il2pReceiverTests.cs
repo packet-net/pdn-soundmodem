@@ -226,6 +226,55 @@ public class Il2pReceiverTests
         got[1].Should().Equal(second);
     }
 
+    [Fact]
+    public void A_Retransmission_After_A_Burst_Boundary_Is_Not_Swallowed_As_A_Late_Reading()
+    {
+        // The GB7RDG off-air capture's shape, synthetically: the same frame twice with a burst
+        // boundary between, the first trailer verifying, the second corrupted so only the plain
+        // reading can produce it. The late-reading guard exists for deframer skew within one
+        // transmission, but its window is one maximum-length frame - over half a minute at
+        // 300 baud - so before it was cleared on Reset it swallowed exactly this: the plain copy
+        // of a genuine retransmission, matched byte-for-byte against the previous burst's
+        // delivery. Skew cannot cross a burst boundary; a retransmission always does.
+        byte[] ax25 = Ax25Frame("GB7RDG", "GB7OXF", "retransmission");
+        byte[] good = FrameBits(ax25, crc: true);
+        byte[] bad = (byte[])good.Clone();
+        for (int i = 1; i <= 8; i++)
+        {
+            bad[^i] ^= 1;   // corrupt the trailing CRC, leaving the RS-protected payload intact
+        }
+
+        var frames = new List<byte[]>();
+        var info = new List<Il2pDecodeInfo>();
+        var delivery = new List<Il2pDelivery>();
+        var receiver = new Il2pReceiver(
+            (frame, decode, routing) =>
+            {
+                frames.Add(frame);
+                info.Add(decode);
+                delivery.Add(routing);
+            },
+            crcMode: true, acceptPlainIl2p: false);
+        foreach (byte bit in good)
+        {
+            receiver.PushBit(bit);
+        }
+
+        receiver.Reset();   // the DCD falling edge between the two bursts
+        foreach (byte bit in bad)
+        {
+            receiver.PushBit(bit);
+        }
+
+        receiver.Reset();   // end of the second burst releases its held plain reading
+
+        frames.Should().HaveCount(2, "a retransmission is a new frame, not a late reading");
+        info[0].CrcValid.Should().BeTrue("the first burst's trailer verifies");
+        delivery[1].PlainIl2p.Should().BeTrue("the second stands on Reed-Solomon alone");
+        frames[1].Should().Equal(ax25, "and it is the same bytes, which is what made it look "
+            + "like a duplicate to a guard that outlived its burst");
+    }
+
     private static List<byte[]> Push(byte[] bits, bool crcMode, bool acceptPlainIl2p) =>
         PushWithInfo(bits, crcMode, acceptPlainIl2p).Frames;
 

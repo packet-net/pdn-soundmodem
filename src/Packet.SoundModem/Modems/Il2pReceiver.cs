@@ -201,6 +201,17 @@ internal sealed class Il2pReceiver
         ReleaseHeld();
         _deframer.Reset();
         _plainDeframer?.Reset();
+
+        // The late-reading guard must not survive the burst it was armed in. Its window is
+        // sized for deframer skew within one transmission (a rewound collection), but at
+        // 300 baud that many bits is over half a minute of wall clock - long enough that a
+        // station retransmitting the identical frame in its next burst would have the plain
+        // copy of the retransmission swallowed as a "late second reading" of the first, when
+        // the retransmission is the only copy whose trailer never verified. The GB7RDG
+        // off-air fixture holds exactly that pair, 12.5 s apart. Skew cannot cross a burst
+        // boundary - Reset abandons both collections - so clearing the guard here costs
+        // nothing and un-deafens the receiver to in-window retransmissions.
+        _lastDelivered = null;
     }
 
     /// <summary>The link's own reading produced a frame: emit it, and drop any held plain copy
