@@ -84,6 +84,51 @@ public class FrameLogTests : IDisposable
         SqliteConnection.ClearAllPools();
     }
 
+    /// <summary>
+    /// A log in the schema as it shipped WITH <c>direction</c> but before the corroboration
+    /// columns (<c>trailer_near_bits</c>, <c>monitor_only</c>) - what a station deployed
+    /// between the two migrations is holding right now.
+    /// </summary>
+    private void WriteLogInThePreCorroborationSchema()
+    {
+        using (var old = new SqliteConnection($"Data Source={DbPath}"))
+        {
+            old.Open();
+            using SqliteCommand create = old.CreateCommand();
+            create.CommandText = """
+                CREATE TABLE frames (
+                    id          INTEGER PRIMARY KEY,
+                    heard_at    TEXT    NOT NULL,
+                    direction   TEXT    NOT NULL DEFAULT 'rx',
+                    sub_channel INTEGER NOT NULL,
+                    mode        TEXT    NOT NULL,
+                    mode_name   TEXT    NOT NULL,
+                    source      TEXT,
+                    destination TEXT,
+                    length      INTEGER NOT NULL,
+                    corrected   INTEGER,
+                    crc_valid   INTEGER,
+                    offset_hz   REAL,
+                    audio_hz    REAL,
+                    rf_hz       REAL,
+                    payload     BLOB    NOT NULL
+                );
+                CREATE INDEX frames_heard_at ON frames(heard_at);
+                CREATE INDEX frames_source ON frames(source);
+                INSERT INTO frames
+                  (heard_at, direction, sub_channel, mode, mode_name, source, destination,
+                   length, corrected, crc_valid, offset_hz, audio_hz, rf_hz, payload)
+                VALUES
+                  ('2026-08-01T09:00:00.0000000+00:00', 'rx', 0, 'bpsk300-il2pc',
+                   'BPSK300 IL2Pc', 'G0OLD', 'GB7RDG', 4, 0, NULL, -2.5, 1500.0, 7051600.0,
+                   X'01020304');
+                """;
+            create.ExecuteNonQuery();
+        }
+
+        SqliteConnection.ClearAllPools();
+    }
+
     private static FrameQuality Quality(string mode = "bpsk300-il2pc") =>
         new(mode, FrameBytes: 32, CorrectedBytes: 2, CrcValid: true,
             FrequencyOffsetHz: -3.5, EmphasisDb: null);
@@ -131,6 +176,8 @@ public class FrameLogTests : IDisposable
         row["length"].Should().Be(32L);
         row["corrected"].Should().Be(2L);
         row["crc_valid"].Should().Be(1L);
+        row["trailer_near_bits"].Should().BeNull("the CRC verified; no trailer was corroborated");
+        row["monitor_only"].Should().Be(0L, "the host received this one");
         row["offset_hz"].Should().Be(-3.5);
         row["audio_hz"].Should().Be(2150.0);
         row["rf_hz"].Should().Be(7_051_600.0, "where it was heard on the band is the useful column");
@@ -174,6 +221,8 @@ public class FrameLogTests : IDisposable
 
         row["corrected"].Should().BeNull("nothing corrected a frame we generated");
         row["crc_valid"].Should().BeNull("we did not check a CRC, we wrote one");
+        row["trailer_near_bits"].Should().BeNull("corroborating a trailer is a receive event");
+        row["monitor_only"].Should().BeNull("and so is withholding a frame from the host");
         row["offset_hz"].Should().BeNull("we did not measure our own carrier against itself");
     }
 
@@ -198,8 +247,34 @@ public class FrameLogTests : IDisposable
         rows.Should().HaveCount(2, "a station's existing history must survive the upgrade");
         rows[0]["source"].Should().Be("G0OLD");
         rows[0]["direction"].Should().Be("rx", "everything logged before this was heard");
+        rows[0]["trailer_near_bits"].Should().BeNull("nobody measured a trailer at the time");
+        rows[0]["monitor_only"].Should().BeNull("whether it was withheld was never written down");
         ((byte[])rows[0]["payload"]!).Should().Equal([1, 2, 3, 4], "the old rows are untouched");
         rows[1]["direction"].Should().Be("tx", "and the log can now take what we send");
+    }
+
+    /// <summary>
+    /// The other deployed schema: <c>direction</c> already present, the corroboration columns
+    /// not. It gains them, keeps its history honest (null, not a guessed 0), and takes a
+    /// corroborated frame's evidence from then on.
+    /// </summary>
+    [Fact]
+    public async Task A_Log_From_Before_The_Corroboration_Columns_Gains_Them_And_Keeps_Its_History()
+    {
+        WriteLogInThePreCorroborationSchema();
+
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.Record(0, Frame(), new FrameQuality(
+                "bpsk300-il2pc", FrameBytes: 32, CorrectedBytes: 0, CrcValid: null,
+                PlainIl2p: true, MonitorOnly: false, TrailerNearBits: 3), null, null));
+
+        rows.Should().HaveCount(2, "the station's existing history must survive the upgrade");
+        rows[0]["source"].Should().Be("G0OLD");
+        rows[0]["trailer_near_bits"].Should().BeNull(
+            "a pre-upgrade crc_valid-null row stays ambiguous rather than gaining invented facts");
+        rows[0]["monitor_only"].Should().BeNull();
+        rows[1]["trailer_near_bits"].Should().Be(3L, "and new rows carry the evidence");
+        rows[1]["monitor_only"].Should().Be(0L);
     }
 
     /// <summary>The migrated log reads back through the backlog query too - the waterfall panel
@@ -267,8 +342,8 @@ public class FrameLogTests : IDisposable
     {
         // The log is fed from the monitor path, so a frame shown to the operator and not passed
         // to the host is recorded like any other. That is the point of it: it is the record of
-        // what the station heard, not of what its host was given, and crc_valid being nullable
-        // already says the honest thing about this one - no CRC was checked.
+        // what the station heard, not of what its host was given - and monitor_only writes down
+        // which of the two this row was, where crc_valid null used to leave the question open.
         List<Dictionary<string, object?>> rows = await ReadBackAsync(
             log => log.Record(
                 0, Frame(), new FrameQuality(
@@ -279,8 +354,59 @@ public class FrameLogTests : IDisposable
         Dictionary<string, object?> row = rows.Should().ContainSingle(
             "a burst the station read is a burst the station read").Subject;
         row["crc_valid"].Should().BeNull("no CRC was checked");
+        row["monitor_only"].Should().Be(1L, "the host never saw it, and the log says so");
+        row["trailer_near_bits"].Should().BeNull("nothing corroborated this reading");
         row["mode"].Should().Be("bpsk300-il2pc-multi9");
         row["length"].Should().Be(46L);
+    }
+
+    /// <summary>
+    /// The gap the 40 m capture campaign found by diffing this log against an offline re-decode:
+    /// a delivered trailer-corroborated frame and a withheld RS-only reading both logged as
+    /// crc_valid null, indistinguishable. Now the corroborated row carries its measured bit
+    /// distance and monitor_only 0, and the withheld row monitor_only 1.
+    /// </summary>
+    [Fact]
+    public async Task A_Corroborated_Frame_Is_Tellable_From_A_Withheld_One()
+    {
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(log =>
+        {
+            // Delivered on the strength of a trailer 2 bits from the one its payload implies.
+            log.Record(0, Frame(), new FrameQuality(
+                "bpsk300-il2pc", FrameBytes: 32, CorrectedBytes: 1, CrcValid: null,
+                PlainIl2p: true, MonitorOnly: false, TrailerNearBits: 2), null, null);
+            // Read, shown, withheld: the plain reading with nothing behind it but Reed-Solomon.
+            log.Record(0, Frame(), new FrameQuality(
+                "bpsk300-il2pc", FrameBytes: 32, CorrectedBytes: 0, CrcValid: null,
+                PlainIl2p: true, MonitorOnly: true), null, null);
+        });
+
+        rows.Should().HaveCount(2);
+        rows[0]["crc_valid"].Should().BeNull("both rows read identically before these columns");
+        rows[1]["crc_valid"].Should().BeNull();
+        rows[0]["trailer_near_bits"].Should().Be(2L, "the corroborating distance is the evidence");
+        rows[0]["monitor_only"].Should().Be(0L, "corroboration delivered it to the host");
+        rows[1]["trailer_near_bits"].Should().BeNull();
+        rows[1]["monitor_only"].Should().Be(1L, "the host never received this one");
+    }
+
+    /// <summary>
+    /// Off-air evidence from the live 40 m campaign: PD4R-12 beacons decoded and delivered CRC
+    /// valid, and the log recorded source and destination both null. The destination field is
+    /// all spaces - degenerate, but no reason to lose a perfectly readable sender.
+    /// </summary>
+    [Fact]
+    public async Task A_Frame_With_A_Blank_Destination_Still_Logs_Its_Source()
+    {
+        byte[] frame = Convert.FromHexString(
+            Packet.SoundModem.Tests.Waterfall.Ax25AddressParserTests.Pd4rBeaconHex);
+
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.Record(0, frame, Quality(), audioHz: 2150, rfHz: 7_051_600));
+
+        Dictionary<string, object?> row = rows.Should().ContainSingle().Subject;
+        row["source"].Should().Be("PD4R-12", "the sender is readable and is the column queried");
+        row["destination"].Should().BeNull("an all-spaces destination field is not a callsign");
     }
 
     [Fact]

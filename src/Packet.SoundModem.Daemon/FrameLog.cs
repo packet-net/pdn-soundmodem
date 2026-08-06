@@ -70,21 +70,23 @@ internal sealed class FrameLog : IAsyncDisposable
                 PRAGMA journal_mode=WAL;
                 PRAGMA synchronous=NORMAL;
                 CREATE TABLE IF NOT EXISTS frames (
-                    id          INTEGER PRIMARY KEY,
-                    heard_at    TEXT    NOT NULL,
-                    direction   TEXT    NOT NULL DEFAULT 'rx',
-                    sub_channel INTEGER NOT NULL,
-                    mode        TEXT    NOT NULL,
-                    mode_name   TEXT    NOT NULL,
-                    source      TEXT,
-                    destination TEXT,
-                    length      INTEGER NOT NULL,
-                    corrected   INTEGER,
-                    crc_valid   INTEGER,
-                    offset_hz   REAL,
-                    audio_hz    REAL,
-                    rf_hz       REAL,
-                    payload     BLOB    NOT NULL
+                    id                INTEGER PRIMARY KEY,
+                    heard_at          TEXT    NOT NULL,
+                    direction         TEXT    NOT NULL DEFAULT 'rx',
+                    sub_channel       INTEGER NOT NULL,
+                    mode              TEXT    NOT NULL,
+                    mode_name         TEXT    NOT NULL,
+                    source            TEXT,
+                    destination       TEXT,
+                    length            INTEGER NOT NULL,
+                    corrected         INTEGER,
+                    crc_valid         INTEGER,
+                    trailer_near_bits INTEGER,
+                    monitor_only      INTEGER,
+                    offset_hz         REAL,
+                    audio_hz          REAL,
+                    rf_hz             REAL,
+                    payload           BLOB    NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS frames_heard_at ON frames(heard_at);
                 CREATE INDEX IF NOT EXISTS frames_source ON frames(source);
@@ -101,25 +103,36 @@ internal sealed class FrameLog : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// <c>CREATE TABLE IF NOT EXISTS</c> does nothing to a table that already exists, and there
-    /// are deployed stations whose <c>frames</c> table predates the <c>direction</c> column - on
-    /// those, every INSERT would fail and every frame would be silently dropped. The old rows are
-    /// all receives, so <c>'rx'</c> is the truth about them rather than a guess, which is why the
-    /// column can be added NOT NULL with a default and no backfill.
+    /// are deployed stations whose <c>frames</c> table predates one or more of these columns - on
+    /// those, every INSERT would fail and every frame would be silently dropped. <c>direction</c>
+    /// can be added NOT NULL with a default and no backfill because the old rows are all
+    /// receives, so <c>'rx'</c> is the truth about them rather than a guess.
+    /// <c>trailer_near_bits</c> and <c>monitor_only</c> stay null on old rows: whether a frame
+    /// was corroborated or withheld was not written down at the time, and null says so.
     /// </remarks>
     private static void Migrate(SqliteConnection connection)
     {
-        using SqliteCommand columns = connection.CreateCommand();
-        // PRAGMA table_info(frames) in its table-valued form, so the answer is one scalar.
-        columns.CommandText =
-            "SELECT COUNT(*) FROM pragma_table_info('frames') WHERE name = 'direction'";
-        if (Convert.ToInt64(columns.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) != 0)
+        foreach ((string column, string definition) in new[]
+                 {
+                     ("direction", "TEXT NOT NULL DEFAULT 'rx'"),
+                     ("trailer_near_bits", "INTEGER"),
+                     ("monitor_only", "INTEGER"),
+                 })
         {
-            return;
-        }
+            using SqliteCommand columns = connection.CreateCommand();
+            // PRAGMA table_info(frames) in its table-valued form, so the answer is one scalar.
+            columns.CommandText =
+                "SELECT COUNT(*) FROM pragma_table_info('frames') WHERE name = $column";
+            columns.Parameters.AddWithValue("$column", column);
+            if (Convert.ToInt64(columns.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) != 0)
+            {
+                continue;
+            }
 
-        using SqliteCommand add = connection.CreateCommand();
-        add.CommandText = "ALTER TABLE frames ADD COLUMN direction TEXT NOT NULL DEFAULT 'rx'";
-        add.ExecuteNonQuery();
+            using SqliteCommand add = connection.CreateCommand();
+            add.CommandText = $"ALTER TABLE frames ADD COLUMN {column} {definition}";
+            add.ExecuteNonQuery();
+        }
     }
 
     /// <summary>
@@ -152,6 +165,11 @@ internal sealed class FrameLog : IAsyncDisposable
             quality.FrameBytes,
             quality.CorrectedBytes,
             quality.CrcValid,
+            // Without these two, a crc_valid-null row is ambiguous: a corroborated frame the
+            // host received and a withheld RS-only reading logged identically. The 40 m capture
+            // campaign found the gap by diffing this log against an offline re-decode.
+            quality.TrailerNearBits,
+            quality.MonitorOnly,
             quality.FrequencyOffsetHz,
             audioHz,
             rfHz,
@@ -169,7 +187,9 @@ internal sealed class FrameLog : IAsyncDisposable
     /// so the caller passes it, and <c>corrected</c>, <c>crc_valid</c> and <c>offset_hz</c> are
     /// left null rather than filled with plausible values: they are receive measurements, and
     /// inventing them for our own transmission would be inventing a measurement of ourselves.
-    /// (Same reasoning as the waterfall's TX rows.)</para>
+    /// (Same reasoning as the waterfall's TX rows.) <c>trailer_near_bits</c> and
+    /// <c>monitor_only</c> stay null too: corroborating a trailer and withholding a frame from
+    /// the host are things that happen to a receive.</para>
     /// <para><c>heard_at</c> holds when it went out - see the note on the class.</para>
     /// </remarks>
     /// <param name="mode">
@@ -196,6 +216,8 @@ internal sealed class FrameLog : IAsyncDisposable
             frame.Length,
             Corrected: null,
             CrcValid: null,
+            TrailerNearBits: null,
+            MonitorOnly: null,
             OffsetHz: null,
             audioHz,
             rfHz,
@@ -292,16 +314,17 @@ internal sealed class FrameLog : IAsyncDisposable
         insert.CommandText = """
             INSERT INTO frames
               (heard_at, direction, sub_channel, mode, mode_name, source, destination,
-               length, corrected, crc_valid, offset_hz, audio_hz, rf_hz, payload)
+               length, corrected, crc_valid, trailer_near_bits, monitor_only,
+               offset_hz, audio_hz, rf_hz, payload)
             VALUES
               ($heard_at, $direction, $sub, $mode, $mode_name, $source, $destination,
-               $length, $corrected, $crc, $offset, $audio, $rf, $payload)
+               $length, $corrected, $crc, $trailer, $monitor, $offset, $audio, $rf, $payload)
             """;
         foreach (string name in new[]
                  {
                      "$heard_at", "$direction", "$sub", "$mode", "$mode_name", "$source",
-                     "$destination", "$length", "$corrected", "$crc", "$offset", "$audio",
-                     "$rf", "$payload",
+                     "$destination", "$length", "$corrected", "$crc", "$trailer", "$monitor",
+                     "$offset", "$audio", "$rf", "$payload",
                  })
         {
             insert.Parameters.Add(new SqliteParameter(name, DBNull.Value));
@@ -321,6 +344,8 @@ internal sealed class FrameLog : IAsyncDisposable
                 insert.Parameters["$length"].Value = entry.Length;
                 insert.Parameters["$corrected"].Value = (object?)entry.Corrected ?? DBNull.Value;
                 insert.Parameters["$crc"].Value = entry.CrcValid is bool crc ? crc ? 1 : 0 : DBNull.Value;
+                insert.Parameters["$trailer"].Value = (object?)entry.TrailerNearBits ?? DBNull.Value;
+                insert.Parameters["$monitor"].Value = entry.MonitorOnly is bool monitor ? monitor ? 1 : 0 : DBNull.Value;
                 insert.Parameters["$offset"].Value = (object?)entry.OffsetHz ?? DBNull.Value;
                 insert.Parameters["$audio"].Value = (object?)entry.AudioHz ?? DBNull.Value;
                 insert.Parameters["$rf"].Value = (object?)entry.RfHz ?? DBNull.Value;
@@ -356,6 +381,8 @@ internal sealed class FrameLog : IAsyncDisposable
         int Length,
         int? Corrected,
         bool? CrcValid,
+        int? TrailerNearBits,
+        bool? MonitorOnly,
         double? OffsetHz,
         double? AudioHz,
         double? RfHz,

@@ -114,10 +114,11 @@ internal static class ActivityLog
     /// <summary>
     /// <c>SOURCE&gt;DEST</c> where the frame is AX.25, else a marker. Not every mode carries AX.25
     /// addresses - a KISS host may send anything - and printing a mangled callsign would be worse
-    /// than admitting there is not one.
+    /// than admitting there is not one. A blank destination field prints as <c>?</c>: the source
+    /// attributes the frame on its own (the PD4R-12 beacon shape).
     /// </summary>
     private static string Addresses(ReadOnlySpan<byte> frame) =>
         Ax25AddressParser.TryParse(frame, out string source, out string destination)
-            ? $"{source}>{destination}"
+            ? $"{source}>{(destination.Length > 0 ? destination : "?")}"
             : "(no ax25 header)";
 }
