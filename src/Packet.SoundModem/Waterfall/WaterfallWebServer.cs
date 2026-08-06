@@ -922,7 +922,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         int blockSamples = _channel.SampleRate * AudioBlockMilliseconds / 1000;
         foreach (float sample in samples)
         {
-            _audioBlock.Add((short)Math.Clamp(sample * 32767f, short.MinValue, short.MaxValue));
+            _audioBlock.Add(Audio.Pcm16.FromFloat(sample));
         }
 
         while (_audioBlock.Count >= blockSamples)

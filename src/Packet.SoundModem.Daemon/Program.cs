@@ -1225,7 +1225,7 @@ if (ardopModem is not null)
                         var floats = new float[audio.Length];
                         for (int i = 0; i < audio.Length; i++)
                         {
-                            floats[i] = audio[i] / 32768f;
+                            floats[i] = Packet.SoundModem.Audio.Pcm16.ToFloat(audio[i]);
                         }
 
                         return ardopShift.Transmit(floats);

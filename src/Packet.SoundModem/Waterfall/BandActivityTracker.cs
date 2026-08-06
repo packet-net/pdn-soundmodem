@@ -15,7 +15,7 @@ namespace Packet.SoundModem.Waterfall;
 public sealed class BandActivityTracker
 {
     private const double BurstThresholdRatio = 4; // 6 dB over the floor
-    private static readonly double[] ByteToLinearPower = BuildLut();
+    private static readonly double[] ByteToLinearPower = WaterfallSource.ByteToLinearPower;
 
     private readonly int _lowBin;
     private readonly int _binCount;
@@ -143,15 +143,4 @@ public sealed class BandActivityTracker
         return Math.Max(min, 1e-12);
     }
 
-    private static double[] BuildLut()
-    {
-        var lut = new double[256];
-        for (int b = 0; b < 256; b++)
-        {
-            double db = WaterfallSource.FloorDb + b * (-WaterfallSource.FloorDb / 255);
-            lut[b] = Math.Pow(10, db / 10);
-        }
-
-        return lut;
-    }
 }

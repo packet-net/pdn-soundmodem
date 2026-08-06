@@ -32,27 +32,13 @@ public class FrameLogTests : IDisposable
     /// <summary>An AX.25 UI frame from M0LTE to GB7RDG, so the addresses are real ones to find.</summary>
     private static byte[] Frame(string from = "M0LTE", string to = "GB7RDG")
     {
-        var frame = new byte[32];
-        WriteAddress(frame, 0, to, last: false);
-        WriteAddress(frame, 7, from, last: true);
-        frame[14] = 0x03;
-        frame[15] = 0xF0;
-        for (int i = 16; i < frame.Length; i++)
+        var payload = new byte[16];
+        for (int i = 0; i < payload.Length; i++)
         {
-            frame[i] = (byte)(i * 11);
+            payload[i] = (byte)((i + 16) * 11);
         }
 
-        return frame;
-
-        static void WriteAddress(byte[] frame, int at, string call, bool last)
-        {
-            for (int n = 0; n < 6; n++)
-            {
-                frame[at + n] = (byte)((n < call.Length ? call[n] : ' ') << 1);
-            }
-
-            frame[at + 6] = (byte)(0x60 | (last ? 1 : 0));
-        }
+        return Packet.SoundModem.Waterfall.Ax25UiFrame.Build(from, to, payload);
     }
 
     /// <summary>

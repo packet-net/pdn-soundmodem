@@ -143,23 +143,7 @@ static byte[] MakeUiFrame(byte[] token, int payloadLength)
         payload[i] = (byte)('A' + (i % 26));
     }
 
-    return
-    [
-        .. Addr("QST", 0, last: false, c: 1), .. Addr("Q0AAA", 0, last: true, c: 0),
-        0x03, 0xF0, .. payload,
-    ];
-
-    static byte[] Addr(string call, int ssid, bool last, int c)
-    {
-        var b = new byte[7];
-        for (int i = 0; i < 6; i++)
-        {
-            b[i] = (byte)((i < call.Length ? call[i] : ' ') << 1);
-        }
-
-        b[6] = (byte)((c << 7) | 0x60 | (ssid << 1) | (last ? 1 : 0));
-        return b;
-    }
+    return Packet.SoundModem.Waterfall.Ax25UiFrame.Build("Q0AAA", "QST", payload);
 }
 
 // One KISS-over-TCP peer: a socket, a background read pump feeding a KissDecoder, and the

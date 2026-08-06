@@ -320,10 +320,7 @@ public sealed class FreeDvDatacModem : IModem
         foreach (float sample in native)
         {
             _energyBusy.Process(sample);
-            float scaled = sample * 32767f;
-            _fifo[_fifoEnd++] = scaled >= 32767f ? (short)32767
-                : scaled <= -32768f ? (short)-32768
-                : (short)scaled;
+            _fifo[_fifoEnd++] = Audio.Pcm16.FromFloat(sample);
         }
 
         // Feeding exactly Nin per call is behaviourally identical to one long call: the

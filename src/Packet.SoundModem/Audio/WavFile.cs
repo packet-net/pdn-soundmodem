@@ -68,7 +68,7 @@ public static class WavFile
                 {
                     short value = BinaryPrimitives.ReadInt16LittleEndian(
                         span.Slice(pos + i * frameBytes + channel * 2, 2));
-                    samples[i] = value / 32768f;
+                    samples[i] = Pcm16.ToFloat(value);
                 }
             }
 
@@ -106,9 +106,8 @@ public static class WavFile
 
         for (int i = 0; i < samples.Length; i++)
         {
-            float clipped = Math.Clamp(samples[i], -1f, 1f);
             BinaryPrimitives.WriteInt16LittleEndian(
-                span[(44 + i * 2)..], (short)MathF.Round(clipped * 32767f));
+                span[(44 + i * 2)..], Pcm16.FromFloat(samples[i]));
         }
 
         File.WriteAllBytes(path, buffer);
