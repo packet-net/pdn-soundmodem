@@ -798,6 +798,22 @@ if (waterfallConfig is not null)
             + "  already hold the port; \"*\" or \"0.0.0.0\" serves every interface.");
         return 2;
     }
+    catch (ArgumentException e)
+    {
+        // The spectrum source refusing its geometry - a wrong answer in the config, not a
+        // busy port. Without this catch the raw exception took a non-2 exit code, and
+        // Restart=on-failure (which only spares exit 2) crash-looped the unit every five
+        // seconds - exactly the failure mode the config-validation contract exists to
+        // prevent.
+        Console.Error.WriteLine(
+            "invalid waterfall settings\n"
+            + $"  {e.Message}\n"
+            + "  Set by \"waterfall\".\"fftSize\" and \"waterfall\".\"linesPerSecond\". The FFT\n"
+            + "  size must be a power of two no shorter than one line's hop (the DSP rate\n"
+            + "  divided by linesPerSecond), and linesPerSecond must divide the DSP rate.\n"
+            + "  Remove the settings to use the defaults.");
+        return 2;
+    }
 
     Console.WriteLine($"waterfall: {waterfallServer.Url}");
 }
@@ -1412,7 +1428,21 @@ else if (deviceIsUberSdr)
 }
 else if (deviceIsFlex)
 {
-    flex = await FlexDevice.OpenAsync(device, DspRate, flexPacketBuffer, flexTuning, cancellation.Token);
+    try
+    {
+        flex = await FlexDevice.OpenAsync(device, DspRate, flexPacketBuffer, flexTuning, cancellation.Token);
+    }
+    catch (Exception e) when (e is not OperationCanceledException)
+    {
+        // The one device path that had no catch: a radio still booting at daemon start
+        // escaped as a raw stack trace with an abort exit code, instead of the
+        // DeviceDiagnostics message and the exit 1 (retry) contract the ALSA and UberSDR
+        // paths honour. Broad on purpose - whatever the radio library throws, the answer
+        // is the same: say what to check, and let the unit retry.
+        Console.Error.WriteLine(DeviceDiagnostics.Flex(device, configPath, e));
+        return 1;
+    }
+
     ptt = flex.Ptt;
     playback = flex.Output;
     input = flex.Input;
@@ -1660,7 +1690,9 @@ int blockSamples = ardopModem is null ? inputRate / 10 : inputRate / 50;
 var floatBuffer = new float[blockSamples];
 var dspBuffer = new float[rxDecimator?.MaxOutput(blockSamples) ?? blockSamples];
 var xrunWatch = new XrunWatch();
-long nextXrunPoll = Environment.TickCount64 + XrunPollMs;
+long nextHealthPoll = Environment.TickCount64 + XrunPollMs;
+long frameLogDropsSeen = 0;
+long captureDropsSeen = 0;
 while (!cancellation.IsCancellationRequested)
 {
     int got = input.Read(floatBuffer);
@@ -1670,13 +1702,34 @@ while (!cancellation.IsCancellationRequested)
     }
 
     // Polled from the receive loop rather than a timer: this loop only turns when audio is
-    // flowing, which is exactly when an xrun means something, and it costs two field reads.
-    if ((alsaIn is not null || alsaOut is not null) && Environment.TickCount64 >= nextXrunPoll)
+    // flowing, which is exactly when an xrun means something, and it costs a few field
+    // reads. The dropped-write counters ride the same poll - they were dead counters
+    // before it: a full disk left a station keeping an empty frame log for weeks with
+    // nothing anywhere saying so.
+    if (Environment.TickCount64 >= nextHealthPoll)
     {
-        nextXrunPoll = Environment.TickCount64 + XrunPollMs;
-        if (xrunWatch.Poll(alsaIn?.Xruns ?? 0, alsaOut?.Xruns ?? 0) is string lost)
+        nextHealthPoll = Environment.TickCount64 + XrunPollMs;
+        if ((alsaIn is not null || alsaOut is not null)
+            && xrunWatch.Poll(alsaIn?.Xruns ?? 0, alsaOut?.Xruns ?? 0) is string lost)
         {
             Console.Error.WriteLine(lost);
+        }
+
+        if (frameLog is not null && frameLog.Dropped is long logDrops && logDrops > frameLogDropsSeen)
+        {
+            Console.Error.WriteLine(
+                $"frame log: {logDrops - frameLogDropsSeen} frames dropped unwritten "
+                + $"({logDrops} total) - the disk cannot keep up, is full, or is unwritable");
+            frameLogDropsSeen = logDrops;
+        }
+
+        if (survey is not null && survey.DroppedCaptures is long captureDrops
+            && captureDrops > captureDropsSeen)
+        {
+            Console.Error.WriteLine(
+                $"survey: {captureDrops - captureDropsSeen} captures dropped unwritten "
+                + $"({captureDrops} total) - the disk cannot keep up, is full, or is unwritable");
+            captureDropsSeen = captureDrops;
         }
     }
 

@@ -313,8 +313,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             }
 
             // Measured edges, but the configured centre where the host stated one: the
-            // midpoint of a measurement is a few Hz off what the operator asked for.
-            if (Declared(sub) is { } declared)
+            // midpoint of a measurement is a few Hz off what the operator asked for. A
+            // declared centre of 0 is the daemon's "no configured frequency" sentinel, not
+            // a statement that the modem sits at DC - the measurement stands then, or the
+            // band chip reads "0 Hz" with its centre tick on the left edge of the page.
+            if (Declared(sub) is { CentreHz: > 0 } declared)
             {
                 band = band with { CentreHz = declared.CentreHz };
             }
