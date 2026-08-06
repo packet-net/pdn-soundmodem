@@ -101,6 +101,15 @@ or one-off pins (the mid-branch CFO hole, the coherent-margin inversion, the era
 interpolation hazard), the ~1.4 dB banked this week exists only as ledger prose until a mask
 holds it, and workstreams 5-7 below each need exactly this instrument to develop against.
 
+**Status 2026-08-06 (evening): landed** - `WattersonMaskTests`, both tiers green. Coverage is
+every non-FM mode the mode-generic rig can drive: the NinoTNC SSB lineage AND the FreeDV
+datac OFDM family (Tom's clarification: all non-FM PDN modems, not just NinoTNC modes).
+Deliberately absent, on the record: **ms110d-\*** keeps its own richer mask suite;
+**ardop** is a session TNC rather than a catalogue `IModem`, so the frame-layer rig cannot
+drive it - giving ARDOP a maskable sim seam is an open item of this workstream, not a
+finished exclusion; the FM modes wait for an FM-appropriate channel model (the impulse-noise
+workstream is the natural place both arrive together).
+
 ### 1. Soft-decision and erasure Reed-Solomon decoding (the big lever)
 
 Everything above the demodulator is hard-decision; that is the textbook ~2 dB give-away, and
