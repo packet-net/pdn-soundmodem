@@ -934,9 +934,29 @@ the slice.
 | `daxChannel` | string | `"2"` headless, `"1"` attach | DAX channel to claim - [below](#coexisting-with-smartsdr) |
 | `txPowerWatts` | number | unset | Transmit power in watts - [below](#transmit-power) |
 | `transmitFilterHighHz` | int | *derived* | TX filter high cut in Hz - [below](#the-transmit-filter). `0` leaves the radio's own |
+| `stationName` | string | `"pdn-soundmodem"` | The station name registered with the radio (best-effort), so per-station state and other operators' diagnostics name this daemon rather than a generic "Flex" |
+| `arbitration` | bool | `false` | Key through the arbitrated PTT - [below](#sharing-the-radio-with-a-second-transmitting-client) |
 
 The headless path disables band persistence and explicitly tunes the slice, so it lands on the
 requested frequency regardless of the radio's last-used band.
+
+### Sharing the radio with a second transmitting client
+
+Two pdn processes can want one Flex: the production daemon plus a test instance, or the
+sm-ota harness. Without arbitration the second client silently steals the TX slice - the
+first then keys the wrong slice forever while logging success - and the radio-global transmit
+filter is last-writer-wins. `"arbitration": true` keys through a sequence that emits no
+radio-global write until the radio is quiet: wait for the interlock to clear, re-assert this
+station's transmit filter, claim the TX slice, key, and only believe a keyup the radio
+confirms. A keyup that cannot get the radio inside 10 s fails loudly (queued frames are
+answered, the journal says another station holds the PA) instead of transmitting over
+someone. Ordinary queued frames also defer before rendering while another station transmits,
+the same polite hold ARDOP sessions get.
+
+**Off by default** until the multi-client radio semantics are probed on real hardware
+(docs/flex-integration.md § Sharing the PA names the nine probes); the default path is
+bit-for-bit what it always was. Turning it on today is safe in the sense that it never
+disturbs a busy radio - the unprobed risks are around losing races, not corrupting anyone.
 
 **The slice mode states the sideband**, so do not also set `sideband`: `DIGU` is USB, `DIGL` is
 LSB, and the daemon takes it from the slice. Setting a `sideband` that contradicts the slice mode

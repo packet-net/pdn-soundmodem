@@ -196,6 +196,24 @@ public sealed class FlexConfig
     /// fixed at the rig.</para>
     /// </remarks>
     public int? TransmitFilterHighHz { get; set; }
+
+    /// <summary>
+    /// The station name this client registers with the radio (headless only, best-effort).
+    /// Default "pdn-soundmodem", so per-station state (transmit power) and anyone else's
+    /// diagnostics name this daemon instead of a generic "Flex" - which matters the moment a
+    /// second transmitting client (a test instance, the sm-ota harness) shares the radio.
+    /// </summary>
+    public string StationName { get; set; } = "pdn-soundmodem";
+
+    /// <summary>
+    /// Key through the arbitrated PTT: every keyup waits for the radio to be quiet, re-asserts
+    /// the transmit filter and the TX slice, and only believes a keyup the radio confirms -
+    /// so a second transmitting client cannot be transmitted over, and cannot silently steal
+    /// this daemon's TX slice between bursts. Default false until the shared-PA hardware
+    /// probes pass (docs/flex-integration.md names them); the default path is exactly what it
+    /// always was.
+    /// </summary>
+    public bool Arbitration { get; set; }
 }
 
 /// <summary>

@@ -39,6 +39,8 @@ public sealed class FlexRuntime : IAsyncDisposable
     {
         (Input as IDisposable)?.Dispose();
         (Output as IDisposable)?.Dispose();
+        // The arbitrated PTT holds a status-stream subscription; the plain one holds nothing.
+        (Ptt as IDisposable)?.Dispose();
         await Station.DisposeAsync().ConfigureAwait(false);
         if (Mock is not null)
         {
@@ -99,6 +101,22 @@ public sealed record FlexTuning
 
     /// <summary>Transmit power in watts. Null leaves the radio's own setting alone.</summary>
     public double? TxPowerWatts { get; init; }
+
+    /// <summary>Station name to register with the radio (headless only, best-effort): what
+    /// per-station state and another operator's diagnostics call this client. Null sends
+    /// nothing. The daemon defaults it to "pdn-soundmodem" so two transmitting clients on
+    /// one radio stop both being an anonymous "Flex".</summary>
+    public string? StationName { get; init; }
+
+    /// <summary>
+    /// Key through <see cref="FlexArbitratedPtt"/> instead of <see cref="FlexPtt"/>: every
+    /// keyup waits for the radio to be quiet, re-asserts the transmit filter and the TX
+    /// slice, and only believes a keyup the radio confirms - for a radio shared with another
+    /// transmitting client (a test instance, the sm-ota harness). Default false until the
+    /// multi-client hardware probes pass (docs/flex-integration.md § Shared-PA probes);
+    /// the sole-owner path is bit-for-bit what it always was.
+    /// </summary>
+    public bool Arbitration { get; init; }
 }
 
 /// <summary>
@@ -212,6 +230,7 @@ public static class FlexDevice
         {
             SliceLetter = spec.SliceLetter,
             Station = spec.Station ?? "Flex",
+            HeadlessStationName = tuning.StationName,
             Frequency = tuning.Frequency,
             Antenna = tuning.Antenna,
             SliceMode = tuning.Mode,
@@ -249,7 +268,15 @@ public static class FlexDevice
         IAudioOutput output = format.SampleRate == dspRate
             ? flexOutput
             : new Channel.UpsamplingAudioOutput(flexOutput, dspRate);
-        IPttControl ptt = station.CreatePtt();
+        // Arbitrated keying carries the plan's transmit-filter high cut so every keyup
+        // re-asserts it while the radio is quiet - the global, persistent filter is the
+        // setting two stations otherwise overwrite under each other.
+        IPttControl ptt = tuning.Arbitration
+            ? station.CreateArbitratedPtt(new FlexPttArbitrationOptions
+            {
+                TransmitFilterHighHz = tuning.TransmitFilterHighHz,
+            })
+            : station.CreatePtt();
 
         return new FlexRuntime(mock, station, input, output, ptt);
     }
