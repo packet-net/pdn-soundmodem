@@ -91,6 +91,23 @@ needs a soft-bit or erasure-hint input surface. This is the one workstream that 
 from this repo alone - it needs the Il2p repo opened alongside. Estimated 1-2 dB AWGN
 equivalent, more under fading.
 
+**Status 2026-08-06 (evening): the erasure leg is built and measured.** M0LTE.Fec 0.3.0
+gained errors-and-erasures decoding with a caller-set cap on located errors (an attempt that
+spends the whole parity budget is pure interpolation and always "succeeds" - found the hard
+way, pinned by test); M0LTE.Il2p 0.2.0 gained `PushBit(bit, confidence)` and a failed-block
+retry ladder of (erasures, cap) rungs that each keep two parity symbols in reserve; the BPSK
+demodulator emits per-symbol confidence from the DF-DD decision magnitude. Measured: **AWGN
+−5 dB 49 % → 55 %, −4 dB 82 % → 88 %, −3 dB 94 % → 96 %** (~0.3-0.4 dB); Good/Poor unchanged
+within noise; the miss corpus unmoved at 22/37 delivered - its residue is not
+payload-RS-limited (5 cases never demodulate, 10 fail only on obliterated trailers). The
+header deliberately gets no erasure rescue (its 2-parity code cannot afford speculative
+erasures without hallucinating collections). What remains of this workstream, in value order:
+**CRC-arbitrated chase** (bit-flip retries on the least-confident bits, which handles the
+scattered-error pattern erasures cannot and is the header's only rescue), and a look at
+whether the **DCD-falling deframer reset kills fade-straddling frames** before erasures even
+see them - a clean-dip probe showed the chain rides amplitude alone easily, so the Good
+channel's losses are phase/timing collapse plus that reset, not byte damage.
+
 ### 2. Trailer corroboration - LANDED 2026-08-06
 
 Measurement redirected this slot on the day the roadmap was written: probing why 29 corpus

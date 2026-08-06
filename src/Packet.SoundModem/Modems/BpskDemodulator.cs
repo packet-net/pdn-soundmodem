@@ -100,6 +100,7 @@ public sealed class BpskDemodulator
     private double _referenceQ;
     private double _seededRotation;
     private double _trackedRotation;
+    private double _confidenceMean;
     private bool _rotationSeeded;
     private int _previousPolarity = 1;
 
@@ -122,10 +123,16 @@ public sealed class BpskDemodulator
     /// differential path's matched filter mirrors. Defaults to
     /// <see cref="BpskModulator.DefaultRollOff"/>; <see cref="BpskModem"/> passes the
     /// per-mode value (0.20 for the 300 Bd mode).</param>
+    /// <param name="softBitSink">When supplied, receives each decided bit together with a
+    /// confidence in (0, 1) - the symbol's decision magnitude against a slow running mean,
+    /// so a faded or hit symbol ranks low. Feed it to
+    /// <see cref="Il2pReceiver.PushBit(int, float)"/> and failed Reed-Solomon blocks retry
+    /// with the weakest bytes erased. <paramref name="bitSink"/> is called either way.</param>
     public BpskDemodulator(
         int sampleRate, Action<int> bitSink, double carrierFrequency = 1500, int baud = 300,
         PskDetector detector = PskDetector.Differential, double? loopBandwidthHz = null,
-        double rollOff = BpskModulator.DefaultRollOff)
+        double rollOff = BpskModulator.DefaultRollOff,
+        Action<int, float>? softBitSink = null)
     {
         ArgumentNullException.ThrowIfNull(bitSink);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
@@ -177,14 +184,34 @@ public sealed class BpskDemodulator
                 // Coherent feeds the absolute sign bit; differentially decode against the
                 // previous symbol (a repeat is a '1'), resolving the loop's π ambiguity.
                 // Differential decides the symbol-instant sample against the reference.
+                int decided;
+                float magnitude;
                 if (_detector == PskDetector.Coherent)
                 {
-                    bitSink(level == _previousLevel ? 1 : 0);
+                    decided = level == _previousLevel ? 1 : 0;
                     _previousLevel = level;
+                    magnitude = Math.Abs(_lastPlotI);
                 }
                 else
                 {
-                    bitSink(DecideAgainstReference());
+                    decided = DecideAgainstReference(out double projection);
+                    magnitude = (float)Math.Abs(projection);
+                }
+
+                bitSink(decided);
+                if (softBitSink is not null)
+                {
+                    // Confidence: the decision magnitude against a slow running mean of
+                    // itself (~500 symbols), squashed into (0, 1). Only the ordering
+                    // matters downstream - a fade drops whole bytes to the bottom of the
+                    // ranking, which is exactly what erasure decoding wants flagged.
+                    _confidenceMean = _confidenceMean == 0
+                        ? magnitude
+                        : _confidenceMean + (0.002 * (magnitude - _confidenceMean));
+                    float confidence = _confidenceMean <= 0
+                        ? 0.5f
+                        : Math.Min(0.999f, (float)(magnitude / (4.0 * _confidenceMean)));
+                    softBitSink(decided, confidence);
                 }
             },
             inertia: detector == PskDetector.Coherent ? 0.74 : DifferentialInertia,
@@ -264,6 +291,7 @@ public sealed class BpskDemodulator
         _seededRotation = 0;
         _trackedRotation = 0;
         _rotationSeeded = false;
+        _confidenceMean = 0;
     }
 
     /// <summary>Processes a block of audio samples.</summary>
@@ -376,7 +404,7 @@ public sealed class BpskDemodulator
     /// moment it turns coherent - a single injection, because feeding the window's angle in
     /// per-symbol measurably jitters the reference with the estimator's own noise.
     /// </remarks>
-    private int DecideAgainstReference()
+    private int DecideAgainstReference(out double projection)
     {
         // The applied rotation is seed + tracker. The seed is a one-shot per burst, placed
         // anywhere within ±baud/4 the moment the offset window turns coherent - which it
@@ -412,7 +440,7 @@ public sealed class BpskDemodulator
                 (_referenceI * sin) + (_referenceQ * cos));
         }
 
-        double projection = (_currentI * _referenceI) + (_currentQ * _referenceQ);
+        projection = (_currentI * _referenceI) + (_currentQ * _referenceQ);
         int polarity = projection >= 0 ? 1 : -1;
         int bit = polarity == _previousPolarity ? 1 : 0;
         _previousPolarity = polarity;
