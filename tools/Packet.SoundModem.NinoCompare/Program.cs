@@ -67,6 +67,11 @@ static int Usage()
               SSB-translate a slot's audio centre (M0LTE.Dsp.FrequencyShifter) and resample -
               e.g. --from 850 --to 1500 lifts slot-2 ARDOP to ardopcf's fixed 1500 Hz centre,
               since we cannot retune the receiver (slot-3's NinoTNC has a fixed tone centre).
+              CAUTION for large DOWN-shifts: translating a real recording down by D folds all
+              its noise below D onto D-f (a measured +3 dB where the fold overlaps the band).
+              The slot-to-1500 shifts this exists for fold harmlessly below every reference
+              band; pre-filter the capture to the signal's band before asking for more than
+              ~1.3 kHz down, or decode with `sm-decode --centre`, which does that itself.
           station-offsets --chunks DIR [--centre 1500] [--baud 300] [--pairs 4] [--step]
                           [--out CSV]
               For every unique station heard across the timestamped chunks, measure the fine

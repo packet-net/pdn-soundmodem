@@ -166,8 +166,24 @@ static int DecodeArdop(float[] audio, int sampleRate, double? centreHz, bool qui
     const double nativeCentreHz = 1500.0;
     if (centreHz is double centre && centre != nativeCentreHz)
     {
+        // Bandpass to the on-air band BEFORE the unshift, exactly as ArdopChannelBridge does
+        // and for the same measured reason: unshifting a centre above 1500 is a downshift,
+        // and downshifting a real recording folds all its noise below the shift onto the
+        // session band - +3 dB across the band's bottom at a 2400 Hz centre, which on a
+        // marginal off-air capture is the difference between a decode and a miss. Edges are
+        // the widest ARDOP session plus margin, the bridge's own numbers.
+        var band = new M0LTE.Dsp.FirFilter(M0LTE.Dsp.FilterDesign.BandPass(
+            Math.Max(50, centre - 1300),
+            Math.Min((sampleRate / 2.0) - 50, centre + 1300),
+            sampleRate, 639));
+        var banded = new float[audio.Length];
+        for (int i = 0; i < audio.Length; i++)
+        {
+            banded[i] = band.Next(audio[i]);
+        }
+
         var shifted = new float[audio.Length];
-        new M0LTE.Dsp.FrequencyShifter(sampleRate, nativeCentreHz - centre).Process(audio, shifted);
+        new M0LTE.Dsp.FrequencyShifter(sampleRate, nativeCentreHz - centre).Process(banded, shifted);
         audio = shifted;
     }
 
