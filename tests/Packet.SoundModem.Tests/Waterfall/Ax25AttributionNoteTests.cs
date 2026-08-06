@@ -92,9 +92,20 @@ public class Ax25AttributionNoteTests
     public void An_Address_Field_Of_Spaces_Is_Reported_As_An_Empty_Callsign()
     {
         // Every character legal, no callsign present - the one remaining way the parse fails
-        // with nothing specific to point at.
+        // with nothing specific to point at. Both fields are blank here; the note names the
+        // source, because a blank destination alone no longer unattributes a frame and an
+        // empty source field is now the only thing this fallback can be reporting.
         byte[] frame = Frame("      ", "      ");
 
-        Ax25AttributionNote.For(frame).Should().NotBeNull().And.Contain("empty callsign");
+        Ax25AttributionNote.For(frame).Should().NotBeNull().And.Contain("empty source callsign");
+    }
+
+    [Fact]
+    public void A_Blank_Destination_With_A_Readable_Source_Has_Nothing_To_Explain()
+    {
+        // The PD4R-12 beacon shape from the live 40 m channel: the destination field is all
+        // spaces and the sender is perfectly readable. The frame is attributed to its source,
+        // so it is not the survey's business and there is no note to write.
+        Ax25AttributionNote.For(Frame("      ", "PD4R")).Should().BeNull();
     }
 }

@@ -690,7 +690,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         if (Ax25AddressParser.TryParse(frame, out string source, out string destination))
         {
             from = source;
-            to = destination;
+            // A blank destination field parses to "" - send null, as the backlog does, and the
+            // panel shows "?" beside the source that attributed the frame.
+            to = destination.Length > 0 ? destination : null;
         }
 
         BroadcastFrame(
@@ -739,7 +741,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         if (Ax25AddressParser.TryParse(frame, out string source, out string destination))
         {
             from = source;
-            to = destination;
+            to = destination.Length > 0 ? destination : null;
         }
 
         BroadcastFrame(
