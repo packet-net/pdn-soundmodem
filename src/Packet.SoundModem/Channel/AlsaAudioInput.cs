@@ -40,7 +40,7 @@ public sealed class AlsaAudioInput : IAudioInput, IDisposable
         int got = _pcm.Read(_buffer.AsSpan(0, destination.Length));
         for (int i = 0; i < got; i++)
         {
-            destination[i] = _buffer[i] / 32768f;
+            destination[i] = Audio.Pcm16.ToFloat(_buffer[i]);
         }
 
         return got;

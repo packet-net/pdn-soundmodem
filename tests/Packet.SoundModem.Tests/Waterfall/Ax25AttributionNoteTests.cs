@@ -10,6 +10,9 @@ namespace Packet.SoundModem.Tests.Waterfall;
 /// </summary>
 public class Ax25AttributionNoteTests
 {
+    // Hand-rolled rather than Ax25UiFrame.Build on purpose: these cases exercise the
+    // attribution note's handling of truncated and PID-less shapes a well-formed builder
+    // cannot produce.
     private static byte[] Frame(string destination, string source, int length = 20)
     {
         var frame = new byte[length];

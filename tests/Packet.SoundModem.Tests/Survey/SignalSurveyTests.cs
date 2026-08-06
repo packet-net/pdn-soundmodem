@@ -384,23 +384,6 @@ public class SignalSurveyTests : IDisposable
         new(mode, FrameBytes: 118, CorrectedBytes: 0, CrcValid: true,
             HeaderType: M0LTE.Il2p.Il2pHeaderType.Type1);
 
-    private static byte[] Ax25Frame(string from, string to)
-    {
-        var frame = new byte[20];
-        Write(frame, 0, to, last: false);
-        Write(frame, 7, from, last: true);
-        frame[14] = 0x03;
-        frame[15] = 0xF0;
-        return frame;
-
-        static void Write(byte[] frame, int at, string call, bool last)
-        {
-            for (int n = 0; n < 6; n++)
-            {
-                frame[at + n] = (byte)((n < call.Length ? call[n] : ' ') << 1);
-            }
-
-            frame[at + 6] = (byte)(0x60 | (last ? 1 : 0));
-        }
-    }
+    private static byte[] Ax25Frame(string from, string to) =>
+        Ax25UiFrame.Build(from, to, new byte[4]);
 }

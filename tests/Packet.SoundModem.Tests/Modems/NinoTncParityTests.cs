@@ -37,19 +37,7 @@ public class NinoTncParityTests
             payload[i] = i < tag.Length ? tag[i] : (byte)('A' + ((i - tag.Length) % 26));
         }
 
-        static byte[] Addr(string call, bool last, int command)
-        {
-            var b = new byte[7];
-            for (int i = 0; i < 6; i++)
-            {
-                b[i] = (byte)((i < call.Length ? call[i] : ' ') << 1);
-            }
-
-            b[6] = (byte)((command << 7) | 0x60 | (last ? 1 : 0));
-            return b;
-        }
-
-        return [.. Addr("TEST", false, 1), .. Addr("Q0AAA", true, 0), 0x03, 0xF0, .. payload];
+        return Packet.SoundModem.Waterfall.Ax25UiFrame.Build("Q0AAA", "TEST", payload);
     }
 
     internal static IModem Create(

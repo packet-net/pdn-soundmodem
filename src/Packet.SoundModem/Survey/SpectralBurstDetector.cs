@@ -67,7 +67,7 @@ public sealed class SpectralBurstDetector
     // has climbed all the way back.
     private const int SeedBlocks = 4;
 
-    private static readonly double[] ByteToLinearPower = BuildLut();
+    private static readonly double[] ByteToLinearPower = WaterfallSource.ByteToLinearPower;
 
     private readonly Action<SurveyBurst> _burstClosed;
     private readonly double _binWidthHz;
@@ -362,17 +362,6 @@ public sealed class SpectralBurstDetector
         }
     }
 
-    private static double[] BuildLut()
-    {
-        var lut = new double[256];
-        for (int b = 0; b < 256; b++)
-        {
-            double db = WaterfallSource.FloorDb + b * (-WaterfallSource.FloorDb / 255);
-            lut[b] = Math.Pow(10, db / 10);
-        }
-
-        return lut;
-    }
 
     /// <summary>A burst still in progress. A class, not a struct: it is mutated in place in a
     /// list while the burst runs.</summary>

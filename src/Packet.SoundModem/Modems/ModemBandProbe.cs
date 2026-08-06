@@ -67,26 +67,12 @@ public static class ModemBandProbe
     /// </summary>
     private static byte[] BuildProbeFrame()
     {
-        var frame = new byte[48];
-        WriteAddress(frame, 0, "PDNSM", last: false);
-        WriteAddress(frame, 7, "PDNSM", last: true);
-        frame[14] = 0x03;
-        frame[15] = 0xF0;
-        for (int n = 16; n < frame.Length; n++)
+        var payload = new byte[32];
+        for (int n = 0; n < payload.Length; n++)
         {
-            frame[n] = (byte)(n * 37); // arbitrary non-repeating payload
+            payload[n] = (byte)((n + 16) * 37); // arbitrary non-repeating payload
         }
 
-        return frame;
-
-        static void WriteAddress(byte[] frame, int at, string call, bool last)
-        {
-            for (int n = 0; n < 6; n++)
-            {
-                frame[at + n] = (byte)((n < call.Length ? call[n] : ' ') << 1);
-            }
-
-            frame[at + 6] = (byte)(0x60 | (last ? 1 : 0));
-        }
+        return Waterfall.Ax25UiFrame.Build("PDNSM", "PDNSM", payload);
     }
 }
