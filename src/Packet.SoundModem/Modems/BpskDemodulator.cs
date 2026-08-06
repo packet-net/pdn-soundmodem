@@ -3,16 +3,21 @@ using M0LTE.Dsp;
 namespace Packet.SoundModem.Modems;
 
 /// <summary>
-/// BPSK demodulator: band-pass → complex mix to baseband → I/Q low-pass → per-symbol bit
-/// (per the IL2P symbol map: 1 = phase repeat, 0 = reversal). Two detection methods share the
-/// chain (see <see cref="PskDetector"/>): the default <b>coherent</b> path recovers the
-/// carrier phase with a <see cref="CostasLoop"/> (locking the constellation to the real axis)
-/// and differentially decodes consecutive <em>absolute</em> symbols - what the NinoTNC does;
-/// the <b>differential</b> path multiplies by the conjugate of the one-symbol-delayed
-/// baseband, whose real part is positive on a phase repeat and negative on a reversal,
-/// tolerant of small frequency offsets and acquiring instantly. Emits logical bits once per
-/// symbol - feed straight into <see cref="M0LTE.Il2p.Il2pDeframer"/>. Covers the NinoTNC 300
-/// (mode 8) and 1200 (mode 10) BPSK symbol rates.
+/// BPSK demodulator emitting one logical bit per symbol (per the IL2P symbol map: 1 = phase
+/// repeat, 0 = reversal) - feed straight into <see cref="M0LTE.Il2p.Il2pDeframer"/>. Covers the
+/// NinoTNC 300 (mode 8) and 1200 (mode 10) BPSK symbol rates. Two detection methods (see
+/// <see cref="PskDetector"/>):
+/// <list type="bullet">
+/// <item><b>Differential</b> (the default): complex mix to baseband → root-raised-cosine
+/// matched filter → decision-feedback differential detection against a remodulated carrier
+/// reference (see <see cref="DecideAgainstReference"/>). Acquires within a couple of symbols,
+/// tolerates ±baud/4 of carrier offset on a single branch, and measures within ~0.7 dB of
+/// ideal coherent BPSK - the differential detector's classic ~1 dB give-away bought back
+/// without a carrier loop that can lose lock.</item>
+/// <item><b>Coherent</b>: band-pass → <see cref="CostasLoop"/> carrier recovery → ⅔-baud
+/// low-pass → absolute symbols differentially decoded downstream - what the NinoTNC does,
+/// kept exactly as measured for issue #5 as the acquisition cross-check variant.</item>
+/// </list>
 /// </summary>
 public sealed class BpskDemodulator
 {
@@ -29,6 +34,41 @@ public sealed class BpskDemodulator
     /// <summary>Samples between oscillator renormalisations; see
     /// <see cref="AfskDemodulator"/>'s twin constant.</summary>
     private const int OscillatorRenormInterval = 4096;
+
+    /// <summary>DPLL inertia for the differential path. Dire Wolf's 0.74 (which the coherent
+    /// path keeps) costs ~1 dB of timing jitter at this mode's Reed-Solomon threshold;
+    /// measured on the −3 dB AWGN BER floor, 0.92 recovers most of it while the all-reversal
+    /// IL2P preamble (a transition every symbol) still pulls a cold clock in within a normal
+    /// TXDELAY. 0.96+ measured better still in steady state but failed acquisition on the
+    /// 24-bit minimum preamble.</summary>
+    private const double DifferentialInertia = 0.92;
+
+    /// <summary>Reference memory λ of the decision-feedback detector: the reference averages
+    /// ~1/(1−λ) = 20 symbols, taking its effective noise well below the single symbol plain
+    /// differential detection divides by. Longer memories measured no better once the
+    /// frequency loop was in place, and forget fades more slowly.</summary>
+    private const double ReferenceMemory = 0.95;
+
+    /// <summary>Per-symbol gain of the reference frequency loop. Measured at −3 dB AWGN:
+    /// 0.02 leaves acquisition lag on mid-branch offsets, 0.3 jitters; 0.05-0.15 are
+    /// equivalent and flat across the bank's offset span.</summary>
+    private const double ReferenceFrequencyGain = 0.05;
+
+    /// <summary>Clamp on the seeded part of the reference rotation, in radians per symbol:
+    /// π/2 is a ±baud/4 offset, the offset window's own unambiguous range and the
+    /// single-branch tolerance the plain differential detector always had (±75 Hz at
+    /// 300 Bd).</summary>
+    private const double MaxSeededRotation = Math.PI / 2;
+
+    /// <summary>Clamp on the tracked part of the reference rotation, in radians per symbol:
+    /// π/10 is two diversity-bank branch steps (±15 Hz at 300 Bd, the step being baud/40).
+    /// The tracker free-runs so that a burst too weak to seed still captures a mid-branch
+    /// residual from its first symbols, and this bound is what keeps its noise wander
+    /// between bursts from carrying a large stale rotation into the next acquisition. It
+    /// also means every branch tracks every signal within two steps, whose
+    /// quasi-independent decisions add selection diversity - measured worth several points
+    /// of frame rate at the Reed-Solomon threshold.</summary>
+    private const double MaxTrackedRotation = Math.PI / 10;
 
     private readonly FirFilter _bandPass;
     private readonly FirFilter _lowPassI;
@@ -54,6 +94,14 @@ public sealed class BpskDemodulator
     private float _previousDecision;
     private float _previousI;
     private float _lastPlotI;
+    private float _currentI;
+    private float _currentQ;
+    private double _referenceI;
+    private double _referenceQ;
+    private double _seededRotation;
+    private double _trackedRotation;
+    private bool _rotationSeeded;
+    private int _previousPolarity = 1;
 
     /// <summary>Raised once per recovered symbol with the 1-D decision as (I,0): the recovered
     /// absolute symbol in coherent mode, the differential product in differential mode.
@@ -70,9 +118,14 @@ public sealed class BpskDemodulator
     /// <param name="detector">Differential (default) or coherent detection.</param>
     /// <param name="loopBandwidthHz">Costas loop bandwidth (coherent only); defaults to 6 %
     /// of the symbol rate, tuned against measurement.</param>
+    /// <param name="rollOff">The transmitter's root-raised-cosine roll-off, which the
+    /// differential path's matched filter mirrors. Defaults to
+    /// <see cref="BpskModulator.DefaultRollOff"/>; <see cref="BpskModem"/> passes the
+    /// per-mode value (0.20 for the 300 Bd mode).</param>
     public BpskDemodulator(
         int sampleRate, Action<int> bitSink, double carrierFrequency = 1500, int baud = 300,
-        PskDetector detector = PskDetector.Differential, double? loopBandwidthHz = null)
+        PskDetector detector = PskDetector.Differential, double? loopBandwidthHz = null,
+        double rollOff = BpskModulator.DefaultRollOff)
     {
         ArgumentNullException.ThrowIfNull(bitSink);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
@@ -82,21 +135,36 @@ public sealed class BpskDemodulator
         }
 
         _detector = detector;
-        // QtSoundModem's P300 filter set, scaled by symbol rate: band-pass ±baud (which
-        // lands on Nino's published OBW at both rates - 500 Hz at 300 Bd, 2400 Hz at
-        // 1200 Bd), I/Q low-pass at ⅔·baud.
+        // QtSoundModem's P300 band-pass, scaled by symbol rate: ±baud about the carrier (which
+        // lands on Nino's published OBW at both rates - 500 Hz at 300 Bd, 2400 Hz at 1200 Bd).
+        // It gates EnergyBusy for both detectors, and fronts the decode chain only on the
+        // coherent path: on the differential path it costs a measured ~1.5 dB (its passband is
+        // not flat across the signal's ±(1+rollOff)·baud/2, which breaks the matched-filter
+        // condition and adds ISI), and the matched filter below provides the selectivity - its
+        // stopband measures −54 dB one whole baud out, −77 dB at two.
         _bandPass = new FirFilter(FilterDesign.BandPass(
             carrierFrequency - baud, carrierFrequency + baud, sampleRate, 256 * sampleRate / 12000));
-        _lowPassI = new FirFilter(FilterDesign.LowPass(baud * 2.0 / 3.0, sampleRate, 128 * sampleRate / 12000));
-        _lowPassQ = new FirFilter(FilterDesign.LowPass(baud * 2.0 / 3.0, sampleRate, 128 * sampleRate / 12000));
+        if (detector == PskDetector.Coherent)
+        {
+            // The issue-#5 measured configuration, untouched: ⅔-baud low-pass I/Q.
+            _lowPassI = new FirFilter(FilterDesign.LowPass(baud * 2.0 / 3.0, sampleRate, 128 * sampleRate / 12000));
+            _lowPassQ = new FirFilter(FilterDesign.LowPass(baud * 2.0 / 3.0, sampleRate, 128 * sampleRate / 12000));
+            _costas = new CostasLoop(sampleRate, carrierFrequency, loopBandwidthHz ?? baud * 0.06);
+        }
+        else
+        {
+            // Root-raised-cosine matched to the transmitter's shaping: the cascade is a
+            // raised cosine - ISI-free at the symbol instants, minimal noise bandwidth.
+            // Replacing the ⅔-baud low-pass measured ~0.5 dB at the RS threshold.
+            float[] taps = MatchedFilterTaps(sampleRate, baud, rollOff);
+            _lowPassI = new FirFilter(taps);
+            _lowPassQ = new FirFilter((float[])taps.Clone());
+        }
+
         double step = 2 * Math.PI * carrierFrequency / sampleRate;
         _rotateCos = Math.Cos(step);
         _rotateSin = Math.Sin(step);
         _sampleRate = sampleRate;
-        if (detector == PskDetector.Coherent)
-        {
-            _costas = new CostasLoop(sampleRate, carrierFrequency, loopBandwidthHz ?? baud * 0.06);
-        }
 
         int samplesPerSymbol = sampleRate / baud;
         _delayI = new float[samplesPerSymbol];
@@ -108,7 +176,7 @@ public sealed class BpskDemodulator
                 SymbolPlotted?.Invoke(_lastPlotI, 0f);
                 // Coherent feeds the absolute sign bit; differentially decode against the
                 // previous symbol (a repeat is a '1'), resolving the loop's π ambiguity.
-                // Differential already feeds the decided logical bit, so pass it through.
+                // Differential decides the symbol-instant sample against the reference.
                 if (_detector == PskDetector.Coherent)
                 {
                     bitSink(level == _previousLevel ? 1 : 0);
@@ -116,9 +184,10 @@ public sealed class BpskDemodulator
                 }
                 else
                 {
-                    bitSink(level);
+                    bitSink(DecideAgainstReference());
                 }
             },
+            inertia: detector == PskDetector.Coherent ? 0.74 : DifferentialInertia,
             transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
         _energyBusy = new EnergyBusyDetector(sampleRate);
     }
@@ -135,17 +204,17 @@ public sealed class BpskDemodulator
     /// <see cref="BpskMultiModem"/> branch's reading honest however far out the branch that
     /// copied a frame happened to be: branch step + this residual is the station's offset from
     /// the bank's centre (see issue #202).</para>
-    /// <para><b>Differential.</b> The detector has already formed z·conj(z one symbol ago) to
-    /// decide the bit - its real part <em>is</em> the decision. That product's angle is the
-    /// per-symbol carrier rotation plus a 0-or-π data step, so squaring the normalised product
-    /// removes the data and leaves a phasor at twice the offset; the estimate rides for free on
-    /// arithmetic the detector was doing anyway. This is
-    /// <see cref="BpskCarrierOffsetEstimator"/>'s algorithm inlined (that class stays as the
-    /// standalone way to measure a channel without decoding it), with one difference that
-    /// matters here: it peak-holds since the last reset, which would freeze on the first strong
-    /// burst of a 26-hour session, whereas this windows the recent signal so a frame's reading
-    /// describes <em>that</em> frame. Unambiguous over ±baud/4 - ±75 Hz at 300 Bd, far wider
-    /// than any bank's span.</para>
+    /// <para><b>Differential.</b> The chain still forms z·conj(z one symbol ago) per sample for
+    /// symbol timing; that product's angle is the per-symbol carrier rotation plus a 0-or-π
+    /// data step, so squaring the normalised product removes the data and leaves a phasor at
+    /// twice the offset - the estimate rides for free on arithmetic the timing path was doing
+    /// anyway. This is <see cref="BpskCarrierOffsetEstimator"/>'s algorithm inlined (that class
+    /// stays as the standalone way to measure a channel without decoding it), with one
+    /// difference that matters here: it peak-holds since the last reset, which would freeze on
+    /// the first strong burst of a 26-hour session, whereas this windows the recent signal so a
+    /// frame's reading describes <em>that</em> frame. Unambiguous over ±baud/4 - ±75 Hz at
+    /// 300 Bd, far wider than any bank's span. The same window seeds the decision-feedback
+    /// detector's frequency loop (see <see cref="DecideAgainstReference"/>).</para>
     /// <para><b>Coherent.</b> The Costas NCO is already tracking the carrier, so its frequency
     /// correction is the residual directly; it is only trustworthy while the loop is on a
     /// signal, hence the DCD gate.</para>
@@ -185,10 +254,16 @@ public sealed class BpskDemodulator
     {
         _packetDcd.Reset();
         _energyBusy.Reset();
-        // Our own transmission is not a measurement of anybody's offset.
+        // Our own transmission is not a measurement of anybody's offset, and not a carrier
+        // reference to decide the next station's symbols against.
         _averageDiffMagnitude = 0;
         _offsetWindowReal = 0;
         _offsetWindowImag = 0;
+        _referenceI = 0;
+        _referenceQ = 0;
+        _seededRotation = 0;
+        _trackedRotation = 0;
+        _rotationSeeded = false;
     }
 
     /// <summary>Processes a block of audio samples.</summary>
@@ -204,7 +279,7 @@ public sealed class BpskDemodulator
             }
             else
             {
-                ProcessDifferential(filtered);
+                ProcessDifferential(sample);
             }
         }
     }
@@ -231,9 +306,11 @@ public sealed class BpskDemodulator
         _dpll.Sample(i > 0 ? 1 : 0, crossing);
     }
 
-    // Differential: multiply by the conjugate of the one-symbol-delayed baseband; the real
-    // part is + on a phase repeat ('1') and − on a reversal ('0').
-    private void ProcessDifferential(float filtered)
+    // Differential: the per-sample product z·conj(z one symbol ago) - + on a phase repeat,
+    // − on a reversal - drives symbol timing (its crossings are the symbol boundaries) and
+    // the carrier-offset window; the bit itself is decided at the DPLL instant against the
+    // decision-feedback reference.
+    private void ProcessDifferential(float sample)
     {
         // The mixer NCO as a rotating phasor rather than per-sample Math.Sin/Cos - the
         // same treatment as AfskDemodulator, and for the same reason: a diversity bank
@@ -250,9 +327,11 @@ public sealed class BpskDemodulator
             _renormCountdown = OscillatorRenormInterval;
         }
 
-        float i = _lowPassI.Next(filtered * (float)_oscillatorSin);
-        float q = _lowPassQ.Next(filtered * (float)_oscillatorCos);
+        float i = _lowPassI.Next(sample * (float)_oscillatorSin);
+        float q = _lowPassQ.Next(sample * (float)_oscillatorCos);
 
+        _currentI = i;
+        _currentQ = q;
         float delayedI = _delayI[_delayPosition];
         float delayedQ = _delayQ[_delayPosition];
         _delayI[_delayPosition] = i;
@@ -263,7 +342,7 @@ public sealed class BpskDemodulator
         }
 
         // Re(z·conj(z_delayed)): + on phase repeat ('1'), − on reversal ('0'). The imaginary
-        // part the bit decision throws away is what carries the carrier offset.
+        // part the timing path throws away is what carries the carrier offset.
         float decision = i * delayedI + q * delayedQ;
         TrackCarrierOffset(decision, (q * delayedI) - (i * delayedQ));
         double crossing = 0;
@@ -275,6 +354,111 @@ public sealed class BpskDemodulator
         _previousDecision = decision;
         _lastPlotI = decision;   // held for the constellation tap (see QpskDemodulator)
         _dpll.Sample(decision > 0 ? 1 : 0, crossing);
+    }
+
+    /// <summary>Decision-feedback differential detection, once per symbol at the DPLL
+    /// instant. The reference is an exponentially-averaged, decision-remodulated estimate of
+    /// the carrier phasor - a ~20-symbol-clean version of the single one-symbol-ago sample
+    /// plain differential detection divides by, which is where the classic ~1 dB
+    /// differential-vs-coherent gap comes from. Decides the absolute polarity of the
+    /// symbol-instant baseband sample against the reference, emits the differential bit
+    /// (repeat = 1), and folds the remodulated sample back in. Convergence is a few symbols
+    /// from cold, there is no lock to lose - a fade that wipes the reference costs exactly
+    /// the symbols the fade already cost - and a polarity slip costs the same two bits it
+    /// costs plain differential detection.</summary>
+    /// <remarks>
+    /// A carrier offset rotates z symbol over symbol, and an exponential average trails a
+    /// rotating phasor by ~λ/(1−λ) times the per-symbol rotation - enough to null the
+    /// detector at half a bank step. Two measures close that hole, both measured on the sim
+    /// ladder: the loop rotates the reference each symbol by a tracked rotation estimate
+    /// (decision-directed, driven by the angle between each aligned sample and the
+    /// reference), and that estimate is seeded once per burst from the offset window the
+    /// moment it turns coherent - a single injection, because feeding the window's angle in
+    /// per-symbol measurably jitters the reference with the estimator's own noise.
+    /// </remarks>
+    private int DecideAgainstReference()
+    {
+        // The applied rotation is seed + tracker. The seed is a one-shot per burst, placed
+        // anywhere within ±baud/4 the moment the offset window turns coherent - which it
+        // only does at SNRs where the estimate is solid. The tracker is narrow and always
+        // running, so a burst too weak to seed (the window's floor is above the mode's own
+        // decode threshold) still captures a mid-branch residual from its first symbols.
+        double offsetCoherence = Math.Sqrt(
+            (_offsetWindowReal * _offsetWindowReal) + (_offsetWindowImag * _offsetWindowImag));
+        if (!_rotationSeeded && offsetCoherence >= OffsetCoherenceFloor)
+        {
+            _seededRotation = Math.Clamp(
+                Math.Atan2(_offsetWindowImag, _offsetWindowReal) / 2.0,
+                -MaxSeededRotation, MaxSeededRotation);
+            _trackedRotation = 0;
+            _rotationSeeded = true;
+        }
+        else if (_rotationSeeded && offsetCoherence < OffsetCoherenceFloor / 2)
+        {
+            // Burst over: the next one re-seeds. The seed does not outlive its burst - the
+            // next station may sit elsewhere, and a burst too weak to re-seed must start
+            // from the tracker's own bounded window, not a stale neighbour's offset.
+            _rotationSeeded = false;
+            _seededRotation = 0;
+        }
+
+        double rotation = _seededRotation + _trackedRotation;
+        if (rotation != 0)
+        {
+            double cos = Math.Cos(rotation);
+            double sin = Math.Sin(rotation);
+            (_referenceI, _referenceQ) = (
+                (_referenceI * cos) - (_referenceQ * sin),
+                (_referenceI * sin) + (_referenceQ * cos));
+        }
+
+        double projection = (_currentI * _referenceI) + (_currentQ * _referenceQ);
+        int polarity = projection >= 0 ? 1 : -1;
+        int bit = polarity == _previousPolarity ? 1 : 0;
+        _previousPolarity = polarity;
+
+        // Advance the tracker by the angle by which the aligned sample leads the reference.
+        double cross = (polarity * _currentQ * _referenceI) - (polarity * _currentI * _referenceQ);
+        double magnitude = Math.Sqrt(
+            ((double)_currentI * _currentI + (double)_currentQ * _currentQ)
+            * ((_referenceI * _referenceI) + (_referenceQ * _referenceQ)));
+        if (magnitude > 1e-12)
+        {
+            double error = Math.Asin(Math.Clamp(cross / magnitude, -1, 1));
+            _trackedRotation = Math.Clamp(
+                _trackedRotation + (ReferenceFrequencyGain * error),
+                -MaxTrackedRotation, MaxTrackedRotation);
+        }
+
+        _referenceI = (ReferenceMemory * _referenceI) + ((1 - ReferenceMemory) * polarity * _currentI);
+        _referenceQ = (ReferenceMemory * _referenceQ) + ((1 - ReferenceMemory) * polarity * _currentQ);
+        return bit;
+    }
+
+    /// <summary>Root-raised-cosine matched-filter taps at the sample rate, spanning ±6
+    /// symbols (the modulator's own truncation), normalised to unity DC gain. Deliberately
+    /// unwindowed: a taper widens the transition band and de-matches the cascade, and the
+    /// truncated pulse's own stopband (−54 dB one baud out) already exceeds what the old
+    /// band-pass provided against a neighbouring modem on the same audio.</summary>
+    private static float[] MatchedFilterTaps(int sampleRate, int baud, double rollOff)
+    {
+        int samplesPerSymbol = sampleRate / baud;
+        int half = 6 * samplesPerSymbol;
+        var taps = new float[(2 * half) + 1];
+        double sum = 0;
+        for (int k = 0; k < taps.Length; k++)
+        {
+            double t = (k - half) / (double)samplesPerSymbol;
+            taps[k] = (float)FilterDesign.RootRaisedCosine(t, rollOff);
+            sum += taps[k];
+        }
+
+        for (int k = 0; k < taps.Length; k++)
+        {
+            taps[k] = (float)(taps[k] / sum);
+        }
+
+        return taps;
     }
 
     /// <summary>Folds one differential product into the carrier-offset window (see
