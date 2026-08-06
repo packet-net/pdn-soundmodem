@@ -545,10 +545,13 @@ if (frameLogConfig is not null)
 
 await using var frameLogLifetime = frameLog;
 
-// Per-family PSK detector, for the informational print below: --psk-detector overrides both;
-// unset, the catalogue's per-family defaults apply (BPSK differential, QPSK coherent).
-PskDetector bpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFor("bpsk");
-PskDetector qpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFor("qpsk");
+// The PSK detector, for the informational print below: --psk-detector overrides it; unset,
+// the catalogue default applies, which is differential for every PSK family (see
+// ModemCatalog.DefaultDetectorFor for the bench evidence - an earlier comment here still
+// said "QPSK coherent" long after the catalogue changed its mind, which is the kind of
+// drift asking the catalogue directly avoids).
+PskDetector bpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFor("bpsk300");
+PskDetector qpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFor("qpsk2400");
 
 foreach (ModemConfig modemConfig in modems)
 {
@@ -582,9 +585,13 @@ foreach (ModemConfig modemConfig in modems)
 
     if (frequency is not null && !ModemCatalog.AcceptsCentreFrequency(mode))
     {
+        // The same wording as ModemCatalog.Create's own refusal: this message had drifted
+        // to claim only afsk*/bpsk*/qpsk* accept a frequency, a mode family after the
+        // spec-fixed ms110d-*/freedv-* ones learned to take one by decoration.
         Console.Error.WriteLine(
-            $"modem {subChannel}: mode '{mode}' has a fixed centre frequency - drop the " +
-            "frequency override (only the afsk*/bpsk*/qpsk* modes accept one)");
+            $"modem {subChannel}: mode '{mode}' occupies the audio band from DC upwards and " +
+            "has no centre frequency to move - drop the frequency override (the " +
+            "afsk*/bpsk*/qpsk* and spec-fixed ms110d-*/freedv-* modes accept one)");
         return 2;
     }
 
