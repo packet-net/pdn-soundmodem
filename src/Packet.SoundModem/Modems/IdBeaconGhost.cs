@@ -98,20 +98,13 @@ public sealed class IdBeaconGhost
 
     /// <summary>
     /// Whether <paramref name="mode"/> is one a NinoTNC identifies alongside rather than within -
-    /// the four PSK SSB modes, and their aliases.
+    /// the PSK SSB modes, and their aliases. Answered from the mode's own catalogue row
+    /// (<see cref="ModemCatalog.HasNinoPskIdBeacon"/>) rather than a name list kept here: a new
+    /// PSK mode used to have to remember this file existed, or its idents stayed unreadable
+    /// bursts in the middle of the channel. The row notes say why <c>qpsk3600</c> answers no
+    /// (an FM mode; Nino identifies those in 1200 AFSK - a different ghost, not this one).
     /// </summary>
-    /// <remarks>
-    /// <c>qpsk3600</c> is excluded deliberately and is not an oversight: it is an FM mode
-    /// (<c>docs/mode-modulation-reference.md</c>), and Nino identifies the FM modes in 1200 AFSK
-    /// AX.25 rather than 300 - a different ghost, not this one.
-    /// </remarks>
-    public static bool AppliesTo(string mode) => mode switch
-    {
-        "bpsk300" or "bpsk300-multi" or "bpsk300-nocrc" => true,
-        "bpsk1200" or "bpsk1200-multi" => true,
-        "qpsk600" or "qpsk2400" => true,
-        _ => false,
-    };
+    public static bool AppliesTo(string mode) => ModemCatalog.HasNinoPskIdBeacon(mode);
 
     /// <summary>
     /// Where a base modem's ident will land, given the audio centre that modem is tuned to
