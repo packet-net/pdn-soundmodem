@@ -1083,6 +1083,12 @@ void WatchClients(KissTcpServer server)
         Console.WriteLine(ActivityLog.ClientConnected(server.LocalPort, server.DedicatedSubChannel, e));
     server.ClientDisconnected += e =>
         Console.WriteLine(ActivityLog.ClientDisconnected(server.LocalPort, server.DedicatedSubChannel, e));
+
+    // What a host changed with SETHW, or why it was refused - RAM-only state with no other
+    // record, so the journal is where an operator learns which waveform their modem is on.
+    server.HardwareCommand += e => Console.WriteLine(e.Applied
+        ? $"modem {e.SubChannel}: SETHW -> {e.Description}"
+        : $"modem {e.SubChannel}: SETHW ignored - {e.Description}");
 }
 
 var kissServers = new List<KissTcpServer>();

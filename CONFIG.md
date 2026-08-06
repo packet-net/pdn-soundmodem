@@ -213,6 +213,39 @@ nibbles - you can run both at once.
 Two services asking for the same TCP port is rejected at start-up, naming both, rather than
 left to whichever listener happens to bind second.
 
+### The KISS command surface
+
+What a host can say on any KISS port (shared or dedicated), beyond ordinary data frames:
+
+| Type | Name | Behaviour |
+|---|---|---|
+| 0 | data | queued for transmission on the addressed modem |
+| 1-4 | TXDELAY / P / SLOTTIME / TXTAIL | update the channel's CSMA settings live, x10 ms (unlike QtSoundModem, which ignores them) |
+| 5 | full duplex | accepted, no-op (the channel is half duplex) |
+| 6 | SETHW | modem-specific hardware control, [below](#sethw-runtime-waveform-selection) |
+| 12 | ACKMODE data | `id_lo, id_hi, data...` (the BPQ convention): the two-byte id is echoed back to the SENDING client once the frame's audio has fully left the device - true TX-complete, not a timer. An id with no data is acked immediately. A frame the channel refuses gets no ack; the host's retry timer is the error channel, as ACKMODE defines |
+| 7 | RX quality | TNC-to-host only: opt-in per-frame decode diagnostics as JSON (`"qualityFrames"`) |
+
+On a dedicated port every TNC-to-host frame - received data, acks, SETHW echoes, quality -
+carries nibble 0, the same relabelling the data path always had.
+
+### SETHW: runtime waveform selection
+
+On a port whose modem is `ms110d-*`, SETHW (type 6) switches the TRANSMIT waveform without a
+restart - the KISS face of `Ms110dModem.SetTxWaveform`, which in-process hosts call directly:
+
+- `payload[0]`: the waveform number, plain: 0-8 or 13 (MIL-STD-188-110D Phase A). No
+  NinoTNC-style +16 form - there is no flash here to suppress a write to, and the setting is
+  RAM-only either way: the config file's `mode` is what survives a restart.
+- `payload[1]` (optional): interleaver, 0 = short, 1 = long.
+
+Receive needs nothing: it is autobaud, decoding every Phase A waveform regardless of the TX
+setting. On success the daemon echoes the SETHW frame back to the sender - the confirmation
+KISS itself never defined - and journals `modem 3: SETHW -> ms110d-wn2, short interleaver`.
+An invalid payload is ignored and journalled, never answered (KISS has no error channel), and
+the mode string on the waterfall's TX rows and in the frame log follows the change live. A
+SETHW to any other mode's port is a journalled no-op.
+
 ## `modems`
 
 The logical modems sharing the one audio channel, each addressed by its KISS port nibble.
