@@ -137,6 +137,37 @@ public class ActivityLogTests
     }
 
     [Fact]
+    public void A_Plain_Il2p_Frame_Says_So_And_Says_Whether_The_Host_Got_It()
+    {
+        // A row on an -il2pc modem with nothing but Reed-Solomon behind it, which the mode name
+        // beside it flatly contradicts. The second half is worth as much as the first: a frame
+        // the station showed and withheld is a different event from a delivery, and the journal
+        // is the only place most operators will ever see either.
+        string withheld = ActivityLog.Received(
+            0, Frame(), new FrameQuality(
+                "bpsk300-il2pc-multi9", 46, 0, null, PlainIl2p: true, MonitorOnly: true));
+        string delivered = ActivityLog.Received(
+            0, Frame(), new FrameQuality(
+                "bpsk300-il2pc-multi9", 46, 0, null, PlainIl2p: true, MonitorOnly: false));
+
+        withheld.Should().Contain("plain il2p (rs only, not passed to host)");
+        delivered.Should().Contain("plain il2p (rs only)")
+            .And.NotContain("not passed to host");
+        withheld.Should().NotContain("crc ok").And.NotContain("CRC BAD",
+            "there was no CRC to check, and claiming either verdict would be a lie");
+    }
+
+    [Fact]
+    public void An_Ordinary_Frame_Says_Nothing_About_Plain_Il2p()
+    {
+        // The note is for the frames that need it. Everything else keeps the line it had.
+        string line = ActivityLog.Received(
+            0, Frame(), new FrameQuality("bpsk300-il2pc", 20, 0, true));
+
+        line.Should().NotContain("plain il2p").And.NotContain("rs only");
+    }
+
+    [Fact]
     public void An_Untwisted_Signal_Does_Not_Report_Emphasis()
     {
         string quiet = ActivityLog.Received(

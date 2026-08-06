@@ -48,10 +48,10 @@ public sealed class FskModem : IModem
     /// <param name="frameReceived">Receives each decoded AX.25 frame.</param>
     /// <param name="framing">Wire framing (classic G3RUH vs IL2P).</param>
     /// <param name="baud">Baseband symbol rate: 9600 (modes 0/2) or 4800 (mode 4).</param>
-    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
-    /// trailing CRC (off by default, and inert unless <paramref name="framing"/> is
-    /// <see cref="FskFraming.Il2pCrc"/>) - see <see cref="Il2pReceiver"/> for what that buys and
-    /// what it costs.</param>
+    /// <param name="acceptPlainIl2p">Pass frames that arrive as plain IL2P, with no trailing CRC,
+    /// to <paramref name="frameReceived"/> as well as reporting them (off by default, and inert
+    /// unless <paramref name="framing"/> is <see cref="FskFraming.Il2pCrc"/>). They are read
+    /// either way - see <see cref="Il2pReceiver"/> for what that buys and what it costs.</param>
     public FskModem(
         int sampleRate, Action<byte[]> frameReceived, FskFraming framing, int baud = 9600,
         bool acceptPlainIl2p = false)
@@ -86,12 +86,18 @@ public sealed class FskModem : IModem
         else
         {
             var deframer = new Il2pReceiver(
-                (frame, info) =>
+                (frame, info, delivery) =>
                 {
-                    frameReceived(frame);
+                    if (!delivery.MonitorOnly)
+                    {
+                        frameReceived(frame);
+                    }
+
                     FrameDecoded?.Invoke(frame, new FrameQuality(
                         Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
-                        HeaderType: info.HeaderType));
+                        HeaderType: info.HeaderType,
+                        PlainIl2p: delivery.PlainIl2p,
+                        MonitorOnly: delivery.MonitorOnly));
                 },
                 crcMode: framing == FskFraming.Il2pCrc, acceptPlainIl2p: acceptPlainIl2p);
             // Reset the deframer on the DCD falling edge - same rationale as BpskModem:

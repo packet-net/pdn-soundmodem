@@ -11,9 +11,21 @@ public interface IModem
     string Mode { get; }
 
     /// <summary>Raised for every decoded frame with its receive diagnostics - FEC
-    /// corrections, CRC state, winning decoder branch. Fires in addition to (and after
-    /// the same decode as) the constructor's frame sink; subscribe when per-frame
-    /// quality matters, ignore when it does not.</summary>
+    /// corrections, CRC state, winning decoder branch. This is the <b>monitor</b> path:
+    /// subscribe when per-frame quality matters, ignore when it does not.</summary>
+    /// <remarks>
+    /// <para>This used to fire strictly in addition to the constructor's frame sink, on the same
+    /// decode, and that invariant no longer holds. A frame carrying
+    /// <see cref="FrameQuality.MonitorOnly"/> fires this event and <em>never reaches the
+    /// sink</em>: it is a frame the station read and is not passing to its host, which today
+    /// means plain IL2P heard by an IL2P+CRC link that was not told to accept it (see
+    /// <see cref="Il2pReceiver"/>). Everything hanging off this event - display, frame log,
+    /// journal line, signal survey - wants such a frame, because the station did hear it.</para>
+    /// <para>So anything that <em>relays</em> frames onward rather than displaying them must test
+    /// that flag. Do not infer delivery from the order the two fire in: they still fire from the
+    /// same synchronous decode when both fire, which makes ordering look like a usable signal
+    /// right up until the sink is silent.</para>
+    /// </remarks>
     event Action<byte[], FrameQuality>? FrameDecoded;
 
     /// <summary>True while the demodulator sees a coherent packet signal.</summary>

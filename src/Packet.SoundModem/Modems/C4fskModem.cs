@@ -94,8 +94,9 @@ public sealed class C4fskModem : IModem
     /// <param name="frameReceived">Receives each decoded AX.25 frame.</param>
     /// <param name="symbolRate">4800 (mode 3, 9600 bps) or 9600 (mode 1, 19200 bps).</param>
     /// <param name="crc">IL2P+CRC (both NinoTNC C4FSK modes run CRC).</param>
-    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
-    /// trailing CRC (off by default, and inert unless <paramref name="crc"/> is on) - see
+    /// <param name="acceptPlainIl2p">Pass frames that arrive as plain IL2P, with no trailing CRC,
+    /// to <paramref name="frameReceived"/> as well as reporting them (off by default, and inert
+    /// unless <paramref name="crc"/> is on). They are read either way - see
     /// <see cref="Il2pReceiver"/> for what that buys and what it costs.</param>
     public C4fskModem(
         int sampleRate, Action<byte[]> frameReceived, int symbolRate = 4800, bool crc = true,
@@ -119,12 +120,18 @@ public sealed class C4fskModem : IModem
         _energyBusy = new EnergyBusyDetector(sampleRate);
 
         _deframer = new Il2pReceiver(
-            (frame, info) =>
+            (frame, info, delivery) =>
             {
-                frameReceived(frame);
+                if (!delivery.MonitorOnly)
+                {
+                    frameReceived(frame);
+                }
+
                 FrameDecoded?.Invoke(frame, new FrameQuality(
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
-                    HeaderType: info.HeaderType));
+                    HeaderType: info.HeaderType,
+                    PlainIl2p: delivery.PlainIl2p,
+                    MonitorOnly: delivery.MonitorOnly));
             },
             crcMode: crc, acceptPlainIl2p: acceptPlainIl2p, syncWord: SyncWord);
 

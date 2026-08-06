@@ -41,6 +41,23 @@ namespace Packet.SoundModem.Modems;
 /// first question worth asking about a frame that decoded cleanly and then would not yield
 /// callsigns: the two types put the address field in different places, so which one it was
 /// decides whether the payload is unusual or the decode is.</param>
+/// <param name="PlainIl2p">The frame was read as plain IL2P, with no trailing CRC behind it: it
+/// is standing on Reed-Solomon alone. A fact about the <em>decode</em>, and the one a display
+/// should badge - <see cref="CrcValid"/> is <c>null</c> here, but it is also null for HDLC and
+/// FX.25 and for every frame of a mode that has no CRC to check, so "no CRC was checked" and
+/// "no CRC existed" are not the same question and one flag cannot answer both. True both for a
+/// frame the second plain reading of an IL2P+CRC link produced (see
+/// <see cref="Il2pReceiver"/>) and for every frame of a link that runs plain IL2P as its own
+/// framing, because the guarantee behind them is identical.</param>
+/// <param name="MonitorOnly">The frame was <b>not</b> passed to the host: it reached
+/// <see cref="IModem.FrameDecoded"/> and everything hanging off it - display, frame log,
+/// journal, survey - but never the modem's constructor frame sink. A fact about what
+/// <em>happened to</em> the frame rather than about the decode, which is why it is separate
+/// from <see cref="PlainIl2p"/>. Set for a plain IL2P frame read by an IL2P+CRC link that was
+/// not told to accept them (the default): the operator wants to see such a frame without
+/// handing an RS-only frame to a host that asked for IL2P+CRC. Anything relaying frames onward
+/// - the KISS server's quality sidecar included - must skip these, or it reports a frame its
+/// peer never received.</param>
 public readonly record struct FrameQuality(
     string Mode,
     int FrameBytes,
@@ -48,4 +65,42 @@ public readonly record struct FrameQuality(
     bool? CrcValid,
     double? FrequencyOffsetHz = null,
     int? EmphasisDb = null,
-    M0LTE.Il2p.Il2pHeaderType? HeaderType = null);
+    M0LTE.Il2p.Il2pHeaderType? HeaderType = null,
+    bool PlainIl2p = false,
+    bool MonitorOnly = false);
+
+/// <summary>
+/// How much a reading of a transmission actually established, for choosing between two decoder
+/// branches' copies of the same frame.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A diversity bank routinely has several branches copy the same transmission, and since every
+/// IL2P+CRC branch reads its bits both ways, they do not all establish the same thing about it.
+/// One branch's IL2P+CRC reading may verify the trailer while another branch, closer to the
+/// carrier and copying identical bytes, cannot - which is not hypothetical: on the committed
+/// GB7RDG off-air capture the five low branches verify the frame and the four nearest the carrier
+/// only manage the plain reading (<c>OffAirBpskTests</c>).
+/// </para>
+/// <para>
+/// So the copy to report and deliver is the best-evidenced one, and nothing else gets to
+/// outrank that: which branch happened to be best centred is a question about our receiver, and
+/// whether the far station's CRC checked out is a question about the frame. Ranking on
+/// <see cref="FrameQuality.MonitorOnly"/> instead looks equivalent and is not - that is the
+/// operator's routing choice, identical across every branch of one bank, so with
+/// <c>acceptPlainIl2p</c> on it says nothing at all and a verified frame gets reported as
+/// RS-only by whichever branch was nearest.
+/// </para>
+/// </remarks>
+internal static class DecodeEvidence
+{
+    /// <summary>Ranks a copy by what its reading proved, highest first: the trailing CRC verified,
+    /// then the link's own reading with a trailer that did not verify, then a plain reading with
+    /// no trailer behind it at all.</summary>
+    internal static int RankOf(in FrameQuality quality) => quality switch
+    {
+        { CrcValid: true } => 2,
+        { PlainIl2p: false } => 1,
+        _ => 0,
+    };
+}

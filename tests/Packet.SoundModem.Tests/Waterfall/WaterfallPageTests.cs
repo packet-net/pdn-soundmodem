@@ -322,6 +322,62 @@ public class WaterfallPageTests
     }
 
     /// <summary>
+    /// A frame read as plain IL2P is badged in the panel, whether or not the modem was told to
+    /// pass such frames to the host - because it is standing on Reed-Solomon alone either way.
+    /// </summary>
+    /// <remarks>
+    /// <para>The row's mode column says <c>bpsk300-il2pc</c> and its decode had no CRC behind it at
+    /// all, and the panel is the only place an operator sees both. Without the badge the two rows
+    /// are indistinguishable from ordinary traffic, which is the state that let a CRC-less
+    /// neighbour sit unread on the 40 m slot for weeks.</para>
+    /// <para>The colours come out of the shipping stylesheet, resolved the way a browser resolves
+    /// them (see <c>badgeBackground</c> in the probe), because the badge shares its box with the
+    /// ident badge and the transmit rule also claims <c>.id</c> - so "does the warning colour
+    /// actually win" is a real question and not one a stub could be trusted to answer.</para>
+    /// </remarks>
+    [Fact]
+    public async Task A_Plain_Il2p_Frame_Is_Badged_As_Reed_Solomon_Only()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty();
+
+        string withheld = probe.FrameRows[RowWith(probe.FrameRows, "GB7BPQ")];
+        string delivered = probe.FrameRows[RowWith(probe.FrameRows, "PD4R-11")];
+        foreach (string row in (string[])[withheld, delivered])
+        {
+            row.Should().Contain("class=\"id rs\"", "the badge is about the decode, not the routing")
+                .And.Contain(">RS ONLY<");
+        }
+
+        // The half only the tooltip can carry: what the operator's own configuration did with it.
+        withheld.Should().Contain("NOT passed to the KISS host")
+            .And.Contain("acceptPlainIl2p", "and how to change that");
+        delivered.Should().Contain("Passed to the KISS host")
+            .And.NotContain("NOT passed");
+
+        // Ordinary traffic keeps the panel it had.
+        probe.FrameRows[RowWith(probe.FrameRows, "12.5 dB")].Should().NotContain("RS ONLY");
+
+        // And the stylesheet: the warning colour, distinct from the ident badge's, and surviving
+        // on a row that also matches the transmit rule.
+        probe.RsBadgeBackground.Should().Be("#f0b45a");
+        probe.IdentBadgeBackground.Should().NotBe(
+            probe.RsBadgeBackground, "an RS-only frame is not an ident and must not look like one");
+        probe.RsBadgeOnTxRowBackground.Should().Be(
+            "#f0b45a", "the warning must not be repainted by a rule about transmissions");
+    }
+
+    /// <summary>
     /// Finds a panel row by something only it contains. Rows were addressed by index, which made
     /// every test depend on how many other things the probe happened to drive first - adding one
     /// step broke two unrelated tests. Order still matters and is asserted where it means
@@ -439,5 +495,8 @@ public class WaterfallPageTests
         string? TxHistBorder,
         string? TxBorder,
         string? HistBorder,
+        string? RsBadgeBackground,
+        string? IdentBadgeBackground,
+        string? RsBadgeOnTxRowBackground,
         string[] Thrown);
 }

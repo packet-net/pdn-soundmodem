@@ -59,8 +59,9 @@ public sealed class BpskMultiModem : IModem
     /// <param name="offsetHz">Frequency step between adjacent branches; defaults to baud/40,
     /// sized to the single-branch offset tolerance.</param>
     /// <param name="detector">Differential (default) or coherent detection.</param>
-    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
-    /// trailing CRC (off by default, and inert unless <paramref name="crc"/> is on) - see
+    /// <param name="acceptPlainIl2p">Pass frames that arrive as plain IL2P, with no trailing CRC,
+    /// to <paramref name="frameReceived"/> as well as reporting them (off by default, and inert
+    /// unless <paramref name="crc"/> is on). They are read either way - see
     /// <see cref="Il2pReceiver"/>. Every branch reads both ways; the bank's content dedupe is
     /// what keeps a transmission two branches read differently to one delivery.</param>
     public BpskMultiModem(
@@ -236,13 +237,23 @@ public sealed class BpskMultiModem : IModem
             }
 
             // Still deduped across chunks: a transmission straddling a chunk boundary reaches
-            // here twice, and the window is what stops the second copy being delivered.
-            if (!_deduper.ShouldEmit(best.Frame, _samplesProcessed))
+            // here twice, and the window is what stops the second copy being delivered. A copy
+            // that is only being shown says so, so that it cannot swallow the host's copy of a
+            // retransmission a second later - see FrameDeduper.
+            if (!_deduper.ShouldEmit(best.Frame, _samplesProcessed, !best.Quality.MonitorOnly))
             {
                 continue;
             }
 
-            _frameReceived(best.Frame);
+            // A monitor-only copy is reported and not handed on, exactly as a single branch would
+            // do with it: the bank is a receiver, not a second opinion about what the host asked
+            // for. IsBetter has already preferred a deliverable copy where one of the branches
+            // produced one, so this asks the winner rather than the group.
+            if (!best.Quality.MonitorOnly)
+            {
+                _frameReceived(best.Frame);
+            }
+
             FrameDecoded?.Invoke(best.Frame, best.Quality with
             {
                 Mode = Mode,
@@ -253,12 +264,33 @@ public sealed class BpskMultiModem : IModem
         }
     }
 
-    /// <summary>Ranks two branches' copies of the same frame: a measured branch beats an
-    /// unmeasured one, the better-centred of two measured branches wins, and two unmeasured
-    /// copies are separated by FEC work then by distance from the bank centre - anything but
-    /// array order, which is the bias being removed.</summary>
+    /// <summary>Ranks two branches' copies of the same frame: the best-evidenced reading wins
+    /// (<see cref="DecodeEvidence"/>), then a measured branch beats an unmeasured one, the
+    /// better-centred of two measured branches wins, and two unmeasured copies are separated by
+    /// FEC work then by distance from the bank centre - anything but array order, which is the
+    /// bias being removed.</summary>
+    /// <remarks>
+    /// The evidence test comes first, ahead of the centring that the rest of this exists for,
+    /// because the two facts are not the same size. A branch whose IL2P+CRC reading claimed the
+    /// frame has <em>checked</em> it; a branch that only managed a plain reading of the same bytes
+    /// has an intact frame with a trailer that would not verify there, and there is no way to tell
+    /// that from a genuinely CRC-less neighbour. When both happen at once the station did verify
+    /// those bytes, so that is the copy delivered and the quality reported - whichever branch
+    /// produced it and whatever <c>acceptPlainIl2p</c> says, so the answer cannot depend on which
+    /// branch happened to be nearest. The cost is that the frequency reading then comes from the
+    /// branch that verified it rather than the best-centred one; on the GB7RDG capture that is
+    /// 8.56 Hz against 8.37 Hz, which is nothing set beside reporting a verified frame as
+    /// standing on Reed-Solomon alone.
+    /// </remarks>
     private static bool IsBetter(in Candidate candidate, in Candidate best)
     {
+        int evidence = DecodeEvidence.RankOf(candidate.Quality);
+        int bestEvidence = DecodeEvidence.RankOf(best.Quality);
+        if (evidence != bestEvidence)
+        {
+            return evidence > bestEvidence;
+        }
+
         if (candidate.ResidualHz is { } residual)
         {
             return best.ResidualHz is not { } bestResidual

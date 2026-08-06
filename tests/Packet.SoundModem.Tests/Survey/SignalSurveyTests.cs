@@ -165,6 +165,28 @@ public class SignalSurveyTests : IDisposable
     }
 
     [Fact]
+    public void A_Burst_Read_As_Plain_Il2p_And_Withheld_Counts_As_Decoded()
+    {
+        // The survey is fed from the monitor path, so a frame the station read and did not pass
+        // to its host marks its burst decoded and stops it being kept as a miss. That is the
+        // wanted answer rather than an accident of the wiring: the survey's question is whether
+        // this station could read that burst, and it could. A badged row in the panel naming
+        // GB7BPQ tells the operator far more than another WAV of the same beacon every ten
+        // minutes, which would spend the capture budget the next unexplained burst needs.
+        var survey = new SignalSurvey(Options(), Bands, SampleRate, BinWidthHz, LinesPerSecond, LineLength);
+        Play(survey, 1950, 2350, burstLines: 60, atBurstEnd: _ => survey.NoteDecode(
+            2,
+            Ax25Frame("GB7BPQ", "BEACON"),
+            Quality("bpsk300-il2pc-multi9") with
+            {
+                CrcValid = null, PlainIl2p = true, MonitorOnly = true,
+            }));
+        Settle(survey);
+
+        Captures().Should().BeEmpty("the station did read it, whatever it did with it afterwards");
+    }
+
+    [Fact]
     public void A_Decode_From_A_Waveform_That_Is_Not_Ax25_Is_A_Frame_The_Station_Read()
     {
         // ARDOP carries Winlink sessions and ID frames, not AX.25, so running its payload past

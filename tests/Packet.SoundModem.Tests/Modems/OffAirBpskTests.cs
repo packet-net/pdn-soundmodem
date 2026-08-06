@@ -83,15 +83,106 @@ public class OffAirBpskTests
     [Fact]
     public void The_Bank_Reports_The_Measured_Offset_Of_A_Real_Off_Air_Frame()
     {
+        var host = new List<byte[]>();
         var qualities = new List<FrameQuality>();
-        var modem = BpskMultiModem.Bpsk300(DspRate, _ => { });
+        var modem = BpskMultiModem.Bpsk300(DspRate, host.Add);
         modem.FrameDecoded += (_, quality) => qualities.Add(quality);
 
         modem.Process(Gb7rdgFixture());
 
-        qualities.Should().ContainSingle()
-            .Which.FrequencyOffsetHz.Should().BeApproximately(
-                8, 4, "the captured GB7RDG carrier sits ~8 Hz above the 1500 Hz centre");
+        host.Should().ContainSingle("only the first burst verifies, and only it is the host's")
+            .Which.Should().Equal(ExpectedFrame);
+        qualities[0].MonitorOnly.Should().BeFalse();
+        qualities[0].FrequencyOffsetHz.Should().BeApproximately(
+            8, 4, "the captured GB7RDG carrier sits ~8 Hz above the 1500 Hz centre");
+    }
+
+    /// <summary>
+    /// The capture holds the connected-mode frame <em>twice</em>, 12.5 seconds apart, and only the
+    /// first one's trailing CRC verifies. The second is now reported and withheld rather than
+    /// discarded in silence.
+    /// </summary>
+    /// <remarks>
+    /// <para>This is the change of behaviour on real RF, on audio that has been committed here
+    /// since issue #40 and was until now believed to hold one frame. Every branch demodulates the
+    /// second burst perfectly - identical bytes, zero FEC corrections - and no branch can make its
+    /// four trailer bytes check out, so an IL2P+CRC modem threw it away and nothing anywhere said
+    /// a burst had been read and dropped. A station's own retransmission with a damaged trailer
+    /// and a CRC-less neighbour are indistinguishable at the receiver, which is exactly why the
+    /// frame is shown rather than delivered.</para>
+    /// <para>Two identical frames 12.5 s apart are also not a duplicate to be deduped: that is
+    /// ordinary AX.25 retry behaviour, and the bank's content dedupe window is deliberately a few
+    /// seconds wide for the same reason.</para>
+    /// </remarks>
+    [Fact]
+    public void The_Second_Burst_In_The_Capture_Is_Reported_As_Plain_And_Withheld()
+    {
+        var host = new List<byte[]>();
+        var qualities = new List<FrameQuality>();
+        var modem = BpskMultiModem.Bpsk300(DspRate, host.Add);
+        modem.FrameDecoded += (_, quality) => qualities.Add(quality);
+
+        modem.Process(Gb7rdgFixture());
+
+        qualities.Should().HaveCount(2, "the capture holds the frame twice");
+        FrameQuality second = qualities[1];
+        second.CrcValid.Should().BeNull("its trailer would not check out on any branch");
+        second.CorrectedBytes.Should().Be(0, "the burst itself demodulated perfectly");
+        second.PlainIl2p.Should().BeTrue("Reed-Solomon alone stood behind this reading");
+        second.MonitorOnly.Should().BeTrue(
+            "so the operator sees it and the host does not, which is the whole split");
+        host.Should().ContainSingle("the host is told about the burst that verified, and no other");
+    }
+
+    /// <summary>
+    /// A frame whose trailing CRC verified is reported as verified, whichever branch produced it
+    /// and whatever <c>acceptPlainIl2p</c> is set to. Turning the option on must not downgrade a
+    /// good frame's provenance.
+    /// </summary>
+    /// <remarks>
+    /// <para>This is a real defect this capture caught and a synthetic frame cannot. Every branch
+    /// of the bank copies this transmission, and they do not all establish the same thing about
+    /// it: the five branches from −30 to 0 Hz verify the trailing CRC, while the four nearest the
+    /// carrier (+7.5 to +30 Hz, and the carrier sits at ~+8.4 Hz) manage only the plain reading.
+    /// Branch +7.5 therefore has the smallest residual, 0.87 Hz, and wins any comparison made on
+    /// centring.</para>
+    /// <para>Ranking the branches on whether the copy was withheld from the host hid that, because
+    /// with the option <em>on</em> no copy is withheld and the test says nothing - so the
+    /// best-centred branch won and a verified frame came out marked
+    /// <see cref="FrameQuality.PlainIl2p"/>, with <c>crc_valid</c> null in the station's own frame
+    /// log and an <c>RS ONLY</c> badge on every ordinary frame of any port that had asked to see
+    /// CRC-less traffic. The ranking is on what each reading proved instead
+    /// (<c>DecodeEvidence</c>), which cannot depend on which branch happened to be nearest. A
+    /// clean synthetic frame decodes on-centre and never exercises it.</para>
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_Verified_Frame_Is_Reported_As_Verified_Whatever_The_Option_Says(bool acceptPlainIl2p)
+    {
+        var host = new List<byte[]>();
+        var qualities = new List<FrameQuality>();
+        IModem modem = ModemCatalog.Create(
+            "bpsk300", DspRate, host.Add,
+            new ModemOptions(CentreFrequencyHz: 1500, AcceptPlainIl2p: acceptPlainIl2p));
+        modem.FrameDecoded += (_, quality) => qualities.Add(quality);
+
+        modem.Process(Gb7rdgFixture());
+
+        FrameQuality verified = qualities[0];
+        verified.CrcValid.Should().BeTrue(
+            "a branch did verify this frame's trailer, so that is the reading to report");
+        verified.PlainIl2p.Should().BeFalse(
+            "the badge means Reed-Solomon alone stood behind the frame, and here it did not");
+        verified.MonitorOnly.Should().BeFalse();
+        host[0].Should().Equal(ExpectedFrame, "and the verified copy is the one handed on");
+
+        // The option decides routing and nothing else. The second burst is the one no branch can
+        // verify, so it is the only frame whose destination the option moves.
+        qualities.Should().HaveCount(2);
+        qualities[1].PlainIl2p.Should().BeTrue();
+        qualities[1].MonitorOnly.Should().Be(!acceptPlainIl2p);
+        host.Should().HaveCount(acceptPlainIl2p ? 2 : 1);
     }
 
     [Fact]

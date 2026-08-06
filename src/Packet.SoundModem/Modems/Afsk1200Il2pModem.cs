@@ -28,8 +28,9 @@ public sealed class Afsk1200Il2pModem : IModem
     /// <param name="crc">Expect/emit the Hamming-protected trailing CRC ("IL2P+CRC" -
     /// what the NinoTNC modes use).</param>
     /// <param name="centerFrequency">Mark/space midpoint; 1700 Hz standard.</param>
-    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
-    /// trailing CRC (off by default, and inert unless <paramref name="crc"/> is on) - see
+    /// <param name="acceptPlainIl2p">Pass frames that arrive as plain IL2P, with no trailing CRC,
+    /// to <paramref name="frameReceived"/> as well as reporting them (off by default, and inert
+    /// unless <paramref name="crc"/> is on). They are read either way - see
     /// <see cref="Il2pReceiver"/> for what that buys and what it costs.</param>
     public Afsk1200Il2pModem(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
@@ -38,12 +39,18 @@ public sealed class Afsk1200Il2pModem : IModem
         ArgumentNullException.ThrowIfNull(frameReceived);
         _crc = crc;
         var deframer = new Il2pReceiver(
-            (frame, info) =>
+            (frame, info, delivery) =>
             {
-                frameReceived(frame);
+                if (!delivery.MonitorOnly)
+                {
+                    frameReceived(frame);
+                }
+
                 FrameDecoded?.Invoke(frame, new FrameQuality(
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
-                    HeaderType: info.HeaderType));
+                    HeaderType: info.HeaderType,
+                    PlainIl2p: delivery.PlainIl2p,
+                    MonitorOnly: delivery.MonitorOnly));
             },
             crcMode: crc, acceptPlainIl2p: acceptPlainIl2p);
         // Reset the deframer on the DCD falling edge - same rationale as BpskModem:

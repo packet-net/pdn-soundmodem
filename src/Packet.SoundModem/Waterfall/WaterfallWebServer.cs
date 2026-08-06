@@ -702,7 +702,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // operator notices one of these and the next thing they will want is to copy them.
             note: Ax25AttributionNote.For(frame),
             headerType: quality.HeaderType?.ToString(),
-            frameHex: from is null && to is null ? Convert.ToHexString(frame) : null);
+            frameHex: from is null && to is null ? Convert.ToHexString(frame) : null,
+            // Reed-Solomon and nothing else stood behind this frame, and on an -il2pc modem the
+            // mode label beside it says the opposite. The panel is the one place an operator sees
+            // both at once, so it is the place to say so - and to say whether the frame was
+            // handed on, which is the operator's own configuration answering back.
+            plainIl2p: quality.PlainIl2p,
+            monitorOnly: quality.MonitorOnly);
     }
 
     /// <summary>Frame event (transmit thread): list what this station has just sent, so the
@@ -809,7 +815,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         int subChannel, string mode, string? from, string? to, int lengthBytes,
         double? snrDb, int? burstLines, double? offsetHz, int? corrected, bool? crc,
         bool idBeacon = false, bool transmitted = false,
-        string? note = null, string? headerType = null, string? frameHex = null)
+        string? note = null, string? headerType = null, string? frameHex = null,
+        bool plainIl2p = false, bool monitorOnly = false)
     {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -836,6 +843,16 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             why = note,
             il2p = headerType,
             hex = frameHex,
+            // True on a frame read as plain IL2P - Reed-Solomon alone stood behind it - and null
+            // otherwise, the same shape as id/tx above. Its own field rather than the page
+            // inferring it from a null crc: crc is also null on our own transmissions, on HDLC
+            // and on ARDOP, and a badge that says "no CRC checked" on a mode that has no CRC to
+            // check would be noise on three paths to be right on one.
+            plain = plainIl2p ? true : (bool?)null,
+            // And whether it stopped here. Only meaningful alongside plain; the badge is the same
+            // either way, because the frame is RS-only either way, but the operator reading it
+            // wants to know which of the two things their configuration did.
+            monitorOnly = monitorOnly ? true : (bool?)null,
         }, Json);
         Broadcast(WebSocketMessageType.Text, message);
     }

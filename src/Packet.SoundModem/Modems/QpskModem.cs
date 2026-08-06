@@ -22,12 +22,18 @@ public sealed class QpskModem : IModem, IConstellationSource
         _bitRate = baud * 2;
         _crc = crc;
         var deframer = new Il2pReceiver(
-            (frame, info) =>
+            (frame, info, delivery) =>
             {
-                frameReceived(frame);
+                if (!delivery.MonitorOnly)
+                {
+                    frameReceived(frame);
+                }
+
                 FrameDecoded?.Invoke(frame, new FrameQuality(
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
-                    HeaderType: info.HeaderType));
+                    HeaderType: info.HeaderType,
+                    PlainIl2p: delivery.PlainIl2p,
+                    MonitorOnly: delivery.MonitorOnly));
             },
             crc, acceptPlainIl2p);
 

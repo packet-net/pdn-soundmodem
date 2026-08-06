@@ -17,12 +17,16 @@ namespace Packet.SoundModem.Modems;
 /// <param name="Detector">PSK detection method for <c>bpsk*</c>/<c>qpsk*</c>. Null ⇒ the
 /// per-family default from <see cref="ModemCatalog.DefaultDetectorFor"/> (BPSK differential,
 /// QPSK coherent).</param>
-/// <param name="AcceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no trailing
-/// CRC, on a mode whose link runs IL2P+CRC - for a neighbour (a BPQ32 node, say) that sends the
-/// CRC-less variant. Null ⇒ false, the interop ground truth: IL2P+CRC modes accept IL2P+CRC and
-/// nothing else. Only the IL2P+CRC modes have anything to switch on, so <see langword="true"/>
-/// for any other mode throws - see <see cref="ModemCatalog.RunsIl2pCrc"/> and, for what the
-/// tolerance costs, <see cref="Il2pReceiver"/>.</param>
+/// <param name="AcceptPlainIl2p">Pass frames that arrive as plain IL2P, with no trailing CRC, to
+/// the modem's frame sink - for a neighbour (a BPQ32 node, say) that sends the CRC-less variant.
+/// This decides <em>delivery</em>, not decoding: an IL2P+CRC mode reads such frames whatever this
+/// says, and reports every one of them through <see cref="IModem.FrameDecoded"/> marked
+/// <see cref="FrameQuality.PlainIl2p"/>, so a display shows the neighbour either way. Null ⇒
+/// false, which leaves them <see cref="FrameQuality.MonitorOnly"/>: seen, and not handed to a
+/// host that asked for IL2P+CRC. Only the IL2P+CRC modes have anything to release, so
+/// <see langword="true"/> for any other mode throws - see
+/// <see cref="ModemCatalog.RunsIl2pCrc"/> and, for what the tolerance costs,
+/// <see cref="Il2pReceiver"/>.</param>
 public readonly record struct ModemOptions(
     double? CentreFrequencyHz = null,
     int? OffsetPairs = null,

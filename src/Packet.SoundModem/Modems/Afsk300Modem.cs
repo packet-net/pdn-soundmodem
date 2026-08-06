@@ -82,10 +82,10 @@ public sealed class Afsk300Modem : IModem
     /// range - see the constant above; <see cref="Afsk300MultiModem"/> passes 250 here.</param>
     /// <param name="lowPassCutoff">Receive I/Q low-pass cutoff, paired with
     /// <paramref name="bandPassHalfWidth"/>.</param>
-    /// <param name="acceptPlainIl2p">Also deliver frames that arrive as plain IL2P, with no
-    /// trailing CRC (off by default, and inert unless <paramref name="framing"/> is
-    /// <see cref="Afsk300Framing.Il2pCrc"/>) - see <see cref="Il2pReceiver"/> for what that buys
-    /// and what it costs.</param>
+    /// <param name="acceptPlainIl2p">Pass frames that arrive as plain IL2P, with no trailing CRC,
+    /// to <paramref name="frameReceived"/> as well as reporting them (off by default, and inert
+    /// unless <paramref name="framing"/> is <see cref="Afsk300Framing.Il2pCrc"/>). They are read
+    /// either way - see <see cref="Il2pReceiver"/> for what that buys and what it costs.</param>
     public Afsk300Modem(
         int sampleRate, Action<byte[]> frameReceived, Afsk300Framing framing = Afsk300Framing.Il2pCrc,
         double centerFrequency = 1700,
@@ -121,13 +121,19 @@ public sealed class Afsk300Modem : IModem
         else
         {
             var deframer = new Il2pReceiver(
-                (frame, info) =>
+                (frame, info, delivery) =>
                 {
-                    frameReceived(frame);
+                    if (!delivery.MonitorOnly)
+                    {
+                        frameReceived(frame);
+                    }
+
                     FrameDecoded?.Invoke(frame, new FrameQuality(
                         Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                         HeaderType: info.HeaderType,
-                        FrequencyOffsetHz: demodulator!.CarrierOffsetHz));
+                        FrequencyOffsetHz: demodulator!.CarrierOffsetHz,
+                        PlainIl2p: delivery.PlainIl2p,
+                        MonitorOnly: delivery.MonitorOnly));
                 },
                 crcMode: framing == Afsk300Framing.Il2pCrc, acceptPlainIl2p: acceptPlainIl2p);
             // Reset the deframer on the DCD falling edge - same rationale as BpskModem:

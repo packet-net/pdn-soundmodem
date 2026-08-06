@@ -234,7 +234,7 @@ This is the QtSoundModem multiplex model - your host software picks a modem by K
 | `bandwidth` | number | measured | How much room to plan for; mainly for `ardop` - [below](#band-plans-in-rf-terms) |
 | `offsetPairs` | int | `4` | Diversity-bank modes only |
 | `offsetStepHz` | number | baud/40 | Diversity-bank modes only |
-| `acceptPlainIl2p` | bool | `false` | IL2P+CRC modes only: also accept IL2P **without** the trailing CRC - [below](#acceptplainil2p) |
+| `acceptPlainIl2p` | bool | `false` | IL2P+CRC modes only: pass IL2P **without** the trailing CRC to the host as well. Such frames are read and displayed either way - [below](#acceptplainil2p) |
 | `port` | int | *(none)* | A TCP port carrying this modem alone - KISS, or the ardopcf host interface for `ardop` - [below](#a-port-per-modem) |
 
 Omit `modems` entirely and you get one `afsk1200` on sub-channel 0.
@@ -276,10 +276,9 @@ centred modem. Both are ignored by non-bank modes.
 ### `acceptPlainIl2p`
 
 IL2P comes in two variants: with a trailing CRC (what a NinoTNC sends, what every `-il2pc` mode
-here expects) and without. A modem set to one will not read the other, and there is nothing in
-the signal to tell you which you are looking at - the modulation, the baud and the centre are all
-identical, so a neighbour sending the CRC-less variant is a strong, clean, perfectly
-demodulated burst that produces nothing at all.
+here expects) and without. There is nothing in the signal to tell you which you are looking at -
+the modulation, the baud and the centre are all identical - so a neighbour sending the CRC-less
+variant used to be a strong, clean, perfectly demodulated burst that produced nothing at all.
 
 That is not hypothetical. A station running `bpsk300` at 2150 Hz on 7.0516 MHz had a
 [survey](#survey) full of `missed` captures; replayed offline through every 12 kHz mode, one of
@@ -294,38 +293,62 @@ own diversity bank. Right frequency, right modulation, right baud, wrong IL2P va
 node sends plain IL2P, and the frame was being demodulated perfectly and then thrown away at the
 CRC check.
 
-Set `"acceptPlainIl2p": true` on that modem and both are accepted:
+**Every IL2P+CRC modem now reads both variants, always.** You do not configure that and you cannot
+turn it off. A station that cannot read a neighbour cannot tell you the neighbour is there, and
+"nothing decoded" and "a CRC-less node you are structurally deaf to" look identical from the
+outside. So a plain IL2P frame is decoded, and it appears:
+
+- on the [waterfall](#waterfall) panel, **badged `RS ONLY`** in warning orange, with a tooltip
+  saying whether it went to your host;
+- in the [frame log](#framelog), with `crc_valid` null;
+- on the journal line, as `plain il2p (rs only, not passed to host)`;
+- as a decode for the [survey](#survey), so its burst stops being captured as `missed` - which is
+  the point: a row in the panel naming GB7BPQ is worth more than another WAV of the same beacon
+  every ten minutes, and it leaves the capture budget for bursts nobody has explained yet.
+
+What it does **not** do by default is give the frame to your KISS host. That is the one thing
+`acceptPlainIl2p` decides:
 
 ```json
 { "subChannel": 0, "mode": "bpsk300", "frequency": 2150, "acceptPlainIl2p": true }
 ```
 
-It is per modem, so a station can be tolerant on the BPSK slot and strict on the AFSK one. It
-does not change what the modem *transmits*: you still send IL2P+CRC, exactly as before, and
-nothing about an ordinary frame's handling changes.
+With that set, plain IL2P frames on that modem are sent to the host as ordinary KISS data frames
+like any other. It is per modem, so a station can be permissive on the BPSK slot and strict on the
+AFSK one. It does not change what the modem *transmits*: you still send IL2P+CRC, exactly as
+before, and nothing about an ordinary frame's handling changes in either direction.
 
-**What it costs, plainly.** A plain IL2P frame is checked by Reed-Solomon and nothing else. There
-is no CRC behind it, which is the entire reason the +CRC variant exists: RS decoding does not
-merely detect errors, it *invents* corrections, and given a run of noise it will occasionally
-produce a frame that looks structurally valid and is not. On an IL2P+CRC link the trailing CRC
-catches those; here nothing does. Expect the occasional frame of rubbish on a noisy channel, and
-more of it the busier and worse the channel is.
+**What accepting them costs, plainly.** A plain IL2P frame is checked by Reed-Solomon and nothing
+else. There is no CRC behind it, which is the entire reason the +CRC variant exists: RS decoding
+does not merely detect errors, it *invents* corrections, and given a run of noise it will
+occasionally produce a frame that looks structurally valid and is not. On an IL2P+CRC link the
+trailing CRC catches those; here nothing does. Expect the occasional frame of rubbish on a noisy
+channel, and more of it the busier and worse the channel is. That is exactly why this is off by
+default: seeing what is on the band is a different question from feeding it to a node.
 
 Two consequences worth knowing before you turn it on:
 
 - **Frames that arrive this way are logged with `crc_valid` null**, not `true` - "no CRC was
   checked" rather than "the CRC passed". If you [log frames](#framelog), that column is how you
-  tell which frames came in on the relaxed path.
-- **An IL2P+CRC frame whose CRC fails is now delivered too.** The receiver genuinely cannot tell
-  it apart from a plain frame - both are a valid IL2P frame with four bytes after it that do not
+  tell which frames came in on the relaxed path, and the panel badges them whether or not you
+  turned this on.
+- **An IL2P+CRC frame whose CRC fails is delivered too.** The receiver genuinely cannot tell it
+  apart from a plain frame - both are a valid IL2P frame with four bytes after it that do not
   check out - so a corrupt frame that would have been dropped and counted is handed up instead.
+  With this off, such a frame is shown and withheld, which is a good reason to look at the row
+  and a poor reason to give it to a node.
+
+Hosts with the KISS quality extension (`kiss.emitQualityFrames`) see nothing at all for a withheld
+frame: no data frame, and no quality frame either, because a quality report for a frame the host
+never received would be worse than silence.
 
 Off by default, and only meaningful on a mode that runs IL2P+CRC: `afsk300-il2pc`,
 `afsk1200-il2p`, `bpsk*`, `qpsk*`, `fsk9600-il2p`, `fsk4800-il2p`, `c4fsk*`, `freedv-*` and
 `ms110d-*`. Setting it on any other mode - including the ones that already read plain IL2P, like
-`bpsk300-nocrc` - is an error at start-up rather than silently ignored, because an ignored
-setting leaves you believing your modem got more tolerant when it did not. Note that
-`fsk9600-il2p` and `fsk4800-il2p` *do* run the CRC, despite their names.
+`bpsk300-nocrc`, where every frame is plain and every frame goes to the host - is an error at
+start-up rather than silently ignored, because an ignored setting leaves you believing something
+changed when nothing did. Note that `fsk9600-il2p` and `fsk4800-il2p` *do* run the CRC, despite
+their names.
 
 ## Band plans in RF terms
 
@@ -648,7 +671,7 @@ Omit the section and frames come and go without being written down. One row per 
 | `direction` | `rx` for a frame the station heard, `tx` for one it sent |
 | `sub_channel`, `mode`, `mode_name` | which modem carried it, and what it is - `bpsk300-il2pc` and `BPSK300 IL2Pc` |
 | `source`, `destination` | AX.25 callsigns where the frame carries them; null where it does not |
-| `length`, `corrected`, `crc_valid` | size, FEC corrections applied, whether the CRC checked - null on a received frame means there was no CRC to check, which on an IL2P+CRC modem means it came in via [`acceptPlainIl2p`](#acceptplainil2p) |
+| `length`, `corrected`, `crc_valid` | size, FEC corrections applied, whether the CRC checked - null on a received frame means there was no CRC to check, which on an IL2P+CRC modem means it was read as [plain IL2P](#acceptplainil2p) (and, unless that modem sets `acceptPlainIl2p`, was not passed to the host) |
 | `offset_hz` | how far off centre the sender actually was - measured, not the diversity branch that copied it; null where the decoder could not measure it |
 | `audio_hz`, `rf_hz` | where that modem sits - `rf_hz` filled in when you have given it an `rfFrequency` |
 | `payload` | the frame itself, as a blob |
@@ -1125,7 +1148,7 @@ enumerated yet at boot, for instance - still restarts on its own as usual.
 | `ardop` alongside `modems` or `paging` | `"ardop" cannot be combined with … keep "ardop" and delete the others, or delete "ardop"` |
 | `mode` not a known mode | `unknown mode 'X'` - with a **did you mean** for near misses, and a link to the mode table |
 | `frequency` on a fixed-centre mode | `mode 'X' has a fixed centre frequency - drop the frequency override …` |
-| `acceptPlainIl2p` on a mode that does not run IL2P+CRC | `mode 'X' does not run IL2P+CRC, so it has no CRC check to relax - drop "acceptPlainIl2p"` - with the modes it does apply to |
+| `acceptPlainIl2p` on a mode that does not run IL2P+CRC | `mode 'X' does not run IL2P+CRC, so it has no separate plain-IL2P reading to release - drop "acceptPlainIl2p"` - with the modes it does apply to |
 | `captureRate` not a multiple of the DSP rate | `--capture-rate must be a multiple of N` |
 | `flex.transmitFilterHighHz` outside 500-10000 (and not `0`) | `That is an audio cut-off in Hz … use 500-10000, 0 to leave the radio's own filter alone …` |
 | `ptt` alongside a `flex:` device | `--device flex: keys the radio itself; remove the conflicting --ptt …` |
