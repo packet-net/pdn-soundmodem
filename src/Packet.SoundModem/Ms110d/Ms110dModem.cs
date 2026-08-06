@@ -26,13 +26,21 @@ namespace Packet.SoundModem.Ms110d;
 /// App D implementation or off-air recording exists to test against (design §1.2; Q2 -
 /// pdn↔pdn only).</para>
 /// </remarks>
-public sealed class Ms110dModem : IModem
+public sealed class Ms110dModem : IModem, IHardwareControllable
 {
     /// <summary>Native DSP rate (4 samples/symbol at 2400 Bd).</summary>
     private const int NativeRate = Ms110dModulator.NativeRate;
 
     private readonly Action<byte[]> _frameReceived;
-    private readonly Ms110dModulator _tx;
+
+    /// <summary>The transmitter, swapped whole under <see cref="SetTxWaveform"/>: a modulator
+    /// is immutable once built, so a waveform change builds a fresh one and publishes it with
+    /// a volatile write. <see cref="Modulate"/> reads the reference once per burst, so a
+    /// change lands between bursts, never inside one. Receive is untouched - it is autobaud,
+    /// decoding every Phase A waveform whatever this is set to.</summary>
+    private Ms110dModulator _tx;
+
+    private Ms110dTxSettings _txSettings;
     private readonly Ms110dDemodulator _rx;
     private readonly Il2pReceiver _deframer;
     private readonly EnergyBusyDetector _energyBusy;
@@ -71,7 +79,8 @@ public sealed class Ms110dModem : IModem
 
         _frameReceived = frameReceived;
         _sampleRate = sampleRate;
-        _tx = new Ms110dModulator(tx ?? new Ms110dTxSettings());
+        _txSettings = tx ?? new Ms110dTxSettings();
+        _tx = new Ms110dModulator(_txSettings);
         _rx = new Ms110dDemodulator(rx);
         _deframer = new Il2pReceiver(
             (frame, info, delivery) =>
@@ -110,7 +119,68 @@ public sealed class Ms110dModem : IModem
     public event Action<byte[], FrameQuality>? FrameDecoded;
 
     /// <inheritdoc />
-    public string Mode => $"ms110d-wn{_tx.Mode.Wn}";
+    public string Mode => $"ms110d-wn{Volatile.Read(ref _tx).Mode.Wn}";
+
+    /// <summary>
+    /// Switches the TRANSMIT waveform at runtime - the typed API the KISS SETHW path calls
+    /// after parsing its bytes, and the one an in-process host (the pdn node's
+    /// <c>kind: soundmodem</c> transport) should call directly. Applies from the next burst;
+    /// a burst already rendering keeps the modulator it started with. Receive needs nothing:
+    /// it is autobaud, so this modem goes on decoding every Phase A waveform regardless.
+    /// </summary>
+    /// <param name="waveformNumber">Phase A waveform number: 0-8 or 13.</param>
+    /// <param name="interleaver">New interleaver, or null to keep the current one.</param>
+    /// <exception cref="ArgumentException">The waveform number or interleaver combination is
+    /// not one MIL-STD-188-110D Phase A defines (thrown before anything changes).</exception>
+    public void SetTxWaveform(int waveformNumber, Ms110dInterleaverKind? interleaver = null)
+    {
+        Ms110dTxSettings next = _txSettings with
+        {
+            WaveformNumber = waveformNumber,
+            Interleaver = interleaver ?? _txSettings.Interleaver,
+        };
+
+        // Built before anything is published: an invalid combination throws here and the
+        // modem keeps transmitting exactly what it was.
+        var modulator = new Ms110dModulator(next);
+        _txSettings = next;
+        Volatile.Write(ref _tx, modulator);
+    }
+
+    /// <inheritdoc />
+    public bool TrySetHardware(ReadOnlySpan<byte> payload, out string outcome)
+    {
+        if (payload.Length is < 1 or > 2)
+        {
+            outcome = "SETHW payload must be 1-2 bytes: waveform number, optional interleaver";
+            return false;
+        }
+
+        Ms110dInterleaverKind? interleaver = null;
+        if (payload.Length == 2)
+        {
+            if (payload[1] > 1)
+            {
+                outcome = $"interleaver byte {payload[1]} is not 0 (short) or 1 (long)";
+                return false;
+            }
+
+            interleaver = payload[1] == 0 ? Ms110dInterleaverKind.Short : Ms110dInterleaverKind.Long;
+        }
+
+        try
+        {
+            SetTxWaveform(payload[0], interleaver);
+        }
+        catch (ArgumentException refused)
+        {
+            outcome = refused.Message;
+            return false;
+        }
+
+        outcome = $"{Mode}, {_txSettings.Interleaver.ToString().ToLowerInvariant()} interleaver";
+        return true;
+    }
 
     /// <inheritdoc />
     public bool CarrierDetect => _rx.CarrierDetect;
@@ -139,9 +209,11 @@ public sealed class Ms110dModem : IModem
     /// <inheritdoc />
     public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds)
     {
+        // One read per burst: a concurrent SetTxWaveform applies to the next burst whole.
+        Ms110dModulator tx = Volatile.Read(ref _tx);
         byte[] il2pWire = Il2pCodec.Encode(ax25Frame, appendCrc: true);
         byte[] bits = Il2pFramer.FrameBits(il2pWire, preambleBits: 0);
-        float[] native = _tx.Modulate(bits);
+        float[] native = tx.Modulate(bits);
 
         int delayNative = NativeRate * Math.Max(0, txDelayMilliseconds) / 1000;
         var burst = new float[delayNative + native.Length];

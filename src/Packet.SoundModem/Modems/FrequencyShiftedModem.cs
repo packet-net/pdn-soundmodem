@@ -38,7 +38,7 @@ namespace Packet.SoundModem.Modems;
 /// just latency) and processes through fixed scratch chunks, so the steady state allocates
 /// nothing.</para>
 /// </remarks>
-public sealed class FrequencyShiftedModem : IModem
+public sealed class FrequencyShiftedModem : IModem, IHardwareControllable
 {
     /// <summary>See the type remarks for why this is so much longer than the shifter's default.</summary>
     private const int HilbertTaps = 639;
@@ -120,6 +120,11 @@ public sealed class FrequencyShiftedModem : IModem
         return new FrequencyShiftedModem(inner, sampleRate, shift, low + shift, high + shift);
     }
 
+    /// <summary>The wrapped modem, for in-process hosts that want its typed surface
+    /// (e.g. <c>Ms110dModem.SetTxWaveform</c>) rather than the byte-payload
+    /// <see cref="IHardwareControllable"/> path, which is forwarded either way.</summary>
+    public IModem Inner => _inner;
+
     /// <inheritdoc/>
     public string Mode => _inner.Mode;
 
@@ -177,4 +182,18 @@ public sealed class FrequencyShiftedModem : IModem
 
     /// <inheritdoc/>
     public void ResetCarrierState() => _inner.ResetCarrierState();
+
+    /// <inheritdoc/>
+    public bool TrySetHardware(ReadOnlySpan<byte> payload, out string outcome)
+    {
+        // Moving a modem changes where it sits, not what it is: hardware control passes
+        // straight through to the wrapped instance.
+        if (_inner is IHardwareControllable hw)
+        {
+            return hw.TrySetHardware(payload, out outcome);
+        }
+
+        outcome = $"mode '{Mode}' has no hardware settings";
+        return false;
+    }
 }

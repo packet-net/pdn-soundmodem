@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using Packet.SoundModem.Channel;
+using Packet.SoundModem.Modems;
 
 namespace Packet.SoundModem.Kiss;
 
@@ -28,7 +29,7 @@ public sealed class KissTcpServer : IAsyncDisposable
     private readonly TcpListener _listener;
     private readonly SoundModemChannel _channel;
     private readonly int? _dedicatedSubChannel;
-    private readonly ConcurrentDictionary<Guid, TcpClient> _clients = [];
+    private readonly ConcurrentDictionary<Guid, ClientSession> _clients = [];
     private readonly CancellationTokenSource _stopping = new();
     private Task? _acceptLoop;
 
@@ -68,6 +69,11 @@ public sealed class KissTcpServer : IAsyncDisposable
     /// <summary>A host's KISS session ended, cleanly or otherwise.</summary>
     public event Action<KissClientEvent>? ClientDisconnected;
 
+    /// <summary>A SETHW frame was applied to a modem, or refused - either way with a
+    /// printable description, so the operator's journal records what a host changed (there
+    /// is no other record: SETHW state is RAM-only and gone at restart).</summary>
+    public event Action<KissHardwareEvent>? HardwareCommand;
+
     /// <summary>
     /// When true, each received data frame is followed by a <see cref="KissCommand.RxQuality"/>
     /// frame on the same port nibble carrying its decode diagnostics as UTF-8 JSON, e.g.
@@ -95,12 +101,13 @@ public sealed class KissTcpServer : IAsyncDisposable
                 TcpClient client = await _listener.AcceptTcpClientAsync(_stopping.Token).ConfigureAwait(false);
                 client.NoDelay = true;
                 var id = Guid.NewGuid();
-                _clients[id] = client;
+                var session = new ClientSession(client);
+                _clients[id] = session;
                 // Read the endpoint now: after the socket is disposed there is nothing to ask, and
                 // the disconnect line is the half an operator most wants to attribute.
                 EndPoint? remote = client.Client.RemoteEndPoint;
                 ClientConnected?.Invoke(new KissClientEvent(remote, _clients.Count));
-                _ = ServeClientAsync(id, client, remote);
+                _ = ServeClientAsync(id, session, remote);
             }
         }
         catch (OperationCanceledException)
@@ -108,10 +115,11 @@ public sealed class KissTcpServer : IAsyncDisposable
         }
     }
 
-    private async Task ServeClientAsync(Guid id, TcpClient client, EndPoint? remote)
+    private async Task ServeClientAsync(Guid id, ClientSession session, EndPoint? remote)
     {
         string? reason = null;
-        var decoder = new KissDecoder(frame => OnClientFrame(client, frame));
+        TcpClient client = session.Client;
+        var decoder = new KissDecoder(frame => OnClientFrame(session, frame));
         var buffer = new byte[4096];
         try
         {
@@ -145,7 +153,7 @@ public sealed class KissTcpServer : IAsyncDisposable
         }
     }
 
-    private void OnClientFrame(TcpClient origin, KissFrame frame)
+    private void OnClientFrame(ClientSession origin, KissFrame frame)
     {
         switch (frame.Command)
         {
@@ -153,17 +161,33 @@ public sealed class KissTcpServer : IAsyncDisposable
                 _ = _channel.EnqueueTransmit(TransmitSubChannel(frame.Port), frame.Payload);
                 break;
 
-            case KissCommand.AckModeData when frame.Payload.Length > 2:
+            case KissCommand.AckModeData when frame.Payload.Length >= 2:
             {
                 byte[] ackId = frame.Payload[..2];
                 int port = TransmitSubChannel(frame.Port);
+
+                // The ack goes back under the nibble this server SPEAKS, which on a dedicated
+                // port is 0 - the same relabelling every received frame gets. Encoding the
+                // real sub-channel here made a dedicated port answer with a nibble its host
+                // never uses (and, per BPQ's convention, would mis-file).
+                int ackNibble = _dedicatedSubChannel is null ? port : 0;
+                byte[] ack = KissCodec.Encode(new KissFrame(ackNibble, KissCommand.AckModeData, ackId));
+
+                if (frame.Payload.Length == 2)
+                {
+                    // An id with no data: nothing to transmit, so transmission is trivially
+                    // complete. Acking now beats dropping it - the host is owed its id back.
+                    Send(origin, ack);
+                    break;
+                }
+
                 Task sent = _channel.EnqueueTransmit(port, frame.Payload[2..]);
                 _ = sent.ContinueWith(
                     t =>
                     {
                         if (t.IsCompletedSuccessfully)
                         {
-                            Send(origin, KissCodec.Encode(new KissFrame(port, KissCommand.AckModeData, ackId)));
+                            Send(origin, ack);
                         }
                     },
                     TaskScheduler.Default);
@@ -183,9 +207,39 @@ public sealed class KissTcpServer : IAsyncDisposable
                 _channel.Csma.TxTailMilliseconds = frame.Payload[0] * 10;
                 break;
 
+            case KissCommand.SetHardware when frame.Payload.Length >= 1:
+            {
+                // Hardware-specific by definition: the payload's meaning belongs to the modem
+                // on this port (Ms110dModem: waveform number + optional interleaver). Applied
+                // frames are echoed back to the sender as the confirmation KISS itself never
+                // defined; refused ones are journalled and NOT echoed - KISS has no error
+                // channel, and a NinoTNC-style host expects fire-and-forget to stay silent.
+                int port = TransmitSubChannel(frame.Port);
+                if (_channel.Modems.TryGetValue(port, out IModem? modem)
+                    && modem is IHardwareControllable hw)
+                {
+                    bool applied = hw.TrySetHardware(frame.Payload, out string outcome);
+                    if (applied)
+                    {
+                        int nibble = _dedicatedSubChannel is null ? port : 0;
+                        Send(origin, KissCodec.Encode(
+                            new KissFrame(nibble, KissCommand.SetHardware, frame.Payload)));
+                    }
+
+                    HardwareCommand?.Invoke(new KissHardwareEvent(port, outcome, applied));
+                }
+                else
+                {
+                    HardwareCommand?.Invoke(new KissHardwareEvent(
+                        port, $"the modem on port {port} has no hardware settings", false));
+                }
+
+                break;
+            }
+
             case KissCommand.FullDuplex:
             case KissCommand.SetHardware:
-                break; // accepted, currently no-ops (half duplex only; no hardware subcommands yet)
+                break; // accepted no-ops (half duplex only; an empty SETHW says nothing)
 
             default:
                 break;
@@ -217,9 +271,9 @@ public sealed class KissTcpServer : IAsyncDisposable
         }
 
         byte[] encoded = KissCodec.Encode(new KissFrame(nibble, KissCommand.Data, frame));
-        foreach (TcpClient client in _clients.Values)
+        foreach (ClientSession session in _clients.Values)
         {
-            Send(client, encoded);
+            Send(session, encoded);
         }
     }
 
@@ -262,22 +316,36 @@ public sealed class KissTcpServer : IAsyncDisposable
         json.Append('}');
         byte[] encoded = KissCodec.Encode(new KissFrame(
             nibble, KissCommand.RxQuality, System.Text.Encoding.UTF8.GetBytes(json.ToString())));
-        foreach (TcpClient client in _clients.Values)
+        foreach (ClientSession session in _clients.Values)
         {
-            Send(client, encoded);
+            Send(session, encoded);
         }
     }
 
-    private static void Send(TcpClient client, byte[] data)
+    private static void Send(ClientSession session, byte[] data)
     {
         try
         {
-            client.GetStream().Write(data);
+            // One frame at a time per socket: an ACKMODE echo runs on a continuation thread
+            // while a received-frame broadcast runs on the receive path, and unserialised
+            // writes can interleave mid-frame - the client then reads two torn frames and,
+            // depending on where the FENDs landed, silently drops both.
+            lock (session.WriteGate)
+            {
+                session.Client.GetStream().Write(data);
+            }
         }
         catch (Exception)
         {
             // Broken pipe: the client's read loop will clean it up.
         }
+    }
+
+    /// <summary>One connected host: its socket and the write gate that keeps concurrent
+    /// frames (broadcasts, acks, echoes) from interleaving mid-frame on it.</summary>
+    private sealed record ClientSession(TcpClient Client)
+    {
+        public object WriteGate { get; } = new();
     }
 
     /// <inheritdoc />
@@ -289,9 +357,9 @@ public sealed class KissTcpServer : IAsyncDisposable
         _channel.FrameReceivedWithQuality -= OnFrameQuality;
         await _stopping.CancelAsync().ConfigureAwait(false);
         _listener.Stop();
-        foreach (TcpClient client in _clients.Values)
+        foreach (ClientSession session in _clients.Values)
         {
-            client.Dispose();
+            session.Client.Dispose();
         }
 
         if (_acceptLoop is not null)
@@ -308,6 +376,12 @@ public sealed class KissTcpServer : IAsyncDisposable
         _stopping.Dispose();
     }
 }
+
+/// <summary>A SETHW frame's outcome: what a host changed on a modem, or why it was refused.</summary>
+/// <param name="SubChannel">The modem the frame addressed (after dedicated-port routing).</param>
+/// <param name="Description">Printable one-liner: what was applied, or the refusal reason.</param>
+/// <param name="Applied">Whether anything changed.</param>
+public readonly record struct KissHardwareEvent(int SubChannel, string Description, bool Applied);
 
 /// <summary>A host attaching to, or leaving, a KISS-over-TCP port.</summary>
 /// <param name="Remote">The host's address, or null if the socket was already gone.</param>
