@@ -65,6 +65,8 @@ public class WattersonMaskTests(ITestOutputHelper output)
     [InlineData("bpsk300", "awgn", -3.0, 3.75, 32)]    // measured 39/40 - the mid-branch
                                                        // CFO point a lagging reference nulls
     [InlineData("bpsk300", "good", 0.0, 0.0, 12)]      // measured 22/40
+    [InlineData("bpsk300", "moderate", 2.0, 0.0, 10)]  // measured 21/40 - the CCIR middle,
+                                                       // where receiver work actually shows
     [InlineData("bpsk300", "poor", 9.0, 0.0, 2)]       // measured 7/40 - the equaliser-bound
                                                        // floor must not collapse further
     [InlineData("bpsk1200", "awgn", 2.0, 0.0, 28)]     // measured 37/40
@@ -78,6 +80,7 @@ public class WattersonMaskTests(ITestOutputHelper output)
                                                              // family's fading capability
                                                              // is exactly what it is for
     [InlineData("freedv-datac1", "good", 9.0, 0.0, 14, 25)]  // measured 22/25
+    [InlineData("freedv-datac3", "moderate", 3.0, 0.0, 15, 25)] // measured 23/25
     public void Smoke_Mask_Holds(
         string mode, string channel, double snrDb, double cfoHz, int floor,
         int bursts = SmokeBursts)
@@ -122,7 +125,10 @@ public class WattersonMaskTests(ITestOutputHelper output)
         yield return ["bpsk300", "awgn", -3.0, 15.0, 75];
         yield return ["bpsk300", "awgn", -3.0, 30.0, 75];
 
-        // bpsk300 fading - measured Good 35/49/60/70/76 %, Poor 23/26/28/28 %.
+        // bpsk300 fading - measured Good 35/49/60/70/76 %, Moderate (N=40) 23/42/53/60 %
+        // across -2..+4, Poor 23/26/28/28 %.
+        yield return ["bpsk300", "moderate", 0.0, 0.0, 22];
+        yield return ["bpsk300", "moderate", 4.0, 0.0, 40];
         yield return ["bpsk300", "good", -4.0, 0.0, 15];
         yield return ["bpsk300", "good", 0.0, 0.0, 38];
         yield return ["bpsk300", "good", 4.0, 0.0, 55];

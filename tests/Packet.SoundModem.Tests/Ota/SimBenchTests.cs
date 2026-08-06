@@ -39,10 +39,22 @@ public class SimBenchTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Moderate_Profile_Is_The_Ccir_One_Ms_Half_Hz_Pairing()
+    {
+        WattersonPath[] moderate = SimChannel.Paths(SimChannelKind.Moderate);
+        moderate.Should().HaveCount(2, "CCIR Moderate is two equal-power Rayleigh paths");
+        moderate.Should().OnlyContain(p => p.Fading && p.DopplerSpreadHz == 0.5,
+            "Moderate is a 0.5 Hz two-sigma fade");
+        moderate.Select(p => p.DelayMs).Should().BeEquivalentTo([0.0, 1.0], "1 ms differential delay");
+    }
+
+    [Fact]
     public void Parses_Channel_Names()
     {
         SimChannel.Parse("awgn").Should().Be(SimChannelKind.Awgn);
         SimChannel.Parse("Good").Should().Be(SimChannelKind.Good);
+        SimChannel.Parse("moderate").Should().Be(SimChannelKind.Moderate);
+        SimChannel.Parse("m").Should().Be(SimChannelKind.Moderate);
         SimChannel.Parse("poor").Should().Be(SimChannelKind.Poor);
         SimChannel.Parse("p").Should().Be(SimChannelKind.Poor);
     }

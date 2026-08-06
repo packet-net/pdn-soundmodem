@@ -194,15 +194,36 @@ Rayleigh paths fading together for 60-150 symbol times) which **no receiver fixe
 wire format** - there is no interleaving to bridge it. Beyond MLSE, Poor is workstream 8's
 problem.
 
-### 6. Impulse-noise instrumentation, then mitigation
+### 6. Channel-model extensions: impulse noise first, then the rest of reality
 
-Every evidence instrument this project owns is Gaussian - the Watterson sim, every ladder.
-Real 40 m evenings are static crashes and QRN, and the receiver has no blanker and no
-heavy-tail-aware metric; every serious HF modem has one. Possibly the most real-world dB per
-line of code on this list, and currently unmeasurable. Order of work is therefore fixed:
-**first the instrument** (an impulsive-noise channel profile in the sim, plus scoring against
-the raw 40 m capture above, which will contain real summer-evening QRN), **then** the blanker
-or clipped-metric fix, sized by what the instrument shows.
+(Broadened from "impulse-noise instrumentation" on 2026-08-06, Tom's prompt: the masks pin
+the model, so extending the model extends what the masks can hold.) Ranked by value per
+effort:
+
+1. **CCIR Moderate - DONE 2026-08-06.** The middle of the standard triple (1 ms / 0.5 Hz)
+   was the biggest gap for the least work: Good is outage-bound and Poor equaliser-bound, so
+   Moderate is the channel where receiver improvements actually show. Measured on landing:
+   bpsk300 climbs 23/42/53/60 % across -2..+4 dB (a real slope at last); freedv-datac3
+   rides it at 92-100 % - the OFDM contrast, on the record. Profile pinned in
+   `SimBenchTests`, mask rows in both tiers.
+2. **Impulse noise, calibrated from the capture.** Real 40 m evenings are static crashes and
+   QRN; the receiver has no blanker and no heavy-tail-aware metric, and nothing measures the
+   cost. The capture campaign changes the job: derive arrival rate, amplitude distribution
+   and burst shape from the raw chunks' real summer-evening QRN rather than inventing a
+   Middleton model, then the blanker or clipped-metric fix, sized by what the instrument
+   shows. Possibly the most real-world dB per line of code on this list.
+3. **Slow CFO drift + phase noise.** The exact impairment that walled qpsk2400 (#116) and
+   the RSP1 coherent modes (#102): a Hz-per-minute ramp plus a 1/f phase process. Cheap (a
+   time-varying rotation in the channel), and it is what the undisciplined-radio aspiration
+   needs to develop against.
+4. **TX/RX sample-clock skew.** Real soundcards sit +/-50-100 ppm apart; the sim shares one
+   clock, which quietly flatters every timing loop. A resample-by-(1+epsilon) axis protects
+   the DPLL work.
+5. **SSB passband tilt** (a configurable radio filter post-channel) - placement-dependent
+   losses for multi-modem plans; **QRM injection** and **AGC dynamics** - both waiting on
+   real interferer material from the capture.
+6. **An FM channel model** - deviation error, emphasis mismatch, discriminator noise,
+   flutter. Its own track, and the gate on masks for the FM modes.
 
 ### 7. Per-station acquisition priors
 
