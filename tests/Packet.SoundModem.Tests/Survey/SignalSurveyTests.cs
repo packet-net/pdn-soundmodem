@@ -165,6 +165,20 @@ public class SignalSurveyTests : IDisposable
     }
 
     [Fact]
+    public void A_Keyup_Reset_Is_Applied_On_The_Receive_Path_And_Abandons_The_Burst()
+    {
+        // Reset arrives from the transmitter thread at keyup; it must still take effect even
+        // though the mutation is deferred to the receive path (the unguarded lists belong to
+        // that thread). A burst straddling our own transmission is not a measurement of
+        // anybody else's, so nothing may be captured from it.
+        var survey = new SignalSurvey(Options(), Bands, SampleRate, BinWidthHz, LinesPerSecond, LineLength);
+        Play(survey, 944, 1344, burstLines: 60, atBurstEnd: _ => survey.Reset());
+        Settle(survey);
+
+        Captures().Should().BeEmpty("the burst in flight was abandoned at the keyup");
+    }
+
+    [Fact]
     public void A_Burst_Read_As_Plain_Il2p_And_Withheld_Counts_As_Decoded()
     {
         // The survey is fed from the monitor path, so a frame the station read and did not pass
@@ -370,23 +384,6 @@ public class SignalSurveyTests : IDisposable
         new(mode, FrameBytes: 118, CorrectedBytes: 0, CrcValid: true,
             HeaderType: M0LTE.Il2p.Il2pHeaderType.Type1);
 
-    private static byte[] Ax25Frame(string from, string to)
-    {
-        var frame = new byte[20];
-        Write(frame, 0, to, last: false);
-        Write(frame, 7, from, last: true);
-        frame[14] = 0x03;
-        frame[15] = 0xF0;
-        return frame;
-
-        static void Write(byte[] frame, int at, string call, bool last)
-        {
-            for (int n = 0; n < 6; n++)
-            {
-                frame[at + n] = (byte)((n < call.Length ? call[n] : ' ') << 1);
-            }
-
-            frame[at + 6] = (byte)(0x60 | (last ? 1 : 0));
-        }
-    }
+    private static byte[] Ax25Frame(string from, string to) =>
+        Ax25UiFrame.Build(from, to, new byte[4]);
 }

@@ -545,10 +545,13 @@ if (frameLogConfig is not null)
 
 await using var frameLogLifetime = frameLog;
 
-// Per-family PSK detector, for the informational print below: --psk-detector overrides both;
-// unset, the catalogue's per-family defaults apply (BPSK differential, QPSK coherent).
-PskDetector bpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFor("bpsk");
-PskDetector qpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFor("qpsk");
+// The PSK detector, for the informational print below: --psk-detector overrides it; unset,
+// the catalogue default applies, which is differential for every PSK family (see
+// ModemCatalog.DefaultDetectorFor for the bench evidence - an earlier comment here still
+// said "QPSK coherent" long after the catalogue changed its mind, which is the kind of
+// drift asking the catalogue directly avoids).
+PskDetector bpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFor("bpsk300");
+PskDetector qpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFor("qpsk2400");
 
 foreach (ModemConfig modemConfig in modems)
 {
@@ -582,9 +585,13 @@ foreach (ModemConfig modemConfig in modems)
 
     if (frequency is not null && !ModemCatalog.AcceptsCentreFrequency(mode))
     {
+        // The same wording as ModemCatalog.Create's own refusal: this message had drifted
+        // to claim only afsk*/bpsk*/qpsk* accept a frequency, a mode family after the
+        // spec-fixed ms110d-*/freedv-* ones learned to take one by decoration.
         Console.Error.WriteLine(
-            $"modem {subChannel}: mode '{mode}' has a fixed centre frequency - drop the " +
-            "frequency override (only the afsk*/bpsk*/qpsk* modes accept one)");
+            $"modem {subChannel}: mode '{mode}' occupies the audio band from DC upwards and " +
+            "has no centre frequency to move - drop the frequency override (the " +
+            "afsk*/bpsk*/qpsk* and spec-fixed ms110d-*/freedv-* modes accept one)");
         return 2;
     }
 
@@ -796,6 +803,22 @@ if (waterfallConfig is not null)
             + $"  {e.Message}\n"
             + "  Set by \"waterfall\".\"port\" and the top-level \"bind\". Another process may\n"
             + "  already hold the port; \"*\" or \"0.0.0.0\" serves every interface.");
+        return 2;
+    }
+    catch (ArgumentException e)
+    {
+        // The spectrum source refusing its geometry - a wrong answer in the config, not a
+        // busy port. Without this catch the raw exception took a non-2 exit code, and
+        // Restart=on-failure (which only spares exit 2) crash-looped the unit every five
+        // seconds - exactly the failure mode the config-validation contract exists to
+        // prevent.
+        Console.Error.WriteLine(
+            "invalid waterfall settings\n"
+            + $"  {e.Message}\n"
+            + "  Set by \"waterfall\".\"fftSize\" and \"waterfall\".\"linesPerSecond\". The FFT\n"
+            + "  size must be a power of two no shorter than one line's hop (the DSP rate\n"
+            + "  divided by linesPerSecond), and linesPerSecond must divide the DSP rate.\n"
+            + "  Remove the settings to use the defaults.");
         return 2;
     }
 
@@ -1097,6 +1120,8 @@ void WatchClients(KissTcpServer server)
         Console.WriteLine(ActivityLog.ClientConnected(server.LocalPort, server.DedicatedSubChannel, e));
     server.ClientDisconnected += e =>
         Console.WriteLine(ActivityLog.ClientDisconnected(server.LocalPort, server.DedicatedSubChannel, e));
+    server.AcceptFailed += why => Console.Error.WriteLine(
+        $"kiss[{server.LocalPort}] accept failed: {why} - listening continues");
 
     // What a host changed with SETHW, or why it was refused - RAM-only state with no other
     // record, so the journal is where an operator learns which waveform their modem is on.
@@ -1207,7 +1232,7 @@ if (ardopModem is not null)
                         var floats = new float[audio.Length];
                         for (int i = 0; i < audio.Length; i++)
                         {
-                            floats[i] = audio[i] / 32768f;
+                            floats[i] = Packet.SoundModem.Audio.Pcm16.ToFloat(audio[i]);
                         }
 
                         return ardopShift.Transmit(floats);
@@ -1294,6 +1319,13 @@ if (paging is not null)
         : M0LTE.Pocsag.PocsagPolarity.Normal;
     pagingServer = new Packet.SoundModem.Pocsag.PagingTcpServer(
         channel, paging.Port, paging.Baud, polarity, listenAddress);
+
+    // A page the server said OK to and then could not send has no client left to tell -
+    // the journal is the only place the loss can be recorded, exactly as for KISS frames.
+    pagingServer.PageDropped += drop => Console.Error.WriteLine(
+        $"page[{drop.Id}] to {drop.Ric} DROPPED: {drop.Reason}");
+    pagingServer.AcceptFailed += why => Console.Error.WriteLine(
+        $"paging: accept failed: {why} - listening continues");
     pagingServer.Start();
     Console.WriteLine($"paging tcp: {(Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString())}:{pagingServer.LocalPort} ({pagingServer.Mode}, DAPNET/POCSAG-compatible)");
 }
@@ -1403,7 +1435,21 @@ else if (deviceIsUberSdr)
 }
 else if (deviceIsFlex)
 {
-    flex = await FlexDevice.OpenAsync(device, DspRate, flexPacketBuffer, flexTuning, cancellation.Token);
+    try
+    {
+        flex = await FlexDevice.OpenAsync(device, DspRate, flexPacketBuffer, flexTuning, cancellation.Token);
+    }
+    catch (Exception e) when (e is not OperationCanceledException)
+    {
+        // The one device path that had no catch: a radio still booting at daemon start
+        // escaped as a raw stack trace with an abort exit code, instead of the
+        // DeviceDiagnostics message and the exit 1 (retry) contract the ALSA and UberSDR
+        // paths honour. Broad on purpose - whatever the radio library throws, the answer
+        // is the same: say what to check, and let the unit retry.
+        Console.Error.WriteLine(DeviceDiagnostics.Flex(device, configPath, e));
+        return 1;
+    }
+
     ptt = flex.Ptt;
     playback = flex.Output;
     input = flex.Input;
@@ -1638,6 +1684,24 @@ channel.PttFailed += failure => Console.Error.WriteLine($"ptt: {failure.Message}
 
 Task transmitter = channel.RunTransmitterAsync(playback, ptt, cancellation.Token);
 
+// A transmitter that dies (the output device failed mid-keyup) must stop the daemon, not
+// leave it running as a healthy-looking receive-only station for the rest of the process's
+// life - which is what discarding the task's fault used to do, silently. Exit 1 so the
+// unit restarts: a device that comes back is exactly what a restart fixes, and exit 2
+// stays reserved for "your configuration is wrong".
+_ = transmitter.ContinueWith(
+    t =>
+    {
+        Console.Error.WriteLine(
+            $"transmit: the audio output failed - {t.Exception!.GetBaseException().Message}. "
+            + "Stopping so the service restarts.");
+        radioLost = true;
+        cancellation.Cancel();
+    },
+    CancellationToken.None,
+    TaskContinuationOptions.OnlyOnFaulted,
+    TaskScheduler.Default);
+
 // Decimate the source to the DSP rate. When it already runs at the DSP rate (a 48 kHz
 // mode's full-bandwidth DAX, --capture-rate 12000, or a 12 kHz virtual card) there is
 // nothing to decimate - a Decimator with factor 1 is invalid, so feed samples straight
@@ -1651,7 +1715,9 @@ int blockSamples = ardopModem is null ? inputRate / 10 : inputRate / 50;
 var floatBuffer = new float[blockSamples];
 var dspBuffer = new float[rxDecimator?.MaxOutput(blockSamples) ?? blockSamples];
 var xrunWatch = new XrunWatch();
-long nextXrunPoll = Environment.TickCount64 + XrunPollMs;
+long nextHealthPoll = Environment.TickCount64 + XrunPollMs;
+long frameLogDropsSeen = 0;
+long captureDropsSeen = 0;
 while (!cancellation.IsCancellationRequested)
 {
     int got = input.Read(floatBuffer);
@@ -1661,13 +1727,34 @@ while (!cancellation.IsCancellationRequested)
     }
 
     // Polled from the receive loop rather than a timer: this loop only turns when audio is
-    // flowing, which is exactly when an xrun means something, and it costs two field reads.
-    if ((alsaIn is not null || alsaOut is not null) && Environment.TickCount64 >= nextXrunPoll)
+    // flowing, which is exactly when an xrun means something, and it costs a few field
+    // reads. The dropped-write counters ride the same poll - they were dead counters
+    // before it: a full disk left a station keeping an empty frame log for weeks with
+    // nothing anywhere saying so.
+    if (Environment.TickCount64 >= nextHealthPoll)
     {
-        nextXrunPoll = Environment.TickCount64 + XrunPollMs;
-        if (xrunWatch.Poll(alsaIn?.Xruns ?? 0, alsaOut?.Xruns ?? 0) is string lost)
+        nextHealthPoll = Environment.TickCount64 + XrunPollMs;
+        if ((alsaIn is not null || alsaOut is not null)
+            && xrunWatch.Poll(alsaIn?.Xruns ?? 0, alsaOut?.Xruns ?? 0) is string lost)
         {
             Console.Error.WriteLine(lost);
+        }
+
+        if (frameLog is not null && frameLog.Dropped is long logDrops && logDrops > frameLogDropsSeen)
+        {
+            Console.Error.WriteLine(
+                $"frame log: {logDrops - frameLogDropsSeen} frames dropped unwritten "
+                + $"({logDrops} total) - the disk cannot keep up, is full, or is unwritable");
+            frameLogDropsSeen = logDrops;
+        }
+
+        if (survey is not null && survey.DroppedCaptures is long captureDrops
+            && captureDrops > captureDropsSeen)
+        {
+            Console.Error.WriteLine(
+                $"survey: {captureDrops - captureDropsSeen} captures dropped unwritten "
+                + $"({captureDrops} total) - the disk cannot keep up, is full, or is unwritable");
+            captureDropsSeen = captureDrops;
         }
     }
 
@@ -1682,7 +1769,19 @@ while (!cancellation.IsCancellationRequested)
     }
 }
 
-await transmitter.ContinueWith(_ => { }, TaskScheduler.Default);
+try
+{
+    await transmitter;
+}
+catch (OperationCanceledException)
+{
+    // The normal shutdown path: the loop ends by cancellation.
+}
+catch (Exception)
+{
+    // Already journalled (and turned into exit 1) by the fault observer above.
+}
+
 if (!deviceIsFlex)
 {
     (ptt as IDisposable)?.Dispose();

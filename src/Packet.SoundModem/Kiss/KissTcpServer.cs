@@ -26,9 +26,22 @@ namespace Packet.SoundModem.Kiss;
 /// </remarks>
 public sealed class KissTcpServer : IAsyncDisposable
 {
+    /// <summary>
+    /// Bytes a client may have queued and unread before its session is dropped. Bytes, not a
+    /// frame count: a burst of tiny acks answered faster than one socket write is normal, a
+    /// megabyte of frames nobody is reading is not - the queue only holds bytes once the
+    /// socket's kernel buffers are full, which means the host has stopped reading.
+    /// </summary>
+    private const int MaxQueuedBytes = 1 << 20;
+
+    /// <summary>Pause after a failed accept, so a persistent fault (fd exhaustion) does not
+    /// turn the accept loop into a busy spin.</summary>
+    private static readonly TimeSpan AcceptRetryDelay = TimeSpan.FromSeconds(1);
+
     private readonly TcpListener _listener;
     private readonly SoundModemChannel _channel;
     private readonly int? _dedicatedSubChannel;
+    private readonly TimeProvider _time;
     private readonly ConcurrentDictionary<Guid, ClientSession> _clients = [];
     private readonly CancellationTokenSource _stopping = new();
     private Task? _acceptLoop;
@@ -43,12 +56,15 @@ public sealed class KissTcpServer : IAsyncDisposable
     /// nibble 0) and all transmits go to it regardless of the nibble received. When null the
     /// server is multiplexed and the nibble selects the modem, as QtSoundModem does.
     /// </param>
+    /// <param name="time">Wall clock; the system's when null.</param>
     public KissTcpServer(
-        SoundModemChannel channel, int port = 8105, IPAddress? bind = null, int? subChannel = null)
+        SoundModemChannel channel, int port = 8105, IPAddress? bind = null, int? subChannel = null,
+        TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(channel);
         _channel = channel;
         _dedicatedSubChannel = subChannel;
+        _time = time ?? TimeProvider.System;
         _listener = new TcpListener(bind ?? IPAddress.Loopback, port);
         _channel.FrameReceived += OnFrameReceived;
         _channel.FrameReceivedWithQuality += OnFrameQuality;
@@ -68,6 +84,11 @@ public sealed class KissTcpServer : IAsyncDisposable
 
     /// <summary>A host's KISS session ended, cleanly or otherwise.</summary>
     public event Action<KissClientEvent>? ClientDisconnected;
+
+    /// <summary>An accept failed and the listener is carrying on (with the failure's
+    /// message). Raised so the journal can say why a host's connect attempt went nowhere;
+    /// existing sessions are unaffected.</summary>
+    public event Action<string>? AcceptFailed;
 
     /// <summary>A SETHW frame was applied to a modem, or refused - either way with a
     /// printable description, so the operator's journal records what a host changed (there
@@ -94,24 +115,50 @@ public sealed class KissTcpServer : IAsyncDisposable
 
     private async Task AcceptLoopAsync()
     {
-        try
+        while (!_stopping.IsCancellationRequested)
         {
-            while (!_stopping.IsCancellationRequested)
+            TcpClient client;
+            try
             {
-                TcpClient client = await _listener.AcceptTcpClientAsync(_stopping.Token).ConfigureAwait(false);
-                client.NoDelay = true;
-                var id = Guid.NewGuid();
-                var session = new ClientSession(client);
-                _clients[id] = session;
-                // Read the endpoint now: after the socket is disposed there is nothing to ask, and
-                // the disconnect line is the half an operator most wants to attribute.
-                EndPoint? remote = client.Client.RemoteEndPoint;
-                ClientConnected?.Invoke(new KissClientEvent(remote, _clients.Count));
-                _ = ServeClientAsync(id, session, remote);
+                client = await _listener.AcceptTcpClientAsync(_stopping.Token).ConfigureAwait(false);
             }
-        }
-        catch (OperationCanceledException)
-        {
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (ObjectDisposedException)
+            {
+                return; // the listener was stopped under us: shutdown, not a fault
+            }
+            catch (SocketException e)
+            {
+                // One failed accept (a client that reset mid-handshake, the process briefly out
+                // of fds) must not kill the listener for the rest of the process's life - which
+                // is what a fault escaping this loop used to do, silently: existing sessions
+                // kept working and no new host could ever connect again.
+                AcceptFailed?.Invoke(e.Message);
+                try
+                {
+                    await Task.Delay(AcceptRetryDelay, _time, _stopping.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+
+                continue;
+            }
+
+            client.NoDelay = true;
+            var id = Guid.NewGuid();
+            var session = new ClientSession(client);
+            _clients[id] = session;
+            // Read the endpoint now: after the socket is disposed there is nothing to ask, and
+            // the disconnect line is the half an operator most wants to attribute.
+            EndPoint? remote = client.Client.RemoteEndPoint;
+            ClientConnected?.Invoke(new KissClientEvent(remote, _clients.Count));
+            _ = WriteLoopAsync(session);
+            _ = ServeClientAsync(id, session, remote);
         }
     }
 
@@ -142,14 +189,36 @@ public sealed class KissTcpServer : IAsyncDisposable
         catch (Exception e)
         {
             // Client errors only ever cost that client its connection - but say which and why,
-            // because "the host vanished" and "the host closed" are different problems.
-            reason = e.Message;
+            // because "the host vanished" and "the host closed" are different problems. A
+            // session dropped for not reading records that, not the socket teardown it causes.
+            reason = session.Fault ?? e.Message;
         }
         finally
         {
             _clients.TryRemove(id, out _);
+            session.SendQueue.Writer.TryComplete();
             client.Dispose();
-            ClientDisconnected?.Invoke(new KissClientEvent(remote, _clients.Count, reason));
+            ClientDisconnected?.Invoke(new KissClientEvent(remote, _clients.Count, reason ?? session.Fault));
+        }
+    }
+
+    /// <summary>Drains one client's send queue onto its socket - the only writer, so frames
+    /// cannot interleave mid-frame however many threads queued them.</summary>
+    private async Task WriteLoopAsync(ClientSession session)
+    {
+        try
+        {
+            NetworkStream stream = session.Client.GetStream();
+            await foreach (byte[] data in session.SendQueue.Reader.ReadAllAsync(_stopping.Token)
+                               .ConfigureAwait(false))
+            {
+                await stream.WriteAsync(data, _stopping.Token).ConfigureAwait(false);
+                Interlocked.Add(ref session.QueuedBytes, -data.Length);
+            }
+        }
+        catch (Exception)
+        {
+            // Broken pipe or shutdown: the client's read loop cleans the session up.
         }
     }
 
@@ -158,7 +227,11 @@ public sealed class KissTcpServer : IAsyncDisposable
         switch (frame.Command)
         {
             case KissCommand.Data:
-                _ = _channel.EnqueueTransmit(TransmitSubChannel(frame.Port), frame.Payload);
+                // Fire-and-forget by KISS's nature, but the task's fault still has to be read:
+                // the channel announces every rejection on TransmitRejected (including a frame
+                // for a sub-channel with no modem), and this keeps the same fault from
+                // resurfacing later as an UnobservedTaskException.
+                Observe(_channel.EnqueueTransmit(TransmitSubChannel(frame.Port), frame.Payload));
                 break;
 
             case KissCommand.AckModeData when frame.Payload.Length >= 2:
@@ -188,6 +261,13 @@ public sealed class KissTcpServer : IAsyncDisposable
                         if (t.IsCompletedSuccessfully)
                         {
                             Send(origin, ack);
+                        }
+                        else
+                        {
+                            // No ack for a frame that never went out; the DROPPED line came
+                            // from TransmitRejected. Reading the fault here keeps it from
+                            // surfacing as an UnobservedTaskException.
+                            _ = t.Exception;
                         }
                     },
                     TaskScheduler.Default);
@@ -251,6 +331,15 @@ public sealed class KissTcpServer : IAsyncDisposable
     /// entirely - the whole point is to serve a host that can only ever send 0.
     /// </summary>
     private int TransmitSubChannel(int requested) => _dedicatedSubChannel ?? requested;
+
+    /// <summary>Reads a fire-and-forget transmission's fault so it cannot surface as an
+    /// UnobservedTaskException. The rejection itself is the channel's to announce.</summary>
+    private static void Observe(Task task) =>
+        _ = task.ContinueWith(
+            static t => _ = t.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     /// <summary>
     /// The nibble a frame is published under, or null to withhold it from this server's
@@ -324,28 +413,45 @@ public sealed class KissTcpServer : IAsyncDisposable
 
     private static void Send(ClientSession session, byte[] data)
     {
-        try
+        // Queued, never written here: this runs on the audio receive thread (broadcasts) and
+        // on ACKMODE continuations, and a synchronous socket write from either can block for
+        // as long as the host cares to stop reading - which for the receive path means every
+        // modem, tap and other client on the channel goes deaf with it. The per-client write
+        // loop serialises frames, so they cannot interleave mid-frame either.
+        if (Interlocked.Add(ref session.QueuedBytes, data.Length) <= MaxQueuedBytes
+            && session.SendQueue.Writer.TryWrite(data))
         {
-            // One frame at a time per socket: an ACKMODE echo runs on a continuation thread
-            // while a received-frame broadcast runs on the receive path, and unserialised
-            // writes can interleave mid-frame - the client then reads two torn frames and,
-            // depending on where the FENDs landed, silently drops both.
-            lock (session.WriteGate)
-            {
-                session.Client.GetStream().Write(data);
-            }
+            return;
         }
-        catch (Exception)
-        {
-            // Broken pipe: the client's read loop will clean it up.
-        }
+
+        // The budget only fills once the socket's kernel buffers are full: the host has
+        // stopped reading. Dropping the session - with the reason on the disconnect line -
+        // beats silently discarding frames for a host that believes it is still attached.
+        session.Fault ??= "the host stopped reading (over 1 MiB of frames queued unread)";
+        session.SendQueue.Writer.TryComplete();
+        session.Client.Dispose();
     }
 
-    /// <summary>One connected host: its socket and the write gate that keeps concurrent
-    /// frames (broadcasts, acks, echoes) from interleaving mid-frame on it.</summary>
-    private sealed record ClientSession(TcpClient Client)
+    /// <summary>One connected host: its socket and the queue its frames (broadcasts, acks,
+    /// echoes) leave through, in order, without ever blocking the sender.</summary>
+    private sealed class ClientSession(TcpClient client)
     {
-        public object WriteGate { get; } = new();
+        public TcpClient Client { get; } = client;
+
+        public System.Threading.Channels.Channel<byte[]> SendQueue { get; } =
+            System.Threading.Channels.Channel.CreateUnbounded<byte[]>(
+                new System.Threading.Channels.UnboundedChannelOptions
+                {
+                    SingleReader = true,
+                });
+
+        /// <summary>Bytes queued and not yet written - the budget
+        /// <see cref="MaxQueuedBytes"/> bounds. Interlocked: writers race the write loop.</summary>
+        public int QueuedBytes;
+
+        /// <summary>Why the server dropped this session, when it did (the read loop's
+        /// teardown exception would otherwise bury it).</summary>
+        public string? Fault { get; set; }
     }
 
     /// <inheritdoc />
@@ -359,6 +465,7 @@ public sealed class KissTcpServer : IAsyncDisposable
         _listener.Stop();
         foreach (ClientSession session in _clients.Values)
         {
+            session.SendQueue.Writer.TryComplete();
             session.Client.Dispose();
         }
 

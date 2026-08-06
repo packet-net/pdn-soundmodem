@@ -206,6 +206,11 @@ public class IdBeaconGhostTests
         return audio;
     }
 
+    // Hand-rolled rather than Ax25UiFrame.Build on purpose: this fixture's exact bit
+    // pattern is load-bearing. The off-dial theory asserts the measured FrequencyOffsetHz
+    // to +/-8 Hz, and that measurement carries a small content-dependent bias - even the
+    // builder's conventional command bit shifts the whole frame's stuffing and tone duty
+    // enough to move the reading by ~9 Hz against the tolerance calibrated on these bytes.
     private static byte[] IdentFrame(string call)
     {
         byte[] text = Encoding.ASCII.GetBytes($"{call} pdn-soundmodem");

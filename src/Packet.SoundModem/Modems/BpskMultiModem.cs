@@ -28,7 +28,7 @@ namespace Packet.SoundModem.Modems;
 /// linear CPU cost (each branch is a full band-pass + Costas chain).
 /// </para>
 /// </remarks>
-public sealed class BpskMultiModem : IModem
+public sealed class BpskMultiModem : IModem, IConstellationSource
 {
     private readonly BpskModem[] _branches;
     private readonly BpskModem _transmit;
@@ -114,6 +114,17 @@ public sealed class BpskMultiModem : IModem
 
     /// <inheritdoc />
     public event Action<byte[], FrameQuality>? FrameDecoded;
+
+    /// <inheritdoc />
+    /// <remarks>The centre branch's view. One branch's decisions are a constellation; the
+    /// whole bank's overlaid would be that constellation plus a rotated copy per offset
+    /// branch. Forwarded because the catalogue builds this bank for every bpsk mode, and
+    /// without it the channel's constellation sink saw a modem with nothing to plot.</remarks>
+    public event Action<ConstellationPoint>? SymbolPlotted
+    {
+        add => _transmit.SymbolPlotted += value;
+        remove => _transmit.SymbolPlotted -= value;
+    }
 
     /// <inheritdoc />
     public string Mode => $"bpsk{_baud}{(_crc ? "-il2pc" : "-il2p")}-multi{_branches.Length}";

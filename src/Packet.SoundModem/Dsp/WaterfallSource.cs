@@ -22,6 +22,26 @@ public sealed class WaterfallSource
     /// <summary>dBFS mapped to byte 0; 0 dBFS (a full-scale sine's peak bin) maps to 255.</summary>
     public const double FloorDb = -100;
 
+    /// <summary>
+    /// Line byte back to linear power on the <see cref="FloorDb"/> scale - the inverse of
+    /// what this source encodes, kept beside the encoding so the two cannot drift. Shared
+    /// by everything that averages or sums line power (the band-activity tracker, the
+    /// survey's burst detector); it used to live as an identical private copy in each.
+    /// </summary>
+    public static readonly double[] ByteToLinearPower = BuildByteToLinearPower();
+
+    private static double[] BuildByteToLinearPower()
+    {
+        var lut = new double[256];
+        for (int b = 0; b < 256; b++)
+        {
+            double db = FloorDb + b * (-FloorDb / 255);
+            lut[b] = Math.Pow(10, db / 10);
+        }
+
+        return lut;
+    }
+
     private readonly Action<long, ReadOnlyMemory<byte>> _lineSink;
     private readonly float[] _ring;
     private readonly float[] _window;

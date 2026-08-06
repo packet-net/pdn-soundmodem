@@ -313,8 +313,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             }
 
             // Measured edges, but the configured centre where the host stated one: the
-            // midpoint of a measurement is a few Hz off what the operator asked for.
-            if (Declared(sub) is { } declared)
+            // midpoint of a measurement is a few Hz off what the operator asked for. A
+            // declared centre of 0 is the daemon's "no configured frequency" sentinel, not
+            // a statement that the modem sits at DC - the measurement stands then, or the
+            // band chip reads "0 Hz" with its centre tick on the left edge of the page.
+            if (Declared(sub) is { CentreHz: > 0 } declared)
             {
                 band = band with { CentreHz = declared.CentreHz };
             }
@@ -902,10 +905,20 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// </remarks>
     private void BroadcastAudio(ReadOnlySpan<float> samples)
     {
-        bool wanted;
+        // Plain loops under the lock: this runs per received audio block on the receive
+        // thread for the life of the daemon, and the LINQ forms allocated an enumerator and
+        // a closure per block while holding the clients lock.
+        bool wanted = false;
         lock (_clientsLock)
         {
-            wanted = _clients.Any(c => c.AudioEnabled);
+            foreach (WaterfallClient client in _clients)
+            {
+                if (client.AudioEnabled)
+                {
+                    wanted = true;
+                    break;
+                }
+            }
         }
 
         if (!wanted)
@@ -919,7 +932,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         int blockSamples = _channel.SampleRate * AudioBlockMilliseconds / 1000;
         foreach (float sample in samples)
         {
-            _audioBlock.Add((short)Math.Clamp(sample * 32767f, short.MinValue, short.MaxValue));
+            _audioBlock.Add(Audio.Pcm16.FromFloat(sample));
         }
 
         while (_audioBlock.Count >= blockSamples)
@@ -937,9 +950,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             _audioBlock.RemoveRange(0, blockSamples);
             lock (_clientsLock)
             {
-                foreach (WaterfallClient listener in _clients.Where(c => c.AudioEnabled))
+                foreach (WaterfallClient listener in _clients)
                 {
-                    listener.Queue.Writer.TryWrite((WebSocketMessageType.Binary, message));
+                    if (listener.AudioEnabled)
+                    {
+                        listener.Queue.Writer.TryWrite((WebSocketMessageType.Binary, message));
+                    }
                 }
             }
         }

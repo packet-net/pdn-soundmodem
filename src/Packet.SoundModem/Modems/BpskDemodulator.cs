@@ -31,6 +31,10 @@ public sealed class BpskDemodulator
     /// noise floor, well below a clean signal's ~0.9.</summary>
     private const double OffsetCoherenceFloor = 0.5;
 
+    /// <summary>Samples between oscillator renormalisations; see
+    /// <see cref="AfskDemodulator"/>'s twin constant.</summary>
+    private const int OscillatorRenormInterval = 4096;
+
     /// <summary>DPLL inertia for the differential path. Dire Wolf's 0.74 (which the coherent
     /// path keeps) costs ~1 dB of timing jitter at this mode's Reed-Solomon threshold;
     /// measured on the −3 dB AWGN BER floor, 0.92 recovers most of it while the all-reversal
@@ -76,9 +80,12 @@ public sealed class BpskDemodulator
     private readonly CostasLoop? _costas;
     private readonly float[] _delayI;
     private readonly float[] _delayQ;
-    private readonly double _oscillatorStep;
+    private readonly double _rotateCos;
+    private readonly double _rotateSin;
     private readonly int _sampleRate;
-    private double _oscillatorPhase;
+    private double _oscillatorCos = 1;
+    private double _oscillatorSin;
+    private int _renormCountdown = OscillatorRenormInterval;
     private double _averageDiffMagnitude;
     private double _offsetWindowReal;
     private double _offsetWindowImag;
@@ -154,7 +161,9 @@ public sealed class BpskDemodulator
             _lowPassQ = new FirFilter((float[])taps.Clone());
         }
 
-        _oscillatorStep = 2 * Math.PI * carrierFrequency / sampleRate;
+        double step = 2 * Math.PI * carrierFrequency / sampleRate;
+        _rotateCos = Math.Cos(step);
+        _rotateSin = Math.Sin(step);
         _sampleRate = sampleRate;
 
         int samplesPerSymbol = sampleRate / baud;
@@ -303,14 +312,23 @@ public sealed class BpskDemodulator
     // decision-feedback reference.
     private void ProcessDifferential(float sample)
     {
-        _oscillatorPhase += _oscillatorStep;
-        if (_oscillatorPhase > 2 * Math.PI)
+        // The mixer NCO as a rotating phasor rather than per-sample Math.Sin/Cos - the
+        // same treatment as AfskDemodulator, and for the same reason: a diversity bank
+        // multiplies this loop by its branch count.
+        double rotatedCos = (_oscillatorCos * _rotateCos) - (_oscillatorSin * _rotateSin);
+        double rotatedSin = (_oscillatorSin * _rotateCos) + (_oscillatorCos * _rotateSin);
+        _oscillatorCos = rotatedCos;
+        _oscillatorSin = rotatedSin;
+        if (--_renormCountdown == 0)
         {
-            _oscillatorPhase -= 2 * Math.PI;
+            double scale = 1 / Math.Sqrt((rotatedCos * rotatedCos) + (rotatedSin * rotatedSin));
+            _oscillatorCos *= scale;
+            _oscillatorSin *= scale;
+            _renormCountdown = OscillatorRenormInterval;
         }
 
-        float i = _lowPassI.Next(sample * (float)Math.Sin(_oscillatorPhase));
-        float q = _lowPassQ.Next(sample * (float)Math.Cos(_oscillatorPhase));
+        float i = _lowPassI.Next(sample * (float)_oscillatorSin);
+        float q = _lowPassQ.Next(sample * (float)_oscillatorCos);
 
         _currentI = i;
         _currentQ = q;

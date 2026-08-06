@@ -29,7 +29,7 @@ public sealed class AlsaAudioOutput : IAudioOutput, IDisposable
 
         for (int i = 0; i < samples.Length; i++)
         {
-            _buffer[i] = (short)MathF.Round(Math.Clamp(samples[i], -1f, 1f) * 32767f);
+            _buffer[i] = Audio.Pcm16.FromFloat(samples[i]);
         }
 
         _pcm.Write(_buffer.AsSpan(0, samples.Length));
