@@ -28,7 +28,6 @@ public class WaterfallPlainIl2pTests : IAsyncLifetime
     private readonly SoundModemChannel _channel;
     private readonly WaterfallWebServer _server;
     private readonly int _port;
-    private readonly CancellationTokenSource _cancellation = new(TimeSpan.FromSeconds(30));
 
     public WaterfallPlainIl2pTests()
     {
@@ -44,11 +43,21 @@ public class WaterfallPlainIl2pTests : IAsyncLifetime
         return ValueTask.CompletedTask;
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        await _server.DisposeAsync();
-        _cancellation.Dispose();
-    }
+    public async ValueTask DisposeAsync() => await _server.DisposeAsync();
+
+    /// <summary>
+    /// A fresh deadline for one await, rather than one deadline shared by the whole test.
+    /// </summary>
+    /// <remarks>
+    /// A single test-lifetime budget has to cover the connect, the config message, the
+    /// <em>synchronous</em> demodulation of a 300 baud burst through a nine-branch bank, and only
+    /// then the receive it was actually written to bound. Running the whole suite in parallel on a
+    /// loaded box, the work in front can eat most of it, and what surfaces is a
+    /// <c>TaskCanceledException</c> out of a socket read that had seconds rather than the thirty
+    /// it looks like it has. Measured here at roughly one failure per six full Release runs.
+    /// Per-await budgets mean each wait is bounded by how long that wait takes.
+    /// </remarks>
+    private static CancellationTokenSource Budget() => new(TimeSpan.FromSeconds(30));
 
     [Fact]
     public async Task A_Withheld_Plain_Frame_Reaches_The_Browser_Marked_As_Both()
@@ -80,35 +89,62 @@ public class WaterfallPlainIl2pTests : IAsyncLifetime
     private async Task<JsonDocument> FirstFrameAsync(float[] audio)
     {
         using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        using (CancellationTokenSource connecting = Budget())
+        {
+            await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), connecting.Token);
+        }
+
         await Receive(socket);   // config
 
-        _channel.ProcessReceive(audio);
+        // Read while the audio is fed, the way a browser does, rather than pushing it all in and
+        // only then looking. The server's per-client queue is bounded at about a second of
+        // messages and drops the OLDEST when it overflows, because a display that has fallen
+        // behind should show the newest spectrum and not a backlog. Four seconds of 300 baud
+        // audio in one synchronous call puts something like 120 spectrum lines behind the frame
+        // message and evicts it - the server behaving exactly as designed, and a test that has to
+        // behave like a browser to see the thing it is asserting about. Measured before the fix:
+        // about one failure per four full parallel runs, and none at all in 40 runs of this class
+        // on its own, which is the signature of a queue that only overflows when the send loop is
+        // competing for a thread.
+        Task<JsonDocument> reader = Task.Run(() => ReadUntilFrameAsync(socket));
+        for (int at = 0; at < audio.Length; at += SampleRate / 10)
+        {
+            _channel.ProcessReceive(audio.AsSpan(at, Math.Min(SampleRate / 10, audio.Length - at)));
+            await Task.Delay(1);   // let the reader drain what that tenth of a second produced
+        }
 
+        return await reader;
+    }
+
+    private static async Task<JsonDocument> ReadUntilFrameAsync(ClientWebSocket socket)
+    {
         while (true)
         {
             (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
-            if (kind == WebSocketMessageType.Text)
+            if (kind != WebSocketMessageType.Text)
             {
-                var message = JsonDocument.Parse(payload);
-                if (message.RootElement.GetProperty("type").GetString() == "frame")
-                {
-                    return message;
-                }
-
-                message.Dispose();
+                continue;
             }
+
+            var message = JsonDocument.Parse(payload);
+            if (message.RootElement.GetProperty("type").GetString() == "frame")
+            {
+                return message;
+            }
+
+            message.Dispose();
         }
     }
 
-    private async Task<(WebSocketMessageType Kind, byte[] Payload)> Receive(ClientWebSocket socket)
+    private static async Task<(WebSocketMessageType Kind, byte[] Payload)> Receive(ClientWebSocket socket)
     {
         var buffer = new byte[64 * 1024];
         var got = new List<byte>();
         WebSocketReceiveResult result;
         do
         {
-            result = await socket.ReceiveAsync(buffer, _cancellation.Token);
+            using CancellationTokenSource reading = Budget();
+            result = await socket.ReceiveAsync(buffer, reading.Token);
             got.AddRange(buffer.AsSpan(0, result.Count).ToArray());
         }
         while (!result.EndOfMessage);
