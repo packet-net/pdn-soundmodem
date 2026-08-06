@@ -89,6 +89,34 @@ public class MultiDecoderTests
     }
 
     [Fact]
+    public void The_Bank_Transmits_The_Training_Fill_A_Cold_Receiver_Acquires_From()
+    {
+        // The TXDELAY-0 parity criterion the single Afsk1200Modem passes
+        // (NinoTncParityTests): 10 for 10 into a cold receiver with no preamble to spare.
+        // The bank transmits the identical Bell 202 waveform, so it must carry the
+        // identical TrainingPreamble fill - the all-flags fill it used to send trains a
+        // cold slicer poorly and this is the test that notices.
+        var bank = new Afsk1200MultiModem(SampleRate, _ => { });
+        var audio = new List<float>();
+        audio.AddRange(new float[SampleRate / 2]);
+        for (int i = 0; i < 10; i++)
+        {
+            var frame = new byte[40];
+            byte[] header = [0x96, 0x82, 0x64, 0x88, 0x8A, 0xAE, 0xE4, 0x96, 0x96, 0x68, 0x90, 0x8A, 0x94, 0x6F, 0x03, 0xF0];
+            header.CopyTo(frame, 0);
+            new Random(i + 10).NextBytes(frame.AsSpan(16));
+            audio.AddRange(bank.Modulate(frame, txDelayMilliseconds: 0));
+            audio.AddRange(new float[SampleRate / 2]);
+        }
+
+        int decoded = 0;
+        var receiver = new Afsk1200Modem(SampleRate, _ => decoded++);
+        receiver.Process(audio.ToArray());
+
+        decoded.Should().Be(10, "a cold receiver acquires every frame at TXDELAY 0");
+    }
+
+    [Fact]
     public void Identical_Content_Later_Is_Not_Deduplicated()
     {
         byte[] frame = SampleFrame();

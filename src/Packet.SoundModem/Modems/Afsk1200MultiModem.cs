@@ -26,7 +26,16 @@ public sealed class Afsk1200MultiModem : IModem
     private readonly Action<byte[]> _frameReceived;
     private readonly FrameDeduper _deduper;
     private readonly int _dedupeChunk;
+    private readonly List<Candidate> _candidates = [];
     private long _samplesProcessed;
+
+    /// <summary>One branch's copy of a frame, held until the chunk ends and the branches can
+    /// be compared. <paramref name="ResidualHz"/> is that branch's demodulator's own
+    /// measurement of how far the signal sat from <em>its</em> centre, so branch + residual
+    /// is the station's offset from the bank's centre however far out the branch that copied
+    /// it happened to be (the issue #202 model, as in <see cref="Afsk300MultiModem"/>).</summary>
+    private readonly record struct Candidate(
+        byte[] Frame, double BranchOffsetHz, double ResidualHz, int EmphasisDb);
 
     /// <summary>Creates the bank.</summary>
     /// <param name="sampleRate">Channel DSP rate.</param>
@@ -63,7 +72,8 @@ public sealed class Afsk1200MultiModem : IModem
             int step = (i % frequencyCount) - offsetPairs;
             double offset = step * offsetHz;
             int emphasisDb = (i / frequencyCount) * 6;   // EmphasisFilter variants: 0/+6/+12 dB/oct
-            var deframer = new HdlcDeframer(frame => OnFrame(frame, offset, emphasisDb));
+            int branch = i;
+            var deframer = new HdlcDeframer(frame => OnFrame(frame, offset, emphasisDb, branch));
             var nrzi = new NrziDecoder();
             _demodulators[i] = new AfskDemodulator(
                 sampleRate,
@@ -107,15 +117,21 @@ public sealed class Afsk1200MultiModem : IModem
             }
 
             _samplesProcessed += slice.Length;
+            EmitBestOfChunk();
         }
     }
 
     /// <inheritdoc />
-    public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds)
-    {
-        int openingFlags = Math.Max(2, (int)(txDelayMilliseconds * 1200L / (8 * 1000)));
-        return _modulator.Modulate(HdlcFramer.FrameBits(ax25Frame, openingFlags, closingFlags: 2));
-    }
+    /// <remarks>
+    /// The TXDELAY fill is <see cref="TrainingPreamble"/> zeros, not flags - the cold-start
+    /// fix the single <see cref="Afsk1200Modem"/> and <see cref="Afsk300Modem"/> carry (an
+    /// all-flags fill is 87.5 % one tone and trains a cold slicer poorly; see that class).
+    /// This bank transmits the identical Bell 202 waveform, so it takes the identical fix.
+    /// </remarks>
+    public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds) =>
+        _modulator.Modulate(TrainingPreamble.Prepend(
+            HdlcFramer.FrameBits(ax25Frame, openingFlags: 2, closingFlags: 2),
+            txDelayMilliseconds, 1200));
 
     /// <inheritdoc />
     public void ResetCarrierState()
@@ -160,16 +176,77 @@ public sealed class Afsk1200MultiModem : IModem
         }
     }
 
-    private void OnFrame(byte[] frame, double offsetHz, int emphasisDb)
+    // Several branches usually decode the same transmission within a frame-time of each
+    // other, which is well inside one chunk. Hold them all and let the chunk end decide,
+    // rather than emitting whichever finished first.
+    private void OnFrame(byte[] frame, double offsetHz, int emphasisDb, int branch) =>
+        _candidates.Add(new Candidate(
+            frame, offsetHz, _demodulators[branch].CarrierOffsetHz, emphasisDb));
+
+    /// <summary>
+    /// Emits one frame per distinct transmission seen this chunk, from the branch that was
+    /// actually tuned closest to it.
+    /// </summary>
+    /// <remarks>
+    /// The first branch to finish is the wrong one to report: branches are fed in ascending
+    /// order and a clean signal decodes on branches well either side of it, so "first" means
+    /// "lowest-centred branch that could still read it" - a construction-time comb position,
+    /// not a measurement, and it reported −60 Hz for a GPSDO-locked station squarely on
+    /// frequency. Ranking the branches on each one's own
+    /// <see cref="AfskDemodulator.CarrierOffsetHz"/> residual instead is the issue #202 fix
+    /// <see cref="BpskMultiModem"/> and <see cref="Afsk300MultiModem"/> already carry;
+    /// <c>branch + residual</c> is the station's offset from the bank's centre. All copies
+    /// here carry equal decode evidence (an HDLC frame is FCS-checked or it does not
+    /// exist), but not equal <em>measurement</em> evidence: the emphasis pre-filters tilt
+    /// the spectrum by design, which skews the discriminator midpoint the residual is read
+    /// from - measured on a clean on-frequency signal, a +6 dB/oct branch 30 Hz out
+    /// reported a near-zero residual and stole the win from the flat branch that was
+    /// actually matched. So flat outranks emphasised, and the residual decides among
+    /// equals. Measured matched-branch honesty is ~±12 Hz at 1200 baud (the envelope
+    /// midpoint carries a small mark-duty bias Bell 202's 87.5 %-mark flags produce)
+    /// against the ±60-90 Hz comb-position lie this replaces. The cost is a frame waiting
+    /// for the end of its chunk: at most 100 ms.
+    /// </remarks>
+    private void EmitBestOfChunk()
     {
-        // Several branches usually decode the same transmission within a frame-time of
-        // each other; emit the first and drop content-identical repeats in the window.
-        if (_deduper.ShouldEmit(frame, _samplesProcessed))
+        while (_candidates.Count > 0)
         {
-            _frameReceived(frame);
-            FrameDecoded?.Invoke(frame, new FrameQuality(
-                Mode, frame.Length, CorrectedBytes: null, CrcValid: null,
-                FrequencyOffsetHz: offsetHz, EmphasisDb: emphasisDb));
+            Candidate best = _candidates[0];
+            for (int i = 1; i < _candidates.Count; i++)
+            {
+                if (IsSameFrame(_candidates[i].Frame, best.Frame) && IsBetter(_candidates[i], best))
+                {
+                    best = _candidates[i];
+                }
+            }
+
+            for (int i = _candidates.Count - 1; i >= 0; i--)
+            {
+                if (IsSameFrame(_candidates[i].Frame, best.Frame))
+                {
+                    _candidates.RemoveAt(i);
+                }
+            }
+
+            // Still deduped across chunks: a transmission straddling a chunk boundary
+            // reaches here twice, and the window is what stops the second copy going out.
+            if (!_deduper.ShouldEmit(best.Frame, _samplesProcessed))
+            {
+                continue;
+            }
+
+            _frameReceived(best.Frame);
+            FrameDecoded?.Invoke(best.Frame, new FrameQuality(
+                Mode, best.Frame.Length, CorrectedBytes: null, CrcValid: null,
+                FrequencyOffsetHz: best.BranchOffsetHz + best.ResidualHz,
+                EmphasisDb: best.EmphasisDb));
         }
     }
+
+    private static bool IsBetter(in Candidate candidate, in Candidate best) =>
+        candidate.EmphasisDb != best.EmphasisDb
+            ? candidate.EmphasisDb < best.EmphasisDb
+            : Math.Abs(candidate.ResidualHz) < Math.Abs(best.ResidualHz);
+
+    private static bool IsSameFrame(byte[] a, byte[] b) => a.AsSpan().SequenceEqual(b);
 }

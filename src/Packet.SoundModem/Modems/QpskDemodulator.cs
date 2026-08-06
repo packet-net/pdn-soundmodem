@@ -16,6 +16,15 @@ namespace Packet.SoundModem.Modems;
 /// </summary>
 public sealed class QpskDemodulator
 {
+    /// <summary>Memory of the carrier-offset window, per contributing sample - ~1000
+    /// samples, so the reading describes roughly the last tenth of a second of signal
+    /// rather than the whole burst. Mirrors <see cref="BpskDemodulator"/>.</summary>
+    private const double OffsetWindowRate = 0.001;
+
+    /// <summary>Coherence (0..1) below which the offset window is noise rather than a
+    /// signal. As in <see cref="BpskDemodulator"/>.</summary>
+    private const double OffsetCoherenceFloor = 0.5;
+
     private readonly FirFilter _bandPass;
     private readonly FirFilter _lowPassI;
     private readonly FirFilter _lowPassQ;
@@ -29,7 +38,12 @@ public sealed class QpskDemodulator
     private readonly int _delayWhole;
     private readonly float _delayFraction;
     private readonly double _oscillatorStep;
+    private readonly double _delaySamples;
+    private readonly int _sampleRate;
     private double _oscillatorPhase;
+    private double _averageDiffMagnitude;
+    private double _offsetWindowReal;
+    private double _offsetWindowImag;
     private int _delayPosition;
     private int _previousQuadrant;
     private float _lastRe;
@@ -68,6 +82,8 @@ public sealed class QpskDemodulator
         }
 
         double delay = (double)sampleRate / baud;
+        _delaySamples = delay;
+        _sampleRate = sampleRate;
         _delayWhole = (int)Math.Floor(delay);
         _delayFraction = (float)(delay - _delayWhole);
         // Ring of whole+1: the slot about to be overwritten holds z[n-(whole+1)] (older),
@@ -98,6 +114,48 @@ public sealed class QpskDemodulator
     /// <summary>True while DPLL transition timing indicates a coherent packet signal.</summary>
     public bool CarrierDetect => _packetDcd.Asserted;
 
+    /// <summary>
+    /// How far the signal sat from <em>this</em> demodulator's own carrier centre, in Hz
+    /// (positive = above it), or <c>null</c> when nothing coherent enough to measure is
+    /// present. The QPSK twin of <see cref="BpskDemodulator.CarrierOffsetHz"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Coherent</b> (the mode family's default): the Costas NCO is already tracking
+    /// the carrier, so its frequency correction is the residual directly; trustworthy only
+    /// while the loop is on a signal, hence the DCD gate.</para>
+    /// <para><b>Differential:</b> the detector has already formed z·conj(z one symbol ago)
+    /// to decide the dibit; that product's angle is the per-symbol carrier rotation plus a
+    /// multiple-of-90° data step, so raising the normalised product to the <em>fourth</em>
+    /// power (BPSK squares - one more doubling removes the extra data axis) strips the data
+    /// and leaves a phasor at four times the rotation. Unambiguous over ±baud/8, far wider
+    /// than any real station error on these modes.</para>
+    /// <para>Read it when a frame arrives - between bursts the window decays into the noise
+    /// and this goes null, which is the honest answer to "how far off was the station"
+    /// when there is no station.</para>
+    /// </remarks>
+    public double? CarrierOffsetHz
+    {
+        get
+        {
+            if (_detector == PskDetector.Coherent)
+            {
+                return _packetDcd.Asserted ? _costas!.FrequencyOffsetHz(_sampleRate) : null;
+            }
+
+            double coherence = Math.Sqrt(
+                (_offsetWindowReal * _offsetWindowReal) + (_offsetWindowImag * _offsetWindowImag));
+            if (coherence < OffsetCoherenceFloor)
+            {
+                return null;
+            }
+
+            // Quartering the fourth-power phasor's angle recovers the per-symbol rotation,
+            // which is the offset in cycles per symbol.
+            return Math.Atan2(_offsetWindowImag, _offsetWindowReal)
+                / (4.0 * _delaySamples) * _sampleRate / (2 * Math.PI);
+        }
+    }
+
     /// <summary>Channel-busy for carrier sense (packet or energy).</summary>
     public bool ChannelBusy => _packetDcd.Asserted || _energyBusy.Busy;
 
@@ -106,6 +164,10 @@ public sealed class QpskDemodulator
     {
         _packetDcd.Reset();
         _energyBusy.Reset();
+        // Our own transmission is not a measurement of anybody's offset.
+        _averageDiffMagnitude = 0;
+        _offsetWindowReal = 0;
+        _offsetWindowImag = 0;
     }
 
     /// <summary>Processes a block of audio samples.</summary>
@@ -179,9 +241,11 @@ public sealed class QpskDemodulator
             _delayPosition = 0;
         }
 
-        // Phase change over one symbol; quadrant = nearest multiple of 90°.
+        // Phase change over one symbol; quadrant = nearest multiple of 90°. The angle the
+        // quadrant decision rounds away is what carries the carrier offset.
         float re = i * delayedI + q * delayedQ;
         float im = q * delayedI - i * delayedQ;
+        TrackCarrierOffset(re, im);
         double angle = Math.Atan2(im, re);
         int quadrant = ((int)Math.Round(angle / (Math.PI / 2)) + 4) & 3;
 
@@ -190,5 +254,37 @@ public sealed class QpskDemodulator
         _lastRe = re;
         _lastIm = im;
         _dpll.Sample(quadrant);
+    }
+
+    /// <summary>Folds one differential product into the carrier-offset window (see
+    /// <see cref="CarrierOffsetHz"/>) - <see cref="BpskDemodulator"/>'s tracker with the
+    /// squaring doubled to strip QPSK's four-way data steps.</summary>
+    /// <remarks>
+    /// Samples whose magnitude is below its running mean - the amplitude nulls a phase
+    /// transition sweeps through - are dropped, so only full-amplitude symbol centres
+    /// contribute; that is also what tolerates the all-reversal training preamble, whose
+    /// π steps the fourth power removes entirely.
+    /// </remarks>
+    private void TrackCarrierOffset(double real, double imaginary)
+    {
+        double magnitude = Math.Sqrt((real * real) + (imaginary * imaginary));
+        _averageDiffMagnitude += OffsetWindowRate * (magnitude - _averageDiffMagnitude);
+        if (magnitude <= _averageDiffMagnitude || magnitude < 1e-9)
+        {
+            return;   // a transition null - no reliable phase here
+        }
+
+        double normalisedReal = real / magnitude;
+        double normalisedImaginary = imaginary / magnitude;
+
+        // (d/|d|)⁴ strips the multiple-of-90° data steps, leaving a phasor at four times
+        // the per-symbol rotation. The window starts from zero, not from the first phasor,
+        // so a lone early sample cannot read as full coherence.
+        double squaredReal = (normalisedReal * normalisedReal) - (normalisedImaginary * normalisedImaginary);
+        double squaredImaginary = 2 * normalisedReal * normalisedImaginary;
+        double fourthReal = (squaredReal * squaredReal) - (squaredImaginary * squaredImaginary);
+        double fourthImaginary = 2 * squaredReal * squaredImaginary;
+        _offsetWindowReal += OffsetWindowRate * (fourthReal - _offsetWindowReal);
+        _offsetWindowImag += OffsetWindowRate * (fourthImaginary - _offsetWindowImag);
     }
 }

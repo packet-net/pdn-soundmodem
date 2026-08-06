@@ -98,13 +98,38 @@ public class FrameQualityTests
         bank.Process(padded);
 
         qualities.Should().ContainSingle("the deduper emits one frame however many branches decode");
-        // On a CLEAN signal several branches decode and the deduper takes whichever
-        // finished first, so the offset is populated but not directionally meaningful -
-        // it only points at the transmitter's error when the signal is marginal enough
-        // that just the matching branch decodes. Assert the plumbing, not direction.
+        // The bank ranks branches on each demodulator's own residual measurement and
+        // reports branch + residual (the issue #202 model), so on a clean signal the
+        // reading points at the transmitter's error - it used to be whichever comb
+        // position finished first, which read −60 Hz for this station 60 Hz HIGH. Range,
+        // not precision: Bell 202's envelope-midpoint residual is content-biased by up to
+        // ~30 Hz (the trailing flags' mark duty), and direction plus scale is the claim.
         qualities[0].FrequencyOffsetHz.Should().NotBeNull();
-        Math.Abs(qualities[0].FrequencyOffsetHz!.Value).Should().BeLessThanOrEqualTo(60);
+        qualities[0].FrequencyOffsetHz!.Value.Should().BeInRange(
+            40, 100, "the station really is 60 Hz high, and the sign must say so");
         qualities[0].EmphasisDb.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void The_Multi_Decoder_Bank_Reads_An_On_Frequency_Station_As_On_Frequency()
+    {
+        var qualities = new List<FrameQuality>();
+        var bank = new Afsk1200MultiModem(SampleRate, _ => { }, offsetPairs: 2);
+        bank.FrameDecoded += (_, q) => qualities.Add(q);
+
+        // A GPSDO-locked neighbour, squarely on frequency: the reading must say so, not
+        // report the comb position of whichever branch was processed first.
+        float[] audio = bank.Modulate(SampleFrame(), 100);
+        var padded = new float[audio.Length + SampleRate];
+        audio.CopyTo(padded, SampleRate / 2);
+        bank.Process(padded);
+
+        qualities.Should().ContainSingle();
+        // ~±12 Hz is the honest floor of the Bell 202 envelope-midpoint measurement (a
+        // mark-duty bias; see EmitBestOfChunk) - the bar here is that the comb position
+        // (±30/±60) no longer masquerades as the reading.
+        Math.Abs(qualities[0].FrequencyOffsetHz!.Value).Should().BeLessThan(
+            20, "the station is on frequency and the bank measured it, not its comb");
     }
 
     [Fact]
