@@ -1097,6 +1097,8 @@ void WatchClients(KissTcpServer server)
         Console.WriteLine(ActivityLog.ClientConnected(server.LocalPort, server.DedicatedSubChannel, e));
     server.ClientDisconnected += e =>
         Console.WriteLine(ActivityLog.ClientDisconnected(server.LocalPort, server.DedicatedSubChannel, e));
+    server.AcceptFailed += why => Console.Error.WriteLine(
+        $"kiss[{server.LocalPort}] accept failed: {why} - listening continues");
 
     // What a host changed with SETHW, or why it was refused - RAM-only state with no other
     // record, so the journal is where an operator learns which waveform their modem is on.
@@ -1294,6 +1296,13 @@ if (paging is not null)
         : M0LTE.Pocsag.PocsagPolarity.Normal;
     pagingServer = new Packet.SoundModem.Pocsag.PagingTcpServer(
         channel, paging.Port, paging.Baud, polarity, listenAddress);
+
+    // A page the server said OK to and then could not send has no client left to tell -
+    // the journal is the only place the loss can be recorded, exactly as for KISS frames.
+    pagingServer.PageDropped += drop => Console.Error.WriteLine(
+        $"page[{drop.Id}] to {drop.Ric} DROPPED: {drop.Reason}");
+    pagingServer.AcceptFailed += why => Console.Error.WriteLine(
+        $"paging: accept failed: {why} - listening continues");
     pagingServer.Start();
     Console.WriteLine($"paging tcp: {(Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString())}:{pagingServer.LocalPort} ({pagingServer.Mode}, DAPNET/POCSAG-compatible)");
 }
