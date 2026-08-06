@@ -83,6 +83,7 @@ internal sealed class FrameLog : IAsyncDisposable
                     crc_valid         INTEGER,
                     trailer_near_bits INTEGER,
                     monitor_only      INTEGER,
+                    erased_bytes      INTEGER,
                     offset_hz         REAL,
                     audio_hz          REAL,
                     rf_hz             REAL,
@@ -117,6 +118,7 @@ internal sealed class FrameLog : IAsyncDisposable
                      ("direction", "TEXT NOT NULL DEFAULT 'rx'"),
                      ("trailer_near_bits", "INTEGER"),
                      ("monitor_only", "INTEGER"),
+                     ("erased_bytes", "INTEGER"),
                  })
         {
             using SqliteCommand columns = connection.CreateCommand();
@@ -170,6 +172,7 @@ internal sealed class FrameLog : IAsyncDisposable
             // campaign found the gap by diffing this log against an offline re-decode.
             quality.TrailerNearBits,
             quality.MonitorOnly,
+            quality.ErasedBytes,
             quality.FrequencyOffsetHz,
             audioHz,
             rfHz,
@@ -218,6 +221,7 @@ internal sealed class FrameLog : IAsyncDisposable
             CrcValid: null,
             TrailerNearBits: null,
             MonitorOnly: null,
+            ErasedBytes: null,
             OffsetHz: null,
             audioHz,
             rfHz,
@@ -314,17 +318,17 @@ internal sealed class FrameLog : IAsyncDisposable
         insert.CommandText = """
             INSERT INTO frames
               (heard_at, direction, sub_channel, mode, mode_name, source, destination,
-               length, corrected, crc_valid, trailer_near_bits, monitor_only,
+               length, corrected, crc_valid, trailer_near_bits, monitor_only, erased_bytes,
                offset_hz, audio_hz, rf_hz, payload)
             VALUES
               ($heard_at, $direction, $sub, $mode, $mode_name, $source, $destination,
-               $length, $corrected, $crc, $trailer, $monitor, $offset, $audio, $rf, $payload)
+               $length, $corrected, $crc, $trailer, $monitor, $erased, $offset, $audio, $rf, $payload)
             """;
         foreach (string name in new[]
                  {
                      "$heard_at", "$direction", "$sub", "$mode", "$mode_name", "$source",
                      "$destination", "$length", "$corrected", "$crc", "$trailer", "$monitor",
-                     "$offset", "$audio", "$rf", "$payload",
+                     "$erased", "$offset", "$audio", "$rf", "$payload",
                  })
         {
             insert.Parameters.Add(new SqliteParameter(name, DBNull.Value));
@@ -346,6 +350,7 @@ internal sealed class FrameLog : IAsyncDisposable
                 insert.Parameters["$crc"].Value = entry.CrcValid is bool crc ? crc ? 1 : 0 : DBNull.Value;
                 insert.Parameters["$trailer"].Value = (object?)entry.TrailerNearBits ?? DBNull.Value;
                 insert.Parameters["$monitor"].Value = entry.MonitorOnly is bool monitor ? monitor ? 1 : 0 : DBNull.Value;
+                insert.Parameters["$erased"].Value = (object?)entry.ErasedBytes ?? DBNull.Value;
                 insert.Parameters["$offset"].Value = (object?)entry.OffsetHz ?? DBNull.Value;
                 insert.Parameters["$audio"].Value = (object?)entry.AudioHz ?? DBNull.Value;
                 insert.Parameters["$rf"].Value = (object?)entry.RfHz ?? DBNull.Value;
@@ -383,6 +388,7 @@ internal sealed class FrameLog : IAsyncDisposable
         bool? CrcValid,
         int? TrailerNearBits,
         bool? MonitorOnly,
+        int? ErasedBytes,
         double? OffsetHz,
         double? AudioHz,
         double? RfHz,
