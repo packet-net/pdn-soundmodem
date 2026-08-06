@@ -21,6 +21,7 @@ public sealed class QpskModem : IModem, IConstellationSource
     {
         _bitRate = baud * 2;
         _crc = crc;
+        QpskDemodulator? demodulator = null;
         var deframer = new Il2pReceiver(
             (frame, info, delivery) =>
             {
@@ -31,6 +32,9 @@ public sealed class QpskModem : IModem, IConstellationSource
 
                 FrameDecoded?.Invoke(frame, new FrameQuality(
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                    // The measurement BpskModem has carried since issue #202; without it
+                    // the whole live QPSK family reported no offset at all.
+                    FrequencyOffsetHz: demodulator!.CarrierOffsetHz,
                     HeaderType: info.HeaderType,
                     PlainIl2p: delivery.PlainIl2p,
                     MonitorOnly: delivery.MonitorOnly));
@@ -41,7 +45,6 @@ public sealed class QpskModem : IModem, IConstellationSource
         // carrier that drops mid-collection leaves the deframer consuming the next
         // transmission's preamble and sync word as phantom payload.
         bool previousDcd = false;
-        QpskDemodulator? demodulator = null;
         demodulator = new QpskDemodulator(
             sampleRate, baud,
             (first, second) =>
