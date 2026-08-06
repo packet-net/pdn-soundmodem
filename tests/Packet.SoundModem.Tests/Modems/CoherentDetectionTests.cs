@@ -66,11 +66,11 @@ public class CoherentDetectionTests
     /// <summary>
     /// At a σ inside each mode's measured decode gap, coherent detection decodes strictly more
     /// of the same noisy bursts than the differential detector - the ~1-2 dB margin #5 set out
-    /// to recover. σ per mode is chosen where the measured gap is wide and stable.
+    /// to recover. σ per mode is chosen where the measured gap is wide and stable. QPSK only
+    /// since the BPSK differential detector became decision-feedback: see
+    /// <see cref="Bpsk_Differential_Detection_Matches_Coherent"/> for where that margin went.
     /// </summary>
     [Theory]
-    [InlineData("bpsk300", 0.60f)]
-    [InlineData("bpsk1200", 0.35f)]
     [InlineData("qpsk600", 0.40f)]
     [InlineData("qpsk2400", 0.25f)]
     [InlineData("qpsk3600", 0.12f)]
@@ -85,6 +85,31 @@ public class CoherentDetectionTests
             "coherent detection of mode '{0}' must recover margin over the differential opt-in "
             + "(σ={1}: coherent {2}/{3}, differential {4}/{3})",
             mode, sigma, coherent, Trials, differential);
+    }
+
+    /// <summary>
+    /// The BPSK rows of the margin gate above, inverted on purpose: the differential detector's
+    /// decision-feedback carrier reference (matched filter, ~20-symbol reference memory, seeded
+    /// frequency tracking) buys back the margin plain one-symbol differential detection gave
+    /// away, without the Costas loop's acquisition fragility - so at the same in-gap σ the
+    /// robust default must now decode at least as many of the same noisy bursts as the coherent
+    /// cross-check variant. A regression that quietly returns the differential path to its
+    /// plain form turns this red.
+    /// </summary>
+    [Theory]
+    [InlineData("bpsk300", 0.60f)]
+    [InlineData("bpsk1200", 0.35f)]
+    public void Bpsk_Differential_Detection_Matches_Coherent(string mode, float sigma)
+    {
+        const int Trials = 30;
+        int coherent = DecodeCount(mode, PskDetector.Coherent, sigma, Trials);
+        int differential = DecodeCount(mode, PskDetector.Differential, sigma, Trials);
+
+        differential.Should().BeGreaterThanOrEqualTo(
+            coherent,
+            "decision-feedback differential detection of mode '{0}' must hold the coherent "
+            + "margin (σ={1}: differential {2}/{3}, coherent {4}/{3})",
+            mode, sigma, differential, Trials, coherent);
     }
 
     /// <summary>Both detectors decode a clean frame for every PSK mode - the coherent default

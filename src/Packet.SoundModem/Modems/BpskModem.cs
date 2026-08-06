@@ -82,7 +82,7 @@ public sealed class BpskModem : IModem, IConstellationSource
 
             previousDcd = dcd;
             deframer.PushBit(bit);
-        }, carrierFrequency, baud, detector);
+        }, carrierFrequency, baud, detector, rollOff: rollOff);
         _demodulator = demodulator;
         _demodulator.SymbolPlotted = (i, q) => SymbolPlotted?.Invoke(new ConstellationPoint(i, q));
         _modulator = new BpskModulator(sampleRate, baud, carrierFrequency, rollOff);

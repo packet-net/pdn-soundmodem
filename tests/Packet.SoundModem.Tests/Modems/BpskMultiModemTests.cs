@@ -129,8 +129,15 @@ public class BpskMultiModemTests
 
         modem.Process(OffTune(22));
 
+        // ±3 rather than the bank's sub-Hz: the matched filter is centred on the channel, so
+        // a signal this far off has its spectrum asymmetrically truncated, which makes the
+        // baseband pulse complex and biases the reading away from centre by ~10 % of the
+        // offset. A bank never reads through that skew - its winning branch sits within half
+        // a step (±3.75 Hz), where the bias is under 0.1 Hz, which is what
+        // The_Reported_Offset_Is_A_Measurement_Of_The_Signal pins. What this guards is the
+        // lone modem reporting a measurement at all, not a comb position.
         qualities.Should().ContainSingle()
-            .Which.FrequencyOffsetHz.Should().BeApproximately(22, 2);
+            .Which.FrequencyOffsetHz.Should().BeApproximately(22, 3);
     }
 
     [Fact]
