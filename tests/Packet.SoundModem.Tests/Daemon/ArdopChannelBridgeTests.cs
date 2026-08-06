@@ -217,6 +217,88 @@ public class ArdopChannelBridgeTests
     }
 
     [Fact]
+    public void Receive_Does_Not_Fold_Channel_Noise_Onto_A_High_Centres_Band()
+    {
+        // The fold the FrequencyShiftedModem gate caught, checked on ARDOP's own bridge:
+        // unshifting a centre above 1500 is a DOWNSHIFT by delta = centre - 1500, and
+        // downshifting a real signal folds all channel noise below delta onto delta - f.
+        // At centre 2400 (delta 900) the folded region 0-900 Hz overlaps the bottom of a
+        // 2000 Hz session's 500-2500 Hz engine band, doubling its noise (+3 dB) unless the
+        // channel audio is bandpassed to the on-air band BEFORE the unshift. Wide-window
+        // Flex plans make such placements legitimate, so this is not a corner an operator
+        // warning covers. White noise in; the output noise floor must be flat across the
+        // engine band, folded region included.
+        var bridge = ArdopChannelBridge.For(2400, Rate, Rate);
+        var random = new Random(1234);
+        var noise = new float[Rate * 4];
+        for (int i = 0; i < noise.Length; i++)
+        {
+            // Box-Muller; unit-variance white noise.
+            double u1 = 1.0 - random.NextDouble();
+            double u2 = random.NextDouble();
+            noise[i] = (float)(Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2));
+        }
+
+        float[] unshifted = bridge.Receive(noise);
+
+        // Averaged Hann-windowed periodograms, well past the filters' settling transient.
+        const int N = 4096;
+        double binHz = Rate / (double)N;
+        var psd = new double[N / 2];
+        int windows = 0;
+        for (int start = Rate; start + N <= unshifted.Length; start += N / 2)
+        {
+            var windowed = new double[N];
+            for (int i = 0; i < N; i++)
+            {
+                windowed[i] = unshifted[start + i] * (0.5 - (0.5 * Math.Cos(2 * Math.PI * i / (N - 1))));
+            }
+
+            for (int k = 1; k < N / 2; k++)
+            {
+                double hz = k * binHz;
+                if (hz < 500 || hz > 2500)
+                {
+                    continue;
+                }
+
+                double re = 0, im = 0;
+                for (int i = 0; i < N; i++)
+                {
+                    double angle = -2 * Math.PI * k * i / N;
+                    re += windowed[i] * Math.Cos(angle);
+                    im += windowed[i] * Math.Sin(angle);
+                }
+
+                psd[k] += (re * re) + (im * im);
+            }
+
+            windows++;
+        }
+
+        windows.Should().BeGreaterThan(10);
+        double BandDb(double lowHz, double highHz)
+        {
+            double sum = 0;
+            int count = 0;
+            for (int k = (int)(lowHz / binHz); k <= (int)(highHz / binHz); k++)
+            {
+                sum += psd[k];
+                count++;
+            }
+
+            return 10 * Math.Log10(sum / count);
+        }
+
+        // 550-850 Hz sits inside the folded region; 1200-2400 Hz is above it. Unfixed, the
+        // first reads ~3 dB above the second.
+        double folded = BandDb(550, 850);
+        double clear = BandDb(1200, 2400);
+        (folded - clear).Should().BeLessThan(1.0,
+            "channel noise below the unshift frequency must not fold onto the session band");
+    }
+
+    [Fact]
     public void A_Channel_Rate_That_Is_Not_A_Multiple_Is_Rejected()
     {
         FluentActions.Invoking(() => ArdopChannelBridge.For(null, Rate, 18000))

@@ -40,8 +40,28 @@ internal sealed class ArdopChannelBridge
     internal const double PassbandLowHz = 300.0;
     internal const double PassbandHighHz = 2700.0;
 
+    /// <summary>Receive bandpass length: at 12 kHz its ~60 Hz transition is far sharper than
+    /// the 300 Hz margin below needs, and it matches the FrequencyShiftedModem's choice so the
+    /// two shift paths read the same.</summary>
+    private const int ReceiveBandpassTaps = 639;
+
+    /// <summary>How far the receive bandpass opens beyond the widest session's band edges,
+    /// so real skirts sit in the flat passband.</summary>
+    private const double ReceiveBandpassMarginHz = 300.0;
+
     private readonly FrequencyShifter? _transmit;
     private readonly FrequencyShifter? _receive;
+
+    /// <summary>Bandpass to the on-air band, applied BEFORE the receive unshift - and that
+    /// order is load-bearing, not hygiene. Unshifting a centre above 1500 Hz is a downshift
+    /// by delta = centre - 1500, and downshifting a real signal folds all channel noise below
+    /// delta onto delta - f: at centre 2400 that measured +2.9 dB across the bottom of a
+    /// 2000 Hz session's band (the same fold the FrequencyShiftedModem BER gate caught at
+    /// 3 dB, where more Hilbert taps changed nothing because it is not a Hilbert defect).
+    /// Sized for the widest session plus margin, the bandpass's low edge sits above every
+    /// fold-source frequency, so the fold's input is stopband noise. Null when unshifted -
+    /// that path stays bit-for-bit what it always was.</summary>
+    private readonly FirFilter? _receiveBandpass;
 
     /// <summary>Channel rate -> engine rate, receive side. One instance for the life of the
     /// bridge: the RX stream is continuous, so the decimator's filter state must carry across
@@ -55,6 +75,9 @@ internal sealed class ArdopChannelBridge
 
     /// <summary>Decimator output scratch, grown to the largest block seen and then reused.</summary>
     private float[] _decimated = [];
+
+    /// <summary>Bandpass output scratch for <see cref="Unshift"/>, likewise reused.</summary>
+    private float[] _banded = [];
 
     private ArdopChannelBridge(double centreHz, int engineRate, int channelRate)
     {
@@ -74,6 +97,10 @@ internal sealed class ArdopChannelBridge
         {
             _transmit = new FrequencyShifter(engineRate, delta);
             _receive = new FrequencyShifter(engineRate, -delta);
+            _receiveBandpass = new FirFilter(FilterDesign.BandPass(
+                Math.Max(50, centreHz - (WidestBandwidthHz / 2) - ReceiveBandpassMarginHz),
+                Math.Min((engineRate / 2.0) - 50, centreHz + (WidestBandwidthHz / 2) + ReceiveBandpassMarginHz),
+                engineRate, ReceiveBandpassTaps));
         }
 
         if (_factor > 1)
@@ -136,7 +163,7 @@ internal sealed class ArdopChannelBridge
             }
             else
             {
-                _receive.Process(samples, output);
+                Unshift(samples, output);
             }
 
             return output;
@@ -156,10 +183,27 @@ internal sealed class ArdopChannelBridge
         }
         else
         {
-            _receive.Process(_decimated.AsSpan(0, produced), engine);
+            Unshift(_decimated.AsSpan(0, produced), engine);
         }
 
         return engine;
+    }
+
+    /// <summary>Bandpass to the on-air band, then move it back to ARDOP's native centre - in
+    /// that order; see <see cref="_receiveBandpass"/> for why swapping them costs 3 dB.</summary>
+    private void Unshift(ReadOnlySpan<float> onAir, float[] output)
+    {
+        if (_banded.Length < onAir.Length)
+        {
+            _banded = new float[onAir.Length];
+        }
+
+        for (int i = 0; i < onAir.Length; i++)
+        {
+            _banded[i] = _receiveBandpass!.Next(onAir[i]);
+        }
+
+        _receive!.Process(_banded.AsSpan(0, onAir.Length), output);
     }
 
     /// <summary>The start-up line's suffix.</summary>
