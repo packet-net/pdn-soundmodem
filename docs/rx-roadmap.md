@@ -70,6 +70,37 @@ grows with band variety (a weekend contest, a geomagnetic upset, summer QRN). Ch
 Ranked by expected real-world return per unit of effort, with the reasoning pinned so a future
 session can re-rank honestly as facts change.
 
+### 0. Watterson masks and the accept discipline (cross-cutting; Tom, 2026-08-06)
+
+Extend the MS110D programme's two instruments to the audio modems: **per-mode Watterson
+performance masks** frozen as tests, and the **accept discipline** that goes with them. Most
+of the machinery exists - `WattersonChannel` is itself validated, `SimChannel` pins the
+Good/Poor geometries so packet and MS110D masks stay one rig, and `SimModem` makes the
+generate-channel-score loop mode-generic. What is missing is thin and is this workstream:
+
+- **Two tiers.** A small always-blocking smoke per mode - one anchor rung, 30-50 bursts,
+  threshold far enough under the measured value that binomial wobble cannot flake it, sized
+  to catch a regression of a dB or more. Plus an env-gated full ladder (the A/B instrument)
+  over the whole SNR x channel x CFO grid. Deterministic seeds throughout: a mask failure
+  reproduces exactly, or it is not a mask failure.
+- **Masks from measured reality, never aspiration.** bpsk300/bpsk1200 masks come from the
+  2026-08-06 campaign numbers; the QPSK family's come from their current, known-poor levels,
+  which documents the truth and catches further slippage - when those modes get their own
+  receive campaign the masks move up with the ledger entry that justifies it. Aspirations
+  stay in the aspiration suites, where the house discipline already keeps them non-blocking.
+- **The discipline.** A PR touching a modem's receive path runs that mode's full ladder A/B
+  and quotes it; a mask moves only with a mode-validation.md entry. This is what the #236 and
+  erasure campaigns did by hand; the workstream makes it the floor, not the habit.
+- **The honest limit, stated up front.** Masks pin the receiver against the model. The
+  Watterson sim carries no static crashes, no SSB filter tilt, no AGC and our own TX shaping
+  rather than a NinoTNC's - so a green mask means "no regression against the model", and the
+  capture campaign stays the truth about the band. Two instruments, two jobs.
+
+Why it ranks where it does: three near-misses in two days were caught only by ad-hoc sweeps
+or one-off pins (the mid-branch CFO hole, the coherent-margin inversion, the erasure
+interpolation hazard), the ~1.4 dB banked this week exists only as ledger prose until a mask
+holds it, and workstreams 5-7 below each need exactly this instrument to develop against.
+
 ### 1. Soft-decision and erasure Reed-Solomon decoding (the big lever)
 
 Everything above the demodulator is hard-decision; that is the textbook ~2 dB give-away, and
