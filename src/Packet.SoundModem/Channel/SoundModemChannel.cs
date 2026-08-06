@@ -284,6 +284,18 @@ public sealed class SoundModemChannel
     public event Action<bool>? TransmittingChanged;
 
     /// <summary>
+    /// A PTT keyup or unkey failed. Raised instead of letting the exception kill the
+    /// transmitter loop, which is what happened before this existed: the loop had no catch,
+    /// the daemon swallowed the task's fault, and one throwing Key() left a receive-only
+    /// station with no log line - for every PTT type, not just a Flex. On a keyup failure
+    /// every queued frame is faulted (a definite answer for ACKMODE hosts and the reject
+    /// path, matching TransmitInhibitTimeout's philosophy) and the loop carries on: the
+    /// next enqueue tries again, so a transient contention or an unplugged serial lead
+    /// costs frames, never the transmitter.
+    /// </summary>
+    public event Action<Exception>? PttFailed;
+
+    /// <summary>
     /// Consulted before a shared transmission is queued; while it returns true the transmission
     /// waits. Set by a host that has to keep a stretch of the channel clear - an ARDOP ARQ
     /// session, whose timing an AX.25 frame landing mid-turnaround would break. Null (the
@@ -376,9 +388,30 @@ public sealed class SoundModemChannel
 
             _transmitting = true;
             TransmittingChanged?.Invoke(true);
+            bool keyed = false;
             try
             {
-                ptt.Key();
+                try
+                {
+                    ptt.Key();
+                    keyed = true;
+                }
+                catch (Exception keyFailure) when (keyFailure is not OperationCanceledException)
+                {
+                    // Fault everything queued rather than leaving enqueuers to time out one by
+                    // one: the answer is definite, the frames are lost, and the loop survives
+                    // to try the next keyup. FlexTxContendedException lands here by design -
+                    // "another station holds the PA" is an outcome, not a broken radio.
+                    while (reader.TryRead(out var queued))
+                    {
+                        queued.Done.TrySetException(keyFailure);
+                        queued.Rejected?.Invoke(keyFailure);
+                    }
+
+                    PttFailed?.Invoke(keyFailure);
+                    continue;
+                }
+
                 bool first = true;
                 while (reader.TryRead(out var item))
                 {
@@ -429,7 +462,22 @@ public sealed class SoundModemChannel
             }
             finally
             {
-                ptt.Unkey();
+                // Best-effort: an unkey that throws (the radio's session died mid-burst) must
+                // not mask the burst's own result or kill the loop - and after a failed keyup
+                // there is nothing to unkey. The arbitrated Flex PTT additionally suppresses
+                // unkey for a keyup it did not win, so this cannot cut a peer's burst.
+                if (keyed)
+                {
+                    try
+                    {
+                        ptt.Unkey();
+                    }
+                    catch (Exception unkeyFailure) when (unkeyFailure is not OperationCanceledException)
+                    {
+                        PttFailed?.Invoke(unkeyFailure);
+                    }
+                }
+
                 _transmitting = false;
                 TransmittingChanged?.Invoke(false);
                 foreach (IModem modem in _modems.Values)

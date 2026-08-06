@@ -167,6 +167,10 @@ public sealed class FlexDaxTransmitter : IOtaTransmitter
                 DaxChannel = DaxChannel,
                 TransmitFilterHighHz = options.DaxTransmitFilterHighHz,
                 SelectDaxAsTransmitSource = true,
+                // Name the harness: the production daemon registers as "pdn-soundmodem", and
+                // until both named themselves, two transmitting clients on one radio were
+                // indistinguishable "Flex"es in each other's diagnostics.
+                HeadlessStationName = "sm-ota",
             },
             cancellation).ConfigureAwait(false);
 

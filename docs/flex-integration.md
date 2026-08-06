@@ -933,3 +933,38 @@ return codes or packet counts, which were uniformly healthy in both failure case
 in particular had been carried in the docs, in the library's XML comments and in the tool's own
 banner, none of which had ever measured it. Where a number in this document is not accompanied by
 how it was measured, treat it as inherited.
+
+## 11. Sharing the PA between transmitting clients - arbitration, and the probe checklist
+
+(2026-08-06, shipped with pdn-soundmodem's concurrent-TX programme; M0LTE.Flex 0.12.0.)
+
+Two of this repo's own processes want the same radio: the production daemon and a test
+instance or the sm-ota harness. Until 0.12.0 the second client silently stole the TX slice
+(`FlexPtt` claimed `tx=1` once per process and never re-asserted), the transmit filter -
+global and persistent - was last-writer-wins, and both clients registered as an anonymous
+"Flex". The library half of the fix is `FlexArbitratedPtt` (keys only into a quiet radio,
+ordered filter -> slice -> xmit -> confirm, unkeys only a won keyup); the daemon half is
+`"flex": { "arbitration": true, "stationName": "..." }`, a transmit-inhibit gate composed
+over ARDOP's, and per-keyup filter re-assertion.
+
+**`arbitration` defaults OFF until the probes below run on the real 6500.** Everything the
+arbitrated path does is conservative under every plausible radio semantic (it never writes
+into a busy radio and never believes an unconfirmed keyup), but four semantics are genuinely
+unmeasured, and the answers set the defaults:
+
+| # | Probe (~2 min each, two client sessions + dummy load) | Decides |
+|---|---|---|
+| P1 | A transmitting, B sends `slice set <B> tx=1`: rejected, or steals mid-burst (A's RF drops/unmodulates)? | Whether arbitration is belt-and-braces or load-bearing |
+| P2 | A transmitting, B sends `xmit 0`: PA drops (global boolean) or nothing (per-client)? Then B `xmit 1` mid-burst: error or silent accept? | The lost-race exit policy (may a loser send `xmit 0`?) |
+| P3 | While A transmits, dump B's S-lines: does `interlock` carry a TX attribution field? Does a fresh client connecting mid-burst receive the current state or only the next transition? | The confirm mechanism and the cold-join rule |
+| P4 | A `rfpower=10`, B `rfpower=50`, each keys in turn: does each station's own power apply? | Whether rfpower needs per-keyup re-assertion (`FlexPttArbitrationOptions.RfPower`) |
+| P5 | A transmits a wide sweep, B writes `transmit set filter_high=500`: does A's occupied bandwidth collapse? | Confirms the quiet-gating of filter writes (and the bring-up hazard: starting a second client mid-burst) |
+| P6 | kill -9 a keyed client: time to PA drop and interlock RECEIVE (RST vs the ~15 s keepalive worst case) | The QuietWaitTimeout floor |
+| P7 | `client station <name>` after `client gui`: err codes, name visible in `client` status, rfpower held under it | Station naming as shipped (best-effort either way) |
+| P8 | A transmits, B completes a full arbitrated burst, A keys again: does A's DAX audio air, or does `dax audio set <ch> slice=<idx> tx=1` also need per-keyup re-assertion? | Whether the arbitrated sequence needs one more command |
+| P9 | B (plain DAX client) watches the interlock across A's waveform-IQ burst: TRANSMITTING seen? RECEIVE ever announced, or parked UNKEY_REQUESTED? | The `StaleUnkeyGrace` value, or its removal |
+
+Record outcomes as measured-corrections entries in this file (§10 style), flip the
+`arbitration` default only after P1/P2/P3, and finish with the two-instance rehearsal: the
+production config and a test instance alternating bursts, both journals clean, no stolen
+slices, no truncated filters.

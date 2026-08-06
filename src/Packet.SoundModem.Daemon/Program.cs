@@ -285,6 +285,8 @@ var flexTuning = new FlexTuning
     TransmitFilterHighHz = flexConfig?.TransmitFilterHighHz is > 0
         ? flexConfig.TransmitFilterHighHz
         : null,
+    StationName = flexConfig?.StationName ?? "pdn-soundmodem",
+    Arbitration = flexConfig?.Arbitration ?? false,
 };
 
 // Nothing stated: the daemon works the transmit filter out rather than inheriting whatever the
@@ -1074,6 +1076,18 @@ Console.CancelKeyPress += (_, e) =>
     cancellation.Cancel();
 };
 
+// systemctl stop sends SIGTERM, and until this existed only Ctrl-C ran the graceful path -
+// a stopped service skipped every disposal, which on a headless Flex leaks the created slice
+// (the radio keeps it, dead handle and all, until its four-slice limit stalls every later
+// bring-up). Same route as Ctrl-C: cancel, drain, dispose, slice removed.
+using var sigterm = System.Runtime.InteropServices.PosixSignalRegistration.Create(
+    System.Runtime.InteropServices.PosixSignal.SIGTERM,
+    context =>
+    {
+        context.Cancel = true;
+        cancellation.Cancel();
+    });
+
 // Who is attached to a KISS port, in the journal. A host that quietly drops its TCP session
 // stops passing traffic, and from the modem's side that is indistinguishable from a quiet band -
 // so the attach and the loss both get a line, and the loss carries its reason where it had one.
@@ -1393,6 +1407,21 @@ else if (deviceIsFlex)
     ptt = flex.Ptt;
     playback = flex.Output;
     input = flex.Input;
+
+    // Arbitrated keying: ordinary queued frames also defer BEFORE they are rendered while
+    // another station transmits - the same polite hold ARDOP sessions get - rather than
+    // discovering the busy radio inside Key(). Composed over whatever inhibit is already
+    // installed (ARDOP's ARQ gate lands earlier), never instead of it. ARDOP's own bursts
+    // bypass the inhibit by design and rely on the in-Key wait alone.
+    if (flex.Ptt is M0LTE.Flex.FlexArbitratedPtt arbitratedPtt)
+    {
+        Func<bool>? priorInhibit = channel.TransmitInhibit;
+        channel.TransmitInhibit = () =>
+            (priorInhibit?.Invoke() ?? false) || arbitratedPtt.AnotherStationTransmitting;
+        Console.WriteLine(
+            "flex: arbitrated keying - every keyup waits out other stations, re-asserts the "
+            + "transmit filter and the TX slice, and is confirmed against the interlock");
+    }
     FlexDevice.FlexSpec flexSpec = FlexDevice.Parse(device);
     string flexModeDesc = flexSpec.Headless
         ? $"headless {flexTuning.Frequency} MHz {flexTuning.Antenna} {flexTuning.Mode}"
@@ -1601,6 +1630,11 @@ else
 }
 
 await using var flexLifetime = flex;
+
+// A keyup that fails must say so: the loop survives it (faulting the queued frames), and
+// this line is the only place the operator learns why nothing went out - "another station
+// holds the PA" on an arbitrated radio, or a dead PTT lead anywhere else.
+channel.PttFailed += failure => Console.Error.WriteLine($"ptt: {failure.Message}");
 
 Task transmitter = channel.RunTransmitterAsync(playback, ptt, cancellation.Token);
 
