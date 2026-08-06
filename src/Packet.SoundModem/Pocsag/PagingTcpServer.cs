@@ -40,11 +40,21 @@ public sealed class PagingTcpServer : IAsyncDisposable
     /// 240 keeps a page inside ~13 batches.)</summary>
     public const int MaxTextLength = 240;
 
+    /// <summary>Bytes a client may have queued and unread before its session is dropped.
+    /// Writes only back up once the socket's kernel buffers are full, which means the
+    /// client has stopped reading; a healthy client never comes close.</summary>
+    private const int MaxQueuedBytes = 1 << 20;
+
+    /// <summary>Pause after a failed accept, so a persistent fault (fd exhaustion) does not
+    /// turn the accept loop into a busy spin.</summary>
+    private static readonly TimeSpan AcceptRetryDelay = TimeSpan.FromSeconds(1);
+
     private readonly TcpListener _listener;
     private readonly SoundModemChannel _channel;
     private readonly PocsagEncoder _encoder;
     private readonly int _baud;
-    private readonly ConcurrentDictionary<Guid, TcpClient> _clients = [];
+    private readonly TimeProvider _time;
+    private readonly ConcurrentDictionary<Guid, ClientSession> _clients = [];
     private readonly CancellationTokenSource _stopping = new();
     private Task? _acceptLoop;
     private int _nextId;
@@ -57,13 +67,16 @@ public sealed class PagingTcpServer : IAsyncDisposable
     /// <param name="baud">POCSAG bit rate; 1200 is DAPNET's.</param>
     /// <param name="polarity">TX baseband polarity (the decoder auto-detects on RX).</param>
     /// <param name="bind">Bind address; loopback by default.</param>
+    /// <param name="time">Wall clock; the system's when null.</param>
     public PagingTcpServer(
         SoundModemChannel channel, int port = 8106, int baud = 1200,
-        PocsagPolarity polarity = PocsagPolarity.Normal, IPAddress? bind = null)
+        PocsagPolarity polarity = PocsagPolarity.Normal, IPAddress? bind = null,
+        TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(channel);
         _channel = channel;
         _baud = baud;
+        _time = time ?? TimeProvider.System;
         _encoder = new PocsagEncoder(channel.SampleRate, baud, polarity);
         var decoder = new PocsagDecoder(channel.SampleRate, OnPageHeard, baud);
         channel.AddReceiveTap(decoder.Process);
@@ -76,6 +89,16 @@ public sealed class PagingTcpServer : IAsyncDisposable
     /// <summary>The bound port (useful when constructed with port 0).</summary>
     public int LocalPort => ((IPEndPoint)_listener.LocalEndpoint).Port;
 
+    /// <summary>An accept failed and the listener is carrying on (with the failure's
+    /// message). Existing sessions are unaffected.</summary>
+    public event Action<string>? AcceptFailed;
+
+    /// <summary>A page the server answered <c>OK</c> for that never went out, and why: the
+    /// channel refused it after queueing (an ARQ session holding the channel past the
+    /// inhibit timeout, a PTT failure). The client cannot be told - <c>OK</c> already went
+    /// - so this is the journal's to record.</summary>
+    public event Action<PageDropEvent>? PageDropped;
+
     /// <summary>Starts accepting clients.</summary>
     public void Start()
     {
@@ -85,29 +108,54 @@ public sealed class PagingTcpServer : IAsyncDisposable
 
     private async Task AcceptLoopAsync()
     {
-        try
+        while (!_stopping.IsCancellationRequested)
         {
-            while (!_stopping.IsCancellationRequested)
+            TcpClient client;
+            try
             {
-                TcpClient client = await _listener.AcceptTcpClientAsync(_stopping.Token).ConfigureAwait(false);
-                client.NoDelay = true;
-                var id = Guid.NewGuid();
-                _clients[id] = client;
-                _ = ServeClientAsync(id, client);
+                client = await _listener.AcceptTcpClientAsync(_stopping.Token).ConfigureAwait(false);
             }
-        }
-        catch (OperationCanceledException)
-        {
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (ObjectDisposedException)
+            {
+                return; // the listener was stopped under us: shutdown, not a fault
+            }
+            catch (SocketException e)
+            {
+                // One failed accept (a client that reset mid-handshake, the process briefly
+                // out of fds) must not kill the listener for the rest of the process's life.
+                AcceptFailed?.Invoke(e.Message);
+                try
+                {
+                    await Task.Delay(AcceptRetryDelay, _time, _stopping.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+
+                continue;
+            }
+
+            client.NoDelay = true;
+            var id = Guid.NewGuid();
+            var session = new ClientSession(client);
+            _clients[id] = session;
+            _ = WriteLoopAsync(session);
+            _ = ServeClientAsync(id, session);
         }
     }
 
-    private async Task ServeClientAsync(Guid id, TcpClient client)
+    private async Task ServeClientAsync(Guid id, ClientSession session)
     {
         var pending = new StringBuilder();
         var buffer = new byte[4096];
         try
         {
-            NetworkStream stream = client.GetStream();
+            NetworkStream stream = session.Client.GetStream();
             while (!_stopping.IsCancellationRequested)
             {
                 int got = await stream.ReadAsync(buffer, _stopping.Token).ConfigureAwait(false);
@@ -123,13 +171,13 @@ public sealed class PagingTcpServer : IAsyncDisposable
                     pending.Remove(0, newline + 1);
                     if (line.Length > 0)
                     {
-                        Send(client, HandleLine(line));
+                        Send(session, HandleLine(line));
                     }
                 }
 
                 if (pending.Length > 4096)
                 {
-                    Send(client, "ERR line too long");
+                    Send(session, "ERR line too long");
                     break;
                 }
             }
@@ -141,7 +189,28 @@ public sealed class PagingTcpServer : IAsyncDisposable
         finally
         {
             _clients.TryRemove(id, out _);
-            client.Dispose();
+            session.SendQueue.Writer.TryComplete();
+            session.Client.Dispose();
+        }
+    }
+
+    /// <summary>Drains one client's send queue onto its socket - the only writer, so lines
+    /// cannot interleave however many threads queued them.</summary>
+    private async Task WriteLoopAsync(ClientSession session)
+    {
+        try
+        {
+            NetworkStream stream = session.Client.GetStream();
+            await foreach (byte[] data in session.SendQueue.Reader.ReadAllAsync(_stopping.Token)
+                               .ConfigureAwait(false))
+            {
+                await stream.WriteAsync(data, _stopping.Token).ConfigureAwait(false);
+                Interlocked.Add(ref session.QueuedBytes, -data.Length);
+            }
+        }
+        catch (Exception)
+        {
+            // Broken pipe or shutdown: the client's read loop cleans the session up.
         }
     }
 
@@ -207,8 +276,28 @@ public sealed class PagingTcpServer : IAsyncDisposable
         int id = Interlocked.Increment(ref _nextId);
         // The spec preamble (576 bits) doubles as the TXDELAY budget; honour a longer
         // configured TXDELAY by stretching it (the preamble is the settling time).
-        _ = _channel.EnqueueTransmit(txDelay => _encoder.Modulate(
+        Task sent = _channel.EnqueueTransmit(txDelay => _encoder.Modulate(
             [page], Math.Max(PocsagEncoder.PreambleBits, (int)((long)txDelay * _baud / 1000))));
+
+        // A channel with no transmitter at all refuses synchronously - that answer belongs
+        // to the client, not a journal, and a false OK teaches it the page went somewhere.
+        if (sent.IsFaulted)
+        {
+            string refusal = sent.Exception!.GetBaseException().Message;
+            return $"ERR {refusal}";
+        }
+
+        // A page the channel accepts can still die waiting (an ARQ session holding the
+        // channel past the inhibit timeout, a PTT failure). OK has been sent by then, so
+        // the drop is announced on PageDropped - it used to vanish, its faulted task
+        // surfacing only as an UnobservedTaskException.
+        uint droppedRic = ric;
+        _ = sent.ContinueWith(
+            t => PageDropped?.Invoke(new PageDropEvent(
+                id, droppedRic, t.Exception?.GetBaseException().Message ?? "unknown")),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
         return $"OK {id}";
     }
 
@@ -218,9 +307,9 @@ public sealed class PagingTcpServer : IAsyncDisposable
             ? "TONE"
             : page.Function == 0 ? $"NUMERIC {Sanitize(page.NumericText)}" : $"ALPHA {Sanitize(page.AlphaText)}";
         string line = $"HEARD {page.Address} {page.Function} {content}";
-        foreach (TcpClient client in _clients.Values)
+        foreach (ClientSession session in _clients.Values)
         {
-            Send(client, line);
+            Send(session, line);
         }
     }
 
@@ -237,20 +326,41 @@ public sealed class PagingTcpServer : IAsyncDisposable
         return safe.ToString();
     }
 
-    private static void Send(TcpClient client, string line)
+    private static void Send(ClientSession session, string line)
     {
-        try
+        // Queued, never written here: HEARD broadcasts run on the audio receive thread, and
+        // a synchronous socket write there can block for as long as a client cares to stop
+        // reading - taking every modem and tap on the channel deaf with it.
+        byte[] bytes = Encoding.UTF8.GetBytes(line + "\n");
+        if (Interlocked.Add(ref session.QueuedBytes, bytes.Length) <= MaxQueuedBytes
+            && session.SendQueue.Writer.TryWrite(bytes))
         {
-            byte[] bytes = Encoding.UTF8.GetBytes(line + "\n");
-            lock (client)
-            {
-                client.GetStream().Write(bytes);
-            }
+            return;
         }
-        catch (Exception)
-        {
-            // Broken pipe: the client's read loop will clean it up.
-        }
+
+        // The budget only fills once the socket's kernel buffers are full: the client has
+        // stopped reading. Dropping the session beats silently discarding lines for a
+        // client that believes it is still attached.
+        session.SendQueue.Writer.TryComplete();
+        session.Client.Dispose();
+    }
+
+    /// <summary>One connected client: its socket and the queue its lines (replies and
+    /// HEARD broadcasts) leave through, in order, without ever blocking the sender.</summary>
+    private sealed class ClientSession(TcpClient client)
+    {
+        public TcpClient Client { get; } = client;
+
+        public System.Threading.Channels.Channel<byte[]> SendQueue { get; } =
+            System.Threading.Channels.Channel.CreateUnbounded<byte[]>(
+                new System.Threading.Channels.UnboundedChannelOptions
+                {
+                    SingleReader = true,
+                });
+
+        /// <summary>Bytes queued and not yet written - the budget
+        /// <see cref="MaxQueuedBytes"/> bounds. Interlocked: writers race the write loop.</summary>
+        public int QueuedBytes;
     }
 
     /// <inheritdoc />
@@ -258,9 +368,10 @@ public sealed class PagingTcpServer : IAsyncDisposable
     {
         await _stopping.CancelAsync().ConfigureAwait(false);
         _listener.Stop();
-        foreach (TcpClient client in _clients.Values)
+        foreach (ClientSession session in _clients.Values)
         {
-            client.Dispose();
+            session.SendQueue.Writer.TryComplete();
+            session.Client.Dispose();
         }
 
         if (_acceptLoop is not null)
@@ -277,3 +388,7 @@ public sealed class PagingTcpServer : IAsyncDisposable
         _stopping.Dispose();
     }
 }
+
+/// <summary>A queued page that never went out: the id its client was answered <c>OK</c>
+/// with, the RIC it addressed, and why the channel refused it.</summary>
+public readonly record struct PageDropEvent(int Id, uint Ric, string Reason);

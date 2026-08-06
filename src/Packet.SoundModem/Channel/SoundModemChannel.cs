@@ -98,10 +98,11 @@ public sealed class SoundModemChannel
     /// </remarks>
     public event Action<int, byte[], Modems.FrameQuality>? FrameReceivedWithQuality;
 
-    /// <summary>Raised when a queued frame is dropped because its modem refused to
-    /// modulate it (sub-channel, frame, reason) - e.g. a frame beyond the mode's size
-    /// bound. The frame's <see cref="EnqueueTransmit(int, byte[])"/> task faults with
-    /// the same exception; the transmitter keeps running.</summary>
+    /// <summary>Raised when a queued frame is dropped (sub-channel, frame, reason): its
+    /// modem refused to modulate it (e.g. a frame beyond the mode's size bound), or the
+    /// sub-channel has no modem at all. The frame's
+    /// <see cref="EnqueueTransmit(int, byte[])"/> task faults with the same exception;
+    /// the transmitter keeps running.</summary>
     public event Action<int, byte[], Exception>? TransmitRejected;
 
     /// <summary>True while any modem sees packet or energy busy, or we are transmitting.</summary>
@@ -166,7 +167,16 @@ public sealed class SoundModemChannel
     {
         if (!_modems.TryGetValue(subChannel, out IModem? modem))
         {
-            return Task.FromException(new ArgumentException($"no modem on sub-channel {subChannel}"));
+            // A sub-channel nothing transmits on - a typo'd nibble, or the ARDOP entry, which
+            // is a receive tap rather than a modem. This used to fault a task most callers
+            // discard: no DROPPED line, no observed exception, the host's traffic simply
+            // vanished with nothing to distinguish it from a dead band. Announced like every
+            // other refused frame, and observed here because a fire-and-forget caller cannot.
+            var refusal = new ArgumentException($"no modem on sub-channel {subChannel}");
+            TransmitRejected?.Invoke(subChannel, frame, refusal);
+            Task faulted = Task.FromException(refusal);
+            _ = faulted.Exception;
+            return faulted;
         }
 
         return SendAndAnnounceAsync(subChannel, frame, modem);
