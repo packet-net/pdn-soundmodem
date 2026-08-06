@@ -84,9 +84,20 @@ public class TransmitterOutputFailureTests
         await FluentActions.Awaiting(() => doomed.WaitAsync(TimeSpan.FromSeconds(10)))
             .Should().ThrowAsync<IOException>().WithMessage("*unplugged*");
 
-        // The drop is journalled like any other, and the loop's fault reaches its owner -
-        // the daemon turns it into a logged exit rather than a silent transmit-dead station.
+        // The drop is journalled like any other. Waited for rather than asserted flat: the
+        // faulted task releases this test's await on a pool thread, which can win the race
+        // against the transmitter thread still invoking the rejected callback.
+        using var settle = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (rejections.Count == 0)
+        {
+            settle.Token.ThrowIfCancellationRequested();
+            await Task.Delay(10, settle.Token);
+        }
+
         rejections.Should().ContainSingle().Which.Should().BeOfType<IOException>();
+
+        // And the loop's fault reaches its owner - the daemon turns it into a logged exit
+        // rather than a silent transmit-dead station.
         await FluentActions.Awaiting(() => transmitter.WaitAsync(TimeSpan.FromSeconds(10)))
             .Should().ThrowAsync<IOException>();
     }
