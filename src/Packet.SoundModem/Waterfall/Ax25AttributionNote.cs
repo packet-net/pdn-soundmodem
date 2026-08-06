@@ -58,7 +58,8 @@ public static class Ax25AttributionNote
         }
 
         // Every character is legal but the parse still failed - the remaining way that happens is
-        // a field that is all spaces, i.e. an empty callsign.
-        return "the address field holds legal characters but an empty callsign";
+        // a source field that is all spaces, i.e. an empty source callsign. (A blank destination
+        // alone no longer unattributes a frame: the parser reads each field on its own.)
+        return "the address field holds legal characters but an empty source callsign";
     }
 }
