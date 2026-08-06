@@ -275,11 +275,108 @@ public class Il2pReceiverTests
             + "like a duplicate to a guard that outlived its burst");
     }
 
+    [Theory]
+    [InlineData(2)]
+    [InlineData(4)]
+    public void A_Grazed_Trailer_Corroborates_The_Frame_And_It_Is_Delivered(int damagedBits)
+    {
+        // The corpus's dominant failure: payload recovered byte-exact, trailer clipped by the
+        // end-of-burst pulse truncation. Within CorroborationMaxBits the trailer still proves
+        // the payload, so the frame is delivered even on a link that withholds plain IL2P.
+        // Two bits is the floor for this path: a single flipped trailer bit never reaches it,
+        // because the trailer's own Hamming layer corrects it and the CRC reading verifies.
+        byte[] beacon = Gb7bpqBeacon();
+        byte[] bits = FrameBits(beacon, crc: true);
+        for (int i = 1; i <= damagedBits; i++)
+        {
+            bits[^i] ^= 1;   // clip the trailer's tail, exactly where the cliff bites
+        }
+
+        (List<byte[]> got, List<Il2pDecodeInfo> info, List<Il2pDelivery> delivery) = PushWithInfo(
+            bits, crcMode: true, acceptPlainIl2p: false);
+
+        got.Should().ContainSingle().Which.Should().Equal(beacon);
+        info[0].CrcValid.Should().BeNull("the CRC as decoded did not verify");
+        delivery[0].TrailerNearBits.Should().Be(damagedBits,
+            "the distance is measured, and it is what corroborated the frame");
+        delivery[0].MonitorOnly.Should().BeFalse(
+            "a corroborated frame is CRC-strength evidence and goes to the host");
+        delivery[0].PlainIl2p.Should().BeTrue("the reading itself was still the plain one");
+    }
+
+    [Fact]
+    public void A_Wrecked_Trailer_Does_Not_Corroborate()
+    {
+        byte[] beacon = Gb7bpqBeacon();
+        byte[] bits = FrameBits(beacon, crc: true);
+        for (int i = 1; i <= 8; i++)
+        {
+            bits[^i] ^= 1;
+        }
+
+        (List<byte[]> _, List<Il2pDecodeInfo> _, List<Il2pDelivery> delivery) = PushWithInfo(
+            bits, crcMode: true, acceptPlainIl2p: false);
+
+        delivery[0].TrailerNearBits.Should().BeNull("eight of thirty-two bits is not a graze");
+        delivery[0].MonitorOnly.Should().BeTrue("so the frame stays a withheld plain reading");
+    }
+
+    [Fact]
+    public void A_Genuinely_Plain_Frame_Is_Not_Corroborated_By_The_Noise_Behind_It()
+    {
+        // A plain-IL2P station's frames are followed by whatever the channel does next, not by
+        // a trailer. The corroboration check must not promote them off that noise.
+        byte[] beacon = Gb7bpqBeacon();
+        byte[] plainBits = FrameBits(beacon, crc: false);
+        var random = new Random(7);
+        byte[] bits = new byte[plainBits.Length + IdleBits];
+        plainBits.CopyTo(bits, 0);
+        for (int i = plainBits.Length; i < bits.Length; i++)
+        {
+            bits[i] = (byte)random.Next(2);
+        }
+
+        (List<byte[]> _, List<Il2pDecodeInfo> _, List<Il2pDelivery> delivery) = PushWithInfo(
+            bits, crcMode: true, acceptPlainIl2p: false, idleBits: 0);
+
+        delivery[0].TrailerNearBits.Should().BeNull(
+            "random bits sit ~16 of 32 from any implied trailer");
+        delivery[0].MonitorOnly.Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_Burst_That_Ends_Before_The_Trailer_Is_Released_Uncorroborated()
+    {
+        // Reset (the DCD falling edge) releases the held frame before 32 trailer bits arrived;
+        // with nothing whole to measure it stays a plain reading, exactly as before.
+        byte[] beacon = Gb7bpqBeacon();
+        byte[] bits = FrameBits(beacon, crc: false);
+        var frames = new List<byte[]>();
+        var deliveries = new List<Il2pDelivery>();
+        var receiver = new Il2pReceiver(
+            (frame, _, routing) =>
+            {
+                frames.Add(frame);
+                deliveries.Add(routing);
+            },
+            crcMode: true, acceptPlainIl2p: false);
+        foreach (byte bit in bits)
+        {
+            receiver.PushBit(bit);
+        }
+
+        receiver.Reset();
+
+        frames.Should().ContainSingle().Which.Should().Equal(beacon);
+        deliveries[0].TrailerNearBits.Should().BeNull();
+        deliveries[0].MonitorOnly.Should().BeTrue();
+    }
+
     private static List<byte[]> Push(byte[] bits, bool crcMode, bool acceptPlainIl2p) =>
         PushWithInfo(bits, crcMode, acceptPlainIl2p).Frames;
 
     private static (List<byte[]> Frames, List<Il2pDecodeInfo> Info, List<Il2pDelivery> Delivery)
-        PushWithInfo(byte[] bits, bool crcMode, bool acceptPlainIl2p)
+        PushWithInfo(byte[] bits, bool crcMode, bool acceptPlainIl2p, int? idleBits = null)
     {
         var frames = new List<byte[]>();
         var info = new List<Il2pDecodeInfo>();
@@ -297,7 +394,7 @@ public class Il2pReceiverTests
             receiver.PushBit(bit);
         }
 
-        for (int i = 0; i < IdleBits; i++)
+        for (int i = 0; i < (idleBits ?? IdleBits); i++)
         {
             receiver.PushBit(0);
         }

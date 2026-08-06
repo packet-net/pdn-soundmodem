@@ -131,6 +131,7 @@ public sealed class FreeDvDatacModem : IModem
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                     FrequencyOffsetHz: _rx.Demod.FoffEstHz,
                     PlainIl2p: delivery.PlainIl2p,
+                    TrailerNearBits: delivery.TrailerNearBits,
                     MonitorOnly: delivery.MonitorOnly));
             },
             crcMode: true, acceptPlainIl2p: acceptPlainIl2p);

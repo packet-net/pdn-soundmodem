@@ -49,6 +49,15 @@ namespace Packet.SoundModem.Modems;
 /// frame the second plain reading of an IL2P+CRC link produced (see
 /// <see cref="Il2pReceiver"/>) and for every frame of a link that runs plain IL2P as its own
 /// framing, because the guarantee behind them is identical.</param>
+/// <param name="TrailerNearBits">For a frame only the plain reading produced: the Hamming
+/// distance, in wire bits, between the 32 trailer bits that followed it and the trailer its
+/// payload implies - present only when small enough to corroborate the frame (see
+/// <see cref="Il2pReceiver.CorroborationMaxBits"/>), which is what delivered it despite
+/// <see cref="CrcValid"/> being null. The usual cause is measured, not guessed: the transmit
+/// pulse truncates at the end of the burst and the last symbols suffer for it, and the wire
+/// format parks its only unprotected bytes exactly there. A corroborated frame is backed by
+/// Reed-Solomon plus a near-exact trailer, evidence of the same order as a passing CRC;
+/// badge it as its own thing, not as either "CRC OK" or "RS only".</param>
 /// <param name="MonitorOnly">The frame was <b>not</b> passed to the host: it reached
 /// <see cref="IModem.FrameDecoded"/> and everything hanging off it - display, frame log,
 /// journal, survey - but never the modem's constructor frame sink. A fact about what
@@ -67,7 +76,8 @@ public readonly record struct FrameQuality(
     int? EmphasisDb = null,
     M0LTE.Il2p.Il2pHeaderType? HeaderType = null,
     bool PlainIl2p = false,
-    bool MonitorOnly = false);
+    bool MonitorOnly = false,
+    int? TrailerNearBits = null);
 
 /// <summary>
 /// How much a reading of a transmission actually established, for choosing between two decoder

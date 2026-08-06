@@ -50,6 +50,7 @@ public sealed class Afsk1200Il2pModem : IModem
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                     HeaderType: info.HeaderType,
                     PlainIl2p: delivery.PlainIl2p,
+                    TrailerNearBits: delivery.TrailerNearBits,
                     MonitorOnly: delivery.MonitorOnly));
             },
             crcMode: crc, acceptPlainIl2p: acceptPlainIl2p);

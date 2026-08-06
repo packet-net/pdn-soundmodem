@@ -37,6 +37,7 @@ public sealed class QpskModem : IModem, IConstellationSource
                     FrequencyOffsetHz: demodulator!.CarrierOffsetHz,
                     HeaderType: info.HeaderType,
                     PlainIl2p: delivery.PlainIl2p,
+                    TrailerNearBits: delivery.TrailerNearBits,
                     MonitorOnly: delivery.MonitorOnly));
             },
             crc, acceptPlainIl2p);

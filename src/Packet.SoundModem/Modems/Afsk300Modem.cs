@@ -133,6 +133,7 @@ public sealed class Afsk300Modem : IModem
                         HeaderType: info.HeaderType,
                         FrequencyOffsetHz: demodulator!.CarrierOffsetHz,
                         PlainIl2p: delivery.PlainIl2p,
+                        TrailerNearBits: delivery.TrailerNearBits,
                         MonitorOnly: delivery.MonitorOnly));
                 },
                 crcMode: framing == Afsk300Framing.Il2pCrc, acceptPlainIl2p: acceptPlainIl2p);

@@ -35,13 +35,27 @@ public class OffAirAfsk300Tests
     }
 
     [Fact]
-    public void The_Historical_Wide_Filters_Lose_The_Frame_To_The_Neighbouring_Qso()
+    public void The_Historical_Wide_Filters_Degrade_The_Frame_To_A_Corroborated_Reading()
     {
+        // Pinned as "loses the frame entirely" until trailer corroboration landed: the ±400 Hz
+        // filters were recovering the payload all along - Reed-Solomon carried it through the
+        // QSO splatter - and only the trailing CRC was failing, so the withheld plain reading
+        // looked like silence from the outside. The grazed trailer now corroborates the frame
+        // and it is delivered. What the narrow defaults still buy, and what this pins, is the
+        // grade of the evidence: wide filters get there on RS plus a near-miss trailer, the
+        // defaults verify the CRC outright (the test below).
         var frames = new List<byte[]>();
-        new Afsk300Modem(12000, frames.Add, Afsk300Framing.Il2pCrc, Centre,
-            bandPassHalfWidth: 400, lowPassCutoff: 400).Process(Load());
+        var qualities = new List<FrameQuality>();
+        var modem = new Afsk300Modem(12000, frames.Add, Afsk300Framing.Il2pCrc, Centre,
+            bandPassHalfWidth: 400, lowPassCutoff: 400);
+        modem.FrameDecoded += (_, quality) => qualities.Add(quality);
+        modem.Process(Load());
 
-        frames.Should().BeEmpty("±400 Hz filters admit the QSO below the slot and the discriminator follows it");
+        frames.Should().ContainSingle("corroboration rescues what the QSO splatter grazed")
+            .Which.Should().Equal(Expected);
+        FrameQuality quality = qualities.Single(q => !q.MonitorOnly);
+        quality.CrcValid.Should().BeNull("the CRC as decoded never verified through these filters");
+        quality.TrailerNearBits.Should().NotBeNull("the near-miss trailer is what delivered it");
     }
 
     [Fact]
