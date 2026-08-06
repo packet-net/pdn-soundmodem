@@ -207,6 +207,7 @@ FlexConfig? flexConfig = null;
 UberSdrConfig? uberSdrConfig = null;
 WaterfallConfig? waterfallConfig = null;
 SurveyConfig? surveyConfig = null;
+RawCaptureConfig? rawCaptureConfig = null;
 bool idBeacons = true;
 
 if (configPath is not null)
@@ -241,6 +242,7 @@ if (configPath is not null)
     uberSdrConfig = config.UberSdr;
     waterfallConfig = config.Waterfall;
     surveyConfig = config.Survey;
+    rawCaptureConfig = config.RawCapture;
     idBeacons = config.IdBeacons;
     ardopPort ??= config.Ardop?.Port;
     Console.WriteLine($"config: {configPath}");
@@ -970,6 +972,38 @@ if (surveyConfig is not null)
 }
 
 using var surveyLifetime = new Disposer(() => survey?.Dispose());
+
+// Continuous raw capture: everything the channel hears, chunked to disk, so the run can be
+// re-scored offline against a later receiver. Curated bursts are the survey's job; this is
+// the unedited stream, and it costs disk by design (the budget prunes oldest-first).
+RawCaptureWriter? rawCapture = null;
+if (rawCaptureConfig is not null)
+{
+    try
+    {
+        rawCapture = new RawCaptureWriter(
+            rawCaptureConfig.Path, rawCaptureConfig.MaxBytes, rawCaptureConfig.ChunkMinutes,
+            DspRate);
+    }
+    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+    {
+        Console.Error.WriteLine(
+            $"cannot open the raw-capture directory at {rawCaptureConfig.Path}\n"
+            + $"  {e.Message}\n"
+            + "  Set by \"rawCapture\".\"path\". The service user must be able to write to it;\n"
+            + "  remove the \"rawCapture\" section to run without one.");
+        return 2;
+    }
+
+    rawCapture.Failed = Console.Error.WriteLine;
+    channel.AddReceiveTap(rawCapture.Process);
+    Console.WriteLine(
+        $"raw capture: {rawCaptureConfig.Path}, {rawCaptureConfig.ChunkMinutes} min chunks at "
+        + $"{DspRate} Hz, budget {rawCaptureConfig.MaxBytes / (1024.0 * 1024 * 1024):F1} GB "
+        + "(oldest pruned)");
+}
+
+using var rawCaptureLifetime = new Disposer(() => rawCapture?.Dispose());
 
 // Ghost demodulators for the station identifications a NinoTNC sends alongside its PSK SSB data
 // modes rather than within them (300 AFSK AX.25, 200 Hz above the carrier - see IdBeaconGhost).

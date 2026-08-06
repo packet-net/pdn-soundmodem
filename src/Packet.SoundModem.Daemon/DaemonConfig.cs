@@ -333,6 +333,33 @@ public sealed class SurveyConfig
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
+/// <summary>
+/// Continuous raw capture of the channel's receive audio - chunked WAVs under a byte budget,
+/// so the whole run can be re-scored offline against a later receiver; null = off. Unlike the
+/// <see cref="SurveyConfig">survey</see>, which curates bursts, this keeps the unedited
+/// stream - see <see cref="RawCaptureWriter"/> for why both exist.
+/// </summary>
+public sealed class RawCaptureConfig
+{
+    /// <summary>Where chunks are written. The packaged service runs unprivileged, so the
+    /// default sits under its own state directory.</summary>
+    public string Path { get; set; } = "/var/lib/pdn-soundmodem/raw";
+
+    /// <summary>Byte budget for the directory; the oldest chunks are pruned to fit. The
+    /// default keeps roughly two days at a 12 kHz DSP rate - size it to the disk and the
+    /// campaign, not the other way round.</summary>
+    public long MaxBytes { get; set; } = 4L * 1024 * 1024 * 1024;
+
+    /// <summary>Audio minutes per chunk. Fifteen matches the GB7RDG benchmark methodology -
+    /// long enough that a burst almost never straddles a boundary, short enough to copy
+    /// around.</summary>
+    public int ChunkMinutes { get; set; } = 15;
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
 /// <summary>Browser waterfall endpoint (spectrum + waterfall + per-frame burst
 /// attribution); null = disabled. See WaterfallWebServer.</summary>
 public sealed class WaterfallConfig
@@ -438,6 +465,9 @@ public sealed class DaemonConfig
 
     /// <summary>Signal survey; null = signals this station cannot read go unrecorded.</summary>
     public SurveyConfig? Survey { get; set; }
+
+    /// <summary>Continuous raw receive-audio capture; null = off.</summary>
+    public RawCaptureConfig? RawCapture { get; set; }
 
     /// <summary>
     /// Whether to listen for the station identifications a NinoTNC sends alongside its PSK SSB
@@ -586,6 +616,7 @@ public sealed class DaemonConfig
         Unknown("ubersdr", config.UberSdr?.UnknownSettings);
         Unknown("frameLog", config.FrameLog?.UnknownSettings);
         Unknown("survey", config.Survey?.UnknownSettings);
+        Unknown("rawCapture", config.RawCapture?.UnknownSettings);
         Unknown("ptt", config.Ptt?.UnknownSettings);
         Unknown("paging", config.Paging?.UnknownSettings);
         Unknown("ardop", config.Ardop?.UnknownSettings);
