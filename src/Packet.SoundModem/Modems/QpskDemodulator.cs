@@ -75,6 +75,13 @@ public sealed class QpskDemodulator
         PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null)
     {
         ArgumentNullException.ThrowIfNull(dibitSink);
+        if (detector == PskDetector.Mlse)
+        {
+            // The MLSE decision stage is built for the BPSK differential chain (rx-roadmap
+            // workstream 5); this demodulator has no equaliser to hand the symbols to.
+            throw new ArgumentException("MLSE detection is BPSK-only", nameof(detector));
+        }
+
         _detector = detector;
         // Filter plan follows QtSM's per-mode tables: BPF ≈ 2×baud wide, LPF ≈ 0.75×baud.
         _bandPass = new FirFilter(FilterDesign.BandPass(

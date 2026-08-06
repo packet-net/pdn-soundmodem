@@ -17,6 +17,10 @@ namespace Packet.SoundModem.Modems;
 /// <item><b>Coherent</b>: band-pass → <see cref="CostasLoop"/> carrier recovery → ⅔-baud
 /// low-pass → absolute symbols differentially decoded downstream - what the NinoTNC does,
 /// kept exactly as measured for issue #5 as the acquisition cross-check variant.</item>
+/// <item><b>Mlse</b>: the differential front-end unchanged, with the per-symbol decision
+/// handed to a 4-state adaptive <see cref="MlseEqualiser"/> instead of the decision-feedback
+/// reference - rx-roadmap workstream 5's answer to multipath ISI. Bits emerge a traceback
+/// (16 symbols) late, which the deframer never notices.</item>
 /// </list>
 /// </summary>
 public sealed class BpskDemodulator
@@ -74,6 +78,9 @@ public sealed class BpskDemodulator
     private readonly FirFilter _lowPassI;
     private readonly FirFilter _lowPassQ;
     private readonly BitDpll _dpll;
+    private readonly MlseEqualiser? _mlse;
+    private readonly Action<int> _bitSink;
+    private readonly Action<int, float>? _softBitSink;
     private readonly PacketDcd _packetDcd = new();
     private readonly EnergyBusyDetector _energyBusy;
     private readonly PskDetector _detector;
@@ -142,6 +149,13 @@ public sealed class BpskDemodulator
         }
 
         _detector = detector;
+        _bitSink = bitSink;
+        _softBitSink = softBitSink;
+        if (detector == PskDetector.Mlse)
+        {
+            _mlse = new MlseEqualiser(EmitBit);
+        }
+
         // QtSoundModem's P300 band-pass, scaled by symbol rate: ±baud about the carrier (which
         // lands on Nino's published OBW at both rates - 500 Hz at 300 Bd, 2400 Hz at 1200 Bd).
         // It gates EnergyBusy for both detectors, and fronts the decode chain only on the
@@ -184,6 +198,28 @@ public sealed class BpskDemodulator
                 // Coherent feeds the absolute sign bit; differentially decode against the
                 // previous symbol (a repeat is a '1'), resolving the loop's π ambiguity.
                 // Differential decides the symbol-instant sample against the reference.
+                // MLSE hands the symbol-instant sample to the trellis, whose bits emerge
+                // through EmitBit a traceback later.
+                if (_detector == PskDetector.Mlse)
+                {
+                    // Only the seed event matters here. The burst-over event must NOT
+                    // flush the trellis: on a fading channel a deep mid-frame fade
+                    // collapses the offset window's coherence exactly like a burst end
+                    // does, and a mid-frame path-memory reset swallows a pipeline's worth
+                    // of bits - a bit slip that destroys the frame's RS block alignment
+                    // (measured: flushing here cost ~15 points on CCIR Moderate). The
+                    // pipeline free-runs instead, one bit per symbol, always; a real
+                    // burst's final bits still emerge within the traceback (16 symbols),
+                    // inside the ~24-symbol window before the deframer's DCD reset.
+                    if (UpdateRotationSeed() == RotationSeedEvent.Seeded)
+                    {
+                        _mlse!.OnRotationSeeded();
+                    }
+
+                    _mlse!.Push(_currentI, _currentQ, _seededRotation, _rotationSeeded);
+                    return;
+                }
+
                 int decided;
                 float magnitude;
                 if (_detector == PskDetector.Coherent)
@@ -198,21 +234,7 @@ public sealed class BpskDemodulator
                     magnitude = (float)Math.Abs(projection);
                 }
 
-                bitSink(decided);
-                if (softBitSink is not null)
-                {
-                    // Confidence: the decision magnitude against a slow running mean of
-                    // itself (~500 symbols), squashed into (0, 1). Only the ordering
-                    // matters downstream - a fade drops whole bytes to the bottom of the
-                    // ranking, which is exactly what erasure decoding wants flagged.
-                    _confidenceMean = _confidenceMean == 0
-                        ? magnitude
-                        : _confidenceMean + (0.002 * (magnitude - _confidenceMean));
-                    float confidence = _confidenceMean <= 0
-                        ? 0.5f
-                        : Math.Min(0.999f, (float)(magnitude / (4.0 * _confidenceMean)));
-                    softBitSink(decided, confidence);
-                }
+                EmitBit(decided, magnitude);
             },
             inertia: detector == PskDetector.Coherent ? 0.74 : DifferentialInertia,
             transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
@@ -292,6 +314,7 @@ public sealed class BpskDemodulator
         _trackedRotation = 0;
         _rotationSeeded = false;
         _confidenceMean = 0;
+        _mlse?.Reset();
     }
 
     /// <summary>Processes a block of audio samples.</summary>
@@ -406,28 +429,9 @@ public sealed class BpskDemodulator
     /// </remarks>
     private int DecideAgainstReference(out double projection)
     {
-        // The applied rotation is seed + tracker. The seed is a one-shot per burst, placed
-        // anywhere within ±baud/4 the moment the offset window turns coherent - which it
-        // only does at SNRs where the estimate is solid. The tracker is narrow and always
-        // running, so a burst too weak to seed (the window's floor is above the mode's own
-        // decode threshold) still captures a mid-branch residual from its first symbols.
-        double offsetCoherence = Math.Sqrt(
-            (_offsetWindowReal * _offsetWindowReal) + (_offsetWindowImag * _offsetWindowImag));
-        if (!_rotationSeeded && offsetCoherence >= OffsetCoherenceFloor)
+        if (UpdateRotationSeed() == RotationSeedEvent.Seeded)
         {
-            _seededRotation = Math.Clamp(
-                Math.Atan2(_offsetWindowImag, _offsetWindowReal) / 2.0,
-                -MaxSeededRotation, MaxSeededRotation);
             _trackedRotation = 0;
-            _rotationSeeded = true;
-        }
-        else if (_rotationSeeded && offsetCoherence < OffsetCoherenceFloor / 2)
-        {
-            // Burst over: the next one re-seeds. The seed does not outlive its burst - the
-            // next station may sit elsewhere, and a burst too weak to re-seed must start
-            // from the tracker's own bounded window, not a stale neighbour's offset.
-            _rotationSeeded = false;
-            _seededRotation = 0;
         }
 
         double rotation = _seededRotation + _trackedRotation;
@@ -461,6 +465,75 @@ public sealed class BpskDemodulator
         _referenceI = (ReferenceMemory * _referenceI) + ((1 - ReferenceMemory) * polarity * _currentI);
         _referenceQ = (ReferenceMemory * _referenceQ) + ((1 - ReferenceMemory) * polarity * _currentQ);
         return bit;
+    }
+
+    /// <summary>What <see cref="UpdateRotationSeed"/> observed this symbol.</summary>
+    private enum RotationSeedEvent
+    {
+        /// <summary>No change of burst state.</summary>
+        None,
+
+        /// <summary>The offset window just turned coherent and the burst rotation was
+        /// seeded from it; the detector's own rotation tracker starts afresh.</summary>
+        Seeded,
+
+        /// <summary>The offset window's coherence collapsed - the burst is over, several
+        /// symbol times after the carrier stopped and well before DCD falls.</summary>
+        BurstOver,
+    }
+
+    /// <summary>Per-symbol bookkeeping of the per-burst rotation seed, shared by the DF-DD
+    /// and MLSE decision stages. The seed is a one-shot per burst, placed anywhere within
+    /// ±baud/4 the moment the offset window turns coherent - which it only does at SNRs
+    /// where the estimate is solid. A detector's own narrow tracker is always running, so a
+    /// burst too weak to seed (the window's floor is above the mode's own decode threshold)
+    /// still captures a mid-branch residual from its first symbols. The seed does not
+    /// outlive its burst - the next station may sit elsewhere, and a burst too weak to
+    /// re-seed must start from the tracker's own bounded window, not a stale neighbour's
+    /// offset.</summary>
+    private RotationSeedEvent UpdateRotationSeed()
+    {
+        double offsetCoherence = Math.Sqrt(
+            (_offsetWindowReal * _offsetWindowReal) + (_offsetWindowImag * _offsetWindowImag));
+        if (!_rotationSeeded && offsetCoherence >= OffsetCoherenceFloor)
+        {
+            _seededRotation = Math.Clamp(
+                Math.Atan2(_offsetWindowImag, _offsetWindowReal) / 2.0,
+                -MaxSeededRotation, MaxSeededRotation);
+            _rotationSeeded = true;
+            return RotationSeedEvent.Seeded;
+        }
+
+        if (_rotationSeeded && offsetCoherence < OffsetCoherenceFloor / 2)
+        {
+            _rotationSeeded = false;
+            _seededRotation = 0;
+            return RotationSeedEvent.BurstOver;
+        }
+
+        return RotationSeedEvent.None;
+    }
+
+    /// <summary>Delivers one decided bit to the sinks. Confidence: the decision magnitude
+    /// (DF-DD projection, coherent amplitude, or MLSE traceback margin) against a slow
+    /// running mean of itself (~500 symbols), squashed into (0, 1). Only the ordering
+    /// matters downstream - a fade drops whole bytes to the bottom of the ranking, which is
+    /// exactly what erasure decoding wants flagged.</summary>
+    private void EmitBit(int decided, float magnitude)
+    {
+        _bitSink(decided);
+        if (_softBitSink is null)
+        {
+            return;
+        }
+
+        _confidenceMean = _confidenceMean == 0
+            ? magnitude
+            : _confidenceMean + (0.002 * (magnitude - _confidenceMean));
+        float confidence = _confidenceMean <= 0
+            ? 0.5f
+            : Math.Min(0.999f, (float)(magnitude / (4.0 * _confidenceMean)));
+        _softBitSink(decided, confidence);
     }
 
     /// <summary>Root-raised-cosine matched-filter taps at the sample rate, spanning ±6

@@ -195,6 +195,39 @@ Rayleigh paths fading together for 60-150 symbol times) which **no receiver fixe
 wire format** - there is no interleaving to bridge it. Beyond MLSE, Poor is workstream 8's
 problem.
 
+**Status 2026-08-06 (night): built, measured, and the 50-60 % claim is retired.** The
+equaliser exists (`MlseEqualiser`, `PskDetector.Mlse`, `sm-ota sim --detector mlse`): a
+4-state Viterbi over the absolute polarities behind the unchanged differential front end,
+3 complex taps under decision-directed LMS, SOVA margins feeding the erasure ladder,
+16-symbol traceback inside the DCD window. Getting it to *parity* took four measured
+design corrections, each worth recording: mid-stream flushes swallow a pipeline of bits (a
+frame-killing slip - the trellis must free-run); a 3-tap LMS is **unidentifiable on the
+all-reversal preamble** (only g0-g1+g2 is observable), so unconstrained adaptation walks
+into the sync word with the main energy split equally across all three taps - the fix is
+skipping outer-tap updates exactly on alternating decision triples; outer taps may enter
+the metrics only on sustained, smoothed evidence during a seeded burst (unconditional
+exposure cost ~5 dB on AWGN from metric self-noise; between bursts the tap-power ratio is
+meaningless and engagement at burst start cost 0/50 at -5 dB); and the main tap plus
+rotation tracker form a per-symbol feedback loop that must stay undelayed, while the outer
+taps want traceback-matured (depth-6) decisions.
+
+Measured endpoint (N=100/point, seed 1; Poor 6/9 dB re-confirmed on seeds 101-200):
+AWGN and the CFO sweep at parity within two points (a hair under at -5..-3, even at -2);
+Good/Moderate at parity with +3 at the top rungs; **Poor +6/+9 dB pooled over both seed
+spans: 51->58 and 56->64 of 200, roughly +4 points**; miss corpus unchanged at 32/37
+demodulated. Why the ceiling never moved: the frames Poor takes die of flat outage, DPLL
+timing wander during dominance swaps, and near-antiphase composite nulls (a static-echo
+probe found **no** two-path setting that separates the detectors through the full chain -
+DF-DD+RS digests any static echo the trellis can equalise, and what kills DF-DD kills the
+trellis too, because a symbol-rate equaliser cannot restore timing); and the preamble's
+unidentifiability means the outer taps cannot converge before the sync word, so
+header-limited frames are structurally out of reach - engagement matures mid-header at
+best. **The default detector stays differential.** Two successors inherit the machinery:
+the capture campaign's misses-v2 should A/B `mlse` on real audio (the sim says the gain
+lives exactly where real QSOs operate on 40 m), and workstream 4's two-pass receiver is
+the honest answer to "converged taps from symbol 0", which is most of what this
+architecture cannot reach causally.
+
 ### 6. Channel-model extensions: impulse noise first, then the rest of reality
 
 (Broadened from "impulse-noise instrumentation" on 2026-08-06, Tom's prompt: the masks pin
