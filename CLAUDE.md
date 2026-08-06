@@ -61,6 +61,10 @@ row in the matrix. A fix isn't finished until the ledger records it.
 - CI: every workflow job MUST target `[self-hosted, Linux, X64]` - no GitHub-hosted
   runners (no minutes budget). Same rule as packet.net.
 - PRs merge on locally-run green tests (`dotnet test`); fix forward.
+- **Watterson masks** (`WattersonMaskTests`, rx-roadmap workstream 0): each audio mode's
+  measured performance floor is pinned - the smoke tier blocks CI, `SM_MASK_GATE=1` runs the
+  full ladder. A PR touching a modem's receive path runs the affected mode's full ladder A/B
+  and quotes it; a mask moves only with a mode-validation.md entry, in either direction.
 
 ## What lives where
 
