@@ -61,6 +61,11 @@ row in the matrix. A fix isn't finished until the ledger records it.
 - CI: every workflow job MUST target `[self-hosted, Linux, X64]` - no GitHub-hosted
   runners (no minutes budget). Same rule as packet.net.
 - PRs merge on locally-run green tests (`dotnet test`); fix forward.
+- **Cross-repo iteration**: the co-developed packages swap to local checkouts with
+  `-p:FecSourcePath=... -p:Il2pSourcePath=... -p:FlexSourcePath=...` (see
+  `Packet.SoundModem.csproj`) - no pack/publish round trip per change. Unset, CI and
+  everyone else consume the published packages; version pins in
+  `Directory.Packages.props` only move when a package actually ships.
 - **Watterson masks** (`WattersonMaskTests`, rx-roadmap workstream 0): each audio mode's
   measured performance floor is pinned - the smoke tier blocks CI, `SM_MASK_GATE=1` runs the
   full ladder. A PR touching a modem's receive path runs the affected mode's full ladder A/B
