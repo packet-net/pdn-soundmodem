@@ -29,6 +29,7 @@ public sealed class Afsk1200Modem : IModem
     private readonly AfskModulator _modulator;
     private readonly Fx25Mode _fx25;
     private readonly int _fx25CheckBytes;
+    private readonly int _dedupeChunk;
     private long _samplesProcessed;
 
     /// <summary>Creates the modem.</summary>
@@ -48,6 +49,7 @@ public sealed class Afsk1200Modem : IModem
         ArgumentNullException.ThrowIfNull(frameReceived);
         _fx25 = fx25;
         _fx25CheckBytes = fx25CheckBytes;
+        _dedupeChunk = Math.Max(1, sampleRate / 10);
 
         // Quality rides with whichever decode the deduper lets through: a clean FX.25
         // block also decodes as plain HDLC, and the consumer should see one frame with
@@ -110,8 +112,16 @@ public sealed class Afsk1200Modem : IModem
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples)
     {
-        _demodulator.Process(samples);
-        _samplesProcessed += samples.Length;
+        // Bounded chunks so the FX.25 deduper's clock advances with the audio even when a
+        // caller hands over one huge buffer - the clock used to hold still for the whole
+        // buffer, so a genuine repeat seconds later in the same call read as a duplicate
+        // and was suppressed (mirrors the multi banks' chunking).
+        for (int position = 0; position < samples.Length; position += _dedupeChunk)
+        {
+            var slice = samples.Slice(position, Math.Min(_dedupeChunk, samples.Length - position));
+            _demodulator.Process(slice);
+            _samplesProcessed += slice.Length;
+        }
     }
 
     /// <inheritdoc />

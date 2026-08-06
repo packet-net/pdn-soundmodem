@@ -323,10 +323,12 @@ public sealed class SoundModemChannel
 
     private async Task EnqueueWhenPermittedAsync(Func<int, float[]> modulate, Action<Exception>? rejected)
     {
-        var waitedFor = System.Diagnostics.Stopwatch.StartNew();
+        // The injected clock, per the repo's wall-clock discipline - this was the library's
+        // one Stopwatch and its one bare Task.Delay, which no test could virtualise.
+        long waitedFrom = _time.GetTimestamp();
         while (TransmitInhibit?.Invoke() == true)
         {
-            if (waitedFor.Elapsed > TransmitInhibitTimeout)
+            if (_time.GetElapsedTime(waitedFrom) > TransmitInhibitTimeout)
             {
                 var refusal = new InvalidOperationException(
                     $"another service is holding the channel (waited {TransmitInhibitTimeout.TotalSeconds:F0}s); "
@@ -335,7 +337,7 @@ public sealed class SoundModemChannel
                 throw refusal;
             }
 
-            await Task.Delay(InhibitPollInterval).ConfigureAwait(false);
+            await Task.Delay(InhibitPollInterval, _time).ConfigureAwait(false);
         }
 
         await EnqueueNow(modulate, rejected, ownsChannelTiming: false).ConfigureAwait(false);

@@ -162,8 +162,12 @@ public class ArdopChannelBridgeTests
         }
 
         float[] onAir = bridge.Transmit(audio);
-        onAir.Length.Should().Be(audio.Length * (channelRate / Rate),
-            "the burst must come out at the channel rate");
+        // A shifted burst grows by the TX shifter's flushed group delay (64 samples at the
+        // engine rate): the tail used to be truncated off the air and carried into the next
+        // burst's leader by the persistent shifter's state.
+        int engineSamples = bridge.IsShifted ? audio.Length + 64 : audio.Length;
+        onAir.Length.Should().Be(engineSamples * (channelRate / Rate),
+            "the burst must come out at the channel rate, tail included");
 
         var decoded = new List<ArdopDecodedFrame>();
         var demodulator = new ArdopDemodulator();
