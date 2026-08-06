@@ -70,9 +70,18 @@ re-decodes the raw chunks through catalogue receivers (one continuous modem inst
 across chunk boundaries; per-mode passes in parallel), stamps frames from the chunk filename
 UTC, writes a payload-hex CSV, and diffs against the frame log by exact payload in a +-45 s
 nearest-first window. Validation over the opening 1.3 h: 144 replayed / 148 logged /
-144 matched / 0 phantoms - the misses were two window-edge bursts plus two marginal frames,
-a ~1.4 % instrument floor consistent with the raw record's 16-bit quantisation against the
-float path the live modems saw. The first real-audio detector A/B (the whole opening evening,
+144 matched / 0 phantoms. **Know the referee's generation** (Tom's catch): the deployed
+daemon is 0.25.1, built against M0LTE.Fec 0.2.0 / M0LTE.Il2p 0.1.2 (pinned from the deployed
+`deps.json`) - the pre-erasure receiver, and its frame log lacks the trailer_near_bits /
+monitor_only / erased_bytes columns - so log-vs-replay deltas mix receiver generations with
+instrument effects (16-bit raw quantisation against the live float path, window edges) and
+are a cross-version reading, not an instrument floor. Measured across the full evening, the
+generations barely separate on real traffic: 4 exclusive frames each way (two of the live
+station's were window-edge), none of the replay's exclusives erasure-driven. Erasure decoding
+fired on 2 of 708 frames all evening and both matched frames the pre-erasure live station
+also copied - zero exclusive real-traffic contribution tonight, consistent with the corpus
+finding that the real frames do not die at the RS knee - while trailer corroboration fired
+on 20. The first real-audio detector A/B (the whole opening evening,
 7.2 h, ~708 bpsk300 frames) then ran on it: differential 708 decoded / 659 deliverable /
 639 CRC-verified against mlse 707 / 658 / 644 - totals at parity, mlse +5 CRC-verified, and a
 roughly symmetric ~1.5 % exchange (11 frames only differential caught, 10 only mlse caught,
