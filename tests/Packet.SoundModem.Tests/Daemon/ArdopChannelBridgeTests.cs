@@ -109,7 +109,7 @@ public class ArdopChannelBridgeTests
         var shift = ArdopChannelBridge.For(950, Rate, Rate);
 
         float[] onAir = shift.Transmit(TwoTone());
-        List<double> recovered = Tones(shift.Receive(onAir));
+        List<double> recovered = Tones(shift.Receive(onAir).ToArray());
 
         recovered.Should().HaveCount(2);
         ((recovered[0] + recovered[1]) / 2).Should().BeApproximately(ArdopChannelBridge.NativeCentreHz, 5.0);
@@ -121,7 +121,8 @@ public class ArdopChannelBridgeTests
         var shift = ArdopChannelBridge.For(950, Rate, Rate);
         float[] original = TwoTone();
 
-        float[] recovered = shift.Receive(shift.Transmit(original));
+        // Copied out: Receive returns a view over scratch the next call reuses.
+        float[] recovered = shift.Receive(shift.Transmit(original)).ToArray();
 
         // Compare well inside the signal, past both shifters' filter delay.
         int from = original.Length / 2, count = 4000;
@@ -243,7 +244,7 @@ public class ArdopChannelBridgeTests
             noise[i] = (float)(Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2));
         }
 
-        float[] unshifted = bridge.Receive(noise);
+        float[] unshifted = bridge.Receive(noise).ToArray();
 
         // Averaged Hann-windowed periodograms, well past the filters' settling transient.
         const int N = 4096;

@@ -18,14 +18,22 @@ namespace Packet.SoundModem.Modems;
 /// </remarks>
 public sealed class AfskDemodulator
 {
+    /// <summary>Samples between oscillator renormalisations. The rotation recurrence's
+    /// magnitude drifts by ~1 ULP per step; at this interval the drift stays parts-per-
+    /// trillion, far below the filters' own float noise.</summary>
+    private const int OscillatorRenormInterval = 4096;
+
     private readonly FirFilter _bandPass;
     private readonly FirFilter _lowPassI;
     private readonly FirFilter _lowPassQ;
     private readonly BitDpll _dpll;
     private readonly PacketDcd _packetDcd = new();
     private readonly EnergyBusyDetector _energyBusy;
-    private readonly double _oscillatorStep;
-    private double _oscillatorPhase;
+    private readonly double _rotateCos;
+    private readonly double _rotateSin;
+    private double _oscillatorCos = 1;
+    private double _oscillatorSin;
+    private int _renormCountdown = OscillatorRenormInterval;
 
     private float _i0, _i1, _i2;
     private float _q0, _q1, _q2;
@@ -82,7 +90,9 @@ public sealed class AfskDemodulator
             sampleRate, bandPassTaps * sampleRate / 12000));
         _lowPassI = new FirFilter(FilterDesign.LowPass(lowPassCutoff, sampleRate, lowPassTaps * sampleRate / 12000));
         _lowPassQ = new FirFilter(FilterDesign.LowPass(lowPassCutoff, sampleRate, lowPassTaps * sampleRate / 12000));
-        _oscillatorStep = 2 * Math.PI * centerFrequency / sampleRate;
+        double step = 2 * Math.PI * centerFrequency / sampleRate;
+        _rotateCos = Math.Cos(step);
+        _rotateSin = Math.Sin(step);
         _dpll = new BitDpll(baud, sampleRate, bitSink, transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
         _energyBusy = new EnergyBusyDetector(sampleRate);
 
@@ -171,14 +181,25 @@ public sealed class AfskDemodulator
             float filtered = _bandPass.Next(sample);
             _energyBusy.Process(filtered);
 
-            _oscillatorPhase += _oscillatorStep;
-            if (_oscillatorPhase > 2 * Math.PI)
+            // The mixer NCO as a rotating phasor rather than per-sample Math.Sin/Cos: the
+            // transcendentals were the receive path's hottest line once the multi banks
+            // multiplied this loop by their branch count (~360k calls/s for a 15-branch
+            // 1200 baud bank). One complex rotation replaces both, with a periodic
+            // renormalisation so the magnitude cannot drift.
+            double rotatedCos = (_oscillatorCos * _rotateCos) - (_oscillatorSin * _rotateSin);
+            double rotatedSin = (_oscillatorSin * _rotateCos) + (_oscillatorCos * _rotateSin);
+            _oscillatorCos = rotatedCos;
+            _oscillatorSin = rotatedSin;
+            if (--_renormCountdown == 0)
             {
-                _oscillatorPhase -= 2 * Math.PI;
+                double scale = 1 / Math.Sqrt((rotatedCos * rotatedCos) + (rotatedSin * rotatedSin));
+                _oscillatorCos *= scale;
+                _oscillatorSin *= scale;
+                _renormCountdown = OscillatorRenormInterval;
             }
 
-            float i = _lowPassI.Next(filtered * (float)Math.Sin(_oscillatorPhase));
-            float q = _lowPassQ.Next(filtered * (float)Math.Cos(_oscillatorPhase));
+            float i = _lowPassI.Next(filtered * (float)_oscillatorSin);
+            float q = _lowPassQ.Next(filtered * (float)_oscillatorCos);
 
             _i2 = _i1; _i1 = _i0; _i0 = i;
             _q2 = _q1; _q1 = _q0; _q0 = q;

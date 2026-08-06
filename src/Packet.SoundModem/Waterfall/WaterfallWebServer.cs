@@ -905,10 +905,20 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// </remarks>
     private void BroadcastAudio(ReadOnlySpan<float> samples)
     {
-        bool wanted;
+        // Plain loops under the lock: this runs per received audio block on the receive
+        // thread for the life of the daemon, and the LINQ forms allocated an enumerator and
+        // a closure per block while holding the clients lock.
+        bool wanted = false;
         lock (_clientsLock)
         {
-            wanted = _clients.Any(c => c.AudioEnabled);
+            foreach (WaterfallClient client in _clients)
+            {
+                if (client.AudioEnabled)
+                {
+                    wanted = true;
+                    break;
+                }
+            }
         }
 
         if (!wanted)
@@ -940,9 +950,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             _audioBlock.RemoveRange(0, blockSamples);
             lock (_clientsLock)
             {
-                foreach (WaterfallClient listener in _clients.Where(c => c.AudioEnabled))
+                foreach (WaterfallClient listener in _clients)
                 {
-                    listener.Queue.Writer.TryWrite((WebSocketMessageType.Binary, message));
+                    if (listener.AudioEnabled)
+                    {
+                        listener.Queue.Writer.TryWrite((WebSocketMessageType.Binary, message));
+                    }
                 }
             }
         }

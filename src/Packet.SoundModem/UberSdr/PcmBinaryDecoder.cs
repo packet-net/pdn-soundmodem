@@ -37,7 +37,18 @@ public sealed class PcmBinaryDecoder : IDisposable
     private const ushort MagicFull = 0x5043;    // "PC" read as little-endian uint16
     private const ushort MagicMinimal = 0x504D; // "PM"
 
+    /// <summary>Ceiling on one decoded packet, far above any real ~20-100 ms IQ frame:
+    /// the point where a growing buffer stops meaning "bigger packet" and starts meaning
+    /// "corrupt length field".</summary>
+    private const int MaxPacketBytes = 1 << 24;
+
     private readonly Decompressor _zstd = new();
+
+    /// <summary>The packet buffer <see cref="PcmPacket.Pcm"/> views into, reused across
+    /// calls exactly as the packet's doc has always promised - it used to be a fresh
+    /// allocation per WebSocket message, which at the stream's packet rate was steady-state
+    /// garbage for the life of the daemon.</summary>
+    private byte[] _buffer = new byte[8192];
 
     /// <summary>Last sample rate seen in a full header. Pre-seed to 48000 for iq48, since the
     /// server may open with minimal ("PM") frames and sends no initial text status for binary
@@ -54,13 +65,37 @@ public sealed class PcmBinaryDecoder : IDisposable
     /// </summary>
     public PcmPacket Decode(ReadOnlySpan<byte> frame, bool isZstd)
     {
-        // Own a mutable copy: for raw frames we must not mutate the caller's WebSocket buffer
-        // during the big-endian → little-endian swap; Unwrap returns a view we also copy.
-        byte[] data = isZstd ? _zstd.Unwrap(frame).ToArray() : frame.ToArray();
-
-        if (data.Length < 4)
+        // Own a mutable copy (the big-endian swap below must not touch the caller's
+        // WebSocket buffer), decoded into the reused packet buffer.
+        int length;
+        if (isZstd)
         {
-            throw new InvalidDataException($"binary PCM packet too short: {data.Length} bytes");
+            while (!_zstd.TryUnwrap(frame, _buffer, out length))
+            {
+                if (_buffer.Length >= MaxPacketBytes)
+                {
+                    throw new InvalidDataException(
+                        $"zstd PCM packet would not fit {MaxPacketBytes} bytes - corrupt frame?");
+                }
+
+                _buffer = new byte[Math.Min(MaxPacketBytes, _buffer.Length * 2)];
+            }
+        }
+        else
+        {
+            if (_buffer.Length < frame.Length)
+            {
+                _buffer = new byte[Math.Max(frame.Length, _buffer.Length * 2)];
+            }
+
+            frame.CopyTo(_buffer);
+            length = frame.Length;
+        }
+
+        byte[] data = _buffer;
+        if (length < 4)
+        {
+            throw new InvalidDataException($"binary PCM packet too short: {length} bytes");
         }
 
         ushort magic = BinaryPrimitives.ReadUInt16LittleEndian(data);
@@ -71,9 +106,9 @@ public sealed class PcmBinaryDecoder : IDisposable
 
         if (magic == MagicFull)
         {
-            if (data.Length < 29)
+            if (length < 29)
             {
-                throw new InvalidDataException($"full-header PCM packet too short: {data.Length} bytes");
+                throw new InvalidDataException($"full-header PCM packet too short: {length} bytes");
             }
 
             gpsTimestampNanos = BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(4, 8));
@@ -87,9 +122,9 @@ public sealed class PcmBinaryDecoder : IDisposable
         }
         else if (magic == MagicMinimal)
         {
-            if (data.Length < 13)
+            if (length < 13)
             {
-                throw new InvalidDataException($"minimal-header PCM packet too short: {data.Length} bytes");
+                throw new InvalidDataException($"minimal-header PCM packet too short: {length} bytes");
             }
 
             gpsTimestampNanos = BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(3, 8));
@@ -108,7 +143,7 @@ public sealed class PcmBinaryDecoder : IDisposable
         }
 
         // Convert the PCM payload from big-endian int16 to little-endian, in place.
-        Span<byte> pcm = data.AsSpan(pcmOffset);
+        Span<byte> pcm = data.AsSpan(pcmOffset, length - pcmOffset);
         int wholeSamples = pcm.Length / 2;
         for (int i = 0; i < wholeSamples; i++)
         {
