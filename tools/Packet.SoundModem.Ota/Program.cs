@@ -37,6 +37,7 @@ try
         "score" => ScoreCommand.Run(args[1..]),
         "sim" => SimCommand.Run(args[1..]),
         "sim-stream" => SimStreamCommand.Run(args[1..]),
+        "replay" => ReplayCommand.Run(args[1..]),
         "ladder" => await LadderCommand.RunAsync(args[1..]),
         "fm-deviation" => FmLadderCommand.Deviation(args[1..]),
         "monitor" => await MonitorCommand.RunAsync(args[1..]),

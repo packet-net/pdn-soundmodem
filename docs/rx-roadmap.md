@@ -65,6 +65,24 @@ There is no automatic end date: 24 h was the ask, the budget carries two months,
 grows with band variety (a weekend contest, a geomagnetic upset, summer QRN). Check on it with
 `systemctl status pdn-capture-40m` and `ls -lh /home/tf/capture-40m/raw | tail`.
 
+**Status 2026-08-06 (night): the harvest instrument exists and has flown.** `sm-ota replay`
+re-decodes the raw chunks through catalogue receivers (one continuous modem instance per mode
+across chunk boundaries; per-mode passes in parallel), stamps frames from the chunk filename
+UTC, writes a payload-hex CSV, and diffs against the frame log by exact payload in a +-45 s
+nearest-first window. Validation over the opening 1.3 h: 144 replayed / 148 logged /
+144 matched / 0 phantoms - the misses were two window-edge bursts plus two marginal frames,
+a ~1.4 % instrument floor consistent with the raw record's 16-bit quantisation against the
+float path the live modems saw. The first real-audio detector A/B (the whole opening evening,
+7.2 h, ~708 bpsk300 frames) then ran on it: differential 708 decoded / 659 deliverable /
+639 CRC-verified against mlse 707 / 658 / 644 - totals at parity, mlse +5 CRC-verified, and a
+roughly symmetric ~1.5 % exchange (11 frames only differential caught, 10 only mlse caught,
+the mlse-exclusive list skewing to the genuinely weak distant traffic: three GB7WEM-7 frames,
+a GB7WEM IDENT, an EI0RSI-7 ID). Two of mlse's catches are the exact frames the live station
+heard but the differential replay missed, so the exchange is real signal, not instrument
+noise. Consequences: no default flip on one evening's evidence - the A/B repeats as the
+corpus grows - and the symmetric exchange strengthens the demoted ensemble-decode-any idea
+(workstream 2): running both detectors would have banked ~+1.5 % union gain for CPU alone.
+
 ## Workstreams, ranked
 
 Ranked by expected real-world return per unit of effort, with the reasoning pinned so a future
