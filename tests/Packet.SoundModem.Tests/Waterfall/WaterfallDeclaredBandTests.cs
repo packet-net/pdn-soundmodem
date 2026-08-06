@@ -72,6 +72,26 @@ public class WaterfallDeclaredBandTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_Zero_Declared_Centre_Is_The_No_Frequency_Sentinel_Not_A_Centre()
+    {
+        // Plain `--modem 0:bpsk300 --waterfall <port>`: the daemon declares CentreHz 0 for a
+        // modem with no configured frequency. That is a sentinel, not a placement, and it
+        // must not overwrite the probe's measurement - it did, and the band chip read
+        // "0 Hz" with its dashed centre line at DC.
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => ModemCatalog.Create("bpsk300", SampleRate, sink));
+        await using var server = new WaterfallWebServer(channel, FreePort(), new WaterfallOptions
+        {
+            DeclaredBands = [new DeclaredBand(0, "bpsk300", 0, null)],
+        });
+        server.Start();
+
+        ModemBand band = server.Bands.Should().ContainSingle().Subject;
+        band.CentreHz.Should().BeGreaterThan(500,
+            "the measured centre stands when no frequency was configured");
+    }
+
+    [Fact]
     public void Bands_Are_Ordered_By_Sub_Channel_However_They_Arrived()
     {
         // Declared bands are appended after the probed ones, so without a sort ARDOP on

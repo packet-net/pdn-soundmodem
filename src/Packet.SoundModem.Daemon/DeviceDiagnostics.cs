@@ -63,6 +63,24 @@ internal static class DeviceDiagnostics
         {Retry}
         """;
 
+    /// <summary>
+    /// A FlexRadio that would not open a session. Same "keep retrying" treatment as a sound
+    /// card, and for the same reason: at a site power-up the modem host routinely boots
+    /// faster than the radio, and a network blip is nobody's configuration mistake.
+    /// </summary>
+    internal static string Flex(string device, string? configPath, Exception error) =>
+        $"""
+        cannot reach the FlexRadio "{device}"
+          {error.Message}
+
+        {Source(configPath, "device", "--device")}
+          This names a FlexRadio reached over the network. Check the radio is powered up,
+          finished booting, and on this network - SmartSDR (or `ping` on the radio's
+          address) is the quick test. Slice, DAX channel and tuning live in the same
+          device string.
+        {Retry}
+        """;
+
     internal static string Ptt(PttConfig ptt, string? configPath, Exception error)
     {
         string where = Source(configPath, "ptt", "--ptt");

@@ -157,6 +157,11 @@ public sealed class SignalSurvey : IDisposable
     /// <summary>Bytes the capture directory holds, against the budget.</summary>
     public long Bytes => _writer.Bytes;
 
+    /// <summary>Captures dropped because the disk could not keep up, or would not take
+    /// them. Failures, distinct from <see cref="SkippedForBudget"/>'s deliberate refusals;
+    /// 0 on a healthy station.</summary>
+    public long DroppedCaptures => _writer.Dropped;
+
     /// <summary>Where captures are written.</summary>
     public string Directory => _options.Directory;
 
