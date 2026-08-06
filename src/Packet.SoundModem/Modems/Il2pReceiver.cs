@@ -14,7 +14,12 @@ namespace Packet.SoundModem.Modems;
 /// <param name="PlainIl2p">The reading that produced this frame had no trailing CRC behind it.</param>
 /// <param name="MonitorOnly">This frame must not be passed to the host - see
 /// <see cref="FrameQuality.MonitorOnly"/>.</param>
-internal readonly record struct Il2pDelivery(bool PlainIl2p, bool MonitorOnly);
+/// <param name="TrailerNearBits">For a frame only the plain reading produced: how many of the
+/// 32 trailer wire bits that followed it differ from the trailer its payload implies, when
+/// that distance is small enough to corroborate the frame - see
+/// <see cref="Il2pReceiver.CorroborationMaxBits"/>. Null when the trailer was not close
+/// (or was never seen whole).</param>
+internal readonly record struct Il2pDelivery(bool PlainIl2p, bool MonitorOnly, int? TrailerNearBits = null);
 
 /// <summary>
 /// The IL2P receive seam. Every IL2P-carrying modem pushes its demodulated bits through one of
@@ -103,6 +108,22 @@ internal sealed class Il2pReceiver
     private static readonly long LateReadingGuardBits =
         (Il2pCodec.HeaderWireLength + Il2pBlockLayout.Compute(Il2pCodec.MaxPayloadBytes).WireLength) * 8;
 
+    /// <summary>
+    /// Largest Hamming distance, in wire bits, at which the 32 trailer bits following a
+    /// plain-only frame still corroborate it. The payload implies the trailer exactly - the
+    /// trailing CRC is a function of the AX.25 bytes - so a received trailer that is merely
+    /// grazed is strong evidence the Reed-Solomon-validated payload is genuine: a frame RS
+    /// hallucinated from noise implies a trailer uncorrelated with the received bits, and
+    /// the chance of an uncorrelated 32-bit word landing within 4 bits is
+    /// sum(C(32,i), i&lt;=4) / 2^32 ~ 1.1e-5 - the same order as the trailing CRC check's own
+    /// false-accept (~2^-16). Why grazed trailers are the common case is measured, not
+    /// assumed: on the GB7RDG 24 h miss corpus, 29 of 32 byte-exact frames failed only the
+    /// trailer, with the damage clustered in the last few bits - the transmit pulse
+    /// truncates at the end of the burst and the matched filter loses the final symbols, and
+    /// the IL2P+CRC wire format parks its only unprotected bytes exactly there.
+    /// </summary>
+    internal const int CorroborationMaxBits = 4;
+
     private readonly Action<byte[], Il2pDecodeInfo, Il2pDelivery> _frameReceived;
     private readonly Il2pDeframer _deframer;
     private readonly Il2pDeframer? _plainDeframer;
@@ -114,6 +135,8 @@ internal sealed class Il2pReceiver
     private long _releaseHeldAtBit;
     private byte[]? _lastDelivered;
     private long _lastDeliveredAtBit;
+    private uint _trailerBits;
+    private int _trailerBitCount;
 
     /// <summary>Creates the receiver.</summary>
     /// <param name="frameReceived">Called synchronously from <see cref="PushBit"/> with each
@@ -170,6 +193,14 @@ internal sealed class Il2pReceiver
     public void PushBit(int bit)
     {
         _bitsPushed++;
+
+        // While a plain frame is held, the wire is delivering the very bits the hold exists
+        // to wait for - the trailer. Collect them for the corroboration check at release.
+        if (_heldFrame is not null && _trailerBitCount < Il2pCodec.TrailingCrcWireLength * 8)
+        {
+            _trailerBits = (_trailerBits << 1) | (uint)(bit & 1);
+            _trailerBitCount++;
+        }
 
         // The link's own reading goes first. At the bit where both readings have the same frame,
         // this is what cancels the held plain copy before the release check below could let it
@@ -248,11 +279,14 @@ internal sealed class Il2pReceiver
         _heldFrame = frame;
         _heldInfo = info;
         _releaseHeldAtBit = _bitsPushed + CrcTrailerBits;
+        _trailerBits = 0;
+        _trailerBitCount = 0;
     }
 
     /// <summary>Emits the held plain frame, if there is one, marked as the plain reading's and
-    /// with the operator's answer about where it may go. The field is cleared before the sink is
-    /// called so that a sink which pushes more bits cannot see it twice.</summary>
+    /// with the operator's answer about where it may go - unless the trailer bits that followed
+    /// it corroborate the frame, in which case it is delivered. The field is cleared before the
+    /// sink is called so that a sink which pushes more bits cannot see it twice.</summary>
     private void ReleaseHeld()
     {
         if (_heldFrame is not { } frame)
@@ -262,6 +296,33 @@ internal sealed class Il2pReceiver
 
         Il2pDecodeInfo info = _heldInfo;
         _heldFrame = null;
+
+        // Corroboration: re-derive the trailer the payload implies and measure how far the
+        // received trailer bits sit from it. Only when all 32 arrived - a burst that ended
+        // before the trailer (the Reset release path) has nothing whole to measure. A genuine
+        // plain-IL2P station fails this naturally: nothing follows its frames but noise or the
+        // next preamble, half the bits disagree, and the frame stays a plain reading.
+        if (_trailerBitCount == Il2pCodec.TrailingCrcWireLength * 8)
+        {
+            byte[] expected = Il2pCodec.Encode(frame, appendCrc: true);
+            uint expectedBits = 0;
+            for (int i = expected.Length - Il2pCodec.TrailingCrcWireLength; i < expected.Length; i++)
+            {
+                expectedBits = (expectedBits << 8) | expected[i];
+            }
+
+            int distance = System.Numerics.BitOperations.PopCount(_trailerBits ^ expectedBits);
+            if (distance <= CorroborationMaxBits)
+            {
+                _frameReceived(frame, info, _plainReading with
+                {
+                    MonitorOnly = false,
+                    TrailerNearBits = distance,
+                });
+                return;
+            }
+        }
+
         _frameReceived(frame, info, _plainReading);
     }
 }

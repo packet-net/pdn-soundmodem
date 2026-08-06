@@ -372,6 +372,19 @@ Two consequences worth knowing before you turn it on:
   With this off, such a frame is shown and withheld, which is a good reason to look at the row
   and a poor reason to give it to a node.
 
+**The exception, delivered whatever this option says: a frame whose trailer nearly checks
+out.** The trailing CRC is a pure function of the frame's bytes, so the receiver can compute
+the trailer a recovered payload *implies* and compare it with the 32 trailer bits that actually
+followed. When they differ by at most 4 bits, the trailer corroborates the frame and it goes to
+the host even with this option off - logged with `crc_valid` null plus the measured bit
+distance. This is not the RS-only gamble the paragraphs above warn about: a frame RS invented
+from noise implies a trailer uncorrelated with the received bits, and the odds of an
+uncorrelated trailer landing within 4 bits of the implied one are about 1 in 90,000 - the same
+order as the CRC check itself. The common real cause of a grazed trailer is mundane and
+measured: transmitters truncate the final pulse at the end of the burst, the last symbols
+suffer, and the wire format parks its only FEC-unprotected bytes exactly there. On the GB7RDG
+24 h miss corpus this one check moved host-delivered frames from 3 of 37 to 22 of 37.
+
 Hosts with the KISS quality extension (`kiss.emitQualityFrames`) see nothing at all for a withheld
 frame: no data frame, and no quality frame either, because a quality report for a frame the host
 never received would be worse than silence.

@@ -94,6 +94,7 @@ public sealed class Ms110dModem : IModem, IHardwareControllable
                     Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                     FrequencyOffsetHz: _rx.Lock?.CfoHz,
                     PlainIl2p: delivery.PlainIl2p,
+                    TrailerNearBits: delivery.TrailerNearBits,
                     MonitorOnly: delivery.MonitorOnly));
             },
             crcMode: true, acceptPlainIl2p: acceptPlainIl2p);

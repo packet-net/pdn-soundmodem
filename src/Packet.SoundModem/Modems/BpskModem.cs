@@ -56,6 +56,7 @@ public sealed class BpskModem : IModem, IConstellationSource
                     // is measured over still describes that burst.
                     FrequencyOffsetHz: demodulator!.CarrierOffsetHz,
                     PlainIl2p: delivery.PlainIl2p,
+                    TrailerNearBits: delivery.TrailerNearBits,
                     MonitorOnly: delivery.MonitorOnly));
             },
             crc, acceptPlainIl2p);

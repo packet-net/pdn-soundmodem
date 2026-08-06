@@ -97,6 +97,7 @@ public sealed class FskModem : IModem
                         Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                         HeaderType: info.HeaderType,
                         PlainIl2p: delivery.PlainIl2p,
+                        TrailerNearBits: delivery.TrailerNearBits,
                         MonitorOnly: delivery.MonitorOnly));
                 },
                 crcMode: framing == FskFraming.Il2pCrc, acceptPlainIl2p: acceptPlainIl2p);

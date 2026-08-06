@@ -18,8 +18,17 @@ bursts/point, 3 kHz SNR convention) and the real-audio corpora:
 | Carrier-offset sweep 0-33 Hz @ −3 dB | 92-97 % flat |
 | CCIR Good (0.5 ms / 0.1 Hz) | 33 % @ −4 dB, outage-bound above |
 | CCIR Poor (2 ms / 1 Hz) | ~29 % ceiling - equaliser-bound |
-| GB7RDG 24 h miss corpus | 32 of 37 copy, 5 remain (`NINOTNC_ASPIRATION=1`) |
+| GB7RDG 24 h miss corpus, demodulated byte-exact | 32 of 37 (`NINOTNC_ASPIRATION=1`) |
+| GB7RDG 24 h miss corpus, **host-delivered** | 22 of 37 (3 CRC-verified + 19 trailer-corroborated) |
 | bpsk1200 AWGN | 86 % @ +2 dB (was 20 %) |
+
+The demodulated/delivered split matters and was initially conflated: the aspiration test counts
+`FrameDecoded`, which includes withheld RS-only readings. Before trailer corroboration landed
+(2026-08-06, same day as this doc), only 3 of the 32 byte-exact frames actually verified their
+CRC and reached a host. The other 29 failed on 2-10 grazed trailer bits, clustered in the last
+positions - the end-of-burst pulse-truncation cliff landing on the wire format's only
+unprotected bytes. Corroboration (`Il2pReceiver`: recompute the trailer the payload implies,
+deliver within 4 wire bits, ~1.1e-5 false-accept - CRC-order evidence) recovered 19 of them.
 
 The demodulator now sits within ~0.5-1 dB of the matched-filter bound for this waveform on
 AWGN. The remaining structural losses are **above** the demodulator: everything from the bit
@@ -82,15 +91,23 @@ needs a soft-bit or erasure-hint input surface. This is the one workstream that 
 from this repo alone - it needs the Il2p repo opened alongside. Estimated 1-2 dB AWGN
 equivalent, more under fading.
 
-### 2. Ensemble decode-any (cheap, corpus-targeted) - IN PROGRESS 2026-08-06
+### 2. Trailer corroboration - LANDED 2026-08-06
 
-During the #236 campaign, marginal off-air frames flipped between detector variants: coherent
-caught frames DF-DD missed and vice versa, and small parameter changes (frequency-loop gain
-0.05 vs 0.1) changed *which* frames copied rather than how many. Each variant has a different
-failure geometry and the CRC arbitrates. Run two or three variants per branch - at minimum
-DF-DD + Costas-coherent - and deliver any CRC-verified decode. CPU is cheap at 300 Bd. Best
-guess: the remaining 5 corpus misses drop to 2-3, and the fading-channel curves improve a few
-points via detector diversity. No wire, no cross-repo.
+Measurement redirected this slot on the day the roadmap was written: probing why 29 corpus
+frames demodulated byte-exact without delivering exposed the trailer-cliff mechanism above, and
+the fix (corroboration in `Il2pReceiver`) took the corpus from 3 to 22 host-delivered - worth
+more than any planned demodulator change, for two hundred lines. Left behind it, two follow-ups:
+
+- **Tail handling in the demodulator.** The cliff itself is partly recoverable: the matched
+  filter loses the final symbols because both ends truncate the last pulse. Our own modulator
+  does too - extending TX rendering by the pulse span (wire-compatible, it is just carrier
+  tail) would make our transmissions decode better at every receiver, and an RX-side
+  asymmetric-tail treatment could shave the remaining grazed bits. Also worth probing: whether
+  bpsk300's DF-DD reference decays into the trailer when the tail fades.
+- **Ensemble decode-any**, demoted from this slot: the measured union gain was one corpus case
+  (coherent copied `GB7OXF-180252` where DF-DD did not) plus general detector diversity under
+  fading. Still cheap and worth having, but corroboration ate most of its lunch. Re-evaluate
+  against the capture campaign's `misses-v2`.
 
 ### 3. Retransmission soft combining (the sleeper)
 
@@ -151,7 +168,7 @@ its own ceiling is.
 
 - Every workstream that changes decode behaviour lands with its sim-ladder A/B and a corpus
   re-score, and gets its dated entry in [mode-validation.md](mode-validation.md).
-- The 37-frame corpus is close to exhausted as a discriminator (32 copy); do not tune against
-  its tail. New tuning decisions wait for the capture campaign's `misses-v2`.
+- The 37-frame corpus is close to exhausted as a discriminator (32 demodulate, 22 deliver); do
+  not tune against its tail. New tuning decisions wait for the capture campaign's `misses-v2`.
 - Nothing here changes a single transmitted bit: NinoTNC interop is ground truth, and the
   parity/QtSM/off-air suites stay the regression gate.
