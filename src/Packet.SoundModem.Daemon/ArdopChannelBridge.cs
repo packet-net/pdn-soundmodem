@@ -82,6 +82,11 @@ internal sealed class ArdopChannelBridge
     /// <summary>Bandpass output scratch for <see cref="Unshift"/>, likewise reused.</summary>
     private float[] _banded = [];
 
+    /// <summary>Engine-rate output scratch for <see cref="Receive"/>, likewise reused: the
+    /// receive path runs per 20 ms block for the life of the daemon, and a fresh array per
+    /// block was steady-state garbage on the audio thread.</summary>
+    private float[] _engine = [];
+
     private ArdopChannelBridge(double centreHz, int engineRate, int channelRate)
     {
         if (channelRate < engineRate || channelRate % engineRate != 0)
@@ -162,23 +167,25 @@ internal sealed class ArdopChannelBridge
 
     /// <summary>
     /// Channel audio, brought down to the engine rate and moved back to where ARDOP expects to
-    /// find its signal.
+    /// find its signal. The returned span aliases reused scratch: consume it before the next
+    /// call (the TNC's <c>ProcessReceive</c> does, synchronously).
     /// </summary>
-    internal float[] Receive(ReadOnlySpan<float> samples)
+    internal ReadOnlySpan<float> Receive(ReadOnlySpan<float> samples)
     {
         if (_receiveDecimator is null)
         {
-            var output = new float[samples.Length];
             if (_receive is null)
             {
-                samples.CopyTo(output);
-            }
-            else
-            {
-                Unshift(samples, output);
+                return samples;
             }
 
-            return output;
+            if (_engine.Length < samples.Length)
+            {
+                _engine = new float[samples.Length];
+            }
+
+            Unshift(samples, _engine.AsSpan(0, samples.Length));
+            return _engine.AsSpan(0, samples.Length);
         }
 
         int most = _receiveDecimator.MaxOutput(samples.Length);
@@ -188,22 +195,23 @@ internal sealed class ArdopChannelBridge
         }
 
         int produced = _receiveDecimator.Process(samples, _decimated);
-        var engine = new float[produced];
         if (_receive is null)
         {
-            Array.Copy(_decimated, engine, produced);
-        }
-        else
-        {
-            Unshift(_decimated.AsSpan(0, produced), engine);
+            return _decimated.AsSpan(0, produced);
         }
 
-        return engine;
+        if (_engine.Length < produced)
+        {
+            _engine = new float[produced];
+        }
+
+        Unshift(_decimated.AsSpan(0, produced), _engine.AsSpan(0, produced));
+        return _engine.AsSpan(0, produced);
     }
 
     /// <summary>Bandpass to the on-air band, then move it back to ARDOP's native centre - in
     /// that order; see <see cref="_receiveBandpass"/> for why swapping them costs 3 dB.</summary>
-    private void Unshift(ReadOnlySpan<float> onAir, float[] output)
+    private void Unshift(ReadOnlySpan<float> onAir, Span<float> output)
     {
         if (_banded.Length < onAir.Length)
         {

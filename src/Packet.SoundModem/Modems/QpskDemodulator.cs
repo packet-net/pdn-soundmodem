@@ -25,6 +25,10 @@ public sealed class QpskDemodulator
     /// signal. As in <see cref="BpskDemodulator"/>.</summary>
     private const double OffsetCoherenceFloor = 0.5;
 
+    /// <summary>Samples between oscillator renormalisations; see
+    /// <see cref="AfskDemodulator"/>'s twin constant.</summary>
+    private const int OscillatorRenormInterval = 4096;
+
     private readonly FirFilter _bandPass;
     private readonly FirFilter _lowPassI;
     private readonly FirFilter _lowPassQ;
@@ -37,10 +41,13 @@ public sealed class QpskDemodulator
     private readonly float[] _delayQ;
     private readonly int _delayWhole;
     private readonly float _delayFraction;
-    private readonly double _oscillatorStep;
+    private readonly double _rotateCos;
+    private readonly double _rotateSin;
     private readonly double _delaySamples;
     private readonly int _sampleRate;
-    private double _oscillatorPhase;
+    private double _oscillatorCos = 1;
+    private double _oscillatorSin;
+    private int _renormCountdown = OscillatorRenormInterval;
     private double _averageDiffMagnitude;
     private double _offsetWindowReal;
     private double _offsetWindowImag;
@@ -74,7 +81,9 @@ public sealed class QpskDemodulator
             carrierFrequency - baud, carrierFrequency + baud, sampleRate, 256 * sampleRate / 12000));
         _lowPassI = new FirFilter(FilterDesign.LowPass(0.75 * baud, sampleRate, 128 * sampleRate / 12000));
         _lowPassQ = new FirFilter(FilterDesign.LowPass(0.75 * baud, sampleRate, 128 * sampleRate / 12000));
-        _oscillatorStep = 2 * Math.PI * carrierFrequency / sampleRate;
+        double step = 2 * Math.PI * carrierFrequency / sampleRate;
+        _rotateCos = Math.Cos(step);
+        _rotateSin = Math.Sin(step);
         _energyBusy = new EnergyBusyDetector(sampleRate);
         if (detector == PskDetector.Coherent)
         {
@@ -219,14 +228,23 @@ public sealed class QpskDemodulator
     // quadrant of that product is the phase change, which the sink maps straight to a dibit.
     private void ProcessDifferential(float filtered)
     {
-        _oscillatorPhase += _oscillatorStep;
-        if (_oscillatorPhase > 2 * Math.PI)
+        // The mixer NCO as a rotating phasor rather than per-sample Math.Sin/Cos - the
+        // same treatment as AfskDemodulator, and for the same reason: a diversity bank
+        // multiplies this loop by its branch count.
+        double rotatedCos = (_oscillatorCos * _rotateCos) - (_oscillatorSin * _rotateSin);
+        double rotatedSin = (_oscillatorSin * _rotateCos) + (_oscillatorCos * _rotateSin);
+        _oscillatorCos = rotatedCos;
+        _oscillatorSin = rotatedSin;
+        if (--_renormCountdown == 0)
         {
-            _oscillatorPhase -= 2 * Math.PI;
+            double scale = 1 / Math.Sqrt((rotatedCos * rotatedCos) + (rotatedSin * rotatedSin));
+            _oscillatorCos *= scale;
+            _oscillatorSin *= scale;
+            _renormCountdown = OscillatorRenormInterval;
         }
 
-        float i = _lowPassI.Next(filtered * (float)Math.Sin(_oscillatorPhase));
-        float q = _lowPassQ.Next(filtered * (float)Math.Cos(_oscillatorPhase));
+        float i = _lowPassI.Next(filtered * (float)_oscillatorSin);
+        float q = _lowPassQ.Next(filtered * (float)_oscillatorCos);
 
         // Fractional one-symbol delay via linear interpolation in the ring.
         int older = _delayPosition; // about to be overwritten = oldest (whole+2 back)
