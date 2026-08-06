@@ -165,6 +165,20 @@ public class SignalSurveyTests : IDisposable
     }
 
     [Fact]
+    public void A_Keyup_Reset_Is_Applied_On_The_Receive_Path_And_Abandons_The_Burst()
+    {
+        // Reset arrives from the transmitter thread at keyup; it must still take effect even
+        // though the mutation is deferred to the receive path (the unguarded lists belong to
+        // that thread). A burst straddling our own transmission is not a measurement of
+        // anybody else's, so nothing may be captured from it.
+        var survey = new SignalSurvey(Options(), Bands, SampleRate, BinWidthHz, LinesPerSecond, LineLength);
+        Play(survey, 944, 1344, burstLines: 60, atBurstEnd: _ => survey.Reset());
+        Settle(survey);
+
+        Captures().Should().BeEmpty("the burst in flight was abandoned at the keyup");
+    }
+
+    [Fact]
     public void A_Burst_Read_As_Plain_Il2p_And_Withheld_Counts_As_Decoded()
     {
         // The survey is fed from the monitor path, so a frame the station read and did not pass

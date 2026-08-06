@@ -96,6 +96,7 @@ public sealed class SignalSurvey : IDisposable
     private readonly string[] _modemNames;
     private long _lastLine = -1;
     private long _skippedForBudget;
+    private int _resetPending;
 
     /// <summary>Creates a survey over <paramref name="bands"/>, writing captures per
     /// <paramref name="options"/>.</summary>
@@ -184,6 +185,7 @@ public sealed class SignalSurvey : IDisposable
     /// <summary>Feeds one spectrum line.</summary>
     public void AddLine(long lineIndex, ReadOnlySpan<byte> line)
     {
+        ApplyPendingReset();
         _lastLine = lineIndex;
         _lineSamples[(int)(((lineIndex % _lineSamples.Length) + _lineSamples.Length) % _lineSamples.Length)]
             = _ring.Written;
@@ -217,6 +219,7 @@ public sealed class SignalSurvey : IDisposable
     public void NoteDecode(
         int subChannel, ReadOnlySpan<byte> frame, Modems.FrameQuality quality, bool ax25 = true)
     {
+        ApplyPendingReset();
         if (_lastLine < 0)
         {
             return;   // no line clock yet; nothing to attach it to
@@ -240,11 +243,24 @@ public sealed class SignalSurvey : IDisposable
 
     /// <summary>Abandons everything in flight. Called when the station keys up: a burst that
     /// straddles our own transmission is not a measurement of anybody else's.</summary>
-    public void Reset()
+    /// <remarks>
+    /// Callable from any thread - the keyup announcement arrives on the transmitter's, and
+    /// the audio thread can be mid-block in the receive tap at that very moment. Nothing is
+    /// mutated here: a flag is set, and the receive path applies it before the next line or
+    /// decode it processes. Receive is gated for the length of the transmission, so the state
+    /// is swept exactly once, before any post-keyup audio is examined - same effect as an
+    /// immediate reset, without two threads in the unguarded lists.
+    /// </remarks>
+    public void Reset() => Volatile.Write(ref _resetPending, 1);
+
+    private void ApplyPendingReset()
     {
-        _detector.Reset();
-        _decodes.Clear();
-        _lastLine = -1;
+        if (Interlocked.Exchange(ref _resetPending, 0) == 1)
+        {
+            _detector.Reset();
+            _decodes.Clear();
+            _lastLine = -1;
+        }
     }
 
     /// <inheritdoc />
