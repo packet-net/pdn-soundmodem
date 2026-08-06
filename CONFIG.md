@@ -42,6 +42,7 @@ with `su -` and drop the prefix.)
 | `ardop` | object | *(disabled)* | ARDOP virtual TNC - [below](#ardop) |
 | `frameLog` | object | *(not kept)* | Record every frame heard and sent to SQLite - [below](#framelog) |
 | `survey` | object | *(not surveying)* | Keep signals this station cannot read, for analysis - [below](#survey) |
+| `rawCapture` | object | *(not recording)* | Record everything the channel hears, continuously - [below](#rawcapture) |
 | `idBeacons` | bool | `true` | Listen for the NinoTNC idents sent alongside the PSK SSB modes - [below](#idbeacons) |
 | `flex` | object | see below | FlexRadio slice params - [below](#flex) |
 | `ubersdr` | object | see below | UberSDR stream params - [below](#ubersdr) |
@@ -840,6 +841,33 @@ The sidecar records the measured centre, edges, width, duration and SNR, the RF 
 the dial is known, the sample rate, and which modems the station was running at the time - so a
 capture read months later still says what "unclaimed" meant. Point `sm-decode` at the WAV, or any
 mode's demodulator at the sidecar's centre, to find out what it was.
+
+## `rawCapture`
+
+Continuous recording of the channel's receive audio - everything, not just detected bursts -
+as chunked 16-bit mono WAVs at the channel DSP rate:
+
+```json
+"rawCapture": { "path": "/var/lib/pdn-soundmodem/raw", "maxBytes": 4294967296, "chunkMinutes": 15 }
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `path` | string | `/var/lib/pdn-soundmodem/raw` | Where chunks land, named `raw-<UTC>.wav` |
+| `maxBytes` | number | 4 GiB | Directory budget; the oldest chunks are pruned to fit |
+| `chunkMinutes` | int | `15` | Audio minutes per chunk |
+
+The [survey](#survey) and this answer different questions. The survey curates: bursts the
+station could not read, rate-limited and cooled down, cheap enough to leave on for months. Raw
+capture keeps the unedited stream so the **whole run can be re-scored offline against a later
+receiver** - including everything a burst detector would have missed, which is precisely what a
+receiver-improvement campaign needs a corpus of. It costs disk by design: about 2 GB per day at
+a 12 kHz DSP rate, 8.6 GB at 48 kHz. Size `maxBytes` to the disk and the campaign.
+
+Chunks are always readable WAVs, even after a crash or power cut, to within a few seconds of
+the end. Recording pauses while the station transmits (its own transmissions are not receive
+evidence), and a disk failure disables recording with one journal line rather than stopping
+the modems.
 
 ## `paging`
 
