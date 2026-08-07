@@ -189,6 +189,34 @@ internal sealed class Il2pReceiver
     /// opposed to being reported and withheld.</summary>
     public bool DeliversPlainIl2p => !_plainReading.MonitorOnly;
 
+    /// <summary>
+    /// Cumulative count of sync-found-but-unrecoverable events across this receiver's readings:
+    /// every time a deframer matched the IL2P sync word, collected the frame the header implied,
+    /// and could not bring it back through Reed-Solomon (forwards
+    /// <see cref="Il2pDeframer.RsFailures"/>). This is the only observable form of "there was a
+    /// transmission here and we lost it" - a decode failure with no sync found leaves no trace at
+    /// all - which makes the delta across a burst the burst-verdict instrument's
+    /// sync-without-decode signal.
+    /// </summary>
+    /// <remarks>
+    /// On an IL2P+CRC link both readings hunt the same bits, so one damaged transmission
+    /// typically bumps this twice (and a diversity bank multiplies it again per branch). Treat a
+    /// positive delta as "sync was found and the frame was unrecoverable", never as a count of
+    /// lost transmissions. Noise can also tick it - a 24-bit sync word surfaces from random bits
+    /// now and then - which is why callers measure deltas across a DCD-bounded burst rather than
+    /// reading the counter cold.
+    /// </remarks>
+    public long RsFailures => _deframer.RsFailures + (_plainDeframer?.RsFailures ?? 0);
+
+    /// <summary>
+    /// Cumulative count of frames the link's own IL2P+CRC reading recovered through Reed-Solomon
+    /// whose trailing CRC then failed to verify (forwards <see cref="Il2pDeframer.CrcFailures"/>;
+    /// always zero on a plain-IL2P link, which has no trailer to check). Such a frame is not
+    /// lost - the plain reading releases it as a monitor copy - but the counter is the honest
+    /// record that the link's own reading got all the way to the trailer and was refused there.
+    /// </summary>
+    public long CrcFailures => _deframer.CrcFailures;
+
     /// <summary>Pushes one received bit (0/1) through both readings.</summary>
     public void PushBit(int bit) => PushBit(bit, 1f);
 

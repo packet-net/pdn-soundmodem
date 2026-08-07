@@ -175,6 +175,80 @@ public class BpskMultiModemTests
         frames.Should().HaveCount(2);
     }
 
+    /// <summary>A burst whose sync survives and whose payload is beyond Reed-Solomon - a
+    /// genuine BPSK transmission the receiver cannot bring back, which is the burst-verdict
+    /// instrument's DAMAGED-BPSK class made synthetic.</summary>
+    private static float[] DamagedBurst(double offsetHz = 0)
+    {
+        byte[] wire = Il2pCodec.Encode(Frame, appendCrc: true);
+        for (int i = Il2pCodec.HeaderWireLength; i < wire.Length; i += 2)
+        {
+            wire[i] ^= 0xA5;
+        }
+
+        byte[] bits = Il2pFramer.FrameBits(wire, preambleBits: 45, Il2pFramer.PreambleStyle.Zeros);
+        float[] audio = new BpskModulator(SampleRate, carrierFrequency: 1500 + offsetHz).Modulate(bits);
+        int pad = SampleRate / 5;
+        var padded = new float[audio.Length + 2 * pad];
+        audio.CopyTo(padded, pad);
+        return padded;
+    }
+
+    [Fact]
+    public void A_Damaged_Burst_Asserts_Dcd_And_Ticks_The_Sync_Failure_Counter()
+    {
+        // The burst-verdict instrument's calibration case (DcdBurstTracker): a genuine BPSK
+        // transmission too damaged to decode still asserts DCD - transition-timing coherence is
+        // a property of the modulation, not of the payload surviving - and the only trace of
+        // the lost frame is the bank's sync-found-but-RS-failed counter.
+        float[] audio = DamagedBurst();
+        var frames = new List<byte[]>();
+        var monitored = new List<byte[]>();
+        var bank = BpskMultiModem.Bpsk300(SampleRate, frames.Add);
+        bank.FrameDecoded += (frame, _) => monitored.Add(frame);
+        bank.RsFailures.Should().Be(0, "a fresh bank has failed nothing");
+
+        bool dcdSeen = false;
+        int block = SampleRate / 10;
+        for (int pos = 0; pos < audio.Length; pos += block)
+        {
+            bank.Process(audio.AsSpan(pos, Math.Min(block, audio.Length - pos)));
+            dcdSeen |= bank.CarrierDetect;
+        }
+
+        dcdSeen.Should().BeTrue("BPSK symbol timing asserts DCD whether or not the frame decodes");
+        frames.Should().BeEmpty();
+        monitored.Should().BeEmpty("the payload is beyond Reed-Solomon on every branch");
+        bank.RsFailures.Should().BeGreaterThan(0,
+            "sync was found and the frame refused - the damaged-bpsk verdict");
+    }
+
+    [Fact]
+    public void The_Bank_Measures_The_Carrier_Offset_Of_A_Burst_It_Cannot_Decode()
+    {
+        // Decoded frames carry their offset in FrameQuality; the bursts that never decode are
+        // the ones the live CarrierOffsetHz property exists for. Half a branch step off centre,
+        // like the swept-grid test, so a comb label cannot pass it.
+        float[] audio = DamagedBurst(offsetHz: 11.25);
+        var bank = BpskMultiModem.Bpsk300(SampleRate, _ => { });
+        bank.CarrierOffsetHz.Should().BeNull("silence measures nothing");
+
+        double? during = null;
+        int block = SampleRate / 10;
+        for (int pos = 0; pos < audio.Length; pos += block)
+        {
+            bank.Process(audio.AsSpan(pos, Math.Min(block, audio.Length - pos)));
+            if (bank.CarrierDetect)
+            {
+                during = bank.CarrierOffsetHz ?? during;
+            }
+        }
+
+        during.Should().NotBeNull("the burst was there to measure while DCD held");
+        during!.Value.Should().BeApproximately(11.25, 3,
+            "the bank reports where the station actually was, decodable or not");
+    }
+
     [Fact]
     public void Transmit_Uses_The_Centre_And_Round_Trips_Through_A_Single_Modem()
     {

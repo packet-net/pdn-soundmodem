@@ -200,3 +200,35 @@ CFO rows are at the mode's knee SNR (+4 for qpsk600, +9 for qpsk2400).
    ideal DQPSK at these rates sits several dB lower; the #236-class chain suspects -
    decode-path band-pass, unmatched low-pass, DPLL inertia - are all present and
    unmeasured here). Q1's autopsies put a number on each.
+
+## Closeout (2026-08-07)
+
+The campaign ran Q0 through Q2 in one day and merged as PR #245; this section closes Q3
+and Q4 in the MS110D closeout style.
+
+- **Q3, family closure.** qpsk600 and qpsk2400 sit at their new measured floors (the Q2
+  tables above), pinned by the raised smoke masks and the inverted
+  differential-matches-coherent gate. qpsk3600 was re-validated at its ORIGINAL
+  configuration: fix-set 1's matched filter reaches it and its gates stayed green;
+  fix-set 2's decision-feedback reference measurably regressed its FM chain and is scoped
+  out with `decisionFeedback: false` at the factory - re-opening that is the first task of
+  any future qpsk3600 campaign, which also owns the FM channel model (rx-roadmap
+  workstream 6 item 6). No live cross-check exists for any QPSK mode: the 40 m capture
+  carries afsk300/bpsk300/ARDOP only, so on-air confirmation waits for a QPSK slot to be
+  monitored or worked; the NinoTNC corpus (9/9) and QtSM interop suites stand as the
+  interop evidence meanwhile.
+- **Q4, the gate flip.** Both mask moves and both fixture inversions shipped inside the
+  landing commits with their mode-validation.md entries (2026-08-07, two entries) - there
+  was no separate flip to perform, which is the discipline working as intended.
+- **What the campaign leaves open, honestly ranked:** the qpsk fading rows barely moved
+  and remain equaliser territory (the workstream 5 causal-limit findings apply doubly at
+  1200 Bd, where CCIR echoes span 1.2-2.4 symbols); the CFO tail beyond ~20 Hz on qpsk600
+  is seed-timing-bound at short TXDELAY (38 % at 30 Hz with a realistic preamble, 0 %
+  without); and a diversity bank for the QPSK family - BPSK's remaining structural
+  advantage - was neither needed for these gains nor measured, and is the obvious next
+  lever if the live network ever shows QPSK stations arriving further off-frequency than
+  the seed covers.
+
+Net: ~2.5 dB (qpsk600) and ~2 dB (qpsk2400) at the AWGN knees, CFO robustness roughly
+doubled with the dip eliminated, one measured null (DF-DD noise margin on QPSK) and one
+measured scope-out (qpsk3600's FM chain) on the record, at zero transmitted-bit change.

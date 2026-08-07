@@ -372,6 +372,67 @@ public class Il2pReceiverTests
         deliveries[0].MonitorOnly.Should().BeTrue();
     }
 
+    [Fact]
+    public void Sync_Found_But_Unrecoverable_Ticks_The_Rs_Failure_Counter()
+    {
+        // The burst-verdict instrument's sync-without-decode signal: a transmission whose sync
+        // word arrives intact but whose payload is beyond Reed-Solomon leaves no frame and no
+        // event - only this counter. Wreck half the bytes after the header; the header still
+        // decodes, so both readings size the payload, collect it and fail it.
+        byte[] wire = Il2pCodec.Encode(Gb7bpqBeacon(), appendCrc: true);
+        for (int i = Il2pCodec.HeaderWireLength; i < wire.Length; i += 2)
+        {
+            wire[i] ^= 0xA5;
+        }
+
+        byte[] bits = Il2pFramer.FrameBits(wire, preambleBits: 64, Il2pFramer.PreambleStyle.Zeros);
+        var frames = new List<byte[]>();
+        var receiver = new Il2pReceiver(
+            (frame, _, _) => frames.Add(frame), crcMode: true, acceptPlainIl2p: false);
+        receiver.RsFailures.Should().Be(0, "nothing has been pushed yet");
+        foreach (byte bit in bits)
+        {
+            receiver.PushBit(bit);
+        }
+
+        for (int i = 0; i < IdleBits; i++)
+        {
+            receiver.PushBit(0);
+        }
+
+        frames.Should().BeEmpty("the payload is beyond Reed-Solomon");
+        receiver.RsFailures.Should().BeGreaterThan(0,
+            "sync was found and the frame refused - the only trace an unrecoverable "
+            + "transmission leaves");
+    }
+
+    [Fact]
+    public void A_Wrecked_Trailer_Ticks_The_Crc_Failure_Counter()
+    {
+        // A_Wrecked_Trailer_Does_Not_Corroborate seen from the counters: the link's own reading
+        // recovers the frame through Reed-Solomon, reaches the trailer and is refused there,
+        // exactly once; nothing failed RS, because the payload itself was untouched.
+        byte[] bits = FrameBits(Gb7bpqBeacon(), crc: true);
+        for (int i = 1; i <= 8; i++)
+        {
+            bits[^i] ^= 1;
+        }
+
+        var receiver = new Il2pReceiver((_, _, _) => { }, crcMode: true, acceptPlainIl2p: false);
+        foreach (byte bit in bits)
+        {
+            receiver.PushBit(bit);
+        }
+
+        for (int i = 0; i < IdleBits; i++)
+        {
+            receiver.PushBit(0);
+        }
+
+        receiver.CrcFailures.Should().Be(1, "the trailer refused the recovered frame once");
+        receiver.RsFailures.Should().Be(0, "the payload decoded cleanly on both readings");
+    }
+
     private static List<byte[]> Push(byte[] bits, bool crcMode, bool acceptPlainIl2p) =>
         PushWithInfo(bits, crcMode, acceptPlainIl2p).Frames;
 

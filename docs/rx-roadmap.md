@@ -109,6 +109,78 @@ station read ~94 % of its slot's activity on the opening evening; misses-v2 as a
 needs either richer pickings (contest weekends, deeper QRN) or expected-bytes context
 (retry correlation) to say more than "hard".
 
+**First full-day harvest (2026-08-07, covering 2026-08-06 13:53Z to 2026-08-07 14:19Z).**
+The honest extent first: the replay window spans 100 chunks / 24.4 h of wall clock, but only
+**19.6 h of it is audio**. The DAX feed died silently at 09:26:47Z (pinned by the last
+non-zero sample, 447.8 s into `raw-20260807T091919Z.wav`); the daemon stayed up, logged no
+error, and wrote zero-filled chunks until a manual restart at 16:17:53Z - 6 h 51 m of dead
+air that looked alive from file timestamps. The feed watchdog (#247) now bounds that class
+at ~30 s. Separately the chunk timeline carries 116 s of inter-chunk gaps: 57 s of startup
+churn at 13:54Z, 7 s at the 14:19Z binary deploy, two silent process deaths at 23:16:58Z
+and 23:18:43Z (26 s + 22 s; `Restart=always` masked them, the kill mechanism lives in the
+system journal user `tf` cannot read, config unchanged across both), and two 2 s chunk-roll
+jitters. Different failure families: process death restarts and gaps the record; feed death
+gaps nothing and records silence. Instruments, for reproduction: `sm-ota replay --raw
+/home/tf/capture-40m/raw --mode bpsk300@2150,afsk300-il2pc@850 --detector differential
+--framelog /home/tf/capture-40m/framelog/frames.sqlite --from 20260806T135000Z --to
+20260807T141900Z --workers 10 --csv ...` (second run `--mode bpsk300@2150 --detector mlse`),
+the CSVs diffed with the scratch `ab-compare.py` (payload-hex match within +-45 s), impulses
+via `docs/bench/impulse-stats-2026-08-06.py` over the 81 audio-bearing chunks.
+
+- **Replay vs the live log.** Differential: bpsk300 **1122 decoded / 1062 deliverable /
+  1036 CRC-verified**, afsk300-il2pc **174 / 158 / 149**. Frame-log diff over the window:
+  1304 logged / 1296 replayed / **1292 matched / 12 log-only / 4 replay-only** - the same
+  near-parity cross-version reading as the opening evening, now at 24 h scale. Traffic
+  shape: evening peak 16:00-21:00Z (bpsk 111-189 frames/h), pre-dawn floor 01:00-04:00Z
+  (4, 15, 0, 0), dawn recovery from 05:00Z (07:00Z hits 69). 14 distinct bpsk source
+  callsign-SSIDs across 9 base calls (EI0RSI-1 317, GB7WEM-7 314, GB7BPQ 145, GB7OXF-2 69,
+  GB7BEX-15 67, PD4R-12 40, EI0RSI-7 38, the rest under 21; GB7NOT and G8BPQ heard rs-only),
+  4 on afsk (GB7BEX-15 84, GB7BPQ 45, GB7BWR-2 19, GB7NOT 10). New face: PD4R-12, an
+  empty-destination 118-byte beacon every ~13 min that the live daemon logs as source NULL.
+- **Detector A/B at 24 h: the opening evening's verdict holds.** mlse: **1126 / 1060 /
+  1043**. Totals at parity (4 frames apart on 1122), mlse again ahead only on CRC-verified
+  (+7 now, +5 then), and the exchange stays roughly symmetric: 12 differential-only against
+  16 mlse-only, union **+12 decoded (+1.07 %) / +13 deliverable (+1.22 %)** over the best
+  single detector - the same ~+1 % the opening evening promised for ensemble-decode-any.
+  mlse's exclusives again skew to the weak distant traffic (three GB7WEM-7, a GB7WEM IDENT,
+  an EI0RSI-7 ID, and all three PD4R-12 frames the differential replay dropped). Sharpest
+  new number: of the 1127 bpsk frames the live station logged in-window, differential's
+  replay misses 9 and mlse's misses 13, but **only 2 frames are missed by both** (18:46:52Z
+  GB7BWR len 56, 02:47:51Z len 15) - the live-vs-replay gap is almost entirely detector
+  exchange, not instrument loss. Still no default flip; the union number keeps funding
+  workstream 2.
+- **Survey misses: 0-for-71 again.** The harvest window banked 600 survey bursts - a capped
+  sample, not an inventory (120 s per-250 Hz-bucket cooldown, 30/h cap): 134 Missed
+  (51 afsk-slot, 72 bpsk-slot, 9 at the afsk watcher's 1002-1017 Hz edge, 2 at 683 Hz),
+  463 Unclaimed, 3 Unattributed. The 71 missed bursts not in the opening evening's autopsy
+  (56 afsk-claimed, 15 bpsk) were staged per-burst and re-decoded isolated, bpsk under both
+  detectors: **0 of 71 decode**. Lifetime isolated-decode score for missed bursts is now
+  0/133; the opening evening's conclusion (fragments and hard damage, not collection-state
+  masking) survives its first scale-up. Cross-check: the burst-verdict instrument (#250,
+  `/home/tf/capture-40m/replays/bursts-bpsk300-20260806-07.csv`, window extending past the
+  feed restart to 18:19Z) sees 873 DCD bursts, 743 with a decode, 130 zero-decode of which
+  57 are sub-second - the same shape from the receiver's own DCD.
+- **Impulse noise, full day.** 371,967 events >6x background in 2500-2950 Hz over 19.6 h
+  (315.7/min), 35 % broadband-coincident (opening evening: 38 %). Broadband rate by half
+  hour: evening peak 211-218/min at 18:00-18:30Z, overnight sustained 62-135/min (no
+  collapse; floor 58.7/min at 21:30Z), and a new observation the opening evening could not
+  see: a **sunrise spike, 187-230/min at 06:30-07:00Z with the day's strongest medians
+  (21-22 dB, 32-41 ms)**. Distribution stable against the opening evening: amplitude p50
+  18.0 / p90 23.7 / p99 34.0 / max 73.0 dB over background; duration p50 17.8 ms (5.3
+  symbols at 300 Bd) / p90 92 ms / p99 1.5 s. The 09:30Z half-hour row is a boundary
+  artefact (one event at the audio-to-zeros transition) and is excluded from the claims.
+- **The ARDOP slot, characterized without decoding it.** Between the IL2P slots the survey
+  logged 206 Unclaimed bursts in 1000-2000 Hz across the 19.6 h: 403 s of air time, 0.57 %
+  duty, arriving ~10/h around the clock with no diurnal collapse (range 5-19 per hour).
+  Burst widths cluster at ~200 Hz (median 203, p90 264); durations split into a ping/ACK
+  population (p50 0.53 s) and a data tail (p75 1.79 s, p90 6.15 s, max 16.9 s).
+  Duration-weighted centre concentrates 63 % of air time in 1500-1800 Hz, session centre
+  ~1650 Hz audio = RF ~7.051100 - consistent with ARDOP 200/500 sessions parked mid-slot.
+  A time-averaged PSD of active chunks is noise-dominated and flat across the passband, so
+  the survey bursts stay the instrument. This corpus is banked as the future cross-check
+  for the repo's own ARDOP implementation: real on-air ARDOP bursts with timestamps,
+  centres and SNRs, none of which the frame-layer rig can claim.
+
 ## Workstreams, ranked
 
 Ranked by expected real-world return per unit of effort, with the reasoning pinned so a future
