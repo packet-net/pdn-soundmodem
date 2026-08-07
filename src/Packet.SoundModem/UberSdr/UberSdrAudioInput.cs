@@ -61,6 +61,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
     private long _droppedReported;
     private long _published;
     private bool _ended;
+    private bool _sessionLive;
     private Task? _pump;
     private ClientWebSocket? _first;
     private readonly TimeProvider _time;
@@ -108,6 +109,18 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
     /// <summary>Samples dropped because nothing drained the buffer in time. Non-zero means the
     /// box cannot keep up, and is reported rather than hidden.</summary>
     public long DroppedSamples => Interlocked.Read(ref _dropped);
+
+    /// <summary>
+    /// True while an IQ session is open and expected to be delivering audio; false between
+    /// sessions, when quiet is deliberate - reconnect backoff, or an instance refusing us
+    /// until its daily quota resets. The daemon's starvation watch reads this: a live session
+    /// that delivers nothing for the threshold is a hung stream worth a restart, while a
+    /// deliberate wait restarted every threshold would re-ask a public receiver with a fresh
+    /// session each time - the exact hammering the reconnect policy exists to avoid. The
+    /// unreachable-receiver family is reported exactly once, by <see cref="Lost"/> on its own
+    /// five-minute clock, never by starvation.
+    /// </summary>
+    public bool SessionLive => Volatile.Read(ref _sessionLive);
 
     /// <summary>
     /// Connects to <paramref name="endpoint"/> and starts streaming. The pre-flight and the
@@ -356,6 +369,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
             }
 
             long publishedBefore = Interlocked.Read(ref _published);
+            Volatile.Write(ref _sessionLive, true);
             try
             {
                 await ReceiveAsync(socket, cancellation).ConfigureAwait(false);
@@ -368,6 +382,10 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
             catch (Exception e)
             {
                 _log?.Invoke($"ubersdr: stream from {_endpoint} ended ({e.Message})");
+            }
+            finally
+            {
+                Volatile.Write(ref _sessionLive, false);
             }
 
             socket.Dispose();

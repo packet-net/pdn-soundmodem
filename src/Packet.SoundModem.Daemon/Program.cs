@@ -208,6 +208,7 @@ UberSdrConfig? uberSdrConfig = null;
 WaterfallConfig? waterfallConfig = null;
 SurveyConfig? surveyConfig = null;
 RawCaptureConfig? rawCaptureConfig = null;
+DeadFeedConfig? deadFeedConfig = null;
 bool idBeacons = true;
 
 if (configPath is not null)
@@ -243,6 +244,7 @@ if (configPath is not null)
     waterfallConfig = config.Waterfall;
     surveyConfig = config.Survey;
     rawCaptureConfig = config.RawCapture;
+    deadFeedConfig = config.DeadFeed;
     idBeacons = config.IdBeacons;
     ardopPort ??= config.Ardop?.Port;
     Console.WriteLine($"config: {configPath}");
@@ -1749,35 +1751,167 @@ int blockSamples = ardopModem is null ? inputRate / 10 : inputRate / 50;
 var floatBuffer = new float[blockSamples];
 var dspBuffer = new float[rxDecimator?.MaxOutput(blockSamples) ?? blockSamples];
 var xrunWatch = new XrunWatch();
-// Flex only: the paced DAX ring pads exact silence at full rate when the VITA stream
-// dies, so the loop keeps turning and nothing else can notice (measured 2026-08-07:
-// 6.8 h of zeros recorded). ALSA inputs have xrun detection and genuinely-silent wired
-// inputs exist, so they are deliberately not watched.
-DeadFeedWatch? deadFeedWatch = flex is not null ? new DeadFeedWatch(inputRate) : null;
+
+// Dead-feed protection, two watches for two failure families, thresholds per device (the
+// config's "deadFeed" block overrides; 0 = off). What each input actually does when its
+// source dies, read from the implementations and the two real incidents:
+//
+//   flex     A dead VITA stream keeps DELIVERING - the radio pads exact zeros at full rate
+//            (measured 2026-08-07: 6.8 h of zeros recorded), so the silence watch is the one
+//            that sees it. If instead the DAX UDP path breaks while the TCP session stays up,
+//            FlexAudioInput.Read waits 200 ms for packets and returns 0 - paced, not a spin -
+//            and only the starvation watch can see that. A dead TCP session raises
+//            Client.Disconnected (handled above). Silence 30 + starvation 30.
+//   ubersdr  UberSdrAudioInput.Read waits 100 ms and returns 0 when the ring is empty -
+//            paced, not a spin. A hung established WebSocket (half-open TCP; .NET sends
+//            pings but by default never times out missing pongs) starves the ring while the
+//            pump sits in ReceiveAsync believing the session is live: starvation's case.
+//            An instance whose SDR feed dies but keeps streaming would deliver exact-zero
+//            IQ, which demodulates to exact-zero audio: silence's case. Deliberate quiet -
+//            reconnect backoff, quota refusals - is declared by SessionLive and postpones
+//            starvation; a receiver unreachable past five minutes is uberSdr.Lost's alone
+//            (handled above), so no death is reported two ways. Silence 30 + starvation 30.
+//   alsa     AlsaPcm.Read BLOCKS until the span fills and never returns 0; a card that
+//            stops producing period interrupts therefore blocks Read forever and stops this
+//            loop turning - which is why starvation is polled from a timer, not from the
+//            loop. A card that dies outright (USB unplug: -ENODEV, which snd_pcm_recover
+//            cannot fix) makes Read throw InvalidOperationException, caught below. Silence
+//            is OFF by deliberate default: genuinely-silent wired inputs exist, and a
+//            disconnected cable must not restart-loop the service. Starvation 30 only.
+//   wavloop  Paces itself with Thread.Sleep and always returns a full buffer - it can
+//            neither starve nor die, and a silent recording looping is legitimate. Both off.
+//
+// No 0-return above is a busy spin (each has already waited inside Read), so the loop needs
+// no backoff of its own. Recovery for every detector is the proven restart contract: orderly
+// shutdown, exit 1, systemd rebuilds the device session from scratch (Restart=on-failure in
+// the shipped unit; the capture campaign's unit is Restart=always).
+// flex:mock counts as a bench device, not a Flex: its DAX-RX path deliberately delivers
+// nothing between injected frames, which a starvation watch would read as a dead radio
+// 30 s into every idle bench session.
+DeadFeedDevice deadFeedDevice =
+    wavLoopPath is not null ? DeadFeedDevice.WavLoop
+    : deviceIsUberSdr ? DeadFeedDevice.UberSdr
+    : deviceIsFlex ? (flex!.Mock is null ? DeadFeedDevice.Flex : DeadFeedDevice.WavLoop)
+    : DeadFeedDevice.Alsa;
+(double silenceSeconds, double starvationSeconds) =
+    DeadFeedConfig.Resolve(deadFeedConfig, deadFeedDevice);
+DeadFeedWatch? deadFeedWatch =
+    silenceSeconds > 0 ? new DeadFeedWatch(inputRate, silenceSeconds) : null;
+string silenceMessage = deadFeedDevice switch
+{
+    DeadFeedDevice.Flex =>
+        $"receive feed dead: {silenceSeconds:F0} s of unbroken digital silence from the radio "
+        + "- restarting to rebuild the session (recurring? check DAX/slice config - a "
+        + "deliberately muted DAX stream restart-loops this way)",
+    DeadFeedDevice.UberSdr =>
+        $"receive feed dead: {silenceSeconds:F0} s of unbroken digital silence from the "
+        + "receiver's IQ stream - its SDR feed has likely died - restarting to reconnect "
+        + "afresh",
+    _ =>
+        $"receive feed dead: {silenceSeconds:F0} s of unbroken digital silence from the sound "
+        + "device - restarting (\"deadFeed\".\"silenceSeconds\" asked for this watch; a "
+        + "genuinely silent input restart-loops this way - set it 0 to turn the watch off)",
+};
+
+TimeProvider wallClock = TimeProvider.System;
+StarvationWatch? starvationWatch =
+    starvationSeconds > 0 ? new StarvationWatch(wallClock, starvationSeconds) : null;
+ITimer? starvationGrace = null;
+using ITimer? starvationTimer = starvationWatch is null ? null : wallClock.CreateTimer(_ =>
+    {
+        if (cancellation.IsCancellationRequested)
+        {
+            return; // already shutting down; firing now would relabel a clean stop as a fault
+        }
+
+        if (uberSdr is not null && !uberSdr.SessionLive)
+        {
+            // Quiet between UberSDR sessions is the reconnect policy pacing itself; see
+            // SessionLive for why restarting through it would hammer a public receiver.
+            starvationWatch.NoteExpectedQuiet();
+            return;
+        }
+
+        if (!starvationWatch.IsStarved())
+        {
+            return;
+        }
+
+        Console.Error.WriteLine(deadFeedDevice switch
+        {
+            DeadFeedDevice.Flex =>
+                $"receive feed starved: no samples from the radio for {starvationSeconds:F0} s "
+                + "- the DAX stream has stopped while the session looks alive - restarting to "
+                + "rebuild it",
+            DeadFeedDevice.UberSdr =>
+                $"receive feed starved: an open session delivered no audio for "
+                + $"{starvationSeconds:F0} s - a hung stream - restarting to reconnect afresh",
+            _ =>
+                $"receive feed starved: the sound device returned no samples for "
+                + $"{starvationSeconds:F0} s - a stalled or unplugged card - restarting to "
+                + "reopen it",
+        });
+        radioLost = true;
+        cancellation.Cancel();
+
+        // If the receive loop is stuck inside a blocked Read (the ALSA stall family) the
+        // orderly path can never run - it only re-checks cancellation when Read returns. Give
+        // it a grace period, then exit hard; systemd restarts either way. Assigned to a
+        // captured local so the timer stays rooted while the process lives.
+        starvationGrace = wallClock.CreateTimer(
+            _ =>
+            {
+                Console.Error.WriteLine(
+                    "receive feed starved: the orderly shutdown stalled (the input's Read is "
+                    + "blocked) - exiting hard so the service restarts");
+                Environment.Exit(1);
+            },
+            null, TimeSpan.FromSeconds(15), Timeout.InfiniteTimeSpan);
+    }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+
 long nextHealthPoll = Environment.TickCount64 + XrunPollMs;
 long frameLogDropsSeen = 0;
 long captureDropsSeen = 0;
 while (!cancellation.IsCancellationRequested)
 {
-    int got = input.Read(floatBuffer);
+    int got;
+    try
+    {
+        got = input.Read(floatBuffer);
+    }
+    catch (InvalidOperationException deviceDeath)
+    {
+        // The ALSA death-with-an-errno family (USB card unplugged: snd_pcm_readi -ENODEV,
+        // beyond snd_pcm_recover). Without this catch it escaped as a raw stack trace with
+        // an abort exit code; the recovery is the same restart contract as every other
+        // dead feed, so say what happened in one line and take it.
+        Console.Error.WriteLine(
+            $"receive feed dead: the input device failed ({deviceDeath.Message}) - "
+            + "restarting to reopen it");
+        radioLost = true;
+        cancellation.Cancel();
+        break;
+    }
+
     if (got == 0)
     {
+        // Never a busy spin: every input that can return 0 has already waited inside Read
+        // (100 ms ubersdr, 200 ms flex; ALSA and wav-loop never return 0) - see the
+        // dead-feed notes above.
         continue;
     }
+
+    starvationWatch?.NoteDelivery();
 
     if (deadFeedWatch is not null && deadFeedWatch.Observe(floatBuffer.AsSpan(0, got)))
     {
         // Restart-to-recover: both real feed deaths were fixed by a process restart and
-        // nothing less is proven, so take the orderly shutdown and let Restart=always
-        // rebuild the Flex session from scratch. If this line repeats every ~30 s the
-        // feed is not coming back by itself - check DAX routing and the slice on the
-        // radio side.
-        Console.Error.WriteLine(
-            "receive feed dead: 30 s of unbroken digital silence from the radio - "
-            + "restarting to rebuild the session (recurring? check DAX/slice config)");
-        // Exit 1 is the unit's retry contract (Restart=on-failure in the shipped unit;
-        // the capture campaign's unit is Restart=always) - a dead feed is the radio lost,
-        // whatever the paced ring pretends.
+        // nothing less is proven, so take the orderly shutdown and let the unit rebuild
+        // the device session from scratch. If this line repeats every threshold the feed
+        // is not coming back by itself - the message says where to look.
+        Console.Error.WriteLine(silenceMessage);
+        // Exit 1 is the unit's retry contract - a dead feed is the radio lost, whatever
+        // the paced ring pretends.
         radioLost = true;
         cancellation.Cancel();
         break;

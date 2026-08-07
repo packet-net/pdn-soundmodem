@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Pocsag;
 
@@ -50,7 +51,16 @@ public class PagingDropTests
     [Fact]
     public async Task A_Page_That_Dies_Waiting_On_The_Inhibit_Raises_PageDropped()
     {
-        var channel = new SoundModemChannel(SampleRate, randomSeed: 7)
+        // The channel's clock is faked so the OK-before-drop ordering is a certainty rather
+        // than a race: with a real clock and a 1 ms inhibit timeout, a scheduler preemption
+        // longer than 1 ms between the enqueue stamping its wait start and its first elapsed
+        // check made the refusal synchronous - the server answered "ERR ... (waited 0s)"
+        // instead of OK, which is exactly how this test failed on a loaded CI runner
+        // (2026-08-07, run 31221914872). On the fake clock no time passes until this test
+        // says so, so the enqueue always parks on its first inhibit poll and OK is sent;
+        // advancing the clock then expires the timeout and raises the drop.
+        var clock = new FakeTimeProvider();
+        var channel = new SoundModemChannel(SampleRate, time: clock, randomSeed: 7)
         {
             TransmitInhibit = () => true,
             TransmitInhibitTimeout = TimeSpan.FromMilliseconds(1),
@@ -65,6 +75,10 @@ public class PagingDropTests
         {
             string response = await SendAsync(client, reader, "PAGE 1234567 0 TONE");
             response.Should().StartWith("OK ", "the refusal happens after the inhibit timeout, not at submission");
+
+            // Past the 50 ms inhibit poll the enqueue is parked on; the next check sees the
+            // 1 ms timeout long expired and faults the page.
+            clock.Advance(TimeSpan.FromMilliseconds(100));
 
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             while (drops.Count == 0)

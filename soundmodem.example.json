@@ -102,5 +102,10 @@
   // Every frame heard, written to SQLite (WAL, so you can read it while the modem runs).
   // Omit and nothing is written down.
   // "frameLog": { "path": "/var/lib/pdn-soundmodem/frames.db" },
+  // Dead-feed protection: the daemon restarts itself when the input stops delivering samples
+  // at all (every device) or delivers unbroken digital silence (flex/ubersdr by default; off
+  // for ALSA, where genuinely-silent wired inputs exist). Thresholds in seconds, 0 = off;
+  // omit for per-device defaults. See CONFIG.md § deadFeed.
+  // "deadFeed": { "silenceSeconds": 30, "starvationSeconds": 30 },
   "bind": "127.0.0.1"
 }

@@ -46,6 +46,7 @@ with `su -` and drop the prefix.)
 | `idBeacons` | bool | `true` | Listen for the NinoTNC idents sent alongside the PSK SSB modes - [below](#idbeacons) |
 | `flex` | object | see below | FlexRadio slice params - [below](#flex) |
 | `ubersdr` | object | see below | UberSDR stream params - [below](#ubersdr) |
+| `deadFeed` | object | *(per-device defaults)* | Dead-feed protection: restart when the input dies silently - [below](#deadfeed) |
 
 ---
 
@@ -1146,6 +1147,64 @@ every session and a stripe on the waterfall. It costs about a second per reconne
 **`gain` is for the display, not the decoders.** Everything downstream is floating point and
 level-independent; measured off `m9psy-1`, the demodulated audio lands around −26 dBFS RMS,
 which is soundcard-like already. Raise it if a quiet instance makes the waterfall hard to read.
+
+---
+
+## `deadFeed`
+
+An input device can die without saying so, and a modem that keeps "running" on a dead feed is
+worse than one that stops: no decodes, no captures, and nothing anywhere says a word. The real
+incident behind this: a Flex whose VITA stream died kept delivering full-rate buffers of exact
+zeros, and the daemon spent 6.8 hours recording them. Two watches cover the two ways a feed
+dies, and either one firing takes the proven recovery - an orderly shutdown with exit 1, so
+systemd restarts the service and rebuilds the device session from scratch.
+
+```json
+"deadFeed": { "silenceSeconds": 30, "starvationSeconds": 30 }
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `silenceSeconds` | number | per device | Unbroken **digital silence** (every sample exactly zero) that declares the feed dead. 0 = off |
+| `starvationSeconds` | number | per device | Wall-clock seconds with **no samples delivered at all** that declare the feed starved. 0 = off |
+
+Omit the section (the normal case) and each device gets the defaults its failure modes ask for:
+
+| Device | `silenceSeconds` | `starvationSeconds` | Why |
+|---|---|---|---|
+| `flex:` | 30 | 30 | A dead VITA stream pads exact zeros at full rate (silence); a broken DAX UDP path delivers nothing while the session looks alive (starvation) |
+| `ubersdr:` | 30 | 30 | An instance whose SDR feed dies streams zero IQ (silence); a hung WebSocket delivers nothing (starvation) |
+| ALSA | off | 30 | A stalled or unplugged card stops returning samples (starvation). Silence is off **deliberately**: genuinely-silent wired inputs exist, and a disconnected cable must not restart-loop the service |
+| `--wav-loop`, `flex:mock` | off | off | Bench inputs with no radio behind them: a recording paces itself and cannot starve (and looping a silent one is legitimate), and the mock's DAX-RX path deliberately delivers nothing between injected frames |
+
+The silence watch is safe where it is on by default because a real receive path always carries
+noise-floor energy (the healthy Flex capture measures RMS ~0.02 against the dead feed's exact
+0.0) - half a minute of unbroken zeros is a dead feed with certainty, not a quiet band. The one
+false-positive family is a **deliberately muted** stream: a muted DAX channel restart-loops the
+service every `silenceSeconds`, loudly, and the journal line says where to look. Set
+`"silenceSeconds": 0` if muting the feed is something you do on purpose.
+
+Turning `silenceSeconds` on for an ALSA card is legitimate where the input always carries
+audible noise floor (a receiver wired straight in) - that buys the same protection the Flex
+gets, at the price above if the cable comes out.
+
+One ALSA consequence worth knowing: an `snd-aloop` capture side only clocks while some
+application holds its playback side, so a virtual-card station started before its peer sits in
+a blocked read, gets declared starved after `starvationSeconds`, and restart-loops (loudly)
+until the peer appears - at which point it comes up by itself, which is the point of the
+watch. If waiting indefinitely for the peer is your normal case, set `"starvationSeconds": 0`.
+
+The watches do not double-report deaths another path already owns: a Flex whose TCP session
+drops is reported by the session handler, and an UberSDR receiver that stays unreachable is
+reported once by its own five-minute give-up clock - reconnect backoff and quota refusals are
+deliberate quiet, not starvation.
+
+In the journal, each detector names its family and device, e.g.:
+
+```
+receive feed dead: 30 s of unbroken digital silence from the radio - restarting to rebuild the session (recurring? check DAX/slice config - a deliberately muted DAX stream restart-loops this way)
+receive feed starved: the sound device returned no samples for 30 s - a stalled or unplugged card - restarting to reopen it
+```
 
 ---
 

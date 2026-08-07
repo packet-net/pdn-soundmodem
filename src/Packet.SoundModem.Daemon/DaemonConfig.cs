@@ -360,6 +360,79 @@ public sealed class RawCaptureConfig
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
+/// <summary>Which kind of audio input the station runs on, for resolving the dead-feed
+/// defaults - each family has its own way of dying and its own legitimate quiet.</summary>
+public enum DeadFeedDevice
+{
+    /// <summary>An ALSA sound card.</summary>
+    Alsa,
+
+    /// <summary>A FlexRadio DAX stream (<c>flex:</c> device).</summary>
+    Flex,
+
+    /// <summary>An UberSDR web receiver's IQ stream (<c>ubersdr:</c> device).</summary>
+    UberSdr,
+
+    /// <summary>A bench input with no radio behind it: a recording replayed as the capture
+    /// device (<c>--wav-loop</c>), or the in-process mock radio (<c>flex:mock</c>), whose
+    /// DAX-RX path deliberately delivers nothing between injected frames.</summary>
+    WavLoop,
+}
+
+/// <summary>
+/// Dead-feed protection thresholds; null (no section) = the per-device defaults. Two watches,
+/// two failure families: <c>silenceSeconds</c> catches a feed that keeps delivering samples
+/// which are all exactly zero (a dead Flex VITA stream pads silence at full rate - the
+/// 2026-08-07 incident recorded 6.8 hours of it); <c>starvationSeconds</c> catches a feed
+/// that stops delivering samples at all (a hung network stream, a stalled or unplugged
+/// card). Either firing takes the proven recovery: an orderly shutdown with exit 1, so the
+/// unit restarts and rebuilds the device session from scratch.
+/// </summary>
+public sealed class DeadFeedConfig
+{
+    /// <summary>
+    /// Seconds of unbroken digital silence that declare the feed dead; 0 = off; null = the
+    /// device default - 30 for flex and ubersdr (their streams always carry noise-floor
+    /// energy when healthy, so half a minute of exact zeros is a dead feed with certainty),
+    /// off for ALSA and --wav-loop.
+    /// </summary>
+    /// <remarks>
+    /// Off for ALSA by deliberate default, not oversight: genuinely-silent wired inputs
+    /// exist, and a disconnected cable must not restart-loop the service. Set it here if
+    /// your input always carries audible noise floor and you want the same protection.
+    /// </remarks>
+    public double? SilenceSeconds { get; set; }
+
+    /// <summary>
+    /// Seconds without any samples delivered that declare the feed starved; 0 = off; null =
+    /// the device default - 30 for flex, ubersdr and ALSA, off for --wav-loop (a recording
+    /// paces itself and cannot starve).
+    /// </summary>
+    public double? StarvationSeconds { get; set; }
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+
+    /// <summary>
+    /// The thresholds to run <paramref name="device"/> with: the device family's defaults,
+    /// overridden field-by-field where <paramref name="config"/> states a value. 0 in either
+    /// place means that watch is off.
+    /// </summary>
+    public static (double SilenceSeconds, double StarvationSeconds) Resolve(
+        DeadFeedConfig? config, DeadFeedDevice device)
+    {
+        (double silence, double starvation) = device switch
+        {
+            DeadFeedDevice.Flex or DeadFeedDevice.UberSdr => (30.0, 30.0),
+            DeadFeedDevice.Alsa => (0.0, 30.0),
+            _ => (0.0, 0.0),
+        };
+
+        return (config?.SilenceSeconds ?? silence, config?.StarvationSeconds ?? starvation);
+    }
+}
+
 /// <summary>Browser waterfall endpoint (spectrum + waterfall + per-frame burst
 /// attribution); null = disabled. See WaterfallWebServer.</summary>
 public sealed class WaterfallConfig
@@ -468,6 +541,10 @@ public sealed class DaemonConfig
 
     /// <summary>Continuous raw receive-audio capture; null = off.</summary>
     public RawCaptureConfig? RawCapture { get; set; }
+
+    /// <summary>Dead-feed protection thresholds; null = the per-device defaults
+    /// (see <see cref="DeadFeedConfig"/>).</summary>
+    public DeadFeedConfig? DeadFeed { get; set; }
 
     /// <summary>
     /// Whether to listen for the station identifications a NinoTNC sends alongside its PSK SSB
@@ -578,6 +655,25 @@ public sealed class DaemonConfig
                 + "leave the radio's own filter alone, or remove it to have it set from the modems.");
         }
 
+        // Negative seconds is a sign error or a misunderstood off-switch either way; 0 is the
+        // documented "that watch is off", so say so rather than letting a -30 disable a watch
+        // the operator believed they had tightened.
+        foreach ((string name, double? seconds) in (ReadOnlySpan<(string, double?)>)
+            [
+                ("silenceSeconds", config.DeadFeed?.SilenceSeconds),
+                ("starvationSeconds", config.DeadFeed?.StarvationSeconds),
+            ])
+        {
+            if (seconds is < 0)
+            {
+                throw new InvalidDataException(
+                    $"\"deadFeed\".\"{name}\" is {seconds}. That is how many seconds the watch "
+                    + "waits before declaring the feed dead and restarting the service - use a "
+                    + "positive number of seconds, 0 to turn that watch off, or remove it for "
+                    + "the device's default.");
+            }
+        }
+
         if (ParseBind(config.Bind) is null)
         {
             throw new InvalidDataException(
@@ -617,6 +713,7 @@ public sealed class DaemonConfig
         Unknown("frameLog", config.FrameLog?.UnknownSettings);
         Unknown("survey", config.Survey?.UnknownSettings);
         Unknown("rawCapture", config.RawCapture?.UnknownSettings);
+        Unknown("deadFeed", config.DeadFeed?.UnknownSettings);
         Unknown("ptt", config.Ptt?.UnknownSettings);
         Unknown("paging", config.Paging?.UnknownSettings);
         Unknown("ardop", config.Ardop?.UnknownSettings);

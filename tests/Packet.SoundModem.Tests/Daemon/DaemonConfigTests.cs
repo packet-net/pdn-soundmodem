@@ -547,6 +547,77 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void Dead_Feed_Defaults_Follow_The_Device()
+    {
+        // flex/ubersdr: a healthy stream always carries noise-floor energy and can also stop
+        // delivering, so both watches. ALSA: genuinely-silent wired inputs exist (a
+        // disconnected cable must not restart-loop), so starvation only. wav-loop: a
+        // recording paces itself and cannot starve, and looping a silent one is legitimate.
+        DeadFeedConfig.Resolve(null, DeadFeedDevice.Flex).Should().Be((30.0, 30.0));
+        DeadFeedConfig.Resolve(null, DeadFeedDevice.UberSdr).Should().Be((30.0, 30.0));
+        DeadFeedConfig.Resolve(null, DeadFeedDevice.Alsa).Should().Be((0.0, 30.0));
+        DeadFeedConfig.Resolve(null, DeadFeedDevice.WavLoop).Should().Be((0.0, 0.0));
+    }
+
+    [Fact]
+    public void A_Stated_Dead_Feed_Threshold_Overrides_Only_Its_Own_Watch()
+    {
+        var config = new DeadFeedConfig { SilenceSeconds = 10 };
+
+        DeadFeedConfig.Resolve(config, DeadFeedDevice.Alsa).Should().Be(
+            (10.0, 30.0), "silence was stated (turning it ON for an ALSA card whose input "
+            + "always carries noise floor); starvation keeps the device default");
+    }
+
+    [Fact]
+    public void Zero_Turns_A_Dead_Feed_Watch_Off()
+    {
+        var config = new DeadFeedConfig { SilenceSeconds = 0, StarvationSeconds = 0 };
+
+        DeadFeedConfig.Resolve(config, DeadFeedDevice.Flex).Should().Be(
+            (0.0, 0.0), "0 is the documented off-switch, honoured on any device");
+    }
+
+    [Fact]
+    public void Dead_Feed_Thresholds_Load_From_The_File()
+    {
+        string path = WriteConfig(
+            """{"device": "null", "deadFeed": {"silenceSeconds": 45, "starvationSeconds": 0}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.DeadFeed!.SilenceSeconds.Should().Be(45);
+        config.DeadFeed.StarvationSeconds.Should().Be(0);
+        config.Warnings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_Negative_Dead_Feed_Threshold_Is_Rejected_With_Guidance()
+    {
+        string path = WriteConfig("""{"device": "null", "deadFeed": {"starvationSeconds": -30}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("starvationSeconds").And.Contain("-30");
+        error.Should().Contain("0 to turn that watch off");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void An_Unknown_Dead_Feed_Setting_Is_Warned_About()
+    {
+        string path = WriteConfig("""{"device": "null", "deadFeed": {"silenceSecs": 30}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("deadFeed").And.Contain("silenceSecs").And.Contain("IGNORED");
+    }
+
+    [Fact]
     public void A_Missing_File_Is_Reported_As_Configuration_Not_As_A_Crash()
     {
         string path = Path.Combine(_dir, "does-not-exist.json");
