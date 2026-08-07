@@ -114,6 +114,26 @@ fitted to one rig do not transfer) applies to receive chains too.
   inverted matches-coherent gate; the SSB scorer's sub-cliff rung moved 0 -> -6 dB
   (qpsk600 now decodes 69/100 at 0 dB); and the qpsk600/qpsk2400 AWGN smoke masks rose
   30 -> 36 and 32 -> 36 of 40. Ledger entry: mode-validation.md 2026-08-07.
+
+  **Fix-set 2 (2026-08-07, later): the four-phase decision-feedback reference with seeded
+  rotation - a CFO-robustness landing, an AWGN null, and two findings the first cut paid
+  for.** The BPSK DF-DD port (absolute-quadrant decisions against a ~20-symbol
+  decision-remodulated reference, per-burst rotation seed from the fourth-power offset
+  window, decision-directed tracker) measured, on its final shape: qpsk600 CFO at +8 dB
+  with a realistic 150 ms TXDELAY **15 Hz: 71 -> 97 %, 30 Hz: 0 -> 38 %** (the first
+  configuration ever to decode this mode at 30 Hz); AWGN, fading and knee-SNR CFO rows
+  all identical to fix-set 1 within confidence intervals - the reference's noise-margin
+  contribution on AWGN is a measured NULL for QPSK, recorded as such. The two findings:
+  (1) **the seed gates the handover, not just the rotation** - a first cut that let the
+  reference decide from cold scored 60 % at a mere 8 Hz at +8 dB (0 % at 15 Hz), because
+  an unseeded reference must drag its phase through the offset by decision-remodulation
+  alone and QPSK gives it half the preamble and half the margin BPSK had; until the seed
+  fires the plain product decides and the reference only warms up, so a burst too weak to
+  seed keeps exactly the fix-set-1 detector. (2) **qpsk3600 is scoped out after a
+  measured regression** (22/30 vs the product's 30/30 on a clean signal - the FM chain at
+  6 2/3 samples per symbol was never in the SSB campaign's scope); `decisionFeedback:
+  false` pins it to the detector it was validated with, and the demodulator parameter
+  documents why. Full suite green (1574); coherent untouched; wire unchanged.
 - **Q3 - family closure.** qpsk600 and qpsk2400 both at their new measured floors;
   qpsk3600 re-validated on the FM loop for chain regressions; the 40 m capture replay
   cross-checks any mode the live station carries.

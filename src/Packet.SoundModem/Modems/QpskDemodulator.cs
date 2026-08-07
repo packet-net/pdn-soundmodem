@@ -29,6 +29,30 @@ public sealed class QpskDemodulator
     /// <see cref="AfskDemodulator"/>'s twin constant.</summary>
     private const int OscillatorRenormInterval = 4096;
 
+    /// <summary>Reference memory λ of the decision-feedback detector - the value
+    /// <see cref="BpskDemodulator"/> measured (~20 symbols of averaging), inherited with
+    /// its rationale: the reference's effective noise sits well below the single
+    /// one-symbol-ago sample the plain differential product divides by, which is where the
+    /// classic differential-vs-coherent give-away lives, and QPSK's halved phase margins
+    /// make that give-away larger, not smaller.</summary>
+    private const double ReferenceMemory = 0.95;
+
+    /// <summary>Per-symbol gain of the reference frequency loop - the
+    /// <see cref="BpskDemodulator"/> measured value.</summary>
+    private const double ReferenceFrequencyGain = 0.05;
+
+    /// <summary>Clamp on the seeded part of the reference rotation, radians per symbol:
+    /// π/4 is ±baud/8, the fourth-power offset window's own unambiguous range - ±37.5 Hz
+    /// at 300 Bd, ±150 Hz at 1200 Bd, far beyond any real station error.</summary>
+    private const double MaxSeededRotation = Math.PI / 4;
+
+    /// <summary>Clamp on the tracked part of the reference rotation, radians per symbol.
+    /// Unlike BPSK there is no diversity bank whose step this needs to match; π/16
+    /// (±baud/64 - a few Hz at 300 Bd) bounds the free-running tracker's between-burst
+    /// noise wander to a fraction of the 45° decision margin while still absorbing
+    /// residual drift the per-burst seed missed.</summary>
+    private const double MaxTrackedRotation = Math.PI / 16;
+
     private readonly FirFilter _bandPass;
     private readonly FirFilter _lowPassI;
     private readonly FirFilter _lowPassQ;
@@ -53,8 +77,17 @@ public sealed class QpskDemodulator
     private double _offsetWindowImag;
     private int _delayPosition;
     private int _previousQuadrant;
+    private int _previousAbsoluteQuadrant;
     private float _lastRe;
     private float _lastIm;
+    private float _currentI;
+    private float _currentQ;
+    private double _referenceI;
+    private double _referenceQ;
+    private double _seededRotation;
+    private double _trackedRotation;
+    private bool _rotationSeeded;
+    private readonly bool _decisionFeedback;
 
     /// <summary>Raised once per recovered symbol with the symbol-instant constellation point
     /// (I,Q): the recovered absolute constellation in coherent mode, the differential product
@@ -73,10 +106,17 @@ public sealed class QpskDemodulator
     /// <param name="rollOff">The transmitter's root-raised-cosine roll-off, which the
     /// differential path's matched filter mirrors. <see cref="QpskModem"/> passes the
     /// per-mode value (0.20 for qpsk600, 0.35 for qpsk2400, 0.25 for qpsk3600).</param>
+    /// <param name="decisionFeedback">Whether the differential path decides against the
+    /// decision-feedback reference once a burst's rotation is seeded (see
+    /// <see cref="DecideAgainstReference"/>). On for the SSB modes the 2026-08-07 QPSK
+    /// campaign measured; OFF for qpsk3600, where the same handover measured a clean-signal
+    /// regression (22/30 against the plain product's 30/30 at σ=0.12) - the FM chain at
+    /// 6⅔ samples per symbol was outside the campaign's scope and keeps the detector it
+    /// was validated with until its own campaign says otherwise.</param>
     public QpskDemodulator(
         int sampleRate, int baud, Action<int, int> dibitSink, double carrierFrequency,
         PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null,
-        double rollOff = QpskModulator.DefaultRollOff)
+        double rollOff = QpskModulator.DefaultRollOff, bool decisionFeedback = true)
     {
         ArgumentNullException.ThrowIfNull(dibitSink);
         if (detector == PskDetector.Mlse)
@@ -87,6 +127,7 @@ public sealed class QpskDemodulator
         }
 
         _detector = detector;
+        _decisionFeedback = decisionFeedback;
         // Filter plan follows QtSM's per-mode tables: BPF ≈ 2×baud wide, LPF ≈ 0.75×baud.
         _bandPass = new FirFilter(FilterDesign.BandPass(
             carrierFrequency - baud, carrierFrequency + baud, sampleRate, 256 * sampleRate / 12000));
@@ -134,11 +175,12 @@ public sealed class QpskDemodulator
                 SymbolPlotted?.Invoke(_lastRe, _lastIm);
                 // Coherent feeds the absolute quadrant; differentially decode against the
                 // previous symbol so the wire mapping (a phase change) is unchanged.
-                // Differential already feeds the phase-change quadrant, so its "previous"
-                // is a no-op reference of 0.
+                // Differential decides the symbol-instant sample against the
+                // decision-feedback reference (the passed product quadrant only drove
+                // symbol timing).
                 int change = _detector == PskDetector.Coherent
                     ? (quadrant - _previousQuadrant) & 3
-                    : quadrant;
+                    : _decisionFeedback ? DecideAgainstReference(quadrant) : quadrant;
                 _previousQuadrant = quadrant;
                 dibitSink((QuadrantToDibit[change] >> 1) & 1, QuadrantToDibit[change] & 1);
             },
@@ -206,10 +248,16 @@ public sealed class QpskDemodulator
     {
         _packetDcd.Reset();
         _energyBusy.Reset();
-        // Our own transmission is not a measurement of anybody's offset.
+        // Our own transmission is not a measurement of anybody's offset, and not a
+        // carrier reference to decide the next station's symbols against.
         _averageDiffMagnitude = 0;
         _offsetWindowReal = 0;
         _offsetWindowImag = 0;
+        _referenceI = 0;
+        _referenceQ = 0;
+        _seededRotation = 0;
+        _trackedRotation = 0;
+        _rotationSeeded = false;
     }
 
     /// <summary>Processes a block of audio samples.</summary>
@@ -300,7 +348,9 @@ public sealed class QpskDemodulator
         }
 
         // Phase change over one symbol; quadrant = nearest multiple of 90°. The angle the
-        // quadrant decision rounds away is what carries the carrier offset.
+        // quadrant decision rounds away is what carries the carrier offset. The product
+        // drives symbol timing and the offset window; the dibit itself is decided at the
+        // DPLL instant against the decision-feedback reference.
         float re = i * delayedI + q * delayedQ;
         float im = q * delayedI - i * delayedQ;
         TrackCarrierOffset(re, im);
@@ -311,7 +361,121 @@ public sealed class QpskDemodulator
         // inside Sample() on wrap samples, so these are the wrap-instant values.
         _lastRe = re;
         _lastIm = im;
+        _currentI = i;
+        _currentQ = q;
         _dpll.Sample(quadrant);
+    }
+
+    /// <summary>Decision-feedback differential detection, once per symbol at the DPLL
+    /// instant - <see cref="BpskDemodulator.DecideAgainstReference"/>'s rule with the
+    /// polarity pair widened to the four-phase grid. The reference is an exponentially
+    /// averaged, decision-remodulated estimate of the carrier phasor; the symbol-instant
+    /// sample's absolute quadrant is decided against it, the emitted value is the quadrant
+    /// CHANGE (the wire format), and the sample - rotated back by its decided quadrant, an
+    /// exact axis swap - folds into the reference. There is no lock to lose, and a
+    /// quadrant slip costs the same two symbols it costs the plain product detector.</summary>
+    /// <remarks>
+    /// <para><b>The seed gates the handover, not just the rotation - QPSK's own lesson.</b>
+    /// Until the burst's rotation is seeded from the fourth-power offset window (quartering
+    /// its angle recovers the per-symbol rotation, unambiguous over ±baud/8), the DIBIT
+    /// comes from the plain conjugate product, which is offset-immune; the reference warms
+    /// up alongside on those product decisions but decides nothing. A first cut that let
+    /// the reference decide from cold measured 60 % at a mere 8 Hz offset at +8 dB (and
+    /// 0 % at 15 Hz) against the plain product's ~99 %: an unseeded reference must drag
+    /// its phase through the offset by decision-remodulation alone, and QPSK gives it half
+    /// the preamble (two bits per symbol) and half the phase margin BPSK had. BPSK can
+    /// afford to decide from cold; QPSK cannot, and a burst too weak to ever seed simply
+    /// keeps the product detector it always had.</para>
+    /// <para><b>The tracker exists only after the seed.</b> It starts at zero on seeding
+    /// and is updated decision-directed from then on; while unseeded its input would read
+    /// the reference's systematic warm-up lag, not a residual - and letting it free-run on
+    /// between-burst noise walks a rotation error into exactly the acquisition symbols a
+    /// 12-symbol preamble cannot spare. The seed does not outlive its burst.</para>
+    /// </remarks>
+    private int DecideAgainstReference(int productQuadrant)
+    {
+        double offsetCoherence = Math.Sqrt(
+            (_offsetWindowReal * _offsetWindowReal) + (_offsetWindowImag * _offsetWindowImag));
+        if (!_rotationSeeded && offsetCoherence >= OffsetCoherenceFloor)
+        {
+            _seededRotation = Math.Clamp(
+                Math.Atan2(_offsetWindowImag, _offsetWindowReal) / 4.0,
+                -MaxSeededRotation, MaxSeededRotation);
+            _trackedRotation = 0;
+            _rotationSeeded = true;
+        }
+        else if (_rotationSeeded && offsetCoherence < OffsetCoherenceFloor / 2)
+        {
+            _rotationSeeded = false;
+            _seededRotation = 0;
+        }
+
+        double rotation = _seededRotation + _trackedRotation;
+        if (rotation != 0)
+        {
+            double cos = Math.Cos(rotation);
+            double sin = Math.Sin(rotation);
+            (_referenceI, _referenceQ) = (
+                (_referenceI * cos) - (_referenceQ * sin),
+                (_referenceI * sin) + (_referenceQ * cos));
+        }
+
+        int change;
+        int absolute;
+        if (_rotationSeeded)
+        {
+            // The sample's angle relative to the reference, decided to the nearest
+            // quadrant. A cold reference pins the decision to quadrant 0; the blend below
+            // then builds it along the signal's own phase - absolute phase is arbitrary
+            // and the wire format differential, exactly as on BPSK.
+            double relativeRe = (_currentI * _referenceI) + (_currentQ * _referenceQ);
+            double relativeIm = (_currentQ * _referenceI) - (_currentI * _referenceQ);
+            absolute = (relativeRe * relativeRe) + (relativeIm * relativeIm) < 1e-24
+                ? 0
+                : ((int)Math.Round(Math.Atan2(relativeIm, relativeRe) / (Math.PI / 2)) + 4) & 3;
+            change = (absolute - _previousAbsoluteQuadrant) & 3;
+        }
+        else
+        {
+            // Unseeded: the plain product decides (the value the DPLL was fed), and the
+            // absolute chain follows it so the reference warms up on the same decisions
+            // and the handover at the seed is seamless.
+            change = productQuadrant;
+            absolute = (_previousAbsoluteQuadrant + change) & 3;
+        }
+
+        _previousAbsoluteQuadrant = absolute;
+
+        // Remodulate: rotate the sample back by its decided quadrant - exact axis swaps,
+        // no trigonometry - so every symbol stacks on the reference phasor.
+        (double backRe, double backIm) = absolute switch
+        {
+            1 => ((double)_currentQ, (double)-_currentI),
+            2 => ((double)-_currentI, (double)-_currentQ),
+            3 => ((double)-_currentQ, (double)_currentI),
+            _ => ((double)_currentI, (double)_currentQ),
+        };
+
+        if (_rotationSeeded)
+        {
+            // Advance the tracker by the angle by which the remodulated sample leads the
+            // reference - the BPSK tracker's rule on the four-phase grid.
+            double cross = (backIm * _referenceI) - (backRe * _referenceQ);
+            double magnitude = Math.Sqrt(
+                ((backRe * backRe) + (backIm * backIm))
+                * ((_referenceI * _referenceI) + (_referenceQ * _referenceQ)));
+            if (magnitude > 1e-12)
+            {
+                double error = Math.Asin(Math.Clamp(cross / magnitude, -1, 1));
+                _trackedRotation = Math.Clamp(
+                    _trackedRotation + (ReferenceFrequencyGain * error),
+                    -MaxTrackedRotation, MaxTrackedRotation);
+            }
+        }
+
+        _referenceI = (ReferenceMemory * _referenceI) + ((1 - ReferenceMemory) * backRe);
+        _referenceQ = (ReferenceMemory * _referenceQ) + ((1 - ReferenceMemory) * backIm);
+        return change;
     }
 
     /// <summary>Folds one differential product into the carrier-offset window (see
