@@ -21,6 +21,12 @@ internal enum SimChannelKind
     /// 0.1&#160;Hz two-sigma fade - a slow, shallow multipath.</summary>
     Good,
 
+    /// <summary>CCIR / ITU-R F.1487 "Moderate": two equal-power Rayleigh paths 1&#160;ms
+    /// apart, 0.5&#160;Hz two-sigma fade - the middle of the standard triple, and the most
+    /// representative of an ordinary UK 40&#160;m NVIS day: Good is outage-bound and Poor is
+    /// equaliser-bound, so this is the channel where receiver improvements actually show.</summary>
+    Moderate,
+
     /// <summary>CCIR / ITU-R F.1487 "Poor" (D.6.1): two equal-power Rayleigh paths 2&#160;ms apart,
     /// 1&#160;Hz two-sigma fade - the mask suite's own rig.</summary>
     Poor,
@@ -51,23 +57,33 @@ internal static class SimChannel
         new WattersonPath(0.5, Fading: true, DopplerSpreadHz: 0.1),
     ];
 
+    /// <summary>CCIR / ITU-R F.1487 "Moderate": 2 equal Rayleigh paths, 1&#160;ms, 0.5&#160;Hz spread.</summary>
+    public static WattersonPath[] Moderate =>
+    [
+        new WattersonPath(0, Fading: true, DopplerSpreadHz: 0.5),
+        new WattersonPath(1, Fading: true, DopplerSpreadHz: 0.5),
+    ];
+
     /// <summary>The path geometry for a channel kind - empty for AWGN (the ideal direct path).</summary>
     public static WattersonPath[] Paths(SimChannelKind kind) => kind switch
     {
         SimChannelKind.Awgn => [],
         SimChannelKind.Good => Good,
+        SimChannelKind.Moderate => Moderate,
         SimChannelKind.Poor => WattersonChannel.Poor,
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "unknown channel"),
     };
 
-    /// <summary>Parses a channel name (awgn|good|poor), case-insensitive, prefix-tolerant.</summary>
+    /// <summary>Parses a channel name (awgn|good|moderate|poor), case-insensitive,
+    /// prefix-tolerant.</summary>
     public static SimChannelKind Parse(string name)
     {
         string n = name.Trim().ToLowerInvariant();
         return n.StartsWith('a') ? SimChannelKind.Awgn
             : n.StartsWith('g') ? SimChannelKind.Good
+            : n.StartsWith('m') ? SimChannelKind.Moderate
             : n.StartsWith('p') ? SimChannelKind.Poor
-            : throw new ArgumentException($"unknown channel '{name}' (awgn|good|poor)", nameof(name));
+            : throw new ArgumentException($"unknown channel '{name}' (awgn|good|moderate|poor)", nameof(name));
     }
 
     /// <summary>

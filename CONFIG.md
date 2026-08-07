@@ -722,6 +722,7 @@ Omit the section and frames come and go without being written down. One row per 
 | `length`, `corrected`, `crc_valid` | size, FEC corrections applied, whether the CRC checked - null on a received frame means there was no CRC to check, which on an IL2P+CRC modem means it was read as [plain IL2P](#acceptplainil2p); the next two columns say what became of such a frame |
 | `trailer_near_bits` | on a frame delivered by [trailer corroboration](#acceptplainil2p): the measured distance, in wire bits, between the 32 trailer bits received and the trailer the payload implies (0-4). Null on every other row, so a `crc_valid`-null frame with this set is one the host received on the trailer's evidence |
 | `monitor_only` | 1 for a frame the station read, showed and withheld from the host; 0 for one the host received. Null on transmitted rows - withholding is a receive event - and on rows logged before the column existed, where it was not written down |
+| `erased_bytes` | bytes the decode erased on the receiver's own confidence flags before Reed-Solomon repaired the frame - how a frame beyond the errors-only budget was still read. Null when no erasures were needed, or before the column existed |
 | `offset_hz` | how far off centre the sender actually was - measured, not the diversity branch that copied it; null where the decoder could not measure it |
 | `audio_hz`, `rf_hz` | where that modem sits - `rf_hz` filled in when you have given it an `rfFrequency` |
 | `payload` | the frame itself, as a blob |

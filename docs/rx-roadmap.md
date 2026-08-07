@@ -70,6 +70,46 @@ grows with band variety (a weekend contest, a geomagnetic upset, summer QRN). Ch
 Ranked by expected real-world return per unit of effort, with the reasoning pinned so a future
 session can re-rank honestly as facts change.
 
+### 0. Watterson masks and the accept discipline (cross-cutting; Tom, 2026-08-06)
+
+Extend the MS110D programme's two instruments to the audio modems: **per-mode Watterson
+performance masks** frozen as tests, and the **accept discipline** that goes with them. Most
+of the machinery exists - `WattersonChannel` is itself validated, `SimChannel` pins the
+Good/Poor geometries so packet and MS110D masks stay one rig, and `SimModem` makes the
+generate-channel-score loop mode-generic. What is missing is thin and is this workstream:
+
+- **Two tiers.** A small always-blocking smoke per mode - one anchor rung, 30-50 bursts,
+  threshold far enough under the measured value that binomial wobble cannot flake it, sized
+  to catch a regression of a dB or more. Plus an env-gated full ladder (the A/B instrument)
+  over the whole SNR x channel x CFO grid. Deterministic seeds throughout: a mask failure
+  reproduces exactly, or it is not a mask failure.
+- **Masks from measured reality, never aspiration.** bpsk300/bpsk1200 masks come from the
+  2026-08-06 campaign numbers; the QPSK family's come from their current, known-poor levels,
+  which documents the truth and catches further slippage - when those modes get their own
+  receive campaign the masks move up with the ledger entry that justifies it. Aspirations
+  stay in the aspiration suites, where the house discipline already keeps them non-blocking.
+- **The discipline.** A PR touching a modem's receive path runs that mode's full ladder A/B
+  and quotes it; a mask moves only with a mode-validation.md entry. This is what the #236 and
+  erasure campaigns did by hand; the workstream makes it the floor, not the habit.
+- **The honest limit, stated up front.** Masks pin the receiver against the model. The
+  Watterson sim carries no static crashes, no SSB filter tilt, no AGC and our own TX shaping
+  rather than a NinoTNC's - so a green mask means "no regression against the model", and the
+  capture campaign stays the truth about the band. Two instruments, two jobs.
+
+Why it ranks where it does: three near-misses in two days were caught only by ad-hoc sweeps
+or one-off pins (the mid-branch CFO hole, the coherent-margin inversion, the erasure
+interpolation hazard), the ~1.4 dB banked this week exists only as ledger prose until a mask
+holds it, and workstreams 5-7 below each need exactly this instrument to develop against.
+
+**Status 2026-08-06 (evening): landed** - `WattersonMaskTests`, both tiers green. Coverage is
+every non-FM mode the mode-generic rig can drive: the NinoTNC SSB lineage AND the FreeDV
+datac OFDM family (Tom's clarification: all non-FM PDN modems, not just NinoTNC modes).
+Deliberately absent, on the record: **ms110d-\*** keeps its own richer mask suite;
+**ardop** is a session TNC rather than a catalogue `IModem`, so the frame-layer rig cannot
+drive it - giving ARDOP a maskable sim seam is an open item of this workstream, not a
+finished exclusion; the FM modes wait for an FM-appropriate channel model (the impulse-noise
+workstream is the natural place both arrive together).
+
 ### 1. Soft-decision and erasure Reed-Solomon decoding (the big lever)
 
 Everything above the demodulator is hard-decision; that is the textbook ~2 dB give-away, and
@@ -90,6 +130,24 @@ increasing depth:
 needs a soft-bit or erasure-hint input surface. This is the one workstream that cannot land
 from this repo alone - it needs the Il2p repo opened alongside. Estimated 1-2 dB AWGN
 equivalent, more under fading.
+
+**Status 2026-08-06 (evening): the erasure leg is built and measured.** M0LTE.Fec 0.3.0
+gained errors-and-erasures decoding with a caller-set cap on located errors (an attempt that
+spends the whole parity budget is pure interpolation and always "succeeds" - found the hard
+way, pinned by test); M0LTE.Il2p 0.2.0 gained `PushBit(bit, confidence)` and a failed-block
+retry ladder of (erasures, cap) rungs that each keep two parity symbols in reserve; the BPSK
+demodulator emits per-symbol confidence from the DF-DD decision magnitude. Measured: **AWGN
+−5 dB 49 % → 55 %, −4 dB 82 % → 88 %, −3 dB 94 % → 96 %** (~0.3-0.4 dB); Good/Poor unchanged
+within noise; the miss corpus unmoved at 22/37 delivered - its residue is not
+payload-RS-limited (5 cases never demodulate, 10 fail only on obliterated trailers). The
+header deliberately gets no erasure rescue (its 2-parity code cannot afford speculative
+erasures without hallucinating collections). What remains of this workstream, in value order:
+**CRC-arbitrated chase** (bit-flip retries on the least-confident bits, which handles the
+scattered-error pattern erasures cannot and is the header's only rescue), and the DCD-falling
+reset question, now **answered in the negative** (2026-08-06 evening): disabling the reset
+entirely changed nothing on Good (identical to the burst) and 0-4 points on Moderate, inside
+the confidence intervals - fading losses are acquisition or RS-budget failures, not
+collection aborts, so the reset stays exactly as it is and the suspicion is retired.
 
 ### 2. Trailer corroboration - LANDED 2026-08-06
 
@@ -137,15 +195,36 @@ Rayleigh paths fading together for 60-150 symbol times) which **no receiver fixe
 wire format** - there is no interleaving to bridge it. Beyond MLSE, Poor is workstream 8's
 problem.
 
-### 6. Impulse-noise instrumentation, then mitigation
+### 6. Channel-model extensions: impulse noise first, then the rest of reality
 
-Every evidence instrument this project owns is Gaussian - the Watterson sim, every ladder.
-Real 40 m evenings are static crashes and QRN, and the receiver has no blanker and no
-heavy-tail-aware metric; every serious HF modem has one. Possibly the most real-world dB per
-line of code on this list, and currently unmeasurable. Order of work is therefore fixed:
-**first the instrument** (an impulsive-noise channel profile in the sim, plus scoring against
-the raw 40 m capture above, which will contain real summer-evening QRN), **then** the blanker
-or clipped-metric fix, sized by what the instrument shows.
+(Broadened from "impulse-noise instrumentation" on 2026-08-06, Tom's prompt: the masks pin
+the model, so extending the model extends what the masks can hold.) Ranked by value per
+effort:
+
+1. **CCIR Moderate - DONE 2026-08-06.** The middle of the standard triple (1 ms / 0.5 Hz)
+   was the biggest gap for the least work: Good is outage-bound and Poor equaliser-bound, so
+   Moderate is the channel where receiver improvements actually show. Measured on landing:
+   bpsk300 climbs 23/42/53/60 % across -2..+4 dB (a real slope at last); freedv-datac3
+   rides it at 92-100 % - the OFDM contrast, on the record. Profile pinned in
+   `SimBenchTests`, mask rows in both tiers.
+2. **Impulse noise, calibrated from the capture.** Real 40 m evenings are static crashes and
+   QRN; the receiver has no blanker and no heavy-tail-aware metric, and nothing measures the
+   cost. The capture campaign changes the job: derive arrival rate, amplitude distribution
+   and burst shape from the raw chunks' real summer-evening QRN rather than inventing a
+   Middleton model, then the blanker or clipped-metric fix, sized by what the instrument
+   shows. Possibly the most real-world dB per line of code on this list.
+3. **Slow CFO drift + phase noise.** The exact impairment that walled qpsk2400 (#116) and
+   the RSP1 coherent modes (#102): a Hz-per-minute ramp plus a 1/f phase process. Cheap (a
+   time-varying rotation in the channel), and it is what the undisciplined-radio aspiration
+   needs to develop against.
+4. **TX/RX sample-clock skew.** Real soundcards sit +/-50-100 ppm apart; the sim shares one
+   clock, which quietly flatters every timing loop. A resample-by-(1+epsilon) axis protects
+   the DPLL work.
+5. **SSB passband tilt** (a configurable radio filter post-channel) - placement-dependent
+   losses for multi-modem plans; **QRM injection** and **AGC dynamics** - both waiting on
+   real interferer material from the capture.
+6. **An FM channel model** - deviation error, emphasis mismatch, discriminator noise,
+   flutter. Its own track, and the gate on masks for the FM modes.
 
 ### 7. Per-station acquisition priors
 

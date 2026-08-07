@@ -57,6 +57,7 @@ public sealed class BpskModem : IModem, IConstellationSource
                     FrequencyOffsetHz: demodulator!.CarrierOffsetHz,
                     PlainIl2p: delivery.PlainIl2p,
                     TrailerNearBits: delivery.TrailerNearBits,
+                    ErasedBytes: info.ErasedSymbols > 0 ? info.ErasedSymbols : null,
                     MonitorOnly: delivery.MonitorOnly));
             },
             crc, acceptPlainIl2p);
@@ -73,17 +74,19 @@ public sealed class BpskModem : IModem, IConstellationSource
         // 24 symbol times (80 ms at 300 Bd) of the carrier stopping - well before the next
         // transmission's sync word arrives - so the reset is always in time.
         bool previousDcd = false;
-        demodulator = new BpskDemodulator(sampleRate, bit =>
-        {
-            bool dcd = demodulator!.CarrierDetect;
-            if (previousDcd && !dcd)
+        demodulator = new BpskDemodulator(sampleRate, static _ => { },
+            carrierFrequency, baud, detector, rollOff: rollOff,
+            softBitSink: (bit, confidence) =>
             {
-                deframer.Reset();
-            }
+                bool dcd = demodulator!.CarrierDetect;
+                if (previousDcd && !dcd)
+                {
+                    deframer.Reset();
+                }
 
-            previousDcd = dcd;
-            deframer.PushBit(bit);
-        }, carrierFrequency, baud, detector, rollOff: rollOff);
+                previousDcd = dcd;
+                deframer.PushBit(bit, confidence);
+            });
         _demodulator = demodulator;
         _demodulator.SymbolPlotted = (i, q) => SymbolPlotted?.Invoke(new ConstellationPoint(i, q));
         _modulator = new BpskModulator(sampleRate, baud, carrierFrequency, rollOff);

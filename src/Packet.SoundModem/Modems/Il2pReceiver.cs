@@ -139,7 +139,7 @@ internal sealed class Il2pReceiver
     private int _trailerBitCount;
 
     /// <summary>Creates the receiver.</summary>
-    /// <param name="frameReceived">Called synchronously from <see cref="PushBit"/> with each
+    /// <param name="frameReceived">Called synchronously from <see cref="PushBit(int, float)"/> with each
     /// decoded AX.25 frame, its decode diagnostics and where the frame is allowed to go, much as
     /// <see cref="Il2pDeframer"/> would call it. A caller that ignores the
     /// <see cref="Il2pDelivery"/> passes plain IL2P frames straight to its host, which is
@@ -190,7 +190,13 @@ internal sealed class Il2pReceiver
     public bool DeliversPlainIl2p => !_plainReading.MonitorOnly;
 
     /// <summary>Pushes one received bit (0/1) through both readings.</summary>
-    public void PushBit(int bit)
+    public void PushBit(int bit) => PushBit(bit, 1f);
+
+    /// <summary>Pushes one received bit with the demodulator's confidence in it, which both
+    /// readings use to retry failed Reed-Solomon blocks with the weakest bytes erased - see
+    /// <see cref="Il2pDeframer.PushBit(int, float)"/>. Lower = less reliable; only the
+    /// ordering matters, but values must sit below 1 for the deframer to engage.</summary>
+    public void PushBit(int bit, float confidence)
     {
         _bitsPushed++;
 
@@ -205,13 +211,13 @@ internal sealed class Il2pReceiver
         // The link's own reading goes first. At the bit where both readings have the same frame,
         // this is what cancels the held plain copy before the release check below could let it
         // out - which is the whole reason the order here is not arbitrary.
-        _deframer.PushBit(bit);
+        _deframer.PushBit(bit, confidence);
         if (_plainDeframer is null)
         {
             return;
         }
 
-        _plainDeframer.PushBit(bit);
+        _plainDeframer.PushBit(bit, confidence);
         if (_heldFrame is not null && _bitsPushed >= _releaseHeldAtBit)
         {
             ReleaseHeld();

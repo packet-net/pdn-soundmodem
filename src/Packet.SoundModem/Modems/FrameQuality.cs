@@ -58,6 +58,11 @@ namespace Packet.SoundModem.Modems;
 /// format parks its only unprotected bytes exactly there. A corroborated frame is backed by
 /// Reed-Solomon plus a near-exact trailer, evidence of the same order as a passing CRC;
 /// badge it as its own thing, not as either "CRC OK" or "RS only".</param>
+/// <param name="ErasedBytes">Bytes the decode erased on the receiver's own confidence
+/// flags before Reed-Solomon repaired the frame - each costs one parity symbol where an
+/// unlocated error costs two, so this is how a frame beyond the errors-only budget was
+/// still read. Null when no erasures were needed (or the modem supplies no confidence);
+/// see <see cref="M0LTE.Il2p.Il2pDecodeInfo.ErasedSymbols"/>.</param>
 /// <param name="MonitorOnly">The frame was <b>not</b> passed to the host: it reached
 /// <see cref="IModem.FrameDecoded"/> and everything hanging off it - display, frame log,
 /// journal, survey - but never the modem's constructor frame sink. A fact about what
@@ -77,7 +82,8 @@ public readonly record struct FrameQuality(
     M0LTE.Il2p.Il2pHeaderType? HeaderType = null,
     bool PlainIl2p = false,
     bool MonitorOnly = false,
-    int? TrailerNearBits = null);
+    int? TrailerNearBits = null,
+    int? ErasedBytes = null);
 
 /// <summary>
 /// How much a reading of a transmission actually established, for choosing between two decoder

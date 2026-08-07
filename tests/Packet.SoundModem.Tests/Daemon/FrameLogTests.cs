@@ -275,6 +275,21 @@ public class FrameLogTests : IDisposable
         rows[0]["monitor_only"].Should().BeNull();
         rows[1]["trailer_near_bits"].Should().Be(3L, "and new rows carry the evidence");
         rows[1]["monitor_only"].Should().Be(0L);
+        rows[1]["erased_bytes"].Should().BeNull("this frame needed no erasures");
+    }
+
+    /// <summary>A frame that leaned on confidence erasures writes the count down, so a log
+    /// reader can see how hard-won a decode was.</summary>
+    [Fact]
+    public async Task A_Frame_Read_Through_Erasures_Records_How_Many()
+    {
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.Record(0, Frame(), new FrameQuality(
+                "bpsk300-il2pc", FrameBytes: 32, CorrectedBytes: 12, CrcValid: true,
+                ErasedBytes: 14), null, null));
+
+        rows.Should().ContainSingle().Which["erased_bytes"].Should().Be(14L,
+            "fourteen bytes were erased on the receiver's own confidence flags");
     }
 
     /// <summary>The migrated log reads back through the backlog query too - the waterfall panel
