@@ -46,6 +46,10 @@ jobs:
             # failures off the end, which is exactly what happened and cost a reproduce-and-guess
             # cycle. The tail is kept after them for context.
             log="$(iconv -f UTF-16LE -t UTF-8 "$f" 2>/dev/null || cat "$f")"
+            # MTP writes ANSI colour codes into the log; the per-test "failed <name>" lines
+            # start with an escape sequence, so an unstripped ^failed grep names nothing -
+            # measured on the v0.26.0 release run, which failed a test and could not say which.
+            log="$(sed 's/\x1b\[[0-9;]*m//g' <<<"$log")"
             grep -A 6 -E "^failed |^\s+failed " <<<"$log" | head -120 || true
             echo "--- tail ---"
             grep -vE "^\s*$" <<<"$log" | tail -40
