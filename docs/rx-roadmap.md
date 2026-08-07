@@ -92,6 +92,23 @@ noise. Consequences: no default flip on one evening's evidence - the A/B repeats
 corpus grows - and the symmetric exchange strengthens the demoted ensemble-decode-any idea
 (workstream 2): running both detectors would have banked ~+1.5 % union gain for CPU alone.
 
+**The opening evening's misses, autopsied (2026-08-07 early).** The survey banked 62
+missed-verdict bursts in the bpsk300 slot (peak SNR p50 19 dB, to 36 dB) - and **none of
+them decodes in isolation under either detector**, against a positive control (a
+survey-length window cut around a frame-log-proven frame) that decodes cleanly through the
+identical per-burst pipeline. That inverts the GB7RDG-era expectation, where half the
+in-stream losses decoded isolated because collection-state masking ate them: the
+DCD-falling reset has closed that class, and what the station misses now is genuinely
+undecodable. What the misses are: **43 of 62 are shorter than 1 s** - physically too short
+to hold a complete frame; fragments (collided tails, partial acquisitions), not losses -
+and the ~19 full-length residue died to damage no current detector reads. What they are
+NOT: static crashes - coincidence with >25 dB broadband impulses is 16 observed against
+~32 expected by chance, so **a noise blanker would not rescue this failure class** (it may
+still buy general SNR margin; that question stays with the workstream-6 instrument). The
+station read ~94 % of its slot's activity on the opening evening; misses-v2 as a corpus
+needs either richer pickings (contest weekends, deeper QRN) or expected-bytes context
+(retry correlation) to say more than "hard".
+
 ## Workstreams, ranked
 
 Ranked by expected real-world return per unit of effort, with the reasoning pinned so a future
