@@ -17,7 +17,7 @@ public sealed class QpskModem : IModem, IConstellationSource
         int sampleRate, int baud, double carrier, Action<byte[]> frameReceived, bool crc,
         double rollOff = QpskModulator.DefaultRollOff,
         PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null,
-        bool acceptPlainIl2p = false)
+        bool acceptPlainIl2p = false, bool decisionFeedback = true)
     {
         _bitRate = baud * 2;
         _crc = crc;
@@ -60,7 +60,7 @@ public sealed class QpskModem : IModem, IConstellationSource
                 deframer.PushBit(first);
                 deframer.PushBit(second);
             },
-            carrier, detector, loopBandwidthHz);
+            carrier, detector, loopBandwidthHz, rollOff, decisionFeedback);
         _demodulator = demodulator;
         _modulator = new QpskModulator(sampleRate, baud, carrier, rollOff);
         _demodulator.SymbolPlotted = (i, q) => SymbolPlotted?.Invoke(new ConstellationPoint(i, q));
@@ -131,8 +131,12 @@ public sealed class QpskModem : IModem, IConstellationSource
         // the 0.25 roll-off, the wider loop tracks noise instead of carrier and loses even
         // at low SNR (bench: 0.06×baud scored 25/40 at σ0.08 where 0.03×baud scored 40/40).
         // 54 Hz keeps the coherent noise win and still pulls in a ~5 Hz offset.
+        // decisionFeedback off: the 2026-08-07 QPSK campaign's reference detector measured
+        // a clean-signal regression on this mode's FM chain at 6⅔ samples per symbol
+        // (22/30 vs the plain product's 30/30) - out of that campaign's SSB scope, so the
+        // mode keeps the detector it was validated with (see QpskDemodulator's parameter).
         new(sampleRate, 1800, carrierFrequency, frameReceived, crc, rollOff, detector,
-            loopBandwidthHz ?? 1800 * 0.03, acceptPlainIl2p);
+            loopBandwidthHz ?? 1800 * 0.03, acceptPlainIl2p, decisionFeedback: false);
 
     /// <inheritdoc />
     public event Action<byte[], FrameQuality>? FrameDecoded;
