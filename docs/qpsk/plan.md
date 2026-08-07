@@ -72,7 +72,50 @@ fitted to one rig do not transfer) applies to receive chains too.
 
 ## Q0 baseline table
 
-(filled by measurement; empty cells are unmeasured, never assumed)
+Measured 2026-08-07, N=100/point, seed 1, `sm-ota sim` (the same rig the masks run).
+CFO rows are at the mode's knee SNR (+4 for qpsk600, +9 for qpsk2400).
 
-| Mode | Detector | Channel | Points (SNR dB: ok/N) |
+| Mode | Detector | Channel | Points (SNR dB: ok/100) |
 |---|---|---|---|
+| qpsk600 | differential | AWGN | 0: 6, +2: 80, +4: 99, +6: 100 |
+| qpsk600 | differential | CFO @+4 | 3.75 Hz: 95, 7.5: 92, 15: 30, 30: 0 |
+| qpsk600 | differential | Good | +4: 52, +8: 68 |
+| qpsk600 | differential | Moderate | +4: 26, +8: 41 |
+| qpsk600 | differential | Poor | +8: 4, +12: 5 |
+| qpsk600 | coherent | AWGN | 0: 52, +2: 81, +4: 89, +6: 98 |
+| qpsk600 | coherent | CFO @+4 | 3.75 Hz: 0, 7.5: 0, 15: 0, 30: 0 |
+| qpsk600 | coherent | Good | +4: 58, +8: 66 |
+| qpsk600 | coherent | Moderate | +4: 30, +8: 41 |
+| qpsk600 | coherent | Poor | +8: 7, +12: 7 |
+| qpsk2400 | differential | AWGN | +5: 0, +7: 15, +9: 80, +11: 99 |
+| qpsk2400 | differential | CFO @+9 | 3.75 Hz: 72, 7.5: 76, 15: 71, 30: 58 |
+| qpsk2400 | differential | Good | +9: 20, +13: 35 |
+| qpsk2400 | differential | Moderate | +9: 2, +13: 10 |
+| qpsk2400 | differential | Poor | +13: 2, +17: 3 |
+| qpsk2400 | coherent | AWGN | +5: 3, +7: 36, +9: 58, +11: 74 |
+| qpsk2400 | coherent | CFO @+9 | 3.75 Hz: 33, 7.5: 4, 15: 0, 30: 0 |
+| qpsk2400 | coherent | Good | +9: 19, +13: 26 |
+| qpsk2400 | coherent | Moderate | +9: 3, +13: 9 |
+| qpsk2400 | coherent | Poor | +13: 1, +17: 3 |
+
+**The loss surface, named (Q0 exit).**
+
+1. **qpsk600's low-SNR knee is detector-bound.** Coherent beats differential by ~1.5-2 dB
+   at the bottom (52 vs 6 at 0 dB) - the classic single-sample differential give-away,
+   exactly the gap the bpsk300 DF-DD reference closed. The DF-DD port (a 4-phase
+   decision-remodulated reference) is the headline Q2 candidate.
+2. **qpsk600's CFO wall sits at ~+-10-15 Hz** (95 % at 7.5 Hz, 30 % at 15, 0 at 30) - no
+   diversity bank, no seeding, and a differential product whose phase margin is half
+   BPSK's. Coherent's wall is at 0 Hz for both modes, re-confirming the 2026-07-31
+   default reversal. The offset window already computed for reporting (4th-power) is the
+   seeding source, as it was on BPSK.
+3. **qpsk2400 on real-channel fading is near-floor** (Moderate 2-10 %, Poor 2-3 % at
+   +13-17 dB): at 1200 Bd the CCIR echoes span 1.2-2.4 symbols - genuine equaliser
+   territory, where the WS5 machinery's lessons (and its measured causal limits,
+   docs/rx-roadmap.md workstream 5) both apply. Recorded as the hard end of the campaign,
+   not the first target.
+4. **The whole family's knees carry several dB of implementation loss** against the
+   matched-filter expectation (qpsk600 differential reaches 90 % near +3 dB SNR3k where
+   ideal DQPSK at these rates sits several dB lower; the #236-class chain suspects -
+   decode-path band-pass, unmatched low-pass, DPLL inertia - are all present and
+   unmeasured here). Q1's autopsies put a number on each.
