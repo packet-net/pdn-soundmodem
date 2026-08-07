@@ -60,7 +60,8 @@ internal static class SimBench
     public static SimPointResult RunPoint(
         string mode, int? rate, SimLayer layer, SimChannelKind kind, double snrDb,
         int bursts, int frameBytes, int firstSeed, int workers, double levelDb = 0,
-        int txDelayMs = 0, double cfoHz = 0, PskDetector? detector = null, double? centreHz = null)
+        int txDelayMs = 0, double cfoHz = 0, PskDetector? detector = null, double? centreHz = null,
+        PskDetector? secondDetector = null)
     {
         var options = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, workers) };
         float levelScale = (float)Math.Pow(10, levelDb / 20.0);
@@ -89,7 +90,8 @@ internal static class SimBench
                 {
                     var sm = new SimModem(mode, rate)
                     {
-                        Options = new ModemOptions(CentreFrequencyHz: centreHz, Detector: detector),
+                        Options = new ModemOptions(CentreFrequencyHz: centreHz, Detector: detector,
+                            SecondDetector: secondDetector),
                     };
                     byte[] frame = SimModem.Frame(frameBytes, seed);
                     float[] active = sm.RenderBurst(frame, txDelayMs);

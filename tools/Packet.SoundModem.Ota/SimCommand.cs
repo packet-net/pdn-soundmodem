@@ -36,6 +36,9 @@ internal static class SimCommand
                   --cfo <list>         carrier-offset Hz, comma-separated sweep axis (default 0)
                   --detector <name>    coherent|differential|mlse override for bpsk*/qpsk*
                                        modes (mlse is bpsk-only - rx-roadmap workstream 5)
+                  --detector2 <name>   ensemble second detector for the bpsk banks: every
+                                       diversity position gets a branch under each detector
+                                       and the bank delivers the union (workstream 2)
                   --centre <Hz>        audio-centre override for the modes that take one,
                                        including ms110d-*/freedv-* via the shift decorator -
                                        the A/B instrument for the moved-modem BER gate
@@ -90,6 +93,11 @@ internal static class SimCommand
                 : d.StartsWith('m') ? PskDetector.Mlse
                 : PskDetector.Coherent
             : null;
+        PskDetector? detector2 = a.Str("detector2", null) is { } d2
+            ? d2.StartsWith('d') ? PskDetector.Differential
+                : d2.StartsWith('m') ? PskDetector.Mlse
+                : PskDetector.Coherent
+            : null;
         double? centreHz = a.Has("centre") ? a.Dbl("centre", 0) : null;
         bool quiet = a.Has("quiet");
 
@@ -124,7 +132,7 @@ internal static class SimCommand
                     {
                     SimPointResult r = SimBench.RunPoint(
                         mode, rateArg, layer, kind, snr, bursts, frameBytes, firstSeed, workers, level,
-                        txDelayMs, cfo, detector, centreHz);
+                        txDelayMs, cfo, detector, centreHz, detector2);
                     rows.Add(r);
                     if (level == 0)
                     {

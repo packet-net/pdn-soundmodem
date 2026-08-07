@@ -65,11 +65,16 @@ public sealed class BpskMultiModem : IModem, IConstellationSource
     /// unless <paramref name="crc"/> is on). They are read either way - see
     /// <see cref="Il2pReceiver"/>. Every branch reads both ways; the bank's content dedupe is
     /// what keeps a transmission two branches read differently to one delivery.</param>
+    /// <param name="secondDetector">When set (and different from <paramref name="detector"/>),
+    /// every offset position gets a second branch under this detector and the bank delivers
+    /// the UNION of what the two detectors decode - rx-roadmap workstream 2's ensemble,
+    /// bought with the existing content dedupe. Doubles the bank's CPU; null (the default)
+    /// keeps the single-detector bank.</param>
     public BpskMultiModem(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
         double centreFrequency = 1500, int baud = 300, int offsetPairs = 4,
         double? offsetHz = null, PskDetector detector = PskDetector.Differential,
-        bool acceptPlainIl2p = false)
+        bool acceptPlainIl2p = false, PskDetector? secondDetector = null)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         ArgumentOutOfRangeException.ThrowIfNegative(offsetPairs);
@@ -84,20 +89,35 @@ public sealed class BpskMultiModem : IModem, IConstellationSource
         double step = offsetHz ?? baud / 40.0;
         _stepHz = step;
 
-        int count = 2 * offsetPairs + 1;
-        _branches = new BpskModem[count];
-        for (int i = 0; i < count; i++)
+        int positions = 2 * offsetPairs + 1;
+        int perPosition = secondDetector is not null && secondDetector != detector ? 2 : 1;
+        _branches = new BpskModem[positions * perPosition];
+        for (int i = 0; i < positions; i++)
         {
             double offset = (i - offsetPairs) * step;
             // Drive everything off FrameDecoded (which carries the CRC/FEC quality); the required
             // frame sink is a no-op so each decode reaches the deduper exactly once.
-            _branches[i] = new BpskModem(
+            _branches[i * perPosition] = new BpskModem(
                 sampleRate, static _ => { }, crc, centreFrequency + offset, baud, detector: detector,
                 acceptPlainIl2p: acceptPlainIl2p);
-            _branches[i].FrameDecoded += (frame, quality) => OnFrame(frame, offset, quality);
+            _branches[i * perPosition].FrameDecoded += (frame, quality) => OnFrame(frame, offset, quality);
+            if (perPosition == 2)
+            {
+                // The ensemble twin: the same position under the second detector. The
+                // detectors' error sets are quasi-independent (measured on the opening
+                // evening of the 40 m capture: a roughly symmetric ~1.5 % exchange of
+                // exclusive frames, +1.1 % union - docs/rx-roadmap.md workstream 2), and
+                // the bank's content dedupe already reduces N copies of a transmission to
+                // one delivery, so the union comes for exactly one more branch's CPU per
+                // position and no new machinery.
+                _branches[(i * perPosition) + 1] = new BpskModem(
+                    sampleRate, static _ => { }, crc, centreFrequency + offset, baud,
+                    detector: secondDetector!.Value, acceptPlainIl2p: acceptPlainIl2p);
+                _branches[(i * perPosition) + 1].FrameDecoded += (frame, quality) => OnFrame(frame, offset, quality);
+            }
         }
 
-        _transmit = _branches[offsetPairs]; // the centre (offset 0) branch
+        _transmit = _branches[offsetPairs * perPosition]; // the centre (offset 0) primary branch
     }
 
     /// <summary>Creates the 300 bps bank (NinoTNC mode 8) around <paramref name="carrierFrequency"/>.</summary>

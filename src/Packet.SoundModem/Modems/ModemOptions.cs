@@ -27,9 +27,16 @@ namespace Packet.SoundModem.Modems;
 /// <see langword="true"/> for any other mode throws - see
 /// <see cref="ModemCatalog.RunsIl2pCrc"/> and, for what the tolerance costs,
 /// <see cref="Il2pReceiver"/>.</param>
+/// <param name="SecondDetector">Ensemble decode-any for the <c>bpsk*</c> banks
+/// (rx-roadmap workstream 2): every diversity position gets a second branch under this
+/// detector and the bank delivers the union of what both decode, at double the bank CPU.
+/// Only the bpsk banks have the machinery; supplying it for any other mode throws, so a
+/// measurement that asks for an ensemble can never silently not get one. Null ⇒ the
+/// single-detector bank.</param>
 public readonly record struct ModemOptions(
     double? CentreFrequencyHz = null,
     int? OffsetPairs = null,
     double? OffsetStepHz = null,
     PskDetector? Detector = null,
-    bool? AcceptPlainIl2p = null);
+    bool? AcceptPlainIl2p = null,
+    PskDetector? SecondDetector = null);
