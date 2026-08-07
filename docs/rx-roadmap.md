@@ -307,6 +307,26 @@ independent. Novel for this ecosystem, receive-only, wire-legal. Needs: burst so
 (bounded), alignment via the sync word + correlation, and honest accounting so a combined
 decode is badged as such in the frame log.
 
+**Status 2026-08-07: sized before building, and the measured ceiling says do not build -
+for now.** The sizing itself took three attempts, each failure instructive enough to record:
+pairing the survey's missed bursts found zero retry twins, but the survey's own sampling
+policy (120 s per-250 Hz-bucket cooldown, 30/h cap) structurally discards the second copy of
+any retry pair, so that zero measured the cooldown (Tom's catch); raw band-energy detection
+swung to the opposite artefact, counting the slot's abundant foreign traffic as misses; and a
+squaring classifier failed to separate. The honest instrument is the receiver itself:
+`sm-ota replay --bursts` (PR #250) uses the bank's own DCD as the per-burst bpsk verdict,
+with sync-without-decode surfaced through new RsFailures/CrcFailures counters and the
+calibration cross-checked against the frame log (93-98 % containment; the classifier errs
+conservative). On the first full day: 873 DCD bursts of ~2600 energy events (72 % of the
+slot's energy is foreign), 743 decoded, 130 damaged - of which 72 had their content recovered
+by a decoded retry sibling within ten minutes, and only **2-5 all-copies-lost retry groups
+existed in 28.6 h**: roughly 2-4 combinable frames per day against ~1030 decoded, a
+throughput ceiling of 0.2-0.4 %. The link layer's own retransmission diversity (43.5 % of
+decoded traffic is retry copies, chains to 14 deep) is already doing this workstream's job at
+these SNRs. Re-run the sizing (the instrument is one command now) when the corpus contains
+storm or contest days - the twin class is exactly what deep synchronised QSB would populate -
+and build only if it appears.
+
 ### 4. Two-pass, non-causal burst processing
 
 The receiver is strictly causal; a burst is short and cheap to buffer. First pass: decode as
