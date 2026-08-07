@@ -51,6 +51,8 @@ public static class ModemCatalog
     /// <param name="OffsetStepHz">Diversity-bank step override, where the mode runs one.</param>
     /// <param name="Detector">The PSK detector, resolved against the catalogue default.</param>
     /// <param name="AcceptPlainIl2p">Plain-IL2P tolerance (validated against the row).</param>
+    /// <param name="SecondDetector">Ensemble second detector for the bpsk banks (validated
+    /// against the mode in <see cref="Create"/>).</param>
     private readonly record struct ModemBuild(
         int DspRate,
         Action<byte[]> FrameReceived,
@@ -58,7 +60,8 @@ public static class ModemCatalog
         int? OffsetPairs,
         double? OffsetStepHz,
         PskDetector Detector,
-        bool AcceptPlainIl2p);
+        bool AcceptPlainIl2p,
+        PskDetector? SecondDetector);
 
     /// <summary>One mode, wholly: every fact the catalogue can be asked, next to the
     /// factory that must agree with it.</summary>
@@ -140,23 +143,27 @@ public static class ModemCatalog
         new("bpsk300", 12000, CentreSemantics.Native, 1500, RunsIl2pCrc: true, NinoPskIdBeacon: true,
             b => new BpskMultiModem(b.DspRate, b.FrameReceived, crc: true, b.CentreHz!.Value,
                 baud: 300, offsetPairs: b.OffsetPairs ?? 4, offsetHz: b.OffsetStepHz,
-                detector: b.Detector, acceptPlainIl2p: b.AcceptPlainIl2p)),
+                detector: b.Detector, acceptPlainIl2p: b.AcceptPlainIl2p,
+                secondDetector: b.SecondDetector)),
         new("bpsk300-multi", 12000, CentreSemantics.Native, 1500, RunsIl2pCrc: true, NinoPskIdBeacon: true,
             b => new BpskMultiModem(b.DspRate, b.FrameReceived, crc: true, b.CentreHz!.Value,
                 baud: 300, offsetPairs: b.OffsetPairs ?? 4, offsetHz: b.OffsetStepHz,
-                detector: b.Detector, acceptPlainIl2p: b.AcceptPlainIl2p)),
+                detector: b.Detector, acceptPlainIl2p: b.AcceptPlainIl2p,
+                secondDetector: b.SecondDetector)),
         new("bpsk300-nocrc", 12000, CentreSemantics.Native, 1500, RunsIl2pCrc: false, NinoPskIdBeacon: true,
             b => new BpskMultiModem(b.DspRate, b.FrameReceived, crc: false, b.CentreHz!.Value,
                 baud: 300, offsetPairs: b.OffsetPairs ?? 4, offsetHz: b.OffsetStepHz,
-                detector: b.Detector)),
+                detector: b.Detector, secondDetector: b.SecondDetector)),
         new("bpsk1200", 12000, CentreSemantics.Native, 1500, RunsIl2pCrc: true, NinoPskIdBeacon: true,
             b => new BpskMultiModem(b.DspRate, b.FrameReceived, crc: true, b.CentreHz!.Value,
                 baud: 1200, offsetPairs: b.OffsetPairs ?? 4, offsetHz: b.OffsetStepHz,
-                detector: b.Detector, acceptPlainIl2p: b.AcceptPlainIl2p)),
+                detector: b.Detector, acceptPlainIl2p: b.AcceptPlainIl2p,
+                secondDetector: b.SecondDetector)),
         new("bpsk1200-multi", 12000, CentreSemantics.Native, 1500, RunsIl2pCrc: true, NinoPskIdBeacon: true,
             b => new BpskMultiModem(b.DspRate, b.FrameReceived, crc: true, b.CentreHz!.Value,
                 baud: 1200, offsetPairs: b.OffsetPairs ?? 4, offsetHz: b.OffsetStepHz,
-                detector: b.Detector, acceptPlainIl2p: b.AcceptPlainIl2p)),
+                detector: b.Detector, acceptPlainIl2p: b.AcceptPlainIl2p,
+                secondDetector: b.SecondDetector)),
 
         new("qpsk600", 12000, CentreSemantics.Native, 1500, RunsIl2pCrc: true, NinoPskIdBeacon: true,
             b => QpskModem.Qpsk600(b.DspRate, b.FrameReceived, detector: b.Detector,
@@ -373,6 +380,16 @@ public static class ModemCatalog
             frequency = null;
         }
 
+        if (options.SecondDetector is not null && !mode.StartsWith("bpsk", StringComparison.Ordinal))
+        {
+            // Only the bpsk banks carry the ensemble machinery; a silent no-op here would
+            // hand a measurement the single-detector bank while it believes it asked for
+            // the union - the instrument lie the MS110D programme taught us to refuse.
+            throw new ArgumentException(
+                $"mode '{mode}' does not support an ensemble second detector (bpsk banks only)",
+                nameof(options));
+        }
+
         IModem modem = descriptor.Factory(new ModemBuild(
             dspRate,
             frameReceived,
@@ -380,7 +397,8 @@ public static class ModemCatalog
             options.OffsetPairs,
             options.OffsetStepHz,
             options.Detector ?? DefaultDetectorFor(mode),
-            acceptPlainIl2p));
+            acceptPlainIl2p,
+            options.SecondDetector));
 
         // Asked-for centre equal to the native one included: Wrap returns the bare modem then,
         // so a config that spells out the default is bit-identical to one that omits it.

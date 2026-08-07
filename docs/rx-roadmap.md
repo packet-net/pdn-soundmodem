@@ -211,6 +211,20 @@ more than any planned demodulator change, for two hundred lines. Left behind it,
   fading. Still cheap and worth having, but corroboration ate most of its lunch. Re-evaluate
   against the capture campaign's `misses-v2`.
 
+  **Status 2026-08-07: built as an opt-in knob, and the fading gain is real.** The capture
+  campaign's opening-evening A/B revived this (a roughly symmetric ~1.5 % exchange of
+  exclusive frames between the differential and MLSE detectors, +1.1 % deliverable union on
+  real 40 m traffic), so the knob now exists: `ModemOptions.SecondDetector` doubles a bpsk
+  bank with one branch per detector per diversity position and the existing content dedupe
+  delivers the union (`sm-ota sim --detector2`, bpsk banks only - other modes throw rather
+  than silently hand a measurement the single bank). Sim ladder A/B, N=100 seed 1, single
+  differential bank -> differential+mlse ensemble: AWGN -5/-4/-3 dB 56/88/95 -> 58/88/95
+  (the detectors agree on AWGN); Moderate 0/+2/+4 dB 50/55/63 -> 50/58/67; **Poor +6/+9 dB
+  21/24 -> 28/30** - the ensemble banks workstream 5's Poor-rung catches without giving up
+  a single differential frame, never measuring worse anywhere, at twice the bank CPU
+  (~19 % of a core at 12 kHz). Not the default: the CPU doubling is an operator's call,
+  and the masks continue to pin the single-detector default.
+
 ### 3. Retransmission soft combining (the sleeper)
 
 AX.25 retries are byte-identical frames seconds apart - the #236 guard bug proved the stream
