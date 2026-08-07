@@ -1749,6 +1749,11 @@ int blockSamples = ardopModem is null ? inputRate / 10 : inputRate / 50;
 var floatBuffer = new float[blockSamples];
 var dspBuffer = new float[rxDecimator?.MaxOutput(blockSamples) ?? blockSamples];
 var xrunWatch = new XrunWatch();
+// Flex only: the paced DAX ring pads exact silence at full rate when the VITA stream
+// dies, so the loop keeps turning and nothing else can notice (measured 2026-08-07:
+// 6.8 h of zeros recorded). ALSA inputs have xrun detection and genuinely-silent wired
+// inputs exist, so they are deliberately not watched.
+DeadFeedWatch? deadFeedWatch = flex is not null ? new DeadFeedWatch(inputRate) : null;
 long nextHealthPoll = Environment.TickCount64 + XrunPollMs;
 long frameLogDropsSeen = 0;
 long captureDropsSeen = 0;
@@ -1758,6 +1763,24 @@ while (!cancellation.IsCancellationRequested)
     if (got == 0)
     {
         continue;
+    }
+
+    if (deadFeedWatch is not null && deadFeedWatch.Observe(floatBuffer.AsSpan(0, got)))
+    {
+        // Restart-to-recover: both real feed deaths were fixed by a process restart and
+        // nothing less is proven, so take the orderly shutdown and let Restart=always
+        // rebuild the Flex session from scratch. If this line repeats every ~30 s the
+        // feed is not coming back by itself - check DAX routing and the slice on the
+        // radio side.
+        Console.Error.WriteLine(
+            "receive feed dead: 30 s of unbroken digital silence from the radio - "
+            + "restarting to rebuild the session (recurring? check DAX/slice config)");
+        // Exit 1 is the unit's retry contract (Restart=on-failure in the shipped unit;
+        // the capture campaign's unit is Restart=always) - a dead feed is the radio lost,
+        // whatever the paced ring pretends.
+        radioLost = true;
+        cancellation.Cancel();
+        break;
     }
 
     // Polled from the receive loop rather than a timer: this loop only turns when audio is
