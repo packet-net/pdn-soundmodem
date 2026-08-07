@@ -37,6 +37,7 @@ public sealed class BpskMultiModem : IModem, IConstellationSource
     private readonly int _dedupeChunk;
     private readonly int _baud;
     private readonly bool _crc;
+    private readonly double _stepHz;
     private readonly List<Candidate> _candidates = [];
     private long _samplesProcessed;
 
@@ -81,6 +82,7 @@ public sealed class BpskMultiModem : IModem, IConstellationSource
         _deduper = new FrameDeduper(3L * sampleRate);
         _dedupeChunk = Math.Max(1, sampleRate / 10);
         double step = offsetHz ?? baud / 40.0;
+        _stepHz = step;
 
         int count = 2 * offsetPairs + 1;
         _branches = new BpskModem[count];
@@ -160,6 +162,72 @@ public sealed class BpskMultiModem : IModem, IConstellationSource
             }
 
             return false;
+        }
+    }
+
+    /// <summary>
+    /// How far the current signal sits from the bank's centre, in Hz (positive = above it), or
+    /// null when no branch has anything coherent enough to measure. The reading is the
+    /// best-matched branch's - smallest own residual, exactly the rule
+    /// <see cref="EmitBestOfChunk"/> uses to pick a decoded frame's reported offset - as that
+    /// branch's step plus its residual. Decoded frames already carry their reading in
+    /// <see cref="FrameQuality.FrequencyOffsetHz"/>; this property is for the bursts that never
+    /// decode, polled while <see cref="CarrierDetect"/> holds.
+    /// </summary>
+    public double? CarrierOffsetHz
+    {
+        get
+        {
+            double? best = null;
+            double bestResidual = double.MaxValue;
+            int offsetPairs = _branches.Length / 2;
+            for (int i = 0; i < _branches.Length; i++)
+            {
+                if (_branches[i].CarrierOffsetHz is { } residual
+                    && Math.Abs(residual) < bestResidual)
+                {
+                    bestResidual = Math.Abs(residual);
+                    best = ((i - offsetPairs) * _stepHz) + residual;
+                }
+            }
+
+            return best;
+        }
+    }
+
+    /// <summary>Cumulative sync-found-but-Reed-Solomon-failed count summed across the bank. A
+    /// bank-level event count, not a transmission count: several branches typically sync on the
+    /// same transmission and each IL2P+CRC branch reads its bits twice
+    /// (<see cref="Il2pReceiver.RsFailures"/>), so a positive delta across a burst means "at
+    /// least one branch found sync here and could not recover the frame" and the magnitude means
+    /// nothing beyond that.</summary>
+    public long RsFailures
+    {
+        get
+        {
+            long total = 0;
+            foreach (BpskModem branch in _branches)
+            {
+                total += branch.RsFailures;
+            }
+
+            return total;
+        }
+    }
+
+    /// <summary>Cumulative recovered-but-trailing-CRC-refused count summed across the bank -
+    /// the same bank-level-event caveat as <see cref="RsFailures"/> applies.</summary>
+    public long CrcFailures
+    {
+        get
+        {
+            long total = 0;
+            foreach (BpskModem branch in _branches)
+            {
+                total += branch.CrcFailures;
+            }
+
+            return total;
         }
     }
 

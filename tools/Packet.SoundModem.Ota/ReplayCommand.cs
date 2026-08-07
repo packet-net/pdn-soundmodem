@@ -44,7 +44,8 @@ internal static class ReplayCommand
                 """
                 usage: sm-ota replay --raw <dir|file[,file...]> --mode <mode@centreHz>[,...]
                                      [--detector <name>] [--framelog <frames.sqlite>]
-                                     [--from <UTC>] [--to <UTC>] [--csv <path>] [--quiet]
+                                     [--from <UTC>] [--to <UTC>] [--csv <path>]
+                                     [--bursts <path>] [--quiet]
 
                 Replays raw-capture WAV chunks through catalogue receivers and reports every
                 frame that decodes; with --framelog, diffs the result against what the live
@@ -66,6 +67,11 @@ internal static class ReplayCommand
                                        absorbs the boundary jitter
                   --csv <path>         one row per replayed frame, full payload hex - the
                                        stable artefact two detector runs diff against
+                  --bursts <path>      one row per DCD burst - the receiver's own per-burst
+                                       verdict: burst times, seconds DCD held, decode
+                                       outcome, carrier offset, sync/CRC failure deltas
+                                       (offset and deltas are BPSK-bank readings; see
+                                       DcdBurstTracker). Single --mode only.
                   --quiet              suppress the per-frame lines
                 """);
             return argv.Length == 0 ? 2 : 0;
@@ -106,6 +112,14 @@ internal static class ReplayCommand
             .ToArray();
 
         bool quiet = a.Has("quiet");
+        string? burstsPath = a.Str("bursts", null);
+        if (burstsPath is not null && specs.Length != 1)
+        {
+            Console.Error.WriteLine(
+                "--bursts wants exactly one --mode: the verdict rows are one receiver's");
+            return 2;
+        }
+
         (_, int rate) = WavFile.ReadMono(chunks[0]);
 
         // The compute scales two ways at once: one independent pass per (mode, timeline
@@ -126,6 +140,8 @@ internal static class ReplayCommand
 
         DateTimeOffset runStart = ChunkUtc(chunks[0]);
         var perJob = new List<ReplayedFrame>[specs.Length * segments];
+        var burstsPerJob = new List<DcdBurst>[specs.Length * segments];
+        var orphansPerJob = new int[specs.Length * segments];
         var ends = new DateTimeOffset[specs.Length * segments];
         Parallel.For(0, specs.Length * segments,
             new ParallelOptions { MaxDegreeOfParallelism = workers },
@@ -140,9 +156,25 @@ internal static class ReplayCommand
                 DateTimeOffset windowEnd = segment == segments - 1
                     ? DateTimeOffset.MaxValue
                     : ChunkUtc(chunks[starts[segment + 1]]);
+                DcdBurstTracker? tracker = burstsPath is null ? null : new DcdBurstTracker();
                 (perJob[job], ends[job]) = RunPass(
                     specs[spec], feed, rate, detector, windowStart, windowEnd,
-                    reportGaps: spec == 0);
+                    reportGaps: spec == 0, tracker,
+                    // A burst that opens near the window's end outlives it; feeding a bounded
+                    // slice of the next segment's first chunk lets it close here, on the side
+                    // that owns its start (see the ownership rule below).
+                    cooldownChunk: tracker is not null && starts[segment + 1] < chunks.Length
+                        ? chunks[starts[segment + 1]]
+                        : null);
+                // Each burst has exactly one owner: the segment whose window contains its
+                // start. The neighbouring segment sees the same burst begin during its warmup
+                // chunk and drops it here.
+                burstsPerJob[job] = tracker is null
+                    ? []
+                    : tracker.Bursts
+                        .Where(b => b.UtcStart >= windowStart && b.UtcStart < windowEnd)
+                        .ToList();
+                orphansPerJob[job] = tracker?.OrphanFrames ?? 0;
             });
         DateTimeOffset runEnd = ends.Max();
         List<ReplayedFrame> frames = Deduplicate(
@@ -165,6 +197,22 @@ internal static class ReplayCommand
             int delivered = frames.Count(f => f.SpecMode == mode && !f.Quality.MonitorOnly);
             Console.WriteLine($"{mode}@{centre:F0}: {total} decoded, {delivered} deliverable"
                 + (detector is { } det ? $" (detector {det})" : ""));
+        }
+
+        if (burstsPath is not null)
+        {
+            List<DcdBurst> bursts = burstsPerJob.SelectMany(b => b)
+                .OrderBy(b => b.UtcStart).ToList();
+            int orphans = orphansPerJob.Sum();
+            int decodedBursts = bursts.Count(b => b.Decoded);
+            int syncedUndecoded = bursts.Count(b => !b.Decoded && b.RsFailures > 0);
+            Console.WriteLine(
+                $"bursts: {bursts.Count} dcd, {decodedBursts} decoded, "
+                + $"{bursts.Count - decodedBursts} undecoded "
+                + $"({syncedUndecoded} of those synced-then-RS-failed), "
+                + $"{orphans} orphan frames");
+            WriteBurstsCsv(burstsPath, bursts);
+            Console.WriteLine($"bursts csv: {burstsPath}");
         }
 
         if (a.Str("csv", null) is { } csv)
@@ -220,27 +268,51 @@ internal static class ReplayCommand
         return result;
     }
 
+    /// <summary>Audio fed past a segment's window when bursts are tracked, so a burst that
+    /// opens just inside the window can close on this side of the boundary. Bursts run seconds;
+    /// a minute is beyond generous without costing a whole extra chunk per segment.</summary>
+    private const int CooldownSeconds = 60;
+
     /// <summary>One mode's continuous pass over one contiguous chunk range, keeping only
     /// the frames delivered inside [<paramref name="windowStart"/>,
-    /// <paramref name="windowEnd"/>) - the range ahead of the window is warmup.</summary>
+    /// <paramref name="windowEnd"/>) - the range ahead of the window is warmup. With a
+    /// <paramref name="tracker"/>, the receiver's burst-level signals are polled once per feed
+    /// block (100 ms, against bursts of 0.7 s and up) and every delivered frame is offered to
+    /// it, warmup and cooldown included - burst ownership is settled by the caller on burst
+    /// start times, not here.</summary>
     private static (List<ReplayedFrame> Frames, DateTimeOffset End) RunPass(
         (string Mode, double CentreHz) spec, string[] chunks, int rate,
         PskDetector? detector, DateTimeOffset windowStart, DateTimeOffset windowEnd,
-        bool reportGaps)
+        bool reportGaps, DcdBurstTracker? tracker = null, string? cooldownChunk = null)
     {
         var frames = new List<ReplayedFrame>();
         DateTimeOffset blockTime = default;
         IModem modem = ModemCatalog.Create(spec.Mode, rate, static _ => { },
             new ModemOptions(CentreFrequencyHz: spec.CentreHz, Detector: detector));
+        var bank = modem as BpskMultiModem;
         modem.FrameDecoded += (frame, quality) =>
         {
             if (blockTime >= windowStart && blockTime < windowEnd)
             {
                 frames.Add(new ReplayedFrame(blockTime, spec.Mode, frame, quality));
             }
+
+            tracker?.OnFrame(blockTime, quality);
         };
 
         int block = Math.Max(1, rate * BlockMilliseconds / 1000);
+        void Feed(float[] audio, DateTimeOffset start, int limit)
+        {
+            for (int pos = 0; pos < limit; pos += block)
+            {
+                int length = Math.Min(block, limit - pos);
+                blockTime = start + TimeSpan.FromSeconds((pos + length) / (double)rate);
+                modem.Process(audio.AsSpan(pos, length));
+                tracker?.Observe(blockTime, modem.CarrierDetect, bank?.CarrierOffsetHz,
+                    bank?.RsFailures ?? 0, bank?.CrcFailures ?? 0);
+            }
+        }
+
         DateTimeOffset expected = ChunkUtc(chunks[0]);
         for (int c = 0; c < chunks.Length; c++)
         {
@@ -264,14 +336,23 @@ internal static class ReplayCommand
                     + $"{Path.GetFileName(chunks[c])} (daemon restart?) - feeding through");
             }
 
-            for (int pos = 0; pos < audio.Length; pos += block)
+            Feed(audio, start, audio.Length);
+            expected = start + TimeSpan.FromSeconds(audio.Length / (double)rate);
+        }
+
+        if (tracker is not null)
+        {
+            if (cooldownChunk is not null)
             {
-                int length = Math.Min(block, audio.Length - pos);
-                blockTime = start + TimeSpan.FromSeconds((pos + length) / (double)rate);
-                modem.Process(audio.AsSpan(pos, length));
+                (float[] audio, int chunkRate) = WavFile.ReadMono(cooldownChunk);
+                if (chunkRate == rate)
+                {
+                    Feed(audio, ChunkUtc(cooldownChunk),
+                        Math.Min(audio.Length, rate * CooldownSeconds));
+                }
             }
 
-            expected = start + TimeSpan.FromSeconds(audio.Length / (double)rate);
+            tracker.Flush();
         }
 
         return (frames, expected);
@@ -351,6 +432,24 @@ internal static class ReplayCommand
                 f.Quality.FrequencyOffsetHz?.ToString("F1", CultureInfo.InvariantCulture) ?? "",
                 f.Payload.Length,
                 Convert.ToHexString(f.Payload)));
+        }
+    }
+
+    private static void WriteBurstsCsv(string path, List<DcdBurst> bursts)
+    {
+        using var writer = new StreamWriter(path);
+        writer.WriteLine("utc_start,utc_end,dcd_seconds,decoded,frames,offset_hz,rs_failures,crc_failures");
+        foreach (DcdBurst b in bursts)
+        {
+            writer.WriteLine(string.Join(',',
+                b.UtcStart.ToString("O"),
+                b.UtcEnd.ToString("O"),
+                b.DcdSeconds.ToString("F1", CultureInfo.InvariantCulture),
+                b.Decoded ? 1 : 0,
+                b.Frames,
+                b.OffsetHz?.ToString("F1", CultureInfo.InvariantCulture) ?? "",
+                b.RsFailures,
+                b.CrcFailures));
         }
     }
 
