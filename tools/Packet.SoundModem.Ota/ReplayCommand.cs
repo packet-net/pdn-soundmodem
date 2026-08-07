@@ -59,6 +59,11 @@ internal static class ReplayCommand
                   --framelog <path>    the station's frames.sqlite; adds the matched /
                                        log-only / replay-only diff over the replayed window
                   --from/--to <UTC>    bound the chunk list (ISO or yyyyMMddTHHmmssZ)
+                  --workers <n>        parallel receiver passes (default cores-2): the chunk
+                                       timeline splits into contiguous segments, each fed
+                                       one warmup chunk before its own window so receiver
+                                       state is hot at the boundary; a +-2 s payload dedupe
+                                       absorbs the boundary jitter
                   --csv <path>         one row per replayed frame, full payload hex - the
                                        stable artefact two detector runs diff against
                   --quiet              suppress the per-frame lines
@@ -103,17 +108,45 @@ internal static class ReplayCommand
         bool quiet = a.Has("quiet");
         (_, int rate) = WavFile.ReadMono(chunks[0]);
 
-        // One pass per mode, in parallel: each pass owns its modem, its WAV reads and its
-        // frame list, so there is no shared receiver state to protect - the duplicate file
-        // IO is nothing beside two multi-bank FIR chains, and the full-capture harvest is
-        // compute-bound enough to want every core it can justify.
-        var perSpec = new List<ReplayedFrame>[specs.Length];
-        var ends = new DateTimeOffset[specs.Length];
+        // The compute scales two ways at once: one independent pass per (mode, timeline
+        // segment). A segment is a contiguous chunk range fed with the chunk before it as
+        // warmup - 15 minutes, far beyond any receiver's memory - and it keeps only the
+        // frames whose delivery time lands inside its own window, so each frame has exactly
+        // one owner. Delivery-time jitter of the same frame between two warm receivers is
+        // under a feed block, so a burst that straddles a boundary within that jitter can
+        // surface from both sides; the +-2 s payload dedupe below absorbs it (a genuine
+        // retransmission cannot arrive that fast at these symbol rates).
+        int workers = a.Int("workers", Math.Clamp(Environment.ProcessorCount - 2, 1, 16));
+        int segments = Math.Clamp(workers / specs.Length, 1, chunks.Length);
+        var starts = new int[segments + 1];
+        for (int s = 0; s <= segments; s++)
+        {
+            starts[s] = s * chunks.Length / segments;
+        }
+
         DateTimeOffset runStart = ChunkUtc(chunks[0]);
-        Parallel.For(0, specs.Length, i =>
-            (perSpec[i], ends[i]) = RunPass(specs[i], chunks, rate, detector, reportGaps: i == 0));
-        DateTimeOffset runEnd = ends[0];
-        List<ReplayedFrame> frames = perSpec.SelectMany(f => f).OrderBy(f => f.Utc).ToList();
+        var perJob = new List<ReplayedFrame>[specs.Length * segments];
+        var ends = new DateTimeOffset[specs.Length * segments];
+        Parallel.For(0, specs.Length * segments,
+            new ParallelOptions { MaxDegreeOfParallelism = workers },
+            job =>
+            {
+                int spec = job / segments;
+                int segment = job % segments;
+                int ownStart = starts[segment];
+                int feedStart = Math.Max(0, ownStart - 1);
+                string[] feed = chunks[feedStart..starts[segment + 1]];
+                DateTimeOffset windowStart = ChunkUtc(chunks[ownStart]);
+                DateTimeOffset windowEnd = segment == segments - 1
+                    ? DateTimeOffset.MaxValue
+                    : ChunkUtc(chunks[starts[segment + 1]]);
+                (perJob[job], ends[job]) = RunPass(
+                    specs[spec], feed, rate, detector, windowStart, windowEnd,
+                    reportGaps: spec == 0);
+            });
+        DateTimeOffset runEnd = ends.Max();
+        List<ReplayedFrame> frames = Deduplicate(
+            perJob.SelectMany(f => f).OrderBy(f => f.Utc).ToList());
         if (!quiet)
         {
             foreach (ReplayedFrame frame in frames)
@@ -124,7 +157,8 @@ internal static class ReplayCommand
 
         Console.WriteLine();
         Console.WriteLine($"=== replay {runStart:yyyy-MM-dd HH:mm}Z .. {runEnd:HH:mm}Z "
-            + $"({chunks.Length} chunks, {(runEnd - runStart).TotalHours:F1} h) ===");
+            + $"({chunks.Length} chunks, {(runEnd - runStart).TotalHours:F1} h, "
+            + $"{segments} segments x {specs.Length} modes on {workers} workers) ===");
         foreach ((string mode, double centre) in specs)
         {
             int total = frames.Count(f => f.SpecMode == mode);
@@ -147,17 +181,64 @@ internal static class ReplayCommand
         return 0;
     }
 
-    /// <summary>One mode's continuous pass over the whole chunk sequence.</summary>
+    /// <summary>Removes the segment-boundary twins: the same payload on the same mode WITH
+    /// THE SAME DELIVERY STATUS within 2 s is one transmission surfaced by both sides of a
+    /// boundary - never a genuine retransmission (a minimum frame takes over a second at
+    /// 300 Bd, and real retries are tens of seconds apart), and never the bank's deliberate
+    /// monitor-plus-delivered double emission of one transmission, which differs in
+    /// MonitorOnly (matching on payload alone ate exactly one frame of each such pair -
+    /// the 708-vs-701 discrepancy that gated this instrument's first parallel run). Input
+    /// must be time-sorted.</summary>
+    private static List<ReplayedFrame> Deduplicate(List<ReplayedFrame> sorted)
+    {
+        var result = new List<ReplayedFrame>(sorted.Count);
+        foreach (ReplayedFrame frame in sorted)
+        {
+            bool twin = false;
+            for (int i = result.Count - 1; i >= 0; i--)
+            {
+                if ((frame.Utc - result[i].Utc) > TimeSpan.FromSeconds(2))
+                {
+                    break;
+                }
+
+                if (result[i].SpecMode == frame.SpecMode
+                    && result[i].Quality.MonitorOnly == frame.Quality.MonitorOnly
+                    && result[i].Payload.AsSpan().SequenceEqual(frame.Payload))
+                {
+                    twin = true;
+                    break;
+                }
+            }
+
+            if (!twin)
+            {
+                result.Add(frame);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>One mode's continuous pass over one contiguous chunk range, keeping only
+    /// the frames delivered inside [<paramref name="windowStart"/>,
+    /// <paramref name="windowEnd"/>) - the range ahead of the window is warmup.</summary>
     private static (List<ReplayedFrame> Frames, DateTimeOffset End) RunPass(
         (string Mode, double CentreHz) spec, string[] chunks, int rate,
-        PskDetector? detector, bool reportGaps)
+        PskDetector? detector, DateTimeOffset windowStart, DateTimeOffset windowEnd,
+        bool reportGaps)
     {
         var frames = new List<ReplayedFrame>();
         DateTimeOffset blockTime = default;
         IModem modem = ModemCatalog.Create(spec.Mode, rate, static _ => { },
             new ModemOptions(CentreFrequencyHz: spec.CentreHz, Detector: detector));
         modem.FrameDecoded += (frame, quality) =>
-            frames.Add(new ReplayedFrame(blockTime, spec.Mode, frame, quality));
+        {
+            if (blockTime >= windowStart && blockTime < windowEnd)
+            {
+                frames.Add(new ReplayedFrame(blockTime, spec.Mode, frame, quality));
+            }
+        };
 
         int block = Math.Max(1, rate * BlockMilliseconds / 1000);
         DateTimeOffset expected = ChunkUtc(chunks[0]);
