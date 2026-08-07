@@ -65,6 +65,50 @@ There is no automatic end date: 24 h was the ask, the budget carries two months,
 grows with band variety (a weekend contest, a geomagnetic upset, summer QRN). Check on it with
 `systemctl status pdn-capture-40m` and `ls -lh /home/tf/capture-40m/raw | tail`.
 
+**Status 2026-08-06 (night): the harvest instrument exists and has flown.** `sm-ota replay`
+re-decodes the raw chunks through catalogue receivers (one continuous modem instance per mode
+across chunk boundaries; per-mode passes in parallel), stamps frames from the chunk filename
+UTC, writes a payload-hex CSV, and diffs against the frame log by exact payload in a +-45 s
+nearest-first window. Validation over the opening 1.3 h: 144 replayed / 148 logged /
+144 matched / 0 phantoms. **Know the referee's generation** (Tom's catch): the deployed
+daemon is 0.25.1, built against M0LTE.Fec 0.2.0 / M0LTE.Il2p 0.1.2 (pinned from the deployed
+`deps.json`) - the pre-erasure receiver, and its frame log lacks the trailer_near_bits /
+monitor_only / erased_bytes columns - so log-vs-replay deltas mix receiver generations with
+instrument effects (16-bit raw quantisation against the live float path, window edges) and
+are a cross-version reading, not an instrument floor. Measured across the full evening, the
+generations barely separate on real traffic: 4 exclusive frames each way (two of the live
+station's were window-edge), none of the replay's exclusives erasure-driven. Erasure decoding
+fired on 2 of 708 frames all evening and both matched frames the pre-erasure live station
+also copied - zero exclusive real-traffic contribution tonight, consistent with the corpus
+finding that the real frames do not die at the RS knee - while trailer corroboration fired
+on 20. The first real-audio detector A/B (the whole opening evening,
+7.2 h, ~708 bpsk300 frames) then ran on it: differential 708 decoded / 659 deliverable /
+639 CRC-verified against mlse 707 / 658 / 644 - totals at parity, mlse +5 CRC-verified, and a
+roughly symmetric ~1.5 % exchange (11 frames only differential caught, 10 only mlse caught,
+the mlse-exclusive list skewing to the genuinely weak distant traffic: three GB7WEM-7 frames,
+a GB7WEM IDENT, an EI0RSI-7 ID). Two of mlse's catches are the exact frames the live station
+heard but the differential replay missed, so the exchange is real signal, not instrument
+noise. Consequences: no default flip on one evening's evidence - the A/B repeats as the
+corpus grows - and the symmetric exchange strengthens the demoted ensemble-decode-any idea
+(workstream 2): running both detectors would have banked ~+1.5 % union gain for CPU alone.
+
+**The opening evening's misses, autopsied (2026-08-07 early).** The survey banked 62
+missed-verdict bursts in the bpsk300 slot (peak SNR p50 19 dB, to 36 dB) - and **none of
+them decodes in isolation under either detector**, against a positive control (a
+survey-length window cut around a frame-log-proven frame) that decodes cleanly through the
+identical per-burst pipeline. That inverts the GB7RDG-era expectation, where half the
+in-stream losses decoded isolated because collection-state masking ate them: the
+DCD-falling reset has closed that class, and what the station misses now is genuinely
+undecodable. What the misses are: **43 of 62 are shorter than 1 s** - physically too short
+to hold a complete frame; fragments (collided tails, partial acquisitions), not losses -
+and the ~19 full-length residue died to damage no current detector reads. What they are
+NOT: static crashes - coincidence with >25 dB broadband impulses is 16 observed against
+~32 expected by chance, so **a noise blanker would not rescue this failure class** (it may
+still buy general SNR margin; that question stays with the workstream-6 instrument). The
+station read ~94 % of its slot's activity on the opening evening; misses-v2 as a corpus
+needs either richer pickings (contest weekends, deeper QRN) or expected-bytes context
+(retry correlation) to say more than "hard".
+
 ## Workstreams, ranked
 
 Ranked by expected real-world return per unit of effort, with the reasoning pinned so a future
@@ -195,6 +239,39 @@ Rayleigh paths fading together for 60-150 symbol times) which **no receiver fixe
 wire format** - there is no interleaving to bridge it. Beyond MLSE, Poor is workstream 8's
 problem.
 
+**Status 2026-08-06 (night): built, measured, and the 50-60 % claim is retired.** The
+equaliser exists (`MlseEqualiser`, `PskDetector.Mlse`, `sm-ota sim --detector mlse`): a
+4-state Viterbi over the absolute polarities behind the unchanged differential front end,
+3 complex taps under decision-directed LMS, SOVA margins feeding the erasure ladder,
+16-symbol traceback inside the DCD window. Getting it to *parity* took four measured
+design corrections, each worth recording: mid-stream flushes swallow a pipeline of bits (a
+frame-killing slip - the trellis must free-run); a 3-tap LMS is **unidentifiable on the
+all-reversal preamble** (only g0-g1+g2 is observable), so unconstrained adaptation walks
+into the sync word with the main energy split equally across all three taps - the fix is
+skipping outer-tap updates exactly on alternating decision triples; outer taps may enter
+the metrics only on sustained, smoothed evidence during a seeded burst (unconditional
+exposure cost ~5 dB on AWGN from metric self-noise; between bursts the tap-power ratio is
+meaningless and engagement at burst start cost 0/50 at -5 dB); and the main tap plus
+rotation tracker form a per-symbol feedback loop that must stay undelayed, while the outer
+taps want traceback-matured (depth-6) decisions.
+
+Measured endpoint (N=100/point, seed 1; Poor 6/9 dB re-confirmed on seeds 101-200):
+AWGN and the CFO sweep at parity within two points (a hair under at -5..-3, even at -2);
+Good/Moderate at parity with +3 at the top rungs; **Poor +6/+9 dB pooled over both seed
+spans: 51->58 and 56->64 of 200, roughly +4 points**; miss corpus unchanged at 32/37
+demodulated. Why the ceiling never moved: the frames Poor takes die of flat outage, DPLL
+timing wander during dominance swaps, and near-antiphase composite nulls (a static-echo
+probe found **no** two-path setting that separates the detectors through the full chain -
+DF-DD+RS digests any static echo the trellis can equalise, and what kills DF-DD kills the
+trellis too, because a symbol-rate equaliser cannot restore timing); and the preamble's
+unidentifiability means the outer taps cannot converge before the sync word, so
+header-limited frames are structurally out of reach - engagement matures mid-header at
+best. **The default detector stays differential.** Two successors inherit the machinery:
+the capture campaign's misses-v2 should A/B `mlse` on real audio (the sim says the gain
+lives exactly where real QSOs operate on 40 m), and workstream 4's two-pass receiver is
+the honest answer to "converged taps from symbol 0", which is most of what this
+architecture cannot reach causally.
+
 ### 6. Channel-model extensions: impulse noise first, then the rest of reality
 
 (Broadened from "impulse-noise instrumentation" on 2026-08-06, Tom's prompt: the masks pin
@@ -213,6 +290,22 @@ effort:
    and burst shape from the raw chunks' real summer-evening QRN rather than inventing a
    Middleton model, then the blanker or clipped-metric fix, sized by what the instrument
    shows. Possibly the most real-world dB per line of code on this list.
+
+   **First measurement, 2026-08-06 (the campaign's opening evening, 9.4 h).** Methodology
+   that survived its own first contact: a naive full-band envelope detector counted packet
+   transmissions as impulses (near-full-scale "events" with durations chopped by its own
+   adaptive background); the honest detector runs on the *out-of-slot* audio - the slice
+   passband measures 0-3 kHz with the slots at 850/2150 Hz, so 2500-2950 Hz is in-passband
+   but signal-free - with a 20th-percentile background the sparse events cannot pollute,
+   and a 300-700 Hz coincidence gate separating broadband atmospherics from band-limited
+   interference (38 % of quiet-band events were broadband). Measured: **60-220 broadband
+   crashes/min** across the evening, peaking 18:00-20:00 UTC; median crash **15-30 ms
+   (~5-7 symbols at 300 Bd)** at median **~18 dB over the quiet-band floor**; heavy tail
+   p90 24 dB / p99 35 dB / max 73 dB, with second-long crash trains at p99 duration. Known
+   limits, recorded: slice AGC compresses absolute amplitudes (rates and durations robust,
+   the amplitude tail a lower bound), and the rate counts every sferic tick above 6x the
+   quiet floor - the modem-relevant subset is the strong tail. Next: correlate crash times
+   against frame-log misses to size what a blanker would actually buy.
 3. **Slow CFO drift + phase noise.** The exact impairment that walled qpsk2400 (#116) and
    the RSP1 coherent modes (#102): a Hz-per-minute ramp plus a 1/f phase process. Cheap (a
    time-varying rotation in the channel), and it is what the undisciplined-radio aspiration

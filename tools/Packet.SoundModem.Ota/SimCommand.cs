@@ -32,9 +32,10 @@ internal static class SimCommand
                   --mode <name>        ModemCatalog mode (e.g. freedv-datac0 … freedv-datac14).
                                        Any catalogue mode works at the frame layer.
                   --snr <a,b,c>        SNR rungs in dB (3 kHz), ascending
-                  --channel <list>     awgn|good|poor, comma-separated (default awgn)
+                  --channel <list>     awgn|good|moderate|poor, comma-separated (default awgn)
                   --cfo <list>         carrier-offset Hz, comma-separated sweep axis (default 0)
-                  --detector <name>    coherent|differential override for bpsk*/qpsk* modes
+                  --detector <name>    coherent|differential|mlse override for bpsk*/qpsk*
+                                       modes (mlse is bpsk-only - rx-roadmap workstream 5)
                   --centre <Hz>        audio-centre override for the modes that take one,
                                        including ms110d-*/freedv-* via the shift decorator -
                                        the A/B instrument for the moved-modem BER gate
@@ -85,7 +86,9 @@ internal static class SimCommand
         int workers = a.Int("workers", 4);
         int txDelayMs = a.Int("txdelay", 0);
         PskDetector? detector = a.Str("detector", null) is { } d
-            ? d.StartsWith('d') ? PskDetector.Differential : PskDetector.Coherent
+            ? d.StartsWith('d') ? PskDetector.Differential
+                : d.StartsWith('m') ? PskDetector.Mlse
+                : PskDetector.Coherent
             : null;
         double? centreHz = a.Has("centre") ? a.Dbl("centre", 0) : null;
         bool quiet = a.Has("quiet");

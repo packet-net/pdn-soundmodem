@@ -9,6 +9,12 @@
 
   <ItemGroup>
     <PackageReference Include="M0LTE.Dsp" />
+    <!-- The replay command reads the daemon's frame log to diff a re-decode against what
+         the live station heard (the capture campaign's harvest instrument). The bundle pin
+         mirrors the daemon: Microsoft.Data.Sqlite's own transitive carries
+         GHSA-2m69-gcr7-jv3q, and Directory.Packages.props holds the patched line. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
   </ItemGroup>
 
   <ItemGroup>

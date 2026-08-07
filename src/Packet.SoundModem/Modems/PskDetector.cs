@@ -21,4 +21,11 @@ public enum PskDetector
     /// (measured against a NinoTNC on the GB7RDG 40 m channel) it matches and occasionally
     /// beats coherent, because real carriers arrive off-frequency with short preambles.</summary>
     Differential,
+
+    /// <summary>The differential front-end with a per-branch adaptive MLSE equaliser as the
+    /// decision stage (<see cref="MlseEqualiser"/>) - rx-roadmap workstream 5, aimed at the
+    /// multipath ISI the symbol-by-symbol detectors cannot resolve (CCIR Moderate/Poor's
+    /// echo spans a good fraction of a 300 Bd symbol). BPSK only; the QPSK demodulator
+    /// rejects it.</summary>
+    Mlse,
 }
