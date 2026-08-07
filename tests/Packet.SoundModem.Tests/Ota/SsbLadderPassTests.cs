@@ -190,15 +190,18 @@ public class SsbLadderPassTests
     [Fact]
     public void The_scorer_reports_the_cliff_rather_than_papering_over_it()
     {
-        // A scorer that always passes is worthless. qpsk600 is comfortable at 20 dB and lost at 0 dB in
-        // AWGN, so a two-rung pass must catch the difference: the healthy rung decodes, the sub-cliff
-        // rung is not acquired and counts every payload bit wrong.
-        SsbCaptureScore score = RenderAndScore("qpsk600", [20, 0], firstSeed: 55);
+        // A scorer that always passes is worthless. qpsk600 is comfortable at 20 dB and lost at -6 dB
+        // in AWGN, so a two-rung pass must catch the difference: the healthy rung decodes, the
+        // sub-cliff rung is not acquired and counts every payload bit wrong. The sub-cliff rung was
+        // 0 dB until the 2026-08-07 QPSK campaign's matched filter and DPLL timing moved the mode's
+        // AWGN knee ~2.5 dB down (69/100 decode at 0 dB now - docs/qpsk/plan.md Q2); the fixture
+        // follows the receiver downhill.
+        SsbCaptureScore score = RenderAndScore("qpsk600", [20, -6], firstSeed: 55);
 
         score.Bursts[0].Decoded.Should().BeTrue("20 dB is well above qpsk600's AWGN cliff");
         score.Bursts[0].CodedBer.Should().Be(0);
-        score.Bursts[1].Decoded.Should().BeFalse("0 dB is below the cliff - the frame is lost");
-        score.Bursts[1].Acquired.Should().BeFalse("nothing to lock onto at 0 dB for this mode");
+        score.Bursts[1].Decoded.Should().BeFalse("-6 dB is below the cliff - the frame is lost");
+        score.Bursts[1].Acquired.Should().BeFalse("nothing to lock onto at -6 dB for this mode");
         score.Bursts[1].CodedBer.Should().Be(1.0, "a lost frame counts every payload bit wrong");
     }
 

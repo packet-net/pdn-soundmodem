@@ -60,7 +60,7 @@ public sealed class QpskModem : IModem, IConstellationSource
                 deframer.PushBit(first);
                 deframer.PushBit(second);
             },
-            carrier, detector, loopBandwidthHz);
+            carrier, detector, loopBandwidthHz, rollOff);
         _demodulator = demodulator;
         _modulator = new QpskModulator(sampleRate, baud, carrier, rollOff);
         _demodulator.SymbolPlotted = (i, q) => SymbolPlotted?.Invoke(new ConstellationPoint(i, q));

@@ -540,8 +540,10 @@ public sealed class BpskDemodulator
     /// symbols (the modulator's own truncation), normalised to unity DC gain. Deliberately
     /// unwindowed: a taper widens the transition band and de-matches the cascade, and the
     /// truncated pulse's own stopband (−54 dB one baud out) already exceeds what the old
-    /// band-pass provided against a neighbouring modem on the same audio.</summary>
-    private static float[] MatchedFilterTaps(int sampleRate, int baud, double rollOff)
+    /// band-pass provided against a neighbouring modem on the same audio. Shared with
+    /// <see cref="QpskDemodulator"/>, whose differential path learned the same lesson in
+    /// the QPSK campaign (docs/qpsk/plan.md Q1-2).</summary>
+    internal static float[] MatchedFilterTaps(int sampleRate, int baud, double rollOff)
     {
         int samplesPerSymbol = sampleRate / baud;
         int half = 6 * samplesPerSymbol;

@@ -70,9 +70,13 @@ public sealed class QpskDemodulator
     /// <param name="detector">Coherent (default) or differential detection.</param>
     /// <param name="loopBandwidthHz">Costas loop bandwidth (coherent only); defaults to 6 %
     /// of the symbol rate, tuned against measurement.</param>
+    /// <param name="rollOff">The transmitter's root-raised-cosine roll-off, which the
+    /// differential path's matched filter mirrors. <see cref="QpskModem"/> passes the
+    /// per-mode value (0.20 for qpsk600, 0.35 for qpsk2400, 0.25 for qpsk3600).</param>
     public QpskDemodulator(
         int sampleRate, int baud, Action<int, int> dibitSink, double carrierFrequency,
-        PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null)
+        PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null,
+        double rollOff = QpskModulator.DefaultRollOff)
     {
         ArgumentNullException.ThrowIfNull(dibitSink);
         if (detector == PskDetector.Mlse)
@@ -86,8 +90,24 @@ public sealed class QpskDemodulator
         // Filter plan follows QtSM's per-mode tables: BPF ≈ 2×baud wide, LPF ≈ 0.75×baud.
         _bandPass = new FirFilter(FilterDesign.BandPass(
             carrierFrequency - baud, carrierFrequency + baud, sampleRate, 256 * sampleRate / 12000));
-        _lowPassI = new FirFilter(FilterDesign.LowPass(0.75 * baud, sampleRate, 128 * sampleRate / 12000));
-        _lowPassQ = new FirFilter(FilterDesign.LowPass(0.75 * baud, sampleRate, 128 * sampleRate / 12000));
+        if (detector == PskDetector.Coherent)
+        {
+            // The coherent path keeps its measured QtSM-style configuration untouched, as
+            // the acquisition cross-check variant - exactly the BPSK arrangement.
+            _lowPassI = new FirFilter(FilterDesign.LowPass(0.75 * baud, sampleRate, 128 * sampleRate / 12000));
+            _lowPassQ = new FirFilter(FilterDesign.LowPass(0.75 * baud, sampleRate, 128 * sampleRate / 12000));
+        }
+        else
+        {
+            // Root-raised-cosine matched to the transmitter's per-mode shaping: the cascade
+            // is a raised cosine - ISI-free at the symbol instants, minimal noise bandwidth.
+            // Replacing the 0.75-baud low-pass measured ~1-1.5 dB at the Reed-Solomon
+            // threshold on both SSB QPSK modes (docs/qpsk/plan.md Q1-2), the same lesson
+            // the bpsk300 campaign measured in PR #236.
+            float[] taps = BpskDemodulator.MatchedFilterTaps(sampleRate, baud, rollOff);
+            _lowPassI = new FirFilter(taps);
+            _lowPassQ = new FirFilter((float[])taps.Clone());
+        }
         double step = 2 * Math.PI * carrierFrequency / sampleRate;
         _rotateCos = Math.Cos(step);
         _rotateSin = Math.Sin(step);
@@ -122,6 +142,12 @@ public sealed class QpskDemodulator
                 _previousQuadrant = quadrant;
                 dibitSink((QuadrantToDibit[change] >> 1) & 1, QuadrantToDibit[change] & 1);
             },
+            // Dire Wolf's 0.74 costs ~1 dB of timing jitter at the Reed-Solomon threshold
+            // on the differential path here exactly as it did on bpsk300 (docs/qpsk/plan.md
+            // Q1-3, PR #236's measurement); 0.92 recovers it, and the all-reversal IL2P
+            // preamble - a transition every symbol - still pulls a cold clock in within a
+            // normal TXDELAY. Coherent keeps its issue-#5 measured configuration.
+            inertia: detector == PskDetector.Coherent ? 0.74 : 0.92,
             transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
     }
 
@@ -199,7 +225,14 @@ public sealed class QpskDemodulator
             }
             else
             {
-                ProcessDifferential(filtered);
+                // The band-pass gates EnergyBusy only on this path: fronting the decode
+                // chain with it costs where the matched filter above is doing the
+                // selectivity - measured on qpsk600's deepest AWGN rung (40 % raw vs 33 %
+                // band-passed at 0 dB, docs/qpsk/plan.md Q1-2), its +-300 Hz passband
+                // rippling across the 300 Bd signal; qpsk2400's wider band-pass measured
+                // benign, and one arrangement serves both. The same split PR #236 measured
+                // for bpsk300.
+                ProcessDifferential(sample);
             }
         }
     }

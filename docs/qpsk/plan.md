@@ -91,6 +91,29 @@ fitted to one rig do not transfer) applies to receive chains too.
 - **Q2 - science core.** Fixes land one at a time, each with its full-ladder A/B quoted in
   the PR and its interop gates green (NinoTNC corpus 9/9, QtSM suite, parity tests). No
   fix lands on aspiration.
+
+  **Fix-set 1 (2026-08-07): matched filter + decode-path band-pass removal + DPLL
+  inertia, landed together as one chain change.** The differential path gets an RRC
+  matched to each mode's own TX roll-off (0.20/0.35/0.25 - the Q1 probe had hardcoded
+  0.35, and matching qpsk600 properly bought a further ~3 points at its deepest rung),
+  raw audio into the decode chain with the band-pass gating EnergyBusy only, and
+  inertia 0.92. Full ladder, N=100 seed 1, differential (Q0 baseline -> fix-set 1):
+
+  | Channel | qpsk600 | qpsk2400 |
+  |---|---|---|
+  | AWGN | 0 dB: 6->69, +2: 80->99, +4: 99->100, +6: 100->100 | +5: 0->3, +7: 15->72, +9: 80->97, +11: 99->99 |
+  | CFO @knee | 3.75 Hz: 95->100, 7.5: 92->99, 15: 30->71, 30: 0->0 | 3.75: 72->95, 7.5: 76->96, 15: 71->94, 30: 58->84 |
+  | Good | +4: 52->57, +8: 68->74 | +9: 20->24, +13: 35->34 |
+  | Moderate | +4: 26->26, +8: 41->41 | +9: 2->8, +13: 10->13 |
+  | Poor | +8: 4->7, +12: 5->10 | +13: 2->2, +17: 3->2 |
+
+  ~2.5 dB at qpsk600's AWGN knee and ~2 dB at qpsk2400's; qpsk2400's CFO dip eliminated;
+  fading rows barely move, exactly as the Q0 loss surface predicted (equaliser territory).
+  Three pinned expectations moved WITH this landing, each an improvement outrunning its
+  fixture: the coherent-beats-differential gate's QPSK rows joined the BPSK rows in the
+  inverted matches-coherent gate; the SSB scorer's sub-cliff rung moved 0 -> -6 dB
+  (qpsk600 now decodes 69/100 at 0 dB); and the qpsk600/qpsk2400 AWGN smoke masks rose
+  30 -> 36 and 32 -> 36 of 40. Ledger entry: mode-validation.md 2026-08-07.
 - **Q3 - family closure.** qpsk600 and qpsk2400 both at their new measured floors;
   qpsk3600 re-validated on the FM loop for chain regressions; the 40 m capture replay
   cross-checks any mode the live station carries.

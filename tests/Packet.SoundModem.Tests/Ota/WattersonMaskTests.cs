@@ -71,8 +71,12 @@ public class WattersonMaskTests(ITestOutputHelper output)
                                                        // floor must not collapse further
     [InlineData("bpsk1200", "awgn", 2.0, 0.0, 28)]     // measured 37/40
     [InlineData("afsk300-il2pc", "awgn", 0.0, 0.0, 30)] // measured 39/40
-    [InlineData("qpsk600", "awgn", 4.0, 0.0, 30)]      // measured 39/40
-    [InlineData("qpsk2400", "awgn", 11.0, 0.0, 32)]    // measured 40/40
+    [InlineData("qpsk600", "awgn", 4.0, 0.0, 36)]      // measured 100/100 2026-08-07 (QPSK
+                                                       // campaign fix-set 1: matched filter
+                                                       // + DPLL timing; was 39/40)
+    [InlineData("qpsk2400", "awgn", 11.0, 0.0, 36)]    // measured 99/100 2026-08-07 (same
+                                                       // campaign; was 40/40 at a knee that
+                                                       // has since moved ~2 dB down)
     [InlineData("freedv-datac0", "awgn", 0.0, 0.0, 20, 25)]  // measured 25/25
     [InlineData("freedv-datac1", "awgn", 3.0, 0.0, 20, 25)]  // measured 25/25
     [InlineData("freedv-datac3", "awgn", 0.0, 0.0, 20, 25)]  // measured 25/25
