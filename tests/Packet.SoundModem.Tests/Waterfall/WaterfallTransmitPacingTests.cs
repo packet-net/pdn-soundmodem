@@ -1,7 +1,8 @@
-using System.Diagnostics;
 using System.Net.WebSockets;
+using System.Text;
 using M0LTE.Radio.Audio;
 using AwesomeAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Waterfall;
@@ -19,27 +20,57 @@ namespace Packet.SoundModem.Tests.Waterfall;
 /// line source during a keyup. That is what "juddery, hangs at the start of TX, renders large
 /// chunks at a time" looks like from the browser.</para>
 /// <para>Receive audio has no such problem: it arrives from the sound card in real time. So the
-/// transmit side is queued and released at the rate real time passes, which is the rate the audio
-/// is actually leaving the radio.</para>
+/// transmit side is queued and released at the rate time passes, which is the rate the audio is
+/// actually leaving the radio.</para>
+/// <para><b>Time here is a <see cref="FakeTimeProvider"/>, and every assertion is exact.</b> The
+/// server paces off <see cref="WaterfallOptions.TimeProvider"/> alone, so a test advances the
+/// clock in whole pacer periods and knows precisely how many samples each tick releases and how
+/// many lines those samples yield. Earlier versions of this file measured the same properties
+/// against the wall clock with tolerance bands, and a loaded CI box walked straight through the
+/// bands. Nothing here sleeps, delays or reads a stopwatch; the only real-time anything is the
+/// 60-second cancellation guard, which fires on a deadlock and never on a pass.</para>
+/// <para>The model, mirrored from <c>WaterfallWebServer.PaceTransmitLines</c>: the pacer ticks
+/// every <see cref="PacerPeriod"/> and releases <c>(int)(elapsed * rate)</c> queued samples -
+/// <see cref="SamplesPerTick"/>, which is 399 and not 400 because the period truncates to whole
+/// ticks and the budget truncates to whole samples, exactly as the server computes it. The
+/// spectrum source emits one line per <see cref="HopSamples"/> samples fed, from the first
+/// sample. Lines reach the test through a real WebSocket; a broadcast marker
+/// (<see cref="WaterfallWebServer.SetTransmitStatus"/>) sent after each advance bounds the drain,
+/// because the per-client queue is FIFO - everything painted before the marker arrives before
+/// the marker.</para>
 /// </remarks>
 public class WaterfallTransmitPacingTests : IAsyncLifetime
 {
     private const int SampleRate = 12000;
     private const int LinesPerSecond = 30;
 
+    /// <summary>Samples per waterfall line: the spectrum source's hop.</summary>
+    private const int HopSamples = SampleRate / LinesPerSecond;
+
     private const double CentreHz = 850;   // the 300-baud slot this station actually runs
 
-    private readonly SoundModemChannel _channel = new(SampleRate, randomSeed: 7);
+    /// <summary>The pacer's period, computed exactly as the server computes it.</summary>
+    private static readonly TimeSpan PacerPeriod = TimeSpan.FromMilliseconds(1000.0 / LinesPerSecond);
+
+    /// <summary>Queued samples one pacer tick releases - the server's own truncation, mirrored.</summary>
+    private static readonly int SamplesPerTick = (int)(PacerPeriod.TotalSeconds * SampleRate);
+
+    private readonly FakeTimeProvider _time = new();
+    private readonly SoundModemChannel _channel;
     private readonly WaterfallWebServer _server;
     private readonly int _port;
     private readonly CancellationTokenSource _cancellation = new(TimeSpan.FromSeconds(60));
+    private long _transmittedSamples;
+    private int _markers;
 
     public WaterfallTransmitPacingTests()
     {
+        _channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         _channel.AddModem(0, sink => ModemCatalog.Create("afsk300-il2pc", SampleRate, sink, new ModemOptions(CentreFrequencyHz: CentreHz)));
+        _channel.TransmittedAudio += samples => _transmittedSamples += samples.Length;
         _port = FreePort();
         _server = new WaterfallWebServer(
-            _channel, _port, new WaterfallOptions { LinesPerSecond = LinesPerSecond });
+            _channel, _port, new WaterfallOptions { LinesPerSecond = LinesPerSecond, TimeProvider = _time });
     }
 
     public ValueTask InitializeAsync()
@@ -54,38 +85,58 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         _cancellation.Dispose();
     }
 
+    /// <summary>Total queued samples released after this many pacer ticks.</summary>
+    private static long Released(long ticks, long queued) => Math.Min(ticks * SamplesPerTick, queued);
+
+    /// <summary>Waterfall lines the source has emitted after being fed this many samples.</summary>
+    private static int LinesFor(long samples) => (int)(samples / HopSamples);
+
+    /// <summary>Pacer ticks needed to release a queue of this many samples in full.</summary>
+    private static int TicksToDrain(long samples) => (int)((samples + SamplesPerTick - 1) / SamplesPerTick);
+
+    /// <summary>A line whose every bin is byte 0 - digital silence on the display.</summary>
+    private static bool IsSilent(byte[] line) => line.AsSpan(5).IndexOfAnyExcept((byte)0) < 0;
+
     [Fact]
     public async Task A_Keyup_Paints_Across_Its_Own_Duration_Rather_Than_In_One_Lurch()
     {
         using ClientWebSocket socket = await ConnectAsync();
 
-        // A frame big enough to be over a second of AFSK1200 - long enough that "all at once"
-        // and "spread over the burst" cannot be confused for one another.
-        Task transmitting = TransmitAsync(Payload(60));
+        // A frame big enough that "all at once" and "spread over the burst" cannot be confused
+        // for one another: seconds of audio, dozens of lines.
+        await TransmitAsync(Payload(60));
+        long burst = _transmittedSamples;
 
-        List<long> arrivals = await CollectTransmitLinesAsync(socket, atLeast: 25);
-        await transmitting;
+        // The bug, as an assertion: every line landing in the instant of the handover. No time
+        // has passed on the display clock, so nothing may have been painted.
+        (await DrainAsync(socket, _server)).Should().BeEmpty(
+            "the burst must paint across its own duration, not in a single instant chunk");
 
-        arrivals.Should().HaveCountGreaterThanOrEqualTo(25);
-
-        // The bug, as an assertion: every line landing inside a few milliseconds.
-        (arrivals[^1] - arrivals[0]).Should().BeGreaterThan(
-            500, "the burst must paint across its own duration, not in a single instant chunk");
-
-        // And no one gap may swallow most of the keyup - the "hangs at the start" half of the
-        // symptom, which a spread-out first-to-last alone would not catch. Measured against the
-        // burst rather than the clock: a 33 ms timer sharing a machine with the rest of the suite
-        // gets starved for hundreds of milliseconds at a time, and that is the test bench
-        // stalling rather than the product.
-        long widestGap = 0;
-        for (int i = 1; i < arrivals.Count; i++)
+        // One pacer tick at a time: each releases SamplesPerTick samples, each yields the lines
+        // the model says and not one more or fewer. That is both halves of the old assertion at
+        // once - no lurch (never more than the tick's own lines) and no stall (never fewer).
+        int ticks = TicksToDrain(burst);
+        int painted = 0;
+        for (int tick = 1; tick <= ticks; tick++)
         {
-            widestGap = Math.Max(widestGap, arrivals[i] - arrivals[i - 1]);
+            _time.Advance(PacerPeriod);
+            List<byte[]> lines = await DrainAsync(socket, _server);
+            int expected = LinesFor(Released(tick, burst)) - LinesFor(Released(tick - 1, burst));
+            lines.Count.Should().Be(
+                expected,
+                "tick {0} of {1}: lines must keep coming through the keyup, one per display tick, rather than stalling in it or bunching",
+                tick,
+                ticks);
+            lines.Should().AllSatisfy(line => line[0].Should().Be((byte)0x03, "a keyup paints transmit lines"));
+            painted += lines.Count;
         }
 
-        long span = arrivals[^1] - arrivals[0];
-        widestGap.Should().BeLessThan(
-            span / 2, "lines must keep coming through the keyup rather than stalling in it");
+        painted.Should().Be(LinesFor(burst), "the whole keyup must have painted by the end of its own duration");
+
+        // And the pacer has put itself away: further display time paints nothing.
+        _time.Advance(PacerPeriod);
+        _time.Advance(PacerPeriod);
+        (await DrainAsync(socket, _server)).Should().BeEmpty("the keyup is over and fully painted");
     }
 
     [Fact]
@@ -93,18 +144,34 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
     {
         using ClientWebSocket socket = await ConnectAsync();
 
-        Task transmitting = TransmitAsync(Payload(60));
-        List<long> arrivals = await CollectTransmitLinesAsync(socket, atLeast: 30);
-        await transmitting;
+        await TransmitAsync(Payload(60));
+        long burst = _transmittedSamples;
+        burst.Should().BeGreaterThan(
+            2L * LinesPerSecond * SamplesPerTick,
+            "the burst must outlast the two display seconds this test paces through");
 
-        // 30 lines/s, so 30 lines is about a second. Generous either side: this is asserting that
-        // the display is paced to the air at all, not measuring timer accuracy.
-        double perLine = (arrivals[^1] - arrivals[0]) / (double)(arrivals.Count - 1);
+        // Two whole seconds of display time, a second per batch: each fake second must yield
+        // exactly a second's worth of waterfall - 29 lines, not 30, because the pacer's own
+        // truncation releases 399 samples per tick against the source's 400-sample hop. Exact,
+        // in both directions: faster was the original bug, slower is a stall.
+        int painted = 0;
+        for (int second = 1; second <= 2; second++)
+        {
+            for (int tick = 0; tick < LinesPerSecond; tick++)
+            {
+                _time.Advance(PacerPeriod);
+            }
 
-        perLine.Should().BeInRange(
-            1000.0 / LinesPerSecond * 0.5,
-            1000.0 / LinesPerSecond * 3.0,
-            "a transmitted second must take about a second of waterfall");
+            painted += (await DrainAsync(socket, _server)).Count;
+            painted.Should().Be(
+                LinesFor(Released((long)second * LinesPerSecond, burst)),
+                "a transmitted second must take about a second of waterfall - no more, no less");
+        }
+
+        // And with the clock parked, nothing more arrives: lines come from display time passing,
+        // never from the queue being helpfully flushed.
+        (await DrainAsync(socket, _server)).Should().BeEmpty(
+            "no display time has passed, so no line may arrive");
     }
 
     [Fact]
@@ -114,17 +181,23 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         // transmit loop wait a second per second of audio would wreck channel timing outright.
         using ClientWebSocket socket = await ConnectAsync();
 
-        var clock = Stopwatch.StartNew();
+        // The display clock never moves during the handover. If the transmitter waited on the
+        // picture in any way it would be waiting on a clock nobody is advancing, and this await
+        // would deadlock into the cancellation guard - the failure this test exists to force.
+        long before = _time.GetTimestamp();
         await TransmitAsync(Payload(60));
-        clock.Stop();
-
-        // FakeAudioOutput drains instantly, so this is the handover cost and nothing else.
-        clock.ElapsedMilliseconds.Should().BeLessThan(
-            700, "the transmitter must hand the burst over in an instant, not play it out");
+        _time.GetTimestamp().Should().Be(
+            before, "the transmitter must hand the burst over in an instant, not play it out");
 
         // And the display is still painting it afterwards - the point of doing it this way.
-        List<long> arrivals = await CollectTransmitLinesAsync(socket, atLeast: 10);
-        arrivals.Should().HaveCountGreaterThanOrEqualTo(10);
+        for (int tick = 0; tick < 11; tick++)
+        {
+            _time.Advance(PacerPeriod);
+        }
+
+        (await DrainAsync(socket, _server)).Count.Should().Be(
+            LinesFor(Released(11, _transmittedSamples)),
+            "the burst is still being painted after the transmitter has long since finished");
     }
 
     [Fact]
@@ -139,33 +212,46 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         // The reference is the same audio received at a strong-signal level, so this asserts the
         // design intent directly - our own transmission is drawn on the scale the operator has
         // calibrated their eye to - rather than pinning a number that only holds for one modem.
+        // The 1.3 factors below are that design margin, not a timing tolerance: both lines are
+        // produced from fixed audio by a fixed transform and come out identical on every run.
         using ClientWebSocket socket = await ConnectAsync();
 
-        Task transmitting = TransmitAsync(Payload(60));
-        byte[] transmitted = await NextLineAsync(socket, 0x03, skip: 5);
-        await transmitting;
+        await TransmitAsync(Payload(60));
+        long burst = _transmittedSamples;
 
+        // Paint the whole keyup, a display second per batch to stay inside the client queue.
+        var transmitLines = new List<byte[]>();
+        int ticks = TicksToDrain(burst);
+        for (int done = 0; done < ticks; done += LinesPerSecond)
+        {
+            for (int tick = 0; tick < Math.Min(LinesPerSecond, ticks - done); tick++)
+            {
+                _time.Advance(PacerPeriod);
+            }
+
+            transmitLines.AddRange(await DrainAsync(socket, _server));
+        }
+
+        transmitLines.Count.Should().Be(LinesFor(burst), "the whole burst paints once its duration has passed");
+        byte[] transmitted = transmitLines[5];   // well inside the burst, clear of the transform's warm-up
+
+        // The same audio, received at a strong-signal level. The transmit queue is fully drained,
+        // so the receive tap is open again and each hop of samples paints synchronously.
         float[] audio = Modulated(Payload(60));
         for (int i = 0; i < audio.Length; i++)
         {
             audio[i] *= 0.02f;   // a strong station, well above the noise and not overloading
         }
 
-        // Receive audio is deliberately not drawn while our own burst is still being painted -
-        // the two must not share a transform - so it is offered repeatedly until one lands.
-        using var feeding = new CancellationTokenSource();
-        Task feed = Task.Run(async () =>
+        var receiveLines = new List<byte[]>();
+        for (int block = 0; receiveLines.Count < 6; block++)
         {
-            while (!feeding.IsCancellationRequested)
-            {
-                _channel.ProcessReceive(audio);
-                await Task.Delay(100, CancellationToken.None);
-            }
-        });
+            _channel.ProcessReceive(audio.AsSpan(block * HopSamples, HopSamples));
+            receiveLines.AddRange(await DrainAsync(socket, _server));
+        }
 
-        byte[] received = await NextLineAsync(socket, 0x01, skip: 5);
-        await feeding.CancelAsync();
-        await feed;
+        receiveLines.Should().AllSatisfy(line => line[0].Should().Be((byte)0x01, "these lines were heard, not sent"));
+        byte[] received = receiveLines[5];
 
         (int txLit, double txPeak) = Describe(transmitted);
         (int rxLit, double rxPeak) = Describe(received);
@@ -187,7 +273,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         // buffer to a target level is an automatic gain control, and an AGC exists to make quiet
         // things loud: a ramp-down, a tail, an idle stretch of a shifted burst gets multiplied by
         // an enormous gain and its noise floor fills the whole span. Measured at the time: near
-        // silence at −65 dBFS rms, normalised to −40, lit 1011 of 1024 bins - the same full-width
+        // silence at -65 dBFS rms, normalised to -40, lit 1011 of 1024 bins - the same full-width
         // haze as the original bug, reached from the opposite direction.
         var rng = new Random(1);
         var nearSilence = new float[8000];
@@ -234,68 +320,58 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         // of a keyup.
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => ModemCatalog.Create("afsk300-il2pc", SampleRate, sink, new ModemOptions(CentreFrequencyHz: CentreHz)));
+        long transmitted = 0;
+        channel.TransmittedAudio += samples => transmitted += samples.Length;
         await using var server = new WaterfallWebServer(
-            channel, FreePort(), new WaterfallOptions { LinesPerSecond = LinesPerSecond });
+            channel, FreePort(), new WaterfallOptions { LinesPerSecond = LinesPerSecond, TimeProvider = _time });
         server.Start();
-
-        using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{server.Url.Split(':')[^1].TrimEnd('/')}/ws"), _cancellation.Token);
-        await ReceiveAsync(socket);   // config
-
-        // Band noise, always flowing, exactly as a sound card delivers it.
-        using var noiseStop = new CancellationTokenSource();
-        var rng = new Random(3);
-        Task noise = Task.Run(async () =>
-        {
-            var block = new float[400];
-            while (!noiseStop.IsCancellationRequested)
-            {
-                for (int i = 0; i < block.Length; i++)
-                {
-                    block[i] = (float)(rng.NextDouble() - 0.5) * 0.004f;
-                }
-
-                channel.ProcessReceive(block);
-                await Task.Delay(33, CancellationToken.None);
-            }
-        });
+        using ClientWebSocket socket = await ConnectAsync(server.Port);
 
         channel.Csma.Persistence = 255;
         channel.Csma.TxDelayMilliseconds = 200;
-        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var unkeyed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        channel.TransmittingChanged += keyed =>
+        {
+            if (!keyed)
+            {
+                unkeyed.TrySetResult();
+            }
+        };
+
+        using var stop = new CancellationTokenSource();
         Task transmitter = channel.RunTransmitterAsync(
             new InstantDrainOutput(SampleRate), new NullPtt(), stop.Token);
-        await channel.EnqueueTransmit(0, Payload(60)).WaitAsync(TimeSpan.FromSeconds(20));
+        await channel.EnqueueTransmit(0, Payload(60)).WaitAsync(_cancellation.Token);
+        await unkeyed.Task.WaitAsync(_cancellation.Token);   // the tail is queued; the keyup is over
 
-        // The defect is not a level: it is receive lines appearing among the transmitted ones,
-        // because both are feeding one transform. So that is what is asserted - no bin count,
-        // which would only be calibrated for whichever modem this test happened to pick.
+        // Band noise, always flowing, exactly as a sound card delivers it: one hop of samples
+        // per display tick, offered while the burst is still being painted and after it.
+        var rng = new Random(3);
+        var block = new float[HopSamples];
         var types = new List<byte>();
-        int transmitLines = 0;
-        var clock = Stopwatch.StartNew();
-        while (transmitLines < 20 && clock.ElapsedMilliseconds < 20_000)
+        int ticks = TicksToDrain(transmitted);
+        for (int tick = 1; tick <= ticks; tick++)
         {
-            (WebSocketMessageType kind, byte[] payload) = await ReceiveAsync(socket);
-            if (kind != WebSocketMessageType.Binary || payload.Length <= 5)
+            FillNoise(rng, block);
+            channel.ProcessReceive(block);
+            _time.Advance(PacerPeriod);
+            foreach (byte[] line in await DrainAsync(socket, server))
             {
-                continue;
+                types.Add(line[0]);
             }
-
-            if (payload[0] != 0x01 && payload[0] != 0x03)
-            {
-                continue;
-            }
-
-            if (payload[0] == 0x03)
-            {
-                transmitLines++;
-            }
-
-            types.Add(payload[0]);
         }
 
-        await noiseStop.CancelAsync();
-        await noise;
+        // The burst has been painted in full; the same noise now reaches the display again.
+        for (int after = 0; after < 5; after++)
+        {
+            FillNoise(rng, block);
+            channel.ProcessReceive(block);
+            foreach (byte[] line in await DrainAsync(socket, server))
+            {
+                types.Add(line[0]);
+            }
+        }
+
         await stop.CancelAsync();
         try
         {
@@ -305,17 +381,20 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         {
         }
 
-        transmitLines.Should().Be(20, "the burst must paint");
+        types.Count(type => type == 0x03).Should().Be(LinesFor(transmitted), "the burst must paint in full");
 
         // From the first transmitted line to the last, nothing else may be drawn. Measured before
         // the fix, the two alternated line for line - TX, RX, TX, RX - all the way through.
         int first = types.IndexOf(0x03);
-        List<byte> duringBurst = [.. types.Skip(first)];
-
-        duringBurst.Should().AllSatisfy(
+        int last = types.LastIndexOf(0x03);
+        types.Skip(first).Take(last - first + 1).Should().AllSatisfy(
             type => type.Should().Be(
                 (byte)0x03,
                 "receive audio must not be drawn into the burst we are still painting"));
+
+        // And the gate opens again the moment the burst is done: the band is drawn, not muted.
+        types.Skip(last + 1).Should().HaveCount(5, "one line per hop of noise once the burst has finished painting")
+            .And.AllSatisfy(type => type.Should().Be((byte)0x01));
     }
 
     [Fact]
@@ -324,26 +403,21 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         // Receive processing stops the instant the transmitter takes the channel, but the first
         // transmitted audio does not exist until the frame has been modulated and handed to the
         // device. Nothing was drawn in between, so the waterfall visibly stalled as the PTT
-        // engaged. The modem here takes half a second to modulate, which is that gap made
-        // deterministic; a real one is shorter but a real display still stops for it.
+        // engaged. The modem here spends fifteen display ticks modulating - that gap, made
+        // deterministic; a real one is shorter but a real display still stops for it. The modem
+        // then HOLDS, so "a line was drawn while the frame was still being modulated" is not a
+        // race this test can lose on a loaded machine: the modulation provably has not finished
+        // until the test itself lets go of it.
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
-        channel.AddModem(0, sink => new SlowToModulate(SampleRate, TimeSpan.FromMilliseconds(500)));
+        var slow = new SlowToModulate(SampleRate, _time, _cancellation.Token);
+        channel.AddModem(0, _ => slow);
         await using var server = new WaterfallWebServer(
-            channel, FreePort(), new WaterfallOptions { LinesPerSecond = LinesPerSecond });
+            channel, FreePort(), new WaterfallOptions { LinesPerSecond = LinesPerSecond, TimeProvider = _time });
         server.Start();
+        using ClientWebSocket socket = await ConnectAsync(server.Port);
 
-        using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(
-            new Uri($"ws://127.0.0.1:{server.Url.Split(':')[^1].TrimEnd('/')}/ws"), _cancellation.Token);
-        await ReceiveAsync(socket);   // config
-
-        // Ordering, not stopwatch time: the property is that a line is drawn in the gap BETWEEN
-        // key-down and the first transmitted audio, which is exactly what this test is named
-        // after. Asserting "within 250 ms of key-down" measured the same thing on an idle machine
-        // and measured the machine's load on a busy one - it failed intermittently in CI for days
-        // while passing every local run.
-        var keyedDown = new TaskCompletionSource();
-        var firstAudio = new TaskCompletionSource();
+        var keyedDown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstAudio = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         channel.TransmittingChanged += keyed =>
         {
             if (keyed)
@@ -355,16 +429,24 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
 
         channel.Csma.Persistence = 255;
         channel.Csma.TxDelayMilliseconds = 20;
-        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        slow.Arm();
+        using var stop = new CancellationTokenSource();
         Task transmitter = channel.RunTransmitterAsync(
             new InstantDrainOutput(SampleRate), new NullPtt(), stop.Token);
         Task sending = channel.EnqueueTransmit(0, Payload(60));
 
-        byte[] firstLine = await NextLineAsync(socket, 0x03, skip: 0);
-        bool audioHadArrivedFirst = firstAudio.Task.IsCompleted;
-        await keyedDown.Task;
+        // Drawn while the frame is still being modulated - before any transmitted audio exists
+        // to draw. The line is already on its way: the armed modem advanced the display clock
+        // through its own modulation gap before it parked itself on the hold.
+        byte[] firstLine = await NextTransmitLineAsync(socket);
+        firstAudio.Task.IsCompleted.Should().BeFalse(
+            "the display must draw during the modulate gap, not wait for the audio to turn up");
+        firstLine.Length.Should().BeGreaterThan(5, "and it must be a real line");
+        IsSilent(firstLine).Should().BeTrue("what was on the air during the gap is silence, so silence is what is drawn");
 
-        await sending.WaitAsync(TimeSpan.FromSeconds(20));
+        slow.Resume();
+        await keyedDown.Task.WaitAsync(_cancellation.Token);
+        await sending.WaitAsync(_cancellation.Token);
         await stop.CancelAsync();
         try
         {
@@ -373,20 +455,20 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         catch (OperationCanceledException)
         {
         }
-
-        // Drawn while the frame was still being modulated - before any transmitted audio existed
-        // to draw. That is the stall this guards against, stated as an order rather than a deadline.
-        audioHadArrivedFirst.Should().BeFalse(
-            "the display must draw during the modulate gap, not wait for the audio to turn up");
-        firstLine.Length.Should().BeGreaterThan(5, "and it must be a real line");
     }
 
     /// <summary>
     /// A modem that takes a long time to produce its audio - the key-down gap, made deterministic
-    /// and large enough to see. Every real modem has this gap; only the size differs.
+    /// and large enough to see. Every real modem has this gap; only the size differs. Armed, its
+    /// <see cref="Modulate"/> advances the display clock through the gap and then holds until the
+    /// test has seen what the gap painted; unarmed (the band probe at server start) it returns
+    /// at once and leaves the clock alone.
     /// </summary>
-    private sealed class SlowToModulate(int sampleRate, TimeSpan cost) : IModem
+    private sealed class SlowToModulate(int sampleRate, FakeTimeProvider time, CancellationToken guard) : IModem
     {
+        private readonly SemaphoreSlim _resume = new(0);
+        private volatile bool _armed;
+
         public string Mode => "slow";
 
         public event Action<byte[], FrameQuality>? FrameDecoded;
@@ -395,13 +477,27 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
 
         public bool ChannelBusy => false;
 
+        public void Arm() => _armed = true;
+
+        public void Resume() => _resume.Release();
+
         public void Process(ReadOnlySpan<float> samples)
         {
         }
 
         public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds)
         {
-            Thread.Sleep(cost);
+            if (_armed)
+            {
+                _armed = false;
+                for (int tick = 0; tick < 15; tick++)
+                {
+                    time.Advance(PacerPeriod);   // the modulation gap, in display time
+                }
+
+                _resume.Wait(guard);   // held until the test has read the gap's first line
+            }
+
             FrameDecoded?.Invoke([], default);   // never raised; keeps the compiler honest
             var audio = new float[sampleRate];   // one second of tone
             for (int n = 0; n < audio.Length; n++)
@@ -487,10 +583,20 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         // bandwidth and placement off this line, and both must survive.
         using ClientWebSocket socket = await ConnectAsync();
 
-        Task transmitting = TransmitAsync(Payload(60));
-        byte[] line = await NextLineAsync(socket, 0x03, skip: 5);
-        await transmitting;
+        await TransmitAsync(Payload(60));
 
+        // Six lines' worth of display time, then the sixth line - well inside the burst, clear
+        // of the transform's warm-up.
+        var lines = new List<byte[]>();
+        for (int tick = 1; lines.Count < 6; tick++)
+        {
+            _time.Advance(PacerPeriod);
+            lines.AddRange(await DrainAsync(socket, _server));
+            tick.Should().BeLessThan(
+                TicksToDrain(_transmittedSamples), "the burst must yield six lines well before it has finished painting");
+        }
+
+        byte[] line = lines[5];
         ReadOnlySpan<byte> bins = line.AsSpan(5);
         double binHz = (double)SampleRate / (bins.Length * 2);
         int peak = 0;
@@ -531,8 +637,13 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
     /// whole transmission painting silence - the only thing it has while the queue is empty and the
     /// channel is keyed - and then painted the actual burst over again afterwards. Twice the
     /// duration, the first half black.</para>
-    /// <para>Every test double in this suite accepts instantly, which is exactly why nothing here
-    /// ever saw it. This one models the device: a small buffer, drained at real time.</para>
+    /// <para>Every plain test double in this suite accepts instantly, which is exactly why nothing
+    /// here ever saw it. This one models the device on the display's own clock: its Write returns
+    /// only after the audio's whole duration has passed on that clock, so everything the pacer
+    /// does "while the device swallows the burst" happens inside the Write call - and a marker
+    /// sent as Write returns splits the line stream exactly at that boundary. Told before the
+    /// write, the pacer paints the burst inside it: every during-write line carries signal. Told
+    /// after - the defect - it would have painted that entire window as silence.</para>
     /// </remarks>
     [Fact]
     public async Task A_Keyup_Is_Painted_As_It_Goes_Out_Not_After_The_Device_Has_Swallowed_It()
@@ -541,68 +652,66 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
 
         _channel.Csma.Persistence = 255;
         _channel.Csma.TxDelayMilliseconds = 20;
-        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        var output = new RealTimeOutput(SampleRate, bufferMilliseconds: 150);
-        Task transmitter = _channel.RunTransmitterAsync(output, new NullPtt(), stop.Token);
-        // Short enough not to load the box for thirteen seconds - a neighbouring test in this
-        // suite measures wall-clock gaps between lines and this one is full of sleeps. The defect
-        // is a proportion, so it shows at any burst longer than the device buffer.
-        Task sending = _channel.EnqueueTransmit(0, Payload(16));
-
-        // Every transmit line until the pacer stops, sorted into silence and signal. Digital
-        // silence maps to byte 0 across the line, so the two are unambiguous.
-        // Nothing feeds receive audio here, so the socket simply goes quiet once the keyup has
-        // finished being painted. Quiet is the terminator.
-        int silentBefore = 0, content = 0;
-        bool seenContent = false;
-        var clock = Stopwatch.StartNew();
-        while (clock.Elapsed < TimeSpan.FromSeconds(30))
+        _channel.Csma.TxTailMilliseconds = 0;   // one keyup, one Write, one window to model
+        var unkeyed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _channel.TransmittingChanged += keyed =>
         {
-            using var idle = CancellationTokenSource.CreateLinkedTokenSource(_cancellation.Token);
-            idle.CancelAfter(TimeSpan.FromSeconds(2));
-            byte[] payload;
-            try
+            if (!keyed)
             {
-                var buffer = new byte[64 * 1024];
-                WebSocketReceiveResult result = await socket.ReceiveAsync(buffer, idle.Token);
-                if (result.MessageType != WebSocketMessageType.Binary)
+                unkeyed.TrySetResult();
+            }
+        };
+
+        using var stop = new CancellationTokenSource();
+        var output = new FakeClockOutput(SampleRate, _time, () => _server.SetTransmitStatus("wrote"));
+        Task transmitter = _channel.RunTransmitterAsync(output, new NullPtt(), stop.Token);
+        // Small enough that a whole keyup of lines fits the client queue while nobody reads it.
+        await _channel.EnqueueTransmit(0, Payload(16)).WaitAsync(_cancellation.Token);
+        await unkeyed.Task.WaitAsync(_cancellation.Token);
+        long burst = _transmittedSamples;
+
+        // The device swallowed the burst across exactly its own duration of display time, all of
+        // it inside Write. The pacer ticked this many times in that window.
+        long ticksInWrite = TimeSpan.FromSeconds((double)burst / SampleRate).Ticks / PacerPeriod.Ticks;
+        ticksInWrite.Should().BeGreaterThan(0, "the burst must be long enough to see the device take it");
+
+        // Whatever the write window left unreleased, paint now, then close the stream.
+        long released = Released(ticksInWrite, burst);
+        while (released < burst)
+        {
+            _time.Advance(PacerPeriod);
+            released = Math.Min(released + SamplesPerTick, burst);
+        }
+
+        var duringWrite = new List<byte[]>();
+        var afterWrite = new List<byte[]>();
+        bool wrote = false;
+        string final = NextMarker();
+        _server.SetTransmitStatus(final);
+        while (true)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await ReceiveAsync(socket);
+            if (kind == WebSocketMessageType.Text)
+            {
+                string text = Encoding.UTF8.GetString(payload);
+                if (text.Contains("\"wrote\"", StringComparison.Ordinal))
                 {
-                    continue;
+                    wrote = true;
+                }
+                else if (text.Contains($"\"{final}\"", StringComparison.Ordinal))
+                {
+                    break;
                 }
 
-                payload = buffer[..result.Count];
-            }
-            catch (OperationCanceledException) when (!_cancellation.IsCancellationRequested)
-            {
-                break;   // two seconds without a line: the keyup is over
-            }
-
-            if (payload.Length < 6 || payload[0] != 0x03)
-            {
                 continue;
             }
 
-            bool silent = true;
-            for (int i = 5; i < payload.Length && silent; i++)
+            if (payload.Length > 5 && payload[0] == 0x03)
             {
-                silent = payload[i] == 0;
-            }
-
-            if (silent)
-            {
-                if (!seenContent)
-                {
-                    silentBefore++;
-                }
-            }
-            else
-            {
-                seenContent = true;
-                content++;
+                (wrote ? afterWrite : duringWrite).Add(payload);
             }
         }
 
-        await sending.WaitAsync(TimeSpan.FromSeconds(20));
         await stop.CancelAsync();
         try
         {
@@ -612,65 +721,54 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         {
         }
 
-        seenContent.Should().BeTrue("the transmission has to reach the display at all");
+        // The keyup was painted as it went out: the lines drawn while the device was swallowing
+        // the burst are the burst, to the exact line the pacer's budget allows.
+        duringWrite.Count.Should().Be(
+            LinesFor(Released(ticksInWrite, burst)),
+            "the display must paint the burst while the device is taking it, not sit black until Write returns");
+        (duringWrite.Count + afterWrite.Count).Should().Be(LinesFor(burst), "and the whole keyup paints exactly once");
 
-        // The lead-in is the gap between keying and the first audio existing - real, and short.
-        // Half the keyup means the display is waiting for the device to finish swallowing a burst
-        // it could have been painting all along.
-        // Half, not a quarter. The defect puts the lead-in at ~95 % of the burst (measured 92
-        // black against 97 of signal, and 41 against 45 at this size), so half separates it with
-        // room to spare - while the honest lead-in is keying, CSMA and modulating, all of which
-        // stretch on a loaded CI runner. A quarter was tight enough to fail there for the wrong
-        // reason, which is a worse outcome than a slightly loose guard: this file already carries
-        // one load-sensitive test and does not need two.
-        silentBefore.Should().BeLessThan(
-            content / 2,
-            "black lead-in ({0} lines) is the gap before audio exists, not half the keyup ({1} lines of signal)",
-            silentBefore,
-            content);
+        // The defect painted the entire write window black and the burst over again afterwards -
+        // "twice the duration, the first half black". No line of this keyup may be black: no
+        // display time ever passes between key-down and the audio existing, so there is nothing
+        // for silence to stand in for.
+        duringWrite.Should().AllSatisfy(
+            line => IsSilent(line).Should().BeFalse(
+                "black lead-in is the device-swallow defect: the display was told after the audio had gone"));
+        afterWrite.Should().AllSatisfy(
+            line => IsSilent(line).Should().BeFalse("the tail of the keyup is still the burst, not black"));
     }
 
     /// <summary>
-    /// A sound card, as far as this matters: a buffer of fixed size that empties at the sample
-    /// rate, and a <see cref="Write"/> that blocks until it has room. Every other double in this
-    /// suite accepts instantly, which is why none of them could show what a real one does.
+    /// A sound card on the display's own clock: a <see cref="Write"/> that returns only once the
+    /// samples' full duration has passed on the fake clock - the blocking write of a real device,
+    /// with display time standing in for the air - and a callback as it returns, so a test can
+    /// mark that boundary in the line stream. Replaces a Stopwatch-and-Sleep double that made
+    /// this file's slowest test also its most load-sensitive one.
     /// </summary>
-    private sealed class RealTimeOutput(int sampleRate, int bufferMilliseconds) : IAudioOutput
+    private sealed class FakeClockOutput(int sampleRate, FakeTimeProvider time, Action wrote) : IAudioOutput
     {
-        private readonly int _bufferSamples = sampleRate * bufferMilliseconds / 1000;
-        private readonly Stopwatch _clock = Stopwatch.StartNew();
-        private long _accepted;
-
         public int SampleRate { get; } = sampleRate;
 
         public void Write(ReadOnlySpan<float> samples)
         {
-            long played = (long)(_clock.Elapsed.TotalSeconds * SampleRate);
-            long room = _bufferSamples - (_accepted - played);
-            int at = 0;
-            while (at < samples.Length)
+            long remaining = TimeSpan.FromSeconds((double)samples.Length / SampleRate).Ticks;
+            while (remaining >= PacerPeriod.Ticks)
             {
-                if (room <= 0)
-                {
-                    Thread.Sleep(5);
-                    played = (long)(_clock.Elapsed.TotalSeconds * SampleRate);
-                    room = _bufferSamples - (_accepted - played);
-                    continue;
-                }
-
-                int take = (int)Math.Min(room, samples.Length - at);
-                _accepted += take;
-                at += take;
-                room -= take;
+                time.Advance(PacerPeriod);
+                remaining -= PacerPeriod.Ticks;
             }
+
+            if (remaining > 0)
+            {
+                time.Advance(TimeSpan.FromTicks(remaining));
+            }
+
+            wrote();
         }
 
         public void Drain()
         {
-            while ((long)(_clock.Elapsed.TotalSeconds * SampleRate) < _accepted)
-            {
-                Thread.Sleep(5);
-            }
         }
     }
 
@@ -685,7 +783,15 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         return frame;
     }
 
-    /// <summary>Maps a line byte to display brightness in the page's default −95..−35 dB window.</summary>
+    private static void FillNoise(Random rng, float[] block)
+    {
+        for (int i = 0; i < block.Length; i++)
+        {
+            block[i] = (float)(rng.NextDouble() - 0.5) * 0.004f;
+        }
+    }
+
+    /// <summary>Maps a line byte to display brightness in the page's default -95..-35 dB window.</summary>
     private static double Brightness(byte bin)
     {
         const double floorDb = -95, topDb = -35;
@@ -694,44 +800,35 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         return Math.Clamp((db - floorDb) / (topDb - floorDb), 0, 1);
     }
 
-    /// <summary>
-    /// A line of the given type from well inside the burst. The first few are still part-filled
-    /// with whatever preceded it, so they are not representative of either state.
-    /// </summary>
-    private async Task<byte[]> NextLineAsync(ClientWebSocket socket, byte type, int skip)
-    {
-        int seen = 0;
-        var clock = Stopwatch.StartNew();
-        while (clock.ElapsedMilliseconds < 20_000)
-        {
-            (WebSocketMessageType kind, byte[] payload) = await ReceiveAsync(socket);
-            if (kind == WebSocketMessageType.Binary && payload.Length > 5 && payload[0] == type
-                && seen++ >= skip)
-            {
-                return payload;
-            }
-        }
-
-        throw new InvalidOperationException($"no 0x{type:X2} line arrived");
-    }
-
-    private async Task<ClientWebSocket> ConnectAsync()
+    private async Task<ClientWebSocket> ConnectAsync(int? port = null)
     {
         var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{port ?? _port}/ws"), _cancellation.Token);
         await ReceiveAsync(socket);   // the config message
         return socket;
     }
 
-    /// <summary>Runs a real transmit through the transmitter loop the daemon uses.</summary>
+    /// <summary>Runs a real transmit through the transmitter loop the daemon uses. Returns once
+    /// the keyup is completely over - tail queued to the display, channel unkeyed - so the whole
+    /// burst is sitting in the pacer's queue and <see cref="_transmittedSamples"/> is final.</summary>
     private async Task TransmitAsync(byte[] frame)
     {
         _channel.Csma.Persistence = 255;
         _channel.Csma.TxDelayMilliseconds = 20;
-        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var unkeyed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _channel.TransmittingChanged += keyed =>
+        {
+            if (!keyed)
+            {
+                unkeyed.TrySetResult();
+            }
+        };
+
+        using var stop = new CancellationTokenSource();
         var output = new Channel.FakeAudioOutput(SampleRate);
         Task transmitter = _channel.RunTransmitterAsync(output, new NullPtt(), stop.Token);
-        await _channel.EnqueueTransmit(0, frame).WaitAsync(TimeSpan.FromSeconds(20));
+        await _channel.EnqueueTransmit(0, frame).WaitAsync(_cancellation.Token);
+        await unkeyed.Task.WaitAsync(_cancellation.Token);
         await stop.CancelAsync();
         try
         {
@@ -742,21 +839,47 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         }
     }
 
-    /// <summary>Arrival times of transmitted (0x03) waterfall lines, in milliseconds.</summary>
-    private async Task<List<long>> CollectTransmitLinesAsync(ClientWebSocket socket, int atLeast)
+    /// <summary>
+    /// Every waterfall line already broadcast, in order. Bounded by a marker rather than by
+    /// waiting: <see cref="WaterfallWebServer.SetTransmitStatus"/> broadcasts through the same
+    /// FIFO client queue as the lines, so once the marker text arrives, everything painted
+    /// before it has been counted - no timeout, no idle-means-done heuristic.
+    /// </summary>
+    private async Task<List<byte[]>> DrainAsync(ClientWebSocket socket, WaterfallWebServer server)
     {
-        var arrivals = new List<long>();
-        var clock = Stopwatch.StartNew();
-        while (arrivals.Count < atLeast && clock.ElapsedMilliseconds < 20_000)
+        string marker = NextMarker();
+        server.SetTransmitStatus(marker);
+        var lines = new List<byte[]>();
+        while (true)
         {
             (WebSocketMessageType kind, byte[] payload) = await ReceiveAsync(socket);
-            if (kind == WebSocketMessageType.Binary && payload.Length > 0 && payload[0] == 0x03)
+            if (kind == WebSocketMessageType.Text
+                && Encoding.UTF8.GetString(payload).Contains($"\"{marker}\"", StringComparison.Ordinal))
             {
-                arrivals.Add(clock.ElapsedMilliseconds);
+                return lines;
+            }
+
+            if (kind == WebSocketMessageType.Binary && payload.Length > 5
+                && payload[0] is 0x01 or 0x03)
+            {
+                lines.Add(payload);
             }
         }
+    }
 
-        return arrivals;
+    private string NextMarker() => $"marker-{++_markers}";
+
+    /// <summary>The next transmit (0x03) line off the socket. Everything else is skipped.</summary>
+    private async Task<byte[]> NextTransmitLineAsync(ClientWebSocket socket)
+    {
+        while (true)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await ReceiveAsync(socket);
+            if (kind == WebSocketMessageType.Binary && payload.Length > 5 && payload[0] == 0x03)
+            {
+                return payload;
+            }
+        }
     }
 
     private async Task<(WebSocketMessageType Kind, byte[] Payload)> ReceiveAsync(ClientWebSocket socket)
