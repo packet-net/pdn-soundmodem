@@ -10,6 +10,7 @@ public sealed class BpskModem : IModem, IConstellationSource
 {
     private readonly BpskDemodulator _demodulator;
     private readonly BpskModulator _modulator;
+    private readonly Il2pReceiver _deframer;
     private readonly int _baud;
     private readonly bool _crc;
 
@@ -90,6 +91,7 @@ public sealed class BpskModem : IModem, IConstellationSource
         _demodulator = demodulator;
         _demodulator.SymbolPlotted = (i, q) => SymbolPlotted?.Invoke(new ConstellationPoint(i, q));
         _modulator = new BpskModulator(sampleRate, baud, carrierFrequency, rollOff);
+        _deframer = deframer;
     }
 
     /// <inheritdoc />
@@ -125,6 +127,22 @@ public sealed class BpskModem : IModem, IConstellationSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulator.ChannelBusy;
+
+    /// <summary>How far the current signal sits from this modem's carrier centre, in Hz
+    /// (positive = above it), or null when nothing coherent enough to measure is present -
+    /// <see cref="BpskDemodulator.CarrierOffsetHz"/> read live. Decoded frames already carry
+    /// the reading in <see cref="FrameQuality.FrequencyOffsetHz"/>; this property is for the
+    /// bursts that never produce one, polled while <see cref="CarrierDetect"/> holds.</summary>
+    public double? CarrierOffsetHz => _demodulator.CarrierOffsetHz;
+
+    /// <summary>Cumulative sync-found-but-Reed-Solomon-failed count across this modem's IL2P
+    /// readings - see <see cref="Il2pReceiver.RsFailures"/> for exactly what one tick means
+    /// and why deltas, not totals, are the usable signal.</summary>
+    public long RsFailures => _deframer.RsFailures;
+
+    /// <summary>Cumulative recovered-but-trailing-CRC-refused count on the link's own IL2P+CRC
+    /// reading - see <see cref="Il2pReceiver.CrcFailures"/>.</summary>
+    public long CrcFailures => _deframer.CrcFailures;
 
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples) => _demodulator.Process(samples);
