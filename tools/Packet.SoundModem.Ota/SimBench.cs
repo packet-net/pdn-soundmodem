@@ -61,7 +61,7 @@ internal static class SimBench
         string mode, int? rate, SimLayer layer, SimChannelKind kind, double snrDb,
         int bursts, int frameBytes, int firstSeed, int workers, double levelDb = 0,
         int txDelayMs = 0, double cfoHz = 0, PskDetector? detector = null, double? centreHz = null,
-        PskDetector? secondDetector = null)
+        PskDetector? secondDetector = null, double impulseRatePerMinute = 0)
     {
         var options = new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, workers) };
         float levelScale = (float)Math.Pow(10, levelDb / 20.0);
@@ -95,7 +95,8 @@ internal static class SimBench
                     };
                     byte[] frame = SimModem.Frame(frameBytes, seed);
                     float[] active = sm.RenderBurst(frame, txDelayMs);
-                    float[] rx = SimChannel.Apply(active, sm.Rate, kind, snrDb, seed + 3_000_000, cfoHz: cfoHz);
+                    float[] rx = SimChannel.Apply(active, sm.Rate, kind, snrDb, seed + 3_000_000, cfoHz: cfoHz,
+                        impulseRatePerMinute: impulseRatePerMinute);
                     ScaleInPlace(rx, levelScale);
                     SimDecode d = sm.Decode(rx, frame);
                     int bits = frameBytes * 8;

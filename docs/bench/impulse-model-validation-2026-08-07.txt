@@ -1,0 +1,41 @@
+Impulse-noise model validation loop - 2026-08-07 (rx-roadmap workstream 6 item 2)
+
+The injector (tests/Packet.SoundModem.Tests/Channel/ImpulseNoise.cs) is calibrated by a
+closed loop: 30 minutes of its own output (850 Hz tone + AWGN at 10 dB SNR3k +
+SunrisePeak-rate impulses; ImpulseNoiseTests.Synthesis_For_The_Validation_Loop with
+IMPULSE_SYNTH_DIR set) re-analysed by the capture campaign's own measuring instrument
+(docs/bench/impulse-stats-2026-08-06.py methodology). A model the instrument cannot
+confirm is not calibrated.
+
+Converged fit (broadband-event class, detected by the instrument):
+
+  metric                measured 40 m target   injected, detected   delta
+  rate (SunrisePeak)    220 /min               249 /min             +13 %
+  amplitude p50         18.1 dB over bg        19.6                 +1.5 dB
+  amplitude p90         23.8                   25.7                 +1.9 dB
+  amplitude p99         34.7                   34.5                 -0.2 dB
+  duration p50          19 ms                  20.5                 +8 %
+  duration p90          102 ms                 130.9                +28 %
+  duration p99          1835 ms                1465.8               -20 %
+
+Instrument couplings learned through the loop, recorded so nobody re-fights them:
+- The instrument's "dB over background" reads ~6 dB above the drawn broadband sigma
+  ratio (p20-of-envelope background convention ~4 dB, peak-of-smoothed-envelope readout
+  ~2 dB); the injector's amplitude base absorbs this (ThresholdDb 7.4 against the
+  instrument's nominal 15.56).
+- The two-band coincidence gate passes ~65-70 percent of drawn events at these
+  amplitudes; the drawn rate is scaled so the DETECTED broadband rate matches the
+  profile.
+- Second-long measured events are crash TRAINS: only a dense volley of floored
+  sub-crashes (spacing under the instrument's 20 ms merge gap) reproduces them; a single
+  decaying envelope crosses back under detection within a fraction of its span. The
+  volley's peak statistics couple train tuning to the amplitude percentiles, which is
+  why the joint fit is frozen at the table above rather than chased further.
+- The measured amplitude tail (max 73 dB) is an AGC-compressed lower bound per the
+  original record; the model deliberately does not chase it.
+
+Reproduce: build tests, then
+  IMPULSE_SYNTH_DIR=<dir> <test-exe> -class Packet.SoundModem.Tests.Channel.ImpulseNoiseTests
+  python3 docs/bench/impulse-stats-2026-08-06.py <dir>/raw-*.wav
+(rate table note: the instrument's per-half-hour table divides by 30 minutes regardless
+of coverage; with 10-minute synthetic chunks read the headline events line instead.)

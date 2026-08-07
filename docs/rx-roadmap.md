@@ -412,6 +412,24 @@ effort:
    the amplitude tail a lower bound), and the rate counts every sferic tick above 6x the
    quiet floor - the modem-relevant subset is the strong tail. Next: correlate crash times
    against frame-log misses to size what a blanker would actually buy.
+
+   **The model exists and the cost is measured (2026-08-07 late).** The injector
+   (`ImpulseNoiseProfile`, an axis on the Watterson rig like CFO; `sm-ota sim --impulse
+   <rate/min>`; anchors Evening=120, SunrisePeak=220) is calibrated through a closed loop:
+   its own output re-analysed by the campaign's measuring instrument reproduces the
+   measured percentile table (docs/bench/impulse-model-validation-2026-08-07.txt - rate
+   +13 %, amplitudes within 1.9 dB, durations within 28 %, with the instrument couplings
+   that cost three loop iterations recorded so nobody re-fights them). The cost table the
+   workstream never had: an ordinary evening's 120/min collapses bpsk300 AWGN -4 dB from
+   88 % to 23 % and Moderate +2 from 55 % to 29 %; the 220/min peak takes them to 6 % and
+   19 %; qpsk600 0 dB falls 69 -> 28 -> 13 %. QRN is, by these numbers, the largest
+   un-addressed receive impairment in the model set. A naive clipping blanker was probed
+   and is NOT landed: +11 points at the evening rate, nil at the peak, ~1.5 clean-channel
+   points of cost - because at 300 Bd a 5-7 symbol crash is a short jam, not an impulse;
+   clipping bounds its energy but cannot restore the symbols under it. The follow-up the
+   probe points at: the blanker knows exactly which spans it clipped, and that knowledge
+   belongs in the per-symbol confidence stream feeding the erasure ladder (crash-hit
+   bytes become erasures, which is what the RS budget can actually spend on them).
 3. **Slow CFO drift + phase noise.** The exact impairment that walled qpsk2400 (#116) and
    the RSP1 coherent modes (#102): a Hz-per-minute ramp plus a 1/f phase process. Cheap (a
    time-varying rotation in the channel), and it is what the undisciplined-radio aspiration

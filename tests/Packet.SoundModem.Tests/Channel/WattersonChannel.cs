@@ -69,22 +69,38 @@ public sealed class WattersonChannel
     /// pass <see cref="double.PositiveInfinity"/> for a noiseless run.
     /// <paramref name="leadInSamples"/>/<paramref name="leadOutSamples"/> prepend/append
     /// noise-only padding (so acquisition sees realistic noise, not digital silence).
-    /// <paramref name="frequencyOffsetHz"/> applies a carrier offset (the D.6.4 rig).</summary>
+    /// <paramref name="frequencyOffsetHz"/> applies a carrier offset (the D.6.4 rig).
+    /// <paramref name="impulses"/> adds measured-calibrated QRN on top of the AWGN (see
+    /// <see cref="ImpulseNoise"/>); impulse amplitudes stand on the AWGN floor, so a
+    /// noiseless run cannot take a non-zero rate.</summary>
     public float[] Apply(
         ReadOnlySpan<float> input,
         double snrDb,
         double noiseBandwidthHz = 3000,
         int leadInSamples = 0,
         int leadOutSamples = 0,
-        double frequencyOffsetHz = 0)
+        double frequencyOffsetHz = 0,
+        ImpulseNoiseProfile? impulses = null)
     {
+        if (impulses is { RatePerMinute: > 0 } && double.IsPositiveInfinity(snrDb))
+        {
+            throw new ArgumentException(
+                "impulse amplitudes are calibrated over the AWGN floor; give a finite SNR",
+                nameof(impulses));
+        }
+
         if (_paths.Length == 0 && frequencyOffsetHz == 0)
         {
             // Ideal path: passband passthrough plus calibrated noise.
             LastPathGains = RecordGains ? [] : null;
             var direct = new float[leadInSamples + input.Length + leadOutSamples];
             input.CopyTo(direct.AsSpan(leadInSamples));
-            AddNoise(direct, input, snrDb, noiseBandwidthHz);
+            double directSigma = AddNoise(direct, input, snrDb, noiseBandwidthHz);
+            if (impulses is not null)
+            {
+                ImpulseNoise.Add(direct, _sampleRate, directSigma, impulses, _random);
+            }
+
             return direct;
         }
 
@@ -159,16 +175,23 @@ public sealed class WattersonChannel
                 (float)((summed[i].Re * Math.Cos(theta)) - (summed[i].Im * Math.Sin(theta)));
         }
 
-        AddNoise(output, input, snrDb, noiseBandwidthHz);
+        double sigma = AddNoise(output, input, snrDb, noiseBandwidthHz);
+        if (impulses is not null)
+        {
+            ImpulseNoise.Add(output, _sampleRate, sigma, impulses, _random);
+        }
+
         return output;
     }
 
-    private void AddNoise(float[] output, ReadOnlySpan<float> input, double snrDb, double noiseBandwidthHz)
+    /// <summary>Adds the calibrated AWGN and returns its per-sample sigma (0 for a
+    /// noiseless run) - the floor the impulse injector's amplitudes stand on.</summary>
+    private double AddNoise(float[] output, ReadOnlySpan<float> input, double snrDb, double noiseBandwidthHz)
     {
         // Noise calibrated against the mean power of the clean input burst.
         if (double.IsPositiveInfinity(snrDb))
         {
-            return;
+            return 0;
         }
 
         double signalPower = 0;
@@ -185,6 +208,8 @@ public sealed class WattersonChannel
         {
             output[i] += (float)(sigma * Gaussian());
         }
+
+        return sigma;
     }
 
     /// <summary>Generates a fading-gain sequence (unit mean-square, Gaussian Doppler
