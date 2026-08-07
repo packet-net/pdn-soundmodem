@@ -50,6 +50,44 @@ fitted to one rig do not transfer) applies to receive chains too.
 - **Q1 - autopsies.** One isolation experiment per suspected loss (the table above), each
   a measured A/B on the sim ladder with the change reverted afterwards. Exit: each loss
   has a number or a recorded null.
+
+  **Q1-1, band-pass bypass alone (2026-08-07): a recorded near-null with a lesson about
+  experiment order.** Feeding the differential path raw audio instead of the band-passed
+  sample moved qpsk600 not at all (6/80/99 -> 7/77/98 across 0/+2/+4) and qpsk2400 +5
+  only at its bottom rung. The bpsk300 prior (~1.5 dB) was measured against a MATCHED
+  filter; against QPSK's unmatched 0.75-baud low-pass the band-pass ripple is lost in the
+  larger mismatch. The autopsy order is therefore matched-filter-first.
+
+  **Q1-2, RRC matched filter (2026-08-07): the dominant chain fix, ~+1-1.5 dB on both
+  modes.** Replacing the differential path's 0.75-baud low-pass with an RRC matched to
+  the modulator's 0.35 roll-off, the 2x2 with the band-pass measured (N=100, seed 1,
+  AWGN):
+
+  | Configuration | qpsk600 0/+2/+4 dB | qpsk2400 +7/+9/+11 dB |
+  |---|---|---|
+  | LPF + BPF (Q0 baseline) | 6 / 80 / 99 | 15 / 80 / 99 |
+  | LPF, BPF bypassed | 7 / 77 / 98 | 20 / 80 / 98 |
+  | RRC, BPF bypassed | **40 / 90 / 100** | 41 / 88 / 98 |
+  | RRC + BPF | 33 / 88 / 100 | **42 / 89 / 99** |
+
+  With matching in place the band-pass cost becomes visible exactly where the bpsk300
+  story predicts, and only there: qpsk600's deepest rung (40 vs 33 - its +-300 Hz passband
+  ripples across the 300 Bd signal), while qpsk2400's +-1200 Hz band-pass is benign. Q2
+  landing shape: the bpsk300 arrangement - matched filter on the decode path, band-pass
+  kept for EnergyBusy gating only - on the differential path, coherent untouched.
+
+  **Q1-3, DPLL inertia 0.92 (2026-08-07): another ~1 dB on both modes, measured on top of
+  Q1-2.** The Dire Wolf 0.74 inertia costs the same timing jitter here as it did on
+  bpsk300. RRC+BPF+0.92, AWGN, N=100 seed 1: qpsk600 0/+2/+4: **66 / 99 / 100** (from
+  33/88/100); qpsk2400 +7/+9/+11: **72 / 97 / 100** (from 42/89/99). Cumulative from the
+  Q0 baseline: qpsk600's 0 dB rung 6 -> 66, qpsk2400's +7 rung 15 -> 72 - roughly
+  2-2.5 dB banked from two chain fixes, the #236 playbook transferring nearly
+  number-for-number. Caveat before landing: bpsk300 measured 0.96+ failing its 24-bit
+  minimum preamble - the Q2 gate re-runs acquisition (short TXDELAY), the CFO sweep, the
+  fading rows and the interop suites (NinoTNC corpus 9/9, QtSM, parity) before any of
+  this ships. Still unprobed from the priors table: the DF-DD reference (the remaining
+  ~1.5-2 dB detector gap Q0 measured against coherent) and offset seeding for the CFO
+  wall.
 - **Q2 - science core.** Fixes land one at a time, each with its full-ladder A/B quoted in
   the PR and its interop gates green (NinoTNC corpus 9/9, QtSM suite, parity tests). No
   fix lands on aspiration.
