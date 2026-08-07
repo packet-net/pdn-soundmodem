@@ -16,6 +16,7 @@
          channel at the transmitter for §E2. One definition, reached from both sides; the file
          stays here because this is where it belongs and where it is maintained. -->
     <Compile Remove="Channel/WattersonChannel.cs" />
+    <Compile Remove="Channel/ImpulseNoise.cs" />
   </ItemGroup>
 
   <ItemGroup>

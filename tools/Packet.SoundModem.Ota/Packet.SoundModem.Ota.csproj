@@ -27,6 +27,8 @@
          one definition; its namespace is unchanged so no test source needs touching. -->
     <Compile Include="../../tests/Packet.SoundModem.Tests/Channel/WattersonChannel.cs"
              Link="Channel/WattersonChannel.cs" />
+    <Compile Include="../../tests/Packet.SoundModem.Tests/Channel/ImpulseNoise.cs"
+             Link="Channel/ImpulseNoise.cs" />
   </ItemGroup>
 
   <ItemGroup>

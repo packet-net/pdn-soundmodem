@@ -34,6 +34,9 @@ internal static class SimCommand
                   --snr <a,b,c>        SNR rungs in dB (3 kHz), ascending
                   --channel <list>     awgn|good|moderate|poor, comma-separated (default awgn)
                   --cfo <list>         carrier-offset Hz, comma-separated sweep axis (default 0)
+                  --impulse <rate>     measured-calibrated QRN, broadband crashes per minute
+                                       (0 off; the 40 m campaign's anchors: 120 = ordinary
+                                       summer evening, 220 = evening/sunrise peak)
                   --detector <name>    coherent|differential|mlse override for bpsk*/qpsk*
                                        modes (mlse is bpsk-only - rx-roadmap workstream 5)
                   --detector2 <name>   ensemble second detector for the bpsk banks: every
@@ -93,6 +96,7 @@ internal static class SimCommand
                 : d.StartsWith('m') ? PskDetector.Mlse
                 : PskDetector.Coherent
             : null;
+        double impulseRate = a.Dbl("impulse", 0);
         PskDetector? detector2 = a.Str("detector2", null) is { } d2
             ? d2.StartsWith('d') ? PskDetector.Differential
                 : d2.StartsWith('m') ? PskDetector.Mlse
@@ -132,7 +136,7 @@ internal static class SimCommand
                     {
                     SimPointResult r = SimBench.RunPoint(
                         mode, rateArg, layer, kind, snr, bursts, frameBytes, firstSeed, workers, level,
-                        txDelayMs, cfo, detector, centreHz, detector2);
+                        txDelayMs, cfo, detector, centreHz, detector2, impulseRate);
                     rows.Add(r);
                     if (level == 0)
                     {

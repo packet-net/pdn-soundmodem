@@ -108,7 +108,8 @@ internal static class SimChannel
     /// <param name="leadOutSeconds">Noise-only padding after the burst (end-of-burst window).</param>
     public static float[] Apply(
         ReadOnlySpan<float> activeBurst, int rate, SimChannelKind kind, double snrDb, int seed,
-        double leadInSeconds = 0.5, double leadOutSeconds = 1.2, double cfoHz = 0)
+        double leadInSeconds = 0.5, double leadOutSeconds = 1.2, double cfoHz = 0,
+        double impulseRatePerMinute = 0)
     {
         var channel = new WattersonChannel(rate, seed, Paths(kind));
         return channel.Apply(
@@ -117,6 +118,7 @@ internal static class SimChannel
             noiseBandwidthHz: 3000,
             leadInSamples: (int)(leadInSeconds * rate),
             leadOutSamples: (int)(leadOutSeconds * rate),
-            frequencyOffsetHz: cfoHz);
+            frequencyOffsetHz: cfoHz,
+            impulses: impulseRatePerMinute > 0 ? new ImpulseNoiseProfile(impulseRatePerMinute) : null);
     }
 }
