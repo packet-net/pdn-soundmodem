@@ -430,6 +430,27 @@ effort:
    probe points at: the blanker knows exactly which spans it clipped, and that knowledge
    belongs in the per-symbol confidence stream feeding the erasure ladder (crash-hit
    bytes become erasures, which is what the RS budget can actually spend on them).
+
+   **Leg 2, crash-marked erasures (2026-08-08): that follow-up ran, and it is a measured
+   null - with the mechanism that finally explains the whole impulse cost.** The crash
+   detector (raw-envelope ratio, broadband on purpose: in-band detection measured blind at
+   under 2x prominence - the impulse instrument's own lesson recreated in the receive
+   path) was wired into the bpsk confidence stream with marks consumed at the matched
+   filter's group delay (undelayed marks erased the fine bytes AHEAD of the damage - an
+   exact zero until aligned). Correct, tested, zero clean-channel cost - and N=300 at the
+   -4 dB knee under 120/min: 97/300 vs 93/300. Why there is nothing to convert: **crash
+   TRAINS carry the impulse cost** (true baselines at 0/+2 dB under 120/min are only
+   53/61 %, and those failures are train hits - hundreds of bytes, beyond any erasure
+   budget), short crashes at high SNR already survive errors-only decoding, and at the
+   joint-budget knee the ladder's erasures+2*cap=14 leaves a conversion shell worth
+   ~1 point. Implementation archived unmerged on branch `crash-erasures` (the
+   chase-decoding precedent). The honest residual: the impulse cost is a TRAIN problem -
+   an outage class like Poor's flat fades that no in-frame machinery fixes at this wire
+   format; what would pay is avoiding or riding trains (retry timing, workstream 8's
+   escalation), not decoding through them. Instrument hazard found en route, worth a
+   separate fix: `sm-ota sim` accepts unknown flags silently (a one-merge-stale binary
+   swallowed `--impulse` and measured a clean channel while claiming an impulse run -
+   caught only because the numbers matched the no-injection table).
 3. **Slow CFO drift + phase noise.** The exact impairment that walled qpsk2400 (#116) and
    the RSP1 coherent modes (#102): a Hz-per-minute ramp plus a 1/f phase process. Cheap (a
    time-varying rotation in the channel), and it is what the undisciplined-radio aspiration
