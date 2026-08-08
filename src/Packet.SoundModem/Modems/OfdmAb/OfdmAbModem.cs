@@ -41,6 +41,7 @@ public sealed class OfdmAbModem
     private readonly double _drive;
     private readonly int _headerSymbols;
     private readonly double[] _syncSymbol;
+    private readonly OfdmAbCodec _codec;
 
     /// <summary>Creates a modem for one bandwidth profile.</summary>
     public OfdmAbModem(OfdmAbParameters parameters)
@@ -94,6 +95,7 @@ public sealed class OfdmAbModem
         }
 
         _syncSymbol = RenderSymbol(syncCarriers, _drive);
+        _codec = new OfdmAbCodec(parameters.Codes);
 
         // A header may not fit one symbol: a narrow profile has few data carriers, and BPSK gives
         // one bit each. Span as many symbols as it takes rather than assuming.
@@ -118,13 +120,7 @@ public sealed class OfdmAbModem
         framed[^1] = (byte)(crc >> 8);
         Scramble(framed);
 
-        int bits = constellation.BitsPerCarrier();
-        int payloadBits = framed.Length * 8;
-        int symbols = (payloadBits + (_parameters.DataCarriers * bits) - 1)
-            / (_parameters.DataCarriers * bits);
-
-        var audio = new List<float>(
-            (leadInSymbols + 2 + _headerSymbols + symbols) * _parameters.SymbolSamples);
+        var audio = new List<float>(_parameters.SymbolSamples * 8);
         for (int s = 0; s < leadInSymbols * _parameters.SymbolSamples; s++)
         {
             audio.Add(0f);
@@ -137,23 +133,38 @@ public sealed class OfdmAbModem
             AppendSymbol(audio, RenderSymbol(headerSymbol, _drive));
         }
 
-        var reader = new BitReader(framed);
-        (float I, float Q)[] points = OfdmAbMapper.Points(constellation);
+        int[] carrierBits = _parameters.BitsPerDataCarrier(constellation);
+        byte[] coded = _codec.Encode(Unpack(framed));
+        var points = new Dictionary<int, (float I, float Q)[]>();
+        foreach (int bits in carrierBits.Distinct())
+        {
+            points[bits] = OfdmAbMapper.Points((OfdmAbConstellation)bits);
+        }
+
+        int perSymbol = carrierBits.Sum();
+        int symbols = ((coded.Length + perSymbol) - 1) / perSymbol;
+        int read = 0;
         for (int s = 0; s < symbols; s++)
         {
             var carriers = new (double Re, double Im)[_parameters.TotalCarriers];
-            int pilot = 0;
+            int data = 0;
             for (int c = 0; c < carriers.Length; c++)
             {
                 if (_pilotMap[c])
                 {
                     carriers[c] = (_preambleBins[c].Re, 0);
-                    pilot++;
                     continue;
                 }
 
-                int value = reader.Read(bits);
-                carriers[c] = (points[value].I, points[value].Q);
+                int bits = carrierBits[data++];
+                int value = 0;
+                for (int b = 0; b < bits; b++)
+                {
+                    value = (value << 1) | (read < coded.Length ? coded[read++] : 0);
+                }
+
+                (float I, float Q) point = points[bits][value];
+                carriers[c] = (point.I, point.Q);
             }
 
             AppendSymbol(audio, RenderSymbol(carriers, _drive));
@@ -227,13 +238,22 @@ public sealed class OfdmAbModem
         }
 
         var constellation = (OfdmAbConstellation)constellationValue;
-        int bits = constellation.BitsPerCarrier();
         int framedLength = length + 2;
-        int symbols = ((framedLength * 8) + (_parameters.DataCarriers * bits) - 1)
-            / (_parameters.DataCarriers * bits);
 
-        (float I, float Q)[] points = OfdmAbMapper.Points(constellation);
-        var writer = new BitWriter();
+        int[] carrierBits = _parameters.BitsPerDataCarrier(constellation);
+        var tables = new Dictionary<int, (float I, float Q)[]>();
+        foreach (int b in carrierBits.Distinct())
+        {
+            tables[b] = OfdmAbMapper.Points((OfdmAbConstellation)b);
+        }
+
+        int payloadBits = framedLength * 8;
+        int codedBits = _codec.CodedBits(payloadBits);
+        int perSymbol = carrierBits.Sum();
+        int symbols = ((codedBits + perSymbol) - 1) / perSymbol;
+
+        var llrs = new float[symbols * perSymbol];
+        int written = 0;
         for (int s = 0; s < symbols; s++)
         {
             int offset = headerStart + ((_headerSymbols + s) * _parameters.SymbolSamples);
@@ -243,6 +263,7 @@ public sealed class OfdmAbModem
                 return null;
             }
 
+            int data = 0;
             for (int c = 0; c < symbol.Length; c++)
             {
                 if (_pilotMap[c])
@@ -250,9 +271,19 @@ public sealed class OfdmAbModem
                     continue;
                 }
 
-                int value = OfdmAbMapper.Demap(points, (float)symbol[c].Re, (float)symbol[c].Im);
-                writer.Write(value, bits);
+                int bits = carrierBits[data++];
+                OfdmAbMapper.SoftBits(
+                    tables[bits], bits, (float)symbol[c].Re, (float)symbol[c].Im, SoftScale,
+                    llrs.AsSpan(written, bits));
+                written += bits;
             }
+        }
+
+        byte[] payloadBitArray = _codec.Decode(llrs.AsSpan(0, codedBits), payloadBits);
+        var writer = new BitWriter();
+        foreach (byte bit in payloadBitArray)
+        {
+            writer.Write(bit, 1);
         }
 
         byte[] framed = writer.ToArray();
@@ -474,6 +505,25 @@ public sealed class OfdmAbModem
 
             data[i] ^= mask;
         }
+    }
+
+    /// <summary>Scale on the soft metrics. Max-log distances are on the constellation's own
+    /// scale; the decoder only cares about their ratios, so this keeps them in a comfortable
+    /// numeric range rather than encoding any noise estimate.</summary>
+    private const float SoftScale = 4f;
+
+    private static byte[] Unpack(ReadOnlySpan<byte> bytes)
+    {
+        var bits = new byte[bytes.Length * 8];
+        for (int i = 0; i < bytes.Length; i++)
+        {
+            for (int b = 0; b < 8; b++)
+            {
+                bits[(i * 8) + b] = (byte)((bytes[i] >> (7 - b)) & 1);
+            }
+        }
+
+        return bits;
     }
 
     private sealed class BitReader(byte[] data)

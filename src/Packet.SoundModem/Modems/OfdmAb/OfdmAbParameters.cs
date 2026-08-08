@@ -16,14 +16,59 @@ namespace Packet.SoundModem.Modems.OfdmAb;
 /// <param name="DataCarriers">Occupied bins carrying payload.</param>
 /// <param name="PilotCarriers">Occupied bins carrying a known reference, spread evenly through
 /// the block. They cost throughput and buy per-symbol phase tracking.</param>
+/// <param name="Coding">Forward error correction for the payload; none if absent.</param>
+/// <param name="BitLoading">Bits per data carrier as runs across the band, so a channel whose
+/// noise rises with frequency can carry more where it is quiet. Absent means uniform.</param>
 public sealed record OfdmAbParameters(
     int SampleRate,
     int FftSize,
     int CyclicPrefix,
     int FirstCarrier,
     int DataCarriers,
-    int PilotCarriers)
+    int PilotCarriers,
+    OfdmAbCoding? Coding = null,
+    IReadOnlyList<OfdmAbBitLoadingTier>? BitLoading = null)
 {
+    /// <summary>The coding this profile uses; none if the profile does not say.</summary>
+    public OfdmAbCoding Codes => Coding ?? new OfdmAbCoding();
+
+    /// <summary>
+    /// Bits each data carrier carries: the profile's bit-loading tiers if it has them, otherwise
+    /// the requested constellation uniformly across the band.
+    /// </summary>
+    public int[] BitsPerDataCarrier(OfdmAbConstellation uniform)
+    {
+        var bits = new int[DataCarriers];
+        if (BitLoading is null || BitLoading.Count == 0)
+        {
+            Array.Fill(bits, uniform.BitsPerCarrier());
+            return bits;
+        }
+
+        int at = 0;
+        foreach (OfdmAbBitLoadingTier tier in BitLoading)
+        {
+            if (tier.Bits is < 1 or > 8)
+            {
+                throw new InvalidOperationException(
+                    $"bit-loading tier of {tier.Bits} bits is not a constellation we have");
+            }
+
+            for (int c = 0; c < tier.Carriers && at < bits.Length; c++)
+            {
+                bits[at++] = tier.Bits;
+            }
+        }
+
+        if (at != DataCarriers)
+        {
+            throw new InvalidOperationException(
+                $"bit-loading tiers cover {at} carriers, profile has {DataCarriers}");
+        }
+
+        return bits;
+    }
+
     /// <summary>
     /// The parameters this repository commits to, and they are <b>deliberately not the real ones</b>.
     /// </summary>

@@ -207,6 +207,125 @@ public class OfdmAbModemTests
         burst!.Payload.Should().Equal(payload);
     }
 
+    [Theory]
+    [InlineData(1, 2)]
+    [InlineData(2, 3)]
+    [InlineData(3, 4)]
+    public void A_Coded_Burst_Round_Trips_At_Every_Rate(int numerator, int denominator)
+    {
+        var coded = Small with
+        {
+            Coding = new OfdmAbCoding(OfdmAbFec.Convolutional, 7, numerator, denominator, true),
+        };
+        var modem = new OfdmAbModem(coded);
+        byte[] payload = Payload(24);
+
+        OfdmAbBurst? burst = modem.Demodulate(modem.Modulate(payload, OfdmAbConstellation.Qpsk));
+
+        burst.Should().NotBeNull();
+        burst!.Payload.Should().Equal(payload);
+    }
+
+    [Fact]
+    public void A_Bit_Loaded_Burst_Round_Trips()
+    {
+        // Bits spread unevenly across the band, as a channel whose noise rises with frequency
+        // wants. Same 20 carriers, same total per symbol, different distribution.
+        var loaded = Small with
+        {
+            BitLoading = [new OfdmAbBitLoadingTier(8, 4), new OfdmAbBitLoadingTier(12, 2)],
+        };
+        var modem = new OfdmAbModem(loaded);
+        byte[] payload = Payload(24);
+
+        OfdmAbBurst? burst = modem.Demodulate(modem.Modulate(payload, OfdmAbConstellation.Qpsk));
+
+        burst.Should().NotBeNull();
+        burst!.Payload.Should().Equal(payload);
+    }
+
+    [Fact]
+    public void Bit_Loading_Tiers_Must_Cover_Exactly_The_Data_Carriers()
+    {
+        var short_ = Small with { BitLoading = [new OfdmAbBitLoadingTier(5, 4)] };
+
+        Action build = () => short_.BitsPerDataCarrier(OfdmAbConstellation.Qpsk);
+
+        build.Should().Throw<InvalidOperationException>().WithMessage("*cover 5 carriers*");
+    }
+
+    [Theory]
+    [InlineData(OfdmAbFec.None, 0)]
+    [InlineData(OfdmAbFec.Convolutional, 12)]
+    public void The_Codec_Corrects_What_Its_Scheme_Should(OfdmAbFec scheme, int correctable)
+    {
+        // The coding layer on its own, away from the burst: flip bits in the coded stream and see
+        // what comes back. Measured at the burst level the payload code cannot show, because the
+        // HEADER is uncoded BPSK and fails first - a real finding, and a design item: whatever
+        // codes the payload should cover the header too, or the header becomes the burst's floor.
+        var codec = new OfdmAbCodec(new OfdmAbCoding(scheme, Interleave: true));
+        var random = new Random(9);
+        var bits = new byte[160];
+        for (int i = 0; i < bits.Length; i++)
+        {
+            bits[i] = (byte)random.Next(2);
+        }
+
+        byte[] coded = codec.Encode(bits);
+        var llrs = new float[coded.Length];
+        for (int i = 0; i < coded.Length; i++)
+        {
+            llrs[i] = coded[i] == 0 ? 4f : -4f;
+        }
+
+        // Corrupt a scattered handful of coded bits by flipping their metrics outright.
+        for (int k = 0; k < correctable + 1; k++)
+        {
+            int at = (k * 13) % llrs.Length;
+            llrs[at] = -llrs[at];
+        }
+
+        byte[] back = codec.Decode(llrs, bits.Length);
+        int wrong = 0;
+        for (int i = 0; i < bits.Length; i++)
+        {
+            wrong += bits[i] == back[i] ? 0 : 1;
+        }
+
+        if (scheme == OfdmAbFec.None)
+        {
+            wrong.Should().BeGreaterThan(0, "an uncoded stream cannot correct anything");
+        }
+        else
+        {
+            wrong.Should().Be(0, "a rate-1/2 K=7 code must absorb {0} scattered bit flips", correctable);
+        }
+    }
+
+    [Fact]
+    public void The_Interleaver_Is_Its_Own_Inverse_Pairing()
+    {
+        // Guards a real trap: M0LTE.Fec's GpInterleaver Interleave/Deinterleave are NOT inverses
+        // in the pinned version - a round trip returns about a third of a block wrong, either
+        // order - so this chain uses its own permutation. If that ever regresses, every coded
+        // burst decodes to noise and nothing else would say why.
+        var codec = new OfdmAbCodec(new OfdmAbCoding(OfdmAbFec.None, Interleave: true));
+        var bits = new byte[257];
+        for (int i = 0; i < bits.Length; i++)
+        {
+            bits[i] = (byte)(i % 2);
+        }
+
+        byte[] spread = codec.Encode(bits);
+        var llrs = new float[spread.Length];
+        for (int i = 0; i < spread.Length; i++)
+        {
+            llrs[i] = spread[i] == 0 ? 4f : -4f;
+        }
+
+        codec.Decode(llrs, bits.Length).Should().Equal(bits);
+    }
+
     [Fact]
     public void Silence_Decodes_To_Nothing()
     {

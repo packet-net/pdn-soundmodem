@@ -115,6 +115,43 @@ public static class OfdmAbMapper
         return best;
     }
 
+    /// <summary>
+    /// Soft metrics for one received point: a log-likelihood ratio per bit, most significant
+    /// first, positive meaning zero - the convention the Viterbi decoder expects.
+    /// </summary>
+    /// <remarks>
+    /// Max-log: the squared distance to the nearest point carrying a one, less the distance to the
+    /// nearest carrying a zero. Exhaustive over the table, which at 256 points is not a hot loop's
+    /// idea of a good time but is exactly right, and being right is what a decoder's input has to
+    /// be before anything downstream means anything.
+    /// </remarks>
+    public static void SoftBits(
+        (float I, float Q)[] points, int bits, float i, float q, float scale, Span<float> llrs)
+    {
+        for (int b = 0; b < bits; b++)
+        {
+            double nearestZero = double.MaxValue;
+            double nearestOne = double.MaxValue;
+            int mask = 1 << (bits - 1 - b);
+            for (int s = 0; s < points.Length; s++)
+            {
+                double di = points[s].I - i;
+                double dq = points[s].Q - q;
+                double distance = (di * di) + (dq * dq);
+                if ((s & mask) == 0)
+                {
+                    nearestZero = Math.Min(nearestZero, distance);
+                }
+                else
+                {
+                    nearestOne = Math.Min(nearestOne, distance);
+                }
+            }
+
+            llrs[b] = (float)((nearestOne - nearestZero) * scale);
+        }
+    }
+
     private static int GrayToLevel(int grayIndex, int levels)
     {
         // The index is a Gray code; walk it back to a plain level so neighbouring levels differ

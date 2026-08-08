@@ -177,6 +177,54 @@ mechanism, and a ledger entry when a mode's status changes.
   search looked for +1. A synthetic profile with an even first carrier cannot catch that, so a
   parity theory now guards it.
 
+  **Coding and bit loading, added 2026-08-08, both as config** (`OfdmAbCoding`,
+  `OfdmAbBitLoadingTier` on the profile, so the scheme is a parameter exactly like the geometry -
+  the real mode's FEC is "to be determined"). Rate-1/2 tail-biting convolutional, K=7 (the
+  classic 0o133/0o171 pair 802.11a carries), soft-decision Viterbi with max-log LLRs from the
+  equalised constellation, puncturable to 2/3 and 3/4, and a frequency interleave.
+
+  **Measured through the FM link, narrowband profile, QPSK, 8 seeds a point.** Microphone and
+  speaker path, frames recovered of 8:
+
+  | coding | +40 | +34 | +28 | +24 | +20 | +16 |
+  |---|---|---|---|---|---|---|
+  | none | 8 | 8 | 8 | 2 | 0 | 0 |
+  | conv 1/2 | 8 | 8 | 8 | 8 | 6 | 0 |
+  | conv 2/3 | 8 | 8 | 8 | 8 | 4 | 0 |
+  | conv 3/4 | 8 | 8 | 8 | 8 | 2 | 0 |
+
+  So **the code is worth about 5-6 dB** at rate 1/2, and the puncturing ladder falls in the
+  expected order. The cliff at +16 dB is not a coding limit at all - it is the FM threshold, below
+  which the discriminator hands up click noise and no code helps. There is no point spending rate
+  below where the link itself collapses.
+
+  **Bit loading: a prediction of ours that measurement corrected.** Uniform QPSK against a
+  bit-loaded profile carrying the identical 220 bits per symbol, just distributed toward the quiet
+  end of the band. On the microphone path loading made things consistently WORSE (uncoded 8/8/8/2
+  became 8/8/0/0). The reason is one this repo already documented: **de-emphasis flattens the
+  discriminator's rising noise**, which is what an emphasis pair is for. Measured per-carrier SNR
+  on that path is flat - 11.4 to 13.6 dB from 305 Hz to 2742 Hz - so there is no gradient for
+  loading to exploit, and spending three bits on a carrier no better than its neighbours simply
+  breaks it.
+
+  On the **data-port path, with no de-emphasis, the gradient is real and large**: 22.0 dB at
+  305 Hz falling to 4.7 dB at 2742 Hz, a 17 dB slope, exactly the f-squared triangular noise. There
+  loading helps in every pairing measured (uncoded +1 of 8 at +24 dB, conv 1/2 7/8 -> 8/8, conv 2/3
+  6/8 -> 7/8). The gain is modest because the tiers are a hand-picked three-step guess rather than
+  water-filled to the measured curve; deriving them from the per-carrier SNR is the obvious next
+  step.
+
+  **So the recommendation sharpens: bit loading is for the flat-audio data-port profiles, not the
+  emphasised microphone ones.** On a mic path the emphasis network has already done the
+  equalisation, and loading is not just useless there but harmful.
+
+  Two things found on the way. `M0LTE.Fec.GpInterleaver`'s Interleave and Deinterleave are **not
+  inverses** in the pinned version - a round trip returns about a third of a block wrong, in either
+  order - so this chain carries its own permutation, with a test that would catch a regression.
+  And at burst level on the synthetic profile the payload code cannot show its value, because the
+  **header is uncoded BPSK and fails first**: whatever codes the payload should cover the header
+  too, or the header is the burst's floor.
+
   Original rationale, kept: Build the reusable chain - CP framing, sync,
   per-carrier equalisation, QAM soft-slicing - and validate it against our own sim at the
   inferred geometry (46.875 Hz spacing, 56/78/123/166 carriers, ~2 ms CP). This is not OFDM-AB
