@@ -30,6 +30,76 @@ internal enum SimChannelKind
     /// <summary>CCIR / ITU-R F.1487 "Poor" (D.6.1): two equal-power Rayleigh paths 2&#160;ms apart,
     /// 1&#160;Hz two-sigma fade - the mask suite's own rig.</summary>
     Poor,
+
+    /// <summary>A real FM link through a radio's <b>microphone and speaker</b>: pre/de-emphasis at
+    /// both ends and a 300-3000&#160;Hz voice passband, on a 12.5&#160;kHz channel (8&#160;kHz IF).
+    /// The SNR axis becomes carrier-to-noise ratio in that IF bandwidth - see
+    /// <see cref="Packet.SoundModem.Tests.Channel.FmChannel"/>, and note it is NOT comparable to
+    /// the SSB modes' SNR3k.</summary>
+    FmMic,
+
+    /// <summary>A real FM link through a radio's <b>data port</b>: flat audio both ends, wider
+    /// passband, same 12.5&#160;kHz channel. What a 9600 baud packet radio actually uses.</summary>
+    FmData,
+}
+
+/// <summary>
+/// What the FM modes are transmitted at. The peak deviations are
+/// docs/mode-modulation-reference.md's targets, which is the same calibration the over-the-air
+/// harness drives the Flex to - so a sim FM point and a bench FM point describe the same radio.
+/// </summary>
+internal static class FmModes
+{
+    /// <summary>The channel spacing a mode is meant to run on, in Hz. Not a preference: C4FSK
+    /// 9600 is a narrow-channel mode and C4FSK 19200 is a wide-channel one (Tom, 2026-08-08,
+    /// from MMDVM-TNC and NinoTNC practice), and running either on the wrong spacing measures a
+    /// radio nobody deploys. The 5 kHz-deviation modes need the wide channel's IF filter or their
+    /// own sidebands are truncated.</summary>
+    public static double ChannelSpacingHz(string mode) => mode switch
+    {
+        // Tom, 2026-08-08, from MMDVM-TNC and NinoTNC practice: C4FSK 9600 is the narrow-channel
+        // mode and C4FSK 19200 the wide one. GFSK 9600 keeps its G3RUH-lineage 25 kHz channel -
+        // 2.4 kHz deviation against a 4800 Hz baseband is 14 kHz of Carson bandwidth, which an
+        // 8 kHz IF filter cannot pass. qpsk3600 shares the C4FSK 19200 modulator, so it shares
+        // its channel.
+        _ when mode.StartsWith("c4fsk19200", StringComparison.Ordinal) => 25000,
+        _ when mode.StartsWith("qpsk3600", StringComparison.Ordinal) => 25000,
+        _ when mode.StartsWith("fsk9600", StringComparison.Ordinal) => 25000,
+        _ => 12500,
+    };
+
+    /// <summary>Peak deviation in Hz for an FM catalogue mode, or null if the mode is an SSB
+    /// mode and has no business on an FM channel.</summary>
+    public static double? PeakDeviationHz(string mode) => mode switch
+    {
+        _ when mode.StartsWith("afsk1200", StringComparison.Ordinal) => 3000,
+        _ when mode.StartsWith("fsk9600", StringComparison.Ordinal) => 2400,
+        _ when mode.StartsWith("fsk4800", StringComparison.Ordinal) => 1200,
+        _ when mode.StartsWith("c4fsk19200", StringComparison.Ordinal) => 5000,
+        _ when mode.StartsWith("c4fsk9600", StringComparison.Ordinal) => 2500,
+        _ when mode.StartsWith("qpsk3600", StringComparison.Ordinal) => 5000,
+        _ => null,
+    };
+
+    /// <summary>True for the channel kinds that model a real FM link.</summary>
+    public static bool IsFmChannel(SimChannelKind kind) =>
+        kind is SimChannelKind.FmMic or SimChannelKind.FmData;
+
+    /// <summary>The link profile for a (mode, channel) pair. Throws rather than quietly
+    /// substituting a default: an SSB mode on an FM channel is a question with no answer, and a
+    /// number produced for it would be a fiction.</summary>
+    public static FmLinkProfile Profile(string mode, SimChannelKind kind)
+    {
+        double deviation = PeakDeviationHz(mode)
+            ?? throw new ArgumentException(
+                $"'{mode}' is not an FM mode - it has no deviation target in "
+                + "docs/mode-modulation-reference.md, so an FM channel cannot carry it",
+                nameof(mode));
+        double ifBandwidth = FmLinkProfile.IfBandwidthForSpacing(ChannelSpacingHz(mode));
+        return kind == SimChannelKind.FmMic
+            ? FmLinkProfile.MicAndSpeaker(deviation, ifBandwidth)
+            : FmLinkProfile.DataPort(deviation, ifBandwidthHz: ifBandwidth);
+    }
 }
 
 /// <summary>Maps a <see cref="SimChannelKind"/> to the <see cref="WattersonChannel"/> path geometry,
@@ -83,7 +153,10 @@ internal static class SimChannel
             : n.StartsWith('g') ? SimChannelKind.Good
             : n.StartsWith('m') ? SimChannelKind.Moderate
             : n.StartsWith('p') ? SimChannelKind.Poor
-            : throw new ArgumentException($"unknown channel '{name}' (awgn|good|moderate|poor)", nameof(name));
+            : name.Equals("fm-mic", StringComparison.OrdinalIgnoreCase) ? SimChannelKind.FmMic
+            : name.Equals("fm-data", StringComparison.OrdinalIgnoreCase) ? SimChannelKind.FmData
+            : throw new ArgumentException(
+                $"unknown channel '{name}' (awgn|good|moderate|poor|fm-mic|fm-data)", nameof(name));
     }
 
     /// <summary>
@@ -120,5 +193,24 @@ internal static class SimChannel
             leadOutSamples: (int)(leadOutSeconds * rate),
             frequencyOffsetHz: cfoHz,
             impulses: impulseRatePerMinute > 0 ? new ImpulseNoiseProfile(impulseRatePerMinute) : null);
+    }
+
+    /// <summary>
+    /// Applies a real FM link: the burst is frequency-modulated onto a carrier, meets noise there,
+    /// and comes back through a limiter and a discriminator.
+    /// </summary>
+    /// <param name="cnrDb">Carrier-to-noise ratio in the receiver's IF bandwidth - the FM axis.
+    /// Deliberately not the SSB modes' SNR3k: the two are different quantities and a number moved
+    /// between them would be wrong.</param>
+    /// <remarks>The lead-in is unmodulated carrier rather than silence, which is what a real
+    /// transmitter's key-up gives the receiver, and it is long enough for the energy-gated modes to
+    /// seed their noise floor on the floor rather than on the burst.</remarks>
+    public static float[] ApplyFm(
+        ReadOnlySpan<float> activeBurst, int rate, SimChannelKind kind, string mode, double cnrDb,
+        int seed, double leadInSeconds = 0.5, double leadOutSeconds = 1.2)
+    {
+        FmLinkProfile profile = FmModes.Profile(mode, kind);
+        return new FmChannel(profile, rate, seed).Apply(
+            activeBurst, cnrDb, leadInSeconds, leadOutSeconds);
     }
 }

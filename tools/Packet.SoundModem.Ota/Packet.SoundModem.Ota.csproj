@@ -29,6 +29,8 @@
              Link="Channel/WattersonChannel.cs" />
     <Compile Include="../../tests/Packet.SoundModem.Tests/Channel/ImpulseNoise.cs"
              Link="Channel/ImpulseNoise.cs" />
+    <Compile Include="../../tests/Packet.SoundModem.Tests/Channel/FmChannel.cs"
+             Link="Channel/FmChannel.cs" />
   </ItemGroup>
 
   <ItemGroup>
