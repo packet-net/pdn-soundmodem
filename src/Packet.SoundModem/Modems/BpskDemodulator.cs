@@ -110,11 +110,27 @@ public sealed class BpskDemodulator
     private double _confidenceMean;
     private bool _rotationSeeded;
     private int _previousPolarity = 1;
+    private long _sampleIndex = -1;
+    private int _scheduleIndex;
 
     /// <summary>Raised once per recovered symbol with the 1-D decision as (I,0): the recovered
     /// absolute symbol in coherent mode, the differential product in differential mode.
     /// Null-safe; wire from the modem.</summary>
     public Action<float, float>? SymbolPlotted { get; set; }
+
+    /// <summary>Bench seam (rx-roadmap workstream 4): receives the input-sample index of every
+    /// symbol instant this demodulator sampled at. Set before the first
+    /// <see cref="Process(ReadOnlySpan{float})"/> call; indices count input samples from zero.
+    /// </summary>
+    internal Action<long>? SymbolInstantObserver { get; set; }
+
+    /// <summary>Bench seam (rx-roadmap workstream 4): when set, symbols are sampled at these
+    /// input-sample indices instead of at the DPLL's own wraps - the timing oracle. The DPLL
+    /// still runs, still observes transitions and still drives <see cref="PacketDcd"/>, so a
+    /// schedule replaces exactly one variable (when the symbol is read) and holds carrier
+    /// detection, which gates the deframer, constant. Indices must ascend; instants beyond the
+    /// end of the schedule emit nothing.</summary>
+    internal IReadOnlyList<long>? SymbolInstantSchedule { get; set; }
 
     /// <summary>Creates a demodulator delivering logical bits to <paramref name="bitSink"/>
     /// once per symbol.</summary>
@@ -194,51 +210,64 @@ public sealed class BpskDemodulator
             baud, sampleRate,
             level =>
             {
-                SymbolPlotted?.Invoke(_lastPlotI, 0f);
-                // Coherent feeds the absolute sign bit; differentially decode against the
-                // previous symbol (a repeat is a '1'), resolving the loop's π ambiguity.
-                // Differential decides the symbol-instant sample against the reference.
-                // MLSE hands the symbol-instant sample to the trellis, whose bits emerge
-                // through EmitBit a traceback later.
-                if (_detector == PskDetector.Mlse)
+                // Under a timing oracle the DPLL still runs for its transition/DCD duties,
+                // but the schedule decides when a symbol is read (see Process).
+                if (SymbolInstantSchedule is null)
                 {
-                    // Only the seed event matters here. The burst-over event must NOT
-                    // flush the trellis: on a fading channel a deep mid-frame fade
-                    // collapses the offset window's coherence exactly like a burst end
-                    // does, and a mid-frame path-memory reset swallows a pipeline's worth
-                    // of bits - a bit slip that destroys the frame's RS block alignment
-                    // (measured: flushing here cost ~15 points on CCIR Moderate). The
-                    // pipeline free-runs instead, one bit per symbol, always; a real
-                    // burst's final bits still emerge within the traceback (16 symbols),
-                    // inside the ~24-symbol window before the deframer's DCD reset.
-                    if (UpdateRotationSeed() == RotationSeedEvent.Seeded)
-                    {
-                        _mlse!.OnRotationSeeded();
-                    }
-
-                    _mlse!.Push(_currentI, _currentQ, _seededRotation, _rotationSeeded);
-                    return;
+                    OnSymbolInstant(level);
                 }
-
-                int decided;
-                float magnitude;
-                if (_detector == PskDetector.Coherent)
-                {
-                    decided = level == _previousLevel ? 1 : 0;
-                    _previousLevel = level;
-                    magnitude = Math.Abs(_lastPlotI);
-                }
-                else
-                {
-                    decided = DecideAgainstReference(out double projection);
-                    magnitude = (float)Math.Abs(projection);
-                }
-
-                EmitBit(decided, magnitude);
             },
             inertia: detector == PskDetector.Coherent ? 0.74 : DifferentialInertia,
             transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
         _energyBusy = new EnergyBusyDetector(sampleRate);
+    }
+
+    /// <summary>Reads one symbol at the current sampling instant, whether the DPLL chose it or a
+    /// timing oracle did.</summary>
+    private void OnSymbolInstant(int level)
+    {
+        SymbolInstantObserver?.Invoke(_sampleIndex);
+        SymbolPlotted?.Invoke(_lastPlotI, 0f);
+        // Coherent feeds the absolute sign bit; differentially decode against the
+        // previous symbol (a repeat is a '1'), resolving the loop's π ambiguity.
+        // Differential decides the symbol-instant sample against the reference.
+        // MLSE hands the symbol-instant sample to the trellis, whose bits emerge
+        // through EmitBit a traceback later.
+        if (_detector == PskDetector.Mlse)
+        {
+            // Only the seed event matters here. The burst-over event must NOT
+            // flush the trellis: on a fading channel a deep mid-frame fade
+            // collapses the offset window's coherence exactly like a burst end
+            // does, and a mid-frame path-memory reset swallows a pipeline's worth
+            // of bits - a bit slip that destroys the frame's RS block alignment
+            // (measured: flushing here cost ~15 points on CCIR Moderate). The
+            // pipeline free-runs instead, one bit per symbol, always; a real
+            // burst's final bits still emerge within the traceback (16 symbols),
+            // inside the ~24-symbol window before the deframer's DCD reset.
+            if (UpdateRotationSeed() == RotationSeedEvent.Seeded)
+            {
+                _mlse!.OnRotationSeeded();
+            }
+
+            _mlse!.Push(_currentI, _currentQ, _seededRotation, _rotationSeeded);
+            return;
+        }
+
+        int decided;
+        float magnitude;
+        if (_detector == PskDetector.Coherent)
+        {
+            decided = level == _previousLevel ? 1 : 0;
+            _previousLevel = level;
+            magnitude = Math.Abs(_lastPlotI);
+        }
+        else
+        {
+            decided = DecideAgainstReference(out double projection);
+            magnitude = (float)Math.Abs(projection);
+        }
+
+        EmitBit(decided, magnitude);
     }
 
     /// <summary>True while DPLL transition timing indicates a coherent packet signal.</summary>
@@ -322,6 +351,7 @@ public sealed class BpskDemodulator
     {
         foreach (float sample in samples)
         {
+            _sampleIndex++;
             float filtered = _bandPass.Next(sample);
             _energyBusy.Process(filtered);
             if (_detector == PskDetector.Coherent)
@@ -331,6 +361,28 @@ public sealed class BpskDemodulator
             else
             {
                 ProcessDifferential(sample);
+            }
+
+            // A timing oracle reads the symbol here, after this sample has been through the
+            // whole front end (so the value read is the same one the DPLL would have read at
+            // this instant) and after the DPLL has taken its own turn at the transition.
+            if (SymbolInstantSchedule is { } schedule)
+            {
+                // Step over any instant this stream has already passed - one that fell before the
+                // first sample, above all - rather than waiting for a sample index that can never
+                // arrive, which would stall the whole schedule at its first entry and emit nothing
+                // at all. (Found by a displacement profile whose entire negative half read exactly
+                // zero: a plausible-looking result that was the instrument, not the receiver.)
+                while (_scheduleIndex < schedule.Count && schedule[_scheduleIndex] < _sampleIndex)
+                {
+                    _scheduleIndex++;
+                }
+
+                if (_scheduleIndex < schedule.Count && schedule[_scheduleIndex] == _sampleIndex)
+                {
+                    _scheduleIndex++;
+                    OnSymbolInstant(_lastPlotI > 0 ? 1 : 0);
+                }
             }
         }
     }

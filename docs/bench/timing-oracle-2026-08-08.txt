@@ -1,0 +1,115 @@
+rx-roadmap workstream 4, the symbol-timing ceiling probe (2026-08-08)
+=====================================================================
+
+Question: how much of the receiver's loss belongs to the symbol clock, and therefore how much
+could a second, non-causal pass over a buffered burst ever give back? The workstream claimed
+"the remaining ~0.5 dB of DPLL timing loss".
+
+Instrument: sm-ota oracle (tools/Packet.SoundModem.Ota/TimingOracleProbe.cs) over the bench seam
+BpskDemodulator.SymbolInstantObserver / SymbolInstantSchedule. The Watterson rig draws its fades
+from the burst seed BEFORE its noise, so the same seed at infinite SNR replays the identical
+channel realisation with the noise left off. A pass over that noise-free copy records the input-
+sample index of every symbol instant; the measured arms decode the NOISY copy reading at those
+instants. The DPLL keeps running in every arm (transitions, PacketDcd, and so the deframer's
+gating are held constant), so the arms differ in one variable: when each symbol is read.
+
+Arms
+  causal   the deployed receiver, recovering timing from the noisy audio
+  oracle   symbols read at the noise-free pass's own instants
+  grid     a perfect constant-rate clock at the noise-free phase - the transmitted symbol grid
+           itself (the sim shares one clock end to end), i.e. the best a perfectly smoothed
+           non-causal estimate could ever be
+  control  the oracle schedule slipped half a symbol: MUST collapse, or no verdict may be read
+
+Configuration: bpsk300, SINGLE branch (not the deployed 9-branch diversity bank - a bank's
+branches recover their own clocks and the winner is chosen by content dedupe, which would blur
+what is being measured). Frame 60 bytes, N=200/rung, first seed 1, 3 kHz SNR convention.
+
+Result (docs figures; CSV in the campaign scratch, reproducible from the command below)
+
+  sm-ota oracle --mode bpsk300 --channel awgn,good,moderate,poor \
+                --snr -5,-4,0,3,6,9,12 --bursts 200 --workers 4
+
+  channel     SNR    causal    oracle      grid  gridGap   control
+  Awgn       -5.0    73/200    76/200    76/200       +3     0/200
+  Awgn       -4.0   147/200   143/200   153/200       +6     0/200
+  Awgn       +0.0   199/200   199/200   199/200       +0     0/200
+  Awgn     +3..12   200/200   200/200   200/200       +0     0/200
+  Good       -5.0    44/200    33/200    51/200       +7     0/200
+  Good       -4.0    62/200    44/200    65/200       +3     0/200
+  Good       +0.0   115/200    98/200   116/200       +1     0/200
+  Good       +3.0   142/200   121/200   141/200       -1     0/200
+  Good       +6.0   159/200   140/200   160/200       +1     0/200
+  Good       +9.0   170/200   151/200   173/200       +3     0/200
+  Good      +12.0   177/200   158/200   179/200       +2     0/200
+  Moderate   -5.0    12/200     8/200     9/200       -3     0/200
+  Moderate   -4.0    18/200    15/200    16/200       -2     0/200
+  Moderate   +0.0    60/200    57/200    50/200      -10     0/200
+  Moderate   +3.0    96/200    80/200    87/200       -9     0/200
+  Moderate   +6.0   110/200    93/200   103/200       -7     0/200
+  Moderate   +9.0   114/200   110/200   109/200       -5     0/200
+  Moderate  +12.0   118/200   114/200   117/200       -1     0/200
+  Poor       -5.0     0/200     0/200     0/200       +0     0/200
+  Poor       -4.0     0/200     1/200     0/200       +0     0/200
+  Poor       +0.0    11/200    11/200    10/200       -1     0/200
+  Poor       +3.0    26/200    23/200    20/200       -6     0/200
+  Poor       +6.0    38/200    34/200    37/200       -1     0/200
+  Poor       +9.0    42/200    41/200    45/200       +3     0/200
+  Poor      +12.0    41/200    41/200    47/200       +6     0/200
+
+  pooled over 5600 bursts: causal 2774, grid 2763 (-0.2 points), oracle 2591 (-3.3 points)
+
+Reading: perfect symbol timing is worth nothing. At the AWGN knees the perfect clock buys +3 and
++6 frames against a local slope of ~70 frames/dB - under 0.1 dB, against a claimed ~0.5. Good is
+parity. On Moderate the perfect FIXED clock is consistently worse, and the perfect INSTANTANEOUS
+clock (the oracle arm) is worse nearly everywhere: -11 to -21 on Good, -3 to -17 on Moderate.
+
+Mechanism, two parts. At 40 samples per symbol behind an RRC matched filter the timing-error
+slope is gentle, so the DPLL's residual jitter costs a fraction of a dB and the measurement puts
+that fraction under a tenth. And on a fading channel there are TWO candidate true clocks - the
+transmitted symbol grid, and the composite channel's instantaneous group delay as the paths swap
+dominance - so sampling perfectly at either loses to the DPLL's inertia-limited compromise
+between them. The inertia is the smoothing a second pass would be trying to discover.
+
+Constant-displacement profile (is the clock systematically in the wrong place?)
+
+  sm-ota oracle --mode bpsk300 --channel awgn --snr -5 --bursts 100 --phase-profile
+
+  displacement from the transmitted grid, samples (40 per symbol), AWGN -5 dB, N=100:
+    -7:  5   -6: 15   -5: 28   -4: 29   -3: 34   -2: 45   -1: 40   +0: 36
+    +1: 37   +2: 34   +3: 33   +4: 18   +5:  6   +6:  1   else: 0
+
+  Best displacement -2 samples (45/100) against 36/100 at the grid - inside sampling noise, and
+  0.05 of a symbol. No exploitable bias; the usable window is about a quarter of a symbol wide,
+  with a sharper edge late than early.
+
+Hindsight arm, and the lead it leaves behind
+
+  --phase-sweep decodes each burst at every one of the 40 phases and counts it if ANY delivers.
+  This is not a bound on estimation (the winning phase is picked knowing which one decoded); it
+  measures how much DECODING DIVERSITY sits across the sampling phase.
+
+    Awgn  -5 dB, N=100: causal 34, any-phase 70
+    Awgn  -4 dB, N=100: causal 69, any-phase 95
+    Good  +0 dB, N=100: causal 57, any-phase 64
+    Good  +3 dB, N=100: causal 71, any-phase 76
+    Mod   +0 dB, N=100: causal 34, any-phase 47
+    Mod   +3 dB, N=100: causal 52, any-phase 61
+
+  A receiver CAN select on that criterion - a frame passes IL2P RS+CRC or it does not - so this
+  is a real architecture (timing diversity, the frequency bank's trick along the other axis) and
+  not an oracle. But it must be sized against the DEPLOYED bank, not against one branch: the
+  9-branch frequency bank on the same seeds scores 56/100 at -5 dB, 88/100 at -4 and 95/100 at
+  -3, so it already banks most of this diversity, leaving at most ~14 and ~7 points of headroom
+  at those rungs before any overlap is subtracted. Against that, each added decoder multiplies
+  the bank's false-accept exposure. Measure phase-union-on-top-of-the-bank before building.
+
+Instrument fault found and fixed en route (the campaign's standing lesson, again)
+
+  The first displacement profile read exactly 0/100 for every negative displacement and a plain
+  curve for the positive ones. That was not the receiver: schedule entries falling before the
+  first sample could never equal the sample counter, so the schedule stalled at its first entry
+  and emitted nothing - a stall that reads exactly like "this timing does not decode". The
+  matcher now steps over instants already passed, and TimingOracleSeamTests pins it. Every
+  headline number above was re-measured after the fix (the main arms were never affected: their
+  instants are non-negative).

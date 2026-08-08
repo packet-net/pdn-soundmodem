@@ -342,6 +342,66 @@ remaining ~0.5 dB of DPLL timing loss, and is the natural place to compute fade-
 erasure flags for workstream 1. Fits inside `BpskDemodulator`/`BpskMultiModem` without touching
 the streaming surface, since branches already hold per-burst state.
 
+**Status 2026-08-08: sized before building, and the timing half is a measured null - perfect
+symbol timing is worth nothing.** The instrument is `sm-ota oracle` over a new bench seam
+(`BpskDemodulator.SymbolInstantObserver` / `SymbolInstantSchedule`): the Watterson rig draws its
+fades from the burst seed *before* its noise, so the same seed at infinite SNR replays the
+identical channel with the noise left off. A pass over that noise-free copy records the sample
+index of every symbol instant, and the measured arms decode the *noisy* copy reading their
+symbols at those instants. The DPLL keeps running throughout - transitions, `PacketDcd`, and
+therefore the deframer's gating are held constant - so the arms differ in one variable only:
+when each symbol is read. Four arms per burst: **causal** (deployed), **oracle** (the noise-free
+instants), **grid** (a perfect constant-rate clock at the noise-free phase - the transmitted
+symbol grid itself, since the sim shares one clock end to end, and therefore the best a
+perfectly-smoothed non-causal estimate could ever be), and a **control** whose schedule is
+slipped half a symbol. The control decoded 0 of 200 at every rung of 5600 bursts, which is what
+licenses reading a null off the rest.
+
+Measured, single-branch bpsk300, N=200/rung, seed 1 (`docs/bench/timing-oracle-2026-08-08.txt`):
+pooled over 5600 bursts **causal 2774, grid 2763 (-0.2 points), oracle 2591 (-3.3 points)**. At
+the AWGN knees the perfect clock buys 73 -> 76 at -5 dB and 147 -> 153 at -4 dB against a local
+slope of ~70 frames/dB: **under 0.1 dB, against the ~0.5 dB the workstream claimed**. Good is
+parity across -5..+12 dB (+7/+3/+1/-1/+1/+3/+2). On Moderate the perfect *fixed* clock is
+consistently WORSE (-3/-2/-10/-9/-7/-5/-1), and the perfect *instantaneous* clock is worse
+everywhere it can be (Good -11 to -21, Moderate -3 to -17).
+
+Two mechanisms, both worth keeping. At 40 samples per symbol behind an RRC matched filter the
+timing-error slope is gentle enough that the DPLL's residual jitter costs a fraction of a dB, and
+the measurement puts that fraction under a tenth. And on a fading channel there are *two*
+candidate true clocks - the transmitted symbol grid, and the composite channel's instantaneous
+group delay as the paths swap dominance - so sampling perfectly at either one loses to the DPLL's
+inertia-limited compromise between them. **The inertia is not a limitation waiting to be smoothed
+away; it is the smoothing**, and it already sits where a second pass would be estimating toward.
+This also corrects a suspicion this document recorded under workstream 5: DPLL timing wander
+during dominance swaps is a *symptom* of the fade, not an independent cause of Poor's ceiling - a
+perfect clock rescues none of those frames (Poor rows at parity).
+
+What survives of the workstream: converged equaliser taps from symbol 0 (real, but bounded by
+what MLSE is worth, which measured at parity except ~+4 points on Poor) and fade-envelope erasure
+flags for workstream 1 (whose conversion shell the crash-erasure leg already measured at ~1
+point at the joint-budget knee). Neither pays for the buffering architecture on its own, so the
+workstream drops below 6 and 7. The instrument stays: the question deserves re-asking on a mode
+with few samples per symbol (fsk9600 runs 1.25 at 12 kHz, where timing is a different animal),
+and `sm-ota oracle` is the way to ask it.
+
+**The lead the null left behind: timing diversity, not timing estimation.** The same probe's
+hindsight arm (`--phase-sweep`: decode at all 40 phases, count the burst if any delivers) reads
+70/100 at AWGN -5 dB against a single branch's 34, and 95 against 69 at -4 dB. The winning phase
+is picked knowing which one decoded, so this is no bound on estimation - but a receiver can
+select on exactly that criterion, because a frame passes IL2P RS+CRC or it does not. It is the
+frequency bank's own trick along the other axis, and the phase branches could share the whole
+front end (band-pass, mixer, matched filter are phase-independent; only the symbol decisions,
+the DF-DD reference and the deframer duplicate). Before anyone builds it, the honest comparison
+is against the **deployed bank**, not one branch: on the same seeds the 9-branch bank already
+scores 56/88/95 at -5/-4/-3 dB, so it banks most of this diversity already and leaves at most
+~14 and ~7 points at the two knees before overlap is subtracted - against a proportional
+multiplication of the bank's false-accept exposure. Sized, recorded, not built.
+
+The instrument had a fault worth recording, found by a result that looked like physics: the first
+displacement profile read exactly 0/100 across its whole negative half, which was a schedule
+stalling on entries that fell before the first sample rather than a receiver that could not
+decode. Every headline number here was re-measured after the fix.
+
 ### 5. Poor-channel MLSE (the known mode limit, half-liftable)
 
 CCIR Poor's 2 ms echo at 300 Bd spans ~0.6 symbol: the composite channel fits a **2-4 state
@@ -372,7 +432,9 @@ AWGN and the CFO sweep at parity within two points (a hair under at -5..-3, even
 Good/Moderate at parity with +3 at the top rungs; **Poor +6/+9 dB pooled over both seed
 spans: 51->58 and 56->64 of 200, roughly +4 points**; miss corpus unchanged at 32/37
 demodulated. Why the ceiling never moved: the frames Poor takes die of flat outage, DPLL
-timing wander during dominance swaps, and near-antiphase composite nulls (a static-echo
+timing wander during dominance swaps (**withdrawn 2026-08-08**: workstream 4's timing oracle
+rescues none of those frames with a perfect clock, so the wander is a symptom of the fade rather
+than an independent cause), and near-antiphase composite nulls (a static-echo
 probe found **no** two-path setting that separates the detectors through the full chain -
 DF-DD+RS digests any static echo the trellis can equalise, and what kills DF-DD kills the
 trellis too, because a symbol-rate equaliser cannot restore timing); and the preamble's
