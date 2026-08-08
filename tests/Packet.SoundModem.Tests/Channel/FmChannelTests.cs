@@ -187,6 +187,52 @@ public class FmChannelTests
     }
 
     [Fact]
+    public void Emphasis_Round_Trips_Flat_Through_A_Matched_Pair()
+    {
+        // The test this model should have had from the start. A matched pre/de-emphasis pair must
+        // leave a signal's own spectrum alone - it shapes the NOISE, not the wanted audio. The
+        // first cut used a plausible shelf for pre-emphasis against a one-pole de-emphasis with
+        // separately-derived coefficients, and left ~15 dB of tilt across the voice band. AFSK
+        // shrugged it off, so every AFSK measurement looked healthy, while qpsk3600 - which has no
+        // equaliser - could not decode through a microphone path at ANY signal level. NinoTNC's
+        // own documentation says qpsk3600 IS a speaker/mic mode, and that external prediction is
+        // what exposed it.
+        //
+        // Measured with a multitone on purpose: the drive is normalised to the burst's peak, so a
+        // single tone has its pre-emphasis exactly cancelled by that normalisation and would show
+        // a tilt that is an artefact of the measurement rather than the channel.
+        double[] tones = [500, 1000, 1500, 2000, 2500, 2800];
+        var multi = new float[(int)(0.25 * AudioRate)];
+        foreach (double hz in tones)
+        {
+            for (int n = 0; n < multi.Length; n++)
+            {
+                multi[n] += (float)(Math.Sin(2 * Math.PI * hz * n / AudioRate) / tones.Length);
+            }
+        }
+
+        var emphasised = new FmChannel(FmLinkProfile.MicAndSpeaker(3000), AudioRate, 1);
+        float[] output = emphasised.Apply(multi, double.PositiveInfinity);
+
+        int from = (int)(0.15 * AudioRate);
+        int to = from + (int)(0.08 * AudioRate);
+        var window = output[from..to];
+        double reference = Math.Sqrt(BandPower(window, tones[1]));
+        double lowest = double.MaxValue;
+        double highest = 0;
+        foreach (double hz in tones)
+        {
+            double gain = Math.Sqrt(BandPower(window, hz)) / reference;
+            lowest = Math.Min(lowest, gain);
+            highest = Math.Max(highest, gain);
+        }
+
+        (20 * Math.Log10(highest / lowest)).Should().BeLessThan(2.0,
+            "a matched emphasis pair must cancel: any tilt it leaves is distortion the wanted "
+            + "signal has to survive, and a mode without an equaliser will not");
+    }
+
+    [Fact]
     public void De_Emphasis_Flattens_The_Noise_It_Rises_By()
     {
         var flat = FmLinkProfile.DataPort(2400) with { RxAudioHighHz = 5000, TxAudioHighHz = 5000 };
