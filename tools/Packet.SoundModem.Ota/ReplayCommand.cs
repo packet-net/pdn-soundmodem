@@ -385,7 +385,7 @@ internal static class ReplayCommand
         }
     }
 
-    private static string[] ResolveChunks(string rawArg, DateTimeOffset? from, DateTimeOffset? to)
+    internal static string[] ResolveChunks(string rawArg, DateTimeOffset? from, DateTimeOffset? to)
     {
         string[] files = Directory.Exists(rawArg)
             ? Directory.GetFiles(rawArg, "raw-*.wav")
@@ -407,7 +407,7 @@ internal static class ReplayCommand
         }).ToArray();
     }
 
-    private static DateTimeOffset ChunkUtc(string path)
+    internal static DateTimeOffset ChunkUtc(string path)
     {
         string name = Path.GetFileNameWithoutExtension(path);
         string stamp = name.StartsWith("raw-", StringComparison.Ordinal) ? name[4..] : name;
@@ -416,7 +416,7 @@ internal static class ReplayCommand
             DateTimeStyles.AssumeUniversal);
     }
 
-    private static DateTimeOffset? ParseUtc(string? s) =>
+    internal static DateTimeOffset? ParseUtc(string? s) =>
         s is null ? null
         : DateTimeOffset.TryParseExact(
             s, "yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture,
