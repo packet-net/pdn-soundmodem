@@ -19,11 +19,11 @@
          Unset (the default and what CI uses), the published package is consumed. -->
     <PackageReference Include="M0LTE.Flex" Condition="'$(FlexSourcePath)' == ''" />
     <PackageReference Include="M0LTE.Radio.Audio" />
-    <!-- Same local-checkout override pattern as FlexSourcePath, for the FEC and IL2P
-         packages - the soft-decision receive campaign iterates across all three repos. -->
+    <!-- Same local-checkout override pattern as FlexSourcePath, for the FEC, IL2P and
+         ARDOP packages - the receive campaigns iterate across these repos. -->
     <PackageReference Include="M0LTE.Fec" Condition="'$(FecSourcePath)' == ''" />
     <PackageReference Include="M0LTE.Il2p" Condition="'$(Il2pSourcePath)' == ''" />
-    <PackageReference Include="M0LTE.Ardop" />
+    <PackageReference Include="M0LTE.Ardop" Condition="'$(ArdopSourcePath)' == ''" />
     <PackageReference Include="M0LTE.Pocsag" />
     <!-- DSP primitives, OFDM modem and LDPC codec, each lifted out into its own package. -->
     <PackageReference Include="M0LTE.Dsp" />
@@ -43,6 +43,10 @@
 
   <ItemGroup Condition="'$(FecSourcePath)' != ''">
     <ProjectReference Include="$(FecSourcePath)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(ArdopSourcePath)' != ''">
+    <ProjectReference Include="$(ArdopSourcePath)" />
   </ItemGroup>
 
   <ItemGroup>

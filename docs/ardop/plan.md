@@ -181,13 +181,61 @@ scratch: `a1-sweep/sweep.sh`, `a1-sweep/perframe.py`).
    1500-1580 (outliers 1680, 1760): wild session centres cluster at 1500-1560 audio, not
    the ~1650 the survey estimator suggested and A0 assumed. Our ±200 Hz tuning absorbed
    the offset for acquisition, but body decode degrades with residual offset (finding 2's
-   recoveries). A corrected-centre rescan of the corpus quantifies the corpus-wide
-   effect (addendum below when complete). The monitor default stays 1650 until the rescan
-   settles the number.
+   recoveries). The corrected-centre rescan (addendum below) settled the number; the
+   monitor default is now 1500.
 5. **Net of the ConAck artifact, genuine per-frame disputes go 9-4 in our favour**
    (ours-ok/oracle-FAIL vs ours-FAIL/oracle-ok). On this corpus our receive chain is at
    parity with or slightly ahead of the reference implementation everywhere except the
    marginal-RS coin-toss region.
+
+### Addendum: the corrected-centre rescan (2026-08-08)
+
+The full corpus rescanned at `--centre 1500` (package 0.3.0, same instrument):
+
+| | @1650 (A0) | @1500 (corrected) |
+|---|---:|---:|
+| acquired / ok | 636 / 551 | **749 / 605** |
+| IDFrame | 65 / 60 | 84 / 74 |
+| DataACK | 117 / 117 | 129 / 129 |
+| 4PSK.500.100 | 38 / 26 | 69 / 26 |
+| 16QAM.500.100 | 7 / 0 | 17 / 0 |
+| 4FSK.500.100 | 84 / 50 | 90 / 47 |
+| 8PSK.500.100 | 3 / 0 | 2 / 0 |
+
+The 150 Hz miss was costing **acquisitions** - the loss A0 item 5 called invisible,
+now measured at +113 frames (+18 %) and +54 bodies (+10 %). 4PSK.500.100 acquires 31
+more frames at the same ok count (the weak direction of sessions previously only
+half-heard). The top-rung sample more than doubles (17 16QAM.500 bodies) and still
+decodes zero - the confirmed null, on a bigger corpus. Two honest negatives: the
+**4FSK.500.100 body rate does not improve at the corrected centre** (50 -> 47 ok on
+84 -> 90 acquired; the cut-level recoveries are threshold churn that moves both ways,
+and the GB7BPQ beacon stays at the decode threshold regardless), and the outlier
+sessions at 1680-1760 audio cut the other way (8PSK 3 -> 2, 16QAM.2000 1 -> 0: a
+1760 Hz session is outside ±200 of 1500). Centre 1500 wins as the single default and
+the monitor now defaults to it; the outliers are the reason a future multi-centre or
+wider-tuning pass could still pay.
+
+## A2: the ConAck reference-policy alignment (2026-08-08)
+
+The one fix the autopsy indicated, approved on the recommended shape: accept a ConAck on
+successful type decode; report its timing as null when the 2-of-3 byte majority is absent
+(reference-compatible with deployed peers, which proceed on majority-less ConAcks, without
+fabricating ardopcf's 0 ms). Shipped in **M0LTE.Ardop 0.4.0** (M0LTE.Ardop#3, tag v0.4.0
+on merge 7616ce9, nuget-published via trusted publishing), with a loopback test pinning
+the behaviour and the package's ardopcf oracle legs green (368/368 with `ARDOPCF` set).
+This repo: `ArdopSourcePath` joined the local-checkout override pattern (the A/B iterated
+without a package round trip) and the pin moved to 0.4.0.
+
+Measured, bounded to the capture chunks both scans processed (the capture appends
+continuously, so unbounded row counts differ by corpus growth, not behaviour):
+
+- @1650: 634 aligned frames, **exactly 5 verdict flips, all ConAck500 fail -> ok** (551 ->
+  556 bodies). The autopsy's five disputed frames, no other movement.
+- @1500: 748 aligned frames, **exactly 8 flips, all ConAck500 fail -> ok** (604 -> 612).
+  The corrected centre acquires more ConAcks, so more majority-less ones.
+
+ConAck500 on the wild corpus is now 35 of 35 at the corrected centre. Nothing else moved
+at either centre; the bench Rungs 0-2 and the full local suite stayed green throughout.
 
 ## Phases
 
@@ -199,11 +247,10 @@ scratch: `a1-sweep/sweep.sh`, `a1-sweep/perframe.py`).
   audio via the --emit seam. Result: top-rung null confirmed at parity, the 4FSK loss is one
   weak beacon emitter, the one 5-0 deficit is an ardopcf accept-anything policy, and the
   baseline's centre assumption was 150 Hz off.
-- **A2: fixes, if any pay.** From the autopsy, exactly two candidates: (a) ConAck
-  reference-policy alignment in M0LTE.Ardop (interop: live peers proceed on majority-less
-  ConAcks); (b) the corrected monitor centre once the rescan settles it. Receive-side only,
-  each with its A/B against the wild corpus and the bench rig's Rungs 0-2 kept green
-  (interop is still ground truth).
+- **A2: fixes, if any pay.** Done (2026-08-08, section above). Both autopsy candidates
+  shipped: the ConAck reference-policy alignment (M0LTE.Ardop 0.4.0; 5 flips @1650, 8
+  @1500, nothing else moved) and the corrected monitor default centre (1650 -> 1500,
+  +18 % acquisitions). Ledger entry in docs/mode-validation.md (decode behaviour shipped).
 - **A3: the sim seam.** Turn the validated wild corpus into a maskable ARDOP sim baseline
   (the rx-roadmap workstream 0 debt), so ARDOP joins the mask discipline the other modes have.
 
