@@ -26,12 +26,13 @@ namespace Packet.SoundModem.Tests.Ota;
 /// Watterson sim carries no static crashes, no SSB filter tilt, no AGC, and our own transmit
 /// shaping rather than a NinoTNC's; the 40 m capture campaign (docs/rx-roadmap.md) stays the
 /// truth about the band. Two instruments, two jobs.</para>
-/// <para><b>Coverage rule.</b> Every non-FM mode the mode-generic sim rig can drive gets a
-/// mask: the NinoTNC SSB lineage (afsk300-il2pc, bpsk300/1200, qpsk600/2400) and the FreeDV
-/// datac OFDM family. Deliberately absent: <b>ms110d-*</b>, which carries its own, richer
-/// mask suite (this file is that suite's idea generalised); <b>ardop</b>, a session TNC
-/// rather than a catalogue <c>IModem</c>, which the frame-layer rig structurally cannot
-/// drive - rx-roadmap workstream 0 records that gap rather than papering over it; and the
+/// <para><b>Coverage rule.</b> Every non-FM mode the sim rig can drive gets a mask: the
+/// NinoTNC SSB lineage (afsk300-il2pc, bpsk300/1200, qpsk600/2400), the FreeDV datac OFDM
+/// family, and ARDOP's wild-relevant frame ladder via <see cref="ArdopFrameProbe"/>
+/// (<c>ardop:&lt;FrameName&gt;</c> - a session TNC is not a catalogue <c>IModem</c>, so it
+/// takes the dedicated-probe path; the campaign's A3 leg closed what rx-roadmap workstream 0
+/// recorded as this suite's one open gap). Deliberately absent: <b>ms110d-*</b>, which
+/// carries its own, richer mask suite (this file is that suite's idea generalised); and the
 /// FM modes (afsk1200, fsk*, c4fsk*, qpsk3600), outside this suite's channel model, except
 /// the single fsk9600 AWGN anchor kept because it is nearly free.</para>
 /// </remarks>
@@ -85,6 +86,25 @@ public class WattersonMaskTests(ITestOutputHelper output)
                                                              // is exactly what it is for
     [InlineData("freedv-datac1", "good", 9.0, 0.0, 14, 25)]  // measured 22/25
     [InlineData("freedv-datac3", "moderate", 3.0, 0.0, 15, 25)] // measured 23/25
+    // ARDOP wild-relevant frame ladder (campaign A3; measured 2026-08-08, N=100, seed 1).
+    // The single-shot ceiling is ~98 %, not 100: a small fraction of noise realisations
+    // capture the leader detector during the lead-in (ArdopFrameProbe remarks) - the
+    // floors pin that measured reality.
+    [InlineData("ardop:4FSK.200.50S", "awgn", -2.0, 0.0, 22, 25)]   // measured 98/100
+    [InlineData("ardop:4FSK.200.50S", "moderate", 6.0, 0.0, 15, 25)] // measured 82/100
+    [InlineData("ardop:4PSK.200.100S", "awgn", 2.0, 0.0, 23, 25)]   // measured 99/100
+    [InlineData("ardop:4FSK.500.100", "awgn", 2.0, 0.0, 23, 25)]    // measured 99/100
+    [InlineData("ardop:4FSK.500.100", "moderate", 9.0, 0.0, 13, 25)] // measured 74/100 -
+                                                                    // the wild workhorse on
+                                                                    // the representative
+                                                                    // channel
+    [InlineData("ardop:4PSK.500.100", "awgn", 4.0, 0.0, 23, 25)]    // measured 99/100
+    [InlineData("ardop:8PSK.500.100", "awgn", 12.0, 0.0, 22, 25)]   // measured 97/100
+    [InlineData("ardop:16QAM.500.100", "awgn", 16.0, 0.0, 22, 25)]  // measured 98/100 -
+                                                                    // the top rung's sim
+                                                                    // floor on record; its
+                                                                    // wild zero was SNR,
+                                                                    // not the decoder
     public void Smoke_Mask_Holds(
         string mode, string channel, double snrDb, double cfoHz, int floor,
         int bursts = SmokeBursts)
@@ -142,6 +162,40 @@ public class WattersonMaskTests(ITestOutputHelper output)
         // bpsk1200 AWGN - measured 86 % @ +2, 99 % @ +4.
         yield return ["bpsk1200", "awgn", 2.0, 0.0, 62];
         yield return ["bpsk1200", "awgn", 4.0, 0.0, 82];
+
+        // ARDOP flagship: 4FSK.500.100, the wild workhorse (campaign A3, measured
+        // 2026-08-08, N=100). AWGN knee at ~-1 dB; CFO-flat to 50 Hz; the fading rows are
+        // the wild corpus's own weather.
+        yield return ["ardop:4FSK.500.100", "awgn", -2.0, 0.0, 20];   // measured 38/100
+        yield return ["ardop:4FSK.500.100", "awgn", 0.0, 0.0, 75];    // measured 93/100
+        yield return ["ardop:4FSK.500.100", "awgn", 2.0, 0.0, 85];    // measured 99/100
+        yield return ["ardop:4FSK.500.100", "awgn", 0.0, 20.0, 75];   // measured 93/100
+        yield return ["ardop:4FSK.500.100", "awgn", 0.0, 50.0, 75];   // measured 94/100
+        yield return ["ardop:4FSK.500.100", "good", 3.0, 0.0, 48];    // measured 66/100
+        yield return ["ardop:4FSK.500.100", "good", 9.0, 0.0, 68];    // measured 85/100
+        yield return ["ardop:4FSK.500.100", "moderate", 3.0, 0.0, 15]; // measured 30/100
+        yield return ["ardop:4FSK.500.100", "moderate", 9.0, 0.0, 56]; // measured 74/100
+        yield return ["ardop:4FSK.500.100", "moderate", 12.0, 0.0, 70]; // measured 88/100
+        yield return ["ardop:4FSK.500.100", "poor", 9.0, 0.0, 26];    // measured 43/100
+        yield return ["ardop:4FSK.500.100", "poor", 16.0, 0.0, 47];   // measured 65/100
+
+        // ARDOP top rungs - the sim floors behind the wild campaign's confirmed null:
+        // on Moderate/Poor these frames are effectively undecodable at any plausible
+        // NVIS SNR (0/25 through +12 and +16 coarse), so the full-tier rows pin AWGN and
+        // Good, where they exist at all.
+        yield return ["ardop:8PSK.500.100", "awgn", 12.0, 0.0, 80];   // measured 97/100
+        yield return ["ardop:8PSK.500.100", "good", 16.0, 0.0, 40];   // measured 59/100
+        yield return ["ardop:16QAM.500.100", "awgn", 12.0, 0.0, 65];  // measured 85/100
+        yield return ["ardop:16QAM.500.100", "awgn", 16.0, 0.0, 80];  // measured 98/100
+        yield return ["ardop:16QAM.500.100", "good", 16.0, 0.0, 36];  // measured 55/100
+
+        // ARDOP remaining wild-ladder types - one full-tier anchor each.
+        yield return ["ardop:4FSK.200.50S", "awgn", -2.0, 0.0, 88];   // measured 98/100
+        yield return ["ardop:4FSK.200.50S", "moderate", 6.0, 0.0, 64]; // measured 82/100
+        yield return ["ardop:4PSK.200.100S", "awgn", 0.0, 0.0, 82];   // measured 97/100
+        yield return ["ardop:4PSK.200.100S", "good", 3.0, 0.0, 56];   // measured 74/100
+        yield return ["ardop:4PSK.500.100", "awgn", 4.0, 0.0, 85];    // measured 99/100
+        yield return ["ardop:4PSK.500.100", "moderate", 9.0, 0.0, 52]; // measured 70/100
     }
 
     [Theory]

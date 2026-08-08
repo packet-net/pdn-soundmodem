@@ -30,7 +30,12 @@ internal static class SimCommand
                 and tallies frame/packet success - the software BER-vs-SNR baseline.
 
                   --mode <name>        ModemCatalog mode (e.g. freedv-datac0 … freedv-datac14).
-                                       Any catalogue mode works at the frame layer.
+                                       Any catalogue mode works at the frame layer. ARDOP
+                                       (a session TNC, not a catalogue mode) is driven as
+                                       ardop:<FrameName>, e.g. ardop:4FSK.500.100 - one
+                                       full-capacity even data frame per burst at the native
+                                       12 kHz, scored payload byte-exact; --frame-bytes and
+                                       --layer do not apply (the type fixes the payload).
                   --snr <a,b,c>        SNR rungs in dB (3 kHz), ascending
                   --channel <list>     awgn|good|moderate|poor, comma-separated (default awgn)
                   --cfo <list>         carrier-offset Hz, comma-separated sweep axis (default 0)
@@ -114,9 +119,13 @@ internal static class SimCommand
         a.RejectUnknown("sim");
 
         // Native 8 kHz is the right default for the datac family: it is codec2's own rate and what
-        // FreeDV's published operating points are measured at. Other modes take their catalogue rate.
+        // FreeDV's published operating points are measured at. ARDOP is hard 12 kHz. Other modes
+        // take their catalogue rate.
         int effectiveRate = rate ?? (mode.StartsWith("freedv-", StringComparison.Ordinal)
-            ? 8000 : Packet.SoundModem.Modems.ModemCatalog.DspRateFor(mode));
+            ? 8000
+            : ArdopFrameProbe.IsArdopMode(mode)
+                ? ArdopFrameProbe.Rate
+                : Packet.SoundModem.Modems.ModemCatalog.DspRateFor(mode));
         int? rateArg = layer == SimLayer.Packet ? null : effectiveRate;
 
         void Log(string m)

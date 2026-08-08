@@ -77,7 +77,22 @@ internal static class SimBench
             (i, _, acc) =>
             {
                 int seed = firstSeed + i;
-                if (layer == SimLayer.Packet)
+                if (ArdopFrameProbe.IsArdopMode(mode))
+                {
+                    // ARDOP is a session TNC, not a catalogue IModem, so it takes the
+                    // dedicated-probe path (the DatacPacketProbe pattern) regardless of
+                    // the requested layer; the score is frame-layer semantics: payload
+                    // byte-exact or the burst's bits count wrong.
+                    var probe = new ArdopFrameProbe(mode);
+                    ArdopProbeResult r = probe.Run(seed, kind, snrDb, levelScale, cfoHz,
+                        impulseRatePerMinute);
+                    int bits = probe.PayloadBytes * 8;
+                    acc.Successes += r.Matched ? 1 : 0;
+                    acc.BitErrors += r.Matched ? 0 : bits;
+                    acc.TotalBits += bits;
+                    acc.Margin += r.Quality;
+                }
+                else if (layer == SimLayer.Packet)
                 {
                     var probe = new DatacPacketProbe(mode);
                     PacketResult r = probe.Run(seed, kind, snrDb, levelScale);
