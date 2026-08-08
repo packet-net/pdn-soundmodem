@@ -144,6 +144,11 @@ public sealed class BpskModem : IModem, IConstellationSource
     /// reading - see <see cref="Il2pReceiver.CrcFailures"/>.</summary>
     public long CrcFailures => _deframer.CrcFailures;
 
+    /// <summary>Bench seam: this modem's demodulator, so the sim oracles can record or drive
+    /// its symbol instants (rx-roadmap workstream 4). Not part of the deployment surface.
+    /// </summary>
+    internal BpskDemodulator Demodulator => _demodulator;
+
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples) => _demodulator.Process(samples);
 

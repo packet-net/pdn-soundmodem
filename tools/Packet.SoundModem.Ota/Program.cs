@@ -37,6 +37,7 @@ try
         "score" => ScoreCommand.Run(args[1..]),
         "sim" => SimCommand.Run(args[1..]),
         "sim-stream" => SimStreamCommand.Run(args[1..]),
+        "oracle" => OracleCommand.Run(args[1..]),
         "replay" => ReplayCommand.Run(args[1..]),
         "ardop-monitor" => ArdopMonitorCommand.Run(args[1..]),
         "ardop-cut" => ArdopCutCommand.Run(args[1..]),
@@ -86,6 +87,10 @@ static int Usage()
         sm-ota sim-stream  continuous-stream datac measurement: N single-packet bursts through ONE
                         channel run, scored packets-received/sent (codec2's MPP currency). Injects a
                         managed WattersonChannel, or emits/decodes int16 for codec2's own `ch`.
+        sm-ota oracle   symbol-timing ceiling probe (rx-roadmap workstream 4): decode each burst
+                        with the clock the receiver recovers from noise, and again with the clock
+                        a noise-free copy of that same burst says is right. The gap bounds what
+                        any timing work - two-pass included - could ever return.
         sm-ota ladder   §E2: inject the mask suite's own channel at the transmitter and run an
                         SNR ladder through real hardware. --dry-run rehearses it with no radio.
                         --mode freedv-datac<N> runs the OFDM ladder; --mode <fm-mode>
