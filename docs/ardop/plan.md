@@ -237,6 +237,43 @@ continuously, so unbounded row counts differ by corpus growth, not behaviour):
 ConAck500 on the wild corpus is now 35 of 35 at the corrected centre. Nothing else moved
 at either centre; the bench Rungs 0-2 and the full local suite stayed green throughout.
 
+## A3: the sim seam (2026-08-08)
+
+Workstream 0's recorded gap closed: ARDOP is maskable. `ArdopFrameProbe` applies the
+`DatacPacketProbe` pattern to the session TNC's engine - library modulator, the shared
+Watterson rig (`SimChannel.Apply`, standard deterministic seeds), a fresh default-constructed
+demodulator (squelch 5, ±100 Hz: the ardopcf defaults, not the monitor's widened wild
+setting), scored payload byte-exact on a full-capacity even data frame. Driven as
+`sm-ota sim --mode ardop:<FrameName>` through the same `SimBench.RunPoint` the mask rows
+call, so a mask row and a CLI command are one measurement. Reproduction:
+`sm-ota sim --mode ardop:4FSK.500.100 --snr -2,0,2 --channel awgn,moderate --bursts 100`.
+
+### Measured ladder (N=100, seed 1, 3 kHz noise bandwidth)
+
+| frame | AWGN knee (~50 %) | anchor points measured |
+|---|---|---|
+| 4FSK.200.50S | ~-5 dB | awgn -2: 98 %; moderate +6: 82 % |
+| 4PSK.200.100S | ~-2.5 dB | awgn 0: 97 %, +2: 99 %; good +3: 74 % |
+| 4FSK.500.100 | ~-1.5 dB | awgn 0: 93 %, +2: 99 %; cfo 20/50 Hz at 0 dB: 93/94 % (flat); good +3/+6/+9: 66/75/85 %; moderate +3/+6/+9/+12: 30/55/74/88 %; poor +9/+12/+16: 43/56/65 % |
+| 4PSK.500.100 | ~+1.5 dB | awgn +2: 82 %, +4: 99 %; moderate +9: 70 % |
+| 8PSK.500.100 | ~+10 dB | awgn +12: 97 %; good +16: 59 %; moderate/poor: 0/25 coarse through +12/+16 |
+| 16QAM.500.100 | ~+11 dB | awgn +12: 85 %, +16: 98 %; good +16: 55 %; moderate/poor: 0/25 coarse through +16/+20 |
+
+Two findings worth their ink. **The top rungs are unusable on fading channels**: 8PSK and
+16QAM under CCIR Moderate/Poor decode essentially nothing at any plausible NVIS SNR - the
+design doc's thin-margin prediction quantified, and the sim-side confirmation that the wild
+zero-of-eleven was overdetermined (weak copies AND a channel class the waveform cannot
+carry). **The single-shot ceiling is ~98 %, not 100 %, and it is the receiver**: a small
+fraction of noise realisations false-trigger the leader detector during the lead-in and the
+capture swallows the real frame (seeds 18/27 fail at every AWGN SNR from +10 to +25 and
+decode at +40; mechanism in the probe's remarks). Deployment absorbs this with ARQ retries;
+the masks pin the measured reality, and a leader re-arm improvement is a named candidate for
+a future receiver leg with its own A/B.
+
+Masks: 8 smoke-tier rows (blocking, N=25, floors 2-3 binomial sigma under measured) and 23
+full-tier rows (SM_MASK_GATE=1, N=100) in `WattersonMaskTests`, alongside every other mode.
+The coverage-rule paragraph and rx-roadmap workstream 0 both record the gap closed.
+
 ## Phases
 
 - **A0 (this leg): the monitor instrument and the baseline.** Exit: the instrument decodes the
@@ -251,8 +288,11 @@ at either centre; the bench Rungs 0-2 and the full local suite stayed green thro
   shipped: the ConAck reference-policy alignment (M0LTE.Ardop 0.4.0; 5 flips @1650, 8
   @1500, nothing else moved) and the corrected monitor default centre (1650 -> 1500,
   +18 % acquisitions). Ledger entry in docs/mode-validation.md (decode behaviour shipped).
-- **A3: the sim seam.** Turn the validated wild corpus into a maskable ARDOP sim baseline
-  (the rx-roadmap workstream 0 debt), so ARDOP joins the mask discipline the other modes have.
+- **A3: the sim seam.** Done (2026-08-08, section above). `ArdopFrameProbe` +
+  `ardop:<FrameName>` sim modes; the wild-relevant six-frame ladder measured at N=100 and
+  mask-pinned in both tiers; workstream 0's recorded gap closed. Open residue, named: the
+  ~2 % single-shot acquisition-capture ceiling (a leader re-arm candidate for a future
+  receiver leg), and the top rungs' fading floor (a waveform property, not a work item).
 
 ## Discipline (restated for this campaign)
 

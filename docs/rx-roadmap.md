@@ -221,10 +221,16 @@ holds it, and workstreams 5-7 below each need exactly this instrument to develop
 every non-FM mode the mode-generic rig can drive: the NinoTNC SSB lineage AND the FreeDV
 datac OFDM family (Tom's clarification: all non-FM PDN modems, not just NinoTNC modes).
 Deliberately absent, on the record: **ms110d-\*** keeps its own richer mask suite;
-**ardop** is a session TNC rather than a catalogue `IModem`, so the frame-layer rig cannot
-drive it - giving ARDOP a maskable sim seam is an open item of this workstream, not a
-finished exclusion; the FM modes wait for an FM-appropriate channel model (the impulse-noise
+the FM modes wait for an FM-appropriate channel model (the impulse-noise
 workstream is the natural place both arrive together).
+
+**Status 2026-08-08: the ARDOP gap is closed** - the ARDOP campaign's phase A3
+(docs/ardop/plan.md) landed `ArdopFrameProbe` (the `DatacPacketProbe` pattern applied to the
+session TNC's engine: library modulator -> shared Watterson rig -> fresh demodulator, scored
+payload byte-exact), driven as `sm-ota sim --mode ardop:<FrameName>` through the same
+`SimBench.RunPoint` the mask rows use. The wild-relevant frame ladder (4FSK.200.50S,
+4PSK.200.100S, 4FSK.500.100, 4PSK.500.100, 8PSK.500.100, 16QAM.500.100) is measured and
+mask-pinned in `WattersonMaskTests` alongside every other mode.
 
 ### 1. Soft-decision and erasure Reed-Solomon decoding (the big lever)
 
