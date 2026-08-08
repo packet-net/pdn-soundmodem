@@ -57,6 +57,13 @@ public sealed class QpskDemodulator
     private readonly FirFilter _lowPassI;
     private readonly FirFilter _lowPassQ;
     private readonly BitDpll _dpll;
+
+    /// <summary>Whether to interpolate the decision back to the clock's true instant. On only
+    /// where the samples-per-symbol ratio is not a whole number, which in this catalogue means
+    /// qpsk3600 alone (12 kHz / 1800 Bd = 6.667): the integer-ratio modes are measured to be flat
+    /// at high signal without it, and leaving their sample path bit-identical is worth more than
+    /// the consistency.</summary>
+    private readonly bool _interpolateSymbolInstant;
     private readonly PacketDcd _packetDcd = new();
     private readonly EnergyBusyDetector _energyBusy;
     private readonly PskDetector _detector;
@@ -80,6 +87,8 @@ public sealed class QpskDemodulator
     private int _previousAbsoluteQuadrant;
     private float _lastRe;
     private float _lastIm;
+    private float _previousRe;
+    private float _previousIm;
     private float _currentI;
     private float _currentQ;
     private double _referenceI;
@@ -160,6 +169,7 @@ public sealed class QpskDemodulator
 
         double delay = (double)sampleRate / baud;
         _delaySamples = delay;
+        _interpolateSymbolInstant = Math.Abs(delay - Math.Round(delay)) > 1e-9;
         _sampleRate = sampleRate;
         _delayWhole = (int)Math.Floor(delay);
         _delayFraction = (float)(delay - _delayWhole);
@@ -173,6 +183,28 @@ public sealed class QpskDemodulator
             quadrant =>
             {
                 SymbolPlotted?.Invoke(_lastRe, _lastIm);
+                // The clock can only wrap on a sample, so the emitting sample sits up to one
+                // sample late - which at qpsk3600's 6.667 samples per symbol is up to 0.15 of a
+                // symbol of timing error on the decision, six times coarser than any other mode
+                // in the catalogue. Interpolating the differential product back to the instant
+                // the clock actually asked for costs one lerp and removes that quantisation.
+                // (QtSoundModem reaches the same place from the other end: it interpolates every
+                // PSK mode up to exactly 40 samples per symbol before its sampler.)
+                // Differential only: this interpolates the DIFFERENTIAL PRODUCT, which is what
+                // the coherent path's _lastRe/_lastIm do not hold (they carry the Costas-tracked
+                // I/Q there, and its previous-sample twin is not maintained). Coherent is the
+                // cross-check variant, not the deployed one, and it stays byte-identical.
+                if (_interpolateSymbolInstant && _detector != PskDetector.Coherent)
+                {
+                    // The field is still being assigned as this lambda is constructed; nothing
+                    // reads it until audio flows, which is the same pattern BpskModem uses for
+                    // its deframer/demodulator knot.
+                    float f = (float)_dpll!.WrapOvershootSamples;
+                    float re = _lastRe - (f * (_lastRe - _previousRe));
+                    float im = _lastIm - (f * (_lastIm - _previousIm));
+                    quadrant = ((int)Math.Round(Math.Atan2(im, re) / (Math.PI / 2)) + 4) & 3;
+                }
+
                 // Coherent feeds the absolute quadrant; differentially decode against the
                 // previous symbol so the wire mapping (a phase change) is unchanged.
                 // Differential decides the symbol-instant sample against the
@@ -359,6 +391,8 @@ public sealed class QpskDemodulator
 
         // Held for the constellation tap: the DPLL fires its symbol sink synchronously
         // inside Sample() on wrap samples, so these are the wrap-instant values.
+        _previousRe = _lastRe;
+        _previousIm = _lastIm;
         _lastRe = re;
         _lastIm = im;
         _currentI = i;

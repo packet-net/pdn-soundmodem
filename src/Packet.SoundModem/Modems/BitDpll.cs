@@ -43,6 +43,22 @@ public sealed class BitDpll
         _symbolObserver = symbolObserver;
     }
 
+    /// <summary>
+    /// How far past the ideal symbol instant the sample that emitted the last symbol fell, in
+    /// samples (0 to 1). The clock's wrap can only land on a sample, so at coarse
+    /// samples-per-symbol ratios the emitting sample sits measurably late; this is by how much,
+    /// for a caller that can interpolate its decision back to the instant the clock actually
+    /// wanted. Only meaningful immediately inside the symbol sink.
+    /// </summary>
+    /// <remarks>
+    /// It matters most where the ratio is small or fractional. qpsk3600 runs 6.667 samples per
+    /// symbol at 12 kHz and is the only catalogue mode with a non-integer ratio; QtSoundModem
+    /// sidesteps the whole problem by interpolating every PSK mode up to exactly 40 samples per
+    /// symbol before its sampler (ax25_demod.c, make_core_INTR / decode_stream_QPSK), which is
+    /// the same fix arrived at from the other end.
+    /// </remarks>
+    public double WrapOvershootSamples { get; private set; }
+
     /// <summary>Advances the clock by one sample of sliced level (0/1).</summary>
     /// <param name="level">The sliced level at this sample.</param>
     /// <param name="crossingFraction">How far <b>before</b> this sample the underlying
@@ -59,6 +75,10 @@ public sealed class BitDpll
         _phase += _increment;
         if (_phase >= 0.5)
         {
+            // How far this sample overshot the wrap, expressed in samples: the clock wanted to
+            // sample that much earlier than now, and a caller with sub-sample resolution can act
+            // on it. Recorded before the wrap subtraction, and before the sink runs.
+            WrapOvershootSamples = (_phase - 0.5) / _increment;
             _phase -= 1.0;
             _bitSink(level);
             _symbolObserver?.Invoke();
