@@ -37,7 +37,16 @@ internal static class SimCommand
                                        12 kHz, scored payload byte-exact; --frame-bytes and
                                        --layer do not apply (the type fixes the payload).
                   --snr <a,b,c>        SNR rungs in dB (3 kHz), ascending
-                  --channel <list>     awgn|good|moderate|poor, comma-separated (default awgn)
+                  --channel <list>     awgn|good|moderate|poor|fm-mic|fm-data, comma-separated
+                                       (default awgn). The two fm-* channels put an FM mode
+                                       through a real FM link (modulate, noise on the carrier,
+                                       limit, discriminate) rather than the linear SSB path;
+                                       there --snr means carrier-to-noise ratio in the receiver
+                                       IF bandwidth, which is NOT the SSB modes' SNR3k and must
+                                       not be compared with it. fm-mic is a microphone/speaker
+                                       path (emphasis, 300-3000 Hz); fm-data is a data port
+                                       (flat, wide). Deviation comes from the mode, per
+                                       docs/mode-modulation-reference.md
                   --cfo <list>         carrier-offset Hz, comma-separated sweep axis (default 0)
                   --impulse <rate>     measured-calibrated QRN, broadband crashes per minute
                                        (0 off; the 40 m campaign's anchors: 120 = ordinary

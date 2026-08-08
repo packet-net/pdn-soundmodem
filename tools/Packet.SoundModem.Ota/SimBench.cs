@@ -110,8 +110,14 @@ internal static class SimBench
                     };
                     byte[] frame = SimModem.Frame(frameBytes, seed);
                     float[] active = sm.RenderBurst(frame, txDelayMs);
-                    float[] rx = SimChannel.Apply(active, sm.Rate, kind, snrDb, seed + 3_000_000, cfoHz: cfoHz,
-                        impulseRatePerMinute: impulseRatePerMinute);
+                    // An FM mode meets a real FM link - noise on the carrier, then a limiter and a
+                    // discriminator - rather than the linear SSB path, and its axis is CNR in the
+                    // IF bandwidth. The two channels are not interchangeable and neither are their
+                    // numbers, so the mode picks the physics rather than the caller.
+                    float[] rx = FmModes.IsFmChannel(kind)
+                        ? SimChannel.ApplyFm(active, sm.Rate, kind, mode, snrDb, seed + 3_000_000)
+                        : SimChannel.Apply(active, sm.Rate, kind, snrDb, seed + 3_000_000, cfoHz: cfoHz,
+                            impulseRatePerMinute: impulseRatePerMinute);
                     ScaleInPlace(rx, levelScale);
                     SimDecode d = sm.Decode(rx, frame);
                     int bits = frameBytes * 8;

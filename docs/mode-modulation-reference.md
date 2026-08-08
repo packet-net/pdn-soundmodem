@@ -6,14 +6,24 @@ How each NinoTNC-lineage mode is carried on the air, for the OTA test harness. S
 
 ## FM modulators (transmit via the Flex FM mode, at the targeted deviation)
 
-| NinoTNC mode | Tone/subcarrier Hz | **Tgt peak dev kHz** | NinoTNC switch | pdn `ModemCatalog` mode(s) |
-|---|---|---|---|---|
-| AFSK 1200 | 1248 | **3.0** | 0110, 0111 | `afsk1200` (+`-fx25`, `-fx25rx`, `-il2p`, `-il2p-nocrc`) |
-| GFSK 9600 | 999 | **2.4** | 0000, 0010 | `fsk9600` (+`-il2p`) |
-| GFSK 4800 | 500 | **1.2** | 0100 | `fsk4800-il2p` |
-| C4FSK 9600 | 1039 | **2.5** | 0011 | `c4fsk9600` |
-| C4FSK 19200 | 2079 | **5.0** | 0001, 0101 | `c4fsk19200` |
-| **QPSK 3600** | 2079 | **5.0** | 0001, 0101 | `qpsk3600` - QPSK audio over FM (shares the C4FSK 19200 modulator) |
+| NinoTNC mode | Tone/subcarrier Hz | **Tgt peak dev kHz** | **Channel** | NinoTNC switch | pdn `ModemCatalog` mode(s) |
+|---|---|---|---|---|---|
+| AFSK 1200 | 1248 | **3.0** | narrow (12.5) | 0110, 0111 | `afsk1200` (+`-fx25`, `-fx25rx`, `-il2p`, `-il2p-nocrc`) |
+| GFSK 9600 | 999 | **2.4** | wide (25) | 0000, 0010 | `fsk9600` (+`-il2p`) |
+| GFSK 4800 | 500 | **1.2** | narrow (12.5) | 0100 | `fsk4800-il2p` |
+| C4FSK 9600 | 1039 | **2.5** | narrow (12.5) | 0011 | `c4fsk9600` |
+| C4FSK 19200 | 2079 | **5.0** | wide (25) | 0001, 0101 | `c4fsk19200` |
+| **QPSK 3600** | 2079 | **5.0** | wide (25) | 0001, 0101 | `qpsk3600` - QPSK audio over FM (shares the C4FSK 19200 modulator) |
+
+**Channel spacing is part of the mode, not an operator preference** (Tom, 2026-08-08, from
+MMDVM-TNC and NinoTNC practice: C4FSK 9600 is the narrow-channel mode, C4FSK 19200 the wide one).
+It sets the receiver's IF filter - roughly 8 kHz on 12.5 kHz spacing, 16 kHz on 25 kHz - and a
+mode run on the wrong one has its own sidebands truncated. Measured through the FM channel model
+(`sm-ota sim --channel fm-data`, 2026-08-08): `fsk9600` on its proper wide channel knees at about
++10.5 dB CNR, and on a narrow one at about +15 dB. **4.5 dB is what the wrong channel costs**, and
+it is invisible unless the spacing is stated with the number. `c4fsk9600` pays about 1.8 dB for
+being a narrow-channel mode (knee ~19.5 dB narrow against ~17.7 dB wide), which is the price of
+fitting - it does work there, which is the point of it.
 
 ## SSB modulators (transmit via SSB/DIGU - the DAX route the harness already drives)
 

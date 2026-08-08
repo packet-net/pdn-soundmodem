@@ -135,8 +135,18 @@ mechanism, and a ledger entry when a mode's status changes.
   Carrillo's involvement means our NinoTNC interop record is a credential. **(b)** Preservation:
   done 2026-08-08 (see Provenance). *Exit: a reply, or a recorded non-reply after a fair
   interval.*
-- **O1: the FM channel model** (rx-roadmap workstream 6 item 6). Pays regardless of what O0
-  returns: it unblocks masks for `afsk1200`, `fsk9600`, `c4fsk9600` and `qpsk3600` as well, and
+- **O1: the FM channel model - DONE 2026-08-08** (rx-roadmap workstream 6 item 6, which carries
+  the measured ladders). `FmChannel` models the link physically - modulate, noise on the carrier,
+  limit, discriminate - so the threshold effect, the discriminator's rising noise spectrum, IF
+  truncation, emphasis and deviation error all emerge rather than being asserted. Two results
+  bear directly on OFDM-AB. The **rising noise spectrum** means its top subcarriers are
+  measurably noisier than its bottom ones, so a per-subcarrier SNR tilt is a design fact and not
+  a detail; masking OFDM-AB against flat AWGN would have measured the wrong thing. And **IF
+  truncation puts a distortion floor under a noiseless link** (third harmonic ~-25 dB on an 8 kHz
+  filter at full deviation), which is the ceiling QAM-256 meets before it meets noise. The
+  microphone path is now modelled explicitly, and the model reproduces unprompted the reason
+  9600 baud packet needs a data port - which is the same wall OFDM-AB's narrowband profiles are
+  drawn to avoid. Original rationale, kept because it still holds: it unblocks masks for `afsk1200`, `fsk9600`, `c4fsk9600` and `qpsk3600` as well, and
   it is a prerequisite for any honest OFDM-AB number. Calibrate against real radios where we can
   (the FM deviation instrument `sm-ota fm-deviation` exists, and the mode-modulation reference
   records per-mode peak-deviation targets). *Exit: an FM channel axis on the Watterson rig, its

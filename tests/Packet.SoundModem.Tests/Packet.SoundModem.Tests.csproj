@@ -17,6 +17,7 @@
          stays here because this is where it belongs and where it is maintained. -->
     <Compile Remove="Channel/WattersonChannel.cs" />
     <Compile Remove="Channel/ImpulseNoise.cs" />
+    <Compile Remove="Channel/FmChannel.cs" />
   </ItemGroup>
 
   <ItemGroup>

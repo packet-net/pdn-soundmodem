@@ -532,6 +532,48 @@ effort:
 6. **An FM channel model** - deviation error, emphasis mismatch, discriminator noise,
    flutter. Its own track, and the gate on masks for the FM modes.
 
+   **Status 2026-08-08: built, validated and masking.** `FmChannel` is a physical link rather
+   than a curve fit: the modem's audio really is frequency-modulated onto a carrier, noise is
+   added *there*, and a limiter and discriminator bring it back. Every FM impairment then
+   emerges instead of being asserted - the threshold effect, the discriminator's rising noise
+   spectrum, IF truncation, emphasis, deviation error and flutter. `FmChannelTests` pins them as
+   physics (below the knee the output falls away faster per dB than above it; noise power rises
+   with the square of audio frequency and de-emphasis flattens it; under-deviation costs output
+   SNR; a microphone path will not pass 4 kHz). The axis is **carrier-to-noise ratio in the
+   receiver IF bandwidth**, deliberately not SNR3k: the two are different quantities and moving
+   a number between them would be wrong. Driven as `sm-ota sim --channel fm-mic|fm-data`, each
+   mode on the channel spacing it is deployed on.
+
+   First measured FM ladders (N=50, seed 1, TXDELAY 150 ms, 50 % knees):
+
+   | mode | channel | path | knee |
+   |---|---|---|---|
+   | `afsk1200-il2p` | 12.5 kHz | mic + speaker | ~+8 dB |
+   | `afsk1200-il2p` | 12.5 kHz | data port | ~+7.5 dB |
+   | `fsk9600-il2p` | 25 kHz | data port | ~+10.5 dB |
+   | `fsk9600-il2p` | 25 kHz | mic + speaker | **never** - 0/50 at +15, +21 and +27 |
+   | `c4fsk9600` | 12.5 kHz | data port | ~+19.5 dB |
+   | `c4fsk9600` | 25 kHz | data port | ~+17.7 dB |
+   | `c4fsk19200` | 25 kHz | data port | ~+16.5 dB |
+
+   Three results worth keeping. **The model reproduces the reason 9600 packet needs a data
+   port** without being told: 9600 GFSK through a 300-3000 Hz emphasised microphone path decodes
+   nothing at any signal level, a well-known operational fact falling straight out of a
+   passband. **The channel spacing is worth 4.5 dB**: `fsk9600` first measured a ~15 dB knee
+   because it was run on a narrow channel, and moved to ~10.5 dB on the wide channel it is
+   actually deployed on - so an FM number without its spacing is meaningless, and
+   mode-modulation-reference.md now records the spacing per mode. **A noiseless FM link is not
+   arbitrarily clean**: full deviation on a low tone spreads sidebands past a narrow IF filter,
+   and symmetric truncation comes back as odd-order distortion (third harmonic ~-25 dB on an
+   8 kHz filter) - a ceiling any dense constellation meets before it meets noise, and the first
+   thing OFDM-AB's QAM-256 rung will run into.
+
+   Masks: five blocking FM rows plus the microphone-path negative in `WattersonMaskTests`, smoke
+   tier still ~40 s. What this does not yet have is calibration against a real radio: the
+   numbers are the model's, and the `sm-ota ladder` FM route over the Flex/RSP1 rig is the
+   instrument that would tie them to hardware. Until that runs, an FM mask means "no regression
+   against the model", exactly as workstream 0 says of the Watterson masks.
+
 ### 7. Per-station acquisition priors
 
 The daemon hears the same handful of stations all day. Cache each station's measured carrier

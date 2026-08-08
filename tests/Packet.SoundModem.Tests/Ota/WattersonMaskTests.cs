@@ -119,6 +119,62 @@ public class WattersonMaskTests(ITestOutputHelper output)
             mode, channel, snrDb, cfoHz);
     }
 
+    // ------------------------------------------------------------------------------------
+    // FM link tier - blocking. The FM modes measured through a real FM link (modulate, noise on
+    // the carrier, limit, discriminate) rather than the linear SSB path, so the axis is
+    // carrier-to-noise ratio in the receiver IF bandwidth and these numbers are NOT comparable
+    // with the SNR3k rows above. Each mode runs on the channel spacing it is deployed on:
+    // AFSK 1200 and C4FSK 9600 narrow, GFSK 9600 and C4FSK 19200 wide.
+    // Measured 2026-08-08, N=50, seed 1, TXDELAY 150 ms.
+    // ------------------------------------------------------------------------------------
+
+    // Every row sits ABOVE its mode's knee, on the flat, and that is deliberate. The first cut of
+    // this tier pinned fsk9600 at +12 dB, which the ladder shows is the steepest part of an FM
+    // cliff (22 % at +9, 90 % at +12, 100 % at +15) - it passed here and failed in CI, because a
+    // point on a cliff measures the machine's floating point as much as the modem. Knees belong in
+    // the ladder tables in rx-roadmap.md; masks belong where the curve is flat.
+    [Theory]
+    [InlineData("afsk1200-il2p", "fm-mic", 15.0, 20, 25)]    // measured 24/25 - and the whole
+                                                             // point of AFSK 1200: it works
+                                                             // through a microphone and speaker
+    [InlineData("afsk1200-il2p", "fm-data", 12.0, 21, 25)]   // measured 25/25
+    [InlineData("fsk9600-il2p", "fm-data", 15.0, 21, 25)]    // measured 25/25
+    [InlineData("c4fsk9600", "fm-data", 24.0, 21, 25)]       // measured 25/25 on its narrow
+                                                             // channel; the same mode on wide
+                                                             // is ~1.8 dB better, which is what
+                                                             // narrow costs it
+    [InlineData("c4fsk19200", "fm-data", 24.0, 21, 25)]      // measured 25/25
+    public void Fm_Smoke_Mask_Holds(
+        string mode, string channel, double cnrDb, int floor, int bursts)
+    {
+        SimPointResult result = Point(
+            mode, SimChannel.Parse(channel), cnrDb, bursts: bursts, txDelayMs: 150);
+
+        result.Successes.Should().BeGreaterThanOrEqualTo(
+            floor,
+            "the {0} FM mask at {1} {2} dB CNR is measured reality - a miss this deep is a "
+            + "receive-path or channel-model regression, and either way it moves only with a "
+            + "mode-validation.md entry",
+            mode, channel, cnrDb);
+    }
+
+    /// <summary>
+    /// The negative that defines the microphone path: 9600 baud GFSK cannot pass through one at
+    /// any signal level, because a 300-3000 Hz emphasised voice channel does not carry it. This is
+    /// why every 9600 packet station needs a data port, and the model reproduces it from the
+    /// passband alone rather than being told.
+    /// </summary>
+    [Fact]
+    public void Fast_Fsk_Cannot_Pass_Through_A_Microphone_Path()
+    {
+        SimPointResult result = Point(
+            "fsk9600-il2p", SimChannel.Parse("fm-mic"), 27.0, bursts: 10, txDelayMs: 150);
+
+        result.Successes.Should().Be(0,
+            "measured 0/50 at 15, 21 and 27 dB CNR - if this ever decodes, either the audio path "
+            + "limits moved or the model stopped modelling them");
+    }
+
     [Fact]
     public void Fsk9600_Smoke_Mask_Holds()
     {
