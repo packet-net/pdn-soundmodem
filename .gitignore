@@ -12,3 +12,8 @@ artifacts/
 corpus/
 .claude/
 .test.sh
+
+# OFDM-AB waveform geometry. The real parameters are not ours to publish - see
+# src/Packet.SoundModem/Modems/OfdmAb/OfdmAbParameters.cs. Keep them here, untracked.
+ofdm-ab.local.json
+**/ofdm-ab.local.json
