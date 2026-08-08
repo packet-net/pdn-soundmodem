@@ -79,8 +79,17 @@ public sealed class BpskDemodulator
     private readonly FirFilter _lowPassQ;
     private readonly BitDpll _dpll;
     private readonly MlseEqualiser? _mlse;
+    private readonly CrashMarker _crashMarker;
+    // Raw-time crash flags, one per symbol, consumed with the matched filter's group
+    // delay: the flag ring is written at raw time and read 4-8 symbols later, because a
+    // symbol DECIDED now was filtered from raw input centred six symbols ago - marks
+    // consumed undelayed erased the fine bytes just ahead of the damage and left the
+    // damaged ones as over-cap errors (measured as an exact zero-point recovery).
+    private readonly bool[] _crashFlagRing = new bool[16];
     private readonly Action<int> _bitSink;
     private readonly Action<int, float>? _softBitSink;
+    private bool _crashInSymbol;
+    private int _crashRingHead;
     private readonly PacketDcd _packetDcd = new();
     private readonly EnergyBusyDetector _energyBusy;
     private readonly PskDetector _detector;
@@ -153,7 +162,7 @@ public sealed class BpskDemodulator
         _softBitSink = softBitSink;
         if (detector == PskDetector.Mlse)
         {
-            _mlse = new MlseEqualiser(EmitBit);
+            _mlse = new MlseEqualiser((bit, margin) => EmitBit(bit, margin));
         }
 
         // QtSoundModem's P300 band-pass, scaled by symbol rate: ±baud about the carrier (which
@@ -188,6 +197,7 @@ public sealed class BpskDemodulator
         _sampleRate = sampleRate;
 
         int samplesPerSymbol = sampleRate / baud;
+        _crashMarker = new CrashMarker(sampleRate, samplesPerSymbol);
         _delayI = new float[samplesPerSymbol];
         _delayQ = new float[samplesPerSymbol];
         _dpll = new BitDpll(
@@ -216,6 +226,10 @@ public sealed class BpskDemodulator
                         _mlse!.OnRotationSeeded();
                     }
 
+                    // Crash marks are not applied to MLSE bits: they emerge a traceback
+                    // (16 symbols) later, so a mark set now would land on the wrong bits,
+                    // and the trellis margins already collapse across a jammed span.
+                    _crashInSymbol = false;
                     _mlse!.Push(_currentI, _currentQ, _seededRotation, _rotationSeeded);
                     return;
                 }
@@ -234,7 +248,16 @@ public sealed class BpskDemodulator
                     magnitude = (float)Math.Abs(projection);
                 }
 
-                EmitBit(decided, magnitude);
+                _crashFlagRing[_crashRingHead] = _crashInSymbol;
+                _crashInSymbol = false;
+                bool crashMarked = false;
+                for (int back = 4; back <= 8; back++)
+                {
+                    crashMarked |= _crashFlagRing[(_crashRingHead - back + 16) & 15];
+                }
+
+                _crashRingHead = (_crashRingHead + 1) & 15;
+                EmitBit(decided, magnitude, crashMarked);
             },
             inertia: detector == PskDetector.Coherent ? 0.74 : DifferentialInertia,
             transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
@@ -314,6 +337,10 @@ public sealed class BpskDemodulator
         _trackedRotation = 0;
         _rotationSeeded = false;
         _confidenceMean = 0;
+        _crashMarker.Reset();
+        _crashInSymbol = false;
+        Array.Clear(_crashFlagRing);
+        _crashRingHead = 0;
         _mlse?.Reset();
     }
 
@@ -324,6 +351,19 @@ public sealed class BpskDemodulator
         {
             float filtered = _bandPass.Next(sample);
             _energyBusy.Process(filtered);
+            // The marker feeds on the RAW sample, not the band-passed one: a static
+            // crash is broadband, and its ~18 dB prominence over the broadband floor is
+            // exactly what the band-pass strips (in-band, a median crash stands under 2x
+            // over the signal-bearing envelope at the Reed-Solomon knee - measured as a
+            // 0-point recovery when this fed on `filtered`). Same lesson as the impulse
+            // instrument: detect broadband events broadband. On multi-slot audio a
+            // foreign burst's onset can mark a few symbols; marks only steer failed-block
+            // erasure retries, so the cost is a wasted retry rung, not a decode.
+            if (_crashMarker.Update(Math.Abs(sample)))
+            {
+                _crashInSymbol = true;
+            }
+
             if (_detector == PskDetector.Coherent)
             {
                 ProcessCoherent(filtered);
@@ -518,12 +558,24 @@ public sealed class BpskDemodulator
     /// (DF-DD projection, coherent amplitude, or MLSE traceback margin) against a slow
     /// running mean of itself (~500 symbols), squashed into (0, 1). Only the ordering
     /// matters downstream - a fade drops whole bytes to the bottom of the ranking, which is
-    /// exactly what erasure decoding wants flagged.</summary>
-    private void EmitBit(int decided, float magnitude)
+    /// exactly what erasure decoding wants flagged. A crash-marked bit (the
+    /// <see cref="CrashMarker"/> saw a static crash hit its symbol) goes straight to zero
+    /// confidence and is kept out of the running mean: the crash's decision magnitude is
+    /// the CRASH's energy, not evidence, and a marked byte at the bottom of the ranking is
+    /// exactly the located damage the Reed-Solomon erasure ladder converts at two-for-one
+    /// (workstream 6 leg 2 - the information the blanker experiment proved detectable but
+    /// could not repair in place).</summary>
+    private void EmitBit(int decided, float magnitude, bool crashMarked = false)
     {
         _bitSink(decided);
         if (_softBitSink is null)
         {
+            return;
+        }
+
+        if (crashMarked)
+        {
+            _softBitSink(decided, 0f);
             return;
         }
 
