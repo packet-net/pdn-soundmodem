@@ -201,6 +201,14 @@ internal static class LadderCommand
     {
         string outPath = a.Str("out", "ladder-dryrun.wav");
         double gap = a.Dbl("gap", 3);
+        string freqMHz = a.Str("freq", "18.106500");
+        string? supplyNote = a.Str("supply", null);
+
+        // Every flag the dry-run path reads has now been touched (RunAsync already read the
+        // rest before dispatching here) - reject anything left over before a single frame is
+        // written, not after the file already holds the wrong experiment.
+        a.RejectUnknown("ladder");
+
         int gapFrames = (int)(gap * rate);
         var random = new Random(1);
         var starts = new List<double>();
@@ -247,14 +255,14 @@ internal static class LadderCommand
             ModemRevision: CampaignFiles.ModemRevision(),
             WrittenUtc: DateTimeOffset.UtcNow,
             Radio: "none (rehearsal)",
-            FrequencyMHz: a.Str("freq", "18.106500"),
+            FrequencyMHz: freqMHz,
             RfPower: null,
             PassGain: gain,
             DialCorrectionHz: 0,
             CapturePath: Path.GetFileName(outPath),
             CaptureSha256: CampaignFiles.Sha256(outPath),
             BurstStartSeconds: burstTimes,
-            SupplyNote: a.Str("supply", null)));
+            SupplyNote: supplyNote));
 
         Console.Error.WriteLine($"wrote {outPath}: {frames} frames, {frames / (double)rate:F1} s");
         Console.Error.WriteLine($"wrote {manifestPath} (modem {CampaignFiles.ModemRevision()})");
@@ -317,11 +325,49 @@ internal static class LadderCommand
             IdMode = "MS110D",
         };
 
+        bool antennaGiven = a.Has("antenna");
+        double gap = a.Dbl("gap", 3);
+        double dialCorrectionHz = a.Dbl("dial-correction", 0);
+        string outDir = a.Str("out-dir", ".");
+        string? supplyNote = a.Str("supply", null);
+
+        // Capture backend selection, read up front - whichever branch below runs, every flag it
+        // could touch is read here first, so a mistyped or unsupported capture flag is caught
+        // before the radio is connected to and before any RF goes out, not after.
+        string? rspHost = null;
+        string? rspSshKey = null;
+        int? rspFreqOverride = null;
+        int rspRate = 96000;
+        string rspGain = RspIqClient.DefaultGain;
+        string? capHost = null;
+        int capturePort = 443;
+        if (captureRsp)
+        {
+            rspHost = a.Str("rsp-host", "studybox");
+            rspSshKey = ExpandUser(a.Str("rsp-ssh-key", "~/.ssh/id_ed25519"));
+            rspFreqOverride = a.Has("rsp-freq") ? a.Int("rsp-freq", 0) : null;
+            rspRate = a.Int("rsp-rate", 96000);
+            rspGain = a.Str("rsp-gain", RspIqClient.DefaultGain);
+        }
+        else
+        {
+            capHost = a.Str("capture-host", null);
+            if (capHost is not null)
+            {
+                capturePort = a.Int("capture-port", 443);
+            }
+        }
+
+        // Every flag this live path recognises has now been read (RunAsync already read the
+        // rest before dispatching here) - reject anything left over before the radio is even
+        // connected to, so a mistyped flag cannot key a transmitter into the wrong experiment.
+        a.RejectUnknown("ladder");
+
         void Log(string m) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] {m}");
 
         Log($"transmit antenna: {options.Antenna}"
-            + (captureRsp && !a.Has("antenna") ? "  (defaulted to ANT2 for the RSP1 capture rig)" : "")
-            + (captureRsp && a.Has("antenna") && options.Antenna != "ANT2"
+            + (captureRsp && !antennaGiven ? "  (defaulted to ANT2 for the RSP1 capture rig)" : "")
+            + (captureRsp && antennaGiven && options.Antenna != "ANT2"
                 ? "  *** WARNING: RSP1 capture is on ANT2 - transmitting on a different port records nothing ***"
                 : ""));
         if (maxWatts is double mw)
@@ -329,8 +375,6 @@ internal static class LadderCommand
             Log($"transmit power ceiling: {mw:F1} W measured (rfpower level capped at {options.RfPowerCeiling}) "
                 + "- the interlock aborts any burst that exceeds it");
         }
-
-        double gap = a.Dbl("gap", 3);
 
         // The route selector picks the transmitter; everything downstream - capture, timing,
         // manifest - is route-independent and runs against the IOtaTransmitter seam. The DAX route
@@ -352,13 +396,13 @@ internal static class LadderCommand
         {
             var rspOpt = new RspCaptureOptions
             {
-                Host = a.Str("rsp-host", "studybox"),
-                SshKeyPath = ExpandUser(a.Str("rsp-ssh-key", "~/.ssh/id_ed25519")),
-                FrequencyHz = a.Int("rsp-freq", (int)Math.Round(centreHz + a.Dbl("dial-correction", 0))),
-                SampleRate = a.Int("rsp-rate", 96000),
-                Gain = a.Str("rsp-gain", RspIqClient.DefaultGain),
+                Host = rspHost!,
+                SshKeyPath = rspSshKey!,
+                FrequencyHz = rspFreqOverride ?? (int)Math.Round(centreHz + dialCorrectionHz),
+                SampleRate = rspRate,
+                Gain = rspGain,
                 Name = $"ladder-wn{rendered[0].Point.WaveformNumber}",
-                OutputDir = a.Str("out-dir", "."),
+                OutputDir = outDir,
                 DurationSeconds = (int)Math.Ceiling(captureSeconds),
             };
             Log($"capture: RSP1 on {rspOpt.Host} at {rspOpt.FrequencyHz} Hz, {rspOpt.SampleRate} S/s, "
@@ -369,15 +413,15 @@ internal static class LadderCommand
             // the stream running past its guard, not be exact.
             await Task.Delay(TimeSpan.FromSeconds(4)).ConfigureAwait(false);
         }
-        else if (a.Str("capture-host", null) is { } host)
+        else if (capHost is not null)
         {
             var capOpt = new UberSdrCaptureOptions
             {
-                Host = host,
-                Port = a.Int("capture-port", 443),
-                FrequencyHz = (int)Math.Round(centreHz + a.Dbl("dial-correction", 0)),
+                Host = capHost,
+                Port = capturePort,
+                FrequencyHz = (int)Math.Round(centreHz + dialCorrectionHz),
                 Name = $"ladder-wn{rendered[0].Point.WaveformNumber}",
-                OutputDir = a.Str("out-dir", "."),
+                OutputDir = outDir,
                 DurationSeconds = (int)Math.Ceiling(captureSeconds),
             };
             capturing = new UberSdrIqClient(m => Log($"[rx] {m}")).CaptureAsync(capOpt, cts.Token);
@@ -437,7 +481,7 @@ internal static class LadderCommand
         }
 
         string manifestPath = Path.Combine(
-            a.Str("out-dir", "."), Path.GetFileNameWithoutExtension(result.WavPath) + ".manifest.json");
+            outDir, Path.GetFileNameWithoutExtension(result.WavPath) + ".manifest.json");
         CampaignFiles.Save(manifestPath, new CampaignManifest(
             Schedule: schedule with { Bursts = [.. schedule.Bursts.Take(keyed.Count)] },
             ModemRevision: CampaignFiles.ModemRevision(),
@@ -448,13 +492,13 @@ internal static class LadderCommand
             // The pass level that actually reached the radio: the audio gain on the DAX route, the
             // IQ gain on the waveform route.
             PassGain: route == LadderRoute.Dax ? pass.AudioGain : pass.Gain,
-            DialCorrectionHz: a.Dbl("dial-correction", 0),
+            DialCorrectionHz: dialCorrectionHz,
             CapturePath: Path.GetFileName(result.WavPath),
             CaptureSha256: result.WavSha256,
             CaptureSample0Utc: result.Sample0Utc,
-            ReceiverHost: captureRsp ? a.Str("rsp-host", "studybox") : a.Str("capture-host", null),
+            ReceiverHost: captureRsp ? rspHost : capHost,
             BurstStartSeconds: [.. burstStarts],
-            SupplyNote: a.Str("supply", null)));
+            SupplyNote: supplyNote));
 
         Console.Error.WriteLine();
         Console.Error.WriteLine($"wrote {manifestPath} (modem {CampaignFiles.ModemRevision()})");

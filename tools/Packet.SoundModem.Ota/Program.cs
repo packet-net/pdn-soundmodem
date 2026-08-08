@@ -216,6 +216,27 @@ internal static class Commands
         int captureSeconds = (int)Math.Ceiling(
             seconds + idSeconds + (preflight ? 6 : 2) + 8);
 
+        bool dumpMeters = a.Has("dump-meters");
+        double observeSeconds = a.Dbl("observe", 0);
+        bool captureSsl = true;
+        int capturePort = 443;
+        int? captureFreqOverride = null;
+        string captureName = "otatone";
+        string outDir = ".";
+        if (captureHost is not null)
+        {
+            captureSsl = !a.Has("capture-no-ssl");
+            capturePort = a.Int("capture-port", captureSsl ? 443 : 80);
+            captureFreqOverride = a.Has("capture-freq") ? a.Int("capture-freq", 0) : null;
+            captureName = a.Str("capture-name", "otatone");
+            outDir = a.Str("out-dir", ".");
+        }
+
+        // Every flag tone recognises has now been read - reject anything left over before the
+        // radio is even connected to, so a mistyped flag cannot key a transmitter into running
+        // the wrong experiment.
+        a.RejectUnknown("tone");
+
         await using FlexIqTransmitter tx = await FlexIqTransmitter.OpenAsync(options, Log);
 
         // Read back what the radio thinks it is doing - a deaf transmitter cannot confirm its
@@ -234,7 +255,7 @@ internal static class Commands
         // received and discarded by our class filter rather than never sent at all.
         var vitaTally = new Dictionary<(ushort Class, uint Stream), long>();
         var vitaGate = new Lock();
-        if (a.Has("dump-meters"))
+        if (dumpMeters)
         {
             tx.Client.VitaPacketReceived += p =>
             {
@@ -246,7 +267,7 @@ internal static class Commands
             };
         }
 
-        if (a.Has("dump-meters"))
+        if (dumpMeters)
         {
             Console.WriteLine($"{tx.Meters.Descriptors.Count} meters described after bring-up:");
             foreach (FlexMeterDescriptor d in tx.Meters.Descriptors.Values.OrderBy(d => d.Id))
@@ -260,7 +281,6 @@ internal static class Commands
         using var captureCts = new CancellationTokenSource();
         if (captureHost is not null)
         {
-            bool ssl = !a.Has("capture-no-ssl");
             // Tune the receiver to the BAND REFERENCE (--freq, where baseband 0 Hz lands), not
             // to the tone. That puts the tone at +tone-hz, any residual image at −tone-hz, and
             // LO/carrier leakage at +obw (the DERIVED slice sits at the top of the placed
@@ -271,11 +291,11 @@ internal static class Commands
             var capOpt = new UberSdrCaptureOptions
             {
                 Host = captureHost,
-                Port = a.Int("capture-port", ssl ? 443 : 80),
-                Ssl = ssl,
-                FrequencyHz = a.Int("capture-freq", (int)Math.Round(centreHz)),
-                Name = a.Str("capture-name", "otatone"),
-                OutputDir = a.Str("out-dir", "."),
+                Port = capturePort,
+                Ssl = captureSsl,
+                FrequencyHz = captureFreqOverride ?? (int)Math.Round(centreHz),
+                Name = captureName,
+                OutputDir = outDir,
                 DurationSeconds = captureSeconds,
             };
             Log($"capture: {capOpt.Host} at {capOpt.FrequencyHz} Hz for {captureSeconds} s");
@@ -302,10 +322,10 @@ internal static class Commands
             Report(report, tx);
             mainBurst = report;
 
-            if (a.Dbl("observe", 0) is var observe && observe > 0)
+            if (observeSeconds > 0)
             {
-                Log($"observing the radio for {observe:F0} s after unkey…");
-                await tx.ObserveAfterTransmitAsync(observe);
+                Log($"observing the radio for {observeSeconds:F0} s after unkey…");
+                await tx.ObserveAfterTransmitAsync(observeSeconds);
             }
 
             lock (vitaGate)
@@ -402,20 +422,30 @@ internal static class Commands
             Identify = !a.Has("no-id"),
         };
 
-        await using FlexIqTransmitter tx = await FlexIqTransmitter.OpenAsync(options, Log);
-
         string captureHost = a.Req("capture-host");
         bool ssl = !a.Has("capture-no-ssl");
+        int capturePort = a.Int("capture-port", ssl ? 443 : 80);
+        int captureFreq = a.Int("capture-freq",
+            (int)Math.Round(double.Parse(freq, CultureInfo.InvariantCulture) * 1e6));
+        string captureName = a.Str("capture-name", "otasweep");
+        string outDir = a.Str("out-dir", ".");
+
+        // Every flag sweep recognises has now been read - reject anything left over before the
+        // radio is even connected to, so a mistyped flag cannot key a transmitter into running
+        // the wrong experiment.
+        a.RejectUnknown("sweep");
+
+        await using FlexIqTransmitter tx = await FlexIqTransmitter.OpenAsync(options, Log);
+
         int captureSeconds = (int)Math.Ceiling((steps.Length * (seconds + gap)) + 14);
         var capOpt = new UberSdrCaptureOptions
         {
             Host = captureHost,
-            Port = a.Int("capture-port", ssl ? 443 : 80),
+            Port = capturePort,
             Ssl = ssl,
-            FrequencyHz = a.Int("capture-freq",
-                (int)Math.Round(double.Parse(freq, CultureInfo.InvariantCulture) * 1e6)),
-            Name = a.Str("capture-name", "otasweep"),
-            OutputDir = a.Str("out-dir", "."),
+            FrequencyHz = captureFreq,
+            Name = captureName,
+            OutputDir = outDir,
             DurationSeconds = captureSeconds,
         };
         Log($"capture: {capOpt.Host} at {capOpt.FrequencyHz} Hz for {captureSeconds} s");
@@ -520,6 +550,10 @@ internal static class Commands
         string antenna = a.Str("antenna", "ANT1");
         string mode = a.Str("mode", "DIGU");
 
+        // Every flag tune recognises has now been read - reject anything left over before the
+        // radio is even connected to.
+        a.RejectUnknown("tune");
+
         Log($"connecting to '{radio}'…");
         M0LTE.Flex.FlexClient client = string.Equals(radio, "discover", StringComparison.OrdinalIgnoreCase)
             ? await M0LTE.Flex.FlexClient.DiscoverAndConnectAsync("", TimeSpan.FromSeconds(10))
@@ -615,9 +649,17 @@ internal static class Commands
             return a is null ? 2 : 0;
         }
 
-        await RawMeterProbe.RunAsync(
-            a.Req("radio"), a.Str("freq", "18.106500"), a.Str("antenna", "ANT1"),
-            a.Int("rf-power", 10), a.Dbl("seconds", 3), Log);
+        string radio = a.Req("radio");
+        string freq = a.Str("freq", "18.106500");
+        string antenna = a.Str("antenna", "ANT1");
+        int rfPower = a.Int("rf-power", 10);
+        double seconds = a.Dbl("seconds", 3);
+
+        // Every flag rawmeters recognises has now been read - reject anything left over before
+        // this keys a tune carrier.
+        a.RejectUnknown("rawmeters");
+
+        await RawMeterProbe.RunAsync(radio, freq, antenna, rfPower, seconds, Log);
         return 0;
     }
 
@@ -634,6 +676,12 @@ internal static class Commands
 
         string radio = a.Str("radio", "10.45.0.76");
         string? filter = a.Str("filter", null);
+        string? setCommand = a.Str("set", null);
+
+        // Every flag radio recognises has now been read - reject anything left over before the
+        // radio is even connected to.
+        a.RejectUnknown("radio");
+
         M0LTE.Flex.FlexClient client = string.Equals(radio, "discover", StringComparison.OrdinalIgnoreCase)
             ? await M0LTE.Flex.FlexClient.DiscoverAndConnectAsync("", TimeSpan.FromSeconds(10))
             : await M0LTE.Flex.FlexClient.ConnectAsync(radio);
@@ -648,7 +696,7 @@ internal static class Commands
                 }
             };
 
-            if (a.Str("set", null) is string setCommand)
+            if (setCommand is not null)
             {
                 M0LTE.Flex.FlexResult r = await client.SendCommandAsync(setCommand);
                 Console.WriteLine($"'{setCommand}' -> error 0x{r.Error:X8} {r.Message}");
@@ -694,6 +742,10 @@ internal static class Commands
         double seconds = a.Dbl("seconds", 5);
         bool all = a.Has("all");
         bool dumpStatus = a.Has("dump-status");
+
+        // Every flag meters recognises has now been read - reject anything left over before
+        // the radio is even connected to.
+        a.RejectUnknown("meters");
 
         Log($"connecting to '{radio}'…");
         M0LTE.Flex.FlexClient client = string.Equals(radio, "discover", StringComparison.OrdinalIgnoreCase)
@@ -790,12 +842,20 @@ internal static class Commands
         // software can be cleared (or convicted) without involving a radio at all.
         if (a.Has("tone-hz"))
         {
+            double toneHz = a.Dbl("tone-hz", 2000);
+            double toneAmplitude = a.Dbl("amplitude", 0.9);
+            double toneSeconds = a.Dbl("seconds", 30);
+            string toneOut = a.Str("out", "synth-tone.wav");
+
+            // Every flag this branch reads is now touched - reject anything left over before
+            // the WAV is written.
+            a.RejectUnknown("synth");
+
             float[] toneIq = ToneGenerator.Complex(
-                [a.Dbl("tone-hz", 2000)], a.Dbl("amplitude", 0.9), a.Dbl("seconds", 30), rate,
-                rampSeconds: 0.005);
-            WriteIqWav(a.Str("out", "synth-tone.wav"), toneIq, rate);
-            Console.Error.WriteLine($"tone {a.Dbl("tone-hz", 2000):F0} Hz, {toneIq.Length / 2} complex @ {rate} Hz");
-            Console.WriteLine(a.Str("out", "synth-tone.wav"));
+                [toneHz], toneAmplitude, toneSeconds, rate, rampSeconds: 0.005);
+            WriteIqWav(toneOut, toneIq, rate);
+            Console.Error.WriteLine($"tone {toneHz:F0} Hz, {toneIq.Length / 2} complex @ {rate} Hz");
+            Console.WriteLine(toneOut);
             return 0;
         }
 
@@ -804,8 +864,15 @@ internal static class Commands
         var interleaver = Ms110dInterleaverKind.Short;
         int defaultBits = Ms110dInterleaverParams.Get3k(wn, interleaver).InputBits - 32;
         int payloadBits = a.Int("payload-bits", 0) is var pb && pb > 0 ? pb : defaultBits;
+        int seed = a.Int("seed", 1);
+        double amplitude = a.Dbl("amplitude", 0.9);
+        string outPath = a.Str("out", "synth-iq.wav");
 
-        var random = new Random(a.Int("seed", 1));
+        // Every flag this branch reads is now touched - reject anything left over before the
+        // burst is rendered.
+        a.RejectUnknown("synth");
+
+        var random = new Random(seed);
         var payload = new byte[payloadBits];
         for (int i = 0; i < payload.Length; i++)
         {
@@ -824,10 +891,9 @@ internal static class Commands
         {
             OutputRate = rate,
             OffsetHz = offset,
-            Amplitude = a.Dbl("amplitude", 0.9),
+            Amplitude = amplitude,
         }).Convert(audio);
 
-        string outPath = a.Str("out", "synth-iq.wav");
         WriteIqWav(outPath, iq, rate);
 
         Console.Error.WriteLine(
@@ -931,29 +997,40 @@ internal static class Commands
                 + $"the declared --obw {options.OccupiedBandwidthHz} Hz");
         }
 
-        await using FlexIqTransmitter tx = await FlexIqTransmitter.OpenAsync(options, Log);
-
         bool ssl = !a.Has("capture-no-ssl");
-        double centreHz = double.Parse(options.FrequencyMHz, CultureInfo.InvariantCulture) * 1e6;
         // The capture is tuned to the --freq reference (where baseband 0 Hz lands) PLUS the
         // measured reference error, so the residual carrier offset the demodulator sees is
         // near zero. Without it the combined TX+RX error at 18 MHz exceeds the ±75 Hz
         // acquisition grid and nothing acquires.
         double correction = a.Dbl("dial-correction", 0);
+        bool noCapture = a.Has("no-capture");
+        // Required only when we are opening a capture of our own; --no-capture transmits
+        // into one held elsewhere and must not demand a host it will never use.
+        string captureHostArg = noCapture ? "" : a.Req("capture-host");
+        int capturePort = a.Int("capture-port", ssl ? 443 : 80);
+        string captureName = a.Str("capture-name", $"otaburst-wn{wn}");
+        string outDir = a.Str("out-dir", ".");
+
+        // Every flag burst recognises has now been read - reject anything left over before the
+        // radio is even connected to, so a mistyped flag cannot key a transmitter into running
+        // the wrong experiment.
+        a.RejectUnknown("burst");
+
+        await using FlexIqTransmitter tx = await FlexIqTransmitter.OpenAsync(options, Log);
+
+        double centreHz = double.Parse(options.FrequencyMHz, CultureInfo.InvariantCulture) * 1e6;
         double idSeconds = options.Identify
             ? MorseGenerator.DurationSeconds(MorseGenerator.IdText("M0LTE", options.IdMode), 30)
               + options.InterBurstSettle.TotalSeconds
             : 0;
         var capOpt = new UberSdrCaptureOptions
         {
-            // Required only when we are opening a capture of our own; --no-capture transmits
-            // into one held elsewhere and must not demand a host it will never use.
-            Host = a.Has("no-capture") ? "" : a.Req("capture-host"),
-            Port = a.Int("capture-port", ssl ? 443 : 80),
+            Host = captureHostArg,
+            Port = capturePort,
             Ssl = ssl,
             FrequencyHz = (int)Math.Round(centreHz + correction),
-            Name = a.Str("capture-name", $"otaburst-wn{wn}"),
-            OutputDir = a.Str("out-dir", "."),
+            Name = captureName,
+            OutputDir = outDir,
             DurationSeconds = (int)Math.Ceiling(burstSeconds + idSeconds + 6 + 10),
         };
         // One session per burst exhausts a receiver: an UberSDR session lingers for its
@@ -964,7 +1041,7 @@ internal static class Commands
         // using the key times printed here.
         using var cts = new CancellationTokenSource();
         TransmitReport report;
-        if (a.Has("no-capture"))
+        if (noCapture)
         {
             Log("no capture of our own - transmitting into a capture held elsewhere; "
                 + "note the key time below and score with --at");
@@ -1093,20 +1170,35 @@ internal static class Commands
 
         if (a.Has("purity"))
         {
-            CarrierPurity(a.Req("in"), a.Dbl("tone-hz", 2000), a.Dbl("span-hz", 2000),
-                a.Int("fft", 32768), a.Dbl("from", 0), a.Dbl("length", 0));
+            string purityIn = a.Req("in");
+            double purityToneHz = a.Dbl("tone-hz", 2000);
+            double spanHz = a.Dbl("span-hz", 2000);
+            int purityFft = a.Int("fft", 32768);
+            double from = a.Dbl("from", 0);
+            double length = a.Dbl("length", 0);
+            a.RejectUnknown("measure");
+            CarrierPurity(purityIn, purityToneHz, spanHz, purityFft, from, length);
             return 0;
         }
 
         if (a.Has("survey"))
         {
-            SurveyBand(a.Req("in"), a.Dbl("slot-khz", 2.0), a.Dbl("centre-hz", 0), a.Int("fft", 8192));
+            string surveyIn = a.Req("in");
+            double slotKhz = a.Dbl("slot-khz", 2.0);
+            double centreHz = a.Dbl("centre-hz", 0);
+            int surveyFft = a.Int("fft", 8192);
+            a.RejectUnknown("measure");
+            SurveyBand(surveyIn, slotKhz, centreHz, surveyFft);
             return 0;
         }
 
         double toneHz = a.Dbl("tone-hz", 2000);
         double[] tones = a.Has("tone2-hz") ? [toneHz, a.Dbl("tone2-hz", 0)] : [toneHz];
-        Analyse(a.Req("in"), tones, a.Dbl("offset-hz", toneHz), a.Int("fft", 8192));
+        string inPath = a.Req("in");
+        double offsetHz = a.Dbl("offset-hz", toneHz);
+        int fft = a.Int("fft", 8192);
+        a.RejectUnknown("measure");
+        Analyse(inPath, tones, offsetHz, fft);
         return 0;
     }
 
@@ -1452,8 +1544,21 @@ internal static class Commands
 }
 
 /// <summary>Minimal <c>--key value</c> / <c>--flag</c> parser.</summary>
+/// <remarks>
+/// Every accessor marks the key as read the moment it is queried - whether the flag was
+/// actually passed or the call fell back to its default - so <see cref="RejectUnknown"/> can
+/// tell a flag the command consulted from one it silently ignored, with no hand-maintained
+/// list of valid flags to keep in sync per command: the known-flags set IS the set of keys the
+/// command's own Req/Str/Int/Dbl/Has calls touched. A command calls <c>RejectUnknown</c> once,
+/// after every flag it recognises has been read and before any measurement or transmit work
+/// starts. That is what turns a mistyped or not-yet-supported flag (e.g. <c>--impulse</c>
+/// against a build that predates it) into a loud failure instead of a silently wrong
+/// experiment reporting numbers for the wrong thing.
+/// </remarks>
 internal sealed class Args : Dictionary<string, string>
 {
+    private readonly HashSet<string> _read = new(StringComparer.Ordinal);
+
     public static Args? Parse(string[] argv)
     {
         var a = new Args();
@@ -1474,16 +1579,57 @@ internal sealed class Args : Dictionary<string, string>
         return a;
     }
 
-    public bool Has(string k) => ContainsKey(k);
+    public bool Has(string k)
+    {
+        _read.Add(k);
+        return ContainsKey(k);
+    }
 
-    public string Req(string k) =>
-        TryGetValue(k, out string? v) ? v : throw new ArgumentException($"--{k} is required");
+    public string Req(string k)
+    {
+        _read.Add(k);
+        return TryGetValue(k, out string? v) ? v : throw new ArgumentException($"--{k} is required");
+    }
 
-    public string Str(string k, string? d) => TryGetValue(k, out string? v) ? v : d!;
+    public string Str(string k, string? d)
+    {
+        _read.Add(k);
+        return TryGetValue(k, out string? v) ? v : d!;
+    }
 
-    public int Int(string k, int d) =>
-        TryGetValue(k, out string? v) ? int.Parse(v, CultureInfo.InvariantCulture) : d;
+    public int Int(string k, int d)
+    {
+        _read.Add(k);
+        return TryGetValue(k, out string? v) ? int.Parse(v, CultureInfo.InvariantCulture) : d;
+    }
 
-    public double Dbl(string k, double d) =>
-        TryGetValue(k, out string? v) ? double.Parse(v, CultureInfo.InvariantCulture) : d;
+    public double Dbl(string k, double d)
+    {
+        _read.Add(k);
+        return TryGetValue(k, out string? v) ? double.Parse(v, CultureInfo.InvariantCulture) : d;
+    }
+
+    /// <summary>
+    /// Rejects any flag the caller passed that this command never read: a mistyped or
+    /// not-yet-supported flag that would otherwise be silently dropped and let the command run
+    /// with defaults, measuring the wrong thing and reporting numbers for it as if they were
+    /// right. Call once every flag the command recognises has been read (including ones that
+    /// fell back to a default via <c>Has</c>/<c>Str(null)</c>) and before any real work starts.
+    /// </summary>
+    public void RejectUnknown(string command)
+    {
+        List<string> unknown = [.. Keys.Where(k => !_read.Contains(k)).OrderBy(k => k, StringComparer.Ordinal)];
+        if (unknown.Count == 0)
+        {
+            return;
+        }
+
+        string known = _read.Count == 0
+            ? "(none)"
+            : string.Join(' ', _read.OrderBy(k => k, StringComparer.Ordinal).Select(k => $"--{k}"));
+        string plural = unknown.Count > 1 ? "s" : "";
+        throw new ArgumentException(
+            $"{command}: unknown flag{plural} {string.Join(' ', unknown.Select(k => $"--{k}"))}; "
+            + $"known flags for {command}: {known}");
+    }
 }

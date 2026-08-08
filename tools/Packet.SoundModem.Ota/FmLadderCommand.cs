@@ -133,6 +133,15 @@ internal static class FmLadderCommand
     {
         string outPath = a.Str("out", "fm-ladder-dryrun.wav");
         double gap = a.Dbl("gap", 3);
+        string name = a.Str("name", $"fm-{mode}-{channel}".ToLowerInvariant());
+        string freqMHz = a.Str("freq", "18.106500");
+        string? notes = a.Str("notes", null);
+        int frameBytes = a.Int("frame-bytes", 48);
+
+        // Every flag the rehearsal path reads has now been touched - reject anything left over
+        // before a single frame is written, not after the file already holds the wrong experiment.
+        a.RejectUnknown("ladder");
+
         int gapFrames = (int)(gap * rate);
         var random = new Random(1);
         var burstStarts = new List<double>();
@@ -170,7 +179,7 @@ internal static class FmLadderCommand
         }
 
         FmCampaignManifest manifest = BuildManifest(
-            a, mode, channel, rendered, burstStarts, rate, pass, targetDevHz,
+            name, mode, channel, rendered, burstStarts, rate, pass, targetDevHz, freqMHz, notes, frameBytes,
             radio: "none (rehearsal)", rfPower: null, capturePath: Path.GetFileName(outPath),
             captureSha256: CampaignFiles.Sha256(outPath), sample0Utc: null, receiverHost: null,
             measuredPeakDevHz: null, dialCorrectionHz: 0);
@@ -213,10 +222,39 @@ internal static class FmLadderCommand
             IdMode = mode.ToUpperInvariant(),
         };
 
+        bool antennaGiven = a.Has("antenna");
+        double gap = a.Dbl("gap", 3);
+        double dialCorrectionHz = a.Dbl("dial-correction", 0);
+        string outDir = a.Str("out-dir", ".");
+        string name = a.Str("name", $"fm-{mode}-{channel}".ToLowerInvariant());
+        string? notes = a.Str("notes", null);
+        int frameBytes = a.Int("frame-bytes", 48);
+        int captureRate = a.Int("rsp-rate", 48000);
+        double? measuredPeakDevHz = a.Has("measured-dev-khz") ? a.Dbl("measured-dev-khz", 0) * 1000 : null;
+
+        // Capture backend flags, read up front so a mistyped one is caught before the radio is
+        // connected to and before any RF goes out, not after.
+        string? rspHost = null;
+        string? rspSshKey = null;
+        int? rspFreqOverride = null;
+        string rspGain = RspIqClient.DefaultGain;
+        if (captureRsp)
+        {
+            rspHost = a.Str("rsp-host", "studybox");
+            rspSshKey = LadderCommand.ExpandUser(a.Str("rsp-ssh-key", "~/.ssh/id_ed25519"));
+            rspFreqOverride = a.Has("rsp-freq") ? a.Int("rsp-freq", 0) : null;
+            rspGain = a.Str("rsp-gain", RspIqClient.DefaultGain);
+        }
+
+        // Every flag this live path recognises has now been read - reject anything left over
+        // before the radio is even connected to, so a mistyped flag cannot key a transmitter
+        // into the wrong experiment.
+        a.RejectUnknown("ladder");
+
         void Log(string m) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] {m}");
 
         Log($"transmit antenna: {options.Antenna}"
-            + (captureRsp && !a.Has("antenna") ? "  (defaulted to ANT2 for the RSP1 capture rig)" : ""));
+            + (captureRsp && !antennaGiven ? "  (defaulted to ANT2 for the RSP1 capture rig)" : ""));
         Log($"slice mode: {options.SliceMode} (FM carrier); DAX FM drive {pass.AudioGain:G4} - "
             + $"CALIBRATE this so the achieved peak deviation is {targetDevHz / 1000:F1} kHz "
             + "(sm-ota fm-deviation on a test burst)");
@@ -225,27 +263,24 @@ internal static class FmLadderCommand
             Log($"transmit power ceiling: {mw:F1} W measured (rfpower level capped at {options.RfPowerCeiling})");
         }
 
-        double gap = a.Dbl("gap", 3);
-
         await using FlexClient client = await FlexClient.ConnectAsync(options.Radio);
         await using var tx = await FlexDaxTransmitter.AttachAsync(client, options, Log);
 
         double captureSeconds = rendered.Sum(p => p.LeadInSeconds + p.BurstSeconds + 1.0 + gap) + 30;
         double centreHz = double.Parse(options.FrequencyMHz, CultureInfo.InvariantCulture) * 1e6;
         Task<CaptureResult>? capturing = null;
-        int captureRate = a.Int("rsp-rate", 48000);
         using var cts = new CancellationTokenSource();
         if (captureRsp)
         {
             var rspOpt = new RspCaptureOptions
             {
-                Host = a.Str("rsp-host", "studybox"),
-                SshKeyPath = LadderCommand.ExpandUser(a.Str("rsp-ssh-key", "~/.ssh/id_ed25519")),
-                FrequencyHz = a.Int("rsp-freq", (int)Math.Round(centreHz + a.Dbl("dial-correction", 0))),
+                Host = rspHost!,
+                SshKeyPath = rspSshKey!,
+                FrequencyHz = rspFreqOverride ?? (int)Math.Round(centreHz + dialCorrectionHz),
                 SampleRate = captureRate,
-                Gain = a.Str("rsp-gain", RspIqClient.DefaultGain),
+                Gain = rspGain,
                 Name = $"fm-{mode}",
-                OutputDir = a.Str("out-dir", "."),
+                OutputDir = outDir,
                 DurationSeconds = (int)Math.Ceiling(captureSeconds),
             };
             Log($"capture: RSP1 on {rspOpt.Host} at {rspOpt.FrequencyHz} Hz, {rspOpt.SampleRate} S/s "
@@ -296,28 +331,29 @@ internal static class FmLadderCommand
         }
 
         FmCampaignManifest manifest = BuildManifest(
-            a, mode, channel, rendered.Take(keyed.Count).ToList(), burstStarts, result.SampleRate,
-            pass, targetDevHz, radio: options.Radio, rfPower: options.RfPower,
+            name, mode, channel, rendered.Take(keyed.Count).ToList(), burstStarts, result.SampleRate,
+            pass, targetDevHz, options.FrequencyMHz, notes, frameBytes, radio: options.Radio, rfPower: options.RfPower,
             capturePath: Path.GetFileName(result.WavPath), captureSha256: result.WavSha256,
-            sample0Utc: result.Sample0Utc, receiverHost: a.Str("rsp-host", "studybox"),
-            measuredPeakDevHz: a.Has("measured-dev-khz") ? a.Dbl("measured-dev-khz", 0) * 1000 : null,
-            dialCorrectionHz: a.Dbl("dial-correction", 0));
+            sample0Utc: result.Sample0Utc, receiverHost: rspHost,
+            measuredPeakDevHz: measuredPeakDevHz,
+            dialCorrectionHz: dialCorrectionHz);
         string manifestPath = Path.Combine(
-            a.Str("out-dir", "."), Path.GetFileNameWithoutExtension(result.WavPath) + ".manifest.json");
+            outDir, Path.GetFileNameWithoutExtension(result.WavPath) + ".manifest.json");
         CampaignFiles.Save(manifestPath, manifest);
 
         Console.Error.WriteLine($"wrote {manifestPath} (modem {CampaignFiles.ModemRevision()})");
 
         FmCaptureScore score = FmBurstScorer
-            .FromCapture(result.WavPath, DaxOffsetHz + a.Dbl("dial-correction", 0), pass.DspRate, targetDevHz)
+            .FromCapture(result.WavPath, DaxOffsetHz + dialCorrectionHz, pass.DspRate, targetDevHz)
             .Score(manifest);
         Report(result.WavPath, mode, targetDevHz, manifest, score);
         return 0;
     }
 
     private static FmCampaignManifest BuildManifest(
-        Args a, string mode, SimChannelKind channel, IReadOnlyList<FmRenderedPoint> rendered,
+        string name, string mode, SimChannelKind channel, IReadOnlyList<FmRenderedPoint> rendered,
         IReadOnlyList<double> burstStarts, int captureRate, FmLadderPass pass, double targetDevHz,
+        string freqMHz, string? notes, int frameBytes,
         string radio, int? rfPower, string? capturePath, string? captureSha256,
         DateTimeOffset? sample0Utc, string? receiverHost, double? measuredPeakDevHz, double dialCorrectionHz)
     {
@@ -327,11 +363,11 @@ internal static class FmLadderCommand
             FmRenderedPoint p = rendered[k];
             bursts.Add(new FmCampaignBurst(
                 p.Point.Mode, p.Point.Seed, p.Point.SnrDb, p.Point.Channel,
-                a.Int("frame-bytes", 48), burstStarts[k], p.BurstSeconds));
+                frameBytes, burstStarts[k], p.BurstSeconds));
         }
 
         return new FmCampaignManifest(
-            Name: a.Str("name", $"fm-{mode}-{channel}".ToLowerInvariant()),
+            Name: name,
             Mode: mode,
             DspRate: pass.DspRate,
             TargetDeviationHz: targetDevHz,
@@ -341,7 +377,7 @@ internal static class FmLadderCommand
             ModemRevision: CampaignFiles.ModemRevision(),
             WrittenUtc: DateTimeOffset.UtcNow,
             Radio: radio,
-            FrequencyMHz: a.Str("freq", "18.106500"),
+            FrequencyMHz: freqMHz,
             RfPower: rfPower,
             PassAudioGain: pass.AudioGain,
             MeasuredPeakDeviationHz: measuredPeakDevHz,
@@ -350,7 +386,7 @@ internal static class FmLadderCommand
             CaptureSha256: captureSha256,
             CaptureSample0Utc: sample0Utc,
             ReceiverHost: receiverHost,
-            Notes: a.Str("notes", null));
+            Notes: notes);
     }
 
     private static void Report(
@@ -428,11 +464,16 @@ internal static class FmLadderCommand
 
         string path = a.Req("in");
         double dialHz = a.Dbl("dial-hz", 0);
+        double from = a.Dbl("from", 0);
+        double length = a.Dbl("length", 0);
+
+        // Every flag this command reads has now been touched - reject anything left over
+        // before the capture is even opened, not after it has been measured.
+        a.RejectUnknown("fm-deviation");
+
         (float[] i, int rate) = WavFile.ReadMono(path, channel: 0);
         (float[] q, _) = WavFile.ReadMono(path, channel: 1);
 
-        double from = a.Dbl("from", 0);
-        double length = a.Dbl("length", 0);
         int start = Math.Clamp((int)(from * rate), 0, Math.Max(0, i.Length - 1));
         int count = length > 0
             ? Math.Min((int)(length * rate), i.Length - start)

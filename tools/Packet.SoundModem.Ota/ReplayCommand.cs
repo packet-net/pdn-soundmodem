@@ -131,6 +131,14 @@ internal static class ReplayCommand
         // surface from both sides; the +-2 s payload dedupe below absorbs it (a genuine
         // retransmission cannot arrive that fast at these symbol rates).
         int workers = a.Int("workers", Math.Clamp(Environment.ProcessorCount - 2, 1, 16));
+        string? csvPath = a.Str("csv", null);
+        string? framelogPath = a.Str("framelog", null);
+
+        // Every flag replay recognises has now been read at least once - reject anything left
+        // over before the (expensive, parallel) receiver pass starts, so a mistyped flag cannot
+        // spend minutes of compute replaying the wrong experiment.
+        a.RejectUnknown("replay");
+
         int segments = Math.Clamp(workers / specs.Length, 1, chunks.Length);
         var starts = new int[segments + 1];
         for (int s = 0; s <= segments; s++)
@@ -215,15 +223,15 @@ internal static class ReplayCommand
             Console.WriteLine($"bursts csv: {burstsPath}");
         }
 
-        if (a.Str("csv", null) is { } csv)
+        if (csvPath is not null)
         {
-            WriteCsv(csv, frames);
-            Console.WriteLine($"csv: {csv}");
+            WriteCsv(csvPath, frames);
+            Console.WriteLine($"csv: {csvPath}");
         }
 
-        if (a.Str("framelog", null) is { } log)
+        if (framelogPath is not null)
         {
-            DiffAgainstLog(log, frames, specs.Select(s => s.Mode).ToArray(), runStart, runEnd);
+            DiffAgainstLog(framelogPath, frames, specs.Select(s => s.Mode).ToArray(), runStart, runEnd);
         }
 
         return 0;

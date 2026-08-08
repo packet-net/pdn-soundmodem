@@ -120,6 +120,15 @@ internal static class OfdmLadderCommand
     {
         string outPath = a.Str("out", "ofdm-ladder-dryrun.wav");
         double gap = a.Dbl("gap", 3);
+        string name = a.Str("name",
+            $"ofdm-{mode.Replace("freedv-", "", StringComparison.OrdinalIgnoreCase)}-{channel}".ToLowerInvariant());
+        string freqMHz = a.Str("freq", "18.106500");
+        string? notes = a.Str("notes", null);
+
+        // Every flag the rehearsal path reads has now been touched - reject anything left over
+        // before a single frame is written, not after the file already holds the wrong experiment.
+        a.RejectUnknown("ladder");
+
         int gapFrames = (int)(gap * rate);
         var random = new Random(1);
         var burstStarts = new List<double>();
@@ -162,7 +171,7 @@ internal static class OfdmLadderCommand
         }
 
         OfdmCampaignManifest manifest = BuildManifest(
-            a, mode, channel, rendered, burstStarts, rate, audioGain,
+            name, mode, channel, rendered, burstStarts, rate, audioGain, freqMHz, notes,
             radio: "none (rehearsal)", rfPower: null, capturePath: Path.GetFileName(outPath),
             captureSha256: CampaignFiles.Sha256(outPath), sample0Utc: null, receiverHost: null,
             dialCorrectionHz: 0);
@@ -210,17 +219,45 @@ internal static class OfdmLadderCommand
             IdMode = mode.Replace("freedv-", "", StringComparison.OrdinalIgnoreCase).ToUpperInvariant(),
         };
 
+        bool antennaGiven = a.Has("antenna");
+        double gap = a.Dbl("gap", 3);
+        double dialCorrectionHz = a.Dbl("dial-correction", 0);
+        string outDir = a.Str("out-dir", ".");
+        string name = a.Str("name",
+            $"ofdm-{mode.Replace("freedv-", "", StringComparison.OrdinalIgnoreCase)}-{channel}".ToLowerInvariant());
+        string? notes = a.Str("notes", null);
+
+        // Capture backend flags, read up front so a mistyped one is caught before the radio is
+        // connected to and before any RF goes out, not after.
+        string? rspHost = null;
+        string? rspSshKey = null;
+        int? rspFreqOverride = null;
+        int rspRate = 96000;
+        string rspGain = RspIqClient.DefaultGain;
+        if (captureRsp)
+        {
+            rspHost = a.Str("rsp-host", "studybox");
+            rspSshKey = LadderCommand.ExpandUser(a.Str("rsp-ssh-key", "~/.ssh/id_ed25519"));
+            rspFreqOverride = a.Has("rsp-freq") ? a.Int("rsp-freq", 0) : null;
+            rspRate = a.Int("rsp-rate", 96000);
+            rspGain = a.Str("rsp-gain", RspIqClient.DefaultGain);
+        }
+
+        // Every flag this live path recognises has now been read - reject anything left over
+        // before the radio is even connected to, so a mistyped flag cannot key a transmitter
+        // into the wrong experiment.
+        a.RejectUnknown("ladder");
+
         void Log(string m) => Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] {m}");
 
         Log($"transmit antenna: {options.Antenna}"
-            + (captureRsp && !a.Has("antenna") ? "  (defaulted to ANT2 for the RSP1 capture rig)" : ""));
+            + (captureRsp && !antennaGiven ? "  (defaulted to ANT2 for the RSP1 capture rig)" : ""));
         if (maxWatts is double mw)
         {
             Log($"transmit power ceiling: {mw:F1} W measured (rfpower level capped at {options.RfPowerCeiling})");
         }
 
         Log("route: dax (deployment audio path) - the datac waveform's natural route");
-        double gap = a.Dbl("gap", 3);
 
         await using FlexClient client = await FlexClient.ConnectAsync(options.Radio);
         await using var tx = await FlexDaxTransmitter.AttachAsync(client, options, Log);
@@ -237,13 +274,13 @@ internal static class OfdmLadderCommand
         {
             var rspOpt = new RspCaptureOptions
             {
-                Host = a.Str("rsp-host", "studybox"),
-                SshKeyPath = LadderCommand.ExpandUser(a.Str("rsp-ssh-key", "~/.ssh/id_ed25519")),
-                FrequencyHz = a.Int("rsp-freq", (int)Math.Round(centreHz + a.Dbl("dial-correction", 0))),
-                SampleRate = a.Int("rsp-rate", 96000),
-                Gain = a.Str("rsp-gain", RspIqClient.DefaultGain),
+                Host = rspHost!,
+                SshKeyPath = rspSshKey!,
+                FrequencyHz = rspFreqOverride ?? (int)Math.Round(centreHz + dialCorrectionHz),
+                SampleRate = rspRate,
+                Gain = rspGain,
                 Name = $"ofdm-{mode.Replace("freedv-", "", StringComparison.OrdinalIgnoreCase)}",
-                OutputDir = a.Str("out-dir", "."),
+                OutputDir = outDir,
                 DurationSeconds = (int)Math.Ceiling(captureSeconds),
             };
             Log($"capture: RSP1 on {rspOpt.Host} at {rspOpt.FrequencyHz} Hz, {rspOpt.SampleRate} S/s "
@@ -299,13 +336,13 @@ internal static class OfdmLadderCommand
         }
 
         OfdmCampaignManifest manifest = BuildManifest(
-            a, mode, channel, rendered.Take(keyed.Count).ToList(), burstStarts, result.SampleRate,
-            audioGain, radio: options.Radio, rfPower: options.RfPower,
+            name, mode, channel, rendered.Take(keyed.Count).ToList(), burstStarts, result.SampleRate,
+            audioGain, options.FrequencyMHz, notes, radio: options.Radio, rfPower: options.RfPower,
             capturePath: Path.GetFileName(result.WavPath), captureSha256: result.WavSha256,
-            sample0Utc: result.Sample0Utc, receiverHost: a.Str("rsp-host", "studybox"),
-            dialCorrectionHz: a.Dbl("dial-correction", 0));
+            sample0Utc: result.Sample0Utc, receiverHost: rspHost,
+            dialCorrectionHz: dialCorrectionHz);
         string manifestPath = Path.Combine(
-            a.Str("out-dir", "."), Path.GetFileNameWithoutExtension(result.WavPath) + ".manifest.json");
+            outDir, Path.GetFileNameWithoutExtension(result.WavPath) + ".manifest.json");
         CampaignFiles.Save(manifestPath, manifest);
 
         Console.Error.WriteLine($"wrote {manifestPath} (modem {CampaignFiles.ModemRevision()})");
@@ -316,8 +353,8 @@ internal static class OfdmLadderCommand
     }
 
     private static OfdmCampaignManifest BuildManifest(
-        Args a, string mode, SimChannelKind channel, IReadOnlyList<OfdmRenderedPoint> rendered,
-        IReadOnlyList<double> burstStarts, int captureRate, float audioGain,
+        string name, string mode, SimChannelKind channel, IReadOnlyList<OfdmRenderedPoint> rendered,
+        IReadOnlyList<double> burstStarts, int captureRate, float audioGain, string freqMHz, string? notes,
         string radio, int? rfPower, string? capturePath, string? captureSha256,
         DateTimeOffset? sample0Utc, string? receiverHost, double dialCorrectionHz)
     {
@@ -331,7 +368,7 @@ internal static class OfdmLadderCommand
         }
 
         return new OfdmCampaignManifest(
-            Name: a.Str("name", $"ofdm-{mode.Replace("freedv-", "", StringComparison.OrdinalIgnoreCase)}-{channel}".ToLowerInvariant()),
+            Name: name,
             Mode: mode,
             OffsetHz: DaxOffsetHz,
             CaptureRate: captureRate,
@@ -339,7 +376,7 @@ internal static class OfdmLadderCommand
             ModemRevision: CampaignFiles.ModemRevision(),
             WrittenUtc: DateTimeOffset.UtcNow,
             Radio: radio,
-            FrequencyMHz: a.Str("freq", "18.106500"),
+            FrequencyMHz: freqMHz,
             RfPower: rfPower,
             PassAudioGain: audioGain,
             DialCorrectionHz: dialCorrectionHz,
@@ -347,7 +384,7 @@ internal static class OfdmLadderCommand
             CaptureSha256: captureSha256,
             CaptureSample0Utc: sample0Utc,
             ReceiverHost: receiverHost,
-            Notes: a.Str("notes", null));
+            Notes: notes);
     }
 
     private static void Report(

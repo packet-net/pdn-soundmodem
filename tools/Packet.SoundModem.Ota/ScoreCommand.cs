@@ -111,13 +111,21 @@ internal static class ScoreCommand
         };
 
         string? audioPath = a.Str("audio", null);
+        bool diagnostics = a.Has("diagnostics");
+        string? csvPath = a.Str("csv", null);
+
+        // Every flag this path (no --schedule) reads has now been touched - reject anything left
+        // over before the capture is streamed through the scorer, not after it has already
+        // scored the wrong experiment.
+        a.RejectUnknown("score");
+
         CaptureScore score = new BurstScorer(schedule, new BurstScorerOptions
         {
-            CaptureDiagnostics = a.Has("diagnostics"),
+            CaptureDiagnostics = diagnostics,
         }).Score(Convert(inPath, options, audioPath));
 
         Report(inPath, wn, score);
-        if (a.Str("csv", null) is { } csvPath)
+        if (csvPath is not null)
         {
             WriteCsv(csvPath, score);
             Console.Error.WriteLine($"wrote {csvPath}");
@@ -148,12 +156,21 @@ internal static class ScoreCommand
         };
 
         List<ScheduledBurst> bursts = schedule.ToScorerSchedule(starts);
+        bool diagnostics = a.Has("diagnostics");
+        string? audioPath = a.Str("audio", null);
+        string? csvPath = a.Str("csv", null);
+
+        // Every flag the --schedule path reads has now been touched - reject anything left over
+        // before the capture is streamed through the scorer, not after it has already scored the
+        // wrong experiment.
+        a.RejectUnknown("score");
+
         CaptureScore score = new BurstScorer(bursts, new BurstScorerOptions
         {
             OccupiedLowHz = options.SsbLowHz,
             OccupiedHighHz = options.SsbHighHz,
-            CaptureDiagnostics = a.Has("diagnostics"),
-        }).Score(Convert(inPath, options, a.Str("audio", null)));
+            CaptureDiagnostics = diagnostics,
+        }).Score(Convert(inPath, options, audioPath));
 
         Console.WriteLine();
         Console.WriteLine($"schedule \"{schedule.Name}\" - {schedule.Bursts.Count} burst(s), "
@@ -164,7 +181,7 @@ internal static class ScoreCommand
         }
 
         ReportWithSchedule(inPath, schedule, score);
-        if (a.Str("csv", null) is { } csvPath)
+        if (csvPath is not null)
         {
             WriteCsv(csvPath, score, schedule);
             Console.Error.WriteLine($"wrote {csvPath}");

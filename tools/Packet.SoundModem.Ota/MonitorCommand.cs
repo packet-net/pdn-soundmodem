@@ -118,6 +118,11 @@ internal static class MonitorCommand
             OnBlock = OnBlock,
         };
 
+        // Every flag monitor recognises has now been read - reject anything left over before the
+        // live capture starts, so a mistyped or unsupported flag fails loudly instead of quietly
+        // watching the wrong frequency or passband.
+        a.RejectUnknown("monitor");
+
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
         {

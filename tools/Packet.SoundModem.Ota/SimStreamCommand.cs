@@ -87,15 +87,26 @@ internal static class SimStreamCommand
 
         if (a.Has("decode-raw"))
         {
-            return DecodeRaw(mode, a.Req("decode-raw"), a.Req("manifest"), quiet);
+            string decodeRaw = a.Req("decode-raw");
+            string decodeManifest = a.Req("manifest");
+            // Every flag this branch (decode-raw) reads is now touched - reject anything left
+            // over (mistyped, or a flag belonging to a different role) before the file is opened.
+            a.RejectUnknown("sim-stream");
+            return DecodeRaw(mode, decodeRaw, decodeManifest, quiet);
         }
 
         // Build the run once - the payloads and the clean burst audio are shared by every role.
+        // BuildStream depends only on (mode, bursts, gapSamples, firstSeed), already read above,
+        // so running it ahead of the role-specific flags below cannot produce a wrong result even
+        // if one of those flags turns out to be unrecognised.
         StreamBuild build = BuildStream(mode, modeName, bursts, gapSamples, firstSeed);
 
         if (a.Has("emit-raw"))
         {
-            EmitRaw(build, a.Req("emit-raw"), a.Req("manifest"));
+            string emitRaw = a.Req("emit-raw");
+            string emitManifest = a.Req("manifest");
+            a.RejectUnknown("sim-stream");
+            EmitRaw(build, emitRaw, emitManifest);
             Console.Error.WriteLine(
                 $"emit {modeName}: {bursts} bursts, {build.Clean.Length} samples "
                 + $"({build.ActiveSamples} active, {100.0 * build.ActiveSamples / build.Clean.Length:F1}%), "
@@ -107,6 +118,8 @@ internal static class SimStreamCommand
         SimChannelKind kind = SimChannel.Parse(a.Str("channel", "poor"));
         double[] snrs = a.Req("snr").Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Select(s => double.Parse(s.Trim(), CultureInfo.InvariantCulture)).ToArray();
+        string? csvPath = a.Str("csv", null);
+        a.RejectUnknown("sim-stream");
 
         void Log(string m)
         {
@@ -134,10 +147,10 @@ internal static class SimStreamCommand
                 + $"{$"{lo:P0}..{hi:P0}",13}");
         }
 
-        if (a.Str("csv", null) is { } csv)
+        if (csvPath is not null)
         {
-            WriteCsv(csv, modeName, kind, bursts, rows);
-            Console.Error.WriteLine($"wrote {csv}");
+            WriteCsv(csvPath, modeName, kind, bursts, rows);
+            Console.Error.WriteLine($"wrote {csvPath}");
         }
 
         return 0;
