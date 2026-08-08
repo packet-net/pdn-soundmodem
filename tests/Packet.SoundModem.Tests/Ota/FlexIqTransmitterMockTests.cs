@@ -85,10 +85,40 @@ public sealed class FlexIqTransmitterMockTests
         await using (client)
         await using (tx)
         {
-            await tx.TransmitAsync(ToneGenerator.Complex([2000.0], 0.5, 0.5, Rate));
+            TransmitReport report = await tx.TransmitAsync(ToneGenerator.Complex([2000.0], 0.5, 0.5, Rate));
+
+            // Two real-time races sit between TransmitAsync returning and mock.CapturedWaveformIq
+            // holding exactly the burst, both on the mock's own reflection thread (MockFlexRadio's
+            // WaveformPushLoopAsync paces itself off Environment.TickCount64, not this test's clock):
+            //
+            // 1. WaveformIqTxBuffer.TakePacket signals "ring drained" (Monitor.PulseAll) to the
+            //    writer BEFORE the same call reaches FlexWaveformIqOutput.OnVita's SendVita/capture
+            //    for that same packet - so TransmitAsync's Drain() can return, and this method can
+            //    resume, while the last packet's samples have not yet landed in the mock's list.
+            // 2. The radio (real or mocked) never stops asking for transmit buffers while the
+            //    waveform is registered, keyed or not (docs/flex-integration.md 9.2), and the sink
+            //    keeps answering until the post-unkey UNKEY_REQUESTED status has round-tripped and
+            //    the ring has been seen empty - an indeterminate, scheduler-dependent number of
+            //    all-zero packets that get captured as extra trailing silence in the meantime.
+            //
+            // This is what actually flaked, twice, on self-hosted CI (both green on other runs of
+            // identical code): run 31210983336 measured Db(power) = -12.28, run 31252410959
+            // measured -14.81, against the old bound of -12.02 to -5.52 (Db(0.25) - 6.0 dB /
+            // + 0.5 dB) - both a plain "the level read too low" miss on this exact assertion, the
+            // signature race 2 predicts.
+            //
+            // What was actually transmitted, deterministically, is exactly report.Samples complex
+            // samples (lead-in, tone, lead-out, padded to a whole number of waveform buffers) - a
+            // fixed function of the burst options, not of runtime scheduling. Wait for that many
+            // samples to have landed (closing race 1) and then analyse only that window (closing
+            // race 2 by construction, since anything captured past it is the post-burst race, not
+            // the burst).
+            int floatsExpected = report.Samples * 2;
+            await WaitUntilAsync(() => mock.CapturedWaveformIq.Count >= floatsExpected);
 
             float[] captured = [.. mock.CapturedWaveformIq];
             captured.Should().NotBeEmpty();
+            captured = captured[..floatsExpected];
 
             int n = captured.Length / 2;
             var i = new float[n];
@@ -101,26 +131,38 @@ public sealed class FlexIqTransmitterMockTests
 
             // What the radio is handed is the PLACED baseband: only the negative half of a
             // waveform's baseband is transmitted, so the library shifts the declared 0..obw
-            // span down by obw. The +2000 Hz tone must therefore arrive at 2000 − obw =
-            // −4000 Hz, which the derived slice (top edge of the band) carries back to
+            // span down by obw. The +2000 Hz tone must therefore arrive at 2000 - obw =
+            // -4000 Hz, which the derived slice (top edge of the band) carries back to
             // --freq + 2000 on air. A tone still at +2000 here would be in the half that
             // never transmits.
             IqSpectrum spectrum = IqAnalysis.Welch(i, q, Rate, fftSize: 4096);
             (double hz, double power) = spectrum.FindPeak(2000 - Obw - 200, 2000 - Obw + 200);
 
             hz.Should().BeApproximately(2000.0 - Obw, 2.0);
-            // Amplitude 0.5 → mean-square 0.25 while the tone is on. The captured buffer also holds
-            // the lead-in/lead-out silence and the cosine ramps, and the reflection loop drains a
-            // load-dependent amount of trailing silence, so the Welch-averaged tone power sits below
-            // 0.25 by a duty cycle that varies with how much silence was captured (observed to reach
-            // ~−9.3 dB under a loaded parallel suite). The sharp gates own correctness: A_tone asserts
-            // SamplesStarved == 0 (no phase discontinuity), the −60 dBc check below owns image
-            // rejection, and the ±2 Hz check above owns placement. This is only a coarse "the tone is
-            // present at roughly the right level" band, so its lower edge is generous enough to
-            // survive the capture-duty-cycle variance. The placement shift is a pure frequency
-            // translation, so the level is unchanged.
-            IqAnalysis.Db(power).Should().BeInRange(IqAnalysis.Db(0.25) - 6.0, IqAnalysis.Db(0.25) + 0.5);
+            // Amplitude 0.5 -> mean-square 0.25 while the tone is on. The captured window also
+            // holds the lead-in/lead-out silence and the cosine ramps, so the averaged level sits
+            // below that by a duty cycle - but the window is now exactly report.Samples, a fixed
+            // function of the burst options, so that duty cycle is a constant, not a real-time
+            // race; the tolerance below covers the duty cycle, not scheduling. The sharp gates own
+            // correctness: A_tone asserts SamplesStarved == 0 (no phase discontinuity), the -60 dBc
+            // check below owns image rejection, and the +/-2 Hz check above owns placement. This is
+            // only a coarse "the tone is present at roughly the right level" band.
+            IqAnalysis.Db(power).Should().BeInRange(IqAnalysis.Db(0.25) - 3.0, IqAnalysis.Db(0.25) + 0.5);
             (IqAnalysis.Db(spectrum.TonePower(-hz)) - IqAnalysis.Db(power)).Should().BeLessThan(-60);
+        }
+    }
+
+    /// <summary>Polls until <paramref name="condition"/> is true or 10 s elapses - for waiting on
+    /// the mock's reflection thread, which paces itself off the real clock rather than an
+    /// injectable one (mirrors the WaitUntilAsync helper in KissTcpServerTests/
+    /// KissServerRobustnessTests/TransmitterPttFailureTests).</summary>
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!condition())
+        {
+            cancellation.Token.ThrowIfCancellationRequested();
+            await Task.Delay(5, cancellation.Token);
         }
     }
 
