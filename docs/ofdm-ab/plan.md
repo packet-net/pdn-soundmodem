@@ -218,10 +218,13 @@ mechanism, and a ledger entry when a mode's status changes.
   emphasised microphone ones.** On a mic path the emphasis network has already done the
   equalisation, and loading is not just useless there but harmful.
 
-  Two things found on the way. `M0LTE.Fec.GpInterleaver`'s Interleave and Deinterleave are **not
-  inverses** in the pinned version - a round trip returns about a third of a block wrong, in either
-  order - so this chain carries its own permutation, with a test that would catch a regression.
-  And at burst level on the synthetic profile the payload code cannot show its value, because the
+  Two things found on the way. A round trip through `M0LTE.Fec.GpInterleaver` was returning about
+  a third of a block wrong, and this was first written up as a library defect. **That was wrong and
+  is corrected here**: the third parameter is the ELEMENT COUNT, not the stride, and passing
+  `ChooseB(n)` there permutes only a prefix of the block with the wrong stride. The library is
+  correct, the call was not, and the chain now uses the shared interleaver as intended. The
+  round-trip test stays, because the failure mode is silent - a mispaired interleaver decodes every
+  coded burst to noise and nothing else says why. And at burst level on the synthetic profile the payload code cannot show its value, because the
   **header is uncoded BPSK and fails first**: whatever codes the payload should cover the header
   too, or the header is the burst's floor.
 

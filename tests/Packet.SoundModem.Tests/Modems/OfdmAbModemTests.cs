@@ -305,10 +305,11 @@ public class OfdmAbModemTests
     [Fact]
     public void The_Interleaver_Is_Its_Own_Inverse_Pairing()
     {
-        // Guards a real trap: M0LTE.Fec's GpInterleaver Interleave/Deinterleave are NOT inverses
-        // in the pinned version - a round trip returns about a third of a block wrong, either
-        // order - so this chain uses its own permutation. If that ever regresses, every coded
-        // burst decodes to noise and nothing else would say why.
+        // Guards the interleave/deinterleave pairing end to end. Worth having because getting it
+        // wrong is silent: every coded burst decodes to noise and nothing says why. It caught a
+        // real mistake here, though not the one first diagnosed - GpInterleaver's third parameter
+        // is the ELEMENT COUNT, and passing ChooseB(n) there instead permutes a prefix of the
+        // block with the wrong stride. The library was correct; the call was not.
         var codec = new OfdmAbCodec(new OfdmAbCoding(OfdmAbFec.None, Interleave: true));
         var bits = new byte[257];
         for (int i = 0; i < bits.Length; i++)

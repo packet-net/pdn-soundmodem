@@ -139,7 +139,7 @@ internal sealed class OfdmAbCodec
         }
 
         var spread = new byte[coded.Length];
-        Permute(coded, spread, forward: true);
+        GpInterleaver.Interleave<byte>(coded, spread, coded.Length);
         return spread;
     }
 
@@ -152,7 +152,7 @@ internal sealed class OfdmAbCodec
         if (_coding.Interleave && llrs.Length >= 3)
         {
             ordered = new float[llrs.Length];
-            Permute(llrs, ordered, forward: false);
+            GpInterleaver.Deinterleave<float>(llrs, ordered, llrs.Length);
         }
         else
         {
@@ -184,62 +184,6 @@ internal sealed class OfdmAbCodec
         var decoded = new byte[payloadBits];
         new TailBitingViterbiDecoder(_code).Decode(mother, decoded);
         return decoded;
-    }
-
-    /// <summary>
-    /// The frequency interleave: <c>spread[(stride*i) mod n] = coded[i]</c>, and its exact inverse.
-    /// </summary>
-    /// <remarks>
-    /// Written here rather than taken from <c>M0LTE.Fec.GpInterleaver</c> because that type's
-    /// Interleave and Deinterleave are not inverses of each other in the pinned version - a
-    /// round trip through the pair returns roughly a third of a block wrong, in either order. The
-    /// permutation wanted is trivial and provable: a stride coprime with the block length visits
-    /// every position exactly once, so the map is a bijection and reading it backwards undoes it.
-    /// </remarks>
-    private static void Permute<T>(ReadOnlySpan<T> source, Span<T> destination, bool forward)
-    {
-        int n = source.Length;
-        int stride = Stride(n);
-        for (int i = 0; i < n; i++)
-        {
-            int j = (int)(((long)stride * i) % n);
-            if (forward)
-            {
-                destination[j] = source[i];
-            }
-            else
-            {
-                destination[i] = source[j];
-            }
-        }
-    }
-
-    /// <summary>A stride near the golden section of the block, coprime with it so the walk is a
-    /// permutation. Golden-section spacing is what spreads adjacent coded bits furthest apart,
-    /// which is the whole point: neighbouring subcarriers fail together.</summary>
-    private static int Stride(int n)
-    {
-        int start = Math.Max(2, (int)(n * 0.6180339887));
-        for (int candidate = start; candidate < start + n; candidate++)
-        {
-            int value = candidate % n;
-            if (value > 1 && Gcd(value, n) == 1)
-            {
-                return value;
-            }
-        }
-
-        return 1;
-    }
-
-    private static int Gcd(int a, int b)
-    {
-        while (b != 0)
-        {
-            (a, b) = (b, a % b);
-        }
-
-        return a;
     }
 
     // 802.11a's puncturing patterns, which are the standard ones for this mother code.
