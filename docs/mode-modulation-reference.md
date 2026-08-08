@@ -8,7 +8,7 @@ How each NinoTNC-lineage mode is carried on the air, for the OTA test harness. S
 
 | NinoTNC mode | Tone/subcarrier Hz | **Tgt peak dev kHz** | **Channel** | NinoTNC switch | pdn `ModemCatalog` mode(s) |
 |---|---|---|---|---|---|
-| AFSK 1200 | 1248 | **3.0** | narrow (12.5) | 0110, 0111 | `afsk1200` (+`-fx25`, `-fx25rx`, `-il2p`, `-il2p-nocrc`) |
+| AFSK 1200 | 1248 (Bell 202: 1200/2200) | **3.0** | narrow (12.5) | 0110, 0111 | `afsk1200` (+`-fx25`, `-fx25rx`, `-il2p`, `-il2p-nocrc`) |
 | GFSK 9600 | 999 | **2.4** | wide (25) | 0000, 0010 | `fsk9600` (+`-il2p`) |
 | GFSK 4800 | 500 | **1.2** | narrow (12.5) | 0100 | `fsk4800-il2p` |
 | C4FSK 9600 | 1039 | **2.5** | narrow (12.5) | 0011 | `c4fsk9600` |
@@ -47,12 +47,16 @@ What changed here as a result:
   documentation was wrong. Nino groups it with the FM AFSK modes, i.e. it is meant to work through
   a microphone and speaker, and the sim now reproduces that (`qpsk3600` on `fm-mic` decodes 25/25
   at +18 dB CNR, mask-pinned).
-- **The 5.0 kHz deviation figure for QPSK 3600 is disputed and probably wrong.** It appears to have
-  been inherited from the C4FSK 19200 row it was wrongly sharing. A speaker/mic mode on a narrow
-  channel at 5.0 kHz is over-deviated, and it measures that way: at 5.0 kHz the mode plateaus at
-  83-87 % even at +40 dB CNR (an IF-truncation distortion floor), while at 3.0 kHz it reaches
-  100 %. The sim still uses the recorded 5.0 kHz - a calibration figure is not something to change
-  on inference - but **this needs confirming with Nino before anyone transmits qpsk3600.**
+- **The 5.0 kHz deviation figure for QPSK 3600 is doubtful on provenance, and the evidence I first
+  offered for it was wrong.** The provenance argument stands: the figure appears to have been
+  inherited from the C4FSK 19200 row this mode was wrongly sharing, and 5.0 kHz is a wide-channel
+  deviation for a mode Nino groups with the speaker/mic modes. But the *measurement* I attributed
+  to it does not stand. I reported that qpsk3600 plateaus at 83-87 % even at +40 dB CNR at 5.0 kHz
+  against 100 % at 3.0 kHz, and called it an IF-truncation floor. Tom's challenge - "could just be
+  your implementation?" - was right, and the controls say it is not truncation: widening the IF
+  does not fix it (it is worse), and `qpsk3600` degrades at high signal on a *linear* channel too.
+  See the qpsk3600 high-signal anomaly below. **The deviation figure still needs confirming with
+  Nino before anyone transmits qpsk3600**, but on provenance, not on that measurement.
 - **The shaped PSK modes work on FM radios as well as SSB.** Nino says so explicitly. This document
   previously listed them as SSB-only, and the FM channel model still refuses them
   (`FmModes.PeakDeviationHz` returns null), which is now a known gap rather than correct behaviour:
@@ -68,6 +72,36 @@ What changed here as a result:
   here are low, or Nino's OBW numbers for that group are rounded up to the channel they fit. Worth
   asking; the classification is unaffected either way.
 
+### Open: the qpsk3600 high-signal anomaly (found 2026-08-08, not explained)
+
+Chasing the deviation question turned up something more important, and it is a property of the
+mode's receive path rather than of any channel model.
+
+**`qpsk3600` decodes *worse* as the signal gets stronger.** On the FM channel (data port, flat, no
+emphasis, wide IF, so none of truncation, emphasis or the microphone path is involved) it scores
+30/30 at +18 dB CNR and then 73 %, 77 %, 70 % at +24, +30 and +40. On a linear AWGN channel the
+same shape appears in miniature: 99/97/95/94/97 % across +15/+20/+25/+30/+40 at N=100.
+
+What it is not, each ruled out by measurement:
+
+- **Not the channel model.** `afsk1200-il2p` and `c4fsk9600` both score 25/25 at +40 dB CNR on the
+  same FM path.
+- **Not the shared QPSK code.** `qpsk600` and `qpsk2400` are 25/25 at +20, +30 and +40 dB on AWGN.
+- **Not acquisition.** 150, 300 and 600 ms of TXDELAY all give exactly 21/30 - more preamble does
+  not help at all, and the same frames fail each time.
+- **Not deviation or IF truncation.** Widening the IF makes it worse, not better.
+
+That leaves the mode itself. `qpsk3600` is the only mode in the catalogue running at a non-integer
+6 2/3 samples per symbol (12 kHz over 1800 sym/sec), and the QPSK campaign already recorded one
+clean-signal regression peculiar to it at that ratio (docs/qpsk/plan.md: the decision-feedback
+reference was scoped out of this mode for exactly that reason). A plausible reading is that noise
+dithers a coarsely-quantised sampling instant and a clean signal does not, but that is a
+hypothesis, not a finding - it has not been tested.
+
+Why it matters operationally: a strong local signal is the *normal* case for FM packet, so this is
+the regime the mode is most often used in. Worth its own leg, and the timing-oracle seam built for
+rx-roadmap workstream 4 is the instrument to point at it.
+
 Two operational notes from the same release, which bear on our capture campaign:
 
 - **Before v43, the first frame after an ID beacon was sometimes sent with no preamble** (fixed in
@@ -81,6 +115,12 @@ Two operational notes from the same release, which bear on our capture campaign:
   the correlator gain on AFSK demodulator 1 - both are wire/receive changes that could move an
   interop A/B between firmware versions, so a NinoTNC comparison should record the firmware
   revision.
+
+**AFSK 1200 is narrow, and here is why rather than an assumption**: Bell 202's 1200/2200 Hz tones
+at 3.0 kHz peak deviation give a Carson bandwidth of 2*(3000 + 2200) = **10.4 kHz**, which lands in
+Nino's own 10 kHz OBW bucket alongside 9600 C4FSK and 4800 GFSK - both of which fit a 12.5 kHz
+channel. That is consistent with him grouping it with the speaker/mic modes, and with the fact that
+legacy packet and APRS run on 12.5 kHz-spaced channels across IARU Region 1.
 
 **Channel spacing is part of the mode, not an operator preference** (Tom, 2026-08-08, from
 MMDVM-TNC and NinoTNC practice: C4FSK 9600 is the narrow-channel mode, C4FSK 19200 the wide one).
