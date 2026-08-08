@@ -104,6 +104,14 @@ internal static class SimCommand
             : null;
         double? centreHz = a.Has("centre") ? a.Dbl("centre", 0) : null;
         bool quiet = a.Has("quiet");
+        string? csvPath = a.Str("csv", null);
+
+        // Every flag this command recognises has now been read at least once (including the
+        // optional ones above, via Has/Str(null)) - so any key still unread here is a flag the
+        // caller passed that sim never looked at: mistyped, or not supported by this build. That
+        // must fail now, before a single burst runs, or the run reports numbers for whatever
+        // experiment the defaults happened to describe rather than the one asked for.
+        a.RejectUnknown("sim");
 
         // Native 8 kHz is the right default for the datac family: it is codec2's own rate and what
         // FreeDV's published operating points are measured at. Other modes take their catalogue rate.
@@ -168,7 +176,7 @@ internal static class SimCommand
 
         Report(mode, layer, levelScan, rows);
 
-        if (a.Str("csv", null) is { } csvPath)
+        if (csvPath is not null)
         {
             WriteCsv(csvPath, effectiveRate, layer, frameBytes, rows);
             Console.Error.WriteLine($"wrote {csvPath}");
