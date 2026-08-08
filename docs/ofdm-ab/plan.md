@@ -152,7 +152,32 @@ mechanism, and a ledger entry when a mode's status changes.
   records per-mode peak-deviation targets). *Exit: an FM channel axis on the Watterson rig, its
   parameters calibrated against a real radio path rather than invented, and the existing FM modes
   measured through it.*
-- **O2: the OFDM core, on our own geometry.** Build the reusable chain - CP framing, sync,
+- **O2: the OFDM core - BUILT 2026-08-08.** `Packet.SoundModem.Modems.OfdmAb`: real-FFT symbols
+  with a cyclic prefix, a self-correlating sync symbol (two identical halves, so timing survives a
+  channel that would defeat matching against a clean reference), a channel estimate taken from a
+  known preamble symbol, pilot-tracked residual phase, Gray-coded constellations from BPSK to
+  QAM-256, and a CRC-checked frame whose header announces its own constellation and length. 17
+  tests, all on **synthetic geometry** - see below. Not yet wired to `IModem`, the sim harness or
+  the catalogue; that waits until there is a waveform worth registering.
+
+  **The geometry is not in this repository, deliberately.** What we know of the real parameters
+  came unofficially from the mode's author, who is staying quiet publicly so the organisation
+  funding the project can be its information source. `OfdmAbParameters.Synthetic` is a small
+  invented profile that exercises every code path and resembles nothing; the real profiles live in
+  an untracked `ofdm-ab.local.json` (gitignored) and are loaded at run time. That has a second
+  benefit worth having on its own: every part of the implementation had to be geometry-generic,
+  which is exactly what you want while a specification is still moving.
+
+  Two bugs found by pointing the code at a real geometry, both of the kind that produce a signal
+  which looks healthy and decodes to nothing. The first cut normalised every symbol to its own
+  peak, which rescales each symbol differently and destroys the amplitude a QAM constellation
+  carries information in. And the sync symbol modulated every second *occupied carrier* rather
+  than every even *absolute bin* - a bin repeats over half a symbol only if its index is even, so
+  an odd first carrier gave two sign-flipped halves and a correlation peaking at -1 where the
+  search looked for +1. A synthetic profile with an even first carrier cannot catch that, so a
+  parity theory now guards it.
+
+  Original rationale, kept: Build the reusable chain - CP framing, sync,
   per-carrier equalisation, QAM soft-slicing - and validate it against our own sim at the
   inferred geometry (46.875 Hz spacing, 56/78/123/166 carriers, ~2 ms CP). This is not OFDM-AB
   and must not be called it; it is the machinery that makes implementing OFDM-AB a matter of
