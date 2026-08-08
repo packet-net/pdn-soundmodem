@@ -63,6 +63,10 @@ internal static class ArdopMonitorCommand
                   --tuning <Hz>        leader capture range (default 200; see source remarks)
                   --from/--to <UTC>    bound the chunk list (ISO or yyyymmddTHHMMSSZ)
                   --csv <path>         one row per acquired frame
+                  --emit <path>        write the post-chain stream (bandpassed, unshifted
+                                       to the 1500 Hz native centre) that the demodulator
+                                       actually heard, as a 12 kHz 16-bit WAV - the seam
+                                       for external reference decoders (--wav, one file)
                   --quiet              suppress per-frame lines
                 """);
             return argv.Length == 0 ? 2 : 0;
@@ -79,14 +83,27 @@ internal static class ArdopMonitorCommand
         int tuning = a.Int("tuning", 200);
         bool quiet = a.Has("quiet");
         string? csv = a.Str("csv", null);
+        string? emit = a.Str("emit", null);
 
         var rows = new List<Verdict>();
         if (a.Str("wav", null) is { } wavArg)
         {
-            foreach (string path in wavArg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            string[] paths = wavArg.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (emit is not null && paths.Length != 1)
             {
-                MonitorOne(path, FileUtc(path), centre, squelch, tuning, rows, quiet, isolated: true);
+                Console.Error.WriteLine("--emit needs exactly one --wav file");
+                return 2;
             }
+
+            foreach (string path in paths)
+            {
+                MonitorOne(path, FileUtc(path), centre, squelch, tuning, rows, quiet, emit);
+            }
+        }
+        else if (emit is not null)
+        {
+            Console.Error.WriteLine("--emit needs --wav mode");
+            return 2;
         }
         else
         {
@@ -133,6 +150,11 @@ internal static class ArdopMonitorCommand
         private float[] _engine = [];
         private DateTimeOffset _blockTime;
         private string _source = "";
+
+        /// <summary>When set, every sample handed to the demodulator is also appended
+        /// here - the --emit seam. What external decoders get is bit-identical to what
+        /// ours heard.</summary>
+        public List<float>? EmitSink { get; init; }
 
         public Monitor(double centre, int squelch, int tuning, List<Verdict> rows, bool quiet)
         {
@@ -185,6 +207,7 @@ internal static class ArdopMonitorCommand
                 if (_unshift is null)
                 {
                     _demodulator.ProcessSamples(slice);
+                    EmitSink?.AddRange(slice);
                     continue;
                 }
 
@@ -201,16 +224,25 @@ internal static class ArdopMonitorCommand
 
                 _unshift.Process(_banded.AsSpan(0, length), _engine.AsSpan(0, length));
                 _demodulator.ProcessSamples(_engine.AsSpan(0, length));
+                EmitSink?.AddRange(_engine.AsSpan(0, length));
             }
         }
     }
 
     private static void MonitorOne(
         string path, DateTimeOffset utc, double centre, int squelch, int tuning,
-        List<Verdict> rows, bool quiet, bool isolated)
+        List<Verdict> rows, bool quiet, string? emit)
     {
-        var monitor = new Monitor(centre, squelch, tuning, rows, quiet);
+        var monitor = new Monitor(centre, squelch, tuning, rows, quiet)
+        {
+            EmitSink = emit is not null ? [] : null,
+        };
         monitor.Feed(path, utc);
+        if (emit is not null)
+        {
+            WavFile.WriteMono(emit, monitor.EmitSink!.ToArray(), EngineRate);
+            Console.WriteLine($"emitted: {emit}");
+        }
     }
 
     private static string Describe(Verdict v)
