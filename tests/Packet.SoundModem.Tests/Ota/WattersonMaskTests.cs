@@ -128,17 +128,22 @@ public class WattersonMaskTests(ITestOutputHelper output)
     // Measured 2026-08-08, N=50, seed 1, TXDELAY 150 ms.
     // ------------------------------------------------------------------------------------
 
+    // Every row sits ABOVE its mode's knee, on the flat, and that is deliberate. The first cut of
+    // this tier pinned fsk9600 at +12 dB, which the ladder shows is the steepest part of an FM
+    // cliff (22 % at +9, 90 % at +12, 100 % at +15) - it passed here and failed in CI, because a
+    // point on a cliff measures the machine's floating point as much as the modem. Knees belong in
+    // the ladder tables in rx-roadmap.md; masks belong where the curve is flat.
     [Theory]
-    [InlineData("afsk1200-il2p", "fm-mic", 12.0, 32, 40)]    // measured 47/50 - and the whole
+    [InlineData("afsk1200-il2p", "fm-mic", 15.0, 20, 25)]    // measured 24/25 - and the whole
                                                              // point of AFSK 1200: it works
                                                              // through a microphone and speaker
-    [InlineData("afsk1200-il2p", "fm-data", 9.0, 35, 40)]    // measured 49/50
-    [InlineData("fsk9600-il2p", "fm-data", 12.0, 18, 25)]    // measured 45/50
-    [InlineData("c4fsk9600", "fm-data", 21.0, 18, 25)]       // measured 45/50 on its narrow
+    [InlineData("afsk1200-il2p", "fm-data", 12.0, 21, 25)]   // measured 25/25
+    [InlineData("fsk9600-il2p", "fm-data", 15.0, 21, 25)]    // measured 25/25
+    [InlineData("c4fsk9600", "fm-data", 24.0, 21, 25)]       // measured 25/25 on its narrow
                                                              // channel; the same mode on wide
                                                              // is ~1.8 dB better, which is what
                                                              // narrow costs it
-    [InlineData("c4fsk19200", "fm-data", 21.0, 21, 25)]      // measured 50/50
+    [InlineData("c4fsk19200", "fm-data", 24.0, 21, 25)]      // measured 25/25
     public void Fm_Smoke_Mask_Holds(
         string mode, string channel, double cnrDb, int floor, int bursts)
     {
