@@ -134,7 +134,7 @@ public class WattersonMaskTests(ITestOutputHelper output)
     // point on a cliff measures the machine's floating point as much as the modem. Knees belong in
     // the ladder tables in rx-roadmap.md; masks belong where the curve is flat.
     [Theory]
-    [InlineData("afsk1200-il2p", "fm-mic", 15.0, 20, 25)]    // measured 24/25 - and the whole
+    [InlineData("afsk1200-il2p", "fm-mic", 15.0, 21, 25)]    // measured 25/25 - and the whole
                                                              // point of AFSK 1200: it works
                                                              // through a microphone and speaker
     [InlineData("afsk1200-il2p", "fm-data", 12.0, 21, 25)]   // measured 25/25
@@ -144,6 +144,11 @@ public class WattersonMaskTests(ITestOutputHelper output)
                                                              // is ~1.8 dB better, which is what
                                                              // narrow costs it
     [InlineData("c4fsk19200", "fm-data", 24.0, 21, 25)]      // measured 25/25
+    [InlineData("qpsk3600", "fm-mic", 18.0, 21, 25)]         // measured 25/25 - NinoTNC groups
+                                                             // 3600 AQPSK (switch 0101) with the
+                                                             // speaker/mic modes, and this row is
+                                                             // that claim held as a test
+    [InlineData("qpsk3600", "fm-data", 18.0, 20, 25)]        // measured 24/25
     public void Fm_Smoke_Mask_Holds(
         string mode, string channel, double cnrDb, int floor, int bursts)
     {

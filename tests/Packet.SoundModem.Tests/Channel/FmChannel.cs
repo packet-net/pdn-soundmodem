@@ -311,11 +311,14 @@ public sealed class FmChannel
     // to the modem's rate.
     private float[] ShapeReceiveAudio(float[] discriminated)
     {
+        // Decimate first, then de-emphasise at the modem's own rate: the transmitter inverted the
+        // coefficient for THAT rate, and a pair that cancels is worth more than modelling where in
+        // the receiver's audio chain the network physically sits.
+        float[] atAudioRate = Decimate(discriminated, _interpolation, _ifRate);
         float[] shaped = _profile.DeEmphasisMicroseconds > 0
-            ? DeEmphasise(discriminated, _ifRate, _profile.DeEmphasisMicroseconds)
-            : discriminated;
-        float[] atAudioRate = Decimate(shaped, _interpolation, _ifRate);
-        return BandLimit(atAudioRate, _audioRate, _profile.RxAudioLowHz, _profile.RxAudioHighHz);
+            ? DeEmphasise(atAudioRate, _audioRate, _profile.DeEmphasisMicroseconds)
+            : atAudioRate;
+        return BandLimit(shaped, _audioRate, _profile.RxAudioLowHz, _profile.RxAudioHighHz);
     }
 
     private static float[] BandLimit(float[] audio, int rate, double lowHz, double highHz)
@@ -336,41 +339,48 @@ public sealed class FmChannel
         return output;
     }
 
-    // Pre-emphasis: a first-order high-frequency lift, 6 dB per octave above 1/(2*pi*tau),
-    // normalised to unity gain at 1 kHz so the drive calibration that follows is not chasing the
-    // emphasis network's own gain.
+    // Pre-emphasis and de-emphasis are an EXACT inverse pair, and that is the whole requirement.
+    // De-emphasis is the one-pole low-pass a real receiver has; pre-emphasis is its algebraic
+    // inverse using the same coefficient, so a matched link is flat to numerical precision. The
+    // first cut of this used a plausible-looking shelf for pre-emphasis and a one-pole for
+    // de-emphasis, with separately-derived coefficients: they did not cancel, and left a 15 dB
+    // tilt across 500-2800 Hz. AFSK shrugged that off and every AFSK measurement looked fine,
+    // while qpsk3600 - which has no equaliser - could not decode through a microphone path at any
+    // signal level, contradicting NinoTNC's own documentation that it is a speaker/mic mode. An
+    // external prediction caught what no internal test did, hence
+    // Emphasis_Round_Trips_Flat_Through_A_Matched_Pair.
+    private static double EmphasisCoefficient(int rate, double microseconds) =>
+        1.0 - Math.Exp(-1.0 / (rate * microseconds * 1e-6));
+
+    // The inverse of the de-emphasis low-pass. Its high-frequency gain is real and is the point:
+    // pre-emphasis spends proportionally less deviation on low frequencies, which is what makes a
+    // pre-emphasised link favour the top of the audio band. The absolute level does not matter
+    // here because the drive is normalised to the deviation target afterwards.
     private static float[] PreEmphasise(float[] audio, int rate, double microseconds)
     {
-        double tau = microseconds * 1e-6;
-        double a = 1.0 / (1.0 + (1.0 / (rate * tau)));
-        double reference = Math.Sqrt(1 + Math.Pow(2 * Math.PI * 1000 * tau, 2));
+        double a = EmphasisCoefficient(rate, microseconds);
         var output = new float[audio.Length];
-        double previousIn = 0;
-        double previousOut = 0;
+        double previous = 0;
         for (int n = 0; n < audio.Length; n++)
         {
-            double y = (a * previousOut) + (audio[n] - previousIn);
-            output[n] = (float)(y / reference * (1 / a));
-            previousIn = audio[n];
-            previousOut = y;
+            output[n] = (float)((audio[n] - ((1 - a) * previous)) / a);
+            previous = audio[n];
         }
 
         return output;
     }
 
-    // De-emphasis: the matching single-pole roll-off, which is also what turns the discriminator's
-    // rising noise spectrum back into something close to flat.
+    // The receiver's de-emphasis network: a plain one-pole low-pass, which is also what turns the
+    // discriminator's rising noise spectrum back into something close to flat.
     private static float[] DeEmphasise(float[] audio, int rate, double microseconds)
     {
-        double tau = microseconds * 1e-6;
-        double a = 1.0 - Math.Exp(-1.0 / (rate * tau));
-        double reference = 1.0 / Math.Sqrt(1 + Math.Pow(2 * Math.PI * 1000 * tau, 2));
+        double a = EmphasisCoefficient(rate, microseconds);
         var output = new float[audio.Length];
         double y = 0;
         for (int n = 0; n < audio.Length; n++)
         {
             y += a * (audio[n] - y);
-            output[n] = (float)(y / reference);
+            output[n] = (float)y;
         }
 
         return output;

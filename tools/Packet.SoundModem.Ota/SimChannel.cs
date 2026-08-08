@@ -63,7 +63,6 @@ internal static class FmModes
         // 8 kHz IF filter cannot pass. qpsk3600 shares the C4FSK 19200 modulator, so it shares
         // its channel.
         _ when mode.StartsWith("c4fsk19200", StringComparison.Ordinal) => 25000,
-        _ when mode.StartsWith("qpsk3600", StringComparison.Ordinal) => 25000,
         _ when mode.StartsWith("fsk9600", StringComparison.Ordinal) => 25000,
         _ => 12500,
     };
