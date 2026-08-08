@@ -12,6 +12,9 @@ namespace Packet.SoundModem.Tests.Ota;
 /// whose zero cannot be distinguished from a broken chain measures nothing - the
 /// burst-verdict campaign's lesson, applied on day one here.
 /// </summary>
+/// <remarks>Console.Out redirection is process-global, so every test class that captures
+/// command output shares the "console-capture" collection to stay serialized.</remarks>
+[Collection("console-capture")]
 public class ArdopMonitorTests
 {
     private const int Rate = 12000;
@@ -97,5 +100,39 @@ public class ArdopMonitorTests
         string report = output.ToString();
         report.Should().Contain("IDFrame").And.Contain("4FSK.500.100");
         report.Should().Contain("2 decoded ok");
+    }
+
+    [Fact]
+    public void The_Emitted_Stream_Is_What_The_Demodulator_Heard()
+    {
+        // The --emit seam exists so external reference decoders can be handed exactly
+        // the audio our demodulator consumed. Property under test: emitting from the
+        // shifted path and re-monitoring the emission at the native centre (no shift)
+        // reproduces the decode.
+        float[] native = KnownFrames();
+        var shifted = new float[native.Length];
+        new FrequencyShifter(Rate, 150).Process(native, shifted);
+        string wav = StageWav(shifted, "raw-20260807T120200Z.wav");
+        string emitted = Path.Combine(Path.GetDirectoryName(wav)!, "emitted-120200.wav");
+
+        var output = new StringWriter();
+        TextWriter real = Console.Out;
+        Console.SetOut(output);
+        try
+        {
+            ArdopMonitorCommand.Run(["--wav", wav, "--centre", "1650", "--quiet", "--emit", emitted])
+                .Should().Be(0);
+            ArdopMonitorCommand.Run(["--wav", emitted, "--centre", "1500", "--quiet"])
+                .Should().Be(0);
+        }
+        finally
+        {
+            Console.SetOut(real);
+        }
+
+        string[] reports = output.ToString().Split("=== ardop-monitor");
+        reports.Should().HaveCount(3);
+        reports[1].Should().Contain("2 decoded ok");
+        reports[2].Should().Contain("2 decoded ok");
     }
 }

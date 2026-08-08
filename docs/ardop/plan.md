@@ -119,18 +119,91 @@ bandwidth classes appear, what the unrecognized bursts look like)
    counter (acquisitions that never reached type decode), so the residue above type-decode
    stops being invisible.
 
+## A1: the reference-decoder autopsy (2026-08-08)
+
+The loss surface above was put to the reference implementation frame by frame. Two new
+instruments carry the experiment, both in `sm-ota`:
+
+- **`ardop-cut`**: cuts one WAV per frame group (frames within 120 s of each other) out of
+  the raw capture around every baseline failure, whole-session so Memory-ARQ context is
+  preserved, with a manifest aligning every baseline verdict to its offset in the cut.
+  Capture gaps are silence-filled so offsets stay truthful.
+- **`ardop-monitor --emit`**: writes the exact post-chain stream (bandpassed, unshifted to
+  1500 Hz) the demodulator consumed, so an external decoder can be handed bit-identical
+  audio. The external referee is ardopcf 1.0.4.1.3 (`--decodewav`, the design doc's pinned
+  provenance commit a7c9228, built locally; GCC 14 needs `-std=gnu17
+  -Wno-error=int-conversion` for its rawhid/ws_server libs, no source changes).
+
+ardopcf has no wide tuning search, so each cut was emitted at trial centres 1500-1800 in
+20 Hz steps and the referee scored at each; the plateau locates the session's true centre.
+Reproduction: `tools/.../sm-ota ardop-cut --csv ardop-baseline.csv --raw
+/home/tf/capture-40m/raw --out <dir>`, then the sweep + per-frame join scripts (session
+scratch: `a1-sweep/sweep.sh`, `a1-sweep/perframe.py`).
+
+### Autopsy table (52 cuts, 344 aligned frames, referee at each cut's best centre)
+
+| family          | ours ok / oracle ok | ours FAIL / oracle FAIL | ours FAIL / oracle ok | ours ok / oracle FAIL |
+|-----------------|--------------------:|------------------------:|----------------------:|----------------------:|
+| 16QAM.500.100   |                   0 |            4 (+3 unseen) |                     0 |                     0 |
+| 16QAM.2000.100  |                   0 |                       1 |                     0 |                     0 |
+| 8PSK.500.100    |                   0 |            2 (+1 unseen) |                     0 |                     0 |
+| 4FSK.500.100    |                   9 |                      31 |                     3 |                     1 |
+| 4PSK.500.100    |                  13 |                      12 |                     0 |                     4 |
+| 4PSK.200.100(S) |                  39 |                       7 |                     0 |                     2 |
+| 4FSK.200.50S    |                  29 |                       0 |                     0 |                     2 |
+| ConReq500M      |                  21 |                      10 |                     1 |                     0 |
+| ConAck500       |                  15 |                       0 |                     5 |                     0 |
+| IDFrame         |                  20 |                       5 |                     0 |                     0 |
+| control (ACK/NAK/IDLE/BREAK/DISC/END) | 189 |               0 |                     0 |                     0 |
+
+### Findings
+
+1. **The top-rung null is confirmed by reference parity.** All 11 wild 16QAM/8PSK bodies
+   fail in ardopcf too, at every trial centre; 4 of the 11 it never even acquires. These
+   are weak one-sided copies (we hear the poor direction), not a decoder gap. The design
+   doc's thin-margin prediction stands, but our implementation is not behind the
+   reference. Honest null; no decoder work indicated by this corpus.
+2. **The 4FSK.500.100 60 % body rate is dominated by one emitter.** The failed pairs
+   recur at half-hour marks +37 s: GB7BPQ's FEC beacon (BPQ node position + text, sent
+   20 s before its known ID pair), and both decoders fail it 31 of 34 times - at the
+   decode threshold, not a defect. Of the 3 oracle-only decodes, one passed at the full
+   8-of-8 RS correction budget (a coin-toss margin), and 2 of our failures decode for us
+   too once the cut is monitored at the session's true centre.
+3. **The ConAck500 5-0 to the oracle is a policy artifact, not demodulation.** ardopcf's
+   `Decode4FSKConACK` (SoundInput.c:3059) initialises Timing to 0 and tests `Timing >= 0`,
+   so a body with no 2-of-3 majority still PASSes, reporting "timing 0 ms" - it cannot
+   fail a ConAck. All five disputed frames show exactly that. Our decoder implements the
+   strict majority and calls them FAIL. Interop question for A2: live ISS peers proceed on
+   such ConAcks, so matching reference behaviour (frame ok on type decode; timing null
+   without majority) is the interop-correct choice. Behaviour change belongs in
+   M0LTE.Ardop, gated on its ardopcf loop tests.
+4. **The A0 baseline ran ~150 Hz off-centre.** 48 of 52 cuts lock at trial centres
+   1500-1580 (outliers 1680, 1760): wild session centres cluster at 1500-1560 audio, not
+   the ~1650 the survey estimator suggested and A0 assumed. Our ±200 Hz tuning absorbed
+   the offset for acquisition, but body decode degrades with residual offset (finding 2's
+   recoveries). A corrected-centre rescan of the corpus quantifies the corpus-wide
+   effect (addendum below when complete). The monitor default stays 1650 until the rescan
+   settles the number.
+5. **Net of the ConAck artifact, genuine per-frame disputes go 9-4 in our favour**
+   (ours-ok/oracle-FAIL vs ours-FAIL/oracle-ok). On this corpus our receive chain is at
+   parity with or slightly ahead of the reference implementation everywhere except the
+   marginal-RS coin-toss region.
+
 ## Phases
 
 - **A0 (this leg): the monitor instrument and the baseline.** Exit: the instrument decodes the
   positive controls, the baseline scoreboard is measured over the capture, and the residue is
   characterized. No fixes.
-- **A1: autopsy the residue.** One experiment per class of miss - weak-leader acquisition on the
-  far side, a bandwidth class that never decodes, a frame type that acquires but fails RS. Each
-  measured against the raw audio, each a recorded number or null. Where a wild session's own
-  retries give a second copy, use it as the per-frame referee the band otherwise lacks.
-- **A2: fixes, if any pay.** Receive-side only, each with its A/B against the wild corpus and
-  the bench rig's Rungs 0-2 kept green (interop is still ground truth). A monitor improvement
-  that decodes more of the wild band without regressing the bench oracle.
+- **A1: autopsy the residue.** Done (2026-08-08, table above). The per-frame referee turned
+  out stronger than wild retries: the reference implementation itself, run over bit-identical
+  audio via the --emit seam. Result: top-rung null confirmed at parity, the 4FSK loss is one
+  weak beacon emitter, the one 5-0 deficit is an ardopcf accept-anything policy, and the
+  baseline's centre assumption was 150 Hz off.
+- **A2: fixes, if any pay.** From the autopsy, exactly two candidates: (a) ConAck
+  reference-policy alignment in M0LTE.Ardop (interop: live peers proceed on majority-less
+  ConAcks); (b) the corrected monitor centre once the rescan settles it. Receive-side only,
+  each with its A/B against the wild corpus and the bench rig's Rungs 0-2 kept green
+  (interop is still ground truth).
 - **A3: the sim seam.** Turn the validated wild corpus into a maskable ARDOP sim baseline
   (the rx-roadmap workstream 0 debt), so ARDOP joins the mask discipline the other modes have.
 
