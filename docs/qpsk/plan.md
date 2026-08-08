@@ -232,3 +232,18 @@ and Q4 in the MS110D closeout style.
 Net: ~2.5 dB (qpsk600) and ~2 dB (qpsk2400) at the AWGN knees, CFO robustness roughly
 doubled with the dip eliminated, one measured null (DF-DD noise margin on QPSK) and one
 measured scope-out (qpsk3600's FM chain) on the record, at zero transmitted-bit change.
+
+## Postscript, 2026-08-08: qpsk3600's clean-signal weakness has a cause
+
+The campaign scoped `qpsk3600` out of the decision-feedback reference after measuring a
+clean-signal regression peculiar to it "at 6 2/3 samples per symbol" (Q2). That ratio was the
+cause, not a coincidence, and the FM channel model made it visible: the mode decodes *worse* as
+the signal gets stronger - 30/30 at +18 dB CNR, then ~70-77 % at +24 to +40 - while every other
+PSK mode, all of which have integer samples-per-symbol, is flat. Re-running qpsk3600 at rates that
+make the ratio integer removes it (30/30 at 20 samples/symbol on both AWGN and the FM path).
+
+QtSoundModem avoids the whole problem by construction: `make_core_INTR` interpolates each PSK mode
+by `n_INTR = baud/300` (6 for Q3600) and its sampler hardcodes 300 baud, so every mode decides at
+exactly 40 samples per symbol. The fix here is internal interpolation in `QpskDemodulator`, because
+no divisor of 48 kHz gives an integer ratio at 1800 baud. See docs/mode-modulation-reference.md and
+the mode-validation.md entry of 2026-08-08 (later6).

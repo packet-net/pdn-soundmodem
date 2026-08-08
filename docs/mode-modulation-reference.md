@@ -72,35 +72,56 @@ What changed here as a result:
   here are low, or Nino's OBW numbers for that group are rounded up to the channel they fit. Worth
   asking; the classification is unaffected either way.
 
-### Open: the qpsk3600 high-signal anomaly (found 2026-08-08, not explained)
+### The qpsk3600 high-signal anomaly: found, explained, and the fix identified (2026-08-08)
 
-Chasing the deviation question turned up something more important, and it is a property of the
-mode's receive path rather than of any channel model.
+Chasing the deviation question turned up something more important, and QtSoundModem's source
+explained it.
 
-**`qpsk3600` decodes *worse* as the signal gets stronger.** On the FM channel (data port, flat, no
-emphasis, wide IF, so none of truncation, emphasis or the microphone path is involved) it scores
-30/30 at +18 dB CNR and then 73 %, 77 %, 70 % at +24, +30 and +40. On a linear AWGN channel the
-same shape appears in miniature: 99/97/95/94/97 % across +15/+20/+25/+30/+40 at N=100.
+**The symptom.** `qpsk3600` decodes *worse* as the signal gets stronger. On the FM channel (data
+port, flat, wide IF - so neither truncation nor the microphone path is involved) it scores 30/30 at
++18 dB CNR and then 22/30, 23/30, 21/30 at +24, +30 and +40. On linear AWGN the same shape appears
+in miniature: 99/97/95/94/97 % across +15/+20/+25/+30/+40 at N=100.
 
-What it is not, each ruled out by measurement:
+**Ruled out by measurement**: the channel model (`afsk1200-il2p` and `c4fsk9600` are both 25/25 at
++40 dB CNR on the same path); the shared QPSK code (`qpsk600` and `qpsk2400` are both 25/25 at +20,
++30 and +40 dB); acquisition (TXDELAY 150, 300 and 600 ms all give exactly 21/30, and the same
+frames fail each time); deviation and IF truncation (a wider IF is worse).
 
-- **Not the channel model.** `afsk1200-il2p` and `c4fsk9600` both score 25/25 at +40 dB CNR on the
-  same FM path.
-- **Not the shared QPSK code.** `qpsk600` and `qpsk2400` are 25/25 at +20, +30 and +40 dB on AWGN.
-- **Not acquisition.** 150, 300 and 600 ms of TXDELAY all give exactly 21/30 - more preamble does
-  not help at all, and the same frames fail each time.
-- **Not deviation or IF truncation.** Widening the IF makes it worse, not better.
+**The cause: a non-integer samples-per-symbol ratio.** At the deployed 12 kHz DSP rate, 1800
+symbols per second is **6.667 samples per symbol**. Every other PSK mode in the catalogue is an
+integer - `qpsk600` at 40, `qpsk2400` at 10, `bpsk300` at 40 - and those are exactly the modes that
+do not show the effect. Our symbol instant comes from a phase accumulator that wraps onto the
+sample grid, so a coarse fractional ratio can park the sampler consistently off-centre; noise
+dithers it and, perversely, helps.
 
-That leaves the mode itself. `qpsk3600` is the only mode in the catalogue running at a non-integer
-6 2/3 samples per symbol (12 kHz over 1800 sym/sec), and the QPSK campaign already recorded one
-clean-signal regression peculiar to it at that ratio (docs/qpsk/plan.md: the decision-feedback
-reference was scoped out of this mode for exactly that reason). A plausible reading is that noise
-dithers a coarsely-quantised sampling instant and a clean signal does not, but that is a
-hypothesis, not a finding - it has not been tested.
+Proven by re-running the same mode at rates that make the ratio integer (AWGN, +40 dB, N=30):
 
-Why it matters operationally: a strong local signal is the *normal* case for FM packet, so this is
-the regime the mode is most often used in. Worth its own leg, and the timing-oracle seam built for
-rx-roadmap workstream 4 is the instrument to point at it.
+| DSP rate | samples/symbol | result |
+|---|---|---|
+| 12000 | 6.667 | 28/30 |
+| 10800 | 6.000 | 29/30 |
+| 36000 | 20.000 | **30/30** |
+
+and on the FM path, where the effect is severe, 20 samples/symbol removes it completely: **30/30 at
+both +24 and +40 dB CNR**, against 26/30 and 21/30 at 6.667.
+
+**How QtSoundModem avoids it, and the fix that follows.** QtSoundModem (GPLv3; `ax25_demod.c`,
+`decode_stream_QPSK` and `make_core_INTR`) never lets its symbol sampler see a fractional ratio. It
+interpolates each PSK mode by `n_INTR = baud/300` - **6 for Q3600** - and the sampler then hardcodes
+`baudrate = 300`, so every PSK mode arrives at the decision point with exactly 40 samples per
+symbol. Its sampler is also a different design from ours: it keeps an exponentially averaged
+envelope per position-within-symbol (`bit_buf[sample_cnt]`) and decides at the position where that
+averaged eye peaks, rather than at a transition-nudged phase wrap - an estimator that gets *better*
+as noise falls, which is precisely the opposite of what we measured.
+
+The fix must be **internal interpolation in the receive path**, not a catalogue rate change: no
+divisor of the 48 kHz soundcard rate gives an integer samples-per-symbol at 1800 baud (48000/1800 =
+26.667), which is presumably why the mode sits at 12 kHz in the first place. Interpolating by 3
+(20 samples/symbol) or by 6 (40, matching QtSoundModem exactly) inside the demodulator is the
+change. Not yet built.
+
+**Why it matters operationally**: a strong local signal is the normal case for FM packet, so this
+is the regime the mode is most used in.
 
 Two operational notes from the same release, which bear on our capture campaign:
 
