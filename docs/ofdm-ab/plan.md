@@ -73,6 +73,12 @@ Every published bandwidth divides by **46.875 Hz** to within rounding:
 | WB | 5,766 Hz | 123.0 |
 | EWB | 7,781 Hz | 166.0 |
 
+**Treat this inference as unreliable.** It is arithmetic on ADRCS's published bandwidth figures and
+nothing more; later information indicates it is wrong, and no number derived from it should be
+built on. It is kept here as the record of what could be worked out from the public material, not
+as a specification. The mode's own spec is unpublished and unfinished, and remains the only
+authority.
+
 Four for four on integers is not coincidence, and 46.875 Hz is exactly 48000/1024, 24000/512 and
 **12000/256** - the spacing an implementer picks when the FFT is a power of two at a standard
 audio rate. So: subcarrier spacing 46.875 Hz, 56 / 78 / 123 / 166 subcarriers, useful symbol
