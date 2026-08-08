@@ -294,6 +294,46 @@ The coverage-rule paragraph and rx-roadmap workstream 0 both record the gap clos
   ~2 % single-shot acquisition-capture ceiling (a leader re-arm candidate for a future
   receiver leg), and the top rungs' fading floor (a waveform property, not a work item).
 
+## Open legs, parked 2026-08-08 (the campaign rests here)
+
+A0-A3 are done and merged (#257, #258, #260, #261); evidence at
+`/home/tf/ardop-campaign-evidence/`. What follows is everything the campaign left undone, in
+recommended order, each with the evidence that motivates it and how to measure it - so a future
+leg starts from measurement rather than from memory. Priority moved elsewhere on 2026-08-08
+(Tom: the IP400 project's OFDM-AB mode), so nothing here is scheduled.
+
+1. **Leader re-arm** (pick this first). The measured ~2 % single-shot ceiling is a receiver
+   defect with an isolated mechanism: certain noise realisations false-trigger the leader
+   detector during the lead-in and the capture swallows the frame. Seeds 18 and 27 fail at
+   every AWGN SNR from +10 to +25 dB yet decode at +40 - one capture mechanism, two signatures
+   (never-acquired, and wrong-lock body fail). It caps every ARDOP mask row in
+   `WattersonMaskTests` at ~98 %, and both instruments needed to A/B a fix already exist (the
+   A3 sim ladder and the wild corpus). ARQ retries absorb it in deployment, so the deployment
+   value is latency, not lost traffic - which is why it ranks first on evidence but is not
+   urgent. **Note for any multi-hypothesis or diversity approach here** (2026-08-08): ARDOP
+   data frames carry Reed-Solomon parity *and* a CRC-16 (`ArdopFrameCodec`, FX.25 GF(2^8),
+   Rockliff layout, CRC over count+data with its low byte XORed against the frame type), so a
+   data frame gives a clean pass/fail criterion to select a winning hypothesis on. The short
+   session-control frames do NOT: ConAck is accepted on type decode alone (the A2 alignment,
+   matching ardopcf's `Decode4FSKConACK`) with 2-of-3 majority on the timing bytes and nothing
+   to fail against. Extra decoders on the control path multiply false accepts with no catcher.
+2. **Rung 5, on-air.** Nothing in this campaign is on-air evidence - the corpus is receive-only
+   and the masks pin the receiver against the model. In particular no live ARQ session has ever
+   exercised the ConAck acceptance shipped in M0LTE.Ardop 0.4.0; it has bench and wild-replay
+   evidence only. Exit: one real ARQ connection with a deployed peer, logged.
+3. **The multi-centre pass.** Sessions at 1680-1760 Hz sit outside +/-200 Hz of the corrected
+   1500 Hz default and are silently unheard (measured cost at the corrected centre: 8PSK
+   acquisitions 3 -> 2, 16QAM.2000 1 -> 0). A second monitor centre, or a centre sweep per
+   session, recovers them. Cheap; measure against the corpus by re-scanning at both centres and
+   diffing the framelog.
+4. **The 4FSK.500.100 threshold residue.** GB7BPQ's half-hourly FEC beacon sits at the decode
+   edge for both implementations (ardopcf fails it 31 times of 34), so only a genuine
+   receive-margin advance moves it - no policy or centre change will. The value of this leg is
+   that the corpus can now *measure* any margin candidate against a real threshold emitter.
+5. **The leader-candidate counter.** Still unbuilt: an instrument counting acquisitions that
+   never reached type decode, which would make the acquisition residue visible instead of
+   inferred. It is the natural companion to leg 1 rather than a leg of its own.
+
 ## Discipline (restated for this campaign)
 
 - The bench oracle (ardopcf, Rungs 0-4) stays the interop ground truth; nothing here changes a

@@ -1,0 +1,212 @@
+# OFDM-AB: research and implementation plan
+
+Opened 2026-08-08 on Tom's direction, superseding the receive campaign's remaining legs as the
+active priority. This document is the research record and the plan; it will carry the campaign's
+measured results as it runs, in the same shape as [docs/ardop/plan.md](../ardop/plan.md) and
+[docs/qpsk/plan.md](../qpsk/plan.md).
+
+## What OFDM-AB is, and why this repo cares
+
+**OFDM-AB** ("audio band") is an OFDM waveform confined to the audio passband of an ordinary FM
+transceiver, so the radio emits standard FM and regulatory compliance rides on that. It comes
+from the **IP400 project** of the Alberta Digital Radio Communications Society (ADRCS), by
+**Martin C. Alcock VE6VH**, and it is the project's pivot away from its original 100 kbps 4FSK
+plan at 420-450 MHz toward something that works with radios amateurs already own, on any band
+from 10 m to 1296 MHz.
+
+Three facts make it this repo's business rather than a curiosity:
+
+1. **It is a soundcard modem.** Audio in, audio out, mic-and-speaker or data port. That is
+   exactly what `pdn-soundmodem` is: our FM family (`afsk1200`, `fsk9600`, `c4fsk9600`) already
+   runs at 12 kHz DSP on the same audio path OFDM-AB targets.
+2. **The speeds are a step change for FM packet.** In a 12.5 kHz channel: 19,360 bps through
+   mic/speaker, 42,353 bps through a data port, against the 9600 bps our fastest FM mode manages
+   today. A four-fold improvement on the same radios and the same channel is not an increment.
+3. **The lineage runs straight into our interop ground truth.** OFDM-AB is co-developed with
+   **Nino Carrillo KK4HEJ** - the NinoTNC and IL2P author - and ADRCS is collaborating with
+   **TARPN** to put an audio-band version into TARPN's TNC. This repo's stated ground truth is
+   "NinoTNC behaviour"; if OFDM-AB lands in a NinoTNC, it stops being an optional mode and
+   becomes something we must speak.
+
+## What is published, as of 2026-08-08
+
+The only technical publication is a 14-slide introduction deck (preserved; see Provenance). It
+gives the mode's outline and its numbers, and no waveform specification.
+
+### Bandwidth profiles, on 12.5 kHz channel spacing
+
+| Mode | Audio bandwidth | Application | Radio connection |
+|---|---|---|---|
+| Narrowband (NB) | 2,625 Hz | most FM radios | mic and speaker |
+| Enhanced NB (ENB) | 3,656 Hz | radios without a sharp high-end cut-off | mic and speaker |
+| Wideband (WB) | 5,766 Hz | radios with direct modulator connections | data port |
+| Enhanced WB (EWB) | 7,781 Hz | high-end radios with extended passbands | data port |
+
+Bandwidth adaptation is automatic and needs no handshake, which implies the preamble announces
+the profile (or the receiver measures it) - an important unknown, since it is the first thing a
+receiver must get right.
+
+### Data rates (bps, raw - before FEC, which is not in the product yet)
+
+| Constellation | bits/carrier | NB | ENB | WB | EWB |
+|---|---|---|---|---|---|
+| BPSK | 1 | 2,426 | 3,353 | 5,294 | 7,147 |
+| QPSK | 2 | 4,853 | 6,706 | 10,588 | 14,294 |
+| QPSK-8 (8PSK) | 3 | 7,260 | 10,059 | 15,882 | 21,441 |
+| QAM-16 | 4 | 9,680 | 13,412 | 13,412 (*) | 28,588 |
+| QAM-32 | 5 | 12,132 | 16,765 | 16,765 (*) | 35,735 |
+| QAM-64 | 6 | 14,520 | 20,118 | 31,765 | 42,882 |
+| QAM-128 | 7 | 16,940 | 23,471 | 37,059 | 50,029 |
+| QAM-256 | 8 | 19,360 | 26,824 | 42,353 | 57,176 |
+
+(*) The WB column repeats ENB's values on those two rows, inconsistent with every other row;
+scaling WB's own BPSK rate gives ~21,176 and ~26,470. A transcription slip in the deck.
+
+### The geometry, inferred (this is inference, not specification)
+
+Every published bandwidth divides by **46.875 Hz** to within rounding:
+
+| profile | bandwidth | / 46.875 |
+|---|---|---|
+| NB | 2,625 Hz | 56.0 |
+| ENB | 3,656 Hz | 78.0 |
+| WB | 5,766 Hz | 123.0 |
+| EWB | 7,781 Hz | 166.0 |
+
+Four for four on integers is not coincidence, and 46.875 Hz is exactly 48000/1024, 24000/512 and
+**12000/256** - the spacing an implementer picks when the FFT is a power of two at a standard
+audio rate. So: subcarrier spacing 46.875 Hz, 56 / 78 / 123 / 166 subcarriers, useful symbol
+21.33 ms. The quoted rates then imply a per-carrier symbol rate near 43 baud, i.e. a cyclic
+prefix around 8-9 % (about 2 ms). Long symbols, which is the right choice against FM flutter and
+multipath, and at our 12 kHz FM DSP rate a 256-point FFT lands exactly on the spacing.
+
+Everything else a receiver needs is unpublished: pilot count and placement, preamble and
+synchronisation, how the bandwidth profile and constellation are signalled, framing and CRC
+placement, bit-to-subcarrier mapping and interleaving, scrambling, and the Trellis code that
+arrives later.
+
+### Availability and licence, stated plainly
+
+- **No OFDM-AB source is public.** The published roadmap puts OFDM-AB in firmware v2.1 (Q4 2026,
+  up to QAM-64, all bandwidths, **CRC only**), QAM-128/256 and **Trellis FEC** in v2.2 (Q2 2027).
+  The reference implementation runs OFDM subcarrier processing on an Efinix Trion FPGA in the
+  Advanced Mesh Network Controller, production Q4 2026.
+- **The upstream repository carries no licence** (`license: null`), and on 2026-08-08 it deleted
+  its Documentation, Node Firmware, SDCard and Wireshark directories in a "reboot". The project
+  calls itself open source and invites contributions, but until a licence exists, nothing there
+  may be copied into this GPL-3.0-or-later repo. A clean-room implementation from a published
+  specification is unaffected, and is the only route worth planning around.
+
+## What we would have to build, honestly
+
+We have a great deal of the surrounding machinery and almost none of the waveform.
+
+**We have**: the mode-generic sim harness (`SimModem`, `SimBench`, `sm-ota sim`) that would drive
+an OFDM-AB modem the day it exists; the Watterson rig and the two-tier mask discipline; an
+`IModem` seam and KISS/daemon plumbing that a new mode drops into; QAM experience from the ARDOP
+work (8PSK/16QAM demodulation, and the measured lesson that dense constellations die on fading
+channels); an FFT in `M0LTE.Dsp`; and the FM audio path at 12 kHz.
+
+**We lack**:
+
+- **A native OFDM chain.** The FreeDV datac family is OFDM, but it is codec2's engine behind a
+  wrapper - we have never written OFDM ourselves. Needed: framing with cyclic prefix, coarse and
+  fine timing sync, fractional and integer frequency offset correction, per-subcarrier channel
+  estimation and equalisation, pilot tracking, QAM slicing to soft bits. This is the bulk of the
+  work and it is reusable well beyond OFDM-AB.
+- **An FM channel model.** rx-roadmap workstream 6 item 6 has this recorded as the gate on masks
+  for every FM mode: deviation error, pre-emphasis/de-emphasis mismatch, discriminator noise,
+  flutter. OFDM-AB is *the* mode that needs it, because the whole point of the design is that it
+  survives an ordinary radio's mic-and-speaker path - which is a pre-emphasised, band-limited,
+  AGC'd, possibly companded channel that our sim models not at all. Masking OFDM-AB against AWGN
+  alone would be measuring the wrong thing.
+- **The specification.** Without it there is no interop, and interop is the entire point.
+
+## Plan
+
+Phases in the MS110D discipline: instrument first, measure before building, honest negatives with
+mechanism, and a ledger entry when a mode's status changes.
+
+- **O0: ask, and preserve.** Two actions, both cheap and both high-value. **(a)** Write to ADRCS
+  (info@adrcs.org, ve6vh@adrcs.org) asking for the OFDM-AB waveform specification and a licence
+  on the published sources, introducing this repo as a prospective independent implementation.
+  The project explicitly invites contributions and says it wants OFDM-AB to be an open standard
+  with interoperable implementations, so this is a request it is set up to welcome, and Nino
+  Carrillo's involvement means our NinoTNC interop record is a credential. **(b)** Preservation:
+  done 2026-08-08 (see Provenance). *Exit: a reply, or a recorded non-reply after a fair
+  interval.*
+- **O1: the FM channel model** (rx-roadmap workstream 6 item 6). Pays regardless of what O0
+  returns: it unblocks masks for `afsk1200`, `fsk9600`, `c4fsk9600` and `qpsk3600` as well, and
+  it is a prerequisite for any honest OFDM-AB number. Calibrate against real radios where we can
+  (the FM deviation instrument `sm-ota fm-deviation` exists, and the mode-modulation reference
+  records per-mode peak-deviation targets). *Exit: an FM channel axis on the Watterson rig, its
+  parameters calibrated against a real radio path rather than invented, and the existing FM modes
+  measured through it.*
+- **O2: the OFDM core, on our own geometry.** Build the reusable chain - CP framing, sync,
+  per-carrier equalisation, QAM soft-slicing - and validate it against our own sim at the
+  inferred geometry (46.875 Hz spacing, 56/78/123/166 carriers, ~2 ms CP). This is not OFDM-AB
+  and must not be called it; it is the machinery that makes implementing OFDM-AB a matter of
+  filling in a spec's constants, plus a working answer to "can we even do OFDM here". *Exit: a
+  loopback modem carrying frames at each profile, an AWGN and FM-channel ladder for each
+  constellation, and the honest gap against the published rate table.*
+- **O3: interop, when the spec or firmware lands.** Whichever arrives first - specification,
+  source with a licence, or hardware we can capture off the air - becomes ground truth, and the
+  campaign switches to the pattern that worked for ARDOP: capture real traffic, replay it, and
+  referee frame by frame against the reference. *Exit: bit-exact interop with a reference
+  implementation, or a documented list of what differs.*
+- **O4: deployment.** Mode registered in `ModemCatalog`, masks pinned in both tiers, ledger entry,
+  daemon config, KISS. *Exit: a station can run it.*
+
+O1 and O2 can proceed in parallel with O0's wait and are useful whatever the answer. O3 is
+blocked on someone else's timeline: firmware Q4 2026 at the earliest, FEC Q2 2027.
+
+## Risks and honest limits
+
+- **The spec may never be detailed enough.** The reference is FPGA firmware; there may be no
+  document that pins pilot placement and sync to the bit. If so, interop needs captured signals
+  and reverse engineering, which is slower and needs hardware on the air near us.
+- **No soft reference decoder.** ARDOP's campaign leaned entirely on running `ardopcf` over
+  bit-identical audio. An FPGA reference gives us no such referee, so our A/B discipline loses
+  its strongest instrument and captures become the only truth.
+- **The mic/speaker path is the crux and the least modelled thing we own.** OFDM through
+  pre-emphasis and a speaker output is where this mode either works or does not, and our sim
+  currently says nothing about it. O1 exists because of this.
+- **Timelines are not ours.** Everything interop-facing waits on Q4 2026 firmware at the
+  earliest. Plan the work that pays regardless, and do not let the schedule drive scope.
+- **Licence contamination.** Until ADRCS publishes a licence, no IP400 code may be read into this
+  repo's sources. The archive is private and reference-only, and the provenance rule in
+  [CLAUDE.md](../../CLAUDE.md) applies with extra force here.
+
+## Provenance and preservation (2026-08-08)
+
+Upstream `github.com/adrcs/ip400` deleted its `Documentation/`, `Node Firmware/`, `SDCard/` and
+`Wireshark/` directories between 00:49 and 00:59 UTC on 2026-08-08, replacing the README with a
+note about a forthcoming release. Because that content is the only public record of the project's
+frame format and node software, it was preserved the same day at Tom's direction:
+
+- **`M0LTE/ip400-archive`** (private): a full `git clone --mirror` pushed into a newly created
+  repository - **not a GitHub fork**, so it is independent of upstream's continued existence
+  (`fork: false`, no parent, no source). Branch `pre-reboot-2025-10-29` and tag
+  `pre-reboot-snapshot` point at the last commit before the deletions, whose working tree holds
+  all 148 files. An `archive-notes` branch carries the provenance record and this technical
+  extract; `main` is left as a faithful mirror.
+- **`/home/tf/ip400-archive.git`**: a bare local mirror, verified complete (754 objects,
+  192.69 MiB pack).
+
+The recovered `Wireshark/ip400.fdesc` is worth naming here because it is the one hard
+specification the project has published: it defines the IP400 frame precisely - eye, status,
+offset, length, packed from/to callsigns and ports, a 16-value message type (text, audio, video,
+data, beacon, encapsulated IP, AX.25, DTMF, DMR, D-STAR, P25, NXDN, M17, command), then flags with
+hop count, repeat/connectionless/command bits, extended-callsign bits, a 2-bit compression field
+and the hop table. That is the network layer, independent of the PHY, and implementable from the
+dissector alone. Note that reading it for interop is legitimate; copying the project's C sources
+is not, absent a licence.
+
+## Sources
+
+- IP400 project site: <https://ip400.adrcs.org/>, introduction deck
+  `IP400-OFDB-AB-Introduction.pdf` (2026-08)
+- ADRCS: <https://adrcs.org/adrcs/ip400-network-project/>
+- Upstream sources: <https://github.com/adrcs/ip400>
+- Zero Retries 0259, Steve Stroh N8GNJ: <https://www.zeroretries.org/p/zero-retries-0259>
+- ADRCS/TARPN collaboration announcement (2026-02), via Amateur Radio Daily and the ICQ Podcast
