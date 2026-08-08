@@ -148,7 +148,13 @@ public class WattersonMaskTests(ITestOutputHelper output)
                                                              // 3600 AQPSK (switch 0101) with the
                                                              // speaker/mic modes, and this row is
                                                              // that claim held as a test
-    [InlineData("qpsk3600", "fm-data", 18.0, 20, 25)]        // measured 24/25
+    [InlineData("qpsk3600", "fm-data", 18.0, 21, 25)]        // measured 25/25
+    // A HIGH-signal row, which this suite had none of, and their absence is why qpsk3600's
+    // fractional samples-per-symbol went unseen: every mask sat near a knee, where a mode that
+    // decodes worse as the signal improves looks perfectly healthy. Before the upsampled receive
+    // chain this point measured 77 %; it is 100 % now, so the row is a tripwire for the whole
+    // class of defect where more signal buys less decode.
+    [InlineData("qpsk3600", "fm-data", 30.0, 21, 25)]        // measured 25/25 (was 19/25)
     public void Fm_Smoke_Mask_Holds(
         string mode, string channel, double cnrDb, int floor, int bursts)
     {
