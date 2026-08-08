@@ -72,56 +72,53 @@ What changed here as a result:
   here are low, or Nino's OBW numbers for that group are rounded up to the channel they fit. Worth
   asking; the classification is unaffected either way.
 
-### The qpsk3600 high-signal anomaly: found, explained, and the fix identified (2026-08-08)
+### The qpsk3600 high-signal anomaly: found, explained, and FIXED (2026-08-08)
 
-Chasing the deviation question turned up something more important, and QtSoundModem's source
-explained it.
+**The symptom.** `qpsk3600` decoded *worse* as the signal got stronger: 30/30 at +18 dB CNR on the
+FM data-port path and then 22/30, 23/30, 21/30 at +24, +30 and +40; on linear AWGN the same shape
+in miniature, 99/97/95/94/97 % across +15 to +40 at N=100.
 
-**The symptom.** `qpsk3600` decodes *worse* as the signal gets stronger. On the FM channel (data
-port, flat, wide IF - so neither truncation nor the microphone path is involved) it scores 30/30 at
-+18 dB CNR and then 22/30, 23/30, 21/30 at +24, +30 and +40. On linear AWGN the same shape appears
-in miniature: 99/97/95/94/97 % across +15/+20/+25/+30/+40 at N=100.
+**The cause: a non-integer samples-per-symbol ratio.** At 12 kHz, 1800 symbols/sec is **6.667
+samples per symbol** - and 26.667 at the 48 kHz capture rate. It is the only mode in the catalogue
+with a fractional ratio; `qpsk600` (40), `qpsk2400` (10) and `bpsk300` (40) are integers, and those
+are exactly the modes that never showed the effect. Everything in the chain that resolves time -
+the clock's wrap, the transition crossings that steer it, the matched filter's own sampling - is
+quantised to the input grid, and at 6.667 samples per symbol that quantisation is six times coarser
+than any other mode's. Noise dithered it, so a cleaner signal decoded worse.
 
-**Ruled out by measurement**: the channel model (`afsk1200-il2p` and `c4fsk9600` are both 25/25 at
-+40 dB CNR on the same path); the shared QPSK code (`qpsk600` and `qpsk2400` are both 25/25 at +20,
-+30 and +40 dB); acquisition (TXDELAY 150, 300 and 600 ms all give exactly 21/30, and the same
-frames fail each time); deviation and IF truncation (a wider IF is worse).
+**The fix, and where it came from.** QtSoundModem never lets its symbol sampler see a fractional
+ratio: `make_core_INTR` interpolates every PSK mode by `n_INTR = baud/300` - 6 for `SPEED_Q3600` -
+and `decode_stream_QPSK` then hardcodes `baudrate = 300`, so its sampler always sees exactly 40
+samples per symbol (`ax25_demod.c`, GPLv3, the cross-check CLAUDE.md names). `QpskDemodulator` now
+does the same from the other end: the differential decode chain runs on the smallest whole
+upsampling factor that makes the ratio an integer, which is **3 for both of qpsk3600's rates**
+(20 samples per symbol at 12 kHz, 80 at 48 kHz). Band-pass and energy detection stay on the input
+grid - they answer "is something there", which needs no sub-sample resolution - so the cost falls
+on the decode chain alone. Coherent detection is untouched: it is the cross-check variant, and the
+anomaly was measured on the differential path the mode deploys with.
 
-**The cause: a non-integer samples-per-symbol ratio.** At the deployed 12 kHz DSP rate, 1800
-symbols per second is **6.667 samples per symbol**. Every other PSK mode in the catalogue is an
-integer - `qpsk600` at 40, `qpsk2400` at 10, `bpsk300` at 40 - and those are exactly the modes that
-do not show the effect. Our symbol instant comes from a phase accumulator that wraps onto the
-sample grid, so a coarse fractional ratio can park the sampler consistently off-centre; noise
-dithers it and, perversely, helps.
+**Measured A/B** (before = the decision-instant interpolation alone, after = the upsampled chain):
 
-Proven by re-running the same mode at rates that make the ratio integer (AWGN, +40 dB, N=30):
-
-| DSP rate | samples/symbol | result |
+| point | before | after |
 |---|---|---|
-| 12000 | 6.667 | 28/30 |
-| 10800 | 6.000 | 29/30 |
-| 36000 | 20.000 | **30/30** |
+| AWGN +8 dB (the knee), N=100 | 57/100 | **73/100** |
+| AWGN +10 dB | 97/100 | 94/100 |
+| AWGN +15..+40 dB | 99/97/95/94/97 | **100/100/100/100/100** |
+| fm-data +15 dB, N=50 | 48/50 | **50/50** |
+| fm-data +18 dB | 49/50 | **50/50** |
+| fm-data +24/+30/+40, N=30 | 22/23/21 of 30 | **30/29/30 of 30** |
+| fm-mic +15 dB, N=50 | 48/50 | **50/50** |
+| fm-mic +18 dB | 49/50 | **50/50** |
 
-and on the FM path, where the effect is severe, 20 samples/symbol removes it completely: **30/30 at
-both +24 and +40 dB CNR**, against 26/30 and 21/30 at 6.667.
+So the anomaly is gone and the knee improves by roughly 16 points at +8 dB as well - the coarse
+grid was costing sensitivity everywhere, not only at high signal. The three real recordings still
+decode in full (NinoTNC hardware 3/3, QtSoundModem 10/10, our own 10/10), and `qpsk600` and
+`qpsk2400` keep a bit-identical sample path because their ratios are already whole.
 
-**How QtSoundModem avoids it, and the fix that follows.** QtSoundModem (GPLv3; `ax25_demod.c`,
-`decode_stream_QPSK` and `make_core_INTR`) never lets its symbol sampler see a fractional ratio. It
-interpolates each PSK mode by `n_INTR = baud/300` - **6 for Q3600** - and the sampler then hardcodes
-`baudrate = 300`, so every PSK mode arrives at the decision point with exactly 40 samples per
-symbol. Its sampler is also a different design from ours: it keeps an exponentially averaged
-envelope per position-within-symbol (`bit_buf[sample_cnt]`) and decides at the position where that
-averaged eye peaks, rather than at a transition-nudged phase wrap - an estimator that gets *better*
-as noise falls, which is precisely the opposite of what we measured.
-
-The fix must be **internal interpolation in the receive path**, not a catalogue rate change: no
-divisor of the 48 kHz soundcard rate gives an integer samples-per-symbol at 1800 baud (48000/1800 =
-26.667), which is presumably why the mode sits at 12 kHz in the first place. Interpolating by 3
-(20 samples/symbol) or by 6 (40, matching QtSoundModem exactly) inside the demodulator is the
-change. Not yet built.
-
-**Why it matters operationally**: a strong local signal is the normal case for FM packet, so this
-is the regime the mode is most used in.
+**A mask row now guards it.** The suite had no high-signal rows at all, and that is precisely why
+this went unseen: every mask sat near a knee, where a mode that decodes worse as the signal
+improves looks perfectly healthy. `qpsk3600` on `fm-data` at +30 dB CNR is now blocking - it would
+have read 19/25 before the fix and reads 25/25 after.
 
 Two operational notes from the same release, which bear on our capture campaign:
 

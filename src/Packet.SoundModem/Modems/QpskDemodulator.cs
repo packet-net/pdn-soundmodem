@@ -76,6 +76,14 @@ public sealed class QpskDemodulator
     private readonly double _rotateSin;
     private readonly double _delaySamples;
     private readonly int _sampleRate;
+
+    /// <summary>How many internal samples the decode chain runs per input sample. 1 everywhere
+    /// except where the input rate gives a fractional samples-per-symbol ratio - see the
+    /// constructor.</summary>
+    private readonly int _upsample;
+
+    /// <summary>Anti-image filter for the upsampled decode chain; null when not upsampling.</summary>
+    private readonly FirFilter? _interpolator;
     private double _oscillatorCos = 1;
     private double _oscillatorSin;
     private int _renormCountdown = OscillatorRenormInterval;
@@ -137,6 +145,54 @@ public sealed class QpskDemodulator
 
         _detector = detector;
         _decisionFeedback = decisionFeedback;
+
+        // Run the decode chain on a grid where a symbol is a whole number of samples.
+        //
+        // qpsk3600 is the only catalogue mode whose ratio is fractional - 12000/1800 = 6.667, and
+        // 26.667 at the 48 kHz capture rate - and it was measured to decode WORSE as the signal
+        // got stronger, uniquely among the modes (docs/mode-modulation-reference.md). Every part
+        // of the chain that resolves time is quantised to the input grid: the clock's wrap, the
+        // transition crossings that steer it, the matched filter's own sampling. At 6.667 samples
+        // per symbol that quantisation is six times coarser than any other mode's, and noise was
+        // dithering it - which is why a cleaner signal decoded worse.
+        //
+        // QtSoundModem solves it the same way from the other end: make_core_INTR interpolates
+        // every PSK mode by n_INTR = baud/300 (6 for SPEED_Q3600) and decode_stream_QPSK then
+        // hardcodes 300 baud, so its sampler always sees exactly 40 samples per symbol
+        // (ax25_demod.c, GPLv3 - the cross-check named in CLAUDE.md). We pick the smallest whole
+        // factor that makes the ratio integer, which is 3 for both of qpsk3600's rates.
+        //
+        // Coherent stays on the input grid: it is the cross-check variant, its measured
+        // configuration is deliberately untouched, and the anomaly was measured on the
+        // differential path the mode actually deploys with.
+        int upsample = 1;
+        if (detector != PskDetector.Coherent)
+        {
+            while (upsample < 8 && (sampleRate * upsample) % baud != 0)
+            {
+                upsample++;
+            }
+
+            if ((sampleRate * upsample) % baud != 0)
+            {
+                upsample = 1; // no small whole factor works; stay on the input grid
+            }
+        }
+
+        _upsample = upsample;
+        int chainRate = sampleRate * upsample;
+        if (upsample > 1)
+        {
+            // Anti-image low-pass at the original Nyquist, with the gain the zero-stuffing loses.
+            float[] taps = FilterDesign.LowPass(
+                sampleRate / 2.0 * 0.9, chainRate, 64 * upsample | 1);
+            for (int t = 0; t < taps.Length; t++)
+            {
+                taps[t] *= upsample;
+            }
+
+            _interpolator = new FirFilter(taps);
+        }
         // Filter plan follows QtSM's per-mode tables: BPF ≈ 2×baud wide, LPF ≈ 0.75×baud.
         _bandPass = new FirFilter(FilterDesign.BandPass(
             carrierFrequency - baud, carrierFrequency + baud, sampleRate, 256 * sampleRate / 12000));
@@ -144,8 +200,8 @@ public sealed class QpskDemodulator
         {
             // The coherent path keeps its measured QtSM-style configuration untouched, as
             // the acquisition cross-check variant - exactly the BPSK arrangement.
-            _lowPassI = new FirFilter(FilterDesign.LowPass(0.75 * baud, sampleRate, 128 * sampleRate / 12000));
-            _lowPassQ = new FirFilter(FilterDesign.LowPass(0.75 * baud, sampleRate, 128 * sampleRate / 12000));
+            _lowPassI = new FirFilter(FilterDesign.LowPass(0.75 * baud, chainRate, 128 * chainRate / 12000));
+            _lowPassQ = new FirFilter(FilterDesign.LowPass(0.75 * baud, chainRate, 128 * chainRate / 12000));
         }
         else
         {
@@ -154,11 +210,11 @@ public sealed class QpskDemodulator
             // Replacing the 0.75-baud low-pass measured ~1-1.5 dB at the Reed-Solomon
             // threshold on both SSB QPSK modes (docs/qpsk/plan.md Q1-2), the same lesson
             // the bpsk300 campaign measured in PR #236.
-            float[] taps = BpskDemodulator.MatchedFilterTaps(sampleRate, baud, rollOff);
+            float[] taps = BpskDemodulator.MatchedFilterTaps(chainRate, baud, rollOff);
             _lowPassI = new FirFilter(taps);
             _lowPassQ = new FirFilter((float[])taps.Clone());
         }
-        double step = 2 * Math.PI * carrierFrequency / sampleRate;
+        double step = 2 * Math.PI * carrierFrequency / chainRate;
         _rotateCos = Math.Cos(step);
         _rotateSin = Math.Sin(step);
         _energyBusy = new EnergyBusyDetector(sampleRate);
@@ -167,10 +223,10 @@ public sealed class QpskDemodulator
             _costas = new CostasLoop(sampleRate, carrierFrequency, loopBandwidthHz ?? baud * 0.06);
         }
 
-        double delay = (double)sampleRate / baud;
+        double delay = (double)chainRate / baud;
         _delaySamples = delay;
         _interpolateSymbolInstant = Math.Abs(delay - Math.Round(delay)) > 1e-9;
-        _sampleRate = sampleRate;
+        _sampleRate = chainRate;
         _delayWhole = (int)Math.Floor(delay);
         _delayFraction = (float)(delay - _delayWhole);
         // Ring of whole+1: the slot about to be overwritten holds z[n-(whole+1)] (older),
@@ -179,7 +235,7 @@ public sealed class QpskDemodulator
         _delayQ = new float[_delayWhole + 1];
 
         _dpll = new BitDpll(
-            baud, sampleRate,
+            baud, chainRate,
             quadrant =>
             {
                 SymbolPlotted?.Invoke(_lastRe, _lastIm);
@@ -297,11 +353,24 @@ public sealed class QpskDemodulator
     {
         foreach (float sample in samples)
         {
+            // Band-pass and energy detection stay on the input grid whatever the decode chain
+            // does: they answer "is something there", which needs no sub-sample resolution, and
+            // keeping them here means upsampling costs the decode chain only.
             float filtered = _bandPass.Next(sample);
             _energyBusy.Process(filtered);
             if (_detector == PskDetector.Coherent)
             {
                 ProcessCoherent(filtered);
+            }
+            else if (_upsample > 1)
+            {
+                // Zero-stuff and filter: the decode chain sees a whole number of samples per
+                // symbol, so its clock, its crossings and its matched filter all resolve time on
+                // a grid the symbol rate divides exactly.
+                for (int k = 0; k < _upsample; k++)
+                {
+                    ProcessDifferential(_interpolator!.Next(k == 0 ? sample : 0f));
+                }
             }
             else
             {
