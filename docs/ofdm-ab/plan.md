@@ -158,22 +158,27 @@ mechanism, and a ledger entry when a mode's status changes.
   records per-mode peak-deviation targets). *Exit: an FM channel axis on the Watterson rig, its
   parameters calibrated against a real radio path rather than invented, and the existing FM modes
   measured through it.*
-- **O2: the OFDM core, which is OFDM-FM and not this mode - BUILT 2026-08-08.** Researching OFDM-AB
-  produced a working audio-band OFDM modem, and the honest thing to call it is **OFDM-FM**: OFDM
-  over an FM audio path, our own waveform, not aiming at compatibility with anything. It is named
-  `OfdmFm*` throughout and lives at `Packet.SoundModem.Modems.OfdmFm`: real-FFT symbols
+- **O2: the OFDM core, which is OFDM-FM and not this mode - BUILT 2026-08-08, MOVED OUT 2026-08-09.**
+  Researching OFDM-AB produced a working audio-band OFDM modem, and the honest thing to call it is
+  **OFDM-FM**: OFDM over an FM audio path, our own waveform, not aiming at compatibility with
+  anything. Real-FFT symbols
   with a cyclic prefix, a self-correlating sync symbol (two identical halves, so timing survives a
   channel that would defeat matching against a clean reference), a channel estimate taken from a
   known preamble symbol, pilot-tracked residual phase, Gray-coded constellations from BPSK to
-  QAM-256, and a CRC-checked frame whose header announces its own constellation and length. 17
-  tests, all on **synthetic geometry** - see below. Not yet wired to `IModem`, the sim harness or
-  the catalogue; that waits until there is a waveform worth registering.
+  QAM-256, and a CRC-checked frame whose header announces its own constellation and length.
+
+  **It lives in the private `M0LTE/pdn-ofdm-fm` repository, not this one, and is loaded at run time
+  as a modem plugin** (`docs/modem-binding.md`, `CONFIG.md § modemPlugins`). Not a licence problem
+  - a buildability one: this repository is public and GPL-3.0-or-later, so it has to stay buildable
+  and distributable by anyone who clones it, and it therefore cannot contain or build against
+  anything we are not free to ship. The plugin repository holds the waveform, the streaming
+  `IModem` adapter and its 64 tests; this one holds only the contract those plug into.
 
   Everything below this point is a measurement of OFDM-FM. It is recorded in this document because
   this is the campaign that produced it, not because it says anything about OFDM-AB's performance,
-  which nobody outside the project has measured.
+  which nobody outside that project has measured.
 
-  **The geometry is not in this repository, deliberately.** The profiles OFDM-FM actually runs were
+  **The geometry is in neither repository, deliberately.** The profiles OFDM-FM actually runs were
   sized against what we know of OFDM-AB's parameters, which came unofficially from the mode's
   author, who is staying quiet publicly so the organisation funding the project can be its
   information source. `OfdmFmParameters.Synthetic` is a small
@@ -255,8 +260,11 @@ mechanism, and a ledger entry when a mode's status changes.
   campaign switches to the pattern that worked for ARDOP: capture real traffic, replay it, and
   referee frame by frame against the reference. *Exit: bit-exact interop with a reference
   implementation, or a documented list of what differs.*
-- **O4: deployment.** Mode registered in `ModemCatalog`, masks pinned in both tiers, ledger entry,
-  daemon config, KISS. *Exit: a station can run it.*
+- **O4: deployment - the mechanism landed 2026-08-09, the measurement has not.** `ModemCatalog`
+  grew a plugin seam, the daemon grew `modemPlugins`, and a station with the plugin installed can
+  configure `ofdm-fm:nb` and run it. What is still outstanding is everything that makes a mode
+  trustworthy rather than merely available: masks pinned in both tiers, a mode-validation.md entry,
+  and an on-air contact. *Exit: a station can run it, and the ledger says how well.*
 
 O1 and O2 can proceed in parallel with O0's wait and are useful whatever the answer. O3 is
 blocked on someone else's timeline: firmware Q4 2026 at the earliest, FEC Q2 2027.
