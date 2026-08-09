@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="M0LTE.Dsp" />
+    <PackageReference Include="M0LTE.FmChannel" />
     <!-- The replay command reads the daemon's frame log to diff a re-decode against what
          the live station heard (the capture campaign's harvest instrument). The bundle pin
          mirrors the daemon: Microsoft.Data.Sqlite's own transitive carries
@@ -29,8 +30,6 @@
              Link="Channel/WattersonChannel.cs" />
     <Compile Include="../../tests/Packet.SoundModem.Tests/Channel/ImpulseNoise.cs"
              Link="Channel/ImpulseNoise.cs" />
-    <Compile Include="../../tests/Packet.SoundModem.Tests/Channel/FmChannel.cs"
-             Link="Channel/FmChannel.cs" />
   </ItemGroup>
 
   <ItemGroup>
