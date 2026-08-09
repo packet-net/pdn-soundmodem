@@ -167,7 +167,7 @@ mechanism, and a ledger entry when a mode's status changes.
   known preamble symbol, pilot-tracked residual phase, Gray-coded constellations from BPSK to
   QAM-256, and a CRC-checked frame whose header announces its own constellation and length.
 
-  **It lives in the private `M0LTE/pdn-ofdm-fm` repository, not this one, and is loaded at run time
+  **It lives in the private `packet-net/pdn-ofdm-fm` repository, not this one, and is loaded at run time
   as a modem plugin** (`docs/modem-binding.md`, `CONFIG.md § modemPlugins`). Not a licence problem
   - a buildability one: this repository is public and GPL-3.0-or-later, so it has to stay buildable
   and distributable by anyone who clones it, and it therefore cannot contain or build against
