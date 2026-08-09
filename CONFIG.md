@@ -449,13 +449,18 @@ installed. But it is only half the story: a `modems` entry asking for one of tha
 *does* stop start-up, as an unknown mode, because that is the station being asked for something it
 cannot do.
 
-Two limits worth knowing before you build one:
+Three limits worth knowing before you build one:
 
 - **A plugin gets `IModem` and nothing else.** Audio in, frames out. It cannot key the radio, open
   a port, or reach this config. It is not a place to extend the daemon.
 - **A plugin mode must run at 12000 or 48000 Hz**, because that is what the shared audio channel
   runs at. A modem whose own DSP wants another rate resamples internally; declaring a third rate is
   refused at start-up rather than quietly given 12 kHz.
+- **Plugin modes are config-file only.** `--modem N:MODE[:FREQ]` already uses `:` as its own
+  separator, so `--modem 0:ofdm-fm:nb` reads as mode `ofdm-fm` at frequency `nb` and goes nowhere
+  useful. Nothing is lost by that: an explicit config file is the audit trail this feature is built
+  around, and a plugin loaded from a command line would be exactly the ambient arrangement the
+  design refuses.
 
 There is no version handshake yet. A plugin built against a different `pdn-soundmodem` may simply
 fail to load, and it will say so rather than pretend. See `docs/modem-binding.md` for the design.
