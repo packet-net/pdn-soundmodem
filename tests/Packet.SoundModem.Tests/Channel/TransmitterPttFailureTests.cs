@@ -81,6 +81,13 @@ public class TransmitterPttFailureTests
         Task doomed = channel.EnqueueTransmit(0, SampleFrame());
         await FluentActions.Awaiting(() => doomed.WaitAsync(TimeSpan.FromSeconds(10)))
             .Should().ThrowAsync<InvalidOperationException>().WithMessage("*holds the PA*");
+
+        // Waited for rather than asserted outright, the same way the unkey test below does it.
+        // The two are genuinely concurrent: the loop faults the frame's task and THEN announces
+        // (SoundModemChannel's keyup catch does them in that order), so the await above can resume
+        // before the announcement has been made. Asserting immediately passes on an idle machine
+        // and fails on a loaded one, which is exactly what it did on CI.
+        await WaitUntilAsync(() => failures.Count == 1);
         failures.Should().ContainSingle();
         output.WrittenCount.Should().Be(0, "nothing may go out through a failed keyup");
         ptt.Unkeys.Should().Be(0, "there is nothing to unkey after a failed keyup");
