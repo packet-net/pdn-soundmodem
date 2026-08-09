@@ -672,6 +672,21 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void A_Null_Modem_Plugins_List_Is_No_Plugins_Rather_Than_A_Crash()
+    {
+        // An explicit JSON null deserialises to a null list, not to the property initialiser, so
+        // every read of it afterwards would throw where the operator expects a message about
+        // their file.
+        string path = WriteConfig("""{"device": "null", "modemPlugins": null}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config.Should().NotBeNull();
+        config!.ModemPlugins.Should().BeEmpty();
+    }
+
+    [Fact]
     public void A_Modem_Plugin_Entry_With_No_Path_Is_An_Unfinished_Line_Not_A_Request()
     {
         // Left to the loader this becomes "no path given" at start-up, which reads as the plugin

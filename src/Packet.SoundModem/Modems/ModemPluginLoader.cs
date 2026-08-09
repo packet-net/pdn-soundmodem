@@ -78,22 +78,40 @@ public static class ModemPluginLoader
             return ModemPluginLoad.Failed(full, "no such file");
         }
 
-        var context = new PluginLoadContext(full);
+        // Constructed inside the try, not before it. AssemblyDependencyResolver reads and parses
+        // the plugin's .deps.json in its constructor and throws if it is missing or malformed, so
+        // a context built outside would break this method's whole contract - it would throw for
+        // exactly the kind of half-installed plugin it exists to report calmly.
+        PluginLoadContext? context = null;
         try
         {
+            context = new PluginLoadContext(full);
             Assembly assembly = context.LoadFromAssemblyPath(full);
             IModemPlugin plugin = Construct(assembly);
+
+            // The mode list is read before registering, so a plugin whose Modes property throws on
+            // a second read cannot leave a registration behind that this method then reports as a
+            // failure and nothing ever removes.
+            string[] modes = [.. QualifiedModes(plugin)];
             IDisposable registration = ModemPluginRegistry.Register(plugin);
-            return ModemPluginLoad.Succeeded(full, plugin, registration, context);
+            return ModemPluginLoad.Succeeded(full, plugin.Id, modes, registration, context);
         }
         catch (Exception failure) when (failure is not OutOfMemoryException)
         {
             // The context is unloaded rather than left holding a half-initialised plugin: a
             // second attempt at the same path should meet the same state as the first.
-            Unload(context);
+            if (context is not null)
+            {
+                Unload(context);
+            }
+
             return ModemPluginLoad.Failed(full, Describe(failure));
         }
     }
+
+    /// <summary>The qualified mode strings a plugin declares, read once.</summary>
+    private static IEnumerable<string> QualifiedModes(IModemPlugin plugin) =>
+        (plugin.Modes ?? []).Select(m => $"{plugin.Id}:{m.Name}");
 
     /// <summary>Finds and constructs the assembly's plugin.</summary>
     private static IModemPlugin Construct(Assembly assembly)
@@ -270,15 +288,16 @@ public sealed class ModemPluginLoad : IDisposable
     internal static ModemPluginLoad Failed(string path, string reason) =>
         new(path, null, [], reason, null, null);
 
+    /// <summary>Built from a mode list already read, rather than re-reading the plugin's own
+    /// properties after it has been registered: a second read that threw would leave a
+    /// registration behind that this reported as a failure and nothing ever removed.</summary>
     internal static ModemPluginLoad Succeeded(
-        string path, IModemPlugin plugin, IDisposable registration, AssemblyLoadContext context) =>
-        new(
-            path,
-            plugin.Id,
-            [.. plugin.Modes.Select(m => $"{plugin.Id}:{m.Name}")],
-            null,
-            registration,
-            context);
+        string path,
+        string pluginId,
+        IReadOnlyList<string> modes,
+        IDisposable registration,
+        AssemblyLoadContext context) =>
+        new(path, pluginId, modes, null, registration, context);
 
     /// <summary>Unregisters the plugin's modes and unloads its load context. Idempotent.</summary>
     public void Dispose()

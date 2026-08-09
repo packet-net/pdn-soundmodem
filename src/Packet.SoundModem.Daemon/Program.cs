@@ -345,9 +345,25 @@ if (pagingSpec is not null)
 foreach (string spec in modemSpecs)
 {
     string[] specParts = spec.Split(':');
+    if (specParts.Length > 3
+        || !int.TryParse(specParts[0], out int specSubChannel)
+        || (specParts.Length > 2 && !double.TryParse(specParts[2], out _)))
+    {
+        // The commonest way to land here is a plugin mode: --modem 0:ofdm-fm:nb splits into
+        // three parts and "nb" is not a frequency. That is not a typo to correct, it is a
+        // grammar collision - this option's own separator is the one a plugin mode uses - so
+        // say which way out there is rather than printing a number-format exception.
+        Console.Error.WriteLine($"--modem {spec} is not N:MODE[:FREQ]");
+        Console.Error.WriteLine(
+            "  a plugin mode is written pluginId:mode and already contains the ':' this option "
+            + "separates on, so it cannot be spelled here - put it in a config file, which is "
+            + "where \"modemPlugins\" has to name the plugin anyway");
+        return 2;
+    }
+
     modems.Add(new ModemConfig
     {
-        SubChannel = int.Parse(specParts[0]),
+        SubChannel = specSubChannel,
         Mode = specParts.Length > 1 ? specParts[1] : "afsk1200",
         Frequency = specParts.Length > 2 ? double.Parse(specParts[2]) : null,
     });
@@ -410,12 +426,61 @@ if (modems.Count == 0)
     modems.Add(new ModemConfig());
 }
 
+// Mode names are checked HERE, before the band planner and the transmit-filter plan rather than
+// in the per-modem loop that builds them. Those two ask the catalogue what a mode occupies, and
+// the catalogue answers an unknown mode with its defaults - so a plugin that failed to load used
+// to be planned as a baseband mode and only diagnosed afterwards, by which time the operator had
+// read a band plan built on a fiction.
+foreach (ModemConfig unchecked_ in modems)
+{
+    if (DaemonConfig.IsArdop(unchecked_.Mode) || ModemCatalog.IsKnown(unchecked_.Mode))
+    {
+        continue;
+    }
+
+    Console.Error.WriteLine($"modem {unchecked_.SubChannel}: unknown mode '{unchecked_.Mode}'");
+    ReportUnknownMode(unchecked_.Mode);
+    return 2;
+}
+
+// Checked rather than left to ModemCatalog.Create's throw: 38 mode names is plenty to mistype,
+// and "unknown mode 'fsk9600il2p'" with a stack trace under it does not tell you that the name
+// you wanted was one hyphen away.
+void ReportUnknownMode(string mode)
+{
+    // A qualified name is a plugin mode, and "unknown mode" is the wrong diagnosis for one: the
+    // operator did not mistype it, the plugin that provides it is not loaded. Without this the
+    // failure sits under a "FAILED /path - no such file" line and reads as two unrelated problems.
+    int separator = mode.IndexOf(':', StringComparison.Ordinal);
+    if (separator > 0)
+    {
+        string pluginId = mode[..separator];
+        Console.Error.WriteLine(
+            ModemPluginRegistry.IsPluginRegistered(pluginId)
+                ? $"  modem plugin '{pluginId}' is loaded and does not provide it - it provides: "
+                    + string.Join(", ", ModemPluginRegistry.RegisteredModes
+                        .Where(m => m.StartsWith(pluginId + ":", StringComparison.Ordinal)))
+                : $"  no modem plugin registered for '{pluginId}' - check the \"modemPlugins\" "
+                    + "path, and any plugin failure reported above");
+    }
+
+    string[] near = ModemCatalog.NearestModes(mode);
+    if (near.Length > 0)
+    {
+        Console.Error.WriteLine($"  did you mean: {string.Join(", ", near)}");
+    }
+
+    Console.Error.WriteLine(
+        $"  the {ModemCatalog.KnownModes.Count} built-in mode names are listed at "
+        + "https://github.com/packet-net/pdn-soundmodem/blob/main/docs/modes.md");
+}
+
 // The shared channel runs at one of two rates, so a mode declaring a third has nowhere to run:
 // the decision below would silently hand it 12000 and it would demodulate nothing while looking
-// configured. Only a plugin mode can get here - every built-in declares 12000 or 48000 - and an
-// unknown mode answers 12000 and is refused by name further down, which is where it belongs.
+// configured. Only a plugin mode can get here - every built-in declares 12000 or 48000.
 ModemConfig? oddRate = modems.FirstOrDefault(
-    m => ModemCatalog.IsKnown(m.Mode) && ModemCatalog.DspRateFor(m.Mode) is not (12000 or 48000));
+    m => ModemPluginRegistry.IsRegistered(m.Mode)
+        && ModemCatalog.DspRateFor(m.Mode) is not (12000 or 48000));
 if (oddRate is not null)
 {
     Console.Error.WriteLine(
@@ -430,6 +495,25 @@ if (oddRate is not null)
 // modem present) ArdopChannelBridge decimates its receive audio down and upsamples its
 // bursts back up, so it shares the channel either way.
 int DspRate = modems.Any(m => ModemCatalog.DspRateFor(m.Mode) == 48000) ? 48000 : 12000;
+
+// PLUGIN MODES ONLY, and the distinction is the whole point. Every built-in mode's DSP is
+// rate-parameterised and is built at whatever the channel settled on - afsk1200 beside fsk9600
+// runs the pair at 48 kHz and always has, which is a supported and ordinary arrangement. A plugin
+// mode is different: its descriptor names one rate, the catalogue refuses to build it at any
+// other, and so a 12 kHz plugin mode sharing a channel with any 48 kHz mode simply cannot work.
+// Saying which two modes cannot share beats the exception the build would otherwise throw.
+ModemConfig? wrongRate = modems.FirstOrDefault(
+    m => ModemPluginRegistry.IsRegistered(m.Mode) && ModemCatalog.DspRateFor(m.Mode) != DspRate);
+if (wrongRate is not null)
+{
+    string forcedBy = modems.First(m => ModemCatalog.DspRateFor(m.Mode) == DspRate).Mode;
+    Console.Error.WriteLine(
+        $"modem {wrongRate.SubChannel}: mode '{wrongRate.Mode}' runs at "
+        + $"{ModemCatalog.DspRateFor(wrongRate.Mode)} Hz, but this channel runs at {DspRate} Hz "
+        + $"because '{forcedBy}' needs it. They cannot share one sound card - give them separate "
+        + "daemons, or drop one.");
+    return 2;
+}
 
 // A FlexRadio provides its own DAX sample clock (24/48 kHz auto-picked from the DSP rate), and
 // an UberSDR its own 48 kHz IQ clock, so --capture-rate (an ALSA concept) does not apply to
@@ -609,42 +693,7 @@ foreach (ModemConfig modemConfig in modems)
         continue;
     }
 
-    if (!ModemCatalog.IsKnown(mode))
-    {
-        // Checked here rather than left to ModemCatalog.Create's throw: 38 mode names is
-        // plenty to mistype, and "unknown mode 'fsk9600il2p'" with a stack trace under it
-        // does not tell you that the name you wanted was one hyphen away.
-        Console.Error.WriteLine($"modem {subChannel}: unknown mode '{mode}'");
-
-        // A qualified name is a plugin mode, and "unknown mode" is the wrong diagnosis for one:
-        // the operator did not mistype it, the plugin that provides it is not loaded. Without
-        // this the failure above sits under a "FAILED /path - no such file" line and reads as
-        // two unrelated problems.
-        int separator = mode.IndexOf(':', StringComparison.Ordinal);
-        if (separator > 0)
-        {
-            string pluginId = mode[..separator];
-            Console.Error.WriteLine(
-                ModemPluginRegistry.IsPluginRegistered(pluginId)
-                    ? $"  modem plugin '{pluginId}' is loaded and does not provide it - it provides: "
-                        + string.Join(", ", ModemPluginRegistry.RegisteredModes
-                            .Where(m => m.StartsWith(pluginId + ":", StringComparison.Ordinal)))
-                    : $"  no modem plugin registered for '{pluginId}' - check the \"modemPlugins\" "
-                        + "path, and any plugin failure reported above");
-        }
-
-        string[] near = ModemCatalog.NearestModes(mode);
-        if (near.Length > 0)
-        {
-            Console.Error.WriteLine($"  did you mean: {string.Join(", ", near)}");
-        }
-
-        Console.Error.WriteLine(
-            $"  the {ModemCatalog.KnownModes.Count} built-in mode names are listed at "
-            + "https://github.com/packet-net/pdn-soundmodem/blob/main/docs/modes.md");
-        return 2;
-    }
-
+    // The mode name was checked before the band plan was drawn, so by here it is known.
     if (frequency is not null && !ModemCatalog.AcceptsCentreFrequency(mode))
     {
         // The same wording as ModemCatalog.Create's own refusal: this message had drifted
@@ -672,13 +721,26 @@ foreach (ModemConfig modemConfig in modems)
         return 2;
     }
 
-    channel.AddModem(subChannel, sink => ModemCatalog.Create(mode, DspRate, sink,
-        new ModemOptions(
-            CentreFrequencyHz: frequency,
-            OffsetPairs: modemConfig.OffsetPairs,
-            OffsetStepHz: modemConfig.OffsetStepHz,
-            Detector: pskDetectorOverride,
-            AcceptPlainIl2p: modemConfig.AcceptPlainIl2p)));
+    try
+    {
+        channel.AddModem(subChannel, sink => ModemCatalog.Create(mode, DspRate, sink,
+            new ModemOptions(
+                CentreFrequencyHz: frequency,
+                OffsetPairs: modemConfig.OffsetPairs,
+                OffsetStepHz: modemConfig.OffsetStepHz,
+                Detector: pskDetectorOverride,
+                AcceptPlainIl2p: modemConfig.AcceptPlainIl2p)));
+    }
+    catch (Exception failure) when (failure is ArgumentException or InvalidOperationException)
+    {
+        // A built-in factory that threw here would be our bug and a stack trace would be the
+        // right output. A plugin's can throw for reasons that are entirely the plugin's own -
+        // a geometry it will not accept, a rate it will not run - and that is an operator's
+        // problem with somebody else's assembly, not a crash to be reported against this one.
+        Console.Error.WriteLine($"modem {subChannel}: mode '{mode}' would not build");
+        Console.Error.WriteLine($"  {failure.Message}");
+        return 2;
+    }
     Console.WriteLine($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");
     if (modemConfig.AcceptPlainIl2p)
     {

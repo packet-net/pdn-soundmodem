@@ -371,8 +371,11 @@ public static class ModemCatalog
     {
         if (!ByName.TryGetValue(mode, out ModeDescriptor? descriptor))
         {
-            return ModemPluginRegistry.IsRegistered(mode)
-                ? CreateRegistered(mode, dspRate, frameReceived, options)
+            // One lookup, not IsRegistered-then-DescriptorFor: registration is process-global and
+            // a plugin unregistered between the two would turn a clean "unknown mode" into a
+            // NullReferenceException from a null-forgiving dereference.
+            return ModemPluginRegistry.DescriptorFor(mode) is ModemDescriptor registered
+                ? CreateRegistered(mode, registered, dspRate, frameReceived, options)
                 : throw new ArgumentException(
                     $"unknown mode '{mode}'{MissingPluginHint(mode)}", nameof(mode));
         }
@@ -446,9 +449,26 @@ public static class ModemCatalog
     /// and a different wording would read as a different rule.
     /// </remarks>
     private static IModem CreateRegistered(
-        string mode, int dspRate, Action<byte[]> frameReceived, ModemOptions options)
+        string mode,
+        ModemDescriptor descriptor,
+        int dspRate,
+        Action<byte[]> frameReceived,
+        ModemOptions options)
     {
-        ModemDescriptor descriptor = ModemPluginRegistry.DescriptorFor(mode)!;
+        // A built-in mode's factory reads the rate from the caller and is written to work at the
+        // one the catalogue declares; nothing checks, because nothing has to - the same table
+        // states both. A plugin's descriptor and its caller are two different parties, so a
+        // mismatch is possible and has to be refused rather than handed over. A host whose channel
+        // runs at 48000 building a mode that said 12000 would otherwise get a modem quietly
+        // demodulating at four times the rate its DSP was designed for, which decodes nothing and
+        // looks like a modem that does not work.
+        if (dspRate != descriptor.DspRate)
+        {
+            throw new ArgumentException(
+                $"mode '{mode}' runs at {descriptor.DspRate} Hz and was asked for at {dspRate} Hz "
+                + "- a plugin mode is built at the rate its descriptor declares or not at all",
+                nameof(dspRate));
+        }
 
         double? frequency = options.CentreFrequencyHz;
         if (frequency is not null && !descriptor.AcceptsCentre)

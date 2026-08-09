@@ -131,6 +131,24 @@ public class ModemPluginRegistryTests
     }
 
     [Fact]
+    public void Create_Refuses_To_Build_A_Plugin_Mode_At_A_Rate_It_Did_Not_Declare()
+    {
+        // A built-in factory reads the rate from the caller and nothing checks, because the same
+        // table states both. A plugin's descriptor and its caller are two different parties. A
+        // 48 kHz host building a mode that said 12000 would get a modem demodulating at four times
+        // the rate its DSP was written for, which decodes nothing and looks like a broken modem.
+        using IDisposable registration = ModemPluginRegistry.Register(
+            new FakePlugin("fake", [Carrier(), Baseband()]));
+
+        Action wrong = () => ModemCatalog.Create("fake:carrier", 48000, Sink);
+        wrong.Should().Throw<ArgumentException>()
+            .WithMessage("*runs at 12000 Hz and was asked for at 48000 Hz*");
+
+        Action right = () => ModemCatalog.Create("fake:carrier", 12000, Sink);
+        right.Should().NotThrow();
+    }
+
+    [Fact]
     public void Create_Refuses_A_Centre_Frequency_On_A_Baseband_Plugin_Mode()
     {
         using IDisposable registration = ModemPluginRegistry.Register(

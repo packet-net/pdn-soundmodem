@@ -114,7 +114,7 @@ public static class ModemPluginRegistry
                     $"a modem plugin with id '{id}' is already registered", nameof(plugin));
             }
 
-            _current = current.With(plugin, modes);
+            _current = current.With(id, plugin, modes);
         }
 
         return new Registrant(id);
@@ -205,24 +205,31 @@ public static class ModemPluginRegistry
 
         public Dictionary<string, IModemPlugin> ByPluginId { get; }
 
-        public Snapshot With(IModemPlugin plugin, IReadOnlyList<ModemDescriptor> modes)
+        /// <summary>This snapshot plus one plugin's modes.</summary>
+        /// <param name="id">The id as validated, passed in rather than re-read from the plugin.
+        /// <see cref="IModemPlugin.Id"/> is a property and a badly behaved one could answer
+        /// differently on a second read, which would key modes under something the validation never
+        /// saw and <see cref="Register"/>'s handle could never remove.</param>
+        /// <param name="plugin">The plugin to call when one of its modes is built.</param>
+        /// <param name="modes">Its descriptors, already validated.</param>
+        public Snapshot With(string id, IModemPlugin plugin, IReadOnlyList<ModemDescriptor> modes)
         {
             var byMode = new Dictionary<string, Registration>(ByMode, StringComparer.Ordinal);
             var names = new List<string>(Modes);
             foreach (ModemDescriptor descriptor in modes)
             {
-                string qualified = $"{plugin.Id}:{descriptor.Name}";
+                string qualified = $"{id}:{descriptor.Name}";
                 byMode[qualified] = new Registration(plugin, descriptor);
                 names.Add(qualified);
             }
 
             return new Snapshot(
                 names,
-                [.. PluginIds, plugin.Id],
+                [.. PluginIds, id],
                 byMode,
                 new Dictionary<string, IModemPlugin>(ByPluginId, StringComparer.Ordinal)
                 {
-                    [plugin.Id] = plugin,
+                    [id] = plugin,
                 });
         }
 

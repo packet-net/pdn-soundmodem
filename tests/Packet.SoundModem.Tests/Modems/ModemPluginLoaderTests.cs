@@ -230,6 +230,31 @@ public class ModemPluginLoaderTests
     }
 
     [Fact]
+    public void A_Plugin_Whose_Dependency_Manifest_Is_Corrupt_Is_A_Named_Failure_Too()
+    {
+        // The load context reads and parses the plugin's .deps.json in its constructor and throws
+        // if it cannot. Built before the try, that would break this method's whole contract - it
+        // would throw for exactly the kind of half-installed plugin it exists to report calmly.
+        string dir = Directory.CreateTempSubdirectory("pdnsm-plugin").FullName;
+        try
+        {
+            string copied = Path.Combine(dir, Path.GetFileName(SamplePluginPath));
+            File.Copy(SamplePluginPath, copied);
+            File.WriteAllText(Path.ChangeExtension(copied, ".deps.json"), "{ not json");
+
+            ModemPluginLoad load = ModemPluginLoader.Load(copied);
+
+            load.Loaded.Should().BeFalse();
+            load.Failure.Should().NotBeNullOrWhiteSpace();
+            ModemPluginRegistry.RegisteredModes.Should().BeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Something_That_Is_Not_An_Assembly_At_All_Is_A_Named_Failure()
     {
         string text = Path.Combine(Path.GetTempPath(), $"not-an-assembly-{Guid.NewGuid():N}.dll");

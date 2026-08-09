@@ -711,6 +711,10 @@ public sealed class DaemonConfig
             }
         }
 
+        // "modemPlugins": null deserialises to a null list, not to the property initialiser, and
+        // every read below would then throw where an operator expects a message about their file.
+        config.ModemPlugins ??= [];
+
         // An entry with no path is a half-written line, not a request to load nothing: it would
         // otherwise become a "no path given" load failure at start-up, which reads as the plugin
         // mechanism misbehaving rather than as the file being unfinished.
