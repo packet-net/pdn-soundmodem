@@ -640,4 +640,87 @@ public class DaemonConfigTests : IDisposable
         error.Should().Contain("no such directory");
         ShouldGuideTheOperator(error, path);
     }
+
+    [Fact]
+    public void Modem_Plugins_Are_A_List_Of_Paths_And_Nothing_Else()
+    {
+        string path = WriteConfig("""
+            {
+              "device": "null",
+              "modemPlugins": [ { "path": "/opt/pdn/plugins/M0LTE.OfdmFm.dll" } ],
+              "modems": [ { "subChannel": 0, "mode": "ofdm-fm:nb" } ]
+            }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config.Should().NotBeNull();
+        config!.ModemPlugins.Should().ContainSingle()
+            .Which.Path.Should().Be("/opt/pdn/plugins/M0LTE.OfdmFm.dll");
+    }
+
+    [Fact]
+    public void No_Modem_Plugins_Is_The_Usual_Case_And_Needs_No_Key()
+    {
+        string path = WriteConfig("""{"device": "null"}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.ModemPlugins.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_Null_Modem_Plugins_List_Is_No_Plugins_Rather_Than_A_Crash()
+    {
+        // An explicit JSON null deserialises to a null list, not to the property initialiser, so
+        // every read of it afterwards would throw where the operator expects a message about
+        // their file.
+        string path = WriteConfig("""{"device": "null", "modemPlugins": null}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config.Should().NotBeNull();
+        config!.ModemPlugins.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_Modem_Plugin_Entry_With_No_Path_Is_An_Unfinished_Line_Not_A_Request()
+    {
+        // Left to the loader this becomes "no path given" at start-up, which reads as the plugin
+        // mechanism misbehaving rather than as the file being half written.
+        string path = WriteConfig("""
+            {
+              "device": "null",
+              "modemPlugins": [ { } ]
+            }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("has no \"path\"");
+        error.Should().Contain("no directory to scan",
+            "the operator has to be told there is no location it could be found in instead");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void A_Typo_Inside_A_Modem_Plugin_Entry_Is_Called_Out()
+    {
+        string path = WriteConfig("""
+            {
+              "device": "null",
+              "modemPlugins": [ { "path": "/tmp/x.dll", "pathh": "/tmp/y.dll" } ]
+            }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("modemPlugins[0]: \"pathh\"");
+    }
 }

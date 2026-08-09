@@ -88,6 +88,30 @@ public sealed class ModemConfig
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
+/// <summary>
+/// One modem plugin to load: an assembly outside this package, providing modes this package does
+/// not contain.
+/// </summary>
+/// <remarks>
+/// <para>A path, and nothing but a path. There is no plugins directory to scan, no probing beside
+/// the executable and no environment variable, because a file appearing on disk must never change
+/// what a station transmits. What this file says is what gets loaded, and the start-up log repeats
+/// it.</para>
+/// <para>See <c>docs/modem-binding.md</c>. The modes a plugin provides are named
+/// <c>pluginId:mode</c> - <c>ofdm-fm:nb</c> - so a mode string always says plainly whether it came
+/// from this package.</para>
+/// </remarks>
+public sealed class ModemPluginConfig
+{
+    /// <summary>Path to the plugin assembly. Relative paths are resolved against the daemon's
+    /// working directory; write an absolute one in anything a service unit starts.</summary>
+    public string Path { get; set; } = "";
+
+    /// <summary>Keys in this entry that the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
 /// <summary>PTT configuration.</summary>
 public sealed class PttConfig
 {
@@ -512,6 +536,19 @@ public sealed class DaemonConfig
     /// <summary>The logical modems sharing the audio channel.</summary>
     public List<ModemConfig> Modems { get; set; } = [];
 
+    /// <summary>
+    /// Modem plugins to load before the modems are built: assemblies outside this package that
+    /// provide modes it does not contain. Empty by default, which is the usual case.
+    /// </summary>
+    /// <remarks>
+    /// <b>This loads and runs code from outside the package</b>, which is why it is a list of
+    /// explicit paths rather than any kind of discovery: nothing gets loaded that this file does
+    /// not name. A plugin that fails to load is reported by name and the daemon carries on without
+    /// its modes - but a modem configured to use one of those modes is then an unknown mode, and
+    /// that does stop start-up.
+    /// </remarks>
+    public List<ModemPluginConfig> ModemPlugins { get; set; } = [];
+
     /// <summary>PTT control; null = VOX / none.</summary>
     public PttConfig? Ptt { get; set; }
 
@@ -674,6 +711,21 @@ public sealed class DaemonConfig
             }
         }
 
+        // "modemPlugins": null deserialises to a null list, not to the property initialiser, and
+        // every read below would then throw where an operator expects a message about their file.
+        config.ModemPlugins ??= [];
+
+        // An entry with no path is a half-written line, not a request to load nothing: it would
+        // otherwise become a "no path given" load failure at start-up, which reads as the plugin
+        // mechanism misbehaving rather than as the file being unfinished.
+        if (config.ModemPlugins.FirstOrDefault(p => string.IsNullOrWhiteSpace(p.Path)) is not null)
+        {
+            throw new InvalidDataException(
+                "a \"modemPlugins\" entry has no \"path\". Each entry names one assembly to load, "
+                + "as {\"path\": \"/opt/pdn/plugins/M0LTE.OfdmFm.dll\"} - there is no directory to "
+                + "scan and no default location, deliberately.");
+        }
+
         if (ParseBind(config.Bind) is null)
         {
             throw new InvalidDataException(
@@ -721,6 +773,11 @@ public sealed class DaemonConfig
         foreach (ModemConfig modem in config.Modems)
         {
             Unknown($"modem {modem.SubChannel}", modem.UnknownSettings);
+        }
+
+        for (int i = 0; i < config.ModemPlugins.Count; i++)
+        {
+            Unknown($"modemPlugins[{i}]", config.ModemPlugins[i].UnknownSettings);
         }
 
         return warnings;

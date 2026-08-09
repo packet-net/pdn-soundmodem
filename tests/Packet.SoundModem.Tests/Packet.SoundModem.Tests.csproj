@@ -41,4 +41,22 @@
     <None Include="Waterfall/browser/page-probe.mjs" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- The sample modem plugin, loaded by path at run time rather than referenced.
+       ReferenceOutputAssembly="false" is the whole point: it makes MSBuild build the plugin
+       before these tests run without putting it in the test assembly's reference set or its
+       output directory. A referenced plugin would load into the default AssemblyLoadContext,
+       which is precisely the arrangement the loader exists to avoid, and the tests would pass
+       while proving nothing. The tests find it through the SamplePluginPath metadata below. -->
+  <PropertyGroup>
+    <SamplePluginDir>$(MSBuildThisFileDirectory)../Packet.SoundModem.SamplePlugin/bin/$(Configuration)/$(TargetFramework)/</SamplePluginDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Packet.SoundModem.SamplePlugin/Packet.SoundModem.SamplePlugin.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="false" />
+    <AssemblyMetadata Include="SamplePluginPath"
+                      Value="$([System.IO.Path]::GetFullPath('$(SamplePluginDir)Packet.SoundModem.SamplePlugin.dll'))" />
+  </ItemGroup>
+
 </Project>

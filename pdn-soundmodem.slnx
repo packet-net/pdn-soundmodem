@@ -15,5 +15,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj" />
+    <Project Path="tests/Packet.SoundModem.SamplePlugin/Packet.SoundModem.SamplePlugin.csproj" />
   </Folder>
 </Solution>

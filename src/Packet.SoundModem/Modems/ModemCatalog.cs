@@ -203,12 +203,29 @@ public static class ModemCatalog
     private static readonly Dictionary<string, ModeDescriptor> ByName =
         Modes.ToDictionary(m => m.Name, StringComparer.Ordinal);
 
-    /// <summary>Every accepted mode string, in catalogue order.</summary>
+    /// <summary>
+    /// Every mode <em>built into this library</em>, in catalogue order. Plugin modes are
+    /// deliberately not here: this is the set the repository is answerable for, the one the
+    /// whole-catalogue test sweeps iterate, and the one whose count is pinned. Use
+    /// <see cref="AllModes"/> to list what a running station can actually do.
+    /// </summary>
     public static IReadOnlyList<string> KnownModes { get; } =
         [.. Modes.Select(m => m.Name)];
 
-    /// <summary>True if <paramref name="mode"/> is a recognised mode string (ordinal, case-sensitive).</summary>
-    public static bool IsKnown(string mode) => ByName.ContainsKey(mode);
+    /// <summary>
+    /// Every mode this process can build: the built-ins followed by whatever
+    /// <see cref="ModemPluginRegistry"/> holds. What to show an operator, and what changes under
+    /// your feet when a plugin loads.
+    /// </summary>
+    public static IReadOnlyList<string> AllModes =>
+        ModemPluginRegistry.RegisteredModes.Count == 0
+            ? KnownModes
+            : [.. KnownModes, .. ModemPluginRegistry.RegisteredModes];
+
+    /// <summary>True if <paramref name="mode"/> is a recognised mode string - built in or
+    /// registered by a plugin (ordinal, case-sensitive).</summary>
+    public static bool IsKnown(string mode) =>
+        ByName.ContainsKey(mode) || ModemPluginRegistry.IsRegistered(mode);
 
     /// <summary>
     /// Mode names closest to <paramref name="mode"/>, for a "did you mean" on a typo. A
@@ -224,7 +241,11 @@ public static class ModemCatalog
             return [];
         }
 
-        string[] cased = KnownModes
+        // Over AllModes, not KnownModes: a station running a plugin should be offered its modes
+        // on a typo like any other, and an operator who has loaded one does not think of it as a
+        // different kind of mode.
+        IReadOnlyList<string> candidates = AllModes;
+        string[] cased = candidates
             .Where(m => string.Equals(m, mode, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (cased.Length > 0)
         {
@@ -234,7 +255,7 @@ public static class ModemCatalog
         // Scale the budget with the name so "ms110d-wn13" tolerates more than "afsk300" does,
         // without a short typo matching half the catalogue.
         int budget = Math.Clamp(mode.Length / 3, 2, 4);
-        return KnownModes
+        return candidates
             .Select(m => (Mode: m, Distance: EditDistance(m, mode)))
             .Where(x => x.Distance <= budget)
             .OrderBy(x => x.Distance)
@@ -273,12 +294,14 @@ public static class ModemCatalog
 
     /// <summary>
     /// The DSP sample rate a mode's demod/mod chain runs at: 48000 for the wideband baseband
-    /// families and the OFDM/MS110D waveforms, 12000 otherwise. A soundcard capture rate must
-    /// be an integer multiple of this. Unknown mode strings answer 12000 - callers validate
-    /// names against <see cref="IsKnown"/> before the answer matters.
+    /// families and the OFDM/MS110D waveforms, 12000 otherwise, and whatever a plugin mode
+    /// declares. A soundcard capture rate must be an integer multiple of this. Unknown mode
+    /// strings answer 12000 - callers validate names against <see cref="IsKnown"/> before the
+    /// answer matters.
     /// </summary>
     public static int DspRateFor(string mode) =>
-        ByName.TryGetValue(mode, out ModeDescriptor? found) ? found.DspRate : 12000;
+        ByName.TryGetValue(mode, out ModeDescriptor? found) ? found.DspRate
+        : ModemPluginRegistry.DescriptorFor(mode)?.DspRate ?? 12000;
 
     /// <summary>
     /// Whether a mode has a settable audio-centre frequency. The variable-centre families - the
@@ -290,7 +313,8 @@ public static class ModemCatalog
     /// </summary>
     public static bool AcceptsCentreFrequency(string mode) =>
         ByName.TryGetValue(mode, out ModeDescriptor? found)
-        && found.Centre != CentreSemantics.Baseband;
+            ? found.Centre != CentreSemantics.Baseband
+            : ModemPluginRegistry.DescriptorFor(mode)?.AcceptsCentre ?? false;
 
     /// <summary>
     /// The audio centre a mode sits on when no override is given: the tone-pair midpoint, the PSK
@@ -299,7 +323,8 @@ public static class ModemCatalog
     /// centre to speak of.
     /// </summary>
     public static double? DefaultCentreFrequencyFor(string mode) =>
-        ByName.TryGetValue(mode, out ModeDescriptor? found) ? found.DefaultCentreHz : null;
+        ByName.TryGetValue(mode, out ModeDescriptor? found) ? found.DefaultCentreHz
+        : ModemPluginRegistry.DescriptorFor(mode)?.DefaultCentreHz;
 
     /// <summary>
     /// Whether a mode's receiver runs IL2P+CRC, and so has something for
@@ -308,7 +333,8 @@ public static class ModemCatalog
     /// what they do anyway.
     /// </summary>
     public static bool RunsIl2pCrc(string mode) =>
-        ByName.TryGetValue(mode, out ModeDescriptor? found) && found.RunsIl2pCrc;
+        ByName.TryGetValue(mode, out ModeDescriptor? found) ? found.RunsIl2pCrc
+        : ModemPluginRegistry.DescriptorFor(mode)?.RunsIl2pCrc ?? false;
 
     /// <summary>
     /// Whether a NinoTNC running this mode sends its station identifications as 300 baud AFSK
@@ -345,7 +371,13 @@ public static class ModemCatalog
     {
         if (!ByName.TryGetValue(mode, out ModeDescriptor? descriptor))
         {
-            throw new ArgumentException($"unknown mode '{mode}'", nameof(mode));
+            // One lookup, not IsRegistered-then-DescriptorFor: registration is process-global and
+            // a plugin unregistered between the two would turn a clean "unknown mode" into a
+            // NullReferenceException from a null-forgiving dereference.
+            return ModemPluginRegistry.DescriptorFor(mode) is ModemDescriptor registered
+                ? CreateRegistered(mode, registered, dspRate, frameReceived, options)
+                : throw new ArgumentException(
+                    $"unknown mode '{mode}'{MissingPluginHint(mode)}", nameof(mode));
         }
 
         double? frequency = options.CentreFrequencyHz;
@@ -405,5 +437,93 @@ public static class ModemCatalog
         return shiftedCentre is double centre
             ? FrequencyShiftedModem.Wrap(modem, dspRate, centre, descriptor.DefaultCentreHz!.Value)
             : modem;
+    }
+
+    /// <summary>
+    /// Builds a plugin mode: the same option rules as a built-in, applied against the descriptor
+    /// the plugin declared, then the plugin asked to construct it.
+    /// </summary>
+    /// <remarks>
+    /// The messages are word-for-word the built-in ones deliberately. An operator hitting the
+    /// centre-frequency rule on <c>ofdm-fm:nb</c> is hitting the same rule as on <c>fsk9600</c>,
+    /// and a different wording would read as a different rule.
+    /// </remarks>
+    private static IModem CreateRegistered(
+        string mode,
+        ModemDescriptor descriptor,
+        int dspRate,
+        Action<byte[]> frameReceived,
+        ModemOptions options)
+    {
+        // A built-in mode's factory reads the rate from the caller and is written to work at the
+        // one the catalogue declares; nothing checks, because nothing has to - the same table
+        // states both. A plugin's descriptor and its caller are two different parties, so a
+        // mismatch is possible and has to be refused rather than handed over. A host whose channel
+        // runs at 48000 building a mode that said 12000 would otherwise get a modem quietly
+        // demodulating at four times the rate its DSP was designed for, which decodes nothing and
+        // looks like a modem that does not work.
+        if (dspRate != descriptor.DspRate)
+        {
+            throw new ArgumentException(
+                $"mode '{mode}' runs at {descriptor.DspRate} Hz and was asked for at {dspRate} Hz "
+                + "- a plugin mode is built at the rate its descriptor declares or not at all",
+                nameof(dspRate));
+        }
+
+        double? frequency = options.CentreFrequencyHz;
+        if (frequency is not null && !descriptor.AcceptsCentre)
+        {
+            throw new ArgumentException(
+                $"mode '{mode}' occupies the audio band from DC upwards and has no centre " +
+                "frequency to move - drop the frequency override (the afsk*/bpsk*/qpsk* and " +
+                "spec-fixed ms110d-*/freedv-* modes accept one)",
+                nameof(options));
+        }
+
+        if ((options.AcceptPlainIl2p ?? false) && !descriptor.RunsIl2pCrc)
+        {
+            throw new ArgumentException(
+                $"mode '{mode}' does not run IL2P+CRC, so it has no CRC check to relax - drop " +
+                "the plain-IL2P tolerance (the modes that accept it are the IL2P+CRC ones)",
+                nameof(options));
+        }
+
+        // Refused unconditionally rather than by the built-in path's name test: only the bpsk
+        // banks carry the ensemble machinery, none of them is a plugin, and a plugin id of "bpsk"
+        // would otherwise sneak past a StartsWith and be handed a detector it cannot use.
+        if (options.SecondDetector is not null)
+        {
+            throw new ArgumentException(
+                $"mode '{mode}' does not support an ensemble second detector (bpsk banks only)",
+                nameof(options));
+        }
+
+        // The centre is resolved here, so a plugin is told which centre to use rather than having
+        // to ask the catalogue about itself. Everything else crosses as the caller wrote it.
+        return ModemPluginRegistry.Create(
+            mode,
+            dspRate,
+            frameReceived,
+            options with { CentreFrequencyHz = frequency ?? descriptor.DefaultCentreHz });
+    }
+
+    /// <summary>
+    /// The second sentence of an unknown-mode complaint, when the name looks like a plugin mode
+    /// whose plugin is not loaded. "No plugin registered for 'ofdm-fm'" is a thing an operator can
+    /// act on; a mode that merely does not exist is not, and the config they are reading says the
+    /// mode plainly.
+    /// </summary>
+    private static string MissingPluginHint(string mode)
+    {
+        int separator = mode.IndexOf(':', StringComparison.Ordinal);
+        if (separator <= 0)
+        {
+            return "";
+        }
+
+        string id = mode[..separator];
+        return ModemPluginRegistry.IsPluginRegistered(id)
+            ? $" - modem plugin '{id}' is loaded and does not provide it"
+            : $" - no modem plugin registered for '{id}'";
     }
 }
