@@ -1,25 +1,27 @@
 using M0LTE.Fec;
 
-namespace Packet.SoundModem.Modems.OfdmAb;
+namespace Packet.SoundModem.Modems.OfdmFm;
 
 /// <summary>What one received burst came to.</summary>
 /// <param name="Payload">The recovered bytes, or null if nothing decoded.</param>
 /// <param name="Constellation">The constellation its header announced.</param>
 /// <param name="StartSample">Where in the fed audio the burst was found.</param>
-public sealed record OfdmAbBurst(byte[]? Payload, OfdmAbConstellation Constellation, int StartSample);
+public sealed record OfdmFmBurst(byte[]? Payload, OfdmFmConstellation Constellation, int StartSample);
 
 /// <summary>
 /// An audio-band OFDM modem: a real-valued transform's subcarriers, each carrying a QAM symbol,
 /// inside the audio passband of an ordinary FM radio.
 /// </summary>
 /// <remarks>
-/// <para><b>This is not OFDM-AB, and must not be called it.</b> OFDM-AB's waveform specification
-/// is neither public nor final as of 2026-08-08. What is implemented here is the machinery such a
-/// waveform needs - real-FFT symbols with a cyclic prefix, a correlated preamble for timing, a
-/// channel estimate taken from it, pilot-tracked phase, Gray-coded QAM from one to eight bits per
-/// carrier, and a CRC-checked frame - built so that the parts a specification actually fixes are
-/// parameters rather than assumptions. See <see cref="OfdmAbParameters"/> for why the geometry
-/// lives outside the source.</para>
+/// <para><b>This is OFDM-FM, our own waveform. It is not OFDM-AB and is not aiming at
+/// compatibility with it.</b> OFDM-AB is the IP400 project's audio-band mode, whose specification
+/// is neither public nor final as of 2026-08-08; researching it is what prompted this, and that is
+/// the whole of the relationship. What is implemented here is the machinery such a waveform needs -
+/// real-FFT symbols with a cyclic prefix, a correlated preamble for timing, a channel estimate
+/// taken from it, pilot-tracked phase, Gray-coded QAM from one to eight bits per carrier, and a
+/// CRC-checked frame - built so that the parts a specification actually fixes are parameters rather
+/// than assumptions. See <see cref="OfdmFmParameters"/> for why the geometry lives outside the
+/// source.</para>
 /// <para><b>Burst structure</b>, which is ours and provisional: one preamble symbol carrying a
 /// known pseudo-random BPSK pattern on every occupied carrier; one header symbol, BPSK on the data
 /// carriers, giving the payload constellation, its length and a CRC over both; then the payload
@@ -29,22 +31,22 @@ public sealed record OfdmAbBurst(byte[]? Payload, OfdmAbConstellation Constellat
 /// the two soundcards, which shows up as slow phase rotation that the pilots absorb. A future
 /// version wanting to work over SSB would need real frequency recovery.</para>
 /// </remarks>
-public sealed class OfdmAbModem
+public sealed class OfdmFmModem
 {
     private const int HeaderBits = 40; // 4 constellation, 20 length, 16 CRC
     private const ushort ScramblerSeed = 0x1FF;
 
-    private readonly OfdmAbParameters _parameters;
+    private readonly OfdmFmParameters _parameters;
     private readonly bool[] _pilotMap;
     private readonly double[] _preambleSymbol;
     private readonly (double Re, double Im)[] _preambleBins;
     private readonly double _drive;
     private readonly int _headerSymbols;
     private readonly double[] _syncSymbol;
-    private readonly OfdmAbCodec _codec;
+    private readonly OfdmFmCodec _codec;
 
     /// <summary>Creates a modem for one bandwidth profile.</summary>
-    public OfdmAbModem(OfdmAbParameters parameters)
+    public OfdmFmModem(OfdmFmParameters parameters)
     {
         ArgumentNullException.ThrowIfNull(parameters);
         parameters.Validate();
@@ -95,7 +97,7 @@ public sealed class OfdmAbModem
         }
 
         _syncSymbol = RenderSymbol(syncCarriers, _drive);
-        _codec = new OfdmAbCodec(parameters.Codes);
+        _codec = new OfdmFmCodec(parameters.Codes);
 
         // A header may not fit one symbol: a narrow profile has few data carriers, and BPSK gives
         // one bit each. Span as many symbols as it takes rather than assuming.
@@ -103,7 +105,7 @@ public sealed class OfdmAbModem
     }
 
     /// <summary>The profile this modem runs.</summary>
-    public OfdmAbParameters Parameters => _parameters;
+    public OfdmFmParameters Parameters => _parameters;
 
     /// <summary>Renders one burst carrying <paramref name="payload"/>.</summary>
     /// <param name="payload">Bytes to carry; a CRC-16 is appended.</param>
@@ -111,7 +113,7 @@ public sealed class OfdmAbModem
     /// <param name="leadInSymbols">Silent symbols before the preamble, so a receiver's acquisition
     /// has somewhere to settle.</param>
     public float[] Modulate(
-        ReadOnlySpan<byte> payload, OfdmAbConstellation constellation, int leadInSymbols = 1)
+        ReadOnlySpan<byte> payload, OfdmFmConstellation constellation, int leadInSymbols = 1)
     {
         byte[] framed = new byte[payload.Length + 2];
         payload.CopyTo(framed);
@@ -138,7 +140,7 @@ public sealed class OfdmAbModem
         var points = new Dictionary<int, (float I, float Q)[]>();
         foreach (int bits in carrierBits.Distinct())
         {
-            points[bits] = OfdmAbMapper.Points((OfdmAbConstellation)bits);
+            points[bits] = OfdmFmMapper.Points((OfdmFmConstellation)bits);
         }
 
         int perSymbol = carrierBits.Sum();
@@ -178,7 +180,7 @@ public sealed class OfdmAbModem
     /// none. Whole-buffer rather than streaming: a burst is short and cheap to hold, and the
     /// streaming surface can wrap this once the waveform stops moving.
     /// </summary>
-    public OfdmAbBurst? Demodulate(ReadOnlySpan<float> audio)
+    public OfdmFmBurst? Demodulate(ReadOnlySpan<float> audio)
     {
         int sync = FindSync(audio);
         if (sync < 0)
@@ -237,14 +239,14 @@ public sealed class OfdmAbModem
             return null;
         }
 
-        var constellation = (OfdmAbConstellation)constellationValue;
+        var constellation = (OfdmFmConstellation)constellationValue;
         int framedLength = length + 2;
 
         int[] carrierBits = _parameters.BitsPerDataCarrier(constellation);
         var tables = new Dictionary<int, (float I, float Q)[]>();
         foreach (int b in carrierBits.Distinct())
         {
-            tables[b] = OfdmAbMapper.Points((OfdmAbConstellation)b);
+            tables[b] = OfdmFmMapper.Points((OfdmFmConstellation)b);
         }
 
         int payloadBits = framedLength * 8;
@@ -272,7 +274,7 @@ public sealed class OfdmAbModem
                 }
 
                 int bits = carrierBits[data++];
-                OfdmAbMapper.SoftBits(
+                OfdmFmMapper.SoftBits(
                     tables[bits], bits, (float)symbol[c].Re, (float)symbol[c].Im, SoftScale,
                     llrs.AsSpan(written, bits));
                 written += bits;
@@ -297,8 +299,8 @@ public sealed class OfdmAbModem
         ushort crc = (ushort)(framed[^2] | (framed[^1] << 8));
         byte[] payload = framed[..length];
         return Crc16X25.Compute(payload) == crc
-            ? new OfdmAbBurst(payload, constellation, sync)
-            : new OfdmAbBurst(null, constellation, sync);
+            ? new OfdmFmBurst(payload, constellation, sync)
+            : new OfdmFmBurst(null, constellation, sync);
     }
 
     // Equalises one symbol against the channel estimate, then takes out whatever common phase the
@@ -422,7 +424,7 @@ public sealed class OfdmAbModem
 
     // The header, spread over as many BPSK symbols as this profile's data carriers need.
     private List<(double Re, double Im)[]> HeaderSymbols(
-        OfdmAbConstellation constellation, int payloadLength)
+        OfdmFmConstellation constellation, int payloadLength)
     {
         var writer = new BitWriter();
         writer.Write((int)constellation, 4);

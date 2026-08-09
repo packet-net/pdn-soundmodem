@@ -1,4 +1,4 @@
-namespace Packet.SoundModem.Modems.OfdmAb;
+namespace Packet.SoundModem.Modems.OfdmFm;
 
 /// <summary>
 /// Radix-2 complex FFT, plus the two real-signal wrappers an OFDM chain needs: a spectrum with

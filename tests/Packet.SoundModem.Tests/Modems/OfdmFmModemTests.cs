@@ -1,4 +1,4 @@
-using Packet.SoundModem.Modems.OfdmAb;
+using Packet.SoundModem.Modems.OfdmFm;
 
 namespace Packet.SoundModem.Tests.Modems;
 
@@ -6,16 +6,16 @@ namespace Packet.SoundModem.Tests.Modems;
 /// The audio-band OFDM machinery, exercised on synthetic geometry.
 /// </summary>
 /// <remarks>
-/// Every profile here is invented. The real OFDM-AB geometry is neither public nor final, and
-/// deliberately does not live in this repository (see <see cref="OfdmAbParameters.Synthetic"/>),
+/// Every profile here is invented. The geometry OFDM-FM actually runs deliberately does not live
+/// in this repository (see <see cref="OfdmFmParameters.Synthetic"/>),
 /// so these tests prove the machinery rather than any particular waveform: that a symbol survives
 /// its own transform, that the constellations map and demap, that timing is found, that the
 /// channel estimate corrects a distorted path, and that a bad CRC is refused. All of that is what
 /// a specification cannot change.
 /// </remarks>
-public class OfdmAbModemTests
+public class OfdmFmModemTests
 {
-    private static readonly OfdmAbParameters Small = OfdmAbParameters.Synthetic;
+    private static readonly OfdmFmParameters Small = OfdmFmParameters.Synthetic;
 
     private static byte[] Payload(int length, int seed = 1)
     {
@@ -25,21 +25,21 @@ public class OfdmAbModemTests
     }
 
     [Theory]
-    [InlineData(OfdmAbConstellation.Bpsk)]
-    [InlineData(OfdmAbConstellation.Qpsk)]
-    [InlineData(OfdmAbConstellation.Psk8)]
-    [InlineData(OfdmAbConstellation.Qam16)]
-    [InlineData(OfdmAbConstellation.Qam32)]
-    [InlineData(OfdmAbConstellation.Qam64)]
-    [InlineData(OfdmAbConstellation.Qam128)]
-    [InlineData(OfdmAbConstellation.Qam256)]
-    public void A_Burst_Round_Trips_At_Every_Constellation(OfdmAbConstellation constellation)
+    [InlineData(OfdmFmConstellation.Bpsk)]
+    [InlineData(OfdmFmConstellation.Qpsk)]
+    [InlineData(OfdmFmConstellation.Psk8)]
+    [InlineData(OfdmFmConstellation.Qam16)]
+    [InlineData(OfdmFmConstellation.Qam32)]
+    [InlineData(OfdmFmConstellation.Qam64)]
+    [InlineData(OfdmFmConstellation.Qam128)]
+    [InlineData(OfdmFmConstellation.Qam256)]
+    public void A_Burst_Round_Trips_At_Every_Constellation(OfdmFmConstellation constellation)
     {
-        var modem = new OfdmAbModem(Small);
+        var modem = new OfdmFmModem(Small);
         byte[] payload = Payload(32);
 
         float[] audio = modem.Modulate(payload, constellation);
-        OfdmAbBurst? burst = modem.Demodulate(audio);
+        OfdmFmBurst? burst = modem.Demodulate(audio);
 
         burst.Should().NotBeNull();
         burst!.Constellation.Should().Be(constellation);
@@ -49,14 +49,14 @@ public class OfdmAbModemTests
     [Fact]
     public void Every_Constellation_Maps_And_Demaps_Every_Symbol_Value()
     {
-        foreach (OfdmAbConstellation constellation in Enum.GetValues<OfdmAbConstellation>())
+        foreach (OfdmFmConstellation constellation in Enum.GetValues<OfdmFmConstellation>())
         {
-            (float I, float Q)[] points = OfdmAbMapper.Points(constellation);
+            (float I, float Q)[] points = OfdmFmMapper.Points(constellation);
             points.Should().HaveCount(1 << constellation.BitsPerCarrier());
 
             for (int value = 0; value < points.Length; value++)
             {
-                OfdmAbMapper.Demap(points, points[value].I, points[value].Q)
+                OfdmFmMapper.Demap(points, points[value].I, points[value].Q)
                     .Should().Be(value, "{0} point {1} must demap to itself", constellation, value);
             }
 
@@ -69,16 +69,16 @@ public class OfdmAbModemTests
     [Fact]
     public void The_Burst_Is_Found_Wherever_It_Sits_In_The_Audio()
     {
-        var modem = new OfdmAbModem(Small);
+        var modem = new OfdmFmModem(Small);
         byte[] payload = Payload(24);
-        float[] burstAudio = modem.Modulate(payload, OfdmAbConstellation.Qpsk);
+        float[] burstAudio = modem.Modulate(payload, OfdmFmConstellation.Qpsk);
 
         foreach (int offset in new[] { 0, 7, 133, 1000 })
         {
             var padded = new float[offset + burstAudio.Length + 500];
             burstAudio.CopyTo(padded, offset);
 
-            OfdmAbBurst? burst = modem.Demodulate(padded);
+            OfdmFmBurst? burst = modem.Demodulate(padded);
 
             burst.Should().NotBeNull("a burst offset by {0} samples must still be found", offset);
             burst!.Payload.Should().Equal(payload);
@@ -90,9 +90,9 @@ public class OfdmAbModemTests
     {
         // The whole point of OFDM with a channel estimate: a path that tilts and delays the audio
         // is corrected per subcarrier, and a mode with no equaliser could not read this.
-        var modem = new OfdmAbModem(Small);
+        var modem = new OfdmFmModem(Small);
         byte[] payload = Payload(24);
-        float[] audio = modem.Modulate(payload, OfdmAbConstellation.Qam16);
+        float[] audio = modem.Modulate(payload, OfdmFmConstellation.Qam16);
 
         var distorted = new float[audio.Length];
         float previous = 0;
@@ -105,7 +105,7 @@ public class OfdmAbModemTests
             distorted[n] = shaped + (n >= 3 ? 0.25f * audio[n - 3] : 0f);
         }
 
-        OfdmAbBurst? burst = modem.Demodulate(distorted);
+        OfdmFmBurst? burst = modem.Demodulate(distorted);
 
         burst.Should().NotBeNull();
         burst!.Payload.Should().Equal(payload);
@@ -117,7 +117,7 @@ public class OfdmAbModemTests
         // Not a performance claim - the geometry is invented - but the ordering is real and a
         // modem that got it the other way round would be broken. Measured as "how much noise does
         // each still decode through", which is robust to where the absolute levels happen to fall.
-        var modem = new OfdmAbModem(Small);
+        var modem = new OfdmFmModem(Small);
         byte[] payload = Payload(16);
 
         static float[] Noisy(float[] clean, double sigma, int seed)
@@ -135,7 +135,7 @@ public class OfdmAbModemTests
             return noisy;
         }
 
-        double Tolerance(OfdmAbConstellation constellation)
+        double Tolerance(OfdmFmConstellation constellation)
         {
             float[] clean = modem.Modulate(payload, constellation);
             double best = 0;
@@ -157,8 +157,8 @@ public class OfdmAbModemTests
             return best;
         }
 
-        double bpsk = Tolerance(OfdmAbConstellation.Bpsk);
-        double qam256 = Tolerance(OfdmAbConstellation.Qam256);
+        double bpsk = Tolerance(OfdmFmConstellation.Bpsk);
+        double qam256 = Tolerance(OfdmFmConstellation.Qam256);
 
         bpsk.Should().BeGreaterThan(qam256,
             "one bit per carrier must ride out noise that eight bits per carrier cannot");
@@ -167,9 +167,9 @@ public class OfdmAbModemTests
     [Fact]
     public void A_Corrupted_Payload_Is_Refused_Rather_Than_Delivered()
     {
-        var modem = new OfdmAbModem(Small);
+        var modem = new OfdmFmModem(Small);
         byte[] payload = Payload(24);
-        float[] audio = modem.Modulate(payload, OfdmAbConstellation.Qpsk);
+        float[] audio = modem.Modulate(payload, OfdmFmConstellation.Qpsk);
 
         // Wreck a run of samples inside the payload symbols, past preamble and header.
         int from = Small.SymbolSamples * 3;
@@ -178,7 +178,7 @@ public class OfdmAbModemTests
             audio[n] = 0f;
         }
 
-        OfdmAbBurst? burst = modem.Demodulate(audio);
+        OfdmFmBurst? burst = modem.Demodulate(audio);
 
         // Either the burst is rejected outright or its payload is refused by the CRC, but a
         // wrong payload must never be handed up as good.
@@ -198,10 +198,10 @@ public class OfdmAbModemTests
         // correlation peaking at -1 where the search looked for +1. The signal looked perfectly
         // healthy and decoded to nothing, and it only appeared when the geometry changed under a
         // profile whose first carrier happened to be even.
-        var modem = new OfdmAbModem(Small with { FirstCarrier = firstCarrier });
+        var modem = new OfdmFmModem(Small with { FirstCarrier = firstCarrier });
         byte[] payload = Payload(24);
 
-        OfdmAbBurst? burst = modem.Demodulate(modem.Modulate(payload, OfdmAbConstellation.Qam16));
+        OfdmFmBurst? burst = modem.Demodulate(modem.Modulate(payload, OfdmFmConstellation.Qam16));
 
         burst.Should().NotBeNull("first carrier {0}", firstCarrier);
         burst!.Payload.Should().Equal(payload);
@@ -215,12 +215,12 @@ public class OfdmAbModemTests
     {
         var coded = Small with
         {
-            Coding = new OfdmAbCoding(OfdmAbFec.Convolutional, 7, numerator, denominator, true),
+            Coding = new OfdmFmCoding(OfdmFmFec.Convolutional, 7, numerator, denominator, true),
         };
-        var modem = new OfdmAbModem(coded);
+        var modem = new OfdmFmModem(coded);
         byte[] payload = Payload(24);
 
-        OfdmAbBurst? burst = modem.Demodulate(modem.Modulate(payload, OfdmAbConstellation.Qpsk));
+        OfdmFmBurst? burst = modem.Demodulate(modem.Modulate(payload, OfdmFmConstellation.Qpsk));
 
         burst.Should().NotBeNull();
         burst!.Payload.Should().Equal(payload);
@@ -233,12 +233,12 @@ public class OfdmAbModemTests
         // wants. Same 20 carriers, same total per symbol, different distribution.
         var loaded = Small with
         {
-            BitLoading = [new OfdmAbBitLoadingTier(8, 4), new OfdmAbBitLoadingTier(12, 2)],
+            BitLoading = [new OfdmFmBitLoadingTier(8, 4), new OfdmFmBitLoadingTier(12, 2)],
         };
-        var modem = new OfdmAbModem(loaded);
+        var modem = new OfdmFmModem(loaded);
         byte[] payload = Payload(24);
 
-        OfdmAbBurst? burst = modem.Demodulate(modem.Modulate(payload, OfdmAbConstellation.Qpsk));
+        OfdmFmBurst? burst = modem.Demodulate(modem.Modulate(payload, OfdmFmConstellation.Qpsk));
 
         burst.Should().NotBeNull();
         burst!.Payload.Should().Equal(payload);
@@ -247,23 +247,23 @@ public class OfdmAbModemTests
     [Fact]
     public void Bit_Loading_Tiers_Must_Cover_Exactly_The_Data_Carriers()
     {
-        var short_ = Small with { BitLoading = [new OfdmAbBitLoadingTier(5, 4)] };
+        var short_ = Small with { BitLoading = [new OfdmFmBitLoadingTier(5, 4)] };
 
-        Action build = () => short_.BitsPerDataCarrier(OfdmAbConstellation.Qpsk);
+        Action build = () => short_.BitsPerDataCarrier(OfdmFmConstellation.Qpsk);
 
         build.Should().Throw<InvalidOperationException>().WithMessage("*cover 5 carriers*");
     }
 
     [Theory]
-    [InlineData(OfdmAbFec.None, 0)]
-    [InlineData(OfdmAbFec.Convolutional, 12)]
-    public void The_Codec_Corrects_What_Its_Scheme_Should(OfdmAbFec scheme, int correctable)
+    [InlineData(OfdmFmFec.None, 0)]
+    [InlineData(OfdmFmFec.Convolutional, 12)]
+    public void The_Codec_Corrects_What_Its_Scheme_Should(OfdmFmFec scheme, int correctable)
     {
         // The coding layer on its own, away from the burst: flip bits in the coded stream and see
         // what comes back. Measured at the burst level the payload code cannot show, because the
         // HEADER is uncoded BPSK and fails first - a real finding, and a design item: whatever
         // codes the payload should cover the header too, or the header becomes the burst's floor.
-        var codec = new OfdmAbCodec(new OfdmAbCoding(scheme, Interleave: true));
+        var codec = new OfdmFmCodec(new OfdmFmCoding(scheme, Interleave: true));
         var random = new Random(9);
         var bits = new byte[160];
         for (int i = 0; i < bits.Length; i++)
@@ -292,7 +292,7 @@ public class OfdmAbModemTests
             wrong += bits[i] == back[i] ? 0 : 1;
         }
 
-        if (scheme == OfdmAbFec.None)
+        if (scheme == OfdmFmFec.None)
         {
             wrong.Should().BeGreaterThan(0, "an uncoded stream cannot correct anything");
         }
@@ -310,7 +310,7 @@ public class OfdmAbModemTests
         // real mistake here, though not the one first diagnosed - GpInterleaver's third parameter
         // is the ELEMENT COUNT, and passing ChooseB(n) there instead permutes a prefix of the
         // block with the wrong stride. The library was correct; the call was not.
-        var codec = new OfdmAbCodec(new OfdmAbCoding(OfdmAbFec.None, Interleave: true));
+        var codec = new OfdmFmCodec(new OfdmFmCoding(OfdmFmFec.None, Interleave: true));
         var bits = new byte[257];
         for (int i = 0; i < bits.Length; i++)
         {
@@ -330,7 +330,7 @@ public class OfdmAbModemTests
     [Fact]
     public void Silence_Decodes_To_Nothing()
     {
-        var modem = new OfdmAbModem(Small);
+        var modem = new OfdmFmModem(Small);
 
         modem.Demodulate(new float[Small.SymbolSamples * 6]).Should().BeNull();
     }
@@ -340,7 +340,7 @@ public class OfdmAbModemTests
     {
         var tooMany = Small with { DataCarriers = Small.FftSize };
 
-        Action build = () => new OfdmAbModem(tooMany);
+        Action build = () => new OfdmFmModem(tooMany);
 
         build.Should().Throw<InvalidOperationException>().WithMessage("*do not fit*");
     }
@@ -352,7 +352,7 @@ public class OfdmAbModemTests
         // unofficially are nowhere near these, and they belong in an untracked local file.
         Small.SampleRate.Should().Be(8000);
         Small.FftSize.Should().Be(128);
-        OfdmAbParameters.LoadLocal(Path.Combine(Path.GetTempPath(), "no-such-file.json"))
+        OfdmFmParameters.LoadLocal(Path.Combine(Path.GetTempPath(), "no-such-file.json"))
             .Should().BeNull("a missing local profile file is normal, not an error");
     }
 }

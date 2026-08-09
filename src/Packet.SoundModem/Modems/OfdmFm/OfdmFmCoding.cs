@@ -1,9 +1,9 @@
 using M0LTE.Fec;
 
-namespace Packet.SoundModem.Modems.OfdmAb;
+namespace Packet.SoundModem.Modems.OfdmFm;
 
 /// <summary>Forward error correction over the subcarriers.</summary>
-public enum OfdmAbFec
+public enum OfdmFmFec
 {
     /// <summary>None: a burst is all-or-nothing on its CRC. Only as good as its worst subcarrier,
     /// which on an FM audio path is always one of the top ones.</summary>
@@ -27,15 +27,15 @@ public enum OfdmAbFec
 /// subcarriers. Not optional in practice: an FM audio path's noise rises with frequency, so the
 /// SAME high subcarriers are bad on every burst and an un-interleaved code sees one solid block
 /// of errors rather than a scatter. The switch exists to measure that, not to turn it off.</param>
-public sealed record OfdmAbCoding(
-    OfdmAbFec Scheme = OfdmAbFec.None,
+public sealed record OfdmFmCoding(
+    OfdmFmFec Scheme = OfdmFmFec.None,
     int ConstraintLength = 7,
     int RateNumerator = 1,
     int RateDenominator = 2,
     bool Interleave = true)
 {
     /// <summary>Coded bits per payload bit.</summary>
-    public double Expansion => Scheme == OfdmAbFec.None
+    public double Expansion => Scheme == OfdmFmFec.None
         ? 1.0
         : (double)RateDenominator / RateNumerator;
 }
@@ -50,23 +50,23 @@ public sealed record OfdmAbCoding(
 /// on every burst. Spending eight bits on a carrier that cannot hold four, while a clean low
 /// carrier carries the same four, is the waste this removes.
 /// </remarks>
-public sealed record OfdmAbBitLoadingTier(int Carriers, int Bits);
+public sealed record OfdmFmBitLoadingTier(int Carriers, int Bits);
 
 /// <summary>
 /// The coding chain: payload bits in, subcarrier-ready bits out, and soft metrics back again.
 /// </summary>
-internal sealed class OfdmAbCodec
+internal sealed class OfdmFmCodec
 {
-    private readonly OfdmAbCoding _coding;
+    private readonly OfdmFmCoding _coding;
     private readonly ConvolutionalCode? _code;
     private readonly int[] _keepA;
     private readonly int[] _keepB;
 
-    public OfdmAbCodec(OfdmAbCoding coding)
+    public OfdmFmCodec(OfdmFmCoding coding)
     {
         _coding = coding;
         (_keepA, _keepB) = Puncture(coding.RateNumerator, coding.RateDenominator);
-        if (coding.Scheme == OfdmAbFec.Convolutional)
+        if (coding.Scheme == OfdmFmFec.Convolutional)
         {
             _code = coding.ConstraintLength switch
             {

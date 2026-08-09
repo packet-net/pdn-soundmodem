@@ -1,9 +1,9 @@
 using System.Text.Json;
 
-namespace Packet.SoundModem.Modems.OfdmAb;
+namespace Packet.SoundModem.Modems.OfdmFm;
 
 /// <summary>
-/// The geometry of one OFDM-AB bandwidth profile: how many subcarriers, where they sit, and on
+/// The geometry of one OFDM-FM bandwidth profile: how many subcarriers, where they sit, and on
 /// what transform.
 /// </summary>
 /// <param name="SampleRate">Audio rate the transform runs at.</param>
@@ -19,24 +19,24 @@ namespace Packet.SoundModem.Modems.OfdmAb;
 /// <param name="Coding">Forward error correction for the payload; none if absent.</param>
 /// <param name="BitLoading">Bits per data carrier as runs across the band, so a channel whose
 /// noise rises with frequency can carry more where it is quiet. Absent means uniform.</param>
-public sealed record OfdmAbParameters(
+public sealed record OfdmFmParameters(
     int SampleRate,
     int FftSize,
     int CyclicPrefix,
     int FirstCarrier,
     int DataCarriers,
     int PilotCarriers,
-    OfdmAbCoding? Coding = null,
-    IReadOnlyList<OfdmAbBitLoadingTier>? BitLoading = null)
+    OfdmFmCoding? Coding = null,
+    IReadOnlyList<OfdmFmBitLoadingTier>? BitLoading = null)
 {
     /// <summary>The coding this profile uses; none if the profile does not say.</summary>
-    public OfdmAbCoding Codes => Coding ?? new OfdmAbCoding();
+    public OfdmFmCoding Codes => Coding ?? new OfdmFmCoding();
 
     /// <summary>
     /// Bits each data carrier carries: the profile's bit-loading tiers if it has them, otherwise
     /// the requested constellation uniformly across the band.
     /// </summary>
-    public int[] BitsPerDataCarrier(OfdmAbConstellation uniform)
+    public int[] BitsPerDataCarrier(OfdmFmConstellation uniform)
     {
         var bits = new int[DataCarriers];
         if (BitLoading is null || BitLoading.Count == 0)
@@ -46,7 +46,7 @@ public sealed record OfdmAbParameters(
         }
 
         int at = 0;
-        foreach (OfdmAbBitLoadingTier tier in BitLoading)
+        foreach (OfdmFmBitLoadingTier tier in BitLoading)
         {
             if (tier.Bits is < 1 or > 8)
             {
@@ -73,18 +73,19 @@ public sealed record OfdmAbParameters(
     /// The parameters this repository commits to, and they are <b>deliberately not the real ones</b>.
     /// </summary>
     /// <remarks>
-    /// <para>OFDM-AB's waveform specification is not public and, as of 2026-08-08, is not final
-    /// either. What we know of the real geometry came unofficially from the mode's author, who is
-    /// staying quiet publicly so the organisation funding the project can be its information
-    /// source. Publishing his numbers here would put him in an awkward position and cost us the
-    /// relationship, so this file carries a small synthetic profile instead: enough to exercise
-    /// every code path, nowhere near the real thing.</para>
-    /// <para>The real profiles live in a local, untracked JSON file - see <see cref="LoadLocal"/>.
+    /// <para>OFDM-FM is our own waveform, but the profiles we actually run were sized against what
+    /// we learned about IP400's OFDM-AB while researching it, and those numbers are not ours to
+    /// publish: the specification is neither public nor, as of 2026-08-08, final, and what we know
+    /// came unofficially from the mode's author, who is staying quiet publicly so the organisation
+    /// funding the project can be its information source. Printing his numbers here would put him
+    /// in an awkward position and cost us the relationship, so this file carries a small synthetic
+    /// profile instead: enough to exercise every code path, nowhere near anything real.</para>
+    /// <para>The working profiles live in a local, untracked JSON file - see <see cref="LoadLocal"/>.
     /// Keeping them out of the source has a second benefit worth having on its own: it forces
     /// every part of the implementation to be geometry-generic, which is exactly what you want
-    /// while a specification is still moving.</para>
+    /// while a geometry is still moving.</para>
     /// </remarks>
-    public static OfdmAbParameters Synthetic { get; } = new(
+    public static OfdmFmParameters Synthetic { get; } = new(
         SampleRate: 8000, FftSize: 128, CyclicPrefix: 8, FirstCarrier: 6,
         DataCarriers: 20, PilotCarriers: 4);
 
@@ -104,7 +105,7 @@ public sealed record OfdmAbParameters(
             (FirstCarrier + TotalCarriers - 1) * SubcarrierSpacingHz);
 
     /// <summary>Payload bits per second at a given constellation, before any FEC.</summary>
-    public double BitRate(OfdmAbConstellation constellation) =>
+    public double BitRate(OfdmFmConstellation constellation) =>
         DataCarriers * SymbolRate * constellation.BitsPerCarrier();
 
     /// <summary>Samples in one symbol including its prefix.</summary>
@@ -113,14 +114,14 @@ public sealed record OfdmAbParameters(
     /// <summary>
     /// Reads a profile set from an untracked local file, or returns null if there is none.
     /// </summary>
-    /// <param name="path">File to read; defaults to <c>ofdm-ab.local.json</c> beside the
+    /// <param name="path">File to read; defaults to <c>ofdm-fm.local.json</c> beside the
     /// executable, then the same name at the repository root.</param>
     /// <remarks>
     /// The file is a JSON object of named profiles, for example
     /// <c>{ "nb": { "sampleRate": 24000, "fftSize": 1024, ... } }</c>. It is listed in
     /// .gitignore and must stay there: see <see cref="Synthetic"/> for why.
     /// </remarks>
-    public static IReadOnlyDictionary<string, OfdmAbParameters>? LoadLocal(string? path = null)
+    public static IReadOnlyDictionary<string, OfdmFmParameters>? LoadLocal(string? path = null)
     {
         string? file = path ?? FindLocalFile();
         if (file is null || !File.Exists(file))
@@ -129,7 +130,7 @@ public sealed record OfdmAbParameters(
         }
 
         using FileStream stream = File.OpenRead(file);
-        var profiles = JsonSerializer.Deserialize<Dictionary<string, OfdmAbParameters>>(
+        var profiles = JsonSerializer.Deserialize<Dictionary<string, OfdmFmParameters>>(
             stream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         return profiles is null || profiles.Count == 0 ? null : profiles;
     }
@@ -184,7 +185,7 @@ public sealed record OfdmAbParameters(
 
     private static string? FindLocalFile()
     {
-        const string Name = "ofdm-ab.local.json";
+        const string Name = "ofdm-fm.local.json";
         string beside = Path.Combine(AppContext.BaseDirectory, Name);
         if (File.Exists(beside))
         {

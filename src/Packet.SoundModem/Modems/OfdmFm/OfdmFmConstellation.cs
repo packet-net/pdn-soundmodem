@@ -1,7 +1,7 @@
-namespace Packet.SoundModem.Modems.OfdmAb;
+namespace Packet.SoundModem.Modems.OfdmFm;
 
-/// <summary>The constellations an OFDM-AB subcarrier can carry, from one bit to eight.</summary>
-public enum OfdmAbConstellation
+/// <summary>The constellations an OFDM-FM subcarrier can carry, from one bit to eight.</summary>
+public enum OfdmFmConstellation
 {
     /// <summary>1 bit per carrier.</summary>
     Bpsk = 1,
@@ -39,26 +39,26 @@ public enum OfdmAbConstellation
 /// write a hot loop, but it is obviously correct, and correctness is what a modem built against a
 /// specification that is not final should be spending first.</para>
 /// </remarks>
-public static class OfdmAbMapper
+public static class OfdmFmMapper
 {
     /// <summary>Bits carried by one subcarrier at this constellation.</summary>
-    public static int BitsPerCarrier(this OfdmAbConstellation constellation) => (int)constellation;
+    public static int BitsPerCarrier(this OfdmFmConstellation constellation) => (int)constellation;
 
     /// <summary>The constellation table, unit mean power, index = the Gray-coded symbol value.</summary>
-    public static (float I, float Q)[] Points(OfdmAbConstellation constellation)
+    public static (float I, float Q)[] Points(OfdmFmConstellation constellation)
     {
         int bits = constellation.BitsPerCarrier();
         int count = 1 << bits;
         var points = new (float I, float Q)[count];
 
-        if (constellation == OfdmAbConstellation.Bpsk)
+        if (constellation == OfdmFmConstellation.Bpsk)
         {
             points[0] = (-1f, 0f);
             points[1] = (1f, 0f);
             return points;
         }
 
-        if (constellation == OfdmAbConstellation.Psk8)
+        if (constellation == OfdmFmConstellation.Psk8)
         {
             for (int s = 0; s < 8; s++)
             {

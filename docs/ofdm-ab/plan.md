@@ -158,7 +158,10 @@ mechanism, and a ledger entry when a mode's status changes.
   records per-mode peak-deviation targets). *Exit: an FM channel axis on the Watterson rig, its
   parameters calibrated against a real radio path rather than invented, and the existing FM modes
   measured through it.*
-- **O2: the OFDM core - BUILT 2026-08-08.** `Packet.SoundModem.Modems.OfdmAb`: real-FFT symbols
+- **O2: the OFDM core, which is OFDM-FM and not this mode - BUILT 2026-08-08.** Researching OFDM-AB
+  produced a working audio-band OFDM modem, and the honest thing to call it is **OFDM-FM**: OFDM
+  over an FM audio path, our own waveform, not aiming at compatibility with anything. It is named
+  `OfdmFm*` throughout and lives at `Packet.SoundModem.Modems.OfdmFm`: real-FFT symbols
   with a cyclic prefix, a self-correlating sync symbol (two identical halves, so timing survives a
   channel that would defeat matching against a clean reference), a channel estimate taken from a
   known preamble symbol, pilot-tracked residual phase, Gray-coded constellations from BPSK to
@@ -166,13 +169,18 @@ mechanism, and a ledger entry when a mode's status changes.
   tests, all on **synthetic geometry** - see below. Not yet wired to `IModem`, the sim harness or
   the catalogue; that waits until there is a waveform worth registering.
 
-  **The geometry is not in this repository, deliberately.** What we know of the real parameters
-  came unofficially from the mode's author, who is staying quiet publicly so the organisation
-  funding the project can be its information source. `OfdmAbParameters.Synthetic` is a small
-  invented profile that exercises every code path and resembles nothing; the real profiles live in
-  an untracked `ofdm-ab.local.json` (gitignored) and are loaded at run time. That has a second
+  Everything below this point is a measurement of OFDM-FM. It is recorded in this document because
+  this is the campaign that produced it, not because it says anything about OFDM-AB's performance,
+  which nobody outside the project has measured.
+
+  **The geometry is not in this repository, deliberately.** The profiles OFDM-FM actually runs were
+  sized against what we know of OFDM-AB's parameters, which came unofficially from the mode's
+  author, who is staying quiet publicly so the organisation funding the project can be its
+  information source. `OfdmFmParameters.Synthetic` is a small
+  invented profile that exercises every code path and resembles nothing; the working profiles live in
+  an untracked `ofdm-fm.local.json` (gitignored) and are loaded at run time. That has a second
   benefit worth having on its own: every part of the implementation had to be geometry-generic,
-  which is exactly what you want while a specification is still moving.
+  which is exactly what you want while a geometry is still moving.
 
   Two bugs found by pointing the code at a real geometry, both of the kind that produce a signal
   which looks healthy and decodes to nothing. The first cut normalised every symbol to its own
@@ -183,9 +191,9 @@ mechanism, and a ledger entry when a mode's status changes.
   search looked for +1. A synthetic profile with an even first carrier cannot catch that, so a
   parity theory now guards it.
 
-  **Coding and bit loading, added 2026-08-08, both as config** (`OfdmAbCoding`,
-  `OfdmAbBitLoadingTier` on the profile, so the scheme is a parameter exactly like the geometry -
-  the real mode's FEC is "to be determined"). Rate-1/2 tail-biting convolutional, K=7 (the
+  **Coding and bit loading, added 2026-08-08, both as config** (`OfdmFmCoding`,
+  `OfdmFmBitLoadingTier` on the profile, so the scheme is a parameter exactly like the geometry -
+  OFDM-AB's own FEC is "to be determined", so ours stays a knob). Rate-1/2 tail-biting convolutional, K=7 (the
   classic 0o133/0o171 pair 802.11a carries), soft-decision Viterbi with max-log LLRs from the
   equalised constellation, puncturable to 2/3 and 3/4, and a frequency interleave.
 
@@ -236,8 +244,9 @@ mechanism, and a ledger entry when a mode's status changes.
 
   Original rationale, kept: Build the reusable chain - CP framing, sync,
   per-carrier equalisation, QAM soft-slicing - and validate it against our own sim at the
-  inferred geometry (46.875 Hz spacing, 56/78/123/166 carriers, ~2 ms CP). This is not OFDM-AB
-  and must not be called it; it is the machinery that makes implementing OFDM-AB a matter of
+  inferred geometry (46.875 Hz spacing, 56/78/123/166 carriers, ~2 ms CP; marked unreliable in
+  `d0e5b7f`). This is not OFDM-AB and must not be called it - hence OFDM-FM; it is the machinery
+  that makes implementing OFDM-AB a matter of
   filling in a spec's constants, plus a working answer to "can we even do OFDM here". *Exit: a
   loopback modem carrying frames at each profile, an AWGN and FM-channel ladder for each
   constellation, and the honest gap against the published rate table.*

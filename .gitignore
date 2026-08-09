@@ -13,7 +13,7 @@ corpus/
 .claude/
 .test.sh
 
-# OFDM-AB waveform geometry. The real parameters are not ours to publish - see
-# src/Packet.SoundModem/Modems/OfdmAb/OfdmAbParameters.cs. Keep them here, untracked.
-ofdm-ab.local.json
-**/ofdm-ab.local.json
+# OFDM-FM waveform geometry. The numbers the working profiles are sized against are not ours to
+# publish - see src/Packet.SoundModem/Modems/OfdmFm/OfdmFmParameters.cs. Keep them here, untracked.
+ofdm-fm.local.json
+**/ofdm-fm.local.json
