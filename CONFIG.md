@@ -66,6 +66,24 @@ your machine has.
   devices are re-plugged; `plughw:CARD=Device,DEV=0` (see `aplay -L`) is stable.
 - **`"null"`** - ALSA's null device: the modem runs and serves KISS but hears and transmits
   nothing. Useful for checking a config parses and the daemon starts.
+- **`"pipe:<in>,<out>[,<rate>]"`** - a virtual audio link made of two named pipes, carrying raw
+  32-bit float samples. Point two daemons at each other's pipes, reversed, and they are on the same
+  air with no sound card, no kernel module and no radio:
+
+  ```json
+  "device": "pipe:/tmp/air-a-to-b,/tmp/air-b-to-a,48000"   // station A
+  "device": "pipe:/tmp/air-b-to-a,/tmp/air-a-to-b,48000"   // station B
+  ```
+
+  The FIFOs are created if they do not exist, and the rate defaults to 48000 and must be a multiple
+  of the channel's DSP rate. What one station transmits, the other hears - which is a different and
+  stronger claim than a modem round-tripping its own buffer, because the transmit path and the
+  receive path have to agree about something for it to work at all. It is what
+  `scripts/two-station-pipe.py` uses.
+
+  **It is not a radio.** No noise, no filtering, no deviation: samples arrive exactly as they were
+  written. Right for "can these two talk", wrong for any performance question - those belong to the
+  Watterson and FM channel models, which put a measured path in the way on purpose.
 - **`"flex:<radio>[:slice][@station]"`** - a FlexRadio 6000-series over the LAN as both sound
   card *and* PTT.
 - **`"ubersdr:<instance>"`** - a public UberSDR web receiver, **receive only** -

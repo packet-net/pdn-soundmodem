@@ -1505,7 +1505,36 @@ const int XrunPollMs = 10_000;
 AlsaAudioOutput? alsaOut = null;
 AlsaAudioInput? alsaIn = null;
 
-if (wavLoopPath is not null)
+if (PipeAudio.IsPipe(device) && wavLoopPath is null)
+{
+    // Two FIFOs standing in for a sound card and a radio, so two daemons can be on the same air
+    // with no hardware between them. See PipeAudio for what this deliberately does not model.
+    try
+    {
+        (string inPipe, string outPipe, int pipeRate) = PipeAudio.Parse(device);
+        if (pipeRate % DspRate != 0)
+        {
+            Console.Error.WriteLine(
+                $"pipe rate {pipeRate} is not a multiple of the channel's {DspRate} Hz");
+            return 2;
+        }
+
+        ptt = new NullPtt();
+        var pipeOut = new PipeAudioOutput(outPipe, pipeRate);
+        playback = pipeRate == DspRate
+            ? pipeOut
+            : new UpsamplingAudioOutput(pipeOut, DspRate);
+        input = new PipeAudioInput(inPipe, pipeRate);
+        Console.WriteLine($"audio: pipe in={inPipe} out={outPipe} {pipeRate} Hz -> {DspRate} Hz");
+    }
+    catch (Exception failure) when (failure is InvalidDataException or IOException
+        or UnauthorizedAccessException)
+    {
+        Console.Error.WriteLine($"audio: {failure.Message}");
+        return 2;
+    }
+}
+else if (wavLoopPath is not null)
 {
     // A recording standing in for the capture device: same decimation path, no TX side.
     var wavLoop = new WavLoopAudioInput(wavLoopPath);
