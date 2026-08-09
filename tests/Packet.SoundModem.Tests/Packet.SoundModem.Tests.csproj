@@ -14,10 +14,12 @@
   <ItemGroup>
     <!-- The Watterson rig lives here but is compiled by the OTA tool, which injects the same
          channel at the transmitter for §E2. One definition, reached from both sides; the file
-         stays here because this is where it belongs and where it is maintained. -->
+         stays here because this is where it belongs and where it is maintained. The FM link model
+         used to be arranged the same way and is now the M0LTE.FmChannel package instead - it had
+         been copied into a second repository, and a channel model with two copies is two sets of
+         numbers waiting to disagree. -->
     <Compile Remove="Channel/WattersonChannel.cs" />
     <Compile Remove="Channel/ImpulseNoise.cs" />
-    <Compile Remove="Channel/FmChannel.cs" />
   </ItemGroup>
 
   <ItemGroup>
