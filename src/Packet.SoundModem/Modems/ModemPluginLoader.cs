@@ -89,12 +89,15 @@ public static class ModemPluginLoader
             Assembly assembly = context.LoadFromAssemblyPath(full);
             IModemPlugin plugin = Construct(assembly);
 
-            // The mode list is read before registering, so a plugin whose Modes property throws on
-            // a second read cannot leave a registration behind that this method then reports as a
-            // failure and nothing ever removes.
+            // Everything that reads the plugin's own properties happens BEFORE registering, so
+            // that nothing between the registration and the return can throw. A property that
+            // threw there would leave the plugin registered while this method unloads its assembly
+            // context and reports FAILED - a set of modes the catalogue offers and nothing can
+            // build, which no operator would have any way to see.
+            string id = plugin.Id;
             string[] modes = [.. QualifiedModes(plugin)];
             IDisposable registration = ModemPluginRegistry.Register(plugin);
-            return ModemPluginLoad.Succeeded(full, plugin.Id, modes, registration, context);
+            return ModemPluginLoad.Succeeded(full, id, modes, registration, context);
         }
         catch (Exception failure) when (failure is not OutOfMemoryException)
         {
