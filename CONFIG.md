@@ -36,6 +36,7 @@ with `su -` and drop the prefix.)
 | `sideband` | string | `"usb"` | Which sideband the radio is on - [below](#band-plans-in-rf-terms) |
 | `dialFrequency` | number | *(computed)* | Pin the dial instead of letting the daemon choose - [below](#band-plans-in-rf-terms) |
 | `modems` | array | one `afsk1200` on sub-channel 0 | The modems sharing the channel - [below](#modems) |
+| `modemPlugins` | array | *(none)* | Load modem assemblies from outside this package - [below](#modemplugins) |
 | `ptt` | object | *(none - VOX)* | How the radio is keyed - [below](#ptt) |
 | `waterfall` | object | *(disabled)* | Browser spectrum/waterfall page - [below](#waterfall) |
 | `paging` | object | *(disabled)* | POCSAG paging endpoint - [below](#paging) |
@@ -398,6 +399,66 @@ Off by default, and only meaningful on a mode that runs IL2P+CRC: `afsk300-il2pc
 start-up rather than silently ignored, because an ignored setting leaves you believing something
 changed when nothing did. Note that `fsk9600-il2p` and `fsk4800-il2p` *do* run the CRC, despite
 their names.
+
+## `modemPlugins`
+
+**This loads and runs code that is not part of this package.** Everything below follows from that.
+
+Some modes cannot live in this repository. It is GPL-3.0-or-later and has to stay buildable and
+distributable by anyone who clones it, so it cannot contain or build against anything we are not
+free to ship - an experimental waveform whose specification is not ours to publish, say, or a
+vendor's modem. `modemPlugins` is how a station runs one anyway: an assembly implementing this
+package's `IModemPlugin`, loaded at start-up from a path you wrote down.
+
+```json
+"modemPlugins": [
+  { "path": "/opt/pdn/plugins/M0LTE.OfdmFm.dll" }
+],
+"modems": [
+  { "subChannel": 0, "mode": "ofdm-fm:nb" }
+]
+```
+
+A plugin's modes are named `pluginId:mode`. That is not decoration: it means a plugin can never
+shadow or redefine a built-in mode, a log line or a mode-validation entry always says plainly which
+modes were not built here, and a plugin you have not installed yet gives you
+`no modem plugin registered for 'ofdm-fm'` rather than a mode that mysteriously does not exist.
+
+**Discovery is explicit, never ambient.** There is no plugins directory that gets scanned, no
+probing next to the executable, no environment variable, and no default location. The only thing
+loaded is a path this file names. A daemon where a file appearing on disk changes what the station
+transmits is not a daemon worth having, and an explicit list also makes the audit trivial: the
+config says which non-package code runs, and start-up repeats it:
+
+```
+modem plugin: ofdm-fm from /opt/pdn/plugins/M0LTE.OfdmFm.dll [ofdm-fm:nb, ofdm-fm:enb, ofdm-fm:wb, ofdm-fm:ewb]
+```
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `path` | string | *(required)* | The assembly to load. Relative to the working directory; use an absolute path in anything systemd starts. |
+
+A plugin that will not load is reported by name and start-up continues:
+
+```
+modem plugin: FAILED /opt/pdn/plugins/M0LTE.OfdmFm.dll - no such file
+```
+
+That is deliberate - a station should not refuse to come up because an experimental modem is not
+installed. But it is only half the story: a `modems` entry asking for one of that plugin's modes
+*does* stop start-up, as an unknown mode, because that is the station being asked for something it
+cannot do.
+
+Two limits worth knowing before you build one:
+
+- **A plugin gets `IModem` and nothing else.** Audio in, frames out. It cannot key the radio, open
+  a port, or reach this config. It is not a place to extend the daemon.
+- **A plugin mode must run at 12000 or 48000 Hz**, because that is what the shared audio channel
+  runs at. A modem whose own DSP wants another rate resamples internally; declaring a third rate is
+  refused at start-up rather than quietly given 12 kHz.
+
+There is no version handshake yet. A plugin built against a different `pdn-soundmodem` may simply
+fail to load, and it will say so rather than pretend. See `docs/modem-binding.md` for the design.
 
 ## Band plans in RF terms
 

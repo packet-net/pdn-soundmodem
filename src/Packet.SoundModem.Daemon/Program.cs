@@ -248,6 +248,30 @@ if (configPath is not null)
     idBeacons = config.IdBeacons;
     ardopPort ??= config.Ardop?.Port;
     Console.WriteLine($"config: {configPath}");
+
+    // Before anything asks the catalogue a question - the DSP-rate decision below, the band
+    // planner, the transmit-filter plan - because a mode that is not registered yet is a mode
+    // that does not exist. Each path is one the config named: nothing is discovered.
+    foreach (ModemPluginConfig pluginConfig in config.ModemPlugins)
+    {
+        ModemPluginLoad load = ModemPluginLoader.Load(pluginConfig.Path);
+        if (load.Loaded)
+        {
+            // The handle is deliberately not kept: plugins load for the life of the process, and
+            // a station that unloaded a modem under its own audio would have nothing good to do
+            // with the samples already in flight.
+            Console.WriteLine(
+                $"modem plugin: {load.PluginId} from {load.Path} "
+                + $"[{string.Join(", ", load.Modes)}]");
+        }
+        else
+        {
+            // Named and non-fatal. A modem entry that wanted one of its modes still fails
+            // start-up below, by name, as an unknown mode - which is the right place for it,
+            // because that is the station asking for something it cannot do.
+            Console.Error.WriteLine($"modem plugin: FAILED {load.Path} - {load.Failure}");
+        }
+    }
 }
 
 // --waterfall/--dial override (or stand in for) the config's waterfall section.
@@ -384,6 +408,22 @@ if (ardopModem is null && ardopPort is not null)
 if (modems.Count == 0)
 {
     modems.Add(new ModemConfig());
+}
+
+// The shared channel runs at one of two rates, so a mode declaring a third has nowhere to run:
+// the decision below would silently hand it 12000 and it would demodulate nothing while looking
+// configured. Only a plugin mode can get here - every built-in declares 12000 or 48000 - and an
+// unknown mode answers 12000 and is refused by name further down, which is where it belongs.
+ModemConfig? oddRate = modems.FirstOrDefault(
+    m => ModemCatalog.IsKnown(m.Mode) && ModemCatalog.DspRateFor(m.Mode) is not (12000 or 48000));
+if (oddRate is not null)
+{
+    Console.Error.WriteLine(
+        $"modem {oddRate.SubChannel}: mode '{oddRate.Mode}' runs at "
+        + $"{ModemCatalog.DspRateFor(oddRate.Mode)} Hz, and the shared audio channel runs at "
+        + "12000 or 48000. A plugin mode has to declare one of those and resample internally if "
+        + "its own DSP wants something else.");
+    return 2;
 }
 
 // ARDOP's engine is native 12 kHz; on a 48 kHz channel (any fsk9600/c4fsk/freedv/ms110d
@@ -575,6 +615,24 @@ foreach (ModemConfig modemConfig in modems)
         // plenty to mistype, and "unknown mode 'fsk9600il2p'" with a stack trace under it
         // does not tell you that the name you wanted was one hyphen away.
         Console.Error.WriteLine($"modem {subChannel}: unknown mode '{mode}'");
+
+        // A qualified name is a plugin mode, and "unknown mode" is the wrong diagnosis for one:
+        // the operator did not mistype it, the plugin that provides it is not loaded. Without
+        // this the failure above sits under a "FAILED /path - no such file" line and reads as
+        // two unrelated problems.
+        int separator = mode.IndexOf(':', StringComparison.Ordinal);
+        if (separator > 0)
+        {
+            string pluginId = mode[..separator];
+            Console.Error.WriteLine(
+                ModemPluginRegistry.IsPluginRegistered(pluginId)
+                    ? $"  modem plugin '{pluginId}' is loaded and does not provide it - it provides: "
+                        + string.Join(", ", ModemPluginRegistry.RegisteredModes
+                            .Where(m => m.StartsWith(pluginId + ":", StringComparison.Ordinal)))
+                    : $"  no modem plugin registered for '{pluginId}' - check the \"modemPlugins\" "
+                        + "path, and any plugin failure reported above");
+        }
+
         string[] near = ModemCatalog.NearestModes(mode);
         if (near.Length > 0)
         {
@@ -582,7 +640,7 @@ foreach (ModemConfig modemConfig in modems)
         }
 
         Console.Error.WriteLine(
-            $"  the {ModemCatalog.KnownModes.Count} valid mode names are listed at "
+            $"  the {ModemCatalog.KnownModes.Count} built-in mode names are listed at "
             + "https://github.com/packet-net/pdn-soundmodem/blob/main/docs/modes.md");
         return 2;
     }

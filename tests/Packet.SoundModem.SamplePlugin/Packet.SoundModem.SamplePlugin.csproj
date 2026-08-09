@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Not a test project, despite living under tests/: it is the thing the plugin-loader tests
+         load. It lives here because it exists for no other reason, and it is a project of its own
+         rather than a class in the test assembly because the whole point is to be a separate
+         assembly, in a separate AssemblyLoadContext, resolved from a path. -->
+    <IsTestProject>false</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>Packet.SoundModem.SamplePlugin</AssemblyName>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- tests/Directory.Build.props adds these for the test project; a plugin wants none of
+         them, and inheriting xunit into a plugin's dependency set would make the sample
+         unrepresentative of the real thing. -->
+    <PackageReference Remove="xunit.v3" />
+    <PackageReference Remove="AwesomeAssertions" />
+    <PackageReference Remove="Microsoft.Extensions.TimeProvider.Testing" />
+    <Using Remove="Xunit" />
+    <Using Remove="AwesomeAssertions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The contract, referenced exactly as an out-of-tree plugin would reference the published
+         package. Note that this DOES copy Packet.SoundModem.dll into the plugin's output, which is
+         deliberate: it is what a normal build does, it is the arrangement that produces the classic
+         "IModem cannot be converted to IModem" if the load context gets the shared-contract rule
+         wrong, and ModemPluginLoaderTests asserts the copy is there so the test cannot pass
+         vacuously. -->
+    <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
+  </ItemGroup>
+
+</Project>
