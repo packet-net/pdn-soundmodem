@@ -3,47 +3,34 @@ using Packet.SoundModem.Modems;
 namespace Packet.SoundModem.Ota;
 
 /// <summary>
-/// The FM-native catalogue modes and each one's <b>target peak deviation</b>, from
-/// <c>docs/mode-modulation-reference.md</c> (NinoTNC firmware modulator table). These modes reach
-/// the air as frequency modulation, so the FM ladder transmits them through the radio's FM
-/// modulator at the deviation named here - <em>not</em> the 12.5/25 kHz channel spacing - and
-/// verifies it by measuring the discriminated excursion.
+/// The FM-native catalogue modes and each one's target peak deviation.
 /// </summary>
+/// <remarks>
+/// A shim over <see cref="FmModeProfiles"/>, which is the single table. This used to be a dictionary of
+/// exact mode names, maintained by hand alongside a second copy in <c>SimChannel</c> and a third
+/// for channel spacings. Three copies of one fact drift, and the ladder and the simulator
+/// disagreeing about how hard a mode is driven would have been invisible in both.
+/// </remarks>
 internal static class FmModeCatalog
 {
-    // Tgt peak deviation in Hz, keyed by ModemCatalog mode. AFSK 1200 and its FEC/framing variants
-    // all ride the same 3.0 kHz AFSK modulator; the fsk*/c4fsk* baseband families and qpsk3600
-    // (QPSK audio over FM, sharing the C4FSK 19200 modulator) take their own targets.
-    private static readonly Dictionary<string, double> _targetDeviationHz = new(StringComparer.Ordinal)
-    {
-        ["afsk1200"] = 3000,
-        ["afsk1200-fx25"] = 3000,
-        ["afsk1200-fx25rx"] = 3000,
-        ["afsk1200-multi"] = 3000,
-        ["afsk1200-il2p"] = 3000,
-        ["afsk1200-il2p-nocrc"] = 3000,
-        ["fsk9600"] = 2400,
-        ["fsk9600-il2p"] = 2400,
-        ["fsk4800-il2p"] = 1200,
-        ["c4fsk9600"] = 2500,
-        ["c4fsk19200"] = 5000,
-        ["qpsk3600"] = 5000,
-    };
-
     /// <summary>Whether a mode is carried over FM (and so belongs to the FM ladder, not the SSB one).</summary>
-    public static bool IsFmMode(string? mode) => mode is not null && _targetDeviationHz.ContainsKey(mode);
+    public static bool IsFmMode(string? mode) => FmModeProfiles.IsFmMode(mode);
 
     /// <summary>The mode's target peak FM deviation in Hz.</summary>
     /// <exception cref="ArgumentException">The mode is not an FM-native mode.</exception>
     public static double TargetDeviationHz(string mode) =>
-        _targetDeviationHz.TryGetValue(mode, out double dev)
-            ? dev
-            : throw new ArgumentException(
-                $"'{mode}' is not an FM-native mode - the FM ladder carries "
-                + $"{string.Join(", ", _targetDeviationHz.Keys)}", nameof(mode));
+        FmModeProfiles.For(mode)?.TargetPeakDeviationHz
+        ?? throw new ArgumentException(
+            $"'{mode}' is not an FM-native mode - the FM ladder carries "
+            + $"{string.Join(", ", Modes)}", nameof(mode));
 
     /// <summary>Every FM-native mode, in catalogue order.</summary>
-    public static IReadOnlyCollection<string> Modes => _targetDeviationHz.Keys;
+    /// <remarks>
+    /// Taken from the catalogue rather than listed here, so a new framing variant of an FM mode
+    /// joins the ladder by existing rather than by being remembered.
+    /// </remarks>
+    public static IReadOnlyCollection<string> Modes =>
+        [.. ModemCatalog.KnownModes.Where(FmModeProfiles.IsFmMode)];
 }
 
 /// <summary>One point of an FM §E2 ladder: a burst to transmit through a stated channel at a stated
