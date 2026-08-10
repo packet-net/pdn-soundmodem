@@ -123,10 +123,16 @@ public class FmLadderPassTests
             + "rather than trusting the requested one");
     }
 
+    // The deviation the ladder actually drives, which is FmModeProfiles' recommendation and only
+    // differs from NinoTNC's published figure where we have a measured reason. qpsk3600 is that
+    // case: Nino publishes 5000 Hz, which is 200 % of full deviation for the 12.5 kHz channel he
+    // puts the mode on, and we transmit 2500 because it measures +0.4 dB at the knee and takes
+    // Carson bandwidth from 15.4 to 10.4 kHz. This row failing is the correct behaviour if the
+    // recommendation moves and nobody re-measured the hardware ladder.
     [Theory]
     [InlineData("afsk1200", 3000)]
     [InlineData("fsk9600", 2400)]
-    [InlineData("qpsk3600", 5000)]
+    [InlineData("qpsk3600", 2500)]
     [InlineData("c4fsk9600", 2500)]
     public void A_whole_fm_ladder_decodes_clean_and_at_the_target_deviation(string mode, double targetDevHz)
     {
