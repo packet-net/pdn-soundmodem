@@ -254,8 +254,12 @@ need a different attenuation; keep the Thevenin impedance under about 1 kohm.
 electrolytics, and AUD_TAP_IN is internally biased to about 1.5 V; neither wants the other's DC.
 
 **Size the attenuator so full-scale digital cannot over-deviate.** Choose Rt/Rb such that a 0 dBFS
-sine at the CM108 output produces **90% of class deviation** **CHOICE**, that is 2.25 kHz on a
-12.5 kHz channel. Then no software fault, mixer setting or runaway process can splatter: the
+sine at the CM108 output produces **exactly 100 % of class deviation** **CHOICE**, that is 2.5 kHz on
+a 12.5 kHz channel. An earlier version of this note said 90 %, and that margin costs 0.9 dB of the
+single most valuable quantity on this link: post-detection signal to noise goes as deviation
+squared, and dropping from 2500 to 1500 Hz peak measures 3 to 4 dB of sensitivity. A ceiling at the
+legal limit means a software fault produces exactly legal modulation, and normal operation gets the
+whole budget. Then no software fault, mixer setting or runaway process can splatter: the
 hardware ceiling is below the legal one. The modem then runs at whatever level below that the mode
 wants, set in software.
 
@@ -342,7 +346,7 @@ so the null lands on the deviation you want:
 | Target deviation | Tone for first carrier null |
 |---|---|
 | 2.5 kHz, 100% narrowband | 1040 Hz |
-| 1.5 kHz, 60% narrowband, Tait's own data default | 624 Hz |
+| 1.5 kHz, 60% narrowband, Tait's own data default (too low for OFDM, see below) | 624 Hz |
 | 4.0 kHz, 100% mid | 1663 Hz |
 | 5.0 kHz, 100% wide | 2079 Hz |
 | 3.0 kHz, 60% wide | 1247 Hz |
@@ -351,10 +355,12 @@ Procedure: key the radio into a dummy load, inject the tone at the sound card ou
 level until the carrier nulls. Note the sound card output voltage at the null. That gives you volts
 per kHz at your tap, and hence the Rt/Rb ratio that puts 0 dBFS at 90% deviation.
 
-The 60% row is worth knowing: Tait's own internal 1200 baud modem defaults to 60% of the class
-deviation ceiling (calibration manual p.15), which is 1.5 kHz on a 12.5 kHz channel. That is a
-sensible operating point for a data mode and a good sanity check that your interface is in the right
-territory.
+The 60% row is worth knowing as Tait's own default (calibration manual p.15) and worth NOT copying.
+It is sized for FFSK, whose crest factor is about 3 dB, so 60% of peak still puts plenty of energy on
+the carrier. An OFDM waveform runs at about 12 dB crest factor, so the peak that sets the drive
+carries almost none of its energy, and 60% throws away 3 to 4 dB of sensitivity - measured, 32 seeds,
+at fixed received power in a fixed IF. **Calibrate to 100% of class deviation and let the modem's own
+peak reduction bring the crest factor down**, which is worth another 2.5 dB and costs no spectrum.
 
 **Watch for the limiter while you do this.** If deviation stops following the input level before the
 null appears, you are into the limiter, which would mean the tap is upstream of it and not the T13
