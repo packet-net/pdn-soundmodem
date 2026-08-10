@@ -129,6 +129,47 @@ The 10 nF at the connector is the reason the transmit interface below is deliber
 into a 909 ohm source it is a pole at 17.5 kHz and irrelevant, but into a 10 k source it would be a
 pole at 1.6 kHz and would eat the top of the audio band.
 
+## If the board is yours
+
+The rest of this note is written for a stock dongle, where several values are somebody else's choice
+and the design works around them. **On a custom board most of those workarounds are unnecessary and
+some of the advice inverts.** In rough order of value:
+
+**Use a line input, not the microphone input.** The mic path is only recommended above because it is
+the only input a standard dongle brings out. A line input has more headroom, a flatter response,
+lower noise, no bias resistor fighting the divider, and no +20 dB boost waiting to be left on by
+accident. It also removes the single worst trap in the stock design: dongle microphone coupling
+capacitors are commonly 1 uF or less, which puts the corner at 80 Hz or above and causes visible
+baseline wander on the flat, wide R1 tap. Choose the capacitor yourself and that problem does not
+exist.
+
+**Put the attenuators on the board, at the measured values.** Sections 1 and 2 exist to get an
+arbitrary tap level into an arbitrary dongle. With the board in your hands, measure once and fit the
+divider as designed-in resistors. Keep the transmit ratio such that a full-scale sample gives 90 % of
+class deviation: at T13 nothing in the radio limits, so that ceiling is the only protection there is,
+and it is worth more when it is a property of the PCB than of a config file.
+
+**Bring RSSI in on a second input channel.** Auxiliary pin 6 is an analogue RSSI output. If the codec
+variant has a stereo line input, the right channel costs nothing and gives the modem a per-burst
+received-signal-strength reading sampled alongside the audio it decoded. That is the measurement
+that turns "it decoded" into "it decoded at -113 dBm", which is exactly what is needed to check a
+simulator against a radio, and no off-the-shelf dongle can do it. Check the input arrangement of the
+exact part before designing it in; the CM108AH's is mono, and the stereo-line-input variants are
+different devices.
+
+**Design the isolation in rather than deciding later.** Two 600:600 transformers and an opto-isolated
+PTT, on the board, remove a whole class of vehicle ground-loop fault that is tedious to diagnose
+after the fact. Watch the transformer's low-frequency response against the lowest carrier in use,
+since R1 is flat well below where a telecoms transformer is.
+
+**Drive PTT properly.** The external MOSFET below is there because a dongle GPIO is weak. On your own
+board, drive AUX_GPI1 (3.3 V CMOS) from a real output stage, and consider whether a hardware timeout
+belongs there too: a stuck PTT is the one failure that annoys everybody else on the channel.
+
+**Keep the deviation calibration procedure regardless.** No input-level-to-deviation figure is
+published for any tap in either direction, so the Bessel-null measurement is needed whatever the
+board looks like. Design freedom does not conjure a number Tait never wrote down.
+
 ## The CM108 side
 
 All **CM108**, and all worth confirming on your actual dongle, which is the second thing you measure.
