@@ -41,13 +41,23 @@ public enum FmFigureSource
 /// one.</param>
 /// <param name="Source">Where <see cref="TargetPeakDeviationHz"/> came from.</param>
 /// <param name="Remark">Anything a reader would otherwise get wrong.</param>
+/// <param name="RecommendedPeakDeviationHz">What WE recommend, where that differs from Nino's
+/// figure. Null means follow his.
+/// <para><b>This exists so that disagreeing with a published figure cannot be done by editing it.</b>
+/// <see cref="TargetPeakDeviationHz"/> is a record of what NinoTNC publishes; overwriting it would
+/// falsify that record and leave nobody able to see that a divergence had happened, let alone
+/// why.</para></param>
+/// <param name="RecommendationRemark">Why we diverge, and on what evidence. Required whenever
+/// <see cref="RecommendedPeakDeviationHz"/> is set.</param>
 public sealed record FmModeProfile(
     double TargetPeakDeviationHz,
     double? BesselNullToneHz,
     double ChannelSpacingHz,
     double? OccupiedBandwidthHz,
     FmFigureSource Source,
-    string Remark)
+    string Remark,
+    double? RecommendedPeakDeviationHz = null,
+    string? RecommendationRemark = null)
 {
     /// <summary>The modulation index at which a tone-modulated carrier's own component vanishes,
     /// which is the first zero of the Bessel function of the first kind, order zero.</summary>
@@ -83,6 +93,13 @@ public sealed record FmModeProfile(
     /// </remarks>
     public double PercentOfFullDeviation =>
         100 * TargetPeakDeviationHz / FullDeviationHz(ChannelSpacingHz);
+
+    /// <summary>The deviation to actually transmit at: ours where we have a reason, Nino's
+    /// otherwise.</summary>
+    public double PeakDeviationHz => RecommendedPeakDeviationHz ?? TargetPeakDeviationHz;
+
+    /// <summary>Whether we are recommending something other than the published figure.</summary>
+    public bool DivergesFromPublished => RecommendedPeakDeviationHz is not null;
 
     /// <summary>100 % modulation for a channel spacing.</summary>
     public static double FullDeviationHz(double channelSpacingHz) => channelSpacingHz switch

@@ -71,7 +71,7 @@ internal static class FmModes
     /// table. They used to carry their own copies, and the comment beside the old spacing switch
     /// disagreed with the switch itself about which channel qpsk3600 belongs on.
     /// </remarks>
-    public static double? PeakDeviationHz(string mode) => FmModeProfiles.For(mode)?.TargetPeakDeviationHz;
+    public static double? PeakDeviationHz(string mode) => FmModeProfiles.For(mode)?.PeakDeviationHz;
 
     /// <summary>True for the channel kinds that model a real FM link.</summary>
     public static bool IsFmChannel(SimChannelKind kind) =>

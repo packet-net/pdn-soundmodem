@@ -19,7 +19,7 @@ internal static class FmModeCatalog
     /// <summary>The mode's target peak FM deviation in Hz.</summary>
     /// <exception cref="ArgumentException">The mode is not an FM-native mode.</exception>
     public static double TargetDeviationHz(string mode) =>
-        FmModeProfiles.For(mode)?.TargetPeakDeviationHz
+        FmModeProfiles.For(mode)?.PeakDeviationHz
         ?? throw new ArgumentException(
             $"'{mode}' is not an FM-native mode - the FM ladder carries "
             + $"{string.Join(", ", Modes)}", nameof(mode));
