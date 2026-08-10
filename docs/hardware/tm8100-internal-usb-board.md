@@ -185,6 +185,15 @@ scaling is **0.29 Vp-p per kHz**, and the 2.0 Vp-p full-scale input corresponds 
 deviation**. On a 12.5 kHz channel, 100 % modulation is 2.5 kHz (MMA-00072-03 p.6), which is
 **0.725 Vp-p**.
 
+**Run at 100 % of class, not at Tait's 60 %.** Their internal 1200 baud modem defaults to 60 % of
+the ceiling, which is sensible for FFSK at about 3 dB crest factor and wrong for an OFDM waveform at
+12 dB, where the peak that sets the drive carries almost no energy. Measured at fixed received power
+in a fixed IF, 32 seeds: 1500 Hz peak recovers 16 frames of 32 at +14 dB carrier to noise and none
+below it; 2500 Hz recovers 32, 31 and 20 at +14, +12 and +10. **Three to four decibels, for a
+setting.** The same sweep shows why the extra headroom at T13 is not free spectrum: 6900 Hz peak
+starts going backwards as the signal outgrows a 7.8 kHz IF, so the optimum on a narrow channel is
+near 5 kHz, which will not fit inside one.
+
 **So the radio will happily accept nearly three times legal deviation, and nothing downstream stops
 it.** The limiter and the deviation scaler are both upstream of T13. Over-deviation is entirely this
 board's responsibility.
@@ -203,10 +212,18 @@ board's responsibility.
   codec gnd o------------------------------+--------------------o pin 3 AGND
 ```
 
-**Set Rt/Rb so that a full-scale digital sample produces 90 % of class deviation and no more.**
-For narrowband that is 2.25 kHz, which is 0.6525 Vp-p **DERIVED**. From a 1 Vrms (2.83 Vp-p) codec
-output that is a ratio of 0.231, **-12.7 dB**, giving Rt = 3k3 with Rb = 1k (ratio 0.233).
+**Set Rt/Rb so that a full-scale digital sample produces exactly 100 % of class deviation.** For
+narrowband that is 2.5 kHz, which is 0.725 Vp-p **DERIVED**. From a 1 Vrms (2.83 Vp-p) codec output
+that is a ratio of 0.256, **-11.8 dB**, giving Rt = 2k9 (2k7 or 3k0 in E24) with Rb = 1k.
 **MEASURE** the codec's real output swing and adjust; the ratio is what matters, not the values.
+
+**Not 90 %, which is what an earlier draft of this note said.** A margin below the legal ceiling
+looks prudent and costs 0.9 dB of the one thing measurement says matters most here. Deviation is the
+dominant lever on this link: at fixed received power in a fixed IF, dropping from 2500 Hz peak to
+1500 Hz costs 3 to 4 dB of sensitivity, because post-detection signal to noise goes as deviation
+squared. Setting the ceiling AT the legal limit means a software fault produces exactly 100 %
+modulation, which is legal, while normal operation gets the full budget. A margin buys nothing
+except a quieter signal.
 
 This is the board's only protection against splattering the channel, and it belongs in copper rather
 than in a config file. A number in software can be changed by a bug, a mixer, or a well-meaning
@@ -351,7 +368,8 @@ believe neither until you know why.
 frequency and compare against the R1 plot in Table 2.10 - if it rolls off at 3 kHz, the tap is not
 R1 and something is programmed differently from what you think.
 
-**Full-scale ceiling.** Play 0 dBFS and confirm deviation does not exceed 90 % of the class ceiling.
+**Full-scale ceiling.** Play 0 dBFS and confirm deviation lands on the class ceiling and does not
+exceed it.
 This is the one test that protects everyone else on the channel, so do it before the first transmit
 on a real antenna.
 
