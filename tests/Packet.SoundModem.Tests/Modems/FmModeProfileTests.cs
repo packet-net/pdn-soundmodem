@@ -80,10 +80,32 @@ public class FmModeProfileTests
         FmModeProfile.FullDeviationHz(20000).Should().Be(4000);
         FmModeProfile.FullDeviationHz(25000).Should().Be(5000);
 
-        // qpsk3600 is the outlier worth flagging rather than hiding: a 5 kHz target on a 12.5 kHz
-        // channel is 200 % of full deviation, which is odd for a mode Nino groups with the
-        // speaker/mic modes, and is the one figure in this table worth asking him about.
-        FmModeProfiles.For("qpsk3600")!.PercentOfFullDeviation.Should().BeApproximately(200, 0.1);
+        // qpsk3600 is the outlier, and both halves of it are asserted: Nino publishes 5 kHz, which
+        // is 200 % of full deviation for the 12.5 kHz channel he puts the mode on, and we transmit
+        // 2500. Keeping both visible is the point - a divergence from someone else's published
+        // figure must be legible as a divergence, not hidden by an edit.
+        FmModeProfile qpsk = FmModeProfiles.For("qpsk3600")!;
+        qpsk.PercentOfFullDeviation.Should().BeApproximately(
+            200, 0.1, "that is what NinoTNC publishes and this field records it");
+        qpsk.DivergesFromPublished.Should().BeTrue();
+        qpsk.PeakDeviationHz.Should().Be(2500, "which is 100 % of full deviation for its channel");
+        qpsk.RecommendationRemark.Should().NotBeNullOrWhiteSpace(
+            "a divergence without a stated reason is just an unexplained difference");
+    }
+
+    [Fact]
+    public void A_Divergence_Always_Carries_Its_Reason()
+    {
+        // The guard on the mechanism itself: nobody gets to quietly recommend something other than
+        // the published figure without saying why.
+        foreach ((string mode, FmModeProfile profile) in FmModeProfiles.Profiles)
+        {
+            if (profile.DivergesFromPublished)
+            {
+                profile.RecommendationRemark.Should().NotBeNullOrWhiteSpace(
+                    "{0} recommends a deviation other than the published one", mode);
+            }
+        }
     }
 
     [Fact]

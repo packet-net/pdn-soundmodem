@@ -58,6 +58,18 @@ public static class FmModeProfiles
                 TargetPeakDeviationHz: 5000, BesselNullToneHz: 2079,
                 ChannelSpacingHz: Narrow, OccupiedBandwidthHz: null,
                 Source: FmFigureSource.NinoTnc,
+                RecommendedPeakDeviationHz: 2500,
+                RecommendationRemark:
+                    "Nino publishes 5.0 kHz, which is 200 % of full deviation for the 12.5 kHz "
+                    + "channel he puts this mode on, and Carson bandwidth 15.4 kHz on a 12.5 kHz "
+                    + "channel. Measured, 2500 Hz is +0.4 dB at the 50 % knee and takes Carson to "
+                    + "10.4 kHz, so it is free to slightly better AND stops the mode over-running "
+                    + "its channel. The published figure is also the one already doubted on "
+                    + "provenance, apparently inherited from the c4fsk19200 row this mode was "
+                    + "wrongly grouped with; a station running 1.2 kHz reports it working, which "
+                    + "our ladder puts 3.8 dB worse than 2500 Hz. Consequence for anyone following "
+                    + "the documented procedure: the Bessel null tone becomes 1039 Hz, not 2079. "
+                    + "Ask Nino before treating this as settled.",
                 Remark: "Phase modulation of a 1650 Hz carrier at 1800 symbols a second, grouped by "
                     + "Nino with the FM speaker/mic modes. It SHARES c4fsk19200's 2079 Hz tuning "
                     + "tone, which is a tuning tone and not a carrier - reading that as a carrier "
