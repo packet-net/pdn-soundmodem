@@ -1,3 +1,4 @@
+using Packet.SoundModem.Modems;
 using Packet.SoundModem.Tests.Channel;
 using M0LTE.Fm;
 
@@ -45,10 +46,14 @@ internal enum SimChannelKind
 }
 
 /// <summary>
-/// What the FM modes are transmitted at. The peak deviations are
-/// docs/mode-modulation-reference.md's targets, which is the same calibration the over-the-air
-/// harness drives the Flex to - so a sim FM point and a bench FM point describe the same radio.
+/// The FM link a (mode, channel) pair describes.
 /// </summary>
+/// <remarks>
+/// The deviations and channel spacings come from <see cref="FmModeProfiles"/>, which is the one
+/// table. They used to be duplicated here, and the comment beside the old channel-spacing switch
+/// disagreed with the switch itself about which channel qpsk3600 belongs on - which is the failure
+/// mode having three copies invites.
+/// </remarks>
 internal static class FmModes
 {
     /// <summary>The channel spacing a mode is meant to run on, in Hz. Not a preference: C4FSK
@@ -56,30 +61,17 @@ internal static class FmModes
     /// from MMDVM-TNC and NinoTNC practice), and running either on the wrong spacing measures a
     /// radio nobody deploys. The 5 kHz-deviation modes need the wide channel's IF filter or their
     /// own sidebands are truncated.</summary>
-    public static double ChannelSpacingHz(string mode) => mode switch
-    {
-        // Tom, 2026-08-08, from MMDVM-TNC and NinoTNC practice: C4FSK 9600 is the narrow-channel
-        // mode and C4FSK 19200 the wide one. GFSK 9600 keeps its G3RUH-lineage 25 kHz channel -
-        // 2.4 kHz deviation against a 4800 Hz baseband is 14 kHz of Carson bandwidth, which an
-        // 8 kHz IF filter cannot pass. qpsk3600 shares the C4FSK 19200 modulator, so it shares
-        // its channel.
-        _ when mode.StartsWith("c4fsk19200", StringComparison.Ordinal) => 25000,
-        _ when mode.StartsWith("fsk9600", StringComparison.Ordinal) => 25000,
-        _ => 12500,
-    };
+    public static double ChannelSpacingHz(string mode) =>
+        FmModeProfiles.For(mode)?.ChannelSpacingHz ?? 12500;
 
     /// <summary>Peak deviation in Hz for an FM catalogue mode, or null if the mode is an SSB
     /// mode and has no business on an FM channel.</summary>
-    public static double? PeakDeviationHz(string mode) => mode switch
-    {
-        _ when mode.StartsWith("afsk1200", StringComparison.Ordinal) => 3000,
-        _ when mode.StartsWith("fsk9600", StringComparison.Ordinal) => 2400,
-        _ when mode.StartsWith("fsk4800", StringComparison.Ordinal) => 1200,
-        _ when mode.StartsWith("c4fsk19200", StringComparison.Ordinal) => 5000,
-        _ when mode.StartsWith("c4fsk9600", StringComparison.Ordinal) => 2500,
-        _ when mode.StartsWith("qpsk3600", StringComparison.Ordinal) => 5000,
-        _ => null,
-    };
+    /// <remarks>
+    /// Both this and <see cref="ChannelSpacingHz"/> read <see cref="FmModeProfiles"/>, which is the one
+    /// table. They used to carry their own copies, and the comment beside the old spacing switch
+    /// disagreed with the switch itself about which channel qpsk3600 belongs on.
+    /// </remarks>
+    public static double? PeakDeviationHz(string mode) => FmModeProfiles.For(mode)?.TargetPeakDeviationHz;
 
     /// <summary>True for the channel kinds that model a real FM link.</summary>
     public static bool IsFmChannel(SimChannelKind kind) =>
