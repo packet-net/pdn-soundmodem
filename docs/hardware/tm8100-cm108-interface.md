@@ -27,36 +27,56 @@ Component values quoted from a schematic are from `MMAB12-B1-00-814`, the **TM81
 
 ## Which tap points
 
-Settle this before building. It changes what the modem has to cope with.
+**R1 on receive and T13 on transmit.** That is the deployment, and the rest of this note assumes it.
 
-**Receive: R1 is documented and reachable.** `MMA-00005-05` p.124 lists the CCTM audio tap-out
-command as accepting `r1 r2 r3 r4 r5 t1 t2 t3 t7`, so the raw-demodulator tap exists. At R1 the
-audio has had no bandwidth-dependent scaling, no decimation to 8 kHz, no 0.3 to 3 kHz bandpass and
-no de-emphasis (chain order, `MMA-00005-05` p.56). It is limited only by the IF filter, 7.8 kHz
-total 3 dB on a 12.5 kHz channel (`MMA-00005-05` p.73, Table 3.1), so roughly 3.9 kHz of audio.
+**Receive: R1.** `MMA-00005-05` p.124 lists the CCTM audio tap-out command as accepting
+`r1 r2 r3 r4 r5 t1 t2 t3 t7`, so the raw-demodulator tap is documented and reachable. At R1 the audio
+has had no bandwidth-dependent scaling, no decimation to 8 kHz, no 0.3 to 3 kHz bandpass and no
+de-emphasis (chain order, `MMA-00005-05` p.56). It is limited only by the IF filter, 7.8 kHz total
+3 dB on a 12.5 kHz channel (`MMA-00005-05` p.73, Table 3.1), so roughly 3.9 kHz of audio.
 
-**Transmit: T13 is not in the documentation at all.** Searching all twenty documents for "t13"
-returns only occurrences inside "MPT1327". The only tap-in points Tait document are `r2 r5 t1 t5`
-(`MMA-00005-05` p.124), and the only transmit tap-in ever configured in a programming form is
-**T5**, which appears in six tables across five documents (`MMA-00005-05` p.472, p.574, p.582;
-`MMAA00-00-00-812` p.19; `MMA-00041-04` p.42; `402-00032-03` p.2).
+**Transmit: T13, which is the last tap before the modulator.** The programming application's tap
+diagram places it after compression, encryption, the 300 Hz high pass, pre-emphasis, the limiter, the
+3 kHz low pass and the peak-system-deviation scaler. **An injected signal there meets none of them.**
 
-**The limiter is downstream of every documented tap-in.** Tait qualify their own transmitter
-frequency response as "below limiting" for a tap-injected test signal (`MMA-00005-05` p.480), a
-caveat that is only needed if the limiter is in circuit:
+A documentation note, because it will confuse anyone who goes looking. **T13 appears nowhere in
+these 20 manuals**: searching all of them for "t13" returns only occurrences inside "MPT1327". The
+service manual's own tap-in list is `r2 r5 t1 t5` (p.124), and the only transmit tap-in ever
+configured in a programming form is T5, in six tables across five documents. That manual is from
+2007 and uses a different tap numbering from the programming application; the two describe the same
+radio at different times. **Where they disagree, the programming application is what the radio in
+front of you actually does**, and this note follows it.
+
+The distinction matters because the two taps are on opposite sides of the limiter. Tait qualify
+their own transmitter response as "below limiting" for a tap-injected test signal (p.480), a caveat
+only needed if the limiter is in circuit:
 
 > Bandwidth Response: 300Hz to 3kHz, +1, -3dB relative to -6dB/octave
 > *relative to 1kHz, 20% deviation, below limiting*
 > Test Signal: 0dBm line input, audio tap T1
 
-So a signal injected at T5 still meets the 300 Hz high-pass, pre-emphasis (conditional: "Pre-emphasis,
-if required", p.58), the hard limiter, and the 3 kHz low-pass. T13, if it exists in current firmware,
-sits past all of that.
+So a signal injected at T5 would still meet the 300 Hz high pass, pre-emphasis, the hard limiter and
+the 3 kHz low pass. **At T13 it meets none of that**, which is the whole reason for choosing it.
 
-**This matters to the waveform, not just the wiring.** An OFDM mode whose lowest carrier is near
-305 Hz sits on the 300 Hz high-pass corner at T5, and a high peak-to-average waveform meets a hard
-limiter rather than a level control. Establish which tap you actually have before tuning a mode for
-it. The bench test is in the last section and takes an hour.
+### What T13 means for the modem, and it is not only wiring
+
+**The transmit path is flat.** No 300 Hz high pass, so a waveform with carriers near 305 Hz is not
+sitting on a filter corner. No pre-emphasis, so no tilt to undo. No 3 kHz low pass, so the audio
+bandwidth is bounded by the modulator and the channel rather than by a voice filter.
+
+**Nothing protects the modulator, and nothing scales the drive.** The limiter and the
+peak-system-deviation scaler are both upstream. Your audio level sets deviation directly, and there
+is no ceiling anywhere in the radio. **Over-deviation is therefore entirely yours to prevent**, which
+is why the transmit attenuator below is sized so that a full-scale digital sample cannot exceed 90 %
+of class deviation. At T5 that would be belt and braces; at T13 it is the only belt there is.
+
+**Peak deviation is set by your waveform's peak, so peak-to-average ratio costs you level.** With no
+limiter, staying legal means setting the drive against the loudest instant in the burst, so a peaky
+waveform forces the whole burst down. That is worth real decibels: on an audio-band OFDM mode,
+removing one unusually peaky symbol was worth about 3 dB of sensitivity measured this way, and
+nothing measurable at all when re-measured with a limiter in circuit. Both are honest answers; T13
+is the first question. `M0LTE.FmChannel`'s default drive mode models this, and its
+`LimitAtDeviationHz` models the other, for anyone who ends up at T5 or on the microphone.
 
 ## The radio side
 
@@ -269,7 +289,9 @@ is acting. Measure the AC level at AUD_TAP_OUT with a scope or a true-RMS meter.
 actually use: R1 and R5 have different gains and only R5's is documented.
 
 **Transmit.** This is the one with no published figure at all, so it has to be measured, and it can
-be done without a deviation meter.
+be done without a deviation meter. It matters more at T13 than it would anywhere else, because the
+peak-system-deviation scaler is upstream and therefore bypassed: nothing in the radio is normalising
+your level, so what you inject is what deviates.
 
 Use a **Bessel null**. A carrier frequency-modulated by a single tone has its carrier component
 vanish at a modulation index of 2.405, so if you feed a tone of frequency `f` and watch the carrier
@@ -294,8 +316,10 @@ sensible operating point for a data mode and a good sanity check that your inter
 territory.
 
 **Watch for the limiter while you do this.** If deviation stops following the input level before the
-null appears, you are into the limiter, which tells you the tap is upstream of it. That is the T5
-versus T13 question answered, for free, during a calibration you were doing anyway.
+null appears, you are into the limiter, which would mean the tap is upstream of it and not the T13
+this note assumes. Worth watching for, free, during a calibration you were doing anyway - the
+service manual does not describe T13 at all, so its position comes from the programming application
+rather than from a document that can be cited, and this is the cheapest confirmation available.
 
 ### While you are there: two more useful sweeps
 
@@ -318,8 +342,9 @@ Both take minutes and both settle questions the documentation cannot.
   strong signal decode worse than a weak one.
 - **The dongle's own input capacitor**, typically 1 uF, cutting the low end on a flat R1 tap and
   causing baseline wander.
-- **Over-driving an unlimited modulator**, if you do end up at T13. Nothing downstream protects the
-  transmitter, so the hardware ceiling described above is not optional there.
+- **Over-driving the modulator.** At T13 nothing downstream protects the transmitter: no limiter, no
+  peak-system-deviation scaler. The hardware ceiling described above is not optional, and a software
+  fault that would merely sound bad through the microphone will splatter here.
 - **Ground loop through the vehicle**, heard as alternator whine and as a noise floor that rises
   with engine speed.
 - **Assuming R1 and R5 have the same gain.** They do not, and only R5's is documented.
