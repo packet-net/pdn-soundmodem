@@ -6,7 +6,39 @@ How each NinoTNC-lineage mode is carried on the air, for the OTA test harness. S
 
 ## FM modulators (transmit via the Flex FM mode, at the targeted deviation)
 
-| NinoTNC mode | Tone/subcarrier Hz | **Tgt peak dev kHz** | **Channel** | NinoTNC switch | pdn `ModemCatalog` mode(s) |
+> **The tone column is a TUNING TONE, not a carrier or a subcarrier.** It is the audio frequency the
+> NinoTNC emits so that deviation can be set by a Bessel null: a carrier frequency modulated by a
+> single tone loses its carrier component entirely at a modulation index of 2.405, so
+> `tone x 2.405 = target deviation`. Every row checks out to three decimal places - 1248 Hz gives
+> 3.001 kHz, 2079 Hz gives 5.000 kHz - and Nino's release notes say so outright: "Provided tuning
+> tone selection based on mode switch settings. This allows the user to chose the target deviation
+> for the bessel null tuning procedure... Changing the operating mode switches does not change
+> deviation, but does change the tuning tone."
+>
+> This column previously read "Tone/subcarrier Hz", which conflated two different quantities and
+> caused a real false alarm: the v44 tone table groups C4FSK 19200 and QPSK 3600 on one row at
+> 2079 Hz, which read as a claim that QPSK 3600's carrier had moved from 1650 Hz and that our
+> catalogue was incompatible with current firmware. It had not. **QPSK 3600's carrier is 1650 Hz**,
+> stated in the release notes' own switch map: "0101 3600 AQPSK IL2Pc 1800 sym/sec on 1650Hz
+> carrier". The 2079 Hz they share is only the tone you whistle to set 5 kHz deviation.
+
+> **Target deviations are recommendations, not requirements**, and this is Nino's own position
+> (#ninotnc-help, 11 July 2026): "The target deviations are just recommendations. The modes will
+> work at a range of deviations, though there are reasons to be specific sometimes. Mostly if you
+> are trying to constrain occupied bandwidth of the RF signal. But generally, more deviation will be
+> more effective until you exceed the capability of the transmitter or receiver (IF filter). Also,
+> not many transmitters will actually achieve 5.0kHz deviation, so don't worry too much." The
+> release notes agree from 2020: "3kHz deviation should work for most setups", "2400 Baud mode does
+> not REQUIRE 5kHz deviation (3kHz is fine)", and "The tones selected in 4800 and 9600 mode provide
+> Minimum Shift Keying, but more deviation may work well too."
+>
+> That last one is worth reading twice before treating a low target deviation as wasted headroom.
+> **GFSK 4800 and 9600 are at MSK by design**: deviation equals baud/4, so 1.2 kHz at 4800 and
+> 2.4 kHz at 9600. That is a deliberate modulation index, not accidental under-driving, and changing
+> it changes the signal's geometry rather than only its level.
+
+
+| NinoTNC mode | **Bessel null tuning tone Hz** | **Tgt peak dev kHz** | **Channel** | NinoTNC switch | pdn `ModemCatalog` mode(s) |
 |---|---|---|---|---|---|
 | AFSK 1200 | 1248 (Bell 202: 1200/2200) | **3.0** | narrow (12.5) | 0110, 0111 | `afsk1200` (+`-fx25`, `-fx25rx`, `-il2p`, `-il2p-nocrc`) |
 | GFSK 9600 | 999 | **2.4** | wide (25) | 0000, 0010 | `fsk9600` (+`-il2p`) |
