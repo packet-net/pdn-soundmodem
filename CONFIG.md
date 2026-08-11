@@ -430,17 +430,22 @@ package's `IModemPlugin`, loaded at start-up from a path you wrote down.
 
 ```json
 "modemPlugins": [
-  { "path": "/opt/pdn/plugins/M0LTE.OfdmFm.dll" }
+  { "path": "/opt/pdn/plugins/Packet.SoundModem.SamplePlugin.dll" }
 ],
 "modems": [
-  { "subChannel": 0, "mode": "ofdm-fm:nb" }
+  { "subChannel": 0, "mode": "sample:loopback" }
 ]
 ```
+
+`sample` is the plugin in this repository (`tests/Packet.SoundModem.SamplePlugin`), used here so
+that the example is one you can build and run rather than one you have to take on trust. It is a
+frame codec shaped like a modem: real enough to exercise the seam end to end, not a waveform
+anybody transmits.
 
 A plugin's modes are named `pluginId:mode`. That is not decoration: it means a plugin can never
 shadow or redefine a built-in mode, a log line or a mode-validation entry always says plainly which
 modes were not built here, and a plugin you have not installed yet gives you
-`no modem plugin registered for 'ofdm-fm'` rather than a mode that mysteriously does not exist.
+`no modem plugin registered for 'sample'` rather than a mode that mysteriously does not exist.
 
 **Discovery is explicit, never ambient.** There is no plugins directory that gets scanned, no
 probing next to the executable, no environment variable, and no default location. The only thing
@@ -449,7 +454,7 @@ transmits is not a daemon worth having, and an explicit list also makes the audi
 config says which non-package code runs, and start-up repeats it:
 
 ```
-modem plugin: ofdm-fm from /opt/pdn/plugins/M0LTE.OfdmFm.dll [ofdm-fm:nb, ofdm-fm:enb, ofdm-fm:wb, ofdm-fm:ewb]
+modem plugin: sample from /opt/pdn/plugins/Packet.SoundModem.SamplePlugin.dll [sample:loopback, sample:baseband, sample:explodes]
 ```
 
 | Key | Type | Default | What it does |
@@ -459,7 +464,7 @@ modem plugin: ofdm-fm from /opt/pdn/plugins/M0LTE.OfdmFm.dll [ofdm-fm:nb, ofdm-f
 A plugin that will not load is reported by name and start-up continues:
 
 ```
-modem plugin: FAILED /opt/pdn/plugins/M0LTE.OfdmFm.dll - no such file
+modem plugin: FAILED /opt/pdn/plugins/Packet.SoundModem.SamplePlugin.dll - no such file
 ```
 
 That is deliberate - a station should not refuse to come up because an experimental modem is not
@@ -475,7 +480,7 @@ Three limits worth knowing before you build one:
   runs at. A modem whose own DSP wants another rate resamples internally; declaring a third rate is
   refused at start-up rather than quietly given 12 kHz.
 - **Plugin modes are config-file only.** `--modem N:MODE[:FREQ]` already uses `:` as its own
-  separator, so `--modem 0:ofdm-fm:nb` reads as mode `ofdm-fm` at frequency `nb` and goes nowhere
+  separator, so `--modem 0:sample:loopback` reads as mode `sample` at frequency `loopback` and goes nowhere
   useful. Nothing is lost by that: an explicit config file is the audit trail this feature is built
   around, and a plugin loaded from a command line would be exactly the ambient arrangement the
   design refuses.

@@ -6,9 +6,10 @@ Opened 2026-08-08. Status: **built 2026-08-09** - contract, registry, loader, in
 and daemon config are all in place; see [CONFIG.md § modemPlugins](../CONFIG.md#modemplugins) for
 the operator's half.
 
-The trigger is OFDM-FM, the audio-band OFDM modem that came out of researching IP400's OFDM-AB (see
-[ofdm-ab/plan.md](ofdm-ab/plan.md)). It has to live outside this repository, and the station still
-has to be able to run it. Not for licence reasons: this repository is GPL-3.0-or-later and must
+The trigger was an audio-band OFDM modem that has to live outside this repository while the station
+still has to be able to run it. Its research record and its implementation both live with it, in a
+repository of their own; nothing about that waveform is documented here, which is the same rule the
+mechanism exists to serve. Not for licence reasons: this repository is GPL-3.0-or-later and must
 stay buildable and distributable by anyone who clones it, so it cannot contain, reference or build
 against something we are not free to ship. The unsettled implementation goes outside; only the
 contract stays in.
