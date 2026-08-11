@@ -1,0 +1,43 @@
+{
+  // A receive-only monitoring station: no PTT at all, everything written down.
+  //
+  // Omitting "ptt" means the daemon never keys anything. Transmissions offered by a KISS host
+  // have nowhere to go, so use this on a receiver you want to watch a channel with rather
+  // than one you expect to work traffic through.
+  "device": "plughw:1,0",
+  "captureRate": 48000,
+
+  "modemPlugins": [
+    { "path": "/opt/pdn/plugins/M0LTE.OfdmFm.dll" }
+  ],
+
+  "modems": [
+    { "subChannel": 0, "mode": "ofdm-fm:nb" },
+    { "subChannel": 1, "mode": "fsk9600" }
+  ],
+
+  "frameLog": { "path": "/var/lib/pdn-soundmodem/frames.db" },
+
+  // Survey keeps a recording of bursts it could not decode, which is the only way to work out
+  // afterwards why something did not copy. Bounded three ways - total bytes, bursts per hour,
+  // and a cooldown - because an unbounded capture on a busy channel fills a disk overnight.
+  "survey": {
+    "path": "/var/lib/pdn-soundmodem/survey",
+    "maxBytes": 536870912,
+    "maxPerHour": 30,
+    "cooldownSeconds": 120,
+    "minPeakSnrDb": 6
+  },
+
+  // Continuous raw audio, chunked, with a ceiling. Expensive; turn it on for a session when
+  // you are chasing something, not permanently.
+  "rawCapture": {
+    "path": "/var/lib/pdn-soundmodem/raw",
+    "maxBytes": 4294967296,
+    "chunkMinutes": 15
+  },
+
+  "waterfall": { "port": 8107, "dialFrequencyHz": 144950000, "sideband": "usb" },
+  "kissPort": 8105,
+  "bind": "127.0.0.1"
+}

@@ -1,0 +1,30 @@
+{
+  // OFDM-FM sharing a channel with the modes the neighbours actually run. A node with one
+  // radio that has to serve NinoTNC stations and an OFDM-FM link at the same time: every
+  // modem hears every sample, so all of these decode in parallel and the host chooses what
+  // to transmit with by KISS nibble.
+  //
+  // The channel runs at 48 kHz because ofdm-fm requires it; the built-in modes are happy
+  // there too. Mixing in a mode that only runs at 12 kHz would be refused at start-up.
+  "device": "plughw:1,0",
+  "captureRate": 48000,
+
+  "modemPlugins": [
+    { "path": "/opt/pdn/plugins/M0LTE.OfdmFm.dll" }
+  ],
+
+  "modems": [
+    { "subChannel": 0, "mode": "ofdm-fm:nb" },
+
+    // 9600 GFSK and 3600 QPSK are the NinoTNC modes a 12.5 kHz FM channel carries. The
+    // baseband FSK family has no settable centre, so no "frequency" here either; qpsk3600
+    // does have one and defaults to 1650 Hz, which is where a NinoTNC puts it.
+    { "subChannel": 1, "mode": "fsk9600" },
+    { "subChannel": 2, "mode": "qpsk3600" }
+  ],
+
+  "ptt": { "type": "cm108", "device": "/dev/hidraw0", "gpio": 3 },
+  "frameLog": { "path": "/var/lib/pdn-soundmodem/frames.db" },
+  "kissPort": 8105,
+  "bind": "127.0.0.1"
+}

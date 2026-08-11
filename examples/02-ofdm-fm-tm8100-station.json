@@ -1,0 +1,38 @@
+{
+  // A real station: a Tait TM8100 on its internal audio taps, keyed through a CM108 dongle,
+  // with the things you want when it is running unattended and you are not in the shack.
+  "device": "plughw:1,0",
+  "captureRate": 48000,
+
+  "modemPlugins": [
+    { "path": "/opt/pdn/plugins/M0LTE.OfdmFm.dll" }
+  ],
+
+  "modems": [
+    { "subChannel": 0, "mode": "ofdm-fm:nb" }
+  ],
+
+  // CM108 GPIO keying. "gpio" is the pin number on the chip, not a Linux GPIO number, and 3
+  // is what the common dongles bring out. A serial-DTR keyer instead would be
+  //   { "type": "serial", "device": "/dev/ttyUSB0", "line": "dtr" }
+  "ptt": { "type": "cm108", "device": "/dev/hidraw0", "gpio": 3 },
+
+  // Every frame heard, written to SQLite in WAL mode, so it can be read while the modem runs.
+  // Worth having on any station you are not watching: it is the difference between "the link
+  // was bad last night" and knowing which bursts arrived and what they looked like.
+  "frameLog": { "path": "/var/lib/pdn-soundmodem/frames.db" },
+
+  // Browser waterfall on the LAN. "dialFrequencyHz" is only the preset the RF scale derives
+  // from; each browser can retune its own copy. FM here, so the sideband setting is cosmetic.
+  "waterfall": { "port": 8107, "dialFrequencyHz": 144950000, "sideband": "usb" },
+
+  // The daemon restarts itself if the sound card stops delivering samples. OFF by default on
+  // ALSA, because a genuinely silent wired input is a normal thing to have; turn the
+  // starvation watch on if the card is one that wedges, and leave silence at 0 unless you are
+  // sure nothing legitimate is quiet for that long.
+  "deadFeed": { "silenceSeconds": 0, "starvationSeconds": 30 },
+
+  // KISS has no authentication. "*" is a decision, not a default.
+  "bind": "127.0.0.1",
+  "kissPort": 8105
+}
