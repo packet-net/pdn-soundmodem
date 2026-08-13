@@ -893,7 +893,8 @@ if (fmConfig.Enabled)
     Console.WriteLine(
         $"frequency matching: on - answering a station on its own frequency after "
         + $"{fm.MinSamples} frames, if they agree within {fm.MaxSpreadHz:F0} Hz, "
-        + $"up to {fm.MaxTrimHz:F0} Hz, damped {fm.Damping:0.##}; backs off for "
+        + $"up to {fm.MaxTrimHz:F0} Hz in full ({fm.Damping:0.##} for any station that has "
+        + "moved under it); backs off for "
         + $"{fm.ChaseCooldownSeconds / 60:F0} min from any station whose own frequency then moves "
         + $"more than {fm.ChaseThresholdHz:F0} Hz, and stops after {fm.MaxChases} such moves");
 

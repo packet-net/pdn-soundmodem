@@ -12,7 +12,24 @@ public sealed record FrequencyMatchingOptions
     /// <summary>Largest shift ever applied, in Hz. Default 50.</summary>
     public double MaxTrimHz { get; init; } = 50;
 
-    /// <summary>Fraction of the measured offset applied, 0 to 1. Default 0.5.</summary>
+    /// <summary>
+    /// Fraction of the measured offset applied to a station that has already moved under our
+    /// correction once. Default 0.5. A station that has never moved gets the whole thing.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Conditional, because damping is only ever a fix for a feedback loop, and in the
+    /// normal case there is no loop.</b> Our transmit trim cannot change what we measure of them,
+    /// so correcting for a station that is not itself correcting is open-loop: damping there does
+    /// not stabilise anything, it just leaves half the error uncorrected for nothing. Measurement
+    /// noise is already handled, and better, by averaging the window and gating on its spread;
+    /// a wild estimate is already bounded by <see cref="MaxTrimHz"/>.</para>
+    /// <para>Where it does earn its keep is a two-sided chase too small to trip
+    /// <see cref="ChaseThresholdHz"/>: at a true difference of 5 Hz two undamped stations
+    /// alternate between perfectly aligned and 5 Hz apart every exchange, and a steady small
+    /// offset is easier on a demodulator than one that jumps. So it is applied where there is
+    /// evidence of a peer that reacts - a station that has moved under our correction at least
+    /// once - and nowhere else.</para>
+    /// </remarks>
     public double Damping { get; init; } = 0.5;
 
     /// <summary>
@@ -216,8 +233,12 @@ public sealed class FrequencyMatchingPolicy
                     return 0;
                 }
 
+                // Full correction until a station gives us a reason to hold back. Damping is a
+                // remedy for a loop, and there is no loop unless the far end is correcting too;
+                // having moved once under our correction is the only evidence of that we get.
+                double gain = state.Chases > 0 ? _options.Damping : 1.0;
                 trim = Math.Clamp(
-                    o.OffsetHz * _options.Damping, -_options.MaxTrimHz, _options.MaxTrimHz);
+                    o.OffsetHz * gain, -_options.MaxTrimHz, _options.MaxTrimHz);
 
                 if (!state.Correcting && Math.Abs(trim) >= _options.MinMeaningfulTrimHz)
                 {
