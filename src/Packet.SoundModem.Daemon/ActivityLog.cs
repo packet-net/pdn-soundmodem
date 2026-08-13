@@ -86,8 +86,17 @@ internal static class ActivityLog
     }
 
     /// <summary>A frame this station transmitted, logged once it has actually gone out.</summary>
-    internal static string Transmitted(int subChannel, string mode, ReadOnlySpan<byte> frame) =>
-        $"tx[{subChannel}] {mode} {Addresses(frame)} {frame.Length} bytes";
+    /// <param name="trimHz">
+    /// How far the burst was shifted off the nominal centre to suit the station it was addressed
+    /// to; 0 for the usual case. Said in the journal as well as the panel because a station
+    /// transmitting somewhere other than its own band plan is exactly the sort of thing that
+    /// looks like a fault to whoever reads the log next, and a line that explains itself is
+    /// cheaper than the question.
+    /// </param>
+    internal static string Transmitted(
+        int subChannel, string mode, ReadOnlySpan<byte> frame, double trimHz = 0) =>
+        $"tx[{subChannel}] {mode} {Addresses(frame)} {frame.Length} bytes"
+        + (trimHz == 0 ? "" : $"  shifted {trimHz:+0.0;-0.0} Hz to suit them");
 
     /// <summary>A frame that never went out, and why.</summary>
     internal static string Dropped(int subChannel, ReadOnlySpan<byte> frame, Exception reason) =>

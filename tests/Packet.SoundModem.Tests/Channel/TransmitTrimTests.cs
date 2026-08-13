@@ -162,6 +162,62 @@ public class TransmitTrimTests
     }
 
     [Fact]
+    public async Task The_applied_trim_is_announced_with_the_frame()
+    {
+        // The panel and the frame log both need this, and both need it to be what actually went
+        // out rather than what was asked for - otherwise a clamped trim would be recorded as a
+        // shift that never happened.
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 42);
+        channel.AddModem(0, sink => new BpskModem(SampleRate, sink));
+        channel.Csma.Persistence = 255;
+        channel.TransmitTrimHz = (_sub, _frame) => 12.5;
+
+        var announced = new List<double>();
+        channel.FrameTransmittedWithTrim += (_sub, _frame, trim) => announced.Add(trim);
+
+        var output = new FakeAudioOutput(SampleRate);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        Task transmitter = channel.RunTransmitterAsync(output, new RecordingPtt(), cancellation.Token);
+        await channel.EnqueueTransmit(0, SampleFrame()).WaitAsync(TimeSpan.FromSeconds(8));
+        await cancellation.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        announced.Should().ContainSingle().Which.Should().Be(12.5);
+    }
+
+    [Fact]
+    public async Task An_untrimmed_frame_announces_zero_rather_than_nothing()
+    {
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 42);
+        channel.AddModem(0, sink => new BpskModem(SampleRate, sink));
+        channel.Csma.Persistence = 255;
+
+        var announced = new List<double>();
+        channel.FrameTransmittedWithTrim += (_sub, _frame, trim) => announced.Add(trim);
+
+        var output = new FakeAudioOutput(SampleRate);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        Task transmitter = channel.RunTransmitterAsync(output, new RecordingPtt(), cancellation.Token);
+        await channel.EnqueueTransmit(0, SampleFrame()).WaitAsync(TimeSpan.FromSeconds(8));
+        await cancellation.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        announced.Should().ContainSingle().Which.Should().Be(0);
+    }
+
+    [Fact]
     public async Task An_absurd_trim_is_clamped_rather_than_transmitted()
     {
         // A backstop on the caller. Without it a runaway estimate would walk the burst off the

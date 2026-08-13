@@ -127,6 +127,25 @@ never wrapped in `FrequencyShiftedModem` and there is no shift stage there to le
 those are exactly the modes talking to the stations this is for. Translating the finished burst
 costs one Hilbert pass per transmission and works for every mode on one code path.
 
+## Seeing it happen
+
+A shifted transmission is marked wherever frames are listed, because a signal that is not where
+the band plan says it should be is otherwise indistinguishable from a fault - and because the
+only way to find out whether this helps is to be able to point at the frames it applied to.
+
+- **Waterfall panel**: a `SHIFTED` badge beside the callsigns, and `shifted +4.5 Hz` in the
+  detail line. Outlined rather than filled, so it reads as an annotation on our own frame rather
+  than another station's badge. The tooltip explains the reasoning.
+- **Journal**: `tx[2] bpsk300 GB7RDG-2>EI0RSI-1 37 bytes  shifted +2.3 Hz to suit them`.
+- **Frame log**: a `tx_trim_hz` column, added by the same migration path as the others, so
+  existing logs pick it up without losing their history.
+
+It is deliberately **not** written into `offset_hz`. That column holds a measurement of somebody
+else's transmitter; this is a command to our own, known exactly rather than estimated. Averaging
+the two together would mix what a station did with what we did about it, and the question this
+feature will eventually be judged on - did correcting for them improve their decode rate - is
+exactly the query that mixing would ruin.
+
 ## Not proven on air
 
 All of this is measured against the frame log and tested offline. Nobody has yet confirmed that

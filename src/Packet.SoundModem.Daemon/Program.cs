@@ -901,10 +901,10 @@ if (fmConfig.Enabled)
             : matching.TrimFor(destination);
     };
 }
-channel.FrameTransmitted += (subChannel, frame) =>
+channel.FrameTransmittedWithTrim += (subChannel, frame, trimHz) =>
 {
     Console.WriteLine(ActivityLog.Transmitted(
-        subChannel, modeBySubChannel.GetValueOrDefault(subChannel, "?"), frame));
+        subChannel, modeBySubChannel.GetValueOrDefault(subChannel, "?"), frame, trimHz));
 
     // And into the station's journal, alongside what it heard: a log that records every frame
     // received and none sent is half a record. Raised after the audio has gone to the device, so
@@ -925,7 +925,8 @@ channel.FrameTransmitted += (subChannel, frame) =>
             ? sender.Mode
             : modeBySubChannel.GetValueOrDefault(subChannel, "?"),
         audio,
-        rf);
+        rf,
+        trimHz == 0 ? null : trimHz);
 };
 // Dropped frames are rate-limited per reason. A station that loses its slice rejects every
 // frame it is handed, for as long as the fault lasts: the unmitigated version of this line

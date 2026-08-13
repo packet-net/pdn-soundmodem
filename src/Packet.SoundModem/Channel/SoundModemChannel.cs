@@ -229,17 +229,28 @@ public sealed class SoundModemChannel
     /// same reason the modem's own shifter does that: the FIR delays everything by (taps-1)/2
     /// samples, and without the pad that much of the end of the burst never comes out.</para>
     /// </remarks>
+    /// <summary>
+    /// What <see cref="TransmitTrimHz"/> asked for, reduced to what will actually be done.
+    /// </summary>
+    /// <remarks>
+    /// Clamped here rather than at the point of use so that everything downstream - the burst,
+    /// the event, the frame log, the panel - reports the same number, and that number is the one
+    /// that went on air. The clamp is a backstop on the caller, not a tuning knob: correcting for
+    /// another station's oscillator is a few tens of Hz, and anything approaching this ceiling is
+    /// a bug upstream that a transmitter is the wrong place to discover.
+    /// </remarks>
+    private static double ResolveTrim(double? requestedHz)
+    {
+        double hz = requestedHz ?? 0;
+        return double.IsNaN(hz) ? 0 : Math.Clamp(hz, -MaxTransmitTrimHz, MaxTransmitTrimHz);
+    }
+
     private float[] ApplyTransmitTrim(float[] burst, double trimHz)
     {
-        if (trimHz == 0 || burst.Length == 0 || double.IsNaN(trimHz))
+        if (trimHz == 0 || burst.Length == 0)
         {
             return burst;
         }
-
-        // A backstop on the caller, not a tuning knob. Correcting for another station's
-        // oscillator is a few tens of Hz; anything approaching this is a bug upstream, and a
-        // transmitter is the wrong place to find out.
-        trimHz = Math.Clamp(trimHz, -MaxTransmitTrimHz, MaxTransmitTrimHz);
 
         const int groupDelay = (TrimHilbertTaps - 1) / 2;
         var shifter = new FrequencyShifter(SampleRate, trimHz, TrimHilbertTaps);
@@ -251,18 +262,35 @@ public sealed class SoundModemChannel
 
     private async Task SendAndAnnounceAsync(int subChannel, byte[] frame, IModem modem)
     {
+        double applied = 0;
         await EnqueueTransmit(
                 // Inside the modulate callback, so the trim is chosen when the burst is actually
                 // rendered rather than when it was queued - a frame can wait behind CSMA for
                 // seconds, and the estimate may have moved on by then.
-                txDelay => ApplyTransmitTrim(
-                    modem.Modulate(frame, txDelay),
-                    TransmitTrimHz?.Invoke(subChannel, frame) ?? 0),
+                txDelay =>
+                {
+                    applied = ResolveTrim(TransmitTrimHz?.Invoke(subChannel, frame));
+                    return ApplyTransmitTrim(modem.Modulate(frame, txDelay), applied);
+                },
                 rejection => TransmitRejected?.Invoke(subChannel, frame, rejection))
             .ConfigureAwait(false);
 
         FrameTransmitted?.Invoke(subChannel, frame);
+        FrameTransmittedWithTrim?.Invoke(subChannel, frame, applied);
     }
+
+    /// <summary>
+    /// Raised alongside <see cref="FrameTransmitted"/>, carrying how far the burst was shifted
+    /// off the nominal centre to suit the station it was addressed to; 0 when it went out
+    /// straight.
+    /// </summary>
+    /// <remarks>
+    /// Separate from the receive side's offset on purpose. A received frame's offset is a
+    /// <em>measurement</em> of somebody else's transmitter; this is a <em>command</em> to our
+    /// own, known exactly rather than estimated. Reporting them as one number would make a
+    /// station's average offset meaningless, mixing what they did with what we did about it.
+    /// </remarks>
+    public event Action<int, byte[], double>? FrameTransmittedWithTrim;
 
     /// <summary>
     /// Raised once a KISS-addressed frame has been transmitted - after the audio has gone to the
