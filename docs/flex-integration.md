@@ -968,3 +968,98 @@ Record outcomes as measured-corrections entries in this file (§10 style), flip 
 `arbitration` default only after P1/P2/P3, and finish with the two-instance rehearsal: the
 production config and a test instance alternating bursts, both journals clean, no stolen
 slices, no truncated filters.
+
+## 12. Losing the slice - a six-day silent outage, and what now detects it (2026-08-13)
+
+The failure §11 was written to prevent is two clients fighting over the *PA*. This is the
+one nobody had modelled: two clients contending for the *slice*, where the loser keeps
+running and keeps thinking it is on the air.
+
+### What happened
+
+GB7RDG's 40 m port ran headless on M0LTE's FLEX-6500. On 2026-08-07 at 16:18:01 UTC a
+second headless pdn-soundmodem on the same radio (a receive-only capture campaign,
+`stationName=pdn-rx-capture`) restarted. Seven seconds earlier, at 16:17:54, the production
+modem lost its slice. It stayed that way until 2026-08-13 12:49: six days deaf and mute.
+
+Both instances omitted `daxChannel`, so both took `DefaultHeadlessDaxChannel` = 2. Two
+headless clients claiming one DAX channel is what displaced the first, and the slice went
+with it. The default was chosen to dodge SmartSDR (which grabs DAX 1); it does not dodge a
+second pdn-soundmodem.
+
+### Why nothing noticed
+
+The measured behaviour is the important part, because it defeats every check that was in
+place:
+
+| Observation | Count over the six days |
+|---|---|
+| `slice set 0 tx=1` returning `err=0` while having no effect | 10,528 |
+| `slice set 0 tx=1` returning 0x50000028 "Slice receiver (0) not in use" | 4 |
+| `xmit 1` returning 0x50000043 "The transmit slice has not been selected" | 10,532 |
+| DAX-RX frames decoded after 16:17:51 | 0 |
+
+Slice index 0 was **recycled to the other client**. It therefore still resolved, so
+`slice set 0 tx=1` was accepted and discarded: the radio was politely setting a slice we did
+not own. Only `xmit` failed. The four `0x50000028`s are the moments the other client was
+itself between slices.
+
+This is the same lesson as §10's transmit-source correction, one level up: **a command's
+`err=0` proves it was understood, never that it took effect.** The pre-existing per-keyup
+`tx=1` re-assert (`FlexPtt`, 0.12.0) was designed to self-heal a *moved* TX slice and did
+exactly what it was written to do, 10,528 times, uselessly - because it re-asserted an
+*index* without ever re-checking an *owner*. `FlexArbitratedPtt` would not have helped
+either: its confirm read `slice <n> tx == 1`, and the thief's slice 0 was carrying `tx=1`
+quite happily.
+
+### What now detects it (M0LTE.Flex 0.13.0)
+
+- Ownership is tracked as the pair **(slice index, `client_handle`)**, not a bare index, and
+  published through a shared `FlexSliceLease` that the PTT and both DAX streams read. A
+  rebuild swaps the lease and every consumer follows, so recovery needs no cooperation from
+  the host's audio plumbing.
+- `FlexStation` subscribes to the status stream (already flowing, already parsed) and raises
+  `SliceLost` the moment our index reports `in_use=0`, a foreign `client_handle`, or vanishes.
+  It would have fired within milliseconds on 2026-08-07.
+- `FlexPtt.Key()` reads ownership back before claiming, and throws `FlexOwnershipException`
+  rather than keying into a slice it does not own. The interlock confirm now compares
+  `tx_client_handle` against our handle; `state=TRANSMITTING` alone is equally true while
+  somebody else holds the PA.
+- Teardown will not `slice remove` an index another client has taken. The §8 slice-leak fix
+  would otherwise delete the winner's slice on the loser's way out.
+
+### What it does when something fights back
+
+Recovery creates a new slice, which is the same primitive that takes one. Two stations that
+both auto-recover therefore rebuild against each other indefinitely - worse than one being
+down, because the radio churns continuously and neither is usable, and the symptom becomes
+constant recovery instead of a clean stop.
+
+So `FlexContentionPolicy` bounds it: `LossThreshold` losses (default 3) inside `LossWindow`
+(default 5 min) is treated as evidence of active contention, and the station stands down into
+`FlexStationHealth.Contended` and stays there. The daemon logs this loudly and **does not
+exit** - restarting would recreate the slice and resume the fight. One working station and a
+clear diagnostic beats two stations fighting. `FlexContentionPolicy.Never` is the
+receive-only setting: report the loss, never retake.
+
+### Citizenship, so it does not happen from our side
+
+`FlexStationOptions.ReceiveOnly` (config: `flex.receiveOnly`) suppresses every write to the
+radio's **global, persistent** transmit state - transmit audio source, transmit filter, RF
+power - and implies `FlexContentionPolicy.Never`. A capture or monitoring instance that runs
+the normal bring-up changes what the operator's other clients transmit with, and the change
+outlives its process. Any second instance on one radio also needs its own `daxChannel`.
+
+### Regression cover
+
+`MockFlexRadio.StealSliceAsync()` / `RemoveSliceAsync()` model both shapes offline;
+`FlexSliceOwnershipTests` asserts detection, refusal-to-key, the rebuild, the stand-down, and
+that a losing station touches neither the winner's slice nor the radio once it has stood down.
+No hardware required.
+
+### Still to do on hardware
+
+The whole ownership path has been proven against the mock only. The two-instance rehearsal in
+§11 now has a second purpose: start a second headless instance on the *same* DAX channel and
+confirm the production station reports the loss, rebuilds once, and stands down when the
+second instance keeps restarting.
