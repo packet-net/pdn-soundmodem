@@ -245,6 +245,54 @@ public sealed class FrequencyMatchingTests
     }
 
     [Fact]
+    public void Frames_replayed_from_a_log_keep_their_own_age()
+    {
+        // Seeding a restart: the frames come back with the timestamps they were heard at, so the
+        // age window still governs. A short restart carries its knowledge over; a long outage
+        // seeds nothing, which is the honest answer rather than a stale one.
+        var time = new FakeTimeProvider();
+        StationFrequencyOffsets offsets = Offsets(time);
+        DateTimeOffset now = time.GetUtcNow();
+
+        // Heard two minutes before the restart, and an hour before it.
+        offsets.Record("GB7WEM-7", -3.7, now - TimeSpan.FromMinutes(2));
+        offsets.Record("GB7WEM-7", -3.8, now - TimeSpan.FromMinutes(2));
+        offsets.Record("GB7WEM-7", -3.6, now - TimeSpan.FromMinutes(2));
+        offsets.Record("GB7BPQ", -17.9, now - TimeSpan.FromHours(1));
+        offsets.Record("GB7BPQ", -17.5, now - TimeSpan.FromHours(1));
+        offsets.Record("GB7BPQ", -18.2, now - TimeSpan.FromHours(1));
+
+        offsets.TryGet("GB7WEM-7", out StationOffset? recent).Should().BeTrue();
+        recent!.Value.Samples.Should().Be(3);
+        recent.Value.OffsetHz.Should().BeApproximately(-3.7, 0.1);
+
+        offsets.TryGet("GB7BPQ", out StationOffset? stale).Should()
+            .BeFalse("an hour old is well outside the window, restart or no restart");
+        stale.Should().BeNull();
+    }
+
+    [Fact]
+    public void A_seeded_station_can_be_corrected_for_immediately()
+    {
+        // The point of seeding: the first frame we send after a restart can already be aimed,
+        // rather than waiting to re-learn a station we have heard hundreds of times.
+        var time = new FakeTimeProvider();
+        StationFrequencyOffsets offsets = Offsets(time);
+        DateTimeOffset justBefore = time.GetUtcNow() - TimeSpan.FromMinutes(1);
+        foreach (double hz in new[] { -2.8, -2.9, -2.7, -2.8 })
+        {
+            offsets.Record("GB7OXF-2", hz, justBefore);
+        }
+
+        var policy = new FrequencyMatchingPolicy(offsets, timeProvider: time, options: new FrequencyMatchingOptions
+        {
+            MinSamples = 3, MinMeaningfulTrimHz = 0.5,
+        });
+
+        policy.TrimFor("GB7OXF-2").Should().BeApproximately(-1.4, 0.1);
+    }
+
+    [Fact]
     public void An_unheard_station_gets_no_correction()
     {
         var time = new FakeTimeProvider();

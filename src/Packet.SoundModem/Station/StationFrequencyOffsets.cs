@@ -69,7 +69,25 @@ public sealed class StationFrequencyOffsets
     /// <summary>Records the frequency offset a frame from <paramref name="callsign"/> decoded at.</summary>
     /// <param name="callsign">The AX.25 source address, SSID included.</param>
     /// <param name="offsetHz">The winning branch's offset in Hz, positive above centre.</param>
-    public void Record(string? callsign, double offsetHz)
+    public void Record(string? callsign, double offsetHz) =>
+        Record(callsign, offsetHz, _time.GetUtcNow());
+
+    /// <summary>
+    /// Records a frame heard at a stated time rather than now, for replaying a station's own
+    /// frame log into a freshly started tracker.
+    /// </summary>
+    /// <remarks>
+    /// A restart otherwise throws away everything known about the channel, and the station spends
+    /// the first minutes back unable to correct for anybody - which bites hardest when calling a
+    /// station it has not heard yet, exactly when the correction would have helped. Replaying with
+    /// the original timestamps rather than the current one is what keeps that honest: the age
+    /// window still applies, so a log full of yesterday's frames seeds nothing, and only a restart
+    /// short enough for the old frames to still be current carries anything over.
+    /// </remarks>
+    /// <param name="callsign">The AX.25 source address, SSID included.</param>
+    /// <param name="offsetHz">The offset in Hz, positive above centre.</param>
+    /// <param name="heardAt">When the frame was heard.</param>
+    public void Record(string? callsign, double offsetHz, DateTimeOffset heardAt)
     {
         if (string.IsNullOrWhiteSpace(callsign)
             || double.IsNaN(offsetHz)
@@ -78,7 +96,7 @@ public sealed class StationFrequencyOffsets
             return;
         }
 
-        long now = _time.GetUtcNow().UtcTicks;
+        long now = heardAt.UtcTicks;
         lock (_gate)
         {
             if (!_byStation.TryGetValue(callsign, out List<Sample>? samples))
