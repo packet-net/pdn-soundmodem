@@ -1737,6 +1737,19 @@ else if (deviceIsFlex)
     flex.Station.SliceLost += check =>
         Console.Error.WriteLine($"flex: lost our slice - {check.Detail}");
 
+    // State the starting point explicitly. The station reaches Healthy inside the bring-up
+    // above, so the HealthChanged subscription below is attached after that first transition
+    // has already fired and can only ever report LATER ones. Without this line the journal
+    // never says that ownership was checked at all, which is exactly the reassurance a
+    // six-day silent outage taught us to want.
+    Console.WriteLine(
+        $"flex: slice {flex.Station.SliceIndex} health {flex.Station.Health} at bring-up "
+        + $"({flex.Station.VerifyOwnership().Detail switch
+        {
+            "" => "owned by this client",
+            string detail => detail,
+        }})");
+
     flex.Station.HealthChanged += report =>
     {
         switch (report.Health)
@@ -1756,9 +1769,13 @@ else if (deviceIsFlex)
                     + "service.");
                 break;
 
+            case M0LTE.Flex.FlexStationHealth.Disposed:
+                // Shutdown. The daemon already says it is stopping; "Disposed - disposed"
+                // adds nothing but a line to read past.
+                break;
+
             case M0LTE.Flex.FlexStationHealth.Recovering:
             case M0LTE.Flex.FlexStationHealth.SliceLost:
-            case M0LTE.Flex.FlexStationHealth.Disposed:
             case M0LTE.Flex.FlexStationHealth.Unbound:
             default:
                 Console.Error.WriteLine($"flex: {report.Health} - {report.Detail}");
