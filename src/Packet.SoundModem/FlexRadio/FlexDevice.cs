@@ -117,6 +117,21 @@ public sealed record FlexTuning
     /// the sole-owner path is bit-for-bit what it always was.
     /// </summary>
     public bool Arbitration { get; init; }
+
+    /// <summary>
+    /// Bring the station up for receive only: never write the radio's global transmit state
+    /// (transmit audio source, transmit filter, RF power), and never contend for a slice.
+    /// </summary>
+    /// <remarks>
+    /// For a capture or monitoring instance sharing a radio with a transmitting station. Those
+    /// three settings are global and persistent rather than per-slice, so a receive-only client
+    /// running the normal bring-up silently rewrites what every other client transmits with, and
+    /// the change outlives its process. It also pairs with
+    /// <see cref="M0LTE.Flex.FlexContentionPolicy.Never"/>: a monitor that rebuilds a slice it
+    /// has lost is competing with the station that took it, which is precisely the fight worth
+    /// not having.
+    /// </remarks>
+    public bool ReceiveOnly { get; init; }
 }
 
 /// <summary>
@@ -239,6 +254,12 @@ public static class FlexDevice
             ReceiveFilterLowHz = tuning.ReceiveFilterLowHz,
             ReceiveFilterHighHz = tuning.ReceiveFilterHighHz,
             RfPower = tuning.TxPowerWatts is double watts ? ToRfPowerPercent(watts) : null,
+            ReceiveOnly = tuning.ReceiveOnly,
+            // A receive-only station never takes a slice back: it has no traffic to put on air,
+            // and rebuilding would only contend with whatever displaced it.
+            ContentionPolicy = tuning.ReceiveOnly
+                ? FlexContentionPolicy.Never
+                : FlexContentionPolicy.Default,
         };
         FlexStation station = spec.Headless
             ? await FlexStation.SetUpHeadlessAsync(client, format, options, cancellation).ConfigureAwait(false)

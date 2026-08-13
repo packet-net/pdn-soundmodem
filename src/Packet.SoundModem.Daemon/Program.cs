@@ -315,6 +315,7 @@ var flexTuning = new FlexTuning
         : null,
     StationName = flexConfig?.StationName ?? "pdn-soundmodem",
     Arbitration = flexConfig?.Arbitration ?? false,
+    ReceiveOnly = flexConfig?.ReceiveOnly ?? false,
 };
 
 // Nothing stated: the daemon works the transmit filter out rather than inheriting whatever the
@@ -851,8 +852,46 @@ channel.FrameTransmitted += (subChannel, frame) =>
         audio,
         rf);
 };
+// Dropped frames are rate-limited per reason. A station that loses its slice rejects every
+// frame it is handed, for as long as the fault lasts: the unmitigated version of this line
+// wrote 10,532 identical entries over six days on GB7RDG, which buried the one line that
+// mattered and told a reader nothing the first line had not. The first drop of a reason is
+// always printed; repeats are counted and folded into a periodic line.
+var dropGate = new object();
+var dropSuppressed = new Dictionary<string, int>(StringComparer.Ordinal);
+var dropLastLogged = new Dictionary<string, long>(StringComparer.Ordinal);
+const long DropLogIntervalMs = 60_000;
+
 channel.TransmitRejected += (subChannel, frame, reason) =>
-    Console.Error.WriteLine(ActivityLog.Dropped(subChannel, frame, reason));
+{
+    string key = reason.Message;
+    bool report;
+    int suppressed = 0;
+    lock (dropGate)
+    {
+        long now = Environment.TickCount64;
+        report = !dropLastLogged.TryGetValue(key, out long last)
+            || now - last >= DropLogIntervalMs;
+        if (report)
+        {
+            dropLastLogged[key] = now;
+            dropSuppressed.Remove(key, out suppressed);
+        }
+        else
+        {
+            dropSuppressed[key] = dropSuppressed.GetValueOrDefault(key) + 1;
+        }
+    }
+
+    if (!report)
+    {
+        return;
+    }
+
+    Console.Error.WriteLine(
+        ActivityLog.Dropped(subChannel, frame, reason)
+        + (suppressed > 0 ? $" (and {suppressed} more like it in the last minute)" : ""));
+};
 
 if (wavPath is not null)
 {
@@ -1665,6 +1704,14 @@ else if (deviceIsFlex)
         Console.Error.WriteLine($"flex: {tuneWarning}");
     }
 
+    // Two headless instances that both take the default DAX channel displace each other, which
+    // is exactly how this station lost its slice for six days (docs/flex-integration.md §12).
+    // Said at bring-up, while it can still be acted on.
+    if (flex.Station.DaxChannelWarning is string daxWarning)
+    {
+        Console.Error.WriteLine($"flex: {daxWarning}");
+    }
+
     // The radio's global transmit filter, read back at bring-up (Flex 0.7.0) - it, not the
     // slice, limits transmitted DAX audio bandwidth, and it is whatever last touched the radio
     // (a 300 Hz CW filter would silently crush a 3 kHz mode). We deliberately never set it;
@@ -1681,6 +1728,70 @@ else if (deviceIsFlex)
             + "connection. Stopping so the service restarts and rediscovers it.");
         radioLost = true;
         cancellation.Cancel();
+    };
+
+    // Losing the SLICE is not the same as losing the session, and it used to be invisible. The
+    // socket stays up, the modem keeps queueing, and every keyup is accepted by the radio and
+    // does nothing - a station deaf and mute with a healthy-looking connection. Say so once,
+    // clearly, and rebuild.
+    flex.Station.SliceLost += check =>
+        Console.Error.WriteLine($"flex: lost our slice - {check.Detail}");
+
+    flex.Station.HealthChanged += report =>
+    {
+        switch (report.Health)
+        {
+            case M0LTE.Flex.FlexStationHealth.Healthy:
+                Console.WriteLine($"flex: slice healthy - {report.Detail}");
+                break;
+
+            case M0LTE.Flex.FlexStationHealth.Contended:
+                // Deliberately not an exit. Restarting would recreate the slice, which is the
+                // same move the other client is making, and two daemons rebuilding at each
+                // other churns the radio for both. Stay up, stay off the air, and be loud.
+                Console.Error.WriteLine(
+                    $"flex: STANDING DOWN - {report.Detail} This station is now off the air and "
+                    + "will not retake the slice. Check what else is connected to the radio "
+                    + "(SmartSDR, a capture tool, a second modem), stop it, and restart this "
+                    + "service.");
+                break;
+
+            case M0LTE.Flex.FlexStationHealth.Recovering:
+            case M0LTE.Flex.FlexStationHealth.SliceLost:
+            case M0LTE.Flex.FlexStationHealth.Disposed:
+            case M0LTE.Flex.FlexStationHealth.Unbound:
+            default:
+                Console.Error.WriteLine($"flex: {report.Health} - {report.Detail}");
+                break;
+        }
+    };
+
+    // Rebuild off the status thread: RecoverAsync serialises itself and returns immediately
+    // when the slice is already ours, so a duplicate trigger is free.
+    M0LTE.Flex.FlexStation flexStation = flex.Station;
+    flexStation.SliceLost += lostCheck =>
+    {
+        _ = lostCheck;
+        _ = Task.Run(
+            async () =>
+            {
+                try
+                {
+                    M0LTE.Flex.FlexRecoveryResult result =
+                        await flexStation.RecoverAsync(cancellation.Token);
+                    if (!result.Recovered)
+                    {
+                        Console.Error.WriteLine(
+                            $"flex: could not rebuild the slice after {result.Attempts} "
+                            + $"attempt(s) - {result.Detail}");
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Shutting down.
+                }
+            },
+            CancellationToken.None);
     };
 
     // The radio's frequency reference, into the waterfall's top bar and kept current. Only a

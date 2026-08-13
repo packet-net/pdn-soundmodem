@@ -197,7 +197,28 @@ public sealed class FlexConfig
     public string? DaxChannel { get; set; }
 
     /// <summary>Out of SmartSDR's way, and valid on every 6000-series model (a 6500 has four).</summary>
+    /// <remarks>
+    /// It dodges SmartSDR; it does <b>not</b> dodge a second pdn-soundmodem, and two headless
+    /// instances that both take the default land on the same channel. That is how a receive-only
+    /// capture instance displaced GB7RDG's 40 m modem on 2026-08-07 and took it off air for six
+    /// days. If you run a second instance against one radio, give it its own
+    /// <see cref="DaxChannel"/> and set <see cref="ReceiveOnly"/>.
+    /// </remarks>
     public const string DefaultHeadlessDaxChannel = "2";
+
+    /// <summary>
+    /// Receive only: never write the radio's global transmit state, and never contend for a
+    /// slice. Default false.
+    /// </summary>
+    /// <remarks>
+    /// For a capture or monitoring instance sharing a radio with a transmitting station. The
+    /// transmit audio source, the transmit filter and RF power are global and persistent rather
+    /// than per-slice, so a monitor that runs the normal bring-up quietly changes what the
+    /// station on the same radio puts on air, and the change outlives the monitor's process.
+    /// Setting this also stops the instance rebuilding a slice it has lost, so it can never
+    /// fight the station for one.
+    /// </remarks>
+    public bool ReceiveOnly { get; set; }
 
     /// <summary>
     /// Transmit power in watts. Null (the default) leaves whatever the radio is already set to.
