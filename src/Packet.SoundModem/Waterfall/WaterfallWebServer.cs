@@ -1025,6 +1025,16 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             {
                 byte[] page = LoadPage();
                 context.Response.ContentType = "text/html; charset=utf-8";
+                // The page carries no version in its URL and the daemon served it with no
+                // freshness information at all - no Cache-Control, no ETag, no Last-Modified -
+                // which leaves a browser free to cache it heuristically for as long as it likes.
+                // The result is a station that has been upgraded and a browser that has not: the
+                // page keeps whatever markup it fetched first, the newer server sends it fields
+                // its elements do not exist for, and the missing readouts fail silently because
+                // every setter starts with a null check. That is indistinguishable from a broken
+                // feature, and it was reported as one - a transmit power and SWR readout that
+                // appeared on a phone and never on a long-lived desktop tab.
+                context.Response.Headers["Cache-Control"] = "no-cache, must-revalidate";
                 context.Response.ContentLength64 = page.Length;
                 await context.Response.OutputStream.WriteAsync(page).ConfigureAwait(false);
                 context.Response.Close();

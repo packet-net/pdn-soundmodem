@@ -33,7 +33,7 @@ public sealed class FrequencyMatchingTests
     }
 
     [Fact]
-    public void A_settled_station_gets_a_damped_correction()
+    public void A_settled_station_gets_the_whole_correction()
     {
         var time = new FakeTimeProvider();
         StationFrequencyOffsets offsets = Offsets(time);
@@ -45,8 +45,10 @@ public sealed class FrequencyMatchingTests
             MinMeaningfulTrimHz = 0.5,
         });
 
-        // Damped by half: enough to help them, short of a full swing on one estimate.
-        policy.TrimFor("GB7WEM-7").Should().BeApproximately(-1.85, 0.05);
+        // All of it. Nothing is looping - our transmitter is not in the path by which we
+        // measure theirs - so there is nothing for damping to stabilise, and holding back would
+        // just leave them half as wrong for no reason.
+        policy.TrimFor("GB7WEM-7").Should().BeApproximately(-3.7, 0.05);
     }
 
     [Fact]
@@ -113,7 +115,7 @@ public sealed class FrequencyMatchingTests
 
         // A peer sitting 20 Hz high, settled. We start answering it 10 Hz off.
         Hear(offsets, "M0ABC-1", 20.0, 20.1, 19.9, 20.0);
-        policy.TrimFor("M0ABC-1").Should().BeApproximately(10.0, 0.2);
+        policy.TrimFor("M0ABC-1").Should().BeApproximately(20.0, 0.2);
         stoodDown.Should().BeEmpty("nothing has moved yet");
 
         // It answers our correction by moving its own transmitter. Our transmitter cannot change
@@ -146,7 +148,7 @@ public sealed class FrequencyMatchingTests
         });
 
         Hear(offsets, "M0ABC-1", 20.0, 20.0, 20.0);
-        policy.TrimFor("M0ABC-1").Should().BeApproximately(10.0, 0.2);
+        policy.TrimFor("M0ABC-1").Should().BeApproximately(20.0, 0.2, "nothing has moved yet");
 
         // The dial gets knocked: they move once, to somewhere else, and stay there.
         time.Advance(TimeSpan.FromSeconds(30));
@@ -155,11 +157,13 @@ public sealed class FrequencyMatchingTests
         policy.IsCoolingDown("M0ABC-1").Should().BeTrue();
 
         // After the cooldown they are still sitting quietly on their new frequency, so they get
-        // corrected for there. A rig that moved is not a rig that argues.
+        // corrected for there. A rig that moved is not a rig that argues - but it HAS moved once
+        // under our correction, and that is the only evidence we get of a peer that reacts, so
+        // this one is damped from here on where an untouched station would not be.
         time.Advance(TimeSpan.FromMinutes(31));
         Hear(offsets, "M0ABC-1", -30.0, -30.0, -30.0, -30.0);
 
-        policy.TrimFor("M0ABC-1").Should().BeApproximately(-15.0, 0.2);
+        policy.TrimFor("M0ABC-1").Should().BeApproximately(-15.0, 0.2, "half of -30, having moved once");
         policy.HasRetired("M0ABC-1").Should().BeFalse();
     }
 
@@ -234,14 +238,98 @@ public sealed class FrequencyMatchingTests
         });
 
         Hear(offsets, "G0XYZ", 1.0, 1.0, 1.0);
-        policy.TrimFor("G0XYZ").Should().BeApproximately(0.5, 0.1);
+        policy.TrimFor("G0XYZ").Should().BeApproximately(1.0, 0.1);
 
         time.Advance(TimeSpan.FromSeconds(30));
         Hear(offsets, "G0XYZ", 15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0);
 
         policy.IsCoolingDown("G0XYZ").Should().BeFalse();
         policy.HasRetired("G0XYZ").Should().BeFalse();
-        policy.TrimFor("G0XYZ").Should().BeApproximately(7.5, 0.2);
+        policy.TrimFor("G0XYZ").Should().BeApproximately(15.0, 0.2);
+    }
+
+    [Fact]
+    public void Frames_replayed_from_a_log_keep_their_own_age()
+    {
+        // Seeding a restart: the frames come back with the timestamps they were heard at, so the
+        // age window still governs. A short restart carries its knowledge over; a long outage
+        // seeds nothing, which is the honest answer rather than a stale one.
+        var time = new FakeTimeProvider();
+        StationFrequencyOffsets offsets = Offsets(time);
+        DateTimeOffset now = time.GetUtcNow();
+
+        // Heard two minutes before the restart, and an hour before it.
+        offsets.Record("GB7WEM-7", -3.7, now - TimeSpan.FromMinutes(2));
+        offsets.Record("GB7WEM-7", -3.8, now - TimeSpan.FromMinutes(2));
+        offsets.Record("GB7WEM-7", -3.6, now - TimeSpan.FromMinutes(2));
+        offsets.Record("GB7BPQ", -17.9, now - TimeSpan.FromHours(1));
+        offsets.Record("GB7BPQ", -17.5, now - TimeSpan.FromHours(1));
+        offsets.Record("GB7BPQ", -18.2, now - TimeSpan.FromHours(1));
+
+        offsets.TryGet("GB7WEM-7", out StationOffset? recent).Should().BeTrue();
+        recent!.Value.Samples.Should().Be(3);
+        recent.Value.OffsetHz.Should().BeApproximately(-3.7, 0.1);
+
+        offsets.TryGet("GB7BPQ", out StationOffset? stale).Should()
+            .BeFalse("an hour old is well outside the window, restart or no restart");
+        stale.Should().BeNull();
+    }
+
+    [Fact]
+    public void A_seeded_station_can_be_corrected_for_immediately()
+    {
+        // The point of seeding: the first frame we send after a restart can already be aimed,
+        // rather than waiting to re-learn a station we have heard hundreds of times.
+        var time = new FakeTimeProvider();
+        StationFrequencyOffsets offsets = Offsets(time);
+        DateTimeOffset justBefore = time.GetUtcNow() - TimeSpan.FromMinutes(1);
+        foreach (double hz in new[] { -2.8, -2.9, -2.7, -2.8 })
+        {
+            offsets.Record("GB7OXF-2", hz, justBefore);
+        }
+
+        var policy = new FrequencyMatchingPolicy(offsets, timeProvider: time, options: new FrequencyMatchingOptions
+        {
+            MinSamples = 3, MinMeaningfulTrimHz = 0.5,
+        });
+
+        policy.TrimFor("GB7OXF-2").Should().BeApproximately(-2.8, 0.1);
+    }
+
+    /// <summary>Why the damping is conditional at all.</summary>
+    [Fact]
+    public void Damping_arrives_only_once_a_station_has_shown_it_reacts()
+    {
+        var time = new FakeTimeProvider();
+        StationFrequencyOffsets offsets = Offsets(time);
+        var policy = new FrequencyMatchingPolicy(offsets, timeProvider: time, options: new FrequencyMatchingOptions
+        {
+            MinSamples = 3, ChaseThresholdHz = 10, MinMeaningfulTrimHz = 2,
+            ChaseCooldown = TimeSpan.FromMinutes(30), Damping = 0.5,
+        });
+
+        // A station that has never moved: nothing is looping, so it gets all of it.
+        Hear(offsets, "M0AAA", 30.0, 30.0, 30.0, 30.0);
+        policy.TrimFor("M0AAA").Should().BeApproximately(30.0, 0.2);
+
+        // One that has moved under our correction: damped from here on, because moving under a
+        // correction is the only evidence we get that the far end is correcting too.
+        Hear(offsets, "M0BBB", 30.0, 30.0, 30.0, 30.0);
+        policy.TrimFor("M0BBB").Should().BeApproximately(30.0, 0.2);
+        time.Advance(TimeSpan.FromSeconds(30));
+        Hear(offsets, "M0BBB", 8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0, 8.0);
+        policy.TrimFor("M0BBB").Should().Be(0, "backing off");
+
+        time.Advance(TimeSpan.FromMinutes(31));
+        Hear(offsets, "M0BBB", 30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0, 30.0);
+        policy.TrimFor("M0BBB").Should().BeApproximately(15.0, 0.2);
+
+        // And the untouched station is still on the full correction; one station's behaviour
+        // does not change how anybody else is treated. Heard afresh, because half an hour has
+        // passed in this test and its earlier frames have aged out of the window - which is the
+        // tracker doing its job, not an inconvenience.
+        Hear(offsets, "M0AAA", 30.0, 30.0, 30.0, 30.0);
+        policy.TrimFor("M0AAA").Should().BeApproximately(30.0, 0.2);
     }
 
     [Fact]

@@ -67,6 +67,25 @@ transmitting 1.7 Hz off and each still hears the other 3.3 Hz out - worse than i
 corrected. Undamped (`k = 1`) it does not settle at all, oscillating with a period of two
 exchanges as each end applies a correction, sees the offset vanish, and withdraws it.
 
+### Damping is conditional
+
+Damping only ever fixes a feedback loop, and in the normal case **there is no loop**: our
+transmitter is not in the path by which we measure theirs, so correcting for a station that is
+not itself correcting is open-loop. Damping there stabilises nothing; it just leaves half the
+error uncorrected. Noise is already handled by averaging the window and gating on its spread, and
+a wild estimate is already bounded by `maxTrimHz`, so damping is a poor third attempt at two
+solved problems.
+
+Where it does earn its keep is a two-sided chase too small to trip `chaseThresholdHz`. At a true
+difference of 5 Hz, two undamped stations alternate between perfectly aligned and 5 Hz apart on
+every exchange, and a steady small offset is easier on a demodulator than one that jumps.
+
+So a station gets the **whole** correction until it has moved under one, and the damped fraction
+afterwards. Having moved under our correction is the only evidence available that the far end is
+correcting too, and it is already recorded for the back-off.
+
+### Detecting the chase
+
 Damping alone therefore is not enough, so the chase is detected:
 
 > Our transmit trim cannot change what we measure of them. We measure their emissions, and our
@@ -98,7 +117,7 @@ That cap, not the detector, is why this is safe to have on by default.
   "minSamples": 3,
   "maxSpreadHz": 20,
   "maxTrimHz": 50,
-  "damping": 0.5,
+  "damping": 0.5,          // applied only to a station that has moved under a correction
   "chaseThresholdHz": 10,
   "chaseCooldownSeconds": 1800,
   "maxChases": 3

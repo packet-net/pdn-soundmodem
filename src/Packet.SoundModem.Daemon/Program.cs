@@ -839,6 +839,40 @@ var stationOffsets = new StationFrequencyOffsets
     MaxAge = TimeSpan.FromSeconds(
         frequencyMatching?.MaxAgeSeconds ?? FrequencyMatchingConfig.DefaultMaxAgeSeconds),
 };
+// Replay what the station already knew. A restart otherwise starts deaf to the channel's
+// frequencies and cannot correct for anybody until it has heard each station afresh - which
+// bites hardest when calling a station it has not heard yet, exactly when the correction would
+// have helped. The frames come back with their original timestamps, so the age window still
+// governs: a log full of yesterday's traffic seeds nothing, and only a restart short enough for
+// those frames to still be current carries anything over. Which is the case that matters, since
+// the usual reason this process restarts is that somebody upgraded it.
+if (frameLog is not null)
+{
+    int seeded = 0;
+    var seenStations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (LoggedFrame logged in frameLog.Recent(500))
+    {
+        if (logged.Transmitted
+            || logged.OffsetHz is not double loggedOffset
+            || string.IsNullOrWhiteSpace(logged.From))
+        {
+            continue;
+        }
+
+        stationOffsets.Record(logged.From, loggedOffset, logged.HeardAt);
+        seenStations.Add(logged.From);
+        seeded++;
+    }
+
+    if (seeded > 0)
+    {
+        int current = stationOffsets.Snapshot().Count;
+        Console.WriteLine(
+            $"frequency offsets: replayed {seeded} logged frames from {seenStations.Count} "
+            + $"station(s); {current} still current enough to use");
+    }
+}
+
 channel.FrameReceivedWithQuality += (_sub, frame, quality) =>
 {
     if (quality.FrequencyOffsetHz is double offsetHz
@@ -859,7 +893,8 @@ if (fmConfig.Enabled)
     Console.WriteLine(
         $"frequency matching: on - answering a station on its own frequency after "
         + $"{fm.MinSamples} frames, if they agree within {fm.MaxSpreadHz:F0} Hz, "
-        + $"up to {fm.MaxTrimHz:F0} Hz, damped {fm.Damping:0.##}; backs off for "
+        + $"up to {fm.MaxTrimHz:F0} Hz in full ({fm.Damping:0.##} for any station that has "
+        + "moved under it); backs off for "
         + $"{fm.ChaseCooldownSeconds / 60:F0} min from any station whose own frequency then moves "
         + $"more than {fm.ChaseThresholdHz:F0} Hz, and stops after {fm.MaxChases} such moves");
 

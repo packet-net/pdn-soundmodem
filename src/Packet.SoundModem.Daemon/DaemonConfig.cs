@@ -1057,14 +1057,20 @@ public sealed class FrequencyMatchingConfig
     public double MaxTrimHz { get; set; } = 50;
 
     /// <summary>
-    /// Fraction of the measured offset applied per step, 0 to 1. Default 0.5.
+    /// Fraction of the measured offset applied to a station that has already moved under our
+    /// correction once. Default 0.5. A station that has never moved gets the whole correction.
     /// </summary>
     /// <remarks>
-    /// Damping, for the case where the far station corrects too. Once both ends adjust, the
-    /// measured offset stops describing the oscillator difference and starts describing the
-    /// residual after both corrections; assigning it outright makes the pair oscillate, one
-    /// withdrawing its correction as the other applies it. Applying a fraction converges instead.
-    /// The same shape of mistake as two stations both rebuilding a contested slice.
+    /// <para>Conditional, because damping only ever fixes a feedback loop and in the normal case
+    /// there is no loop: our transmitter is not in the path by which we measure theirs, so
+    /// correcting for a station that is not itself correcting is open-loop. Damping there
+    /// stabilises nothing and simply leaves half the error uncorrected. Noise is handled by
+    /// averaging the window and gating on its spread; a wild estimate is bounded by
+    /// <see cref="MaxTrimHz"/>.</para>
+    /// <para>It earns its keep only in a two-sided chase too small to trip
+    /// <see cref="ChaseThresholdHz"/>, where two undamped stations alternate between aligned and
+    /// fully offset every exchange and a steady small error is the kinder outcome. So it applies
+    /// where there is evidence of a peer that reacts, and nowhere else.</para>
     /// </remarks>
     public double Damping { get; set; } = 0.5;
 
