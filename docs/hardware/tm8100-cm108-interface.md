@@ -24,23 +24,53 @@ Five single-pin sockets. The audio names are from the widget's point of view, no
 | SQUELCH | active-low input; pulling it low presses the CM108's volume-down key through a Schottky |
 | GND | board ground |
 
-## The five wires
+## The wiring, through a DE-9 radio port
 
-Radio side is a 15-way standard-density D-sub plug into the auxiliary connector. The space for the
-plug is limited to 41 mm wide by 18 mm high (`MMA-00028-05` p.22), so check the backshell. All the
-passive parts below fit inside the backshell; keep the cable screened and short (a metre or two).
+The widget carries a 9-way D-sub socket (female, like a NinoTNC's radio port) with the passive
+networks in the tail between the widget pads and the socket. The DE-9 is wired to the standard
+Kantronics/NinoTNC radio-port convention, verified in [ninotnc-loop.md](../ninotnc-loop.md) from
+TARPN's cable documentation and proven by the bench loop that ran on it: TXA on 1, TX inhibit
+on 2, PTT on 3, RXA on 5, ground on 6. The assembly is then plug-compatible with the radio
+cables a NinoTNC uses.
 
-| Widget | Via | Radio pin | Signal |
+### Widget to DE-9 socket
+
+| Widget pad | Via | DE-9 pin | DE-9 signal |
 |---|---|---|---|
-| GND | wire | 15 | AGND, the only ground on the connector |
-| PTT | wire, nothing else | 12 | AUX_GPI1: internal 33k pull-up, external PTT is active low |
-| AUDIO_OUT | Rt, Rb, C4 below | 7 | AUD_TAP_IN |
-| AUDIO_IN | C1, Rs, Rp, C3 below | 13 | AUD_TAP_OUT |
-| SQUELCH | wire (optional, see below) | 10 | AUX_GPIO4, programmed Busy Status, active low |
+| GND | wire | 6 | GND |
+| PTT | wire, nothing else | 3 | PTT: pulls to ground to key, exactly the convention |
+| AUDIO_OUT | Rt, Rb, C4 below | 1 | TXA, transmit audio out of the assembly |
+| AUDIO_IN | C1, Rs, Rp, C3 below | 5 | RXA, receive audio into the assembly |
+| SQUELCH | leave unconnected | - | the convention has no carrier-detect pin |
 
-PTT needs no components because the board already has the open-collector stage and the radio
-already has the pull-up: Tait's own external-PTT example is a bare footswitch from pin 12 to
-pin 15.
+**Mind the direction.** This is the opposite way round from the bench loop in
+[ninotnc-loop.md](../ninotnc-loop.md). There the widget played the radio, recording a NinoTNC's
+output, so its OUT fed RXA on pin 5 and its IN listened to TXA on pin 1. Here the widget is the
+TNC: AUDIO_OUT drives TXA on pin 1 and AUDIO_IN listens on RXA on pin 5. Copying the loop table
+into this build swaps transmit and receive.
+
+Leave pin 2 unconnected too: on a real NinoTNC it is TX inhibit, and this assembly does not
+implement it. PTT needs no components because the board already has the open-collector stage and
+the radio end has the pull-up. Build the two networks into the tail (a scrap of stripboard under
+heatshrink is fine); the cables then carry only line-level signals and ground.
+
+### DE-9 plug to the radio
+
+Four wires, straight through, to a 15-way standard-density D-sub plug in the auxiliary
+connector. The space for that plug is limited to 41 mm wide by 18 mm high (`MMA-00028-05` p.22),
+so check the backshell. Keep the total run screened and short (a metre or two), screen to the
+radio backshell and pin 15.
+
+| DE-9 pin | Radio pin | Signal |
+|---|---|---|
+| 1 (TXA) | 7 | AUD_TAP_IN |
+| 3 (PTT) | 12 | AUX_GPI1: internal 33k pull-up, external PTT is active low |
+| 5 (RXA) | 13 | AUD_TAP_OUT |
+| 6 (GND) | 15 | AGND, the only ground on the connector |
+
+Mechanical interchangeability is not calibration: the deviation ceiling belongs to the pairing of
+this assembly with this radio, so if a different device ever hangs on the DE-9, or this assembly
+moves to a different radio, redo the Bessel check before trusting the levels.
 
 ### Transmit: AUDIO_OUT to pin 7
 
@@ -114,7 +144,8 @@ The target is -12 dBFS at 60% of class deviation, computed from R1's published 0
 
 | Ref | Value | Notes |
 |---|---|---|
-| plug | 15-way standard-density D-sub, male | backshell within 41 x 18 mm |
+| socket | 9-way D-sub, female | the assembly's radio port, wired as a NinoTNC's |
+| plug | 15-way standard-density D-sub, male | radio end of the cable; backshell within 41 x 18 mm |
 | Rt | 3k0, 1% (or from the transmit table) | transmit series; trim from the Bessel null |
 | Rb | 1k, 1% | transmit shunt |
 | C4 | 1u film or bipolar | radio side of the transmit divider |
@@ -122,7 +153,7 @@ The target is -12 dBFS at 60% of class deviation, computed from R1's published 0
 | Rs | 6k8, 1% (or from the table) | receive series |
 | Rp | 1k, 1% | receive shunt |
 | C3 | 4n7 | RF bypass at the receive shunt |
-| cable | screened, 2 pairs plus PTT | screen to the backshell and pin 15 |
+| cable | screened, 2 pairs plus PTT, DE-9 plug to 15-way plug | screen to the radio backshell and pin 15 |
 
 ## Program the radio
 
@@ -135,6 +166,9 @@ Programmable I/O form, Digital tab:
 |---|---|---|---|---|
 | AUX_GPI1 | Input | External PTT1 | Low | 0 |
 | AUX_GPIO4 | Output | Busy Status | Low | none |
+
+The AUX_GPIO4 row only does anything if a dedicated carrier-detect wire is ever fitted outside
+the standard DE-9 cable; it is harmless to program regardless.
 
 PTT / External PTT (1) form, Advanced EPTT1 group: PTT Transmission Type **Data**, PTT State Is
 Reflected cleared, PTT Priority Highest, Audio Source **Audio Tap In**.
@@ -166,9 +200,10 @@ independent (3DK p.112 step 5).
 - Playback: **calibrate at maximum playback volume and leave it there.** The divider is sized so
   that the loudest thing the host can produce is exactly 100% deviation; that guarantee only
   holds at the volume it was calibrated at.
-- SQUELCH is optional: `pdn-soundmodem` has its own DCD, and the wire arrives as the CM108's
-  volume-down HID key, so only connect it if something reads it (hidraw) and nothing on the host
-  maps consumer keys to a mixer.
+- SQUELCH stays unconnected in the DE-9 arrangement, since the convention has no carrier-detect
+  pin, and `pdn-soundmodem` has its own DCD so nothing is lost. If a dedicated wire is ever run
+  for it, the signal arrives as the CM108's volume-down HID key: readable over hidraw, and
+  hazardous on a host that maps consumer keys to a mixer.
 
 ## The two bench measurements
 
