@@ -39,7 +39,7 @@ public sealed class FrequencyMatchingTests
         StationFrequencyOffsets offsets = Offsets(time);
         Hear(offsets, "GB7WEM-7", -3.6, -3.7, -3.8, -3.7);
 
-        var policy = new FrequencyMatchingPolicy(offsets, new FrequencyMatchingOptions
+        var policy = new FrequencyMatchingPolicy(offsets, timeProvider: time, options: new FrequencyMatchingOptions
         {
             MinSamples = 3,
             MinMeaningfulTrimHz = 0.5,
@@ -57,7 +57,7 @@ public sealed class FrequencyMatchingTests
         // GB7NOT's real shape: a rig that will not sit still.
         Hear(offsets, "GB7NOT", -13.7, 40.6, 8.0, -2.0);
 
-        var policy = new FrequencyMatchingPolicy(offsets, new FrequencyMatchingOptions
+        var policy = new FrequencyMatchingPolicy(offsets, timeProvider: time, options: new FrequencyMatchingOptions
         {
             MinSamples = 3,
             MaxSpreadHz = 20,
@@ -73,7 +73,7 @@ public sealed class FrequencyMatchingTests
         StationFrequencyOffsets offsets = Offsets(time);
         Hear(offsets, "EI0RSI-1", 4.5, 4.6);
 
-        var policy = new FrequencyMatchingPolicy(offsets, new FrequencyMatchingOptions
+        var policy = new FrequencyMatchingPolicy(offsets, timeProvider: time, options: new FrequencyMatchingOptions
         {
             MinSamples = 3,
         });
@@ -101,7 +101,7 @@ public sealed class FrequencyMatchingTests
     {
         var time = new FakeTimeProvider();
         StationFrequencyOffsets offsets = Offsets(time);
-        var policy = new FrequencyMatchingPolicy(offsets, new FrequencyMatchingOptions
+        var policy = new FrequencyMatchingPolicy(offsets, timeProvider: time, options: new FrequencyMatchingOptions
         {
             MinSamples = 3,
             ChaseThresholdHz = 10,
@@ -125,34 +125,100 @@ public sealed class FrequencyMatchingTests
         Hear(offsets, "M0ABC-1", 8.0, 7.9, 8.1, 8.0, 8.0, 7.9, 8.1, 8.0);
 
         policy.TrimFor("M0ABC-1").Should().Be(0);
-        policy.HasStoodDown("M0ABC-1").Should().BeTrue();
+        policy.IsCoolingDown("M0ABC-1").Should().BeTrue();
+        policy.HasRetired("M0ABC-1").Should().BeFalse("one move is a rig that moved, not a chase");
         stoodDown.Should().ContainSingle();
         stoodDown[0].Callsign.Should().Be("M0ABC-1");
-        stoodDown[0].Detail.Should().Contain("correcting for us");
+        stoodDown[0].Chases.Should().Be(1);
+        stoodDown[0].RetryAfter.Should().NotBeNull();
     }
 
+    /// <summary>Somebody knocks the dial on Tuesday and notices on Thursday.</summary>
     [Fact]
-    public void Standing_down_is_permanent_even_if_the_station_settles_again()
+    public void A_station_that_simply_moved_is_corrected_for_again_at_its_new_frequency()
     {
         var time = new FakeTimeProvider();
         StationFrequencyOffsets offsets = Offsets(time);
-        var policy = new FrequencyMatchingPolicy(offsets, new FrequencyMatchingOptions
+        var policy = new FrequencyMatchingPolicy(offsets, timeProvider: time, options: new FrequencyMatchingOptions
         {
             MinSamples = 3, ChaseThresholdHz = 10, MinMeaningfulTrimHz = 2,
+            ChaseCooldown = TimeSpan.FromMinutes(30),
         });
 
         Hear(offsets, "M0ABC-1", 20.0, 20.0, 20.0);
         policy.TrimFor("M0ABC-1").Should().BeApproximately(10.0, 0.2);
+
+        // The dial gets knocked: they move once, to somewhere else, and stay there.
         time.Advance(TimeSpan.FromSeconds(30));
+        Hear(offsets, "M0ABC-1", -30.0, -30.0, -30.0, -30.0, -30.0, -30.0, -30.0, -30.0);
+        policy.TrimFor("M0ABC-1").Should().Be(0, "we back off while we work out what happened");
+        policy.IsCoolingDown("M0ABC-1").Should().BeTrue();
+
+        // After the cooldown they are still sitting quietly on their new frequency, so they get
+        // corrected for there. A rig that moved is not a rig that argues.
+        time.Advance(TimeSpan.FromMinutes(31));
+        Hear(offsets, "M0ABC-1", -30.0, -30.0, -30.0, -30.0);
+
+        policy.TrimFor("M0ABC-1").Should().BeApproximately(-15.0, 0.2);
+        policy.HasRetired("M0ABC-1").Should().BeFalse();
+    }
+
+    [Fact]
+    public void A_station_that_keeps_moving_every_time_we_correct_is_eventually_left_alone()
+    {
+        var time = new FakeTimeProvider();
+        StationFrequencyOffsets offsets = Offsets(time);
+        var policy = new FrequencyMatchingPolicy(offsets, timeProvider: time, options: new FrequencyMatchingOptions
+        {
+            MinSamples = 3, ChaseThresholdHz = 10, MinMeaningfulTrimHz = 2,
+            ChaseCooldown = TimeSpan.FromMinutes(30), MaxChases = 3,
+        });
+
+        var stoodDown = new List<FrequencyMatchingStandDown>();
+        policy.StoodDown += s => stoodDown.Add(s);
+
+        // Three rounds of: we correct, they move in response, we back off and try again later.
+        // That is not a rig that was knocked, it is the far end running this same algorithm.
+        double[] positions = [40.0, -40.0, 40.0, -40.0];
+        for (int round = 0; round < 3; round++)
+        {
+            Hear(offsets, "M0ABC-1", Enumerable.Repeat(positions[round], 8).ToArray());
+            policy.TrimFor("M0ABC-1").Should().NotBe(0, "round {0} should start correcting", round);
+
+            time.Advance(TimeSpan.FromSeconds(30));
+            Hear(offsets, "M0ABC-1", Enumerable.Repeat(positions[round + 1], 8).ToArray());
+            policy.TrimFor("M0ABC-1").Should().Be(0, "round {0} should detect the move", round);
+
+            time.Advance(TimeSpan.FromMinutes(31));
+        }
+
+        policy.HasRetired("M0ABC-1").Should().BeTrue();
+        stoodDown.Should().HaveCount(3);
+        stoodDown[^1].RetryAfter.Should().BeNull("the last one is for good");
+        stoodDown[^1].Detail.Should().Contain("correcting for us in turn");
+
+        // And it stays that way, however settled they look afterwards.
         Hear(offsets, "M0ABC-1", 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0);
         policy.TrimFor("M0ABC-1").Should().Be(0);
+    }
 
-        // Back to a rock-steady 20 Hz. We still do not resume: whatever moved once will move
-        // again, and one side correcting is the outcome worth having.
-        time.Advance(TimeSpan.FromSeconds(30));
-        Hear(offsets, "M0ABC-1", 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0);
-        policy.TrimFor("M0ABC-1").Should().Be(0);
-        policy.HasStoodDown("M0ABC-1").Should().BeTrue();
+    [Fact]
+    public void The_trim_is_capped_however_far_off_the_station_is()
+    {
+        // The safety cap, and the reason this can be on by default: it bounds the damage on its
+        // own, without relying on the chase detector working.
+        var time = new FakeTimeProvider();
+        StationFrequencyOffsets offsets = Offsets(time);
+        var policy = new FrequencyMatchingPolicy(offsets, timeProvider: time, options: new FrequencyMatchingOptions
+        {
+            MinSamples = 3, MaxTrimHz = 50, Damping = 1.0, MaxSpreadHz = 20,
+        });
+
+        Hear(offsets, "M0FAR", 200.0, 200.0, 200.0, 200.0);
+        policy.TrimFor("M0FAR").Should().Be(50);
+
+        Hear(offsets, "M0FAR2", -200.0, -200.0, -200.0, -200.0);
+        policy.TrimFor("M0FAR2").Should().Be(-50);
     }
 
     [Fact]
@@ -162,7 +228,7 @@ public sealed class FrequencyMatchingTests
         // do. Without that floor the detector would give up on every wandering rig on the band.
         var time = new FakeTimeProvider();
         StationFrequencyOffsets offsets = Offsets(time);
-        var policy = new FrequencyMatchingPolicy(offsets, new FrequencyMatchingOptions
+        var policy = new FrequencyMatchingPolicy(offsets, timeProvider: time, options: new FrequencyMatchingOptions
         {
             MinSamples = 3, ChaseThresholdHz = 10, MinMeaningfulTrimHz = 2, Damping = 0.5,
         });
@@ -173,7 +239,8 @@ public sealed class FrequencyMatchingTests
         time.Advance(TimeSpan.FromSeconds(30));
         Hear(offsets, "G0XYZ", 15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0);
 
-        policy.HasStoodDown("G0XYZ").Should().BeFalse();
+        policy.IsCoolingDown("G0XYZ").Should().BeFalse();
+        policy.HasRetired("G0XYZ").Should().BeFalse();
         policy.TrimFor("G0XYZ").Should().BeApproximately(7.5, 0.2);
     }
 
@@ -181,7 +248,7 @@ public sealed class FrequencyMatchingTests
     public void An_unheard_station_gets_no_correction()
     {
         var time = new FakeTimeProvider();
-        var policy = new FrequencyMatchingPolicy(Offsets(time));
+        var policy = new FrequencyMatchingPolicy(Offsets(time), timeProvider: time);
         policy.TrimFor("NOBODY").Should().Be(0);
         policy.TrimFor(null).Should().Be(0);
     }

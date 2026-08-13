@@ -9,57 +9,78 @@ public sealed record FrequencyMatchingOptions
     /// <summary>Largest spread across those frames, in Hz, that still counts as settled. Default 20.</summary>
     public double MaxSpreadHz { get; init; } = 20;
 
-    /// <summary>Largest shift ever applied, in Hz. Default 60.</summary>
-    public double MaxTrimHz { get; init; } = 60;
+    /// <summary>Largest shift ever applied, in Hz. Default 50.</summary>
+    public double MaxTrimHz { get; init; } = 50;
 
     /// <summary>Fraction of the measured offset applied, 0 to 1. Default 0.5.</summary>
     public double Damping { get; init; } = 0.5;
 
     /// <summary>
     /// How far a station's measured offset may move, in Hz, after we start correcting for it
-    /// before we conclude it is correcting for us and stop. Default 10.
+    /// before we back off. Default 10.
     /// </summary>
-    /// <remarks>
-    /// Sized above ordinary frame-to-frame jitter and below any correction worth making, so an
-    /// unsettled rig does not trip it and a genuine chase does.
-    /// </remarks>
     public double ChaseThresholdHz { get; init; } = 10;
 
     /// <summary>Trim below which we are not really correcting, in Hz. Default 2.</summary>
-    /// <remarks>
-    /// A trim of a fraction of a Hz cannot provoke a measurable response, so movement while one
-    /// is applied is somebody else's drift rather than evidence of a chase. Without this floor
-    /// the detector would blame itself for every wandering rig on the band.
-    /// </remarks>
     public double MinMeaningfulTrimHz { get; init; } = 2;
+
+    /// <summary>
+    /// How long to leave a station alone after its frequency moved under our correction.
+    /// Default 30 minutes.
+    /// </summary>
+    /// <remarks>
+    /// Long enough that a station correcting for us in turn cannot trade adjustments with us at
+    /// any rate worth worrying about, and short enough that a rig which simply moved - a knocked
+    /// dial, a warm-up drift - is picked up again the same day rather than being written off.
+    /// </remarks>
+    public TimeSpan ChaseCooldown { get; init; } = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// How many times a station may move under our correction before we stop trying. Default 3.
+    /// </summary>
+    /// <remarks>
+    /// One move is a rig that moved: it settles at its new offset and we correct for that instead.
+    /// Moving again every time we correct is not a coincidence, it is the far end running this
+    /// same algorithm, and two of those trade adjustments forever without either landing on the
+    /// right answer. Set 0 to retry indefinitely.
+    /// </remarks>
+    public int MaxChases { get; init; } = 3;
 }
 
-/// <summary>Why a station is no longer being corrected for.</summary>
+/// <summary>Why a station is not being corrected for at the moment.</summary>
 /// <param name="Callsign">The station.</param>
 /// <param name="Detail">A human-readable reason, suitable for a log line.</param>
-public readonly record struct FrequencyMatchingStandDown(string Callsign, string Detail);
+/// <param name="Chases">How many times this station has now moved under our correction.</param>
+/// <param name="RetryAfter">When it will be tried again; null when it will not be.</param>
+public readonly record struct FrequencyMatchingStandDown(
+    string Callsign, string Detail, int Chases, TimeSpan? RetryAfter);
 
 /// <summary>
 /// Decides how far to shift a transmission so it lands where the far station's receiver is
-/// listening, and stops when the far station turns out to be doing the same thing back.
+/// listening, and backs off when the far station turns out to be moving in response.
 /// </summary>
 /// <remarks>
-/// <para><b>The chase.</b> If both ends correct, neither converges on the right answer. Working
-/// it through for a true oscillator difference D, with each end applying a fraction k of what it
-/// measures, the pair settles at kD/(1+k) and -kD/(1+k): with k = 0.5 and D = 5 Hz, both stations
-/// end up transmitting 1.7 Hz off and each still hears the other 3.3 Hz out - worse than if only
-/// one of them had corrected, and the more damping, the further short they both stop. Undamped
-/// (k = 1) it does not settle at all: each end applies the full correction, sees the offset
-/// vanish, withdraws it, and sees it return, oscillating with a period of two exchanges.</para>
+/// <para><b>The chase.</b> If both ends correct, neither converges on the right answer. For a
+/// true oscillator difference D, with each end applying a fraction k of what it measures, the
+/// pair settles at kD/(1+k) and -kD/(1+k): with k = 0.5 and D = 5 Hz, both stations end up
+/// transmitting 1.7 Hz off and each still hears the other 3.3 Hz out - worse than if only one
+/// had corrected. Undamped (k = 1) it does not settle at all, oscillating with a period of two
+/// exchanges.</para>
 /// <para><b>Detecting it.</b> Our transmit trim cannot change what we measure of them: we measure
 /// their emissions, and our transmitter is not in that path. So a station's measured offset
-/// should sit still while we correct for it, however much we correct. If it moves once we start,
-/// the movement is theirs - they are correcting for us, or their rig is drifting - and in either
-/// case chasing it is the wrong response. So the correction latches off for that station, and
-/// says so.</para>
-/// <para>Standing down is deliberate and permanent for the session, in the same spirit as a
-/// station that has lost a contested slice: one side correcting is the outcome worth having, and
-/// a clear stop with a reason beats two stations quietly making each other worse.</para>
+/// should sit still while we correct for it, however much we correct. If it moves, the movement
+/// is theirs.</para>
+/// <para><b>Why that is not immediately fatal.</b> A station that moves once has probably just
+/// moved - a knocked dial, a rig warming up - and will sit at its new offset perfectly happily.
+/// Writing it off forever would mean never correcting for it again because of something it did
+/// on a Tuesday. So a move costs a cooldown, after which the new offset is measured and
+/// corrected for like any other. What separates that from a real chase is repetition: a rig that
+/// moved stays put afterwards, while a peer running this same algorithm moves again every time
+/// we correct. Only after <see cref="FrequencyMatchingOptions.MaxChases"/> of those does the
+/// correction stop for good.</para>
+/// <para><b>And the cap.</b> None of the above is what bounds the damage. Every trim is clamped
+/// to <see cref="FrequencyMatchingOptions.MaxTrimHz"/>, so even two stations chasing each other
+/// with the detector disabled entirely cannot walk more than that far off the channel.</para>
 /// </remarks>
 public sealed class FrequencyMatchingPolicy
 {
@@ -68,38 +89,55 @@ public sealed class FrequencyMatchingPolicy
         public double BaselineHz;
         public bool Correcting;
         public double AppliedHz;
-        public bool StoodDown;
+        public int Chases;
+        public bool Retired;
+        public long ResumeAtTicks;
     }
 
     private readonly StationFrequencyOffsets _offsets;
     private readonly FrequencyMatchingOptions _options;
+    private readonly TimeProvider _time;
     private readonly Dictionary<string, State> _states = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
 
     /// <summary>Creates a policy over <paramref name="offsets"/>.</summary>
     public FrequencyMatchingPolicy(
-        StationFrequencyOffsets offsets, FrequencyMatchingOptions? options = null)
+        StationFrequencyOffsets offsets,
+        FrequencyMatchingOptions? options = null,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(offsets);
         _offsets = offsets;
         _options = options ?? new FrequencyMatchingOptions();
+        _time = timeProvider ?? TimeProvider.System;
     }
 
-    /// <summary>Raised once per station, when the correction for it latches off.</summary>
+    /// <summary>Raised each time the correction for a station backs off, temporarily or for good.</summary>
     public event Action<FrequencyMatchingStandDown>? StoodDown;
 
-    /// <summary>Whether <paramref name="callsign"/> has been given up on.</summary>
-    public bool HasStoodDown(string callsign)
+    /// <summary>Whether <paramref name="callsign"/> has been given up on for good.</summary>
+    public bool HasRetired(string callsign)
     {
         lock (_gate)
         {
-            return _states.TryGetValue(callsign, out State? s) && s.StoodDown;
+            return _states.TryGetValue(callsign, out State? s) && s.Retired;
+        }
+    }
+
+    /// <summary>Whether <paramref name="callsign"/> is inside a cooldown after moving.</summary>
+    public bool IsCoolingDown(string callsign)
+    {
+        lock (_gate)
+        {
+            return _states.TryGetValue(callsign, out State? s)
+                && !s.Retired
+                && s.ResumeAtTicks > _time.GetUtcNow().UtcTicks;
         }
     }
 
     /// <summary>
     /// The shift to apply, in Hz, when transmitting to <paramref name="destination"/>; zero when
-    /// there is no settled estimate, or the station has been stood down.
+    /// there is no settled estimate, or the station is cooling down, or it has been retired.
     /// </summary>
     public double TrimFor(string? destination)
     {
@@ -113,8 +151,10 @@ public sealed class FrequencyMatchingPolicy
             return 0;
         }
 
-        string? standDownReason = null;
-        double trim;
+        FrequencyMatchingStandDown? announce = null;
+        double trim = 0;
+        long now = _time.GetUtcNow().UtcTicks;
+
         lock (_gate)
         {
             if (!_states.TryGetValue(destination, out State? state))
@@ -123,33 +163,53 @@ public sealed class FrequencyMatchingPolicy
                 _states[destination] = state;
             }
 
-            if (state.StoodDown)
+            if (state.Retired)
             {
                 return 0;
             }
 
-            // Was our own correction answered? Compare against where they sat when we began.
-            if (state.Correcting
-                && Math.Abs(state.AppliedHz) >= _options.MinMeaningfulTrimHz)
+            if (state.ResumeAtTicks > now)
+            {
+                return 0;
+            }
+
+            // Did our own correction get answered? Measured from where they sat when we began.
+            if (state.Correcting && Math.Abs(state.AppliedHz) >= _options.MinMeaningfulTrimHz)
             {
                 double moved = o.OffsetHz - state.BaselineHz;
                 if (Math.Abs(moved) > _options.ChaseThresholdHz)
                 {
                     double wasApplying = state.AppliedHz;
-                    state.StoodDown = true;
+                    state.Chases++;
                     state.Correcting = false;
                     state.AppliedHz = 0;
-                    standDownReason =
+
+                    bool retire = _options.MaxChases > 0 && state.Chases >= _options.MaxChases;
+                    state.Retired = retire;
+                    state.ResumeAtTicks = retire ? 0 : now + _options.ChaseCooldown.Ticks;
+
+                    string what =
                         $"was heard at {state.BaselineHz:+0.0;-0.0} Hz, we began answering "
-                        + $"{wasApplying:+0.0;-0.0} Hz off to suit it, and it has since moved "
-                        + $"to {o.OffsetHz:+0.0;-0.0} Hz. Our transmitter cannot change what we "
-                        + "measure of theirs, so that movement is theirs: either they are "
-                        + "correcting for us in turn, which converges on both of us being wrong, "
-                        + "or their reference is drifting. Not correcting for this station again.";
+                        + $"{wasApplying:+0.0;-0.0} Hz off to suit it, and it has since moved to "
+                        + $"{o.OffsetHz:+0.0;-0.0} Hz. Our transmitter cannot change what we "
+                        + "measure of theirs, so that movement is theirs.";
+
+                    announce = new FrequencyMatchingStandDown(
+                        destination,
+                        retire
+                            ? what + $" That is {state.Chases} times now, which is not a rig that "
+                                + "moved but a station correcting for us in turn; neither of us "
+                                + "lands on the right answer that way. Not correcting for it again."
+                            : what + " Leaving it alone for "
+                                + $"{_options.ChaseCooldown.TotalMinutes:0} minutes, then measuring "
+                                + "it afresh - a rig that has simply been moved will sit at its new "
+                                + "offset and can be corrected for there.",
+                        state.Chases,
+                        retire ? null : _options.ChaseCooldown);
                 }
             }
 
-            if (standDownReason is null)
+            if (announce is null)
             {
                 if (o.Samples < _options.MinSamples || o.SpreadHz > _options.MaxSpreadHz)
                 {
@@ -169,15 +229,11 @@ public sealed class FrequencyMatchingPolicy
 
                 state.AppliedHz = trim;
             }
-            else
-            {
-                trim = 0;
-            }
         }
 
-        if (standDownReason is not null)
+        if (announce is FrequencyMatchingStandDown stand)
         {
-            StoodDown?.Invoke(new FrequencyMatchingStandDown(destination, standDownReason));
+            StoodDown?.Invoke(stand);
         }
 
         return trim;

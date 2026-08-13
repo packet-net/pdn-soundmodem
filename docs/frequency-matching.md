@@ -1,7 +1,7 @@
 # Answering a station on its own frequency
 
 Most stations on an HF packet channel are not exactly on it. This is about measuring by how
-much, and optionally transmitting to suit.
+much, and transmitting to suit.
 
 ## The measurement
 
@@ -73,27 +73,40 @@ Damping alone therefore is not enough, so the chase is detected:
 > transmitter is not in that path. So a station's measured offset should sit still while we
 > correct for it, however much we correct.
 
-If it moves by more than `chaseThresholdHz` after we begin correcting, the movement is theirs -
-they are correcting for us, or their reference is drifting - and either way chasing it is the
-wrong response. The correction latches off for that station, permanently for the session, and
-says why. One side correcting is the outcome worth having.
+If it moves by more than `chaseThresholdHz` after we begin correcting, the movement is theirs.
+
+**Backing off is not giving up.** A station that moves once has most likely just moved: a
+knocked dial, a rig warming up, a new radio. It will sit perfectly happily at its new offset,
+and writing it off forever would mean never correcting for it again because of something it did
+one Tuesday. So a move costs a cooldown (`chaseCooldownSeconds`, 30 minutes by default), after
+which its new offset is measured and corrected for like anybody else's.
+
+What separates that from a real chase is repetition. A rig that was moved stays put afterwards;
+a peer running this same algorithm moves again *every time we correct*. Only after `maxChases`
+of those does the correction stop for good, and the log says which of the two it concluded.
+
+**None of that is what bounds the damage.** Every trim is clamped to `maxTrimHz`, so even two
+stations chasing each other with the detector disabled entirely could not walk further than 50 Hz
+off the channel centre - less than several of the stations in the table above are off it already.
+That cap, not the detector, is why this is safe to have on by default.
 
 ## Configuration
 
 ```json
 "frequencyMatching": {
-  "enabled": false,
+  "enabled": true,
   "minSamples": 3,
   "maxSpreadHz": 20,
-  "maxTrimHz": 60,
+  "maxTrimHz": 50,
   "damping": 0.5,
-  "chaseThresholdHz": 10
+  "chaseThresholdHz": 10,
+  "chaseCooldownSeconds": 1800,
+  "maxChases": 3
 }
 ```
 
-Measurement runs always; `enabled` governs only whether the transmitter moves. Off by default,
-because it changes what goes on air and a reply that lands away from the channel centre is a
-surprise to anyone reading the waterfall.
+These are the defaults, and the section may be omitted entirely for them. Measurement runs
+always; `enabled` governs only whether the transmitter moves.
 
 `minSamples` is deliberately low. The correction only has to hold for the exchange it is used
 in, so a handful of recent frames is the right evidence; a long run would average across drift

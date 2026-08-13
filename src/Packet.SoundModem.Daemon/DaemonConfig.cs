@@ -1003,14 +1003,15 @@ public sealed class DaemonConfig
 /// baud modes run offset-diversity decoder banks. A correspondent running a fixed-centre modem
 /// with no such bank is the one that cannot hear us, which is why the correction is worth
 /// making and why it is transmit-only.</para>
-/// <para><b>Off by default.</b> It changes what goes on air, and a station whose reply lands
-/// somewhere other than the channel centre is a surprise to anyone reading the waterfall. Turn
-/// it on deliberately, having looked at what the measurements say.</para>
+/// <para><b>On by default</b>, and bounded rather than timid: every shift is clamped to
+/// <see cref="MaxTrimHz"/>, so the worst this can do to a signal is put it 50 Hz off the channel
+/// centre, which is less than several of the stations on the band are off it already. Set
+/// <c>enabled: false</c> to measure and report without touching the transmitter.</para>
 /// </remarks>
 public sealed class FrequencyMatchingConfig
 {
-    /// <summary>Actually shift the transmitter. False (the default) measures and reports only.</summary>
-    public bool Enabled { get; set; }
+    /// <summary>Actually shift the transmitter. True by default; false measures and reports only.</summary>
+    public bool Enabled { get; set; } = true;
 
     /// <summary>Frames kept per station for the estimate. Default 8.</summary>
     public int Samples { get; set; } = DefaultSamples;
@@ -1045,12 +1046,15 @@ public sealed class FrequencyMatchingConfig
     /// </remarks>
     public double MaxSpreadHz { get; set; } = 20;
 
-    /// <summary>Largest shift that will ever be applied, in Hz. Default 60.</summary>
+    /// <summary>Largest shift that will ever be applied, in Hz. Default 50.</summary>
     /// <remarks>
-    /// A clamp on the whole idea rather than a tuning knob. The modem clamps again to its own
-    /// headroom against DC and Nyquist, so a wild estimate cannot walk the band off the end.
+    /// The safety cap, and the reason the rest of this can be on by default. It bounds the damage
+    /// independently of every other guard: even two stations chasing each other with the detector
+    /// switched off could not walk further than this off the channel centre, and 50 Hz is inside
+    /// what the measured stations on the live 40 m port are already scattered across. The channel
+    /// clamps again at its own hard ceiling, so a bug upstream cannot get past both.
     /// </remarks>
-    public double MaxTrimHz { get; set; } = 60;
+    public double MaxTrimHz { get; set; } = 50;
 
     /// <summary>
     /// Fraction of the measured offset applied per step, 0 to 1. Default 0.5.
@@ -1075,6 +1079,30 @@ public sealed class FrequencyMatchingConfig
     /// worth chasing, so the correction latches off for that station and says why.
     /// </remarks>
     public double ChaseThresholdHz { get; set; } = 10;
+
+    /// <summary>
+    /// How long to leave a station alone after its frequency moved under our correction, in
+    /// seconds. Default 1800 (30 minutes).
+    /// </summary>
+    /// <remarks>
+    /// Backing off is not the same as giving up. A station that moves once has most likely just
+    /// moved - a knocked dial, a rig warming up - and will sit happily at its new offset; writing
+    /// it off forever would mean never correcting for it again because of something it did once.
+    /// After the cooldown its new offset is measured and corrected for like anybody else's.
+    /// </remarks>
+    public double ChaseCooldownSeconds { get; set; } = 1800;
+
+    /// <summary>
+    /// How many times a station may move under our correction before we stop trying. Default 3;
+    /// 0 retries indefinitely.
+    /// </summary>
+    /// <remarks>
+    /// Repetition is what separates a rig that moved from a station correcting for us in turn. A
+    /// moved rig stays put afterwards; a peer running this same algorithm moves again every time
+    /// we correct, and two of those trade adjustments indefinitely without either landing on the
+    /// right answer.
+    /// </remarks>
+    public int MaxChases { get; set; } = 3;
 
     /// <summary>
     /// Destinations never worth aiming at, because they are not one station.

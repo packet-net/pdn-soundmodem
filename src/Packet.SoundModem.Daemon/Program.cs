@@ -848,17 +848,20 @@ channel.FrameReceivedWithQuality += (_sub, frame, quality) =>
     }
 };
 
-// Answer an off-frequency station where its receiver is listening. Off unless asked for: this
-// changes what goes on air, and a reply that lands away from the channel centre surprises
-// anyone reading the waterfall.
-if (frequencyMatching?.Enabled == true)
+// Answer an off-frequency station where its receiver is listening. On unless switched off,
+// including when the section is absent entirely: the shift is clamped to a few tens of Hz, which
+// is less than several stations on the band are already scattered across, and the station it
+// helps is the one at the other end with a fixed-centre modem.
+FrequencyMatchingConfig fmConfig = frequencyMatching ?? new FrequencyMatchingConfig();
+if (fmConfig.Enabled)
 {
-    FrequencyMatchingConfig fm = frequencyMatching;
+    FrequencyMatchingConfig fm = fmConfig;
     Console.WriteLine(
         $"frequency matching: on - answering a station on its own frequency after "
         + $"{fm.MinSamples} frames, if they agree within {fm.MaxSpreadHz:F0} Hz, "
-        + $"up to {fm.MaxTrimHz:F0} Hz, damped {fm.Damping:0.##}; stops correcting for any "
-        + $"station whose own frequency then moves more than {fm.ChaseThresholdHz:F0} Hz");
+        + $"up to {fm.MaxTrimHz:F0} Hz, damped {fm.Damping:0.##}; backs off for "
+        + $"{fm.ChaseCooldownSeconds / 60:F0} min from any station whose own frequency then moves "
+        + $"more than {fm.ChaseThresholdHz:F0} Hz, and stops after {fm.MaxChases} such moves");
 
     var matching = new FrequencyMatchingPolicy(
         stationOffsets,
@@ -869,10 +872,17 @@ if (frequencyMatching?.Enabled == true)
             MaxTrimHz = fm.MaxTrimHz,
             Damping = fm.Damping,
             ChaseThresholdHz = fm.ChaseThresholdHz,
-        });
+            ChaseCooldown = TimeSpan.FromSeconds(fm.ChaseCooldownSeconds),
+            MaxChases = fm.MaxChases,
+        },
+        TimeProvider.System);
 
     matching.StoodDown += stand =>
-        Console.Error.WriteLine($"frequency matching: giving up on {stand.Callsign} - {stand.Detail}");
+        Console.Error.WriteLine(
+            stand.RetryAfter is TimeSpan retry
+                ? $"frequency matching: backing off {stand.Callsign} for "
+                    + $"{retry.TotalMinutes:0} min (move {stand.Chases}) - {stand.Detail}"
+                : $"frequency matching: giving up on {stand.Callsign} - {stand.Detail}");
 
     channel.TransmitTrimHz = (_sub, frame) =>
     {
