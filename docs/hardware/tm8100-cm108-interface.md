@@ -14,45 +14,71 @@ KiCad schematic.
 
 ## What the widget provides
 
-Five single-pin sockets. The audio names are from the widget's point of view, not the radio's:
+No connector: a row of five labelled solder pads. The audio names are from the widget's point of
+view, not the radio's:
 
-| Socket | What it is on the board |
+| Pad | What it is on the board |
 |---|---|
-| AUDIO_OUT | CM108AH line out: transmit audio to the radio, through 1 uF on board |
-| AUDIO_IN | CM108AH microphone in: receive audio from the radio, through 1 uF on board; no bias network is fitted |
+| OUT | CM108AH line out (AUDIO_OUT in the schematic): transmit audio, through 1 uF on board |
+| IN | CM108AH microphone in (AUDIO_IN): receive audio, through 1 uF on board; no bias network is fitted |
 | PTT | open-drain BSS138; pulls to ground while CM108 GPIO3 is high |
-| SQUELCH | active-low input; pulling it low presses the CM108's volume-down key through a Schottky |
+| SQL | active-low input; pulling it low presses the CM108's volume-down key through a Schottky |
 | GND | board ground |
 
-## The wiring, through a DE-9 radio port
+## The build: pads to a DE-9 socket
 
-The widget carries a 9-way D-sub socket (female, like a NinoTNC's radio port) with the passive
-networks in the tail between the widget pads and the socket. The DE-9 is wired to the standard
-Kantronics/NinoTNC radio-port convention, verified in [ninotnc-loop.md](../ninotnc-loop.md) from
-TARPN's cable documentation and proven by the bench loop that ran on it: TXA on 1, TX inhibit
-on 2, PTT on 3, RXA on 5, ground on 6. The assembly is then plug-compatible with the radio
-cables a NinoTNC uses.
+Hang a 9-way D-sub socket off the back of the board on a short tail, with the discrete
+components in that tail, wired to the standard Kantronics/NinoTNC radio-port convention: TXA on
+1, TX inhibit on 2, PTT on 3, RXA on 5, ground on 6 (verified in
+[ninotnc-loop.md](../ninotnc-loop.md) from TARPN's cable documentation, and proven by the bench
+loop that ran on it). Use a female socket, which is what a NinoTNC presents; the assembly then
+takes the same radio cables a NinoTNC uses.
 
-### Widget to DE-9 socket
+```
+  widget pads                                                  DE-9 socket, rear
 
-| Widget pad | Via | DE-9 pin | DE-9 signal |
-|---|---|---|---|
-| GND | wire | 6 | GND |
-| PTT | wire, nothing else | 3 | PTT: pulls to ground to key, exactly the convention |
-| AUDIO_OUT | Rt, Rb, C4 below | 1 | TXA, transmit audio out of the assembly |
-| AUDIO_IN | C1, Rs, Rp, C3 below | 5 | RXA, receive audio into the assembly |
-| SQUELCH | leave unconnected | - | the convention has no carrier-detect pin |
+  OUT o-----[ Rt 3k0 ]-----+------------| |--------------------o 1  TXA
+                           |           C4 1u
+                          [ ] Rb 1k
+                           |
+  GND o--------------------+--------+-----------+--------------o 6  GND
+                                    |           |
+                                   [ ] Rp 1k   === C3 4n7
+                                    |           |
+  IN  o-----------------------------+-----------+--[ Rs 6k8 ]--| |--o 5  RXA
+                                                              C1 4u7
+  PTT o--------------------------------------------------------o 3  PTT
+
+  SQL o--x  leave unconnected              pins 2, 4, 7, 8, 9: empty
+```
+
+Pin by pin, from the iron's point of view:
+
+- **Pin 6 (GND): plain wire to the GND pad.** This wire is also the return for every shunt
+  component: Rb, Rp and C3 all land on it.
+- **Pin 3 (PTT): plain wire to the PTT pad.** No components: the board already has the
+  open-collector stage, and the radio end of the cable has the pull-up.
+- **Pin 1 (TXA): three components.** From the OUT pad, Rt in series. From Rt's far end, Rb down
+  to the ground wire. From that same junction, C4 to pin 1. **C4 must be the last element before
+  the pin**: AUD_TAP_IN at the far end of the cable is internally biased to 1.5 V behind roughly
+  100k with a valid range of 0.5 to 2.5 V, and a shunt resistor DC-coupled to it drags that bias
+  to millivolts and clips every negative half cycle. Built as drawn, Rb returns to the widget's
+  ground and never sees the radio's bias.
+- **Pin 5 (RXA): four components.** From pin 5, C1 first, which blocks the tap's +2.3 V offset.
+  Then Rs in series. From Rs's far end, Rp and C3 down to the ground wire. That junction wires
+  to the IN pad.
+- **The SQL pad and DE-9 pins 2, 4, 7, 8 and 9: nothing.** The convention has no carrier-detect
+  pin, so SQL stays empty; pin 2 is TX inhibit on a real NinoTNC and this assembly does not
+  implement it.
+
+Physically, all seven components fit on the DE-9's solder cups, free-standing with heatshrink
+over each leg and the lot, or on a fingernail of stripboard in the tail. Keep the tail short.
 
 **Mind the direction.** This is the opposite way round from the bench loop in
 [ninotnc-loop.md](../ninotnc-loop.md). There the widget played the radio, recording a NinoTNC's
 output, so its OUT fed RXA on pin 5 and its IN listened to TXA on pin 1. Here the widget is the
-TNC: AUDIO_OUT drives TXA on pin 1 and AUDIO_IN listens on RXA on pin 5. Copying the loop table
-into this build swaps transmit and receive.
-
-Leave pin 2 unconnected too: on a real NinoTNC it is TX inhibit, and this assembly does not
-implement it. PTT needs no components because the board already has the open-collector stage and
-the radio end has the pull-up. Build the two networks into the tail (a scrap of stripboard under
-heatshrink is fine); the cables then carry only line-level signals and ground.
+TNC: OUT drives TXA on pin 1 and IN listens on RXA on pin 5. Copying the loop table into this
+build swaps transmit and receive.
 
 ### DE-9 plug to the radio
 
@@ -72,21 +98,7 @@ Mechanical interchangeability is not calibration: the deviation ceiling belongs 
 this assembly with this radio, so if a different device ever hangs on the DE-9, or this assembly
 moves to a different radio, redo the Bessel check before trusting the levels.
 
-### Transmit: AUDIO_OUT to pin 7
-
-```
-  widget                    Rt                        C4         radio pin 7
-  AUDIO_OUT                3k0           +---------o | | o------o AUD_TAP_IN
-      o-------------------|____|---------+          1u film       (+1.5 V bias, 100k)
-                                        [ ] Rb
-                                         |  1k
-  widget GND o---------------------------+----------------------o pin 15 AGND
-```
-
-**C4 sits between the divider and the radio, not on the widget side.** AUD_TAP_IN is internally
-biased to 1.5 V behind roughly 100k, and its valid input range is 0.5 to 2.5 V; a shunt resistor
-DC-coupled to the pin drags that bias to millivolts and the ADC clips on every negative half
-cycle. The widget's own 1 uF blocks DC on the other side.
+### Choosing Rt (transmit)
 
 - **Rb = 1k, Rt = 3k0**, 1% metal film, for the usual 1.0 Vrms CM108 full scale. Measure yours
   (measurement 1) and take Rt from this table, each value the nearest E24 that lands under the
@@ -110,16 +122,7 @@ cycle. The widget's own 1 uF blocks DC on the other side.
 - The divider's 750R source impedance puts the pole against the connector's internal 10 nF at
   21 kHz, well out of band.
 
-### Receive: pin 13 to AUDIO_IN
-
-```
-  radio pin 13             C1             Rs                     widget
-  AUD_TAP_OUT          +-o | | o-------|______|-------+---------o AUDIO_IN
-      o----------------+  4u7 NP       (table)        |
-  (600R source,                                      [ ] Rp    === C3
-   +2.3 V offset)                                     |  1k     |  4n7
-  pin 15 AGND o---------------------------------------+---------+--o widget GND
-```
+### Choosing Rs (receive)
 
 - **Rp = 1k.** The widget has no microphone bias network (the CM108AH's VBIAS pin is
   unconnected), so Rp is the whole shunt; do not copy values from notes written for stock dongles
@@ -200,18 +203,18 @@ independent (3DK p.112 step 5).
 - Playback: **calibrate at maximum playback volume and leave it there.** The divider is sized so
   that the loudest thing the host can produce is exactly 100% deviation; that guarantee only
   holds at the volume it was calibrated at.
-- SQUELCH stays unconnected in the DE-9 arrangement, since the convention has no carrier-detect
+- SQL stays unconnected in the DE-9 arrangement, since the convention has no carrier-detect
   pin, and `pdn-soundmodem` has its own DCD so nothing is lost. If a dedicated wire is ever run
   for it, the signal arrives as the CM108's volume-down HID key: readable over hidraw, and
   hazardous on a host that maps consumer keys to a mixer.
 
 ## The two bench measurements
 
-**1. CM108 full scale, both directions.** Feed a 1 kHz sine into AUDIO_IN from a generator, boost
-off, capture gain at the setting you will run. Raise the level until the samples just clip; that
-voltage picks the Rs row. Then play a 0 dBFS sine at maximum playback volume and measure AUDIO_OUT
-open circuit with a true-RMS meter; that voltage picks the Rt row. Record the mixer settings
-alongside both.
+**1. CM108 full scale, both directions.** Feed a 1 kHz sine into the IN pad from a generator,
+boost off, capture gain at the setting you will run. Raise the level until the samples just clip;
+that voltage picks the Rs row. Then play a 0 dBFS sine at maximum playback volume and measure the
+OUT pad open circuit with a true-RMS meter; that voltage picks the Rt row. Record the mixer
+settings alongside both.
 
 **2. The deviation ceiling, by Bessel null.** Key the radio into a dummy load, play a 1040 Hz
 sine, and raise its digital level while watching the carrier on an SDR. The carrier vanishes at
