@@ -88,6 +88,12 @@ public sealed class WaterfallOptions
 /// True for a frame this station sent - badged TX in the panel rather than read as somebody
 /// heard. Defaults to false: a log with nothing to say about direction holds receives.
 /// </param>
+/// <param name="TxTrimHz">
+/// For a transmission, how far it was shifted off the nominal centre to suit the station it was
+/// addressed to; null when it went out straight, and on every receive. Distinct from
+/// <paramref name="OffsetHz"/>, which measures somebody else's transmitter rather than
+/// commanding our own.
+/// </param>
 public sealed record LoggedFrame(
     DateTimeOffset HeardAt,
     int SubChannel,
@@ -98,7 +104,8 @@ public sealed record LoggedFrame(
     int? CorrectedBytes,
     bool? CrcValid,
     double? OffsetHz,
-    bool Transmitted = false);
+    bool Transmitted = false,
+    double? TxTrimHz = null);
 
 /// <summary>A band the host declares rather than the waterfall measuring it.</summary>
 /// <param name="SubChannel">Which modem, for ordering and labels.</param>
@@ -367,7 +374,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _channel.TransmittedAudio += OnTransmittedAudio;
         _channel.TransmittingChanged += OnTransmittingChanged;
         _channel.FrameReceivedWithQuality += OnFrame;
-        _channel.FrameTransmitted += OnFrameTransmitted;
+        _channel.FrameTransmittedWithTrim += OnFrameTransmitted;
         _listener.Start();
         _acceptLoop = AcceptLoopAsync();
     }
@@ -724,12 +731,14 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// was, and an operator watching their own beacon go out had to take it on trust. Raised
     /// after the audio has left, so a listed frame is one that actually went on air.</para>
     /// <para>No SNR, offset, FEC count or CRC: those are receive measurements, and inventing
-    /// them for our own transmission would be inventing a measurement of ourselves. No burst
-    /// tag either - a received frame's tag lands on the energy that carried it, but transmitted
+    /// them for our own transmission would be inventing a measurement of ourselves. The transmit
+    /// trim is the one number here that IS ours to state - it is a command we issued, not an
+    /// estimate we made - so it is carried in its own field rather than folded into the offset,
+    /// which means something else entirely. No burst tag either - a received frame's tag lands on the energy that carried it, but transmitted
     /// audio is queued and repainted in real time while this fires as soon as the device has
     /// taken it, so the tag would sit somewhere up the burst rather than on it.</para>
     /// </remarks>
-    private void OnFrameTransmitted(int subChannel, byte[] frame)
+    private void OnFrameTransmitted(int subChannel, byte[] frame, double trimHz)
     {
         if (_source is null)
         {
@@ -748,7 +757,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             subChannel,
             _channel.Modems.TryGetValue(subChannel, out IModem? modem) ? modem.Mode : "?",
             from, to, frame.Length, snrDb: null, burstLines: null, offsetHz: null,
-            corrected: null, crc: null, transmitted: true);
+            corrected: null, crc: null, transmitted: true,
+            txTrimHz: trimHz == 0 ? null : trimHz);
     }
 
     /// <summary>
@@ -821,7 +831,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         double? snrDb, int? burstLines, double? offsetHz, int? corrected, bool? crc,
         bool idBeacon = false, bool transmitted = false,
         string? note = null, string? headerType = null, string? frameHex = null,
-        bool plainIl2p = false, bool monitorOnly = false)
+        bool plainIl2p = false, bool monitorOnly = false, double? txTrimHz = null)
     {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -843,6 +853,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // True on our own transmission: the page lists it and, unlike everything else,
             // does not tag it onto the waterfall (see OnFrameTransmitted).
             tx = transmitted ? true : (bool?)null,
+            // How far this transmission was shifted to suit the station it was addressed to.
+            // Null when it went out on the nominal centre, which is most of them.
+            txTrimHz,
             // Only on a frame whose addresses would not read: why, which IL2P encapsulation
             // carried it, and the bytes themselves.
             why = note,
@@ -1184,6 +1197,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 // Same nullable-optional shape as a live frame's, so the page's one row builder
                 // badges a logged transmission TX exactly as it badges a live one.
                 tx = f.Transmitted ? true : (bool?)null,
+                txTrimHz = f.TxTrimHz is { } trim ? Math.Round(trim, 1) : (double?)null,
                 hist = true,
             }),
         }, Json);
@@ -1306,7 +1320,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     {
         await _stopping.CancelAsync().ConfigureAwait(false);
         _channel.FrameReceivedWithQuality -= OnFrame;
-        _channel.FrameTransmitted -= OnFrameTransmitted;
+        _channel.FrameTransmittedWithTrim -= OnFrameTransmitted;
         _channel.TransmittedAudio -= OnTransmittedAudio;
         _channel.TransmittingChanged -= OnTransmittingChanged;
         lock (_transmitLock)

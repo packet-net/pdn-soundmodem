@@ -119,6 +119,7 @@ internal sealed class FrameLog : IAsyncDisposable
                      ("trailer_near_bits", "INTEGER"),
                      ("monitor_only", "INTEGER"),
                      ("erased_bytes", "INTEGER"),
+                     ("tx_trim_hz", "REAL"),
                  })
         {
             using SqliteCommand columns = connection.CreateCommand();
@@ -199,8 +200,15 @@ internal sealed class FrameLog : IAsyncDisposable
     /// The mode string of the modem that sent it, as that modem reports itself - so the column
     /// reads the same for a frame we sent as for one the same modem heard.
     /// </param>
+    /// <param name="txTrimHz">
+    /// How far the burst was shifted off the nominal centre to suit the station it was addressed
+    /// to; null when it went out straight. Deliberately not <c>offset_hz</c>: that column holds a
+    /// measurement of somebody else's transmitter, and averaging the two together would mix what
+    /// a station did with what we did about it.
+    /// </param>
     internal void RecordTransmitted(
-        int subChannel, byte[] frame, string mode, double? audioHz, double? rfHz)
+        int subChannel, byte[] frame, string mode, double? audioHz, double? rfHz,
+        double? txTrimHz = null)
     {
         if (Backlogged())
         {
@@ -225,7 +233,8 @@ internal sealed class FrameLog : IAsyncDisposable
             OffsetHz: null,
             audioHz,
             rfHz,
-            frame));
+            frame,
+            txTrimHz));
     }
 
     /// <summary>
@@ -281,7 +290,7 @@ internal sealed class FrameLog : IAsyncDisposable
             // query, and the panel wants them in the order they happened.
             query.CommandText = """
                 SELECT heard_at, sub_channel, mode, source, destination,
-                       length, corrected, crc_valid, offset_hz, direction
+                       length, corrected, crc_valid, offset_hz, direction, tx_trim_hz
                 FROM frames ORDER BY id DESC LIMIT $count
                 """;
             query.Parameters.AddWithValue("$count", count);
@@ -300,7 +309,8 @@ internal sealed class FrameLog : IAsyncDisposable
                     row.IsDBNull(8) ? null : row.GetDouble(8),
                     // Anything that is not 'tx' is a receive, including a row from a log written
                     // before the column existed: those were all heard.
-                    string.Equals(row.GetString(9), "tx", StringComparison.Ordinal)));
+                    string.Equals(row.GetString(9), "tx", StringComparison.Ordinal),
+                    row.IsDBNull(10) ? null : row.GetDouble(10)));
             }
         }
         catch (Exception e) when (e is SqliteException or IOException or FormatException)
@@ -319,16 +329,17 @@ internal sealed class FrameLog : IAsyncDisposable
             INSERT INTO frames
               (heard_at, direction, sub_channel, mode, mode_name, source, destination,
                length, corrected, crc_valid, trailer_near_bits, monitor_only, erased_bytes,
-               offset_hz, audio_hz, rf_hz, payload)
+               offset_hz, audio_hz, rf_hz, payload, tx_trim_hz)
             VALUES
               ($heard_at, $direction, $sub, $mode, $mode_name, $source, $destination,
-               $length, $corrected, $crc, $trailer, $monitor, $erased, $offset, $audio, $rf, $payload)
+               $length, $corrected, $crc, $trailer, $monitor, $erased, $offset, $audio, $rf,
+               $payload, $tx_trim)
             """;
         foreach (string name in new[]
                  {
                      "$heard_at", "$direction", "$sub", "$mode", "$mode_name", "$source",
                      "$destination", "$length", "$corrected", "$crc", "$trailer", "$monitor",
-                     "$erased", "$offset", "$audio", "$rf", "$payload",
+                     "$erased", "$offset", "$audio", "$rf", "$payload", "$tx_trim",
                  })
         {
             insert.Parameters.Add(new SqliteParameter(name, DBNull.Value));
@@ -352,6 +363,7 @@ internal sealed class FrameLog : IAsyncDisposable
                 insert.Parameters["$monitor"].Value = entry.MonitorOnly is bool monitor ? monitor ? 1 : 0 : DBNull.Value;
                 insert.Parameters["$erased"].Value = (object?)entry.ErasedBytes ?? DBNull.Value;
                 insert.Parameters["$offset"].Value = (object?)entry.OffsetHz ?? DBNull.Value;
+            insert.Parameters["$tx_trim"].Value = (object?)entry.TxTrimHz ?? DBNull.Value;
                 insert.Parameters["$audio"].Value = (object?)entry.AudioHz ?? DBNull.Value;
                 insert.Parameters["$rf"].Value = (object?)entry.RfHz ?? DBNull.Value;
                 insert.Parameters["$payload"].Value = entry.Payload;
@@ -392,5 +404,6 @@ internal sealed class FrameLog : IAsyncDisposable
         double? OffsetHz,
         double? AudioHz,
         double? RfHz,
-        byte[] Payload);
+        byte[] Payload,
+        double? TxTrimHz = null);
 }

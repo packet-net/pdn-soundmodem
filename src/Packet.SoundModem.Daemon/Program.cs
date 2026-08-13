@@ -14,6 +14,7 @@ using Packet.SoundModem.Iq;
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Modems;
+using Packet.SoundModem.Station;
 using Packet.SoundModem.Survey;
 using Packet.SoundModem.Waterfall;
 using Packet.SoundModem.Ms110d;
@@ -207,6 +208,7 @@ FlexConfig? flexConfig = null;
 UberSdrConfig? uberSdrConfig = null;
 WaterfallConfig? waterfallConfig = null;
 SurveyConfig? surveyConfig = null;
+FrequencyMatchingConfig? frequencyMatching = null;
 RawCaptureConfig? rawCaptureConfig = null;
 DeadFeedConfig? deadFeedConfig = null;
 bool idBeacons = true;
@@ -243,6 +245,7 @@ if (configPath is not null)
     uberSdrConfig = config.UberSdr;
     waterfallConfig = config.Waterfall;
     surveyConfig = config.Survey;
+    frequencyMatching = config.FrequencyMatching;
     rawCaptureConfig = config.RawCapture;
     deadFeedConfig = config.DeadFeed;
     idBeacons = config.IdBeacons;
@@ -826,10 +829,82 @@ Dictionary<int, string> modeBySubChannel = modems
 // something an operator can act on.
 channel.FrameReceivedWithQuality += (subChannel, frame, quality) =>
     Console.WriteLine(ActivityLog.Received(subChannel, frame, quality));
-channel.FrameTransmitted += (subChannel, frame) =>
+
+// How far off our centre each station we hear is transmitting. Measured always: it costs a
+// dictionary write per frame, it is the evidence for whether answering them off-centre is worth
+// doing, and the transmit side below will not act without it.
+var stationOffsets = new StationFrequencyOffsets
+{
+    MaxSamples = frequencyMatching?.Samples ?? FrequencyMatchingConfig.DefaultSamples,
+    MaxAge = TimeSpan.FromSeconds(
+        frequencyMatching?.MaxAgeSeconds ?? FrequencyMatchingConfig.DefaultMaxAgeSeconds),
+};
+channel.FrameReceivedWithQuality += (_sub, frame, quality) =>
+{
+    if (quality.FrequencyOffsetHz is double offsetHz
+        && Ax25AddressParser.TryParse(frame, out string source, out string _dest))
+    {
+        stationOffsets.Record(source, offsetHz);
+    }
+};
+
+// Answer an off-frequency station where its receiver is listening. On unless switched off,
+// including when the section is absent entirely: the shift is clamped to a few tens of Hz, which
+// is less than several stations on the band are already scattered across, and the station it
+// helps is the one at the other end with a fixed-centre modem.
+FrequencyMatchingConfig fmConfig = frequencyMatching ?? new FrequencyMatchingConfig();
+if (fmConfig.Enabled)
+{
+    FrequencyMatchingConfig fm = fmConfig;
+    Console.WriteLine(
+        $"frequency matching: on - answering a station on its own frequency after "
+        + $"{fm.MinSamples} frames, if they agree within {fm.MaxSpreadHz:F0} Hz, "
+        + $"up to {fm.MaxTrimHz:F0} Hz, damped {fm.Damping:0.##}; backs off for "
+        + $"{fm.ChaseCooldownSeconds / 60:F0} min from any station whose own frequency then moves "
+        + $"more than {fm.ChaseThresholdHz:F0} Hz, and stops after {fm.MaxChases} such moves");
+
+    var matching = new FrequencyMatchingPolicy(
+        stationOffsets,
+        new FrequencyMatchingOptions
+        {
+            MinSamples = fm.MinSamples,
+            MaxSpreadHz = fm.MaxSpreadHz,
+            MaxTrimHz = fm.MaxTrimHz,
+            Damping = fm.Damping,
+            ChaseThresholdHz = fm.ChaseThresholdHz,
+            ChaseCooldown = TimeSpan.FromSeconds(fm.ChaseCooldownSeconds),
+            MaxChases = fm.MaxChases,
+        },
+        TimeProvider.System);
+
+    matching.StoodDown += stand =>
+        Console.Error.WriteLine(
+            stand.RetryAfter is TimeSpan retry
+                ? $"frequency matching: backing off {stand.Callsign} for "
+                    + $"{retry.TotalMinutes:0} min (move {stand.Chases}) - {stand.Detail}"
+                : $"frequency matching: giving up on {stand.Callsign} - {stand.Detail}");
+
+    channel.TransmitTrimHz = (_sub, frame) =>
+    {
+        if (!Ax25AddressParser.TryParse(frame, out string _src, out string destination))
+        {
+            return 0;
+        }
+
+        // A beacon or an ID is for everybody, and aiming it at one correspondent's oscillator
+        // aims it away from every other listener. Strip the SSID before comparing: ID-1 is as
+        // much a broadcast as ID.
+        string bare = destination.Split('-')[0];
+        return FrequencyMatchingConfig.BroadcastDestinations.Contains(
+            bare, StringComparer.OrdinalIgnoreCase)
+            ? 0
+            : matching.TrimFor(destination);
+    };
+}
+channel.FrameTransmittedWithTrim += (subChannel, frame, trimHz) =>
 {
     Console.WriteLine(ActivityLog.Transmitted(
-        subChannel, modeBySubChannel.GetValueOrDefault(subChannel, "?"), frame));
+        subChannel, modeBySubChannel.GetValueOrDefault(subChannel, "?"), frame, trimHz));
 
     // And into the station's journal, alongside what it heard: a log that records every frame
     // received and none sent is half a record. Raised after the audio has gone to the device, so
@@ -850,7 +925,8 @@ channel.FrameTransmitted += (subChannel, frame) =>
             ? sender.Mode
             : modeBySubChannel.GetValueOrDefault(subChannel, "?"),
         audio,
-        rf);
+        rf,
+        trimHz == 0 ? null : trimHz);
 };
 // Dropped frames are rate-limited per reason. A station that loses its slice rejects every
 // frame it is handed, for as long as the fault lasts: the unmitigated version of this line

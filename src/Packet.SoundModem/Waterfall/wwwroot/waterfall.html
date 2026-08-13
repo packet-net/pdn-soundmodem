@@ -152,6 +152,17 @@
      a check that was never there, and they must not read as the same event. Written as .id.rs so
      it outranks .fr.tx .id on the one row that could carry both. */
   .fr .id.rs { background: #f0b45a; }
+  /* A transmission deliberately shifted off the channel centre, to land where an off-frequency
+     station's receiver is actually listening. Marked because a signal that is not where the band
+     plan says it should be is otherwise indistinguishable from a fault, and because the whole
+     point of doing it is to be able to tell whether it helped. Cyan like the rest of transmit,
+     outlined rather than filled so it reads as an annotation on our own frame and not as another
+     station's badge. */
+  .fr .trim {
+    display: inline-block; margin-left: 6px; padding: 0 4px; border-radius: 2px;
+    font-size: 9px; font-weight: 700; letter-spacing: .08em; vertical-align: 1px;
+    color: #7fe3f7; border: 1px solid #31d2f2;
+  }
   /* Read out of the station's frame log when the page opened, not heard since - dimmed so the
      backlog cannot be mistaken for a channel that is busy right now. Its timestamps are real,
      which is the other half of saying so. */
@@ -758,13 +769,21 @@ function logFrame(ev) {
         ? "Plain IL2P: no trailing CRC, so Reed-Solomon alone stood behind this frame. Shown here and NOT passed to the KISS host - set acceptPlainIl2p on this modem if you want these delivered."
         : "Plain IL2P: no trailing CRC, so Reed-Solomon alone stood behind this frame. Passed to the KISS host, because this modem sets acceptPlainIl2p."}">RS ONLY</span>`
     : "";
+  const trim = ev.txTrimHz != null
+    ? `<span class="trim" title="Transmitted ${ev.txTrimHz.toFixed(1)} Hz off the channel centre, to land where this station's receiver is listening. Measured from its own frames: its transmit and receive share one oscillator, so a station heard high is listening high.">SHIFTED</span>`
+    : "";
   const who = (ev.from
     ? `<span class="from">${ev.from}</span><span class="arrow">›</span><span class="to">${ev.to || "?"}</span>`
-    : `<span class="to">unattributed</span>`) + badge + plain;
+    : `<span class="to">unattributed</span>`) + badge + plain + trim;
   const bits = [];
   bits.push(`${ev.sub}·${ev.mode}`);
   if (ev.snrDb != null) bits.push(`<i>${ev.snrDb.toFixed(1)} dB</i>`);
   if (ev.offsetHz != null) bits.push(`<i>${ev.offsetHz >= 0 ? "+" : ""}${ev.offsetHz.toFixed(0)} Hz</i>`);
+  // Ours, and a command rather than a measurement, so it is worded as an aim and not as an
+  // observation: "shifted +4 Hz", never "+4 Hz" alongside the offsets of stations we heard.
+  if (ev.txTrimHz != null) {
+    bits.push(`<i class="trimtxt">shifted ${ev.txTrimHz >= 0 ? "+" : ""}${ev.txTrimHz.toFixed(1)} Hz</i>`);
+  }
   bits.push(`${ev.lenBytes} B`);
   if (ev.corrected > 0) bits.push(`<i>fec ${ev.corrected}</i>`);
   if (ev.crc === false) bits.push(`<span class="bad">crc✗</span>`);
