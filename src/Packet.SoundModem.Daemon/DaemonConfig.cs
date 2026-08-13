@@ -597,6 +597,9 @@ public sealed class DaemonConfig
     /// <summary>Signal survey; null = signals this station cannot read go unrecorded.</summary>
     public SurveyConfig? Survey { get; set; }
 
+    /// <summary>Answering off-frequency stations on their frequency; null = measure only.</summary>
+    public FrequencyMatchingConfig? FrequencyMatching { get; set; }
+
     /// <summary>Continuous raw receive-audio capture; null = off.</summary>
     public RawCaptureConfig? RawCapture { get; set; }
 
@@ -984,4 +987,108 @@ public sealed class DaemonConfig
 
     internal const string ConfigDocUrl =
         "https://github.com/packet-net/pdn-soundmodem/blob/main/CONFIG.md";
+}
+
+/// <summary>
+/// Answering a station on the frequency its receiver is actually listening on.
+/// </summary>
+/// <remarks>
+/// <para>A rig's transmit and receive conversions share one master oscillator, so a station
+/// heard 5 Hz high is also listening 5 Hz high. Shifting our reply by the offset measured on
+/// its own frames puts our signal where its demodulator expects it. Our own reference error
+/// cancels - it is in the measurement and in the transmission with the same sign, through the
+/// same oscillator - so this needs no calibrated or GPS-locked reference, only one that does
+/// not move appreciably between hearing them and answering.</para>
+/// <para><b>The benefit is theirs, not ours.</b> This station finds them regardless: the 300
+/// baud modes run offset-diversity decoder banks. A correspondent running a fixed-centre modem
+/// with no such bank is the one that cannot hear us, which is why the correction is worth
+/// making and why it is transmit-only.</para>
+/// <para><b>Off by default.</b> It changes what goes on air, and a station whose reply lands
+/// somewhere other than the channel centre is a surprise to anyone reading the waterfall. Turn
+/// it on deliberately, having looked at what the measurements say.</para>
+/// </remarks>
+public sealed class FrequencyMatchingConfig
+{
+    /// <summary>Actually shift the transmitter. False (the default) measures and reports only.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Frames kept per station for the estimate. Default 8.</summary>
+    public int Samples { get; set; } = DefaultSamples;
+
+    /// <inheritdoc cref="Samples" />
+    public const int DefaultSamples = 8;
+
+    /// <summary>How old a frame may be and still count, in seconds. Default 600.</summary>
+    public double MaxAgeSeconds { get; set; } = DefaultMaxAgeSeconds;
+
+    /// <inheritdoc cref="MaxAgeSeconds" />
+    public const double DefaultMaxAgeSeconds = 600;
+
+    /// <summary>
+    /// Frames required before the estimate is acted on. Default 3.
+    /// </summary>
+    /// <remarks>
+    /// Low on purpose. The correction only has to hold for the exchange it is used in, so a
+    /// handful of recent frames is the right evidence; a long run would average across drift and
+    /// describe neither end of it.
+    /// </remarks>
+    public int MinSamples { get; set; } = 3;
+
+    /// <summary>
+    /// Largest spread across those frames, in Hz, that still counts as settled. Default 20.
+    /// </summary>
+    /// <remarks>
+    /// This is what separates a rig that is merely off frequency from one that is wandering.
+    /// Measured on the live 40 m station: GB7WEM-7 held 0.6 Hz of spread across 467 frames and
+    /// GB7OXF-2 held 0.7, while GB7NOT ranged over 54 Hz. The first two are worth correcting
+    /// for and the third is not.
+    /// </remarks>
+    public double MaxSpreadHz { get; set; } = 20;
+
+    /// <summary>Largest shift that will ever be applied, in Hz. Default 60.</summary>
+    /// <remarks>
+    /// A clamp on the whole idea rather than a tuning knob. The modem clamps again to its own
+    /// headroom against DC and Nyquist, so a wild estimate cannot walk the band off the end.
+    /// </remarks>
+    public double MaxTrimHz { get; set; } = 60;
+
+    /// <summary>
+    /// Fraction of the measured offset applied per step, 0 to 1. Default 0.5.
+    /// </summary>
+    /// <remarks>
+    /// Damping, for the case where the far station corrects too. Once both ends adjust, the
+    /// measured offset stops describing the oscillator difference and starts describing the
+    /// residual after both corrections; assigning it outright makes the pair oscillate, one
+    /// withdrawing its correction as the other applies it. Applying a fraction converges instead.
+    /// The same shape of mistake as two stations both rebuilding a contested slice.
+    /// </remarks>
+    public double Damping { get; set; } = 0.5;
+
+    /// <summary>
+    /// How far a station's own frequency may move, in Hz, after we start answering it off-centre
+    /// before we stop doing so. Default 10.
+    /// </summary>
+    /// <remarks>
+    /// Our transmitter cannot change what we measure of theirs, so a station whose offset shifts
+    /// once we begin correcting has moved itself: either it is correcting for us in turn, which
+    /// leaves both of us worse off than if only one had, or its reference is drifting. Neither is
+    /// worth chasing, so the correction latches off for that station and says why.
+    /// </remarks>
+    public double ChaseThresholdHz { get; set; } = 10;
+
+    /// <summary>
+    /// Destinations never worth aiming at, because they are not one station.
+    /// </summary>
+    /// <remarks>
+    /// A beacon or an ID is heard by everybody, and aiming it at one correspondent's oscillator
+    /// aims it away from every other listener. In practice these exclude themselves - we never
+    /// receive frames <em>from</em> "BEACON", so no estimate for it can exist - but saying so
+    /// makes the intent legible rather than incidental.
+    /// </remarks>
+    public static readonly string[] BroadcastDestinations =
+        ["ID", "BEACON", "CQ", "QST", "ALL", "NODES", "MAIL", "APRS", "TEST"];
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
