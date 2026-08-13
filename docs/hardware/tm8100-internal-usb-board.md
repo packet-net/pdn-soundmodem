@@ -23,7 +23,9 @@ now, and they are worth repeating because they were load-bearing:
   tap list is a test command's subset in an older numbering, not the feature set.
 
 The two notes now share the same figures and differ only in where the board lives. This one is the
-better read if you are designing copper; that one carries the dongle-side practicalities and the
+better read if you are designing copper; the CM108 note has since split into
+[wiring instructions](tm8100-cm108-interface.md) for the deployed widget and
+[extended notes](tm8100-cm108-interface-notes.md) carrying the dongle-side practicalities and the
 bench procedures.
 
 Marking as before: **DATASHEET** stated and cited, **DERIVED** computed with the arithmetic shown,
