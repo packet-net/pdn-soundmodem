@@ -129,7 +129,9 @@ moves to a different radio, redo the Bessel check before trusting the levels.
   unconnected), so Rp is the whole shunt; do not copy values from notes written for stock dongles
   with a 2k2 bias resistor.
 - **Rs from the table**, against measurement 1 below. Build with **6k8** if you have not measured
-  yet.
+  yet. The first assembly measured 455 mVrms full scale at +8 dB capture and took **1k8 at +13 dB
+  capture gain**; Rs and the capture gain are a single choice, so fix the gain too. See Measured
+  below.
 - **C1 = 4u7 non-polarised** (blocks the tap's +2.3 V offset), **C3 = 4n7** (RF bypass, pole near
   40 kHz).
 
@@ -258,6 +260,41 @@ The linearity figure is worth more than the absolute one and should be repeated 
 assembly: being a ratio, it is immune to gain calibration, and it is what confirms nothing
 compresses at 0 dBFS, which is the premise that lets full-scale digital stand in for the
 deviation ceiling.
+
+#### Receive half
+
+Signal generator on the IN pad with the scope probe on the same node, so the applied voltage
+and the resulting digital level are read together and the generator's own calibration never
+enters the answer. Both ends measure the 1 kHz component only: a least-squares sine fit on the
+scope, a Goertzel on the capture. Broadband RMS is the wrong statistic here, and using it gave
+a first reading with a 38 dB crest factor from a single transient.
+
+| | |
+|---|---|
+| Input full scale at +8.00 dB capture | **455 mVrms** |
+| Cross-check, by clipping onset | +10.0 dB of gain above that reference, against +9.7 predicted |
+| Capture control accuracy | tracks its claimed dB to 0.32 dB worst case over 25 dB |
+| **Capture gain to run** | **+13.00 dB (`Mic` capture step 25 of 35)**, AGC off |
+| **Rs at that gain** | **1k8** with Rp = 1k |
+| Level at 60% of class deviation | -12.26 dBFS, against the -12 target |
+| Clips at | about 6.15 kHz deviation |
+
+Full scale scales with the capture control, so **Rs and the capture gain are one choice, not
+two**: 270R at +8 dB, 1k8 at +13, 3k3 at +16, 8k2 at +23 all hit the same -12 dBFS. Set the gain
+explicitly at start-up, because moving it silently invalidates Rs.
+
++13 dB is chosen for robustness rather than noise. Low gain does put a larger signal into the
+codec, but the tap already carries the radio's own audio noise about 40 dB below full deviation,
+which swamps the CM108's preamp noise by roughly 35 dB at any of these settings, so that
+advantage is not real. What is real: at +8 dB the required Rs falls to 270R, the divider barely
+divides, and one more step down leaves no positive Rs at all.
+
+Note when reworking the table: the tap's **600R source impedance is in series with Rs**, so
+
+    Rs = 844.3/FS - 1600      (FS in volts)
+
+which reproduces the published rows closely (100 mV -> 6843 against 6k8, 250 mV -> 1777 against
+1k8). Omitting the 600R inflates Rs by about 600R and quietly picks the wrong row.
 
 Three cautions earned the hard way, all of which produced confident wrong numbers rather than
 obvious errors:
