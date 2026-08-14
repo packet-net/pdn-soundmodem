@@ -11,9 +11,10 @@ Nearly every figure here comes from the **TM8100/TM8200 3DK Hardware Developer's
 Manual** (Tait Electronics, March 2006, 156 pages), which is the document Tait wrote for exactly this
 purpose. Citations below are page numbers in it unless another document is named.
 
-**That manual superseded two claims in [tm8100-cm108-interface.md](tm8100-cm108-interface.md),**
-which was written from the service set before the 3DK manual was in it. Both are corrected there
-now, and they are worth repeating because they were load-bearing:
+**That manual superseded two claims in the CM108 note, whose reasoning now lives in
+[tm8100-cm108-interface-notes.md](tm8100-cm108-interface-notes.md),** written from the service set
+before the 3DK manual was in it. Both are corrected there now, and they are worth repeating because
+they were load-bearing:
 
 - It said no input-level-to-deviation figure is published anywhere. **It is published**, per tap
   point, in the 3DK manual's Table 2.7. The Bessel-null calibration is still worth doing, but as a
@@ -47,10 +48,15 @@ Marking as before: **DATASHEET** stated and cited, **DERIVED** computed with the
    |   TXD RXD       line in   line out   GPIO (PTT)      |
    +-----|---|----------|---------|----------|------------+
          |   |          |         |          |
-        18  17          2         6      one of 9..15      18-pin Micro-MaTch
+        17  18          2         6      one of 9..15      18-pin Micro-MaTch
       IOP_  IOP_   AUD_TAP_   AUD_TAP_    IOP_GPIOn
-      TXD   RXD      OUT        IN
+      RXD   TXD      OUT        IN
 ```
+
+The serial pair crosses over, as serial pairs do: the pin names are the radio's own perspective,
+with IOP_TXD in the manual's digital *output* line list and IOP_RXD in its *input* list (Tables 3.7
+and 3.2, p.71 and p.40). So the bridge's TXD lands on pin 17, IOP_RXD, and its RXD on pin 18. An
+earlier version of this diagram wired TXD to TXD, which is a dead serial port both ways.
 
 Host sees: one USB device tree, a `/dev/ttyUSB*`-class serial port, and an ALSA card. No drivers
 beyond USB CDC and USB Audio Class 1.0.
@@ -149,9 +155,11 @@ All **DATASHEET**, p.21-23 and p.91.
 **DERIVED, and confirmed by Tait's own prose.** The quoted levels are into a matched 600 ohm load,
 so a light load sees twice the voltage: **1.2 Vp-p for 3 kHz deviation** open circuit. The p.91 text
 states the full-scale case outright, "full scale output level is nominally 4Vp-p with no load", so
-the doubling is not an inference on the part that matters most. At the 1.5 kHz deviation this modem
-is expected to run (60 % of narrowband's 2.5 kHz, which is what Tait's own 1200 baud modem uses)
-that is **0.6 Vp-p, or 212 mVrms** open circuit.
+the doubling is not an inference on the part that matters most. On receive the level is the far
+station's deviation, not ours: a peer at 100 % of narrowband class (2.5 kHz, which is what the
+transmit section below calibrates this board to) delivers **1.0 Vp-p, or 354 mVrms** open circuit,
+and one at the 60 % that Tait's own 1200 baud modem defaults to (1.5 kHz) delivers 0.6 Vp-p,
+212 mVrms.
 
 **R1 clips at 10 kHz of deviation** (2.0 Vp-p into 600 ohm at 0.20 Vp-p per kHz), and the narrowband
 IF is 7.8 kHz wide, so nothing that reaches this tap can overload it. **DERIVED.**
@@ -185,17 +193,19 @@ the radio, not this board, then decides the drive.
 ### Design
 
 ```
-  pin 2                    Rs                        codec
-  AUD_TAP_OUT     C1     (below)                    line in
-  600R, +2.3V DC   ||     ____                          |
-      o-----------||-----|____|-----+------------------o
-                  1u                |
-                                   [ ] Rp
-                                    |
-                                   === C2 1n   (RF, to the screen ground)
-                                    |
-  pin 3 AGND o----------------------+------------------o codec ground
+  pin 2                     Rs                            codec
+  AUD_TAP_OUT     C1       1k0                           line in
+  600R, +2.3V DC   ||      ____
+      o-----------||------|____|-----+-----------+-----------o
+                  10u                |           |
+                                    [ ] Rp      === C2 1n   (RF, to the screen ground)
+                                     |  3k9      |
+  pin 3 AGND o-----------------------+-----------+-----------o codec ground
 ```
+
+Rp and C2 are both shunt legs from the same node to ground, in parallel; an earlier version of this
+diagram stacked them into one string, which reads as Rp in series with C2 and is a divider that
+stops dividing below radio frequencies. Built that way the codec sees the tap barely attenuated.
 
 **Use a line input, not a microphone input.** More headroom, flatter, quieter, no bias resistor
 fighting the divider, and no software boost waiting to be left on. This is the single biggest
@@ -204,18 +214,30 @@ advantage of a custom board over a dongle.
 **Size Rs/Rp so the radio's full scale lands on the codec's full scale**, so both clip in the same
 place and no headroom is wasted. **MEASURE** the codec's actual full-scale input first; for a
 1 Vrms (2.83 Vp-p) line input the required attenuation is 4.0 to 2.83 Vp-p, **-3.0 dB DERIVED**,
-which is Rs = 10k with Rp = 22k. The load on a 600 ohm source is then 32k, so insertion loss is
-negligible and the tap is barely loaded.
+which against the tap's 600 ohm source is **Rs = 1k0 with Rp = 3k9**: 3.9k over 5.5k is -3.0 dB on
+the nose. The tap sees a 4.9k load, eight times the 600 ohm Tait's own crossband cable presents, so
+the loading is comfortable and already inside the ratio.
+
+**Keep this divider low impedance, for the same reason as the transmit one.** The codec's line-in
+input impedance sits across Rp whether the design acknowledges it or not. From this divider's
+1.1 kohm output impedance **DERIVED**, a 10 kohm line input moves the level by under a decibel, in
+the safe direction. An earlier version of this note used 10k/22k, whose 7.2 kohm output impedance
+hands that same input nearly 5 dB of error against numbers derived here to tenths, and quietly
+breaks the full-scale alignment this section exists to set. Measure the codec's input impedance
+alongside its full scale, or accept the decibel.
 
 Know where that puts the signal: since R1's full scale is 10 kHz of deviation, aligning the two
-full scales lands **1.5 kHz of deviation at about -17 dBFS** and 2.5 kHz at -12.5 dBFS **DERIVED**.
-That is a quiet-looking waveform on a level meter and it is the correct answer on a 16-bit path;
-the alternative, gaining it up to sit nearer full scale, buys nothing but a codec that clips before
-the radio does.
+full scales lands a peer at **100% of class deviation (2.5 kHz) at about -12 dBFS**, and one at
+Tait's 1200 baud default of 60% at -16.5 dBFS **DERIVED**. That is a quiet-looking waveform on a
+level meter and it is the correct answer on a 16-bit path; the alternative, gaining it up to sit
+nearer full scale, buys nothing but a codec that clips before the radio does.
 
-C1 at 1 uF into 32k is a **5 Hz** corner **DERIVED**, comfortably below anything the modem uses and
-below the tap's own behaviour. Do not economise here: a 100 nF part would put the corner at 50 Hz,
-which is fine for a 300 Hz to 3 kHz mode and not fine for a wideband one off R1.
+C1 at 10 uF into the divider's 5.5k series loop is a **3 Hz** corner **DERIVED**, comfortably below
+anything the modem uses and below the tap's own behaviour. Do not economise here: a 1 uF part would
+put the corner at 29 Hz, which is fine for a 300 Hz to 3 kHz mode and marginal for a wideband one
+off R1. Non-polarised or film, since it sits across the tap's +2.3 V pedestal. C2 is RF hygiene at
+the divider node: 1 nF against the node's 1.1 kohm is a pole at **141 kHz DERIVED**, far above
+anything the modem uses.
 
 ## Transmit path: AUD_TAP_IN at tap T13
 
@@ -282,16 +304,17 @@ board's responsibility.
 ### Design
 
 ```
-  codec                          Rt 3k0                     pin 6
-  line out          C3            ____          C4        AUD_TAP_IN
-      o------------||------------|____|----+----||-----------o
-                  10u                      |    1u        100k, +1.5V bias
-                                          [ ] Rb 1k
-                                           |
-                                          === C5 1n
-                                           |
-  codec gnd o------------------------------+--------------------o pin 3 AGND
+  codec                          Rt 3k0                          pin 6
+  line out          C3            ____                C4       AUD_TAP_IN
+      o------------||------------|____|----+-----+----||----------o
+                  10u                      |     |    1u       100k, +1.5V bias
+                                          [ ] Rb === C5
+                                           |  1k  |   1n
+  codec gnd o------------------------------+-----+----------------o pin 3 AGND
 ```
+
+As on the receive side, Rb and C5 are parallel shunt legs from the divider node, and both sit on
+the codec side of C4, so neither ever loads the tap's 1.5 V bias.
 
 **Set Rt/Rb so that a full-scale digital sample produces exactly 100 % of class deviation.** For
 narrowband that is 2.5 kHz, which is 0.725 Vp-p **DERIVED**. From a 1 Vrms (2.83 Vp-p) codec output
@@ -507,10 +530,10 @@ Treatment, in order of effect:
 3. **Pi filter on VBUS at the entry**: 1 uF and 100 nF, a ferrite bead of about 600 ohm at 100 MHz
    rated for the current, then 100 nF. Every filter ground goes to the same bond point as the shield.
 4. **Screen the digital section** and keep the codec's analogue pins, both audio pairs and the control
-   lines on the quiet side. Filter each line where it crosses: 1 nF on the audio pairs (265 kHz
-   corner against the 600 ohm tap source, 212 kHz against the 750 ohm transmit divider, both
-   **DERIVED**), 10 nF on PTT, and **470 pF on serial** - at 28800 baud a 10 nF part would round the
-   edges badly.
+   lines on the quiet side. Filter each line where it crosses: 1 nF on the audio pairs (141 kHz
+   corner against the receive divider's 1.1 kohm, 212 kHz against the 750 ohm transmit divider,
+   both **DERIVED**), 10 nF on PTT, and **470 pF on serial** - at 28800 baud a 10 nF part would
+   round the edges badly.
 5. Solid ground plane under the digital section, guarded and stitched crystal, and no audio routed
    under the hub.
 
@@ -603,7 +626,8 @@ A **624 Hz** tone nulls at 1.5 kHz deviation and **1040 Hz** at 2.5 kHz. If the 
 believe neither until you know why.
 
 **Receive level and response.** Feed the radio a signal generator at 1 kHz, 3 kHz deviation, around
--80 dBm so no AGC is acting, and confirm 1.2 Vp-p open circuit at pin 2. Then sweep the modulation
+-80 dBm so no AGC is acting, and confirm 1.2 Vp-p at pin 2 with the divider disconnected; through
+the fitted 4.9k divider the same signal reads about 1 dB less. Then sweep the modulation
 frequency and compare against the R1 plot in Table 2.10 - if it rolls off at 3 kHz, the tap is not
 R1 and something is programmed differently from what you think.
 
@@ -624,8 +648,10 @@ of it is entangled with a transmitter.
 
 ## Open items
 
-- **The codec's actual full-scale input and output swing**, which sets both dividers. Two
-  measurements, and they are the only ones the design waits on.
+- **The codec's actual full-scale input and output swing, and its line-in input impedance**, which
+  set both dividers. Three measurements, and they are the only ones the design waits on. The input
+  impedance is the least of them now the receive divider is low impedance: 10 kohm would cost under
+  a decibel, in the safe direction.
 - **Which USB socket, if any, fits the height zones.** 10.7 mm at best and 8.2 mm of that already
   spent on the Micro-MaTch connector; a pigtail through the 7.5 mm round hole may be the answer.
 - **Whether the chosen codec supports a configuration EEPROM** for a USB serial number. Decides
