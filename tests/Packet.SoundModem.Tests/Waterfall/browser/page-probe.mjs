@@ -193,8 +193,21 @@ const run = (expr) => { try { return vm.runInContext(expr, sandbox); } catch (e)
 const thrown = [];
 process.on("uncaughtException", e => thrown.push(String(e)));
 
-await wait(1500);
-const connected = run("!!(ws && ws.readyState === 1)") === true && run("!!cfg") === true;
+// Waited for rather than slept through. A fixed pause is a guess about how quickly a machine
+// completes a handshake, and on a box running the rest of the suite alongside this it is
+// sometimes wrong - which showed up as a page that had simply not connected yet, and as an audio
+// window that had already half elapsed before the socket was open.
+const untilTrue = async (predicate, ms) => {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (predicate() === true) return true;
+    await wait(50);
+  }
+  return false;
+};
+const until = (expr, ms) => untilTrue(() => run(expr) === true, ms);
+
+const connected = await until("!!(ws && ws.readyState === 1 && cfg)", 20000);
 
 // The modem chips as the handshake left them - nothing driven by hand. What the server had to say
 // about its KISS ports when this browser arrived has to reach the labels, or a page opened at any
@@ -205,7 +218,15 @@ const chipsOnArrival = chips();
 let clickError = null;
 try { vm.runInContext(`document.getElementById("listen").click()`, sandbox); }
 catch (e) { clickError = String(e); }
-await wait(2500);
+// A second of audio is 25 blocks at the 40 ms the server sends; wait for enough of them to prove
+// a stream rather than a first packet, and give a busy machine longer to produce them than a
+// fixed window would - it returns as soon as they are there. Only one of this suite's runs feeds
+// the channel any audio at all, so a run with nothing playing after the first couple of seconds
+// stops waiting rather than spending the whole budget proving silence.
+const quietBy = Date.now() + 2500;
+await untilTrue(
+  () => { const p = sandbox.__stats().played; return p > 25 || (p === 0 && Date.now() > quietBy); },
+  10000);
 const whilePlaying = sandbox.__stats();
 const listening = run("audioOn()");
 const label = run(`document.getElementById("listen").textContent`);
