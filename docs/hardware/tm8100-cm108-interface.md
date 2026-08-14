@@ -148,18 +148,54 @@ The target is -12 dBFS at 60% of class deviation, computed from R1's published 0
 
 ## Parts
 
-| Ref | Value | Notes |
+Values are those measured for the first assembly. Rt comes from the transmit table against your
+own measurement, and **Rs is paired with a capture gain**, so neither is a free choice: see
+Measured above.
+
+| Ref | Value | Type | Tolerance | Rating | Notes |
+|---|---|---|---|---|---|
+| Rt | **3k3** | metal film | **1%** | 0.125 W | transmit series; 3k0 instead if trimming on the Bessel null |
+| Rb | **1k** | metal film | **1%** | 0.125 W | transmit shunt |
+| Rs | **1k8** | metal film | 1% | 0.125 W | receive series; paired with +13.00 dB capture gain |
+| Rp | **1k** | metal film | 1% | 0.125 W | receive shunt; the whole shunt, there is no bias network |
+| C4 | 1u | film (PET or PP), or bipolar electrolytic | 10% or 20% | 50 V | radio side of the transmit divider; Tait's own 10u also works |
+| C1 | 4u7 | non-polarised: bipolar electrolytic or film | 10% or 20% | >= 16 V | receive DC block, sits across the tap's +2.3 V |
+| C3 | 4n7 | ceramic, C0G/NP0 preferred, X7R acceptable | 10% or 20% | 50 V | RF bypass at the receive shunt |
+| socket | 9-way D-sub, female | | | | the assembly's radio port, wired as a NinoTNC's |
+| plug | 15-way standard-density D-sub, male | | | | radio end of the cable; backshell within 41 x 18 mm |
+| cable | screened, 2 pairs plus PTT | | | | DE-9 plug to 15-way plug; screen to the radio backshell and pin 15 |
+| R(gate) | 100k | any | 5% | any | **optional, fitted to the widget not this assembly**: BSS138 gate to source, see Widget modifications |
+
+### Why those tolerances
+
+**1% on Rt and Rb is required, and it is the only place tolerance is tight.** The transmit
+divider's ratio moves 0.767% per 1% of error in either resistor, so 1% parts give at worst
+1.5%, or 0.13 dB. The margin between a full-scale sine and the deviation ceiling is only about
+5.9%, i.e. 0.50 dB, so 1% parts leave 0.37 dB in hand while 5% parts (0.64 dB worst case) can
+put the assembly **over the ceiling on their own**. Metal film rather than carbon also keeps the
+temperature coefficient near 50 ppm/K, so a hot vehicle does not move what the Bessel null set.
+
+**1% on Rs and Rp is convenience, not necessity.** The receive divider moves about 1.2% worst
+case with 1% parts and 6.2% with 5% parts, which is 0.52 dB against 12.26 dB of headroom to
+clipping. 5% would work; 1% is specified only so the whole build uses one type of resistor.
+
+**Capacitor tolerance does not matter here; the dielectric does.** All three set poles far
+outside the passband, and even 20% parts move them by 20%:
+
+| | pole | against |
 |---|---|---|
-| socket | 9-way D-sub, female | the assembly's radio port, wired as a NinoTNC's |
-| plug | 15-way standard-density D-sub, male | radio end of the cable; backshell within 41 x 18 mm |
-| Rt | 3k0, 1% (or from the transmit table) | transmit series; trim from the Bessel null |
-| Rb | 1k, 1% | transmit shunt |
-| C4 | 1u film or bipolar | radio side of the transmit divider |
-| C1 | 4u7 non-polarised, >= 16 V | receive DC block |
-| Rs | 6k8, 1% (or from the table) | receive series |
-| Rp | 1k, 1% | receive shunt |
-| C3 | 4n7 | RF bypass at the receive shunt |
-| cable | screened, 2 pairs plus PTT, DE-9 plug to 15-way plug | screen to the radio backshell and pin 15 |
+| C4 (1u) | about 15 Hz | Rt \|\| Rb = 767R plus the tap input |
+| C1 (4u7) | about 12 Hz | Rs + Rp = 2k8 |
+| C3 (4n7) | about 48 kHz | (600R + Rs) \|\| Rp = 706R |
+
+What does matter is **not using a high-K ceramic for C4 or C1**. A 1u or 4u7 in X7R has a strong
+voltage coefficient and would add distortion to the transmit audio; Y5V additionally loses much
+of its capacitance with bias and temperature. Film or bipolar electrolytic has neither problem.
+C3 is small enough and far enough out of band that ceramic is right for it, C0G by preference.
+
+**Power rating is a formality.** The transmit divider dissipates about 0.2 mW at full scale and
+the receive divider about 20 uW at full class deviation, so the smallest part you can handle is
+adequate; 0.125 W is simply what is easy to buy.
 
 ## Program the radio
 
