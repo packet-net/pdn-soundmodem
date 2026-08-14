@@ -2293,6 +2293,31 @@ while (!cancellation.IsCancellationRequested)
 
     if (deadFeedWatch is not null && deadFeedWatch.Observe(floatBuffer.AsSpan(0, got)))
     {
+        // A station that has deliberately given up its slice is silent on purpose, and
+        // restarting it is the one response guaranteed to be wrong. Measured on the live
+        // 40 m station, 2026-08-14: the contention policy stood down at 07:07:18 and this
+        // watch restarted the process at 07:07:45, which took a fresh slice and resumed
+        // exactly the fight the stand-down existed to end. Under real contention that is a
+        // loop - create, lose, stand down, thirty seconds of silence, restart - and this
+        // message already warned it would be ("a deliberately muted DAX stream
+        // restart-loops this way"), without knowing that the mute could be our own doing.
+        //
+        // The watch is for a feed that died WITHOUT explanation. This one has one, it is
+        // already in the journal above, and the operator instruction there is to stop the
+        // other client and restart the service by hand.
+        if (flex?.Station.Health == M0LTE.Flex.FlexStationHealth.Contended)
+        {
+            // Said once, not every block: Observe latches after firing and re-arms only on
+            // live audio, so this reaches here once per silent spell. Said at all because a
+            // journal that goes quiet without explaining why is how the original fault hid
+            // for six days.
+            Console.Error.WriteLine(
+                "receive feed silent because this station stood down from a contested slice, "
+                + "which is deliberate - not restarting. Stop whatever else is claiming the "
+                + "radio and restart this service.");
+            continue;
+        }
+
         // Restart-to-recover: both real feed deaths were fixed by a process restart and
         // nothing less is proven, so take the orderly shutdown and let the unit rebuild
         // the device session from scratch. If this line repeats every threshold the feed
