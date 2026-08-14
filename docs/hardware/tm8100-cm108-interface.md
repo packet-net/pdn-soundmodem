@@ -116,7 +116,8 @@ moves to a different radio, redo the Bessel check before trusting the levels.
   2.5 kHz at T13's published 0.87 Vp-p per 3 kHz: **full-scale digital is the deviation ceiling**,
   and normal drive sits below it in software. Confirm with the Bessel null below. If you will
   never measure the null, fit the next Rt step up (3k3 on the 1 Vrms row): the worst-case radio is
-  then exactly legal and a typical one gives up 0.9 dB.
+  then exactly legal and a typical one gives up 0.9 dB. The first assembly measured about
+  1.0 Vrms and took 3k3 on exactly that reasoning; see Measured below.
 - **C4 = 1u film or bipolar** (Tait's own suggestion of 10 uF also works). It sits across the
   tap's 1.5 V bias, so nothing leaky.
 - The divider's 750R source impedance puts the pole against the connector's internal 10 nF at
@@ -222,6 +223,55 @@ sine, and raise its digital level while watching the carrier on an SDR. The carr
 arrives early, raise Rt one E24 step (each step is about 0.8 dB); if it never arrives, lower Rt
 one step. While you are there, confirm deviation keeps following level right up to the null; if
 it stops following, the radio is limiting and the tap is not programmed to T13.
+
+### Measured: first assembly, 2026-08-14
+
+Transmit half of measurement 1, on the widget from `tomwardill/cm108radiowidget` (C-Media
+0d8c:0012, netlist in [cm108-widget-netlist.md](cm108-widget-netlist.md)), host `radio2`.
+Measured on a Hantek DSO2D15 driven over USBTMC, capturing the waveform and fitting a sine
+rather than reading the screen.
+
+| | |
+|---|---|
+| CM108 full scale, OUT pad open circuit | **1.00 Vrms, +/- 3%** (see below) |
+| Linearity, 0 to -26 dBFS | +/- 0.06 dB, no compression at full scale |
+| Rt to fit | **3k3** with Rb = 1k, or 3k0 if you will trim on the Bessel null |
+| Peak deviation at 0 dBFS with 3k3 | about 2360 Hz |
+
+Mixer state it was calibrated at, which the levels only hold for: card `hw:3,0` addressed
+directly at 48 kHz S16_LE with no plug layer and no software volume; `Speaker` 37/37 = 0.00 dB;
+`Mic` playback (sidetone) muted; `Auto Gain Control` off; `Mic` capture 20/35 = +8.00 dB.
+
+**Why 3k3 rather than the 1.0 Vrms row's 3k0.** Rt = 3k0 stays under the 0.725 Vp-p ceiling
+only while full scale is at or below 1.0253 Vrms, and the measurement sits right on that
+boundary. Three sound readings gave 0.997, 1.030 and 1.041 Vrms; two of the three are over it.
+The spread is instrumental, not the widget: repeated captures hold to 0.01 dB within a session,
+but the scope's own vertical ranges disagree by 0.18 dB and an 8-bit scope's gain accuracy is
+about 3% anyway. A voltage measurement therefore cannot resolve which side of this boundary the
+board is on. 3k3 is under the ceiling for every reading taken and costs about 0.6 dB.
+
+The Bessel null (measurement 2) is the way to settle it, because it measures deviation directly
+and does not care about the scope's calibration. Fit 3k0 and check the null if you want the last
+0.6 dB; fit 3k3 and skip it otherwise.
+
+The linearity figure is worth more than the absolute one and should be repeated on any new
+assembly: being a ratio, it is immune to gain calibration, and it is what confirms nothing
+compresses at 0 dBFS, which is the premise that lets full-scale digital stand in for the
+deviation ceiling.
+
+Three cautions earned the hard way, all of which produced confident wrong numbers rather than
+obvious errors:
+
+- Levels taken through a crocodile clip on a board edge were low and drifting. The tell was the
+  crest factor: Vp-p sat at 2.97 to 3.16 times Vrms instead of 2.828. Check that ratio before
+  believing any reading, and solder the joint.
+- A tone looped from a WAV file leaves a gap at each restart that pulls an RMS reading low. Play
+  one continuous stream.
+- One session read 1.4 dB low, stably and with a ladder that sloped, which looked exactly like a
+  bad joint but was not: nothing was touched and it returned to normal by itself. It has not
+  recurred across a 12 minute watch. Treat a single session's absolute figure as provisional
+  until a second session agrees; the ladder's linearity is the check that tells you which
+  readings to trust.
 
 ## Widget modifications
 
