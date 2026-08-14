@@ -164,7 +164,9 @@ Measured above.
 | socket | 9-way D-sub, female | | | | the assembly's radio port, wired as a NinoTNC's |
 | plug | 15-way standard-density D-sub, male | | | | radio end of the cable; backshell within 41 x 18 mm |
 | cable | screened, 2 pairs plus PTT | | | | DE-9 plug to 15-way plug; screen to the radio backshell and pin 15 |
-| R(gate) | 100k | any | 5% | any | **optional, fitted to the widget not this assembly**: BSS138 gate to source, see Widget modifications |
+
+That is the whole assembly. The one other component worth buying is a 100k for the widget
+itself, which is a modification to that board and not part of this one: see Widget modifications.
 
 ### Why those tolerances
 
@@ -353,8 +355,14 @@ bias network (its absence is what makes the receive divider clean) and do not ad
 transistor (the BSS138 on board is that transistor; doubling it would invert the logic).
 
 One cheap improvement worth making: **100k from Q1's gate to ground** (tack it across the BSS138
-gate and source legs). GPIO3 floats briefly while USB enumerates, and the pull-down removes any
-chance of a keying glitch at plug-in.
+gate and source legs). Any type, 5%, any rating; it carries no current and its value is not
+critical, anything from about 47k to 220k does the job.
+
+This is worth doing rather than optional-sounding. The netlist confirms Q1's gate net contains
+only the gate itself and the CM108's GPIO3, with nothing else on it, so until the driver has
+configured that pin the gate is genuinely floating. A floating BSS138 gate can sit above
+threshold, and the failure mode is the transmitter keying itself the moment the widget is
+plugged in.
 
 ## Grounding
 
