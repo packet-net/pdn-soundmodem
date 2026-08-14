@@ -73,6 +73,14 @@ public sealed class KissTcpServer : IAsyncDisposable
     /// <summary>The modem this server is dedicated to, or null when it is multiplexed.</summary>
     public int? DedicatedSubChannel => _dedicatedSubChannel;
 
+    /// <summary>How many hosts hold a session on this port right now.</summary>
+    /// <remarks>
+    /// The same number <see cref="KissClientEvent.Clients"/> carries, askable without waiting for
+    /// an event: a display coming up after the sessions did needs the current state, not the next
+    /// change to it.
+    /// </remarks>
+    public int ClientCount => _clients.Count;
+
     /// <summary>A host opened a KISS session on this port.</summary>
     /// <remarks>
     /// Who is attached is operational information a station keeps no other record of: a node that

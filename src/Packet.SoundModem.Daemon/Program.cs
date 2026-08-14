@@ -1417,15 +1417,44 @@ using var sigterm = System.Runtime.InteropServices.PosixSignalRegistration.Creat
         cancellation.Cancel();
     });
 
+var kissServers = new List<KissTcpServer>();
+
+// The same question the journal lines below answer, as state rather than as events: which ports
+// have a host on them right now, onto the waterfall's modem labels. A snapshot of every port each
+// time one changes - the server drops it when it says nothing new, and a snapshot cannot leave
+// the page holding a count that a missed event would have corrected.
+void PublishHostPorts()
+{
+    if (waterfallServer is null)
+    {
+        return;
+    }
+
+    var ports = new List<Packet.SoundModem.Waterfall.HostPortStatus>(kissServers.Count);
+    foreach (KissTcpServer server in kissServers)
+    {
+        ports.Add(new Packet.SoundModem.Waterfall.HostPortStatus(
+            server.LocalPort, server.DedicatedSubChannel, server.ClientCount));
+    }
+
+    waterfallServer.SetHostPorts(ports);
+}
+
 // Who is attached to a KISS port, in the journal. A host that quietly drops its TCP session
 // stops passing traffic, and from the modem's side that is indistinguishable from a quiet band -
 // so the attach and the loss both get a line, and the loss carries its reason where it had one.
 void WatchClients(KissTcpServer server)
 {
     server.ClientConnected += e =>
+    {
         Console.WriteLine(ActivityLog.ClientConnected(server.LocalPort, server.DedicatedSubChannel, e));
+        PublishHostPorts();
+    };
     server.ClientDisconnected += e =>
+    {
         Console.WriteLine(ActivityLog.ClientDisconnected(server.LocalPort, server.DedicatedSubChannel, e));
+        PublishHostPorts();
+    };
     server.AcceptFailed += why => Console.Error.WriteLine(
         $"kiss[{server.LocalPort}] accept failed: {why} - listening continues");
 
@@ -1436,7 +1465,6 @@ void WatchClients(KissTcpServer server)
         : $"modem {e.SubChannel}: SETHW ignored - {e.Description}");
 }
 
-var kissServers = new List<KissTcpServer>();
 // KISS serves the packet modems, so it starts whenever there are any - ARDOP sharing the
 // channel is no longer a reason to withhold it. (It was, when an ARDOP channel carried nothing
 // else; gating on the old top-level "ardop" setting would now silently leave the packet modems
@@ -1474,6 +1502,11 @@ if (modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
             $"kiss tcp: {shown}:{dedicated.LocalPort} (modem {modemConfig.SubChannel} "
             + $"{modemConfig.Mode} only, as nibble 0)");
     }
+
+    // The opening state, once every port is up: no host attached yet, or - if a node beat the
+    // display to it - however many already are. Without this the page would show nothing about
+    // attachment until the first connect or disconnect, which on a settled station is never.
+    PublishHostPorts();
 
     if (channel.ReceiveOnlyReason is not null)
     {
@@ -1954,17 +1987,13 @@ else if (deviceIsFlex)
                 double watts = M0LTE.Flex.FlexMeters.DbmToWatts(reading.Value);
                 if (watts < TransmitReadoutFloorWatts)
                 {
-                    waterfallServer.SetTransmitStatus(null);
+                    // Key-up: the display averages what it was given and holds that average,
+                    // because a packet burst is over before an operator can read a live figure.
+                    waterfallServer.SetTransmitReading(null, null);
                     return;
                 }
 
-                // Rounded, because the readout updates many times a second and a digit that
-                // never settles is harder to read than one that does.
-                double? swr = txMeters.SwrFromPowers();
-                string reading_ = swr is double s && !double.IsInfinity(s)
-                    ? $"TX {watts:F1} W, SWR {s:F1}"
-                    : $"TX {watts:F1} W";
-                waterfallServer.SetTransmitStatus(reading_);
+                waterfallServer.SetTransmitReading(watts, txMeters.SwrFromPowers());
             };
         }
         catch (Exception e) when (e is M0LTE.Flex.FlexProtocolException or IOException)

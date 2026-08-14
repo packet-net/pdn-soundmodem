@@ -717,6 +717,22 @@ the page. The backlog is listed, never tagged onto the waterfall: those frames h
 the scroll on screen began and belong to no burst on it. Reconnecting rebuilds the panel from the
 log rather than stacking a second copy of the same frames.
 
+**The transmit readout holds the last burst.** On a radio that reports its meters (a Flex), the
+header carries forward power and SWR. While the transmitter is up the figures are live and the
+readout is red; at key-up they are replaced by the **average over that transmission** and the
+readout goes neutral, labelled `Last TX` with the time it was taken. Nothing clears it until the
+next transmission. Packet bursts are a fraction of a second and the gaps between them are minutes,
+so a readout that existed only during the keyup was one nobody ever managed to read - and holding
+figures without saying they are held would be worse, which is why the state is said in words as
+well as in colour. An SWR of 2.0 or more is flagged in either state.
+
+**Each modem's label says whether a host is attached.** The chips under the header carry the KISS
+attachment state - `1 host`, `2 hosts` or `no host` - covering both that modem's dedicated port
+and the multiplexed one, since either can reach it; the tooltip breaks it down by port. A node
+that quietly drops its TCP session stops passing traffic, and from the modem's side that is
+indistinguishable from a band that went quiet: the journal says so once, at the moment it happens,
+and then scrolls away. This follows clients in and out live.
+
 **Your own frames are listed too**, in the decoded-frames panel, marked **TX** and styled apart
 so a transmission can never be misread as a station heard. The panel was a record of half the
 channel until then: everything heard, nothing sent, so an operator watching their own beacon go

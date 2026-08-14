@@ -116,6 +116,18 @@ public sealed record LoggedFrame(
 /// </param>
 public sealed record DeclaredBand(int SubChannel, string Mode, double CentreHz, double? BandwidthHz);
 
+/// <summary>
+/// One host-facing KISS port and how many hosts hold a session on it, for the page's per-modem
+/// attachment indicator.
+/// </summary>
+/// <param name="Port">The TCP port it listens on.</param>
+/// <param name="SubChannel">
+/// The one modem it serves, or null for the multiplexed port (which reaches every modem, by
+/// nibble). The page uses this to decide which modem labels a session on this port lights up.
+/// </param>
+/// <param name="Clients">Hosts currently attached.</param>
+public readonly record struct HostPortStatus(int Port, int? SubChannel, int Clients);
+
 /// <summary>One modem's display band, measured off its own modulator at start-up.</summary>
 /// <param name="SubChannel">KISS sub-channel.</param>
 /// <param name="Mode">Mode name.</param>
@@ -189,12 +201,29 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
     }
     private WaterfallSource? _source;
-    private string? _transmitStatus;
     private byte[]? _surveyMessage;
+    private byte[]? _hostPortsMessage;
     private string _surveyDirectory = "";
     private volatile bool _keyed;
     private byte[] _configMessage = [];
     private Task? _acceptLoop;
+
+    // State a browser is handed on arrival and told about on every change: the transmit readout
+    // and who is attached to which KISS port. Both are set from other threads (the radio's status
+    // thread, the KISS accept loop) while a browser is connecting on its own, so both the update
+    // and the connect handshake hold this - taken before _clientsLock, never after, so that a
+    // change either lands in the snapshot a new client is given or is broadcast to it, and never
+    // both or neither.
+    private readonly object _stateLock = new();
+
+    // The transmission being metered: what has been reported since the transmitter came up, so
+    // that key-up can leave an average behind rather than whichever instantaneous sample happened
+    // to be last.
+    private double _transmitWattsSum;
+    private int _transmitWattsCount;
+    private double _transmitSwrSum;
+    private int _transmitSwrCount;
+    private byte[]? _transmitMessage;
 
     /// <summary>Creates a server for <paramref name="channel"/>'s audio on
     /// <paramref name="port"/>.</summary>
@@ -224,24 +253,124 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     public string Url { get; }
 
     /// <summary>
-    /// What the transmitter is doing right now - forward power and SWR - or null when it is not
-    /// keyed. Shown next to the radio status and cleared on key-up.
+    /// A transmit meter sample - forward power in watts and SWR - or <c>(null, null)</c> for a
+    /// transmitter that is not keyed.
+    /// </summary>
+    /// <param name="watts">Forward power now, or null when the transmitter is down.</param>
+    /// <param name="swr">SWR now, where the radio reports one; null or non-finite is "unknown".</param>
+    /// <remarks>
+    /// <para>Called on every meter update while keyed, and once with nulls at key-up. Keyed
+    /// samples go straight out (rounded, and only when the rounded reading changes - the meters
+    /// update many times a second). At key-up the samples since key-down are averaged and that
+    /// average is what stays on the page, stamped with the time, until the next transmission
+    /// replaces it.</para>
+    /// <para>Retained rather than cleared because a packet burst is a fraction of a second and
+    /// gaps between them are minutes: a readout that only existed during the keyup was one an
+    /// operator could not read. The page says which state it is showing - live or last - so a
+    /// held reading can never be mistaken for a transmitter that is still up.</para>
+    /// <para>Separate from <see cref="SetRadioStatus"/> because it changes on every keyup rather
+    /// than once in a session.</para>
+    /// </remarks>
+    public void SetTransmitReading(double? watts, double? swr)
+    {
+        byte[] message;
+        lock (_stateLock)
+        {
+            if (watts is double keyed && double.IsFinite(keyed))
+            {
+                _transmitWattsSum += keyed;
+                _transmitWattsCount++;
+                if (swr is double s && double.IsFinite(s))
+                {
+                    _transmitSwrSum += s;
+                    _transmitSwrCount++;
+                }
+
+                message = TransmitMessage(true, keyed, swr, null);
+            }
+            else if (_transmitWattsCount > 0)
+            {
+                double averageWatts = _transmitWattsSum / _transmitWattsCount;
+                double? averageSwr = _transmitSwrCount > 0 ? _transmitSwrSum / _transmitSwrCount : null;
+                _transmitWattsSum = 0;
+                _transmitWattsCount = 0;
+                _transmitSwrSum = 0;
+                _transmitSwrCount = 0;
+                message = TransmitMessage(
+                    false, averageWatts, averageSwr, _options.TimeProvider.GetUtcNow());
+            }
+            else
+            {
+                // Unkeyed and nothing to summarise: an idle transmitter reporting nothing, over
+                // and over. Whatever the last transmission left on the page stands.
+                return;
+            }
+
+            if (_transmitMessage is { } previous && previous.AsSpan().SequenceEqual(message))
+            {
+                return;
+            }
+
+            _transmitMessage = message;
+            // Inside the lock: two meter samples racing must reach the page in the order they
+            // were taken, or a keyed reading can land after the key-up that summarised it.
+            Broadcast(WebSocketMessageType.Text, message);
+        }
+    }
+
+    /// <summary>One transmit readout on the wire: live sample or retained average.</summary>
+    private static byte[] TransmitMessage(bool keyed, double watts, double? swr, DateTimeOffset? at) =>
+        JsonSerializer.SerializeToUtf8Bytes(
+            new
+            {
+                type = "tx",
+                keyed,
+                // Rounded here rather than on the page: it is what makes an unchanged reading
+                // identical to the last one, which is what keeps the meters off the socket.
+                watts = Math.Round(watts, 1),
+                swr = swr is double s && double.IsFinite(s) ? Math.Round(s, 1) : (double?)null,
+                at,
+            },
+            Json);
+
+    /// <summary>
+    /// The host-facing KISS ports the station serves, and how many hosts hold a session on each.
     /// </summary>
     /// <remarks>
-    /// Separate from <see cref="SetRadioStatus"/> because it changes on every keyup rather than
-    /// once in a session, and because an empty transmit status is the normal state rather than a
-    /// missing reading.
+    /// A node that stops passing traffic because its TCP session quietly went away looks, from
+    /// the modem's side, exactly like a band that went quiet - and the journal line saying so
+    /// scrolled past hours ago. On the page it is a state rather than an event: every modem's
+    /// label says whether anything is attached to a port that reaches it.
     /// </remarks>
-    public void SetTransmitStatus(string? status)
+    /// <param name="ports">Every port, whatever its client count; a snapshot, not a delta.</param>
+    public void SetHostPorts(IReadOnlyList<HostPortStatus> ports)
     {
-        if (status == _transmitStatus)
-        {
-            return;
-        }
+        ArgumentNullException.ThrowIfNull(ports);
+        byte[] message = JsonSerializer.SerializeToUtf8Bytes(
+            new
+            {
+                type = "hosts",
+                ports = ports.OrderBy(p => p.Port).Select(p => new
+                {
+                    port = p.Port,
+                    sub = p.SubChannel,
+                    clients = p.Clients,
+                }),
+            },
+            Json);
 
-        _transmitStatus = status;
-        Broadcast(WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(
-            new { type = "tx", status }, Json));
+        lock (_stateLock)
+        {
+            if (_hostPortsMessage is { } previous && previous.AsSpan().SequenceEqual(message))
+            {
+                return;
+            }
+
+            _hostPortsMessage = message;
+            // Inside the lock, as for the transmit readout: a connect and a disconnect racing
+            // must not leave the page holding the older of the two snapshots.
+            Broadcast(WebSocketMessageType.Text, message);
+        }
     }
 
     /// <summary>
@@ -1087,9 +1216,21 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 SingleReader = true,
             });
         var client = new WaterfallClient { Queue = queue };
-        lock (_clientsLock)
+
+        // The retained state a browser opens with - what the last transmission did, and who is
+        // attached to which KISS port - read at the instant this client joins the broadcast list,
+        // and under the lock the setters hold while they broadcast. Read either side of that
+        // instant instead and a change racing the handshake arrives twice or not at all.
+        byte[]? transmit;
+        byte[]? hosts;
+        lock (_stateLock)
         {
-            _clients.Add(client);
+            transmit = _transmitMessage;
+            hosts = _hostPortsMessage;
+            lock (_clientsLock)
+            {
+                _clients.Add(client);
+            }
         }
 
         try
@@ -1099,6 +1240,18 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             if (_surveyMessage is { } survey)
             {
                 await socket.SendAsync(survey, WebSocketMessageType.Text, true, _stopping.Token)
+                    .ConfigureAwait(false);
+            }
+
+            if (transmit is not null)
+            {
+                await socket.SendAsync(transmit, WebSocketMessageType.Text, true, _stopping.Token)
+                    .ConfigureAwait(false);
+            }
+
+            if (hosts is not null)
+            {
+                await socket.SendAsync(hosts, WebSocketMessageType.Text, true, _stopping.Token)
                     .ConfigureAwait(false);
             }
 

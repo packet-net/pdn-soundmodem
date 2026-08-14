@@ -35,7 +35,7 @@ namespace Packet.SoundModem.Tests.Waterfall;
 /// ticks and the budget truncates to whole samples, exactly as the server computes it. The
 /// spectrum source emits one line per <see cref="HopSamples"/> samples fed, from the first
 /// sample. Lines reach the test through a real WebSocket; a broadcast marker
-/// (<see cref="WaterfallWebServer.SetTransmitStatus"/>) sent after each advance bounds the drain,
+/// (<see cref="WaterfallWebServer.SetRadioStatus"/>) sent after each advance bounds the drain,
 /// because the per-client queue is FIFO - everything painted before the marker arrives before
 /// the marker.</para>
 /// </remarks>
@@ -663,7 +663,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         };
 
         using var stop = new CancellationTokenSource();
-        var output = new FakeClockOutput(SampleRate, _time, () => _server.SetTransmitStatus("wrote"));
+        var output = new FakeClockOutput(SampleRate, _time, () => _server.SetRadioStatus("wrote"));
         Task transmitter = _channel.RunTransmitterAsync(output, new NullPtt(), stop.Token);
         // Small enough that a whole keyup of lines fits the client queue while nobody reads it.
         await _channel.EnqueueTransmit(0, Payload(16)).WaitAsync(_cancellation.Token);
@@ -687,7 +687,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         var afterWrite = new List<byte[]>();
         bool wrote = false;
         string final = NextMarker();
-        _server.SetTransmitStatus(final);
+        _server.SetRadioStatus(final);
         while (true)
         {
             (WebSocketMessageType kind, byte[] payload) = await ReceiveAsync(socket);
@@ -841,14 +841,14 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
 
     /// <summary>
     /// Every waterfall line already broadcast, in order. Bounded by a marker rather than by
-    /// waiting: <see cref="WaterfallWebServer.SetTransmitStatus"/> broadcasts through the same
+    /// waiting: <see cref="WaterfallWebServer.SetRadioStatus"/> broadcasts through the same
     /// FIFO client queue as the lines, so once the marker text arrives, everything painted
     /// before it has been counted - no timeout, no idle-means-done heuristic.
     /// </summary>
     private async Task<List<byte[]>> DrainAsync(ClientWebSocket socket, WaterfallWebServer server)
     {
         string marker = NextMarker();
-        server.SetTransmitStatus(marker);
+        server.SetRadioStatus(marker);
         var lines = new List<byte[]>();
         while (true)
         {
