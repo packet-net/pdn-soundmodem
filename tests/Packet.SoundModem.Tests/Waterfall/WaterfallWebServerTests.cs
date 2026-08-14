@@ -658,27 +658,73 @@ public class WaterfallWebServerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Transmit_Metering_Reaches_The_Page_And_Clears_On_Key_Up()
+    public async Task Transmit_Metering_Reaches_The_Page_And_Is_Averaged_On_Key_Up()
     {
-        // Forward power and SWR while keyed. Cleared on key-up rather than left showing the last
-        // reading, which would otherwise look like a station transmitting into a dummy load
-        // forever.
+        // Forward power and SWR live while keyed, and the transmission's average once it is over -
+        // held, not cleared. A burst is a fraction of a second and the next one may be a quarter
+        // of an hour away, so a readout that existed only during the keyup was never read.
         using var socket = new ClientWebSocket();
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
         (_, _) = await Receive(socket);   // config
 
-        _server.SetTransmitStatus("TX 29.4 W, SWR 1.2");
+        _server.SetTransmitReading(29.4, 1.2);
         JsonDocument keyed = await NextTextAsync(socket);
         keyed.RootElement.GetProperty("type").GetString().Should().Be("tx");
-        keyed.RootElement.GetProperty("status").GetString().Should().Be("TX 29.4 W, SWR 1.2");
+        keyed.RootElement.GetProperty("keyed").GetBoolean().Should().BeTrue();
+        keyed.RootElement.GetProperty("watts").GetDouble().Should().Be(29.4);
+        keyed.RootElement.GetProperty("swr").GetDouble().Should().Be(1.2);
+        keyed.RootElement.GetProperty("at").ValueKind.Should().Be(
+            JsonValueKind.Null, "a live reading is now, and needs no timestamp");
         keyed.Dispose();
 
-        _server.SetTransmitStatus(null);
-        JsonDocument unkeyed = await NextTextAsync(socket);
-        unkeyed.RootElement.GetProperty("type").GetString().Should().Be("tx");
-        unkeyed.RootElement.GetProperty("status").ValueKind.Should().Be(
-            JsonValueKind.Null, "an unkeyed transmitter has nothing to report");
-        unkeyed.Dispose();
+        _server.SetTransmitReading(25.6, 1.6);
+        (await NextTextAsync(socket)).Dispose();
+
+        _server.SetTransmitReading(null, null);
+        JsonDocument held = await NextTextAsync(socket);
+        held.RootElement.GetProperty("keyed").GetBoolean().Should().BeFalse();
+        held.RootElement.GetProperty("watts").GetDouble().Should().Be(
+            27.5, "the held figure is the mean of the samples, not whichever arrived last");
+        held.RootElement.GetProperty("swr").GetDouble().Should().Be(1.4);
+        held.RootElement.GetProperty("at").GetDateTimeOffset().Should().BeCloseTo(
+            DateTimeOffset.UtcNow, TimeSpan.FromMinutes(1),
+            "a held reading has to say when it was taken, or it reads as one from just now");
+        held.Dispose();
+
+        // And the next transmission starts a fresh average rather than continuing the last one.
+        _server.SetTransmitReading(10.0, 3.0);
+        (await NextTextAsync(socket)).Dispose();
+        _server.SetTransmitReading(null, null);
+        JsonDocument second = await NextTextAsync(socket);
+        second.RootElement.GetProperty("watts").GetDouble().Should().Be(10.0);
+        second.RootElement.GetProperty("swr").GetDouble().Should().Be(3.0);
+        second.Dispose();
+    }
+
+    [Fact]
+    public async Task An_Idle_Transmitter_Does_Not_Wipe_The_Reading_It_Left_Behind()
+    {
+        // The meters go on reporting nothing for as long as the station is not transmitting. Only
+        // the first of those is a key-up; the rest must leave the held average alone, or the
+        // readout the operator is meant to be reading disappears the moment it appears.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        (_, _) = await Receive(socket);
+
+        _server.SetTransmitReading(29.4, 1.2);
+        (await NextTextAsync(socket)).Dispose();
+        _server.SetTransmitReading(null, null);
+        (await NextTextAsync(socket)).Dispose();
+
+        // Two idle reports that must produce nothing, then a real one to bound the wait.
+        _server.SetTransmitReading(null, null);
+        _server.SetTransmitReading(null, null);
+        _server.SetRadioStatus("GPSDO locked");
+
+        JsonDocument next = await NextTextAsync(socket);
+        next.RootElement.GetProperty("type").GetString().Should()
+            .Be("radio", "an idle transmitter has nothing new to say");
+        next.Dispose();
     }
 
     [Fact]
@@ -689,16 +735,81 @@ public class WaterfallWebServerTests : IAsyncLifetime
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
         (_, _) = await Receive(socket);
 
-        _server.SetTransmitStatus("TX 29.4 W");
+        _server.SetTransmitReading(29.4, null);
         (await NextTextAsync(socket)).Dispose();
 
-        _server.SetTransmitStatus("TX 29.4 W");
-        _server.SetTransmitStatus("TX 30.1 W");
+        // Same to a tenth of a watt, which is all the readout shows: not a change.
+        _server.SetTransmitReading(29.44, null);
+        _server.SetTransmitReading(30.1, null);
 
         JsonDocument next = await NextTextAsync(socket);
-        next.RootElement.GetProperty("status").GetString().Should()
-            .Be("TX 30.1 W", "the repeat must not have been sent");
+        next.RootElement.GetProperty("watts").GetDouble().Should()
+            .Be(30.1, "the repeat must not have been sent");
         next.Dispose();
+    }
+
+    [Fact]
+    public async Task A_Browser_Opening_Between_Transmissions_Is_Told_What_The_Last_One_Did()
+    {
+        // The whole point of holding the reading: the gaps are long, and a page opened in one of
+        // them would otherwise say nothing at all about a transmitter that is working perfectly.
+        _server.SetTransmitReading(29.4, 1.2);
+        _server.SetTransmitReading(null, null);
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        (_, _) = await Receive(socket);   // config
+
+        JsonDocument held = await NextTextAsync(socket);
+        held.RootElement.GetProperty("type").GetString().Should().Be("tx");
+        held.RootElement.GetProperty("keyed").GetBoolean().Should().BeFalse();
+        held.RootElement.GetProperty("watts").GetDouble().Should().Be(29.4);
+        held.Dispose();
+    }
+
+    [Fact]
+    public async Task Which_Kiss_Ports_Have_A_Host_Reaches_The_Page_And_Late_Joiners()
+    {
+        // A node that quietly drops its TCP session stops passing traffic, and from the modem's
+        // side that is indistinguishable from a quiet band. The page carries it as state, so a
+        // browser opened at any time - not just one that was watching when it happened - can see
+        // whether anything is attached.
+        _server.SetHostPorts([
+            new HostPortStatus(8105, null, 1),
+            new HostPortStatus(8101, 0, 0),
+        ]);
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        (_, _) = await Receive(socket);   // config
+
+        JsonDocument hosts = await NextTextAsync(socket);
+        hosts.RootElement.GetProperty("type").GetString().Should().Be("hosts");
+        JsonElement ports = hosts.RootElement.GetProperty("ports");
+        ports.GetArrayLength().Should().Be(2);
+        ports[0].GetProperty("port").GetInt32().Should().Be(8101, "ports are listed in order");
+        ports[0].GetProperty("sub").GetInt32().Should().Be(0);
+        ports[0].GetProperty("clients").GetInt32().Should().Be(0);
+        ports[1].GetProperty("port").GetInt32().Should().Be(8105);
+        ports[1].GetProperty("sub").ValueKind.Should().Be(
+            JsonValueKind.Null, "the multiplexed port reaches every modem");
+        ports[1].GetProperty("clients").GetInt32().Should().Be(1);
+        hosts.Dispose();
+
+        // A snapshot that says nothing new is not sent; one that does, is.
+        _server.SetHostPorts([
+            new HostPortStatus(8105, null, 1),
+            new HostPortStatus(8101, 0, 0),
+        ]);
+        _server.SetHostPorts([
+            new HostPortStatus(8105, null, 1),
+            new HostPortStatus(8101, 0, 2),
+        ]);
+
+        JsonDocument changed = await NextTextAsync(socket);
+        changed.RootElement.GetProperty("ports")[0].GetProperty("clients").GetInt32().Should()
+            .Be(2, "the repeat must not have been sent");
+        changed.Dispose();
     }
 
     private async Task<JsonDocument> NextTextAsync(ClientWebSocket socket)

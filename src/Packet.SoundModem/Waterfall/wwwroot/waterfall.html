@@ -34,9 +34,6 @@
   .radio-status { margin-left: 10px; padding: 1px 7px; border-radius: 9px;
                   background: rgba(255,255,255,.06); font-size: 12px; }
   .radio-status.bad { background: rgba(255,120,90,.16); color: #ff9a7a; }
-  /* Keyed, in the same cyan the waterfall draws our own transmissions in. */
-  .radio-status.tx { background: rgba(49,210,242,.16); color: #7fe3f7; }
-  .radio-status.tx.swr { background: rgba(255,120,90,.16); color: #ff9a7a; }
   .seg-btn { font: inherit; color: var(--fg); background: #1a1d22; border: 1px solid #2b3038;
              border-radius: 6px; padding: 3px 10px; cursor: pointer; }
   .seg-btn.on { background: var(--amber); color: #12141a; border-color: var(--amber); }
@@ -48,6 +45,30 @@
     font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
   }
   .ctl-row { display: flex; align-items: center; gap: 6px; }
+  /* .ctl's display would otherwise beat the browser's rule for [hidden] on specificity, and a
+     readout with nothing to say would sit in the header showing dashes. */
+  .ctl[hidden] { display: none; }
+
+  /* What the transmitter did. Red while it is up, neutral once it is down - and the label says
+     which, because two shades of pill are the same pill to anyone who cannot compare them side
+     by side. The figures a keyed reading shows are the radio's meters now; the ones a held
+     reading shows are the average over the transmission that has just ended. */
+  #txReadout {
+    border: 1px solid var(--edge); border-radius: 3px; padding: 2px 8px 3px; background: #0c1016;
+  }
+  #txReadout.live { background: rgba(226,80,60,.22); border-color: #e2503c; }
+  #txReadout.live label { color: #ffb3a3; }
+  .txfig {
+    font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums;
+    color: var(--muted); white-space: nowrap;
+  }
+  .txfig b { color: var(--ink); font-weight: 600; }
+  #txReadout.live .txfig b { color: #fff; }
+  .txfig .k { font-size: 10px; letter-spacing: .08em; }
+  /* The one reading here an operator has to stop and act on, in either state - and while keyed
+     the whole readout is already red, so the alarm needs a box of its own to be seen at all. */
+  .txfig.alarm { background: #7a1f14; border-radius: 3px; padding: 0 5px; }
+  .txfig.alarm b, .txfig.alarm .k { color: #ffd0c4; }
 
   #dial {
     font-family: var(--mono); font-variant-numeric: tabular-nums;
@@ -89,6 +110,10 @@
   .chip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
   .chip b { color: var(--ink); font-weight: 500; }
   .chip .rf { color: var(--amber); }
+  /* Whether the node software is actually attached to a KISS port that reaches this modem. A
+     host that dropped its TCP session looks, from here, exactly like a quiet band. */
+  .chip .host { color: #f27e7e; border-left: 1px solid var(--edge); padding-left: 7px; }
+  .chip .host.on { color: #7bd88f; }
 
   main { flex: 1; display: flex; min-height: 0; }
   #display { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
@@ -192,7 +217,6 @@
     <!-- The radio's frequency reference, when it has one to report. Hidden entirely rather
          than shown empty, so a soundcard station is not told about an absent oscillator. -->
     <span id="radioStatus" class="radio-status" hidden></span>
-    <span id="txStatus" class="radio-status tx" hidden></span>
   </div>
 
   <div class="ctl">
@@ -224,6 +248,17 @@
       <input type="range" id="floor" min="-100" max="-45" step="1" title="Floor">
       <input type="range" id="top" min="-60" max="0" step="1" title="Top">
       <button class="btn" id="auto" title="Set floor and top from the current spectrum">Auto</button>
+    </div>
+  </div>
+
+  <!-- Forward power and SWR: live while keyed, and the transmission's average afterwards. A
+       packet burst is a fraction of a second and the gaps between them are minutes, so a readout
+       that existed only during the keyup was one an operator never managed to read. -->
+  <div class="ctl" id="txReadout" hidden>
+    <label id="txWhen">Last TX</label>
+    <div class="ctl-row">
+      <span class="txfig"><b id="txPower">-</b> <span class="k">W</span></span>
+      <span class="txfig" id="txSwrFig"><span class="k">SWR</span> <b id="txSwr">-</b></span>
     </div>
   </div>
 
@@ -312,18 +347,44 @@ const nyquist = () => cfg.sampleRate / 2;
 const spanHz = () => Math.min(ui.spanHz, nyquist());
 const binsInSpan = () => Math.min(cfg.lineLength, Math.round(spanHz() / cfg.binWidthHz));
 const afToX = (af, w) => af / spanHz() * w;
-// The reference line reads as a warning when the radio is not running on what it was told to
-// use - that is the case an operator has to act on, and it should not look like the good one.
-// Only visible while keyed. A high SWR turns it red, because that is the one reading here an
-// operator has to stop and act on.
-function setTransmitStatus(status) {
-  const el = document.getElementById("txStatus");
-  if (!el) return;
-  if (!status) { el.hidden = true; el.textContent = ""; return; }
-  el.hidden = false;
-  el.textContent = status;
-  const swr = /SWR ([0-9.]+)/.exec(status);
-  el.classList.toggle("swr", swr !== null && parseFloat(swr[1]) >= 2.0);
+// The transmit readout. Two states, and the difference between them is the whole point: keyed is
+// what the radio's meters say right now, held is the average of the transmission that has just
+// finished - kept on screen because a burst is over long before anybody has read a live figure,
+// and because the next one may be a quarter of an hour away. Red for one, neutral for the other,
+// and the label says which in words as well.
+function setTransmitReading(msg) {
+  const box = $("txReadout");
+  if (!box) return;
+  box.hidden = false;
+  box.classList.toggle("live", !!msg.keyed);
+  box.title = msg.keyed
+    ? "Live from the radio's meters"
+    : "Average over the last transmission; the figures do not change until the next one";
+  const when = txTime(msg.at);
+  $("txWhen").textContent = msg.keyed ? "Transmitting" : "Last TX" + (when ? " · " + when : "");
+  $("txPower").textContent = msg.watts != null ? msg.watts.toFixed(1) : "-";
+  // A radio that reports no SWR shows no SWR, rather than a dash that reads as 1:1 at a glance.
+  const swr = $("txSwrFig");
+  swr.hidden = msg.swr == null;
+  $("txSwr").textContent = msg.swr != null ? msg.swr.toFixed(1) : "-";
+  swr.classList.toggle("alarm", msg.swr != null && msg.swr >= 2.0);
+}
+
+// When the held reading was taken. Minutes of silence look the same as seconds of it, so a held
+// reading has to say when, or it reads as though the station just transmitted.
+function txTime(at) {
+  if (!at) return "";
+  const when = new Date(at);
+  return isNaN(when) ? "" : when.toTimeString().slice(0, 8);
+}
+
+// Which KISS ports the station serves and how many hosts are on each: [{port, sub, clients}],
+// sub null being the multiplexed port, which reaches every modem. Empty until the server says
+// otherwise, and the chips then say nothing about attachment rather than guessing at it.
+let hostPorts = [];
+function setHostPorts(msg) {
+  hostPorts = msg.ports || [];
+  if (cfg) renderChips();
 }
 
 function setRadioStatus(status) {
@@ -502,10 +563,25 @@ function renderChips() {
     chip.className = "chip";
     const rf = dialSet() ? ` <span class="rf">${fmtRfMhz(m.centreHz)}</span>` : "";
     chip.innerHTML = `<i style="background:${hueFor(i)}"></i>` +
-      `<span><b>${m.sub} · ${m.modeName || m.mode}</b> ${Math.round(m.centreHz)} Hz${rf}</span>`;
+      `<span><b>${m.sub} · ${m.modeName || m.mode}</b> ${Math.round(m.centreHz)} Hz${rf}</span>` +
+      hostBadge(m.sub);
     chip.title = `${m.mode}\nband ${Math.round(m.lowHz)}-${Math.round(m.highHz)} Hz`;
     return chip;
   }));
+}
+
+// Whether the node software is attached to a port that can reach this modem: its own dedicated
+// port, and the multiplexed one, which reaches every modem by nibble. Nothing at all when the
+// station has not said what it serves - an absent badge is honest, a green one would not be.
+function hostBadge(sub) {
+  const reach = hostPorts.filter(p => p.sub == null || p.sub === sub);
+  if (!reach.length) return "";
+  const clients = reach.reduce((n, p) => n + (p.clients || 0), 0);
+  const detail = reach.map(p =>
+    `${p.port} (${p.sub == null ? "all modems" : "this modem"}): ` +
+    (p.clients ? `${p.clients} connected` : "nothing connected")).join("\n");
+  const text = clients ? `${clients} host${clients === 1 ? "" : "s"}` : "no host";
+  return `<span class="host${clients ? " on" : ""}" title="${esc(detail)}">${text}</span>`;
 }
 
 /* ---------- ruler: RF (amber, from dial ± AF) above AF (muted) ---------- */
@@ -893,7 +969,9 @@ function connect() {
       } else if (msg.type === "radio") {
         setRadioStatus(msg.status);
       } else if (msg.type === "tx") {
-        setTransmitStatus(msg.status);
+        setTransmitReading(msg);
+      } else if (msg.type === "hosts") {
+        setHostPorts(msg);
       } else if (msg.type === "frame") {
         onFrameEvent(msg);
       } else if (msg.type === "history") {

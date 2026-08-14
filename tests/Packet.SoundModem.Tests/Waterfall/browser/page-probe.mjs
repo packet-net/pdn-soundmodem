@@ -87,13 +87,32 @@ const ctx2d = new Proxy({}, { get: (_, k) =>
   typeof k === "string" ? noop : undefined,
   set: () => true });
 
+// A className that actually tracks classList, because state the page carries in a class - which
+// of two colours the transmit readout is wearing - is otherwise invisible to every assertion. The
+// list reads and writes className, so a row that sets className directly (the frames panel does)
+// and one that toggles classes (the header does) both read back the same way.
+function classListFor(node) {
+  const parse = () => String(node.className || "").split(/\s+/).filter(Boolean);
+  const write = list => { node.className = list.join(" "); };
+  return {
+    add(...names) { const list = parse(); for (const n of names) if (!list.includes(n)) list.push(n); write(list); },
+    remove(...names) { write(parse().filter(n => !names.includes(n))); },
+    contains: name => parse().includes(name),
+    toggle(name, force) {
+      const on = force === undefined ? !parse().includes(name) : !!force;
+      on ? this.add(name) : this.remove(name);
+      return on;
+    },
+  };
+}
+
 const els = new Map();
 function el(id) {
   if (els.has(id)) return els.get(id);
   const e = {
     id, textContent: "", innerHTML: "", value: "0.8", checked: false, disabled: false,
     width: 800, height: 300, style: {}, children: [], dataset: {},
-    className: "", classList: { add: noop, remove: noop, toggle: noop, contains: () => false },
+    className: "",
     getContext: () => ctx2d, appendChild: noop, removeChild: noop, insertBefore: noop,
     addEventListener: noop, removeEventListener: noop, getBoundingClientRect: () => ({ width: 800, height: 300, left: 0, top: 0 }),
     querySelector: () => el(id + "-q"), querySelectorAll: () => [], focus: noop, scrollTo: noop,
@@ -103,11 +122,17 @@ function el(id) {
     // Real enough for the decoded-frames panel, which builds rows with createElement, sets their
     // innerHTML and prepends them - so the markup it produces can be read back and asserted on.
     prepend(node) { node._parent = this; this.children.unshift(node); },
-    replaceChildren() { this.children.length = 0; },
+    // With its arguments: the modem chips are built as a list and handed over in one call, and
+    // dropping them made the whole strip invisible to the probe.
+    replaceChildren(...nodes) {
+      this.children.length = 0;
+      for (const node of nodes) { node._parent = this; this.children.push(node); }
+    },
     remove() { const kids = this._parent?.children; const at = kids?.indexOf(this) ?? -1; if (at >= 0) kids.splice(at, 1); },
     get firstChild() { return this.children[0] ?? null; },
     get lastChild() { return this.children[this.children.length - 1] ?? null; },
   };
+  e.classList = classListFor(e);
   els.set(id, e);
   return e;
 }
@@ -171,6 +196,12 @@ process.on("uncaughtException", e => thrown.push(String(e)));
 await wait(1500);
 const connected = run("!!(ws && ws.readyState === 1)") === true && run("!!cfg") === true;
 
+// The modem chips as the handshake left them - nothing driven by hand. What the server had to say
+// about its KISS ports when this browser arrived has to reach the labels, or a page opened at any
+// time other than the moment a host connected would say nothing about attachment.
+const chips = () => sandbox.document.getElementById("chips").children.map(c => c.innerHTML);
+const chipsOnArrival = chips();
+
 let clickError = null;
 try { vm.runInContext(`document.getElementById("listen").click()`, sandbox); }
 catch (e) { clickError = String(e); }
@@ -229,6 +260,36 @@ const captureTag = sandbox.__text().slice(beforeCapture);
 run(`setSurveyStatus({captured:7, skipped:2, bytes:12582912})`);
 const surveyStatus = sandbox.document.getElementById("survey").textContent;
 
+// The transmit readout, through its four states: keyed, keyed into a bad load, the average left
+// behind at key-up, and a radio that reports no SWR at all. Each state is read back where it is
+// set, because every one of them overwrites the last.
+const readout = () => ({
+  className: sandbox.document.getElementById("txReadout").className,
+  hidden: sandbox.document.getElementById("txReadout").hidden === true,
+  when: sandbox.document.getElementById("txWhen").textContent,
+  power: sandbox.document.getElementById("txPower").textContent,
+  swr: sandbox.document.getElementById("txSwr").textContent,
+  swrHidden: sandbox.document.getElementById("txSwrFig").hidden === true,
+  swrClass: sandbox.document.getElementById("txSwrFig").className,
+});
+run(`setTransmitReading({type:"tx", keyed:true, watts:29.4, swr:1.2, at:null})`);
+const txKeyed = readout();
+run(`setTransmitReading({type:"tx", keyed:true, watts:29.4, swr:3.1, at:null})`);
+const txKeyedBadSwr = readout();
+run(`setTransmitReading({type:"tx", keyed:false, watts:27.5, swr:1.4, at:"2026-08-14T09:15:23.000Z"})`);
+const txHeld = readout();
+run(`setTransmitReading({type:"tx", keyed:false, watts:27.5, swr:null, at:"2026-08-14T09:15:23.000Z"})`);
+const txHeldNoSwr = readout();
+
+// Which KISS ports have a host on them, onto the modem chips. The server has one modem (0), and
+// both a dedicated port and the multiplexed one reach it - so the badge is about the modem, not
+// about any one port. Driven attached and then detached, because the second state is the one an
+// operator is looking for.
+run(`setHostPorts({type:"hosts", ports:[{port:8105, sub:null, clients:1}, {port:8101, sub:0, clients:1}]})`);
+const chipsAttached = chips();
+run(`setHostPorts({type:"hosts", ports:[{port:8105, sub:null, clients:0}, {port:8101, sub:0, clients:0}]})`);
+const chipsDetached = chips();
+
 const frames = sandbox.document.getElementById("frames").children;
 const rows = frames.map(c => c.innerHTML);
 const rowClasses = frames.map(c => c.className);
@@ -252,6 +313,13 @@ const historyTag = sandbox.__text().slice(beforeHistory);
 const afterHistory = sandbox.document.getElementById("frames").children;
 
 console.log(JSON.stringify({
+  txKeyed,
+  txKeyedBadSwr,
+  txHeld,
+  txHeldNoSwr,
+  chipsOnArrival,
+  chipsAttached,
+  chipsDetached,
   ordinaryTag,
   identTag,
   heardTag,

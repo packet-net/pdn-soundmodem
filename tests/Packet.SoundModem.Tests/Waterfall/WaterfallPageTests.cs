@@ -378,6 +378,119 @@ public class WaterfallPageTests
     }
 
     /// <summary>
+    /// The transmit readout holds the last transmission's figures, and says - in words as well as
+    /// in colour - whether what it is showing is live or held.
+    /// </summary>
+    /// <remarks>
+    /// Page behaviour end to end: the server sends the same message shape either way and only
+    /// <c>keyed</c> differs. The reason the readout exists at all is that a packet burst is a
+    /// fraction of a second and the gaps between bursts are minutes, so the figures have to
+    /// survive key-up - and the moment they do, the page has to say they are not live, or an
+    /// operator reads a held 29 W as a transmitter that is still up.
+    /// </remarks>
+    [Fact]
+    public async Task The_Transmit_Readout_Holds_The_Last_Burst_And_Says_That_It_Is_Held()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw on a transmit reading");
+
+        // Keyed: the figures as the radio reports them, and a readout wearing the live class.
+        probe.TxKeyed!.Hidden.Should().BeFalse("a reading makes the readout appear");
+        probe.TxKeyed.When.Should().Be("Transmitting");
+        probe.TxKeyed.Power.Should().Be("29.4");
+        probe.TxKeyed.Swr.Should().Be("1.2");
+        probe.TxKeyed.SwrHidden.Should().BeFalse();
+        probe.TxKeyed.ClassName.Should().Contain("live");
+        probe.TxKeyed.SwrClass.Should().NotContain("alarm");
+
+        // The one reading an operator has to act on, in the state they are most likely to see it.
+        probe.TxKeyedBadSwr!.SwrClass.Should().Contain(
+            "alarm", "an SWR of 3.1 has to look different from an SWR of 1.2");
+
+        // Key-up: the figures stay, and everything about the readout says they are from before.
+        probe.TxHeld!.Hidden.Should().BeFalse("the readout survives key-up - that is the point");
+        probe.TxHeld.Power.Should().Be("27.5", "the transmission's average is what is held");
+        probe.TxHeld.Swr.Should().Be("1.4");
+        probe.TxHeld.ClassName.Should().NotContain(
+            "live", "a held reading must not be wearing the transmitting colour");
+        probe.TxHeld.When.Should().StartWith("Last TX").And.Contain(
+            ":", "a held reading says when it was taken, or it reads as one from just now");
+
+        // A radio with no SWR to report shows no SWR, rather than a dash that reads as 1:1.
+        probe.TxHeldNoSwr!.SwrHidden.Should().BeTrue();
+        probe.TxHeldNoSwr.Power.Should().Be("27.5");
+
+        // And the readout starts hidden, in a way that survives .ctl's own display rule - which
+        // is more specific than the browser's rule for [hidden], so without a rule of its own the
+        // header opens showing a transmit readout full of dashes.
+        string page = await File.ReadAllTextAsync(PageOnDisk());
+        page.Should().Contain("id=\"txReadout\" hidden")
+            .And.Contain(".ctl[hidden] { display: none; }");
+    }
+
+    /// <summary>
+    /// Each modem's label says whether the node software is attached to a KISS port that reaches
+    /// it, and follows the client coming and going.
+    /// </summary>
+    /// <remarks>
+    /// A host that quietly dropped its TCP session stops passing traffic, and from the modem's
+    /// side that is indistinguishable from a band that went quiet - the one journal line that
+    /// said so scrolled past hours ago. The badge is per modem rather than per port because a
+    /// modem is reachable through both its own dedicated port and the multiplexed one, and what
+    /// the operator is asking is "can anything get to this modem", not "which socket".
+    /// </remarks>
+    [Fact]
+    public async Task A_Modem_Label_Says_Whether_A_Host_Is_Attached()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        // Set before the browser arrives, and never changed again: this is the state a page opened
+        // at any moment other than a connect or a disconnect has to be given, and the whole reason
+        // the server carries it rather than only broadcasting the events.
+        server.SetHostPorts([new HostPortStatus(8105, null, 1), new HostPortStatus(8101, 0, 0)]);
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw on a host-port snapshot");
+
+        probe.ChipsOnArrival.Should().ContainSingle();
+        probe.ChipsOnArrival[0].Should().Contain(
+            "1 host", "the handshake's snapshot has to reach the labels with nothing else happening");
+
+        probe.ChipsAttached.Should().ContainSingle("the station has one modem");
+        probe.ChipsAttached[0].Should().Contain("2 hosts")
+            .And.Contain("class=\"host on\"", "attached is the state that reads as good")
+            .And.Contain("8105 (all modems): 1 connected", "the tooltip says which port")
+            .And.Contain("8101 (this modem): 1 connected");
+
+        // And it follows them out again, which is the state worth noticing.
+        probe.ChipsDetached.Should().ContainSingle();
+        probe.ChipsDetached[0].Should().Contain("no host")
+            .And.Contain("class=\"host\"", "nothing attached must not be wearing the good colour")
+            .And.Contain("nothing connected");
+
+        // The rest of the label is untouched: the badge is an addition, not a replacement.
+        probe.ChipsDetached[0].Should().Contain("AFSK1200").And.Contain("1723 Hz");
+    }
+
+    /// <summary>
     /// Finds a panel row by something only it contains. Rows were addressed by index, which made
     /// every test depend on how many other things the probe happened to drive first - adding one
     /// step broke two unrelated tests. Order still matters and is asserted where it means
@@ -472,6 +585,16 @@ public class WaterfallPageTests
         return port;
     }
 
+    /// <summary>One state of the header's transmit readout, as the page left it.</summary>
+    private sealed record TxReadout(
+        string ClassName,
+        bool Hidden,
+        string When,
+        string Power,
+        string Swr,
+        bool SwrHidden,
+        string SwrClass);
+
     private sealed record Probe(
         bool Connected,
         string? ClickError,
@@ -498,5 +621,12 @@ public class WaterfallPageTests
         string? RsBadgeBackground,
         string? IdentBadgeBackground,
         string? RsBadgeOnTxRowBackground,
+        TxReadout? TxKeyed,
+        TxReadout? TxKeyedBadSwr,
+        TxReadout? TxHeld,
+        TxReadout? TxHeldNoSwr,
+        string[] ChipsOnArrival,
+        string[] ChipsAttached,
+        string[] ChipsDetached,
         string[] Thrown);
 }
