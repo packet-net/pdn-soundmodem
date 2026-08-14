@@ -715,6 +715,100 @@ is. T13's position is documented now, so this is a check on the programming rath
 documentation, but it is free during a calibration you were doing anyway and it is the fastest way
 to catch a radio that was programmed for T5.
 
+### Measured: first assembly, 2026-08-14
+
+Measurement 1 performed on the widget from `tomwardill/cm108radiowidget` (C-Media 0d8c:0012,
+netlist in [cm108-widget-netlist.md](cm108-widget-netlist.md)), host `radio2`, with a Hantek
+DSO2D15 driven over USBTMC. Both ends measure the 1 kHz component only, by least-squares sine fit
+on the scope and Goertzel on the capture; broadband RMS is the wrong statistic and a first attempt
+using it returned a 38 dB crest factor off a single transient. The values it produced are what
+[tm8100-cm108-interface.md](tm8100-cm108-interface.md) tells you to build.
+
+**Transmit.** Full scale at the OUT pad, open circuit, is **1.00 Vrms to about +/-3%**, and the
+path is linear to **+/- 0.06 dB from 0 to -26 dBFS** with no compression at full scale. That
+linearity figure is the one worth repeating on a new assembly: being a ratio it survives gain
+calibration error, and it is what licenses full-scale digital standing in for the deviation
+ceiling.
+
+Rt lands awkwardly. 3k0 stays under the 0.725 Vp-p ceiling only while full scale is at or below
+1.0253 Vrms, and three sound readings gave 0.997, 1.030 and 1.041 Vrms, two of them over it. The
+spread is instrumental rather than the widget: repeats hold to 0.01 dB within a session, but the
+scope's own vertical ranges disagree by 0.18 dB and an 8-bit scope's gain accuracy is about 3%.
+**A voltage measurement cannot resolve this boundary**, which is exactly what the Bessel null is
+for. 3k3 is under the ceiling on every reading and costs about 0.6 dB, so that is what is fitted
+pending the null.
+
+**Receive.** Input full scale is **455 mVrms at +8.00 dB capture gain**, cross-checked by driving
+the gain up until clipping started: it took +10.0 dB against +9.7 predicted. The capture control
+was verified first, since everything downstream assumes it, and it tracks its claimed dB to
+**0.32 dB worst case over a 25 dB span**.
+
+Full scale scales with that control, so **Rs and the capture gain are one choice**: 270R at +8 dB,
+1k8 at +13, 3k3 at +16, 8k2 at +23 all land on the same -12 dBFS at 60% of class deviation. +13 dB
+with **Rs = 1k8** is fitted, giving -12.26 dBFS and clipping only at about 6.15 kHz deviation.
+
+That choice is for robustness, not noise. Low gain does put a bigger signal into the codec, but the
+tap already carries the radio's own audio noise about 40 dB below full deviation, which swamps the
+CM108's preamp noise by roughly 35 dB at any of these settings, so the apparent 15 dB advantage of
+running at +8 dB is not real. What is real is that at +8 dB the required Rs falls to 270R, the
+divider barely divides, and one step further down leaves no positive Rs at all.
+
+Mixer state the figures hold for, and only for: card addressed directly at 48 kHz S16_LE with no
+plug layer and no software volume; `Speaker` 37/37 = 0.00 dB; `Mic` playback muted; AGC off.
+
+### Sizing Rt and Rs from a measurement
+
+Given a measured full scale, with Rb = Rp = 1k:
+
+    Rt: pick the nearest E24 that keeps  FS_pp x 1000/(Rt+1000)  under 0.725 Vp-p
+    Rs = 844.3/FS - 1600        (FS in volts)
+
+The 1600 is Rp plus the tap's **600R source impedance, which is in series with Rs**. Omitting it
+inflates Rs by about 600R and quietly picks the wrong value. With it, the formula reproduces the
+old published table closely: 100 mV gives 6843 against 6k8, 250 mV gives 1777 against 1k8.
+
+For reference, the tables these replace:
+
+| CM108 output full scale | Rt | | CM108 input full scale | Rs |
+|---|---|---|---|---|
+| 0.5 Vrms | 1k0 | | 50 mVrms | 15k |
+| 0.7 Vrms | 1k8 | | 100 mVrms | 6k8 |
+| 1.0 Vrms | 3k0 | | 150 mVrms | 3k9 |
+| 1.4 Vrms | 4k7 | | 200 mVrms | 2k7 |
+| 2.0 Vrms | 6k8 | | 250 mVrms | 1k8 |
+
+### Why 1% on the transmit divider and not elsewhere
+
+The transmit divider's ratio moves 0.767% per 1% of error in either resistor, so 1% parts give
+0.13 dB at worst. The margin between a full-scale sine and the deviation ceiling is only about
+0.50 dB, so 1% leaves 0.37 dB in hand while **5% parts reach 0.64 dB and can breach the ceiling
+unaided**, at nominal values, with nothing on the bench to show for it. Metal film also holds the
+temperature coefficient near 50 ppm/K, so a hot vehicle does not undo what the null set.
+
+The receive divider is the opposite case: 5% parts shift it 0.52 dB against 12.26 dB of headroom
+to clipping, so 1% there is only to avoid stocking two types of resistor.
+
+Capacitor tolerance is irrelevant and the dielectric is not. All three set poles decades outside
+the passband (about 15 Hz for C4, 12 Hz for C1, 48 kHz for C3), so even 20% parts are fine. But a
+1u or 4u7 in X7R has a voltage coefficient that would add distortion to the transmit audio, and
+Y5V additionally sheds much of its capacitance with bias and temperature. Film or bipolar for
+those two; ceramic only for C3, where it is small and out of band. Power rating is a formality at
+0.2 mW and 20 uW.
+
+### Three ways a level measurement lies
+
+Each of these produced a confident wrong number rather than an obvious error:
+
+- **A crocodile clip on a board edge.** Readings low and drifting. The tell is the crest factor:
+  Vp-p sat at 2.97 to 3.16 times Vrms instead of 2.828. Check that ratio before believing anything,
+  and solder the joint.
+- **A tone looped from a WAV file.** Each restart leaves a silent gap that pulls an RMS reading
+  low. Play one continuous stream.
+- **A single session.** One run read 1.4 dB low, stably, with a ladder that sloped exactly as a bad
+  joint would, having touched nothing; it returned to normal by itself and has not recurred. Treat
+  one session's absolute figure as provisional until a second agrees. The ladder's linearity is
+  what tells you which readings to trust.
+
 ### While you are there: two more useful sweeps
 
 - **Transmit response.** Sweep the tone from 100 Hz to 4 kHz at a level well below limiting and
