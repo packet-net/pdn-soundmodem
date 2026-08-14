@@ -982,10 +982,23 @@ second headless pdn-soundmodem on the same radio (a receive-only capture campaig
 `stationName=pdn-rx-capture`) restarted. Seven seconds earlier, at 16:17:54, the production
 modem lost its slice. It stayed that way until 2026-08-13 12:49: six days deaf and mute.
 
-Both instances omitted `daxChannel`, so both took `DefaultHeadlessDaxChannel` = 2. Two
-headless clients claiming one DAX channel is what displaced the first, and the slice went
-with it. The default was chosen to dodge SmartSDR (which grabs DAX 1); it does not dodge a
-second pdn-soundmodem.
+Both instances omitted `daxChannel`, so both took `DefaultHeadlessDaxChannel` = 2. The default
+was chosen to dodge SmartSDR (which grabs DAX 1); it does not dodge a second pdn-soundmodem.
+
+**The DAX collision was not the mechanism**, though this section said it was until it was
+tested. Reproduced against the live radio on 2026-08-13, a second headless client on the same
+DAX channel does *not* displace the first: both slices sat on `dax=2` with `dax_clients=1`
+each, the production station's audio kept flowing at 1639 kbit/s, and its journal recorded
+nothing at all. On this firmware the channel is shared, not seized.
+
+What the evidence does support is a **teardown** rather than a claim. Slice 0 was *destroyed*
+(`slice set 0 tx=1` answered 0x50000028, "Slice receiver (0) not in use") and index 0 was
+afterwards occupied by the capture client. The likeliest path is the capture's dispose running
+`slice remove` against an index it had recorded as its own at bring-up, but which the
+production station had come to occupy - the slice-leak fix of §8 firing at the wrong target.
+That is a hypothesis consistent with every number here rather than something reproduced, and
+it is worth stating as such; what matters is that it is exactly the case the ownership check on
+teardown now prevents.
 
 ### Why nothing noticed
 
@@ -1048,7 +1061,15 @@ receive-only setting: report the loss, never retake.
 radio's **global, persistent** transmit state - transmit audio source, transmit filter, RF
 power - and implies `FlexContentionPolicy.Never`. A capture or monitoring instance that runs
 the normal bring-up changes what the operator's other clients transmit with, and the change
-outlives its process. Any second instance on one radio also needs its own `daxChannel`.
+outlives its process.
+
+A second instance should still be given its own `daxChannel`, and bring-up warns when the one
+it is about to take is already held. That warning is worth keeping even though sharing turned
+out to be survivable on this firmware: it names the other client, which is the fact an operator
+needs first, and nobody has tested what a different firmware does with two clients on one
+channel. Its wording says "likely to leave that client's station running with a slice wired to
+nothing", which is stronger than what was observed - the measured outcome was two slices on
+`dax=2`, both working.
 
 ### Regression cover
 
@@ -1057,9 +1078,43 @@ outlives its process. Any second instance on one radio also needs its own `daxCh
 that a losing station touches neither the winner's slice nor the radio once it has stood down.
 No hardware required.
 
+### Proven on hardware (2026-08-14)
+
+Battle-tested against the live 40 m station rather than left to the mock. Contention is
+produced by removing the station's slice from a separate API client - connect to the radio on
+:4992 and send `C1|slice remove <n>` - which reproduces the effect of the original fault
+without needing its cause. Three removals inside `LossWindow` exercises the whole path.
+
+| Claim | Result |
+| --- | --- |
+| Detection | 2-3 s, repeatedly |
+| Rebuild | ~10 s, verified by slice ownership on the radio and DAX throughput, not by log lines |
+| Stand-down holds | `could not rebuild the slice after 0 attempt(s)`, no commands sent |
+| Stand-down survives | same PID, 0 restarts, 75 s later |
+| Teardown citizenship | a second instance removed only its own slice |
+| DAX-collision warning | fired at bring-up naming the client already holding the channel |
+
+Against the six days the original fault ran for.
+
+It found three defects that no offline test could have reached, each needing something the mock
+does not have - a real host's event ordering, a real host's threading, or systemd:
+
+1. **The stand-down announced itself and then rebuilt anyway** (fixed in M0LTE.Flex 0.13.1).
+   `SliceLost` was raised before the health was published, so the host's own recovery task read
+   a station still marked healthy. The health a loss handler observes is a contract, not an
+   implementation detail. The offline tests missed it by calling `RecoverAsync` directly on a
+   station whose health was already set.
+2. **The obvious loss handler deadlocked** (fixed in 0.13.2). Blocking on `RecoverAsync` from
+   the event waits for a slice status that only the status-reading thread can deliver, and that
+   thread is the one being blocked. Status events now go through a notification pump, in order,
+   with handler exceptions isolated - a throwing subscriber used to take the client's status
+   parsing down with it.
+3. **The dead-feed watchdog undid the stand-down** (fixed in pdn-soundmodem 0.33.4). Standing
+   down means no slice, which means no DAX audio, which is exactly what that watch exists to
+   catch: 30 s later it restarted the process into a fresh slice and resumed the fight. Two
+   recovery mechanisms, each correct alone, disagreeing about who owns the response to silence.
+
 ### Still to do on hardware
 
-The whole ownership path has been proven against the mock only. The two-instance rehearsal in
-§11 now has a second purpose: start a second headless instance on the *same* DAX channel and
-confirm the production station reports the loss, rebuilds once, and stands down when the
-second instance keeps restarting.
+Nothing on the ownership path. The remaining gap is §11's shared-PA probes, which are about
+two *transmitting* clients rather than slice ownership.
