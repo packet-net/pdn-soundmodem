@@ -365,18 +365,19 @@ netlist changes four of this note's stock-dongle assumptions. The build values i
 ## Receive path
 
 ```
-  AUX pin 13                      Rs                          to CM108
-  AUD_TAP_OUT                  (table)         Rp             mic or line in
-  600R src, +2.3V DC   C1      _______         1k       C2
-      o------------||---------|_______|----+---||-------------o
-                   2u2                     |    10u
-                                          [ ]  Rp 1k
-                                           |
-                                          === C3 4n7
-                                           |
-  AUX pin 15  o----------------------------+--------------------o  dongle GND
-  AGND                                                             (see Grounding)
+  AUX pin 13                      Rs                             to CM108
+  AUD_TAP_OUT                  (table)                          mic or line in
+  600R src, +2.3V DC   C1      _______                    C2
+      o------------||---------|_______|----+--------+-----||------o
+                   2u2                     |        |     10u
+                                          [ ] Rp   === C3
+                                           |  1k    |  4n7
+  AUX pin 15  o----------------------------+--------+-------------o  dongle GND
+  AGND                                                               (see Grounding)
 ```
+
+Rp and C3 are parallel shunt legs from the same node; an earlier rendering of this diagram stacked
+them into one string, which reads as a series leg that stops shunting below radio frequencies.
 
 **C1 blocks the +2.3 V pedestal absolutely**, so the interface presents no DC path and does not
 disturb the radio's bias. Tait's own crossband cable does load the tap with 600 ohm to ground and
