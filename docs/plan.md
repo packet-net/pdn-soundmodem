@@ -234,6 +234,16 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-08-14 (later still) - the filter moved, the warning did not: a read-back that never asked the radio
+
+The fix above went out as 0.34.1, Tom installed it, and the station said the same thing again - while the waterfall showed the filter had visibly narrowed. Both were right. `filt 0 450 2550` had moved the DSP; the read-back was reporting a value it had cached at `slice create` and never refreshed.
+
+**The radio does not push this change back to the session that made it.** Measured on GB7RDG's 6500 (fw 4.2.20) with a read-only second client while the station ran: the slice reported `filter_lo=450 filter_hi=2550`, the new values, at a moment when the daemon was still insisting on 0-3000. No slice status reached the commanding session in the whole 5 s window, so the poll re-read its own stale copy until it timed out. The station had been *right about the radio* and wrong about itself.
+
+**The confirmation is a re-subscription, not a wait.** A repeated `sub slice all` re-dumps every slice in ~40 ms, and the dump lands before that command's own reply on the connection, which one reader processes in order - so awaiting the reply means the state is already in hand. `M0LTE.Flex` 0.14.1 refreshes that way inside the read-back loop (pin moved here), and `MockFlexRadio` now models both halves: no echo after `filt`, and a re-dump on subscribe, dump before reply. The old echo is precisely what let 0.14.0 pass its tests, so the mock has now been wrong in the same place twice, in opposite directions.
+
+Worth keeping: the transmit object *does* push its changes back - the 10 kHz transmit-filter clamp was measured through exactly that read-back - so this is a difference between two objects on one radio, not a rule about the radio. Guessing either way from the other is what produced both bugs.
+
 ### 2026-08-14 (later) - the slice receive filter has never taken, and the warning that said so blamed the radio
 
 Tom read a line off GB7RDG's journal that did not add up: `asked the slice for a receive filter of low 450 Hz, high 2550 Hz and it reports 0-3000 Hz - the radio would not go that wide`. 0-3000 *contains* 450-2550, so nothing was deaf and the radio had not narrowed anything; it had ignored the request and stayed on the stock DIGU passband. Two separate faults, both in `M0LTE.Flex`, both fixed in **0.14.0** (pin moved here).
