@@ -165,8 +165,24 @@ the two together would mix what a station did with what we did about it, and the
 feature will eventually be judged on - did correcting for them improve their decode rate - is
 exactly the query that mixing would ruin.
 
-## Not proven on air
+## On air
 
-All of this is measured against the frame log and tested offline. Nobody has yet confirmed that
-a correspondent's decode rate improves when we correct for it, which is the only claim that
-matters and the only one that needs a cooperative station at the other end.
+Live on GB7RDG from 2026-08-13. The first corrections went to EI0RSI-1, heard consistently at
++4 Hz: 47 frames of a connected QSO transmitted `shifted +2.0 Hz to suit them` under the
+damping then in force, and `+4.0 Hz` once the gain became conditional. ID beacons in the middle
+of the same exchange went out unshifted, which is the broadcast exclusion doing its job on real
+traffic rather than in a test.
+
+Seeding was exercised by a restart during a lull and correctly seeded nothing: the last frame
+was 36 minutes old, well outside the age window. A later restart, closer to traffic, reported
+`replayed 28 logged frames from 4 station(s); 1 still current enough to use`.
+
+## Still not proven
+
+**Whether any of this helps.** Nobody has shown that a correspondent's decode rate improves
+when we correct for it, which is the only claim that finally matters and the one needing a
+cooperative station at the far end. Everything above establishes that the right number is
+computed and the right signal is transmitted; none of it establishes that the far end noticed.
+
+The chase detector is likewise untested against a real peer, for the good reason that no such
+peer exists yet - it needs another station running this same algorithm.
