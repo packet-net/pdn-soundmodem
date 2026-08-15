@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Scratch instrument: isolated per-burst re-decode of the misses-v2 corpus through
+       the deployed bank configuration, one fresh modem per cut - the aspiration-test
+       pipeline pointed at the new corpus. Parameterised by SmRoot so the identical rig
+       runs against the baseline checkout and the chase worktree. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <SmRoot Condition="'$(SmRoot)' == ''">../../..</SmRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(SmRoot)/src/Packet.SoundModem/Packet.SoundModem.csproj" />
+  </ItemGroup>
+
+</Project>

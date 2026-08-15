@@ -108,6 +108,11 @@ public sealed class BpskDemodulator
     private double _seededRotation;
     private double _trackedRotation;
     private double _confidenceMean;
+
+    // Previous symbol's decision magnitude, for the pair-min per-bit confidence (see
+    // OnSymbolInstant). MaxValue = no previous symbol yet, so a burst's first bit is
+    // judged on its own magnitude alone.
+    private float _previousDecisionMagnitude = float.MaxValue;
     private bool _rotationSeeded;
     private int _previousPolarity = 1;
     private long _sampleIndex = -1;
@@ -267,7 +272,20 @@ public sealed class BpskDemodulator
             magnitude = (float)Math.Abs(projection);
         }
 
-        EmitBit(decided, magnitude);
+        // A differentially-decoded bit is a function of TWO symbol decisions - bit k
+        // compares symbol k's polarity against symbol k-1's, so an error in EITHER flips
+        // it, and a single hit symbol flips two consecutive bits. The projection magnitude
+        // above measures only the current symbol (the decision-directed reference is
+        // smoothed over many, so one weak predecessor barely dents it), which left the
+        // second bit of every such pair looking confident - and a bit-level chase decoder
+        // hunting the weakest bits could never find it (measured: 0 chase hits in 50
+        // attempts at the AWGN knee before this line). The honest per-bit confidence is
+        // the weaker of the two symbols the bit depends on. Coherent detection decides
+        // bits the same differential way (level == previous), so it gets the same
+        // treatment; MLSE margins come from the trellis, which already spans both.
+        float pairMin = Math.Min(magnitude, _previousDecisionMagnitude);
+        _previousDecisionMagnitude = magnitude;
+        EmitBit(decided, pairMin);
     }
 
     /// <summary>True while DPLL transition timing indicates a coherent packet signal.</summary>
@@ -343,6 +361,7 @@ public sealed class BpskDemodulator
         _trackedRotation = 0;
         _rotationSeeded = false;
         _confidenceMean = 0;
+        _previousDecisionMagnitude = float.MaxValue;
         _mlse?.Reset();
     }
 

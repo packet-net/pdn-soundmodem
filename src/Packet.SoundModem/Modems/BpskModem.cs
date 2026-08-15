@@ -59,6 +59,7 @@ public sealed class BpskModem : IModem, IConstellationSource
                     PlainIl2p: delivery.PlainIl2p,
                     TrailerNearBits: delivery.TrailerNearBits,
                     ErasedBytes: info.ErasedSymbols > 0 ? info.ErasedSymbols : null,
+                    ChasedBits: info.ChasedBits > 0 ? info.ChasedBits : null,
                     MonitorOnly: delivery.MonitorOnly));
             },
             crc, acceptPlainIl2p);

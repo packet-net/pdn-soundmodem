@@ -426,7 +426,7 @@ internal static class ReplayCommand
     private static void WriteCsv(string path, List<ReplayedFrame> frames)
     {
         using var writer = new StreamWriter(path);
-        writer.WriteLine("utc,mode,delivered,crc_valid,trailer_near_bits,corrected,erased,offset_hz,length,payload_hex");
+        writer.WriteLine("utc,mode,delivered,crc_valid,trailer_near_bits,corrected,erased,chased,offset_hz,length,payload_hex");
         foreach (ReplayedFrame f in frames)
         {
             writer.WriteLine(string.Join(',',
@@ -437,6 +437,7 @@ internal static class ReplayCommand
                 f.Quality.TrailerNearBits?.ToString(CultureInfo.InvariantCulture) ?? "",
                 f.Quality.CorrectedBytes?.ToString(CultureInfo.InvariantCulture) ?? "",
                 f.Quality.ErasedBytes?.ToString(CultureInfo.InvariantCulture) ?? "",
+                f.Quality.ChasedBits?.ToString(CultureInfo.InvariantCulture) ?? "",
                 f.Quality.FrequencyOffsetHz?.ToString("F1", CultureInfo.InvariantCulture) ?? "",
                 f.Payload.Length,
                 Convert.ToHexString(f.Payload)));
