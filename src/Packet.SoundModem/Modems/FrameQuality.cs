@@ -69,6 +69,16 @@ namespace Packet.SoundModem.Modems;
 /// reserve. The rescue for scattered bit errors too spread out for erasures, and the only
 /// rescue the 2-parity IL2P header has at all. Null when no chase was needed (or the modem
 /// supplies no confidence); see <see cref="M0LTE.Il2p.Il2pDecodeInfo.ChasedBits"/>.</param>
+/// <param name="SnrDb">Strength of the burst this frame arrived on: mean in-band power
+/// over the burst against a rolling minimum noise floor, in dB, measured by the channel's
+/// own band tracker (<see cref="Packet.SoundModem.Channel.BurstSnrMonitor"/>) and rounded
+/// to 0.1 dB so every consumer records the identical figure. <b>This is the band-tracker
+/// convention, NOT the 3 kHz-referenced SNR the sim ladder and the Watterson masks use</b>
+/// - the reference bandwidth is the modem's own band and the floor is its quietest recent
+/// half second, so comparing this number against a mask row without converting is wrong.
+/// Null when the band was quiet at decode time (a frame that cannot be attributed to
+/// visible energy), when the modem's band was never measurable, or when the frame did not
+/// come through a <see cref="Packet.SoundModem.Channel.SoundModemChannel"/>.</param>
 /// <param name="MonitorOnly">The frame was <b>not</b> passed to the host: it reached
 /// <see cref="IModem.FrameDecoded"/> and everything hanging off it - display, frame log,
 /// journal, survey - but never the modem's constructor frame sink. A fact about what
@@ -90,7 +100,8 @@ public readonly record struct FrameQuality(
     bool MonitorOnly = false,
     int? TrailerNearBits = null,
     int? ErasedBytes = null,
-    int? ChasedBits = null);
+    int? ChasedBits = null,
+    double? SnrDb = null);
 
 /// <summary>
 /// How much a reading of a transmission actually established, for choosing between two decoder

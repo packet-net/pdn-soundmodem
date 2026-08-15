@@ -55,6 +55,14 @@ internal static class ActivityLog
             text.Append($"  fec {corrected}");
         }
 
+        // The strength of the burst it rode in on - the first question of nearly every
+        // receive investigation, now answered by the line itself. Band-tracker dB, not the
+        // sim ladder's 3 kHz reference (see FrameQuality.SnrDb).
+        if (quality.SnrDb is double snr)
+        {
+            text.Append($"  snr {snr:0.0} dB");
+        }
+
         if (quality.FrequencyOffsetHz is double offset)
         {
             text.Append($"  {offset:+0;-0} Hz");

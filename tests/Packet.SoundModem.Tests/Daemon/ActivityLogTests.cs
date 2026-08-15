@@ -51,6 +51,26 @@ public class ActivityLogTests
     }
 
     [Fact]
+    public void The_Burst_Strength_Rides_The_Line_When_It_Was_Measured()
+    {
+        string line = ActivityLog.Received(
+            0, Frame(), new FrameQuality("bpsk300", 20, CorrectedBytes: 0, CrcValid: true,
+                                         FrequencyOffsetHz: 4, SnrDb: 19.3));
+
+        // "rx[0] bpsk300 M0LTE>GB7RDG-2 20 bytes  crc ok  fec 0  snr 19.3 dB  +4 Hz"
+        line.Should().Contain("snr 19.3 dB");
+    }
+
+    [Fact]
+    public void A_Frame_With_No_Measured_Burst_Says_Nothing_About_Snr()
+    {
+        string line = ActivityLog.Received(
+            0, Frame(), new FrameQuality("bpsk300", 20, CorrectedBytes: 0, CrcValid: true));
+
+        line.Should().NotContain("snr", "an unmeasured figure must be absent, not zero");
+    }
+
+    [Fact]
     public void A_Bad_Crc_Is_Shouted_Rather_Than_Mentioned()
     {
         // The difference between "a frame" and "probably a frame" is the one thing an operator

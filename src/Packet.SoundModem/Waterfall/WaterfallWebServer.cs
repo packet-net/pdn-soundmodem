@@ -824,12 +824,18 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// decoder branch - and fan it out as JSON.</summary>
     private void OnFrame(int subChannel, byte[] frame, FrameQuality quality)
     {
-        double? snrDb = null;
+        // The channel's own measurement first (FrameQuality.SnrDb): it is what the frame
+        // log, journal and KISS quality frame record, and the panel must show the same
+        // figure - two burst-SNR numbers for one frame is the branch-index-offset mistake
+        // with a different noun. This server's trackers still supply the burst extent (a
+        // display-rate quantity), and the SNR too for a channel wired without the monitor's
+        // enrichment (frames arriving through a bare event, as some tests do).
+        double? snrDb = quality.SnrDb;
         int? burstLines = null;
         if (_trackers.TryGetValue(subChannel, out BandActivityTracker? tracker)
             && tracker.TryMeasureBurst(out double snr, out int lines))
         {
-            snrDb = Math.Round(snr, 1);
+            snrDb ??= Math.Round(snr, 1);
             burstLines = lines;
         }
 
