@@ -32,6 +32,12 @@ LimitRTPRIO=10
 NoNewPrivileges=true
 ProtectHome=true
 ProtectSystem=full
+# ProtectSystem=full makes /etc read-only, which is right for everything except one case: the
+# configuration API's "?persist=true", where the daemon writes its own config file on an
+# operator's explicit instruction. Narrowed to the one directory, and it does nothing at all
+# unless "api": {"key": ...} is set - without that the API is not served. A station that never
+# enables the API is exactly as protected as before.
+ReadWritePaths=/etc/pdn-soundmodem
 
 [Install]
 WantedBy=multi-user.target

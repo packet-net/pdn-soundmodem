@@ -35,6 +35,35 @@ AWGN. The remaining structural losses are **above** the demodulator: everything 
 decision upward is hard-decision, single-look, and causal. The wire format is NinoTNC IL2P+CRC
 and is not negotiable; every workstream below is receive-side only unless marked otherwise.
 
+### Assessment, 2026-08-15 (Tom asked: how well is it behaving, and how much room is left?)
+
+**The implementation is in good shape; what is left is structural rather than defective.** The
+evidence for the first half is the FreeDV real-path run of 2026-08-15, which is the cleanest
+receiver behaviour this project has measured in the wild: 23 bursts, decoded ones at +17.2 dB
+mean in-band excess against the missed ones' +5.7 dB, **11.5 dB of separation with not one
+inversion**, and `fec 0` on every decode across the day - not a single Reed-Solomon correction
+spent. A misbehaving demodulator shows up precisely as scatter through that boundary, and there
+was none. Add no false positives and +2 Hz frequency tracking held all day, and there is nothing
+here indicting the DSP.
+
+The room that remains, ranked honestly and by family:
+
+- **The `freedv-datac*` OFDM engine: nearly nothing left.** It trails codec2's own modem by ~4
+  points on the *same* `ch` channel, on the heavily-coded long modes only, and its AWGN knees
+  match published figures. Characterised, small, not worth effort.
+- **The IL2P/BPSK chain (the modes that carry live traffic): the demodulator is close to done,
+  and everything above it is not.** Hard-decision, single-look, causal - the textbook ~2 dB
+  give-away that workstream 1 exists to collect, worth much more on the fading channels 40 m
+  actually serves than on AWGN.
+- **CCIR Poor is largely not liftable here, and that is now measured rather than assumed.**
+  Workstream 5 built the MLSE and *retired* its own 50-60 % claim: most of Poor's loss is flat
+  outage across 60-150 symbol times, which no receiver fixes at a wire format with no
+  interleaving. That is a ceiling, not a backlog item.
+- **So the biggest real lever is not receive-side at all.** It is workstream 8, and the 2026-08-15
+  run is the first hard evidence for it (see its status note).
+- **And the cheapest item on the whole list is workstream 9**, which improves no decode at all
+  and makes every other workstream measurable in the wild.
+
 ## The 40 m capture campaign (live)
 
 Tom's concern, 2026-08-06: the 37-frame miss corpus is small, and improvements are starting to
@@ -590,6 +619,44 @@ lacks. Blue sky: per-neighbour capability discovery - speak IL2P BPSK as the lin
 recognise a pdn-soundmodem peer, escalate that link to a Poor-capable waveform automatically.
 Protocol and node work, not receiver work; parked here so the receive plan says out loud where
 its own ceiling is.
+
+**Status 2026-08-15: the first real-path evidence for this, and it is a strong argument.** The
+FreeDV campaign transmitted `freedv-datac1` and `freedv-datac3` from the production GB7RDG node
+over a real ionospheric hop within the same half hour, same power, same dial (ledger entry of
+2026-08-15). `datac3` delivered **6 of 6**; `datac1` **11 of 14**, and on a later, worse pass
+`datac1` managed 10 of 23 where the burst-level analysis put the threshold squarely between the
+two modes' requirements. That gap is roughly 5 dB of link margin, bought purely by choosing a
+different waveform on a link that had the option, and it is the escalation ladder in miniature:
+the same choice a capability-discovery mechanism would be making automatically. It also sharpens
+the case, because the alternative reading of workstream 5's retirement - "Poor is just hard" - is
+true but incomplete. Poor is hard *for this waveform*. The escalation answer is the one that
+moves, and the modes it escalates to are already in the repo and already validated on air.
+
+### 9. Per-frame SNR in the record (cross-cutting; the cheapest item here)
+
+**The daemon already measures this and then throws it away.** `BandActivityTracker.TryMeasureBurst`
+computes a per-burst SNR, and the waterfall draws it - but the `frameLog` schema has no SNR column
+and the `rx[...]` journal line does not print it. So the station's own record of what it heard
+cannot answer "how strong was it", which is the first question of nearly every receive
+investigation.
+
+That cost real time on 2026-08-15. Answering "why did those three `freedv-datac1` frames not
+decode" required standing up a parallel `sm-iqcapture` session, a Welch analysis and a
+burst-to-decode time correlation, purely to recover a number the daemon had already computed and
+discarded. With SNR in the frame log the whole investigation is a SQL query, and it is one that
+can be run retrospectively against captures already sitting on disk.
+
+Concretely: an `snr_db` column on `frames`, the figure on the `rx[...]` line, and the same number
+in the KISS quality frame where one is emitted. Worth ranking **above every DSP workstream above
+it**, not because it improves a single decode, but because it is what makes the others
+measurable in the wild rather than only on the sim ladder. The masks tell us what the receiver
+does against a model; this tells us what the band did to us, per frame, for free, forever.
+
+Care needed on one point, learned the same day: an SNR figure must say what it is measured
+against. The waterfall's is a band-tracker ratio against a rolling noise floor, which is not the
+3 kHz-referenced convention the sim ladder and the masks use. Record which one it is, in the
+column name or a documented convention, or the two will be compared and the comparison will be
+wrong.
 
 ## Discipline
 

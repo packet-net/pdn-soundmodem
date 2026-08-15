@@ -1,0 +1,135 @@
+using Packet.SoundModem.Daemon;
+
+namespace Packet.SoundModem.Tests.Daemon;
+
+/// <summary>
+/// The runtime configuration API's decision half: what it accepts, what it declines, and the
+/// one-run semantics of a change that was not persisted.
+/// </summary>
+/// <remarks>
+/// The point of this feature is that a bad configuration costs nothing, so the cases that matter
+/// are the refusals. Each one below is a real way an operator gets it wrong, and the first is the
+/// one that actually took the GB7RDG node off the air on 2026-08-15.
+/// </remarks>
+public class ConfigApiTests : IDisposable
+{
+    private readonly string _dir = Directory.CreateTempSubdirectory("pdnsm-api").FullName;
+
+    public void Dispose() => Directory.Delete(_dir, recursive: true);
+
+    [Fact]
+    public void A_Workable_Configuration_Is_Accepted()
+    {
+        string? refusal = ConfigApi.Validate("""
+            {"device": "null", "modems": [{"subChannel": 0, "mode": "bpsk300", "frequency": 1500}]}
+            """);
+
+        refusal.Should().BeNull();
+    }
+
+    [Fact]
+    public void A_Mode_Name_With_A_Stray_Character_Is_Declined_By_Name()
+    {
+        // The 2026-08-15 outage, exactly: a `sed` left a trailing space in the mode name, the
+        // JSON was perfectly valid, the daemon refused it at start-up with exit 2, and
+        // RestartPreventExitStatus=2 left a production node down until somebody noticed. Through
+        // the API the same mistake is an HTTP 400 and a station that never stopped.
+        string? refusal = ConfigApi.Validate("""
+            {"device": "null", "modems": [{"subChannel": 0, "mode": "freedv-datac3 "}]}
+            """);
+
+        refusal.Should().NotBeNull();
+        refusal.Should().Contain("freedv-datac3 ", "the operator has to see the stray character");
+        refusal.Should().Contain("modem 0", "and which modem carries it");
+    }
+
+    [Fact]
+    public void A_Band_Plan_That_Cannot_Be_Built_Is_Declined_Before_Anything_Is_Written()
+    {
+        // A baseband mode has no centre frequency to be placed on, so "put it at 7.0516 MHz" has
+        // no meaning. Parsing cannot catch this; planning can, which is why validation plans.
+        string? refusal = ConfigApi.Validate("""
+            {"device": "null", "modems": [
+              {"subChannel": 0, "mode": "fsk9600", "rfFrequency": 7051600}]}
+            """);
+
+        refusal.Should().NotBeNull();
+        refusal.Should().Contain("baseband");
+    }
+
+    [Fact]
+    public void Malformed_Json_Is_Declined_With_An_Explanation_Not_A_Stack_Trace()
+    {
+        string? refusal = ConfigApi.Validate("{\"device\": \"null\",");
+
+        refusal.Should().NotBeNull();
+        refusal.Should().NotContain("Exception", "a stack trace is not an explanation");
+        refusal.Should().NotContain("   at ");
+    }
+
+    [Fact]
+    public void An_Unknown_Setting_Is_A_Warning_Not_A_Refusal()
+    {
+        // Consistent with the file path: an unknown key is reported at start-up and ignored, and
+        // it must not become a hard failure just because it arrived over HTTP.
+        string? refusal = ConfigApi.Validate("""
+            {"device": "null", "wibble": 3, "modems": [{"subChannel": 0, "mode": "bpsk300"}]}
+            """);
+
+        refusal.Should().BeNull();
+    }
+
+    [Fact]
+    public void A_One_Run_Change_Is_Consumed_So_It_Applies_To_Exactly_One_Start_Up()
+    {
+        string configPath = Path.Combine(_dir, "soundmodem.json");
+        File.WriteAllText(configPath, "{}");
+        string pending = ConfigApi.EphemeralPathFor(configPath);
+        File.WriteAllText(pending, """{"device": "null"}""");
+
+        ConfigApi.PendingPath(configPath).Should().Be(pending, "a change is waiting");
+
+        ConfigApi.ConsumePending(configPath);
+
+        ConfigApi.PendingPath(configPath).Should().BeNull(
+            "consuming it is what makes it one-run: the restart after this one returns the "
+            + "station to its config file, so an experiment that goes wrong self-heals");
+    }
+
+    [Fact]
+    public void Consuming_Nothing_Is_Not_An_Error()
+    {
+        string configPath = Path.Combine(_dir, "soundmodem.json");
+        File.WriteAllText(configPath, "{}");
+
+        Action twice = () =>
+        {
+            ConfigApi.ConsumePending(configPath);
+            ConfigApi.ConsumePending(configPath);
+        };
+
+        twice.Should().NotThrow("every ordinary start-up takes this path");
+    }
+
+    [Fact]
+    public void The_Api_Key_Is_Blanked_In_What_Is_Served_Back()
+    {
+        // Not keeping it from the caller, who just presented it - keeping it out of everywhere
+        // the answer subsequently goes: scrollback, pasted diagnostics, screenshots.
+        string redacted = ConfigApi.Redact("""
+            {"device": "null", "api": {"key": "a-long-random-string"}}
+            """);
+
+        redacted.Should().NotContain("a-long-random-string");
+        redacted.Should().Contain("not shown");
+        redacted.Should().Contain("null", "the rest of the configuration is still served");
+    }
+
+    [Fact]
+    public void A_Configuration_With_No_Api_Section_Passes_Through_Redaction_Unchanged()
+    {
+        const string json = """{"device": "null", "modems": []}""";
+
+        ConfigApi.Redact(json).Should().Be(json);
+    }
+}

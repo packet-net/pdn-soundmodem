@@ -877,6 +877,85 @@ trackers are keyed by modem, and a ghost shares its base modem's rather than hav
 carry a **frequency offset**, which is a real measurement of the identifying station's carrier
 against the ghost's centre, so it tells you how far their dial sits from yours.
 
+## `api`
+
+Change this station's configuration at runtime, over HTTP:
+
+```json
+"api": { "key": "a-long-random-string" },
+"waterfall": { "port": 8099 }
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `key` | string | *(none)* | The shared secret every request must present. No key, no API |
+
+Served on the [`waterfall`](#waterfall)'s listener under `/api/`, so a station that already
+publishes a waterfall gains this on the same port rather than a second one to open. An `api`
+section without a `waterfall` section is refused at start-up: there would be no listener to hang
+it on, and a setting that silently does nothing is worse than one that says so.
+
+**Present the key** as `Authorization: Bearer KEY` or `X-API-Key: KEY`. Compared in fixed time,
+because the socket may be reachable from the LAN and a byte-at-a-time comparison leaks a secret a
+byte at a time. There is no unauthenticated mode and no default key.
+
+> **This can change frequency and transmit power**, which makes it a bigger gun than the
+> waterfall it shares a socket with. The same warning that applies to KISS applies here and more
+> so: anything that can reach the port *and holds the key* can retune and key your transmitter.
+> Bind the waterfall to loopback and reach it over SSH if the station is anywhere exposed.
+
+```
+GET  /api/config                     what this process is running
+POST /api/config                     replace it for one run
+POST /api/config?persist=true        replace it and write the config file
+```
+
+`GET` reports the running configuration, the config file's path, and whether the station is
+running the file or a one-run change. The `api.key` is blanked in the reply - the caller already
+knows it, and the point is to keep it out of the scrollback, the pasted diagnostic and the
+screenshot.
+
+`POST` takes a **complete** configuration document, the same shape as `soundmodem.json`. It is
+not a patch: send what you want the station to be.
+
+**Validate and decline is the whole point.** The proposal is parsed and band-planned *before*
+anything is written, through the code the start-up path uses, and a bad one comes back as `400`
+with the message the journal would have carried - while the running station carries on untouched:
+
+```
+$ curl -sX POST -H "X-API-Key: $KEY" --data @new.json http://radio:8099/api/config
+modem 3: unknown mode 'freedv-datac3 '. Check the spelling against docs/modes.md.
+```
+
+That is a real example. Editing the file by hand, the same stray space produced a correct refusal
+with a much worse consequence: exit 2, which `RestartPreventExitStatus=2` deliberately does not
+retry, and a production node down until somebody noticed. Validation is not exhaustive - a sound
+card that has been unplugged is discovered only by trying - which is what the default below
+insures against.
+
+**Applying is a full rebuild.** Nothing is mutated in place. Adding a 48 kHz mode to a 12 kHz
+station rebuilds every modem anyway (the channel's DSP rate is chosen once, from the modem set),
+so the daemon writes the new configuration and restarts onto it. Expect a few seconds of
+interruption, and note that KISS clients are disconnected and reconnect.
+
+**A change is one-run unless you say otherwise.** By default it lives in the state directory and
+is consumed by the next start-up - read once, deleted immediately - so it is in force for exactly
+one run. Any later restart (a crash, a reboot, a `systemctl restart`) returns the station to its
+config file. **An experiment that goes wrong therefore self-heals**, and the config file stays the
+description of the intended station. While one is in force the daemon says so on every start-up:
+
+```
+api: this station is running a ONE-RUN configuration applied over the API, not
+     /etc/pdn-soundmodem/soundmodem.json. Any restart from here returns it to the file.
+```
+
+`?persist=true` writes `soundmodem.json` instead, for a change meant to outlive the session. The
+shipped unit allows this with `ReadWritePaths=/etc/pdn-soundmodem`; on a hand-written unit with
+`ProtectSystem=full` and no such line the write is refused and the reply says so.
+
+**Run without systemd and there is nothing to restart the daemon**, so an applied change stops it
+rather than reloading it. The daemon warns at start-up when it cannot see systemd around it.
+
 ## `frameLog`
 
 Everything the station hears **and everything it sends**, written to a SQLite file:

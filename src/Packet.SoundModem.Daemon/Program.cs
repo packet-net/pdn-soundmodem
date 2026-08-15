@@ -213,13 +213,34 @@ FrequencyMatchingConfig? frequencyMatching = null;
 RawCaptureConfig? rawCaptureConfig = null;
 DeadFeedConfig? deadFeedConfig = null;
 bool idBeacons = true;
+ApiConfig? apiConfig = null;
+// What this process is running, verbatim, so the API can serve it back rather than re-serialise
+// a parsed object and quietly lose whatever the operator wrote that this version ignores.
+string apiConfigJson = "{}";
+bool apiEphemeralInForce = false;
 
 if (configPath is not null)
 {
+    // A one-run configuration left by the API takes precedence for exactly this start-up, and is
+    // deleted the moment it has been read - see ConfigApi.ConsumePending for why that ordering is
+    // the safety property rather than a detail.
+    string? pendingPath = ConfigApi.PendingPath(configPath);
+    string loadPath = pendingPath ?? configPath;
+    apiEphemeralInForce = pendingPath is not null;
+
     // A bad config is an operator typo, not a bug: explain it and exit 2. The unit's
     // RestartPreventExitStatus=2 stops systemd retrying, so the journal carries one
     // readable explanation instead of a stack trace every RestartSec.
-    DaemonConfig? config = DaemonConfig.TryLoad(configPath, out string configError);
+    // Read before consuming: the API serves back what this process is actually running, and for
+    // a one-run configuration the file it came from is about to be deleted.
+    apiConfigJson = File.Exists(loadPath) ? File.ReadAllText(loadPath) : "{}";
+
+    DaemonConfig? config = DaemonConfig.TryLoad(loadPath, out string configError);
+    if (pendingPath is not null)
+    {
+        ConfigApi.ConsumePending(configPath);
+    }
+
     if (config is null)
     {
         Console.Error.WriteLine(configError);
@@ -245,6 +266,7 @@ if (configPath is not null)
     flexConfig = config.Flex;
     uberSdrConfig = config.UberSdr;
     waterfallConfig = config.Waterfall;
+    apiConfig = config.Api;
     surveyConfig = config.Survey;
     frequencyMatching = config.FrequencyMatching;
     rawCaptureConfig = config.RawCapture;
@@ -1222,6 +1244,7 @@ if (waterfallConfig is not null)
 
 await using var waterfallLifetime = waterfallServer;
 
+
 // The signal survey: watch the whole passband for transmissions this station cannot read, and
 // keep the ones worth looking at later (issue #206). Off unless configured - it writes audio to
 // disk unattended for as long as the station runs.
@@ -1518,8 +1541,72 @@ System.Net.IPAddress listenAddress = DaemonConfig.ParseBind(bindAddress)!;
 
 // Set when the radio's session dies, so the exit code says "retry me" rather than "I am done".
 bool radioLost = false;
+// Set by the configuration API once a change has been validated and written: the process ends so
+// systemd rebuilds the whole station on it. Exit 1, like a lost radio, because that is the code
+// Restart=on-failure reopens - exit 2 is "your configuration is wrong" and is deliberately final.
+bool restartRequested = false;
 
 using var cancellation = new CancellationTokenSource();
+
+// Runtime configuration, on the waterfall's listener. Off unless a key is set, and refused
+// outright if there is no listener to hang it on - an "api" section on a station with no
+// waterfall is a setting that would silently do nothing.
+if (apiConfig?.Key is { Length: > 0 } apiKey)
+{
+    if (waterfallServer is null)
+    {
+        Console.Error.WriteLine(
+            "\"api\" is served on the waterfall's HTTP listener, and this station has no "
+            + "\"waterfall\" section - add one, or remove \"api\"");
+        return 2;
+    }
+
+    if (configPath is null)
+    {
+        Console.Error.WriteLine(
+            "\"api\" needs a --config file to read back and to write changes to; a station "
+            + "configured entirely from the command line has nothing for it to act on");
+        return 2;
+    }
+
+    string ephemeralPath = ConfigApi.EphemeralPathFor(configPath);
+    var configApi = new ConfigApi(
+        apiKey, configPath, ephemeralPath,
+        runningJson: () => apiConfigJson,
+        ephemeralInForce: apiEphemeralInForce,
+        requestRestart: () =>
+        {
+            // Exit 1, the same door a lost radio uses, because it is the one systemd's
+            // Restart=on-failure reopens. Exit 2 is reserved for "your configuration is wrong"
+            // and is deliberately not restarted - which is the wrong answer for a change that
+            // has already been validated.
+            restartRequested = true;
+            cancellation.Cancel();
+        });
+    waterfallServer.ApiHandler = configApi.HandleAsync;
+
+    Console.WriteLine(
+        $"api: configuration over {waterfallServer.Url}api/config (key required). "
+        + $"POST replaces it for one run; add ?persist=true to write {configPath}.");
+
+    // Said out loud because the whole apply path assumes something will restart the process. Run
+    // by hand, nothing will, and "it applied and then the station stopped" is a bad surprise.
+    if (Environment.GetEnvironmentVariable("INVOCATION_ID") is null)
+    {
+        Console.Error.WriteLine(
+            "api: WARNING - this daemon does not appear to be running under systemd, so an "
+            + "applied change will STOP it rather than restart it onto the new configuration.");
+    }
+}
+
+if (apiEphemeralInForce)
+{
+    // Loud, and on every start-up it applies to: a station running something other than its own
+    // config file is the kind of thing that gets forgotten and then debugged for an hour.
+    Console.Error.WriteLine(
+        $"api: this station is running a ONE-RUN configuration applied over the API, not "
+        + $"{configPath}. Any restart from here returns it to the file.");
+}
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
@@ -2631,7 +2718,7 @@ if (!deviceIsFlex)
     (input as IDisposable)?.Dispose();
 }
 
-return radioLost ? 1 : 0;
+return radioLost || restartRequested ? 1 : 0;
 
 /// <summary>Runs an action on scope exit - for state captured after its `using` must be declared.</summary>
 internal sealed class Disposer(Action onDispose) : IDisposable

@@ -401,6 +401,18 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     public IReadOnlyList<ModemBand> Bands => _bands;
 
     /// <summary>
+    /// Handles requests under <c>/api/</c>, returning true if it dealt with one. Null (the
+    /// default) leaves every such path a 404, which is what a station that has not configured an
+    /// API serves.
+    /// </summary>
+    /// <remarks>
+    /// The waterfall owns the socket; it deliberately does not own what this does with it. The
+    /// handler is responsible for its own authentication - this class applies none, because the
+    /// page it serves needs none and the two must not inherit each other's answer.
+    /// </remarks>
+    public Func<HttpListenerContext, Task<bool>>? ApiHandler { get; set; }
+
+    /// <summary>
     /// What the signal survey has been doing - captures kept, captures a budget refused, and the
     /// disk it is using. Pushed rather than polled, and only on a change.
     /// </summary>
@@ -1146,6 +1158,18 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             {
                 HttpListenerWebSocketContext upgrade = await context.AcceptWebSocketAsync(null).ConfigureAwait(false);
                 await ServeWebSocketAsync(upgrade.WebSocket).ConfigureAwait(false);
+                return;
+            }
+
+            // Anything under /api/ belongs to whoever installed the handler, not to the
+            // waterfall. The seam is here rather than in this class because the meaning of those
+            // requests is the daemon's - configuration, validation, the station's own restart -
+            // and this library knows nothing about any of that. Unhandled falls through to 404,
+            // so a station with no handler installed serves exactly what it always did.
+            if (ApiHandler is { } api
+                && context.Request.Url?.AbsolutePath.StartsWith("/api/", StringComparison.Ordinal) == true
+                && await api(context).ConfigureAwait(false))
+            {
                 return;
             }
 
