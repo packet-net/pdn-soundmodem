@@ -335,7 +335,10 @@ sets coming back as adjacent pairs. Each half alone is a null; together (M0LTE.I
 the pair-min, PR #307): AWGN -5/-4 dB 55->67 %/88->93 %, the CFO span at -3 dB 92-97->98-99 %,
 15-byte frames -5 dB 62->76 %, fading +1..+5 points, Poor at its ceiling; misses-v2 isolated
 decode 14->32 of 573 with zero lost and 11 of the 18 new reads CRC-verified. Numbers and
-budgets in the mode-validation.md entry of the same date. What remains of this workstream
+budgets in the mode-validation.md entry of the same date; the overnight continuous replay
+of the whole 166.9 h archive then read +78 frames (41 CRC-verified, zero content lost, 102
+decodes leaning on chase) and out-gained the old receiver's MLSE detector swap on the
+deployed default - the 2026-08-16 ledger addendum. What remains of this workstream
 now: **full soft RS (GMD/KV), still judged diminishing beyond chase for these block sizes**,
 and one cheap idea the pair signature suggests - a chase enumerator that flips adjacent
 PAIRS as single candidates would cover two symbol errors where today's 3-flip budget covers
