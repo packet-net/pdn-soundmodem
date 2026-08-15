@@ -100,6 +100,28 @@ public sealed class ModemConfig
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
+/// <summary>Runtime configuration over HTTP - see <see cref="DaemonConfig.Api"/>.</summary>
+/// <remarks>
+/// <para>Served on the <see cref="WaterfallConfig.Port"/> listener under <c>/api/</c>, so a
+/// station that already publishes a waterfall gains this on the same port rather than a second
+/// one to open.</para>
+/// <para><b>This can change frequency and transmit power</b>, which makes it a bigger gun than
+/// the waterfall it shares a socket with. It does nothing at all until <see cref="Key"/> is set,
+/// and every request must carry that key.</para>
+/// </remarks>
+public sealed class ApiConfig
+{
+    /// <summary>
+    /// The shared secret every request must present, as <c>Authorization: Bearer KEY</c> or
+    /// <c>X-API-Key: KEY</c>. No key, no API: there is no default and no unauthenticated mode.
+    /// </summary>
+    public string? Key { get; set; }
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
 /// <summary>Morse identification for one modem - see <see cref="ModemConfig.Identify"/>.</summary>
 public sealed class IdentifyConfig
 {
@@ -661,6 +683,12 @@ public sealed class DaemonConfig
     /// <summary>Browser waterfall endpoint; null = disabled.</summary>
     public WaterfallConfig? Waterfall { get; set; }
 
+    /// <summary>
+    /// Change this station's configuration at runtime over HTTP. Omit it (the default) and there
+    /// is no such surface at all.
+    /// </summary>
+    public ApiConfig? Api { get; set; }
+
     /// <summary>Frame log; null = frames are heard and not written down.</summary>
     public FrameLogConfig? FrameLog { get; set; }
 
@@ -855,6 +883,7 @@ public sealed class DaemonConfig
 
         Unknown(null, config.UnknownSettings);
         Unknown("waterfall", config.Waterfall?.UnknownSettings);
+        Unknown("api", config.Api?.UnknownSettings);
         Unknown("ubersdr", config.UberSdr?.UnknownSettings);
         Unknown("frameLog", config.FrameLog?.UnknownSettings);
         Unknown("survey", config.Survey?.UnknownSettings);
