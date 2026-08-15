@@ -210,6 +210,29 @@ via `docs/bench/impulse-stats-2026-08-06.py` over the 81 audio-bearing chunks.
   for the repo's own ARDOP implementation: real on-air ARDOP bursts with timestamps,
   centres and SNRs, none of which the frame-layer rig can claim.
 
+**Full-archive harvest and the misses-v2 corpus (2026-08-15).** The whole raw archive -
+675 chunks, 2026-08-06 13:53Z to 2026-08-13 12:34Z, 166.9 h (the capture service stood down
+on 2026-08-13 when the Flex went to the FreeDV campaign) - replayed through current main:
+bpsk300 differential **4318 decoded / 3872 deliverable**, burst verdicts **4442 DCD bursts,
+3456 decoded, 986 undecoded (310 synced-then-RS-failed)**. Frame-log diff at 7-day scale
+stays near parity, and is now **generation-controlled** (the deployed daemon changed at
+frame id 1328, 2026-08-07 16:45Z, from pre-erasure 0.25.1 to the erasure receiver): gen1
+1146 logged / 9 log-only, gen2 3200 logged / 32 log-only, 13 replay-only - the same
+detector-exchange-not-instrument-loss shape as the 24 h reading. The corpus itself:
+**misses-v2 is built** at `/home/tf/capture-40m/misses-v2/` - the 573 full-length (>= 1 s
+DCD) undecoded bursts cut to per-burst WAVs with 2 s margins, 413 sub-second fragments
+excluded per the opening-evening autopsy, manifest.json carrying burst metadata and, for
+**77 cuts, expected bytes attached by unique retry-sibling** (a decoded frame within ten
+minutes whose wire duration matches the burst's DCD hold - context evidence, weaker than
+the GB7RDG NinoTNC referee, stated per case; 252 more had multiple candidate payloads and
+carry none). Instruments committed under `docs/bench/`: the corpus builder
+(generation-tagged log diff included; its matching reproduces `sm-ota replay`'s 4305
+matched exactly) and the isolated re-score harness (one fresh deployed-configuration bank
+per cut - the aspiration-test pipeline pointed at the new corpus). Baseline isolated-decode
+score: **14 of 573** (1 of the 77 expected-attached byte-exact) - the "what the station
+misses is genuinely undecodable" conclusion holding at 7-day scale, and the yardstick the
+chase landing then moved to 32 (workstream 1's 2026-08-15 status).
+
 ## Workstreams, ranked
 
 Ranked by expected real-world return per unit of effort, with the reasoning pinned so a future
@@ -299,6 +322,26 @@ reset question, now **answered in the negative** (2026-08-06 evening): disabling
 entirely changed nothing on Good (identical to the burst) and 0-4 points on Moderate, inside
 the confidence intervals - fading losses are acquisition or RS-budget failures, not
 collection aborts, so the reset stays exactly as it is and the suspicion is retired.
+
+**Status 2026-08-15: the chase leg is landed, and the 2026-08-06 archived null it reverses
+is explained - the null was the per-bit metric, not the idea.** Chase had been built once
+already (M0LTE.Il2p branch `chase-decoding`, archived unmerged 2026-08-06: "re-open only
+with a demonstrably better per-bit soft metric") and its diagnosis was right: with the DF-DD
+magnitude as the per-bit confidence, the population where chase beats erasures is empty. The
+missing mechanism: a differential bit depends on TWO symbols, so one hit symbol flips two
+adjacent bits, and only the first ranked weak - measured 0 chase hits in 50 header attempts
+at the -4 dB knee, 40/70 after `BpskDemodulator` emits the pair-min, with the accepted flip
+sets coming back as adjacent pairs. Each half alone is a null; together (M0LTE.Il2p 0.3.0 +
+the pair-min, PR #307): AWGN -5/-4 dB 55->67 %/88->93 %, the CFO span at -3 dB 92-97->98-99 %,
+15-byte frames -5 dB 62->76 %, fading +1..+5 points, Poor at its ceiling; misses-v2 isolated
+decode 14->32 of 573 with zero lost and 11 of the 18 new reads CRC-verified. Numbers and
+budgets in the mode-validation.md entry of the same date. What remains of this workstream
+now: **full soft RS (GMD/KV), still judged diminishing beyond chase for these block sizes**,
+and one cheap idea the pair signature suggests - a chase enumerator that flips adjacent
+PAIRS as single candidates would cover two symbol errors where today's 3-flip budget covers
+one and a half, at the same candidate count. Sized only, not built: the header (the knee's
+population) already chases all 4095 subsets of its 12 weakest, so the pair enumerator only
+helps payload blocks, whose failures the erasure ladder already dominates.
 
 ### 2. Trailer corroboration - LANDED 2026-08-06
 

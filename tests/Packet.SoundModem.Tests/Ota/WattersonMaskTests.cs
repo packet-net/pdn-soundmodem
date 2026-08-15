@@ -204,17 +204,20 @@ public class WattersonMaskTests(ITestOutputHelper output)
 
     public static IEnumerable<object[]> FullGrid()
     {
-        // bpsk300 AWGN ladder - measured 2026-08-06 (erasure receiver, N>=100): 7/55/88/96/98 %.
-        yield return ["bpsk300", "awgn", -5.0, 0.0, 35];
-        yield return ["bpsk300", "awgn", -4.0, 0.0, 68];
+        // bpsk300 AWGN ladder - measured 2026-08-15 (chase receiver, N=300): 67/93/97/99 %
+        // (was 55/88/96/98 on the erasure receiver; the -5/-4 rows moved with the
+        // pair-confidence + chase landing, mode-validation.md 2026-08-15).
+        yield return ["bpsk300", "awgn", -5.0, 0.0, 47];
+        yield return ["bpsk300", "awgn", -4.0, 0.0, 73];
         yield return ["bpsk300", "awgn", -3.0, 0.0, 80];
         yield return ["bpsk300", "awgn", -2.0, 0.0, 85];
 
-        // bpsk300 CFO flatness at -3 dB - measured 92-97 % across the span.
-        yield return ["bpsk300", "awgn", -3.0, 3.75, 75];
-        yield return ["bpsk300", "awgn", -3.0, 7.5, 75];
-        yield return ["bpsk300", "awgn", -3.0, 15.0, 75];
-        yield return ["bpsk300", "awgn", -3.0, 30.0, 75];
+        // bpsk300 CFO flatness at -3 dB - measured 98-99 % across the span (2026-08-15;
+        // was 92-97 - chase rescues the header bits a residual rotation grazes).
+        yield return ["bpsk300", "awgn", -3.0, 3.75, 80];
+        yield return ["bpsk300", "awgn", -3.0, 7.5, 80];
+        yield return ["bpsk300", "awgn", -3.0, 15.0, 80];
+        yield return ["bpsk300", "awgn", -3.0, 30.0, 80];
 
         // bpsk300 fading - measured Good 35/49/60/70/76 %, Moderate (N=40) 23/42/53/60 %
         // across -2..+4, Poor 23/26/28/28 %.
