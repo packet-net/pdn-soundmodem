@@ -2,7 +2,11 @@
 
 The campaign Tom asked for on 2026-08-15: add a `freedv-datac*` modem to the **production**
 `pdn-soundmodem` config on host `pdn-soundmodem` (10.45.0.37), pass traffic through it on 40 m,
-and receive it on a second `pdn-soundmodem` instance listening to the M9PSY UberSDR in Scotland.
+and receive it on a second `pdn-soundmodem` instance listening to a public UberSDR.
+
+**Run complete, 2026-08-15** - see [What happened](#what-happened-2026-08-15-run-complete) at the
+end. It worked, on both modes, but not to the receiver this plan was written around: read that
+section before repeating any of the frequency or receiver choices below.
 
 This is not [`freedv-hf-loop.md`](freedv-hf-loop.md), which is a two-ended bench loop over a
 short path with both ends on the desk. The point here is the **deployment path at real range**:
@@ -85,8 +89,10 @@ Hz, but three things do change:
   bandwidth, about **3.9 dB more noise** into the DAX stream. The daemon filters per modem
   digitally, so decode performance should not follow it down, but that is a claim to test rather
   than assert: compare decode counts in `frames.db` for the hour before and the hour after.
-- **The transmit filter opens** to 5350 Hz. This one is **radio-global and persistent**; it
-  outlives the daemon, so putting the config back is not enough to put the radio back.
+- **The transmit filter opens** to 5350 Hz. This one is **radio-global and persistent**: it
+  outlives the daemon, so nothing else on the radio will put it back. Restoring the config does,
+  though, because the daemon states the high cut from the band plan at every start-up rather than
+  inheriting it - measured on the takedown, 4950 Hz back to 2550 Hz. Verify it off the banner.
 
 The restart also drops the BPQ KISS sessions (10.45.0.121 on ports 8101 and 8102) while
 GB7RDG-2 is passing traffic to GB7BPQ and EI0RSI-1.
@@ -160,8 +166,12 @@ the transmission is not.
    passband and both filters match the `flex:mock` dry run.
 7. **Pass traffic** (`scripts/kiss-send.py`). The first transmission makes an identification due
    at once and every 10 minutes thereafter, on the test frequency; watch for the `id[3]` lines.
-8. **Take it down** when the session ends: restore the config, restart, and explicitly restore
-   the transmit filter high cut, which the config alone will not do.
+8. **Take it down** when the session ends: restore the config and restart. That is sufficient,
+   including for the radio-global transmit filter - the daemon *states* the high cut from the band
+   plan at every start-up rather than inheriting it, so restoring the three-modem config puts the
+   filter back to 2550 Hz as a side effect. (An earlier draft of this plan said the config alone
+   would not do it. The run disproved that; verify it off the banner rather than trusting either
+   claim.)
 
 ### Abort conditions
 
@@ -178,3 +188,47 @@ the PR, per the standing rule; the IQ captures with their sidecars; the before-a
 counts for the three production modems; and the measured dial correction. If `freedv-datac1`
 decodes at 550 km through a production node sharing a slice with live traffic, that is the row
 worth writing.
+
+---
+
+## What happened (2026-08-15, run complete)
+
+Authorised and run on 2026-08-15 between roughly 09:02 and 09:35 UTC. **Both modes crossed a real
+path; the node was restored and verified back in service.** The ledger entry in
+[mode-validation.md](mode-validation.md) is the durable record; this is what the plan got right
+and wrong.
+
+| | Result |
+|---|---|
+| `freedv-datac3` to Wessex | **6 of 6, 100 %** |
+| `freedv-datac1` to Wessex | **11 of 14, 79 %** |
+| Decode quality | every frame `crc ok`, `fec 0`, **+2 Hz** |
+| Morse ident on air | 09:18:50 and 09:28:56 - **10 min 06 s** against a configured 10 |
+| Node afterwards | config byte-identical to the backup, filters back to 2550 Hz, working EI0RSI-1 |
+
+**The receiver was the variable, not the mode.** The plan named m9psy-1 throughout and it was the
+wrong choice: nothing decoded there at all, and the survey was *empty* - heard nothing, rather
+than heard-and-failed. Rather than guess, an IQ capture taken through the transmissions showed our
+bursts arriving at the right instants at only +6 to +10 dB of in-band excess, about +5 dB SNR3k,
+which is precisely datac1's fading threshold. A 550 km hop on 40 m at 09:10 UTC in August simply
+did not have the margin. Tom suggested `wessex.zapto.org` (~120 km, solid NVIS) and the same
+waveform at the same power decoded 100 %. **For any repeat: pick the receiver by path length
+first.** The `--dial-correction` trap never appeared - GPSDO at both ends held +2 Hz - so the
+step-4 measurement is better spent choosing a receiver that can hear you.
+
+**Placement moved to 7053.600**, not the planned 7054.000. The pre-transmission check found a
+narrow persistent carrier at 7055.15-7055.25 kHz, 300 Hz off datac1's upper edge at 7054.0;
+dropping 400 Hz bought a 700 Hz guard at the cost of the emission straddling 7053 by 250 Hz, which
+is immaterial for an attended test since both segments carry digimodes at 2700 Hz. Passband
+300-4831 Hz, transmit filter 4950 Hz, slice receive 150-4950 Hz - a little better than the 5350 Hz
+the 7054.0 placement modelled.
+
+**The costs landed as measured.** Dial 7.049450 to 7.049750 exactly as the `flex:mock` dry run
+said; the mock and the production banner agreed line for line, which is the reason to keep doing
+the dry run. Two restarts were budgeted and four were spent: one to deploy, one for a `sed` that
+left a trailing space in `"freedv-datac3 "` and stopped the service on exit 2 (the config guard
+working as designed, but a self-inflicted outage of about a minute - **edit the config with a JSON
+parser, not `sed`**), one to switch to datac1, and one to restore.
+
+**Still open:** nothing blocking. Worth doing next if the campaign continues - a longer datac1 run
+to put a real number on 79 %, and the same test at a time of day with less D-layer absorption.
