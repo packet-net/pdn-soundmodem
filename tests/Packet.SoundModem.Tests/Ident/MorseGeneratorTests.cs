@@ -1,6 +1,7 @@
+using Packet.SoundModem.Ident;
 using Packet.SoundModem.Ota;
 
-namespace Packet.SoundModem.Tests.Ota;
+namespace Packet.SoundModem.Tests.Ident;
 
 /// <summary>
 /// Morse station identification: PARIS timing, the exact keying of the callsign we will

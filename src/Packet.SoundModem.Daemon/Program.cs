@@ -10,6 +10,7 @@ using Packet.SoundModem.Daemon;
 using M0LTE.Dsp;
 using Packet.SoundModem.Dsp;
 using Packet.SoundModem.FlexRadio;
+using Packet.SoundModem.Ident;
 using Packet.SoundModem.Iq;
 using Packet.SoundModem.Kiss;
 using Packet.SoundModem.UberSdr;
@@ -769,6 +770,126 @@ if (modems.Any(m => m.Mode.StartsWith("qpsk", StringComparison.Ordinal)))
 {
     Console.WriteLine($"psk detector (qpsk): {qpskDetector.ToString().ToLowerInvariant()}"
         + (pskDetectorOverride is null ? " [default]" : " [--psk-detector]"));
+}
+
+// Morse identification, per modem. A data waveform carries nothing a listener can read without
+// our software, so a station running one on a real antenna owes anyone sharing the band a
+// callsign in a form they can copy by ear. Off unless a modem asks for it: the modes that
+// already identify themselves in-band need nothing, and a station that transmits nothing owes
+// nothing (see StationIdentifier for why the clock only runs while the modem is transmitting).
+var identifiers = new Dictionary<int, StationIdentifier>();
+foreach (ModemConfig modemConfig in modems)
+{
+    if (modemConfig.Identify is not IdentifyConfig id)
+    {
+        continue;
+    }
+
+    int subChannel = modemConfig.SubChannel;
+    if (channel.ReceiveOnlyReason is not null)
+    {
+        // The same shape of refusal "ptt" gets on this device, and for the same reason: there is
+        // no transmitter to identify. Queueing one would only turn "cannot" into a timeout.
+        Console.Error.WriteLine(
+            $"modem {subChannel}: \"identify\" needs a transmitter, and this station receives "
+            + "only - drop it, or point the station at a radio");
+        return 2;
+    }
+
+    if (DaemonConfig.IsArdop(modemConfig.Mode))
+    {
+        // ARDOP transmits through the delegate path as a whole virtual TNC, so none of its
+        // bursts raise the per-sub-channel event this policy counts. Rather than accept the
+        // setting and never identify, say so: a silent no-op on a licence condition is the
+        // worst of the three outcomes.
+        Console.Error.WriteLine(
+            $"modem {subChannel}: \"identify\" is not supported on ardop - its ARQ bursts do "
+            + "not go out as addressed frames, so there is nothing here to count transmissions "
+            + "against. Identify on a packet modem sharing the channel instead.");
+        return 2;
+    }
+
+    if (string.IsNullOrWhiteSpace(id.Callsign))
+    {
+        Console.Error.WriteLine(
+            $"modem {subChannel}: \"identify\" needs a \"callsign\" - there is no default for a "
+            + "licence condition");
+        return 2;
+    }
+
+    if (id.ToneHz is not null && id.RfFrequency is not null)
+    {
+        Console.Error.WriteLine(
+            $"modem {subChannel}: \"identify\" sets both \"toneHz\" and \"rfFrequency\" - they "
+            + "say the same thing two ways. Keep one.");
+        return 2;
+    }
+
+    if (id.RfFrequency is not null && bandPlan is null)
+    {
+        Console.Error.WriteLine(
+            $"modem {subChannel}: \"identify\".\"rfFrequency\" needs a band plan - without one "
+            + "the daemon does not know this station's dial, so it cannot turn an RF frequency "
+            + "into a tone. Give the modems \"rfFrequency\", pin \"dialFrequency\", or set "
+            + "\"identify\".\"toneHz\" instead.");
+        return 2;
+    }
+
+    double? toneHz =
+        id.ToneHz
+        ?? (id.RfFrequency is double identRf && bandPlan is not null
+            ? (bandPlan.IsUpperSideband ? identRf - bandPlan.DialHz : bandPlan.DialHz - identRf)
+            : modemConfig.Frequency);
+
+    if (toneHz is not double tone)
+    {
+        // A baseband mode occupies the audio band from DC up and has no centre to borrow.
+        Console.Error.WriteLine(
+            $"modem {subChannel}: mode '{modemConfig.Mode}' has no audio centre, so there is "
+            + "nothing to default the ident tone to - set \"identify\".\"toneHz\"");
+        return 2;
+    }
+
+    StationIdentifier identifier;
+    try
+    {
+        identifier = new StationIdentifier(
+            id.Callsign!,
+            id.IncludeMode ? modemConfig.Mode : null,
+            tone,
+            id.Wpm,
+            TimeSpan.FromMinutes(id.IntervalMinutes),
+            DspRate,
+            id.Amplitude);
+    }
+    catch (Exception bad) when (bad is ArgumentException or ArgumentOutOfRangeException)
+    {
+        Console.Error.WriteLine($"modem {subChannel}: \"identify\" is not usable");
+        Console.Error.WriteLine($"  {bad.Message}");
+        return 2;
+    }
+
+    identifiers[subChannel] = identifier;
+    Console.WriteLine(
+        $"modem {subChannel}: identifying as {identifier.Text} in CW @ {tone:F0} Hz"
+        + (bandPlan is not null
+            ? $" = {RfPlan.Mhz(bandPlan.IsUpperSideband ? bandPlan.DialHz + tone : bandPlan.DialHz - tone)}"
+            : "")
+        + $", {id.Wpm:F0} wpm, every {id.IntervalMinutes:F0} min while transmitting "
+        + $"({identifier.DurationSeconds:F1} s)");
+
+    if (bandPlan is not null && (tone < bandPlan.Window.LowHz || tone > bandPlan.Window.HighHz))
+    {
+        // Not fatal: the window is what the plan fitted the modems into, and an operator who
+        // moved the ident deliberately may know something the planner does not. But on a Flex
+        // the transmit filter is set from that window, so an ident outside it goes out truncated
+        // or not at all, and nothing else would say so.
+        Console.Error.WriteLine(
+            $"modem {subChannel}: WARNING - the ident tone {tone:F0} Hz is outside the "
+            + $"{bandPlan.Window.LowHz:F0}-{bandPlan.Window.HighHz:F0} Hz passband this plan "
+            + "plays into, so it may be filtered away on transmit. Leave \"toneHz\" unset to "
+            + "identify on this modem's own centre.");
+    }
 }
 
 // Where each modem sits in the audio band, for the radio's transmit filter: from the plan when
@@ -2154,6 +2275,70 @@ _ = transmitter.ContinueWith(
     CancellationToken.None,
     TaskContinuationOptions.OnlyOnFaulted,
     TaskScheduler.Default);
+
+// Identification. Two halves: every frame a configured modem sends starts its clock, and a
+// slow poll sends the ident once one falls due. Polling rather than a timer per modem because
+// the decision is StationIdentifier's and depends on traffic as well as time - there is no
+// instant to schedule in advance, only a condition to notice - and at a ten-minute interval a
+// five-second granularity costs nothing.
+if (identifiers.Count > 0)
+{
+    channel.FrameTransmitted += (sub, _) =>
+    {
+        if (identifiers.TryGetValue(sub, out StationIdentifier? owed))
+        {
+            owed.NoteTransmission();
+        }
+    };
+
+    _ = Task.Run(async () =>
+    {
+        while (!cancellation.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), cancellation.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            foreach ((int sub, StationIdentifier owed) in identifiers)
+            {
+                if (!owed.IdentificationDue)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    // Queued like anything else, so it waits out a busy channel and a keyup in
+                    // progress rather than transmitting over somebody. The TXDELAY budget is
+                    // spent on silence: an SSB transmitter radiates nothing without audio, which
+                    // is exactly what the PTT settling time wants.
+                    await channel.EnqueueTransmit(txDelay =>
+                    {
+                        float[] tone = owed.Render();
+                        int lead = (int)Math.Round(txDelay / 1000.0 * DspRate);
+                        var audio = new float[lead + tone.Length];
+                        tone.CopyTo(audio, lead);
+                        return audio;
+                    }).ConfigureAwait(false);
+
+                    // Stamped only on success: an ident the radio refused was not sent, and
+                    // clearing the debt for it would mean the station quietly stopped identifying.
+                    owed.NoteIdentified();
+                    Console.WriteLine($"id[{sub}] {owed.Text} in CW");
+                }
+                catch (Exception refused) when (refused is InvalidOperationException or ArgumentException)
+                {
+                    Console.Error.WriteLine($"id[{sub}]: identification dropped - {refused.Message}");
+                }
+            }
+        }
+    });
+}
 
 // Decimate the source to the DSP rate. When it already runs at the DSP rate (a 48 kHz
 // mode's full-bandwidth DAX, --capture-rate 12000, or a 12 kHz virtual card) there is

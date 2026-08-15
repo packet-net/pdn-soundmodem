@@ -83,7 +83,77 @@ public sealed class ModemConfig
     /// </summary>
     public double? Bandwidth { get; set; }
 
+    /// <summary>
+    /// Identify this modem in Morse. Omit (the default) and it never transmits an identification.
+    /// </summary>
+    /// <remarks>
+    /// Per modem rather than per station, because a station identifies on the signal it is
+    /// identifying: the modems on one channel can sit kilohertz apart, and one station-wide ident
+    /// would land on a single audio frequency, say nothing about the others, and usually sit on
+    /// top of one of them. The modes that already identify themselves in-band (an AX.25 node
+    /// sending its own ID frames) need nothing here.
+    /// </remarks>
+    public IdentifyConfig? Identify { get; set; }
+
     /// <summary>Keys in this modem entry that the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
+/// <summary>Morse identification for one modem - see <see cref="ModemConfig.Identify"/>.</summary>
+public sealed class IdentifyConfig
+{
+    /// <summary>The callsign to send. Required; there is no sensible default for a licence
+    /// condition, and guessing one wrong is worse than refusing to start.</summary>
+    public string? Callsign { get; set; }
+
+    /// <summary>
+    /// Minutes between identifications, counted from the last one sent. Default 10.
+    /// </summary>
+    /// <remarks>
+    /// The clock only runs while the modem is transmitting: an ident falls due when this has
+    /// elapsed <em>and</em> the modem has transmitted since it last identified. A station that
+    /// has sent nothing owes nothing, so an idle modem never keys up to announce itself.
+    /// </remarks>
+    public double IntervalMinutes { get; set; } = 10;
+
+    /// <summary>Sending speed in words per minute (PARIS). Default 20.</summary>
+    public double Wpm { get; set; } = 20;
+
+    /// <summary>
+    /// The audio tone to key, in Hz. Defaults to <b>this modem's own audio centre</b>, so the
+    /// ident goes out on the signal it identifies and follows the band plan without being kept
+    /// in step by hand. Set it only to move the ident off its modem deliberately.
+    /// </summary>
+    /// <remarks>
+    /// The default is the whole point of hanging this off a modem. A conventional 700 Hz ident
+    /// tone is a trap on a band-planned station: with a dial chosen to centre the ensemble, 700 Hz
+    /// is wherever the planner happened to put it, which on a real 40 m layout landed on top of a
+    /// neighbouring modem's slot.
+    /// </remarks>
+    public double? ToneHz { get; set; }
+
+    /// <summary>
+    /// Where to identify in absolute Hz (7054000 for 7054.0 kHz), as an alternative to
+    /// <see cref="ToneHz"/>. Only meaningful on a band-planned station, which is the only kind
+    /// that knows its own dial. Mutually exclusive with <see cref="ToneHz"/>.
+    /// </summary>
+    public double? RfFrequency { get; set; }
+
+    /// <summary>
+    /// Send the mode name after the callsign, e.g. <c>M0LTE FREEDV-DATAC1</c>. Off by default.
+    /// Worth turning on for an unusual waveform: it tells a listener who just heard something
+    /// they could not read what it actually was.
+    /// </summary>
+    public bool IncludeMode { get; set; }
+
+    /// <summary>
+    /// Key-down peak amplitude. Default 0.8, which is what the modulators themselves use, so the
+    /// ident presents the transmitter with the same drive the data does.
+    /// </summary>
+    public double Amplitude { get; set; } = 0.8;
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
@@ -797,6 +867,7 @@ public sealed class DaemonConfig
         foreach (ModemConfig modem in config.Modems)
         {
             Unknown($"modem {modem.SubChannel}", modem.UnknownSettings);
+            Unknown($"modem {modem.SubChannel} identify", modem.Identify?.UnknownSettings);
         }
 
         for (int i = 0; i < config.ModemPlugins.Count; i++)
