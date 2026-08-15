@@ -12,3 +12,7 @@ artifacts/
 corpus/
 .claude/
 .test.sh
+
+# Python byte-code from running the helper scripts
+__pycache__/
+*.pyc
