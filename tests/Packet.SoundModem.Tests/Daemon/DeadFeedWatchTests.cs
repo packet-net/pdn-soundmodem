@@ -92,4 +92,63 @@ public class DeadFeedWatchTests
         watch.Observe(Silence(Rate)).Should().BeTrue(
             "a second death after recovery must be reported again");
     }
+
+    [Fact]
+    public void Silence_While_The_Station_Is_Transmitting_Is_Not_Evidence_Of_Death()
+    {
+        // The bug this pins took the GB7RDG node off the air on 2026-08-15: a keyed Flex is not
+        // receiving and its DAX stream delivers exact zeros, so a FreeDV run pacing frames every
+        // 8 s accumulated 30 s of "unbroken digital silence" across its own transmissions and
+        // restarted the production daemon mid-campaign.
+        var watch = new DeadFeedWatch(Rate, thresholdSeconds: 1);
+
+        for (int block = 0; block < 40; block++)
+        {
+            watch.Observe(Silence(Rate / 10), transmitting: true)
+                .Should().BeFalse("the radio is keyed, so of course the receive feed is silent");
+        }
+    }
+
+    [Fact]
+    public void A_Transmission_Rearms_The_Watch_Rather_Than_Merely_Pausing_It()
+    {
+        // Re-arming is what covers the unkey transition: the receive path takes a moment to
+        // resume real audio afterwards, and counting that as evidence of death would be the same
+        // mistake one block later.
+        var watch = new DeadFeedWatch(Rate, thresholdSeconds: 1);
+
+        for (int block = 0; block < 9; block++)
+        {
+            watch.Observe(Silence(Rate / 10)).Should().BeFalse("0.9 s, just under the threshold");
+        }
+
+        watch.Observe(Silence(Rate / 10), transmitting: true).Should().BeFalse();
+
+        for (int block = 0; block < 9; block++)
+        {
+            watch.Observe(Silence(Rate / 10)).Should().BeFalse(
+                "the run restarted at the transmission, so this is 0.9 s again, not 1.9 s");
+        }
+
+        watch.Observe(Silence(Rate / 10)).Should().BeTrue("a full second of idle silence since");
+    }
+
+    [Fact]
+    public void A_Receive_Only_Station_Is_Unaffected_By_The_Transmit_Exemption()
+    {
+        // The incident the watch was built for was a capture station that never transmits, so
+        // the exemption must not weaken it at all: same threshold, same firing block.
+        var watch = new DeadFeedWatch(Rate, thresholdSeconds: 1);
+        int fired = 0;
+
+        for (int block = 0; block < 20; block++)
+        {
+            if (watch.Observe(Silence(Rate / 10), transmitting: false))
+            {
+                fired = block + 1;
+            }
+        }
+
+        fired.Should().Be(10, "ten 100 ms blocks is one second, exactly as before the change");
+    }
 }

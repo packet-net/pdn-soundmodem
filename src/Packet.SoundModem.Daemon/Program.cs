@@ -2399,6 +2399,23 @@ DeadFeedDevice deadFeedDevice =
     DeadFeedConfig.Resolve(deadFeedConfig, deadFeedDevice);
 DeadFeedWatch? deadFeedWatch =
     silenceSeconds > 0 ? new DeadFeedWatch(inputRate, silenceSeconds) : null;
+
+// Whether the station itself is keyed, for the silence watch above. A keyed Flex is not
+// receiving and its DAX stream delivers exact zeros, which is byte-for-byte what a dead feed
+// looks like - so without this a station that transmits enough restarts itself. It did: the
+// FreeDV campaign pacing frames every 8 s took the GB7RDG node off the air on 2026-08-15.
+// Two flags because the receive loop samples them per block: the live state, and a sticky
+// "there was a keyup since you last looked" for transmissions shorter than one read.
+int stationKeyedNow = 0;
+int stationKeyedSinceRead = 0;
+channel.TransmittingChanged += keyed =>
+{
+    Volatile.Write(ref stationKeyedNow, keyed ? 1 : 0);
+    if (keyed)
+    {
+        Interlocked.Exchange(ref stationKeyedSinceRead, 1);
+    }
+};
 string silenceMessage = deadFeedDevice switch
 {
     DeadFeedDevice.Flex =>
@@ -2505,7 +2522,14 @@ while (!cancellation.IsCancellationRequested)
 
     starvationWatch?.NoteDelivery();
 
-    if (deadFeedWatch is not null && deadFeedWatch.Observe(floatBuffer.AsSpan(0, got)))
+    // Sticky rather than instantaneous: a whole transmission can start and finish inside one
+    // read block, and reading the live flag afterwards would see an idle station and count our
+    // own keyed silence as a dead feed. Taking-and-clearing means any keyup since the last block
+    // re-arms the watch exactly once.
+    bool keyedThisBlock = Interlocked.Exchange(ref stationKeyedSinceRead, 0) == 1
+        || Volatile.Read(ref stationKeyedNow) == 1;
+
+    if (deadFeedWatch is not null && deadFeedWatch.Observe(floatBuffer.AsSpan(0, got), keyedThisBlock))
     {
         // A station that has deliberately given up its slice is silent on purpose, and
         // restarting it is the one response guaranteed to be wrong. Measured on the live
