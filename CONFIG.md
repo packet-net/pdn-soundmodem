@@ -418,6 +418,72 @@ start-up rather than silently ignored, because an ignored setting leaves you bel
 changed when nothing did. Note that `fsk9600-il2p` and `fsk4800-il2p` *do* run the CRC, despite
 their names.
 
+### `identify`
+
+Send this modem's callsign in Morse, so anyone sharing the band can read it by ear:
+
+```json
+{ "subChannel": 3, "mode": "freedv-datac1", "rfFrequency": 7054000, "port": 8103,
+  "identify": { "callsign": "M0LTE" } }
+```
+
+A data waveform carries nothing a listener can decode without our software. On a real antenna
+that is a problem worth fixing: a station running `freedv-datac1` or `ms110d-wn6` is, to everyone
+else on the channel, an unfamiliar noise that starts and stops. This puts a callsign on it.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `callsign` | string | *(required)* | No default; there is none for a licence condition |
+| `intervalMinutes` | number | `10` | Counted from the last identification sent |
+| `wpm` | number | `20` | PARIS timing |
+| `toneHz` | number | *this modem's centre* | The audio tone to key |
+| `rfFrequency` | number | *(none)* | Where to identify in absolute Hz, instead of `toneHz`. Band-planned stations only |
+| `includeMode` | bool | `false` | Send the mode name after the callsign |
+| `amplitude` | number | `0.8` | Key-down peak, matching the modulators' own |
+
+**It is per modem, and that is the point.** The modems on one channel can sit kilohertz apart, so
+a single station-wide ident would land on one audio frequency, say nothing about the others, and
+usually sit on top of one of them. Leave `toneHz` unset and the ident goes out on **this modem's
+own centre** - the signal it is identifying - and follows the band plan without being kept in step
+by hand. That default is doing real work: on a band-planned station the dial is chosen to centre
+the ensemble, so a conventional 700 Hz ident tone is wherever the planner happened to put it. On a
+real 40 m layout it landed on top of a neighbouring modem's slot.
+
+Omit the block and the modem never identifies, which is the right answer for a mode that already
+identifies itself in-band: an AX.25 node sending its own `>ID` frames is legible to anything that
+can hear it. Nothing here is switched on by upgrading.
+
+**An identification is owed only after transmitting.** The clock starts at the first transmission,
+and one falls due when the interval has elapsed *and* the modem has transmitted since it last
+identified. A station that has sent nothing owes nothing: keying up on a timer to announce a
+callsign nobody has heard transmit is QRM, not compliance. This is also what a NinoTNC does - its
+beacon runs "while the station is transmitting" - and matching the established behaviour on this
+network is worth more than a rule of our own. It is queued like any other transmission, so it
+waits out a busy channel rather than transmitting over somebody, and the clock is only stamped
+once the radio has actually sent it: an identification the transmitter refused was not made.
+
+```
+modem 3: identifying as M0LTE in CW @ 4250 Hz = 7.054000 MHz, 20 wpm, every 10 min while transmitting (3.1 s)
+...
+tx[3] freedv-datac1 M0LTE>TEST 30 bytes
+id[3] M0LTE in CW
+```
+
+`includeMode` sends `M0LTE FREEDV-DATAC1` instead of `M0LTE`, which tells a listener who just
+heard something they could not read what it actually was. It costs about two seconds.
+
+Rejected at start-up rather than ignored: a missing `callsign`; both `toneHz` and `rfFrequency`
+(they say the same thing twice); `rfFrequency` without a band plan, since the dial is what turns
+one into a tone; a callsign with characters Morse has no code for; a tone above the channel's
+Nyquist; `identify` on a [receive-only](#listening-to-a-web-receiver) station, which has no
+transmitter to identify; and `identify` on `ardop`, whose ARQ bursts do not go out as addressed
+frames, so there is nothing to count transmissions against. A tone outside the planned passband
+warns and starts - you may have moved it deliberately - but on a Flex the transmit filter is set
+from that passband, so it says so.
+
+This is the transmit side. [`idBeacons`](#idbeacons) is the unrelated receive-side feature that
+listens for *other* stations' identifications.
+
 ## `modemPlugins`
 
 **This loads and runs code that is not part of this package.** Everything below follows from that.
@@ -793,8 +859,10 @@ and cannot drift.)
 
 **What a ghost deliberately is not.** It takes no KISS sub-channel - beacons are not traffic, and
 a host asking for packet data should not have to filter idents out of it. It does not contribute
-to carrier sense, so channel access behaves exactly as it did without it. It never transmits:
-identifying *your* station is your host's job, and this is only a listener.
+to carrier sense, so channel access behaves exactly as it did without it. And it never transmits:
+this is only a listener, for *other* stations' identifications. To identify your own station, see
+[`identify`](#identify), which is a per-modem transmit setting and has nothing to do with this
+one beyond the word.
 
 Idents appear in the waterfall's decoded-frames panel with an **ID** badge, are tagged onto their
 burst on the waterfall like any other frame - reading `KK4HEJ · ID` - and land in the

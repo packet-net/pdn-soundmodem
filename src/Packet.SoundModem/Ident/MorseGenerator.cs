@@ -1,16 +1,20 @@
 using System.Text;
 
-namespace Packet.SoundModem.Ota;
+namespace Packet.SoundModem.Ident;
 
 /// <summary>
-/// Morse station identification, rendered as a keyed complex-baseband carrier for the Flex
-/// waveform IQ path.
+/// Morse station identification, rendered either as mono audio (<see cref="Real"/>) or as a
+/// keyed complex-baseband carrier (<see cref="Complex"/>).
 /// </summary>
 /// <remarks>
 /// <para>Required once transmissions go to a real antenna: a data waveform carries no
 /// human-readable identification, so the station has to say who it is in a form anyone
 /// listening can decode without our software. Sending the mode name alongside the callsign
 /// also tells a listener what the unfamiliar signal they just heard actually was.</para>
+/// <para>This began life in the OTA harness, keying the Flex directly for measurement runs.
+/// It lives in the library because the daemon needs it too: a station running a data mode on
+/// a real antenna owes listeners an identification whether a harness or a node is driving it.
+/// <see cref="StationIdentifier"/> is the daemon's policy layer over this rendering.</para>
 /// <para><b>Edges are shaped, deliberately.</b> Hard-keying a carrier splatters - the
 /// transform of a rectangular envelope has sidelobes decaying at only 6 dB/octave, which on
 /// the air is key clicks either side of the signal. A raised-cosine rise and fall of a few

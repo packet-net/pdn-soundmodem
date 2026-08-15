@@ -335,6 +335,48 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void A_Modem_Can_Be_Told_To_Identify_In_Morse()
+    {
+        string path = WriteConfig("""
+            {"device": "null", "modems": [
+              {"subChannel": 0, "mode": "afsk1200"},
+              {"subChannel": 1, "mode": "bpsk300", "identify": {"callsign": "M0LTE"}}]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull();
+        error.Should().BeEmpty();
+        config!.Modems[0].Identify.Should().BeNull(
+            "identification is per modem: a modem that did not ask for it never transmits one");
+        config.Modems[1].Identify!.Callsign.Should().Be("M0LTE");
+        config.Modems[1].Identify!.IntervalMinutes.Should().Be(10, "the documented default");
+        config.Modems[1].Identify!.Wpm.Should().Be(20, "the documented default");
+        config.Modems[1].Identify!.ToneHz.Should().BeNull(
+            "unset means the modem's own centre, which is resolved from the band plan at "
+            + "start-up rather than written down here");
+    }
+
+    [Fact]
+    public void An_Unknown_Setting_Inside_Identify_Is_Called_Out_With_Its_Modem()
+    {
+        // A typo in a licence-condition setting must not vanish into the deserialiser: the
+        // failure mode is a station that believes it is identifying and is not.
+        string path = WriteConfig("""
+            {"device": "null", "modems": [
+              {"subChannel": 0, "mode": "bpsk300",
+               "identify": {"callsign": "M0LTE", "intervalMins": 10}}]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.Modems[0].Identify!.IntervalMinutes.Should().Be(10, "the default still stands");
+        config.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("modem 0 identify").And.Contain("intervalMins");
+    }
+
+    [Fact]
     public void A_Modem_Can_Be_Told_To_Accept_Plain_Il2p_As_Well()
     {
         // The 40 m station hearing the BPQ32 node next door (see ModemConfig.AcceptPlainIl2p).
