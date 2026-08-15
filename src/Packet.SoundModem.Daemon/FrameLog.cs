@@ -84,6 +84,7 @@ internal sealed class FrameLog : IAsyncDisposable
                     trailer_near_bits INTEGER,
                     monitor_only      INTEGER,
                     erased_bytes      INTEGER,
+                    chased_bits       INTEGER,
                     offset_hz         REAL,
                     audio_hz          REAL,
                     rf_hz             REAL,
@@ -119,6 +120,7 @@ internal sealed class FrameLog : IAsyncDisposable
                      ("trailer_near_bits", "INTEGER"),
                      ("monitor_only", "INTEGER"),
                      ("erased_bytes", "INTEGER"),
+                     ("chased_bits", "INTEGER"),
                      ("tx_trim_hz", "REAL"),
                  })
         {
@@ -174,6 +176,7 @@ internal sealed class FrameLog : IAsyncDisposable
             quality.TrailerNearBits,
             quality.MonitorOnly,
             quality.ErasedBytes,
+            quality.ChasedBits,
             quality.FrequencyOffsetHz,
             audioHz,
             rfHz,
@@ -230,6 +233,7 @@ internal sealed class FrameLog : IAsyncDisposable
             TrailerNearBits: null,
             MonitorOnly: null,
             ErasedBytes: null,
+            ChasedBits: null,
             OffsetHz: null,
             audioHz,
             rfHz,
@@ -329,17 +333,17 @@ internal sealed class FrameLog : IAsyncDisposable
             INSERT INTO frames
               (heard_at, direction, sub_channel, mode, mode_name, source, destination,
                length, corrected, crc_valid, trailer_near_bits, monitor_only, erased_bytes,
-               offset_hz, audio_hz, rf_hz, payload, tx_trim_hz)
+               chased_bits, offset_hz, audio_hz, rf_hz, payload, tx_trim_hz)
             VALUES
               ($heard_at, $direction, $sub, $mode, $mode_name, $source, $destination,
-               $length, $corrected, $crc, $trailer, $monitor, $erased, $offset, $audio, $rf,
-               $payload, $tx_trim)
+               $length, $corrected, $crc, $trailer, $monitor, $erased, $chased, $offset,
+               $audio, $rf, $payload, $tx_trim)
             """;
         foreach (string name in new[]
                  {
                      "$heard_at", "$direction", "$sub", "$mode", "$mode_name", "$source",
                      "$destination", "$length", "$corrected", "$crc", "$trailer", "$monitor",
-                     "$erased", "$offset", "$audio", "$rf", "$payload", "$tx_trim",
+                     "$erased", "$chased", "$offset", "$audio", "$rf", "$payload", "$tx_trim",
                  })
         {
             insert.Parameters.Add(new SqliteParameter(name, DBNull.Value));
@@ -362,6 +366,7 @@ internal sealed class FrameLog : IAsyncDisposable
                 insert.Parameters["$trailer"].Value = (object?)entry.TrailerNearBits ?? DBNull.Value;
                 insert.Parameters["$monitor"].Value = entry.MonitorOnly is bool monitor ? monitor ? 1 : 0 : DBNull.Value;
                 insert.Parameters["$erased"].Value = (object?)entry.ErasedBytes ?? DBNull.Value;
+                insert.Parameters["$chased"].Value = (object?)entry.ChasedBits ?? DBNull.Value;
                 insert.Parameters["$offset"].Value = (object?)entry.OffsetHz ?? DBNull.Value;
             insert.Parameters["$tx_trim"].Value = (object?)entry.TxTrimHz ?? DBNull.Value;
                 insert.Parameters["$audio"].Value = (object?)entry.AudioHz ?? DBNull.Value;
@@ -401,6 +406,7 @@ internal sealed class FrameLog : IAsyncDisposable
         int? TrailerNearBits,
         bool? MonitorOnly,
         int? ErasedBytes,
+        int? ChasedBits,
         double? OffsetHz,
         double? AudioHz,
         double? RfHz,

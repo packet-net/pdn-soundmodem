@@ -292,6 +292,21 @@ public class FrameLogTests : IDisposable
             "fourteen bytes were erased on the receiver's own confidence flags");
     }
 
+    /// <summary>A frame that leaned on chase decoding writes the flipped-bit count down, the
+    /// same honesty as <c>erased_bytes</c>: a log reader can see the decode rested on receiver
+    /// confidence, not parity alone.</summary>
+    [Fact]
+    public async Task A_Frame_Read_Through_Chase_Records_How_Many_Bits_Were_Flipped()
+    {
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.Record(0, Frame(), new FrameQuality(
+                "bpsk300-il2pc", FrameBytes: 32, CorrectedBytes: 7, CrcValid: true,
+                ChasedBits: 3), null, null));
+
+        rows.Should().ContainSingle().Which["chased_bits"].Should().Be(3L,
+            "three bits were flipped on the receiver's own confidence ranking");
+    }
+
     /// <summary>The migrated log reads back through the backlog query too - the waterfall panel
     /// is the other consumer of these rows, and it asks for the columns by name.</summary>
     [Fact]

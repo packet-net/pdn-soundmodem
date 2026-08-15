@@ -63,6 +63,12 @@ namespace Packet.SoundModem.Modems;
 /// unlocated error costs two, so this is how a frame beyond the errors-only budget was
 /// still read. Null when no erasures were needed (or the modem supplies no confidence);
 /// see <see cref="M0LTE.Il2p.Il2pDecodeInfo.ErasedSymbols"/>.</param>
+/// <param name="ChasedBits">Wire bits chase decoding flipped - the receiver's
+/// least-confident bits, tried in combination after both errors-only decoding and the
+/// erasure ladder failed, each accepted attempt still leaving Reed-Solomon parity in
+/// reserve. The rescue for scattered bit errors too spread out for erasures, and the only
+/// rescue the 2-parity IL2P header has at all. Null when no chase was needed (or the modem
+/// supplies no confidence); see <see cref="M0LTE.Il2p.Il2pDecodeInfo.ChasedBits"/>.</param>
 /// <param name="MonitorOnly">The frame was <b>not</b> passed to the host: it reached
 /// <see cref="IModem.FrameDecoded"/> and everything hanging off it - display, frame log,
 /// journal, survey - but never the modem's constructor frame sink. A fact about what
@@ -83,7 +89,8 @@ public readonly record struct FrameQuality(
     bool PlainIl2p = false,
     bool MonitorOnly = false,
     int? TrailerNearBits = null,
-    int? ErasedBytes = null);
+    int? ErasedBytes = null,
+    int? ChasedBits = null);
 
 /// <summary>
 /// How much a reading of a transmission actually established, for choosing between two decoder
