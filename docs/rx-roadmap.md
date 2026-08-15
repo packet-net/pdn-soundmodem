@@ -701,6 +701,19 @@ against. The waterfall's is a band-tracker ratio against a rolling noise floor, 
 column name or a documented convention, or the two will be compared and the comparison will be
 wrong.
 
+**Status 2026-08-15 (later): landed.** The measurement moved into the channel itself
+(`BurstSnrMonitor`: a waterfall source feeding one `BandActivityTracker` per modem band,
+bands from the same `ModemBandProbe` the waterfall overlay and the RF planner use), so it
+exists on every station - the capture rig never had a waterfall configured and therefore
+never had the number at all. Enrichment happens at the one point every modem's quality
+passes through (`SoundModemChannel.AddModem`'s FrameDecoded wrapper), so the frame log's
+new `snr_db` column, the `rx[...]` journal line's `snr x.x dB` figure, the KISS quality
+frame's `snrDb` and the waterfall panel all carry the IDENTICAL figure - one measurement,
+per the branch-index-offset lesson. The convention warning above is answered in
+documentation rather than the column name: `FrameQuality.SnrDb`'s doc, the frameLog table
+in CONFIG.md and the ledger entry all state it is the band-tracker ratio, NOT SNR3k. A
+quiet band at decode time yields null, never zero.
+
 ## Discipline
 
 - Every workstream that changes decode behaviour lands with its sim-ladder A/B and a corpus

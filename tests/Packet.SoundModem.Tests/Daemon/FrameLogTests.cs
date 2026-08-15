@@ -292,6 +292,21 @@ public class FrameLogTests : IDisposable
             "fourteen bytes were erased on the receiver's own confidence flags");
     }
 
+    /// <summary>The strength of the burst behind the frame goes in the record - the first
+    /// question of nearly every receive investigation, answerable by SQL forever after.
+    /// Band-tracker convention, per FrameQuality.SnrDb; the column must never be compared
+    /// against the sim ladder's 3 kHz-referenced numbers without converting.</summary>
+    [Fact]
+    public async Task A_Frame_Records_The_Strength_Of_Its_Burst()
+    {
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.Record(0, Frame(), new FrameQuality(
+                "bpsk300-il2pc", FrameBytes: 32, CorrectedBytes: 0, CrcValid: true,
+                SnrDb: 19.3), null, null));
+
+        rows.Should().ContainSingle().Which["snr_db"].Should().Be(19.3);
+    }
+
     /// <summary>A frame that leaned on chase decoding writes the flipped-bit count down, the
     /// same honesty as <c>erased_bytes</c>: a log reader can see the decode rested on receiver
     /// confidence, not parity alone.</summary>

@@ -43,6 +43,7 @@ public sealed class SoundModemChannel
     private readonly TimeProvider _time;
     private readonly Random _random;
     private readonly SpectrumSource? _spectrum;
+    private readonly BurstSnrMonitor _burstSnr;
     private readonly Action<int, ReadOnlyMemory<byte>>? _constellationSink;
     private volatile bool _transmitting;
 
@@ -70,6 +71,7 @@ public sealed class SoundModemChannel
             _spectrum = new SpectrumSource(sampleRate, spectrumSink);
         }
 
+        _burstSnr = new BurstSnrMonitor(sampleRate);
         _constellationSink = constellationSink;
     }
 
@@ -120,14 +122,21 @@ public sealed class SoundModemChannel
         ArgumentOutOfRangeException.ThrowIfNegative(subChannel);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(subChannel, 15);
         IModem modem = factory(frame => FrameReceived?.Invoke(subChannel, frame));
+
+        // Enriched here, at the one point every modem's quality passes through, so the frame
+        // log, the journal line, the KISS quality frame and the waterfall all carry the SAME
+        // burst-SNR figure - the lesson of the branch-index offsets, applied before the second
+        // number exists rather than after it bites.
         modem.FrameDecoded += (frame, quality) =>
-            FrameReceivedWithQuality?.Invoke(subChannel, frame, quality);
+            FrameReceivedWithQuality?.Invoke(
+                subChannel, frame, quality with { SnrDb = _burstSnr.MeasureBurst(subChannel) });
         if (_constellationSink is { } sink && modem is IConstellationSource psk)
         {
             var constellation = new ConstellationSource(frame => sink(subChannel, frame));
             constellation.Attach(psk);
         }
 
+        _burstSnr.AddModem(subChannel, modem);
         _modems.Add(subChannel, modem);
     }
 
@@ -150,6 +159,9 @@ public sealed class SoundModemChannel
             return;
         }
 
+        // Below the half-duplex gate on purpose: our own transmission is not a signal we
+        // heard, and feeding it here would attribute a huge SNR to whatever decodes next.
+        _burstSnr.Process(samples);
         foreach (IModem modem in _modems.Values)
         {
             modem.Process(samples);

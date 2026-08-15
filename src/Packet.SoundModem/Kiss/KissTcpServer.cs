@@ -405,6 +405,13 @@ public sealed class KissTcpServer : IAsyncDisposable
             json.Append(",\"offsetHz\":").Append(off.ToString("F0", System.Globalization.CultureInfo.InvariantCulture));
         }
 
+        // Band-tracker convention, the same figure the frame log and journal carry - see
+        // FrameQuality.SnrDb for what it is measured against (not the sim ladder's 3 kHz).
+        if (quality.SnrDb is { } snr)
+        {
+            json.Append(",\"snrDb\":").Append(snr.ToString("F1", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
         if (quality.EmphasisDb is { } emph)
         {
             json.Append(",\"emphasisDb\":").Append(emph);
