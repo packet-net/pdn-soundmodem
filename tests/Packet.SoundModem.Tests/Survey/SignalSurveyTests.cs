@@ -386,4 +386,84 @@ public class SignalSurveyTests : IDisposable
 
     private static byte[] Ax25Frame(string from, string to) =>
         Ax25UiFrame.Build(from, to, new byte[4]);
+    /// <summary>Reads a capture's WAV length in seconds - the margins are the point.</summary>
+    private double WavSeconds()
+    {
+        string path = Directory.GetFiles(_dir, "*.wav").Should().ContainSingle().Subject;
+        (float[] audio, int rate) = Packet.SoundModem.Audio.WavFile.ReadMono(path);
+        return (double)audio.Length / rate;
+    }
+
+    /// <summary>Feeds quiet lines with their audio, in step, like <see cref="Play"/>.</summary>
+    private static void FeedQuiet(SignalSurvey survey, ref long line, int count)
+    {
+        var audio = new float[SampleRate / LinesPerSecond];
+        byte[] quiet = Line();
+        for (int i = 0; i < count; i++)
+        {
+            survey.AddAudio(audio);
+            survey.AddLine(line++, quiet);
+        }
+    }
+
+    [Fact]
+    public void A_Capture_Waits_For_Its_Full_Trailing_Margin()
+    {
+        // The 2026-08-16 defect: a burst closes one grace period (~0.2 s) after its last hot
+        // line, and writing the capture at that moment shipped every WAV with a full 1 s
+        // lead-in and ~0.2 s of tail. The capture must wait until the ring holds the whole
+        // trailing margin.
+        SignalSurveyOptions options = Options();
+        options.MarginSeconds = 1.0;
+        var survey = new SignalSurvey(
+            options, Bands, SampleRate, BinWidthHz, LinesPerSecond, LineLength);
+        var audio = new float[SampleRate / LinesPerSecond];
+        byte[] quiet = Line();
+        byte[] signal = Line(944, 1344);
+        long line = 0;
+        for (int i = 0; i < 90; i++) { survey.AddAudio(audio); survey.AddLine(line++, quiet); }
+        for (int i = 0; i < 60; i++) { survey.AddAudio(audio); survey.AddLine(line++, signal); }
+
+        // Nine quiet lines: enough for the detector to close the burst (0.2 s grace), not
+        // enough for the 1 s trailing margin. Nothing may be written yet.
+        FeedQuiet(survey, ref line, 9);
+        Directory.GetFiles(_dir, "*.wav").Should().BeEmpty(
+            "the trailing margin has not been recorded yet");
+
+        // Another 1.2 s of audio completes the margin; the capture is released.
+        FeedQuiet(survey, ref line, 36);
+        Settle(survey);
+
+        Captures().Should().ContainSingle().Subject.DurationSeconds.Should().BeApproximately(2, 0.3);
+        WavSeconds().Should().BeApproximately(4.0, 0.25,
+            "a 2 s burst must carry its full second of context on BOTH sides");
+    }
+
+    [Fact]
+    public void A_Keyup_Flushes_A_Waiting_Capture_Honestly_Short()
+    {
+        // The audio that would have completed the margin is on the far side of our own
+        // transmission; splicing post-keyup audio onto a pre-keyup burst would manufacture
+        // context that never happened. The capture ships with what was really recorded.
+        SignalSurveyOptions options = Options();
+        options.MarginSeconds = 1.0;
+        var survey = new SignalSurvey(
+            options, Bands, SampleRate, BinWidthHz, LinesPerSecond, LineLength);
+        var audio = new float[SampleRate / LinesPerSecond];
+        byte[] quiet = Line();
+        byte[] signal = Line(944, 1344);
+        long line = 0;
+        for (int i = 0; i < 90; i++) { survey.AddAudio(audio); survey.AddLine(line++, quiet); }
+        for (int i = 0; i < 60; i++) { survey.AddAudio(audio); survey.AddLine(line++, signal); }
+        FeedQuiet(survey, ref line, 9);
+
+        survey.Reset();
+        FeedQuiet(survey, ref line, 1);   // the reset is applied on the next line
+        Settle(survey);
+
+        Captures().Should().ContainSingle();
+        WavSeconds().Should().BeLessThan(3.6,
+            "the trailing margin must not include audio from beyond the keyup")
+            .And.BeGreaterThan(3.0, "the lead-in second was recorded and must be kept");
+    }
 }

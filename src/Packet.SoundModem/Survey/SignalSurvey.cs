@@ -94,6 +94,7 @@ public sealed class SignalSurvey : IDisposable
     private readonly List<DateTimeOffset> _recent = [];
     private readonly Dictionary<int, DateTimeOffset> _cooldown = [];
     private readonly string[] _modemNames;
+    private readonly List<PendingCapture> _pending = [];
     private long _lastLine = -1;
     private long _skippedForBudget;
     private int _resetPending;
@@ -185,7 +186,14 @@ public sealed class SignalSurvey : IDisposable
 
     /// <summary>Feeds channel audio. Must be the same audio the spectrum lines are made from,
     /// and must be gated the same way - nothing is surveyed while the station transmits.</summary>
-    public void AddAudio(ReadOnlySpan<float> samples) => _ring.Write(samples);
+    public void AddAudio(ReadOnlySpan<float> samples)
+    {
+        _ring.Write(samples);
+        if (_pending.Count > 0)
+        {
+            DrainPending(flush: false);
+        }
+    }
 
     /// <summary>Feeds one spectrum line.</summary>
     public void AddLine(long lineIndex, ReadOnlySpan<byte> line)
@@ -262,6 +270,11 @@ public sealed class SignalSurvey : IDisposable
     {
         if (Interlocked.Exchange(ref _resetPending, 0) == 1)
         {
+            // Captures waiting on their trailing margin are written now, honestly short:
+            // the audio that would have completed the margin is on the far side of our own
+            // transmission, and splicing post-keyup audio directly onto a pre-keyup burst
+            // would manufacture context that never happened.
+            DrainPending(flush: true);
             _detector.Reset();
             _decodes.Clear();
             _lastLine = -1;
@@ -269,7 +282,12 @@ public sealed class SignalSurvey : IDisposable
     }
 
     /// <inheritdoc />
-    public void Dispose() => _writer.Dispose();
+    public void Dispose()
+    {
+        // A capture still waiting on its margin at shutdown ships short rather than not at all.
+        DrainPending(flush: true);
+        _writer.Dispose();
+    }
 
     private void OnBurst(SurveyBurst burst)
     {
@@ -287,14 +305,23 @@ public sealed class SignalSurvey : IDisposable
             return;
         }
 
-        if (!TryCopyAudio(burst, out float[]? audio))
+        long startSample = SampleAt(burst.StartLine);
+        long endSample = SampleAt(burst.EndLine);
+        if (startSample < 0 || endSample < 0 || endSample <= startSample)
         {
             Interlocked.Increment(ref _skippedForBudget);
             StatusChanged?.Invoke();
             return;
         }
 
-        _writer.Write(
+        // Queued, not written: a burst closes one grace period (~0.2 s) after its last hot
+        // line, so writing at verdict time ships every capture with a truncated trailing
+        // margin - measured on the 2026-08-16 v0.37.0 rollout, where every miss carried its
+        // full 1 s lead-in and ~0.2 s of tail. The capture waits in _pending until the ring
+        // has recorded the full trailing margin (AddAudio drains it); a keyup or shutdown
+        // flushes early, honestly short. Sample extents are resolved here, while the line
+        // clock still holds them.
+        _pending.Add(new PendingCapture(
             new BurstCapture(
                 now,
                 verdict,
@@ -318,9 +345,45 @@ public sealed class SignalSurvey : IDisposable
                 decode?.FrameHex,
                 decode?.HeaderType,
                 decode?.AttributionNote),
-            audio);
-        StatusChanged?.Invoke();
+            startSample,
+            endSample));
+        DrainPending(flush: false);   // a zero margin (or a generous grace) may already be satisfied
     }
+
+    /// <summary>Writes every queued capture whose trailing margin the ring now holds - or,
+    /// when <paramref name="flush"/> is set, everything, clamped to the audio that exists.</summary>
+    private void DrainPending(bool flush)
+    {
+        for (int i = 0; i < _pending.Count; i++)
+        {
+            PendingCapture pending = _pending[i];
+            if (!flush && _ring.Written < pending.EndSample + _marginSamples)
+            {
+                continue;
+            }
+
+            _pending.RemoveAt(i--);
+            long from = Math.Max(0, pending.StartSample - _marginSamples);
+            long to = Math.Min(pending.EndSample + _marginSamples, _ring.Written);
+            var buffer = new float[(int)(to - from)];
+            if (!_ring.TryCopy(from, buffer))
+            {
+                // Aged out of the ring; better nothing than the wrong audio. The ring is
+                // sized to hold a maximum burst plus both margins with slack, so this is a
+                // failure worth counting, not a policy refusal.
+                Interlocked.Increment(ref _skippedForBudget);
+                StatusChanged?.Invoke();
+                continue;
+            }
+
+            _writer.Write(pending.Capture, buffer);
+            StatusChanged?.Invoke();
+        }
+    }
+
+    /// <summary>A triaged, budget-approved capture waiting for its trailing margin to be
+    /// recorded before it is written.</summary>
+    private sealed record PendingCapture(BurstCapture Capture, long StartSample, long EndSample);
 
     /// <summary>
     /// Decides what a closed burst is. The order matters: shape first, because an SSB over that
@@ -405,39 +468,6 @@ public sealed class SignalSurvey : IDisposable
 
         _cooldown[bucket] = now;
         _recent.Add(now);
-        return true;
-    }
-
-    private bool TryCopyAudio(SurveyBurst burst, out float[] audio)
-    {
-        audio = [];
-        long start = SampleAt(burst.StartLine);
-        long end = SampleAt(burst.EndLine);
-        if (start < 0 || end < 0 || end <= start)
-        {
-            return false;
-        }
-
-        long from = Math.Max(0, start - _marginSamples);
-        long to = end + _marginSamples;
-        if (to > _ring.Written)
-        {
-            to = _ring.Written;   // the trailing margin has not been captured yet
-        }
-
-        int count = (int)(to - from);
-        if (count <= 0)
-        {
-            return false;
-        }
-
-        var buffer = new float[count];
-        if (!_ring.TryCopy(from, buffer))
-        {
-            return false;   // aged out of the ring; better nothing than the wrong audio
-        }
-
-        audio = buffer;
         return true;
     }
 
