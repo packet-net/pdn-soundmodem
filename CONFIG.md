@@ -1060,6 +1060,7 @@ captured at all.
 | `maxPerHour` | int | `30` | Captures in any rolling hour |
 | `cooldownSeconds` | number | `120` | How long the same part of the spectrum is left alone after a capture |
 | `marginSeconds` | number | `1.0` | Audio kept either side of the burst |
+| `decodeClaimSeconds` | number | `5.0` | How long a Missed capture waits for a decode to claim it as a fade-split fragment of its own transmission before it is written. A frame's decode lands at the END of the transmission, seconds after a fragment closes; 0 writes at once and files every such fragment as a miss |
 | `maxSeconds` | number | `20` | Longest burst still plausibly a packet |
 | `minPeakSnrDb` | number | `6` | Weakest burst worth keeping, over the noise floor |
 | `capture` | array | all three | Which verdicts to write - `unclaimed`, `missed`, `unattributed` |

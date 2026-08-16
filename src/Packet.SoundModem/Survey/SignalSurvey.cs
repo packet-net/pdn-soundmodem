@@ -27,6 +27,17 @@ public sealed class SignalSurveyOptions
     /// lead-in it needs, and to prove what the channel was doing before and after.</summary>
     public double MarginSeconds { get; set; } = 1.0;
 
+    /// <summary>How long a Missed capture waits for a decode to claim it before it is
+    /// written. A deep fade splits one transmission into fragments at the burst detector
+    /// (its grace is 0.2 s; CCIR-class fades run longer), and the frame's decode lands at
+    /// the END of the transmission - measured 0.6 to 3.2 s after such a fragment closed on
+    /// the 2026-08-16 by-ear session, where 9 of the day's 11 in-slot "misses" were leading
+    /// fragments of transmissions the station went on to decode, fingerprinted to their
+    /// stations by carrier offset. Five seconds covers the slot's real frames (a 118-byte
+    /// beacon is ~4.3 s of wire at 300 Bd) without holding genuine misses back meaningfully.
+    /// </summary>
+    public double DecodeClaimSeconds { get; set; } = 5.0;
+
     /// <summary>Widest burst still plausibly a packet. Above this is an SSB over or a wideband
     /// data mode this station has no business capturing at 12 kHz.</summary>
     public double MaxWidthHz { get; set; } = 3000;
@@ -89,6 +100,8 @@ public sealed class SignalSurvey : IDisposable
     private readonly int _sampleRate;
     private readonly int _linesPerSecond;
     private readonly int _marginSamples;
+    private readonly int _claimSamples;
+    private readonly int _claimLines;
     private readonly long[] _lineSamples;      // line index → samples written when it arrived
     private readonly List<Decode> _decodes = [];
     private readonly List<DateTimeOffset> _recent = [];
@@ -97,6 +110,7 @@ public sealed class SignalSurvey : IDisposable
     private readonly List<PendingCapture> _pending = [];
     private long _lastLine = -1;
     private long _skippedForBudget;
+    private long _claimedByLaterDecode;
     private int _resetPending;
 
     /// <summary>Creates a survey over <paramref name="bands"/>, writing captures per
@@ -125,6 +139,8 @@ public sealed class SignalSurvey : IDisposable
         _sampleRate = sampleRate;
         _linesPerSecond = linesPerSecond;
         _marginSamples = (int)(options.MarginSeconds * sampleRate);
+        _claimSamples = (int)(options.DecodeClaimSeconds * sampleRate);
+        _claimLines = (int)Math.Round(options.DecodeClaimSeconds * linesPerSecond);
         _writer = writer ?? new BurstCaptureWriter(
             options.Directory, options.MaxBytes, options.TimeProvider);
 
@@ -132,9 +148,11 @@ public sealed class SignalSurvey : IDisposable
             binWidthHz, linesPerSecond, lineLength, OnBurst,
             maxSeconds: options.MaxSeconds * 2);   // long enough to see and reject an over-runner
 
-        // The longest thing capturable, plus both margins, plus a second of slack so a burst is
-        // still in the ring when its closing grace period expires.
-        int ringSeconds = (int)Math.Ceiling((options.MaxSeconds * 2) + (2 * options.MarginSeconds) + 1);
+        // The longest thing capturable, plus both margins, plus the Missed claim window it may
+        // sit through, plus a second of slack so a burst is still in the ring when its closing
+        // grace period expires.
+        int ringSeconds = (int)Math.Ceiling(
+            (options.MaxSeconds * 2) + (2 * options.MarginSeconds) + options.DecodeClaimSeconds + 1);
         _ring = new AudioRingBuffer(ringSeconds * sampleRate);
 
         // A line's audio position has to be remembered rather than computed: the line clock stops
@@ -183,6 +201,12 @@ public sealed class SignalSurvey : IDisposable
     /// <summary>Bursts worth keeping that were not, because a budget said no. Non-zero means the
     /// station is seeing more than it was told to record, which is worth an operator knowing.</summary>
     public long SkippedForBudget => Interlocked.Read(ref _skippedForBudget);
+
+    /// <summary>Missed-verdict captures cancelled because a decode arrived inside
+    /// <see cref="SignalSurveyOptions.DecodeClaimSeconds"/> and claimed the burst as part of
+    /// its own transmission - fade-split fragments, not misses. The count is how often the
+    /// claim window is earning its keep.</summary>
+    public long ClaimedByLaterDecode => Interlocked.Read(ref _claimedByLaterDecode);
 
     /// <summary>Feeds channel audio. Must be the same audio the spectrum lines are made from,
     /// and must be gated the same way - nothing is surveyed while the station transmits.</summary>
@@ -322,6 +346,8 @@ public sealed class SignalSurvey : IDisposable
         // flushes early, honestly short. Sample extents are resolved here, while the line
         // clock still holds them.
         _pending.Add(new PendingCapture(
+            burst.StartLine,
+            burst.EndLine,
             new BurstCapture(
                 now,
                 verdict,
@@ -351,18 +377,31 @@ public sealed class SignalSurvey : IDisposable
     }
 
     /// <summary>Writes every queued capture whose trailing margin the ring now holds - or,
-    /// when <paramref name="flush"/> is set, everything, clamped to the audio that exists.</summary>
+    /// when <paramref name="flush"/> is set, everything, clamped to the audio that exists. A
+    /// Missed capture additionally waits out <see cref="SignalSurveyOptions.DecodeClaimSeconds"/>
+    /// and is re-checked against the decodes before writing: the attribution window Triage
+    /// uses runs one second past the burst, but a fade-split fragment's decode lands at the
+    /// END of its transmission, seconds later - so the claim is re-asked when the answer can
+    /// actually be known.</summary>
     private void DrainPending(bool flush)
     {
         for (int i = 0; i < _pending.Count; i++)
         {
             PendingCapture pending = _pending[i];
-            if (!flush && _ring.Written < pending.EndSample + _marginSamples)
+            bool missed = pending.Capture.Verdict == SurveyVerdict.Missed;
+            long hold = missed ? Math.Max(_marginSamples, _claimSamples) : _marginSamples;
+            if (!flush && _ring.Written < pending.EndSample + hold)
             {
                 continue;
             }
 
             _pending.RemoveAt(i--);
+            if (missed && ClaimedByDecode(pending))
+            {
+                Interlocked.Increment(ref _claimedByLaterDecode);
+                StatusChanged?.Invoke();
+                continue;
+            }
             long from = Math.Max(0, pending.StartSample - _marginSamples);
             long to = Math.Min(pending.EndSample + _marginSamples, _ring.Written);
             var buffer = new float[(int)(to - from)];
@@ -381,9 +420,28 @@ public sealed class SignalSurvey : IDisposable
         }
     }
 
+    /// <summary>Whether a decode has arrived that claims this Missed burst as a fragment of
+    /// its own transmission - Triage's attribution rule, re-asked with the window a
+    /// transmission-end decode actually needs.</summary>
+    private bool ClaimedByDecode(PendingCapture pending)
+    {
+        foreach (Decode candidate in _decodes)
+        {
+            if (candidate.Line >= pending.StartLine
+                && candidate.Line <= pending.EndLine + Math.Max(30, _claimLines))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>A triaged, budget-approved capture waiting for its trailing margin to be
-    /// recorded before it is written.</summary>
-    private sealed record PendingCapture(BurstCapture Capture, long StartSample, long EndSample);
+    /// recorded - and, for a Missed verdict, for the decode claim window to pass - before it
+    /// is written.</summary>
+    private sealed record PendingCapture(
+        long StartLine, long EndLine, BurstCapture Capture, long StartSample, long EndSample);
 
     /// <summary>
     /// Decides what a closed burst is. The order matters: shape first, because an SSB over that

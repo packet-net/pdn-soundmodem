@@ -466,4 +466,54 @@ public class SignalSurveyTests : IDisposable
             "the trailing margin must not include audio from beyond the keyup")
             .And.BeGreaterThan(3.0, "the lead-in second was recorded and must be kept");
     }
+    [Fact]
+    public void A_Fade_Split_Fragment_Is_Claimed_By_The_Decode_That_Follows_It()
+    {
+        // The 2026-08-16 by-ear finding: a deep fade splits one transmission at the burst
+        // detector, the leading fragment closes, and the frame's decode lands seconds later
+        // at the END of the transmission - outside Triage's one-second window. Nine of that
+        // day's eleven in-slot "misses" were this, fingerprinted to their stations by
+        // carrier offset. The Missed capture now waits out the claim window, and the decode
+        // cancels it: a fragment of a read transmission is not a miss.
+        var survey = new SignalSurvey(Options(), Bands, SampleRate, BinWidthHz, LinesPerSecond, LineLength);
+        var audio = new float[SampleRate / LinesPerSecond];
+        byte[] quiet = Line();
+        byte[] signal = Line(1950, 2350);
+        long line = 0;
+        for (int i = 0; i < 90; i++) { survey.AddAudio(audio); survey.AddLine(line++, quiet); }
+        for (int i = 0; i < 60; i++) { survey.AddAudio(audio); survey.AddLine(line++, signal); }
+        FeedQuiet(survey, ref line, 9);   // the fade: the fragment closes here
+
+        // The rest of the transmission decodes ~2 s after the fragment closed.
+        FeedQuiet(survey, ref line, 60);
+        survey.NoteDecode(2, Ax25Frame("PD4R", "GB7RDG"), Quality("bpsk300-il2pc-multi9"));
+
+        FeedQuiet(survey, ref line, 160);   // past the claim window
+        survey.ClaimedByLaterDecode.Should().Be(1, "the claim is counted, so an operator can see the class");
+        Settle(survey);
+
+        Captures().Should().BeEmpty("a fragment of a transmission the station read is not a miss");
+    }
+
+    [Fact]
+    public void A_Real_Miss_Survives_The_Claim_Window()
+    {
+        // No decode ever arrives: after the claim window the capture is written exactly as
+        // before - the claim must only ever remove false misses, never delay-away real ones.
+        var survey = new SignalSurvey(Options(), Bands, SampleRate, BinWidthHz, LinesPerSecond, LineLength);
+        var audio = new float[SampleRate / LinesPerSecond];
+        byte[] quiet = Line();
+        byte[] signal = Line(1950, 2350);
+        long line = 0;
+        for (int i = 0; i < 90; i++) { survey.AddAudio(audio); survey.AddLine(line++, quiet); }
+        for (int i = 0; i < 60; i++) { survey.AddAudio(audio); survey.AddLine(line++, signal); }
+        FeedQuiet(survey, ref line, 9);
+
+        FeedQuiet(survey, ref line, 160);   // the claim window passes with no decode
+        Settle(survey);
+
+        BurstCapture capture = Captures().Should().ContainSingle().Subject;
+        capture.Verdict.Should().Be(SurveyVerdict.Missed);
+        survey.ClaimedByLaterDecode.Should().Be(0);
+    }
 }
