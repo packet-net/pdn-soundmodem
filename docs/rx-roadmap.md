@@ -233,6 +233,16 @@ score: **14 of 573** (1 of the 77 expected-attached byte-exact) - the "what the 
 misses is genuinely undecodable" conclusion holding at 7-day scale, and the yardstick the
 chase landing then moved to 32 (workstream 1's 2026-08-15 status).
 
+**Corpus caveat, found by ear (2026-08-16, mode-validation.md entry of the same date):** a
+share of the full-length "misses" are fade-split leading fragments of transmissions the
+station DECODED seconds later - the burst detector's 0.2 s grace splits a QSB-hit
+transmission, and the decode lands at the transmission's end, outside the survey's old
+one-second attribution window. On the rollout morning's sample, 9 of 11 in-slot bursts were
+this class, station-fingerprinted by carrier offset. The survey now holds Missed captures
+for a `decodeClaimSeconds` window so a decode claims its fragments (PR #311); misses-v2
+entries from before that fix over-count true misses accordingly, and the fragment class is
+one more reason the isolated re-decode score reads low - a fragment is not a frame.
+
 ## Workstreams, ranked
 
 Ranked by expected real-world return per unit of effort, with the reasoning pinned so a future
