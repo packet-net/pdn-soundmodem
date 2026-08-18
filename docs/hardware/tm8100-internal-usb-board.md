@@ -46,6 +46,8 @@ Marking as before: **DATASHEET** stated and cited, **DERIVED** computed with the
    |  USB-serial       USB audio codec (CM108 class)      |
    |  bridge            |         |          |            |
    |   TXD RXD       line in   line out   GPIO (PTT)      |
+   |    |   |           |         |          |            |
+   |   inv inv          |         |          |            |
    +-----|---|----------|---------|----------|------------+
          |   |          |         |          |
         17  18          2         6      one of 9..15      18-pin Micro-MaTch
@@ -56,7 +58,9 @@ Marking as before: **DATASHEET** stated and cited, **DERIVED** computed with the
 The serial pair crosses over, as serial pairs do: the pin names are the radio's own perspective,
 with IOP_TXD in the manual's digital *output* line list and IOP_RXD in its *input* list (Tables 3.7
 and 3.2, p.71 and p.40). So the bridge's TXD lands on pin 17, IOP_RXD, and its RXD on pin 18. An
-earlier version of this diagram wired TXD to TXD, which is a dead serial port both ways.
+earlier version of this diagram wired TXD to TXD, which is a dead serial port both ways. **The pair
+is also inverted**: Tait serial is negative logic, RS-232 polarity at 3V3 levels, so there is an
+inverter in each direction between the bridge and the connector. See Serial below.
 
 Host sees: one USB device tree, a `/dev/ttyUSB*`-class serial port, and an ALSA card. No drivers
 beyond USB CDC and USB Audio Class 1.0.
@@ -116,8 +120,8 @@ for three more bidirectional lines.
 | 8 | RSSI | Analogue RSSI output | Analog |
 | 9 to 15 | IOP_GPIO1..7 | Programmable function and direction; pin 9 is GPIO1 through pin 15 GPIO7. With LK4 fitted GPIO7 becomes a power sense input | 3V3 CMOS |
 | 16 | DGND | Digital ground | Ground |
-| 17 | IOP_RXD | Serial receive data | 3V3 CMOS |
-| 18 | IOP_TXD | Serial transmit data | 3V3 CMOS |
+| 17 | IOP_RXD | Serial receive data, **negative logic** (see Serial) | 3V3 levels |
+| 18 | IOP_TXD | Serial transmit data, **negative logic** (see Serial) | 3V3 levels |
 
 All **DATASHEET**, p.27.
 
@@ -353,8 +357,27 @@ limiting element rather than this board.
 
 ## Serial
 
-**DATASHEET**, p.28. IOP_TXD on pin 18, IOP_RXD on pin 17, both **3V3 CMOS**, so a 3.3 V bridge
-connects directly with no level shifter.
+**DATASHEET**, p.28. IOP_TXD on pin 18, IOP_RXD on pin 17, both at 3V3 levels, so no level
+shifter. **But the polarity is inverted, and this note previously got that wrong.** Tait put it on
+its own page as a notice to all integrators (section 1.2, p.11): "The serial lines in all Tait
+radios are negative logic. This means that a logic high is 0V and a logic low is 3V3, which is the
+same polarity as RS232, and is opposite to TTL/CMOS. No negative voltage is provided on these
+lines." A USB-UART bridge's TTL-level TXD and RXD therefore need **an inverter in each direction**
+between the bridge and pins 17 and 18. Wired straight through, both directions are dead and every
+byte is framing errors, which is easy to misdiagnose as a baud-rate or wiring fault.
+
+Two ways to invert. FTDI's FT230X and FT232R can invert TXD and RXD in their configuration EEPROM,
+so no gates are needed; a CP2102N cannot, and wants a dual XOR (74LVC2G86) or two inverters
+(74LVC2G04) in the path. An XOR against a strap gives a polarity jumper for free, which is worth
+having: fit it inverted for the radio and it also lets the same board talk to a normal TTL device
+for bench tests. Whichever way, hold the radio-facing lines at their idle level when the radio is
+absent, and remember that idle for negative logic is **0 V**, so a pull-down, not a pull-up.
+
+Two consequences of the notice worth knowing. IOP_TXD's 0 to 3V3 swing "will drive most modern
+RS232 receivers satisfactorily", and IOP_RXD "is capable of accepting signals up to the full RS232
+levels", so an RS-232-level bridge also works, with no inverter, over a short cable. And Tait cap
+these lines at **3.0 m**; inside the radio body that is not a constraint, on the auxiliary
+connector it is.
 
 | Parameter | Value |
 |---|---|
