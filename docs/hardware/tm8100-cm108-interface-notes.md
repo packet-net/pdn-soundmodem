@@ -281,7 +281,11 @@ lower noise, no bias resistor fighting the divider, and no +20 dB boost waiting 
 accident. It also removes the single worst trap in the stock design: dongle microphone coupling
 capacitors are commonly 1 uF or less, which puts the corner at 80 Hz or above and causes visible
 baseline wander on the flat, wide R1 tap. Choose the capacitor yourself and that problem does not
-exist.
+exist. On the CM108B specifically there is no separate line input, but the microphone booster is
+an EEPROM option and with it cleared MICIN is a 2.88 Vp-p full-scale input at 0 dB gain, which is
+a line input in everything but the name; the internal board note sizes its receive divider for
+exactly that. Note too that MICIN is biased at 1.75 V through 10 kohm, so any shunt goes behind a
+coupling capacitor, not on the pin.
 
 **Put the attenuators on the board, at computed values, confirmed once.** The dividers exist to get
 a known tap level into an arbitrary dongle. With the board in your hands both ends are yours, so fit
