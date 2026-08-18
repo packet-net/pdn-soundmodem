@@ -1,46 +1,42 @@
-# An internal USB accessory board for the Tait TM8100
+# The TM8100 internal USB board, and why it is the way it is
 
-Design notes for a board fitting inside a TM8100 radio body, presenting **one USB cable to the host**
-that enumerates as a serial device and an audio device. The serial side reaches the radio's CCDI
-port; the audio side reaches its audio tap points. Intended for headless packet operation with
-`pdn-soundmodem`.
+The reasoning behind a board that fits inside a TM8100 radio body and presents **one USB cable to
+the host**, enumerating as a serial device on the radio's CCDI port and an audio device on its tap
+points, for headless packet operation with `pdn-soundmodem`.
 
-## Sources, and two corrections to an earlier note
+**The board itself is [packethacking/tait-cm108](https://github.com/packethacking/tait-cm108)**
+(Tom Wardill): a CM108B, an FE1.1s hub and a CP2102N on a four-hole board with a USB-C entry. Its
+schematic, layout and bill of materials live there and are not repeated here. This note keeps what
+a schematic cannot carry: which tap points and why, how the two dividers are sized and what
+protects the channel if software gets it wrong, what the radio has to be programmed to, what the
+timing means for the modem, and what to check before the first transmission. An earlier version
+was a plan for laying out such a board; the parts of it that a finished board answers (connector
+kits, mechanical zones, socket heights, filter component lists) have been cut.
 
-Nearly every figure here comes from the **TM8100/TM8200 3DK Hardware Developer's Kit Application
-Manual** (Tait Electronics, March 2006, 156 pages), which is the document Tait wrote for exactly this
-purpose. Citations below are page numbers in it unless another document is named.
+## Sources
 
-**That manual superseded two claims in the CM108 note, whose reasoning now lives in
-[tm8100-cm108-interface-notes.md](tm8100-cm108-interface-notes.md),** written from the service set
-before the 3DK manual was in it. Both are corrected there now, and they are worth repeating because
-they were load-bearing:
+Nearly every figure comes from the **TM8100/TM8200 3DK Hardware Developer's Kit Application
+Manual** (Tait Electronics, March 2006, 156 pages, `MMA-00011-01` in
+[M0LTE/tait-tm8100-tm8200-docs](https://github.com/M0LTE/tait-tm8100-tm8200-docs)), which is the
+document Tait wrote for exactly this purpose; its section 5.1.1 is their own worked example of an
+external modem on these taps. Page numbers below are in it unless another document is named. The
+codec figures are from the CM108B datasheet (rev 1.11), cross-checked against the CM108AH measured
+on the deployed widget. Marking: **DATASHEET** stated and cited, **DERIVED** computed with the
+arithmetic shown, **ABSENT** not in the documents.
 
-- It said no input-level-to-deviation figure is published anywhere. **It is published**, per tap
-  point, in the 3DK manual's Table 2.7. The Bessel-null calibration is still worth doing, but as a
-  cross-check rather than the only route to a number.
-- It said T13 appears nowhere in the documentation. **T13 is a fully documented tap-in point** (p.93),
-  with its own level, group delay and frequency response specifications. The service manual's CCTM
-  tap list is a test command's subset in an older numbering, not the feature set.
+The same figures, applied to a stock CM108 widget on the auxiliary connector, are the deployed
+build in [tm8100-cm108-interface.md](tm8100-cm108-interface.md) with the reasoning in
+[tm8100-cm108-interface-notes.md](tm8100-cm108-interface-notes.md). The three notes agree on
+every level; they differ only in where the board lives and which connector it reaches.
 
-The two notes now share the same figures and differ only in where the board lives. This one is the
-better read if you are designing copper; the CM108 note has since split into
-[wiring instructions](tm8100-cm108-interface.md) for the deployed widget and
-[extended notes](tm8100-cm108-interface-notes.md) carrying the dongle-side practicalities and the
-bench procedures.
-
-**A board designed from this note exists: [packethacking/tait-cm108](https://github.com/packethacking/tait-cm108)**
-(Tom Wardill), a CM108B, an FE1.1s hub and a CP2102N on a four-hole board with a USB-C entry. Treat
-it as the reference implementation and this note as the rationale behind it. Comparing the two on
-2026-08-18 corrected this note in three places, each recorded where it applies: the serial lines are
-negative logic and need inverters (his board had them, this note did not); the receive divider's
-shunt must sit behind a coupling capacitor because the codec pin is biased (this note drew it on the
-pin, and his board inherited that); and the CM108B's own figures now replace the "measure the codec"
-placeholders. Its audio wiring was verified from the schematic netlist; the rest of the board was
-not independently checked here.
-
-Marking as before: **DATASHEET** stated and cited, **DERIVED** computed with the arithmetic shown,
-**ABSENT** not in the documents.
+**Where this note has been corrected**, so the record is not lost: the 3DK manual established that
+tap levels are published (Table 2.7) and that T13 is a documented tap, both of which an earlier
+note denied; comparing this note against the built board on 2026-08-18 added that the serial lines
+are negative logic and need inverters (the board had them, this note did not), that the receive
+divider's shunt must sit behind a coupling capacitor because the codec pin is biased (this note
+drew it on the pin, and the board inherited that), and replaced the "measure the codec"
+placeholders with the CM108B's figures. Only the audio wiring of the board was verified here, from
+its schematic netlist.
 
 ## Architecture
 
@@ -77,46 +73,11 @@ beyond USB CDC and USB Audio Class 1.0.
 
 ## The radio interface
 
-**18-pin 0.1 inch pitch Micro-MaTch** (p.27). On the main board it is **SK102**, which the silkscreen
-may label PL103 (MMA-00005-05 p.410). Tait's part is **240-10000-11, "Conn SMD 18w Skt M/Match"**
-(MMAB12-B1-00-814 p.4), and every Tait options board in the set fits **the same part** rather than a
-plug: SK1 on the TMAA01-02 RS-232 board, SK2 on the TMAA01-01 line interface, SK1 on the TMAA01-05
-extender. The two sockets are bridged by a loom, Tait IPN **219-00329-00 "Loom TMA Int Opt"**,
-supplied in kit 600-00010-00.
-
-**So the board takes a socket, not a header, and a ribbon loom joins the two.** That is worth knowing
-before laying out a footprint, and it is why the connector is specified as 18-way in two rows of nine
-with the pinout drawings labelled "top view". The
-[Tait_TM8XXX_TNC_Adapter](https://github.com/marrold/Tait_TM8XXX_TNC_Adapter) project has a working
-SMD footprint and a photograph of a loom fitted in a real radio.
-
-Tait sell the parts as a kit: **TMAA30-06** as an orderable product code, which is the same bag the
-service manual's parts list calls 600-00010-00, "Pkg Kit Opt Int parts". The 3DK manual prints its
-bill of material and both connector footprints (p.101, Table 4.1, Figures 4.4 and 4.5):
-
-| Tait IPN | Qty | Description |
-|---|---|---|
-| 240-10000-11 | 1 | Conn SMD 18w Skt M/Match, the board-side socket |
-| 219-00329-00 | 1 | Loom TMA Int Opt, the 18-way ribbon between the two sockets |
-| 240-00011-67 | 1 | Skt 15w Drng Ra Slim Dsub, if you take a 15-way HD D-range out of the case |
-| 240-00010-80 | 1 | Plg 15w Drng Hi-D, its mating plug |
-| 240-06010-29 | 1 | Conn 9w Hood/Cvr Lets |
-| 354-01043-00 | 2 | Fsnr Scrw Lok 1pr 4-40, the D-range hexlocks |
-| 347-00011-00 | 2 | Scrw 4-40x3/16 |
-| 349-02062-00 | 9 | Scrw M3x8 self-tapping, for the nine lid screw points |
-| 362-01108-00 | 1 | Seal Drng Cvr 9way |
-| 362-01111-00 | 1 | Seal Drng 9way |
-
-The socket footprint is 26.2 x 4.6 mm with 21.6 mm between the outer pins, and **8.2 mm tall
-including the mating connector**, which is most of the height budget in the next section. Tighten
-the hexlocks before screwing the board to the lid, to 0.9 N.m. The screw length is the one place the
-manual argues with itself: the BOM says M3x8, the installation drawing on p.100 calls out M3x10.
-Buy the 8.
-
-The specifications manual summarises what the connector carries as "1 serial, 7 I/O, 1 audio tap in,
-1 audio tap out" (MMA-00072-03 p.26), against the auxiliary connector's "1 serial, 3 input, 4 I/O,
-1 audio tap in, 1 audio tap out" - so the internal connector trades the auxiliary's dedicated inputs
-for three more bidirectional lines.
+**18-pin Micro-MaTch** (p.27), **SK102** on the main board (silkscreen may say PL103,
+MMA-00005-05 p.410). Every Tait options board fits **the same socket** rather than a plug, and a
+ribbon loom (Tait 219-00329-00, in kit TMAA30-06 / 600-00010-00) joins the two; the reference
+board does the same. Tait's part is 240-10000-11, and its socket is 8.2 mm tall including the
+mating connector, which is most of the height budget inside the lid.
 
 | Pin | Signal | Description | Type |
 |---|---|---|---|
@@ -133,15 +94,17 @@ for three more bidirectional lines.
 | 17 | IOP_RXD | Serial receive data, **negative logic** (see Serial) | 3V3 levels |
 | 18 | IOP_TXD | Serial transmit data, **negative logic** (see Serial) | 3V3 levels |
 
-All **DATASHEET**, p.27.
+All **DATASHEET**, p.27. Named from the radio's point of view: AUD_TAP_OUT is what the codec
+listens to and AUD_TAP_IN is what it drives, which is the opposite of the codec-side names a
+schematic will use.
 
 **One sharing constraint that matters** (p.27): the digital signals and the serial port are
 independent of the auxiliary connector, but **AUD_TAP_IN, AUD_TAP_OUT, AUX_MIC_AUD and RSSI are
 shared with it**. So this board's audio cannot coexist with anything using the auxiliary connector's
 audio, while its serial port can coexist with a second serial user on the auxiliary side.
 
-RSSI is on pin 8 but is not used here: it is read digitally over CCDI instead, which is more accurate
-and costs no analogue input.
+RSSI is on pin 8 but is not used here: it is read digitally over CCDI instead, which is more
+accurate and costs no analogue input.
 
 Two pins have no counterpart on the auxiliary connector and are worth knowing about even though this
 design leaves both unconnected (both **DATASHEET**, Table 2.16, p.28). **RX_BEEP_IN** (pin 5) injects
@@ -217,64 +180,47 @@ the radio, not this board, then decides the drive.
   pin 3 AGND o--------------------+-----------+---------------------o codec ground
 ```
 
-Rp and C2 are both shunt legs from the same node to ground, in parallel; an earlier version of this
-diagram stacked them into one string, which reads as Rp in series with C2 and is a divider that
-stops dividing below radio frequencies. Built that way the codec sees the tap barely attenuated.
+Rp and C2 are parallel shunt legs from one node; stacked in series they read as a divider that
+stops dividing below radio frequencies, and the codec sees the tap barely attenuated.
 
-**The coupling capacitor goes at the codec pin, not at the tap, and this is the second thing an
-earlier version of this drawing got wrong.** It had C1 at pin 2 and Rp landing directly on the
-codec input. The CM108B's MICIN is not a floating input: the datasheet gives it as 10 kohm, and the
-block diagram hangs the microphone booster off VREF at 1.75 V, so the pin sits at 1.75 V through
-that 10 k. A 3k9 to ground on the pin drags it to about half a volt, and whether that saturates the
-booster or merely costs it headroom, it is not how C-Media wire it (their reference feeds MICIN
-through a series capacitor) and not how the widget wires it (its own 1 uF sits between MICIN and
-the pad, which is why the deployed assembly could put Rp on the pad and get away with it). A board
-built from the earlier drawing inherited the DC-coupled shunt. Built as now drawn, the tap's 600 ohm
-buffer sees a 5.5 kohm DC load and 0.4 mA, which it does not mind (short-circuit safe, +/-20 mA), and
-the divider node sits at about 1.6 V, so C1 has almost no DC across it. If you would rather keep
-the tap AC-isolated as well, a second 10 uF at pin 2 costs one part and changes nothing else.
+**The coupling capacitor goes at the codec pin, because the pin is biased.** MICIN is 10 kohm to
+VREF at 1.75 V (**DATASHEET**, pin table and block diagram). A shunt to ground on the pin drags it
+to about half a volt, and whether that saturates the booster or only costs it headroom, C-Media's
+reference feeds the pin through a capacitor and so does the widget's own board, which is why the
+deployed assembly could put Rp on the pad and get away with it. Drawn as above the tap's 600 ohm
+buffer sees a 5.5 kohm DC load and 0.4 mA (it is short-circuit safe, +/-20 mA), and the node sits
+near 1.6 V so C1 has almost no DC across it. A second 10 uF at pin 2 keeps the tap AC-isolated too,
+if you would rather.
 
-**Use a line-level input, and on the CM108B that means MICIN with its boost switched off.** The
-part has no separate line input, but the microphone booster is an EEPROM option (register 0x2B
-bit 3, on by default at 12 dB), and with it cleared MICIN is a 2.88 Vp-p full-scale input at 0 dB
-gain, which is a line input in everything but the name. Leave the boost at its default and a peer at
-60 % deviation arrives at +2 dBFS through this divider and clips; clear it and the same peer is at
--17.5 dBFS. Set it in the EEPROM, along with the ADC's initial volume at 0 dB (default +8 dB), so
-the codec boots into the calibrated state rather than relying on the host to put it there. That is
-still the single biggest advantage of a custom board over a dongle: on the widget the equivalent
-state exists but is whatever the part shipped with, and it was measured rather than chosen.
+**A line-level input, which on the CM108B means MICIN with its boost cleared.** There is no
+separate line input, but the 12 dB microphone booster is EEPROM register 0x2B bit 3, and with it
+cleared MICIN is a **2.88 Vp-p** full-scale input at 0 dB gain (**DATASHEET**). Leave the boost on
+and a peer at 60 % deviation arrives at +2 dBFS through this divider and clips; clear it and the same
+peer is at -17.5 dBFS. Set boost off and the ADC's initial volume at 0 dB (default +8) in the
+EEPROM, so the codec boots calibrated rather than relying on the host.
 
-**Size Rs/Rp so the radio's full scale lands on the codec's full scale**, so both clip in the same
-place and no headroom is wasted. The CM108B's is **2.88 Vp-p at the ADC** (**DATASHEET**, and with
-boost off and 0 dB gain that is the pin), so the required attenuation is 4.0 to 2.88 Vp-p,
-**-2.9 dB DERIVED**, which against the tap's 600 ohm source is **Rs = 1k0 with Rp = 3k9**. The tap
-sees a 4.9k load, eight times the 600 ohm Tait's own crossband cable presents, so the loading is
-comfortable and already inside the ratio. The CM108AH on the widget measured 455 mVrms full scale
-at +8 dB gain, which is the same input to within a decibel, so the family is consistent.
+**Size Rs/Rp so the radio's full scale lands on the codec's**, so both clip together and no headroom
+is wasted: 4.0 to 2.88 Vp-p is **-2.9 dB DERIVED**, and against the tap's 600 ohm source that is
+**Rs = 1k0 with Rp = 3k9**. Count the pin's 10 k across Rp: 3k9 in parallel with 10k is 2.8k, so
+the pad is really **-3.9 dB DERIVED**, in the safe direction. R1's 4 Vp-p full scale lands at
+2.55 Vp-p against the codec's 2.88, and the codec clips at 11 kHz of deviation against R1's own 10,
+which is as aligned as E24 values get. Keep the divider low impedance for exactly this reason: an
+earlier 10k/22k version handed that same 10 k nearly 5 dB of error. The CM108AH on the widget
+measured 455 mVrms full scale at +8 dB gain, the same input to within a decibel, so the family is
+consistent.
 
-**The codec's 10 kohm input impedance sits across Rp**, and it is worth counting rather than
-ignoring: 3k9 in parallel with 10k is 2.8k, so the pad is **-3.9 dB DERIVED**, not -3.0. That is
-in the safe direction, R1's 4 Vp-p full scale lands at 2.55 Vp-p against the codec's 2.88, and the
-codec now clips at about 11 kHz of deviation against R1's own 10, which is as close to aligned as
-E24 values get. Keep the divider low impedance for exactly this reason: an earlier version of this
-note used 10k/22k, whose 7.2 kohm output impedance hands that same 10k nearly 5 dB of error, and
-quietly breaks the alignment this section exists to set.
+**Where that puts the signal:** a peer at 100 % of class deviation (2.5 kHz) is at **-13 dBFS**,
+one at Tait's 1200 baud default of 60 % at -17.5 dBFS **DERIVED**. Quiet on a meter and correct on
+a 16-bit path; gaining it up buys nothing but a codec that clips before the radio does. The widget
+assembly targets -12 dBFS at 60 % instead, 4.4 dB hotter, from the same reasoning applied to a
+smaller full scale. Both are fine, and on either board the difference is one capture-gain step, so
+pick one and write it down.
 
-Know where that puts the signal: a peer at **100% of class deviation (2.5 kHz) sits at -13 dBFS**,
-and one at Tait's 1200 baud default of 60% at -17.5 dBFS **DERIVED**. That is a quiet-looking
-waveform on a level meter and it is the correct answer on a 16-bit path; the alternative, gaining it
-up to sit nearer full scale, buys nothing but a codec that clips before the radio does. The
-deployed widget assembly targets -12 dBFS at 60% instead, about 4.4 dB hotter, from the same
-reasoning applied to a smaller full scale; both are fine, and on either board the difference is one
-capture-gain step away, so pick one and write it down.
-
-C1 at 10 uF at the codec pin sees 10 kohm plus the divider's 1.3 kohm source, a **1.4 Hz** corner
-**DERIVED**, comfortably below anything the modem uses and below the tap's own behaviour. Do not
-economise here: a 1 uF part would put the corner at 14 Hz, which is fine for a 300 Hz to 3 kHz
-mode and marginal for a wideband one off R1. It has under 0.2 V across it, so an X7R ceramic is
-fine; if the second capacitor at pin 2 is fitted, that one sits across the tap's +2.3 V and wants
-to be non-polarised or film. C2 is RF hygiene at the divider node: 1 nF against the node's
-1.1 kohm is a pole at **141 kHz DERIVED**, far above anything the modem uses.
+**C1** at 10 uF into the pin's 10 k plus the divider's 1.3 k is a **1.4 Hz** corner **DERIVED**. Do
+not economise: 1 uF is 14 Hz, fine for a 300 Hz to 3 kHz mode and marginal for a wideband one off
+R1. It has under 0.2 V across it, so X7R is fine; a second capacitor at pin 2 sits across the tap's
++2.3 V and wants non-polarised or film. **C2** at 1 nF against the node's 1.1 kohm is
+**141 kHz DERIVED**, RF hygiene only.
 
 ## Transmit path: AUD_TAP_IN at tap T13
 
@@ -334,14 +280,14 @@ setting.** The same sweep shows why the extra headroom at T13 is not free spectr
 starts going backwards as the signal outgrows a 7.8 kHz IF, so the optimum on a narrow channel is
 near 5 kHz, which will not fit inside one.
 
-**So the radio will happily accept nearly three times legal deviation, and nothing downstream stops
-it.** The limiter and the deviation scaler are both upstream of T13. Over-deviation is entirely this
+**So the radio will accept nearly three times legal deviation and nothing downstream stops it**:
+the limiter and the deviation scaler are both upstream of T13. Over-deviation is entirely this
 board's responsibility.
 
 ### Design
 
 ```
-  codec                          Rt 3k0                          pin 6
+  codec                          Rt 3k3                          pin 6
   line out          C3            ____                C4       AUD_TAP_IN
       o------------||------------|____|----+-----+----||----------o
                   10u                      |     |    1u       100k, +1.5V bias
@@ -350,53 +296,42 @@ board's responsibility.
   codec gnd o------------------------------+-----+----------------o pin 3 AGND
 ```
 
-As on the receive side, Rb and C5 are parallel shunt legs from the divider node, and both sit on
-the codec side of C4, so neither ever loads the tap's 1.5 V bias.
+Rb and C5 are parallel shunt legs on the codec side of C4, so neither ever loads the tap's 1.5 V
+bias; put the shunt on the radio side and it drags the bias to ground.
 
-**Set Rt/Rb so that a full-scale digital sample produces exactly 100 % of class deviation.** For
-narrowband that is 2.5 kHz, which is 0.725 Vp-p **DERIVED**. The CM108B's line output is
-**0.995 Vrms, 2.81 Vp-p** full scale (**DATASHEET**, into 10 k; its source is about 40 ohm, so the
-divider's 4 k costs nothing), and the CM108AH on the widget measured 1.00 Vrms, so 1 Vrms is the
-family figure. The ratio is then 0.258, **-11.8 dB**, so Rt = 2k9 exactly with Rb = 1k, and 3k0 is
-the nearest E24 value: **2.40 kHz on a typical radio**.
+**Rt/Rb: a full-scale digital sample produces exactly 100 % of class deviation**, 2.5 kHz on a
+12.5 kHz channel, **0.725 Vp-p DERIVED**. The CM108B's line output is **0.995 Vrms, 2.81 Vp-p** full
+scale (**DATASHEET**, into 10 k; its source is about 40 ohm, so the divider's 4 k costs nothing), and
+the CM108AH on the widget measured 1.00 Vrms, so 1 Vrms is the family figure. The ratio is 0.258,
+**-11.8 dB**, Rt = 2k9 exactly with Rb = 1k; 3k0 is the nearest E24 and gives **2.40 kHz on a
+typical radio**.
 
-**But fit 3k3, not 3k0, unless you will null that radio.** T13's level is 0.78 / **0.87** / 0.96
-Vp-p, which is **+/-0.9 dB** of radio-to-radio variation on the one figure the ceiling depends on,
-and 3k0 sized on the typical figure gives **2.68 kHz, 7 % over, on a radio at the sensitive end**.
-3k3 gives 2.24 kHz on a typical radio and 2.49 kHz on the worst one: legal everywhere, at a cost of
-0.6 dB on a typical radio. 1 % resistors are not the uncertainty that matters here, the radio is.
-Recover the 0.6 dB by measuring the radio with the Bessel null in the Verification section and
-stepping down to 3k0 if the null says so; the footprint is the same, so it is a fitting decision
-and not a layout one. The deployed widget assembly reached the same conclusion from a measured
-1.00 Vrms and is built with 3k3.
+**But fit 3k3, unless you will null that radio.** T13 is 0.78 / **0.87** / 0.96 Vp-p, **+/-0.9 dB**
+radio to radio on the one figure the ceiling depends on, and 3k0 gives **2.68 kHz, 7 % over, on a
+radio at the sensitive end**. 3k3 gives 2.24 kHz on a typical radio and 2.49 kHz on the worst one:
+legal everywhere, for 0.6 dB on a typical radio, and the Bessel null in Verification takes that
+back by stepping down to 3k0 where it says so. Same footprint, so a fitting decision. The widget
+build reached the same conclusion from a measured 1.00 Vrms and is fitted with 3k3. 1 % resistors
+are not the uncertainty that matters here; the radio is.
 
-**Playback volume is part of the ceiling.** The CM108B's DAC volume defaults to **-10 dB** at
-power-up (**DATASHEET**, "Volume Control Initial Value"), and the divider is sized for 0 dB. Set the
-initial DAC volume to 0 dB in the EEPROM (register 0x29) so the board boots at the ceiling and the
-host cannot leave it 10 dB short by doing nothing; and, as on the widget, calibrate at maximum
-playback volume and leave it there, since the ceiling only holds at the volume it was set at.
+**Playback volume is part of the ceiling.** The DAC volume defaults to **-10 dB** at power-up
+(**DATASHEET**) and the divider is sized for 0 dB. Set the initial DAC volume to 0 dB in the EEPROM
+(register 0x29) so the board boots at the ceiling and the host cannot leave it 10 dB short by doing
+nothing; and, as on the widget, calibrate at maximum playback volume and leave it there.
 
-**Not 90 %, which is what an earlier draft of this note said.** A margin below the legal ceiling
-looks prudent and costs 0.9 dB of the one thing measurement says matters most here. (3k3 above is
-not that margin: it is the worst-case radio's 100 %, and the null takes it back on a typical one.) Deviation is the
-dominant lever on this link: at fixed received power in a fixed IF, dropping from 2500 Hz peak to
-1500 Hz costs 3 to 4 dB of sensitivity, because post-detection signal to noise goes as deviation
-squared. Setting the ceiling AT the legal limit means a software fault produces exactly 100 %
-modulation, which is legal, while normal operation gets the full budget. A margin buys nothing
-except a quieter signal.
+**Not 90 %.** A margin below the legal ceiling looks prudent and costs the 3 to 4 dB measured
+above. Setting the ceiling AT the limit means a software fault produces exactly 100 % modulation,
+which is legal, while normal operation gets the full budget. (3k3 is not that margin: it is the
+worst-case radio's 100 %, and the null takes it back on a typical one.)
 
-This is the board's only protection against splattering the channel, and it belongs in copper rather
-than in a config file. A number in software can be changed by a bug, a mixer, or a well-meaning
-operator; a divider cannot.
+**This is the board's only protection against splattering the channel, and it belongs in copper.**
+A number in software can be changed by a bug, a mixer or a well-meaning operator; a divider cannot.
 
-**Thevenin impedance is 3k0 || 1k = 750 ohm DERIVED.** Keep it under about 1 kohm. Into the tap's
-100 kohm input the loading is under 1 %, and a low source impedance keeps any connector-side
-capacitance from eating the top of the audio band.
-
-**C4 preserves the tap's 1.5 V bias**, as Tait require. Note the divider's shunt leg must sit on the
-codec side of C4, not the radio side, or it would drag the bias to ground. 1 uF into 100 kohm is a
-1.6 Hz corner **DERIVED**, well below the tap's own 3.7 Hz high pass, so the radio remains the
-limiting element rather than this board.
+**Thevenin impedance 3k3 || 1k = 770 ohm DERIVED.** Keep it under about 1 kohm: under 1 % loading
+into the tap's 100 kohm, and a low source impedance keeps connector capacitance from eating the top
+of the band. **C4** preserves the tap's 1.5 V bias as Tait require; 1 uF into 100 kohm is
+**1.6 Hz DERIVED**, below the tap's own 3.7 Hz high pass, so the radio stays the limiting element.
+**C3** at 10 uF into the divider's 4 k is 4 Hz. **C5** at 1 nF against 770 ohm is 207 kHz.
 
 ## Serial
 
@@ -411,16 +346,11 @@ byte is framing errors, which is easy to misdiagnose as a baud-rate or wiring fa
 
 Two ways to invert. FTDI's FT230X and FT232R can invert TXD and RXD in their configuration EEPROM,
 so no gates are needed; a CP2102N cannot, and wants a dual XOR (74LVC2G86) or two inverters
-(74LVC2G04) in the path. An XOR against a strap gives a polarity jumper for free, which is worth
-having: fit it inverted for the radio and it also lets the same board talk to a normal TTL device
-for bench tests. Whichever way, hold the radio-facing lines at their idle level when the radio is
-absent, and remember that idle for negative logic is **0 V**, so a pull-down, not a pull-up.
-
-Two consequences of the notice worth knowing. IOP_TXD's 0 to 3V3 swing "will drive most modern
-RS232 receivers satisfactorily", and IOP_RXD "is capable of accepting signals up to the full RS232
-levels", so an RS-232-level bridge also works, with no inverter, over a short cable. And Tait cap
-these lines at **3.0 m**; inside the radio body that is not a constraint, on the auxiliary
-connector it is.
+(74LVC2G04), which is what the reference board fits, XORed against a strap so the same board can
+talk to a plain TTL device on the bench. Idle for negative logic is **0 V**, so an absent radio's
+lines are held with a pull-down, not a pull-up. The same notice says IOP_TXD's 0 to 3V3 swing
+drives most RS-232 receivers and IOP_RXD accepts full RS-232 levels, so an RS-232-level bridge also
+works with no inverter over a short cable, and caps these lines at **3.0 m**.
 
 | Parameter | Value |
 |---|---|
@@ -469,9 +399,9 @@ with its GPIO asserted will not transmit until it deasserts and asserts again.
 **Use a hardware PTT line, not CCDI.** A serial command has queueing and parsing latency; a GPIO
 does not, and transmit timing is one of the things this modem cares about.
 
-**Consider a hardware transmit timeout** on the board - a monostable or a watchdog that releases PTT
-after a few seconds regardless of what USB is doing. A wedged host is the one failure mode that
-inconveniences everybody else on the channel, and it is cheap to make impossible.
+**A hardware transmit timeout** (a monostable or watchdog that drops PTT after a few seconds
+regardless of USB) is cheap and would make a wedged host harmless to everyone else on the channel;
+the reference board does not have one. See Open items.
 
 A second GPIO configured as a radio output gives channel-busy status, readable on another codec GPIO.
 Note the radio's outputs have **1 kohm series resistance** and are specified at 100 uA, so present a
@@ -518,133 +448,43 @@ every voice channel in another, so the two sets of channel settings cannot drag 
 
 ## Power
 
-**Bus powered.** A hub, a codec and a bridge is on the order of 100 to 150 mA, well inside a single
-upstream port's budget, and it avoids putting any switching regulator inside the radio.
-
-13V8_SW on pin 1 is available and generous - **1 A continuous, 2 A peak for under a second**
-(**DATASHEET** p.28), derated by whatever the control head and auxiliary interfaces draw. It is
-there if bus power proves marginal.
-
-**Prefer bus power for thermal reasons as much as electrical ones.** Tait ask for industrial-grade
-parts rated to 85 C and say that "heat dissipation added by an internal options board can reduce the
-radio's operating temperature range or duty cycle. Keep heat dissipation to a minimum" (p.102). A
-linear regulator dropping 13.8 V to 5 V at 150 mA is **1.3 W DERIVED** inside a sealed lid that is
-already carrying a PA, which is exactly the dissipation they are asking you not to add. If the board
-must run from 13V8_SW, that 1.3 W is the reason to reach for a well-filtered switcher after all, and
-to measure the receiver afterwards.
-
-One behavioural consequence worth choosing deliberately: bus power means the board is alive whenever
-the host is, regardless of the radio. Powering from 13V8_SW instead makes the USB devices appear and
-disappear with the radio, which some hosts handle more gracefully than others.
+**Bus powered**, and for thermal reasons as much as electrical ones. A hub, a codec and a bridge is
+on the order of 100 to 150 mA, inside one upstream port's budget. 13V8_SW on pin 1 is generous
+(**1 A continuous, 2 A peak for under a second**, p.28) but a linear regulator dropping it to 5 V
+at 150 mA is **1.3 W DERIVED** inside a sealed lid already carrying a PA, and Tait ask that an
+options board "keep heat dissipation to a minimum" (p.102). Bus power also means the board is alive
+whenever the host is, regardless of the radio; powering from 13V8_SW would make the USB devices
+appear and disappear with the radio, which some hosts handle less gracefully.
 
 ## Mechanical
 
-**DATASHEET**, p.97-99. The radio body provides space for an internal options board with a maximum
-envelope of **139 x 99 mm** and **nine dia 3.5 mm screw points in the inside of the lid**. Boards may be
-any size and shape within that, using any combination of the fixings.
-
-**Height is the constraint that actually binds, not area.** Figure 4.2 (p.99) divides the envelope
-into zones with different ceilings: **10.7 mm** over the largest region, then **9.5, 8.2, 7.7 and
-6.7 mm** over the rest, with a no-components zone, twelve keep-outs where no routes may go, five
-dia 10 mm and twelve dia 7.8 mm clearance circles, and two rules that decide the stack-up:
-
-- **No components on the bottom side at all**, and maximise ground plane over it.
-- **Through-hole parts are allowed on the top side** in the marked areas, with **no more than 2 mm**
-  of leg protruding from the bottom.
-
-Against 10.7 mm, the Micro-MaTch socket alone is **8.2 mm including its mating connector**. A
-standard USB-A socket is about 6.5 mm and fits; a USB-B is around 10.5 mm and does not, in any
-sensible zone. **Design for a low-profile socket or a pigtail**, and settle that before laying
-anything out, because it is not recoverable at the artwork stage.
-
-**The hole provided for the external options connector is the obvious USB exit** (p.97: an internal
-options board "can also use the hole provided for the external options connector"), sized for a
-9-way standard-density or 15-way high-density D-range and closed by a bung when unused (p.30). Two
-things come with it. **It costs the radio its IP54 rating**: "the IP54 protection class no longer
-applies when the external options connector or an additional connector are used", and sealing is
-"the integrator's sole responsibility" (p.102). And there is a second, smaller opening beside it,
-**a round hole up to 7.5 mm for an SMA or a cable grommet** (p.30), which for a USB pigtail is the
-better of the two: a grommet seals more readily than a D-range cut-out, and 7.5 mm is ample for a
-USB cable.
-
-[marrold/Tait_TM8100-8200_Options_Board_Dimensions](https://github.com/marrold/Tait_TM8100-8200_Options_Board_Dimensions)
-has the 3DK drawing traced to scale as an SVG, which is the quickest way to a correct board outline.
-Its author notes the fit has not been verified against a manufactured board, so check it before
-committing to a panel, and note that a traced outline carries the plan view and not the height
-zones.
-
-139 x 99 mm is a lot of room for three small devices. Spend it on separation and screening rather
-than on shrinking the board.
+The lid gives an internal board a **139 x 99 mm** envelope with nine 3.5 mm screw points, and
+**height binds before area**: zones from 10.7 mm down to 6.7 mm (Figure 4.2, p.99), no parts on the
+bottom side, through-hole legs no more than 2 mm proud. The reference board takes four of the nine
+holes on a 57 x 50 mm outline and a USB-C receptacle a few millimetres tall, so neither constraint
+bites; the Micro-MaTch socket at 8.2 mm is the tallest thing on it. Using the external options hole
+or the 7.5 mm round hole beside it for the cable **costs the radio its IP54 rating** (p.102), and
+sealing is the integrator's problem. Bond the board to the lid at the mounting hole nearest the
+cable entry: Tait ask for a **3.5 mm plated hole with a 7 mm pad on both sides**, resist cleared,
+on the ground plane.
 
 ## Interference
 
 The receiver makes 12 dB SINAD at -121 dBm (MMA-00072-03 p.14) and this board sits inside the same
 casting. USB clocks are on 12 MHz multiples, so 12, 24 and 48 MHz all have a harmonic at exactly
-144.000 MHz, and crystal tolerance moves it by only a few kHz. **At an operating frequency of
-144.950 MHz that spur is 950 kHz outside a 7.8 kHz channel filter and can be discounted.** What
-cannot be predicted from a desk is broadband noise from switching edges and data transitions raising
-the floor.
+**144.000 MHz**; at 144.950 that is 950 kHz outside a 7.8 kHz channel filter and can be discounted.
+What cannot be predicted from a desk is broadband noise from switching edges raising the floor,
+which is why the sensitivity check in Verification is done with the board **streaming**, not idle.
 
-Treatment, in order of effect:
-
-1. **Bond the USB shield to the casting 360 degrees at the point of entry**, not through a pigtail.
-   The cable is the largest antenna in the system and common-mode current on it radiates far more
-   than anything on the board.
-2. **Common-mode choke on D+/D-** (about 90 ohm at 100 MHz) with low-capacitance ESD protection
-   (under 3 pF). **Do not add shunt capacitance to the data pair** beyond that; full-speed USB
-   tolerates a few pF and a "filter" there only costs eye margin.
-3. **Pi filter on VBUS at the entry**: 1 uF and 100 nF, a ferrite bead of about 600 ohm at 100 MHz
-   rated for the current, then 100 nF. Every filter ground goes to the same bond point as the shield.
-4. **Screen the digital section** and keep the codec's analogue pins, both audio pairs and the control
-   lines on the quiet side. Filter each line where it crosses: 1 nF on the audio pairs (141 kHz
-   corner against the receive divider's 1.1 kohm, 212 kHz against the 750 ohm transmit divider,
-   both **DERIVED**), 10 nF on PTT, and **470 pF on serial** - at 28800 baud a 10 nF part would
-   round the edges badly.
-5. Solid ground plane under the digital section, guarded and stitched crystal, and no audio routed
-   under the hub.
-
-**Fit the footprints even if the parts are not populated.** Screen-can pads, the choke, the
-feed-through positions, zero-ohm links where filters would go. If the sensitivity test finds a
-problem it is then a fitting exercise rather than a respin, and a problem you cannot predict is
-exactly the kind worth leaving room to fix.
-
-### What Tait ask for, which is not quite the same list
-
-Their EMC chapter (p.103 to 106) is written for exactly this board, and it puts the effort in a
-different place. Worth reading in full; the parts that change a layout:
-
-**Filter the outside, not the loom.** "For the I/O lines to or from the radio, filtering is usually
-not necessary. The exception is when the internal options board contains high-speed digital
-circuits. In this case, the outputs to the radio should be RC-filtered on the internal options board
-as close as possible to the connector to minimise noise on the loom." A USB hub counts as
-high-speed, so the exception is us, and item 4 above is doing that job. Everything crossing to the
-**external** connector, on the other hand, needs filtering and ESD protection as a matter of course.
-
-**Their values for external lines are 10 nF on audio and 470 pF plus a zener clamp on digital**, all
-returned to the chassis rather than to signal ground, so that a discharge has a low-impedance path
-that does not run through the board. The zener wants a small capacitor in parallel to slow the pulse
-edge so it clamps without overshoot, and they suggest a zener on the digital supply too, about 0.5 V
-above the rail. Note their 10 nF is chosen for ESD energy and assumes voice audio: against a 600 ohm
-tap it is a 26.5 kHz corner, which costs about half a decibel at 9.6 kHz on a wideband R1 tap. On a
-line that stays inside the casting, 1 nF is the better trade.
-
-**Use both ground pins, and use them separately.** AGND on pin 3 and DGND on pin 16 are joined
-inside the radio through its ground plane, and the loom's wire impedance is high enough that digital
-return current develops real noise along its length. Two returns also halve the impedance of the
-earth connection at the board end. Keep them separate on a low-speed board; on a high-speed one the
-ground-plane requirement usually wins and they end up common.
-
-**Bond the board to the lid next to the external connector.** A plated through hole **dia 3.5 mm
-with a 7 mm pad on both sides**, resist cleared, connected to analogue earth or the ground plane,
-using the mounting screws nearest the connector. Other screws may also be bonded but need not be.
-This is the same instinct as item 1 above, expressed in the geometry Tait's own screw points allow.
-
-**Four layers or more, with one reserved as an unbroken ground plane**, is their standing
-recommendation for anything with a DSP or a 16/32-bit part in it, which includes a USB hub. Decouple
-with multiple 100 nF ceramics plus a low-ESR tantalum, and analyse it out to **500 MHz**. They
-finish with a warning worth quoting to anyone who thinks this board is trivial: high-speed digital
-design "should not be undertaken without" experience, the right tools and high-bandwidth test
-equipment.
+Two things Tait ask for that are easy to get wrong (p.103 to 106). **Filter the lines to the radio
+on the board, at the connector**, because a hub counts as the "high-speed digital circuits" that
+are their stated exception to "filtering is usually not necessary": 1 nF on the audio pairs, 10 nF
+on PTT, and 470 pF on serial (a 10 nF part rounds 28800 baud badly), all **DERIVED** to sit far
+above the audio band against the dividers' 770 ohm and 1.1 kohm. And **use both ground pins**, AGND
+on 3 and DGND on 16, joined inside the radio; two returns halve the impedance of the earth at the
+board end, and on a high-speed board they end up common on the ground plane anyway. The rest of
+their EMC chapter (common-mode choke and pi filter at the USB entry, ESD arrays, four layers with an
+unbroken ground plane) is what the reference board implements and is not repeated here.
 
 ## Timing, for the modem's benefit
 
@@ -698,9 +538,8 @@ frequency and compare against the R1 plot in Table 2.10 - if it rolls off at 3 k
 R1 and something is programmed differently from what you think.
 
 **Full-scale ceiling.** Play 0 dBFS and confirm deviation lands on the class ceiling and does not
-exceed it.
-This is the one test that protects everyone else on the channel, so do it before the first transmit
-on a real antenna.
+exceed it. This is the one test that protects everyone else on the channel, so do it before the
+first transmit on a real antenna, and it is the test that decides between 3k3 and 3k0.
 
 **Turnaround.** Key the radio from the PTT line with a tone playing and watch the RF envelope and
 the demodulated tone on an SDR. Full power carrying valid modulation should arrive 14.8 ms after the
@@ -740,6 +579,6 @@ Most of the original list closed when the reference board and the CM108B datashe
 - **Bus-powered hub per-port advertisement.** The reference board runs bus-powered with the CM108B
   strapped for 100 mA; not independently checked here.
 - **Fit against a real radio.** The reference board uses a 57 x 50 mm outline on four of the nine
-  screw points rather than the full traced envelope; still to be proven in a radio body.
+  screw points rather than the full 139 x 99 mm envelope; still to be proven in a radio body.
 - **A hardware transmit timeout** is still only a suggestion, and the reference board does not
   have one.
