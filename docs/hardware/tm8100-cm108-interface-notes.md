@@ -792,12 +792,23 @@ temperature coefficient near 50 ppm/K, so a hot vehicle does not undo what the n
 The receive divider is the opposite case: 5% parts shift it 0.52 dB against 12.26 dB of headroom
 to clipping, so 1% there is only to avoid stocking two types of resistor.
 
-Capacitor tolerance is irrelevant and the dielectric is not. All three set poles decades outside
-the passband (about 15 Hz for C4, 12 Hz for C1, 48 kHz for C3), so even 20% parts are fine. But a
-1u or 4u7 in X7R has a voltage coefficient that would add distortion to the transmit audio, and
-Y5V additionally sheds much of its capacitance with bias and temperature. Film or bipolar for
-those two; ceramic only for C3, where it is small and out of band. Power rating is a formality at
-0.2 mW and 20 uW.
+Capacitor tolerance is irrelevant and the dielectric matters less than an earlier version of this
+note claimed. All three set poles decades outside the passband (about 1.6 Hz for C4 into the tap's
+100 k, 12 Hz for C1, 48 kHz for C3), so even 20% parts are fine. That same margin is what makes a
+ceramic coupling capacitor harmless: the distortion a class 2 dielectric adds comes from its
+capacitance moving with the voltage across it, and at 300 Hz these two drop under a percent (C4)
+and about 3% (C1) of the signal, so there is next to nothing for the coefficient to act on. The
+PCB designs, the [internal board](tm8100-internal-usb-board.md) and the
+[packethacking/tait-cm108](https://github.com/packethacking/tait-cm108) reference board it
+follows, fit 25 V and 50 V X7R in exactly these positions, and the widget itself already has two
+0603 ceramics (its own 1u at LOL and at MICIN, each with 1.75 V across it, the LOL one at a 40 Hz
+corner) in this very chain, which the 2026-08-14 measurements did not notice. What actually rules
+out the ceramics a leaded build would reach for is bias: C1 sits across the tap's full 2.3 V and
+C4 across 1.5 V, a class 2 ceramic loses capacitance in proportion to volts over rated volts, and
+radial ceramics at 1u and 4u7 are typically Y5V/Z5U and low-voltage, shedding a large slice of
+their value at that bias and walking the corner up toward the band. Film or bipolar for those two,
+or a surface-mount X7R rated 25 V or more; ceramic of any kind for C3, where it is small and out of
+band. Power rating is a formality at 0.2 mW and 20 uW.
 
 ### Three ways a level measurement lies
 

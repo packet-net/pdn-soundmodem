@@ -97,8 +97,8 @@ short, screen to the radio backshell and pin 15.
 | Rb | **1k** | metal film | **1%** | 0.125 W |
 | Rs | **1k8** | metal film | 1% | 0.125 W |
 | Rp | **1k** | metal film | 1% | 0.125 W |
-| C4 | 1u | film (PET or PP), or bipolar electrolytic | 20% | 50 V |
-| C1 | 4u7 | non-polarised: bipolar electrolytic or film | 20% | >= 16 V |
+| C4 | 1u | film (PET or PP), or bipolar electrolytic; X7R only at 25 V rating or more | 20% | 50 V |
+| C1 | 4u7 | non-polarised: bipolar electrolytic or film; X7R only at 25 V rating or more | 20% | >= 16 V |
 | C3 | 4n7 | ceramic, C0G preferred, X7R acceptable | 20% | 50 V |
 | socket | 9-way D-sub, female | | | |
 | plug | 15-way standard-density D-sub, male | | | |
@@ -109,9 +109,17 @@ Two things in that table are not free choices:
 - **1% on Rt and Rb is required**, and it is the only place tolerance is tight. 5% parts can put
   the transmit level over the deviation ceiling on their own, at nominal values, with nothing on
   the bench to show for it. 1% on Rs and Rp is only so you stock one type.
-- **Do not use high-K ceramic for C4 or C1.** X7R at these values has a voltage coefficient that
-  distorts the audio and Y5V also loses capacitance with bias and temperature. Tolerance does not
-  matter for any of the three capacitors; the dielectric does.
+- **C1 and C4: film or bipolar electrolytic, or an X7R rated 25 V or more.** Both have corners far
+  below the band (1.6 Hz for C4, 12 Hz for C1), so at 300 Hz they drop under a percent of the
+  signal (C4) and about 3% (C1), and a ceramic would be harmless on that score; the PCB designs, the
+  [internal board](tm8100-internal-usb-board.md) and the
+  [packethacking/tait-cm108](https://github.com/packethacking/tait-cm108) reference board it
+  follows, fit 25 V and 50 V X7R in the same positions. What rules out the leaded ceramics a
+  hand-wired build would reach for is bias: C1 carries the tap's full 2.3 V and C4 1.5 V, a class 2
+  ceramic sheds capacitance in proportion to volts over rated volts, and radial ceramics at 1u and
+  4u7 are typically Y5V/Z5U and low-voltage, so they lose a large slice of their value at that bias
+  and the corner walks up toward the band. Tolerance does not matter for any of the three
+  capacitors.
 
 ## Program the radio
 
