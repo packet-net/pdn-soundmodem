@@ -298,6 +298,29 @@ public class Ms110dMfbFormReceiver
         summary.WriteLine(FormattableString.Invariant(
             $"WN{wn} @ {snrDb} dB baseSeed {baseSeed} worker {worker} burst {burst} (channelSeed {channelSeed}) MFB-form receiver, window [{lMin},{lMax})"));
 
+        // G1c selection-ceiling instrument: MS110D_MFBRX_CANDIDATE names an autopsy
+        // `autopsy-decoded-*.txt` from the shipped receiver (the line whose length is the
+        // burst's tx bit count is its decode). At the final rung every block prices its own
+        // decode and the candidate's by the same label-free MFB reconstruction residual and
+        // reports which the lower residual would select - the ensemble question asked of
+        // the instrument before anything is built.
+        byte[]? candidateBits = null;
+        string? candidatePath = Environment.GetEnvironmentVariable("MS110D_MFBRX_CANDIDATE");
+        if (candidatePath is not null)
+        {
+            foreach (string line in File.ReadLines(candidatePath))
+            {
+                string t = line.Trim();
+                if (t.Length == txBits.Length)
+                {
+                    candidateBits = t.Select(ch => (byte)(ch == '1' ? 1 : 0)).ToArray();
+                }
+            }
+
+            candidateBits.Should().NotBeNull($"{candidatePath} must carry a {txBits.Length}-bit decode line");
+        }
+
+        var selectLines = new List<string>();
         var rungTotals = new long[iters + 1];
         Span<double> metric = stackalloc double[16];
         Span<double> p0 = stackalloc double[4];
@@ -764,6 +787,48 @@ public class Ms110dMfbFormReceiver
                 rungTotals[rung] += errs;
                 rungLines[rung].Add($"b{b}:{errs}");
 
+                if (candidateBits is not null && rung == iters)
+                {
+                    double Residual(ReadOnlySpan<byte> blockBits)
+                    {
+                        byte[] enc = Ms110dFraming.EncodeBlock(code, puncture, interleaver, blockBits);
+                        var wire = new Complex[frames * u256];
+                        int idx = 0;
+                        for (int f2 = 0; f2 < frames; f2++)
+                        {
+                            for (int u2 = 0; u2 < u256; u2++)
+                            {
+                                wire[(f2 * u256) + u2] = Wire(Number(enc, ref idx), u2);
+                            }
+                        }
+
+                        Complex[] rc = Reconstruct(wire);
+                        double r = 0;
+                        long rows = 0;
+                        for (long hc = 2 * frameChips[0]; hc < 2 * (frameChips[^1] + u256); hc++)
+                        {
+                            Complex dd = ring[hc - hc0] - rc[hc - hc0];
+                            r += (dd.Real * dd.Real) + (dd.Imaginary * dd.Imaginary);
+                            rows++;
+                        }
+
+                        return r / rows;
+                    }
+
+                    ReadOnlySpan<byte> cand = candidateBits.AsSpan(b * il.InputBits, il.InputBits);
+                    int candErrs = 0;
+                    for (int i = 0; i < cand.Length; i++)
+                    {
+                        candErrs += cand[i] != txBits[(b * il.InputBits) + i] ? 1 : 0;
+                    }
+
+                    double ownResid = Residual(dec);
+                    double candResid = Residual(cand);
+                    bool pickOwn = ownResid <= candResid;
+                    selectLines.Add(FormattableString.Invariant(
+                        $"b{b}: own {errs}@{ownResid:E3} cand {candErrs}@{candResid:E3} -> {(pickOwn ? "own" : "cand")} = {(pickOwn ? errs : candErrs)}"));
+                }
+
                 if (rung < softUntil)
                 {
                     // W5b1 soft cancellation: SISO per-bit posteriors → per-symbol E[x]
@@ -817,6 +882,11 @@ public class Ms110dMfbFormReceiver
                     }
                 }
             }
+        }
+
+        if (selectLines.Count > 0)
+        {
+            summary.WriteLine($"selection (own vs candidate, by MFB residual): {string.Join(" | ", selectLines)}");
         }
 
         summary.WriteLine($"anchor-fit residual per block: {string.Join(" ", anchorResidBlocks)}");

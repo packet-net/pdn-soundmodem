@@ -23,4 +23,76 @@ Registered 2026-08-20 after G0's PASS, per [poor-gate-successor-plan.md](../../p
 
 ## Measurements
 
-*(appended as the leg runs)*
+**Calibration lane (i) - the mapper does not move QAM16 (2026-08-20, commit af621da).** The prototype before and after the modulation-generic symbol map, on WN8 w0/b0 canonical (channelSeed 509) and disjoint (10509), `MS110D_MFBRX_ITERS=8 MS110D_MFBRX_SOFT=1 MS110D_MFBRX_SOFTUNTIL=4 MS110D_MFBRX_REFIT=1`: summaries **byte-identical** on both specimens ([calibration/](calibration/), SHA-256 in `sha256.txt` - 45f615dc... for 509, 6454af37... for 10509, before = after). Every rung line, anchor-fit residual and truth-reconstruction residual reproduces. The generic code path is the QAM16 code path, operation for operation.
+
+**Calibration lane (ii) - 8PSK templates and alignment.** On every WN7 specimen the truth-reconstruction residual sits at 9.0E-4 to 9.9E-4 per row against an anchor-fit floor of 1.8E-4 to 2.3E-4 (both about 3x the WN8 figures of 3.0E-4 and 7.3E-5, as the 4 dB lower operating point predicts); a wrong map or a misaligned tribit would show here as orders of magnitude, not a factor of three consistent across eight bursts. The lane is green; R0 on every burst sits at 44-46 % coded errors, the coin-flip of an honest unequalised first pass.
+
+**The measurement (2026-08-20, commit af621da; summaries in [wn7-prototype/](wn7-prototype/)).** The generic prototype on the seven residual bursts and the guard-pin burst, `MS110D_MFBRX_WN=7 MS110D_MFBRX_SNR=19 MS110D_MFBRX_ITERS=60 MS110D_MFBRX_SOFT=1 MS110D_MFBRX_SOFTUNTIL=30 MS110D_MFBRX_REFIT=1` (W5b1's best honest schedule: soft30 + refit -> hard), read at the R60 fixed point. Ship's per-block counts come from the same bursts' autopsy corpses (`Mask_Burst_Corpse_Dump`, the decoded-bits file against the tx bits, block = position / 36,864); every autopsy total reproduces its census digit.
+
+| burst (channelSeed) | ship | ship per block | prototype | prototype per block | per-block min |
+|---|---|---|---|---|---|
+| 507 w0/b0 (508), the guard pin | 0 | - | 15 | b1:15 | 0 |
+| 507 w1/b0 (1000508) | 20 | b3:6 b6:14 | **0** | - | 0 |
+| 507 w1/b1 (1001508) | 25 | b2:12 b4:6 b7:7 | 71 | b8:71 | 0 |
+| 507 w2/b1 (2001508) | 38 | b5:6 b8:32 | 15 | b4:15 | 0 |
+| 10507 w0/b0 (10508) | 16 | b4:6 b10:10 | **0** | - | 0 |
+| 10507 w1/b0 (1010508) | 12 | b5:1 b9:11 | 18 | b1:18 | 0 |
+| 10507 w2/b1 (2011508) | 6 | b7:6 | 134 | b4:134 | 0 |
+| 10507 w3/b0 (3010508) | 14 | b5:14 | **0** | - | 0 |
+| **pooled, seven residual bursts** | **131** | | **238** | | **0** |
+
+Two readings, both load-bearing:
+
+1. **As a standalone receiver the MFB-form prototype does not clear WN7's residual.** 238 against ship's 131 over the seven bursts, and 15 on the burst ship decodes clean. The registered kill rule (<= 65) fires by a factor of 3.7. It zeroes three of the seven bursts and more than halves a fourth; it loses on the other three and on the guard pin. Its failures are the MFB's own kind - a block that settles into a self-consistent wrong fixed point (w1/b1 b8 holds 71 from R10 to R60; the refit at R30 moves it to 39 for one rung and it returns), not the deep-fade decoder events B3.9 anatomised on ship.
+2. **The two receivers' failure sets are disjoint at block level, on every burst.** Not one of the 88 blocks is wrong under both. A per-block oracle choosing between the two decodes scores **0 on all eight bursts**. That is an ensemble ceiling in the B4 sense - the best any selector could do - and it is the measured successor lever this leg hands on. The mechanisms differ (ship loses deep-fade blocks to decoder error events with honest low-|LLR| wire bits; the MFB loses blocks to basin traps with a confident wrong decode), which is why they do not coincide.
+
+## Verdict
+
+**G1 kills, per its rule: the B3.9 verdict is confirmed under the MFB class as a standalone receiver.** Banked as "WN7 needs added information, measured under both the DFE-chain class and the MFB class". No shipped change from this leg.
+
+## Stop-and-reassess (the escalation rule's written form)
+
+Options on the table, with cost:
+
+- **(a) Ensemble by label-free selection.** Run both receivers per 8PSK block and keep the decode the evidence prefers. The ceiling is 0 on these specimens (above). What it needs is a selector that, without labels, picks the right block every time; the natural one already exists in the MFB frame - re-encode each candidate decode to wire symbols, reconstruct through the estimated trajectory, and compare reconstruction residuals (the W5b2 port uses exactly this to accept period-2 cycles). A wrong decode of ~70 info bits re-encodes to a few hundred wire-bit differences, which should price as a residual excess well above the noise floor. Cost: ~1 hour of instrument, corpse-minutes to measure; a shipped build, if the ceiling survives, is the 8PSK port of `Ms110dMfbBlockDecoder` plus selection plumbing, 2-3 days. **This is G1c, registered below.**
+- **(b) Schedule variants for the prototype** (hard-only, soft-only, no refit). Corpse-minutes each. Not taken: the kill rule was committed on one schedule and the failure set is a basin phenomenon, which W5b1 measured to be "basin-determined early" and schedule-insensitive in its tail.
+- **(c) Close.** Zero cost; leaves (a)'s measured 0 on the table.
+
+## G1c - the selection ceiling (registered 2026-08-20 16:51 UTC, the instrument launched in the same minute; this rule was written before any selection line was read)
+
+**Question.** Does the label-free MFB reconstruction residual select the zero-error decode on every block of the eight specimens when offered ship's block decode and the prototype's?
+
+**Instrument.** `MS110D_MFBRX_CANDIDATE=<autopsy-decoded file>` on the prototype: at the final rung each block re-encodes its own decode and ship's, reconstructs both through the block's final trajectory, and reports `own errs@residual cand errs@residual -> pick`. Ship's decodes are the same corpses' autopsy files. No shipped change.
+
+**Kill/proceed rule (pre-committed).** All 88 blocks pick a zero-error decode -> **G1d** registers the build (the 8PSK port of the shipped MFB decoder behind structural scope, ship + MFB per block, residual selection), with the battery gate decision by §5.3 on both families. Any block picks a wrong decode -> report the margin distribution (right-minus-wrong residual on every block) and stop; a selector that is right on most blocks but not all cannot clear a mask that needs <= 32 errors per 3.24M bits, and the honest endpoint is the ensemble ceiling banked as a lever with a measured selector accuracy. Selection margins inside the noise floor on the zero-error side -> same stop.
+
+### G1c measurements (2026-08-20, summaries in [wn7-selection/](wn7-selection/), ship's decodes from [wn7-ship-autopsy/](wn7-ship-autopsy/))
+
+Eight specimens, 88 blocks, 18 of them contested (one receiver wrong, never both). **The residual selector picks a zero-error decode on all 88.** On the 70 uncontested blocks both decodes are identical and the residuals equal to the last digit, as they must be.
+
+| specimen | block | wrong receiver | its errors | residual excess of the wrong decode | pick | selected errors |
+|---|---|---|---|---|---|---|
+| 10507 w0/b0 | b4 | ship | 6 | +0.40 % | own | 0 |
+| 10507 w0/b0 | b10 | ship | 10 | +0.35 % | own | 0 |
+| 507 w0/b0 | b1 | MFB | 15 | +4.76 % | cand | 0 |
+| 10507 w1/b0 | b1 | MFB | 18 | +7.87 % | cand | 0 |
+| 10507 w1/b0 | b5 | ship | 1 | +0.88 % | own | 0 |
+| 10507 w1/b0 | b9 | ship | 11 | +0.58 % | own | 0 |
+| 507 w1/b0 | b3 | ship | 6 | +1.08 % | own | 0 |
+| 507 w1/b0 | b6 | ship | 14 | +1.04 % | own | 0 |
+| 507 w1/b1 | b2 | ship | 12 | +0.55 % | own | 0 |
+| 507 w1/b1 | b4 | ship | 6 | +0.17 % | own | 0 |
+| 507 w1/b1 | b7 | ship | 7 | +0.36 % | own | 0 |
+| 507 w1/b1 | b8 | MFB | 71 | +11.03 % | cand | 0 |
+| 10507 w2/b1 | b4 | MFB | 134 | +22.18 % | cand | 0 |
+| 10507 w2/b1 | b7 | ship | 6 | +0.19 % | own | 0 |
+| 507 w2/b1 | b4 | MFB | 15 | +8.65 % | cand | 0 |
+| 507 w2/b1 | b5 | ship | 6 | +0.22 % | own | 0 |
+| 507 w2/b1 | b8 | ship | 32 | +2.41 % | own | 0 |
+| 10507 w3/b0 | b5 | ship | 14 | +0.58 % | own | 0 |
+
+**Margins.** The two failure mechanisms price very differently, and in the helpful direction. An MFB basin trap is a confident wrong decode of 15-134 info bits: it re-encodes to hundreds of wrong wire symbols and its residual sits 5-22 % above the right decode's. A ship decoder event is 1-32 info bits: its excess is 0.17-2.4 %, small in relative terms but not small against the noise of the comparison. Both residuals are means over the same ~37k half-chip rows of the same ring through the same trajectory, so the comparison's only noise is the cross term between the channel noise and the wrong decode's reconstruction difference; at the thinnest contested block (507 w1/b1 b4, six info errors, +0.17 %) the wrong decode adds about 0.040 of reconstruction energy against a cross-term standard deviation of about 0.010, i.e. ~4 sigma, and every other contested block is wider (the one-error block at +0.88 % is ~9 sigma). That is a selector that is right by construction on big mistakes and right by margin on small ones. What this instrument does not measure is the selector over a full battery - 16 bursts per family, 176 blocks each, with whatever contested blocks a fresh family brings - which is exactly what G1d's battery is for.
+
+### G1c verdict
+
+**Proceed to G1d, per the rule.** The ensemble ceiling of 0 survives its selector on every contested block of the eight specimens. Banked for the build: the MFB-form receiver generalised to 8PSK is not a better WN7 receiver than the DFE-chain path (238 vs 131), it is a *differently wrong* one, and the two together with residual selection decode every WN7 residual burst the Phase B battery left.
