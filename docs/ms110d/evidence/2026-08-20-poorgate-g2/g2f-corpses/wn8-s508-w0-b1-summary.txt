@@ -1,0 +1,4 @@
+WN8 @ 23 dB baseSeed 508 worker 0 burst 1 (channelSeed 1509) genie=False
+payload 540640 bits in 11 blocks (16384 symbols/block), decoded 540672, coded errors 12 (first 228343, last 232166), uncoded 195937/720896, collapses 14, turbo 11c/0r/0a/0s/0v, end=Eom, 180224 symbols dumped, lock=//K@Hz (tx K7)
+first-decode errors per block: b0:24318 b1:24473 b2:24541 b3:24740 b4:24505 b5:24313 b6:24409 b7:24387 b8:24523 b9:24608 b10:24013
+final-decode errors per block: 

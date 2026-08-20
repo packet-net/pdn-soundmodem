@@ -42,6 +42,22 @@ internal sealed class Ms110dMfbBlockDecoder
     // and the W5b1 poison case at ~30% - 5% sits in the measured gap with margin on
     // both sides.
     private const int SoftCap = 30;
+    // G2f: a soft-phase fixed point is honoured as the handover only from this rung. With
+    // the MMSE cold rung the hard decode stabilises by rung 4-7, while the SISO posteriors
+    // the re-fit is trained on are still sharpening; a re-fit taken ten rungs in finishes
+    // the blocks that one taken at the first fixed point leaves at 15-62 errors (evidence
+    // 2026-08-20-poorgate-g2, G2e: identical results for re-fits anywhere from rung 10 to
+    // 40). Cap-class: clean blocks pay at most five extra soft rungs.
+    private const int SoftMinRungs = 10;
+    // G2f: the soft phase hands over when its reconstruction residual has stopped falling
+    // (no improvement on the best so far by more than SoftPlateauTolerance for
+    // SoftPlateauRungs consecutive rungs, from SoftMinRungs) rather than only at the cap
+    // or at a fixed point - an oscillating block (the G2e stragglers) otherwise spends the
+    // cap oscillating and hands its worst soft decisions to the re-fit. Cap-class: it
+    // trades soft rungs that were not helping for a hard tail that starts earlier (the
+    // prototype's soft-to-10 schedule, measured 34 on the block the cap left at 62).
+    private const int SoftPlateauRungs = 3;
+    private const double SoftPlateauTolerance = 1e-3;
     // 72: the W5b2 corpse measured the three deep-fade-lottery blocks (canonical
     // b3/b6, disjoint b4) needing ~45-60 rungs while 20/22 blocks converge by ~15-35;
     // at 48 exactly those three cap-reverted. The §B3.4 Amendment 3 asymmetry argument
@@ -247,6 +263,8 @@ internal sealed class Ms110dMfbBlockDecoder
 
     private long _lastHc0;
     private int _lastN;
+    private bool _lastCycleAccepted;
+    private readonly List<byte[]> _decPool = new();
 
     /// <summary>Clears the per-burst window state (a new burst may lock on the other
     /// path - the window must be re-scanned).</summary>
@@ -370,6 +388,46 @@ internal sealed class Ms110dMfbBlockDecoder
             RebuildAnchors(midFrame: false, frameChips); // drop attempt-0 refit anchors
             converged = RunSchedule(softFirst: false, frameChips, hc0, n, lMin, diag);
         }
+        else if (_qam && _lastCycleAccepted)
+        {
+            // G2f: a cycle-accepted decode is a verdict under one schedule, not the block's
+            // last word - the hard-first schedule finds exact fixed points on blocks the
+            // soft-first one cycles on (measured on the G2e stragglers). Run it; an exact
+            // fixed point wins outright; two cycle members are priced through the SAME
+            // model (probe anchors only - residuals through different re-fit models are
+            // not comparable, the G2e banked negative) and the lower residual is kept.
+            if (_decPool.Count == 0)
+            {
+                _decPool.Add(new byte[_il.InputBits]);
+            }
+
+            byte[] decA = _decPool[0];
+            Array.Copy(_dec, decA, _dec.Length);
+            RebuildAnchors(midFrame: false, frameChips);
+            bool convergedB = RunSchedule(softFirst: false, frameChips, hc0, n, lMin, diag);
+            if (!convergedB)
+            {
+                Array.Copy(decA, _dec, _dec.Length);
+            }
+            else if (_lastCycleAccepted)
+            {
+                RebuildAnchors(midFrame: false, frameChips);
+                SetDecisionsFrom(_dec);
+                double priceB = ReconResidual(frameChips, hc0, n, lMin);
+                SetDecisionsFrom(decA);
+                double priceA = ReconResidual(frameChips, hc0, n, lMin);
+                diag?.Invoke(FormattableString.Invariant(
+                    $"mfb-dual block cycle/cycle priceSoftFirst={priceA:E4} priceHardFirst={priceB:E4} keep={(priceB < priceA ? "hard-first" : "soft-first")}"));
+                if (priceB >= priceA)
+                {
+                    Array.Copy(decA, _dec, _dec.Length);
+                }
+            }
+            else
+            {
+                diag?.Invoke("mfb-dual block cycle/fixed-point keep=hard-first");
+            }
+        }
 
         if (converged)
         {
@@ -391,10 +449,19 @@ internal sealed class Ms110dMfbBlockDecoder
         int handoverChurn = -1;
         int rung = 0;
         int lastChurn = int.MaxValue;
+        int hardStart = softFirst ? int.MaxValue : 0; // the first hard-phase rung (G2f / #316)
+        double bestSoftSigma = double.MaxValue;
+        int plateauRungs = 0;
+        bool plateau = false;
         for (; rung <= TotalCap; rung++)
         {
-            bool softPhase = softFirst && rung < SoftCap && !refitDone;
-            if (!softPhase && !refitDone && rung >= SoftCap)
+            bool softPhase = softFirst && rung < SoftCap && !refitDone && !plateau;
+            if (!softPhase && rung < hardStart)
+            {
+                hardStart = rung;
+            }
+
+            if (!softPhase && !refitDone && (rung >= SoftCap || plateau))
             {
                 refitDone = true; // handover - re-fit first if the gate admits it
                 handoverChurn = lastChurn;
@@ -407,6 +474,20 @@ internal sealed class Ms110dMfbBlockDecoder
             }
 
             Project(frameChips, hc0, n, lMin, haveDecisions);
+            if (softPhase && _qam && haveDecisions)
+            {
+                // Soft-phase plateau watch on the reconstruction residual just priced.
+                if (_sigma2 < bestSoftSigma * (1 - SoftPlateauTolerance))
+                {
+                    bestSoftSigma = _sigma2;
+                    plateauRungs = 0;
+                }
+                else if (rung >= SoftMinRungs && ++plateauRungs >= SoftPlateauRungs)
+                {
+                    plateau = true; // next rung hands over through the cap path below
+                }
+            }
+
             BuildLlrs(lMin);
             Array.Copy(_prevDec, _prevDec2, _prevDec.Length);
             Array.Copy(_dec, _prevDec, _dec.Length);
@@ -429,6 +510,15 @@ internal sealed class Ms110dMfbBlockDecoder
                 $"mfb-rung r{rung} churn={churn} soft={(softPhase ? 1 : 0)} sigma={_sigma2:E2}"));
             if (rung > 0 && churn == 0)
             {
+                if (softPhase && _qam && rung < SoftMinRungs)
+                {
+                    // Stable as a hard decode, not yet saturated as soft posteriors: keep
+                    // the soft rungs going so the re-fit below trains on sharper rows.
+                    SetDecisionsSoft();
+                    haveDecisions = true;
+                    continue;
+                }
+
                 if (softPhase)
                 {
                     // A stable soft decode is a handover signal, not the final fixed
@@ -458,7 +548,12 @@ internal sealed class Ms110dMfbBlockDecoder
             // label-free likelihood selection. The §B3.4 confident-wrong attractor
             // cannot satisfy decode == decode-two-rungs-ago exactly, so the revert
             // protection stands for genuine wander.
-            if (!softPhase && rung > 1 && churn > 0 &&
+            // G2f (#316, QAM16 scope): both cycle members must be hard-phase decodes - at
+            // the handover rung _prevDec2 is still a soft-phase decode, and accepting a
+            // soft oscillation there held the WN8 stragglers at 15-62 errors (evidence
+            // 2026-08-20-poorgate-g2). 8PSK keeps the W5b2 behaviour until its own leg.
+            bool membersHard = !_qam || rung >= hardStart + 2;
+            if (!softPhase && rung > 1 && churn > 0 && membersHard &&
                 _dec.AsSpan().SequenceEqual(_prevDec2))
             {
                 double sigmaB = _sigma2; // priced _prevDec's reconstruction this rung
@@ -486,6 +581,7 @@ internal sealed class Ms110dMfbBlockDecoder
             haveDecisions = true;
         }
 
+        _lastCycleAccepted = cycleAccepted;
         diag?.Invoke(
             FormattableString.Invariant(
                 $"mfb-block sched={(softFirst ? "soft" : "hard")} rungs={rung} window=[{lMin},{lMin + WinLen}) conv={(cycleAccepted ? 2 : converged ? 1 : 0)}") +
