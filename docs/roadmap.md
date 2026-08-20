@@ -1,6 +1,8 @@
 # pdn-soundmodem roadmap
 
-Living roadmap of open work. Snapshot committed 2026-07-17. Complements
+Living roadmap of open work. Snapshot committed 2026-07-17; the cross-cutting follow-ups
+section was refreshed 2026-08-20 (#42/#40 closed). Sections not carrying a later date are still
+at the 2026-07-17 snapshot and may lag `mode-validation.md`. Complements
 [`docs/plan.md`](plan.md) (the phase plan + §17 amendment log) and
 [`docs/waveform-roadmap.md`](waveform-roadmap.md) (the approved modem build order and the
 standing quality/OBW directives). Where those disagree with this file, the amendment log in
@@ -123,14 +125,34 @@ through the Flex's DAX audio, no sound card in path.
 
 ## Cross-cutting follow-ups (issues from live-RF validation, 2026-07-17)
 
-- **#42 - NinoTNC BPSK is DEBPSK; our Coherent detector can't decode it.** Real off-air GB7RDG
-  decodes with `Differential` only; `Coherent` (the default from #5) fails even strong + centred,
-  because the NinoTNC uses coherent Costas demod **with** differential encoding to beat the 180°
-  ambiguity, and our coherent path omits the differential-decode step. **Fix:** add a
-  differential-decode step after coherent carrier recovery (match the NinoTNC's modified Costas
-  loop), or default HF BPSK to Differential; re-examine the #5 bench result. Highest-value modem
-  fix in the queue - it's a real NinoTNC-interop gap. Fixture committed.
-- **#40** - the general coherent-vs-differential off-air finding (now explained by #42).
+- **#42 - RESOLVED** (2026-07-17/18): NinoTNC BPSK is DEBPSK and the Coherent default could not
+  decode it. The NinoTNC uses coherent Costas demod **with** differential encoding to beat the
+  180° ambiguity, and our coherent path omitted the differential-decode step. Fixed by reverting
+  the default to **differential detection plus a 4-pair frequency-diversity bank** (PR #52,
+  PR #56), with the off-air GB7RDG capture checked in as `OffAirBpskTests.cs` (PR #41). Coherent
+  remains an opt-in detector and QPSK keeps its coherent default; `CoherentDetectionTests` pins
+  the deliberate inversion (BPSK rows assert differential >= coherent). This landed the day after
+  this file's snapshot, which is why it read as open for so long.
+- **#40 - RESOLVED** with #42 (same fix): the general coherent-vs-differential off-air finding was
+  the same defect.
+
+**`bpsk300` since then** - now the network's flagship mode and the most heavily validated one in
+the repo. Do not re-derive its state from this file; [`docs/mode-validation.md`](mode-validation.md)
+is the authority and carries the dated ledger. Summary as of 2026-08-16:
+- **On air continuously.** GB7RDG's 40 m port runs pdn-soundmodem with a `bpsk300` slot. The
+  continuous replay of the 166.9 h 40 m capture archive reads 4394 decoded / 3914 deliverable,
+  and the live slot's traffic fingerprints into four known stations by carrier offset alone
+  (GB7BPQ and PD4R-12 at -18 Hz, GB7BEX-15 at -8.4 Hz, EI0RSI-7 at +1.6 Hz).
+- **Instrumented.** On-air BER-vs-SNR waterfall over the Flex→RSP1 rig (2026-07-28, AWGN
+  threshold ~ -3 dB); independently confirmed through a public web receiver (2026-08-02).
+- **Receive chain rebuilt against measurement** (PR #236): ~1 dB more AWGN margin, decision-feedback
+  differential detection, RRC matched filtering, retuned DPLL inertia.
+- **Trailer corroboration** (PR #238) moved host-delivered frames from 3/37 to 22/37 on the 24 h
+  miss corpus; chase decoding (M0LTE.Il2p 0.3.0) added +78 frames over the archive.
+- **Floors are pinned by tests, not prose** - `WattersonMaskTests`, per the mask discipline in
+  CLAUDE.md.
+- **Still open:** the residual-miss aspiration scoreboard (`NinoTncMissCorpusAspirationTests`), and
+  Poor remains equaliser-bound - a known mode limit, not a regression.
 - **#39 - RESOLVED** (2026-07-18): the narrow modem tone/carrier centre is now variable per-mode
   (QtSoundModem-style), on both TX and RX, via `--modem N:MODE:FREQ` / config `"frequency"`. Covers
   the AFSK tone-pair modes (afsk*, default 1700) and the BPSK/QPSK carrier modes (bpsk*/qpsk*,
@@ -164,10 +186,11 @@ self-contained and can be picked up standalone. Operate as **M0LTE**.
    the on-air bench doc first (à la the FreeDV one). Closes #6.
 4. **Own FM OFDM - an FM radio loop** (#8) - *later, when the #8 build starts.* Required to
    validate PAPR / pre-emphasis / deviation, which simulation can't fully capture.
-5. **GB7RDG traffic on request** - *optional, opportunistic.* Once the #42 coherent+differential
-   fix lands, capture more live NinoTNC BPSK300 off-air through the Flex to confirm the fix on
-   real signals (this is how #39/#40/#42 were found). A long carrier tone + a frame is the ideal
-   calibration transmission.
+5. **GB7RDG traffic on request** - *optional, opportunistic.* The #42 fix landed and has since
+   been confirmed on real signals many times over (GB7RDG's own 40 m port now runs the daemon), so
+   this is no longer about #42. It stays on the list as the standing way to get a **calibration
+   transmission** on demand: a long carrier tone plus a frame, which is how #39/#40/#42 were found
+   in the first place.
 
 **Hardware available:** a Flex 6500 (10.45.0.76, on the bench with an ANT1 dummy load; GB7RDG's
 transceiver couples into it), an HF rig / GB7RDG's HF port, and an FM radio loop.
