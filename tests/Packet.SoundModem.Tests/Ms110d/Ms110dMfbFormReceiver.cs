@@ -210,7 +210,9 @@ public class Ms110dMfbFormReceiver
             for (int p = 0; p < 8; p++)
             {
                 long ps = Fc0[p] - k32;
-                bool boundary = (p + 1) % frames == 0;
+                // Block 0's preceding probe is the preamble's closing probe, unshifted (see
+                // Ms110dMfbBlockDecoder.ProbeIsBoundary); B0 == 0 here by construction.
+                bool boundary = p != 0 && (p + 1) % frames == 0;
                 Cf[] probe = MiniProbe.Get(k32, boundary);
                 Array.Clear(wRhs);
                 for (int i = 0; i < ScanLen; i++)
@@ -360,9 +362,9 @@ public class Ms110dMfbFormReceiver
             {
                 bool preceding = p < frames;
                 long ps = preceding ? frameChips[p] - k32 : frameChips[^1] + u256;
-                bool boundary = preceding
+                bool boundary = !(p == 0 && b == 0) && (preceding
                     ? (p + 1) % frames == 0
-                    : (frames + 1) % frames == 0;
+                    : (frames + 1) % frames == 0);
                 Cf[] probe = MiniProbe.Get(k32, boundary);
 
                 Array.Clear(rhs);
@@ -553,7 +555,7 @@ public class Ms110dMfbFormReceiver
                 {
                     bool preceding = p < frames;
                     long ps = preceding ? frameChips[p] - k32 : frameChips[^1] + u256;
-                    bool boundary = preceding ? (p + 1) % frames == 0 : (frames + 1) % frames == 0;
+                    bool boundary = !(p == 0 && b == 0) && (preceding ? (p + 1) % frames == 0 : (frames + 1) % frames == 0);
                     Cf[] probe = MiniProbe.Get(k32, boundary);
                     for (int c = 0; c < k32; c++)
                     {

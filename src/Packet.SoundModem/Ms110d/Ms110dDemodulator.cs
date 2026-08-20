@@ -184,6 +184,11 @@ public sealed class Ms110dDemodulator
     private float[] _softVar = [];
     private Cf[] _turboExpected = [];
     private int _blockIndex;
+
+    /// <summary>The 0-based index of the block being decoded within the current burst
+    /// (the MFB decoder needs it: the probe that ends the preamble is unshifted, so block
+    /// 0's preceding probe is never a boundary probe, whatever the interleaver).</summary>
+    internal int BlockIndex => _blockIndex;
     private readonly List<byte> _burstBits = [];
     private readonly List<long> _blockFrameChips = [];
 
@@ -463,7 +468,18 @@ public sealed class Ms110dDemodulator
     /// byte-identical); a nonzero count over real-RF Poor is the fix engaging.</summary>
     public int AgcResolves { get; private set; }
 
-    private Ms110dMfbBlockDecoder? _mfb; // W5b2: lazily built at the first QAM16 block
+    /// <summary>8PSK blocks offered to the per-block ensemble (Poor-gate successor G1d):
+    /// the chain path's final decode and the MFB-form decoder's, both priced by the
+    /// MFB reconstruction residual. Report-only; the census format does not carry it.</summary>
+    public int MfbOffered { get; private set; }
+
+    /// <summary>8PSK blocks where the ensemble kept the MFB-form decode over the chain
+    /// path's (lower reconstruction residual). G1 measured the two receivers never wrong
+    /// on the same block and the residual right on every contested one.</summary>
+    public int MfbSelected { get; private set; }
+
+    private Ms110dMfbBlockDecoder? _mfb; // W5b2: lazily built at the first QAM16/8PSK block
+    private byte[]? _mfbInfo;            // G1d: the MFB's candidate decode for the ensemble
 
     /// <summary>Fires for every decoded input-data block.</summary>
     public event Action<Ms110dRxBlock>? BlockDecoded;
@@ -516,6 +532,8 @@ public sealed class Ms110dDemodulator
         TurboSkipped = 0;
         CollapseResolves = 0;
         AgcResolves = 0;
+        MfbOffered = 0;
+        MfbSelected = 0;
         EndBurst();
     }
 
@@ -2491,6 +2509,52 @@ public sealed class Ms110dDemodulator
             }
 
             _dfe.RestoreTraining();
+
+            if (_mode.Modulation is Ms110dModulation.Psk8)
+            {
+                // G1d (Poor-gate successor program): the 8PSK per-block ensemble. The
+                // chain path above is the better WN7 receiver on most blocks and the
+                // MFB-form decoder on others, and G1 measured them never wrong on the
+                // same block (0 of 88); the label-free reconstruction residual of each
+                // decode through the MFB's probe-anchored trajectory chose the
+                // zero-error one on every contested block (18 of 18, margins +0.17 %
+                // to +22 %). So: run the MFB beside the chain, price both decodes the
+                // same way, keep the lower residual; a tie keeps the chain's. Only a
+                // CONVERGED MFB decode (exact fixed point or accepted cycle) is offered:
+                // a wandering iterate is not evidence (the §B3.3 principle the QAM16
+                // branch lives by), and on a block the MFB cannot model - the hermetic
+                // suite's WN7 UltraShort loopback, one frame per block - its residual is
+                // noise and ranked a garbage decode above the chain's correct one. A
+                // converged decode is by construction one whose model explains the ring,
+                // which is exactly the condition under which G1 measured the residual
+                // discriminating. Structural scoping: only 8PSK reaches this block;
+                // QAM16 keeps its W5b2 branch below and every other waveform is
+                // bit-identical by construction.
+                _mfb ??= new Ms110dMfbBlockDecoder(
+                    _mode, _il, _code!, _puncture!, _interleaver!, _viterbi!, _siso!);
+                _mfbInfo ??= new byte[info.Length];
+                Array.Copy(info, _mfbInfo, info.Length);
+                bool mfbConverged = _mfb.DecodeBlock(this, _blockFrameChips, _mfbInfo);
+                if (mfbConverged)
+                {
+                    double chainPrice = _mfb.Price(info, _blockFrameChips);
+                    double mfbPrice = _mfb.Price(_mfbInfo, _blockFrameChips);
+                    MfbOffered++;
+                    if (mfbPrice < chainPrice)
+                    {
+                        Array.Copy(_mfbInfo, info, info.Length);
+                        MfbSelected++;
+                    }
+
+                    FrameDiagnosticsForInstruments?.Invoke(FormattableString.Invariant(
+                        $"mfb-ensemble block={_blockIndex} chain={chainPrice:E3} mfb={mfbPrice:E3} pick={(mfbPrice < chainPrice ? "mfb" : "chain")}"));
+                }
+                else
+                {
+                    FrameDiagnosticsForInstruments?.Invoke(FormattableString.Invariant(
+                        $"mfb-ensemble block={_blockIndex} mfb=unconverged pick=chain"));
+                }
+            }
         }
         else if (_dfe is not null && _mode is not null &&
             !_options.DisableTurbo &&

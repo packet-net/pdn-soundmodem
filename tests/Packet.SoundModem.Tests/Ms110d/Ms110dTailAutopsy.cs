@@ -622,6 +622,7 @@ public class Ms110dTailAutopsy
             $"first-decode errors per block: {string.Join(" ", firstDecodeErrs)}\n" +
             $"final-decode errors per block: {string.Join(" ", finalDecodeErrs)}\n" +
             (oracle ? $"oracle coded errors per block: {string.Join(" ", oracleBlockErrs)}\n" : "") +
+            (demod.MfbOffered > 0 ? $"mfb ensemble: offered {demod.MfbOffered}, selected {demod.MfbSelected}\n" : "") +
             (truth ? $"truth coded errors per block: {string.Join(" ", truthBlockErrs)}\n" : "") +
             (turboFrozen ? $"frozen coded errors per block: {string.Join(" ", frozenBlockErrs)}\n" : ""));
         if (turboFrozen)
