@@ -180,8 +180,28 @@ public sealed class Ms110dModem : IModem, IHardwareControllable
         }
 
         outcome = $"{Mode}, {_txSettings.Interleaver.ToString().ToLowerInvariant()} interleaver";
+        if (PoorStatusNote(_txSettings.WaveformNumber) is { } note)
+        {
+            outcome += $" ({note})";
+        }
+
         return true;
     }
+
+    /// <summary>
+    /// What the validation ledger (docs/mode-validation.md) says about a waveform's standing
+    /// on the D.6.1 Poor channel, for the journal at configuration and SETHW time - so the
+    /// product says what the record says (Poor-gate successor program G3). Null for the
+    /// waveforms that are hard-gated on Poor and on-air proven. Plain ASCII, one line.
+    /// </summary>
+    public static string? PoorStatusNote(int waveformNumber) => waveformNumber switch
+    {
+        7 => "wn7 Poor-channel standing: sim hard-gated since 2026-08-20 (the 8PSK ensemble); "
+            + "no hardware confirmation exists at its +19 dB mask point",
+        8 => "wn8 Poor-channel standing: measured-only, 2.9E-4 canonical / 1.8E-2 disjoint against "
+            + "the 1E-5 mask; on 2026-08-03 16QAM did not carry over a 48 W NVIS path",
+        _ => null,
+    };
 
     /// <inheritdoc />
     public bool CarrierDetect => _rx.CarrierDetect;

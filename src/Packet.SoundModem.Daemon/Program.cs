@@ -769,6 +769,13 @@ foreach (ModemConfig modemConfig in modems)
         return 2;
     }
     Console.WriteLine($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");
+    if (mode.StartsWith("ms110d-wn", StringComparison.Ordinal)
+        && int.TryParse(mode.AsSpan("ms110d-wn".Length), out int wn)
+        && Packet.SoundModem.Ms110d.Ms110dModem.PoorStatusNote(wn) is { } poorNote)
+    {
+        Console.WriteLine($"modem {subChannel}: {poorNote}");
+    }
+
     if (modemConfig.AcceptPlainIl2p)
     {
         // Said out loud because it removes the one check that separates a frame from noise the

@@ -80,6 +80,11 @@ public class Ms110dMfbFormReceiver
             refitRungs.Add(softUntil);
         }
         string outDir = Environment.GetEnvironmentVariable("MS110D_MFBRX_OUT") ?? ".";
+        // G2c: the MMSE cold rung (per-symbol linear MMSE over the response window at R0,
+        // known probes subtracted, neighbouring data chips as unit-power unknowns, the
+        // anchor-fit residual as the noise estimate) instead of the ISI-inclusive matched
+        // projection. Off by default: the G2b summaries must reproduce byte-identically.
+        bool mmse0 = Environment.GetEnvironmentVariable("MS110D_MFBRX_MMSE0") == "1";
 
         // Bit-exact corpse reconstruction (the banked construction).
         int workerSeed = baseSeed + (worker * 1_000_000);
@@ -704,8 +709,113 @@ public class Ms110dMfbFormReceiver
                 var proj = new Complex[frames * u256];
                 var gramT = new double[frames * u256];
                 var r0Dist = recon is null ? new List<double>(frames * u256) : null;
+                if (recon is null && mmse0)
+                {
+                    // The MMSE cold rung. y_data = ring minus the exact probe reconstruction;
+                    // for symbol d at chip c the rows 2c+lMin..2c+lMax-1 see the neighbouring
+                    // data chips |c'-c| <= (lLen-1)/2 through their own interpolated responses.
+                    // R = Es H H^H + sigma^2 I; z = R^-1 h_c; mu = Es h_c^H z; xhat/mu = x + v,
+                    // var(v) = Es (1-mu)/mu, so the LLR metric weight is mu / (Es (1-mu)).
+                    Complex[] probesOnly = Reconstruct(null);
+                    double es = 0;
+                    for (int q = 0; q < points; q++)
+                    {
+                        Complex pt = Point(q);
+                        es += (pt.Real * pt.Real) + (pt.Imaginary * pt.Imaginary);
+                    }
+
+                    es /= points;
+                    double sigmaNoise = Math.Max(sigmaAnchor, 1e-12);
+                    int half = (lLen - 1) / 2;
+                    var dataAt = new Dictionary<long, int>(proj.Length);
+                    for (int d = 0; d < proj.Length; d++)
+                    {
+                        dataAt[dataChip[d]] = d;
+                    }
+
+                    var rMat = new Complex[lLen, lLen];
+                    var zVec = new Complex[lLen];
+                    var hCol = new Complex[lLen];
+                    var hN = new Complex[lLen];
+                    for (int d = 0; d < proj.Length; d++)
+                    {
+                        long c = dataChip[d];
+                        Complex[] hc = HAt(c);
+                        for (int i = 0; i < lLen; i++)
+                        {
+                            for (int j = 0; j < lLen; j++)
+                            {
+                                rMat[i, j] = Complex.Zero;
+                            }
+
+                            rMat[i, i] = sigmaNoise;
+                            hCol[i] = hc[i];
+                        }
+
+                        for (long cn = c - half; cn <= c + half; cn++)
+                        {
+                            if (!dataAt.ContainsKey(cn))
+                            {
+                                continue; // a probe chip (already subtracted) or outside the block
+                            }
+
+                            Complex[] hn = cn == c ? hc : HAt(cn);
+                            int off = (int)(2 * (cn - c));
+                            for (int i = 0; i < lLen; i++)
+                            {
+                                int k = i - off;
+                                hN[i] = k >= 0 && k < lLen ? hn[k] : Complex.Zero;
+                            }
+
+                            for (int i = 0; i < lLen; i++)
+                            {
+                                if (hN[i] == Complex.Zero)
+                                {
+                                    continue;
+                                }
+
+                                for (int j = 0; j < lLen; j++)
+                                {
+                                    rMat[i, j] += es * hN[i] * Complex.Conjugate(hN[j]);
+                                }
+                            }
+                        }
+
+                        Array.Copy(hCol, zVec, lLen);
+                        Complex mu = Complex.Zero;
+                        Complex xhat = Complex.Zero;
+                        if (SolveHermitian(rMat, zVec))
+                        {
+                            for (int i = 0; i < lLen; i++)
+                            {
+                                long hc2 = (2 * c) + lMin + i;
+                                Complex y = hc2 >= hc0 && hc2 < hc0 + n
+                                    ? ring[hc2 - hc0] - probesOnly[hc2 - hc0]
+                                    : Complex.Zero;
+                                mu += Complex.Conjugate(hCol[i]) * zVec[i];
+                                xhat += Complex.Conjugate(zVec[i]) * y;
+                            }
+
+                            mu *= es;
+                            xhat *= es;
+                        }
+
+                        double muR = Math.Clamp(mu.Real, 1e-6, 1 - 1e-6);
+                        proj[d] = xhat / muR;
+                        gramT[d] = muR / (es * (1 - muR));
+                    }
+
+                    sigma2 = 1.0;
+                    r0Dist = null;
+                }
+
                 for (int d = 0; d < proj.Length; d++)
                 {
+                    if (recon is null && mmse0)
+                    {
+                        break; // projections and prices already set by the MMSE cold rung
+                    }
+
                     long c = dataChip[d];
                     Complex[] h = HAt(c);
                     double g2 = 0;

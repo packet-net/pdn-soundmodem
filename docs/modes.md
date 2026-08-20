@@ -108,7 +108,7 @@ performance mask under the D.6.1 Poor channel.
 | `ms110d-wn5` | BPSK r3/4 | **On-air** - hard-gated; campaign clean |
 | `ms110d-wn6` | QPSK r3/4 | **On-air** ⚠ - requires a disciplined RX reference (receiver phase-noise, not a modem defect; #102) |
 | `ms110d-wn7` | 8PSK r3/4 | ⚠ **Partial** - AWGN on-air-proven; Poor sim hard-gated since 2026-08-20 (the 8PSK per-block ensemble, G1d); no on-air Poor confirmation possible at +19 dB over either rig |
-| `ms110d-wn8` | 16QAM r3/4 | ⚠ **Partial** - AWGN on-air-proven at reachable SNR; Poor decodes (MFB-form receiver, 2026-07-31) but measured-only vs mask |
+| `ms110d-wn8` | 16QAM r3/4 | ⚠ **Partial** - AWGN on-air-proven at reachable SNR; Poor measured-only at 7.17E-6 / 1.78E-5 (2026-08-20, the MMSE cold rung), the canonical family at the mask |
 | `ms110d-wn13` | QPSK r9/16 | **On-air** ⚠ - same disciplined-reference condition as wn6 |
 
 ## Measured extras
