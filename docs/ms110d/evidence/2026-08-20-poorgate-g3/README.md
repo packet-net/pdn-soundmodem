@@ -22,3 +22,54 @@ Registered 2026-08-20 per [poor-gate-successor-plan.md](../../poor-gate-successo
 **The ladder, all ten waveforms, native / 3750 / 5000, 50 frames per cell, rungs re-centred on each waveform's knee:** every waveform passes the per-rung and aggregate criteria (first run: 0 failures in ten processes, 8-26 minutes each; the per-cell table from the second run, which writes its evidence file, follows below).
 
 **The product says what the ledger says:** `Ms110dModem.PoorStatusNote` gives `ms110d-wn7` and `ms110d-wn8` a one-line standing note, printed by the daemon under the modem announcement at start-up and appended to the SETHW outcome in the journal; the other eight waveforms, hard-gated on Poor and on-air proven, print nothing extra.
+
+### The ladder ([ladder/](ladder/), second run, 50 frames per cell; every waveform 0 failures, 6-29 minutes per waveform as one process each)
+
+| waveform | rung (dB) | native | 3750 Hz | 5000 Hz |
+|---|---|---|---|---|
+| ms110d-wn0 | -12 | 0/50 | 0/50 | 0/50 |
+| ms110d-wn0 | -11 | 1/50 | 0/50 | 3/50 |
+| ms110d-wn0 | -10 | 17/50 | 23/50 | 20/50 |
+| ms110d-wn0 | -8 | 50/50 | 49/50 | 45/50 |
+| ms110d-wn1 | -7 | 2/50 | 0/50 | 1/50 |
+| ms110d-wn1 | -6 | 29/50 | 26/50 | 27/50 |
+| ms110d-wn1 | -5 | 48/50 | 43/50 | 46/50 |
+| ms110d-wn1 | -3 | 50/50 | 50/50 | 50/50 |
+| ms110d-wn2 | -6 | 0/50 | 0/50 | 0/50 |
+| ms110d-wn2 | -5 | 1/50 | 1/50 | 0/50 |
+| ms110d-wn2 | -4 | 14/50 | 19/50 | 16/50 |
+| ms110d-wn2 | -2 | 48/50 | 49/50 | 48/50 |
+| ms110d-wn3 | -3 | 0/50 | 0/50 | 0/50 |
+| ms110d-wn3 | -2 | 34/50 | 27/50 | 34/50 |
+| ms110d-wn3 | -1 | 49/50 | 48/50 | 50/50 |
+| ms110d-wn3 | 1 | 50/50 | 50/50 | 50/50 |
+| ms110d-wn4 | -1 | 0/50 | 0/50 | 0/50 |
+| ms110d-wn4 | 0 | 3/50 | 6/50 | 8/50 |
+| ms110d-wn4 | 1 | 43/50 | 43/50 | 36/50 |
+| ms110d-wn4 | 3 | 50/50 | 50/50 | 50/50 |
+| ms110d-wn5 | 0 | 3/50 | 1/50 | 3/50 |
+| ms110d-wn5 | 1 | 33/50 | 41/50 | 41/50 |
+| ms110d-wn5 | 2 | 49/50 | 48/50 | 50/50 |
+| ms110d-wn5 | 4 | 50/50 | 50/50 | 50/50 |
+| ms110d-wn6 | 4 | 33/50 | 37/50 | 30/50 |
+| ms110d-wn6 | 5 | 45/50 | 48/50 | 50/50 |
+| ms110d-wn6 | 6 | 50/50 | 50/50 | 50/50 |
+| ms110d-wn6 | 8 | 50/50 | 50/50 | 50/50 |
+| ms110d-wn7 | 8 | 34/50 | 40/50 | 41/50 |
+| ms110d-wn7 | 9 | 46/50 | 48/50 | 46/50 |
+| ms110d-wn7 | 10 | 50/50 | 50/50 | 50/50 |
+| ms110d-wn7 | 12 | 50/50 | 50/50 | 50/50 |
+| ms110d-wn8 | 11 | 11/50 | 9/50 | 9/50 |
+| ms110d-wn8 | 12 | 36/50 | 39/50 | 38/50 |
+| ms110d-wn8 | 13 | 48/50 | 48/50 | 49/50 |
+| ms110d-wn8 | 15 | 50/50 | 50/50 | 50/50 |
+| ms110d-wn13 | 0 | 0/50 | 0/50 | 0/50 |
+| ms110d-wn13 | 1 | 11/50 | 13/50 | 12/50 |
+| ms110d-wn13 | 2 | 44/50 | 46/50 | 44/50 |
+| ms110d-wn13 | 4 | 50/50 | 50/50 | 50/50 |
+
+Every rung of every waveform keeps the moved arms within the two-sigma binomial band of native and every aggregate within 5 %; no rung set needed re-centring. The WN7 rows run through the G1d ensemble at both centres.
+
+## Verdict
+
+**G3 closes.** Every waveform survives `FrequencyShiftedModem` at 3750 and 5000 Hz within the gate's criterion; the shifted WN6 holds on the Poor channel at its mask SNR once the rig fades about the signal's own centre; the ladder is a standing env-gated instrument over all ten waveforms (`MS110D_SHIFT_GATE=1`, `_MODES`, `_RUNGS`, `_N`, `_CENTRES`, `_OUT`) and the Poor smoke is in the hermetic suite; the daemon states WN7's and WN8's Poor standing at start-up and on SETHW. The one defect found was in the instrument, and it is the kind the audit lesson warned about: a rig hard-wired to the geometry it was built for, read as a receiver fault until the matrix said otherwise. Nothing on air at a moved centre yet - that remains H1's.
