@@ -60,3 +60,32 @@ Registered 2026-08-20 after G1d's exit (i) for WN7, per [poor-gate-successor-pla
 **Reading.** The soft phase keeps descending well past the shipped cap of 30 on all three blocks; given the rungs, it converges w2 b6 exactly and takes w1 b2 to a self-consistent fixed point with 6-40 errors, but w3 b9 only to ~500 with the descent flattening from R160, and any refit before the decode is good poisons it (the refit gate would have to be tighter than 5 % churn for this block). Against the family mask (<= 32 errors per 3,243,776 bits, or the Poisson bound) that is 0 + 6 + ~500 on the disjoint family: roughly 1.6E-4, a hundredfold improvement on 1.75E-2 and not a gate. Wall-clock is the other cost: ~0.4 s per block-rung in the prototype, so a 100-rung soft phase is ~40 s for a 7.68 s block, paid only by the stragglers but paid by every one of them.
 
 **Verdict per the rule:** "a variant converges some but not all -> report per block, and price the MMSE cold rung on the remainder before building anything." The model is not the deficiency (the probe-anchor bound decodes all three to zero with exact cancellation); the *iteration* is - its cold rung is an ISI-inclusive matched projection that starts every block at coin-flip and leaves the deep-fade blocks a long, sometimes unfinishable, descent. The next candidate is therefore a linear MMSE first rung on the anchored trajectory (ISI suppressed by the model rather than cancelled by decisions), priced on the prototype on these three blocks before any shipped change; a stability-driven soft handover (stay soft while churn falls) rides along as the schedule half, since it is measured to convert one block on its own. Registered as **G2c** when the build starts; until then WN8 stays at its W6 figures and nothing ships from G2.
+
+## G2c - the MMSE cold rung (registered 2026-08-20 before the runs)
+
+**Question.** Does a linear MMSE first rung on the anchored trajectory - ISI suppressed by the model instead of cancelled by decisions - start the three blocks inside the basin the soft schedule can finish from?
+
+**Mechanism claim.** The cold rung is the one place the MFB-form receiver is not matched to the channel: R0 is a matched projection with every other symbol's interference still present, priced by a crude median, so a deep-fade block begins at coin-flip and must climb the whole way on decision-directed cancellation. A per-symbol MMSE estimate over the 26-tap response window (known probe chips subtracted exactly, neighbouring data chips treated as unit-power unknowns, the anchor-fit residual as the label-free noise estimate) starts each symbol at its linear-equaliser SNR and prices it honestly (effective SNR mu / (1 - mu)); every later rung is unchanged.
+
+**Instrument.** `MS110D_MFBRX_MMSE0=1` on the prototype; calibration lane: with the knob off the prototype must reproduce the G2b summaries byte-identically. Specimens: the three failing blocks and the control, under schedules (ii) soft to 80 + refit + hard and (iii) soft throughout with refit at 60, 200 rungs. Reads: R0 errors per block (the starting point), the rung reaching 0 or the floor, the control's straggler.
+
+**Kill/proceed rule (pre-committed).** All three blocks reach 0 under one schedule with the control at its W5b2 class or better -> G2d registers the shipped port (the MMSE cold rung plus a stability-driven soft handover behind the QAM16 scope, caps re-derived from the measured rung counts), corpse -> pins -> battery, gate decision by §5.3 on both families. Two of three -> price what remains (the third block's own floor under this start) and decide in writing whether exit (ii) with the new ceiling is the honest endpoint. None -> the cold rung is not the lever either; the program's WN8 endpoint is exit (ii) at the G2b schedule's ceiling, re-banked, with the three blocks recorded as the measured residual.
+
+### G2c measurements (2026-08-20, [mmse0/](mmse0/); prototype with `MS110D_MFBRX_MMSE0=1`, 200 rungs)
+
+**Calibration lane:** knob off, the prototype reproduces the G1 bank summary for WN8 seed 508 byte-for-byte (`calibration-knob-off-seed508.txt` against `../2026-08-20-poorgate-g1/calibration/wn8-seed508-after.txt`).
+
+| block | R0 (was ~24k) | R1 | R2 | R3 | fixed point | rung reached | whole burst at R200 |
+|---|---|---|---|---|---|---|---|
+| w1 b2 | 10,297 | 2,491 | 372 | 49 | **0** | R5 | **0** |
+| w2 b6 | 12,933 | 5,574 | 1,689 | 520 | **0** | R6 | **0** |
+| w3 b9 | 8,713 | 3,121 | 967 | 307 | 34 (60 from R20, 34 from R60-80) | - | 34 |
+| control w0 b4 (W5b2's straggler, 18) | 11,450 | 2,137 | 436 | 99 | **0** | R5 | **0** (was 32) |
+
+Schedules (ii) and (iii) give identical numbers: the blocks are done long before either schedule's handover matters.
+
+**Reading.** The cold rung was the deficiency. With ISI suppressed by the model at R0, every block of every specimen starts at 4-13k errors instead of coin-flip and the soft cancellation finishes in five or six rungs where the old start needed thirty to a hundred, or never; two of the three blocks that carried the whole disjoint 1.75E-2 are clean, the control burst's long-standing straggler is clean, and the third block sits at a self-consistent 34. The wall-clock consequence is as large as the accuracy one: a WN8 block now converges inside the soft phase in single-digit rungs.
+
+### G2c verdict, and G2d (registered 2026-08-20 before the shipped code)
+
+Two of three, with the rule's "decide in writing": the honest endpoint is not to bank a prototype number but to ship the cold rung and let the battery say exit (i) or (ii). **G2d:** the MMSE cold rung ported into `Ms110dMfbBlockDecoder.Project` for the uncancelled rung - structurally scoped to QAM16 in this leg, so the 8PSK ensemble's MFB candidates and the WN7 censuses stay byte-identical (8PSK gets its own registration) - with the anchor-fit residual computed in the probe-anchor loop as the label-free noise estimate, preallocated buffers, no dictionary, the schedule and caps unchanged (caps are upper bounds and the blocks now terminate far inside them). Calibration: knob-free, so the corpses are the lane - 509 and 10509 w0/b0, the three G2 bursts, the canonical leaking burst (seed 508 w1/b1, channelSeed 1001509, 1,029 errors at W6), then the five guard pins, then the full battery. Kill/proceed: WN8 Poor §5.3-green on both families -> exit (i) for WN8, gate armed, `MeasuredOnlyBank` emptied; improved but not green -> exit (ii), the new counts re-banked; any WN7 or non-WN8 census moved, or AWGN WN8 off zero -> stop and diagnose.
