@@ -1,0 +1,6 @@
+== wn7-w0b0-oracle rc=0 ==
+== wn7-w1b0 rc=0 ==
+== wn6-w0b0 rc=0 ==
+== wn13sp-w3b5 rc=0 ==
+== wn0-w2b97 rc=0 ==
+PINS COMPLETE
