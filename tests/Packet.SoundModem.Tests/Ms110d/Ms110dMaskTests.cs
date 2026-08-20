@@ -17,12 +17,11 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// payload bits (fading gate points additionally ≥ 600 s simulated per D-LXV duration logic);
 /// with ≥ 30 errors the direct BER must be ≤ 1e-5, else the 97.5 % Poisson upper bound must
 /// clear 1e-5. Since §B4/§B4.1/§B3.5b (2026-07-26) the at-mask Poor points (WN0-WN6, WN13)
-/// are hard-gated by default, and since the Poor-gate successor program's G1d (2026-08-20,
-/// the 8PSK per-block ensemble) WN7 joins them. WN8 is measured-only (the WN8 redesign
-/// program's exit (ii), evidence 2026-07-31-wn8-w6) and in the battery configuration is
-/// pinned to its banked closing counts (<see cref="MeasuredOnlyBank"/>, successor plan leg
-/// G0). <c>MS110D_POOR_GATED=1</c> forces the 1E-5 gate everywhere instead (the chasing-leg
-/// tool: expected red on WN8).
+/// are hard-gated by default; the Poor-gate successor program (2026-08-20) added WN7 (G1d,
+/// the 8PSK per-block ensemble) and WN8 (G2, the MFB decoder's MMSE cold rung and schedule),
+/// so every Poor point is hard-gated and <see cref="MeasuredOnlyBank"/> is empty - it stays
+/// as the mechanism a future measured-only point re-banks into. <c>MS110D_POOR_GATED=1</c>
+/// still forces the 1E-5 gate everywhere (now a no-op, kept for chasing legs).
 /// Override the bit budget with <c>MS110D_MASK_BITS</c> for smoke runs (reports are then
 /// labelled SMOKE, not gate evidence).
 /// </summary>
@@ -54,11 +53,10 @@ public class Ms110dMaskTests(ITestOutputHelper output)
 
     // The measured-only ceiling bank (docs/ms110d/poor-gate-successor-plan.md, leg G0).
     // A point that does not clear the 1E-5 Poor mask has what it DOES measure banked here
-    // as the exact closing counts of the battery that closed it - WN8 from the successor
-    // program's G2d battery (the MMSE cold rung: 31 canonical, at the mask; 77 disjoint,
-    // 1.8x over; from the W6 program's 1,254 / 75,713). (WN7 sat here at 83/48 from the W0
-    // re-baseline until G1d's ensemble took it to 0/0 and into the gated set, 2026-08-20,
-    // evidence 2026-08-20-poorgate-g1d.) The simulation is seed-deterministic, so in the
+    // as the exact closing counts of the battery that closed it. (WN7 sat here at 83/48
+    // from the W0 re-baseline until G1d's ensemble took it to 0/0 and into the gated set;
+    // WN8 at 1,254 / 75,713 then 31 / 77 until G2f took it to 12 / 18 and into the gated
+    // set - both 2026-08-20.) The simulation is seed-deterministic, so in the
     // battery configuration (in-code budget, 4 workers, both seed families) the count is
     // a byte-identity pin, not a statistic: any other digit, in either direction, is
     // drift in the demodulator and must be explained and re-banked (the Phase B closeout
@@ -66,11 +64,10 @@ public class Ms110dMaskTests(ITestOutputHelper output)
     // MS110D_POOR_GATED=1, which asserts the mask instead of the bank.
     private sealed record MeasuredOnlyPin(long Bits, long Errors, string Evidence);
 
-    private static readonly Dictionary<(int Wn, int SeedOffset), MeasuredOnlyPin> MeasuredOnlyBank = new()
-    {
-        [(8, 0)] = new(4_325_120, 31, "evidence/2026-08-20-poorgate-g2/battery/poor-wn8.mask (7.17E-6)"),
-        [(8, 10_000)] = new(4_325_120, 77, "evidence/2026-08-20-poorgate-g2/battery/poord-wn8.mask (1.78E-5)"),
-    };
+    // Empty since 2026-08-20: WN8 left for the gated set at G2f (12 / 18 on 4,325,120 bits per
+    // family, evidence/2026-08-20-poorgate-g2/battery-g2f/; it sat here at 31 / 77 after
+    // G2d and at 1,254 / 75,713 from the WN8 program's W6).
+    private static readonly Dictionary<(int Wn, int SeedOffset), MeasuredOnlyPin> MeasuredOnlyBank = new();
 
     // The bank only speaks for the configuration it was measured in: the in-code budget,
     // the battery's 4-worker seed split, no instrument knobs (genie, lambda, ridge A/B
@@ -170,11 +167,8 @@ public class Ms110dMaskTests(ITestOutputHelper output)
 
         // §B4 (2026-07-26): the at-mask set is hard-gated by default - flip criterion and
         // both-family gate-run evidence in evidence/2026-07-26-phase-b4-gate/. The two
-        // measured-only point (WN8: 7.17E-6 canonical / 1.78E-5 disjoint since G2d's MMSE
-        // cold rung, evidence/2026-08-20-poorgate-g2/; was 2.90E-4/1.75E-2 at the WN8
-        // program's exit (ii), evidence/2026-07-31-wn8-w6/) is pinned to the
-        // MeasuredOnlyBank in the battery configuration and merely measured otherwise;
-        // WN7 left the bank for the gated set at G1d (below). §B4.1 (same
+        // measured-only points both left the bank for the gated set on 2026-08-20 - WN7 at
+        // G1d, WN8 at G2f (below); the bank stays as the mechanism. §B4.1 (same
         // day): WN6 joins the gated set - the SPIKE-UP per-segment pricing margin lever
         // moved it from 57/57 (pooled bound 1.14E-5, AT THE LINE) to 35/39 both families
         // (pooled 74/12.97M, bound 7.15E-6 - passes the B4 flip criterion;
@@ -187,9 +181,13 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         // the MFB-form decoder, each receiver's evidence weighed in log-likelihood units)
         // took the point from 83/48 to 0/0 on both families at full budget with every
         // other census byte-identical (evidence/2026-08-20-poorgate-g1d/).
-        // MS110D_POOR_GATED=1 still forces the gate everywhere (the chasing-leg tool for
-        // the measured-only point, WN8).
-        bool gated = wn is 0 or 1 or 2 or 3 or 4 or 5 or 6 or 7 or 13
+        // G2 (2026-08-20): WN8 joins - the MFB decoder's MMSE cold rung and its schedule
+        // (soft floor, hard-phase cycle members, hard-first after a cycle, plateau
+        // handover) took the point from 1,254 / 75,713 to 12 / 18 per 4,325,120 bits on
+        // the two families (bounds 4.85E-6 / 6.58E-6), every other census byte-identical
+        // (evidence/2026-08-20-poorgate-g2/battery-g2f/). Every Poor point is now gated;
+        // MS110D_POOR_GATED=1 stays as the chasing-leg tool.
+        bool gated = wn is 0 or 1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 13
             || Environment.GetEnvironmentVariable("MS110D_POOR_GATED") == "1";
         if (gated)
         {

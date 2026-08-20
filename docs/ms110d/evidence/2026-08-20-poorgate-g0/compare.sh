@@ -7,7 +7,7 @@ set -uo pipefail
 cd "$(dirname "$0")"
 OUT="${1:-/tmp/poorgate-g0-battery}"
 W0=../2026-07-31-wn8-w0/battery
-W6=../2026-07-31-wn8-w6/battery
+W6=../2026-08-20-poorgate-g2/battery-g2f   # WN8 Poor baseline since G2f (12 / 18); was the W6 battery
 W5=../2026-07-31-wn8-w5b2/battery   # the only battery that kept AWGN WN8 censuses
 W7=../2026-08-20-poorgate-g1d/battery   # WN7's baseline since G1d (the 8PSK ensemble, 0/0)
 

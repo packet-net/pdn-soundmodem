@@ -163,3 +163,14 @@ Four shipped-path steps, each measured on the same ten corpses (the four straggl
 | + plateau handover (soft ends when its residual stops falling, from rung 10) | **12** | 0 | 12 | 0 | unchanged; every pin exact; WN7 byte-identical |
 
 Family arithmetic from the corpses, if the battery holds: disjoint 77 -> **12**, canonical 31 -> **12**, against 43 allowed on 4,325,120 bits. The battery runs on this build.
+
+### G2f battery (2026-08-20, [battery-g2f/](battery-g2f/), the G0 form, 23:06 to 23:49)
+
+- **Poor WN8 canonical: 12 / 4,325,120 = 2.77E-6, 97.5 % bound 4.85E-6** (from 31 at G2d, 1,254 at W6). Residue: w0/b1 12.
+- **Poor WN8 disjoint: 18 / 4,325,120 = 4.16E-6, 97.5 % bound 6.58E-6** (from 77 at G2d, 75,713 at W6). Residue: w0/b1 6, w3/b0 12.
+- **Both families clear §5.3** (fewer than 30 errors, so the Poisson bound decides, and it sits under 1E-5 with room: the bound reaches 1E-5 at about 33 errors on this budget). AWGN WN8 0. **113 of 120 censuses byte-identical** (G0 for the non-WN7/WN8 points, G1d for WN7), the seven that differ being WN8's Poor censuses. The lanes report rc=1 only because the pre-flip bank asserted 31 / 77.
+- The armed gate on the flipped test, both families, on the final build: see the `g2f-armed` lines in the plan's status log (both pass).
+
+## Verdict
+
+**Exit (i) for WN8.** `Poor_Channel_Mask_Gate` arms WN8 by default; `MeasuredOnlyBank` is empty (kept as the mechanism); this battery's WN8 censuses are WN8's byte-identity baseline from here on. **All ten MS110D Poor points are now hard-gated.** Sim-only by rig physics, as for WN7: the rows forward to "Poor sim hard-gated" and stay partial until H2 lifts the pad-chain ceiling. What G2 leaves behind: #316 stays open for the 8PSK branch (the fix is in for QAM16 only), the MMSE cold rung and the G2f schedule are unmeasured on 8PSK (the WN7 ensemble would change; its own registration), and the banked negative that residuals through different re-fit models are not comparable.

@@ -75,9 +75,9 @@ measured-only against the 1E-5 mask. The live program is the
 #312). Its G1d leg (same day) hard-gated **WN7 Poor at 0 / 3,243,776 on both families**
 through the 8PSK per-block ensemble (the DFE-chain path beside the MFB-form decoder, each
 receiver's evidence weighed in log-likelihood units), so nine of the ten Poor points are
-now hard-gated and WN8 is the one measured-only point - since G2d (same day) at
-7.17E-6 canonical (at the mask) / 1.78E-5 disjoint through the MFB decoder's MMSE cold rung,
-from 2.90E-4 / 1.75E-2; G3 (same day) proved every waveform through `FrequencyShiftedModem`
+now hard-gated, and G2 (same day, in two halves) took WN8 from 2.90E-4 / 1.75E-2 to
+12 / 18 per 4,325,120 bits through the MFB decoder's MMSE cold rung and a reworked QAM16
+schedule - **all ten Poor points are hard-gated**; G3 (same day) proved every waveform through `FrequencyShiftedModem`
 at the tenant centre and corrected the Watterson rig for moved centres. What remains is with
 Tom: the hardware legs H1/H2 that would let the +19/+23 dB points run through a real
 transmitter. On-air state per waveform is in [../mode-validation.md](../mode-validation.md);
