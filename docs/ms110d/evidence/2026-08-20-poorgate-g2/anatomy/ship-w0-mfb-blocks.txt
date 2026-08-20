@@ -1,0 +1,11 @@
+mfb-block sched=soft rungs=27 window=[-17,9) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=12 window=[-17,9) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=29 window=[-17,9) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=19 window=[-17,9) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=40 window=[-17,9) conv=2 handoverChurn=232 refit=1 finalChurn=50
+mfb-block sched=soft rungs=28 window=[-17,9) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=22 window=[-17,9) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=18 window=[-17,9) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=23 window=[-17,9) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=11 window=[-17,9) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=10 window=[-17,9) conv=1 handoverChurn=0 refit=1 finalChurn=0
