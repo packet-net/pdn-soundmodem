@@ -17,9 +17,13 @@ namespace Packet.SoundModem.Tests.Ms110d;
 /// payload bits (fading gate points additionally ≥ 600 s simulated per D-LXV duration logic);
 /// with ≥ 30 errors the direct BER must be ≤ 1e-5, else the 97.5 % Poisson upper bound must
 /// clear 1e-5. Since §B4/§B4.1/§B3.5b (2026-07-26) the at-mask Poor points (WN0-WN6, WN13)
-/// are hard-gated by default; WN7/WN8 are measured-not-gated (open), and
-/// <c>MS110D_POOR_GATED=1</c> forces the gate everywhere. Override the bit budget with
-/// <c>MS110D_MASK_BITS</c> for smoke runs (reports are then labelled SMOKE, not gate evidence).
+/// are hard-gated by default; WN7/WN8 are measured-only (Phase B closeout §4 for WN7; the
+/// WN8 redesign program's exit (ii), evidence 2026-07-31-wn8-w6, for WN8) and in the
+/// battery configuration they are pinned to their banked closing counts
+/// (<see cref="MeasuredOnlyBank"/>, successor plan leg G0). <c>MS110D_POOR_GATED=1</c>
+/// forces the 1E-5 gate everywhere instead (the chasing-leg tool: expected red on the two).
+/// Override the bit budget with <c>MS110D_MASK_BITS</c> for smoke runs (reports are then
+/// labelled SMOKE, not gate evidence).
 /// </summary>
 public class Ms110dMaskTests(ITestOutputHelper output)
 {
@@ -46,6 +50,40 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         { 0, -1 }, { 1, 3 }, { 2, 5 }, { 3, 7 }, { 4, 10 }, { 5, 11 }, { 6, 14 },
         { 7, 19 }, { 8, 23 }, { 13, 11 },
     };
+
+    // The measured-only ceiling bank (docs/ms110d/poor-gate-successor-plan.md, leg G0).
+    // WN7 and WN8 do not clear the 1E-5 Poor mask; what they DO measure is banked here as
+    // the exact closing counts of the batteries that closed them - WN7 from the WN8
+    // program's W0 re-baseline (byte-identical to the Phase B b38 battery), WN8 from the
+    // program's W6 decision battery. The simulation is seed-deterministic, so in the
+    // battery configuration (in-code budget, 4 workers, both seed families) the count is
+    // a byte-identity pin, not a statistic: any other digit, in either direction, is
+    // drift in the demodulator and must be explained and re-banked (the Phase B closeout
+    // §6 merge rule). A chase leg that intends to move these numbers runs with
+    // MS110D_POOR_GATED=1, which asserts the mask instead of the bank.
+    private sealed record MeasuredOnlyPin(long Bits, long Errors, string Evidence);
+
+    private static readonly Dictionary<(int Wn, int SeedOffset), MeasuredOnlyPin> MeasuredOnlyBank = new()
+    {
+        [(7, 0)] = new(3_243_776, 83, "evidence/2026-07-31-wn8-w0/battery/poor-wn7.mask (2.56E-5)"),
+        [(7, 10_000)] = new(3_243_776, 48, "evidence/2026-07-31-wn8-w0/battery/poord-wn7.mask (1.48E-5)"),
+        [(8, 0)] = new(4_325_120, 1_254, "evidence/2026-07-31-wn8-w6/battery/poor-wn8.mask (2.90E-4)"),
+        [(8, 10_000)] = new(4_325_120, 75_713, "evidence/2026-07-31-wn8-w6/battery/poord-wn8.mask (1.75E-2)"),
+    };
+
+    // The bank only speaks for the configuration it was measured in: the in-code budget,
+    // the battery's 4-worker seed split, no instrument knobs (genie, lambda, ridge A/B
+    // runs are report evidence, never pins). Anything else is a measured run with no pin.
+    private static bool BankApplies(int wn, out MeasuredOnlyPin pin)
+    {
+        pin = null!;
+        bool batteryForm = Environment.GetEnvironmentVariable("MS110D_MASK_BITS") is null
+            && Workers() == 4
+            && !GenieMode()
+            && Environment.GetEnvironmentVariable("MS110D_MASK_RLS_LAMBDA") is null
+            && Environment.GetEnvironmentVariable("MS110D_MASK_TRACK_RIDGE") is null;
+        return batteryForm && MeasuredOnlyBank.TryGetValue((wn, SeedOffset()), out pin!);
+    }
 
     [Theory]
     [MemberData(nameof(AwgnMasks))]
@@ -130,8 +168,11 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         Report($"POOR WN{wn} @ {snrDb:+0;-0;0} dB{SeedTag()}", run);
 
         // §B4 (2026-07-26): the at-mask set is hard-gated by default - flip criterion and
-        // both-family gate-run evidence in evidence/2026-07-26-phase-b4-gate/. The open
-        // points stay measured (WN7 attractor-bound, WN8 doubly blocked). §B4.1 (same
+        // both-family gate-run evidence in evidence/2026-07-26-phase-b4-gate/. The two
+        // measured-only points (WN7 at its Phase B B3.9 verdict, 2.56E-5/1.48E-5; WN8 at
+        // the WN8 program's exit (ii), 2.90E-4/1.75E-2 through the MFB-form receiver,
+        // evidence/2026-07-31-wn8-w6/) are pinned to the MeasuredOnlyBank in the battery
+        // configuration and merely measured otherwise. §B4.1 (same
         // day): WN6 joins the gated set - the SPIKE-UP per-segment pricing margin lever
         // moved it from 57/57 (pooled bound 1.14E-5, AT THE LINE) to 35/39 both families
         // (pooled 74/12.97M, bound 7.15E-6 - passes the B4 flip criterion;
@@ -140,12 +181,22 @@ public class Ms110dMaskTests(ITestOutputHelper output)
         // from 5.99E-3/6.40E-3 to 0 and 3 errors per 3M family (bounds 1.22E-6/2.92E-6,
         // pooled 1.46E-6 - passes all three B4 flip conditions;
         // evidence/2026-07-26-phase-b35b-wn0genie/). MS110D_POOR_GATED=1 still forces
-        // the gate everywhere (the chasing-leg tool for open points).
+        // the gate everywhere (the chasing-leg tool for the measured-only points).
         bool gated = wn is 0 or 1 or 2 or 3 or 4 or 5 or 6 or 13
             || Environment.GetEnvironmentVariable("MS110D_POOR_GATED") == "1";
         if (gated)
         {
             AssertMask(run);
+        }
+        else if (BankApplies(wn, out MeasuredOnlyPin pin))
+        {
+            run.AcquisitionFailures.Should().Be(0, "the banked batteries acquired every burst");
+            run.Bits.Should().Be(pin.Bits,
+                $"the measured-only bank for WN{wn}{SeedTag()} was taken at this budget ({pin.Evidence})");
+            run.Errors.Should().Be(pin.Errors,
+                $"WN{wn}{SeedTag()} is measured-only and pinned to its banked closing count " +
+                $"({pin.Evidence}); a different digit is demodulator drift to explain and " +
+                "re-bank, and a chase leg runs with MS110D_POOR_GATED=1");
         }
         else
         {

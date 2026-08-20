@@ -1,0 +1,37 @@
+15:57:13 battery start, HEAD=5f7bbb5, exe 2026-08-20 15:52:48.583727179 +0000
+15:59:09 lane-B done poord-wn5 rc=0 mask=line
+15:59:09 lane-A done poor-wn5 rc=0 mask=line
+15:59:21 lane-C done awgn-wn0 rc=0 mask=line
+16:00:41 lane-A done poor-wn6 rc=0 mask=line
+16:00:41 lane-B done poord-wn6 rc=0 mask=line
+16:11:34 lane-C done awgn-wn1 rc=0 mask=line
+16:12:22 lane-B done poord-wn2 rc=0 mask=line
+16:12:25 lane-A done poor-wn2 rc=0 mask=line
+16:13:16 lane-B done poord-wn13 rc=0 mask=line
+16:13:17 lane-A done poor-wn13 rc=0 mask=line
+16:15:04 lane-B done poord-wn3 rc=0 mask=line
+16:15:06 lane-A done poor-wn3 rc=0 mask=line
+16:16:18 lane-B done poord-wn4 rc=0 mask=line
+16:16:20 lane-A done poor-wn4 rc=0 mask=line
+16:19:24 lane-C done awgn-wn2 rc=0 mask=line
+16:22:37 lane-C done awgn-wn3 rc=0 mask=line
+16:24:17 lane-C done awgn-wn4 rc=0 mask=line
+16:24:53 lane-B done poord-wn1 rc=0 mask=line
+16:25:03 lane-A done poor-wn1 rc=0 mask=line
+16:25:43 lane-C done awgn-wn5 rc=0 mask=line
+16:26:24 lane-C done awgn-wn6 rc=0 mask=line
+16:26:52 lane-C done awgn-wn7 rc=0 mask=line
+16:27:10 lane-C done awgn-wn8 rc=0 mask=line
+16:28:07 lane-C done awgn-wn13 rc=0 mask=line
+16:29:01 lane-B done poord-wn0 rc=0 mask=line
+16:29:11 lane-A done poor-wn0 rc=0 mask=line
+16:30:22 lane-B done poord-wn8 rc=0 mask=line
+16:30:34 lane-A done poor-wn8 rc=0 mask=line
+16:33:10 lane-B done poord-wn7 rc=0 mask=line
+16:33:10 lane-B LANE B COMPLETE
+16:33:12 lane-C done static rc=0
+16:33:40 lane-A done poor-wn7 rc=0 mask=line
+16:33:40 lane-A LANE A COMPLETE
+16:36:51 lane-C done doppler rc=0
+16:36:51 lane-C LANE C COMPLETE
+16:36:51 BATTERY COMPLETE
