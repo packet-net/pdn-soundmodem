@@ -338,6 +338,7 @@ public class Ms110dMfbFormReceiver
         var softWire = new float[il.SizeBits];
         var truthResidBlocks = new List<string>();
         var anchorResidBlocks = new List<string>();
+        var finalResidBlocks = new List<string>(); // G2e: the last decode's reconstruction residual
         var rungLines = new List<string>[iters + 1];
         for (int rung = 0; rung <= iters; rung++)
         {
@@ -994,6 +995,33 @@ public class Ms110dMfbFormReceiver
                     }
                 }
             }
+
+            // G2e: price the block's final decode by the same label-free residual the shipped
+            // decoder's cycle-accept and the G1d ensemble use.
+            {
+                byte[] encFinal = Ms110dFraming.EncodeBlock(code, puncture, interleaver, dec);
+                var wireFinal = new Complex[frames * u256];
+                int fi = 0;
+                for (int f2 = 0; f2 < frames; f2++)
+                {
+                    for (int u2 = 0; u2 < u256; u2++)
+                    {
+                        wireFinal[(f2 * u256) + u2] = Wire(Number(encFinal, ref fi), u2);
+                    }
+                }
+
+                Complex[] rcFinal = Reconstruct(wireFinal);
+                double rf = 0;
+                long rowsF = 0;
+                for (long hc = 2 * frameChips[0]; hc < 2 * (frameChips[^1] + u256); hc++)
+                {
+                    Complex dd = ring[hc - hc0] - rcFinal[hc - hc0];
+                    rf += (dd.Real * dd.Real) + (dd.Imaginary * dd.Imaginary);
+                    rowsF++;
+                }
+
+                finalResidBlocks.Add(FormattableString.Invariant($"b{b}:{rf / rowsF:E4}"));
+            }
         }
 
         if (selectLines.Count > 0)
@@ -1001,6 +1029,7 @@ public class Ms110dMfbFormReceiver
             summary.WriteLine($"selection (own vs candidate, by MFB residual): {string.Join(" | ", selectLines)}");
         }
 
+        summary.WriteLine($"final-residual per block: {string.Join(" ", finalResidBlocks)}");
         summary.WriteLine($"anchor-fit residual per block: {string.Join(" ", anchorResidBlocks)}");
         summary.WriteLine($"truth-recon residual per block: {string.Join(" ", truthResidBlocks)}");
         for (int rung = 0; rung <= iters; rung++)
