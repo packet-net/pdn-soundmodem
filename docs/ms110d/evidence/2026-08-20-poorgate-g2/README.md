@@ -89,3 +89,20 @@ Schedules (ii) and (iii) give identical numbers: the blocks are done long before
 ### G2c verdict, and G2d (registered 2026-08-20 before the shipped code)
 
 Two of three, with the rule's "decide in writing": the honest endpoint is not to bank a prototype number but to ship the cold rung and let the battery say exit (i) or (ii). **G2d:** the MMSE cold rung ported into `Ms110dMfbBlockDecoder.Project` for the uncancelled rung - structurally scoped to QAM16 in this leg, so the 8PSK ensemble's MFB candidates and the WN7 censuses stay byte-identical (8PSK gets its own registration) - with the anchor-fit residual computed in the probe-anchor loop as the label-free noise estimate, preallocated buffers, no dictionary, the schedule and caps unchanged (caps are upper bounds and the blocks now terminate far inside them). Calibration: knob-free, so the corpses are the lane - 509 and 10509 w0/b0, the three G2 bursts, the canonical leaking burst (seed 508 w1/b1, channelSeed 1001509, 1,029 errors at W6), then the five guard pins, then the full battery. Kill/proceed: WN8 Poor §5.3-green on both families -> exit (i) for WN8, gate armed, `MeasuredOnlyBank` emptied; improved but not green -> exit (ii), the new counts re-banked; any WN7 or non-WN8 census moved, or AWGN WN8 off zero -> stop and diagnose.
+
+### G2d measurements (2026-08-20; the shipped cold rung, QAM16 scope; [g2d-corpses/](g2d-corpses/), [g2d-pins/](g2d-pins/))
+
+Hermetic MS110D namespace 297/0 on the build. Corpses through the shipped decoder (every block now converging in **4-7 rungs**, soft phase, exact fixed points):
+
+| corpse | W6 / G0 | G2d |
+|---|---|---|
+| WN8 509 w0/b0 (canonical specimen) | 112 | **0** |
+| WN8 10509 w0/b0 (disjoint specimen) | 32 | **0** |
+| WN8 10508 w1/b0 (b2) | 24,819 | **0** |
+| WN8 10508 w2/b0 (b6) | 24,465 | **0** |
+| WN8 10508 w3/b0 (b9) | 24,468 | 62 |
+| WN8 508 w1/b1 (the canonical leaker) | 1,029 | 19 |
+| WN7 507 w0/b0, 10507 w0/b0 | 0 / 0 (ensemble 0 / 2 selected) | 0 / 0, same selections (scope held) |
+| the five §6 pins | exact | exact (WN7 w1/b0 0 coded / selected 2, as G1d) |
+
+The battery decides the exit; it runs on this build with G0's form.

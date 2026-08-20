@@ -96,6 +96,20 @@ internal sealed class Ms110dMfbBlockDecoder
     private int _lMin;
     private bool _firstBlock;
 
+    // G2d: the MMSE cold rung (Poor-gate successor program, evidence 2026-08-20-poorgate-g2).
+    // Per-symbol linear MMSE over the response window at the uncancelled rung, known
+    // probes subtracted exactly, neighbouring data chips as Es-power unknowns, the
+    // anchor-fit residual as the label-free noise estimate. QAM16 only in this leg
+    // (structural scope: the 8PSK ensemble's MFB candidates stay byte-identical).
+    private readonly double _es;
+    private readonly Complex[,] _rMat = new Complex[WinLen, WinLen];
+    private readonly Complex[] _zVec = new Complex[WinLen];
+    private readonly Complex[] _hCol = new Complex[WinLen];
+    private readonly Complex[] _hNb = new Complex[WinLen];
+    private readonly Complex[] _hShift = new Complex[WinLen];
+    private double _anchorResidSum;
+    private long _anchorResidRows;
+
     // Which mini-probe sits at anchor p of a block (D.5.2.2): the probe after the
     // second-to-last data frame of each interleaver block is cyclically shifted, so the
     // probe PRECEDING frame p is shifted when (p + 1) % frames == 0 and the probe
@@ -165,6 +179,15 @@ internal sealed class Ms110dMfbBlockDecoder
         {
             _scr[i] = _qam ? scrambler.NextQam(0, 4) : scrambler.NextPsk(0);
         }
+
+        double es = 0;
+        for (int q = 0; q < _points; q++)
+        {
+            Complex pt = Point(q);
+            es += (pt.Real * pt.Real) + (pt.Imaginary * pt.Imaginary);
+        }
+
+        _es = es / _points;
     }
 
     private Complex Wire(int number, int u)
@@ -277,6 +300,8 @@ internal sealed class Ms110dMfbBlockDecoder
         // of the last frame, each an LS over its ISI-clean interior.
         _probeAnchorChip.Clear();
         _probeAnchorH.Clear();
+        _anchorResidSum = 0;
+        _anchorResidRows = 0;
         for (int p = 0; p <= frames; p++)
         {
             bool preceding = p < frames;
@@ -307,6 +332,28 @@ internal sealed class Ms110dMfbBlockDecoder
             {
                 _probeAnchorChip.Add(ps + (k / 2.0));
                 _probeAnchorH.Add((Complex[])_rhs.Clone());
+
+                // The anchor-fit residual on its own rows: the label-free noise estimate
+                // the MMSE cold rung prices with (the prototype's sigmaAnchor).
+                for (long hc = rowLo; hc < rowHi; hc++)
+                {
+                    Complex model = Complex.Zero;
+                    for (int i = 0; i < WinLen; i++)
+                    {
+                        long src = hc - (lMin + i);
+                        if ((src & 1) != 0)
+                        {
+                            continue;
+                        }
+
+                        Cf x = probe[(src / 2) - ps];
+                        model += _rhs[i] * new Complex(x.Re, x.Im);
+                    }
+
+                    Complex d = _ring[hc - hc0] - model;
+                    _anchorResidSum += (d.Real * d.Real) + (d.Imaginary * d.Imaginary);
+                    _anchorResidRows++;
+                }
             }
         }
 
@@ -730,6 +777,11 @@ internal sealed class Ms110dMfbBlockDecoder
         {
             _sigma2 = ReconResidual(frameChips, hc0, n, lMin);
         }
+        else if (_qam)
+        {
+            ProjectMmseCold(frameChips, hc0, n, lMin);
+            return;
+        }
 
         var r0Dist = cancel ? null : new List<double>(_proj.Length);
         for (int d = 0; d < _proj.Length; d++)
@@ -778,6 +830,108 @@ internal sealed class Ms110dMfbBlockDecoder
             r0Dist.Sort();
             _sigma2 = Math.Max(r0Dist[r0Dist.Count / 2], 1e-9);
         }
+    }
+
+    /// <summary>The MMSE cold rung (G2d). y_data = ring minus the exact probe reconstruction;
+    /// for the symbol at chip c the rows 2c+lMin..2c+lMax-1 see the neighbouring data
+    /// chips |c'-c| &lt;= (WinLen-1)/2 through their own interpolated responses.
+    /// R = Es H H^H + sigma^2 I; z = R^-1 h_c; mu = Es h_c^H z; xhat/mu = x + v with
+    /// var(v) = Es (1-mu)/mu, so the LLR weight is mu / (Es (1-mu)) against sigma^2 = 1.
+    /// Measured on the G2 specimens: every block starts at 4-13k errors instead of
+    /// coin-flip and the soft cancellation finishes in five or six rungs.</summary>
+    private void ProjectMmseCold(IReadOnlyList<long> frameChips, long hc0, int n, int lMin)
+    {
+        int u = _mode.U;
+        int frames = _il.Frames;
+        Array.Clear(_decisions);
+        ReconResidual(frameChips, hc0, n, lMin); // _recon now holds the probes alone
+        Complex[] probesOnly = _recon!;
+        double sigmaNoise = Math.Max(_anchorResidRows > 0 ? _anchorResidSum / _anchorResidRows : 1e-9, 1e-12);
+        int half = (WinLen - 1) / 2;
+        for (int d = 0; d < _proj.Length; d++)
+        {
+            long c = _dataChip[d];
+            int f0 = d / u;
+            InterpolateH(c, _hCol);
+            for (int i = 0; i < WinLen; i++)
+            {
+                for (int j = 0; j < WinLen; j++)
+                {
+                    _rMat[i, j] = Complex.Zero;
+                }
+
+                _rMat[i, i] = sigmaNoise;
+            }
+
+            for (long cn = c - half; cn <= c + half; cn++)
+            {
+                // A data chip of this block, or a probe/outside chip (already subtracted)?
+                bool isData = false;
+                for (int f = Math.Max(0, f0 - 1); f <= Math.Min(frames - 1, f0 + 1) && !isData; f++)
+                {
+                    isData = cn >= frameChips[f] && cn < frameChips[f] + u;
+                }
+
+                if (!isData)
+                {
+                    continue;
+                }
+
+                Complex[] hn;
+                if (cn == c)
+                {
+                    hn = _hCol;
+                }
+                else
+                {
+                    InterpolateH(cn, _hNb);
+                    hn = _hNb;
+                }
+
+                int off = (int)(2 * (cn - c));
+                for (int i = 0; i < WinLen; i++)
+                {
+                    int kk = i - off;
+                    _hShift[i] = kk >= 0 && kk < WinLen ? hn[kk] : Complex.Zero;
+                }
+
+                for (int i = 0; i < WinLen; i++)
+                {
+                    if (_hShift[i] == Complex.Zero)
+                    {
+                        continue;
+                    }
+
+                    for (int j = 0; j < WinLen; j++)
+                    {
+                        _rMat[i, j] += _es * _hShift[i] * Complex.Conjugate(_hShift[j]);
+                    }
+                }
+            }
+
+            Array.Copy(_hCol, _zVec, WinLen);
+            Complex mu = Complex.Zero;
+            Complex xhat = Complex.Zero;
+            if (SolveHermitian(_rMat, _zVec, WinLen))
+            {
+                for (int i = 0; i < WinLen; i++)
+                {
+                    long hc = (2 * c) + lMin + i;
+                    Complex y = hc >= hc0 && hc < hc0 + n ? _ring[hc - hc0] - probesOnly[hc - hc0] : Complex.Zero;
+                    mu += Complex.Conjugate(_hCol[i]) * _zVec[i];
+                    xhat += Complex.Conjugate(_zVec[i]) * y;
+                }
+
+                mu *= _es;
+                xhat *= _es;
+            }
+
+            double muR = Math.Clamp(mu.Real, 1e-6, 1 - 1e-6);
+            _proj[d] = xhat / muR;
+            _gramT[d] = muR / (_es * (1 - muR));
+        }
+
+        _sigma2 = 1.0;
     }
 
     private void BuildLlrs(int lMin)
