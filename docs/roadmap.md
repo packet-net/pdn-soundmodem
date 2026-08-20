@@ -47,18 +47,28 @@ from **GB7RDG's HF port** (operate as M0LTE), where ARDOP stations already run. 
 session is optional gravy (Pat works via the host interface for free). Write the on-air bench doc
 before the session; add the busy-detector port if channel-sharing needs it on air.
 
-### #7 - MIL-STD-188-110D App D *(Phases A+B complete; WN8 redesign program live)*
+### #7 - MIL-STD-188-110D App D *(Phases A+B complete; WN8 program closed; Poor-gate successor program live)*
 Phase A (Walsh-75/BPSK/QPSK + DFE) closed 2026-07-23 - all mask points 0 errors at full
 statistical budget, KISS-integrated (`ms110d-wn*`); `docs/ms110d/phase-a-closeout.md`.
 - **Phase B closed 2026-07-27** (`docs/ms110d/phase-b-closeout.md`): 8PSK (WN7) / 16QAM (WN8)
   landed and the Poor-channel gating went binding - WN0-6+13 hard-gated at mask. WN7/WN8 close
   measured-only: WN7 at the waveform's own fade-lottery floor (needs added information -
   diversity/ARQ/outer coding - outside the demodulator); WN8 at coin-flip behind a true-label
-  model ceiling and a bootstrap basin (needs waveform-processing redesign - now the live
-  **WN8 redesign program**, `docs/ms110d/wn8-program-plan.md`).
-- On-air (2026-07-27/28): every masked waveform meets its mask over the real rig
-  (`docs/ms110d/evidence/2026-07-27-110d-full-campaign/`); WN7/WN8 Poor masks sit above the
-  rig's ~15-16 dB ceiling, so those Poor points are sim-only.
+  model ceiling and a bootstrap basin (needs waveform-processing redesign).
+- **WN8 redesign program closed 2026-07-31, exit (ii)** (`docs/ms110d/wn8-program-plan.md`):
+  both walls measured down (the ceiling was the estimator's time model; the matched-filter
+  bound is 0/0; the basin is crossed label-free), the MFB-form receiver ships, WN8 Poor at
+  2.90E-4 canonical / 1.75E-2 disjoint - decoding, still measured-only against 1E-5.
+- **Poor-gate successor program registered 2026-08-20**
+  (`docs/ms110d/poor-gate-successor-plan.md`, issue #312): G0 bank + re-baseline; G1 WN7
+  under the MFB-form receiver (the B3.9 verdict reopened on W1's truth-lane evidence); G2
+  WN8's first-block bootstrap; G3 the production path through `FrequencyShiftedModem`; H1/H2
+  Tom's radio evening and the pad-chain ceiling.
+- On-air (2026-07-27/28): every masked waveform meets its mask over the pad-chain rig
+  (`docs/ms110d/evidence/2026-07-27-110d-full-campaign/`). **§E4 2026-08-03**: first
+  transmissions from a real antenna at 48 W, WN0-7 and WN13 bit-exact into wessex, WN8 the
+  ceiling of that path (`docs/ms110d/evidence/2026-08-03-e4-first-on-air/`). WN7/WN8 Poor
+  masks sit above both rigs' ceilings, so those Poor points are sim-only until H2.
 - **Phase C** - 32/64/256-QAM, WN9-12 (groundwave-gated, high-SNR) - not started.
 - Validation is pdn↔pdn + on-air self-consistency (no external App D oracle exists).
 
@@ -82,8 +92,10 @@ and a listening correspondent unattended. Plan: [`docs/ale/plan.md`](ale/plan.md
 Kenwood TK-90 assessment - its ALE needs a KPE-2 board that cannot be obtained, and doing it in
 software removes the dependency on any particular radio, makes LQA our own measured SNR rather
 than a vendor's opaque score, and is a smaller job than the modem already built (8-FSK, no
-equaliser, no turbo decoder). **Deliberately unscheduled**: MS110D's Poor gate is open and §E2 has
-never run on hardware. One exception worth taking early - decoding real off-air 2G ALE needs no
+equaliser, no turbo decoder). **Deliberately unscheduled**: MS110D's Poor gate is 8 of 10 with a
+successor program live (#7 above); §E2 has run on hardware since 2026-07-27, so that half of the
+original reason has lapsed, and ALE is a legitimate candidate again once #7's G-legs close. One
+exception worth taking early - decoding real off-air 2G ALE needs no
 transmit licence, no partner and no hardware this project does not already own, and it would
 verify the waveform constants empirically.
 

@@ -1,6 +1,8 @@
 # MS110D OTA capture client - plan
 
-Status: **plan for the RX-side capture tooling of the one-way OTA test** ([ota-test-plan.md](ota-test-plan.md)). Resolves the two "investigate with the operator" items that doc parks under *Hardware chain* → RX, and upgrades the capture from SSB audio to GPS-disciplined IQ. No code is written yet; Phase C0 below is a de-risking spike that can run any time (it is independent of demodulator progress, like the test's Phase 0).
+> **Status as of 2026-08-20:** C0, C1 and C2 done (2026-07-24, as marked below); C3's discipline is honoured in the evidence dirs (`captures.sha256` + per-burst JSON sidecars, WAVs held outside git) but the object-storage home was never set up; C2's residue (per-burst GPS/preamble alignment, CFO-vs-GPSDO logging) was overtaken by the scorer's own burst-timing match and the Flex's GPS lock. The RSP1 pad-chain rig (2026-07-27) became the primary bench capture; the UberSDR path described here is the on-air receiver. The "edits to fold back into ota-test-plan.md" at the end were applied on 2026-08-20.
+
+Status at writing: **plan for the RX-side capture tooling of the one-way OTA test** ([ota-test-plan.md](ota-test-plan.md)). Resolves the two "investigate with the operator" items that doc parks under *Hardware chain* → RX, and upgrades the capture from SSB audio to GPS-disciplined IQ. No code is written yet; Phase C0 below is a de-risking spike that can run any time (it is independent of demodulator progress, like the test's Phase 0).
 
 ## Bottom line
 

@@ -11,9 +11,9 @@ Status: `todo` · `blocked` (waiting on someone/something else) · `done` (moved
 | # | What | Needs | Blocks | Status |
 |---|---|---|---|---|
 | A1 | Re-measure `--dial-correction` | radio + receiver | **everything** | todo, every session |
-| A2 | §E2 ladder into the dummy load | radio, ~1 h | the whole point of the campaign | todo |
-| A3 | Prove the live `sm-ota ladder` path | radio, 10 min | A2 | todo |
-| A4 | Re-measure path SNR margin at the chosen power | radio, 10 min | interpreting A2's top rungs | todo |
+| A2 | §E2 ladder into the dummy load | radio, ~1 h | the whole point of the campaign | **done 2026-07-27**, over the pad-chain rig rather than the dummy load - `evidence/2026-07-27-110d-full-campaign/`. The dummy-load/UberSDR form is superseded by the deterministic rig |
+| A3 | Prove the live `sm-ota ladder` path | radio, 10 min | A2 | **done 2026-07-27** - 18 live ladders, 0 run failures; the timebase lined up |
+| A4 | Re-measure path SNR margin at the chosen power | radio, 10 min | interpreting A2's top rungs | **done for the pad-chain rig** (~13.5 dB delivered at 3.7 W; ~19-20 dB expected at 15 W); re-measure after any change to the chain. See H2 in `poor-gate-successor-plan.md` for lifting it |
 | A5 | Receiver 100 Hz floor - choke or supply | **Tom's hands at the receiver** | the ladder's ceiling; WN7/WN8 Poor | blocked |
 | A6 | Receiver front-end gain | Tom, and a shared-instrument decision | more TX power, more path margin | blocked |
 | A7 | Settle the Flex's supply for campaigns | Tom | reproducibility of every A2 number | blocked |
@@ -25,7 +25,9 @@ Status: `todo` · `blocked` (waiting on someone/something else) · `done` (moved
 | A13 | §I1 receiver AGC/clipping audit, formally | receiver, no transmit | trusting levels at high power | todo |
 | A14 | Kenwood TK-90 bench measurements | a TK-90 | extending §E3 to a real commercial radio | blocked, no radio |
 
-**Everything offline is now built.** Nothing on this list is waiting on software: `sm-ota ladder`, `score`, `monitor`, the schedule/manifest and the streaming converter are all done and rehearsed. The next thing that moves the campaign forward is a radio.
+**Everything offline that the campaign needed is built**: `sm-ota ladder`, `score`, `monitor`, the schedule/manifest and the streaming converter are done and have run live (A2/A3). Software gaps that remain are quality-of-life, not blockers, and are listed in [ota-handover.md](ota-handover.md) under "Still open in software". The next thing that moves the campaign forward is a radio - and, for the two Poor points above the rig ceiling, an hour at the pad chain (H2 in [poor-gate-successor-plan.md](poor-gate-successor-plan.md)).
+
+**Added 2026-08-20.** The successor program's hardware legs, in its §4: **H1** a radio evening (§E3 A/B = A12, the Phase 1 hour-long ladder, m9psy = A10) and **H2** the pad-chain ceiling (the no-transmit noise-floor-vs-gain table, then a pad swap if the floor is gain-stage limited), which is what A5/A6 were reaching for on the UberSDR path and is now a better instrument for the same question.
 
 ---
 

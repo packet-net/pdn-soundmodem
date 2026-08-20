@@ -68,6 +68,15 @@ Phase A (3 kHz framing + Walsh-75/BPSK/QPSK + DFE) closed 2026-07-23
 ([phase-a-closeout.md](phase-a-closeout.md)); Phase B (8PSK/16QAM + binding Poor-channel
 mask gating) closed 2026-07-27 ([phase-b-closeout.md](phase-b-closeout.md)) - WN0-6+13
 hard-gated at mask on Poor, WN7/WN8 closed with measured-only verdicts (closeout §4).
+The [WN8 redesign program](wn8-program-plan.md) (2026-07-31) then took WN8 Poor from
+coin-flip to 2.90E-4 canonical / 1.75E-2 disjoint through the MFB-form receiver, still
+measured-only against the 1E-5 mask. The live program is the
+[Poor-gate successor program](poor-gate-successor-plan.md) (registered 2026-08-20, issue
+#312): WN7 under the MFB-form receiver, WN8's first-block bootstrap, production-path
+coverage, and the hardware legs that would let the +19/+23 dB points run through a real
+transmitter. On-air state per waveform is in [../mode-validation.md](../mode-validation.md);
+the OTA campaign's record is [ota-handover.md](ota-handover.md) and
+[ota-air-backlog.md](ota-air-backlog.md).
 
 ## Ledger clearance (2026-07-17)
 
