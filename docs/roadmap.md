@@ -60,10 +60,12 @@ statistical budget, KISS-integrated (`ms110d-wn*`); `docs/ms110d/phase-a-closeou
   bound is 0/0; the basin is crossed label-free), the MFB-form receiver ships, WN8 Poor at
   2.90E-4 canonical / 1.75E-2 disjoint - decoding, still measured-only against 1E-5.
 - **Poor-gate successor program registered 2026-08-20**
-  (`docs/ms110d/poor-gate-successor-plan.md`, issue #312): G0 bank + re-baseline; G1 WN7
-  under the MFB-form receiver (the B3.9 verdict reopened on W1's truth-lane evidence); G2
-  WN8's first-block bootstrap; G3 the production path through `FrequencyShiftedModem`; H1/H2
-  Tom's radio evening and the pad-chain ceiling.
+  (`docs/ms110d/poor-gate-successor-plan.md`, issue #312): G0 bank + re-baseline done; **G1d
+  hard-gated WN7 Poor the same day (0/0 both families)** through the 8PSK per-block ensemble
+  (DFE-chain beside the MFB-form decoder, evidence weighed in log-likelihood units) - nine of
+  ten Poor points now hard-gated, WN8 the one measured-only point. Remaining: G2 WN8's
+  first-block bootstrap; G3 the production path through `FrequencyShiftedModem`; H1/H2 Tom's
+  radio evening and the pad-chain ceiling.
 - On-air (2026-07-27/28): every masked waveform meets its mask over the pad-chain rig
   (`docs/ms110d/evidence/2026-07-27-110d-full-campaign/`). **§E4 2026-08-03**: first
   transmissions from a real antenna at 48 W, WN0-7 and WN13 bit-exact into wessex, WN8 the
