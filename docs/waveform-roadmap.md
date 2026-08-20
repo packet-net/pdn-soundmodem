@@ -30,8 +30,12 @@ target (see [qtsm-loop.md](qtsm-loop.md) § Results):
 | QPSK | 600, 2400, 3600 | NinoTNC / QtSM V26A (2400 = DW2400) |
 | C4FSK | 9600, 19200 | NinoTNC / MMDVM-TNC (G4KLX Mode 2) |
 
-Detection: coherent (Costas) by default for the PSK modes, matching the NinoTNC, with a
-differential opt-in for short-preamble links (issue #5).
+Detection: **differential by default for the PSK modes**, with coherent (Costas) as the opt-in.
+That is the reverse of what this line said until 2026-08-20, and the reversal is old news: issue
+#5 made coherent the default in July, real off-air NinoTNC BPSK could not be decoded by it
+(issues #40/#42 - the NinoTNC uses coherent demod *with* differential encoding to beat the 180
+degree ambiguity), and the default went back to differential plus a frequency-diversity bank on
+2026-07-17/18. The QPSK family followed on 2026-07-31. See `mode-validation.md` for the ledger.
 
 ## Build order
 
@@ -43,6 +47,12 @@ differential opt-in for short-preamble links (issue #5).
 | 4 | **MIL-STD-188-110D App D (3 kHz)** | HF SSB | open (public spec) | 5069-class | high (equalizer, no oracle) | #7 |
 | 5 | **own FM OFDM** | VHF/UHF FM voice | greenfield | pdn↔pdn | high | #8 |
 | 6 | **own HF OFDM** | HF SSB | greenfield | pdn↔pdn | high | #9 |
+
+**Status, 2026-08-20:** 1-4 are built (see [`roadmap.md`](roadmap.md) for what remains of each).
+Item 5 was built and then deliberately moved out of this repository to the private
+`packet-net/pdn-ofdm-fm`, reached through the runtime modem plugin seam - a buildability
+requirement, not a licence one. Item 6 is the only unstarted entry, and §4a below records why no
+MIL-STD appendix is a substitute for it.
 
 ### 1. FreeDV OFDM datac - the lead build
 Interop with the FreeDATA/FreeDV ecosystem, and the way we build the shared OFDM engine every
@@ -88,6 +98,53 @@ channel - the same footprint as the STANAG-4285 signals hams already decode.
   sim harness exist. `mars-suite` (110A only, AGPL) is the equalizer reference to study
   clean-room. (Earlier "Nino KK4HEJ is building a 110 modem" was a Discord mention only, no
   public code - not usable prior art; Nino ships FSK/IL2P.)
+
+### 4a. MIL-STD-188-110D Appendix C / STANAG 4539 - evaluated and rejected (2026-08-20)
+Tom asked whether App C (= STANAG 4539, the narrowband MDR waveform) was worth building beside
+the App D work, on the theory that it might hold more sensitive modes for narrow channels. It
+does not. **Rejected: it is a strict subset of what App D already gives us, and the overlapping
+masks are identical.**
+
+The evidence, read off the copy of the standard already vendored at
+`docs/ms110d/spec/MIL-STD-188-110D.pdf` (App C is doc pages 106-135, PDF pages 111-140):
+
+- **Identical performance requirements where they overlap.** Table C-XVII against the
+  transcribed D-LXIV masks (`docs/ms110d/tables/d6x-ber-masks.csv`), AWGN / Poor SNR in dB for
+  BER <= 1.0E-5, 3 kHz: 3200 bps 9/14 both, 4800 13/19 both, 6400 16/23 both, 8000 19/27 both,
+  9600 21/31 both. App D carried App C's numbers forward unchanged for those rates, which
+  follows from it using the same modulations at the same 3/4 code rate. At the top App D is
+  better: WN11 does 12000 bps at 24 dB against App C's 12800 uncoded at 27 dB.
+- **No low-rate modes at all.** App C's title is "for data rates *above* 2400 bps"; its floor is
+  3200 bps at 9 dB AWGN. App D's 3 kHz row runs down to WN0 at 75 bps, **-6 dB AWGN / -1 dB
+  Poor**. That is a 15 dB sensitivity gap in App D's favour, on both channels.
+- **One code rate for everything.** C.4: "A single coding option, a constraint length 7, rate 1/2
+  convolutional code, punctured to rate 3/4, is used for all data rates." App D's 3 kHz column
+  (`docs/ms110d/tables/d49-code-rates.csv`) spans 1/8 to 8/9. App C was built to go fast in
+  3 kHz, not to go weak.
+- **It is not narrower either.** 3 kHz is the floor of the whole document: App A is a LAN
+  interface, App B is the obsolete 39-tone parallel mode, App C is 3 kHz, and App D's bandwidth
+  column runs 3, 6, 9 ... 48 kHz. There is no sub-3-kHz member of this family to reach for; we
+  implemented the narrowest thing 110D contains.
+
+**Recorded because it would otherwise be cheap to build and easy to re-propose.** Unlike App D,
+App C's tables are real text in the PDF rather than page images, so the dual-transcription
+deliverable that dominated App D's early cost largely evaporates; its FEC is K=7 rate 1/2 full
+tail-biting punctured 3/4, which `TailBitingSisoDecoder` + `Ms110dPuncture` already implement;
+and it shares App D's 2400 Bd / 1800 Hz / SRRC front end, DFE and Watterson harness outright.
+Cheap is not the same as worth doing: it would add no rate, no sensitivity and no bandwidth we
+do not already have.
+
+**The one argument that survives, and where it actually points.** App C has third-party decoders
+(commercial, plus closed hobbyist ones such as MultiPSK and Sigmira; no open implementation was
+found), where App D has none - so it could serve as the external oracle `PROVENANCE.md` records
+this project as lacking for the whole serial-tone stack. That is real but does not justify a
+full waveform build for validation alone. **STANAG 4285 is the cheaper way to buy the same
+thing**: same 2400 Bd on 1800 Hz, same known-symbol-block structure, much simpler, and common
+enough on air to be receivable on demand. If the external-oracle gap is ever worth closing,
+start there, not here. For narrow weak-signal capability the lever is bandwidth and code rate,
+not a MIL-STD appendix - `freedv-datac4` (87 bps in 250 Hz) and its siblings already beat
+everything in 110D on a 3 kHz-referenced threshold, and item 6 below is the slot for improving
+on them.
 
 ### 5-6. Our own FM / HF OFDM - greenfield
 Reusing the shared OFDM engine from item 1. **FM OFDM** is the speed play through an FM voice
