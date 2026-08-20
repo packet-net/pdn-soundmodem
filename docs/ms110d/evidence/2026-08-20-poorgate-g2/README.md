@@ -117,3 +117,60 @@ The battery decides the exit; it runs on this build with G0's form.
 ## Verdict
 
 **Exit (ii) for WN8, per the rule - improved, re-banked, not yet green on both families.** WN8 Poor moves from 2.90E-4 / 1.75E-2 to **7.17E-6 / 1.78E-5**: the canonical family at the mask, the disjoint family 1.8x over on the strength of one block (w3 b9, 62 errors) and one 15. `MeasuredOnlyBank` re-banks to 31 / 77; WN8 stays the one measured-only point; this battery's WN8 censuses are WN8's byte-identity baseline from here on. Sim-only by rig physics (successor plan §6). What the program hands on for WN8: two blocks with self-consistent wrong fixed points in the low tens (w3 b9 at 62 under the shipped schedule, 34 in the prototype; w1/b1 disjoint at 15), reachable now in a handful of rungs, so a successor's corpse iteration is seconds; the candidates in order are the G2b stability handover (measured to matter on exactly these stragglers before the cold rung existed), a second decode schedule for the ensemble-style selection G1d built (the MFB's own two schedules priced by residual), and the W3 moment observables as extra anchors. Also banked: the cold rung scoped to 8PSK is unmeasured (G1d's ensemble candidates would change) and is its own registration; the shipped MFB's per-block wall-clock fell with the rung count (4-7 rungs against 10-40).
+
+## G2e - the two stragglers: keep working past a suspect fixed point, and a second opinion (registered 2026-08-20 before the runs)
+
+**Question.** Do the WN8 blocks that now settle on a self-consistent decode with errors in the low tens (disjoint w3/b0 block b9 at 62, w1/b1 at 15; canonical w0/b1 at 12, w1/b1 at 19) reach zero under (1) continued iteration with repeated channel re-fits after the first fixed point, or (2) a second decode schedule with the better-explaining decode kept by reconstruction residual - without moving a clean control burst?
+
+**Instrument.** The prototype with the MMSE cold rung, 120 rungs, six schedule variants per burst (pure soft; soft with one early re-fit; soft with re-fits at 20/40/80; soft to 40 then re-fit and hard; soft to 10 then hard; pure hard) on the four straggler bursts and the clean control 10508 w0/b0. New summary line: each block's final reconstruction residual, so a per-block residual selection across variants can be read off and checked against truth.
+
+**Kill/proceed rule (pre-committed).** One variant, or the residual-selected pick between two variants, reaches 0 on every straggler block with the control unmoved and no wrong pick -> G2f registers the shipped form (a residual-gated continuation and/or the second schedule priced by residual, behind the QAM16 scope), corpse -> pins -> battery, gate by §5.3 on both families. Any block no variant reaches 0 on -> it is banked as WN8's residual under this receiver and exit (ii) stands at the G2d numbers. A wrong residual pick anywhere -> the selection half is dropped and only continuation is carried forward.
+
+### G2e measurements (2026-08-20, [g2e/](g2e/); prototype with the MMSE cold rung, 120 rungs, errors at R120 on the straggler block)
+
+| burst (block) | shipped G2d | v1 pure soft | v2 soft, re-fit @20 | v3 soft, re-fits @20/40/80 | v4 soft to 40, re-fit, hard | v5 soft to 10, re-fit, hard | v6 pure hard |
+|---|---|---|---|---|---|---|---|
+| disjoint w3/b0 (b9) | 62 | 60 | **34** | **34** | **34** | **34** | 58 |
+| disjoint w1/b1 (b1) | 15 | 15 | **0** | **0** | **0** | **0** | 18 |
+| canonical w0/b1 (b4) | 12 | 12 | 12 | 12 | 12 | 12 | 71 |
+| canonical w1/b1 (b9) | 19 | 19 | 19 | 19 | 19 | 19 | 153 (b1), b9 0 |
+| control 10508 w0/b0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 |
+
+**Continuation works where it was needed and is harmless where it was not.** A re-fit taken after ten or more soft rungs (v2-v5, identical results) takes the disjoint w1/b1 block to zero and w3 b9 from 62 to 34; the canonical 12 and 19 do not move under any schedule, and the control stays clean. The shipped decoder already re-fits at the soft phase's first fixed point - but with the MMSE start that fixed point arrives at rung 4-7, when the SISO posteriors are stable as hard decisions yet not saturated as soft ones, and a re-fit on those rows is the weaker anchor set; ten soft rungs later the same re-fit finishes the block. Family arithmetic if the shipped form reproduces this: disjoint 77 -> **34** (mask: <= 43 on 4,325,120 bits), canonical 31 unchanged - **both families under the mask**.
+
+**The second-opinion half is dropped.** Residual selection across variants picked right on 54 of 55 blocks and wrong on one: canonical w1/b1 b9, where pure hard's correct decode priced *above* the re-fit schedules' 19-error decode. The two residuals were taken through different anchor sets (a re-fit model co-adapted to its own decode against probe-only anchors), so they are not comparable; the G1d selection was valid because both decodes were priced through one model. Banked as a negative: never compare residuals across re-fit models.
+
+## G2f - a floor on the soft phase (registered 2026-08-20 before the shipped code)
+
+**Change.** `Ms110dMfbBlockDecoder.RunSchedule`: a soft-phase fixed point is honoured as the handover only from rung 10 (`SoftMinRungs`, cap-class: it costs clean blocks at most five extra soft rungs, the stragglers are what it is for; measured as v5, with v2-v4 showing the result insensitive to where between 10 and 40 the re-fit lands). Nothing else moves; QAM16 scope as G2d.
+
+**Kill/proceed rule.** Corpses: the five G2e bursts reproduce 34 / 0 / 12 / 19 / 0; the G2 specimens and WN7's stay at their G2d digits; pins exact. Battery: WN8 Poor §5.3-green on both families -> **exit (i) for WN8**: the gate arms, `MeasuredOnlyBank` empties, all ten Poor points hard-gated. Disjoint not green -> exit (ii) re-banked at the new counts. Any non-WN8 census moved or AWGN WN8 off zero -> stop.
+
+**G2f amendment (2026-08-20, after the first corpses).** The soft floor alone changed nothing on the stragglers, and the corpses' `mfb-block` lines say why: each straggler block runs the soft phase to its cap of 30 without ever settling (an oscillation, not a fixed point), and the first hard rung then accepts a period-2 cycle whose members are *soft-phase* decodes - the #316 hole, now measured as precisely what holds these blocks at 15 / 62 / 12 / 19 (`r30c2` on every one; clean blocks `r11c1`). The prototype had no cycle-accept and ran the hard tail to a genuine fixed point, which is the 34 / 0 / 12 / 19 it reported. G2f therefore carries two changes, both QAM16-scoped: the soft floor (kept; harmless, five rungs on clean blocks) and the #316 fix - a cycle is accepted only when both its members are hard-phase decodes. #316 stays open for the 8PSK branch, which keeps the old behaviour this leg so the WN7 ensemble is byte-identical.
+
+### G2f measurements (2026-08-20; shipped decoder, QAM16 scope; [g2f-corpses/](g2f-corpses/), [g2f-pins/](g2f-pins/))
+
+Four shipped-path steps, each measured on the same ten corpses (the four stragglers, the four clean G2 specimens, two WN7 ensemble bursts) with the five pins:
+
+| step | w3/b0 (b9) | w1/b1 disjoint | w0/b1 canonical | w1/b1 canonical | clean specimens, WN7, pins |
+|---|---|---|---|---|---|
+| G2d (the cold rung alone) | 62 | 15 | 12 | 19 | all at their digits |
+| + soft floor of 10 rungs | 62 | 15 | 12 | 19 | unchanged - every straggler block was `r30c2`: soft to the cap without settling, then a cycle accepted at the handover |
+| + #316 fix (both cycle members hard-phase) | 62 | **0** (exact fixed point, r35) | 12 | 19 | unchanged |
+| + re-fit once on the first hard cycle, continue | 62 | 0 | 12 | 19 | the cycle recurs after the re-fit; no effect; removed |
+| (measurement) no cycle acceptance at all | 24,468 (cap, revert) | 0 | 24,505 (cap, revert) | **0** (the hard-first fallback's exact fixed point) | the cycles are genuine attractors; the revert throws a 62 away for a 24k; rejected, but it showed the alternate schedule finds answers the first one cycles on |
+| + hard-first also runs after a cycle-accept; exact fixed point wins, two cycles priced through one common (probe-anchor) model | 62 | 0 | 12 | **0** | unchanged |
+| + plateau handover (soft ends when its residual stops falling, from rung 10) | **12** | 0 | 12 | 0 | unchanged; every pin exact; WN7 byte-identical |
+
+Family arithmetic from the corpses, if the battery holds: disjoint 77 -> **12**, canonical 31 -> **12**, against 43 allowed on 4,325,120 bits. The battery runs on this build.
+
+### G2f battery (2026-08-20, [battery-g2f/](battery-g2f/), the G0 form, 23:06 to 23:49)
+
+- **Poor WN8 canonical: 12 / 4,325,120 = 2.77E-6, 97.5 % bound 4.85E-6** (from 31 at G2d, 1,254 at W6). Residue: w0/b1 12.
+- **Poor WN8 disjoint: 18 / 4,325,120 = 4.16E-6, 97.5 % bound 6.58E-6** (from 77 at G2d, 75,713 at W6). Residue: w0/b1 6, w3/b0 12.
+- **Both families clear §5.3** (fewer than 30 errors, so the Poisson bound decides, and it sits under 1E-5 with room: the bound reaches 1E-5 at about 33 errors on this budget). AWGN WN8 0. **113 of 120 censuses byte-identical** (G0 for the non-WN7/WN8 points, G1d for WN7), the seven that differ being WN8's Poor censuses. The lanes report rc=1 only because the pre-flip bank asserted 31 / 77.
+- The armed gate on the flipped test, both families, on the final build: see the `g2f-armed` lines in the plan's status log (both pass).
+
+## Verdict
+
+**Exit (i) for WN8.** `Poor_Channel_Mask_Gate` arms WN8 by default; `MeasuredOnlyBank` is empty (kept as the mechanism); this battery's WN8 censuses are WN8's byte-identity baseline from here on. **All ten MS110D Poor points are now hard-gated.** Sim-only by rig physics, as for WN7: the rows forward to "Poor sim hard-gated" and stay partial until H2 lifts the pad-chain ceiling. What G2 leaves behind: #316 stays open for the 8PSK branch (the fix is in for QAM16 only), the MMSE cold rung and the G2f schedule are unmeasured on 8PSK (the WN7 ensemble would change; its own registration), and the banked negative that residuals through different re-fit models are not comparable.

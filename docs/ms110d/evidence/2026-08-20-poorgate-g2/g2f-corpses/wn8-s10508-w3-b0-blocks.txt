@@ -1,0 +1,13 @@
+mfb-block sched=soft rungs=11 window=[-8,18) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=11 window=[-8,18) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=11 window=[-8,18) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=11 window=[-8,18) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=11 window=[-8,18) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=11 window=[-8,18) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=11 window=[-8,18) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=11 window=[-8,18) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=11 window=[-8,18) conv=1 handoverChurn=0 refit=1 finalChurn=0
+mfb-block sched=soft rungs=19 window=[-8,18) conv=2 handoverChurn=155 refit=1 finalChurn=26
+mfb-block sched=hard rungs=15 window=[-8,18) conv=2 handoverChurn=-1 refit=0 finalChurn=134
+mfb-dual block cycle/cycle priceSoftFirst=3.0279E-004 priceHardFirst=3.2583E-004 keep=soft-first
+mfb-block sched=soft rungs=11 window=[-8,18) conv=1 handoverChurn=0 refit=1 finalChurn=0

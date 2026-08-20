@@ -63,9 +63,9 @@ statistical budget, KISS-integrated (`ms110d-wn*`); `docs/ms110d/phase-a-closeou
   (`docs/ms110d/poor-gate-successor-plan.md`, issue #312): G0 bank + re-baseline done; **G1d
   hard-gated WN7 Poor the same day (0/0 both families)** through the 8PSK per-block ensemble
   (DFE-chain beside the MFB-form decoder, evidence weighed in log-likelihood units) - nine of
-  ten Poor points now hard-gated. **G2d** (same day) took WN8 Poor from 2.90E-4 / 1.75E-2 to
-  7.17E-6 / 1.78E-5 with an MMSE cold rung in the MFB decoder (canonical at the mask,
-  disjoint 1.8x over, still measured-only); **G3** (same day) proved every waveform through
+  ten Poor points hard-gated. **G2** (same day) took WN8 Poor from 2.90E-4 / 1.75E-2 to
+  12 / 18 per 4.3M bits with an MMSE cold rung and a reworked schedule in the MFB decoder -
+  **all ten Poor points hard-gated**; **G3** (same day) proved every waveform through
   `FrequencyShiftedModem` at 3750/5000 Hz and fixed the Watterson rig for moved centres.
   Remaining: H1/H2, Tom's radio evening and the pad-chain ceiling.
 - On-air (2026-07-27/28): every masked waveform meets its mask over the pad-chain rig

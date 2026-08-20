@@ -1,0 +1,1 @@
+2026-08-20T23:41:16.4362947Z [mask] POOR WN0 @ -1 dB (seed+10000): 3,000,704 bits, 3 errors, 476 bursts (0 acquisition failures), 42501 s simulated, 4 workers - BER 1.00E-006, 97.5 % upper bound 2.92E-006 | uncoded 1.86E-002, deep-fade(<-6 dB) holds 75% of uncoded errors in 9% of bits, turbo 0c/0r/0a/5236s, agc 0
