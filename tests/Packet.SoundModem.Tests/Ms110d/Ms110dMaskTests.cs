@@ -54,10 +54,11 @@ public class Ms110dMaskTests(ITestOutputHelper output)
 
     // The measured-only ceiling bank (docs/ms110d/poor-gate-successor-plan.md, leg G0).
     // A point that does not clear the 1E-5 Poor mask has what it DOES measure banked here
-    // as the exact closing counts of the battery that closed it - WN8 from the WN8
-    // program's W6 decision battery. (WN7 sat here at 83/48 from the W0 re-baseline until
-    // G1d's ensemble took it to 0/0 and into the gated set, 2026-08-20, evidence
-    // 2026-08-20-poorgate-g1d.) The simulation is seed-deterministic, so in the
+    // as the exact closing counts of the battery that closed it - WN8 from the successor
+    // program's G2d battery (the MMSE cold rung: 31 canonical, at the mask; 77 disjoint,
+    // 1.8x over; from the W6 program's 1,254 / 75,713). (WN7 sat here at 83/48 from the W0
+    // re-baseline until G1d's ensemble took it to 0/0 and into the gated set, 2026-08-20,
+    // evidence 2026-08-20-poorgate-g1d.) The simulation is seed-deterministic, so in the
     // battery configuration (in-code budget, 4 workers, both seed families) the count is
     // a byte-identity pin, not a statistic: any other digit, in either direction, is
     // drift in the demodulator and must be explained and re-banked (the Phase B closeout
@@ -67,8 +68,8 @@ public class Ms110dMaskTests(ITestOutputHelper output)
 
     private static readonly Dictionary<(int Wn, int SeedOffset), MeasuredOnlyPin> MeasuredOnlyBank = new()
     {
-        [(8, 0)] = new(4_325_120, 1_254, "evidence/2026-07-31-wn8-w6/battery/poor-wn8.mask (2.90E-4)"),
-        [(8, 10_000)] = new(4_325_120, 75_713, "evidence/2026-07-31-wn8-w6/battery/poord-wn8.mask (1.75E-2)"),
+        [(8, 0)] = new(4_325_120, 31, "evidence/2026-08-20-poorgate-g2/battery/poor-wn8.mask (7.17E-6)"),
+        [(8, 10_000)] = new(4_325_120, 77, "evidence/2026-08-20-poorgate-g2/battery/poord-wn8.mask (1.78E-5)"),
     };
 
     // The bank only speaks for the configuration it was measured in: the in-code budget,
@@ -169,8 +170,9 @@ public class Ms110dMaskTests(ITestOutputHelper output)
 
         // §B4 (2026-07-26): the at-mask set is hard-gated by default - flip criterion and
         // both-family gate-run evidence in evidence/2026-07-26-phase-b4-gate/. The two
-        // measured-only point (WN8 at the WN8 program's exit (ii), 2.90E-4/1.75E-2 through
-        // the MFB-form receiver, evidence/2026-07-31-wn8-w6/) is pinned to the
+        // measured-only point (WN8: 7.17E-6 canonical / 1.78E-5 disjoint since G2d's MMSE
+        // cold rung, evidence/2026-08-20-poorgate-g2/; was 2.90E-4/1.75E-2 at the WN8
+        // program's exit (ii), evidence/2026-07-31-wn8-w6/) is pinned to the
         // MeasuredOnlyBank in the battery configuration and merely measured otherwise;
         // WN7 left the bank for the gated set at G1d (below). §B4.1 (same
         // day): WN6 joins the gated set - the SPIKE-UP per-segment pricing margin lever

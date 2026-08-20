@@ -106,3 +106,14 @@ Hermetic MS110D namespace 297/0 on the build. Corpses through the shipped decode
 | the five §6 pins | exact | exact (WN7 w1/b0 0 coded / selected 2, as G1d) |
 
 The battery decides the exit; it runs on this build with G0's form.
+
+### G2d battery (2026-08-20, [battery/](battery/), the G0 form on the shipped cold rung, 21:01 to 21:49 under the G3 ladder's load)
+
+- **Poor WN8 canonical: 31 / 4,325,120 = 7.17E-6** (from 1,254 = 2.90E-4) - 31 errors, direct BER below the 1E-5 mask: **the canonical family clears §5.3.** Residue: w0/b1 12, w1/b1 19 (the burst that leaked 1,029 at W6), every block a fixed point.
+- **Poor WN8 disjoint: 77 / 4,325,120 = 1.78E-5** (from 75,713 = 1.75E-2) - 1.8x over the mask. Residue: w3/b0 62 (block b9, the one G2c left at 34 in the prototype) and w1/b1 15.
+- **AWGN WN8 0 / 4,325,120.** Every other point at its baseline digits; **113 of 120 censuses byte-identical** (G0 for the non-WN7/WN8 points, G1d for WN7 - the 8PSK ensemble is untouched by a QAM16-scoped cold rung, as registered), the seven that differ being WN8's Poor censuses, every line of which now reads 0, 12, 15, 19 or 62. The lanes report rc=1 only because the pre-flip `MeasuredOnlyBank` asserted 1,254 / 75,713, as built.
+- Full hermetic suite on the final main build **1794 / 0 / 131**; `SourceTextTests` green.
+
+## Verdict
+
+**Exit (ii) for WN8, per the rule - improved, re-banked, not yet green on both families.** WN8 Poor moves from 2.90E-4 / 1.75E-2 to **7.17E-6 / 1.78E-5**: the canonical family at the mask, the disjoint family 1.8x over on the strength of one block (w3 b9, 62 errors) and one 15. `MeasuredOnlyBank` re-banks to 31 / 77; WN8 stays the one measured-only point; this battery's WN8 censuses are WN8's byte-identity baseline from here on. Sim-only by rig physics (successor plan §6). What the program hands on for WN8: two blocks with self-consistent wrong fixed points in the low tens (w3 b9 at 62 under the shipped schedule, 34 in the prototype; w1/b1 disjoint at 15), reachable now in a handful of rungs, so a successor's corpse iteration is seconds; the candidates in order are the G2b stability handover (measured to matter on exactly these stragglers before the cold rung existed), a second decode schedule for the ensemble-style selection G1d built (the MFB's own two schedules priced by residual), and the W3 moment observables as extra anchors. Also banked: the cold rung scoped to 8PSK is unmeasured (G1d's ensemble candidates would change) and is its own registration; the shipped MFB's per-block wall-clock fell with the rung count (4-7 rungs against 10-40).

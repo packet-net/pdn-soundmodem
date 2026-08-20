@@ -109,57 +109,173 @@ public class FrequencyShiftedModemTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void Moving_The_Modem_Costs_No_Decodes_On_The_Poor_Channel()
+    {
+        // G3 (Poor-gate successor program): the production tenant runs ms110d-wn6 at 3750 Hz on
+        // a fading channel, and the AWGN arms above say nothing about fading. Same frames,
+        // same seeded D.6.1 Poor realisations, native against the tenant centre at the WN6
+        // Poor mask SNR: the moved arm may not fall past binomial wobble below native. A
+        // smoke at hermetic budget; the env-gated ladder below carries the deep read.
+        const int n = 12;
+        int native = RunPoorArm("ms110d-wn6", null, n, snr3kDb: 14, seed: 600);
+        int moved = RunPoorArm("ms110d-wn6", 3750, n, snr3kDb: 14, seed: 600);
+        output.WriteLine($"Poor +14 dB, native {native}/{n}, 3750 Hz {moved}/{n}");
+        Record($"ms110d-wn6 poor 14 dB: native {native}/{n}, 3750 {moved}/{n}");
+        native.Should().BeGreaterThan(n / 2, "the native arm must decode at its mask SNR or the comparison is vacuous");
+        moved.Should().BeGreaterThanOrEqualTo(native - (int)(2 * Math.Sqrt(0.25 * n)),
+            "the moved WN6 may not fall past statistical wobble below native on Poor");
+    }
+
+    // Per-waveform default rungs for the ladder: a straddle around each waveform's
+    // frame-decode knee in this harness, which sits ~4-5 dB below its D-LXIV AWGN mask SNR
+    // (WN6: native 23/30 at 4 dB against a 9 dB mask, the #221 calibration). The ladder
+    // re-centres itself if a default misses the knee, so these are starting points.
+    private static readonly Dictionary<string, double[]> DefaultRungs = new()
+    {
+        ["ms110d-wn0"] = [-12, -11, -10, -8],
+        ["ms110d-wn1"] = [-9, -8, -7, -5],
+        ["ms110d-wn2"] = [-6, -5, -4, -2],
+        ["ms110d-wn3"] = [-3, -2, -1, 1],
+        ["ms110d-wn4"] = [-1, 0, 1, 3],
+        ["ms110d-wn5"] = [0, 1, 2, 4],
+        ["ms110d-wn6"] = [4, 5, 6, 8],
+        ["ms110d-wn7"] = [8, 9, 10, 12],
+        ["ms110d-wn8"] = [11, 12, 13, 15],
+        ["ms110d-wn13"] = [0, 1, 2, 4],
+    };
+
+    [Fact]
     public void The_Shift_Ladder_Shows_No_Knee_Movement()
     {
         // The deep arm of the performance gate: an A/B/B' ladder around the decode knee. Run
-        // with MS110D_SHIFT_GATE=1 (roughly 10-20 minutes). Rungs and count are overridable:
-        // MS110D_SHIFT_GATE_RUNGS=8,10,12 MS110D_SHIFT_GATE_N=100 for a finer read.
+        // with MS110D_SHIFT_GATE=1 (WN6 alone ~10-20 minutes; all ten waveforms an hour or
+        // two). MS110D_SHIFT_GATE_MODES=ms110d-wn6,ms110d-wn2 picks the waveforms (default:
+        // all ten), MS110D_SHIFT_GATE_RUNGS=8,10,12 overrides the rungs for every mode listed,
+        // MS110D_SHIFT_GATE_N=100 the frames per cell, MS110D_SHIFT_GATE_CENTRES=3750,5000 the
+        // moved arms (default 3750, the GB7RDG tenant centre, and 5000; G3 of the Poor-gate
+        // successor program, evidence 2026-08-20-poorgate-g3).
         Assert.SkipUnless(
             Environment.GetEnvironmentVariable("MS110D_SHIFT_GATE") == "1",
             "set MS110D_SHIFT_GATE=1 for the shift-decorator BER ladder (slow)");
 
-        // Defaults straddle the measured WN6 knee (native 23/30 at 4 dB, clean by 6).
-        double[] rungs = (Environment.GetEnvironmentVariable("MS110D_SHIFT_GATE_RUNGS") ?? "4,5,6,8")
-            .Split(',').Select(double.Parse).ToArray();
+        string[] modes = (Environment.GetEnvironmentVariable("MS110D_SHIFT_GATE_MODES")
+            ?? string.Join(',', DefaultRungs.Keys)).Split(',');
+        double[]? rungOverride = Environment.GetEnvironmentVariable("MS110D_SHIFT_GATE_RUNGS")
+            ?.Split(',').Select(double.Parse).ToArray();
         int n = int.Parse(Environment.GetEnvironmentVariable("MS110D_SHIFT_GATE_N") ?? "50");
-        double?[] arms = [null, 3000, 5000];
+        double?[] arms = (Environment.GetEnvironmentVariable("MS110D_SHIFT_GATE_CENTRES") ?? "3750,5000")
+            .Split(',').Select(c => (double?)double.Parse(c)).Prepend(null).ToArray();
 
-        var successes = new Dictionary<(double? Centre, double Rung), int>();
-        foreach (double rung in rungs)
+        var failures = new List<string>();
+        foreach (string mode in modes)
         {
-            foreach (double? centre in arms)
+            double[] rungs = rungOverride ?? DefaultRungs[mode];
+            var successes = new Dictionary<(double? Centre, double Rung), int>();
+
+            // The native arm first, re-centring the rungs until one sits in the transition:
+            // a ladder that does not straddle the knee compares nothing.
+            for (int attempt = 0; ; attempt++)
             {
-                int ok = RunAwgnArm("ms110d-wn6", centre, n, rung, seed: 500 + (int)rung);
-                successes[(centre, rung)] = ok;
-                output.WriteLine($"centre {centre?.ToString() ?? "native"}, {rung} dB: {ok}/{n}");
+                foreach (double rung in rungs)
+                {
+                    successes[(null, rung)] = RunAwgnArm(mode, null, n, rung, seed: 500 + (int)Math.Round(rung));
+                }
+
+                bool straddles = rungs.Any(r => successes[(null, r)] > n / 10 && successes[(null, r)] < n * 9 / 10);
+                if (straddles || attempt == 4)
+                {
+                    break;
+                }
+
+                bool allHigh = rungs.All(r => successes[(null, r)] >= n * 9 / 10);
+                rungs = rungs.Select(r => allHigh ? r - 2 : r + 2).ToArray();
+                successes.Clear();
             }
-        }
 
-        // The ladder must actually straddle the knee, or the comparison is vacuous.
-        rungs.Any(r => successes[(null, r)] > n / 10 && successes[(null, r)] < n * 9 / 10)
-            .Should().BeTrue("at least one rung must sit in the transition; recalibrate the rungs");
+            rungs.Any(r => successes[(null, r)] > n / 10 && successes[(null, r)] < n * 9 / 10)
+                .Should().BeTrue($"{mode}: at least one rung must sit in the transition; recalibrate the rungs");
 
-        // Per rung: the moved arms may not fall more than the two-sigma binomial wobble below
-        // the bare arm. Aggregate: within 5 % overall, which at these counts resolves a knee
-        // movement well under the 0.2 dB the plan allows.
-        double sigma = Math.Sqrt(0.25 * n) * 2;
-        foreach (double rung in rungs)
-        {
+            foreach (double rung in rungs)
+            {
+                foreach (double? centre in arms.Where(c => c is not null))
+                {
+                    successes[(centre, rung)] = RunAwgnArm(mode, centre, n, rung, seed: 500 + (int)Math.Round(rung));
+                }
+
+                string line = $"{mode} {rung} dB: " + string.Join(", ",
+                    arms.Select(c => $"{c?.ToString() ?? "native"} {successes[(c, rung)]}/{n}"));
+                output.WriteLine(line);
+                Record(line);
+            }
+
+            // Per rung: the moved arms may not fall more than the two-sigma binomial wobble below
+            // the bare arm. Aggregate: within 5 % overall, which at these counts resolves a knee
+            // movement well under the 0.2 dB the plan allows.
+            double sigma = Math.Sqrt(0.25 * n) * 2;
             foreach (double? centre in arms.Where(c => c is not null))
             {
-                successes[(centre, rung)].Should().BeGreaterThanOrEqualTo(
-                    (int)(successes[(null, rung)] - sigma),
-                    $"centre {centre} at {rung} dB may not fall past statistical wobble below native");
+                foreach (double rung in rungs)
+                {
+                    if (successes[(centre, rung)] < (int)(successes[(null, rung)] - sigma))
+                    {
+                        failures.Add($"{mode} centre {centre} at {rung} dB: {successes[(centre, rung)]} vs native {successes[(null, rung)]}");
+                    }
+                }
+
+                int moved = rungs.Sum(r => successes[(centre, r)]);
+                int native = rungs.Sum(r => successes[(null, r)]);
+                if (moved < native - (int)(0.05 * n * rungs.Length))
+                {
+                    failures.Add($"{mode} centre {centre} aggregate {moved} vs native {native}");
+                }
             }
         }
 
-        foreach (double? centre in arms.Where(c => c is not null))
+        failures.Should().BeEmpty("a moved waveform may not fall past statistical wobble below its native knee");
+    }
+
+    /// <summary>The evidence hook: MS110D_SHIFT_GATE_OUT names a file every ladder and smoke
+    /// line is appended to (the console runner shows a passing test's output to nobody).</summary>
+    private static void Record(string line)
+    {
+        string? path = Environment.GetEnvironmentVariable("MS110D_SHIFT_GATE_OUT");
+        if (path is not null)
         {
-            int moved = rungs.Sum(r => successes[(centre, r)]);
-            int native = rungs.Sum(r => successes[(null, r)]);
-            moved.Should().BeGreaterThanOrEqualTo(native - (int)(0.05 * n * rungs.Length),
-                $"centre {centre} aggregate within 5 % of native");
+            File.AppendAllText(path, $"{DateTime.UtcNow:o} {line}{Environment.NewLine}");
         }
+    }
+
+    /// <summary>
+    /// One arm of the D.6.1 Poor gate at 48 kHz: <paramref name="frames"/> bursts through a
+    /// fresh seeded two-path fading realisation each, at <paramref name="snr3kDb"/> in the
+    /// 3 kHz reference bandwidth, each decoded by a fresh modem. Returns how many decoded
+    /// byte-exact. Same frames and realisations for every centre, so the A/B is paired.
+    /// </summary>
+    private static int RunPoorArm(string mode, double? centre, int frames, double snr3kDb, int seed)
+    {
+        int decoded = 0;
+        for (int i = 0; i < frames; i++)
+        {
+            byte[] frame = TestFrame(60, seed + i);
+            IModem tx = Create(mode, centre, _ => { });
+            float[] burst = tx.Modulate(frame, txDelayMilliseconds: 50);
+            var channel = new Channel.WattersonChannel(Rate, (seed * 1000) + i, Channel.WattersonChannel.Poor)
+            {
+                CentreHz = centre ?? 1800, // the rig fades about the signal's own centre
+            };
+            float[] faded = channel.Apply(burst, snr3kDb, leadInSamples: Rate / 2, leadOutSamples: Rate / 4);
+
+            var received = new List<byte[]>();
+            IModem rx = Create(mode, centre, received.Add);
+            rx.Process(faded);
+            rx.Process(new float[Rate / 2]);
+            if (received.Count == 1 && received[0].AsSpan().SequenceEqual(frame))
+            {
+                decoded++;
+            }
+        }
+
+        return decoded;
     }
 
     /// <summary>

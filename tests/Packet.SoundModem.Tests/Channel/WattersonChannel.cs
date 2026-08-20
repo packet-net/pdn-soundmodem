@@ -28,7 +28,13 @@ public sealed record WattersonPath(
 /// </remarks>
 public sealed class WattersonChannel
 {
-    private const double CentreHz = 1800;
+    /// <summary>The audio centre the complex envelope is formed about - 1800 Hz, the App D
+    /// sub-carrier, unless the signal under test has been moved (a FrequencyShiftedModem at
+    /// the GB7RDG tenant's 3750 Hz, say). The rig demodulates to this centre, low-passes at
+    /// 2.2 kHz, fades, and remodulates, so a signal centred elsewhere is simply cut in half
+    /// by the low-pass (G3 of the Poor-gate successor program measured 4/12 at 3750 Hz and
+    /// 0/12 at 5000 Hz, SNR-independent, before this knob existed).</summary>
+    public double CentreHz { get; init; } = 1800;
     private const int GainRate = 96; // fading-gain sample rate, Hz (9600 / 100)
 
     /// <summary>Sample rate of the recorded <see cref="LastPathGains"/> trajectories.</summary>
@@ -268,7 +274,10 @@ public sealed class WattersonChannel
     {
         // Mix down and low-pass (windowed sinc, cutoff 2.2 kHz) to reject the −2·1800 Hz
         // image; gain 2 restores the envelope amplitude. Delay-compensated (linear phase).
-        int taps = 129;
+        // 129 taps at the rig's native 9600 Hz (unchanged there, so every banked battery
+        // digit stands); scaled with the sample rate so the transition band stays ~150 Hz
+        // at 48 kHz, where 129 taps would leave the -2*centre image barely attenuated.
+        int taps = (129 * _sampleRate / 9600) | 1;
         int half = taps / 2;
         var h = new double[taps];
         double sum = 0;
