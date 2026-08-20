@@ -8,7 +8,9 @@ namespace Packet.SoundModem.Ms110d;
 /// <summary>
 /// The MFB-form block decoder for QAM16 (wn8-program W5b2, evidence
 /// 2026-07-31-wn8-w5a/-w5b1/-w5b2): the measured successor to the §B3.4 turbo
-/// exclusion. Per burst, a ridged wide LS over the first block's probes accumulates a
+/// exclusion - and, since the Poor-gate successor program's G1d (evidence
+/// 2026-08-20-poorgate-g1/-g1d), the second member of the 8PSK per-block ensemble,
+/// where it runs beside the DFE-chain path and <see cref="Price"/> arbitrates. Per burst, a ridged wide LS over the first block's probes accumulates a
 /// per-tap energy profile (phases decorrelate across fading, delays do not) and places
 /// a 26-tap detection window - acquisition centres the chip clock on whichever path
 /// wins the preamble (the §B3.5b phenomenon, measured at WN8 on the disjoint
@@ -56,7 +58,17 @@ internal sealed class Ms110dMfbBlockDecoder
     private readonly TailBitingViterbiDecoder _viterbi;
     private readonly TailBitingSisoDecoder _siso;
 
-    private readonly int[] _nibs;
+    // The symbol map (G1d: modulation-generic, the prototype's form). A fetched number
+    // is _bps bits MSB-first; the per-frame scramble sequence comes from the register
+    // reset at each data frame (D.5.1.3, identical every frame): QAM16 XORs the nibble
+    // (NextQam), 8PSK transcodes the tribit through Table D-V and adds the scrambler
+    // tribit modulo 8 (NextPsk), exactly as Ms110dModulator does. The QAM16 arithmetic
+    // is unchanged operation for operation (the W5b2 numbers reproduce byte-identically).
+    private readonly bool _qam;
+    private readonly int _bps;
+    private readonly int _points;
+    private readonly int[] _scr;
+    private readonly byte[] _transcode8 = Ms110dTables.Transcode8Psk.ToArray();
     private readonly Complex[] _ring;
     private readonly Complex[] _decisions;
     private readonly Complex[] _proj;
@@ -82,6 +94,28 @@ internal sealed class Ms110dMfbBlockDecoder
 
     private bool _windowSet;
     private int _lMin;
+    private bool _firstBlock;
+
+    // Which mini-probe sits at anchor p of a block (D.5.2.2): the probe after the
+    // second-to-last data frame of each interleaver block is cyclically shifted, so the
+    // probe PRECEDING frame p is shifted when (p + 1) % frames == 0 and the probe
+    // FOLLOWING the last frame when (frames + 1) % frames == 0. With one frame per
+    // block every probe is shifted - except the one that ends the preamble, which the
+    // modulator emits unshifted, so block 0's preceding probe is never a boundary probe.
+    // For every interleaver with more than one frame per block this is the expression
+    // the W5b2 port shipped, so the Long-interleaver batteries are unmoved by it; it
+    // was found by the G1d hermetic loopback of WN7 UltraShort (evidence
+    // 2026-08-20-poorgate-g1d), where the wrong first anchor made the whole block's
+    // model garbage.
+    private bool ProbeIsBoundary(int p, int frames)
+    {
+        if (p == 0 && _firstBlock)
+        {
+            return false;
+        }
+
+        return p < frames ? (p + 1) % frames == 0 : (frames + 1) % frames == 0;
+    }
 
     public Ms110dMfbBlockDecoder(
         Ms110dMode mode, Ms110dInterleaverParams il, ConvolutionalCode code,
@@ -116,16 +150,80 @@ internal sealed class Ms110dMfbBlockDecoder
         _rhs = new Complex[WinLen];
         _phiRow = new Complex[WinLen];
 
-        // The per-frame scramble nibbles: the register resets at every data frame
-        // start (D.5.1.3), so the sequence is identical each frame.
-        _nibs = new int[u];
+        _qam = mode.Modulation switch
+        {
+            Ms110dModulation.Qam16 => true,
+            Ms110dModulation.Psk8 => false,
+            _ => throw new ArgumentException("the MFB-form decoder speaks QAM16 and 8PSK", nameof(mode)),
+        };
+        _bps = mode.BitsPerSymbol;
+        _points = 1 << _bps;
+        _scr = new int[u];
         var scrambler = new Ms110dScrambler();
         scrambler.Reset();
         for (int i = 0; i < u; i++)
         {
-            _nibs[i] = scrambler.NextQam(0, 4);
+            _scr[i] = _qam ? scrambler.NextQam(0, 4) : scrambler.NextPsk(0);
         }
     }
+
+    private Complex Wire(int number, int u)
+    {
+        Cf w = _qam
+            ? Ms110dTables.Qam16[number ^ _scr[u]]
+            : Ms110dTables.Psk8[(_transcode8[number] + _scr[u]) & 7];
+        return new Complex(w.Re, w.Im);
+    }
+
+    private Complex Point(int q)
+    {
+        Cf w = _qam ? Ms110dTables.Qam16[q] : Ms110dTables.Psk8[q];
+        return new Complex(w.Re, w.Im);
+    }
+
+    private void SetDecisionsFrom(ReadOnlySpan<byte> info)
+    {
+        byte[] fetched = Ms110dFraming.EncodeBlock(_code, _puncture, _interleaver, info);
+        int u = _mode.U;
+        int bit = 0;
+        for (int d = 0; d < _decisions.Length; d++)
+        {
+            int number = 0;
+            for (int i = 0; i < _bps; i++)
+            {
+                number = (number << 1) | fetched[bit++];
+            }
+
+            _decisions[d] = Wire(number, d % u);
+        }
+    }
+
+    /// <summary>The decoder's final iterate for the last block, fixed point or not -
+    /// the ensemble candidate <see cref="Price"/> arbitrates.</summary>
+    public void LastDecode(Span<byte> dst)
+    {
+        _dec.AsSpan().CopyTo(dst);
+    }
+
+    /// <summary>The label-free price of a block decode: re-encode it to wire symbols,
+    /// reconstruct the last block's span through its final anchor set, and return the
+    /// mean squared residual per complex sample over the data region - the same
+    /// likelihood proxy the cycle-accept selection uses, offered to a decode from
+    /// outside (G1c measured it choosing the zero-error decode on every contested
+    /// block between this decoder and the DFE-chain path).</summary>
+    public double Price(ReadOnlySpan<byte> info, IReadOnlyList<long> frameChips)
+    {
+        SetDecisionsFrom(info);
+        return ReconResidual(frameChips, _lastHc0, _lastN, _lMin);
+    }
+
+    /// <summary>The number of complex samples a <see cref="Price"/> averages over (the
+    /// data region of the last block, in T/2 rows) - what turns a residual ratio into a
+    /// Gaussian log-likelihood difference.</summary>
+    public long PriceRows => 2 * ((_il.Frames - 1) * (_mode.U + _mode.K) + _mode.U);
+
+    private long _lastHc0;
+    private int _lastN;
 
     /// <summary>Clears the per-burst window state (a new burst may lock on the other
     /// path - the window must be re-scanned).</summary>
@@ -134,7 +232,7 @@ internal sealed class Ms110dMfbBlockDecoder
         _windowSet = false;
     }
 
-    /// <summary>Decodes one QAM16 block in place. Returns true when the schedule
+    /// <summary>Decodes one QAM16 or 8PSK block in place. Returns true when the schedule
     /// reached an exact fixed point (the decode is <paramref name="info"/>); false
     /// means no fixed point by the cap and the caller must keep its first-pass decode
     /// (the revert principle).</summary>
@@ -149,6 +247,9 @@ internal sealed class Ms110dMfbBlockDecoder
         long hc0 = (2 * (frameChips[0] - k)) + (2 * ScanMin);
         long hcEnd = (2 * (frameChips[frames - 1] + u + k)) + (2 * ScanMax);
         int n = (int)(hcEnd - hc0);
+        _lastHc0 = hc0;
+        _lastN = n;
+        _firstBlock = demod.BlockIndex == 0;
         for (long hc = hc0; hc < hcEnd; hc++)
         {
             Cf v = demod.RingReadT2(hc);
@@ -180,8 +281,7 @@ internal sealed class Ms110dMfbBlockDecoder
         {
             bool preceding = p < frames;
             long ps = preceding ? frameChips[p] - k : frameChips[frames - 1] + u;
-            bool boundary = preceding ? (p + 1) % frames == 0 : (frames + 1) % frames == 0;
-            Cf[] probe = MiniProbe.Get(k, boundary);
+            Cf[] probe = MiniProbe.Get(k, ProbeIsBoundary(p, frames));
             ClearNormal(WinLen);
             long rowLo = (2 * ps) + lMax;
             long rowHi = (2 * (ps + k)) + lMin;
@@ -362,8 +462,7 @@ internal sealed class Ms110dMfbBlockDecoder
         for (int p = 0; p < scanProbes; p++)
         {
             long ps = frameChips[p] - k;
-            bool boundary = (p + 1) % _il.Frames == 0;
-            Cf[] probe = MiniProbe.Get(k, boundary);
+            Cf[] probe = MiniProbe.Get(k, ProbeIsBoundary(p, _il.Frames));
             Array.Clear(rhs);
             for (int i = 0; i < ScanLen; i++)
             {
@@ -599,8 +698,7 @@ internal sealed class Ms110dMfbBlockDecoder
         {
             bool preceding = p < frames;
             long ps = preceding ? frameChips[p] - k : frameChips[frames - 1] + u;
-            bool boundary = preceding ? (p + 1) % frames == 0 : (frames + 1) % frames == 0;
-            Cf[] probe = MiniProbe.Get(k, boundary);
+            Cf[] probe = MiniProbe.Get(k, ProbeIsBoundary(p, frames));
             for (int c = 0; c < k; c++)
             {
                 AddChip(ps + c, new Complex(probe[c].Re, probe[c].Im));
@@ -660,11 +758,11 @@ internal sealed class Ms110dMfbBlockDecoder
             if (r0Dist is not null)
             {
                 double best = double.MaxValue;
-                for (int q = 0; q < 16; q++)
+                for (int q = 0; q < _points; q++)
                 {
-                    Cf cq = Ms110dTables.Qam16[q];
-                    double dr = _proj[d].Real - cq.Re;
-                    double di = _proj[d].Imaginary - cq.Im;
+                    Complex cq = Point(q);
+                    double dr = _proj[d].Real - cq.Real;
+                    double di = _proj[d].Imaginary - cq.Imaginary;
                     best = Math.Min(best, (dr * dr) + (di * di));
                 }
 
@@ -687,21 +785,21 @@ internal sealed class Ms110dMfbBlockDecoder
         int u = _mode.U;
         for (int d = 0; d < _proj.Length; d++)
         {
-            int nib = _nibs[d % u];
-            for (int q = 0; q < 16; q++)
+            int pos = d % u;
+            for (int q = 0; q < _points; q++)
             {
-                Cf cq = Ms110dTables.Qam16[q ^ nib];
-                double dr = _proj[d].Real - cq.Re;
-                double di = _proj[d].Imaginary - cq.Im;
+                Complex cq = Wire(q, pos);
+                double dr = _proj[d].Real - cq.Real;
+                double di = _proj[d].Imaginary - cq.Imaginary;
                 _metric[q] = ((dr * dr) + (di * di)) * _gramT[d] / _sigma2;
             }
 
-            for (int bb = 0; bb < 4; bb++)
+            for (int bb = 0; bb < _bps; bb++)
             {
                 double m0 = double.MaxValue, m1 = double.MaxValue;
-                for (int q = 0; q < 16; q++)
+                for (int q = 0; q < _points; q++)
                 {
-                    if (((q >> (3 - bb)) & 1) != 0)
+                    if (((q >> (_bps - 1 - bb)) & 1) != 0)
                     {
                         m1 = Math.Min(m1, _metric[q]);
                     }
@@ -711,24 +809,14 @@ internal sealed class Ms110dMfbBlockDecoder
                     }
                 }
 
-                _llrs[(d * 4) + bb] = (float)(m1 - m0); // positive ⇒ bit 0
+                _llrs[(d * _bps) + bb] = (float)(m1 - m0); // positive => bit 0
             }
         }
     }
 
     private void SetDecisionsHard()
     {
-        byte[] fetched = Ms110dFraming.EncodeBlock(_code, _puncture, _interleaver, _dec);
-        int u = _mode.U;
-        int bit = 0;
-        for (int d = 0; d < _decisions.Length; d++)
-        {
-            int number = (fetched[bit] << 3) | (fetched[bit + 1] << 2)
-                | (fetched[bit + 2] << 1) | fetched[bit + 3];
-            bit += 4;
-            Cf w = Ms110dTables.Qam16[number ^ _nibs[d % u]];
-            _decisions[d] = new Complex(w.Re, w.Im);
-        }
+        SetDecisionsFrom(_dec);
     }
 
     private void SetDecisionsSoft()
@@ -743,25 +831,24 @@ internal sealed class Ms110dMfbBlockDecoder
         int u = _mode.U;
         for (int d = 0; d < _decisions.Length; d++)
         {
-            for (int bb = 0; bb < 4; bb++)
+            for (int bb = 0; bb < _bps; bb++)
             {
-                double l = Math.Clamp(_softWire[(d * 4) + bb], -30f, 30f);
+                double l = Math.Clamp(_softWire[(d * _bps) + bb], -30f, 30f);
                 _p0[bb] = 1.0 / (1.0 + Math.Exp(-l));
             }
 
-            int nib = _nibs[d % u];
+            int pos = d % u;
             Complex ex = Complex.Zero;
-            for (int m = 0; m < 16; m++)
+            for (int m = 0; m < _points; m++)
             {
                 double pm = 1.0;
-                for (int bb = 0; bb < 4; bb++)
+                for (int bb = 0; bb < _bps; bb++)
                 {
-                    bool one = ((m >> (3 - bb)) & 1) != 0;
+                    bool one = ((m >> (_bps - 1 - bb)) & 1) != 0;
                     pm *= one ? 1.0 - _p0[bb] : _p0[bb];
                 }
 
-                Cf w = Ms110dTables.Qam16[m ^ nib];
-                ex += pm * new Complex(w.Re, w.Im);
+                ex += pm * Wire(m, pos);
             }
 
             _decisions[d] = ex;

@@ -100,7 +100,12 @@ public class Ms110dTailAutopsy
 
         float[] audio = tx.Modulate(payload);
         int channelSeed = workerSeed + (1000 * burst) + 1;
-        var channel = new WattersonChannel(9600, channelSeed, WattersonChannel.Poor)
+        // MS110D_AUTOPSY_AWGN=1: the AWGN rig instead of D.6.1 Poor - the mask suite's
+        // AWGN points (seed base 100 + wn, empty path set) reproduced burst-exactly, so
+        // an AWGN census line becomes a corpse like any Poor one (G1d needed it: the
+        // ensemble's one AWGN WN7 failure).
+        bool awgnRig = Environment.GetEnvironmentVariable("MS110D_AUTOPSY_AWGN") == "1";
+        var channel = new WattersonChannel(9600, channelSeed, awgnRig ? [] : WattersonChannel.Poor)
         {
             RecordGains = true,
         };
@@ -572,7 +577,7 @@ public class Ms110dTailAutopsy
             demod.Process(rx);
         }
 
-        if (!clean)
+        if (!clean && !awgnRig)
         {
             using var gainsOut = new StreamWriter(Path.Combine(outDir, $"autopsy-gains-{tag}.csv"));
             gainsOut.WriteLine("index,p0re,p0im,p1re,p1im");
@@ -622,6 +627,7 @@ public class Ms110dTailAutopsy
             $"first-decode errors per block: {string.Join(" ", firstDecodeErrs)}\n" +
             $"final-decode errors per block: {string.Join(" ", finalDecodeErrs)}\n" +
             (oracle ? $"oracle coded errors per block: {string.Join(" ", oracleBlockErrs)}\n" : "") +
+            (demod.MfbOffered > 0 ? $"mfb ensemble: offered {demod.MfbOffered}, selected {demod.MfbSelected}\n" : "") +
             (truth ? $"truth coded errors per block: {string.Join(" ", truthBlockErrs)}\n" : "") +
             (turboFrozen ? $"frozen coded errors per block: {string.Join(" ", frozenBlockErrs)}\n" : ""));
         if (turboFrozen)

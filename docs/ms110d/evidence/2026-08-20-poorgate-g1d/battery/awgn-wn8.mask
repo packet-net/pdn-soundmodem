@@ -1,0 +1,1 @@
+2026-08-20T18:36:32.9096650Z [mask] AWGN WN8 @ +16 dB: 4,325,120 bits, 0 errors, 8 bursts (0 acquisition failures), 715 s simulated, 4 workers - BER 0.00E+000, 97.5 % upper bound 8.48E-007 | uncoded 3.97E-003, turbo 88c/0r/0a/0s, agc 0
