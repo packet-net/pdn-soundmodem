@@ -127,14 +127,50 @@ public class Ms110dMfbFormReceiver
                 code, puncture, interleaver, txBits.AsSpan(b * il.InputBits, il.InputBits));
         }
 
-        // The per-frame scramble nibbles (register reset each data frame - identical
-        // sequence every frame).
-        var nibs = new int[u256];
+        // The symbol map (G1: modulation-generic - the W5 prototype spoke QAM16 only). A
+        // fetched number is bps bits MSB-first; the per-frame scramble sequence comes from
+        // the register reset at each data frame (identical every frame): QAM16 XORs the
+        // nibble (NextQam), 8PSK transcodes the tribit through Table D-V and adds the
+        // scrambler tribit modulo 8 (NextPsk), exactly as Ms110dModulator does. The QAM16
+        // arithmetic is unchanged operation for operation, so the W5 numbers must
+        // reproduce byte-identically (calibration lane (i) of the G1 registration).
+        bool qam = tx.Mode.Modulation == Ms110dModulation.Qam16;
+        (tx.Mode.Modulation is Ms110dModulation.Qam16 or Ms110dModulation.Psk8).Should().BeTrue(
+            "the MFB-form prototype speaks the two Phase B constellations");
+        int bps = tx.Mode.BitsPerSymbol;
+        int points = 1 << bps;
+        var scr = new int[u256];
         var scrambler = new Ms110dScrambler();
         scrambler.Reset();
         for (int u = 0; u < u256; u++)
         {
-            nibs[u] = scrambler.NextQam(0, 4);
+            scr[u] = qam ? scrambler.NextQam(0, 4) : scrambler.NextPsk(0);
+        }
+
+        byte[] transcode8 = Ms110dTables.Transcode8Psk.ToArray();
+        Complex Wire(int number, int u)
+        {
+            Cf w = qam
+                ? Ms110dTables.Qam16[number ^ scr[u]]
+                : Ms110dTables.Psk8[(transcode8[number] + scr[u]) & 7];
+            return new Complex(w.Re, w.Im);
+        }
+
+        Complex Point(int q)
+        {
+            Cf w = qam ? Ms110dTables.Qam16[q] : Ms110dTables.Psk8[q];
+            return new Complex(w.Re, w.Im);
+        }
+
+        int Number(byte[] bits, ref int idx)
+        {
+            int number = 0;
+            for (int i = 0; i < bps; i++)
+            {
+                number = (number << 1) | bits[idx++];
+            }
+
+            return number;
         }
 
         // The demod runs first: its acquisition supplies CFO/timing, and the block-ready
@@ -262,6 +298,29 @@ public class Ms110dMfbFormReceiver
         summary.WriteLine(FormattableString.Invariant(
             $"WN{wn} @ {snrDb} dB baseSeed {baseSeed} worker {worker} burst {burst} (channelSeed {channelSeed}) MFB-form receiver, window [{lMin},{lMax})"));
 
+        // G1c selection-ceiling instrument: MS110D_MFBRX_CANDIDATE names an autopsy
+        // `autopsy-decoded-*.txt` from the shipped receiver (the line whose length is the
+        // burst's tx bit count is its decode). At the final rung every block prices its own
+        // decode and the candidate's by the same label-free MFB reconstruction residual and
+        // reports which the lower residual would select - the ensemble question asked of
+        // the instrument before anything is built.
+        byte[]? candidateBits = null;
+        string? candidatePath = Environment.GetEnvironmentVariable("MS110D_MFBRX_CANDIDATE");
+        if (candidatePath is not null)
+        {
+            foreach (string line in File.ReadLines(candidatePath))
+            {
+                string t = line.Trim();
+                if (t.Length == txBits.Length)
+                {
+                    candidateBits = t.Select(ch => (byte)(ch == '1' ? 1 : 0)).ToArray();
+                }
+            }
+
+            candidateBits.Should().NotBeNull($"{candidatePath} must carry a {txBits.Length}-bit decode line");
+        }
+
+        var selectLines = new List<string>();
         var rungTotals = new long[iters + 1];
         Span<double> metric = stackalloc double[16];
         Span<double> p0 = stackalloc double[4];
@@ -467,11 +526,7 @@ public class Ms110dMfbFormReceiver
             {
                 for (int u = 0; u < u256; u++)
                 {
-                    int number = (fetched[bit] << 3) | (fetched[bit + 1] << 2)
-                        | (fetched[bit + 2] << 1) | fetched[bit + 3];
-                    bit += 4;
-                    Cf w = Ms110dTables.Qam16[number ^ nibs[u]];
-                    truthWire[(f * u256) + u] = new Complex(w.Re, w.Im);
+                    truthWire[(f * u256) + u] = Wire(Number(fetched, ref bit), u);
                     dataChip[(f * u256) + u] = frameChips[f] + u;
                 }
             }
@@ -673,11 +728,11 @@ public class Ms110dMfbFormReceiver
                     if (r0Dist is not null)
                     {
                         double bestD = double.MaxValue;
-                        for (int q = 0; q < 16; q++)
+                        for (int q = 0; q < points; q++)
                         {
-                            Cf cq = Ms110dTables.Qam16[q];
-                            double dr = proj[d].Real - cq.Re;
-                            double di = proj[d].Imaginary - cq.Im;
+                            Complex cq = Point(q);
+                            double dr = proj[d].Real - cq.Real;
+                            double di = proj[d].Imaginary - cq.Imaginary;
                             bestD = Math.Min(bestD, (dr * dr) + (di * di));
                         }
 
@@ -695,20 +750,20 @@ public class Ms110dMfbFormReceiver
                 for (int d = 0; d < proj.Length; d++)
                 {
                     int u = d % u256;
-                    for (int q = 0; q < 16; q++)
+                    for (int q = 0; q < points; q++)
                     {
-                        Cf cq = Ms110dTables.Qam16[q ^ nibs[u]];
-                        double dr = proj[d].Real - cq.Re;
-                        double di = proj[d].Imaginary - cq.Im;
+                        Complex cq = Wire(q, u);
+                        double dr = proj[d].Real - cq.Real;
+                        double di = proj[d].Imaginary - cq.Imaginary;
                         metric[q] = ((dr * dr) + (di * di)) * gramT[d] / sigma2;
                     }
 
-                    for (int bb = 0; bb < 4; bb++)
+                    for (int bb = 0; bb < bps; bb++)
                     {
                         double m0 = double.MaxValue, m1 = double.MaxValue;
-                        for (int q = 0; q < 16; q++)
+                        for (int q = 0; q < points; q++)
                         {
-                            if (((q >> (3 - bb)) & 1) != 0)
+                            if (((q >> (bps - 1 - bb)) & 1) != 0)
                             {
                                 m1 = Math.Min(m1, metric[q]);
                             }
@@ -718,7 +773,7 @@ public class Ms110dMfbFormReceiver
                             }
                         }
 
-                        llrs[(d * 4) + bb] = (float)(m1 - m0);
+                        llrs[(d * bps) + bb] = (float)(m1 - m0);
                     }
                 }
 
@@ -731,6 +786,48 @@ public class Ms110dMfbFormReceiver
 
                 rungTotals[rung] += errs;
                 rungLines[rung].Add($"b{b}:{errs}");
+
+                if (candidateBits is not null && rung == iters)
+                {
+                    double Residual(ReadOnlySpan<byte> blockBits)
+                    {
+                        byte[] enc = Ms110dFraming.EncodeBlock(code, puncture, interleaver, blockBits);
+                        var wire = new Complex[frames * u256];
+                        int idx = 0;
+                        for (int f2 = 0; f2 < frames; f2++)
+                        {
+                            for (int u2 = 0; u2 < u256; u2++)
+                            {
+                                wire[(f2 * u256) + u2] = Wire(Number(enc, ref idx), u2);
+                            }
+                        }
+
+                        Complex[] rc = Reconstruct(wire);
+                        double r = 0;
+                        long rows = 0;
+                        for (long hc = 2 * frameChips[0]; hc < 2 * (frameChips[^1] + u256); hc++)
+                        {
+                            Complex dd = ring[hc - hc0] - rc[hc - hc0];
+                            r += (dd.Real * dd.Real) + (dd.Imaginary * dd.Imaginary);
+                            rows++;
+                        }
+
+                        return r / rows;
+                    }
+
+                    ReadOnlySpan<byte> cand = candidateBits.AsSpan(b * il.InputBits, il.InputBits);
+                    int candErrs = 0;
+                    for (int i = 0; i < cand.Length; i++)
+                    {
+                        candErrs += cand[i] != txBits[(b * il.InputBits) + i] ? 1 : 0;
+                    }
+
+                    double ownResid = Residual(dec);
+                    double candResid = Residual(cand);
+                    bool pickOwn = ownResid <= candResid;
+                    selectLines.Add(FormattableString.Invariant(
+                        $"b{b}: own {errs}@{ownResid:E3} cand {candErrs}@{candResid:E3} -> {(pickOwn ? "own" : "cand")} = {(pickOwn ? errs : candErrs)}"));
+                }
 
                 if (rung < softUntil)
                 {
@@ -748,24 +845,23 @@ public class Ms110dMfbFormReceiver
                     for (int d = 0; d < decisions.Length; d++)
                     {
                         int u = d % u256;
-                        for (int bb = 0; bb < 4; bb++)
+                        for (int bb = 0; bb < bps; bb++)
                         {
-                            double l = Math.Clamp(softWire[(d * 4) + bb], -30f, 30f);
+                            double l = Math.Clamp(softWire[(d * bps) + bb], -30f, 30f);
                             p0[bb] = 1.0 / (1.0 + Math.Exp(-l)); // positive ⇒ bit 0
                         }
 
                         Complex ex = Complex.Zero;
-                        for (int m = 0; m < 16; m++)
+                        for (int m = 0; m < points; m++)
                         {
                             double pm = 1.0;
-                            for (int bb = 0; bb < 4; bb++)
+                            for (int bb = 0; bb < bps; bb++)
                             {
-                                bool one = ((m >> (3 - bb)) & 1) != 0;
+                                bool one = ((m >> (bps - 1 - bb)) & 1) != 0;
                                 pm *= one ? 1.0 - p0[bb] : p0[bb];
                             }
 
-                            Cf w = Ms110dTables.Qam16[m ^ nibs[u]];
-                            ex += pm * new Complex(w.Re, w.Im);
+                            ex += pm * Wire(m, u);
                         }
 
                         decisions[d] = ex;
@@ -781,15 +877,16 @@ public class Ms110dMfbFormReceiver
                     {
                         for (int u = 0; u < u256; u++)
                         {
-                            int number = (reFetched[rbit] << 3) | (reFetched[rbit + 1] << 2)
-                                | (reFetched[rbit + 2] << 1) | reFetched[rbit + 3];
-                            rbit += 4;
-                            Cf w = Ms110dTables.Qam16[number ^ nibs[u]];
-                            decisions[(f * u256) + u] = new Complex(w.Re, w.Im);
+                            decisions[(f * u256) + u] = Wire(Number(reFetched, ref rbit), u);
                         }
                     }
                 }
             }
+        }
+
+        if (selectLines.Count > 0)
+        {
+            summary.WriteLine($"selection (own vs candidate, by MFB residual): {string.Join(" | ", selectLines)}");
         }
 
         summary.WriteLine($"anchor-fit residual per block: {string.Join(" ", anchorResidBlocks)}");
