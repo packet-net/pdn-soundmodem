@@ -1,0 +1,1 @@
+2026-08-20T17:42:37.0608998Z [mask] AWGN WN7 @ +13 dB: 3,243,776 bits, 8 errors, 8 bursts (0 acquisition failures), 715 s simulated, 4 workers - BER 2.47E-006, 97.5 % upper bound 4.86E-006 | uncoded 3.59E-003, turbo 88c/0r/0a/0s, agc 0

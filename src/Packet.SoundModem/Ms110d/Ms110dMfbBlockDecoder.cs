@@ -217,6 +217,11 @@ internal sealed class Ms110dMfbBlockDecoder
         return ReconResidual(frameChips, _lastHc0, _lastN, _lMin);
     }
 
+    /// <summary>The number of complex samples a <see cref="Price"/> averages over (the
+    /// data region of the last block, in T/2 rows) - what turns a residual ratio into a
+    /// Gaussian log-likelihood difference.</summary>
+    public long PriceRows => 2 * ((_il.Frames - 1) * (_mode.U + _mode.K) + _mode.U);
+
     private long _lastHc0;
     private int _lastN;
 

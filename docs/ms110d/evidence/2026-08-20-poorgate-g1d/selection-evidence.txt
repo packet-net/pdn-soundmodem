@@ -1,0 +1,21 @@
+# Contested blocks under the residual-only selector (build 811233a + diagnostics), the evidence in both receivers' units.
+# chainEvidence = sum |LLR| of the chain's final wire LLRs at the disagreeing wire bits; mfbEvidence = rows x ln(chain residual / MFB residual).
+awgn-s107-w0-b0 block=8 chain=2.495849E-003 mfb=2.495510E-003 pick=mfb diff=5 chainAbsLlrAtDiff=4.46 chainEvidence=22.3 mfbEvidence=5.0
+poor-s10507-w0-b0 block=4 chain=6.313575E-004 mfb=6.289081E-004 pick=mfb diff=4 chainAbsLlrAtDiff=1.80 chainEvidence=7.2 mfbEvidence=143.0
+poor-s10507-w0-b0 block=10 chain=6.349851E-004 mfb=6.327890E-004 pick=mfb diff=7 chainAbsLlrAtDiff=2.94 chainEvidence=20.6 mfbEvidence=127.5
+poor-s10507-w1-b0 block=1 chain=6.289710E-004 mfb=6.784500E-004 pick=chain diff=13 chainAbsLlrAtDiff=21.58 chainEvidence=280.5 mfbEvidence=-2786.7
+poor-s10507-w1-b0 block=5 chain=6.386670E-004 mfb=6.330914E-004 pick=mfb diff=5 chainAbsLlrAtDiff=2.44 chainEvidence=12.2 mfbEvidence=322.7
+poor-s10507-w1-b0 block=9 chain=6.294688E-004 mfb=6.258548E-004 pick=mfb diff=6 chainAbsLlrAtDiff=2.28 chainEvidence=13.7 mfbEvidence=211.9
+poor-s10507-w2-b1 block=4 chain=6.482886E-004 mfb=7.614446E-004 pick=chain diff=46 chainAbsLlrAtDiff=21.88 chainEvidence=1006.7 mfbEvidence=-5920.4
+poor-s10507-w2-b1 block=7 chain=6.418952E-004 mfb=6.406627E-004 pick=mfb diff=4 chainAbsLlrAtDiff=3.44 chainEvidence=13.8 mfbEvidence=70.7
+poor-s10507-w3-b0 block=5 chain=6.449565E-004 mfb=6.413328E-004 pick=mfb diff=4 chainAbsLlrAtDiff=1.33 chainEvidence=5.3 mfbEvidence=207.3
+poor-s507-w0-b0 block=1 chain=6.401353E-004 mfb=6.706346E-004 pick=chain diff=9 chainAbsLlrAtDiff=27.32 chainEvidence=245.9 mfbEvidence=-1712.9
+poor-s507-w1-b0 block=3 chain=6.486517E-004 mfb=6.418014E-004 pick=mfb diff=4 chainAbsLlrAtDiff=2.38 chainEvidence=9.5 mfbEvidence=390.7
+poor-s507-w1-b0 block=6 chain=6.381734E-004 mfb=6.315981E-004 pick=mfb diff=4 chainAbsLlrAtDiff=1.11 chainEvidence=4.5 mfbEvidence=381.1
+poor-s507-w1-b1 block=2 chain=6.529836E-004 mfb=6.493642E-004 pick=mfb diff=5 chainAbsLlrAtDiff=3.32 chainEvidence=16.6 mfbEvidence=204.5
+poor-s507-w1-b1 block=4 chain=6.427984E-004 mfb=6.416651E-004 pick=mfb diff=4 chainAbsLlrAtDiff=1.99 chainEvidence=7.9 mfbEvidence=64.9
+poor-s507-w1-b1 block=7 chain=6.341422E-004 mfb=6.318010E-004 pick=mfb diff=5 chainAbsLlrAtDiff=2.10 chainEvidence=10.5 mfbEvidence=136.1
+poor-s507-w1-b1 block=8 chain=6.462748E-004 mfb=7.102898E-004 pick=chain diff=29 chainAbsLlrAtDiff=19.86 chainEvidence=576.0 mfbEvidence=-3475.7
+poor-s507-w2-b1 block=4 chain=6.509073E-004 mfb=6.955777E-004 pick=chain diff=19 chainAbsLlrAtDiff=25.64 chainEvidence=487.1 mfbEvidence=-2442.6
+poor-s507-w2-b1 block=5 chain=6.442279E-004 mfb=6.428000E-004 pick=mfb diff=4 chainAbsLlrAtDiff=1.36 chainEvidence=5.4 mfbEvidence=81.7
+poor-s507-w2-b1 block=8 chain=6.496352E-004 mfb=6.342826E-004 pick=mfb diff=14 chainAbsLlrAtDiff=1.86 chainEvidence=26.1 mfbEvidence=880.1

@@ -2515,21 +2515,26 @@ public sealed class Ms110dDemodulator
                 // G1d (Poor-gate successor program): the 8PSK per-block ensemble. The
                 // chain path above is the better WN7 receiver on most blocks and the
                 // MFB-form decoder on others, and G1 measured them never wrong on the
-                // same block (0 of 88); the label-free reconstruction residual of each
-                // decode through the MFB's probe-anchored trajectory chose the
-                // zero-error one on every contested block (18 of 18, margins +0.17 %
-                // to +22 %). So: run the MFB beside the chain, price both decodes the
-                // same way, keep the lower residual; a tie keeps the chain's. Only a
-                // CONVERGED MFB decode (exact fixed point or accepted cycle) is offered:
-                // a wandering iterate is not evidence (the §B3.3 principle the QAM16
-                // branch lives by), and on a block the MFB cannot model - the hermetic
-                // suite's WN7 UltraShort loopback, one frame per block - its residual is
-                // noise and ranked a garbage decode above the chain's correct one. A
-                // converged decode is by construction one whose model explains the ring,
-                // which is exactly the condition under which G1 measured the residual
-                // discriminating. Structural scoping: only 8PSK reaches this block;
-                // QAM16 keeps its W5b2 branch below and every other waveform is
-                // bit-identical by construction.
+                // same block (0 of 88). Each receiver is asked for its evidence in its
+                // own log-likelihood units and the larger wins:
+                //   - the MFB's: its Gaussian log-likelihood gain over the block,
+                //     rows x ln(chain residual / MFB residual), both decodes priced
+                //     through the MFB's probe-anchored trajectory;
+                //   - the chain's: the sum of |LLR| of its final wire LLRs at the
+                //     positions where the two decodes re-encode differently (B3.9:
+                //     honest erasures sit near 1, right bits at 12-68).
+                // Measured on the G1 specimens plus the one AWGN WN7 block the
+                // residual-only selector got wrong (evidence 2026-08-20-poorgate-g1d):
+                // the 13 blocks the chain had wrong show MFB evidence 65-880 against
+                // chain evidence 4.5-26 (8x at the thinnest); the AWGN block - an MFB
+                // nearest-neighbour codeword error, 5 wire bits, the residual-minimising
+                // decode under the MFB's own model and so invisible to a residual
+                // comparison - shows chain 22.3 against MFB 5.0; the five Poor MFB basin
+                // traps show negative MFB evidence. No constant is tuned. Only a
+                // CONVERGED MFB decode is offered (the B3.3 principle), and a block whose
+                // chain LLR buffer is not complete keeps the chain's decode. Structural
+                // scoping: only 8PSK reaches this block; QAM16 keeps its W5b2 branch
+                // below and every other waveform is bit-identical by construction.
                 _mfb ??= new Ms110dMfbBlockDecoder(
                     _mode, _il, _code!, _puncture!, _interleaver!, _viterbi!, _siso!);
                 _mfbInfo ??= new byte[info.Length];
@@ -2539,15 +2544,37 @@ public sealed class Ms110dDemodulator
                 {
                     double chainPrice = _mfb.Price(info, _blockFrameChips);
                     double mfbPrice = _mfb.Price(_mfbInfo, _blockFrameChips);
+                    double mfbEvidence = _mfb.PriceRows * Math.Log(chainPrice / mfbPrice);
+                    double chainEvidence = 0;
+                    int diffBits = 0;
+                    bool switchToMfb = false;
                     MfbOffered++;
-                    if (mfbPrice < chainPrice)
+                    if (mfbEvidence > 0 && _blockLlrCount == _il.SizeBits)
+                    {
+                        // Two re-encodes per offered block: the same per-block allocation
+                        // class as the turbo path's first-pass copy, seconds apart on air.
+                        byte[] chainWire = Ms110dFraming.EncodeBlock(_code!, _puncture!, _interleaver!, info);
+                        byte[] mfbWire = Ms110dFraming.EncodeBlock(_code!, _puncture!, _interleaver!, _mfbInfo);
+                        for (int i = 0; i < chainWire.Length; i++)
+                        {
+                            if (chainWire[i] != mfbWire[i])
+                            {
+                                diffBits++;
+                                chainEvidence += Math.Abs(_blockLlrs[i]);
+                            }
+                        }
+
+                        switchToMfb = diffBits > 0 && mfbEvidence > chainEvidence;
+                    }
+
+                    if (switchToMfb)
                     {
                         Array.Copy(_mfbInfo, info, info.Length);
                         MfbSelected++;
                     }
 
                     FrameDiagnosticsForInstruments?.Invoke(FormattableString.Invariant(
-                        $"mfb-ensemble block={_blockIndex} chain={chainPrice:E3} mfb={mfbPrice:E3} pick={(mfbPrice < chainPrice ? "mfb" : "chain")}"));
+                        $"mfb-ensemble block={_blockIndex} chain={chainPrice:E6} mfb={mfbPrice:E6} diff={diffBits} chainEvidence={chainEvidence:F1} mfbEvidence={mfbEvidence:F1} pick={(switchToMfb ? "mfb" : "chain")}"));
                 }
                 else
                 {
