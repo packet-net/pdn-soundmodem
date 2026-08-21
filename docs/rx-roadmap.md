@@ -727,6 +727,25 @@ documentation rather than the column name: `FrameQuality.SnrDb`'s doc, the frame
 in CONFIG.md and the ledger entry all state it is the band-tracker ratio, NOT SNR3k. A
 quiet band at decode time yields null, never zero.
 
+### 10. Timing diversity and the clock hold for the remaining single-carrier modes (opened 2026-08-21, issue #331)
+
+PR #330 gave both PSK demodulators seven decision phases per symbol (the recovered clock
+instant and 2.5, 5 and 7.5 % of a symbol either side, each with its own detector state and
+its own `Il2pReceiver`, the modem delivering whichever copy passes once behind a
+symbol-clocked dedupe) and a DPLL that holds nearly rigid once a burst is established. On
+deterministic seeds it is worth about 1 dB at the knee of qpsk600, qpsk2400, bpsk300 and
+bpsk1200, and it is what copies the 2026-08-21 off-air qpsk600 fixture (ledger, 2026-08-21
+later4). The technique needs only a symbol clock and a deframer that can say yes or no, so
+it reaches every single-carrier mode; the open items, ranked by likely payoff, live in
+**issue #331**: afsk300-il2pc first (same DPLL, same RS edge, bank already there), then the
+FSK/C4FSK IL2P modes at 48 kHz (interpolated sub-sample phases), then afsk1200's classic
+HDLC (any phase whose FCS checks, a few per cent of frames rather than a decibel). FreeDV
+datac, MS110D and ARDOP are not candidates. Two rules carried over from #330: verify the
+phases actually differ by scoring a known frame per phase before trusting any ladder (the
+first cut's phases were [0, -0, 0] and the ladder read a clean null), and gate the clock hold
+on a DCD that really means the clock has converged (BPSK's seed fires too early; QPSK's DCD is
+marginal, #329).
+
 ## Discipline
 
 - Every workstream that changes decode behaviour lands with its sim-ladder A/B and a corpus
