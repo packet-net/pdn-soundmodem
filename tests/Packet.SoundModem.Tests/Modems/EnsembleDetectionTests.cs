@@ -66,15 +66,28 @@ public class EnsembleDetectionTests
     }
 
     [Theory]
-    [InlineData("qpsk600")]
     [InlineData("afsk300-il2pc")]
     [InlineData("freedv-datac3")]
-    public void Non_Bpsk_Modes_Refuse_An_Ensemble_Rather_Than_Silently_Ignoring_It(string mode)
+    public void Non_Psk_Modes_Refuse_An_Ensemble_Rather_Than_Silently_Ignoring_It(string mode)
     {
         Action act = () => ModemCatalog.Create(mode, ModemCatalog.DspRateFor(mode),
             static _ => { }, new ModemOptions(SecondDetector: PskDetector.Coherent));
 
         act.Should().Throw<ArgumentException>(
             "a measurement that asks for an ensemble must never silently get the single bank");
+    }
+
+    [Fact]
+    public void A_Qpsk_Bank_Takes_A_Coherent_Second_Detector()
+    {
+        // Issue #326: the QPSK family has the bank, and with it the ensemble knob. Coherent is
+        // the only other detector it has - the MLSE stage is BPSK-only.
+        IModem rx = ModemCatalog.Create("qpsk600", SampleRate, static _ => { },
+            new ModemOptions(SecondDetector: PskDetector.Coherent));
+        rx.Mode.Should().Be("qpsk600-il2pc-multi18");
+
+        Action mlse = () => ModemCatalog.Create("qpsk600", SampleRate, static _ => { },
+            new ModemOptions(SecondDetector: PskDetector.Mlse));
+        mlse.Should().Throw<ArgumentException>("the QPSK demodulator has no equaliser to hand symbols to");
     }
 }

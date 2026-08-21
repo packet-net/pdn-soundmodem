@@ -247,3 +247,34 @@ by `n_INTR = baud/300` (6 for Q3600) and its sampler hardcodes 300 baud, so ever
 exactly 40 samples per symbol. The fix here is internal interpolation in `QpskDemodulator`, because
 no divisor of 48 kHz gives an integer ratio at 1800 baud. See docs/mode-modulation-reference.md and
 the mode-validation.md entry of 2026-08-08 (later6).
+
+## Postscript, 2026-08-21: the bank, the always-deciding reference, and the timing fixes (issue #326)
+
+The "obvious next lever" of the closeout arrived as issue #326, with a real off-air `qpsk600`
+burst at +1.7 dB that the shipping receiver could not copy (`samples/offair/2026-08-21/`). The
+work is recorded in docs/mode-validation.md (2026-08-21, later3) and docs/plan.md's amendment
+log; the findings that revise this document's record are:
+
+- **Fix-set 2's "AWGN null" had a mechanism.** The handover was gated on the fourth-power offset
+  window turning coherent, and on a real QPSK payload at the knee that window is coherent through
+  the all-reversal preamble and incoherent through the whole payload (the fourth power of a noisy
+  phasor is far noisier than the square BPSK gets away with), so the reference never decided the
+  part of the burst that matters. Decided from cold, as BPSK's does, the reference is worth its
+  theoretical root-two on the decision noise once the tracker's gain is dropped from 0.05 to 0.01
+  after DCD asserts (at 0.05 the tracker's own jitter gave it all back).
+- **The knee was timing-bound, not detector-bound.** With the truth known, a fixed clock at the
+  right phase decodes the 0 dB synthetic burst with zero wrong bytes where the DPLL left six; the
+  sub-sample crossing interpolation BPSK's DPLL always had (QPSK passed zero) and inertia 0.94
+  are worth ~1.5 dB on qpsk2400 and a few points on qpsk600; 0.96 loses the 16-symbol
+  zero-TXDELAY acquisition exactly as #236 found at its 24-bit minimum.
+- **Finding (1) of fix-set 2 stands, with its cause named:** the reference failed at 8 Hz from
+  cold because the rotation tracker was dormant until the seed. Running it from the first symbol,
+  clamped to one bank step, and de-rotating the product it feeds the DPLL with, a single branch
+  now copies +-30 Hz at +4 dB where the campaign measured 3 %, and the bank takes the family's
+  carrier-offset tolerance to its comb (+-30 Hz at 300 Bd, +-120 Hz at 1200 Bd) plus the seed.
+- **Finding (2), qpsk3600's scope-out, is re-measured on the FM ladder in the #326 PR** (the
+  interpolated-instant reference is now applied to the sample the reference decides on, not only
+  to the product).
+- **The fixture itself does not copy**, and its README now records why in wrong bytes: a 70 ms
+  damaged stretch at the start of the payload leaves 8 bad bytes at the best possible clock phase
+  (the RS limit) and 10 at the recovered clock.

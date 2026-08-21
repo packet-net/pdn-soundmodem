@@ -75,9 +75,24 @@ public class WattersonMaskTests(ITestOutputHelper output)
     [InlineData("qpsk600", "awgn", 4.0, 0.0, 36)]      // measured 100/100 2026-08-07 (QPSK
                                                        // campaign fix-set 1: matched filter
                                                        // + DPLL timing; was 39/40)
+    // The #326 rows (2026-08-21, N=40, seed 1): the bank and the chain port moved the
+    // qpsk600 knee ~0.8 dB and qpsk2400's ~1 dB, and took both modes' carrier-offset
+    // tolerance to the bank's comb. The CFO rows are the structural part: on the single
+    // modem these points measured 71 % (15 Hz) and 3 % (30 Hz) at +4 dB.
+    [InlineData("qpsk600", "awgn", 2.0, 0.0, 34)]      // measured 39/40
+    [InlineData("qpsk600", "awgn", 0.0, 0.0, 26)]      // measured 33/40 - the knee, where
+                                                       // the reference and the timing show
+    [InlineData("qpsk600", "awgn", 4.0, 15.0, 36)]     // measured 40/40 - two bank steps out
+    [InlineData("qpsk600", "awgn", 4.0, 30.0, 36)]     // measured 40/40 - the comb's edge
     [InlineData("qpsk2400", "awgn", 11.0, 0.0, 36)]    // measured 99/100 2026-08-07 (same
                                                        // campaign; was 40/40 at a knee that
                                                        // has since moved ~2 dB down)
+    [InlineData("qpsk2400", "awgn", 9.0, 0.0, 34)]     // measured 39/40 (#326)
+    [InlineData("qpsk2400", "awgn", 7.0, 0.0, 32)]     // measured 38/40 (#326) - the knee;
+                                                       // the single modem measured 72/100
+    [InlineData("qpsk2400", "awgn", 9.0, 60.0, 34)]    // measured 39/40 (#326) - two steps
+    [InlineData("qpsk2400", "awgn", 9.0, 120.0, 34)]   // measured 40/40 (#326) - the comb's
+                                                       // edge, bpsk1200's RSP1 figure (#116)
     [InlineData("freedv-datac0", "awgn", 0.0, 0.0, 20, 25)]  // measured 25/25
     [InlineData("freedv-datac1", "awgn", 3.0, 0.0, 20, 25)]  // measured 25/25
     [InlineData("freedv-datac3", "awgn", 0.0, 0.0, 20, 25)]  // measured 25/25
