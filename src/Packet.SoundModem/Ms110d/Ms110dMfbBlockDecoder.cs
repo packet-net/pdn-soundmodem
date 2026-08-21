@@ -115,8 +115,8 @@ internal sealed class Ms110dMfbBlockDecoder
     // G2d: the MMSE cold rung (Poor-gate successor program, evidence 2026-08-20-poorgate-g2).
     // Per-symbol linear MMSE over the response window at the uncancelled rung, known
     // probes subtracted exactly, neighbouring data chips as Es-power unknowns, the
-    // anchor-fit residual as the label-free noise estimate. QAM16 only in this leg
-    // (structural scope: the 8PSK ensemble's MFB candidates stay byte-identical).
+    // anchor-fit residual as the label-free noise estimate. Shipped for QAM16 at G2d and
+    // for 8PSK at G4 (2026-08-21), where it is the ensemble's second member.
     private readonly double _es;
     private readonly Complex[,] _rMat = new Complex[WinLen, WinLen];
     private readonly Complex[] _zVec = new Complex[WinLen];
@@ -388,7 +388,7 @@ internal sealed class Ms110dMfbBlockDecoder
             RebuildAnchors(midFrame: false, frameChips); // drop attempt-0 refit anchors
             converged = RunSchedule(softFirst: false, frameChips, hc0, n, lMin, diag);
         }
-        else if (_qam && _lastCycleAccepted)
+        else if (_lastCycleAccepted)
         {
             // G2f: a cycle-accepted decode is a verdict under one schedule, not the block's
             // last word - the hard-first schedule finds exact fixed points on blocks the
@@ -474,7 +474,7 @@ internal sealed class Ms110dMfbBlockDecoder
             }
 
             Project(frameChips, hc0, n, lMin, haveDecisions);
-            if (softPhase && _qam && haveDecisions)
+            if (softPhase && haveDecisions)
             {
                 // Soft-phase plateau watch on the reconstruction residual just priced.
                 if (_sigma2 < bestSoftSigma * (1 - SoftPlateauTolerance))
@@ -510,7 +510,7 @@ internal sealed class Ms110dMfbBlockDecoder
                 $"mfb-rung r{rung} churn={churn} soft={(softPhase ? 1 : 0)} sigma={_sigma2:E2}"));
             if (rung > 0 && churn == 0)
             {
-                if (softPhase && _qam && rung < SoftMinRungs)
+                if (softPhase && rung < SoftMinRungs)
                 {
                     // Stable as a hard decode, not yet saturated as soft posteriors: keep
                     // the soft rungs going so the re-fit below trains on sharper rows.
@@ -552,7 +552,7 @@ internal sealed class Ms110dMfbBlockDecoder
             // the handover rung _prevDec2 is still a soft-phase decode, and accepting a
             // soft oscillation there held the WN8 stragglers at 15-62 errors (evidence
             // 2026-08-20-poorgate-g2). 8PSK keeps the W5b2 behaviour until its own leg.
-            bool membersHard = !_qam || rung >= hardStart + 2;
+            bool membersHard = rung >= hardStart + 2; // G4: both branches since 2026-08-21
             if (!softPhase && rung > 1 && churn > 0 && membersHard &&
                 _dec.AsSpan().SequenceEqual(_prevDec2))
             {
@@ -873,9 +873,9 @@ internal sealed class Ms110dMfbBlockDecoder
         {
             _sigma2 = ReconResidual(frameChips, hc0, n, lMin);
         }
-        else if (_qam)
+        else
         {
-            ProjectMmseCold(frameChips, hc0, n, lMin);
+            ProjectMmseCold(frameChips, hc0, n, lMin); // G4: both branches since 2026-08-21
             return;
         }
 

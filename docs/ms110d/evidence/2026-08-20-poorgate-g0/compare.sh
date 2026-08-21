@@ -16,7 +16,7 @@ ident=0; differ=0; missing=0
 for mine in "$OUT"/census-*.csv; do
     name=$(basename "$mine")
     if [[ "$name" == census-awgn-wn8-* ]]; then ref="$W5/$name"
-    elif [[ "$name" == *-wn8-* ]]; then ref="$W6/$name"
+    elif [[ "$name" == *-wn8-* ]]; then ref="$W6/census/$name"
     elif [[ "$name" == *-wn7-* ]]; then ref="$W7/census/$name"
     else ref="$W0/census/$name"; fi
     if [[ ! -f "$ref" ]]; then echo "  NO BASELINE $name"; missing=$((missing+1)); continue; fi
