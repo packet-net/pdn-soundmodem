@@ -746,6 +746,19 @@ first cut's phases were [0, -0, 0] and the ladder read a clean null), and gate t
 on a DCD that really means the clock has converged (BPSK's seed fires too early; QPSK's DCD is
 marginal, #329).
 
+**The AFSK family is done (PR #333, ledger 2026-08-21 later5).** `AfskDemodulator` decides
+every bit at the seven phases and holds its clock once DCD asserts; every wrapper runs a
+deframer per phase behind a bit-clocked content dedupe. Worth about a third of a decibel at
+every AFSK knee on AWGN (`afsk300-il2pc` -2 dB 61 -> 92 of 200, `afsk1200` +6 dB 107 -> 129,
+`afsk300` 0 dB 70 -> 86), a little on the FM channels, and nothing at all on the fading ones.
+Measured apart, the phases are the entire sim gain and the hold is neutral there, kept for
+what it does to a real capture. Two findings for the modes still open: the eye sweep
+(`AfskEyeSweepProbe`) is the cheap way to know in advance how much a mode's timing can be
+worth - 300 baud's plateau is nine samples wide at 40 samples per bit, which is why it gains
+a third of what the PSK modes did, while 1200 baud's window is two samples wide - and at
+40 samples per bit the phases one and two samples early are often the same decision, which is
+real rather than a bug and is what the per-phase scoring test exists to tell apart.
+
 ## Discipline
 
 - Every workstream that changes decode behaviour lands with its sim-ladder A/B and a corpus
