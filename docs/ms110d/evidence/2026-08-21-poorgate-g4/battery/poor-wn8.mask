@@ -1,0 +1,1 @@
+2026-08-21T07:16:49.8894188Z [mask] POOR WN8 @ +23 dB: 4,325,120 bits, 12 errors, 8 bursts (0 acquisition failures), 715 s simulated, 4 workers - BER 2.77E-006, 97.5 % upper bound 4.85E-006 | uncoded 2.62E-001, deep-fade(<-6 dB) holds 11% of uncoded errors in 9% of bits, turbo 88c/0r/0a/0s, agc 0
