@@ -36,6 +36,8 @@
     <ProjectReference Include="../../tools/Packet.SoundModem.UberSdr/Packet.SoundModem.UberSdr.csproj" />
     <!-- Dev tool under test: the OTA transmit harness (Ota/*Tests). -->
     <ProjectReference Include="../../tools/Packet.SoundModem.Ota/Packet.SoundModem.Ota.csproj" />
+    <!-- Dev tool under test: the unknown-mode WAV sweep (MultiDecode/*Tests). -->
+    <ProjectReference Include="../../tools/Packet.SoundModem.MultiDecode/Packet.SoundModem.MultiDecode.csproj" />
   </ItemGroup>
 
   <ItemGroup>

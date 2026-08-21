@@ -13,6 +13,19 @@ public static class WavFile
     /// files yield the requested channel (default: the first / left).</summary>
     public static (float[] Samples, int SampleRate) ReadMono(string path, int channel = 0)
     {
+        var (samples, sampleRate, _) = ReadChannel(path, channel);
+        return (samples, sampleRate);
+    }
+
+    /// <summary>
+    /// As <see cref="ReadMono"/>, and also reports how many channels the file has. For a caller
+    /// handed a recording of unknown provenance, which channel to read is a decision it cannot
+    /// make without that count - a two-channel capture with the radio on one side only is an
+    /// ordinary thing to be given, and silently reading the silent side looks exactly like a
+    /// file with nothing in it.
+    /// </summary>
+    public static (float[] Samples, int SampleRate, int Channels) ReadChannel(string path, int channel = 0)
+    {
         byte[] data = File.ReadAllBytes(path);
         var span = data.AsSpan();
         if (data.Length < 44 || !span[..4].SequenceEqual("RIFF"u8) || !span[8..12].SequenceEqual("WAVE"u8))
@@ -80,7 +93,7 @@ public static class WavFile
             throw new InvalidDataException("missing fmt or data chunk");
         }
 
-        return (samples, sampleRate);
+        return (samples, sampleRate, channels);
     }
 
     /// <summary>Writes mono 16-bit PCM. Samples are clipped to −1..1.</summary>
