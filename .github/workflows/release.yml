@@ -41,6 +41,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the release notes are written from first-parent history between tags
 
       # The xUnit v3 / MTP test apphosts (OutputType=Exe) resolve the runtime via
       # DOTNET_ROOT; the runner's distro dotnet lives outside the apphost's default
@@ -188,54 +190,25 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          cat > /tmp/relnotes.md <<'NOTES'
-          ### Install (Debian/Ubuntu/Raspberry Pi OS)
-
-          Download the `.deb` for your architecture and install it - the package is
-          self-contained, so no .NET runtime is needed on the target:
-
-          ```
-          sudo apt install ./pdn-soundmodem_VERSION_ARCH.deb
-          ```
-
-          `amd64` for x86-64, `arm64` for a 64-bit Raspberry Pi OS, `armhf` for 32-bit.
-
-          The systemd unit is enabled and started on install, and on a fresh install it
-          **will fail** - that is expected. The modem has no useful defaults, so the seeded
-          config names a sound device and PTT line that won't match your machine. Edit it
-          and restart:
-
-          ```
-          sudo nano /etc/pdn-soundmodem/soundmodem.json
-          sudo systemctl restart pdn-soundmodem
-          systemctl status pdn-soundmodem
-          ```
-
-          (Debian only installs `sudo` when the root password is left blank at setup - if you
-          do not have it, become root with `su -` and drop the `sudo` prefix.)
-
-          KISS-over-TCP is on port 8105 by default. Verify downloads against `SHA256SUMS`.
-
-          Full instructions - config, PTT permissions, upgrading, uninstalling - are in
-          [INSTALL.md](https://github.com/packet-net/pdn-soundmodem/blob/main/INSTALL.md).
-          NOTES
-          sed -i "s/pdn-soundmodem_VERSION_ARCH/pdn-soundmodem_${VERSION}_<arch>/" /tmp/relnotes.md
+          # One bullet per merged PR (or direct commit) since the previous tag, grouped by
+          # kind, from first-parent history - no rehashed install text, no API calls. The
+          # install pointer is a single line at the end; INSTALL.md carries the detail.
+          python3 scripts/release-notes.py "$TAG" > /tmp/relnotes.md
+          cat /tmp/relnotes.md
 
           prerelease=""
           if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then prerelease="--prerelease"; fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "release $TAG exists - replacing its assets"
+            echo "release $TAG exists - replacing its assets and notes"
             gh release upload "$TAG" ./artifacts/*.deb ./artifacts/*.nupkg ./artifacts/SHA256SUMS --clobber
+            gh release edit "$TAG" --notes-file /tmp/relnotes.md
           else
-            # --notes (not --notes-file) is the flag gh documents as prependable to
-            # --generate-notes' output; the generated "What's Changed" list follows ours.
             gh release create "$TAG" \
               ./artifacts/*.deb ./artifacts/*.nupkg ./artifacts/SHA256SUMS \
               --target "$GITHUB_SHA" \
               --title "pdn-soundmodem $VERSION" \
-              --notes "$(cat /tmp/relnotes.md)" \
-              --generate-notes \
+              --notes-file /tmp/relnotes.md \
               $prerelease
           fi
 

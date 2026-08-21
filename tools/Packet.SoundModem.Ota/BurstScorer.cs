@@ -202,6 +202,21 @@ public sealed class BurstScorer
             demod.FrameDiagnostics += message => diagnostics.Add((consumed, message));
         }
 
+        // The schedule's clock and the capture's drift apart - a constant offset from where the
+        // capture started, plus a slope from the two sample clocks (measured on 2026-07-27 as
+        // about one slot over a ladder: the last bursts fell outside the window and scored as
+        // unscheduled, and the asked/got SNR labels shuffled). Every match re-estimates both
+        // from what has actually been seen, so later slots are predicted where they will be,
+        // not where the schedule said.
+        double matchOffset = 0;      // detected - expected, at the last match
+        double matchSlope = 0;       // d(detected - expected) / d(expected), from the last two
+        double lastMatchExpected = double.NaN;
+
+        double Predicted(double expectedSeconds) =>
+            double.IsNaN(lastMatchExpected)
+                ? expectedSeconds
+                : expectedSeconds + matchOffset + (matchSlope * (expectedSeconds - lastMatchExpected));
+
         Ms110dReferenceBits? MatchSchedule(double startSeconds)
         {
             // Order first - bursts arrive in the order they were sent. Time is the cross-check:
@@ -215,15 +230,30 @@ public sealed class BurstScorer
                 }
 
                 ScheduledBurst candidate = _schedule[k];
-                if (candidate.ExpectedSeconds < 0
-                    || Math.Abs(candidate.ExpectedSeconds - startSeconds) <= _options.MatchWindowSeconds)
+                if (candidate.ExpectedSeconds < 0)
                 {
                     matched[k] = true;
                     scheduleCursor = k + 1;
                     return candidate.Reference;
                 }
 
-                if (candidate.ExpectedSeconds > startSeconds + _options.MatchWindowSeconds)
+                double predicted = Predicted(candidate.ExpectedSeconds);
+                if (Math.Abs(predicted - startSeconds) <= _options.MatchWindowSeconds)
+                {
+                    matched[k] = true;
+                    scheduleCursor = k + 1;
+                    double offset = startSeconds - candidate.ExpectedSeconds;
+                    if (!double.IsNaN(lastMatchExpected) && candidate.ExpectedSeconds > lastMatchExpected)
+                    {
+                        matchSlope = (offset - matchOffset) / (candidate.ExpectedSeconds - lastMatchExpected);
+                    }
+
+                    matchOffset = offset;
+                    lastMatchExpected = candidate.ExpectedSeconds;
+                    return candidate.Reference;
+                }
+
+                if (predicted > startSeconds + _options.MatchWindowSeconds)
                 {
                     break; // detected earlier than any remaining slot - this one is unscheduled
                 }

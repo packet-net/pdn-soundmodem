@@ -154,22 +154,29 @@ internal static class Commands
                   --capture-freq <Hz>       RX tune frequency (default: slice centre + tone offset)
                   --capture-port <n>        default 80 with --capture-no-ssl, else 443
                   --capture-no-ssl          plain ws/http (a LAN instance)
+                  --capture rsp             instead capture on the RSP1/studybox SDR (rx_sdr over
+                                            ssh, as `ladder` does); flips the antenna default to
+                                            ANT2, the pad chain's port. --rsp-host/--rsp-freq/
+                                            --rsp-rate/--rsp-gain/--rsp-ssh-key as for `ladder`.
                   --out-dir <dir>           where the capture WAV/sidecar go (default .)
                 """);
             return a is null ? 2 : 0;
         }
 
+        // RSP1 capture flips the transmit antenna default to ANT2 (the pad chain's port), as the
+        // ladder does - keying ANT1 while capturing on ANT2 records nothing, a whole-session loss.
+        bool captureRsp = string.Equals(a.Str("capture", ""), "rsp", StringComparison.OrdinalIgnoreCase);
         var options = new FlexTransmitterOptions
         {
             Radio = a.Str("radio", "discover"),
             FrequencyMHz = a.Str("freq", "18.098000"),
             OccupiedBandwidthHz = a.Int("obw", 6000),
-            Antenna = a.Str("antenna", "ANT1"),
+            Antenna = a.Str("antenna", captureRsp ? "ANT2" : "ANT1"),
             RfPower = a.Int("rf-power", -1) is var p && p >= 0
                 ? p
                 : throw new ArgumentException("--rf-power <0-100> is required (there is deliberately no default)"),
             MaxSwr = a.Dbl("max-swr", 1.5),
-            RfPowerCeiling = a.Int("rf-power-ceiling", 30),
+            RfPowerCeiling = a.Int("rf-power-ceiling", captureRsp ? 20 : 30),
             Callsign = a.Str("id-call", null),
             IdMode = a.Str("id-mode", "MS110D"),
             Identify = !a.Has("no-id"),
@@ -231,6 +238,22 @@ internal static class Commands
         int? captureFreqOverride = null;
         string captureName = "otatone";
         string outDir = ".";
+        string rspHost = "studybox";
+        string rspSshKey = LadderCommand.ExpandUser("~/.ssh/id_ed25519");
+        int? rspFreqOverride = null;
+        int rspRate = 96000;
+        string rspGain = RspIqClient.DefaultGain;
+        if (captureRsp)
+        {
+            rspHost = a.Str("rsp-host", "studybox");
+            rspSshKey = LadderCommand.ExpandUser(a.Str("rsp-ssh-key", "~/.ssh/id_ed25519"));
+            rspFreqOverride = a.Has("rsp-freq") ? a.Int("rsp-freq", 0) : null;
+            rspRate = a.Int("rsp-rate", 96000);
+            rspGain = a.Str("rsp-gain", RspIqClient.DefaultGain);
+            captureName = a.Str("capture-name", "otatone");
+            outDir = a.Str("out-dir", ".");
+        }
+
         if (captureHost is not null)
         {
             captureSsl = !a.Has("capture-no-ssl");
@@ -287,7 +310,32 @@ internal static class Commands
         Task<CaptureResult>? capture = null;
         TransmitReport? mainBurst = null;
         using var captureCts = new CancellationTokenSource();
-        if (captureHost is not null)
+        if (captureRsp)
+        {
+            // The repeatable RSP1 frequency calibration (the 2026-07-27 Poor-validation note
+            // asked for exactly this): the same tone-and-FFT read the UberSDR path gives,
+            // through the pad chain. Tuned to the band reference like the UberSDR branch.
+            double centreHz = double.Parse(options.FrequencyMHz, CultureInfo.InvariantCulture) * 1e6;
+            var rspOpt = new RspCaptureOptions
+            {
+                Host = rspHost,
+                SshKeyPath = rspSshKey,
+                FrequencyHz = rspFreqOverride ?? (int)Math.Round(centreHz),
+                SampleRate = rspRate,
+                Gain = rspGain,
+                Name = captureName,
+                OutputDir = outDir,
+                DurationSeconds = captureSeconds,
+            };
+            Log($"capture: RSP1 on {rspOpt.Host} at {rspOpt.FrequencyHz} Hz, {rspOpt.SampleRate} S/s, "
+                + $"gain [{rspOpt.Gain}] for {captureSeconds} s");
+            capture = new RspIqClient(m => Log($"[rsp] {m}")).CaptureAsync(rspOpt, captureCts.Token);
+            // rx_sdr over ssh: the SSH connect, the device open and the 1 s startup guard all
+            // precede the first sample; burst alignment uses Sample0Utc, so this only has to
+            // get the stream past its guard before RF.
+            await Task.Delay(TimeSpan.FromSeconds(4));
+        }
+        else if (captureHost is not null)
         {
             // Tune the receiver to the BAND REFERENCE (--freq, where baseband 0 Hz lands), not
             // to the tone. That puts the tone at +tone-hz, any residual image at −tone-hz, and

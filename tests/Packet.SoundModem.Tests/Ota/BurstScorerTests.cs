@@ -240,6 +240,41 @@ public class BurstScorerTests
     }
 
     [Fact]
+    public void A_schedule_whose_clock_drifts_against_the_capture_is_still_matched_in_order()
+    {
+        // The 2026-07-27 campaign's nit: the schedule's times and the capture's drifted apart by
+        // about a slot over a ladder, and the tail scored as unscheduled. Here every slot lands
+        // 3 s later than the schedule says, cumulatively - by the fourth burst the error is
+        // 12 s against a 5 s match window - and the matcher must follow it from what it has
+        // already matched rather than lose the tail.
+        var schedule = new List<ScheduledBurst>();
+        var audio = new List<float>();
+        int[] waveforms = [2, 6, 13, 2, 6];
+        const double driftPerSlot = 3.0;
+        double nominal = 5.0;
+        for (int k = 0; k < waveforms.Length; k++)
+        {
+            var reference = new Ms110dReferenceBits(Settings(waveforms[k]), PayloadBits(waveforms[k]), seed: 950 + k);
+            audio.AddRange(new float[(int)(driftPerSlot * k * Rate)]); // the capture runs slow
+            float[] burst = Transmit(reference, snrDb: 25, seed: 80 + k);
+            audio.AddRange(burst);
+            schedule.Add(new ScheduledBurst(reference, nominal));
+            nominal += burst.Length / (double)Rate; // the schedule's own clock: no drift
+        }
+
+        CaptureScore score = new BurstScorer(schedule).Score(Blocks([.. audio], 4096));
+
+        score.Missed.Should().BeEmpty("every scheduled burst was transmitted");
+        score.Bursts.Should().HaveCount(5);
+        score.Bursts.Should().OnlyContain(b => b.Scheduled, "the matcher follows the measured drift");
+        for (int k = 0; k < 5; k++)
+        {
+            score.Bursts[k].WaveformNumber.Should().Be(waveforms[k]);
+            score.Bursts[k].PayloadErrors.Should().Be(0, "each burst is scored against its own reference bits");
+        }
+    }
+
+    [Fact]
     public void A_burst_that_was_never_transmitted_is_reported_as_missed()
     {
         // The metric that matters most and the one a per-slice scorer cannot produce: the
