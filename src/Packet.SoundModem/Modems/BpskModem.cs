@@ -10,8 +10,15 @@ public sealed class BpskModem : IModem, IConstellationSource
 {
     private readonly BpskDemodulator _demodulator;
     private readonly BpskModulator _modulator;
-    private readonly Il2pReceiver _deframer;
+
+    /// <summary>Dedupe window across the timing phases' deframers, in symbols: shorter than the
+    /// shortest IL2P frame (a 15-byte header alone is 120 symbols at one bit each), longer than
+    /// the trailer a held plain reading waits for (32 bits).</summary>
+    private const int DedupeWindowSymbols = 48;
+    private readonly Il2pReceiver[] _deframers;
+    private readonly FrameDeduper _deduper;
     private readonly int _baud;
+    private long _symbolsSeen;
     private readonly bool _crc;
 
     /// <summary>Creates the modem.</summary>
@@ -42,29 +49,48 @@ public sealed class BpskModem : IModem, IConstellationSource
         // reading below - while it in turn cannot be built until the bit sink that drives it
         // exists. Nothing dereferences it until audio flows.
         BpskDemodulator? demodulator = null;
-        var deframer = new Il2pReceiver(
-            (frame, info, delivery) =>
-            {
-                if (!delivery.MonitorOnly)
+        // One deframer per timing phase (see TimingDiversity): the phases decide the same
+        // symbols at slightly different instants, so their deframers run in lockstep and a
+        // frame that any of them reads is delivered once, the first copy to arrive winning. The
+        // short content window behind it catches the one way a copy can arrive later: a phase
+        // whose own IL2P+CRC reading failed holds a plain reading until the trailer bits pass
+        // and would otherwise show it as a second, monitor-only row.
+        // Clocked in symbols, with a window shorter than any frame: the copies to merge arrive
+        // within a symbol of each other (a held plain reading within a trailer's worth), and
+        // a genuine repeat of even the shortest frame is further away than that.
+        _deduper = new FrameDeduper(DedupeWindowSymbols);
+        _deframers = new Il2pReceiver[TimingDiversity.PhaseCount];
+        for (int phase = 0; phase < _deframers.Length; phase++)
+        {
+            _deframers[phase] = new Il2pReceiver(
+                (frame, info, delivery) =>
                 {
-                    frameReceived(frame);
-                }
+                    if (!_deduper.ShouldEmit(frame, _symbolsSeen, !delivery.MonitorOnly))
+                    {
+                        return;
+                    }
 
-                FrameDecoded?.Invoke(frame, new FrameQuality(
-                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
-                    HeaderType: info.HeaderType,
-                    // Read at the end of the burst that carried the frame, while the window it
-                    // is measured over still describes that burst.
-                    FrequencyOffsetHz: demodulator!.CarrierOffsetHz,
-                    PlainIl2p: delivery.PlainIl2p,
-                    TrailerNearBits: delivery.TrailerNearBits,
-                    ErasedBytes: info.ErasedSymbols > 0 ? info.ErasedSymbols : null,
-                    ChasedBits: info.ChasedBits > 0 ? info.ChasedBits : null,
-                    MonitorOnly: delivery.MonitorOnly));
-            },
-            crc, acceptPlainIl2p);
+                    if (!delivery.MonitorOnly)
+                    {
+                        frameReceived(frame);
+                    }
 
-        // Reset the deframer on the DCD falling edge. Without this, a frame whose carrier
+                    FrameDecoded?.Invoke(frame, new FrameQuality(
+                        Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                        HeaderType: info.HeaderType,
+                        // Read at the end of the burst that carried the frame, while the window it
+                        // is measured over still describes that burst.
+                        FrequencyOffsetHz: demodulator!.CarrierOffsetHz,
+                        PlainIl2p: delivery.PlainIl2p,
+                        TrailerNearBits: delivery.TrailerNearBits,
+                        ErasedBytes: info.ErasedSymbols > 0 ? info.ErasedSymbols : null,
+                        ChasedBits: info.ChasedBits > 0 ? info.ChasedBits : null,
+                        MonitorOnly: delivery.MonitorOnly));
+                },
+                crc, acceptPlainIl2p);
+        }
+
+        // Reset the deframers on the DCD falling edge. Without this, a frame whose carrier
         // drops mid-collection (the preceding transmission ends, a collision corrupts the
         // tail, or the signal fades) leaves the deframer blindly consuming the expected
         // payload bytes from whatever follows - including the next transmission's preamble
@@ -78,21 +104,28 @@ public sealed class BpskModem : IModem, IConstellationSource
         bool previousDcd = false;
         demodulator = new BpskDemodulator(sampleRate, static _ => { },
             carrierFrequency, baud, detector, rollOff: rollOff,
-            softBitSink: (bit, confidence) =>
+            softBitSink: (bit, confidence, phase) =>
             {
-                bool dcd = demodulator!.CarrierDetect;
-                if (previousDcd && !dcd)
+                if (phase == 0)
                 {
-                    deframer.Reset();
+                    _symbolsSeen++;
+                    bool dcd = demodulator!.CarrierDetect;
+                    if (previousDcd && !dcd)
+                    {
+                        foreach (Il2pReceiver deframer in _deframers)
+                        {
+                            deframer.Reset();
+                        }
+                    }
+
+                    previousDcd = dcd;
                 }
 
-                previousDcd = dcd;
-                deframer.PushBit(bit, confidence);
+                _deframers[phase].PushBit(bit, confidence);
             });
         _demodulator = demodulator;
         _demodulator.SymbolPlotted = (i, q) => SymbolPlotted?.Invoke(new ConstellationPoint(i, q));
         _modulator = new BpskModulator(sampleRate, baud, carrierFrequency, rollOff);
-        _deframer = deframer;
     }
 
     /// <inheritdoc />
@@ -136,14 +169,40 @@ public sealed class BpskModem : IModem, IConstellationSource
     /// bursts that never produce one, polled while <see cref="CarrierDetect"/> holds.</summary>
     public double? CarrierOffsetHz => _demodulator.CarrierOffsetHz;
 
-    /// <summary>Cumulative sync-found-but-Reed-Solomon-failed count across this modem's IL2P
-    /// readings - see <see cref="Il2pReceiver.RsFailures"/> for exactly what one tick means
-    /// and why deltas, not totals, are the usable signal.</summary>
-    public long RsFailures => _deframer.RsFailures;
+    /// <summary>Cumulative sync-found-but-Reed-Solomon-failed count summed over this modem's
+    /// IL2P readings at every timing phase - see <see cref="Il2pReceiver.RsFailures"/> for
+    /// exactly what one tick means and why deltas, not totals, are the usable signal. Three
+    /// phases read the same bits, so one damaged transmission typically ticks this three times
+    /// over, and a decoded frame can come with ticks from the phases that did not read it.</summary>
+    public long RsFailures
+    {
+        get
+        {
+            long total = 0;
+            foreach (Il2pReceiver deframer in _deframers)
+            {
+                total += deframer.RsFailures;
+            }
+
+            return total;
+        }
+    }
 
     /// <summary>Cumulative recovered-but-trailing-CRC-refused count on the link's own IL2P+CRC
     /// reading - see <see cref="Il2pReceiver.CrcFailures"/>.</summary>
-    public long CrcFailures => _deframer.CrcFailures;
+    public long CrcFailures
+    {
+        get
+        {
+            long total = 0;
+            foreach (Il2pReceiver deframer in _deframers)
+            {
+                total += deframer.CrcFailures;
+            }
+
+            return total;
+        }
+    }
 
     /// <summary>Bench seam: this modem's demodulator, so the sim oracles can record or drive
     /// its symbol instants (rx-roadmap workstream 4). Not part of the deployment surface.

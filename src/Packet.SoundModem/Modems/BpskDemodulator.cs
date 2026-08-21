@@ -80,7 +80,7 @@ public sealed class BpskDemodulator
     private readonly BitDpll _dpll;
     private readonly MlseEqualiser? _mlse;
     private readonly Action<int> _bitSink;
-    private readonly Action<int, float>? _softBitSink;
+    private readonly Action<int, float, int>? _softBitSink;
     private readonly PacketDcd _packetDcd = new();
     private readonly EnergyBusyDetector _energyBusy;
     private readonly PskDetector _detector;
@@ -103,18 +103,30 @@ public sealed class BpskDemodulator
     private float _lastPlotI;
     private float _currentI;
     private float _currentQ;
-    private double _referenceI;
-    private double _referenceQ;
     private double _seededRotation;
-    private double _trackedRotation;
-    private double _confidenceMean;
-
-    // Previous symbol's decision magnitude, for the pair-min per-bit confidence (see
-    // OnSymbolInstant). MaxValue = no previous symbol yet, so a burst's first bit is
-    // judged on its own magnitude alone.
-    private float _previousDecisionMagnitude = float.MaxValue;
     private bool _rotationSeeded;
-    private int _previousPolarity = 1;
+
+    // Per-timing-phase decision state (see TimingDiversity), indexed like its PhaseFractions:
+    // the decision-feedback reference, its rotation tracker, the polarity the differential bit
+    // is decided against, the running confidence mean, and the previous symbol's decision
+    // magnitude for the pair-min per-bit confidence (MaxValue = no previous symbol yet, so a
+    // burst's first bit is judged on its own magnitude alone).
+    private readonly double[] _referenceI;
+    private readonly double[] _referenceQ;
+    private readonly double[] _trackedRotation;
+    private readonly int[] _previousPolarity;
+    private readonly double[] _confidenceMean;
+    private readonly float[] _previousDecisionMagnitude;
+
+    // Recent baseband samples, indexed by input sample modulo the ring length, so a decision
+    // can be taken a little before or after the clock's instant (the late phase needs samples
+    // that arrive after the instant, hence the deferral in DecidePending).
+    private readonly float[] _ringI;
+    private readonly float[] _ringQ;
+    private readonly double _phaseOffsetSamples;
+    private readonly int _ringLead;
+    private long _pendingInstant = -1;
+
     private long _sampleIndex = -1;
     private int _scheduleIndex;
 
@@ -153,14 +165,16 @@ public sealed class BpskDemodulator
     /// per-mode value (0.20 for the 300 Bd mode).</param>
     /// <param name="softBitSink">When supplied, receives each decided bit together with a
     /// confidence in (0, 1) - the symbol's decision magnitude against a slow running mean,
-    /// so a faded or hit symbol ranks low. Feed it to
-    /// <see cref="Il2pReceiver.PushBit(int, float)"/> and failed Reed-Solomon blocks retry
-    /// with the weakest bytes erased. <paramref name="bitSink"/> is called either way.</param>
+    /// so a faded or hit symbol ranks low - and the timing phase that decided it (see
+    /// <see cref="TimingDiversity"/>; phase 0 is the clock's instant, the others a little
+    /// early and late). Feed each phase to its own <see cref="Il2pReceiver.PushBit(int, float)"/>
+    /// and failed Reed-Solomon blocks retry with the weakest bytes erased.
+    /// <paramref name="bitSink"/> is called for phase 0 either way.</param>
     public BpskDemodulator(
         int sampleRate, Action<int> bitSink, double carrierFrequency = 1500, int baud = 300,
         PskDetector detector = PskDetector.Differential, double? loopBandwidthHz = null,
         double rollOff = BpskModulator.DefaultRollOff,
-        Action<int, float>? softBitSink = null)
+        Action<int, float, int>? softBitSink = null)
     {
         ArgumentNullException.ThrowIfNull(bitSink);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
@@ -174,7 +188,7 @@ public sealed class BpskDemodulator
         _softBitSink = softBitSink;
         if (detector == PskDetector.Mlse)
         {
-            _mlse = new MlseEqualiser(EmitBit);
+            _mlse = new MlseEqualiser((bit, magnitude) => EmitBit(0, bit, magnitude));
         }
 
         // QtSoundModem's P300 band-pass, scaled by symbol rate: ±baud about the carrier (which
@@ -211,6 +225,23 @@ public sealed class BpskDemodulator
         int samplesPerSymbol = sampleRate / baud;
         _delayI = new float[samplesPerSymbol];
         _delayQ = new float[samplesPerSymbol];
+
+        int phases = TimingDiversity.PhaseCount;
+        _referenceI = new double[phases];
+        _referenceQ = new double[phases];
+        _trackedRotation = new double[phases];
+        _previousPolarity = new int[phases];
+        Array.Fill(_previousPolarity, 1);
+        _confidenceMean = new double[phases];
+        _previousDecisionMagnitude = new float[phases];
+        Array.Fill(_previousDecisionMagnitude, float.MaxValue);
+        _phaseOffsetSamples = TimingDiversity.Fraction * samplesPerSymbol;
+        // The late phase reads up to ceil(offset) samples past the instant, plus one for the
+        // interpolation's upper neighbour; the ring spans both sides of the instant with room.
+        _ringLead = (int)Math.Ceiling(_phaseOffsetSamples) + 1;
+        int ring = (2 * _ringLead) + 4;
+        _ringI = new float[ring];
+        _ringQ = new float[ring];
         _dpll = new BitDpll(
             baud, sampleRate,
             level =>
@@ -258,34 +289,73 @@ public sealed class BpskDemodulator
             return;
         }
 
-        int decided;
-        float magnitude;
         if (_detector == PskDetector.Coherent)
         {
-            decided = level == _previousLevel ? 1 : 0;
+            int decided = level == _previousLevel ? 1 : 0;
             _previousLevel = level;
-            magnitude = Math.Abs(_lastPlotI);
-        }
-        else
-        {
-            decided = DecideAgainstReference(out double projection);
-            magnitude = (float)Math.Abs(projection);
+            float magnitude = Math.Abs(_lastPlotI);
+            float pairMin = Math.Min(magnitude, _previousDecisionMagnitude[0]);
+            _previousDecisionMagnitude[0] = magnitude;
+            EmitBit(0, decided, pairMin);
+            return;
         }
 
-        // A differentially-decoded bit is a function of TWO symbol decisions - bit k
-        // compares symbol k's polarity against symbol k-1's, so an error in EITHER flips
-        // it, and a single hit symbol flips two consecutive bits. The projection magnitude
-        // above measures only the current symbol (the decision-directed reference is
-        // smoothed over many, so one weak predecessor barely dents it), which left the
-        // second bit of every such pair looking confident - and a bit-level chase decoder
-        // hunting the weakest bits could never find it (measured: 0 chase hits in 50
-        // attempts at the AWGN knee before this line). The honest per-bit confidence is
-        // the weaker of the two symbols the bit depends on. Coherent detection decides
-        // bits the same differential way (level == previous), so it gets the same
-        // treatment; MLSE margins come from the trellis, which already spans both.
-        float pairMin = Math.Min(magnitude, _previousDecisionMagnitude);
-        _previousDecisionMagnitude = magnitude;
-        EmitBit(decided, pairMin);
+        // Differential decides later, once the samples either side of this instant are in the
+        // ring: the instant itself and the early and late timing phases (see DecidePending).
+        if (_pendingInstant >= 0)
+        {
+            DecidePending();
+        }
+
+        _pendingInstant = _sampleIndex;
+    }
+
+    /// <summary>Decides the symbol whose clock instant is pending, at each timing phase: the
+    /// per-burst seed advances once, then every phase reads its own interpolated baseband
+    /// sample from the ring and decides against its own reference.</summary>
+    private void DecidePending()
+    {
+        long instant = _pendingInstant;
+        _pendingInstant = -1;
+        if (UpdateRotationSeed() == RotationSeedEvent.Seeded)
+        {
+            Array.Clear(_trackedRotation);
+        }
+
+        // The trackers keep free-running between bursts, as #236 measured: their noise walk
+        // is bounded by the clamp, BPSK's 90° margin absorbs it, and the quasi-independent
+        // decisions it gives the bank's branches are selection diversity worth several
+        // points at the threshold. Gating them on signal presence, as QpskDemodulator does,
+        // measured 131/186 -> 120/170 of 200 on bpsk1200 at +1/+2 dB here.
+
+        int ring = _ringI.Length;
+        for (int phase = 0; phase < TimingDiversity.PhaseCount; phase++)
+        {
+            double position = instant + (TimingDiversity.PhaseFractions[phase] * _delayI.Length);
+            long lower = (long)Math.Floor(position);
+            float fraction = (float)(position - lower);
+            int a = (int)(((lower % ring) + ring) % ring);
+            int b = (a + 1) % ring;
+            float i = _ringI[a] + (fraction * (_ringI[b] - _ringI[a]));
+            float q = _ringQ[a] + (fraction * (_ringQ[b] - _ringQ[a]));
+            int decided = DecideAgainstReference(phase, i, q, out double projection);
+            float magnitude = (float)Math.Abs(projection);
+
+            // A differentially-decoded bit is a function of TWO symbol decisions - bit k
+            // compares symbol k's polarity against symbol k-1's, so an error in EITHER flips
+            // it, and a single hit symbol flips two consecutive bits. The projection magnitude
+            // above measures only the current symbol (the decision-directed reference is
+            // smoothed over many, so one weak predecessor barely dents it), which left the
+            // second bit of every such pair looking confident - and a bit-level chase decoder
+            // hunting the weakest bits could never find it (measured: 0 chase hits in 50
+            // attempts at the AWGN knee before this line). The honest per-bit confidence is
+            // the weaker of the two symbols the bit depends on. Coherent detection decides
+            // bits the same differential way (level == previous), so it gets the same
+            // treatment; MLSE margins come from the trellis, which already spans both.
+            float pairMin = Math.Min(magnitude, _previousDecisionMagnitude[phase]);
+            _previousDecisionMagnitude[phase] = magnitude;
+            EmitBit(phase, decided, pairMin);
+        }
     }
 
     /// <summary>True while DPLL transition timing indicates a coherent packet signal.</summary>
@@ -355,13 +425,14 @@ public sealed class BpskDemodulator
         _averageDiffMagnitude = 0;
         _offsetWindowReal = 0;
         _offsetWindowImag = 0;
-        _referenceI = 0;
-        _referenceQ = 0;
+        Array.Clear(_referenceI);
+        Array.Clear(_referenceQ);
+        Array.Clear(_trackedRotation);
+        Array.Clear(_confidenceMean);
+        Array.Fill(_previousDecisionMagnitude, float.MaxValue);
         _seededRotation = 0;
-        _trackedRotation = 0;
         _rotationSeeded = false;
-        _confidenceMean = 0;
-        _previousDecisionMagnitude = float.MaxValue;
+        _pendingInstant = -1;
         _mlse?.Reset();
     }
 
@@ -475,7 +546,14 @@ public sealed class BpskDemodulator
 
         _previousDecision = decision;
         _lastPlotI = decision;   // held for the constellation tap (see QpskDemodulator)
+        int slot = (int)(_sampleIndex % _ringI.Length);
+        _ringI[slot] = i;
+        _ringQ[slot] = q;
         _dpll.Sample(decision > 0 ? 1 : 0, crossing);
+        if (_pendingInstant >= 0 && _sampleIndex >= _pendingInstant + _ringLead)
+        {
+            DecidePending();
+        }
     }
 
     /// <summary>Decision-feedback differential detection, once per symbol at the DPLL
@@ -498,43 +576,40 @@ public sealed class BpskDemodulator
     /// moment it turns coherent - a single injection, because feeding the window's angle in
     /// per-symbol measurably jitters the reference with the estimator's own noise.
     /// </remarks>
-    private int DecideAgainstReference(out double projection)
+    private int DecideAgainstReference(int phase, float sampleI, float sampleQ, out double projection)
     {
-        if (UpdateRotationSeed() == RotationSeedEvent.Seeded)
-        {
-            _trackedRotation = 0;
-        }
-
-        double rotation = _seededRotation + _trackedRotation;
+        double referenceI = _referenceI[phase];
+        double referenceQ = _referenceQ[phase];
+        double rotation = _seededRotation + _trackedRotation[phase];
         if (rotation != 0)
         {
             double cos = Math.Cos(rotation);
             double sin = Math.Sin(rotation);
-            (_referenceI, _referenceQ) = (
-                (_referenceI * cos) - (_referenceQ * sin),
-                (_referenceI * sin) + (_referenceQ * cos));
+            (referenceI, referenceQ) = (
+                (referenceI * cos) - (referenceQ * sin),
+                (referenceI * sin) + (referenceQ * cos));
         }
 
-        projection = (_currentI * _referenceI) + (_currentQ * _referenceQ);
+        projection = (sampleI * referenceI) + (sampleQ * referenceQ);
         int polarity = projection >= 0 ? 1 : -1;
-        int bit = polarity == _previousPolarity ? 1 : 0;
-        _previousPolarity = polarity;
+        int bit = polarity == _previousPolarity[phase] ? 1 : 0;
+        _previousPolarity[phase] = polarity;
 
         // Advance the tracker by the angle by which the aligned sample leads the reference.
-        double cross = (polarity * _currentQ * _referenceI) - (polarity * _currentI * _referenceQ);
+        double cross = (polarity * sampleQ * referenceI) - (polarity * sampleI * referenceQ);
         double magnitude = Math.Sqrt(
-            ((double)_currentI * _currentI + (double)_currentQ * _currentQ)
-            * ((_referenceI * _referenceI) + (_referenceQ * _referenceQ)));
+            ((double)sampleI * sampleI + (double)sampleQ * sampleQ)
+            * ((referenceI * referenceI) + (referenceQ * referenceQ)));
         if (magnitude > 1e-12)
         {
             double error = Math.Asin(Math.Clamp(cross / magnitude, -1, 1));
-            _trackedRotation = Math.Clamp(
-                _trackedRotation + (ReferenceFrequencyGain * error),
+            _trackedRotation[phase] = Math.Clamp(
+                _trackedRotation[phase] + (ReferenceFrequencyGain * error),
                 -MaxTrackedRotation, MaxTrackedRotation);
         }
 
-        _referenceI = (ReferenceMemory * _referenceI) + ((1 - ReferenceMemory) * polarity * _currentI);
-        _referenceQ = (ReferenceMemory * _referenceQ) + ((1 - ReferenceMemory) * polarity * _currentQ);
+        _referenceI[phase] = (ReferenceMemory * referenceI) + ((1 - ReferenceMemory) * polarity * sampleI);
+        _referenceQ[phase] = (ReferenceMemory * referenceQ) + ((1 - ReferenceMemory) * polarity * sampleQ);
         return bit;
     }
 
@@ -590,21 +665,25 @@ public sealed class BpskDemodulator
     /// running mean of itself (~500 symbols), squashed into (0, 1). Only the ordering
     /// matters downstream - a fade drops whole bytes to the bottom of the ranking, which is
     /// exactly what erasure decoding wants flagged.</summary>
-    private void EmitBit(int decided, float magnitude)
+    private void EmitBit(int phase, int decided, float magnitude)
     {
-        _bitSink(decided);
+        if (phase == 0)
+        {
+            _bitSink(decided);
+        }
+
         if (_softBitSink is null)
         {
             return;
         }
 
-        _confidenceMean = _confidenceMean == 0
+        _confidenceMean[phase] = _confidenceMean[phase] == 0
             ? magnitude
-            : _confidenceMean + (0.002 * (magnitude - _confidenceMean));
-        float confidence = _confidenceMean <= 0
+            : _confidenceMean[phase] + (0.002 * (magnitude - _confidenceMean[phase]));
+        float confidence = _confidenceMean[phase] <= 0
             ? 0.5f
-            : Math.Min(0.999f, (float)(magnitude / (4.0 * _confidenceMean)));
-        _softBitSink(decided, confidence);
+            : Math.Min(0.999f, (float)(magnitude / (4.0 * _confidenceMean[phase])));
+        _softBitSink(decided, confidence, phase);
     }
 
     /// <summary>Root-raised-cosine matched-filter taps at the sample rate, spanning ±6
