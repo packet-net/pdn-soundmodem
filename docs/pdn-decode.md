@@ -25,9 +25,10 @@ For each file, in order:
 
 ## The sweep set
 
-**By default, everything.** Every mode in `ModemCatalog.KnownModes`, `qpsk3600` twice (see below).
+**By default, everything.** Every mode in `ModemCatalog.KnownModes`, with each PSK mode run twice
+under both detectors (see below).
 The whole point of the tool is not having to have guessed right, and on a short file the widest
-net costs only wall clock - about 30 seconds for a 7-second file.
+net costs only wall clock - about 15 seconds for a 7-second file.
 
 Narrow it if you know roughly what you are looking at and want the answer sooner:
 
@@ -49,15 +50,22 @@ radios**" ([mode-modulation-reference.md](mode-modulation-reference.md)), and sw
 (`qpsk3600`) is a speaker-and-mic mode grouped with the FM AFSK ones.
 
 This is not hypothetical. The first real off-air corpus this tool was pointed at - five noisy
-captures Tom recorded off an FM radio on 2026-08-21 - turned out to be **`bpsk1200` IL2P+CRC**, a
-BPQ chat session between N2IRZ-2 and WA2M-2. The FM-native sweep read exactly none of it. The
-wider sweep recovered the session. `SweepTests` pins the lesson so a future tidy-up cannot quietly
-re-narrow the default.
+captures Tom recorded off an FM radio on 2026-08-21 - is four files of **`bpsk1200` IL2P+CRC**
+(a BPQ chat session between N2IRZ-2 and WA2M-2) and one of **`qpsk600`**. The FM-native sweep read
+exactly none of it. The wider sweep recovered the session. `SweepTests` pins the lesson so a
+future tidy-up cannot quietly re-narrow the default.
 
-`qpsk3600` runs twice, differential and coherent. Differential is its default and that is the
-right default (differential copies 9 of 9 of the NinoTNC corpus where coherent copies 0 to 2 of
-3), but a file being swept here is by definition one that something else struggled with, which is
-the case where the losing branch occasionally wins.
+That corpus is worth reading about in its own right: the `qpsk600` file
+([`samples/offair/2026-08-21/`](../samples/offair/2026-08-21/README.md)) holds a clean burst at
++1.7 dB that nothing in the tree can copy, and working out why is what this tool is for.
+
+**Every PSK mode runs twice**, differential and coherent. Differential is the catalogue default
+and that is the right default - it was measured to copy 9 of 9 of the NinoTNC corpus where
+coherent copied 0 to 2 of 3, and BPSK was reversed to it in issues #40/#42 because coherent's
+narrow Costas loop cannot acquire real carriers. But a file reaching this tool is by definition
+one that something else could not read, which is exactly where the losing branch occasionally
+wins: coherent buys a decibel or two when it can lock, and a long burst on an on-frequency
+carrier is where it can. It costs one more pass and removes a class of "we did not try".
 
 The `--packet` set is stated as an **exclusion**, not a list, so a mode added to the catalogue
 joins it automatically. That is the safe direction for a tool whose failure mode is a silent miss.
@@ -75,7 +83,7 @@ packet-24501.wav  48000 Hz mono, 7.40 s
     0030  65 72 2d 36 2e 30 2e 32  31 2e 34 30 5d 0d        |er-6.0.21.40].|
     text  .d...@d..d.@@.......[BPQChatServer-6.0.21.40].
 
-  5 distinct frame(s), 10 decode(s); 39 modes tried, 37 silent, 27.2 s.
+  5 distinct frame(s), 16 decode(s); 46 modes tried, 42 silent, 13.7 s.
 ```
 
 - **`via <mode>`** is the mode that read the frame most confidently, not merely the first to read
@@ -98,7 +106,7 @@ Not every decode is a frame somebody sent, and the tool is built to say so rathe
 confident.
 
 A Reed-Solomon-only decode of noise is a real thing this sweep will occasionally produce - running
-thirty-nine receivers over a recording is running thirty-nine chances for one of them to find
+forty-six receivers over a recording is running forty-six chances for one of them to find
 structure that is not there, and widening the default deliberately traded some of that for
 coverage. Two things keep it honest:
 
