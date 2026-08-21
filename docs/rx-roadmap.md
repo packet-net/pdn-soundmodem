@@ -746,7 +746,7 @@ first cut's phases were [0, -0, 0] and the ladder read a clean null), and gate t
 on a DCD that really means the clock has converged (BPSK's seed fires too early; QPSK's DCD is
 marginal, #329).
 
-**The AFSK family is done (PR #333, ledger 2026-08-21 later5).** `AfskDemodulator` decides
+**The AFSK family is done (PR #334, ledger 2026-08-21 later5).** `AfskDemodulator` decides
 every bit at the seven phases and holds its clock once DCD asserts; every wrapper runs a
 deframer per phase behind a bit-clocked content dedupe. Worth about a third of a decibel at
 every AFSK knee on AWGN (`afsk300-il2pc` -2 dB 61 -> 92 of 200, `afsk1200` +6 dB 107 -> 129,
