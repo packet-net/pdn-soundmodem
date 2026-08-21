@@ -221,7 +221,7 @@ public class WattersonMaskTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// The direct-FSK timing-diversity rows (mode-validation.md 2026-08-21 later5, issue #331;
+    /// The direct-FSK timing-diversity rows (mode-validation.md 2026-08-21 later6, issue #331;
     /// N=25, seed 1, TXDELAY 150). Seven decision phases per symbol moved every FSK knee by
     /// 1.5 to 2 dB, so each of the three modes gains a row a rung below where its old knee sat,
     /// which is exactly where the receiver before this change did not reach. Both channel axes

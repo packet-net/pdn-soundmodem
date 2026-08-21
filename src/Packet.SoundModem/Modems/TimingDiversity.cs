@@ -44,10 +44,10 @@ internal static class TimingDiversity
 
     /// <summary>Offsets from the recovered instant, in symbols, phase 0 being the instant, then
     /// early/late pairs stepping outward.</summary>
-    internal static readonly double[] PhaseFractions = Build(Step);
+    internal static readonly double[] PhaseFractions = Build(Step, Pairs);
 
     /// <summary>The same set at the direct-FSK step - see <see cref="FskStep"/>.</summary>
-    internal static readonly double[] FskPhaseFractions = Build(FskStep);
+    internal static readonly double[] FskPhaseFractions = Build(FskStep, Pairs);
 
     /// <summary>How many phases the soft sinks are fed: the index they carry runs 0 to this
     /// minus one. The same for both steps, so one deframer per phase covers either.</summary>
@@ -59,11 +59,16 @@ internal static class TimingDiversity
     /// <summary>The widest offset at the direct-FSK step, in symbols.</summary>
     internal static double FskReach => Pairs * FskStep;
 
-    private static double[] Build(double step)
+    /// <summary>Builds a phase set with a mode-specific step and pair count, in the shared
+    /// order: the instant first, then early/late pairs stepping outward. The PSK modes take
+    /// the constants above; a mode whose decision stage runs at a much coarser
+    /// samples-per-symbol ratio measures its own step and says what it measured (see
+    /// <see cref="FskStep"/> and <see cref="C4fskModem"/>).</summary>
+    internal static double[] Build(double step, int pairs)
     {
-        var fractions = new double[(2 * Pairs) + 1];
+        var fractions = new double[(2 * pairs) + 1];
         fractions[0] = 0;
-        for (int pair = 1; pair <= Pairs; pair++)
+        for (int pair = 1; pair <= pairs; pair++)
         {
             fractions[(2 * pair) - 1] = -pair * step;
             fractions[2 * pair] = pair * step;

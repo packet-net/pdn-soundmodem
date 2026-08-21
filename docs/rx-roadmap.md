@@ -746,7 +746,22 @@ first cut's phases were [0, -0, 0] and the ladder read a clean null), and gate t
 on a DCD that really means the clock has converged (BPSK's seed fires too early; QPSK's DCD is
 marginal, #329).
 
-**Done, 2026-08-21 (later5): the direct-FSK modes** (`fsk9600`, `fsk9600-il2p`,
+**C4FSK landed 2026-08-21 (PR for issue #331's third item, ledger 2026-08-21 later5).** Both
+C4FSK modes now decide at seven phases and hold the clock on DCD, worth 1.0 to 2.1 dB at every
+knee measured (c4fsk9600 fm-data 16.6 -> 14.8 dB CNR at TXDELAY 0, 18.9 -> 16.8 at 150 ms;
+c4fsk19200 fm-data 16.2 -> 14.4 and 17.9 -> 16.3; the AWGN rows 1.0 to 1.6 dB). The
+resolution question the item raised has an answer: at 10 decision points per symbol the PSK
+set's 2.5 % step measures materially worse than 5 %, 7.5 % measures the same as 5 %, and a
+ninth phase buys nothing, so the mode runs 5 % x 3 pairs. The phases carry nearly all of it;
+the hold is neutral on AWGN and worth a few frames in 200 on fm-data. Two things the
+measurement turned up for later: TXDELAY costs these modes 2 dB on fm-data and 5 dB on AWGN
+(a longer run-in making a receiver worse is backwards, and it is bigger than what timing
+diversity just bought), and the 4-PAM clock's wrap can only land on a sample, so its decision
+instant is up to a tenth of a symbol late and the phase set is not centred on the eye -
+reading the decision back to the instant the clock asked for, as `QpskDemodulator` does, is
+the next cheap thing to measure.
+
+**Done, 2026-08-21 (later6): the direct-FSK modes** (`fsk9600`, `fsk9600-il2p`,
 `fsk4800-il2p`). Seven phases at 10 % of a symbol rather than 2.5 %, because these modes
 decide on ten points per symbol at 48 kHz and the union of the phases saturates by 10 %;
 1.5 to 2 dB at every knee on both AWGN and fm-data, on the IL2P legs and on classic HDLC
@@ -757,7 +772,11 @@ crossings, so the loop's whole correction is (1 - inertia) times a phase quantis
 tenth of a symbol; at 0.995 the loop bandwidth falls by twenty and a mistuned transmitter
 walks the clock past DCD's own window. The rule this adds to the two above: **the hold is
 only affordable where the crossing is resolved.** Worth revisiting on this chain if it ever
-gets matched-filter timing. Ledger: mode-validation.md 2026-08-21 (later5).
+gets matched-filter timing. One partial answer to the C4FSK note above, measured here:
+phase 0 does read systematically late (21 wrong bits of 1360 against 13 at -10 % on one
+burst at the edge), but recentring the whole set 15 % early is worth nothing the
+symmetric set does not already cover, 138/183/197 against 135/183/196. Ledger:
+mode-validation.md 2026-08-21 (later6).
 
 ## Discipline
 
