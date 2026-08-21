@@ -25,12 +25,20 @@ public sealed class Afsk1200Modem : IModem
     /// space = centre + 500); the demodulator's default shift.</summary>
     private const double Bell202ToneShift = 500;
 
+    /// <summary>Dedupe window across the timing phases' deframers, in bits: shorter than the
+    /// shortest AX.25 frame (a minimal one is 136 bits), long enough to merge the copies the
+    /// phases produce, which arrive within a bit of each other. Separate from, and inside, the
+    /// seconds-wide FX.25 window below, which exists to merge a frame that decodes twice by two
+    /// different routes rather than at two timing phases.</summary>
+    private const int DedupeWindowBits = 64;
+
     private readonly AfskDemodulator _demodulator;
     private readonly AfskModulator _modulator;
     private readonly Fx25Mode _fx25;
     private readonly int _fx25CheckBytes;
     private readonly int _dedupeChunk;
     private long _samplesProcessed;
+    private long _bitsSeen;
 
     /// <summary>Creates the modem.</summary>
     /// <param name="sampleRate">Channel DSP rate.</param>
@@ -72,22 +80,50 @@ public sealed class Afsk1200Modem : IModem
             };
         }
 
-        var deframer = new HdlcDeframer(frame =>
-            deliver(frame, new FrameQuality(Mode, frame.Length, null, null)));
-        var fx25Deframer = fx25 != Fx25Mode.None
-            ? new Fx25Deframer((frame, correctedBytes) =>
-                deliver(frame, new FrameQuality(Mode, frame.Length, correctedBytes, null)))
-            : null;
-        var nrzi = new NrziDecoder();
+        // The timing phases decide the same bits at slightly different instants and each runs
+        // its own deframer, so whichever phase's copy passes the FCS (or the FX.25 Reed-Solomon)
+        // is the one that gets delivered - no FEC on this mode, so "any phase whose FCS checks"
+        // is the whole benefit, which is how Dire Wolf's multi-slicer decoders earn theirs.
+        var phaseDeduper = new FrameDeduper(DedupeWindowBits);
+        Action<byte[], FrameQuality> phased = deliver;
+        deliver = (frame, quality) =>
+        {
+            if (phaseDeduper.ShouldEmit(frame, _bitsSeen))
+            {
+                phased(frame, quality);
+            }
+        };
+
+        int phases = AfskDemodulator.TimingPhaseCount;
+        var deframers = new HdlcDeframer[phases];
+        var fx25Deframers = new Fx25Deframer?[phases];
+        var nrzi = new NrziDecoder[phases];
+        for (int phase = 0; phase < phases; phase++)
+        {
+            nrzi[phase] = new NrziDecoder();
+            deframers[phase] = new HdlcDeframer(frame =>
+                deliver(frame, new FrameQuality(Mode, frame.Length, null, null)));
+            fx25Deframers[phase] = fx25 != Fx25Mode.None
+                ? new Fx25Deframer((frame, correctedBytes) =>
+                    deliver(frame, new FrameQuality(Mode, frame.Length, correctedBytes, null)))
+                : null;
+        }
+
         _demodulator = new AfskDemodulator(
             sampleRate,
-            level =>
+            static _ => { },
+            centerFrequency,
+            phaseBitSink: (level, phase) =>
             {
-                int bit = nrzi.Decode(level);
-                deframer.PushBit(bit);
-                fx25Deframer?.PushBit(bit);
-            },
-            centerFrequency);
+                if (phase == 0)
+                {
+                    _bitsSeen++;
+                }
+
+                int bit = nrzi[phase].Decode(level);
+                deframers[phase].PushBit(bit);
+                fx25Deframers[phase]?.PushBit(bit);
+            });
         _modulator = new AfskModulator(
             sampleRate, 1200, centerFrequency - Bell202ToneShift, centerFrequency + Bell202ToneShift);
     }
