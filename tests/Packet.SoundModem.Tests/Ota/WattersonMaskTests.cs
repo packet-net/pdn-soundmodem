@@ -79,7 +79,15 @@ public class WattersonMaskTests(ITestOutputHelper output)
     [InlineData("bpsk300", "poor", 9.0, 0.0, 2)]       // measured 7/40 - the equaliser-bound
                                                        // floor must not collapse further
     [InlineData("bpsk1200", "awgn", 2.0, 0.0, 28)]     // measured 37/40
-    [InlineData("afsk300-il2pc", "awgn", 0.0, 0.0, 30)] // measured 39/40
+    [InlineData("afsk300-il2pc", "awgn", 0.0, 0.0, 30)] // measured 39/40 (40/40 after the
+                                                        // 2026-08-21 later6 timing phases)
+    // The AFSK timing-diversity row (2026-08-21 later6, N=40, seed 1): the seven decision
+    // phases moved this mode's knee about a third of a decibel, so one row a rung below the
+    // one above. The rung below THAT (-2 dB) is where the change actually shows - 16/40 to
+    // 25/40 - and it is left out on purpose: at 62 % it sits on the steepest part of the
+    // cliff, where a mask measures the machine's floating point as much as the modem (the
+    // lesson the FM tier below records). The ladder table in the ledger carries it instead.
+    [InlineData("afsk300-il2pc", "awgn", -1.0, 0.0, 30)] // measured 37/40
     [InlineData("qpsk600", "awgn", 4.0, 0.0, 36)]      // measured 100/100 2026-08-07 (QPSK
                                                        // campaign fix-set 1: matched filter
                                                        // + DPLL timing; was 39/40)

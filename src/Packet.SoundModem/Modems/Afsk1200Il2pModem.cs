@@ -18,9 +18,16 @@ public sealed class Afsk1200Il2pModem : IModem
     /// space = centre + 500); the demodulator's default shift.</summary>
     private const double Bell202ToneShift = 500;
 
+    /// <summary>Dedupe window across the timing phases' deframers, in bits: shorter than the
+    /// shortest IL2P frame (a 15-byte header alone is 120 bits), longer than the trailer a held
+    /// plain reading waits for (32 bits). See <see cref="Afsk300Modem"/>.</summary>
+    private const int DedupeWindowBits = 64;
+
     private readonly AfskDemodulator _demodulator;
     private readonly AfskModulator _modulator;
     private readonly bool _crc;
+    private readonly FrameDeduper _deduper = new(DedupeWindowBits);
+    private long _bitsSeen;
 
     /// <summary>Creates the modem.</summary>
     /// <param name="sampleRate">Channel DSP rate.</param>
@@ -38,38 +45,60 @@ public sealed class Afsk1200Il2pModem : IModem
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _crc = crc;
-        var deframer = new Il2pReceiver(
-            (frame, info, delivery) =>
-            {
-                if (!delivery.MonitorOnly)
+        // One deframer per timing phase (see AfskDemodulator.TimingPhaseCount), behind a
+        // bit-clocked content dedupe - the Afsk300Modem/QpskModem arrangement.
+        var deframers = new Il2pReceiver[AfskDemodulator.TimingPhaseCount];
+        for (int phase = 0; phase < deframers.Length; phase++)
+        {
+            deframers[phase] = new Il2pReceiver(
+                (frame, info, delivery) =>
                 {
-                    frameReceived(frame);
-                }
+                    if (!_deduper.ShouldEmit(frame, _bitsSeen, !delivery.MonitorOnly))
+                    {
+                        return;
+                    }
 
-                FrameDecoded?.Invoke(frame, new FrameQuality(
-                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
-                    HeaderType: info.HeaderType,
-                    PlainIl2p: delivery.PlainIl2p,
-                    TrailerNearBits: delivery.TrailerNearBits,
-                    MonitorOnly: delivery.MonitorOnly));
-            },
-            crcMode: crc, acceptPlainIl2p: acceptPlainIl2p);
-        // Reset the deframer on the DCD falling edge - same rationale as BpskModem:
+                    if (!delivery.MonitorOnly)
+                    {
+                        frameReceived(frame);
+                    }
+
+                    FrameDecoded?.Invoke(frame, new FrameQuality(
+                        Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                        HeaderType: info.HeaderType,
+                        PlainIl2p: delivery.PlainIl2p,
+                        TrailerNearBits: delivery.TrailerNearBits,
+                        MonitorOnly: delivery.MonitorOnly));
+                },
+                crcMode: crc, acceptPlainIl2p: acceptPlainIl2p);
+        }
+
+        // Reset the deframers on the DCD falling edge - same rationale as BpskModem:
         // a carrier that drops mid-collection leaves the deframer consuming the next
         // transmission's sync word as phantom payload.
         bool previousDcd = false;
         AfskDemodulator? demodulator = null;
-        demodulator = new AfskDemodulator(sampleRate, bit =>
-        {
-            bool dcd = demodulator!.CarrierDetect;
-            if (previousDcd && !dcd)
+        demodulator = new AfskDemodulator(
+            sampleRate, static _ => { }, centerFrequency,
+            phaseBitSink: (bit, phase) =>
             {
-                deframer.Reset();
-            }
+                if (phase == 0)
+                {
+                    _bitsSeen++;
+                    bool dcd = demodulator!.CarrierDetect;
+                    if (previousDcd && !dcd)
+                    {
+                        foreach (Il2pReceiver receiver in deframers)
+                        {
+                            receiver.Reset();
+                        }
+                    }
 
-            previousDcd = dcd;
-            deframer.PushBit(bit);
-        }, centerFrequency);
+                    previousDcd = dcd;
+                }
+
+                deframers[phase].PushBit(bit);
+            });
         _demodulator = demodulator;
         _modulator = new AfskModulator(
             sampleRate, Baud, centerFrequency - Bell202ToneShift, centerFrequency + Bell202ToneShift);
