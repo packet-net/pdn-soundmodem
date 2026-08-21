@@ -34,7 +34,7 @@ dotnet test tests/Packet.SoundModem.Tests/Packet.SoundModem.Tests.csproj -c Rele
 
 `sm-ota` subcommands as of 2026-08-20: `tone`, `tune`, `sweep`, `rawmeters`, `radio`, `synth`, `burst`, `meters`, `measure` (`--survey`, `--purity`), `score`, `sim`, `sim-stream`, `oracle`, `replay`, `ardop-monitor`, `ardop-cut`, `ladder` (MS110D, FreeDV datac and FM), `fm-deviation`, `monitor`. The tool has grown well past MS110D; this document covers only the MS110D use.
 
-**Still open in software (2026-08-20), contradicting the backlog's "everything offline is built":** `sm-ota tone --capture rsp` (the tone capture path is UberSDR-only, so the repeatable RSP1 frequency calibration is by hand); the scorer's schedule-match drift ("unscheduled" bursts, asked/got SNR labels shuffling under the burst-timing match - thresholds are read from each burst's own delivered SNR as a workaround); the mixed-WN ladder from a JSON schedule; upstreaming `FlexMeters` into `M0LTE.Flex`; the §I4 timing study (never measured); the `FlexDaxIqSource.OnVita` double-offset watch-item (unverified).
+**Software gaps, as of 2026-08-21:** closed - `sm-ota tone --capture rsp` (the repeatable RSP1 frequency calibration through the pad chain, same flags as `ladder`), the scorer's schedule-match drift (the matcher now re-estimates the schedule-to-capture offset and slope from every match, so a ladder's tail no longer scores as unscheduled), and `FlexMeters` (it has lived in `M0LTE.Flex` for a while and `SwrInterlock` consumes it; the execution plan's "upstream it" item was stale). Still open: the mixed-WN ladder from a JSON schedule; the §I4 timing study (never measured); the `FlexDaxIqSource.OnVita` double-offset watch-item (unverified).
 
 ## Environment - constants and quirks
 
