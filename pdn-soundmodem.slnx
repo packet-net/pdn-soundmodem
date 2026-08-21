@@ -5,6 +5,7 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Packet.SoundModem.Decode/Packet.SoundModem.Decode.csproj" />
+    <Project Path="tools/Packet.SoundModem.MultiDecode/Packet.SoundModem.MultiDecode.csproj" />
     <Project Path="tools/Packet.SoundModem.NinoBench/Packet.SoundModem.NinoBench.csproj" />
     <Project Path="tools/Packet.SoundModem.NinoCompare/Packet.SoundModem.NinoCompare.csproj" />
     <Project Path="tools/Packet.SoundModem.Pocsag/Packet.SoundModem.Pocsag.csproj" />

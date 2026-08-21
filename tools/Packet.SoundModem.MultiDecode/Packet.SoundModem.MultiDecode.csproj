@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>pdn-decode</AssemblyName>
+    <RootNamespace>Packet.SoundModem.MultiDecode</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The sweep and the frame formatter are tested rather than only run: a tool whose whole
+         job is "which mode is this?" is worth having pinned against every mode's own modulator. -->
+    <InternalsVisibleTo Include="Packet.SoundModem.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# pdn-decode - run the unknown-mode WAV sweep without typing a dotnet invocation.
+#
+#   scripts/pdn-decode samples/offair/2026-08-21/*.wav
+#
+# Put it on PATH to get the spelling the tool is named for:
+#
+#   ln -s "$PWD/scripts/pdn-decode" ~/.local/bin/pdn-decode
+#   pdn-decode *.wav
+#
+# Builds Release on first use and whenever a source file is newer than the binary, then execs it.
+# Pass --rebuild to force one. See docs/pdn-decode.md.
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+project="$root/tools/Packet.SoundModem.MultiDecode"
+binary="$project/bin/Release/net10.0/pdn-decode"
+
+rebuild=0
+args=()
+for arg in "$@"; do
+    if [ "$arg" = "--rebuild" ]; then rebuild=1; else args+=("$arg"); fi
+done
+
+# Rebuild when anything under the tool or the library it links is newer than the binary. `find
+# -newer` rather than a timestamp comparison in the shell: it is one call and it is exact.
+if [ ! -x "$binary" ] || [ "$rebuild" = 1 ] \
+   || [ -n "$(find "$project" "$root/src/Packet.SoundModem" -name '*.cs' -newer "$binary" \
+              -not -path '*/obj/*' -not -path '*/bin/*' -print -quit 2>/dev/null)" ]; then
+    echo "pdn-decode: building..." >&2
+    dotnet build "$project" -c Release -nodeReuse:false --nologo -v quiet >&2
+fi
+
+exec "$binary" ${args[@]+"${args[@]}"}

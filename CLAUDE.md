@@ -78,7 +78,10 @@ src/Packet.SoundModem/       the core library (NuGet: pdn-soundmodem)
   Fec/                       CRC-16/X-25, Hamming(7,4), Reed-Solomon GF(2^8)
   Il2p/                      IL2P frame codec (spec draft v0.6, incl. IL2P+CRC)
 tests/Packet.SoundModem.Tests/
+tools/Packet.SoundModem.Decode/       sm-decode: one file, one mode you already know
+tools/Packet.SoundModem.MultiDecode/  pdn-decode: sweep every mode over a file nobody labelled
 docs/plan.md                 phase plan + status - keep it current as you work
+docs/pdn-decode.md           the sweep tool, and why its default set is the whole catalogue
 ```
 
 The architecture/design rationale lives in the founding research doc in packet.net
