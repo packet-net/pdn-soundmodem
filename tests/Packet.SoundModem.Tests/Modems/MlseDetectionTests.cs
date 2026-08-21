@@ -21,7 +21,7 @@ public class MlseDetectionTests
         var deframer = new Il2pDeframer((frame, _) => frames.Add(frame), crcMode: true);
         var demodulator = new BpskDemodulator(
             SampleRate, deframer.PushBit, detector: detector,
-            softBitSink: (bit, confidence) => { });
+            softBitSink: (bit, confidence, phase) => { });
         return (demodulator, frames);
     }
 

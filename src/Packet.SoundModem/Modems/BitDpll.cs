@@ -10,7 +10,7 @@ namespace Packet.SoundModem.Modems;
 public sealed class BitDpll
 {
     private readonly double _increment;
-    private readonly double _inertia;
+    private double _inertia;
     private readonly Action<int> _bitSink;
     private readonly Action<double>? _transitionObserver;
     private readonly Action? _symbolObserver;
@@ -58,6 +58,16 @@ public sealed class BitDpll
     /// the same fix arrived at from the other end.
     /// </remarks>
     public double WrapOvershootSamples { get; private set; }
+
+    /// <summary>The phase retained on each transition nudge - the constructor's
+    /// <c>inertia</c>, settable so a caller can acquire with one value and hold with another
+    /// once a burst is established (see <see cref="QpskDemodulator"/>). Takes effect from the
+    /// next transition.</summary>
+    public double Inertia
+    {
+        get => _inertia;
+        set => _inertia = value;
+    }
 
     /// <summary>Advances the clock by one sample of sliced level (0/1).</summary>
     /// <param name="level">The sliced level at this sample.</param>

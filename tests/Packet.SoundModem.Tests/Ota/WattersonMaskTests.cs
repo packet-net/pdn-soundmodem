@@ -61,7 +61,15 @@ public class WattersonMaskTests(ITestOutputHelper output)
     // ------------------------------------------------------------------------------------
 
     [Theory]
-    [InlineData("bpsk300", "awgn", -4.0, 0.0, 28)]     // measured 37/40
+    // The timing-diversity rows (2026-08-21 later4, N=40, seed 1): seven decision phases per
+    // symbol and a clock that holds once a burst is established moved every PSK knee ~1 dB;
+    // one row a rung below each existing knee row. Floors were set from the three-phase cut
+    // (36, 30, 30, 34 of 40) and the seven-phase measurement sits above each.
+    [InlineData("bpsk300", "awgn", -5.0, 0.0, 30)]     // measured 37/40
+    [InlineData("bpsk1200", "awgn", 1.0, 0.0, 22)]     // measured 34/40
+    [InlineData("qpsk600", "awgn", -1.0, 0.0, 22)]     // measured 32/40
+    [InlineData("qpsk2400", "awgn", 6.0, 0.0, 26)]     // measured 37/40
+    [InlineData("bpsk300", "awgn", -4.0, 0.0, 28)]     // measured 37/40 (40/40 after later4)
     [InlineData("bpsk300", "awgn", -3.0, 0.0, 34)]     // measured 40/40
     [InlineData("bpsk300", "awgn", -3.0, 3.75, 32)]    // measured 39/40 - the mid-branch
                                                        // CFO point a lagging reference nulls

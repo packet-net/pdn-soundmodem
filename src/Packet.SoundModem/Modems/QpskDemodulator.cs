@@ -8,7 +8,7 @@ namespace Packet.SoundModem.Modems;
 /// <list type="bullet">
 /// <item><b>Differential</b> (the catalogue default): complex mix to baseband → root-raised-cosine
 /// matched filter → decision-feedback differential detection against a remodulated carrier
-/// reference (see <see cref="DecideAgainstReference"/>), with an always-running rotation tracker,
+/// reference (see <see cref="DecideAgainstReference"/>), with a rotation tracker that runs whenever a signal is present,
 /// a per-burst offset seed, and the one-symbol conjugate product - de-rotated by that estimate -
 /// driving symbol timing. The <see cref="BpskDemodulator"/> chain of PR #236 on the four-phase
 /// grid, which issue #326 ported.</item>
@@ -71,6 +71,17 @@ public sealed class QpskDemodulator
     /// IL2P preamble, a transition every symbol, still pulls a cold clock in within a normal
     /// TXDELAY.</summary>
     private const double DifferentialInertia = 0.94;
+
+    /// <summary>DPLL inertia once a burst is established (the offset window has seeded or
+    /// DCD holds): the clock acquires at <see cref="DifferentialInertia"/> and then holds
+    /// nearly rigid, correcting half a per cent of its error per transition, which still
+    /// follows any plausible symbol-rate error (a 500 ppm clock costs a tenth of a symbol of
+    /// lag) while no longer wandering on noise. On the 2026-08-21 off-air qpsk600 fixture the
+    /// clock that acquired at 6-7 samples and then wandered 2-10 through the payload left 10
+    /// wrong bytes against a Reed-Solomon limit of 8, while a rigid clock two samples later
+    /// copies the frame; held, the timing phases reach that clock and the frame copies with
+    /// 6 corrected. Neutral on the sim's knee rows, where nothing establishes a burst.</summary>
+    private const double HoldInertia = 0.995;
 
     /// <summary>Clamp on the seeded part of the reference rotation, radians per symbol:
     /// π/4 is ±baud/8, the fourth-power offset window's own unambiguous range - ±37.5 Hz
@@ -136,21 +147,15 @@ public sealed class QpskDemodulator
     private double _offsetWindowImag;
     private int _delayPosition;
     private int _previousQuadrant;
-    private int _previousAbsoluteQuadrant;
     private float _lastRe;
     private float _lastIm;
-    private float _previousRe;
-    private float _previousIm;
     private float _currentI;
     private float _currentQ;
-    private float _previousSampleI;
-    private float _previousSampleQ;
-    private double _referenceI;
-    private double _referenceQ;
     private double _seededRotation;
-    private double _trackedRotation;
     private bool _windowCoherent;
     private bool _dcdWasAsserted;
+    private bool _energyWasBusy;
+    private bool _trackerActive;
     private double _derotateCos = 1;
     private double _derotateSin;
 
@@ -159,15 +164,37 @@ public sealed class QpskDemodulator
     /// the backstop that stops one station's seed outliving the gap to the next when DCD never
     /// marked the burst's end (see <see cref="DecideAgainstReference"/>).</summary>
     private readonly double _seedIdleDecay;
-    private double _confidenceMean;
     private readonly bool _decisionFeedback;
     private readonly Action<int, int> _dibitSink;
-    private readonly Action<int, int, float>? _softDibitSink;
+    private readonly Action<int, int, float, int>? _softDibitSink;
 
-    // Previous symbol's decision margin, for the pair-min per-dibit confidence (see
+    /// <summary>How many timing phases the soft sink is fed (see <see cref="TimingDiversity"/>):
+    /// the index it carries runs 0 to this minus one, phase 0 being the clock's own instant.</summary>
+    internal static int TimingPhaseCount => TimingDiversity.PhaseCount;
+
+    // Per-timing-phase decision state, indexed like TimingDiversity.PhaseFractions.
+    private readonly double[] _referenceI;
+    private readonly double[] _referenceQ;
+    private readonly double[] _trackedRotation;
+    private readonly int[] _previousAbsoluteQuadrant;
+    private readonly double[] _confidenceMean;
+
+    // Previous symbol's decision margin per phase, for the pair-min per-dibit confidence (see
     // EmitDibit). MaxValue = no previous symbol yet, so a burst's first dibit is judged on
     // its own margin alone.
-    private float _previousDecisionMargin = float.MaxValue;
+    private readonly float[] _previousDecisionMargin;
+
+    // Recent baseband samples and de-rotated products, indexed by chain sample modulo the
+    // ring length, so a decision can be taken a little before or after the clock's instant
+    // (the late phase needs samples that arrive after the instant, hence the deferral).
+    private readonly float[] _ringI;
+    private readonly float[] _ringQ;
+    private readonly float[] _ringRe;
+    private readonly float[] _ringIm;
+    private readonly double _phaseOffsetSamples;
+    private readonly int _ringLead;
+    private long _pendingInstant = -1;
+    private float _pendingOvershoot;
 
     /// <summary>Raised once per recovered symbol with the symbol-instant constellation point
     /// (I,Q): the recovered absolute constellation in coherent mode, the differential product
@@ -193,6 +220,12 @@ public sealed class QpskDemodulator
     /// transition, the quantity <see cref="PacketDcd"/> scores. Not part of the deployment
     /// surface.</summary>
     internal Action<double>? TransitionObserver { get; set; }
+
+    /// <summary>Bench seam: the current per-burst seed and the clock instant's tracked
+    /// rotation, in Hz. Not part of the deployment surface.</summary>
+    internal (double SeededHz, double TrackedHz) RotationState =>
+        (_seededRotation / _delaySamples * _sampleRate / (2 * Math.PI),
+         _trackedRotation[0] / _delaySamples * _sampleRate / (2 * Math.PI));
 
     private long _chainSampleIndex = -1;
 
@@ -226,7 +259,7 @@ public sealed class QpskDemodulator
         int sampleRate, int baud, Action<int, int> dibitSink, double carrierFrequency,
         PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null,
         double rollOff = QpskModulator.DefaultRollOff, bool decisionFeedback = true,
-        Action<int, int, float>? softDibitSink = null)
+        Action<int, int, float, int>? softDibitSink = null)
     {
         ArgumentNullException.ThrowIfNull(dibitSink);
         if (detector == PskDetector.Mlse)
@@ -330,6 +363,24 @@ public sealed class QpskDemodulator
         _delayI = new float[_delayWhole + 1];
         _delayQ = new float[_delayWhole + 1];
 
+        int phases = TimingDiversity.PhaseFractions.Length;
+        _referenceI = new double[phases];
+        _referenceQ = new double[phases];
+        _trackedRotation = new double[phases];
+        _previousAbsoluteQuadrant = new int[phases];
+        _confidenceMean = new double[phases];
+        _previousDecisionMargin = new float[phases];
+        Array.Fill(_previousDecisionMargin, float.MaxValue);
+        _phaseOffsetSamples = TimingDiversity.Reach * delay;
+        // The late phase reads up to ceil(offset) samples past the instant, plus one for the
+        // interpolation's upper neighbour; the ring spans both sides of the instant with room.
+        _ringLead = (int)Math.Ceiling(_phaseOffsetSamples) + 1;
+        int ring = (2 * _ringLead) + 4;
+        _ringI = new float[ring];
+        _ringQ = new float[ring];
+        _ringRe = new float[ring];
+        _ringIm = new float[ring];
+
         _dpll = new BitDpll(
             baud, chainRate,
             quadrant =>
@@ -347,50 +398,31 @@ public sealed class QpskDemodulator
                 // I/Q there, and its previous-sample twin is not maintained). Coherent is the
                 // cross-check variant, not the deployed one, and it stays byte-identical.
                 SymbolInstantObserver?.Invoke(_chainSampleIndex);
-                float productRe = _lastRe;
-                float productIm = _lastIm;
-                if (_interpolateSymbolInstant && _detector != PskDetector.Coherent)
-                {
-                    // The field is still being assigned as this lambda is constructed; nothing
-                    // reads it until audio flows, which is the same pattern BpskModem uses for
-                    // its deframer/demodulator knot.
-                    float f = (float)_dpll!.WrapOvershootSamples;
-                    productRe = _lastRe - (f * (_lastRe - _previousRe));
-                    productIm = _lastIm - (f * (_lastIm - _previousIm));
-                    quadrant = ((int)Math.Round(Math.Atan2(productIm, productRe) / (Math.PI / 2)) + 4) & 3;
-                    // The baseband sample the reference decides on gets the same treatment,
-                    // so the two detectors no longer read two different instants; with it
-                    // the 2026-08-07 campaign's clean-signal regression of the reference on
-                    // qpsk3600 no longer measures, though the product still wins that mode's
-                    // FM knee (see QpskModem.Qpsk3600).
-                    _currentI -= f * (_currentI - _previousSampleI);
-                    _currentQ -= f * (_currentQ - _previousSampleQ);
-                }
-
-                // Coherent feeds the absolute quadrant; differentially decode against the
-                // previous symbol so the wire mapping (a phase change) is unchanged.
-                // Differential decides the symbol-instant sample against the
-                // decision-feedback reference (the passed product quadrant only drove
-                // symbol timing), or takes the product outright where the reference is off.
-                int change;
-                float margin;
                 if (_detector == PskDetector.Coherent)
                 {
-                    change = (quadrant - _previousQuadrant) & 3;
-                    margin = 1f;
-                }
-                else if (_decisionFeedback)
-                {
-                    change = DecideAgainstReference(quadrant, out margin);
-                }
-                else
-                {
-                    change = quadrant;
-                    margin = MarginOf(productRe, productIm, quadrant);
+                    // Coherent feeds the absolute quadrant; differentially decode against the
+                    // previous symbol so the wire mapping (a phase change) is unchanged.
+                    EmitDibit(0, (quadrant - _previousQuadrant) & 3, 1f);
+                    _previousQuadrant = quadrant;
+                    return;
                 }
 
-                _previousQuadrant = quadrant;
-                EmitDibit(change, margin);
+                // Differential decides later, once the samples either side of this instant are
+                // in the ring (see DecidePending): the instant itself, and the early and late
+                // timing phases. At qpsk3600's 6.667 samples per symbol the wrap sample sits up
+                // to 0.15 of a symbol late, so the decision is read back to the instant the
+                // clock actually asked for (QtSoundModem reaches the same place from the other
+                // end: it interpolates every PSK mode up to exactly 40 samples per symbol
+                // before its sampler); the integer-ratio modes are measured flat without it.
+                // The field is still being assigned as this lambda is constructed; nothing
+                // reads it until audio flows.
+                if (_pendingInstant >= 0)
+                {
+                    DecidePending();
+                }
+
+                _pendingInstant = _chainSampleIndex;
+                _pendingOvershoot = _interpolateSymbolInstant ? (float)_dpll!.WrapOvershootSamples : 0f;
             },
             // Dire Wolf's 0.74 costs ~1 dB of timing jitter at the Reed-Solomon threshold
             // on the differential path here exactly as it did on bpsk300 (docs/qpsk/plan.md
@@ -466,16 +498,18 @@ public sealed class QpskDemodulator
         _averageDiffMagnitude = 0;
         _offsetWindowReal = 0;
         _offsetWindowImag = 0;
-        _referenceI = 0;
-        _referenceQ = 0;
+        Array.Clear(_referenceI);
+        Array.Clear(_referenceQ);
+        Array.Clear(_trackedRotation);
+        Array.Clear(_confidenceMean);
+        Array.Fill(_previousDecisionMargin, float.MaxValue);
         _seededRotation = 0;
-        _trackedRotation = 0;
         _windowCoherent = false;
         _dcdWasAsserted = false;
+        _energyWasBusy = false;
         _derotateCos = 1;
         _derotateSin = 0;
-        _confidenceMean = 0;
-        _previousDecisionMargin = float.MaxValue;
+        _pendingInstant = -1;
     }
 
     /// <summary>Processes a block of audio samples.</summary>
@@ -622,15 +656,60 @@ public sealed class QpskDemodulator
 
         // Held for the constellation tap: the DPLL fires its symbol sink synchronously
         // inside Sample() on wrap samples, so these are the wrap-instant values.
-        _previousRe = _lastRe;
-        _previousIm = _lastIm;
         _lastRe = re;
         _lastIm = im;
-        _previousSampleI = _currentI;
-        _previousSampleQ = _currentQ;
         _currentI = i;
         _currentQ = q;
+        int slot = (int)(_chainSampleIndex % _ringI.Length);
+        _ringI[slot] = i;
+        _ringQ[slot] = q;
+        _ringRe[slot] = re;
+        _ringIm[slot] = im;
         _dpll.Sample(quadrant, crossing);
+        if (_pendingInstant >= 0 && _chainSampleIndex >= _pendingInstant + _ringLead)
+        {
+            DecidePending();
+        }
+    }
+
+    /// <summary>Decides the symbol whose clock instant is pending, at each timing phase:
+    /// the burst state (seed, DCD edges, leaks) advances once, then every phase reads its
+    /// own interpolated baseband sample and product from the ring and decides against its
+    /// own reference. Phase 0 is the clock's instant and owns the de-rotation the DPLL
+    /// sees.</summary>
+    private void DecidePending()
+    {
+        long instant = _pendingInstant;
+        _pendingInstant = -1;
+        UpdateBurstState();
+        int ring = _ringI.Length;
+        for (int phase = 0; phase < TimingDiversity.PhaseFractions.Length; phase++)
+        {
+            double position = instant - _pendingOvershoot + (TimingDiversity.PhaseFractions[phase] * _delaySamples);
+            long lower = (long)Math.Floor(position);
+            float fraction = (float)(position - lower);
+            int a = (int)(((lower % ring) + ring) % ring);
+            int b = (a + 1) % ring;
+            float i = _ringI[a] + (fraction * (_ringI[b] - _ringI[a]));
+            float q = _ringQ[a] + (fraction * (_ringQ[b] - _ringQ[a]));
+            float re = _ringRe[a] + (fraction * (_ringRe[b] - _ringRe[a]));
+            float im = _ringIm[a] + (fraction * (_ringIm[b] - _ringIm[a]));
+            int productQuadrant = ((int)Math.Round(Math.Atan2(im, re) / (Math.PI / 2)) + 4) & 3;
+
+            int change;
+            float margin;
+            if (_decisionFeedback)
+            {
+                change = DecideAgainstReference(phase, i, q, productQuadrant, out margin);
+            }
+            else
+            {
+                change = productQuadrant;
+                margin = MarginOf(re, im, productQuadrant);
+            }
+
+            EmitDibit(phase, change, margin);
+        }
     }
 
     /// <summary>Decision-feedback differential detection, once per symbol at the DPLL
@@ -671,12 +750,12 @@ public sealed class QpskDemodulator
     /// nearer 45° decision boundary, in sample-amplitude units - the ordering
     /// <see cref="EmitDibit"/> turns into a per-dibit confidence for erasure decoding.</para>
     /// </remarks>
-    private int DecideAgainstReference(int productQuadrant, out float margin)
+    private void UpdateBurstState()
     {
         // The seed fires on the offset window's rising edge into coherence - the start of
         // every burst strong enough to measure, and again should a burst's window recover
         // after a mid-payload collapse (it then re-measures the whole rotation, so the
-        // tracker restarts from zero). It is never released on window collapse alone: on a
+        // trackers restart from zero). It is never released on window collapse alone: on a
         // real QPSK payload the fourth power is incoherent at the SNRs that matter, and a
         // seed released there hands an 18°-per-symbol burst to a 9°-per-symbol tracker.
         // Release is the DCD falling edge, the burst's end; the decay below is the backstop
@@ -692,7 +771,7 @@ public sealed class QpskDemodulator
             _seededRotation = Math.Clamp(
                 Math.Atan2(_offsetWindowImag, _offsetWindowReal) / 4.0,
                 -MaxSeededRotation, MaxSeededRotation);
-            _trackedRotation = 0;
+            Array.Clear(_trackedRotation);
         }
 
         _windowCoherent = windowCoherent;
@@ -705,21 +784,64 @@ public sealed class QpskDemodulator
         _dcdWasAsserted = dcd;
         if (!dcd)
         {
-            _trackedRotation *= IdleTrackerLeak;
+            for (int phase = 0; phase < _trackedRotation.Length; phase++)
+            {
+                _trackedRotation[phase] *= IdleTrackerLeak;
+            }
+
             if (!windowCoherent)
             {
                 _seededRotation *= _seedIdleDecay;
             }
         }
 
-        double rotation = _seededRotation + _trackedRotation;
+        // A burst starts from a zero tracker. Between bursts the free-running tracker walks on
+        // noise and, at the acquisition gain, parks anywhere inside its clamp (measured on the
+        // parity test's idle channel: the clamp itself, 30 Hz at 1200 Bd, more often than not),
+        // which a 24-symbol preamble cannot unlearn. In-band energy rising while nothing says
+        // a burst is already under way is the earliest sign of one - within a 20 ms block -
+        // so the trackers restart from zero there and acquire the real residual from the first
+        // symbols as designed. A burst too weak for the energy detector keeps today's walk.
+        bool energy = _energyBusy.Busy;
+        if (energy && !_energyWasBusy && !dcd && !windowCoherent)
+        {
+            Array.Clear(_trackedRotation);
+        }
+
+        _energyWasBusy = energy;
+
+        // And the trackers integrate only while something says a signal is there: the
+        // decision-directed error on noise alone is a random angle, and at the acquisition
+        // gain it walks the tracker to its clamp between bursts (measured: 30 Hz at 1200 Bd,
+        // parked there at the start of a burst its 24-symbol preamble then could not save).
+        // Frozen on noise, the idle leak above drains it instead.
+        _trackerActive = dcd || windowCoherent || energy;
+
+        // The clock acquires at the differential inertia and holds, nearly rigid, once a burst
+        // is established (the offset window has seeded or DCD holds): on the 2026-08-21 off-air
+        // fixture the clock that acquired at 6-7 samples then wandered 2-10 through the payload
+        // while a rigid clock at 8 copies the frame, and the timing phases can only reach a
+        // phase the clock keeps still for.
+        _dpll.Inertia = dcd || windowCoherent ? HoldInertia : DifferentialInertia;
+
+        // The DPLL and DCD see the product de-rotated by the clock instant's own estimate.
+        double rotation = _seededRotation + _trackedRotation[0];
         _derotateCos = Math.Cos(rotation);
         _derotateSin = Math.Sin(rotation);
+    }
+
+    private int DecideAgainstReference(int phase, float sampleI, float sampleQ, int productQuadrant, out float margin)
+    {
+        double referenceI = _referenceI[phase];
+        double referenceQ = _referenceQ[phase];
+        double rotation = _seededRotation + _trackedRotation[phase];
         if (rotation != 0)
         {
-            (_referenceI, _referenceQ) = (
-                (_referenceI * _derotateCos) - (_referenceQ * _derotateSin),
-                (_referenceI * _derotateSin) + (_referenceQ * _derotateCos));
+            double cos = Math.Cos(rotation);
+            double sin = Math.Sin(rotation);
+            (referenceI, referenceQ) = (
+                (referenceI * cos) - (referenceQ * sin),
+                (referenceI * sin) + (referenceQ * cos));
         }
 
         // The sample's angle relative to the reference, decided to the nearest quadrant. An
@@ -727,47 +849,52 @@ public sealed class QpskDemodulator
         // the absolute chain follow it; the blend below then builds the reference along the
         // signal's own phase - absolute phase is arbitrary and the wire format differential,
         // exactly as on BPSK.
-        double relativeRe = (_currentI * _referenceI) + (_currentQ * _referenceQ);
-        double relativeIm = (_currentQ * _referenceI) - (_currentI * _referenceQ);
+        double relativeRe = (sampleI * referenceI) + (sampleQ * referenceQ);
+        double relativeIm = (sampleQ * referenceI) - (sampleI * referenceQ);
         double relativeMagnitude = Math.Sqrt((relativeRe * relativeRe) + (relativeIm * relativeIm));
+        int previousAbsolute = _previousAbsoluteQuadrant[phase];
         int absolute = relativeMagnitude < 1e-12
-            ? (_previousAbsoluteQuadrant + productQuadrant) & 3
+            ? (previousAbsolute + productQuadrant) & 3
             : ((int)Math.Round(Math.Atan2(relativeIm, relativeRe) / (Math.PI / 2)) + 4) & 3;
-        int change = (absolute - _previousAbsoluteQuadrant) & 3;
-        _previousAbsoluteQuadrant = absolute;
+        int change = (absolute - previousAbsolute) & 3;
+        _previousAbsoluteQuadrant[phase] = absolute;
 
         // Remodulate: rotate the sample back by its decided quadrant - exact axis swaps,
         // no trigonometry - so every symbol stacks on the reference phasor.
         (double backRe, double backIm) = absolute switch
         {
-            1 => ((double)_currentQ, (double)-_currentI),
-            2 => ((double)-_currentI, (double)-_currentQ),
-            3 => ((double)-_currentQ, (double)_currentI),
-            _ => ((double)_currentI, (double)_currentQ),
+            1 => ((double)sampleQ, (double)-sampleI),
+            2 => ((double)-sampleI, (double)-sampleQ),
+            3 => ((double)-sampleQ, (double)sampleI),
+            _ => ((double)sampleI, (double)sampleQ),
         };
 
-        double referenceMagnitude = Math.Sqrt((_referenceI * _referenceI) + (_referenceQ * _referenceQ));
-        DecisionObserver?.Invoke(
-            referenceMagnitude > 1e-12 ? relativeRe / referenceMagnitude : 0,
-            referenceMagnitude > 1e-12 ? relativeIm / referenceMagnitude : 0,
-            absolute);
+        double referenceMagnitude = Math.Sqrt((referenceI * referenceI) + (referenceQ * referenceQ));
+        if (phase == 0)
+        {
+            DecisionObserver?.Invoke(
+                referenceMagnitude > 1e-12 ? relativeRe / referenceMagnitude : 0,
+                referenceMagnitude > 1e-12 ? relativeIm / referenceMagnitude : 0,
+                absolute);
+        }
+
         if (referenceMagnitude > 1e-12)
         {
             // The remodulated sample seen from the reference: its in-phase part less its
             // quadrature part is the distance to the nearer of the two 45° boundaries (times
             // root two), in the sample's own amplitude once the reference's is divided out.
-            double alignedRe = ((backRe * _referenceI) + (backIm * _referenceQ)) / referenceMagnitude;
-            double alignedIm = ((backIm * _referenceI) - (backRe * _referenceQ)) / referenceMagnitude;
+            double alignedRe = ((backRe * referenceI) + (backIm * referenceQ)) / referenceMagnitude;
+            double alignedIm = ((backIm * referenceI) - (backRe * referenceQ)) / referenceMagnitude;
             margin = (float)Math.Max(0, alignedRe - Math.Abs(alignedIm));
 
             // Advance the tracker by the angle by which the remodulated sample leads the
             // reference - the BPSK tracker's rule on the four-phase grid.
             double sampleMagnitude = Math.Sqrt((backRe * backRe) + (backIm * backIm));
-            if (sampleMagnitude > 1e-12)
+            if (_trackerActive && sampleMagnitude > 1e-12)
             {
                 double error = Math.Asin(Math.Clamp(alignedIm / sampleMagnitude, -1, 1));
-                _trackedRotation = Math.Clamp(
-                    _trackedRotation + ((_packetDcd.Asserted ? ReferenceTrackingGain : ReferenceAcquisitionGain) * error),
+                _trackedRotation[phase] = Math.Clamp(
+                    _trackedRotation[phase] + ((_packetDcd.Asserted ? ReferenceTrackingGain : ReferenceAcquisitionGain) * error),
                     -MaxTrackedRotation, MaxTrackedRotation);
             }
         }
@@ -776,8 +903,8 @@ public sealed class QpskDemodulator
             margin = 0;
         }
 
-        _referenceI = (ReferenceMemory * _referenceI) + ((1 - ReferenceMemory) * backRe);
-        _referenceQ = (ReferenceMemory * _referenceQ) + ((1 - ReferenceMemory) * backIm);
+        _referenceI[phase] = (ReferenceMemory * referenceI) + ((1 - ReferenceMemory) * backRe);
+        _referenceQ[phase] = (ReferenceMemory * referenceQ) + ((1 - ReferenceMemory) * backIm);
         return change;
     }
 
@@ -805,11 +932,15 @@ public sealed class QpskDemodulator
     /// drops whole bytes to the bottom of the ranking, which is exactly what erasure
     /// decoding wants flagged. The coherent path passes a constant, which is the
     /// confidence-free behaviour it was validated with.</summary>
-    private void EmitDibit(int change, float margin)
+    private void EmitDibit(int phase, int change, float margin)
     {
         int first = (QuadrantToDibit[change] >> 1) & 1;
         int second = QuadrantToDibit[change] & 1;
-        _dibitSink(first, second);
+        if (phase == 0)
+        {
+            _dibitSink(first, second);
+        }
+
         if (_softDibitSink is null)
         {
             return;
@@ -817,19 +948,19 @@ public sealed class QpskDemodulator
 
         if (_detector == PskDetector.Coherent)
         {
-            _softDibitSink(first, second, 1f);
+            _softDibitSink(first, second, 1f, phase);
             return;
         }
 
-        float pairMin = Math.Min(margin, _previousDecisionMargin);
-        _previousDecisionMargin = margin;
-        _confidenceMean = _confidenceMean == 0
+        float pairMin = Math.Min(margin, _previousDecisionMargin[phase]);
+        _previousDecisionMargin[phase] = margin;
+        _confidenceMean[phase] = _confidenceMean[phase] == 0
             ? pairMin
-            : _confidenceMean + (0.002 * (pairMin - _confidenceMean));
-        float confidence = _confidenceMean <= 0
+            : _confidenceMean[phase] + (0.002 * (pairMin - _confidenceMean[phase]));
+        float confidence = _confidenceMean[phase] <= 0
             ? 0.5f
-            : Math.Min(0.999f, (float)(pairMin / (4.0 * _confidenceMean)));
-        _softDibitSink(first, second, confidence);
+            : Math.Min(0.999f, (float)(pairMin / (4.0 * _confidenceMean[phase])));
+        _softDibitSink(first, second, confidence, phase);
     }
 
     /// <summary>Folds one differential product into the carrier-offset window (see
