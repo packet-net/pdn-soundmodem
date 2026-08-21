@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Tests.Modems;
 /// Bench probe (set <c>AFSK_EYE=1</c>): where the recovered clock instant sits in the eye, and
 /// how wide the eye is, by sweeping the decision instant plus or minus 15 samples and scoring a
 /// known bit stream at each. This is the measurement that says how much timing diversity can be
-/// worth on a mode before any of it is built, and it is what explains the 2026-08-21 (later5)
+/// worth on a mode before any of it is built, and it is what explains the 2026-08-21 (later6)
 /// result: at 300 baud (40 samples per bit) the error count is flat across a ten-sample
 /// plateau, so phases 1 to 3 samples either side usually decide the same bit; at 1200 baud (10
 /// samples per bit) the window is about [-2, 0] samples and one sample late nearly doubles the

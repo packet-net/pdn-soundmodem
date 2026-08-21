@@ -80,8 +80,8 @@ public class WattersonMaskTests(ITestOutputHelper output)
                                                        // floor must not collapse further
     [InlineData("bpsk1200", "awgn", 2.0, 0.0, 28)]     // measured 37/40
     [InlineData("afsk300-il2pc", "awgn", 0.0, 0.0, 30)] // measured 39/40 (40/40 after the
-                                                        // 2026-08-21 later5 timing phases)
-    // The AFSK timing-diversity row (2026-08-21 later5, N=40, seed 1): the seven decision
+                                                        // 2026-08-21 later6 timing phases)
+    // The AFSK timing-diversity row (2026-08-21 later6, N=40, seed 1): the seven decision
     // phases moved this mode's knee about a third of a decibel, so one row a rung below the
     // one above. The rung below THAT (-2 dB) is where the change actually shows - 16/40 to
     // 25/40 - and it is left out on purpose: at 62 % it sits on the steepest part of the
