@@ -746,6 +746,20 @@ first cut's phases were [0, -0, 0] and the ladder read a clean null), and gate t
 on a DCD that really means the clock has converged (BPSK's seed fires too early; QPSK's DCD is
 marginal, #329).
 
+**C4FSK landed 2026-08-21 (PR for issue #331's third item, ledger 2026-08-21 later5).** Both
+C4FSK modes now decide at seven phases and hold the clock on DCD, worth 1.0 to 2.1 dB at every
+knee measured (c4fsk9600 fm-data 16.6 -> 14.8 dB CNR at TXDELAY 0, 18.9 -> 16.8 at 150 ms;
+c4fsk19200 fm-data 16.2 -> 14.4 and 17.9 -> 16.3; the AWGN rows 1.0 to 1.6 dB). The
+resolution question the item raised has an answer: at 10 decision points per symbol the PSK
+set's 2.5 % step measures materially worse than 5 %, 7.5 % measures the same as 5 %, and a
+ninth phase buys nothing, so the mode runs 5 % x 3 pairs. The phases carry nearly all of it;
+the hold is neutral on AWGN and worth a few frames in 200 on fm-data. Two things the
+measurement turned up for later: TXDELAY costs these modes 2 dB on fm-data and 5 dB on AWGN
+(a longer run-in making a receiver worse is backwards, and it is bigger than what timing
+diversity just bought), and the 4-PAM clock's wrap can only land on a sample, so its decision
+instant is up to a tenth of a symbol late and the phase set is not centred on the eye -
+reading the decision back to the instant the clock asked for, as `QpskDemodulator` does, is
+the next cheap thing to measure.
 **The AFSK family is done (PR #334, ledger 2026-08-21 later6).** `AfskDemodulator` decides
 every bit at the seven phases and holds its clock once DCD asserts; every wrapper runs a
 deframer per phase behind a bit-clocked content dedupe. Worth about a third of a decibel at
