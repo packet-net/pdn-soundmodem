@@ -73,12 +73,26 @@ public sealed class Afsk1200MultiModem : IModem
             double offset = step * offsetHz;
             int emphasisDb = (i / frequencyCount) * 6;   // EmphasisFilter variants: 0/+6/+12 dB/oct
             int branch = i;
-            var deframer = new HdlcDeframer(frame => OnFrame(frame, offset, emphasisDb, branch));
-            var nrzi = new NrziDecoder();
+
+            // One deframer per timing phase per branch (see AfskDemodulator.TimingPhaseCount):
+            // the phases decide the same bits a little either side of the recovered instant, so
+            // a frame whose FCS checks at any of them is copied. The bank's own content dedupe
+            // already merges identical copies - it exists because several frequency branches
+            // read the same transmission - so the phases need nothing further.
+            int phases = AfskDemodulator.TimingPhaseCount;
+            var deframers = new HdlcDeframer[phases];
+            var nrzi = new NrziDecoder[phases];
+            for (int phase = 0; phase < phases; phase++)
+            {
+                nrzi[phase] = new NrziDecoder();
+                deframers[phase] = new HdlcDeframer(frame => OnFrame(frame, offset, emphasisDb, branch));
+            }
+
             _demodulators[i] = new AfskDemodulator(
                 sampleRate,
-                level => deframer.PushBit(nrzi.Decode(level)),
-                centerFrequency + step * offsetHz);
+                static _ => { },
+                centerFrequency + step * offsetHz,
+                phaseBitSink: (level, phase) => deframers[phase].PushBit(nrzi[phase].Decode(level)));
             _preFilters[i] = new EmphasisFilter(i / frequencyCount);
         }
     }

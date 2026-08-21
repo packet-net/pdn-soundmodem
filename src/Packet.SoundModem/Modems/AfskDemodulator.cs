@@ -23,6 +23,22 @@ public sealed class AfskDemodulator
     /// trillion, far below the filters' own float noise.</summary>
     private const int OscillatorRenormInterval = 4096;
 
+    /// <summary>DPLL inertia while the clock is still acquiring - Dire Wolf's locked value,
+    /// which this chain has always run from cold (see <see cref="BitDpll"/>, whose crossing
+    /// interpolation is what makes one fixed value work through acquisition).</summary>
+    private const double AcquireInertia = 0.74;
+
+    /// <summary>DPLL inertia once DCD holds: the clock acquires at
+    /// <see cref="AcquireInertia"/> and then holds nearly rigid, the treatment
+    /// <see cref="QpskDemodulator"/> measured on the off-air qpsk600 fixture and
+    /// <see cref="BpskDemodulator"/> carries. DCD is the gate, as it is on BPSK:
+    /// <see cref="PacketDcd"/> asserting means 30 of the last 32 transitions landed inside an
+    /// eighth of a bit, which is the clock having converged, and AFSK's DCD is the two-level
+    /// transition-timing kind <see cref="PacketDcd"/> was built for. A clock that no longer
+    /// wanders is a clock the timing phases below can reach past; a 0.5 % correction per
+    /// transition still follows a 500 ppm bit-rate error with a tenth of a bit of lag.</summary>
+    private const double HoldInertia = 0.995;
+
     private readonly FirFilter _bandPass;
     private readonly FirFilter _lowPassI;
     private readonly FirFilter _lowPassQ;
@@ -42,12 +58,31 @@ public sealed class AfskDemodulator
     /// <summary>Diagnostic tap for bench tooling: (discriminator, peakHigh, peakLow,
     /// power) per sample point. Not for production paths.</summary>
     internal Action<float, float, float, float>? DiagnosticTap { get; set; }
+    /// <summary>Diagnostic tap for bench tooling: (phase index, clock instant in samples, ring
+    /// slot, interpolated slicer input) for every decision at every timing phase. Phase 0's
+    /// instant is the only way to tie a recovered bit back to the sample it was read at, which
+    /// is what the eye-sweep probe needs. Not for production paths.</summary>
+    internal Action<int, long, int, float>? PhaseTap { get; set; }
     private readonly float _discriminatorLimit;
     private readonly double _offsetHzPerUnit;
     private readonly double _shiftCosine;
     private float _peakHigh;
     private float _peakLow;
     private float _previousExcess;
+
+    // Timing diversity: the slicer's input is kept in a short ring so every bit can be decided
+    // at several instants either side of the one the clock recovered (see TimingDiversity). The
+    // late phases need samples that arrive after the instant, so a bit's decisions are emitted
+    // a few samples late - which nothing downstream notices, the ring and the pending instant
+    // persist across Process calls, and a caller that chunks its audio gets the same bits as
+    // one that does not.
+    private readonly Action<int> _bitSink;
+    private readonly Action<int, int>? _phaseBitSink;
+    private readonly double _samplesPerBit;
+    private readonly float[] _ring;
+    private readonly int _ringLead;
+    private long _sampleIndex;
+    private long _pendingInstant = -1;
 
     /// <summary>Creates a demodulator delivering NRZI line levels (one per bit) to
     /// <paramref name="bitSink"/>.</summary>
@@ -78,10 +113,16 @@ public sealed class AfskDemodulator
     /// 202 (1200/2200), 100 Hz for the HF tones (1600/1800). Sets the discriminator's
     /// legitimate output range, and so the clamp that keeps silence from deafening the
     /// slicer.</param>
+    /// <param name="phaseBitSink">Optional timing-diversity sink, called once per bit per
+    /// timing phase with (level, phase index), the index running 0 to
+    /// <see cref="TimingPhaseCount"/> minus one and 0 being the clock's own instant - the
+    /// same level <paramref name="bitSink"/> gets. A caller that wires this runs one deframer
+    /// per phase and delivers whichever copy passes, once (see <see cref="Afsk300Modem"/>).</param>
     public AfskDemodulator(
         int sampleRate, Action<int> bitSink, double centerFrequency = 1700, int baud = 1200,
         double bandPassHalfWidth = 700, double lowPassCutoff = 650,
-        int bandPassTaps = 256, int lowPassTaps = 128, double toneShift = 500)
+        int bandPassTaps = 256, int lowPassTaps = 128, double toneShift = 500,
+        Action<int, int>? phaseBitSink = null)
     {
         ArgumentNullException.ThrowIfNull(bitSink);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
@@ -93,7 +134,29 @@ public sealed class AfskDemodulator
         double step = 2 * Math.PI * centerFrequency / sampleRate;
         _rotateCos = Math.Cos(step);
         _rotateSin = Math.Sin(step);
-        _dpll = new BitDpll(baud, sampleRate, bitSink, transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
+        _bitSink = bitSink;
+        _phaseBitSink = phaseBitSink;
+        _samplesPerBit = (double)sampleRate / baud;
+        // The latest phase reads up to ceil(reach) samples past the instant, plus one for the
+        // interpolation's upper neighbour; the ring spans both sides of the instant with room.
+        _ringLead = (int)Math.Ceiling(TimingDiversity.Reach * _samplesPerBit) + 1;
+        _ring = new float[(2 * _ringLead) + 4];
+        _dpll = new BitDpll(
+            baud, sampleRate,
+            // The decision is deferred until the samples either side of this instant are in
+            // the ring (see DecidePending); the field is still being assigned as this lambda
+            // is constructed, and nothing reads it until audio flows.
+            _ =>
+            {
+                if (_pendingInstant >= 0)
+                {
+                    DecidePending();
+                }
+
+                _pendingInstant = _sampleIndex;
+            },
+            inertia: AcquireInertia,
+            transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
         _energyBusy = new EnergyBusyDetector(sampleRate);
 
         // The envelope tracker below runs per sample, but what it must keep up with is the
@@ -158,6 +221,11 @@ public sealed class AfskDemodulator
             return -Math.Asin(Math.Clamp(midpoint, -1, 1)) * _offsetHzPerUnit;
         }
     }
+
+    /// <summary>How many timing phases the phase sink is fed (see
+    /// <see cref="TimingDiversity"/>): the index it carries runs 0 to this minus one, phase 0
+    /// being the clock's own instant.</summary>
+    internal static int TimingPhaseCount => TimingDiversity.PhaseCount;
 
     /// <summary>True while DPLL transition timing indicates a coherent packet signal.</summary>
     public bool CarrierDetect => _packetDcd.Asserted;
@@ -272,7 +340,52 @@ public sealed class AfskDemodulator
 
             _previousExcess = excess;
             DiagnosticTap?.Invoke(discriminator, _peakHigh, _peakLow, power);
+
+            // The slicer's input, kept so the timing phases can read it either side of the
+            // clock instant. Written before the clock is advanced, because the clock's wrap
+            // nominates this sample as an instant.
+            _ring[(int)(_sampleIndex % _ring.Length)] = excess;
             _dpll.Sample(level, crossing);
+            if (_pendingInstant >= 0 && _sampleIndex >= _pendingInstant + _ringLead)
+            {
+                DecidePending();
+            }
+
+            _sampleIndex++;
+        }
+    }
+
+    /// <summary>Decides the bit whose clock instant is pending, at each timing phase: every
+    /// phase reads its own interpolated slicer input from the ring and slices it against the
+    /// same envelope midpoint the instant used. Phase 0 is the clock's own instant, and at
+    /// zero offset it reads exactly the sample the slicer sliced, so the plain
+    /// <c>bitSink</c> sees the bits it always saw.</summary>
+    private void DecidePending()
+    {
+        long instant = _pendingInstant;
+        _pendingInstant = -1;
+
+        // The clock acquires at the usual inertia and holds, nearly rigid, once DCD says it
+        // has converged - see HoldInertia.
+        _dpll.Inertia = _packetDcd.Asserted ? HoldInertia : AcquireInertia;
+
+        int ring = _ring.Length;
+        for (int phase = 0; phase < TimingDiversity.PhaseCount; phase++)
+        {
+            double position = instant + (TimingDiversity.PhaseFractions[phase] * _samplesPerBit);
+            long lower = (long)Math.Floor(position);
+            float fraction = (float)(position - lower);
+            int a = (int)(((lower % ring) + ring) % ring);
+            int b = (a + 1) % ring;
+            float value = _ring[a] + (fraction * (_ring[b] - _ring[a]));
+            int level = value > 0 ? 1 : 0;
+            PhaseTap?.Invoke(phase, instant, a, value);
+            if (phase == 0)
+            {
+                _bitSink(level);
+            }
+
+            _phaseBitSink?.Invoke(level, phase);
         }
     }
 }

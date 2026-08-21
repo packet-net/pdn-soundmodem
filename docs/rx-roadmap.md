@@ -760,8 +760,20 @@ diversity just bought), and the 4-PAM clock's wrap can only land on a sample, so
 instant is up to a tenth of a symbol late and the phase set is not centred on the eye -
 reading the decision back to the instant the clock asked for, as `QpskDemodulator` does, is
 the next cheap thing to measure.
+**The AFSK family is done (PR #334, ledger 2026-08-21 later6).** `AfskDemodulator` decides
+every bit at the seven phases and holds its clock once DCD asserts; every wrapper runs a
+deframer per phase behind a bit-clocked content dedupe. Worth about a third of a decibel at
+every AFSK knee on AWGN (`afsk300-il2pc` -2 dB 61 -> 92 of 200, `afsk1200` +6 dB 107 -> 129,
+`afsk300` 0 dB 70 -> 86), a little on the FM channels, and nothing at all on the fading ones.
+Measured apart, the phases are the entire sim gain and the hold is neutral there, kept for
+what it does to a real capture. Two findings for the modes still open: the eye sweep
+(`AfskEyeSweepProbe`) is the cheap way to know in advance how much a mode's timing can be
+worth - 300 baud's plateau is nine samples wide at 40 samples per bit, which is why it gains
+a third of what the PSK modes did, while 1200 baud's window is two samples wide - and at
+40 samples per bit the phases one and two samples early are often the same decision, which is
+real rather than a bug and is what the per-phase scoring test exists to tell apart.
 
-**Done, 2026-08-21 (later6): the direct-FSK modes** (`fsk9600`, `fsk9600-il2p`,
+**Done, 2026-08-21 (later7): the direct-FSK modes** (`fsk9600`, `fsk9600-il2p`,
 `fsk4800-il2p`). Seven phases at 10 % of a symbol rather than 2.5 %, because these modes
 decide on ten points per symbol at 48 kHz and the union of the phases saturates by 10 %;
 1.5 to 2 dB at every knee on both AWGN and fm-data, on the IL2P legs and on classic HDLC
@@ -776,7 +788,7 @@ gets matched-filter timing. One partial answer to the C4FSK note above, measured
 phase 0 does read systematically late (21 wrong bits of 1360 against 13 at -10 % on one
 burst at the edge), but recentring the whole set 15 % early is worth nothing the
 symmetric set does not already cover, 138/183/197 against 135/183/196. Ledger:
-mode-validation.md 2026-08-21 (later6).
+mode-validation.md 2026-08-21 (later7).
 
 ## Discipline
 

@@ -66,11 +66,20 @@ public sealed class Afsk300Modem : IModem
     /// </summary>
     private const double ObwHz = 400;
 
+    /// <summary>Dedupe window across the timing phases' deframers, in bits: shorter than the
+    /// shortest frame either framing can carry (an IL2P header alone is 120 bits, a minimal
+    /// AX.25 frame 136), longer than the trailer a held plain IL2P reading waits for (32
+    /// bits). The phases decide the same bits, so their copies of a frame arrive within a bit
+    /// of each other and a genuine repeat of even the shortest frame is much further away.</summary>
+    private const int DedupeWindowBits = 64;
+
     private readonly AfskDemodulator _demodulator;
     private readonly AfskModulator _modulator;
     private readonly Afsk300Framing _framing;
     private readonly int _sampleRate;
     private readonly double _centerFrequency;
+    private readonly FrameDeduper _deduper = new(DedupeWindowBits);
+    private long _bitsSeen;
 
     /// <summary>Creates the modem.</summary>
     /// <param name="sampleRate">Channel DSP rate (multiple of 300).</param>
@@ -102,61 +111,107 @@ public sealed class Afsk300Modem : IModem
         // and, on both paths, the carrier-offset reading - while it in turn cannot be built
         // until the bit sink that drives it exists. Nothing dereferences it until audio flows.
         AfskDemodulator? demodulator = null;
-        Action<int> bitSink;
+        Action<int, int> phaseBitSink;
+
+        // One deframer per timing phase (see AfskDemodulator.TimingPhaseCount): the phases
+        // decide the same bits at slightly different instants, so their deframers run in
+        // lockstep and a frame that any of them reads is delivered once, the first copy to
+        // arrive winning (usually every phase that read it arrives on the same bit). The short
+        // content window behind them catches the one way a copy can arrive later: a phase whose
+        // own IL2P+CRC reading failed holds a plain reading until the trailer bits pass, and
+        // would otherwise show it as a second, monitor-only row.
+        int phases = AfskDemodulator.TimingPhaseCount;
 
         if (framing == Afsk300Framing.Ax25)
         {
-            var deframer = new HdlcDeframer(frame =>
+            var deframers = new HdlcDeframer[phases];
+            var nrzi = new NrziDecoder[phases];
+            for (int phase = 0; phase < phases; phase++)
             {
-                frameReceived(frame);
-                FrameDecoded?.Invoke(frame, new FrameQuality(
-                    Mode, frame.Length, null, null,
-                    // Read at the end of the burst that carried the frame, while the slicer
-                    // envelopes it is derived from still describe that burst.
-                    FrequencyOffsetHz: demodulator!.CarrierOffsetHz));
-            });
-            var nrzi = new NrziDecoder();
-            bitSink = level => deframer.PushBit(nrzi.Decode(level));
+                nrzi[phase] = new NrziDecoder();
+                deframers[phase] = new HdlcDeframer(frame =>
+                {
+                    if (!_deduper.ShouldEmit(frame, _bitsSeen))
+                    {
+                        return;
+                    }
+
+                    frameReceived(frame);
+                    FrameDecoded?.Invoke(frame, new FrameQuality(
+                        Mode, frame.Length, null, null,
+                        // Read at the end of the burst that carried the frame, while the slicer
+                        // envelopes it is derived from still describe that burst.
+                        FrequencyOffsetHz: demodulator!.CarrierOffsetHz));
+                });
+            }
+
+            phaseBitSink = (level, phase) =>
+            {
+                if (phase == 0)
+                {
+                    _bitsSeen++;
+                }
+
+                deframers[phase].PushBit(nrzi[phase].Decode(level));
+            };
         }
         else
         {
-            var deframer = new Il2pReceiver(
-                (frame, info, delivery) =>
-                {
-                    if (!delivery.MonitorOnly)
+            var deframers = new Il2pReceiver[phases];
+            for (int phase = 0; phase < phases; phase++)
+            {
+                deframers[phase] = new Il2pReceiver(
+                    (frame, info, delivery) =>
                     {
-                        frameReceived(frame);
-                    }
+                        if (!_deduper.ShouldEmit(frame, _bitsSeen, !delivery.MonitorOnly))
+                        {
+                            return;
+                        }
 
-                    FrameDecoded?.Invoke(frame, new FrameQuality(
-                        Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
-                        HeaderType: info.HeaderType,
-                        FrequencyOffsetHz: demodulator!.CarrierOffsetHz,
-                        PlainIl2p: delivery.PlainIl2p,
-                        TrailerNearBits: delivery.TrailerNearBits,
-                        MonitorOnly: delivery.MonitorOnly));
-                },
-                crcMode: framing == Afsk300Framing.Il2pCrc, acceptPlainIl2p: acceptPlainIl2p);
-            // Reset the deframer on the DCD falling edge - same rationale as BpskModem:
+                        if (!delivery.MonitorOnly)
+                        {
+                            frameReceived(frame);
+                        }
+
+                        FrameDecoded?.Invoke(frame, new FrameQuality(
+                            Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                            HeaderType: info.HeaderType,
+                            FrequencyOffsetHz: demodulator!.CarrierOffsetHz,
+                            PlainIl2p: delivery.PlainIl2p,
+                            TrailerNearBits: delivery.TrailerNearBits,
+                            MonitorOnly: delivery.MonitorOnly));
+                    },
+                    crcMode: framing == Afsk300Framing.Il2pCrc, acceptPlainIl2p: acceptPlainIl2p);
+            }
+
+            // Reset the deframers on the DCD falling edge - same rationale as BpskModem:
             // a carrier that drops mid-collection leaves the deframer consuming the next
             // transmission's sync word as phantom payload.
             bool previousDcd = false;
-            bitSink = bit =>
+            phaseBitSink = (bit, phase) =>
             {
-                bool dcd = demodulator!.CarrierDetect;
-                if (previousDcd && !dcd)
+                if (phase == 0)
                 {
-                    deframer.Reset();
+                    _bitsSeen++;
+                    bool dcd = demodulator!.CarrierDetect;
+                    if (previousDcd && !dcd)
+                    {
+                        foreach (Il2pReceiver deframer in deframers)
+                        {
+                            deframer.Reset();
+                        }
+                    }
+
+                    previousDcd = dcd;
                 }
 
-                previousDcd = dcd;
-                deframer.PushBit(bit);
+                deframers[phase].PushBit(bit);
             };
         }
 
         demodulator = new AfskDemodulator(
-            sampleRate, bitSink, centerFrequency, Baud, bandPassHalfWidth, lowPassCutoff,
-            toneShift: ToneShift);
+            sampleRate, static _ => { }, centerFrequency, Baud, bandPassHalfWidth, lowPassCutoff,
+            toneShift: ToneShift, phaseBitSink: phaseBitSink);
         _demodulator = demodulator;
         _modulator = new AfskModulator(
             sampleRate, Baud, centerFrequency - ToneShift, centerFrequency + ToneShift);
