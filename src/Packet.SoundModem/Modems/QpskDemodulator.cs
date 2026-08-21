@@ -72,6 +72,17 @@ public sealed class QpskDemodulator
     /// TXDELAY.</summary>
     private const double DifferentialInertia = 0.94;
 
+    /// <summary>DPLL inertia once a burst is established (the offset window has seeded or
+    /// DCD holds): the clock acquires at <see cref="DifferentialInertia"/> and then holds
+    /// nearly rigid, correcting half a per cent of its error per transition, which still
+    /// follows any plausible symbol-rate error (a 500 ppm clock costs a tenth of a symbol of
+    /// lag) while no longer wandering on noise. On the 2026-08-21 off-air qpsk600 fixture the
+    /// clock that acquired at 6-7 samples and then wandered 2-10 through the payload left 10
+    /// wrong bytes against a Reed-Solomon limit of 8, while a rigid clock two samples later
+    /// copies the frame; held, the timing phases reach that clock and the frame copies with
+    /// 6 corrected. Neutral on the sim's knee rows, where nothing establishes a burst.</summary>
+    private const double HoldInertia = 0.995;
+
     /// <summary>Clamp on the seeded part of the reference rotation, radians per symbol:
     /// π/4 is ±baud/8, the fourth-power offset window's own unambiguous range - ±37.5 Hz
     /// at 300 Bd, ±150 Hz at 1200 Bd, far beyond any real station error.</summary>
@@ -360,7 +371,7 @@ public sealed class QpskDemodulator
         _confidenceMean = new double[phases];
         _previousDecisionMargin = new float[phases];
         Array.Fill(_previousDecisionMargin, float.MaxValue);
-        _phaseOffsetSamples = TimingDiversity.Fraction * delay;
+        _phaseOffsetSamples = TimingDiversity.Reach * delay;
         // The late phase reads up to ceil(offset) samples past the instant, plus one for the
         // interpolation's upper neighbour; the ring spans both sides of the instant with room.
         _ringLead = (int)Math.Ceiling(_phaseOffsetSamples) + 1;
@@ -805,6 +816,13 @@ public sealed class QpskDemodulator
         // parked there at the start of a burst its 24-symbol preamble then could not save).
         // Frozen on noise, the idle leak above drains it instead.
         _trackerActive = dcd || windowCoherent || energy;
+
+        // The clock acquires at the differential inertia and holds, nearly rigid, once a burst
+        // is established (the offset window has seeded or DCD holds): on the 2026-08-21 off-air
+        // fixture the clock that acquired at 6-7 samples then wandered 2-10 through the payload
+        // while a rigid clock at 8 copies the frame, and the timing phases can only reach a
+        // phase the clock keeps still for.
+        _dpll.Inertia = dcd || windowCoherent ? HoldInertia : DifferentialInertia;
 
         // The DPLL and DCD see the product de-rotated by the clock instant's own estimate.
         double rotation = _seededRotation + _trackedRotation[0];

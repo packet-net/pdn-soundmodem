@@ -3,10 +3,10 @@ namespace Packet.SoundModem.Modems;
 /// <summary>
 /// The timing phases a PSK demodulator decides every symbol at: the recovered clock instant
 /// itself first (it drives DCD, the constellation and the hard bit sink), then a little early
-/// and a little late. Each phase decides the same symbols with its own reference state and
-/// feeds its own deframer through the soft sink's phase index; the modem delivers whichever
+/// and a little late in steps. Each phase decides the same symbols with its own reference state
+/// and feeds its own deframer through the soft sink's phase index; the modem delivers whichever
 /// copy passes, once. The matched filter, the mixer, the clock and the offset window are
-/// shared, so the cost is the decision stage and two deframers per branch.
+/// shared, so the cost is the decision stage and a deframer per extra phase per branch.
 /// </summary>
 /// <remarks>
 /// What it buys is the burst that sits on the Reed-Solomon edge. On the 2026-08-21 off-air
@@ -17,16 +17,37 @@ namespace Packet.SoundModem.Modems;
 /// </remarks>
 internal static class TimingDiversity
 {
-    /// <summary>How far the early and late phases sit from the recovered instant, in symbols.
-    /// Five per cent is two samples at 40 samples per symbol. Measured against 3 and 8 per cent
-    /// on the qpsk600, qpsk2400, bpsk300 and bpsk1200 knee rows (N=200) and found equivalent
-    /// within a few frames; the middle value is kept.</summary>
-    internal const double Fraction = 0.05;
+    /// <summary>Step between adjacent phases, in symbols: one sample at 40 samples per symbol.
+    /// A single pair at 5 % was first measured against 3 and 8 % and found equivalent; three
+    /// pairs at 2.5 % then measured better again on every knee row (qpsk600 -1/0 dB 131/185 ->
+    /// 146/187 of 200, bpsk300 -5/-4 dB 164/195 -> 174/197, bpsk1200 +1/+2 dB 160/197 ->
+    /// 173/198), reaching 7.5 % either side.</summary>
+    internal const double Step = 0.025;
 
-    /// <summary>Offsets from the recovered instant, in symbols, phase 0 being the instant.</summary>
-    internal static readonly double[] PhaseFractions = [0, -Fraction, Fraction];
+    /// <summary>Phases either side of the instant.</summary>
+    internal const int Pairs = 3;
+
+    /// <summary>Offsets from the recovered instant, in symbols, phase 0 being the instant, then
+    /// early/late pairs stepping outward.</summary>
+    internal static readonly double[] PhaseFractions = Build();
 
     /// <summary>How many phases the soft sinks are fed: the index they carry runs 0 to this
     /// minus one.</summary>
     internal static int PhaseCount => PhaseFractions.Length;
+
+    /// <summary>The widest offset, in symbols.</summary>
+    internal static double Reach => Pairs * Step;
+
+    private static double[] Build()
+    {
+        var fractions = new double[(2 * Pairs) + 1];
+        fractions[0] = 0;
+        for (int pair = 1; pair <= Pairs; pair++)
+        {
+            fractions[(2 * pair) - 1] = -pair * Step;
+            fractions[2 * pair] = pair * Step;
+        }
+
+        return fractions;
+    }
 }

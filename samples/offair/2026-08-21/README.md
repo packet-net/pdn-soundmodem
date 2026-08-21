@@ -164,3 +164,21 @@ different slot of the comb (the bank's +15 and +22.5 Hz branches) already shows 
 one short. The same work took the simulated qpsk600 knee and the whole family's carrier-offset
 tolerance a long way, which is the part of #326 that reaches the air; see
 docs/mode-validation.md, 2026-08-21 (later3).
+
+## 2026-08-21 (later2): it copies
+
+Tom pushed back on "copies at the luckiest clock phase, not at the clock the receiver recovers",
+and he was right to. The clock was the problem. Acquired, the DPLL sat at 6-7 samples and then
+wandered 2-10 through the payload; the copyable phase is 8. The receiver now decides every
+symbol at seven timing phases (the clock instant and 2.5, 5 and 7.5 % of a symbol either side)
+and holds its clock nearly rigid from the moment a burst is established, and with both
+
+```
+pdn-decode samples/offair/2026-08-21/packet-24738.wav
+```
+
+reads the frame above: `N2IRZ-2 > ID`, IL2P+CRC verified, **6 bytes corrected** of a limit of 8
+(8 with three phases; the hold alone is what crosses the line). `OffAirQpskTests` pins it as the
+regression test this folder was committed to be. On the simulated channel the same two changes
+are worth about 1 dB at the knee of every PSK mode, in both families; see docs/mode-validation.md,
+2026-08-21 (later4).

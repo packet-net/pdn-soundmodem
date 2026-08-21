@@ -47,6 +47,20 @@ public sealed class BpskDemodulator
     /// 24-bit minimum preamble.</summary>
     private const double DifferentialInertia = 0.92;
 
+    /// <summary>DPLL inertia once DCD holds: the clock acquires at
+    /// <see cref="DifferentialInertia"/> and then holds nearly rigid - see
+    /// <see cref="QpskDemodulator"/>, where it was measured on the off-air fixture. DCD is the
+    /// gate here, not the offset window's seed: <see cref="PacketDcd"/> asserting means 30 of
+    /// the last 32 transitions landed inside an eighth of a symbol, which is the clock having
+    /// converged, whereas BPSK's square-law seed fires within a dozen symbols of a burst, and a
+    /// clock frozen that early keeps its residual error (measured: the QtSM bpsk300 fixture
+    /// 10 -> 8 frames, a single modem losing a 30 Hz burst, and DCD itself no longer asserting
+    /// on the transitions it then scores). Gated on DCD it is neutral on the sim's knee rows
+    /// (bpsk300 -5/-4 dB 174/197 and 173/194 of 200 with or without it, the seven-phase
+    /// figures) and kept for the reason QpskDemodulator measured on the fixture: a clock that
+    /// no longer wanders is a clock the timing phases can reach past.</summary>
+    private const double HoldInertia = 0.995;
+
     /// <summary>Reference memory λ of the decision-feedback detector: the reference averages
     /// ~1/(1−λ) = 20 symbols, taking its effective noise well below the single symbol plain
     /// differential detection divides by. Longer memories measured no better once the
@@ -235,7 +249,7 @@ public sealed class BpskDemodulator
         _confidenceMean = new double[phases];
         _previousDecisionMagnitude = new float[phases];
         Array.Fill(_previousDecisionMagnitude, float.MaxValue);
-        _phaseOffsetSamples = TimingDiversity.Fraction * samplesPerSymbol;
+        _phaseOffsetSamples = TimingDiversity.Reach * samplesPerSymbol;
         // The late phase reads up to ceil(offset) samples past the instant, plus one for the
         // interpolation's upper neighbour; the ring spans both sides of the instant with room.
         _ringLead = (int)Math.Ceiling(_phaseOffsetSamples) + 1;
@@ -327,6 +341,10 @@ public sealed class BpskDemodulator
         // decisions it gives the bank's branches are selection diversity worth several
         // points at the threshold. Gating them on signal presence, as QpskDemodulator does,
         // measured 131/186 -> 120/170 of 200 on bpsk1200 at +1/+2 dB here.
+
+        // The clock acquires at the differential inertia and holds, nearly rigid, once DCD
+        // says it has converged - see HoldInertia.
+        _dpll.Inertia = _packetDcd.Asserted ? HoldInertia : DifferentialInertia;
 
         int ring = _ringI.Length;
         for (int phase = 0; phase < TimingDiversity.PhaseCount; phase++)
