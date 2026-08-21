@@ -200,13 +200,31 @@ internal static class Sweep
     public static bool IsPacketMode(string mode) =>
         !HfWaveformPrefixes.Any(prefix => mode.StartsWith(prefix, StringComparison.Ordinal));
 
+    /// <summary>
+    /// Whether a mode's receiver has a <see cref="PskDetector"/> to choose, and so is worth
+    /// running a second time under the other one.
+    /// </summary>
+    /// <remarks>
+    /// Every PSK mode runs twice, differential and coherent. Differential is the catalogue
+    /// default and is the right default - it was measured to copy 9 of 9 of the NinoTNC corpus
+    /// where coherent copied 0 to 2 of 3, and BPSK was reversed to it in issues #40/#42 because
+    /// coherent's narrow Costas loop cannot acquire real carriers. But a file reaching this tool
+    /// is by definition one something else could not read, which is exactly the case where the
+    /// losing branch occasionally wins: coherent's advantage is a decibel or two when it can
+    /// lock, and a long burst sitting on an on-frequency carrier is where it can. Running both
+    /// costs one more pass over a short file and removes a whole class of "we did not try".
+    /// </remarks>
+    private static bool HasDetectorChoice(string mode) =>
+        mode.StartsWith("bpsk", StringComparison.Ordinal)
+        || mode.StartsWith("qpsk", StringComparison.Ordinal);
+
     private static IReadOnlyList<SweepEntry> Build(IEnumerable<string> modes)
     {
         var entries = new List<SweepEntry>();
         foreach (string mode in modes)
         {
             entries.Add(new SweepEntry(mode, mode));
-            if (mode == "qpsk3600")
+            if (HasDetectorChoice(mode))
             {
                 entries.Add(new SweepEntry(
                     mode + " (coherent)", mode, new ModemOptions(Detector: PskDetector.Coherent)));
