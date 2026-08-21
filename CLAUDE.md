@@ -83,3 +83,7 @@ docs/plan.md                 phase plan + status - keep it current as you work
 
 The architecture/design rationale lives in the founding research doc in packet.net
 (`docs/research/headless-soundmodem.md`) - this repo's plan.md §Decisions is the binding summary.
+
+## Releases and release notes
+
+A release is a `v*` tag on `main`; `release.yml` tests, builds the NuGet package and the `.deb`s, and writes the GitHub Release notes with `scripts/release-notes.py` - one bullet per merged PR (or direct commit) since the previous tag, grouped by the conventional prefix, nothing else. So **a PR title is a release-note bullet**: write it as the plain, one-line, user-facing statement of what changed (what a station operator or a library consumer would want to read), with a `feat:`/`fix:`/`docs:`/`test:`/`chore:` prefix so it lands in the right section. The detail belongs in the PR body. Never hand-write release notes or re-add install text to them; INSTALL.md is linked from every release.
