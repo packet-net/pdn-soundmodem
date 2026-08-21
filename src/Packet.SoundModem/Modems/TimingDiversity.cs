@@ -1,12 +1,14 @@
 namespace Packet.SoundModem.Modems;
 
 /// <summary>
-/// The timing phases a PSK demodulator decides every symbol at: the recovered clock instant
+/// The timing phases a demodulator decides every symbol at: the recovered clock instant
 /// itself first (it drives DCD, the constellation and the hard bit sink), then a little early
 /// and a little late in steps. Each phase decides the same symbols with its own reference state
 /// and feeds its own deframer through the soft sink's phase index; the modem delivers whichever
 /// copy passes, once. The matched filter, the mixer, the clock and the offset window are
 /// shared, so the cost is the decision stage and a deframer per extra phase per branch.
+/// Two step sizes, one shape: <see cref="Step"/> for the PSK chains, which decide on forty
+/// samples per symbol, and <see cref="FskStep"/> for the direct-FSK chains, which have ten.
 /// </summary>
 /// <remarks>
 /// What it buys is the burst that sits on the Reed-Solomon edge. On the 2026-08-21 off-air
@@ -24,28 +26,47 @@ internal static class TimingDiversity
     /// 173/198), reaching 7.5 % either side.</summary>
     internal const double Step = 0.025;
 
+    /// <summary>Step for the direct-FSK modes, which decide on a ten-point grid per symbol
+    /// rather than forty (48 kHz, 9600 Bd, interpolated x2 - see <see cref="FskModem"/>), so
+    /// the PSK step is a quarter of one point. Measured on the sim ladder at fsk9600-il2p AWGN
+    /// +10 dB, N=200, TXDELAY 150: 128 of 200 with no diversity, then 172 at 2.5 %, 178 at 5 %,
+    /// 183 at 10 % and 183 again at 15 %. The union saturates by 10 %, which reaches 30 % of a
+    /// symbol either side and covers the whole open part of this mode's eye, so that is the
+    /// step; going wider only spends deframers. Recentring the whole set 15 % early was also
+    /// tried, because phase 0 alone reads systematically late here (the clock wraps on the
+    /// sample that overshoots and this chain deliberately does not interpolate its crossings):
+    /// 138/183/197 against 135/183/196, i.e. nothing the symmetric set does not already
+    /// cover.</summary>
+    internal const double FskStep = 0.10;
+
     /// <summary>Phases either side of the instant.</summary>
     internal const int Pairs = 3;
 
     /// <summary>Offsets from the recovered instant, in symbols, phase 0 being the instant, then
     /// early/late pairs stepping outward.</summary>
-    internal static readonly double[] PhaseFractions = Build();
+    internal static readonly double[] PhaseFractions = Build(Step);
+
+    /// <summary>The same set at the direct-FSK step - see <see cref="FskStep"/>.</summary>
+    internal static readonly double[] FskPhaseFractions = Build(FskStep);
 
     /// <summary>How many phases the soft sinks are fed: the index they carry runs 0 to this
-    /// minus one.</summary>
+    /// minus one. The same for both steps, so one deframer per phase covers either.</summary>
     internal static int PhaseCount => PhaseFractions.Length;
 
     /// <summary>The widest offset, in symbols.</summary>
     internal static double Reach => Pairs * Step;
 
-    private static double[] Build()
+    /// <summary>The widest offset at the direct-FSK step, in symbols.</summary>
+    internal static double FskReach => Pairs * FskStep;
+
+    private static double[] Build(double step)
     {
         var fractions = new double[(2 * Pairs) + 1];
         fractions[0] = 0;
         for (int pair = 1; pair <= Pairs; pair++)
         {
-            fractions[(2 * pair) - 1] = -pair * Step;
-            fractions[2 * pair] = pair * Step;
+            fractions[(2 * pair) - 1] = -pair * step;
+            fractions[2 * pair] = pair * step;
         }
 
         return fractions;
