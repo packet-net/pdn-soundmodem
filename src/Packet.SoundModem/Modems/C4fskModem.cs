@@ -24,6 +24,17 @@ namespace Packet.SoundModem.Modems;
 /// the three slice thresholds sit at 0 and ±⅔ of it. Mode 1 at 48 kHz has only 5 samples
 /// per symbol, so it takes the same ×2 interpolation the 9600 GFSK RX needs.
 /// </para>
+/// <para>
+/// The decision stage is run at seven timing phases per symbol - the recovered clock instant
+/// and 5, 10 and 15 % of a symbol either side, interpolated from a ring of the slicer's input
+/// - each with its own equalizer and its own <see cref="Il2pReceiver"/>, and whichever phase
+/// reads a frame delivers it once behind a symbol-clocked content dedupe. The front end (the
+/// filter, the energy gate, the envelope and the clock) is shared, so the cost is the
+/// decision stage and six extra deframers. That is <see cref="TimingDiversity"/>'s technique
+/// from the PSK modes at this mode's coarser resolution; the step is twice theirs because at
+/// 10 decision points per symbol a 2.5 % phase is a quarter of a point away from the instant
+/// and decides the same symbol. See the 2026-08-21 (later5) entry in docs/mode-validation.md.
+/// </para>
 /// </remarks>
 public sealed class C4fskModem : IModem
 {
@@ -31,11 +42,18 @@ public sealed class C4fskModem : IModem
     private readonly int _symbolRate;
     private readonly bool _crc;
     private readonly FirFilter _rxFilter;
-    private readonly Il2pReceiver _deframer;
+    private readonly Il2pReceiver[] _deframers;
+    private readonly FrameDeduper _deduper;
     private readonly PacketDcd _packetDcd = new();
     private readonly EnergyBusyDetector _energyBusy;
     private readonly int _upsample;
     private readonly double _clockIncrement;
+    private readonly double _pointsPerSymbol;
+    private readonly float[] _slicerRing;
+    private readonly int _ringLead;
+    private long _pointIndex;
+    private long _pendingInstant = -1;
+    private long _symbolsSeen;
     private double _clockPhase;
     private int _lastSign;
     private bool _previousEnergyBusy;
@@ -55,16 +73,61 @@ public sealed class C4fskModem : IModem
     // from 103 symbol errors to 25, and every burst's distinct-bad-byte count falls
     // inside the RS 8-per-block budget. Adaptation is silence-safe because the
     // energy gate already stops symbols flowing when the channel is idle.
-    private readonly float[] _ffeTaps = new float[FfeLength];
-    private readonly float[] _ffeHistory = new float[FfeLength];
-    private int _ffeCount;
-    private int _alternatingOuterRun;
-    private int _nonAlternatingRun;
-    private bool _ffeFrozen;
-    private int _previousLevel;
+    //
+    // One set of taps, history, freeze state and last decision PER TIMING PHASE (see
+    // PhaseFractions): the phases decide the same symbol from different instants, so each
+    // needs its own adapted equalizer, and the freeze hysteresis is a per-phase reading of
+    // the decision stream. Flat arrays, phase-major, allocated once.
+    private readonly float[] _ffeTaps;
+    private readonly float[] _ffeHistory;
+    private readonly int[] _ffeCount;
+    private readonly int[] _alternatingOuterRun;
+    private readonly int[] _nonAlternatingRun;
+    private readonly bool[] _ffeFrozen;
+    private readonly int[] _previousLevel;
 
     private const int FfeLength = 5;
     private const float FfeMu = 0.05f;
+
+    /// <summary>Dedupe window across the timing phases' deframers, in symbols: shorter than the
+    /// shortest IL2P frame (a 15-byte header alone is 60 symbols at 2 bits a symbol), longer
+    /// than the trailer a held plain reading waits for (32 bits, 16 symbols).</summary>
+    private const int DedupeWindowSymbols = 32;
+
+    /// <summary>Step between adjacent timing phases, in symbols, and how many pairs either
+    /// side of the recovered instant - <see cref="TimingDiversity"/>'s idea at this mode's own
+    /// resolution.</summary>
+    /// <remarks>
+    /// The PSK modes step 2.5 % of a symbol either side, three pairs. That step is a quarter
+    /// of a decision point here: both C4FSK modes run 10 points per symbol at 48 kHz (mode 3
+    /// natively, mode 1 through the x2 interpolation), and c4fsk19200's underlying audio is 5
+    /// samples per symbol, so a 2.5 % phase is an eighth of a real sample from the instant and
+    /// very nearly the same number. Measured over eight knee rows of 200 (2026-08-21, seed 1):
+    /// no diversity 681, the PSK step 1223, 5 % 1339, 7.5 % 1341, 10 % over two pairs 1292, a
+    /// fourth pair at 5 % 1366. So the PSK step is real but leaves half the gain on the table,
+    /// reach past ~15 % of a symbol adds nothing, and a ninth phase is inside the noise. See
+    /// the 2026-08-21 (later5) mode-validation.md entry for the rows themselves.
+    /// </remarks>
+    private const double PhaseStep = 0.05;
+
+    /// <summary>Phases either side of the instant, per <see cref="PhaseStep"/>.</summary>
+    private const int PhasePairs = 3;
+
+    /// <summary>Offsets from the recovered clock instant, in symbols, phase 0 being the
+    /// instant itself. Built from compile-time constants, so no static-initialiser ordering
+    /// can flatten it (PR #330's [0, -0, 0] slip); the phases are asserted distinct, and
+    /// asserted to make different errors on a real burst, in C4fskTimingDiversityTests.</summary>
+    private static readonly double[] PhaseFractions = TimingDiversity.Build(PhaseStep, PhasePairs);
+
+    /// <summary>Clock inertia while acquiring: Dire Wolf's locked value, as BitDpll.</summary>
+    private const double AcquireInertia = 0.74;
+
+    /// <summary>Clock inertia once DCD says the clock has converged (30 of 32 transitions
+    /// well timed). A burst that is established does not need its clock steered any more, and
+    /// a clock that keeps still is the only kind the timing phases either side of it can
+    /// reach; 0.5 % of a transition's phase error still follows a real symbol-rate error. Same
+    /// value, same gate, as <see cref="BpskDemodulator"/>.</summary>
+    private const double HoldInertia = 0.995;
 
     /// <summary>
     /// MMDVM-TNC "Mode 2" sync, 4 bytes chosen to be outer-symbol-only: 0x5D 0x57 0xDF
@@ -119,25 +182,58 @@ public sealed class C4fskModem : IModem
         _rxFilter = new FirFilter(FilterDesign.LowPass(1.5 * symbolRate, sampleRate, 48 * sampleRate / 48000));
         _energyBusy = new EnergyBusyDetector(sampleRate);
 
-        _deframer = new Il2pReceiver(
-            (frame, info, delivery) =>
-            {
-                if (!delivery.MonitorOnly)
+        // One deframer per timing phase: the phases decide the same symbols at slightly
+        // different instants and run their deframers in lockstep, so a frame that any of them
+        // reads is delivered once, the first copy to arrive winning (usually every phase that
+        // reads it arrives on the same symbol). The short content window behind it catches the
+        // one way a copy can arrive later: a phase whose own IL2P+CRC reading failed holds a
+        // plain reading until the trailer bits pass, and would otherwise show it as a second,
+        // monitor-only row.
+        _deduper = new FrameDeduper(DedupeWindowSymbols);
+        _deframers = new Il2pReceiver[PhaseFractions.Length];
+        for (int phase = 0; phase < _deframers.Length; phase++)
+        {
+            _deframers[phase] = new Il2pReceiver(
+                (frame, info, delivery) =>
                 {
-                    frameReceived(frame);
-                }
+                    if (!_deduper.ShouldEmit(frame, _symbolsSeen, !delivery.MonitorOnly))
+                    {
+                        return;
+                    }
 
-                FrameDecoded?.Invoke(frame, new FrameQuality(
-                    Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
-                    HeaderType: info.HeaderType,
-                    PlainIl2p: delivery.PlainIl2p,
-                    TrailerNearBits: delivery.TrailerNearBits,
-                    MonitorOnly: delivery.MonitorOnly));
-            },
-            crcMode: crc, acceptPlainIl2p: acceptPlainIl2p, syncWord: SyncWord);
+                    if (!delivery.MonitorOnly)
+                    {
+                        frameReceived(frame);
+                    }
+
+                    FrameDecoded?.Invoke(frame, new FrameQuality(
+                        Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
+                        HeaderType: info.HeaderType,
+                        PlainIl2p: delivery.PlainIl2p,
+                        TrailerNearBits: delivery.TrailerNearBits,
+                        MonitorOnly: delivery.MonitorOnly));
+                },
+                crcMode: crc, acceptPlainIl2p: acceptPlainIl2p, syncWord: SyncWord);
+        }
+
+        _ffeTaps = new float[PhaseFractions.Length * FfeLength];
+        _ffeHistory = new float[PhaseFractions.Length * FfeLength];
+        _ffeCount = new int[PhaseFractions.Length];
+        _alternatingOuterRun = new int[PhaseFractions.Length];
+        _nonAlternatingRun = new int[PhaseFractions.Length];
+        _ffeFrozen = new bool[PhaseFractions.Length];
+        _previousLevel = new int[PhaseFractions.Length];
 
         _upsample = sampleRate / symbolRate < 8 ? 2 : 1;
         _clockIncrement = (double)symbolRate / (sampleRate * _upsample);
+        _pointsPerSymbol = 1.0 / _clockIncrement;
+
+        // The decision is taken three points AFTER the clock's instant, because the late
+        // phases read slicer input that has not arrived yet at the instant itself; the ring
+        // holds the normalised slicer input either side of it, and nothing downstream of a
+        // decision notices that it is emitted three tenths of a symbol late.
+        _ringLead = (int)Math.Ceiling(PhaseStep * PhasePairs * _pointsPerSymbol) + 1;
+        _slicerRing = new float[(2 * _ringLead) + 4];
         ResetFfe();
     }
 
@@ -153,6 +249,19 @@ public sealed class C4fskModem : IModem
 
     /// <inheritdoc />
     public event Action<byte[], FrameQuality>? FrameDecoded;
+
+    /// <summary>How many timing phases this modem decides every symbol at, phase 0 being the
+    /// recovered clock's own instant.</summary>
+    internal static int TimingPhaseCount => PhaseFractions.Length;
+
+    /// <summary>The phases' offsets from the clock instant, in symbols - the bench's read-only
+    /// view of <see cref="PhaseFractions"/>.</summary>
+    internal static ReadOnlySpan<double> TimingPhaseFractions => PhaseFractions;
+
+    /// <summary>Bench seam: every phase's decided dibit, as (phase, first bit, second bit),
+    /// alongside the deframer it is pushed into. Null in deployment, and the only way to see
+    /// that the phases genuinely decide differently. Not part of the deployment surface.</summary>
+    internal Action<int, int, int>? PhaseDibitObserver { get; set; }
 
     /// <inheritdoc />
     public string Mode => $"c4fsk{_symbolRate * 2}{(_crc ? "-il2pc" : "-il2p")}";
@@ -188,7 +297,12 @@ public sealed class C4fskModem : IModem
                 // resets with it - its taps model the burst that just ended.
                 if (_previousEnergyBusy)
                 {
-                    _deframer.Reset();
+                    foreach (Il2pReceiver deframer in _deframers)
+                    {
+                        deframer.Reset();
+                    }
+
+                    _pendingInstant = -1;
                     ResetFfe();
                 }
 
@@ -214,6 +328,7 @@ public sealed class C4fskModem : IModem
                 float mid = (_peakHigh + _peakLow) * 0.5f;
                 float half = Math.Max((_peakHigh - _peakLow) * 0.5f, 1e-6f);
                 float normalised = (value - mid) / half;
+                _slicerRing[(int)(_pointIndex % _slicerRing.Length)] = normalised;
 
                 // Symbol clock. The shared BitDpll cannot be used as-is for 4-PAM: it
                 // nudges on EVERY level change, and an outer-to-outer transition sweeps
@@ -222,90 +337,23 @@ public sealed class C4fskModem : IModem
                 // decodes with 1 symbol error in 316 at a fixed phase). Only the middle
                 // threshold's crossings - sign changes - land at symbol boundaries, so
                 // only they steer the clock; the 4-level decision is taken at the wrap,
-                // through the equalizer.
+                // through the equalizer - and, since PR #331, at each timing phase either
+                // side of it as well (see DecidePending).
                 _clockPhase += _clockIncrement;
                 if (_clockPhase >= 0.5)
                 {
                     _clockPhase -= 1.0;
-
-                    for (int t = 0; t < FfeLength - 1; t++)
+                    if (_pendingInstant >= 0)
                     {
-                        _ffeHistory[t] = _ffeHistory[t + 1];
+                        DecidePending();   // cannot happen at 10 points per symbol; cheap insurance
                     }
 
-                    _ffeHistory[FfeLength - 1] = normalised;
-                    if (++_ffeCount >= (FfeLength / 2) + 1)
-                    {
-                        float equalized = 0;
-                        float power = 1e-6f;
-                        for (int t = 0; t < FfeLength; t++)
-                        {
-                            equalized += _ffeTaps[t] * _ffeHistory[t];
-                            power += _ffeHistory[t] * _ffeHistory[t];
-                        }
+                    _pendingInstant = _pointIndex;
+                }
 
-                        int level = equalized switch
-                        {
-                            < -2f / 3f => 0,
-                            < 0f => 1,
-                            < 2f / 3f => 2,
-                            _ => 3,
-                        };
-
-                        // Our own 0x77 preamble alternates ±outer every symbol, so each
-                        // neighbour is exactly the negated centre - rank-deficient
-                        // training in which any taps with w[c] − w[c−1] − w[c+1] = 1
-                        // fit the preamble perfectly, and noise random-walks the taps
-                        // along that null space for the whole run-in. Measured as an
-                        // INVERTED preamble trend in the sim (25 dB AWGN: txd20 12/12 →
-                        // txd250 4/12; clean at 60 dB where nothing drives the walk).
-                        // Cure: freeze adaptation while the decision stream is an outer
-                        // alternation, with hysteresis both ways - 8 conforming
-                        // decisions freeze, 4 consecutive non-conforming unfreeze - so
-                        // an isolated noisy preamble decision cannot restart the drift
-                        // (at 5 samples/symbol the 19200 mode's preamble decisions are
-                        // noisy enough that a single-run gate leaked: txd250 3/12 vs
-                        // 12/12 with hysteresis). Scrambled data never freezes (a
-                        // conforming run of 8 is 4⁻⁸ per position) and a NinoTNC's
-                        // 2-up-2-down preamble never matches the alternation test, so
-                        // real-capture behaviour is untouched. NO identity leak: a
-                        // leak's few-per-cent tap bias measurably costs the most
-                        // marginal real capture (corpus txd50 burst 1 sits at exactly
-                        // its RS budget of 8 bad bytes - 45/45 without leak, 44/45
-                        // with 0.002).
-                        if (level is 0 or 3 && level == 3 - _previousLevel)
-                        {
-                            _nonAlternatingRun = 0;
-                            if (++_alternatingOuterRun >= 8)
-                            {
-                                _ffeFrozen = true;
-                            }
-                        }
-                        else
-                        {
-                            _alternatingOuterRun = 0;
-                            if (++_nonAlternatingRun >= 4)
-                            {
-                                _ffeFrozen = false;
-                            }
-                        }
-
-                        _previousLevel = level;
-                        if (!_ffeFrozen)
-                        {
-                            float target = level switch { 0 => -1f, 1 => -1f / 3f, 2 => 1f / 3f, _ => 1f };
-                            float step = FfeMu / power * (target - equalized);
-                            for (int t = 0; t < FfeLength; t++)
-                            {
-                                _ffeTaps[t] += step * _ffeHistory[t];
-                            }
-                        }
-
-                        int dibit = LevelToDibit[level];
-                        _deframer.PushBit((dibit >> 1) & 1);
-                        _deframer.PushBit(dibit & 1);
-                        _packetDcd.OnSymbol();
-                    }
+                if (_pendingInstant >= 0 && _pointIndex >= _pendingInstant + _ringLead)
+                {
+                    DecidePending();
                 }
 
                 int sign = normalised > 0 ? 1 : 0;
@@ -313,11 +361,123 @@ public sealed class C4fskModem : IModem
                 {
                     _lastSign = sign;
                     _packetDcd.OnTransition(_clockPhase);
-                    _clockPhase *= 0.74;   // Dire Wolf's locked inertia, as BitDpll
+
+                    // The clock acquires at Dire Wolf's inertia and holds, nearly rigid, once
+                    // DCD says it has converged - see HoldInertia.
+                    _clockPhase *= _packetDcd.Asserted ? HoldInertia : AcquireInertia;
                 }
+
+                _pointIndex++;
             }
 
             _previousFiltered = filtered;
+        }
+    }
+
+    /// <summary>Decides the symbol whose clock instant is pending, at every timing phase: each
+    /// reads its own interpolated slicer input from the ring and decides it through its own
+    /// equalizer and freeze state. Phase 0 is the clock's own instant, and is the one that
+    /// drives DCD and the dedupe's symbol clock.</summary>
+    private void DecidePending()
+    {
+        long instant = _pendingInstant;
+        _pendingInstant = -1;
+        int ring = _slicerRing.Length;
+        for (int phase = 0; phase < PhaseFractions.Length; phase++)
+        {
+            double position = instant + (PhaseFractions[phase] * _pointsPerSymbol);
+            long lower = (long)Math.Floor(position);
+            float fraction = (float)(position - lower);
+            int a = (int)(((lower % ring) + ring) % ring);
+            int b = (a + 1) % ring;
+            Decide(phase, _slicerRing[a] + (fraction * (_slicerRing[b] - _slicerRing[a])));
+        }
+    }
+
+    /// <summary>One timing phase's 4-PAM decision on its own interpolated slicer input.</summary>
+    private void Decide(int phase, float normalised)
+    {
+        int taps = phase * FfeLength;
+        for (int t = 0; t < FfeLength - 1; t++)
+        {
+            _ffeHistory[taps + t] = _ffeHistory[taps + t + 1];
+        }
+
+        _ffeHistory[taps + FfeLength - 1] = normalised;
+        if (++_ffeCount[phase] < (FfeLength / 2) + 1)
+        {
+            return;
+        }
+
+        float equalized = 0;
+        float power = 1e-6f;
+        for (int t = 0; t < FfeLength; t++)
+        {
+            equalized += _ffeTaps[taps + t] * _ffeHistory[taps + t];
+            power += _ffeHistory[taps + t] * _ffeHistory[taps + t];
+        }
+
+        int level = equalized switch
+        {
+            < -2f / 3f => 0,
+            < 0f => 1,
+            < 2f / 3f => 2,
+            _ => 3,
+        };
+
+        // Our own 0x77 preamble alternates ±outer every symbol, so each neighbour is exactly
+        // the negated centre - rank-deficient training in which any taps with
+        // w[c] − w[c−1] − w[c+1] = 1 fit the preamble perfectly, and noise random-walks the
+        // taps along that null space for the whole run-in. Measured as an INVERTED preamble
+        // trend in the sim (25 dB AWGN: txd20 12/12 → txd250 4/12; clean at 60 dB where
+        // nothing drives the walk). Cure: freeze adaptation while the decision stream is an
+        // outer alternation, with hysteresis both ways - 8 conforming decisions freeze, 4
+        // consecutive non-conforming unfreeze - so an isolated noisy preamble decision cannot
+        // restart the drift (at 5 samples/symbol the 19200 mode's preamble decisions are noisy
+        // enough that a single-run gate leaked: txd250 3/12 vs 12/12 with hysteresis).
+        // Scrambled data never freezes (a conforming run of 8 is 4⁻⁸ per position) and a
+        // NinoTNC's 2-up-2-down preamble never matches the alternation test, so real-capture
+        // behaviour is untouched. NO identity leak: a leak's few-per-cent tap bias measurably
+        // costs the most marginal real capture (corpus txd50 burst 1 sits at exactly its RS
+        // budget of 8 bad bytes - 45/45 without leak, 44/45 with 0.002).
+        if (level is 0 or 3 && level == 3 - _previousLevel[phase])
+        {
+            _nonAlternatingRun[phase] = 0;
+            if (++_alternatingOuterRun[phase] >= 8)
+            {
+                _ffeFrozen[phase] = true;
+            }
+        }
+        else
+        {
+            _alternatingOuterRun[phase] = 0;
+            if (++_nonAlternatingRun[phase] >= 4)
+            {
+                _ffeFrozen[phase] = false;
+            }
+        }
+
+        _previousLevel[phase] = level;
+        if (!_ffeFrozen[phase])
+        {
+            float target = level switch { 0 => -1f, 1 => -1f / 3f, 2 => 1f / 3f, _ => 1f };
+            float step = FfeMu / power * (target - equalized);
+            for (int t = 0; t < FfeLength; t++)
+            {
+                _ffeTaps[taps + t] += step * _ffeHistory[taps + t];
+            }
+        }
+
+        int dibit = LevelToDibit[level];
+        int first = (dibit >> 1) & 1;
+        int second = dibit & 1;
+        _deframers[phase].PushBit(first);
+        _deframers[phase].PushBit(second);
+        PhaseDibitObserver?.Invoke(phase, first, second);
+        if (phase == 0)
+        {
+            _symbolsSeen++;
+            _packetDcd.OnSymbol();
         }
     }
 
@@ -389,6 +549,7 @@ public sealed class C4fskModem : IModem
         _peakHigh = 0;
         _peakLow = 0;
         _previousFiltered = 0;
+        _pendingInstant = -1;
         ResetFfe();
     }
 
@@ -396,12 +557,15 @@ public sealed class C4fskModem : IModem
     {
         Array.Clear(_ffeTaps);
         Array.Clear(_ffeHistory);
-        _ffeTaps[FfeLength / 2] = 1;
-        _ffeCount = 0;
-        _alternatingOuterRun = 0;
-        _nonAlternatingRun = 0;
-        _ffeFrozen = false;
-        _previousLevel = 0;
+        Array.Clear(_ffeCount);
+        Array.Clear(_alternatingOuterRun);
+        Array.Clear(_nonAlternatingRun);
+        Array.Clear(_ffeFrozen);
+        Array.Clear(_previousLevel);
+        for (int phase = 0; phase < PhaseFractions.Length; phase++)
+        {
+            _ffeTaps[(phase * FfeLength) + (FfeLength / 2)] = 1;
+        }
     }
 
     private static int[] BuildInverse()
