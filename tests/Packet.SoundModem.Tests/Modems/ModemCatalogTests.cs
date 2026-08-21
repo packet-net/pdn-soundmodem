@@ -198,4 +198,20 @@ public class ModemCatalogTests
             "bpsk300", 12000, Sink, new ModemOptions(OffsetPairs: offsetPairs));
         modem.Mode.Should().EndWith(expectedSuffix);
     }
+
+    [Theory]
+    [InlineData("qpsk600", null, "qpsk600-il2pc-multi9")]    // the bpsk default, 4 pairs
+    [InlineData("qpsk600", 0, "qpsk600-il2pc-multi1")]
+    [InlineData("qpsk600", 2, "qpsk600-il2pc-multi5")]
+    [InlineData("qpsk2400", null, "qpsk2400-il2pc-multi9")]
+    [InlineData("qpsk3600", null, "qpsk3600-il2pc-multi1")]  // FM: no offset pairs unless asked
+    [InlineData("qpsk3600", 1, "qpsk3600-il2pc-multi3")]
+    public void Create_Builds_The_Qpsk_Family_As_Banks(string mode, int? offsetPairs, string expected)
+    {
+        // Issue #326: the QPSK family runs the same frequency-diversity bank as BPSK.
+        IModem modem = ModemCatalog.Create(
+            mode, 12000, Sink, new ModemOptions(OffsetPairs: offsetPairs));
+        modem.Should().BeOfType<QpskMultiModem>();
+        modem.Mode.Should().Be(expected);
+    }
 }

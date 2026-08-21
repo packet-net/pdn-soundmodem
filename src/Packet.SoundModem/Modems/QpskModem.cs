@@ -10,6 +10,7 @@ public sealed class QpskModem : IModem, IConstellationSource
 {
     private readonly QpskDemodulator _demodulator;
     private readonly QpskModulator _modulator;
+    private readonly Il2pReceiver _deframer;
     private readonly int _bitRate;
     private readonly bool _crc;
 
@@ -19,6 +20,7 @@ public sealed class QpskModem : IModem, IConstellationSource
         PskDetector detector = PskDetector.Coherent, double? loopBandwidthHz = null,
         bool acceptPlainIl2p = false, bool decisionFeedback = true)
     {
+        ArgumentNullException.ThrowIfNull(frameReceived);
         _bitRate = baud * 2;
         _crc = crc;
         QpskDemodulator? demodulator = null;
@@ -38,6 +40,8 @@ public sealed class QpskModem : IModem, IConstellationSource
                     HeaderType: info.HeaderType,
                     PlainIl2p: delivery.PlainIl2p,
                     TrailerNearBits: delivery.TrailerNearBits,
+                    ErasedBytes: info.ErasedSymbols > 0 ? info.ErasedSymbols : null,
+                    ChasedBits: info.ChasedBits > 0 ? info.ChasedBits : null,
                     MonitorOnly: delivery.MonitorOnly));
             },
             crc, acceptPlainIl2p);
@@ -47,8 +51,9 @@ public sealed class QpskModem : IModem, IConstellationSource
         // transmission's preamble and sync word as phantom payload.
         bool previousDcd = false;
         demodulator = new QpskDemodulator(
-            sampleRate, baud,
-            (first, second) =>
+            sampleRate, baud, static (_, _) => { },
+            carrier, detector, loopBandwidthHz, rollOff, decisionFeedback,
+            softDibitSink: (first, second, confidence) =>
             {
                 bool dcd = demodulator!.CarrierDetect;
                 if (previousDcd && !dcd)
@@ -57,11 +62,11 @@ public sealed class QpskModem : IModem, IConstellationSource
                 }
 
                 previousDcd = dcd;
-                deframer.PushBit(first);
-                deframer.PushBit(second);
-            },
-            carrier, detector, loopBandwidthHz, rollOff, decisionFeedback);
+                deframer.PushBit(first, confidence);
+                deframer.PushBit(second, confidence);
+            });
         _demodulator = demodulator;
+        _deframer = deframer;
         _modulator = new QpskModulator(sampleRate, baud, carrier, rollOff);
         _demodulator.SymbolPlotted = (i, q) => SymbolPlotted?.Invoke(new ConstellationPoint(i, q));
     }
@@ -133,8 +138,12 @@ public sealed class QpskModem : IModem, IConstellationSource
         // 54 Hz keeps the coherent noise win and still pulls in a ~5 Hz offset.
         // decisionFeedback off: the 2026-08-07 QPSK campaign's reference detector measured
         // a clean-signal regression on this mode's FM chain at 6⅔ samples per symbol
-        // (22/30 vs the plain product's 30/30) - out of that campaign's SSB scope, so the
-        // mode keeps the detector it was validated with (see QpskDemodulator's parameter).
+        // (22/30 vs the plain product's 30/30). Re-measured for #326 with the reference
+        // deciding on the interpolated instant: the clean-signal loss is gone (98-100 %
+        // either way at +10-12 dB CNR) but at the FM knee the product still wins, fm-mic
+        // +8 dB 78 % against the reference's 68 %, fm-data 80 % against 72 % (N=50), so
+        // the mode keeps the detector it was validated with (see QpskDemodulator's
+        // parameter). The #326 timing fixes reach it regardless: fm-mic +8 dB 62 -> 78 %.
         new(sampleRate, 1800, carrierFrequency, frameReceived, crc, rollOff, detector,
             loopBandwidthHz ?? 1800 * 0.03, acceptPlainIl2p, decisionFeedback: false);
 
@@ -149,6 +158,26 @@ public sealed class QpskModem : IModem, IConstellationSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulator.ChannelBusy;
+
+    /// <summary>How far the current signal sits from this modem's carrier centre, in Hz
+    /// (positive = above it), or null when nothing coherent enough to measure is present -
+    /// <see cref="QpskDemodulator.CarrierOffsetHz"/> read live. Decoded frames already carry
+    /// the reading in <see cref="FrameQuality.FrequencyOffsetHz"/>; this property is for the
+    /// bursts that never produce one, polled while <see cref="CarrierDetect"/> holds, and it
+    /// is what a <see cref="QpskMultiModem"/> branch is ranked on.</summary>
+    public double? CarrierOffsetHz => _demodulator.CarrierOffsetHz;
+
+    /// <summary>Cumulative sync-found-but-Reed-Solomon-failed count across this modem's IL2P
+    /// readings - see <see cref="Il2pReceiver.RsFailures"/> for exactly what one tick means
+    /// and why deltas, not totals, are the usable signal.</summary>
+    public long RsFailures => _deframer.RsFailures;
+
+    /// <summary>Cumulative recovered-but-trailing-CRC-refused count on the link's own IL2P+CRC
+    /// reading - see <see cref="Il2pReceiver.CrcFailures"/>.</summary>
+    public long CrcFailures => _deframer.CrcFailures;
+
+    /// <summary>Bench seam: this modem's demodulator. Not part of the deployment surface.</summary>
+    internal QpskDemodulator Demodulator => _demodulator;
 
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples) => _demodulator.Process(samples);

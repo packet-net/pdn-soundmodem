@@ -117,3 +117,50 @@ pdn-decode samples/offair/2026-08-21/*.wav
 
 Provenance: Tom's own receiver, 48 kHz mono 16-bit, 2026-08-21. Amateur transmissions received
 off air; callsigns are as transmitted.
+
+## 2026-08-21 (later): what the burst contains, and why it still does not copy
+
+Issue #326's work (the QPSK diversity bank and the receive-chain port, PR for #326) recovered
+the frame's content on the bench: a fixed-clock receiver - the deployed mixer, matched filter
+and decision-feedback detector, but sampling on a rigid 40-sample grid swept through all 40
+clock phases - decodes it at exactly one phase on hard Reed-Solomon with **8 corrected bytes**,
+which is the code's limit (t = 8), and at one neighbouring phase with erasures. So the fixture
+now has its known answer. The frame is a TARPN ID beacon, `N2IRZ-2 > ID`, UI, PID F0, IL2P
+Type 1 header, 87-byte payload in one RS block, 103 AX.25 bytes:
+
+```
+928840404040E09C6492A4B4406503F04E3249525A2D322020444F4E20202068
+747470733A2F2F746172706E2E6E6574202E2E2E2E2E2E2E2E2E2E2E2E2E2E2E
+2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E2E
+2E2E2E2E2E200D
+```
+
+(`N2IRZ-2  DON   https://tarpn.net ....` followed by dots and CR.)
+
+Scored against that truth, the receiver's position is precise rather than a pass/fail:
+
+- The sync word arrives with 0 bit errors at 3.655 s and the 15-byte header decodes with 0
+  corrections. Every failure is in the single 103-byte payload block.
+- With the deployed chain the block carries **10 wrong bytes**: six consecutive ones at
+  3.91-3.98 s (the first payload bytes after the header), three more by 4.10 s, and one at
+  5.02 s. Bytes 19, 22, 28, 31, 33 and 102 of the wire are wrong at **every** clock phase of
+  the fixed-clock sweep, so they are damaged in the signal; the other two to four follow the
+  clock phase. The best any clock phase manages is 8.
+- Those first six bytes are decided with high confidence (the decision margins rank them
+  29th to 72nd weakest of 103 under every margin metric tried, amplitude-scaled or phase-only),
+  so erasure decoding cannot place them either: no number of flagged bytes N satisfies
+  N + 2 x (unflagged errors) <= 16. The confidence series drops only from 4.0 s onward. On an
+  FM receiver a fade does not lower the audio level, the noise rises to replace the signal,
+  which is why amplitude says little here.
+- The DPLL holds its phase through the burst (6-7 samples mod 40 under the preamble, wandering
+  by +-3 in the payload); holding it rigid changes nothing about the six damaged bytes.
+
+So "+1.7 dB" is an average over a burst whose first 70 ms of payload are not there to decide,
+and the frame sits on the Reed-Solomon boundary even with perfect timing. The honest status is
+that it copies at the luckiest clock phase and not at the clock the receiver recovers. It stays
+a useful fixture for exactly that reason: with the truth above, any future chain can be scored
+in wrong bytes against the 8-byte floor instead of in pass/fail, and the same burst in a
+different slot of the comb (the bank's +15 and +22.5 Hz branches) already shows 9 wrong bytes,
+one short. The same work took the simulated qpsk600 knee and the whole family's carrier-offset
+tolerance a long way, which is the part of #326 that reaches the air; see
+docs/mode-validation.md, 2026-08-21 (later3).

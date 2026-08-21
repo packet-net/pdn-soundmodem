@@ -165,15 +165,25 @@ public static class ModemCatalog
                 detector: b.Detector, acceptPlainIl2p: b.AcceptPlainIl2p,
                 secondDetector: b.SecondDetector)),
 
+        // QPSK runs the same differential frequency-diversity bank as BPSK since issue #326;
+        // offsetPairs/offsetStepHz tune it (offsetPairs:0 gives a plain single modem).
         new("qpsk600", 12000, CentreSemantics.Native, 1500, RunsIl2pCrc: true, NinoPskIdBeacon: true,
-            b => QpskModem.Qpsk600(b.DspRate, b.FrameReceived, detector: b.Detector,
-                carrierFrequency: b.CentreHz!.Value, acceptPlainIl2p: b.AcceptPlainIl2p)),
+            b => new QpskMultiModem(b.DspRate, b.FrameReceived, crc: true, b.CentreHz!.Value,
+                baud: 300, offsetPairs: b.OffsetPairs ?? 4, offsetHz: b.OffsetStepHz,
+                detector: b.Detector, acceptPlainIl2p: b.AcceptPlainIl2p,
+                secondDetector: b.SecondDetector)),
         new("qpsk2400", 12000, CentreSemantics.Native, 1500, RunsIl2pCrc: true, NinoPskIdBeacon: true,
-            b => QpskModem.Qpsk2400(b.DspRate, b.FrameReceived, detector: b.Detector,
-                carrierFrequency: b.CentreHz!.Value, acceptPlainIl2p: b.AcceptPlainIl2p)),
+            b => new QpskMultiModem(b.DspRate, b.FrameReceived, crc: true, b.CentreHz!.Value,
+                baud: 1200, offsetPairs: b.OffsetPairs ?? 4, offsetHz: b.OffsetStepHz,
+                detector: b.Detector, acceptPlainIl2p: b.AcceptPlainIl2p,
+                secondDetector: b.SecondDetector)),
+        // qpsk3600 arrives through FM, where the audio tones land on frequency whatever the RF
+        // offset, and its decode chain runs threefold upsampled: no offset pairs unless asked.
         new("qpsk3600", 12000, CentreSemantics.Native, 1650, RunsIl2pCrc: true, NinoPskIdBeacon: false,
-            b => QpskModem.Qpsk3600(b.DspRate, b.FrameReceived, detector: b.Detector,
-                carrierFrequency: b.CentreHz!.Value, acceptPlainIl2p: b.AcceptPlainIl2p)),
+            b => new QpskMultiModem(b.DspRate, b.FrameReceived, crc: true, b.CentreHz!.Value,
+                baud: 1800, offsetPairs: b.OffsetPairs ?? 0, offsetHz: b.OffsetStepHz,
+                detector: b.Detector, acceptPlainIl2p: b.AcceptPlainIl2p,
+                secondDetector: b.SecondDetector)),
 
         new("fsk9600", 48000, CentreSemantics.Baseband, null, RunsIl2pCrc: false, NinoPskIdBeacon: false,
             b => FskModem.Fsk9600(b.DspRate, b.FrameReceived, FskFraming.ClassicHdlc)),
@@ -412,13 +422,15 @@ public static class ModemCatalog
             frequency = null;
         }
 
-        if (options.SecondDetector is not null && !mode.StartsWith("bpsk", StringComparison.Ordinal))
+        if (options.SecondDetector is not null
+            && !mode.StartsWith("bpsk", StringComparison.Ordinal)
+            && !mode.StartsWith("qpsk", StringComparison.Ordinal))
         {
-            // Only the bpsk banks carry the ensemble machinery; a silent no-op here would
+            // Only the PSK banks carry the ensemble machinery; a silent no-op here would
             // hand a measurement the single-detector bank while it believes it asked for
             // the union - the instrument lie the MS110D programme taught us to refuse.
             throw new ArgumentException(
-                $"mode '{mode}' does not support an ensemble second detector (bpsk banks only)",
+                $"mode '{mode}' does not support an ensemble second detector (bpsk/qpsk banks only)",
                 nameof(options));
         }
 
@@ -488,13 +500,13 @@ public static class ModemCatalog
                 nameof(options));
         }
 
-        // Refused unconditionally rather than by the built-in path's name test: only the bpsk
+        // Refused unconditionally rather than by the built-in path's name test: only the PSK
         // banks carry the ensemble machinery, none of them is a plugin, and a plugin id of "bpsk"
         // would otherwise sneak past a StartsWith and be handed a detector it cannot use.
         if (options.SecondDetector is not null)
         {
             throw new ArgumentException(
-                $"mode '{mode}' does not support an ensemble second detector (bpsk banks only)",
+                $"mode '{mode}' does not support an ensemble second detector (bpsk/qpsk banks only)",
                 nameof(options));
         }
 
