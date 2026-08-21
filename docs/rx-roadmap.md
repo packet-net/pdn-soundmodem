@@ -746,6 +746,19 @@ first cut's phases were [0, -0, 0] and the ladder read a clean null), and gate t
 on a DCD that really means the clock has converged (BPSK's seed fires too early; QPSK's DCD is
 marginal, #329).
 
+**Done, 2026-08-21 (later5): the direct-FSK modes** (`fsk9600`, `fsk9600-il2p`,
+`fsk4800-il2p`). Seven phases at 10 % of a symbol rather than 2.5 %, because these modes
+decide on ten points per symbol at 48 kHz and the union of the phases saturates by 10 %;
+1.5 to 2 dB at every knee on both AWGN and fm-data, on the IL2P legs and on classic HDLC
+alike. **The clock hold does not come with it.** It is neutral on every sim row and it
+costs the modes an order of magnitude of sample-clock tolerance (+-2000 ppm as they stand,
+failing from +-500 ppm with it in), because this chain does not interpolate its zero
+crossings, so the loop's whole correction is (1 - inertia) times a phase quantised to a
+tenth of a symbol; at 0.995 the loop bandwidth falls by twenty and a mistuned transmitter
+walks the clock past DCD's own window. The rule this adds to the two above: **the hold is
+only affordable where the crossing is resolved.** Worth revisiting on this chain if it ever
+gets matched-filter timing. Ledger: mode-validation.md 2026-08-21 (later5).
+
 ## Discipline
 
 - Every workstream that changes decode behaviour lands with its sim-ladder A/B and a corpus
