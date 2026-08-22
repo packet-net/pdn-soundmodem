@@ -175,8 +175,8 @@ public sealed class BpskDemodulator
     /// of the symbol rate, tuned against measurement.</param>
     /// <param name="rollOff">The transmitter's root-raised-cosine roll-off, which the
     /// differential path's matched filter mirrors. Defaults to
-    /// <see cref="BpskModulator.DefaultRollOff"/>; <see cref="BpskModem"/> passes the
-    /// per-mode value (0.20 for the 300 Bd mode).</param>
+    /// <see cref="BpskModulator.DefaultRollOff"/>, which both BPSK modes run (the 300 Bd
+    /// mode's brief 0.20 was factory-only and never deployed - issue #340).</param>
     /// <param name="softBitSink">When supplied, receives each decided bit together with a
     /// confidence in (0, 1) - the symbol's decision magnitude against a slow running mean,
     /// so a faded or hit symbol ranks low - and the timing phase that decided it (see

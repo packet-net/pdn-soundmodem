@@ -132,14 +132,24 @@ public sealed class BpskModem : IModem, IConstellationSource
     public event Action<ConstellationPoint>? SymbolPlotted;
 
     /// <summary>Creates the 300 bps mode (300 baud, 1500 Hz centre) - NinoTNC mode 8.</summary>
-    /// <remarks>Roll-off 0.20, matching the 328 Hz a NinoTNC's own mode-8 transmission
-    /// measures; the 0.35 default put us at 352 Hz, wider than the TNC we share the
-    /// channel with. <paramref name="carrierFrequency"/> (1500 Hz convention) moves the
+    /// <remarks>Runs the 0.35 default roll-off, the value the deployed
+    /// <see cref="BpskMultiModem"/> bank has always used. This factory carried 0.20 from
+    /// July 2026, chosen when the highest-energy-window method read a NinoTNC's own mode-8
+    /// transmission as 328 Hz and 0.35 put us at 352 Hz, apparently wider than the TNC we
+    /// share the channel with. The like-for-like whole-burst method that replaced that
+    /// measurement (issue #2) reads the same reference recording at 398 Hz, so 0.35 is
+    /// comfortably narrower than the TNC after all; and under calibrated AWGN a 0.35
+    /// receive filter copies that real recording measurably better than 0.20 (248 vs 210
+    /// of 400 bursts at -5 dB, 36 vs 14 at -6 dB) while 0.20 and 0.35 loopback pairs are
+    /// indistinguishable at the knee. The real-TNC bench interop (6/6 both ways,
+    /// docs/ninotnc-loop.md) was also only ever measured at 0.35, because nino-bench
+    /// builds this modem through the constructor default. Issue #340 has the full
+    /// investigation. <paramref name="carrierFrequency"/> (1500 Hz convention) moves the
     /// modem within the audio passband, QtSoundModem-style.</remarks>
     public static BpskModem Bpsk300(
         int sampleRate, Action<byte[]> frameReceived, bool crc = true,
         PskDetector detector = PskDetector.Differential, double carrierFrequency = 1500) =>
-        new(sampleRate, frameReceived, crc, carrierFrequency, 300, 0.20, detector);
+        new(sampleRate, frameReceived, crc, carrierFrequency, 300, BpskModulator.DefaultRollOff, detector);
 
     /// <summary>Creates the 1200 bps mode (1200 baud, 1500 Hz centre) - NinoTNC mode 10,
     /// sharing its 1200 sym/s and 2400 Hz OBW with 2400 QPSK.</summary>
