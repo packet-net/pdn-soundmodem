@@ -72,8 +72,8 @@ public sealed class QpskDemodulator
     /// TXDELAY.</summary>
     private const double DifferentialInertia = 0.94;
 
-    /// <summary>DPLL inertia once a burst is established (the offset window has seeded or
-    /// DCD holds): the clock acquires at <see cref="DifferentialInertia"/> and then holds
+    /// <summary>DPLL inertia once packet DCD holds (the decisions are good, see
+    /// <see cref="QpskDecisionDcd"/>): the clock acquires at <see cref="DifferentialInertia"/> and then holds
     /// nearly rigid, correcting half a per cent of its error per transition, which still
     /// follows any plausible symbol-rate error (a 500 ppm clock costs a tenth of a symbol of
     /// lag) while no longer wandering on noise. On the 2026-08-21 off-air qpsk600 fixture the
@@ -119,7 +119,12 @@ public sealed class QpskDemodulator
     /// at high signal without it, and leaving their sample path bit-identical is worth more than
     /// the consistency.</summary>
     private readonly bool _interpolateSymbolInstant;
+    /// <summary>Transition-timing DCD, fed by the DPLL on the coherent path only.</summary>
     private readonly PacketDcd _packetDcd = new();
+
+    /// <summary>Decision-quality DCD for the differential path (see
+    /// <see cref="QpskDecisionDcd"/>); fed once per symbol at the clock's own instant.</summary>
+    private readonly QpskDecisionDcd _decisionDcd = new();
     private readonly EnergyBusyDetector _energyBusy;
     private readonly PskDetector _detector;
     private readonly CostasLoop? _costas;
@@ -430,18 +435,25 @@ public sealed class QpskDemodulator
             // preamble - a transition every symbol - still pulls a cold clock in within a
             // normal TXDELAY. Coherent keeps its issue-#5 measured configuration.
             inertia: detector == PskDetector.Coherent ? 0.74 : DifferentialInertia,
-            transitionObserver: phase =>
-            {
-                _packetDcd.OnTransition(phase);
-                TransitionObserver?.Invoke(phase);
-            },
-            symbolObserver: _packetDcd.OnSymbol);
+            // Transition timing scores DCD on the coherent path only. The differential
+            // path's slicer is the product's quadrant, whose transitions flicker at every
+            // phase-change null (see QpskDecisionDcd); its DCD is scored on the decisions.
+            transitionObserver: detector == PskDetector.Coherent
+                ? phase =>
+                {
+                    _packetDcd.OnTransition(phase);
+                    TransitionObserver?.Invoke(phase);
+                }
+                : phase => TransitionObserver?.Invoke(phase),
+            symbolObserver: detector == PskDetector.Coherent ? _packetDcd.OnSymbol : null);
     }
 
     private static readonly int[] QuadrantToDibit = [0b11, 0b10, 0b00, 0b01]; // 0°,90°,180°,270°
 
-    /// <summary>True while DPLL transition timing indicates a coherent packet signal.</summary>
-    public bool CarrierDetect => _packetDcd.Asserted;
+    /// <summary>True while a coherent packet signal is present: DPLL transition timing on the
+    /// coherent path (<see cref="PacketDcd"/>), symbol decision quality on the differential
+    /// one (<see cref="QpskDecisionDcd"/>).</summary>
+    public bool CarrierDetect => _detector == PskDetector.Coherent ? _packetDcd.Asserted : _decisionDcd.Asserted;
 
     /// <summary>
     /// How far the signal sat from <em>this</em> demodulator's own carrier centre, in Hz
@@ -486,12 +498,13 @@ public sealed class QpskDemodulator
     }
 
     /// <summary>Channel-busy for carrier sense (packet or energy).</summary>
-    public bool ChannelBusy => _packetDcd.Asserted || _energyBusy.Busy;
+    public bool ChannelBusy => CarrierDetect || _energyBusy.Busy;
 
     /// <summary>Clears carrier state.</summary>
     public void ResetCarrierState()
     {
         _packetDcd.Reset();
+        _decisionDcd.Reset();
         _energyBusy.Reset();
         // Our own transmission is not a measurement of anybody's offset, and not a
         // carrier reference to decide the next station's symbols against.
@@ -625,10 +638,11 @@ public sealed class QpskDemodulator
         // before anything decides on it. A carrier offset adds exactly that rotation to every
         // one-symbol phase change, which moves the 45° decision boundaries to a different
         // point of each transition: the DPLL's transitions then land off the expected
-        // instant, PacketDcd scores them bad and never asserts under any offset at all
-        // (measured: 16 of 24 blocks at 0 Hz, none at +-7.5 or +-15 Hz), and the clock is
-        // biased. Centred again, timing and DCD behave as they do on frequency. The raw
-        // product above is what the offset window measures; only the decisions see this.
+        // instant and the clock is biased (and the transition-timing DCD this path used to
+        // carry never asserted under any offset at all). Centred again, timing behaves as it
+        // does on frequency, and the plain-product decision and DCD (QpskDecisionDcd) see
+        // the four clusters on the axes. The raw product above is what the offset window
+        // measures; only the decisions see this.
         float re = (float)((rawRe * _derotateCos) + (rawIm * _derotateSin));
         float im = (float)((rawIm * _derotateCos) - (rawRe * _derotateSin));
         double angle = Math.Atan2(im, re);
@@ -706,6 +720,11 @@ public sealed class QpskDemodulator
             {
                 change = productQuadrant;
                 margin = MarginOf(re, im, productQuadrant);
+                if (phase == 0)
+                {
+                    // The plain product is the decision variable here, already de-rotated.
+                    _decisionDcd.OnDecision(re, im);
+                }
             }
 
             EmitDibit(phase, change, margin);
@@ -775,7 +794,7 @@ public sealed class QpskDemodulator
         }
 
         _windowCoherent = windowCoherent;
-        bool dcd = _packetDcd.Asserted;
+        bool dcd = CarrierDetect;
         if (_dcdWasAsserted && !dcd)
         {
             _seededRotation = 0;
@@ -817,12 +836,16 @@ public sealed class QpskDemodulator
         // Frozen on noise, the idle leak above drains it instead.
         _trackerActive = dcd || windowCoherent || energy;
 
-        // The clock acquires at the differential inertia and holds, nearly rigid, once a burst
-        // is established (the offset window has seeded or DCD holds): on the 2026-08-21 off-air
-        // fixture the clock that acquired at 6-7 samples then wandered 2-10 through the payload
-        // while a rigid clock at 8 copies the frame, and the timing phases can only reach a
-        // phase the clock keeps still for.
-        _dpll.Inertia = dcd || windowCoherent ? HoldInertia : DifferentialInertia;
+        // The clock acquires at the differential inertia and holds, nearly rigid, once DCD
+        // says the decisions are good: on the 2026-08-21 off-air fixture the clock that
+        // acquired at 6-7 samples then wandered 2-10 through the payload while a rigid clock
+        // at 8 copies the frame, and the timing phases can only reach a phase the clock keeps
+        // still for. PR #330 gated the hold on the offset window's seed as well, because the
+        // transition-timing DCD of the day never asserted on a clean or off-frequency burst;
+        // that froze a clock the pre-seed rotation residual had biased (a lone modem at
+        // 11.25 Hz and +40 dB stopped copying). The decision-quality DCD asserts only once
+        // the symbol decisions are good, which is exactly when the clock is worth holding.
+        _dpll.Inertia = dcd ? HoldInertia : DifferentialInertia;
 
         // The DPLL and DCD see the product de-rotated by the clock instant's own estimate.
         double rotation = _seededRotation + _trackedRotation[0];
@@ -852,6 +875,13 @@ public sealed class QpskDemodulator
         double relativeRe = (sampleI * referenceI) + (sampleQ * referenceQ);
         double relativeIm = (sampleQ * referenceI) - (sampleI * referenceQ);
         double relativeMagnitude = Math.Sqrt((relativeRe * relativeRe) + (relativeIm * relativeIm));
+        if (phase == 0)
+        {
+            // DCD scores the decision variable itself: the sample seen from the reference,
+            // before the quadrant decision rounds it (which the fourth power ignores anyway).
+            _decisionDcd.OnDecision(relativeRe, relativeIm);
+        }
+
         int previousAbsolute = _previousAbsoluteQuadrant[phase];
         int absolute = relativeMagnitude < 1e-12
             ? (previousAbsolute + productQuadrant) & 3
@@ -894,7 +924,7 @@ public sealed class QpskDemodulator
             {
                 double error = Math.Asin(Math.Clamp(alignedIm / sampleMagnitude, -1, 1));
                 _trackedRotation[phase] = Math.Clamp(
-                    _trackedRotation[phase] + ((_packetDcd.Asserted ? ReferenceTrackingGain : ReferenceAcquisitionGain) * error),
+                    _trackedRotation[phase] + ((_decisionDcd.Asserted ? ReferenceTrackingGain : ReferenceAcquisitionGain) * error),
                     -MaxTrackedRotation, MaxTrackedRotation);
             }
         }

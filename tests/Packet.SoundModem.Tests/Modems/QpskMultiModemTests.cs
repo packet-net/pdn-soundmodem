@@ -145,17 +145,15 @@ public class QpskMultiModemTests
     }
 
     /// <summary>
-    /// Unlike its BPSK twin this does not assert DCD. <see cref="PacketDcd"/> scores slicer
-    /// transitions within an eighth of a symbol of the clock's expected instant and wants 30
-    /// of 32; the QPSK product's quadrant flickers at every phase-change null, so even on
-    /// frequency only about half its transitions score, and measured on main DCD asserts for
-    /// a QPSK burst only with the carrier on frequency and noise present (never under a 7.5 Hz
-    /// offset, never on a noise-free burst). That is a pre-existing property of the QPSK DCD,
-    /// recorded in the #326 ledger entry; the bank's counters and measurement do not depend
-    /// on it.
+    /// The BPSK twin's calibration case on the QPSK bank: a genuine transmission too damaged
+    /// to decode still asserts DCD, and the only trace of the lost frame is the counter. This
+    /// test was written without the DCD assertion while the QPSK path scored DCD on the
+    /// product's quadrant transitions, which flicker at every phase-change null and never
+    /// asserted on a noise-free burst (issue #329); <see cref="QpskDecisionDcd"/> scores the
+    /// decisions instead, and a clean burst asserts whether or not its payload survives.
     /// </summary>
     [Fact]
-    public void A_Damaged_Burst_Ticks_The_Sync_Failure_Counter()
+    public void A_Damaged_Burst_Asserts_Dcd_And_Ticks_The_Sync_Failure_Counter()
     {
         float[] audio = DamagedBurst();
         var frames = new List<byte[]>();
@@ -164,12 +162,15 @@ public class QpskMultiModemTests
         bank.FrameDecoded += (frame, _) => monitored.Add(frame);
         bank.RsFailures.Should().Be(0, "a fresh bank has failed nothing");
 
+        bool dcdSeen = false;
         int block = SampleRate / 10;
         for (int pos = 0; pos < audio.Length; pos += block)
         {
             bank.Process(audio.AsSpan(pos, Math.Min(block, audio.Length - pos)));
+            dcdSeen |= bank.CarrierDetect;
         }
 
+        dcdSeen.Should().BeTrue("QPSK decision quality asserts DCD whether or not the frame decodes");
         frames.Should().BeEmpty();
         monitored.Should().BeEmpty("the payload is beyond Reed-Solomon on every branch");
         bank.RsFailures.Should().BeGreaterThan(0,
@@ -181,9 +182,8 @@ public class QpskMultiModemTests
     {
         // Decoded frames carry their offset in FrameQuality; the bursts that never decode are
         // the ones the live CarrierOffsetHz property exists for. Half a branch step off centre,
-        // like the swept-grid test, so a comb label cannot pass it. Polled throughout: the
-        // property is already null whenever no branch's window is coherent (see the DCD
-        // remark on A_Damaged_Burst_Ticks_The_Sync_Failure_Counter).
+        // like the swept-grid test, so a comb label cannot pass it. Polled while DCD holds, as
+        // the BPSK twin polls it (the QPSK DCD could not be trusted for this until #329).
         float[] audio = DamagedBurst(offsetHz: 11.25);
         var bank = QpskMultiModem.Qpsk600(SampleRate, _ => { });
         bank.CarrierOffsetHz.Should().BeNull("silence measures nothing");
@@ -193,10 +193,13 @@ public class QpskMultiModemTests
         for (int pos = 0; pos < audio.Length; pos += block)
         {
             bank.Process(audio.AsSpan(pos, Math.Min(block, audio.Length - pos)));
-            during = bank.CarrierOffsetHz ?? during;
+            if (bank.CarrierDetect)
+            {
+                during = bank.CarrierOffsetHz ?? during;
+            }
         }
 
-        during.Should().NotBeNull("the burst was there to measure");
+        during.Should().NotBeNull("the burst was there to measure while DCD held");
         during!.Value.Should().BeApproximately(11.25, 3,
             "the bank reports where the station actually was, decodable or not");
     }
