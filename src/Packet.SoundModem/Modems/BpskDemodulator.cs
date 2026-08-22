@@ -268,7 +268,14 @@ public sealed class BpskDemodulator
                 }
             },
             inertia: detector == PskDetector.Coherent ? 0.74 : DifferentialInertia,
-            transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
+            transitionObserver: _packetDcd.OnTransition,
+            // The symbol's decision magnitude tells the quiet drop whether the carrier is
+            // still there: the differential product (both z's amplitude, so it collapses
+            // within a filter flush of the carrier stopping) or the coherent in-phase
+            // amplitude. Without it a run of identical scrambled bits - full-strength
+            // signal, no slicer transitions - read as silence and dropped DCD mid-frame
+            // (issue #339; the falling edge resets the deframers, losing the frame).
+            symbolObserver: () => _packetDcd.OnSymbol(Math.Abs(_lastPlotI)));
         _energyBusy = new EnergyBusyDetector(sampleRate);
     }
 

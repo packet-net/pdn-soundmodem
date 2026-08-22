@@ -156,7 +156,11 @@ public sealed class AfskDemodulator
                 _pendingInstant = _sampleIndex;
             },
             inertia: AcquireInertia,
-            transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
+            transitionObserver: _packetDcd.OnTransition,
+            // The slicer excess at the symbol's own sample: a held tone keeps its full eye
+            // excess (no transitions, but plainly not silence - see PacketDcd, issue #339),
+            // while silence collapses it to the discriminator's sub-eye residue.
+            symbolObserver: () => _packetDcd.OnSymbol(Math.Abs(_previousExcess)));
         _energyBusy = new EnergyBusyDetector(sampleRate);
 
         // The envelope tracker below runs per sample, but what it must keep up with is the

@@ -236,7 +236,12 @@ public sealed class FskModem : IModem
                 _pendingInstant = _pointIndex;
             },
             inertia: ClockInertia,
-            transitionObserver: _packetDcd.OnTransition, symbolObserver: _packetDcd.OnSymbol);
+            transitionObserver: _packetDcd.OnTransition,
+            // The slicer excess at the symbol's own point: a run of one scrambled bit value
+            // holds its full eye excess (no transitions, but plainly not silence - see
+            // PacketDcd, issue #339), while silence collapses it toward the decayed
+            // envelope midpoint.
+            symbolObserver: () => _packetDcd.OnSymbol(Math.Abs(_previousExcess)));
     }
 
     /// <summary>Decides the symbol whose clock instant is pending, at each timing phase: every
