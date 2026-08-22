@@ -773,6 +773,23 @@ a third of what the PSK modes did, while 1200 baud's window is two samples wide 
 40 samples per bit the phases one and two samples early are often the same decision, which is
 real rather than a bug and is what the per-phase scoring test exists to tell apart.
 
+**Done, 2026-08-21 (later7): the direct-FSK modes** (`fsk9600`, `fsk9600-il2p`,
+`fsk4800-il2p`). Seven phases at 10 % of a symbol rather than 2.5 %, because these modes
+decide on ten points per symbol at 48 kHz and the union of the phases saturates by 10 %;
+1.5 to 2 dB at every knee on both AWGN and fm-data, on the IL2P legs and on classic HDLC
+alike. **The clock hold does not come with it.** It is neutral on every sim row and it
+costs the modes an order of magnitude of sample-clock tolerance (+-2000 ppm as they stand,
+failing from +-500 ppm with it in), because this chain does not interpolate its zero
+crossings, so the loop's whole correction is (1 - inertia) times a phase quantised to a
+tenth of a symbol; at 0.995 the loop bandwidth falls by twenty and a mistuned transmitter
+walks the clock past DCD's own window. The rule this adds to the two above: **the hold is
+only affordable where the crossing is resolved.** Worth revisiting on this chain if it ever
+gets matched-filter timing. One partial answer to the C4FSK note above, measured here:
+phase 0 does read systematically late (21 wrong bits of 1360 against 13 at -10 % on one
+burst at the edge), but recentring the whole set 15 % early is worth nothing the
+symmetric set does not already cover, 138/183/197 against 135/183/196. Ledger:
+mode-validation.md 2026-08-21 (later7).
+
 ## Discipline
 
 - Every workstream that changes decode behaviour lands with its sim-ladder A/B and a corpus

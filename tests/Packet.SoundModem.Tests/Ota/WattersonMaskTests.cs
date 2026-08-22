@@ -228,6 +228,40 @@ public class WattersonMaskTests(ITestOutputHelper output)
         result.Successes.Should().BeGreaterThanOrEqualTo(19, "measured 25/25 on 2026-08-06");
     }
 
+    /// <summary>
+    /// The direct-FSK timing-diversity rows (mode-validation.md 2026-08-21 later7, issue #331;
+    /// N=25, seed 1, TXDELAY 150). Seven decision phases per symbol moved every FSK knee by
+    /// 1.5 to 2 dB, so each of the three modes gains a row a rung below where its old knee sat,
+    /// which is exactly where the receiver before this change did not reach. Both channel axes
+    /// sit in one method because both need a real run-in - the classic-HDLC detector cannot lock
+    /// onto two opening flags at any signal level. The <c>awgn</c> rows are SNR in 3 kHz; the
+    /// <c>fm-data</c> rows are carrier-to-noise in the receiver IF and are not comparable with
+    /// them.
+    /// </summary>
+    [Theory]
+    [InlineData("fsk9600-il2p", "awgn", 11.0, 21)]     // measured 25/25 (was 22/25)
+    [InlineData("fsk4800-il2p", "awgn", 8.0, 17)]      // measured 22/25 (was 17/25)
+    [InlineData("fsk9600", "awgn", 16.0, 21)]          // measured 25/25 (was 19/25) - the
+                                                       // classic HDLC leg, whose only FEC is
+                                                       // "some phase's FCS checks"
+    [InlineData("fsk9600-il2p", "fm-data", 12.0, 21)]  // measured 25/25 (was 23/25)
+    [InlineData("fsk4800-il2p", "fm-data", 11.0, 21)]  // measured 25/25 (was 22/25) - the
+                                                       // 4800 mode's first mask of any kind
+    [InlineData("fsk9600", "fm-data", 14.0, 21)]       // measured 25/25 (was 15/25)
+    public void Fsk_Timing_Diversity_Mask_Holds(
+        string mode, string channel, double snrDb, int floor)
+    {
+        SimPointResult result = Point(
+            mode, SimChannel.Parse(channel), snrDb, bursts: 25, txDelayMs: 150);
+
+        result.Successes.Should().BeGreaterThanOrEqualTo(
+            floor,
+            "the {0} {1} row at {2} dB is what the timing phases bought and is measured "
+            + "reality - a miss this deep is a receive-path regression, and it moves only "
+            + "with a mode-validation.md entry",
+            mode, channel, snrDb);
+    }
+
     // ------------------------------------------------------------------------------------
     // Full tier - the A/B instrument, env-gated. The flagship's whole grid; floors slacker
     // (measured minus ~20 points at N=100), because this tier's job is the printed table.
