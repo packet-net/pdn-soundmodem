@@ -205,6 +205,21 @@ were in fact measured at 0.35, because nino-bench builds bpsk300 through the con
 default rather than the factory. bpsk300 is aligned at 0.35 everywhere as of #340;
 qpsk600 keeps 0.20 (its bank and factory agree, so any change is its own campaign).
 
+**Correction (2026-08-22, issue #344).** That campaign ran, and qpsk600 is at 0.35 too.
+Measured whole-burst and like-for-like, `samples/ninotnc/qpsk600.wav` is also **398 Hz**
+(the same modulator at the same symbol rate as bpsk300), so the 328 Hz the July table
+attributes to mode 9 was the same superseded window reading and the never-wider rule never
+forced 0.20 here either; our 0.35 shape's 352 Hz sits 12 % inside the TNC. The deciding
+measurements (`Qpsk600RollOffProbe`, `ROLLOFF_PROBE=1`): the 0.35 matched filter copies the
+real mode-9 recording 131 vs 81 of 400 at the -2 dB knee foot under the deployed
+differential detector, matched and cross tx/rx pairs are statistically identical there (a
+mixed-fleet transition costs nothing), and the coherent cross-check copies a 0.35
+transmission 120 vs 69 of 400 at -1 dB. The 6/6 both-ways and TXDELAY-survey results for
+mode 9 in this file were, as with bpsk300, in fact measured at 0.35: nino-bench's
+`--qpsk-rolloff` default has always been 0.35 and it passes that to the factory explicitly,
+so the 0.20 shape was never once validated against the TNC. The qpsk600 mask ladder moved
+up or held at every point with the change (see the 2026-08-22 mode-validation entry).
+
 The direct-FSK modes (0/2/4) are excluded on purpose: their 10/20 kHz figures are *RF*
 bandwidth after FM modulation, not the audio baseband we generate, so they are pinned
 against their own shaping filter instead.

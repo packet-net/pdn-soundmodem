@@ -67,7 +67,8 @@ public class WattersonMaskTests(ITestOutputHelper output)
     // (36, 30, 30, 34 of 40) and the seven-phase measurement sits above each.
     [InlineData("bpsk300", "awgn", -5.0, 0.0, 30)]     // measured 37/40
     [InlineData("bpsk1200", "awgn", 1.0, 0.0, 22)]     // measured 34/40
-    [InlineData("qpsk600", "awgn", -1.0, 0.0, 22)]     // measured 32/40
+    [InlineData("qpsk600", "awgn", -1.0, 0.0, 22)]     // measured 32/40 (34/40 at the
+                                                       // 0.35 roll-off, #344)
     [InlineData("qpsk2400", "awgn", 6.0, 0.0, 26)]     // measured 37/40
     [InlineData("bpsk300", "awgn", -4.0, 0.0, 28)]     // measured 37/40 (40/40 after later4)
     [InlineData("bpsk300", "awgn", -3.0, 0.0, 34)]     // measured 40/40
@@ -95,9 +96,10 @@ public class WattersonMaskTests(ITestOutputHelper output)
     // qpsk600 knee ~0.8 dB and qpsk2400's ~1 dB, and took both modes' carrier-offset
     // tolerance to the bank's comb. The CFO rows are the structural part: on the single
     // modem these points measured 71 % (15 Hz) and 3 % (30 Hz) at +4 dB.
-    [InlineData("qpsk600", "awgn", 2.0, 0.0, 34)]      // measured 39/40
+    [InlineData("qpsk600", "awgn", 2.0, 0.0, 34)]      // measured 39/40 (40/40, #344)
     [InlineData("qpsk600", "awgn", 0.0, 0.0, 26)]      // measured 33/40 - the knee, where
                                                        // the reference and the timing show
+                                                       // (38/40 at the 0.35 roll-off, #344)
     [InlineData("qpsk600", "awgn", 4.0, 15.0, 36)]     // measured 40/40 - two bank steps out
     [InlineData("qpsk600", "awgn", 4.0, 30.0, 36)]     // measured 40/40 - the comb's edge
     [InlineData("qpsk2400", "awgn", 11.0, 0.0, 36)]    // measured 99/100 2026-08-07 (same

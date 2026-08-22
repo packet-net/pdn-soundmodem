@@ -20,9 +20,9 @@ namespace Packet.SoundModem.Modems;
 /// some noise present, never on a clean burst, never under a bank-step offset, never on the
 /// 16-symbol zero-TXDELAY preamble, while the frame decoded in every one of those cases. The
 /// baseband envelope's nulls were measured as a timing source before this and rejected: at
-/// qpsk600's 0.20 roll-off the neighbouring symbols move each null by up to a third of a
-/// symbol, so even a noise-free burst scatters its nulls over half a symbol and no
-/// per-transition scorer can reach 30 of 32 from them.</para>
+/// the 0.20 roll-off qpsk600 ran until issue #344 the neighbouring symbols move each null by
+/// up to a third of a symbol, so even a noise-free burst scatters its nulls over half a
+/// symbol and no per-transition scorer can reach 30 of 32 from them.</para>
 /// <para><b>What is scored instead.</b> At every clock instant the detector has already
 /// formed the symbol-instant sample relative to its reference phasor (the decision-feedback
 /// chain) or the de-rotated conjugate product (the plain-product chain); on a QPSK signal that

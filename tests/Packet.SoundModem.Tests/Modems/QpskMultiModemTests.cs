@@ -23,8 +23,8 @@ public class QpskMultiModemTests
         // offset from the 1500 Hz channel centre, then padded with lead-in/out silence.
         byte[] wire = Il2pCodec.Encode(Frame, appendCrc: true);
         byte[] bits = Il2pFramer.FrameBits(wire, preambleBits, Il2pFramer.PreambleStyle.Zeros);
-        double rollOff = baud == 300 ? 0.20 : QpskModulator.DefaultRollOff;
-        float[] audio = new QpskModulator(SampleRate, baud, 1500 + offsetHz, rollOff).Modulate(bits);
+        float[] audio = new QpskModulator(
+            SampleRate, baud, 1500 + offsetHz, QpskModulator.DefaultRollOff).Modulate(bits);
         int pad = SampleRate / 5;
         var padded = new float[audio.Length + 2 * pad];
         audio.CopyTo(padded, pad);
@@ -156,7 +156,8 @@ public class QpskMultiModemTests
         }
 
         byte[] bits = Il2pFramer.FrameBits(wire, preambleBits: 90, Il2pFramer.PreambleStyle.Zeros);
-        float[] audio = new QpskModulator(SampleRate, 300, 1500 + offsetHz, 0.20).Modulate(bits);
+        float[] audio = new QpskModulator(
+            SampleRate, 300, 1500 + offsetHz, QpskModulator.DefaultRollOff).Modulate(bits);
         int pad = SampleRate / 5;
         var padded = new float[audio.Length + 2 * pad];
         audio.CopyTo(padded, pad);
