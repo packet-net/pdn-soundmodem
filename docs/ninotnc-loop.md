@@ -192,6 +192,19 @@ transmit path. Roll-off is chosen per mode, copying Nino where we were wider tha
   floor set by the signal, not the filter: 360 reaches 319 but our own receiver stops
   decoding it.
 
+**Correction (2026-08-22, issue #340).** The 328 Hz this section attributes to the TNC's
+300 sym/s modes came from the highest-energy-window method that issue #2 later replaced,
+which reads mostly preamble; preamble is narrower than data. Measured whole-burst,
+like-for-like with the shipping never-wider test, the same `samples/ninotnc/bpsk300.wav`
+reference recording is **398 Hz**, with a spectrum flat to about plus or minus 150 Hz and
+steep skirts (-27 dB at 250 Hz out, -44 dB at 300) - wider than either of our candidate
+shapes, which the same meter reads at 328 Hz (roll-off 0.20) and 352 Hz (0.35). The table
+above is left as the record of what that session measured. Two consequences: the
+never-wider rule never forced 0.20 for bpsk300, and the 6/6 both-ways results in this file
+were in fact measured at 0.35, because nino-bench builds bpsk300 through the constructor
+default rather than the factory. bpsk300 is aligned at 0.35 everywhere as of #340;
+qpsk600 keeps 0.20 (its bank and factory agree, so any change is its own campaign).
+
 The direct-FSK modes (0/2/4) are excluded on purpose: their 10/20 kHz figures are *RF*
 bandwidth after FM modulation, not the audio baseband we generate, so they are pinned
 against their own shaping filter instead.
