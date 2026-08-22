@@ -1477,7 +1477,7 @@ tx[0] DROPPED M0LTE>GB7RDG-2 28 bytes: this station receives only
 | Field | Means |
 |---|---|
 | `rx[N]` / `tx[N]` | Direction and KISS sub-channel |
-| mode | The mode the frame was heard on - the bare catalogue name, the same string however many branches the receiving bank was built with. The bank's own construction (`afsk300-il2pc-multi11`) shows in the startup lines, not on every frame |
+| mode | The mode the frame was heard on - the bare catalogue name, the same string however many branches the receiving bank was built with. The bank's own construction (`afsk300-il2pc-multi11`) is how the modem describes itself, shown where the receiver is the subject - the waterfall's modem chips and the id-beacons line above - not on every frame |
 | `SOURCE>DEST` | AX.25 addresses; `(no ax25 header)` where the payload is not AX.25, rather than a mangled callsign |
 | `crc ok` / `CRC BAD` | Only for modes that carry a CRC; a mode with none claims neither |
 | `fec N` | Bytes the FEC corrected. Rising counts mean the link is being carried by the FEC and is closer to the edge than a clean decode suggests |
