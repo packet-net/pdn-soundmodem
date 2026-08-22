@@ -551,7 +551,11 @@ public sealed class C4fskModem : IModem
         if (phase == 0)
         {
             _symbolsSeen++;
-            _packetDcd.OnSymbol();
+            // The equalized reading the symbol was decided from is the carrier evidence the
+            // quiet drop wants (see PacketDcd, issue #339): a run of one 4-ary level keeps
+            // its magnitude while producing no slicer transitions. Symbols only flow while
+            // the energy gate is open here, so the magnitude is belt and braces.
+            _packetDcd.OnSymbol(Math.Abs(_ffeHistory[taps + (FfeLength / 2)]));
             TrackEnvelope(level, _ffeHistory[taps + (FfeLength / 2)]);
         }
     }

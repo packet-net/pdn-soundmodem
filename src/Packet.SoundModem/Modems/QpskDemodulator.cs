@@ -445,7 +445,12 @@ public sealed class QpskDemodulator
                     TransitionObserver?.Invoke(phase);
                 }
                 : phase => TransitionObserver?.Invoke(phase),
-            symbolObserver: detector == PskDetector.Coherent ? _packetDcd.OnSymbol : null);
+            // The coherent baseband power at the symbol's sample: a run of one dibit value
+            // holds constellation-strength power while producing no quadrant transitions,
+            // which must not read as silence (see PacketDcd, issue #339).
+            symbolObserver: detector == PskDetector.Coherent
+                ? () => _packetDcd.OnSymbol(((double)_lastRe * _lastRe) + ((double)_lastIm * _lastIm))
+                : null);
     }
 
     private static readonly int[] QuadrantToDibit = [0b11, 0b10, 0b00, 0b01]; // 0°,90°,180°,270°
