@@ -54,6 +54,7 @@ public sealed class C4fskModem : IModem
     private long _pointIndex;
     private long _pendingInstant = -1;
     private long _symbolsSeen;
+    private int _symbolsSinceGate;
     private double _clockPhase;
     private int _lastSign;
     private bool _previousEnergyBusy;
@@ -88,6 +89,33 @@ public sealed class C4fskModem : IModem
 
     private const int FfeLength = 5;
     private const float FfeMu = 0.05f;
+
+    /// <summary>Symbols after the energy gate opens during which the envelope tracker is the
+    /// per-point peak follower (attack 0.08, decay 1e-5) that acquires a cold burst; from then
+    /// on it is decision-directed - see <see cref="EnvelopeRate"/>.</summary>
+    /// <remarks>
+    /// Issue #336: a longer TXDELAY made both C4FSK modes 5 dB worse on AWGN, and the instrument
+    /// (<c>C4fskTxDelayProbe</c>, reading <see cref="DecisionObserver"/>) says why. The peak
+    /// follower is a max-hold on the noisy waveform: at ten points a symbol it climbs to the
+    /// largest noise excursion of the whole run-in and barely decays, so at the sync word after
+    /// a 150 ms preamble the envelope sits 20 to 38 % above the clean burst's (22 to 25 dB:
+    /// 1.20 to 1.26; 18 to 21 dB: 1.34 to 1.38), the sync's own outer symbols read 0.70 to
+    /// 0.75 normalised against 0.89 to 0.94 after a 20 ms run-in, a hair over the 2/3 slice,
+    /// and nearly every front-of-frame error is an outer symbol demoted to inner. The
+    /// equalizer, the named suspect, was not it: its taps were within 0.03 of identity and
+    /// frozen at the sync in every case. So the follower keeps its job, which is reaching the
+    /// signal from nothing inside a 20 ms run-in, and hands over once the burst is established
+    /// to a tracker that cannot be inflated by noise: one reading per symbol at the decision
+    /// instant, outer decisions only, moving toward the reading both ways. An inner decision
+    /// says nothing about the outer reference and holds it, which is the
+    /// hold-through-inner-heavy-stretches behaviour the 1e-5 decay bought on the real corpus.
+    /// </remarks>
+    private const int AcquireSymbols = 32;
+
+    /// <summary>How far the decision-directed envelope moves toward each outer decision's
+    /// reading, per outer decision: 20 readings to follow a change, and an estimate whose noise
+    /// is a sixth of a single reading's.</summary>
+    private const float EnvelopeRate = 0.05f;
 
     /// <summary>Dedupe window across the timing phases' deframers, in symbols: shorter than the
     /// shortest IL2P frame (a 15-byte header alone is 60 symbols at 2 bits a symbol), longer
@@ -263,6 +291,38 @@ public sealed class C4fskModem : IModem
     /// that the phases genuinely decide differently. Not part of the deployment surface.</summary>
     internal Action<int, int, int>? PhaseDibitObserver { get; set; }
 
+    /// <summary>Bench seam: one row per 4-PAM decision, every phase, carrying what the slicer
+    /// and the equalizer saw and did and where the envelope tracker sat. Null in deployment.
+    /// The issue #336 instrument reads it to say what state the receiver is in when the sync
+    /// word arrives after a short and a long run-in (see <see cref="CopyEqualizerTaps"/> for
+    /// the taps themselves). Not part of the deployment surface.</summary>
+    internal Action<Decision>? DecisionObserver { get; set; }
+
+    /// <summary>Bench seam: copies one phase's equalizer taps into <paramref name="into"/>
+    /// (<see cref="FfeLength"/> of them). Only meaningful from inside a
+    /// <see cref="DecisionObserver"/> call or between bursts.</summary>
+    internal void CopyEqualizerTaps(int phase, Span<float> into) =>
+        _ffeTaps.AsSpan(phase * FfeLength, FfeLength).CopyTo(into);
+
+    /// <summary>How many taps the equalizer has - the bench's sizing for
+    /// <see cref="CopyEqualizerTaps"/>.</summary>
+    internal static int EqualizerLength => FfeLength;
+
+    /// <summary>One decision as <see cref="DecisionObserver"/> reports it.</summary>
+    /// <param name="Phase">Timing phase, 0 being the clock instant.</param>
+    /// <param name="Symbol">Phase 0's running symbol count at this decision, so the phases'
+    /// rows for the same symbol share a number.</param>
+    /// <param name="Normalised">The slicer input at this phase's instant, in units of the
+    /// tracked outer envelope.</param>
+    /// <param name="Equalized">What the equalizer made of it - the value actually sliced.</param>
+    /// <param name="Level">The 4-PAM level decided (0 = -outer, 3 = +outer).</param>
+    /// <param name="Frozen">Whether this phase's equalizer was frozen for this decision.</param>
+    /// <param name="PeakHigh">The shared envelope tracker's upper peak.</param>
+    /// <param name="PeakLow">The shared envelope tracker's lower peak.</param>
+    internal readonly record struct Decision(
+        int Phase, long Symbol, float Normalised, float Equalized, int Level, bool Frozen,
+        float PeakHigh, float PeakLow);
+
     /// <inheritdoc />
     public string Mode => $"c4fsk{_symbolRate * 2}{(_crc ? "-il2pc" : "-il2p")}";
 
@@ -310,21 +370,33 @@ public sealed class C4fskModem : IModem
                 continue;
             }
 
+            if (!_previousEnergyBusy)
+            {
+                _symbolsSinceGate = 0;
+            }
+
             _previousEnergyBusy = true;
 
             for (int point = 1; point <= _upsample; point++)
             {
                 float value = _previousFiltered + ((filtered - _previousFiltered) * point / _upsample);
 
-                // Track the outer envelope exactly as the 2-level FSK slicer does; the
+                // Acquire the outer envelope exactly as the 2-level FSK slicer does; the
                 // four levels sit at ±1 and ±⅓ of it, so the three thresholds are 0 and
                 // ±⅔ of the half-swing around the midpoint.
                 // Decay is 20× slower than the binary modes': the envelope's job here is
                 // to HOLD the outer reference through inner-heavy scrambled stretches, not
                 // to track - at 2e-4 it sagged toward the inner levels mid-frame and the
                 // ⅔ threshold ate them (5/8; 7-8/8 at 1e-5, measured on the same bursts).
-                _peakHigh += (value - _peakHigh) * (value > _peakHigh ? 0.08f : 0.00001f);
-                _peakLow += (value - _peakLow) * (value < _peakLow ? 0.08f : 0.00001f);
+                // Only for the first AcquireSymbols of a burst: after that the follower's
+                // max-hold would climb the noise for the rest of the run-in (issue #336),
+                // and the decision-directed update in Decide carries the envelope instead.
+                if (_symbolsSinceGate < AcquireSymbols)
+                {
+                    _peakHigh += (value - _peakHigh) * (value > _peakHigh ? 0.08f : 0.00001f);
+                    _peakLow += (value - _peakLow) * (value < _peakLow ? 0.08f : 0.00001f);
+                }
+
                 float mid = (_peakHigh + _peakLow) * 0.5f;
                 float half = Math.Max((_peakHigh - _peakLow) * 0.5f, 1e-6f);
                 float normalised = (value - mid) / half;
@@ -458,6 +530,8 @@ public sealed class C4fskModem : IModem
         }
 
         _previousLevel[phase] = level;
+        DecisionObserver?.Invoke(new Decision(
+            phase, _symbolsSeen, normalised, equalized, level, _ffeFrozen[phase], _peakHigh, _peakLow));
         if (!_ffeFrozen[phase])
         {
             float target = level switch { 0 => -1f, 1 => -1f / 3f, 2 => 1f / 3f, _ => 1f };
@@ -478,6 +552,42 @@ public sealed class C4fskModem : IModem
         {
             _symbolsSeen++;
             _packetDcd.OnSymbol();
+            TrackEnvelope(level, _ffeHistory[taps + (FfeLength / 2)]);
+        }
+    }
+
+    /// <summary>The established-burst envelope: once the follower has acquired, each outer
+    /// decision at the clock instant moves its own peak toward the reading it was decided from
+    /// (the centre of the equalizer history, put back into the slicer's units), up or down
+    /// alike, so noise averages out of the reference instead of being held at its maximum.
+    /// Inner decisions leave it alone. See <see cref="AcquireSymbols"/>.</summary>
+    /// <remarks>
+    /// Measured against two refinements and kept plain (2026-08-22 ledger entry): a running
+    /// mean that restarts at the hand-over and again when the 0x77 alternation ends, so the
+    /// frame's own level replaces the preamble's within the sync word (the alternation is a
+    /// tone at half the symbol rate and through the shaping reads 14 to 16 % above a symbol's
+    /// level), landed the envelope prettily by the header and cost 138 frames over the six
+    /// AWGN knee rows; and reading the decision back to the clock's fractional instant was a
+    /// wash. The slow rate leaves the preamble's level in place for the first twenty or so
+    /// outer symbols of a frame and the ladder prefers that.
+    /// </remarks>
+    private void TrackEnvelope(int level, float normalisedCentre)
+    {
+        if (++_symbolsSinceGate <= AcquireSymbols || level is not (0 or 3))
+        {
+            return;
+        }
+
+        float mid = (_peakHigh + _peakLow) * 0.5f;
+        float half = Math.Max((_peakHigh - _peakLow) * 0.5f, 1e-6f);
+        float reading = (normalisedCentre * half) + mid;
+        if (level == 3)
+        {
+            _peakHigh += (reading - _peakHigh) * EnvelopeRate;
+        }
+        else
+        {
+            _peakLow += (reading - _peakLow) * EnvelopeRate;
         }
     }
 
@@ -550,6 +660,7 @@ public sealed class C4fskModem : IModem
         _peakLow = 0;
         _previousFiltered = 0;
         _pendingInstant = -1;
+        _symbolsSinceGate = 0;
         ResetFfe();
     }
 

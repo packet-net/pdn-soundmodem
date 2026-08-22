@@ -175,6 +175,13 @@ public class WattersonMaskTests(ITestOutputHelper output)
                                                              // is ~1.8 dB better, which is what
                                                              // narrow costs it
     [InlineData("c4fsk19200", "fm-data", 24.0, 21, 25)]      // measured 25/25
+    // A rung below the two rows above, added when issue #336 moved both C4FSK knees down about
+    // 2 dB CNR on the data port at this tier's TXDELAY (c4fsk9600 16.7 -> 12.8, c4fsk19200
+    // 16.2 -> 12.4, 50 % knees, N=200): 18 dB is 4 dB above the new 90 % knee, on the flat.
+    // Measured 2026-08-22, N=40, seed 1: 40/40 both modes; the floor sits three binomial sigma
+    // under that at the 98 % the N=200 ladder bounds the rate to (200/200 at 18 dB).
+    [InlineData("c4fsk9600", "fm-data", 18.0, 36, 40)]       // measured 40/40
+    [InlineData("c4fsk19200", "fm-data", 18.0, 36, 40)]      // measured 40/40
     [InlineData("qpsk3600", "fm-mic", 18.0, 21, 25)]         // measured 25/25 - NinoTNC groups
                                                              // 3600 AQPSK (switch 0101) with the
                                                              // speaker/mic modes, and this row is
