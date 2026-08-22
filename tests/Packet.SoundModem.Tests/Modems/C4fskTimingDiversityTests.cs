@@ -38,11 +38,17 @@ public class C4fskTimingDiversityTests(ITestOutputHelper output)
     /// measurably worse than the early ones at the same offset (at +15 % the sync word itself
     /// loses a symbol, where -15 % is byte-perfect), because the 4-PAM clock's wrap can only
     /// land on a sample, so the decision instant is already up to a tenth of a symbol late and
-    /// the phase set is not centred on the eye.
+    /// the phase set is not centred on the eye. Reading the decision back to the clock's
+    /// fractional instant does cure that reading (+15 % then copies the sync clean) and was
+    /// measured on the ladder as a wash, so it is not in (2026-08-22 ledger entry).
+    /// The sigma is whatever makes this burst (a 120 ms run-in) error at some phase and not at
+    /// others: c4fsk19200 took 0.20 until issue #336's envelope fix, after which six of the
+    /// seven phases read it byte-perfect up to 0.28 and the first phase to differ appears at
+    /// 0.32; 0.36 leaves a margin.
     /// </remarks>
     [Theory]
     [InlineData("c4fsk9600", 0.24f)]
-    [InlineData("c4fsk19200", 0.20f)]
+    [InlineData("c4fsk19200", 0.36f)]
     public void The_Timing_Phases_Make_Different_Errors_On_A_Noisy_Burst(string mode, float sigma)
     {
         const int rate = 48000;
