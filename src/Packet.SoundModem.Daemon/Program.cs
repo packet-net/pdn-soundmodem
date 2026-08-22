@@ -1096,10 +1096,13 @@ channel.FrameTransmittedWithTrim += (subChannel, frame, trimHz) =>
     // a logged row is a frame that actually went on air. Same placement lookup as the receive
     // side, so audio_hz/rf_hz mean the same thing in both directions.
     //
-    // The mode is the modem's own report of itself - what the waterfall stamps on its TX rows,
-    // and what the receive side already writes into this column - rather than the configured
-    // name the console line uses. It costs nothing and it keeps one modem's traffic under one
-    // spelling, so "everything on bpsk300-il2pc today" is one query that includes our own.
+    // The mode is the catalogue identity of what went on air - the modem's own report of
+    // itself minus the diversity bank's branch-count suffix, which is receiver construction
+    // rather than a property of the transmission (issue #343). That is the spelling the
+    // receive side writes into this column (FrameQuality.Mode) and the spelling the waterfall
+    // stamps on its TX rows, so one modem's traffic stays under one spelling and "everything
+    // on bpsk300-il2pc today" is one query that includes our own. The configured name the
+    // console line uses ("bpsk300") stays out of it, as before.
     (double? audio, double? rf) = frameLogRfByModem.TryGetValue(subChannel, out var placement)
         ? placement
         : (null, null);
@@ -1107,7 +1110,7 @@ channel.FrameTransmittedWithTrim += (subChannel, frame, trimHz) =>
         subChannel,
         frame,
         channel.Modems.TryGetValue(subChannel, out IModem? sender)
-            ? sender.Mode
+            ? ModeNames.Identity(sender.Mode)
             : modeBySubChannel.GetValueOrDefault(subChannel, "?"),
         audio,
         rf,

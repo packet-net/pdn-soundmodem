@@ -902,7 +902,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
         BroadcastFrame(
             subChannel,
-            _channel.Modems.TryGetValue(subChannel, out IModem? modem) ? modem.Mode : "?",
+            // The catalogue identity, matching the spelling receive rows carry in
+            // FrameQuality.Mode: a diversity bank's branch count is receiver construction,
+            // not a property of the transmission (issue #343).
+            _channel.Modems.TryGetValue(subChannel, out IModem? modem)
+                ? ModeNames.Identity(modem.Mode)
+                : "?",
             from, to, frame.Length, snrDb: null, burstLines: null, offsetHz: null,
             corrected: null, crc: null, transmitted: true,
             txTrimHz: trimHz == 0 ? null : trimHz);

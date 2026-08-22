@@ -384,9 +384,12 @@ public sealed class BpskMultiModem : IModem, IConstellationSource
                 _frameReceived(best.Frame);
             }
 
+            // The quality keeps the branch's own Mode, which is the bare catalogue name and
+            // identical on every branch. The bank's width is receiver construction - it stays
+            // on IModem.Mode for the daemon's own use, and FrameQuality.Mode says why an
+            // identity cannot carry it (issue #343).
             FrameDecoded?.Invoke(best.Frame, best.Quality with
             {
-                Mode = Mode,
                 FrequencyOffsetHz = best.ResidualHz is { } residual
                     ? best.BranchOffsetHz + residual
                     : null,

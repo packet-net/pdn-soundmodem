@@ -51,6 +51,25 @@ public class Afsk300MultiModemTests
     }
 
     [Fact]
+    public void The_Quality_Names_The_Mode_Not_The_Receivers_Construction()
+    {
+        // FrameQuality.Mode is an identity: consumers correlate it against their configured
+        // mode, so the same transmission must report the same string on every receiver that
+        // hears it, however many branches each happens to be built with. The bank's width is
+        // static receiver configuration and stays on IModem.Mode, where the daemon's own logs
+        // and waterfall read it (issue #343).
+        var qualities = new List<FrameQuality>();
+        var modem = new Afsk300MultiModem(SampleRate, _ => { });
+        modem.FrameDecoded += (_, quality) => qualities.Add(quality);
+
+        modem.Process(OffTune(0));
+
+        qualities.Should().ContainSingle().Which.Mode.Should().Be("afsk300-il2pc");
+        modem.Mode.Should().Be(
+            "afsk300-il2pc-multi11", "the receiver describing itself keeps its construction");
+    }
+
+    [Fact]
     public void An_On_Frequency_Signal_Is_Emitted_Exactly_Once()
     {
         var frames = new List<byte[]>();

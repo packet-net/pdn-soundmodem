@@ -89,6 +89,31 @@ public class MultiDecoderTests
     }
 
     [Fact]
+    public void The_Quality_Names_The_Mode_Not_The_Receivers_Construction()
+    {
+        // FrameQuality.Mode is an identity: consumers correlate it against their configured
+        // mode, so the same transmission must report the same string on every receiver that
+        // hears it, however many branches each happens to be built with. The bank's width is
+        // static receiver configuration and stays on IModem.Mode, where the daemon's own logs
+        // and waterfall read it (issue #343).
+        byte[] frame = SampleFrame();
+        var modulator = new AfskModulator(SampleRate);
+        float[] audio = modulator.Modulate(HdlcFramer.FrameBits(frame, openingFlags: 30, closingFlags: 2));
+        var padded = new float[audio.Length + 2 * (SampleRate / 5)];
+        audio.CopyTo(padded, SampleRate / 5);
+
+        var qualities = new List<FrameQuality>();
+        var modem = new Afsk1200MultiModem(SampleRate, _ => { }, offsetPairs: 3);
+        modem.FrameDecoded += (_, quality) => qualities.Add(quality);
+        modem.Process(padded);
+
+        qualities.Should().ContainSingle().Which.Mode.Should().Be(
+            "afsk1200", "what was heard is what the single Afsk1200Modem would call it");
+        modem.Mode.Should().Be(
+            "afsk1200-multi21", "the receiver describing itself keeps its construction");
+    }
+
+    [Fact]
     public void The_Bank_Transmits_The_Training_Fill_A_Cold_Receiver_Acquires_From()
     {
         // The TXDELAY-0 parity criterion the single Afsk1200Modem passes

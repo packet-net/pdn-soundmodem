@@ -21,8 +21,16 @@ namespace Packet.SoundModem.Modems;
 /// uncorrectable IL2P receives); this is the per-frame version.
 /// </para>
 /// </remarks>
-/// <param name="Mode">The mode (and for multi-decoder banks, the branch) that decoded the
-/// frame, e.g. <c>"qpsk2400-il2pc"</c> or <c>"afsk1200@+30Hz+6dB"</c>.</param>
+/// <param name="Mode">The catalogue name of the mode the frame was heard on, e.g.
+/// <c>"qpsk2400-il2pc"</c> or <c>"afsk1200"</c>. This is an identity: consumers correlate it
+/// against their configured mode and against their own mode catalogue, so it must be the same
+/// string on every receiver that hears the same transmission. A diversity bank therefore does
+/// NOT append its branch count here - bank width is static receiver configuration, identical
+/// on every frame and changed by a receiver-local knob, and an identifier cannot vary with the
+/// listener (issue #343). What a bank legitimately knows per frame - the winning branch - is
+/// already carried structured, in <see cref="FrequencyOffsetHz"/> and <see cref="EmphasisDb"/>;
+/// the receiver's own construction stays on <see cref="IModem.Mode"/>, where the daemon's logs
+/// and waterfall read it.</param>
 /// <param name="FrameBytes">Decoded AX.25 frame length in bytes.</param>
 /// <param name="CorrectedBytes">Bytes repaired by forward error correction (Reed-Solomon,
 /// IL2P and FX.25 framings). <c>null</c> for unprotected framings (classic HDLC), where no

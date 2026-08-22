@@ -142,7 +142,12 @@ public class IdBeaconGhostTests
         ghost.Process(Beacon("KK4HEJ", IdBeaconGhost.CentreHzFor(null)));
 
         qualities.Should().ContainSingle();
-        qualities[0].Mode.Should().Be(ghost.Mode);
+        // The quality names the mode the beacon was sent in - the bare catalogue name, the
+        // same string however many branches happened to be listening (issue #343). The
+        // ghost's own Mode keeps the bank decoration, because that is the receiver
+        // describing itself.
+        qualities[0].Mode.Should().Be("afsk300");
+        ghost.Mode.Should().StartWith("afsk300-multi");
         ghost.BaseMode.Should().Be("qpsk2400");
 
         // The display name is what an operator reads, and it is the same either way - the bank's

@@ -8,9 +8,12 @@ namespace Packet.SoundModem.Modems;
 /// <remarks>
 /// <see cref="IModem.Mode"/> reports what the modem actually is, which is more than the mode
 /// name you configured: a BPSK modem says <c>bpsk300-il2pc-multi9</c> - the framing it settled
-/// on and how many branches its diversity bank has. That is the right thing for a log or a
-/// quality frame and the wrong thing for a label on a waterfall, where you want to read
-/// "BPSK300 IL2Pc" at a glance and the bank size is not what you are looking for.
+/// on and how many branches its diversity bank has. That is the right thing for the daemon's
+/// own log of what it is running and the wrong thing for a label on a waterfall, where you
+/// want to read "BPSK300 IL2Pc" at a glance and the bank size is not what you are looking for.
+/// A quality frame is different again: <see cref="FrameQuality.Mode"/> is an identity that
+/// consumers match against their configuration, so it carries the bare catalogue name and
+/// never the bank suffix (issue #343).
 /// </remarks>
 public static class ModeNames
 {
@@ -54,6 +57,21 @@ public static class ModeNames
         }
 
         return text.ToString();
+    }
+
+    /// <summary>
+    /// The catalogue identity behind a receiver's self-description: <c>bpsk300-il2pc-multi9</c>
+    /// → <c>bpsk300-il2pc</c>, and a mode with no bank suffix passes through unchanged. This is
+    /// the spelling <see cref="FrameQuality.Mode"/> carries (issue #343), so it is what a
+    /// record kept alongside quality frames should store when all it holds is an
+    /// <see cref="IModem.Mode"/> - the frame log's and waterfall's transmit rows use it, so one
+    /// modem's traffic stays under one spelling in both directions.
+    /// </summary>
+    public static string Identity(string mode)
+    {
+        ArgumentNullException.ThrowIfNull(mode);
+        int cut = mode.LastIndexOf('-');
+        return cut > 0 && IsBankSuffix(mode[(cut + 1)..]) ? mode[..cut] : mode;
     }
 
     /// <summary><c>multi</c> or <c>multi9</c> - the bank's branch count.</summary>

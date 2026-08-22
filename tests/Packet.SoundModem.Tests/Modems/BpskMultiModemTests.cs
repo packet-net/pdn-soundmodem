@@ -60,6 +60,25 @@ public class BpskMultiModemTests
     }
 
     [Fact]
+    public void The_Quality_Names_The_Mode_Not_The_Receivers_Construction()
+    {
+        // FrameQuality.Mode is an identity: consumers correlate it against their configured
+        // mode, so the same transmission must report the same string on every receiver that
+        // hears it, however many branches each happens to be built with. The bank's width is
+        // static receiver configuration and stays on IModem.Mode, where the daemon's own logs
+        // and waterfall read it (issue #343).
+        var qualities = new List<FrameQuality>();
+        BpskMultiModem modem = BpskMultiModem.Bpsk300(SampleRate, _ => { });
+        modem.FrameDecoded += (_, quality) => qualities.Add(quality);
+
+        modem.Process(OffTune(0));
+
+        qualities.Should().ContainSingle().Which.Mode.Should().Be("bpsk300-il2pc");
+        modem.Mode.Should().Be(
+            "bpsk300-il2pc-multi9", "the receiver describing itself keeps its construction");
+    }
+
+    [Fact]
     public void The_Coherent_Path_Reports_Its_Loop_Frequency_As_The_Residual()
     {
         // Coherent has no differential product to measure; the Costas NCO's own frequency

@@ -1469,7 +1469,7 @@ receive feed starved: the sound device returned no samples for 30 s - a stalled 
 browser and the frame log needs SQL. Every frame the station hears or sends is one line:
 
 ```
-rx[0] afsk300-il2pc-multi11 M0LTE>GB7IOW-1 15 bytes  crc ok  fec 0  -5 Hz
+rx[0] afsk300-il2pc M0LTE>GB7IOW-1 15 bytes  crc ok  fec 0  -5 Hz
 tx[0] afsk1200 M0LTE>GB7RDG-2 28 bytes
 tx[0] DROPPED M0LTE>GB7RDG-2 28 bytes: this station receives only
 ```
@@ -1477,7 +1477,7 @@ tx[0] DROPPED M0LTE>GB7RDG-2 28 bytes: this station receives only
 | Field | Means |
 |---|---|
 | `rx[N]` / `tx[N]` | Direction and KISS sub-channel |
-| mode | What decoded it - a diversity bank names its branch count, so `afsk300-il2pc-multi11` is the 11-branch bank |
+| mode | The mode the frame was heard on - the bare catalogue name, the same string however many branches the receiving bank was built with. The bank's own construction (`afsk300-il2pc-multi11`) shows in the startup lines, not on every frame |
 | `SOURCE>DEST` | AX.25 addresses; `(no ax25 header)` where the payload is not AX.25, rather than a mangled callsign |
 | `crc ok` / `CRC BAD` | Only for modes that carry a CRC; a mode with none claims neither |
 | `fec N` | Bytes the FEC corrected. Rising counts mean the link is being carried by the FEC and is closer to the edge than a clean decode suggests |
