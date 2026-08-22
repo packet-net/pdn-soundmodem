@@ -73,10 +73,17 @@ public sealed class QpskModem : IModem, IConstellationSource
                 crc, acceptPlainIl2p);
         }
 
-        // Reset the deframers on the DCD falling edge - same rationale as BpskModem: a
+        // Reset the deframers when the carrier goes - same rationale as BpskModem: a
         // carrier that drops mid-collection leaves the deframer consuming the next
-        // transmission's preamble and sync word as phantom payload.
-        bool previousDcd = false;
+        // transmission's preamble and sync word as phantom payload. On the coherent path
+        // that is DCD's falling edge, as it always was. On the differential path DCD is
+        // scored on decision quality (QpskDecisionDcd) and can dip on a burst that still
+        // decodes while the carrier is plainly still there, so the carrier is taken to have
+        // gone only when packet DCD and in-band energy are both down (ChannelBusy's falling
+        // edge). Measured for issue #329: with the DCD's release level at 0.25 the reset on
+        // DCD alone cost 43 of 200 qpsk3600 frames at +8 dB; at the shipped 0.10 it still
+        // cost one or two frames on two knee rows, and the quiet rule gives them back.
+        bool previousBusy = false;
         demodulator = new QpskDemodulator(
             sampleRate, baud, static (_, _) => { },
             carrier, detector, loopBandwidthHz, rollOff, decisionFeedback,
@@ -85,8 +92,10 @@ public sealed class QpskModem : IModem, IConstellationSource
                 if (phase == 0)
                 {
                     _symbolsSeen++;
-                    bool dcd = demodulator!.CarrierDetect;
-                    if (previousDcd && !dcd)
+                    bool busy = detector == PskDetector.Coherent
+                        ? demodulator!.CarrierDetect
+                        : demodulator!.ChannelBusy;
+                    if (previousBusy && !busy)
                     {
                         foreach (Il2pReceiver deframer in _deframers)
                         {
@@ -94,7 +103,7 @@ public sealed class QpskModem : IModem, IConstellationSource
                         }
                     }
 
-                    previousDcd = dcd;
+                    previousBusy = busy;
                 }
 
                 _deframers[phase].PushBit(first, confidence);
