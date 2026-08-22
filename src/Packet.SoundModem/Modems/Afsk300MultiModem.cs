@@ -45,6 +45,7 @@ public sealed class Afsk300MultiModem : IModem
     private readonly Afsk300Framing _framing;
     private readonly List<Candidate> _candidates = [];
     private long _samplesProcessed;
+    private bool _carrierWasPresent;
 
     /// <summary>One branch's copy of a frame, held until the chunk ends and the branches can
     /// be compared. <paramref name="ResidualHz"/> is that branch's own measurement of how far
@@ -82,11 +83,21 @@ public sealed class Afsk300MultiModem : IModem
         ArgumentOutOfRangeException.ThrowIfNegative(offsetPairs);
         _frameReceived = frameReceived;
         _framing = framing;
-        // Dedup window a few frame-times wide: branches decode the same transmission
-        // within a frame-time of one another, and the sample clock advances with the
-        // audio (see Process).
-        _deduper = new FrameDeduper(3L * sampleRate);
         _dedupeChunk = Math.Max(1, sampleRate / 10);
+        // The dedupe window only has to span the skew between branches delivering copies of
+        // ONE transmission, and those cluster tightly: measured across the catalogue's
+        // 5-pair bank (issue #342's probe), every branch's copy of a burst landed on the
+        // same sample, and the PSK banks' worst case under two detectors is 130 samples at
+        // 12 kHz. Add up to one feed slice of clock quantisation, because candidates are
+        // stamped at slice ends and a straddling pair lands one slice (at most _dedupeChunk)
+        // apart, and the worst case is a little over one chunk. Two chunks covers it roughly
+        // twice over while staying under the closest two DISTINCT transmissions of the same
+        // bytes can land, which is one burst-time apart (over a second at this baud), so it
+        // cannot swallow a retransmission. The previous 3 s constant was wider than any ARQ
+        // retry interval and did exactly that (issue #342). The deduper is additionally
+        // cleared whenever the bank re-acquires a carrier (see Process): a burst that
+        // arrives after the carrier dropped is a new transmission whatever the clock says.
+        _deduper = new FrameDeduper(2L * _dedupeChunk);
         double step = offsetHz ?? 35;
 
         int count = 2 * offsetPairs + 1;
@@ -162,6 +173,22 @@ public sealed class Afsk300MultiModem : IModem
 
             _samplesProcessed += slice.Length;
             EmitBestOfChunk();
+
+            // An acquisition boundary: the carrier dropped and came back, so whatever the
+            // deduper remembers belongs to an earlier transmission and must not suppress
+            // this one - which is what lets a retransmission through however hard the far
+            // end leans on its timers. Checked after the emit so a copy of the previous
+            // burst still in flight this slice is merged before the memory goes. The edge
+            // can only appear at a burst's start (the OR over the branches rises once and
+            // holds), and no decode of that burst can precede its own preamble, so a clear
+            // never splits one transmission's copies.
+            bool carrier = CarrierDetect;
+            if (carrier && !_carrierWasPresent)
+            {
+                _deduper.CarrierAcquired();
+            }
+
+            _carrierWasPresent = carrier;
         }
     }
 

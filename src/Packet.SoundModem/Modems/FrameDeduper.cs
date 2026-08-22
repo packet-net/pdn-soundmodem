@@ -19,6 +19,40 @@ internal sealed class FrameDeduper(long windowSamples)
 {
     private readonly List<(ulong Hash, long At, bool Delivered)> _recent = [];
 
+    /// <summary>
+    /// The receiver acquired a carrier after losing it. Whatever was heard before belongs to an
+    /// earlier transmission, so nothing remembered may suppress what this one carries: a
+    /// station that dropped carrier and keyed up again chose to send those bytes again, however
+    /// quickly it did so, and dedupe exists to merge copies of one transmission, never to
+    /// second-guess a sender (issue #342: a byte-identical ARQ retransmission is the ordinary
+    /// AX.25 repair, and a time window wide enough to catch it stalls the link). The time
+    /// window stays as the fallback for the case where the acquisition boundary is not seen,
+    /// e.g. a channel so busy the carrier detect never falls between bursts.
+    /// </summary>
+    public void CarrierAcquired() => _recent.Clear();
+
+    /// <summary>Records a copy that is going to the host regardless of what the window holds,
+    /// so that a later copy of the same transmission arriving by another route still dedupes
+    /// against it. For decode routes that can never legitimately produce a duplicate: the
+    /// embedded-HDLC reading of an FX.25 block always precedes its own block's FX.25 reading,
+    /// so nothing already remembered can be a copy of it, and suppressing it on content alone
+    /// would eat a genuine retransmission (issue #342). Replaces any remembered entry for the
+    /// same bytes, so the suppression that follows is anchored at this copy, not a stale
+    /// one.</summary>
+    public void RecordDelivery(ReadOnlySpan<byte> frame, long now)
+    {
+        ulong hash = Hash(frame);
+        for (int i = _recent.Count - 1; i >= 0; i--)
+        {
+            if (_recent[i].Hash == hash)
+            {
+                _recent.RemoveAt(i);
+            }
+        }
+
+        _recent.Add((hash, now, true));
+    }
+
     /// <summary>Returns true if the frame was not already emitted within the window
     /// ending at <paramref name="now"/> (in samples), recording it if so.</summary>
     /// <param name="frame">The decoded frame.</param>
@@ -28,11 +62,7 @@ internal sealed class FrameDeduper(long windowSamples)
     /// the window's entry over.</param>
     public bool ShouldEmit(ReadOnlySpan<byte> frame, long now, bool delivered = true)
     {
-        ulong hash = 14695981039346656037UL;
-        foreach (byte value in frame)
-        {
-            hash = (hash ^ value) * 1099511628211UL;
-        }
+        ulong hash = Hash(frame);
 
         // Oldest first, so this only ever trims from the front.
         int expired = 0;
@@ -70,5 +100,16 @@ internal sealed class FrameDeduper(long windowSamples)
 
         _recent.Add((hash, now, delivered));
         return true;
+    }
+
+    private static ulong Hash(ReadOnlySpan<byte> frame)
+    {
+        ulong hash = 14695981039346656037UL;
+        foreach (byte value in frame)
+        {
+            hash = (hash ^ value) * 1099511628211UL;
+        }
+
+        return hash;
     }
 }
