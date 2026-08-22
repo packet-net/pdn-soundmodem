@@ -67,13 +67,15 @@ public sealed class Afsk1200MultiModem : IModem
         // case under two detectors is 130 samples at 12 kHz. Add up to one feed slice of
         // clock quantisation, because candidates are stamped at slice ends and a straddling
         // pair lands one slice (at most _dedupeChunk) apart, and the worst case is a little
-        // over one chunk. Two chunks covers it roughly twice over while staying under the
-        // closest two DISTINCT transmissions of the same bytes can land, which is one
-        // burst-time apart, so it cannot swallow a retransmission. The previous 3 s constant
-        // was wider than any ARQ retry interval and did exactly that (issue #342). The
-        // deduper is additionally cleared whenever the bank re-acquires a carrier (see
-        // Process): a burst that arrives after the carrier dropped is a new transmission
-        // whatever the clock says.
+        // over one chunk. Two chunks covers it roughly twice over, and two DISTINCT
+        // transmissions of the same bytes deliver at least one burst-time apart, which
+        // stays outside this window at any realistic TXDELAY (only a minimal frame behind
+        // an aggressively short preamble can land two bursts inside 200 ms, and the
+        // acquisition clear below delivers even that case). The previous 3 s constant was
+        // wider than any ARQ retry interval and swallowed byte-identical retransmissions
+        // whole (issue #342). The deduper is additionally cleared whenever the bank
+        // re-acquires a carrier (see Process): a burst that arrives after the carrier
+        // dropped is a new transmission whatever the clock says.
         _deduper = new FrameDeduper(2L * _dedupeChunk);
         _modulator = new AfskModulator(
             sampleRate, 1200, centerFrequency - Bell202ToneShift, centerFrequency + Bell202ToneShift);

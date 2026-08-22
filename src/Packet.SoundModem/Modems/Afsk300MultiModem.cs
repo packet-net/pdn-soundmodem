@@ -91,12 +91,13 @@ public sealed class Afsk300MultiModem : IModem
         // 12 kHz. Add up to one feed slice of clock quantisation, because candidates are
         // stamped at slice ends and a straddling pair lands one slice (at most _dedupeChunk)
         // apart, and the worst case is a little over one chunk. Two chunks covers it roughly
-        // twice over while staying under the closest two DISTINCT transmissions of the same
-        // bytes can land, which is one burst-time apart (over a second at this baud), so it
-        // cannot swallow a retransmission. The previous 3 s constant was wider than any ARQ
-        // retry interval and did exactly that (issue #342). The deduper is additionally
-        // cleared whenever the bank re-acquires a carrier (see Process): a burst that
-        // arrives after the carrier dropped is a new transmission whatever the clock says.
+        // twice over, and two DISTINCT transmissions of the same bytes deliver at least one
+        // burst-time apart - over a second at this baud, so at 300 baud the window can
+        // never reach a second transmission at all. The previous 3 s constant was wider
+        // than any ARQ retry interval and swallowed byte-identical retransmissions whole
+        // (issue #342). The deduper is additionally cleared whenever the bank re-acquires a
+        // carrier (see Process): a burst that arrives after the carrier dropped is a new
+        // transmission whatever the clock says.
         _deduper = new FrameDeduper(2L * _dedupeChunk);
         double step = offsetHz ?? 35;
 
