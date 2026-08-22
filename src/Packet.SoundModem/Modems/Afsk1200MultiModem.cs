@@ -299,8 +299,13 @@ public sealed class Afsk1200MultiModem : IModem
             }
 
             _frameReceived(best.Frame);
+            // The bare catalogue name, exactly as the single Afsk1200Modem reports it: what
+            // was heard is afsk1200 however many branches this receiver happened to be built
+            // with. The bank's width is receiver construction - it stays on IModem.Mode for
+            // the daemon's own use, and FrameQuality.Mode says why an identity cannot carry
+            // it (issue #343).
             FrameDecoded?.Invoke(best.Frame, new FrameQuality(
-                Mode, best.Frame.Length, CorrectedBytes: null, CrcValid: null,
+                "afsk1200", best.Frame.Length, CorrectedBytes: null, CrcValid: null,
                 FrequencyOffsetHz: best.BranchOffsetHz + best.ResidualHz,
                 EmphasisDb: best.EmphasisDb));
         }

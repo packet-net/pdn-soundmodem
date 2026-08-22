@@ -70,4 +70,24 @@ public class ModeNamesTests
         // "multi" as a family, not a suffix, must survive - the rule is positional.
         ModeNames.Display("multi1200").Should().Be("MULTI1200");
     }
+
+    [Theory]
+    // A receiver's self-description maps to the catalogue identity its quality frames carry:
+    // the bank's branch count is receiver construction, not part of the mode (issue #343).
+    [InlineData("bpsk300-il2pc-multi9", "bpsk300-il2pc")]
+    [InlineData("afsk300-il2pc-multi11", "afsk300-il2pc")]
+    [InlineData("afsk1200-multi21", "afsk1200")]
+    [InlineData("qpsk2400-il2pc-multi1", "qpsk2400-il2pc")]
+    // Already an identity: nothing to strip.
+    [InlineData("qpsk2400-il2pc", "qpsk2400-il2pc")]
+    [InlineData("afsk1200", "afsk1200")]
+    [InlineData("ms110d-wn3", "ms110d-wn3")]
+    [InlineData("ardop", "ardop")]
+    // "multi" as a family, not a suffix, survives - the rule is positional, as for Display.
+    [InlineData("multi1200", "multi1200")]
+    public void A_Receivers_Self_Description_Maps_To_The_Identity_Its_Quality_Frames_Carry(
+        string mode, string expected)
+    {
+        ModeNames.Identity(mode).Should().Be(expected);
+    }
 }
