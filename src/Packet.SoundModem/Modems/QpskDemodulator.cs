@@ -245,7 +245,7 @@ public sealed class QpskDemodulator
     /// of the symbol rate, tuned against measurement.</param>
     /// <param name="rollOff">The transmitter's root-raised-cosine roll-off, which the
     /// differential path's matched filter mirrors. <see cref="QpskModem"/> passes the
-    /// per-mode value (0.20 for qpsk600, 0.35 for qpsk2400, 0.25 for qpsk3600).</param>
+    /// per-mode value (the 0.35 default for qpsk600 and qpsk2400, 0.25 for qpsk3600).</param>
     /// <param name="decisionFeedback">Whether the differential path decides against the
     /// decision-feedback reference (see <see cref="DecideAgainstReference"/>) or against the
     /// plain one-symbol conjugate product. On for the SSB modes; OFF for qpsk3600, where the

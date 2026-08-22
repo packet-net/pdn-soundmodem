@@ -119,13 +119,27 @@ public sealed class QpskModem : IModem, IConstellationSource
 
     /// <summary>Creates the 600 bps mode (300 baud, 1500 Hz centre) - NinoTNC mode 9,
     /// an SSB-friendly 500 Hz-OBW mode sharing its symbol rate with 300 BPSK.</summary>
-    /// <remarks>Roll-off 0.20 rather than the default: it puts us at 322 Hz, just inside
-    /// the 328 Hz a NinoTNC's own mode-9 transmission measures on the bench. The rule is
-    /// that we are never wider than the TNC we share a channel with.
+    /// <remarks>Keeps the default 0.35 roll-off (issue #344, the #340 campaign re-run for
+    /// this mode). The 0.20 this factory carried from July 2026 was chosen to sit inside
+    /// "the 328 Hz a NinoTNC's own mode-9 transmission measures", but that reading was the
+    /// pre-issue-#2 highest-energy-window method, which reads mostly preamble: whole-burst
+    /// and like-for-like with the never-wider test, the same reference recording measures
+    /// 398 Hz, so 0.35's 352 Hz sits 12 % inside the TNC and the never-wider rule never
+    /// forced 0.20. Measured before moving it (<c>Qpsk600RollOffProbe</c>,
+    /// <c>ROLLOFF_PROBE=1</c>): the 0.35 matched filter copies the real mode-9 recording
+    /// better at the knee's foot (131 vs 81 of 400 at -2 dB, differential, about 4 sigma),
+    /// matched and cross tx/rx pairs are statistically identical on the deployed
+    /// differential path at every SNR tried (so a mixed 0.20/0.35 fleet loses nothing in
+    /// transition), the coherent cross-check detector copies a 0.35 transmission decisively
+    /// better (120 vs 69 of 400 at -1 dB; its receive low-pass is fixed, so that is the TX
+    /// shape alone), and every nino-bench mode-9 validation on record (6/6 both ways, the
+    /// TXDELAY survey) in fact transmitted 0.35 through that tool's explicit default, so
+    /// 0.35 is also the only shape a real NinoTNC has ever been proven to decode from us.
     /// <paramref name="carrierFrequency"/> (1500 Hz convention) moves the modem within the
     /// audio passband, QtSoundModem-style.</remarks>
     public static QpskModem Qpsk600(
-        int sampleRate, Action<byte[]> frameReceived, bool crc = true, double rollOff = 0.20,
+        int sampleRate, Action<byte[]> frameReceived, bool crc = true,
+        double rollOff = QpskModulator.DefaultRollOff,
         PskDetector detector = PskDetector.Coherent, double carrierFrequency = 1500,
         bool acceptPlainIl2p = false) =>
         new(sampleRate, 300, carrierFrequency, frameReceived, crc, rollOff, detector,
