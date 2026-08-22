@@ -28,6 +28,7 @@ public sealed class Afsk1200MultiModem : IModem
     private readonly int _dedupeChunk;
     private readonly List<Candidate> _candidates = [];
     private long _samplesProcessed;
+    private bool _carrierWasPresent;
 
     /// <summary>One branch's copy of a frame, held until the chunk ends and the branches can
     /// be compared. <paramref name="ResidualHz"/> is that branch's demodulator's own
@@ -58,8 +59,24 @@ public sealed class Afsk1200MultiModem : IModem
         ArgumentNullException.ThrowIfNull(frameReceived);
         ArgumentOutOfRangeException.ThrowIfNegative(offsetPairs);
         _frameReceived = frameReceived;
-        _deduper = new FrameDeduper(3L * sampleRate);
-        _dedupeChunk = sampleRate / 10;
+        _dedupeChunk = Math.Max(1, sampleRate / 10);
+        // The dedupe window only has to span the skew between branches delivering copies of
+        // ONE transmission, and those cluster tightly: measured across the full bank (3
+        // offset pairs times 3 emphasis variants times the timing phases, issue #342's
+        // probe), every copy of a burst landed within 10 samples, and the PSK banks' worst
+        // case under two detectors is 130 samples at 12 kHz. Add up to one feed slice of
+        // clock quantisation, because candidates are stamped at slice ends and a straddling
+        // pair lands one slice (at most _dedupeChunk) apart, and the worst case is a little
+        // over one chunk. Two chunks covers it roughly twice over, and two DISTINCT
+        // transmissions of the same bytes deliver at least one burst-time apart, which
+        // stays outside this window at any realistic TXDELAY (only a minimal frame behind
+        // an aggressively short preamble can land two bursts inside 200 ms, and the
+        // acquisition clear below delivers even that case). The previous 3 s constant was
+        // wider than any ARQ retry interval and swallowed byte-identical retransmissions
+        // whole (issue #342). The deduper is additionally cleared whenever the bank
+        // re-acquires a carrier (see Process): a burst that arrives after the carrier
+        // dropped is a new transmission whatever the clock says.
+        _deduper = new FrameDeduper(2L * _dedupeChunk);
         _modulator = new AfskModulator(
             sampleRate, 1200, centerFrequency - Bell202ToneShift, centerFrequency + Bell202ToneShift);
 
@@ -104,7 +121,23 @@ public sealed class Afsk1200MultiModem : IModem
     public string Mode => $"afsk1200-multi{_demodulators.Length}";
 
     /// <inheritdoc />
-    public bool CarrierDetect => _demodulators.Any(d => d.CarrierDetect);
+    /// <remarks>A plain loop rather than LINQ: Process now reads this once per feed slice
+    /// for the dedupe window's acquisition boundary, which makes it per-block code.</remarks>
+    public bool CarrierDetect
+    {
+        get
+        {
+            foreach (AfskDemodulator demodulator in _demodulators)
+            {
+                if (demodulator.CarrierDetect)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulators.Any(d => d.ChannelBusy);
@@ -132,6 +165,22 @@ public sealed class Afsk1200MultiModem : IModem
 
             _samplesProcessed += slice.Length;
             EmitBestOfChunk();
+
+            // An acquisition boundary: the carrier dropped and came back, so whatever the
+            // deduper remembers belongs to an earlier transmission and must not suppress
+            // this one - which is what lets a retransmission through however hard the far
+            // end leans on its timers. Checked after the emit so a copy of the previous
+            // burst still in flight this slice is merged before the memory goes. The edge
+            // can only appear at a burst's start (the OR over the branches rises once and
+            // holds), and no decode of that burst can precede its own preamble, so a clear
+            // never splits one transmission's copies.
+            bool carrier = CarrierDetect;
+            if (carrier && !_carrierWasPresent)
+            {
+                _deduper.CarrierAcquired();
+            }
+
+            _carrierWasPresent = carrier;
         }
     }
 

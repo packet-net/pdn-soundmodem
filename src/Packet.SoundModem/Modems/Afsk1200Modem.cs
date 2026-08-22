@@ -37,8 +37,10 @@ public sealed class Afsk1200Modem : IModem
     private readonly Fx25Mode _fx25;
     private readonly int _fx25CheckBytes;
     private readonly int _dedupeChunk;
+    private readonly FrameDeduper? _fx25RouteDeduper;
     private long _samplesProcessed;
     private long _bitsSeen;
+    private bool _carrierWasPresent;
 
     /// <summary>Creates the modem.</summary>
     /// <param name="sampleRate">Channel DSP rate.</param>
@@ -69,11 +71,31 @@ public sealed class Afsk1200Modem : IModem
         };
         if (fx25 != Fx25Mode.None)
         {
-            var deduper = new FrameDeduper(3L * sampleRate);
+            // A clean FX.25 block decodes twice by two routes: the embedded frame reads as
+            // plain HDLC at its closing flag, and the whole block reads again once the
+            // Reed-Solomon check bytes have passed. The distance between those copies is the
+            // block's tail - padding plus check bytes - which for a small frame in a large
+            // block approaches a whole codeblock, so the window is sized to the longest
+            // codeblock a correlation tag can name (255 bytes, 2040 bits) at this mode's
+            // 1200 bit/s. Only the FX.25 reading is ever suppressed by it: an embedded-HDLC
+            // reading always precedes its own block's FX.25 reading, so nothing already in
+            // the window can be a copy of it, and suppressing it on content alone would eat
+            // a byte-identical ARQ retransmission (issue #342, where a flat 3 s window here
+            // did exactly that). The HDLC reading is recorded instead, so the FX.25 reading
+            // that trails it merges into it. The window is also cleared when the carrier is
+            // re-acquired (see Process): a burst that arrives after the carrier dropped is a
+            // new transmission however close behind it falls.
+            var routeDeduper = new FrameDeduper(sampleRate * 2040L / 1200);
+            _fx25RouteDeduper = routeDeduper;
             Action<byte[], FrameQuality> inner = deliver;
             deliver = (frame, quality) =>
             {
-                if (deduper.ShouldEmit(frame, _samplesProcessed))
+                if (quality.CorrectedBytes is null)
+                {
+                    routeDeduper.RecordDelivery(frame, _samplesProcessed);
+                    inner(frame, quality);
+                }
+                else if (routeDeduper.ShouldEmit(frame, _samplesProcessed))
                 {
                     inner(frame, quality);
                 }
@@ -157,6 +179,23 @@ public sealed class Afsk1200Modem : IModem
             var slice = samples.Slice(position, Math.Min(_dedupeChunk, samples.Length - position));
             _demodulator.Process(slice);
             _samplesProcessed += slice.Length;
+
+            // An acquisition boundary for the FX.25 route window: the carrier dropped and
+            // came back, so whatever it remembers belongs to an earlier transmission and
+            // must not suppress this one. Deliveries fire inside Process above, so every
+            // decode from this slice has already consulted the window by the time the edge
+            // is sampled here, and a decode of the new burst cannot arrive before its own
+            // preamble - a clear never splits one transmission's two readings.
+            if (_fx25RouteDeduper is not null)
+            {
+                bool carrier = _demodulator.CarrierDetect;
+                if (carrier && !_carrierWasPresent)
+                {
+                    _fx25RouteDeduper.CarrierAcquired();
+                }
+
+                _carrierWasPresent = carrier;
+            }
         }
     }
 

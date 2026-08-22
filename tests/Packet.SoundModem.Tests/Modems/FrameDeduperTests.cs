@@ -71,4 +71,39 @@ public class FrameDeduperTests
         deduper.ShouldEmit(Frame, Window / 2, delivered: false).Should().BeFalse(
             "several branches reading the same unverifiable burst is one burst, not several");
     }
+
+    [Fact]
+    public void A_Carrier_Acquisition_Makes_An_Identical_Frame_A_New_Transmission()
+    {
+        var deduper = new FrameDeduper(Window);
+
+        deduper.ShouldEmit(Frame, 0).Should().BeTrue();
+        deduper.CarrierAcquired();
+        deduper.ShouldEmit(Frame, Window / 2).Should().BeTrue(
+            "the carrier dropped and re-synced between the copies, which is positive evidence "
+            + "of two transmissions however close together they land (issue #342)");
+    }
+
+    [Fact]
+    public void A_Recorded_Delivery_Suppresses_The_Other_Routes_Copy()
+    {
+        var deduper = new FrameDeduper(Window);
+
+        deduper.RecordDelivery(Frame, 0);
+        deduper.ShouldEmit(Frame, Window / 2).Should().BeFalse(
+            "the recorded copy went to the host, so a second reading of the same bytes inside "
+            + "the window is the duplicate the window exists to drop");
+    }
+
+    [Fact]
+    public void A_Recorded_Delivery_Reanchors_The_Window_At_Itself()
+    {
+        var deduper = new FrameDeduper(Window);
+
+        deduper.ShouldEmit(Frame, 0).Should().BeTrue();
+        deduper.RecordDelivery(Frame, 2 * Window);
+        deduper.ShouldEmit(Frame, 2 * Window + Window / 2).Should().BeFalse(
+            "the later recorded copy owns the entry, so its trailing other-route reading still "
+            + "dedupes even though the first copy's window has long expired");
+    }
 }
