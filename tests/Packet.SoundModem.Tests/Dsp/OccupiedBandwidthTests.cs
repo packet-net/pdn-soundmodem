@@ -83,20 +83,12 @@ public class OccupiedBandwidthTests
         { "afsk1200-il2p", 3000 },
     };
 
-    private static IModem Create(string mode) => mode switch
-    {
-        "afsk300" => new Afsk300Modem(SampleRate, _ => { }, Afsk300Framing.Ax25),
-        "afsk300-il2p" => new Afsk300Modem(SampleRate, _ => { }, Afsk300Framing.Il2p),
-        "afsk300-il2pc" => new Afsk300Modem(SampleRate, _ => { }, Afsk300Framing.Il2pCrc),
-        "bpsk300" => BpskModem.Bpsk300(SampleRate, _ => { }),
-        "qpsk600" => QpskModem.Qpsk600(SampleRate, _ => { }),
-        "bpsk1200" => BpskModem.Bpsk1200(SampleRate, _ => { }),
-        "qpsk2400" => QpskModem.Qpsk2400(SampleRate, _ => { }),
-        "qpsk3600" => QpskModem.Qpsk3600(SampleRate, _ => { }),
-        "afsk1200" => new Afsk1200Modem(SampleRate, _ => { }),
-        "afsk1200-il2p" => new Afsk1200Il2pModem(SampleRate, _ => { }),
-        _ => throw new ArgumentException($"unknown mode '{mode}'", nameof(mode)),
-    };
+    // The catalogue's own arm for the mode, because that is the transmitter the daemon
+    // actually keys. The first version of this helper built the single-modem factories,
+    // and for bpsk300 that certified a 0.20 roll-off while the deployed bank transmitted
+    // 0.35 through its centre branch (issue #340) - the test existed to pin the shipping
+    // spectrum and was pinning a modem the daemon never ran.
+    private static IModem Create(string mode) => ModemCatalog.Create(mode, SampleRate, static _ => { });
 
     [Theory]
     [MemberData(nameof(PublishedLimits))]
