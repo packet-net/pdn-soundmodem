@@ -13,9 +13,17 @@ namespace Packet.SoundModem.Tests.Ota;
 /// <remarks>Console.Out redirection is process-global, so every test class that captures
 /// command output shares the "console-capture" collection to stay serialized.</remarks>
 [Collection("console-capture")]
-public class ArdopCutTests
+public class ArdopCutTests : IDisposable
 {
     private const int Rate = 12000;
+
+    // A GUID per run already kept two runs apart, but nothing ever removed the directories: 232 of
+    // them, 62 MB, had accumulated in /tmp on the dev box by the time issue #349 sent somebody
+    // looking. ScratchDirectory takes a passing run's staging away again and files the rest under
+    // one parent per user, which is also where a failing run's cuts are now to be found.
+    private readonly ScratchDirectory _scratch = new("ardop-cut-tests");
+
+    public void Dispose() => _scratch.Dispose();
 
     private static (float[] Id, float[] Data) Frames()
     {
@@ -30,16 +38,14 @@ public class ArdopCutTests
         return (id, data);
     }
 
-    private static string Stage(params (string Name, float[] Audio)[] chunks)
+    private string Stage(params (string Name, float[] Audio)[] chunks)
     {
-        string dir = Path.Combine(Path.GetTempPath(), $"ardop-cut-tests-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(dir);
         foreach ((string name, float[] audio) in chunks)
         {
-            WavFile.WriteMono(Path.Combine(dir, name), audio, Rate);
+            WavFile.WriteMono(Path.Combine(_scratch.FullName, name), audio, Rate);
         }
 
-        return dir;
+        return _scratch.FullName;
     }
 
     private static string RunToString(string[] argv, Func<string[], int> command)
