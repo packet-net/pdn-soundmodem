@@ -15,9 +15,15 @@ namespace Packet.SoundModem.Tests.Ota;
 /// <remarks>Console.Out redirection is process-global, so every test class that captures
 /// command output shares the "console-capture" collection to stay serialized.</remarks>
 [Collection("console-capture")]
-public class ArdopMonitorTests
+public class ArdopMonitorTests : IDisposable
 {
     private const int Rate = 12000;
+
+    // Per-run staging, not a fixed path: see ScratchDirectory for why both halves of that matter,
+    // and why a failing run's WAVs are left where a person can go and listen to them.
+    private readonly ScratchDirectory _scratch = new("ardop-monitor-tests");
+
+    public void Dispose() => _scratch.Dispose();
 
     private static float[] KnownFrames()
     {
@@ -42,11 +48,9 @@ public class ArdopMonitorTests
         ];
     }
 
-    private static string StageWav(float[] audio, string name)
+    private string StageWav(float[] audio, string name)
     {
-        string dir = Path.Combine(Path.GetTempPath(), "ardop-monitor-tests");
-        Directory.CreateDirectory(dir);
-        string path = Path.Combine(dir, name);
+        string path = Path.Combine(_scratch.FullName, name);
         WavFile.WriteMono(path, audio, Rate);
         return path;
     }

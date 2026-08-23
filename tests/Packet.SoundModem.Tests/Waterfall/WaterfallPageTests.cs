@@ -433,7 +433,8 @@ public class WaterfallPageTests
         // And the readout starts hidden, in a way that survives .ctl's own display rule - which
         // is more specific than the browser's rule for [hidden], so without a rule of its own the
         // header opens showing a transmit readout full of dashes.
-        string page = await File.ReadAllTextAsync(PageOnDisk());
+        using var pageFile = new PageFile();
+        string page = await File.ReadAllTextAsync(pageFile.FullName);
         page.Should().Contain("id=\"txReadout\" hidden")
             .And.Contain(".ctl[hidden] { display: none; }");
     }
@@ -529,7 +530,8 @@ public class WaterfallPageTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        start.Environment["PAGE"] = PageOnDisk();
+        using var pageFile = new PageFile();
+        start.Environment["PAGE"] = pageFile.FullName;
         start.Environment["PORT"] = port.ToString();
 
         using Process probe = Process.Start(start)!;
@@ -547,19 +549,33 @@ public class WaterfallPageTests
     /// the embedded copy out - rather than reaching into the source tree - keeps this testing what
     /// ships, not what happens to be sitting next to it.
     /// </summary>
-    private static string PageOnDisk()
+    /// <remarks>
+    /// Unique per instance, and deleted as soon as it has been used. The name used to be
+    /// pdnsm-page-{pid}.html, which is two faults in one line. Nothing ever removed the files, so
+    /// they piled up: 81 of them in /tmp on the dev box. And a leftover from a dead process of
+    /// another Unix account, on a box that hosts more than one self-hosted runner, is a file this
+    /// process cannot open, which surfaces as "Permission denied" on a path the test has every
+    /// right to write. That is exactly how issue #349 blocked the v0.43.0 release from a
+    /// neighbouring test. Nothing here is worth keeping after a failure either: these bytes are
+    /// the shipped page, identical every run, and they are in the assembly.
+    /// </remarks>
+    private sealed class PageFile : IDisposable
     {
-        using Stream? resource = typeof(WaterfallWebServer).Assembly
-            .GetManifestResourceStream("Packet.SoundModem.Waterfall.wwwroot.waterfall.html");
-        resource.Should().NotBeNull("the page ships embedded in the library");
-
-        string path = Path.Combine(Path.GetTempPath(), $"pdnsm-page-{Environment.ProcessId}.html");
-        using (FileStream file = File.Create(path))
+        public PageFile()
         {
+            using Stream? resource = typeof(WaterfallWebServer).Assembly
+                .GetManifestResourceStream("Packet.SoundModem.Waterfall.wwwroot.waterfall.html");
+            resource.Should().NotBeNull("the page ships embedded in the library");
+
+            FullName = Path.Combine(
+                Path.GetTempPath(), $"pdnsm-page-{Guid.NewGuid():N}.html");
+            using FileStream file = File.Create(FullName);
             resource!.CopyTo(file);
         }
 
-        return path;
+        public string FullName { get; }
+
+        public void Dispose() => File.Delete(FullName);
     }
 
     private static string ResolveNode()
