@@ -465,6 +465,27 @@ public sealed class SurveyConfig
     /// </summary>
     public string[]? Capture { get; set; }
 
+    /// <summary>
+    /// Whether to read each capture back with every mode that could have carried it, and
+    /// propose the modems that would have read the traffic. Off by default: it is DSP work
+    /// beside a real-time receiver, and a station that wants its CPU for its modems should
+    /// have it.
+    /// </summary>
+    /// <remarks>
+    /// Bounded by construction rather than by a rate limit - see <c>ProspectorWorker</c> - at a
+    /// twentieth of one core whatever the station hears. Proposals are read from
+    /// <c>/api/proposals</c>, which needs <see cref="ApiConfig.Key"/> set; without one they
+    /// still reach the journal as they are made.
+    /// </remarks>
+    public bool Propose { get; set; }
+
+    /// <summary>
+    /// Separate captures a proposal needs behind it - separate transmissions, on separate
+    /// occasions, each carrying a frame whose own check sequence verified. One decode is a
+    /// decode; a modem slot is a standing commitment.
+    /// </summary>
+    public int ProposeMinCaptures { get; set; } = 3;
+
     /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
