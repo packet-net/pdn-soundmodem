@@ -39,14 +39,15 @@ internal sealed record SweepResult(
 /// Runs every mode in a sweep set over one file's audio and collects what each one heard.
 /// </summary>
 /// <remarks>
-/// <para><b>Driven off <see cref="IModem.FrameDecoded"/>, not the constructor's frame sink.</b>
-/// The event is a superset: every frame that reaches the sink also raises it, and a frame the
-/// receiver read but would not hand to a host - plain IL2P heard by an IL2P+CRC link, marked
-/// <see cref="FrameQuality.MonitorOnly"/> - raises it and never reaches the sink at all. A tool
-/// asking "what is in this recording" wants exactly that frame, and wants to be told it was
-/// held back, which is why the plain-IL2P tolerance is left at its default rather than switched
-/// on: turning it on would deliver such frames and hide the fact that a real link would not
-/// have.</para>
+/// <para>The reading of any one mode is <see cref="ModeReader"/>'s, which the station's own
+/// <see cref="Packet.SoundModem.Survey.CaptureSweep"/> shares: the choice to listen on
+/// <see cref="IModem.FrameDecoded"/> rather than the frame sink, the block size a diversity bank
+/// needs, and the flush that gets the last frame out of the pipeline are decisions that must not
+/// differ between what this tool reports and what a station acts on. What is this class's own is
+/// the <em>set</em>: which modes, at which centres, under which detector, and how the answers
+/// are attributed and counted.</para>
+/// <para>The plain-IL2P tolerance is left at its default rather than switched on: turning it on
+/// would deliver monitor-only frames and hide the fact that a real link would not have.</para>
 /// <para>Modes run one after another over the whole file rather than together over a stream.
 /// Nothing here is real time, and a bank that has seen the entire recording is strictly better
 /// placed than one racing it.</para>
@@ -105,7 +106,7 @@ internal static class Sweep
             {
                 RunOne(entry, audio, dspRate, decodes);
             }
-            catch (ArgumentOutOfRangeException error)
+            catch (ArgumentException error)
                 when (string.Equals(error.ParamName, "centreHz", StringComparison.Ordinal))
             {
                 // The mode is wider than the room left either side of the centre it was given.
@@ -131,30 +132,16 @@ internal static class Sweep
             decodes, failures, silent, System.Diagnostics.Stopwatch.GetElapsedTime(startedAt));
     }
 
-    private static void RunOne(SweepEntry entry, float[] audio, int dspRate, List<Decode> decodes)
-    {
-        // The sink is required by the catalogue and deliberately ignored: see the type remarks
-        // for why FrameDecoded is the honest source here.
-        IModem modem = ModemCatalog.Create(entry.Mode, dspRate, _ => { }, entry.Options);
-        try
-        {
-            modem.FrameDecoded += (frame, quality) =>
-                decodes.Add(new Decode(frame, quality, entry.Label, decodes.Count));
+    private static void RunOne(SweepEntry entry, float[] audio, int dspRate, List<Decode> decodes) =>
+        ModeReader.Run(
+            entry.Mode,
+            audio,
+            dspRate,
+            entry.Options,
+            (frame, quality) => decodes.Add(new Decode(frame, quality, entry.Label, decodes.Count)),
 
-            // In blocks, not one span: a bank holding per-chunk candidate state (the afsk1200 and
-            // bpsk banks compare branches at chunk boundaries) behaves as it does on the air only
-            // if it is fed in something like air-sized pieces.
-            const int block = 4096;
-            for (int offset = 0; offset < audio.Length; offset += block)
-            {
-                modem.Process(audio.AsSpan(offset, Math.Min(block, audio.Length - offset)));
-            }
-        }
-        finally
-        {
-            (modem as IDisposable)?.Dispose();
-        }
-    }
+            // The caller already padded, once, for every mode at this rate.
+            flushSilence: false);
 
     /// <summary>
     /// The HF data waveform families, which <c>--packet</c> leaves out. Prefixes, so every
@@ -338,23 +325,10 @@ internal static class Sweep
 
     /// <summary>
     /// How good a decode is, lowest best, for choosing which mode to name as the one that read a
-    /// frame several modes all read. A frame the receiver would have handed to its host beats one
-    /// it held back; a verified CRC beats Reed-Solomon standing alone; and among equals, fewer
-    /// bytes repaired means a cleaner copy.
+    /// frame several modes all read. The ordering is <see cref="DecodeConfidence.Rank"/>, shared
+    /// with the station; among equals, fewer bytes repaired means a cleaner copy, and the sweep's
+    /// own order breaks the remaining ties so a report is stable.
     /// </summary>
-    public static (int Rank, int Corrected, int Order) Confidence(Decode decode)
-    {
-        FrameQuality quality = decode.Quality;
-        int rank = quality switch
-        {
-            { MonitorOnly: true } => 3,
-            { CrcValid: true } => 0,
-            { PlainIl2p: true, TrailerNearBits: not null } => 1,
-            { PlainIl2p: true } => 2,
-            { CrcValid: false } => 2,
-            _ => 0, // HDLC or FX.25: the FCS passed, which is the whole guarantee that framing has
-        };
-
-        return (rank, quality.CorrectedBytes ?? 0, decode.Order);
-    }
+    public static (int Rank, int Corrected, int Order) Confidence(Decode decode) =>
+        (DecodeConfidence.Rank(decode.Quality), decode.Quality.CorrectedBytes ?? 0, decode.Order);
 }

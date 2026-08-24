@@ -107,6 +107,19 @@ public sealed class IdBeaconGhost
     public static bool AppliesTo(string mode) => ModemCatalog.HasNinoPskIdBeacon(mode);
 
     /// <summary>
+    /// How far either side of <see cref="CentreHz"/> a ghost can hear, for anything that needs to
+    /// know a ghost is listening without holding one - the signal survey, which would otherwise
+    /// report an ident on this frequency as a signal nobody was listening to.
+    /// </summary>
+    /// <remarks>
+    /// The <see cref="BeaconMode"/> receiver is the afsk300 bank, whose default is five branch
+    /// pairs stepped 35 Hz: 175 Hz of comb either side, plus a branch's own pull-in. Stated as a
+    /// constant rather than measured because it is a property of a mode this class chooses, and
+    /// <c>IdBeaconGhostTests</c> pins it against the bank the catalogue actually builds.
+    /// </remarks>
+    public const double CoverageHalfWidthHz = 175;
+
+    /// <summary>
     /// Where a base modem's ident will land, given the audio centre that modem is tuned to
     /// (null = the mode default, which is <see cref="NinoPskCarrierHz"/>).
     /// </summary>

@@ -76,3 +76,46 @@ Two separate reasons nothing read it at the time, and the second is the one wort
 
 824 of that station's 8,836 unclaimed captures sit between 1080 and 1180 Hz, 35 to 90 a day,
 every day of the month.
+
+## `20260824-165052-2350hz-unclaimed.wav` - a real signal nothing in the tree can name
+
+Written at 16:50:52, verdict **unclaimed**, sidecar `audioCentreHz: 2349.6`, `widthHz: 193.7`,
+`durationSeconds: 1.533`, `peakSnrDb: 21.9`. **12 kHz mono, 3.54 s.**
+
+This one is neither of the artefacts the other captures in this folder document. It is committed
+because it is a real transmission this station could not read, which is what the survey is for,
+and because working out what it is remains open.
+
+### Measured
+
+| | |
+|---|---|
+| Occupied width | **270 Hz** at -10 dB, **2206 to 2476 Hz** |
+| Shape | flat-topped with steep skirts; no discrete tones anywhere in it |
+| Centre | ~2341 Hz = **7.051791 MHz** |
+| Duration | 2.1 s of signal in the file; the burst detector measured 1.533 s of it |
+| Level | about 20 dB over the channel noise |
+
+### What it is not
+
+- **Not the station's own transmission.** The longest run of exactly-zero samples in the whole
+  file is one sample. Compare the 2976 Hz capture of the same afternoon, which holds 2,051 of
+  them. (The journal does show `tx[2] bpsk300` at 16:50:44 and 16:50:54, either side of it, and
+  an `rx[2]` of `EI0RSI-1` at 16:50:55 - so the channel was busy, but this burst is in neither.)
+- **Not a clean FSK pair.** The instantaneous frequency is a single smeared distribution centred
+  on 2341 Hz, not two peaks. An early reading of "two tones 92 Hz apart" was an artifact of
+  band-limiting the analysis to 2230-2520 Hz, which clipped one side of the signal; over a wide
+  band it does not hold.
+- **Not a clean BPSK.** Squaring the band-limited signal produces no strong line at twice the
+  centre - the largest component near 2x carries 2% of the band's power.
+- **Not anything in the catalogue.** `pdn-decode --packet --sweep` over it is **307 mode-and-centre
+  combinations, all silent**.
+
+### Where it sits
+
+2350 Hz is exactly where modem 2's NinoTNC id-beacon ghost listens (`bpsk300` at 2150 Hz plus the
+200 Hz ident offset). That is why this capture found the ghost bug - a ghost is a receive tap, so
+neither its band nor its decodes were reaching the survey - but the ghost being deaf to *this*
+signal is a separate question from the survey mislabelling its frequency, and it is not answered
+here. A NinoTNC ident is 300 baud AFSK with a 200 Hz shift; this is 270 Hz of continuous spectrum
+with no tone pair in it.
