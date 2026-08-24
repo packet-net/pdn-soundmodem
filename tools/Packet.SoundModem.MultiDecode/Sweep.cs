@@ -18,7 +18,15 @@ internal sealed record SweepEntry(string Label, string Mode, ModemOptions Option
 internal sealed record Decode(byte[] Frame, FrameQuality Quality, string Label, int Order);
 
 /// <summary>A sweep entry that could not be run at all, and why.</summary>
-internal sealed record SweepFailure(string Label, string Reason);
+/// <param name="Label">The sweep entry.</param>
+/// <param name="Mode">Its catalogue mode, for reporting a family of them together.</param>
+/// <param name="Reason">What the modem said.</param>
+/// <param name="OutOfBand">Whether the only thing wrong was where it was asked to sit: a
+/// 2.8 kHz waveform cannot be centred at 1100 Hz without running off the bottom of the
+/// passband. Expected rather than interesting, so the report collapses these into one line
+/// instead of a screen of them.</param>
+internal sealed record SweepFailure(
+    string Label, string Mode, string Reason, bool OutOfBand = false);
 
 /// <summary>Everything one file's sweep produced.</summary>
 internal sealed record SweepResult(
@@ -88,7 +96,7 @@ internal static class Sweep
             }
             catch (InvalidOperationException error)
             {
-                failures.Add(new SweepFailure(entry.Label, error.Message));
+                failures.Add(new SweepFailure(entry.Label, entry.Mode, error.Message));
                 continue;
             }
 
@@ -97,11 +105,19 @@ internal static class Sweep
             {
                 RunOne(entry, audio, dspRate, decodes);
             }
+            catch (ArgumentOutOfRangeException error)
+                when (string.Equals(error.ParamName, "centreHz", StringComparison.Ordinal))
+            {
+                // The mode is wider than the room left either side of the centre it was given.
+                // Nothing is wrong with the sweep or the file, so this is not news.
+                failures.Add(new SweepFailure(entry.Label, entry.Mode, error.Message, OutOfBand: true));
+                continue;
+            }
 #pragma warning disable CA1031 // one broken mode must not take the rest of the sweep down with it
             catch (Exception error)
 #pragma warning restore CA1031
             {
-                failures.Add(new SweepFailure(entry.Label, error.Message));
+                failures.Add(new SweepFailure(entry.Label, entry.Mode, error.Message));
                 continue;
             }
 
@@ -232,6 +248,92 @@ internal static class Sweep
         }
 
         return entries;
+    }
+
+    /// <summary>
+    /// The same sweep, pointed at one or more audio centres instead of each mode's catalogue
+    /// default.
+    /// </summary>
+    /// <param name="entries">The sweep set to re-point.</param>
+    /// <param name="centres">Audio centres, in Hz. Empty leaves <paramref name="entries"/> alone.</param>
+    /// <param name="keepDefault">Also keep each mode at its own catalogue centre, so a blind
+    /// sweep is a strict superset of the default one and can only ever find more.</param>
+    /// <remarks>
+    /// <para>
+    /// Modes with no centre to point are passed through untouched, once: the baseband
+    /// <c>fsk*</c>/<c>c4fsk*</c> family occupies DC upwards and
+    /// <see cref="ModemCatalog.Create"/> refuses a centre for them outright (issue #39).
+    /// That is the right test rather than "is it an FM mode": the two sets happen to coincide
+    /// today, and <see cref="FmModeProfiles.IsFmMode"/> answers a question about modulators
+    /// that this tool has already been burned by asking (see <see cref="PacketModes"/>).
+    /// </para>
+    /// <para>
+    /// A grid centre that lands on a mode's own default is dropped rather than run twice.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<SweepEntry> AtCentres(
+        IReadOnlyList<SweepEntry> entries, IReadOnlyList<double> centres, bool keepDefault = false)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        ArgumentNullException.ThrowIfNull(centres);
+        if (centres.Count == 0)
+        {
+            return entries;
+        }
+
+        var built = new List<SweepEntry>(entries.Count * centres.Count);
+        foreach (SweepEntry entry in entries)
+        {
+            if (!ModemCatalog.AcceptsCentreFrequency(entry.Mode))
+            {
+                built.Add(entry);
+                continue;
+            }
+
+            double? own = ModemCatalog.DefaultCentreFrequencyFor(entry.Mode);
+            if (keepDefault)
+            {
+                built.Add(entry);
+            }
+
+            foreach (double centre in centres)
+            {
+                if (keepDefault && own is double already && Math.Abs(already - centre) < 1)
+                {
+                    continue;   // that is the entry just added, under its plain name
+                }
+
+                built.Add(entry with
+                {
+                    Label = $"{entry.Label} @ {centre:F0} Hz",
+                    Options = entry.Options with { CentreFrequencyHz = centre },
+                });
+            }
+        }
+
+        return built;
+    }
+
+    /// <summary>
+    /// The centres <c>--sweep</c> tries when nothing says where the signal is: 500 Hz to 2500 Hz
+    /// in 200 Hz steps, which is the SSB passband a station places modems across.
+    /// </summary>
+    /// <remarks>
+    /// The step is set by how far off centre a receiver still copies, measured rather than
+    /// assumed: the 2026-08-24 off-air <c>afsk300</c> capture in <c>samples/offair/</c> reads
+    /// from 1010 to 1210 Hz for a signal sitting at 1120, so a grid point is never more than
+    /// 100 Hz from a signal and every mode's own diversity bank spans further than that again.
+    /// Finer would multiply the wall clock for no coverage; coarser leaves holes.
+    /// </remarks>
+    public static IReadOnlyList<double> BlindCentres()
+    {
+        var centres = new List<double>();
+        for (double centre = 500; centre <= 2500; centre += 200)
+        {
+            centres.Add(centre);
+        }
+
+        return centres;
     }
 
     /// <summary>

@@ -28,6 +28,7 @@ internal static class Cli
         }
 
         bool quiet = args.Contains("--quiet");
+        bool blind = args.Contains("--sweep");
 
         IReadOnlyList<SweepEntry> entries;
         try
@@ -40,12 +41,38 @@ internal static class Cli
             return ExitUsage;
         }
 
+        int centreAt = Array.IndexOf(args, "--centre");
+        double? centre = null;
+        if (centreAt >= 0)
+        {
+            if (centreAt + 1 >= args.Length
+                || !double.TryParse(args[centreAt + 1], out double requested))
+            {
+                Console.Error.WriteLine("pdn-decode: --centre needs an audio frequency in Hz");
+                return ExitUsage;
+            }
+
+            centre = requested;
+        }
+
+        if (centre is not null && blind)
+        {
+            Console.Error.WriteLine(
+                "pdn-decode: --centre says where the signal is and --sweep says nobody knows; "
+                + "use one");
+            return ExitUsage;
+        }
+
         if (args.Contains("--list"))
         {
-            foreach (SweepEntry entry in entries)
+            IReadOnlyList<SweepEntry> listed = centre is double pinned
+                ? Sweep.AtCentres(entries, [pinned])
+                : blind ? Sweep.AtCentres(entries, Sweep.BlindCentres(), keepDefault: true)
+                : entries;
+            foreach (SweepEntry entry in listed)
             {
                 Console.WriteLine(
-                    $"{entry.Label,-24} {ModemCatalog.DspRateFor(entry.Mode)} Hz  "
+                    $"{entry.Label,-32} {ModemCatalog.DspRateFor(entry.Mode)} Hz  "
                     + ModeNames.Display(entry.Mode));
             }
 
@@ -65,7 +92,7 @@ internal static class Cli
             channel = requested;
         }
 
-        string[] files = ExpandFiles(args, channelAt);
+        string[] files = ExpandFiles(args, channelAt, centreAt);
         if (files.Length == 0)
         {
             Console.Error.WriteLine("pdn-decode: no files matched");
@@ -76,7 +103,7 @@ internal static class Cli
         int totalFrames = 0;
         foreach (string file in files)
         {
-            int frames = Report(file, entries, channel, quiet);
+            int frames = Report(file, entries, channel, quiet, centre, blind);
             if (frames > 0)
             {
                 decodedFiles++;
@@ -95,8 +122,19 @@ internal static class Cli
     }
 
     /// <summary>Decodes one file and prints its report. Returns the number of distinct frames.</summary>
+    /// <param name="path">The recording.</param>
+    /// <param name="modes">The sweep set, at each mode's catalogue centre.</param>
+    /// <param name="channel">Which channel of a multi-channel file to read.</param>
+    /// <param name="quiet">One summary line, no frames.</param>
+    /// <param name="centre">An audio centre from <c>--centre</c>, which overrides any sidecar.</param>
+    /// <param name="blind">Whether <c>--sweep</c> asked for the whole centre grid.</param>
     private static int Report(
-        string path, IReadOnlyList<SweepEntry> entries, int? channel, bool quiet)
+        string path,
+        IReadOnlyList<SweepEntry> modes,
+        int? channel,
+        bool quiet,
+        double? centre,
+        bool blind)
     {
         float[] samples;
         int sampleRate;
@@ -117,6 +155,13 @@ internal static class Cli
         string channelNote = channels > 1 ? $", {channels} ch (using {used})" : " mono";
         string header = $"{Path.GetFileName(path)}  {sampleRate} Hz{channelNote}, "
             + $"{samples.Length / (double)sampleRate:F2} s";
+
+        var notes = new List<string>();
+        IReadOnlyList<SweepEntry> entries = Retune(path, modes, centre, blind, notes);
+        foreach (string note in notes)
+        {
+            header += "\n  " + note;
+        }
 
         Action<string>? progress = Console.IsErrorRedirected
             ? null
@@ -148,9 +193,13 @@ internal static class Cli
 
         Console.WriteLine(header);
 
+        string tried = entries.Count == modes.Count
+            ? $"{entries.Count} modes tried"
+            : $"{entries.Count} runs over {modes.Count} modes";
+
         if (quiet)
         {
-            Console.WriteLine(Summary(order.Count, result, entries.Count));
+            Console.WriteLine(Summary(order.Count, result, tried));
             Console.WriteLine();
             return order.Count;
         }
@@ -191,24 +240,99 @@ internal static class Cli
             Console.WriteLine();
         }
 
-        Console.WriteLine("  " + Summary(order.Count, result, entries.Count));
+        Console.WriteLine("  " + Summary(order.Count, result, tried));
 
-        foreach (SweepFailure failure in result.Failures)
+        foreach (SweepFailure failure in result.Failures.Where(f => !f.OutOfBand))
         {
             Console.WriteLine($"  {failure.Label} could not run: {failure.Reason}");
+        }
+
+        // The wide waveforms refusing an off-centre placement is arithmetic, not a fault, and
+        // there are a dozen of them: one line naming the modes, not a dozen restating the
+        // passband.
+        string[] tooWide = [.. result.Failures.Where(f => f.OutOfBand)
+            .Select(f => f.Mode).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+        if (tooWide.Length > 0)
+        {
+            Console.WriteLine(
+                $"  {tooWide.Length} mode(s) too wide to sit where they were pointed, skipped: "
+                + string.Join(", ", tooWide));
         }
 
         Console.WriteLine();
         return order.Count;
     }
 
-    private static string Summary(int frames, SweepResult result, int modes)
+    private static string Summary(int frames, SweepResult result, string tried)
     {
         string counted = frames == 0
             ? "nothing decoded"
             : $"{frames} distinct frame(s), {result.Decodes.Count} decode(s)";
-        return $"{counted}; {modes} modes tried, {result.Silent.Count} silent, "
+        return $"{counted}; {tried}, {result.Silent.Count} silent, "
             + $"{result.Elapsed.TotalSeconds:F1} s.";
+    }
+
+    /// <summary>
+    /// Points the sweep at where the signal actually is, and says in <paramref name="notes"/>
+    /// how it was decided.
+    /// </summary>
+    /// <remarks>
+    /// Three sources, in order. <c>--centre</c> is the operator saying so and wins outright.
+    /// Otherwise the survey's own JSON sidecar, if one sits beside the WAV: a survey capture is
+    /// by definition a signal nothing was tuned to, the survey measured where it was, and
+    /// sweeping catalogue centres over one is the case this tool is guaranteed to get wrong.
+    /// Otherwise <c>--sweep</c>'s grid, if asked for. With none of the three, every mode runs
+    /// where its catalogue says it lives, which is right for a recording of a station that was
+    /// on frequency.
+    /// </remarks>
+    private static IReadOnlyList<SweepEntry> Retune(
+        string path,
+        IReadOnlyList<SweepEntry> modes,
+        double? centre,
+        bool blind,
+        List<string> notes)
+    {
+        if (centre is double pinned)
+        {
+            notes.Add($"centre {pinned:F0} Hz (--centre)");
+            return Sweep.AtCentres(modes, [pinned]);
+        }
+
+        Sidecar? sidecar = CaptureSidecar.Beside(path);
+        if (sidecar?.Problem is string problem)
+        {
+            notes.Add($"sidecar {Path.GetFileName(sidecar.Path)}: {problem} - ignoring it");
+        }
+
+        if (blind)
+        {
+            var grid = new List<double>(Sweep.BlindCentres());
+            if (sidecar?.CentreHz is double measured
+                && !grid.Exists(already => Math.Abs(already - measured) < 1))
+            {
+                grid.Add(measured);
+                grid.Sort();
+            }
+
+            notes.Add(
+                $"blind centre sweep: {grid.Count} centres, {grid[0]:F0} to {grid[^1]:F0} Hz, "
+                + "plus each mode's own");
+            return Sweep.AtCentres(modes, grid, keepDefault: true);
+        }
+
+        if (sidecar?.CentreHz is double fromSidecar)
+        {
+            string what = sidecar.Verdict is string verdict
+                ? $"{verdict.ToLowerInvariant()} capture"
+                : "capture";
+            string width = sidecar.WidthHz is double hz ? $", {hz:F0} Hz wide" : "";
+            notes.Add(
+                $"centre {fromSidecar:F0} Hz from {Path.GetFileName(sidecar.Path)} "
+                + $"({what}{width})");
+            return Sweep.AtCentres(modes, [fromSidecar]);
+        }
+
+        return modes;
     }
 
     /// <summary>The receiver's own account of how hard the frame was to read.</summary>
@@ -348,7 +472,12 @@ internal static class Cli
     /// The file arguments. A glob is expanded here as well as by the shell, so a pattern that
     /// arrived quoted, or from a shell that leaves unmatched patterns alone, still works.
     /// </summary>
-    private static string[] ExpandFiles(string[] args, int channelAt)
+    /// <param name="args">The command line.</param>
+    /// <param name="valueAt">Positions of the flags that take a value, whose next argument is
+    /// therefore that value and not a file. Each is guarded on being present: unguarded, an
+    /// absent flag sits at index -1 and its "value" at 0, which silently eats the first
+    /// filename.</param>
+    private static string[] ExpandFiles(string[] args, params int[] valueAt)
     {
         var files = new List<string>();
         for (int i = 0; i < args.Length; i++)
@@ -363,11 +492,9 @@ internal static class Cli
                 continue;
             }
 
-            // Guarded on channelAt >= 0: unguarded, an absent --channel puts this at index 0 and
-            // silently eats the first filename.
-            if (channelAt >= 0 && i == channelAt + 1)
+            if (Array.Exists(valueAt, at => at >= 0 && i == at + 1))
             {
-                continue; // the channel number
+                continue; // a flag's value
             }
 
             string argument = args[i];
@@ -413,6 +540,12 @@ internal static class Cli
                                 probably want - it leaves out the shaped-PSK modes, which an FM
                                 radio carries perfectly well
               --modes a,b,c     sweep only these modes
+              --centre HZ       point every mode that has a centre at this audio frequency
+                                instead of its catalogue one
+              --sweep           try a grid of centres, 500 to 2500 Hz, as well as each mode's
+                                own: for a signal nothing knows the frequency of. Multiplies
+                                the running time by the number of centres, so pair it with
+                                --packet or --modes
               --list            print the sweep set and exit
               --channel N       read channel N (default: the loudest channel in the file)
               --quiet           one summary line per file, no frames
@@ -420,6 +553,12 @@ internal static class Cli
 
             By default it sweeps every mode the modem has. Narrow it with --packet or --fm if you
             know roughly what you are looking at and want the answer sooner.
+
+            Where it listens: each mode's catalogue centre, unless told otherwise. A signal
+            survey capture carries its own measured centre in the JSON sidecar beside the WAV,
+            and that is read and used automatically - which is the whole point, since a survey
+            capture is a signal nothing was tuned to. --centre overrides it; --sweep tries a
+            grid when nothing knows.
 
             Exit status: 0 if anything decoded, 1 if nothing did, 2 for a usage or input error.
             """);

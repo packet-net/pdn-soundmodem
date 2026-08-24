@@ -1,48 +1,78 @@
-# 2026-08-24 - a signal survey capture that cut off mid-transmission
+# 2026-08-24 - one station, captured twice: before and after the burst detector's floor fix
 
-`20260824-133727-1149hz-unclaimed.wav` is the survey's own output, not a hand-made recording:
-M0LTE's 40 m station wrote it unattended at 13:37:27 on 2026-08-24, verdict **unclaimed** -
-packet-shaped energy outside every modem the station was configured to listen to. **16-bit mono
-PCM, 12 kHz, 4.17 s.**
+Both files are the signal survey's own output rather than hand-made recordings: M0LTE's 40 m
+station (Flex 6500, dial 7.049450 MHz USB) wrote them unattended on 2026-08-24, an hour apart,
+and they hold the same station's beacon. `133727` was written by the burst detector that cut it
+off (#353) and `152242` by v0.44.0, which does not, and that is why the pair is worth keeping
+together: the first will not decode and the second does.
 
-It is here because it is the evidence for the burst detector's floor tracker climbing into a
-sustained signal (`OffAirSurveyTests`), and because nothing else in `samples/` shows what a real
-modulated signal's spectrum does line to line. Every other test of the detector paints flat
-rectangles.
+Both are **16-bit mono PCM at 12 kHz**, verdict **unclaimed** - packet-shaped energy outside
+every modem the station was configured to listen to.
 
-## What the file holds
+## What the station is
 
-| | |
-|---|---|
-| 0.00 - 0.58 s | channel noise, about -33 dBFS RMS |
-| 0.58 s - end | signal, about -26 dBFS RMS, still at full strength in the last sample |
+`PD4R-12`, beaconing in **300 baud AFSK**: 2-FSK, tones **1023 / 1227 Hz** (204 Hz shift), centre
+~1120 Hz audio = **7.050570 MHz**, about 21 dB out of the noise. Framing is **plain AX.25** -
+HDLC and an FCS, no IL2P. The instantaneous-frequency histogram of either file is cleanly
+bimodal, which is what settles it; the averaged spectrum alone is not enough to tell this from a
+single shaped carrier, because a 204 Hz shift at 300 baud merges into one flat-topped lobe.
 
-Measured over the signal:
+From `20260824-152242`:
 
-- **Occupied width 533 Hz** at -20 dB (847-1380 Hz), a single flat-topped lobe from ~975 to
-  ~1290 Hz with steep skirts - one shaped carrier, not an FSK pair.
-- **Envelope rate 300.0 Hz**, so **300 baud**. Consistent with a shaped single-carrier 300 Bd
-  mode (BPSK300-like); the station could not read it and it is not identified here.
-- **Peak SNR 21.5 dB** against the channel noise, and it does not vary across the file.
+```
+PD4R-12>ALL  UI  pid=F0   (116 bytes, FCS clean)
+:>>>>> PD4R-12 <<<<< qrv on 144.925 (fm 1k2) 144.775 (ssb) 14.105 (ssb) 7.049 (ssb) 438.175 (fm 9k6)
+```
 
-## The defect it caught (#353)
+A single `afsk300` receiver reads it at any centre from 1010 to 1210 Hz.
 
-The signal is at full strength in the last sample, so the transmission outlasted the capture.
-That is not the writer truncating a file - the WAV is internally complete and its RIFF sizes
-agree. It is the burst detector deciding the transmission had ended while it was still going:
+## `20260824-133727-1149hz-unclaimed.wav` - the truncated one
 
-- The capture window is `[burst start - MarginSeconds, burst end + MarginSeconds]`. This
-  detector replayed over the file opens its burst 1.03 s in, so at the 1.0 s default the burst
-  the station recorded was 2.17 s and the last second of the file is trailing margin full of
-  signal the detector was no longer seeing. (The sidecar JSON beside the WAV records
-  `DurationSeconds` directly; it was not kept with this copy.)
-- Replaying this capture's own lines for 34.7 s reproduced it: the floor in the signal's centre
-  bin climbed **13.6 dB** (-59.1 to -45.5 dBFS), the detector reported five fragments of 3.17,
-  2.40, 0.90, 0.20 and 0.30 s and then nothing at all for the last 22 seconds, and the survey
-  wrote one capture and refused four more on the frequency cooldown.
+Written at 13:37:27, **4.17 s**: 0.58 s of channel noise at about -33 dBFS RMS, then signal at
+about -26 dBFS which is still at full strength in the last sample of the file. **It does not
+decode**, at any centre - the frame is cut in half.
 
-The cause was the test for whether a bin is measuring noise. It was "is this line under the 6 dB
-detection threshold", and a modulated signal spends much of every bin's time between 0 and 6 dB
-over the noise - the gaps between symbols, the shoulders of the shaped spectrum. Those lines
-were averaged into the floor as if the channel were quiet, and the floor walked up until the
-signal no longer cleared it. Bins under an open burst are now held out of the floor entirely.
+That is not the writer truncating a file. The WAV is internally complete and its RIFF sizes
+agree. The burst detector decided the transmission had ended while it was still going, and the
+capture window is `[burst start - MarginSeconds, burst end + MarginSeconds]`, so the last second
+of the file is trailing margin full of a signal it had stopped seeing. The sidecar the station
+wrote says `durationSeconds: 2.167` for a transmission that ran at least twice that.
+
+The cause was the floor tracker's test for whether a bin is measuring noise: "was this line under
+the 6 dB detection threshold". A modulated signal spends much of every bin's time between 0 and
+6 dB over the noise - here, the gap between an FSK pair's two tones - and every one of those
+lines was averaged into the floor as if the channel were quiet, so the floor walked up into the
+signal until it no longer stood out. Replaying this file's own lines for 34.7 s: the floor in the
+centre bin climbs **13.6 dB** (-59.1 to -45.5 dBFS), the detector reports fragments of 3.17,
+2.40, 0.90, 0.20 and 0.30 s and then nothing at all for the last 22 seconds, and the survey
+writes one capture and refuses four more on the frequency cooldown.
+
+It is here because it is the evidence for that, guarded by `OffAirSurveyTests`, and because
+nothing else in `samples/` shows the detector what a real modulated signal's spectrum does line
+to line. Every other test of it paints flat rectangles, which is why a 25 s test passed
+throughout.
+
+## `20260824-152242-1134hz-unclaimed.wav` - the same beacon, whole
+
+Written at 15:22:42 by v0.44.0, ten minutes after that fix reached the station. **6.43 s**: 0.5 s
+of noise, 4.9 s of signal, 1 s of noise - a complete transmission with both ends inside the file.
+Its JSON sidecar is kept beside it, because what the sidecar says is half of what this file
+tests.
+
+Two separate reasons nothing read it at the time, and the second is the one worth remembering:
+
+- **`pdn-decode` swept all 46 modes over it and reported silence**, because every mode listens at
+  its catalogue centre and `afsk300`'s is 1700 Hz. That is what `--centre`, the sidecar reading
+  and `--sweep` exist for (#355) - see
+  [docs/pdn-decode.md](../../../docs/pdn-decode.md#where-it-listens). This file is the
+  regression: `CentreSweepTests` asserts the default sweep finds nothing in it and the sidecar's
+  measured centre finds the beacon.
+- **The station's own `afsk300-il2pc` bank would have copied it.** Fed this audio at its
+  configured 850 Hz centre it decodes the frame - but only when told to read plain AX.25. It runs
+  IL2P+CRC, and PD4R-12 does not send IL2P. Same population as the GB7BWR-2 / PD4R-11 finding of
+  2026-08-03, and the same answer: a second modem entry. The station gained
+  `{ "subChannel": 3, "mode": "afsk300", "rfFrequency": 7050570 }` on 2026-08-24 and copied the
+  next beacon live off the air eight minutes later, at +1 Hz off that centre.
+
+824 of that station's 8,836 unclaimed captures sit between 1080 and 1180 Hz, 35 to 90 a day,
+every day of the month.
