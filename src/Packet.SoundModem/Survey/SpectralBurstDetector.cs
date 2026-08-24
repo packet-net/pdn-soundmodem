@@ -119,6 +119,7 @@ public sealed class SpectralBurstDetector
     private readonly List<(int Low, int High)> _runs = [];
     private long _lastLine = -1;
     private long _deadBins;
+    private long _silentLines;
 
     /// <summary>Creates a detector over part of the spectrum.</summary>
     /// <param name="binWidthHz">The line source's bin width.</param>
@@ -204,6 +205,20 @@ public sealed class SpectralBurstDetector
 
         _lastLine = lineIndex;
 
+        if (IsSilent(line))
+        {
+            // A line made of nothing is not a measurement of the channel, and letting it into the
+            // floor is worse than ignoring it: the tracker follows it down fast (DownRate), and
+            // then every bin sits under the dead threshold for the many blocks the slow upward
+            // rate needs to climb back - so a station goes deaf for a minute after every one of
+            // its own transmissions. The channel did not change while our radio stopped
+            // delivering, so the floor it had is still the best estimate of it.
+            _silentLines++;
+            _open.Clear();
+            Array.Clear(_inBurst);
+            return;
+        }
+
         // Which bins are carrying signal right now. Needed before the floor is updated as well as
         // after, because a bin carrying signal is not measuring noise.
         const double ratio = 3.98107;   // 6 dB
@@ -272,6 +287,32 @@ public sealed class SpectralBurstDetector
     /// passband than the survey is watching, which is worth an operator knowing.
     /// </summary>
     public long DeadBins => _deadBins;
+
+    /// <summary>Lines discarded because the whole watched passband was empty - the audio stopped
+    /// arriving. Our own transmissions, and device dropouts.</summary>
+    public long SilentLines => _silentLines;
+
+    /// <summary>
+    /// Whether the entire watched passband is at or under the bottom of the encoding scale, which
+    /// is what a hole in the audio looks like once it has been through the transform.
+    /// </summary>
+    /// <remarks>
+    /// The whole line, not a bin: one dead bin is a receiver's filter cut and the rest of the
+    /// passband is still worth watching, while a dead <em>line</em> is the stream itself stopping
+    /// and there is nothing to measure at all.
+    /// </remarks>
+    private bool IsSilent(ReadOnlySpan<byte> line)
+    {
+        for (int n = 0; n < _binCount; n++)
+        {
+            if (ByteToLinearPower[line[_lowBin + n]] > DeadBinPower)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     /// <summary>Abandons everything in flight - nothing that straddles a break in the audio is a
     /// measurement of anything. Called when the station keys up.</summary>

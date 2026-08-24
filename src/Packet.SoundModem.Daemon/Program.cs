@@ -1289,6 +1289,31 @@ if (surveyConfig is not null)
         surveyBands.Add(new ModemBand(ardop.SubChannel, "ardop", centre - half, centre + half, centre));
     }
 
+    // And the id-beacon ghosts, for exactly the same reason and by exactly the same oversight.
+    // A ghost is a receive tap too, so it is not in channel.Modems and cannot be probed - and a
+    // NinoTNC ident landing on its frequency was being reported as a signal nobody was listening
+    // to, on a frequency where a receiver is listening specifically for it. Placed from the same
+    // arithmetic the ghost itself uses, so the two cannot disagree about where it sits; its
+    // width is the afsk300 bank's coverage, which is what a ghost is built from.
+    if (idBeacons)
+    {
+        var ghostCentresSeen = new HashSet<long>();
+        foreach (ModemConfig psk in modems.Where(m => IdBeaconGhost.AppliesTo(m.Mode)))
+        {
+            double centre = IdBeaconGhost.CentreHzFor(psk.Frequency);
+            if (!ghostCentresSeen.Add((long)Math.Round(centre)))
+            {
+                continue;   // two PSK modems idented at the same place; one ghost serves both
+            }
+
+            surveyBands.Add(new ModemBand(
+                psk.SubChannel, "afsk300 (id beacon)",
+                centre - IdBeaconGhost.CoverageHalfWidthHz,
+                centre + IdBeaconGhost.CoverageHalfWidthHz,
+                centre));
+        }
+    }
+
     var surveyOptions = new SignalSurveyOptions
     {
         Directory = surveyConfig.Path,
@@ -1555,6 +1580,13 @@ if (idBeacons)
             frameLog?.Record(
                 ghost.SubChannel, frame, quality, ghost.CentreHz, ghostRfHz,
                 modeName: $"ID beacon ({ModeNames.Display(quality.Mode)})");
+
+            // And the survey, which learns its decodes from the channel's own event - an event a
+            // receive tap does not raise. Without this an ident the station successfully read was
+            // still filed as a burst nothing decoded, captured, and charged to the capture budget
+            // and the frequency cooldown that a real unknown signal needs. Same shape as the
+            // ARDOP omission of 2026-08-05, and found the same way: by opening a capture.
+            survey?.NoteDecode(ghost.SubChannel, frame, quality);
         };
 
         channel.AddReceiveTap(ghost.Process);

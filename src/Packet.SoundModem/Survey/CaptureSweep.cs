@@ -79,19 +79,13 @@ public static class CaptureSweep
     /// <param name="shouldStop">Polled between modes so a shutting-down station stops promptly
     /// rather than finishing a sweep nobody will read.</param>
     public static IReadOnlyList<CaptureReading> Run(
-        ReadOnlySpan<float> audio,
+        float[] audio,
         int dspRate,
         double centreHz,
         IReadOnlyList<string> modes,
         Func<bool>? shouldStop = null)
     {
         ArgumentNullException.ThrowIfNull(modes);
-
-        // Half a second of silence, so a capture that ends flush with its last closing flag
-        // still flushes that frame out of the demodulator's pipeline. A live stream never ends,
-        // so no modem does this for itself - and a survey capture ends by construction.
-        var samples = new float[audio.Length + (dspRate / 2)];
-        audio.CopyTo(samples);
 
         var readings = new List<CaptureReading>();
         foreach (string mode in modes)
@@ -101,63 +95,41 @@ public static class CaptureSweep
                 break;
             }
 
-            RunOne(mode, samples, dspRate, centreHz, readings);
+            try
+            {
+                ModeReader.Run(
+                    mode,
+                    audio,
+                    dspRate,
+                    ModeReader.At(mode, centreHz),
+                    (frame, quality) =>
+                    {
+                        bool addressed = Waterfall.Ax25AddressParser.TryParse(
+                            frame, out string source, out string destination);
+                        readings.Add(new CaptureReading(
+                            mode,
+                            centreHz,
+                            frame,
+                            quality,
+                            addressed ? source : null,
+                            addressed && destination.Length > 0 ? destination : null));
+                    });
+            }
+            catch (ArgumentException e) when (e.ParamName == "centreHz")
+            {
+                // Too wide to sit where it was pointed. Arithmetic, not a fault.
+                //
+                // ArgumentException, not ArgumentOutOfRangeException: the catalogue has two
+                // guards on a centre and they do not throw the same type. The narrower catch
+                // caught one of them and let the other escape.
+            }
+#pragma warning disable CA1031 // one broken mode must not take the sweep down with it
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+            }
         }
 
         return readings;
-    }
-
-    private static void RunOne(
-        string mode, float[] samples, int dspRate, double centreHz, List<CaptureReading> readings)
-    {
-        IModem? modem = null;
-        try
-        {
-            // A mode with no centre to point occupies DC upwards and refuses one (issue #39);
-            // it is run where it lives, which is everywhere.
-            var options = ModemCatalog.AcceptsCentreFrequency(mode)
-                ? new ModemOptions(CentreFrequencyHz: centreHz)
-                : default;
-
-            // The sink is required and deliberately ignored: FrameDecoded is the honest source,
-            // being a superset that includes the frame an IL2P+CRC receiver read and would not
-            // have handed to a host. That frame is exactly the interesting one here - it is the
-            // evidence that this station is running the wrong framing rather than the wrong
-            // frequency.
-            modem = ModemCatalog.Create(mode, dspRate, _ => { }, options);
-            modem.FrameDecoded += (frame, quality) =>
-            {
-                bool addressed = Waterfall.Ax25AddressParser.TryParse(
-                    frame, out string source, out string destination);
-                readings.Add(new CaptureReading(
-                    mode,
-                    centreHz,
-                    frame,
-                    quality,
-                    addressed ? source : null,
-                    addressed && destination.Length > 0 ? destination : null));
-            };
-
-            // In blocks, because a diversity bank compares its branches at chunk boundaries and
-            // behaves as it does on the air only when fed something like air-sized pieces.
-            const int block = 4096;
-            for (int offset = 0; offset < samples.Length; offset += block)
-            {
-                modem.Process(samples.AsSpan(offset, Math.Min(block, samples.Length - offset)));
-            }
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            // Too wide to sit where it was pointed. Arithmetic, not a fault.
-        }
-#pragma warning disable CA1031 // one broken mode must not take the sweep down with it
-        catch (Exception)
-#pragma warning restore CA1031
-        {
-        }
-        finally
-        {
-            (modem as IDisposable)?.Dispose();
-        }
     }
 }

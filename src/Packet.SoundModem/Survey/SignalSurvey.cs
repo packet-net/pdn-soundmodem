@@ -111,6 +111,8 @@ public sealed class SignalSurvey : IDisposable
     private long _lastLine = -1;
     private long _skippedForBudget;
     private long _claimedByLaterDecode;
+    private long _holes;
+    private int _silence;
     private int _resetPending;
 
     /// <summary>Creates a survey over <paramref name="bands"/>, writing captures per
@@ -210,12 +212,80 @@ public sealed class SignalSurvey : IDisposable
 
     /// <summary>Feeds channel audio. Must be the same audio the spectrum lines are made from,
     /// and must be gated the same way - nothing is surveyed while the station transmits.</summary>
+    /// <remarks>
+    /// Watched for holes as it goes: see <see cref="SilenceSamples"/>.
+    /// </remarks>
     public void AddAudio(ReadOnlySpan<float> samples)
     {
+        NoteSilence(samples);
         _ring.Write(samples);
         if (_pending.Count > 0)
         {
             DrainPending(flush: false);
+        }
+    }
+
+    /// <summary>
+    /// How long a run of exactly-zero samples is a hole in the audio rather than a quiet channel.
+    /// Ten milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// A receiver does not deliver silence. Even a dead band arrives as noise, and noise does not
+    /// land on exactly zero for a hundred samples running - so a run this long is a hole in the
+    /// stream, whatever put it there.
+    /// </remarks>
+    public const int SilenceSamples = 120;
+
+    /// <summary>Holes seen in the audio - runs of at least <see cref="SilenceSamples"/> exact
+    /// zeros. Non-zero on a healthy station means its own transmissions are reaching here, or
+    /// its capture device is dropping out.</summary>
+    public long Holes => Interlocked.Read(ref _holes);
+
+    /// <summary>
+    /// Watches for a hole in the audio, and abandons everything in flight when one turns up.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The station's own transmission is the common cause and it was not being caught. Receive is
+    /// gated while <c>_transmitting</c> is set, so the tap is fed nothing at all and the line
+    /// clock stops with it, which is the invariant this class is built on. But the <em>radio's</em>
+    /// receive audio does not come back the instant the daemon clears that flag: a Flex's DAX
+    /// stream stays muted a little longer, so what reaches this method is real samples that are
+    /// exactly zero, followed by a step back to full audio. The line clock never stopped, so the
+    /// gap check does not see it; <see cref="Reset"/> is wired to the keyed edge, so nothing has
+    /// reset by then. What is left is a step discontinuity - broadband, one transform window
+    /// long - which opens a burst.
+    /// </para>
+    /// <para>
+    /// Measured on the live 40 m station: a capture at 16:52:16 holds 2,051 consecutive zero
+    /// samples (170.9 ms), the audio cut off mid-waveform at amplitude 885, and the journal
+    /// carries <c>tx[2] bpsk300</c> at that very second. Across 1,309 sampled captures,
+    /// <b>12% hold at least 20 ms of exact zeros</b>, 71 of them inside the receiver's own
+    /// passband and 85 outside - so this is not a filter-edge effect and not confined to the
+    /// empty part of the spectrum.
+    /// </para>
+    /// <para>
+    /// Testing the samples rather than the PTT is deliberate: it catches a device underrun and a
+    /// dropped DAX packet on the same rule, and it needs no agreement with the transmitter about
+    /// when its audio really stops.
+    /// </para>
+    /// </remarks>
+    private void NoteSilence(ReadOnlySpan<float> samples)
+    {
+        foreach (float sample in samples)
+        {
+            if (sample == 0)
+            {
+                if (++_silence == SilenceSamples)
+                {
+                    Interlocked.Increment(ref _holes);
+                    Reset();
+                }
+            }
+            else
+            {
+                _silence = 0;
+            }
         }
     }
 

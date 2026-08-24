@@ -1,3 +1,4 @@
+using Packet.SoundModem.Modems;
 using Packet.SoundModem.Waterfall;
 
 namespace Packet.SoundModem.Survey;
@@ -126,7 +127,7 @@ public sealed class ModemProspector
     /// <param name="shouldStop">Polled between modes, so shutdown is prompt.</param>
     public IReadOnlyList<CaptureReading> Examine(
         BurstCapture capture,
-        ReadOnlySpan<float> audio,
+        float[] audio,
         IReadOnlyList<string>? modes = null,
         Func<bool>? shouldStop = null)
     {
@@ -176,30 +177,12 @@ public sealed class ModemProspector
         return byFrame.Values;
     }
 
-    private static int Rank(CaptureReading reading) => reading.Quality switch
-    {
-        { MonitorOnly: true } => 3,
-        { CrcValid: true } => 0,
-        { PlainIl2p: true } => 2,
-        { CrcValid: false } => 2,
-        _ => 0,   // HDLC or FX.25: the FCS passed, which is the whole guarantee framing has
-    };
+    private static int Rank(CaptureReading reading) => DecodeConfidence.Rank(reading.Quality);
 
-    /// <summary>
-    /// Whether a reading is evidence that somebody is transmitting, as opposed to a receiver
-    /// finding structure in noise.
-    /// </summary>
-    /// <remarks>
-    /// Reading one capture thirty ways is thirty chances to be wrong, and a Reed-Solomon-only
-    /// decode with no verified check sequence is a real thing such a sweep produces - the sample
-    /// run of 2026-08-24 turned one up on the first afternoon, 15 bytes of "qpsk2400" at 3044 Hz
-    /// with no readable callsigns. A verified FCS or CRC is a different kind of statement: the
-    /// bytes carry their own proof. Weak readings are still recorded, so a cluster's frame count
-    /// tells the truth about what was read; they simply cannot be what pushes a station into
-    /// committing a modem slot.
-    /// </remarks>
+    /// <summary>Whether a reading is evidence somebody transmitted - see
+    /// <see cref="DecodeConfidence.IsEvidence"/>, which the pdn-decode report shares.</summary>
     private static bool IsEvidence(CaptureReading reading) =>
-        reading.Quality is { MonitorOnly: false } and ({ CrcValid: true } or { PlainIl2p: false, CrcValid: null });
+        DecodeConfidence.IsEvidence(reading.Quality);
 
     private void Record(BurstCapture capture, IEnumerable<CaptureReading> readings)
     {
