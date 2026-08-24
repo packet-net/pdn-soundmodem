@@ -102,9 +102,23 @@ public sealed class SpectralBurstDetector
     private int _seedBlocksRemaining = SeedBlocks;
     private int _blockFilled;
 
+    /// <summary>
+    /// How far over <see cref="WaterfallSource.FloorDb"/> a bin's floor must sit before that bin
+    /// is measuring anything at all. Three decibels: a floor at the bottom of the encoding scale
+    /// is not a quiet channel, it is a bin with nothing arriving in it, and 3 dB is comfortably
+    /// below the quietest real noise a receiver delivers - the live 40 m station's quietest
+    /// in-passband bins sit 16 dB over it and its ordinary ones 25 to 55.
+    /// </summary>
+    private const double DeadBinMarginDb = 3;
+
+    /// <summary>The linear power <see cref="DeadBinMarginDb"/> describes.</summary>
+    private static readonly double DeadBinPower =
+        Math.Pow(10, (WaterfallSource.FloorDb + DeadBinMarginDb) / 10);
+
     private readonly List<Open> _open = [];
     private readonly List<(int Low, int High)> _runs = [];
     private long _lastLine = -1;
+    private long _deadBins;
 
     /// <summary>Creates a detector over part of the spectrum.</summary>
     /// <param name="binWidthHz">The line source's bin width.</param>
@@ -146,7 +160,14 @@ public sealed class SpectralBurstDetector
         _binCount = highBin - _lowBin;
         _blockLines = Math.Max(1, linesPerSecond / 2);
         _minRunBins = Math.Max(1, (int)Math.Round(minWidthHz / binWidthHz));
-        _minLines = Math.Max(1, (int)Math.Round(minSeconds * linesPerSecond));
+
+        // Ceiling, not Round. "At least minSeconds" is what the parameter says and rounding does
+        // not deliver it: the default 0.15 s at 30 lines/s is 4.5 lines, and Math.Round takes
+        // that to 4 (midpoint-to-even), so the shortest burst the detector accepted was 0.133 s.
+        // The two thirtieths of a second in the gap are not academic - they are precisely where
+        // a one-line glitch lives, and 39% of the live 40 m station's unclaimed captures were
+        // 0.133 s events sitting in them.
+        _minLines = Math.Max(1, (int)Math.Ceiling(minSeconds * linesPerSecond));
         _maxLines = Math.Max(_minLines + 1, (int)Math.Round(maxSeconds * linesPerSecond));
         _graceLines = Math.Max(1, (int)Math.Round(graceSeconds * linesPerSecond));
 
@@ -190,7 +211,22 @@ public sealed class SpectralBurstDetector
         for (int n = 0; n < _binCount; n++)
         {
             double power = ByteToLinearPower[line[_lowBin + n]];
-            _hot[n] = ready && power >= _floor[n] * ratio;
+
+            // A bin whose floor has reached the bottom of the encoding scale is not measuring a
+            // quiet channel; it is measuring nothing, and an SNR against it is arithmetic on an
+            // absence. Above a receiver's filter cut the audio really is empty - the live 40 m
+            // station's bins above its slice's 2550 Hz high cut sit at exactly -100 dBFS, byte
+            // zero - so any energy at all reads as an enormous burst: a break in the waveform,
+            // broadband by construction and 60 dB over nothing, was reported as a 460 Hz signal
+            // at 39 dB SNR. 3,433 of that station's 8,874 unclaimed captures were that, all of
+            // them clustered above the filter cut, because it is the only part of the spectrum
+            // quiet enough for it to show. In the passband the same break is invisible.
+            bool alive = _floor[n] > DeadBinPower;
+            _hot[n] = ready && alive && power >= _floor[n] * ratio;
+            if (ready && !alive)
+            {
+                _deadBins++;
+            }
             _blockAllSum[n] += power;
 
             // A bin under an open burst is held out of the noise average whether or not this
@@ -229,6 +265,13 @@ public sealed class SpectralBurstDetector
         AgeOut(lineIndex);
         MarkOpenBins();
     }
+
+    /// <summary>
+    /// Bins ignored because nothing is arriving in them at all - see
+    /// <see cref="DeadBinMarginDb"/>. Non-zero means the receiver is delivering less of the
+    /// passband than the survey is watching, which is worth an operator knowing.
+    /// </summary>
+    public long DeadBins => _deadBins;
 
     /// <summary>Abandons everything in flight - nothing that straddles a break in the audio is a
     /// measurement of anything. Called when the station keys up.</summary>
