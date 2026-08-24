@@ -1064,6 +1064,8 @@ captured at all.
 | `maxSeconds` | number | `20` | Longest burst still plausibly a packet |
 | `minPeakSnrDb` | number | `6` | Weakest burst worth keeping, over the noise floor |
 | `capture` | array | all three | Which verdicts to write - `unclaimed`, `missed`, `unattributed` |
+| `propose` | bool | `false` | Read each capture back and propose the modems that would have read it - [below](#proposing-modems) |
+| `proposeMinCaptures` | int | `3` | Separate occasions a proposal needs behind it |
 
 All three reach the **waterfall's decoded-frames panel** too, which is where an operator sees the
 word "unattributed" in the first place: the row carries the IL2P type, the reason, and the frame's
@@ -1072,6 +1074,64 @@ bytes laid out to be selected and pasted.
 The same explanation reaches the journal whether or not a survey is running - the `rx` line for
 such a frame carries `il2p Type1` and the reason in brackets, because the survey is optional and
 budgeted and may drop that particular burst.
+
+### Proposing modems
+
+A survey answers "something went past that I could not read" and stops there, which is a
+diagnosis with no prescription. The 40 m station produced **14,267 captures in three weeks**, and
+two of them opened by hand on 2026-08-24 turned out to be the same station beaconing every twenty
+minutes in a mode the station could read and simply was not configured for. Nobody is going to
+open fourteen thousand WAVs.
+
+```json
+"survey": { "path": "/var/lib/pdn-soundmodem/survey", "propose": true }
+```
+
+With this on, each capture is read back with every mode that could have carried it, pointed at
+the centre the survey already measured. What decodes is clustered by mode and frequency, and once
+a cluster has enough separate occasions behind it the station says what it would take to read the
+traffic:
+
+```
+propose: add afsk300 at 7.050570 MHz - 34 frame(s) in 34 capture(s), PD4R-12, 19 dB,
+         2026-08-06 to 2026-08-24
+```
+
+**Two shapes of answer**, and the second is the one worth having:
+
+| Kind | Means |
+|---|---|
+| `NewModem` | Nobody is listening on that frequency. Add a modem. |
+| `FramingChange` | A modem already covers it and cannot read the framing - it runs IL2P+CRC and the station sends plain AX.25, or the reverse. **The frequency is not the problem** and moving anything would make it worse. |
+
+**What counts as evidence.** Separate captures - separate transmissions, on separate occasions -
+each carrying a frame whose own FCS or CRC verified. Not distinct frames: the traffic this finds
+is largely beacons, and a beacon is the same bytes every twenty minutes for ever. And not
+Reed-Solomon-only readings: running thirty receivers over every capture is thirty chances to find
+structure that is not there, so a reading with no verified check sequence is recorded and cannot
+be what commits a modem slot.
+
+**What it costs.** One capture at a time, on one thread below normal priority, with a sleep after
+each one of nineteen times what that capture took to sweep. That bounds it at a twentieth of one
+core whatever the station is hearing, and a slower box makes it slower rather than busier. A
+backlog is dropped rather than queued, and counted. The receive path is never waited on.
+
+**Acting on one.** With an [`api`](#api) key set, `GET /api/proposals` returns each proposal with
+its evidence *and the complete configuration that would apply it* - the modem entry already
+spelled, on the lowest free sub-channel:
+
+```
+curl -s -H "X-API-Key: $KEY" http://station:8099/api/proposals | jq '.proposals[0].summary'
+```
+
+To act on one, POST the `config` it carries back to `/api/config`, which is the ordinary
+configuration path: validated before anything is written, refused with the same wording an
+operator's own edit would get, and **ephemeral by default** so a proposal that turns out to be
+wrong self-heals at the next restart. There is deliberately no apply endpoint here - a second way
+to change a station is a second set of rules to keep in step, and the first set is the one
+carrying the safety property.
+
+Proposals also reach the journal as they are made, so a station with no API key still tells you.
 
 **On reaching the byte budget the oldest captures are deleted** to make room. That is a real
 choice, and the alternative is worse: stopping instead would mean a station left collecting for a

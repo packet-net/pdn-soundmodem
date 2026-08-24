@@ -1265,6 +1265,8 @@ await using var waterfallLifetime = waterfallServer;
 // accumulator fed from two places. What they do share is the band probe below, so what the
 // waterfall draws and what the survey calls "ours" can never disagree.
 SignalSurvey? survey = null;
+ProspectorWorker? prospectorLifetime = null;
+Func<IReadOnlyList<ModemProposal>>? proposals = null;
 if (surveyConfig is not null)
 {
     var surveyBands = new List<ModemBand>();
@@ -1385,6 +1387,37 @@ if (surveyConfig is not null)
         }
 
         Console.WriteLine($"survey: {surveyConfig.Path}");
+
+        // The prospector: read each capture back with every mode that could have carried it,
+        // and say what modem would have read the traffic. Off unless configured - it is DSP
+        // work beside a real-time receiver, and a station that wants its CPU for its modems
+        // should have it.
+        if (surveyConfig.Propose)
+        {
+            var prospector = new ModemProspector(
+                new ModemProspectorOptions
+                {
+                    MinCaptures = Math.Max(1, surveyConfig.ProposeMinCaptures),
+                    TimeProvider = TimeProvider.System,
+                },
+                surveyBands,
+                surveyOptions.DialFrequencyHz,
+                surveyOptions.Sideband);
+            var prospectorWorker = new ProspectorWorker(prospector, DspRate);
+            prospectorLifetime = prospectorWorker;
+            proposals = prospector.Proposals;
+
+            // Fed from the capture writer rather than from the burst: a capture that a budget
+            // refused is not on disk to read, and one that is has already been written by the
+            // time this hears about it.
+            created.CaptureWritten += prospectorWorker.Examine;
+            prospector.Proposed += proposal =>
+                Console.WriteLine($"propose: {proposal.Summary()}");
+            Console.WriteLine(
+                $"propose: on, {CaptureSweep.ModesFor(DspRate).Count} modes per capture, "
+                + $"{surveyConfig.ProposeMinCaptures} capture(s) of evidence needed "
+                + $"(a twentieth of one core; the receive path is never waited on)");
+        }
     }
     catch (Exception e) when (e is IOException or UnauthorizedAccessException)
     {
@@ -1398,6 +1431,7 @@ if (surveyConfig is not null)
 }
 
 using var surveyLifetime = new Disposer(() => survey?.Dispose());
+using var prospectorDisposer = new Disposer(() => prospectorLifetime?.Dispose());
 
 // Continuous raw capture: everything the channel hears, chunked to disk, so the run can be
 // re-scored offline against a later receiver. Curated bursts are the survey's job; this is
@@ -1594,6 +1628,13 @@ if (apiConfig?.Key is { Length: > 0 } apiKey)
             cancellation.Cancel();
         });
     waterfallServer.ApiHandler = configApi.HandleAsync;
+    if (proposals is not null)
+    {
+        configApi.ServeProposals(proposals);
+        Console.WriteLine(
+            $"api: modem proposals over {waterfallServer.Url}api/proposals (key required); each "
+            + "carries the configuration to POST back to api/config.");
+    }
 
     Console.WriteLine(
         $"api: configuration over {waterfallServer.Url}api/config (key required). "

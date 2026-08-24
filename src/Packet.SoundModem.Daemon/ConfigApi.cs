@@ -38,6 +38,7 @@ internal sealed class ConfigApi
 {
     private readonly string _key;
     private readonly string _configPath;
+    private Func<IReadOnlyList<Survey.ModemProposal>>? _proposals;
     private readonly string _ephemeralPath;
     private readonly Func<string> _runningJson;
     private readonly Action _requestRestart;
@@ -60,6 +61,14 @@ internal sealed class ConfigApi
         _ephemeralInForce = ephemeralInForce;
         _requestRestart = requestRestart;
     }
+
+    /// <summary>
+    /// Where the station's modem proposals come from, if it is making any. Installed by the
+    /// daemon after start-up because the prospector is built from the very configuration this
+    /// class serves.
+    /// </summary>
+    public void ServeProposals(Func<IReadOnlyList<Survey.ModemProposal>> proposals) =>
+        _proposals = proposals;
 
     /// <summary>Where a non-persisted change is left for the next start-up to consume.</summary>
     /// <remarks>The state directory, which systemd creates and owns for the service user. Not
@@ -213,7 +222,7 @@ internal sealed class ConfigApi
     public async Task<bool> HandleAsync(HttpListenerContext context)
     {
         string path = context.Request.Url?.AbsolutePath ?? "";
-        if (path is not "/api/config")
+        if (path is not ("/api/config" or "/api/proposals"))
         {
             return false;
         }
@@ -225,6 +234,20 @@ internal sealed class ConfigApi
             // an interactive login that does not exist.
             await RespondAsync(context, 401, "unauthorized: present the configured api key as "
                 + "\"Authorization: Bearer KEY\" or \"X-API-Key: KEY\"").ConfigureAwait(false);
+            return true;
+        }
+
+        if (path is "/api/proposals")
+        {
+            if (context.Request.HttpMethod != "GET")
+            {
+                await RespondAsync(context, 405, "GET to read the station's modem proposals; "
+                    + "POST the configuration each one carries to /api/config to act on it")
+                    .ConfigureAwait(false);
+                return true;
+            }
+
+            await ProposalsAsync(context).ConfigureAwait(false);
             return true;
         }
 
@@ -249,6 +272,61 @@ internal sealed class ConfigApi
                     + "POST to replace it").ConfigureAwait(false);
                 return true;
         }
+    }
+
+    /// <summary>
+    /// What the station thinks it should be listening to and is not, each with the complete
+    /// configuration that would act on it.
+    /// </summary>
+    /// <remarks>
+    /// The configuration travels with the proposal rather than being built by whoever acts on
+    /// it, so a caller never has to know how a modem entry is spelled or which sub-channel is
+    /// free - and, more to the point, so acting on a proposal is an ordinary POST to
+    /// <c>/api/config</c> and is validated, refused and made ephemeral by exactly the same code
+    /// as an operator's own edit. There is deliberately no apply endpoint here.
+    /// </remarks>
+    private async Task ProposalsAsync(HttpListenerContext context)
+    {
+        if (_proposals is null)
+        {
+            await RespondJsonAsync(context, 200, """
+                {
+                  "proposing": false,
+                  "why": "set \"survey\".\"propose\": true to read each capture back with every mode that could have carried it",
+                  "proposals": []
+                }
+                """).ConfigureAwait(false);
+            return;
+        }
+
+        string running = _runningJson();
+        var items = new JsonArray();
+        foreach (Survey.ModemProposal proposal in _proposals())
+        {
+            string? amended = ProposedConfig.Amend(running, proposal, out string why);
+            items.Add(new JsonObject
+            {
+                ["mode"] = proposal.Mode,
+                ["kind"] = proposal.Kind.ToString(),
+                ["audioCentreHz"] = proposal.AudioCentreHz,
+                ["rfFrequencyHz"] = proposal.RfFrequencyHz,
+                ["captures"] = proposal.Captures,
+                ["frames"] = proposal.Frames,
+                ["stations"] = new JsonArray([.. proposal.Stations.Select(s => JsonValue.Create(s))]),
+                ["meanSnrDb"] = proposal.MeanSnrDb,
+                ["firstHeard"] = proposal.FirstHeard,
+                ["lastHeard"] = proposal.LastHeard,
+                ["conflicts"] = new JsonArray([.. proposal.Conflicts.Select(c => JsonValue.Create(c))]),
+                ["summary"] = proposal.Summary(),
+                ["config"] = amended is null ? null : JsonNode.Parse(Redact(amended)),
+                ["cannotApply"] = amended is null ? why : null,
+            });
+        }
+
+        var body = new JsonObject { ["proposing"] = true, ["proposals"] = items };
+        await RespondJsonAsync(
+            context, 200, body.ToJsonString(new JsonSerializerOptions { WriteIndented = true }))
+            .ConfigureAwait(false);
     }
 
     private async Task ApplyAsync(HttpListenerContext context)
