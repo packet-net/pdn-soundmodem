@@ -1,0 +1,25 @@
+{
+  "capturedAt": "2026-08-24T15:22:42.2627395+00:00",
+  "verdict": "Unclaimed",
+  "audioCentreHz": 1133.984375,
+  "audioLowHz": 1018.9453125,
+  "audioHighHz": 1249.0234375,
+  "widthHz": 230.078125,
+  "durationSeconds": 4.433,
+  "peakSnrDb": 21.7,
+  "meanSnrDb": 19.5,
+  "rfCentreHz": 7050583.984375,
+  "dialHz": 7049450,
+  "sideband": "usb",
+  "sampleRate": 12000,
+  "modems": [
+    "0:afsk300-il2pc-multi11",
+    "2:bpsk300-il2pc-multi9",
+    "1:ardop"
+  ],
+  "subChannel": null,
+  "mode": null,
+  "frameHex": null,
+  "il2pHeaderType": null,
+  "attributionNote": null
+}

@@ -39,6 +39,57 @@ Narrow it if you know roughly what you are looking at and want the answer sooner
 | `--fm` | the FM-native modes only | fastest, and **narrower than you probably want** - see below |
 | `--modes a,b,c` | exactly these | when you already know |
 
+## Where it listens
+
+Sweeping every mode is only half of not having to have guessed right. The other half is
+**where** each mode listens, and until 2026-08-24 the answer was always "at its catalogue
+centre" - `afsk300` at 1700 Hz, the PSK modes at 1500, and so on. That is right for a recording
+of a station somebody was tuned to, and it is exactly wrong for the file this tool exists for.
+
+**A signal survey capture is, by definition, a signal nothing was tuned to.** The station's
+survey writes one when packet-shaped energy turns up outside every configured modem
+(`unclaimed`) or inside one that read nothing (`missed`). Point 46 receivers at their own
+centres over such a file and 46 of them will report silence, correctly, having listened
+somewhere else.
+
+That is not a hypothetical either. `samples/offair/2026-08-24/20260824-152242-1134hz-unclaimed.wav`
+is a real one off the 40 m station: a 300 baud AFSK beacon at **1120 Hz**, plain AX.25, 21 dB
+out of the noise, that the whole sweep missed. Pointed at 1134 Hz it reads first time:
+
+```
+PD4R-12>ALL  UI  pid=F0
+:>>>>> PD4R-12 <<<<< qrv on 144.925 (fm 1k2) 144.775 (ssb) 14.105 (ssb) 7.049 (ssb) 438.175 (fm 9k6)
+```
+
+Three ways to say where, in the order they win:
+
+| | What | When to reach for it |
+|---|---|---|
+| `--centre HZ` | every mode that has a centre runs there instead of its own | you measured it, or you know the slot |
+| *the sidecar* | the survey's own `audioCentreHz`, read from the `.json` beside the WAV | automatic, and the reason `pdn-decode survey/*.wav` now works |
+| `--sweep` | a grid of centres, 500 to 2500 Hz in 200 Hz steps, **plus** each mode's own | nobody knows, and it is worth the wall clock |
+
+The sidecar is read whenever one sits beside the file and names a centre; nothing is needed on
+the command line. A sidecar that will not parse, or that carries no centre, gets a line in the
+report and the sweep carries on at the catalogue centres - a file next to a WAV is not a
+contract, and a tool whose failure mode is a silent miss should not add a new one.
+
+`--sweep` multiplies the running time by the number of centres, so pair it with `--packet` or
+`--modes`. It is a strict superset of the default sweep: every mode still runs at its own centre
+as well, and a grid point that lands on that centre is dropped rather than run twice. The 200 Hz
+step is set by how far off a receiver still copies rather than by taste - the capture above reads
+from 1010 to 1210 Hz for a signal at 1120, so a grid point is never further from a signal than a
+receiver can reach, and the diversity banks reach further again (this one is read at three
+adjacent grid points).
+
+**Modes with no centre are left alone.** The baseband `fsk*`/`c4fsk*` family occupies DC upwards
+and the library refuses a centre for it outright (issue #39), so those run once, unchanged,
+whatever is asked for. The test is "does this mode have a centre", not "is this an FM mode" -
+the two sets coincide today, and `FmModeProfiles.IsFmMode` answers a question about modulators
+that this tool has already been burned by asking once (below). Modes too wide to sit where they
+were pointed - a 2.8 kHz `ms110d-*` waveform centred at 1100 Hz would run off the bottom of the
+passband - are skipped with one line naming them, not a screenful.
+
 ### Why `--fm` is not the default, which is a mistake worth not repeating
 
 The obvious reading of "it came off an FM radio" is `FmModeProfiles.IsFmMode`, and that reading is
@@ -108,7 +159,8 @@ confident.
 A Reed-Solomon-only decode of noise is a real thing this sweep will occasionally produce - running
 forty-six receivers over a recording is running forty-six chances for one of them to find
 structure that is not there, and widening the default deliberately traded some of that for
-coverage. Two things keep it honest:
+coverage. `--sweep` trades further: eleven centres is eleven times the chances. Two things keep
+it honest:
 
 - **`MONITOR ONLY, a crc link would not deliver this`** on a frame that was read but has no
   verified CRC behind it. This is not decoration: it is the same distinction the station makes on
@@ -153,6 +205,8 @@ than against a spectrum.
 --packet          skip the HF data waveforms (freedv-*, ms110d-*)
 --fm              sweep only the FM-native modes (narrower than you probably want)
 --modes a,b,c     sweep only these modes
+--centre HZ       point every mode that has a centre at this audio frequency
+--sweep           try a grid of centres, 500-2500 Hz, as well as each mode's own
 --list            print the sweep set and exit
 --channel N       read channel N (default: the loudest channel in the file)
 --quiet           one summary line per file, no frames
