@@ -229,6 +229,60 @@ public class SpectralBurstDetectorTests
     }
 
     [Fact]
+    public void A_Weak_Signal_Is_Not_Lost_Halfway_Through_By_Its_Own_Floor_Climbing()
+    {
+        // The test above holds at 20 dB, which is enough margin to hide the defect: the floor
+        // used to climb under a transmission at a rate that is a fraction of the distance to
+        // the signal's own power, so it ate about 13 dB of a 25-second over and the burst
+        // survived on what was left. A signal 8 dB over the noise has 2 dB to give, and 8 dB
+        // over the noise is an ordinary capture rather than a corner case - it is the level
+        // the survey's own MinPeakSnrDb is set just under.
+        (List<SurveyBurst> bursts, SpectralBurstDetector detector) = Detector(maxSeconds: 60);
+        long line = Warm(detector);
+
+        byte[] weak = Line(lowHz: 1300, highHz: 1700, signalDb: -62);
+        for (int i = 0; i < 20 * LinesPerSecond; i++)
+        {
+            detector.AddLine(line++, weak);
+        }
+
+        byte[] quiet = Line();
+        for (int i = 0; i < 30; i++)
+        {
+            detector.AddLine(line++, quiet);
+        }
+
+        SurveyBurst burst = bursts.Should().ContainSingle(
+            "the floor beneath a transmission is held still while it runs").Subject;
+        burst.Lines.Should().BeCloseTo(20 * LinesPerSecond, 5);
+        burst.PeakSnrDb.Should().BeApproximately(
+            8, 1.5, "measured against the noise, which is what it stood over throughout");
+    }
+
+    [Fact]
+    public void A_Band_Hot_For_Longer_Than_Any_Transmission_Gets_Its_Floor_Back()
+    {
+        // The other side of holding the floor still under a burst. A floor that is too low
+        // makes ordinary noise read as signal, which opens a burst, which holds the floor -
+        // so the thing that would put it right is the thing being suppressed. What breaks it
+        // is that a burst is closed on the timeout whatever it is doing, and a burst closed
+        // that way is not a transmission: the floor beneath it takes what the block actually
+        // measured, and the band comes back in one block rather than never.
+        (List<SurveyBurst> bursts, SpectralBurstDetector detector) = Detector(maxSeconds: 2);
+        long line = Warm(detector);
+
+        byte[] stuck = Line(lowHz: 1300, highHz: 1700);
+        for (int i = 0; i < 30 * LinesPerSecond; i++)
+        {
+            detector.AddLine(line++, stuck);
+        }
+
+        bursts.Should().ContainSingle(
+            "one timeout, and then the floor is where the band actually is");
+        bursts[0].EndedOnTimeout.Should().BeTrue();
+    }
+
+    [Fact]
     public void A_Break_In_The_Line_Clock_Abandons_What_Was_In_Flight()
     {
         // The line clock stops while the station transmits. A burst stretched across that gap

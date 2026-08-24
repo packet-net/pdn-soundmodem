@@ -19,6 +19,9 @@ namespace Packet.SoundModem.Survey;
 /// tracker - down fast, up slowly, but always up - run per bin rather than per band, so a
 /// signal parked in one part of the passband cannot raise the floor everywhere else. It moves
 /// when a block closes, not per line: a floor that moved within a burst would chase the burst.
+/// A bin an open burst covers is not measuring noise at all and its floor is held still for
+/// as long as the burst runs, which is what stops the tracker climbing into a transmission
+/// and going blind to it (see <see cref="CloseBlock"/>).
 /// </para>
 /// <para>
 /// It was a rolling minimum over the last ~15 s until 2026-08-05, and that latched. A dip
@@ -52,11 +55,17 @@ public sealed class SpectralBurstDetector
     // channel that has genuinely gone quieter is a fact about the noise and the sooner the
     // floor says so the sooner a weak signal over it can be seen. Up is slower, because most
     // of what raises a bin's power is somebody transmitting on it. Which of the two upward
-    // rates applies is decided by whether any line in the block was under threshold: a block
+    // rates applies is decided by whether the block held any line measuring noise: a block
     // with quiet lines in it is noise that has come up and the floor should follow it over
-    // ten seconds or so, while a block where every line was hot may be a transmission sitting
-    // on the bin and the floor must barely move - but it must still move, because a bin that
-    // is hot for ever is not a transmission, it is a floor that is wrong.
+    // ten seconds or so, while a bin hot on every line of every block - and never wide enough
+    // to open a burst - is a het or a carrier, and the floor must barely move under it. It
+    // must still move, because a bin that is hot for ever is not a transmission, it is a
+    // floor that is wrong.
+    //
+    // Neither upward rate is a rate in dB: the step is a fraction of the distance to what the
+    // block measured, and that distance is the signal's own power. At 0.05 of a 20 dB gap the
+    // floor climbs 1.6 dB in half a second, so these rates are only ever safe on a bin that
+    // is measuring noise. Deciding which bins those are is the whole of CloseBlock.
     private const double DownRate = 0.25;
     private const double UpRate = 0.05;
     private const double StuckUpRate = 0.004;
@@ -82,11 +91,14 @@ public sealed class SpectralBurstDetector
     // Per-bin floor machinery: the block being accumulated and the tracked floor itself - all
     // preallocated, nothing per line. Two sums, because the floor wants the quiet lines when
     // there are any and needs to know what the loud ones measured when there are not.
-    private readonly double[] _blockSum;    // per bin: unhot lines only
+    private readonly double[] _blockSum;    // per bin: lines measuring noise only
     private readonly int[] _blockCount;     // per bin: lines that contributed to _blockSum
     private readonly double[] _blockAllSum; // per bin: every line, hot or not
+    private readonly bool[] _blockCarried;  // per bin: an open burst covered it during the block
+    private readonly double[] _blockPower;  // per bin: what the last closed block measured
     private readonly double[] _floor;
     private readonly bool[] _hot;
+    private readonly bool[] _inBurst;       // per bin: covered by a burst open right now
     private int _seedBlocksRemaining = SeedBlocks;
     private int _blockFilled;
 
@@ -141,8 +153,11 @@ public sealed class SpectralBurstDetector
         _blockSum = new double[_binCount];
         _blockCount = new int[_binCount];
         _blockAllSum = new double[_binCount];
+        _blockCarried = new bool[_binCount];
+        _blockPower = new double[_binCount];
         _floor = new double[_binCount];
         _hot = new bool[_binCount];
+        _inBurst = new bool[_binCount];
     }
 
     /// <summary>True once a floor has been seeded and detections mean anything. Before that the
@@ -163,6 +178,7 @@ public sealed class SpectralBurstDetector
         if (_lastLine >= 0 && lineIndex != _lastLine + 1)
         {
             _open.Clear();
+            Array.Clear(_inBurst);
         }
 
         _lastLine = lineIndex;
@@ -176,6 +192,21 @@ public sealed class SpectralBurstDetector
             double power = ByteToLinearPower[line[_lowBin + n]];
             _hot[n] = ready && power >= _floor[n] * ratio;
             _blockAllSum[n] += power;
+
+            // A bin under an open burst is held out of the noise average whether or not this
+            // particular line stood over threshold. Hotness alone is the wrong test: it is the
+            // same 6 dB the detector uses, so everything a modulated signal does between 0 and
+            // 6 dB - the gaps between an FSK pair's tones, a symbol transition, the shoulders
+            // of the shaped spectrum - reads as noise and feeds the floor the signal's own
+            // energy. The burst is the honest statement that this part of the spectrum is
+            // carrying a transmission, and a bin carrying a transmission is not measuring any
+            // noise.
+            if (_inBurst[n])
+            {
+                _blockCarried[n] = true;
+                continue;
+            }
+
             if (!_hot[n])
             {
                 _blockSum[n] += power;
@@ -196,6 +227,7 @@ public sealed class SpectralBurstDetector
         FindRuns();
         MatchRuns(lineIndex, line);
         AgeOut(lineIndex);
+        MarkOpenBins();
     }
 
     /// <summary>Abandons everything in flight - nothing that straddles a break in the audio is a
@@ -203,11 +235,13 @@ public sealed class SpectralBurstDetector
     public void Reset()
     {
         _open.Clear();
+        Array.Clear(_inBurst);
         _lastLine = -1;
     }
 
     /// <summary>
-    /// Averages this block per bin and moves each bin's floor towards it.
+    /// Averages this block per bin, over the lines that were measuring noise, and moves each
+    /// bin's floor towards it. Bins an open burst was sitting on are held still.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -218,26 +252,45 @@ public sealed class SpectralBurstDetector
     /// each short enough to pass a duration gate.
     /// </para>
     /// <para>
-    /// A block where every line was hot has no such average to offer, and what it must not do
-    /// is keep the floor it had: that was the latch, because the floor it had was what made
-    /// every line hot. It moves towards what the block actually measured instead, at a rate
-    /// slow enough that a real transmission shifts it by well under a dB over the longest it
-    /// could plausibly run, and fast enough that a bin held hot by nothing but a wrong floor
-    /// climbs out within the minute.
+    /// <b>Held out means the burst, not the hot lines.</b> Excluding only the lines standing
+    /// over threshold is not enough, and the 40 m station showed why: a 300 baud signal
+    /// captured 2026-08-24 at 1149 Hz drove its own floor up 13.6 dB in half a minute and the
+    /// detector lost sight of it after three seconds, because a modulated signal spends a
+    /// great deal of every bin's time between 0 and 6 dB over the noise - and every one of
+    /// those lines was being averaged in as if the channel were quiet. What is measuring noise
+    /// is not "this line is under threshold" but "no burst is open on this part of the
+    /// spectrum", so that is the test, and a bin under an open burst does not move at all.
+    /// </para>
+    /// <para>
+    /// A burst cannot hold a floor still forever: it is closed at <c>maxSeconds</c> whatever
+    /// it is doing, and a burst closed that way has its bins' floors snapped up to what the
+    /// block last measured (<see cref="AgeOut"/>). That is the escape the slow upward rate
+    /// used to provide - a bin hot for longer than any transmission can run is a floor that is
+    /// wrong, not a signal - now bounded by the timeout rather than by a creep that a real
+    /// transmission could not survive.
+    /// </para>
+    /// <para>
+    /// A bin hot on every line with no burst over it is a het or a carrier too narrow to be
+    /// one, and nothing will ever close over it, so it keeps the old slow climb.
     /// </para>
     /// </remarks>
     private void CloseBlock()
     {
         for (int n = 0; n < _binCount; n++)
         {
-            bool everyLineHot = _blockCount[n] == 0;
-            double power = everyLineHot
-                ? _blockAllSum[n] / _blockLines
-                : _blockSum[n] / _blockCount[n];
+            bool measured = _blockCount[n] > 0;
+            double power = measured
+                ? _blockSum[n] / _blockCount[n]
+                : _blockAllSum[n] / _blockLines;
+            bool carried = _blockCarried[n];
 
+            // What the bin actually held, noise or not - the reading a burst that turns out to
+            // have been a wrong floor rather than a transmission is snapped to.
+            _blockPower[n] = _blockAllSum[n] / _blockLines;
             _blockSum[n] = 0;
             _blockCount[n] = 0;
             _blockAllSum[n] = 0;
+            _blockCarried[n] = false;
 
             if (_seedBlocksRemaining > 0)
             {
@@ -245,7 +298,12 @@ public sealed class SpectralBurstDetector
                 continue;
             }
 
-            double rate = power < _floor[n] ? DownRate : everyLineHot ? StuckUpRate : UpRate;
+            if (!measured && carried)
+            {
+                continue;   // a transmission is sitting on this bin; it says nothing about noise
+            }
+
+            double rate = power < _floor[n] ? DownRate : measured ? UpRate : StuckUpRate;
             _floor[n] = Math.Max(_floor[n] + ((power - _floor[n]) * rate), 1e-12);
         }
 
@@ -255,6 +313,20 @@ public sealed class SpectralBurstDetector
         }
 
         _blockFilled = 0;
+    }
+
+    /// <summary>Which bins the bursts still open are sitting on - the bins whose floors are
+    /// held still, because they are carrying a transmission rather than measuring noise.</summary>
+    private void MarkOpenBins()
+    {
+        Array.Clear(_inBurst);
+        foreach (Open open in _open)
+        {
+            for (int n = open.LowBin; n < open.HighBin; n++)
+            {
+                _inBurst[n] = true;
+            }
+        }
     }
 
     /// <summary>Contiguous runs of bins standing over their floors, wide enough to be a signal.</summary>
@@ -346,6 +418,19 @@ public sealed class SpectralBurstDetector
             }
 
             _open.RemoveAt(i);
+            if (timedOut)
+            {
+                // Nothing this long is a transmission, so the floor that was held still under
+                // it for the whole of it was being held for nothing - and if the reason it
+                // stayed hot was that its floor was too low, holding it is what kept it there.
+                // What the block measured is the best reading of that part of the spectrum
+                // there is, so the floor takes it and the bin starts again from the truth.
+                for (int n = open.LowBin; n < open.HighBin; n++)
+                {
+                    _floor[n] = Math.Max(_blockPower[n], 1e-12);
+                }
+            }
+
             if (open.Lines < _minLines)
             {
                 continue;   // a click, not a transmission
