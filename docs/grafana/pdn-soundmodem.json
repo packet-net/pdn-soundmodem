@@ -515,7 +515,7 @@
       "pluginVersion": "10.4.0",
       "targets": [
         {
-          "alias": "$tag_station",
+          "alias": "$tag_station $tag_mode",
           "datasource": {
             "type": "influxdb",
             "uid": "${DS_INFLUXDB}"
@@ -531,7 +531,7 @@
           "measurement": "pdn_frame",
           "orderByTime": "ASC",
           "policy": "autogen",
-          "query": "SELECT \"snr_db\" FROM \"autogen\".\"pdn_frame\" WHERE $timeFilter AND \"station\" =~ /^($station)$/ GROUP BY \"station\"",
+          "query": "SELECT \"snr_db\" FROM \"autogen\".\"pdn_frame\" WHERE $timeFilter AND \"station\" =~ /^($station)$/ GROUP BY \"station\",\"mode\"",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series",
@@ -647,7 +647,7 @@
           "editorMode": "code",
           "expr": "rate(pdn_station_snr_db_sum{station=~\"$station\"}[$__rate_interval]) / rate(pdn_station_frames_with_snr_total{station=~\"$station\"}[$__rate_interval])",
           "instant": false,
-          "legendFormat": "{{station}}",
+          "legendFormat": "{{station}} {{mode}}",
           "range": true,
           "refId": "A"
         }
@@ -745,7 +745,7 @@
           "editorMode": "code",
           "expr": "rate(pdn_station_frequency_offset_hz_sum{station=~\"$station\"}[$__rate_interval]) / rate(pdn_station_frames_with_offset_total{station=~\"$station\"}[$__rate_interval])",
           "instant": false,
-          "legendFormat": "{{station}}",
+          "legendFormat": "{{station}} {{mode}}",
           "range": true,
           "refId": "A"
         }
@@ -842,7 +842,7 @@
           "editorMode": "code",
           "expr": "rate(pdn_station_corrected_bytes_total{station=~\"$station\"}[$__rate_interval])",
           "instant": false,
-          "legendFormat": "{{station}}",
+          "legendFormat": "{{station}} {{mode}}",
           "range": true,
           "refId": "A"
         }
@@ -974,7 +974,7 @@
           "editorMode": "code",
           "expr": "rate(pdn_station_frames_total{station=~\"$station\"}[$__rate_interval])",
           "instant": false,
-          "legendFormat": "{{station}} frames",
+          "legendFormat": "{{station}} {{mode}} frames",
           "range": true,
           "refId": "A"
         },
@@ -987,7 +987,7 @@
           "expr": "rate(pdn_station_bytes_total{station=~\"$station\"}[$__rate_interval])",
           "hide": false,
           "instant": false,
-          "legendFormat": "{{station}} bytes",
+          "legendFormat": "{{station}} {{mode}} bytes",
           "range": true,
           "refId": "B"
         }
