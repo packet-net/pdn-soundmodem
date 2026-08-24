@@ -48,7 +48,7 @@ public class StationTelemetryTests
         telemetry.Record(0, Frame("GB7IOW", 0), Quality(crcValid: true, snr: 16));
 
         telemetry.StationCount.Should().Be(1);
-        telemetry.Exposition().Should().Contain("pdn_station_frames_total{station=\"GB7IOW\"} 3");
+        telemetry.Exposition().Should().Contain("pdn_station_frames_total{station=\"GB7IOW\",mode=\"afsk300-il2pc\"} 3");
     }
 
     [Fact]
@@ -79,11 +79,32 @@ public class StationTelemetryTests
         telemetry.Record(0, Frame("GB7NOT", 0), Quality(crcValid: true, snr: null));
 
         string text = telemetry.Exposition();
-        text.Should().Contain("pdn_station_snr_db_sum{station=\"GB7NOT\"} 30");
-        text.Should().Contain("pdn_station_frames_with_snr_total{station=\"GB7NOT\"} 2");
-        text.Should().Contain("pdn_station_frames_total{station=\"GB7NOT\"} 3");
-        text.Should().Contain("pdn_station_snr_db_last{station=\"GB7NOT\"} 20",
+        text.Should().Contain("pdn_station_snr_db_sum{station=\"GB7NOT\",mode=\"afsk300-il2pc\"} 30");
+        text.Should().Contain("pdn_station_frames_with_snr_total{station=\"GB7NOT\",mode=\"afsk300-il2pc\"} 2");
+        text.Should().Contain("pdn_station_frames_total{station=\"GB7NOT\",mode=\"afsk300-il2pc\"} 3");
+        text.Should().Contain("pdn_station_snr_db_last{station=\"GB7NOT\",mode=\"afsk300-il2pc\"} 20",
             "a point reading is still worth having, named so nobody charts it by accident");
+    }
+
+    [Fact]
+    public void One_Callsign_On_Two_Modes_Is_Two_Links_And_Two_Series()
+    {
+        // Not a presentation choice. A station heard on two modes is reaching us over two
+        // frequencies through two modems with two path budgets, and one series spanning both
+        // describes neither: on the live 40 m station GB7BPQ reads 15.2 dB on afsk300-il2pc and
+        // 12.7 dB on bpsk300-il2pc, and the single number was the average of two unrelated
+        // measurements. Mode is on the series rather than on an info metric to join to, because
+        // InfluxQL - half of a common setup, both halves scraping the same endpoint - has no
+        // join and could not recover it at all.
+        var telemetry = new StationTelemetry(new FakeTime(Start));
+
+        telemetry.Record(0, Frame("GB7BPQ", 0), Quality(crcValid: true, snr: 15.2, mode: "afsk300-il2pc"));
+        telemetry.Record(2, Frame("GB7BPQ", 0), Quality(crcValid: true, snr: 12.7, mode: "bpsk300-il2pc"));
+
+        string text = telemetry.Exposition();
+        text.Should().Contain("pdn_station_snr_db_sum{station=\"GB7BPQ\",mode=\"afsk300-il2pc\"} 15.2");
+        text.Should().Contain("pdn_station_snr_db_sum{station=\"GB7BPQ\",mode=\"bpsk300-il2pc\"} 12.7");
+        telemetry.StationCount.Should().Be(2, "two links, and the SSID rule does not merge them");
     }
 
     [Fact]
@@ -220,8 +241,9 @@ public class StationTelemetryTests
 
     private static FrameQuality Quality(
         bool? crcValid = null, bool plainIl2p = false, bool monitorOnly = false,
-        double? snr = null, double? offset = null, int? corrected = null) =>
-        new("afsk300-il2pc", 20, corrected, crcValid, offset, PlainIl2p: plainIl2p,
+        double? snr = null, double? offset = null, int? corrected = null,
+        string mode = "afsk300-il2pc") =>
+        new(mode, 20, corrected, crcValid, offset, PlainIl2p: plainIl2p,
             MonitorOnly: monitorOnly, SnrDb: snr);
 
     /// <summary>A clock the test moves by hand. No test here may decide anything by the wall

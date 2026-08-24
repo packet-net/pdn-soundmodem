@@ -1108,19 +1108,35 @@ that can pull line protocol. Everything else is on the first.
 
 ### Metrics
 
+Every per-station series carries `station` and `mode`.
+
 | Metric | Type | |
 |---|---|---|
-| `pdn_station_info{station,mode,sub_channel}` | gauge | Always 1. Join telemetry onto it rather than repeating labels |
-| `pdn_station_frames_total{station}` | counter | Frames whose own check sequence verified |
-| `pdn_station_bytes_total{station}` | counter | Bytes in those frames |
-| `pdn_station_snr_db_sum{station}` | counter | Sum of per-frame SNR |
-| `pdn_station_frames_with_snr_total{station}` | counter | The divisor for it |
-| `pdn_station_frequency_offset_hz_sum{station}` | counter | Sum of how far each station sat from our centre |
-| `pdn_station_frames_with_offset_total{station}` | counter | The divisor for it |
-| `pdn_station_corrected_bytes_total{station}` | counter | Bytes Reed-Solomon repaired |
-| `pdn_station_snr_db_last{station}` | gauge | The most recent frame's SNR. A point reading |
+| `pdn_station_info{station,mode,sub_channel}` | gauge | 1 per station and mode, with the sub-channel it was last heard on |
+| `pdn_station_frames_total` | counter | Frames whose own check sequence verified |
+| `pdn_station_bytes_total` | counter | Bytes in those frames |
+| `pdn_station_snr_db_sum` | counter | Sum of per-frame SNR |
+| `pdn_station_frames_with_snr_total` | counter | The divisor for it |
+| `pdn_station_frequency_offset_hz_sum` | counter | Sum of how far each station sat from our centre |
+| `pdn_station_frames_with_offset_total` | counter | The divisor for it |
+| `pdn_station_corrected_bytes_total` | counter | Bytes Reed-Solomon repaired |
+| `pdn_station_snr_db_last` | gauge | The most recent frame's SNR. A point reading |
 | `pdn_frames_uncounted_total` | counter | Decodes attributed to nobody |
-| `pdn_stations` | gauge | Stations currently held |
+| `pdn_stations` | gauge | Station-and-mode series currently held |
+
+### Mode is on the series, not something to join to
+
+The tidy Prometheus idiom is an info metric carrying the detail and a `group_left` join to bring
+it in. That was the wrong choice here, twice over.
+
+**A join is PromQL, and InfluxQL has none.** In a setup where Telegraf scrapes the same endpoint
+into InfluxDB alongside Prometheus - which is a common shape, and the one this was built against
+- the mode would be unreachable for every aggregate panel on the InfluxDB side.
+
+**And it is not really a join.** One callsign heard on two modes is two links: different
+frequency, different modem, different path budget. On the 40 m station `GB7BPQ` reads **15.2 dB
+on `afsk300-il2pc` and 12.7 dB on `bpsk300-il2pc`**, and a single series spanning both was the
+average of two unrelated measurements, describing neither.
 
 ### Sums and counts, not gauges, and why
 
@@ -1146,6 +1162,9 @@ anyone building a time series on it can see what they are doing.
 `station` label is the base callsign and a chart does not draw one signal three times. The SSID
 travels as a field on the individual frame, where the question "which one answered" is still
 answerable.
+
+Note the asymmetry with mode, and that it is deliberate: SSIDs combine because they are one link,
+and modes separate because they are not.
 
 ### Only frames that vouched for themselves
 

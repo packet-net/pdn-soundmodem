@@ -55,7 +55,7 @@ public sealed record FrameEvent(
 public sealed class StationTelemetry
 {
     private readonly Lock _lock = new();
-    private readonly Dictionary<string, Station> _stations = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<(string Callsign, string Mode), Station> _stations = [];
     private readonly Queue<FrameEvent> _events = [];
     private readonly TimeProvider _time;
     private readonly int _maxStations;
@@ -127,11 +127,17 @@ public sealed class StationTelemetry
 
         lock (_lock)
         {
-            if (!_stations.TryGetValue(callsign, out Station? station))
+            // Keyed by station AND mode. The same callsign heard on two modes is two links -
+            // different frequency, different modem, different path budget - and averaging them
+            // is averaging two unrelated measurements: on the live 40 m station GB7BPQ reads
+            // 15.2 dB on afsk300-il2pc and 12.7 dB on bpsk300-il2pc, and one number covering
+            // both describes neither.
+            (string Callsign, string Mode) key = (callsign, quality.Mode);
+            if (!_stations.TryGetValue(key, out Station? station))
             {
                 Evict(now);
-                station = new Station(callsign);
-                _stations[callsign] = station;
+                station = new Station(callsign, quality.Mode);
+                _stations[key] = station;
             }
 
             station.Add(heard);
@@ -156,9 +162,15 @@ public sealed class StationTelemetry
     /// </code>
     /// <para>A <c>_last</c> gauge is published too, for a "right now" readout, and is named so
     /// that anyone building a time series on it can see what they are doing.</para>
-    /// <para><b>Labels stay thin.</b> Mode and sub-channel live on <c>pdn_station_info</c> and
-    /// join on, rather than being repeated onto every series - so a station changing mode does
-    /// not fork all of its history.</para>
+    /// <para><b>Mode is a label on every series, not something to join on.</b> The tidy
+    /// Prometheus idiom is an info metric carrying the detail and a
+    /// <c>group_left</c> join to bring it in, and it was the wrong choice here for two reasons.
+    /// The join is PromQL: InfluxQL has none, so anything reading these through Telegraf and
+    /// InfluxDB - which is half of a common setup, both scraping the same endpoint - could not
+    /// recover the mode at all. And it is not really a join anyway: one callsign heard on two
+    /// modes is two links, over different frequencies through different modems, and a series
+    /// spanning both describes neither. <c>pdn_station_info</c> stays, for the sub-channel and
+    /// as the list of what is currently heard.</para>
     /// </remarks>
     public string Exposition()
     {
@@ -168,10 +180,11 @@ public sealed class StationTelemetry
             DateTimeOffset now = _time.GetUtcNow();
             Station[] live = [.. _stations.Values
                 .Where(s => now - s.LastHeard <= _stationIdle)
-                .OrderBy(s => s.Callsign, StringComparer.Ordinal)];
+                .OrderBy(s => s.Callsign, StringComparer.Ordinal)
+                .ThenBy(s => s.Mode, StringComparer.Ordinal)];
 
             Metric(text, "pdn_station_info", "gauge",
-                "The station behind the series: 1, labelled with what it was last heard on.");
+                "1 per station and mode, carrying the sub-channel it was last heard on.");
             foreach (Station s in live)
             {
                 text.Append(CultureInfo.InvariantCulture,
@@ -293,7 +306,8 @@ public sealed class StationTelemetry
             }
 
             text.Append(CultureInfo.InvariantCulture,
-                $"{name}{{station=\"{Escape(s.Callsign)}\"}} {v.ToString("0.###", CultureInfo.InvariantCulture)}\n");
+                $"{name}{{station=\"{Escape(s.Callsign)}\",mode=\"{Escape(s.Mode)}\"}} "
+                + $"{v.ToString("0.###", CultureInfo.InvariantCulture)}\n");
         }
     }
 
@@ -324,27 +338,28 @@ public sealed class StationTelemetry
             return;
         }
 
-        string? oldest = null;
+        (string, string)? oldest = null;
         DateTimeOffset when = DateTimeOffset.MaxValue;
-        foreach (Station s in _stations.Values)
+        foreach (KeyValuePair<(string Callsign, string Mode), Station> entry in _stations)
         {
-            if (s.LastHeard < when)
+            if (entry.Value.LastHeard < when)
             {
-                (when, oldest) = (s.LastHeard, s.Callsign);
+                (when, oldest) = (entry.Value.LastHeard, entry.Key);
             }
         }
 
-        if (oldest is not null)
+        if (oldest is { } key)
         {
-            _stations.Remove(oldest);
+            _stations.Remove(key);
         }
     }
 
-    private sealed class Station(string callsign)
+    private sealed class Station(string callsign, string mode)
     {
         public string Callsign { get; } = callsign;
 
-        public string Mode { get; private set; } = "";
+        /// <summary>Part of the key, so it never changes for a given series.</summary>
+        public string Mode { get; } = mode;
 
         public int SubChannel { get; private set; }
 
@@ -370,7 +385,6 @@ public sealed class StationTelemetry
         {
             Frames++;
             Bytes += e.Bytes;
-            Mode = e.Mode;
             SubChannel = e.SubChannel;
             LastHeard = e.HeardAt;
             if (e.SnrDb is double snr)
