@@ -65,3 +65,5 @@ Method that works, and the one that does not:
 ## Files
 
 `captures.sha256` lists every scored capture; the `.json` sidecars carry each capture's receiver description, sample-0 UTC and SHA-256. The WAVs themselves are held outside git (≈5 MB each).
+
+**The sidecar filenames spell the capture time `T08-22-51.464Z`, with `-` where the WAV's own name has `:`.** `captures.sha256` is unchanged and still lists the WAVs exactly as they exist on disk, colons and all. Colons are illegal in Windows paths, so the sidecars as first committed made the entire repository impossible to check out on Windows: `git pull` aborted with `invalid path` and left every Windows working copy stuck at its last good commit. Each sidecar's `wav_file` field still carries the WAV's true, colon-bearing name, so the pairing stays exact: match a sidecar to its capture on that field, not on the sidecar's own filename.

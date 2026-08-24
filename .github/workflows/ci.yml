@@ -10,6 +10,19 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
+      # A filename legal on Linux but not on Windows (`: ? * < > | "`) does not merely
+      # inconvenience Windows users - it makes the whole repository impossible to check out
+      # there. `git pull` aborts the entire tree update with "invalid path" and the clone stays
+      # pinned at its last good commit, which is how a stray wget artefact and eleven
+      # ISO-timestamped evidence sidecars left Windows working copies 864 commits behind with
+      # no way forward. Catch it at the commit that adds one, not at somebody's next pull.
+      - name: Reject paths Windows cannot check out
+        run: |
+          if bad="$(git ls-files | grep '[:?*<>|"]')"; then
+            echo "::error::these paths cannot be checked out on Windows (illegal characters : ? * < > | \"):"
+            echo "$bad"
+            exit 1
+          fi
       # The xUnit v3 / MTP test apphosts (OutputType=Exe) resolve the runtime via
       # DOTNET_ROOT; the runner's distro dotnet lives outside the apphost's default
       # search paths (/usr/share/dotnet, /etc/dotnet/install_location), so register
