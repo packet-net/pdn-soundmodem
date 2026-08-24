@@ -17,6 +17,7 @@ using Packet.SoundModem.UberSdr;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Station;
 using Packet.SoundModem.Survey;
+using Packet.SoundModem.Telemetry;
 using Packet.SoundModem.Waterfall;
 using Packet.SoundModem.Ms110d;
 
@@ -209,6 +210,7 @@ FlexConfig? flexConfig = null;
 UberSdrConfig? uberSdrConfig = null;
 WaterfallConfig? waterfallConfig = null;
 SurveyConfig? surveyConfig = null;
+MetricsConfig? metricsConfig = null;
 FrequencyMatchingConfig? frequencyMatching = null;
 RawCaptureConfig? rawCaptureConfig = null;
 DeadFeedConfig? deadFeedConfig = null;
@@ -268,6 +270,7 @@ if (configPath is not null)
     waterfallConfig = config.Waterfall;
     apiConfig = config.Api;
     surveyConfig = config.Survey;
+    metricsConfig = config.Metrics;
     frequencyMatching = config.FrequencyMatching;
     rawCaptureConfig = config.RawCapture;
     deadFeedConfig = config.DeadFeed;
@@ -1491,6 +1494,34 @@ if (surveyConfig is not null)
             + "  Set by \"survey\".\"path\". The service user must be able to write to it;\n"
             + "  remove the \"survey\" section to run without one.");
         return 2;
+    }
+}
+
+// What this station hears, for a monitoring system to come and read. Fed from the monitor path
+// like the frame log, so a frame the station read and did not pass to a host still counts as
+// heard - which is the honest answer to "how well am I copying this station".
+StationTelemetry? metrics = null;
+if (metricsConfig is { Enabled: true })
+{
+    metrics = new StationTelemetry(
+        TimeProvider.System,
+        metricsConfig.MaxStations,
+        TimeSpan.FromSeconds(Math.Max(1, metricsConfig.FrameWindowSeconds)),
+        TimeSpan.FromHours(Math.Max(0.1, metricsConfig.StationIdleHours)));
+    channel.FrameReceivedWithQuality += (sub, frame, quality) => metrics.Record(sub, frame, quality);
+
+    if (waterfallServer is { } metricsServer)
+    {
+        metricsServer.Metrics = metrics;
+        Console.WriteLine(
+            $"metrics: {metricsServer.Url}metrics (prometheus) and {metricsServer.Url}metrics/frames "
+            + "(one point per frame, influx line protocol). No authentication.");
+    }
+    else
+    {
+        Console.Error.WriteLine(
+            "metrics: WARNING - nothing to serve them on. They ride the waterfall's listener; "
+            + "add a \"waterfall\" section with a port, or remove \"metrics\".");
     }
 }
 

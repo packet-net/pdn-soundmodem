@@ -100,6 +100,44 @@ public sealed class ModemConfig
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
+/// <summary>
+/// Publishing what this station hears, for a monitoring system to collect - see
+/// <see cref="DaemonConfig.Metrics"/>.
+/// </summary>
+/// <remarks>
+/// <para>Served on the <see cref="WaterfallConfig.Port"/> listener, so a station that already
+/// publishes a waterfall gains this on the same port rather than another one to open.</para>
+/// <para><b>Pull, and deliberately ignorant.</b> Nothing here knows the address, protocol or
+/// credentials of any monitoring system: the station serves what it knows and whoever is
+/// interested comes and reads it. That is what keeps it generic rather than fitted to one
+/// operator's stack.</para>
+/// <para><b>Unauthenticated.</b> What is served is callsigns and signal reports, transmitted in
+/// the clear on a shared channel - the same facts the waterfall page already shows anyone who
+/// opens it. Off by default all the same, because publishing is the operator's decision.</para>
+/// </remarks>
+public sealed class MetricsConfig
+{
+    /// <summary>Whether to serve <c>/metrics</c> and <c>/metrics/frames</c>.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Most stations kept. On reaching it the least recently heard is dropped.</summary>
+    public int MaxStations { get; set; } = 256;
+
+    /// <summary>How long a frame stays in the per-frame feed, in seconds. Must comfortably
+    /// exceed the collector's scrape interval: scraping more slowly loses frames, scraping
+    /// faster sees some twice, which is harmless.</summary>
+    public double FrameWindowSeconds { get; set; } = 300;
+
+    /// <summary>How long a station keeps its series after its last frame, in hours. A station
+    /// that has stopped transmitting should stop being a series rather than hold its last
+    /// reading for ever.</summary>
+    public double StationIdleHours { get; set; } = 6;
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
 /// <summary>Runtime configuration over HTTP - see <see cref="DaemonConfig.Api"/>.</summary>
 /// <remarks>
 /// <para>Served on the <see cref="WaterfallConfig.Port"/> listener under <c>/api/</c>, so a
@@ -715,6 +753,10 @@ public sealed class DaemonConfig
 
     /// <summary>Signal survey; null = signals this station cannot read go unrecorded.</summary>
     public SurveyConfig? Survey { get; set; }
+
+    /// <summary>Publishing what this station hears, for a monitoring system to collect;
+    /// null publishes nothing. Served on the waterfall's listener.</summary>
+    public MetricsConfig? Metrics { get; set; }
 
     /// <summary>Answering off-frequency stations on their frequency; null = measure only.</summary>
     public FrequencyMatchingConfig? FrequencyMatching { get; set; }
