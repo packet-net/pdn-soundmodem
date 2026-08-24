@@ -1267,6 +1267,7 @@ await using var waterfallLifetime = waterfallServer;
 SignalSurvey? survey = null;
 ProspectorWorker? prospectorLifetime = null;
 Func<IReadOnlyList<ModemProposal>>? proposals = null;
+Func<(long Examined, long Read, long Dropped)>? prospectorCounts = null;
 if (surveyConfig is not null)
 {
     var surveyBands = new List<ModemBand>();
@@ -1406,6 +1407,8 @@ if (surveyConfig is not null)
             var prospectorWorker = new ProspectorWorker(prospector, DspRate);
             prospectorLifetime = prospectorWorker;
             proposals = prospector.Proposals;
+            prospectorCounts = () =>
+                (prospector.Examined, prospector.Read, prospectorWorker.Dropped);
 
             // Fed from the capture writer rather than from the burst: a capture that a budget
             // refused is not on disk to read, and one that is has already been written by the
@@ -1413,6 +1416,42 @@ if (surveyConfig is not null)
             created.CaptureWritten += prospectorWorker.Examine;
             prospector.Proposed += proposal =>
                 Console.WriteLine($"propose: {proposal.Summary()}");
+
+            // What it looked at, and what came back. Work that leaves no trace until it succeeds
+            // is indistinguishable from work that is not happening - which is exactly how it read
+            // from outside on the day it went live, where the only evidence a capture had been
+            // examined was a thread's CPU counter in /proc.
+            prospector.ExaminedCapture += (capture, readings) =>
+            {
+                if (readings.Count == 0)
+                {
+                    // Every twenty-five, not every one: most captures are unreadable and a line
+                    // each would bury the station's own traffic. Silence still has to be
+                    // accounted for, though, or "is it running?" has no answer on a quiet band.
+                    if (prospector.Examined % 25 == 0)
+                    {
+                        Console.WriteLine(
+                            $"propose: {prospector.Examined} capture(s) examined, "
+                            + $"{prospector.Read} readable, {prospectorWorker.Dropped} skipped "
+                            + "for backlog");
+                    }
+
+                    return;
+                }
+
+                foreach (CaptureReading reading in readings)
+                {
+                    string who = reading.Source is string source
+                        ? $"{source}{(reading.Destination is string to ? ">" + to : "")}"
+                        : "no readable callsigns";
+                    string progress = prospector.Progress(capture, reading) is var (banked, needed)
+                        ? $", {banked} of {needed} occasion(s)"
+                        : ", not counted (no verified check sequence)";
+                    Console.WriteLine(
+                        $"propose: {capture.AudioCentreHz:F0} Hz reads as {reading.Mode} - "
+                        + $"{reading.Frame.Length} B, {who}{progress}");
+                }
+            };
             Console.WriteLine(
                 $"propose: on, {CaptureSweep.ModesFor(DspRate).Count} modes per capture, "
                 + $"{surveyConfig.ProposeMinCaptures} capture(s) of evidence needed "
@@ -1630,7 +1669,7 @@ if (apiConfig?.Key is { Length: > 0 } apiKey)
     waterfallServer.ApiHandler = configApi.HandleAsync;
     if (proposals is not null)
     {
-        configApi.ServeProposals(proposals);
+        configApi.ServeProposals(proposals, prospectorCounts!);
         Console.WriteLine(
             $"api: modem proposals over {waterfallServer.Url}api/proposals (key required); each "
             + "carries the configuration to POST back to api/config.");

@@ -106,6 +106,17 @@ public sealed class ModemProspector
     public event Action<ModemProposal>? Proposed;
 
     /// <summary>
+    /// Raised for every capture examined, with whatever came out of it - empty included.
+    /// </summary>
+    /// <remarks>
+    /// Work that leaves no trace until it succeeds is indistinguishable from work that is not
+    /// happening, and it was: asked "any evidence it was picked up?" about a capture on the live
+    /// station, the honest answer was a thread's CPU counter in <c>/proc</c>. A station gets to
+    /// say what it looked at.
+    /// </remarks>
+    public event Action<BurstCapture, IReadOnlyList<CaptureReading>>? ExaminedCapture;
+
+    /// <summary>
     /// Examines one capture: reads it every way it might have been sent, and files what comes
     /// back. Returns the readings, for a caller that wants to log them.
     /// </summary>
@@ -129,13 +140,13 @@ public sealed class ModemProspector
             modes ?? CaptureSweep.ModesFor(capture.SampleRate),
             shouldStop);
 
-        if (readings.Count == 0)
+        if (readings.Count > 0)
         {
-            return readings;
+            _read++;
+            Record(capture, Best(readings));
         }
 
-        _read++;
-        Record(capture, Best(readings));
+        ExaminedCapture?.Invoke(capture, readings);
         return readings;
     }
 
@@ -218,6 +229,28 @@ public sealed class ModemProspector
     }
 
     private bool IsProposal(Cluster cluster) => cluster.EvidencedCaptures >= _options.MinCaptures;
+
+    /// <summary>
+    /// How close the traffic in <paramref name="reading"/> is to being proposed: the occasions
+    /// banked so far and the occasions needed. Null when the reading is not the kind that counts
+    /// (see <see cref="IsEvidence"/>) - which is itself worth being told, since a station reading
+    /// something every ten minutes and never proposing it is otherwise a mystery.
+    /// </summary>
+    public (int Banked, int Needed)? Progress(BurstCapture capture, CaptureReading reading)
+    {
+        ArgumentNullException.ThrowIfNull(capture);
+        ArgumentNullException.ThrowIfNull(reading);
+        if (!IsEvidence(reading))
+        {
+            return null;
+        }
+
+        Cluster? cluster = _clusters.Find(
+            c => string.Equals(c.Mode, reading.Mode, StringComparison.Ordinal)
+                && Math.Abs(c.MeanCentreHz - capture.AudioCentreHz) <= _options.ClusterHz / 2);
+
+        return cluster is null ? null : (cluster.EvidencedCaptures, _options.MinCaptures);
+    }
 
     /// <summary>Drops the weakest clusters once there are more than the budget allows.</summary>
     private void Trim()

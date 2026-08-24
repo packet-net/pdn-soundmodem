@@ -39,6 +39,7 @@ internal sealed class ConfigApi
     private readonly string _key;
     private readonly string _configPath;
     private Func<IReadOnlyList<Survey.ModemProposal>>? _proposals;
+    private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
     private readonly string _ephemeralPath;
     private readonly Func<string> _runningJson;
     private readonly Action _requestRestart;
@@ -67,8 +68,16 @@ internal sealed class ConfigApi
     /// daemon after start-up because the prospector is built from the very configuration this
     /// class serves.
     /// </summary>
-    public void ServeProposals(Func<IReadOnlyList<Survey.ModemProposal>> proposals) =>
+    /// <param name="proposals">What the station would have listening.</param>
+    /// <param name="counts">What it has looked at to say so - the number that answers "is this
+    /// running?" on a band where nothing has been readable yet.</param>
+    public void ServeProposals(
+        Func<IReadOnlyList<Survey.ModemProposal>> proposals,
+        Func<(long Examined, long Read, long Dropped)> counts)
+    {
         _proposals = proposals;
+        _prospectorCounts = counts;
+    }
 
     /// <summary>Where a non-persisted change is left for the next start-up to consume.</summary>
     /// <remarks>The state directory, which systemd creates and owns for the service user. Not
@@ -323,7 +332,15 @@ internal sealed class ConfigApi
             });
         }
 
-        var body = new JsonObject { ["proposing"] = true, ["proposals"] = items };
+        (long examined, long read, long dropped) = _prospectorCounts?.Invoke() ?? (0, 0, 0);
+        var body = new JsonObject
+        {
+            ["proposing"] = true,
+            ["examined"] = examined,
+            ["readable"] = read,
+            ["skippedForBacklog"] = dropped,
+            ["proposals"] = items,
+        };
         await RespondJsonAsync(
             context, 200, body.ToJsonString(new JsonSerializerOptions { WriteIndented = true }))
             .ConfigureAwait(false);
