@@ -43,6 +43,7 @@ with `su -` and drop the prefix.)
 | `ardop` | object | *(disabled)* | ARDOP virtual TNC - [below](#ardop) |
 | `frameLog` | object | *(not kept)* | Record every frame heard and sent to SQLite - [below](#framelog) |
 | `survey` | object | *(not surveying)* | Keep signals this station cannot read, for analysis - [below](#survey) |
+| `metrics` | object | *(publishing nothing)* | Publish what this station hears, for a monitoring system to collect - [below](#metrics) |
 | `rawCapture` | object | *(not recording)* | Record everything the channel hears, continuously - [below](#rawcapture) |
 | `idBeacons` | bool | `true` | Listen for the NinoTNC idents sent alongside the PSK SSB modes - [below](#idbeacons) |
 | `flex` | object | see below | FlexRadio slice params - [below](#flex) |
@@ -1074,6 +1075,131 @@ bytes laid out to be selected and pasted.
 The same explanation reaches the journal whether or not a survey is running - the `rx` line for
 such a frame carries `il2p Type1` and the reason in brackets, because the survey is optional and
 budgeted and may drop that particular burst.
+
+## `metrics`
+
+What this station hears, published for a monitoring system to come and collect.
+
+```json
+"metrics": { "enabled": true }
+```
+
+Served on the [waterfall](#waterfall)'s listener, so a station that already publishes a waterfall
+gains this on the same port rather than another one to open. **There is no authentication**: what
+is served is callsigns and signal reports that were transmitted in the clear on a shared channel,
+which is what the waterfall page already shows anyone who opens it. It is off unless configured
+all the same, because publishing is the operator's decision.
+
+**Pull, and deliberately ignorant of your stack.** Nothing here knows the address, protocol or
+credentials of any monitoring system. The station serves what it knows; whoever is interested
+comes and reads it. That is what makes this generic rather than fitted to one operator's setup.
+
+### Two endpoints, because one format cannot do both
+
+| | | |
+|---|---|---|
+| `/metrics` | Prometheus text exposition | totals and sums, for rates, dashboards and alerting |
+| `/metrics/frames` | InfluxDB line protocol | **one point per frame**, carrying the moment it was heard |
+
+A scrape-and-aggregate format has one sample per series per scrape, so it cannot express two
+frames a second apart. If you want to plot individual frames as points - a scatter of every frame
+received, coloured by station - that is what the second endpoint is for, and it needs a collector
+that can pull line protocol. Everything else is on the first.
+
+### Metrics
+
+| Metric | Type | |
+|---|---|---|
+| `pdn_station_info{station,mode,sub_channel}` | gauge | Always 1. Join telemetry onto it rather than repeating labels |
+| `pdn_station_frames_total{station}` | counter | Frames whose own check sequence verified |
+| `pdn_station_bytes_total{station}` | counter | Bytes in those frames |
+| `pdn_station_snr_db_sum{station}` | counter | Sum of per-frame SNR |
+| `pdn_station_frames_with_snr_total{station}` | counter | The divisor for it |
+| `pdn_station_frequency_offset_hz_sum{station}` | counter | Sum of how far each station sat from our centre |
+| `pdn_station_frames_with_offset_total{station}` | counter | The divisor for it |
+| `pdn_station_corrected_bytes_total{station}` | counter | Bytes Reed-Solomon repaired |
+| `pdn_station_snr_db_last{station}` | gauge | The most recent frame's SNR. A point reading |
+| `pdn_frames_uncounted_total` | counter | Decodes attributed to nobody |
+| `pdn_stations` | gauge | Stations currently held |
+
+### Sums and counts, not gauges, and why
+
+The obvious design is a gauge holding each station's latest SNR, and it is a trap. A station
+transmitting every few minutes against a fifteen-second scrape holds its reading across every
+scrape in between, so a chart draws a flat line and a long-retention store keeps it for ever. One
+sample smeared across an hour reads exactly like a continuous measurement of a quiet channel.
+
+A sum and a count divide into the mean over whatever window you ask for, and produce **nothing at
+all** when nothing was heard, which is the truth:
+
+```promql
+rate(pdn_station_snr_db_sum[$__rate_interval]) / rate(pdn_station_frames_with_snr_total[$__rate_interval])
+```
+
+Same shape for frequency offset, which over days is the one that shows a station's reference
+drifting. `pdn_station_snr_db_last` is published for a "right now" readout and is named so that
+anyone building a time series on it can see what they are doing.
+
+### SSIDs are combined
+
+`GB7IOW-1`, `GB7IOW-2` and `GB7IOW-9` are one transmitter, one antenna and one path, so the
+`station` label is the base callsign and a chart does not draw one signal three times. The SSID
+travels as a field on the individual frame, where the question "which one answered" is still
+answerable.
+
+### Only frames that vouched for themselves
+
+A frame counts towards a station when its own FCS or IL2P CRC verified. This is not tidiness. Of
+the 77 distinct callsigns the 40 m station had ever decoded, **45 were heard exactly once and not
+one of those 45 ever had a valid check sequence** - they are corruptions of the regulars
+(`EI0RSI-9`, `EI0RSA-12` and `EI0RSE-1` are all `EI0RSI-1` with a bit wrong; `7B7BPQ` is
+`GB7BPQ`). All 21 stations heard twenty times or more had one. Without the gate, every bit error
+the receiver ever makes mints a series that exists for ever and appears on a dashboard as a
+station.
+
+What was declined is counted in `pdn_frames_uncounted_total`, because a large number beside a
+small station list is a receiver working at its limit and worth knowing about.
+
+A station drops out of the exposition once it has not been heard for `stationIdleHours`, rather
+than holding its last reading indefinitely.
+
+### Options
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `enabled` | bool | `true` | Serve the endpoints |
+| `maxStations` | int | `256` | Cap; the least recently heard is dropped on reaching it |
+| `frameWindowSeconds` | number | `300` | How long a frame stays in `/metrics/frames` |
+| `stationIdleHours` | number | `6` | How long a station keeps its series after its last frame |
+
+`frameWindowSeconds` must comfortably exceed your scrape interval. Scraping more slowly loses
+frames; scraping faster sees some twice, which is harmless - a window is served rather than a
+queue, so nothing is consumed by being read, and InfluxDB identifies a point by measurement, tags
+and timestamp, so a repeated write of an identical point replaces it.
+
+### Collecting it
+
+Prometheus, or anything that scrapes Prometheus text (VictoriaMetrics, Grafana Alloy, the
+OpenTelemetry collector, Telegraf's `inputs.prometheus`):
+
+```yaml
+  - job_name: pdn-soundmodem
+    static_configs:
+      - targets: ['station.example:8099']
+```
+
+The per-frame feed needs a collector that pulls line protocol. With Telegraf:
+
+```toml
+[[inputs.http]]
+  urls = ["http://station.example:8099/metrics/frames"]
+  interval = "10s"
+  data_format = "influx"
+```
+
+A ready-made Grafana dashboard is in [`docs/grafana/pdn-soundmodem.json`](grafana/pdn-soundmodem.json),
+including the per-frame scatter. It picks its datasources through variables rather than hardcoding
+them, so it imports against whatever yours are called.
 
 ### Proposing modems
 

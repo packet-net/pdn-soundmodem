@@ -413,6 +413,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     public Func<HttpListenerContext, Task<bool>>? ApiHandler { get; set; }
 
     /// <summary>
+    /// What this station has heard, served at <c>/metrics</c> (Prometheus text) and
+    /// <c>/metrics/frames</c> (InfluxDB line protocol, one point per frame). Null serves
+    /// neither, which is the default: a station publishes what it hears only when asked to.
+    /// </summary>
+    public Telemetry.StationTelemetry? Metrics { get; set; }
+
+    /// <summary>
     /// What the signal survey has been doing - captures kept, captures a budget refused, and the
     /// disk it is using. Pushed rather than polled, and only on a change.
     /// </summary>
@@ -1181,6 +1188,30 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 && context.Request.Url?.AbsolutePath.StartsWith("/api/", StringComparison.Ordinal) == true
                 && await api(context).ConfigureAwait(false))
             {
+                return;
+            }
+
+            // Metrics, unauthenticated by design: a scraper is a machine on a schedule and every
+            // monitoring system in use expects to GET a URL and get text. What is served is
+            // callsigns and signal reports, which were transmitted in the clear on a shared
+            // channel - the same facts the waterfall page already shows anyone who opens it.
+            // Off unless a station asks for it (see the daemon's "metrics" config).
+            if (context.Request.HttpMethod == "GET"
+                && Metrics is { } metrics
+                && context.Request.Url?.AbsolutePath is "/metrics" or "/metrics/frames")
+            {
+                bool frames = context.Request.Url.AbsolutePath.EndsWith("frames", StringComparison.Ordinal);
+                byte[] body = System.Text.Encoding.UTF8.GetBytes(
+                    frames ? metrics.LineProtocol() : metrics.Exposition());
+
+                // The version parameter is what a Prometheus scraper negotiates on, and getting
+                // it wrong is a scrape that silently parses as nothing.
+                context.Response.ContentType = frames
+                    ? "text/plain; charset=utf-8"
+                    : "text/plain; version=0.0.4; charset=utf-8";
+                context.Response.ContentLength64 = body.Length;
+                await context.Response.OutputStream.WriteAsync(body).ConfigureAwait(false);
+                context.Response.Close();
                 return;
             }
 
