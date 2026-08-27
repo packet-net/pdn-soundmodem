@@ -185,6 +185,69 @@ public class StationTelemetryTests
     }
 
     [Fact]
+    public void A_Station_Below_Our_Centre_Never_Makes_A_Counter_Go_Backwards()
+    {
+        // Frequency offset is signed, and a counter that decreases is a counter Prometheus reads
+        // as having reset: rate() then returns a large positive number from the value after the
+        // drop. On the live 40 m station seven of twelve station-and-mode pairs sat low, so a
+        // single signed sum charted plausibly for the stations above centre and was nonsense for
+        // the ones below. Split by sign, both halves only ever go up.
+        var time = new FakeTime(Start);
+        var telemetry = new StationTelemetry(time);
+
+        telemetry.Record(2, Frame("GB7BPQ", 0), Quality(crcValid: true, offset: -18.5));
+        string first = telemetry.Exposition();
+        telemetry.Record(2, Frame("GB7BPQ", 0), Quality(crcValid: true, offset: -21.5));
+        telemetry.Record(2, Frame("GB7BPQ", 0), Quality(crcValid: true, offset: 4));
+
+        string second = telemetry.Exposition();
+        Value(first, "pdn_station_frequency_offset_below_hz_sum").Should().Be(18.5);
+        Value(second, "pdn_station_frequency_offset_below_hz_sum").Should().Be(40);
+        Value(second, "pdn_station_frequency_offset_above_hz_sum").Should().Be(4);
+        Value(second, "pdn_station_frames_with_offset_total").Should().Be(3);
+
+        // Which is what a dashboard divides out: (above - below) / count = (4 - 40) / 3 = -12 Hz.
+        ((Value(second, "pdn_station_frequency_offset_above_hz_sum")
+            - Value(second, "pdn_station_frequency_offset_below_hz_sum"))
+            / Value(second, "pdn_station_frames_with_offset_total"))
+            .Should().BeApproximately(-12, 0.001);
+    }
+
+    [Fact]
+    public void Every_Station_Publishes_Its_Latest_Offset_Beside_Its_Latest_Snr()
+    {
+        // The "right now, how far off is that station" readout, matching the SNR one. A point
+        // reading rather than a series, and named so that anyone charting it can see that.
+        var telemetry = new StationTelemetry(new FakeTime(Start));
+
+        telemetry.Record(2, Frame("GB7OXF", 0), Quality(crcValid: true, snr: 14.7, offset: -2.9));
+        telemetry.Record(2, Frame("EI0RSI", 1), Quality(crcValid: true, snr: 18, offset: 2.2));
+
+        string text = telemetry.Exposition();
+        text.Should().Contain("# TYPE pdn_station_frequency_offset_hz_last gauge");
+        text.Should().Contain(
+            "pdn_station_frequency_offset_hz_last{station=\"GB7OXF\",mode=\"afsk300-il2pc\"} -2.9");
+        text.Should().Contain(
+            "pdn_station_frequency_offset_hz_last{station=\"EI0RSI\",mode=\"afsk300-il2pc\"} 2.2");
+    }
+
+    [Fact]
+    public void A_Station_Whose_Offset_Was_Never_Measured_Reads_As_Unmeasured_Not_As_Zero()
+    {
+        // A single decoder measures no carrier offset, so its stations have none. Nothing may
+        // report that as "dead on frequency": the last-reading gauge is simply absent, and the
+        // divisor is zero, so the mean divides to no point at all rather than to 0 Hz.
+        var telemetry = new StationTelemetry(new FakeTime(Start));
+
+        telemetry.Record(0, Frame("PD4R", 0), Quality(crcValid: true, snr: 20.6));
+
+        string text = telemetry.Exposition();
+        text.Should().Contain("pdn_station_snr_db_last{station=\"PD4R\"");
+        text.Should().NotContain("pdn_station_frequency_offset_hz_last{station=\"PD4R\"");
+        Value(text, "pdn_station_frames_with_offset_total").Should().Be(0);
+    }
+
+    [Fact]
     public void The_Exposition_Is_Well_Formed_Prometheus_Text()
     {
         // Every metric carries HELP and TYPE, and every value parses as a number. A scraper that
@@ -217,6 +280,14 @@ public class StationTelemetryTests
 
         lines.Count(l => l.StartsWith("# HELP", StringComparison.Ordinal)).Should().BeGreaterThan(5);
     }
+
+    /// <summary>The value of the one series with this name, as a scraper would read it.</summary>
+    private static double Value(string exposition, string metric) =>
+        double.Parse(
+            exposition.Split('\n')
+                .Single(l => l.StartsWith(metric + "{", StringComparison.Ordinal))
+                .Split(' ')[^1],
+            System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>An AX.25 UI frame from a station, which is all this needs.</summary>
     private static byte[] Frame(string callsign, int ssid)

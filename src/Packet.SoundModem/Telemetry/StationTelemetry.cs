@@ -162,6 +162,22 @@ public sealed class StationTelemetry
     /// </code>
     /// <para>A <c>_last</c> gauge is published too, for a "right now" readout, and is named so
     /// that anyone building a time series on it can see what they are doing.</para>
+    /// <para><b>Frequency offset is signed, so it takes two counters rather than one.</b> A
+    /// station below our centre contributes a negative number, a single running sum of them
+    /// goes <em>down</em>, and a counter that goes down is a counter that reset: Prometheus
+    /// reads the drop as a restart and <c>rate()</c> returns a large positive rate from the
+    /// value after it. The live 40 m station is where that showed - seven of its twelve
+    /// station-and-mode pairs sat low, so the mean-offset chart read plausibly for the stations
+    /// above centre and was nonsense for the ones below, which is the worst way for a metric to
+    /// be wrong. So the sums are split by sign, each monotonic, and the mean is the difference
+    /// over the count:</para>
+    /// <code>
+    /// (rate(pdn_station_frequency_offset_above_hz_sum[10m])
+    ///  - rate(pdn_station_frequency_offset_below_hz_sum[10m]))
+    /// / rate(pdn_station_frames_with_offset_total[10m])
+    /// </code>
+    /// <para>Splitting rather than reaching for a gauge keeps the property that matters: it
+    /// still produces nothing at all over a window in which the station was not heard.</para>
     /// <para><b>Mode is a label on every series, not something to join on.</b> The tidy
     /// Prometheus idiom is an info metric carrying the detail and a
     /// <c>group_left</c> join to bring it in, and it was the wrong choice here for two reasons.
@@ -202,12 +218,18 @@ public sealed class StationTelemetry
             Series(text, live, "pdn_station_frames_with_snr_total", "counter",
                 "Frames whose receiver reported an SNR - the divisor for pdn_station_snr_db_sum.",
                 s => s.SnrCount);
-            Series(text, live, "pdn_station_frequency_offset_hz_sum", "counter",
-                "Sum of how far this station sat from our centre. Divide by "
-                + "pdn_station_frames_with_offset_total; drift over days is a reference going off.",
-                s => s.OffsetSum);
+            Series(text, live, "pdn_station_frequency_offset_above_hz_sum", "counter",
+                "Sum of how far this station sat above our centre, counting only the frames "
+                + "where it was above. See pdn_station_frequency_offset_below_hz_sum.",
+                s => s.OffsetAboveSum);
+            Series(text, live, "pdn_station_frequency_offset_below_hz_sum", "counter",
+                "The same below our centre, as a positive number. Subtract it from the above "
+                + "sum and divide by pdn_station_frames_with_offset_total for the mean offset; "
+                + "drift over days is a reference going off.",
+                s => s.OffsetBelowSum);
             Series(text, live, "pdn_station_frames_with_offset_total", "counter",
-                "The divisor for pdn_station_frequency_offset_hz_sum.", s => s.OffsetCount);
+                "Frames whose receiver measured an offset - the divisor for the two offset sums.",
+                s => s.OffsetCount);
             Series(text, live, "pdn_station_corrected_bytes_total", "counter",
                 "Bytes Reed-Solomon repaired: rises long before a link starts losing frames.",
                 s => s.Corrected);
@@ -215,6 +237,11 @@ public sealed class StationTelemetry
                 "SNR of the most recent frame. A point reading, not a time series - it holds "
                 + "its value between transmissions; build charts on the _sum and _total pair.",
                 s => s.LastSnr ?? double.NaN);
+            Series(text, live, "pdn_station_frequency_offset_hz_last", "gauge",
+                "How far the most recent frame sat from our centre, positive above. A point "
+                + "reading, not a time series - it holds its value between transmissions; build "
+                + "charts on the two offset sums and pdn_station_frames_with_offset_total.",
+                s => s.LastOffset ?? double.NaN);
 
             Metric(text, "pdn_frames_uncounted_total", "counter",
                 "Decodes not attributed to any station: no verified check sequence, or no "
@@ -373,13 +400,20 @@ public sealed class StationTelemetry
 
         public long SnrCount { get; private set; }
 
-        public double OffsetSum { get; private set; }
+        /// <summary>Offsets above centre only, so this never decreases - see
+        /// <see cref="OffsetBelowSum"/>.</summary>
+        public double OffsetAboveSum { get; private set; }
+
+        /// <summary>Offsets below centre, as magnitudes, so this never decreases either.</summary>
+        public double OffsetBelowSum { get; private set; }
 
         public long OffsetCount { get; private set; }
 
         public long Corrected { get; private set; }
 
         public double? LastSnr { get; private set; }
+
+        public double? LastOffset { get; private set; }
 
         public void Add(FrameEvent e)
         {
@@ -396,8 +430,17 @@ public sealed class StationTelemetry
 
             if (e.FrequencyOffsetHz is double offset)
             {
-                OffsetSum += offset;
+                if (offset >= 0)
+                {
+                    OffsetAboveSum += offset;
+                }
+                else
+                {
+                    OffsetBelowSum -= offset;
+                }
+
                 OffsetCount++;
+                LastOffset = offset;
             }
 
             Corrected += e.CorrectedBytes ?? 0;
