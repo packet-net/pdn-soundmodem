@@ -245,6 +245,22 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "Last offset"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "hertz"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "Frames/s"
             },
             "properties": [
@@ -352,7 +368,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "rate(pdn_station_frequency_offset_hz_sum{station=~\"$station\"}[$__rate_interval]) / rate(pdn_station_frames_with_offset_total{station=~\"$station\"}[$__rate_interval])",
+          "expr": "(rate(pdn_station_frequency_offset_above_hz_sum{station=~\"$station\"}[$__rate_interval]) - rate(pdn_station_frequency_offset_below_hz_sum{station=~\"$station\"}[$__rate_interval])) / rate(pdn_station_frames_with_offset_total{station=~\"$station\"}[$__rate_interval])",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -366,7 +382,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "rate(pdn_station_frames_total{station=~\"$station\"}[$__rate_interval])",
+          "expr": "pdn_station_frequency_offset_hz_last{station=~\"$station\"}",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -380,12 +396,26 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "rate(pdn_station_corrected_bytes_total{station=~\"$station\"}[$__rate_interval])",
+          "expr": "rate(pdn_station_frames_total{station=~\"$station\"}[$__rate_interval])",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
           "range": false,
           "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "rate(pdn_station_corrected_bytes_total{station=~\"$station\"}[$__rate_interval])",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "G"
         }
       ],
       "title": "Stations heard",
@@ -411,15 +441,17 @@
               "Value #A": true,
               "__name__": true,
               "instance": true,
-              "job": true
+              "job": true,
+              "Time 7": true
             },
             "indexByName": {},
             "renameByName": {
               "Value #B": "Mean SNR",
               "Value #C": "Last SNR",
               "Value #D": "Mean offset",
-              "Value #E": "Frames/s",
-              "Value #F": "Corrected bytes/s",
+              "Value #E": "Last offset",
+              "Value #F": "Frames/s",
+              "Value #G": "Corrected bytes/s",
               "mode": "Mode",
               "station": "Station",
               "sub_channel": "Sub-channel"
@@ -559,6 +591,134 @@
     },
     {
       "datasource": {
+        "type": "influxdb",
+        "uid": "${DS_INFLUXDB}"
+      },
+      "description": "One point per received frame: how far off our centre the sender actually was, against the time the frame was heard, coloured by station. Raw points from measurement pdn_frame, with no GROUP BY time and no aggregation function, so nothing is averaged away. A station whose cloud of points sits clear of zero is off frequency by that much; a cloud that walks across the chart over days is a reference drifting.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": true,
+            "axisColorMode": "text",
+            "axisLabel": "Offset",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "points",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 0,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "always",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "unit": "hertz"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [
+            "count",
+            "mean",
+            "min",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Count",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "10.4.0",
+      "targets": [
+        {
+          "alias": "$tag_station $tag_mode",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "${DS_INFLUXDB}"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "station"
+              ],
+              "type": "tag"
+            }
+          ],
+          "measurement": "pdn_frame",
+          "orderByTime": "ASC",
+          "policy": "autogen",
+          "query": "SELECT \"offset_hz\" FROM \"autogen\".\"pdn_frame\" WHERE $timeFilter AND \"station\" =~ /^($station)$/ GROUP BY \"station\",\"mode\"",
+          "rawQuery": true,
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "offset_hz"
+                ],
+                "type": "field"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "station",
+              "operator": "=~",
+              "value": "/^($station)$/"
+            }
+          ]
+        }
+      ],
+      "title": "Per-frame frequency offset scatter",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
@@ -618,7 +778,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 19
+        "y": 30
       },
       "id": 5,
       "options": {
@@ -660,7 +820,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Mean carrier frequency offset per station over the window. Watch this over days: a slow common drift across every station is our own reference moving, whereas one station walking off on its own is theirs.",
+      "description": "How far each station sat from our centre, averaged over the window, positive above. Two sums rather than one because the reading is signed: a station below centre makes a single running sum decrease, and a counter that decreases is a counter Prometheus reads as reset. Drift over days is a reference going off, in theirs or in yours.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -716,7 +876,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 19
+        "y": 30
       },
       "id": 6,
       "options": {
@@ -743,7 +903,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rate(pdn_station_frequency_offset_hz_sum{station=~\"$station\"}[$__rate_interval]) / rate(pdn_station_frames_with_offset_total{station=~\"$station\"}[$__rate_interval])",
+          "expr": "(rate(pdn_station_frequency_offset_above_hz_sum{station=~\"$station\"}[$__rate_interval]) - rate(pdn_station_frequency_offset_below_hz_sum{station=~\"$station\"}[$__rate_interval])) / rate(pdn_station_frames_with_offset_total{station=~\"$station\"}[$__rate_interval])",
           "instant": false,
           "legendFormat": "{{station}} {{mode}}",
           "range": true,
@@ -814,7 +974,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 27
+        "y": 38
       },
       "id": 7,
       "options": {
@@ -946,7 +1106,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 27
+        "y": 38
       },
       "id": 8,
       "options": {

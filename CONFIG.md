@@ -1117,10 +1117,12 @@ Every per-station series carries `station` and `mode`.
 | `pdn_station_bytes_total` | counter | Bytes in those frames |
 | `pdn_station_snr_db_sum` | counter | Sum of per-frame SNR |
 | `pdn_station_frames_with_snr_total` | counter | The divisor for it |
-| `pdn_station_frequency_offset_hz_sum` | counter | Sum of how far each station sat from our centre |
-| `pdn_station_frames_with_offset_total` | counter | The divisor for it |
+| `pdn_station_frequency_offset_above_hz_sum` | counter | Sum of how far each station sat **above** our centre |
+| `pdn_station_frequency_offset_below_hz_sum` | counter | The same **below** it, as a positive number |
+| `pdn_station_frames_with_offset_total` | counter | The divisor for the two of them |
 | `pdn_station_corrected_bytes_total` | counter | Bytes Reed-Solomon repaired |
 | `pdn_station_snr_db_last` | gauge | The most recent frame's SNR. A point reading |
+| `pdn_station_frequency_offset_hz_last` | gauge | The most recent frame's offset, positive above centre. A point reading |
 | `pdn_frames_uncounted_total` | counter | Decodes attributed to nobody |
 | `pdn_stations` | gauge | Station-and-mode series currently held |
 
@@ -1152,9 +1154,37 @@ all** when nothing was heard, which is the truth:
 rate(pdn_station_snr_db_sum[$__rate_interval]) / rate(pdn_station_frames_with_snr_total[$__rate_interval])
 ```
 
-Same shape for frequency offset, which over days is the one that shows a station's reference
-drifting. `pdn_station_snr_db_last` is published for a "right now" readout and is named so that
-anyone building a time series on it can see what they are doing.
+`pdn_station_snr_db_last` is published for a "right now" readout and is named so that anyone
+building a time series on it can see what they are doing.
+
+### Frequency offset takes two sums, because it has a sign
+
+How far a station sat from our centre is the measurement that shows a reference drifting over
+days, and the one that says which way to nudge the dial. It is charted the same way as SNR, with
+one difference forced on it: a station below our centre reads negative, so a single running sum
+of those readings goes **down** - and a counter that goes down is a counter that reset. Prometheus
+reads the drop as a restart and `rate()` returns a large positive number from the value after it.
+That is the worst way for a metric to be wrong, because it looks right: on the 40 m station seven
+of twelve station-and-mode pairs sat low, so the mean-offset chart was believable for the stations
+above centre and nonsense for the ones below.
+
+So the sums are split by sign - each one only ever climbs - and the mean is the difference over
+the count:
+
+```promql
+(rate(pdn_station_frequency_offset_above_hz_sum[$__rate_interval])
+ - rate(pdn_station_frequency_offset_below_hz_sum[$__rate_interval]))
+/ rate(pdn_station_frames_with_offset_total[$__rate_interval])
+```
+
+Positive is above your centre, so the sign reads the way an operator expects: `+18 Hz` means they
+are high and you would tune up to meet them.
+
+`pdn_station_frequency_offset_hz_last` is the point reading, beside `pdn_station_snr_db_last`.
+
+Only a modem that measures a carrier offset reports one, so a station heard on a single decoder
+has no offset series at all - `pdn_station_frames_with_offset_total` stays at zero and the mean
+divides to no point. That is deliberate: "not measured" must not chart as "dead on frequency".
 
 ### SSIDs are combined
 
