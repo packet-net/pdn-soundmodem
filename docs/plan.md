@@ -122,15 +122,14 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   The decoded-frames panel lists this station's own transmissions too, marked **TX**, and
   opens on the last 50 rows of the [`frameLog`](../CONFIG.md#framelog) where the station keeps
   one (2026-08-04).
-- 🟡 AX.25 links pane (2026-09-02, branch `feat/ax25-links-pane`): the waterfall page reads
-  every AX.25 frame it lists into packet.net's `Ax25LinkObserver` and shows the result as one
-  card per pair of stations per modem, each with its own feed narrated in plain words
-  ("resends #3", "polls, no answer yet", "accepts the call; link up") rather than the classic
-  monitor line. Slides up over the waterfall (L / Esc), resizable, detaches into its own
-  window at `/links` which asks the server for no spectrum. Warmed from the frame log on
-  start. **Blocked on a packet.net release**: the observer is on packet.net branch
-  `feat/ax25-link-observer` (unpushed at the time of writing); this repo builds against it
-  with `-p:Ax25SourcePath=...` and CI cannot until the `Packet.Ax25` pin moves past 0.23.0.
+- ✅ AX.25 links pane (2026-09-02): the waterfall page reads every AX.25 frame it lists into
+  packet.net's `Ax25LinkObserver` and shows the result as one card per pair of stations per
+  modem, each with its own feed narrated in plain words ("resends #3", "polls, no answer
+  yet", "accepts the call; link up") rather than the classic monitor line. Slides up over the
+  waterfall (L / Esc), resizable, detaches into its own window at `/links` which asks the
+  server for no spectrum. Warmed from the frame log on start. The observer shipped in
+  packet.net `lib-v0.31.0`; the `Packet.Ax25` and `Packet.Core` pins moved from 0.23.0 to
+  0.31.0 with it, and `-p:Ax25SourcePath=...` remains for iterating against a checkout.
 - ⬜ packet.net side: `kind: soundmodem` transport + `transport is ICarrierSense` probe at
   PortSupervisor (seam mapped in the research doc §5), spectrum + constellation SSE
   endpoints + waterfall/constellation UI (PdnPortTuningApi is the template; add to the SSE
@@ -251,7 +250,7 @@ Tom: "I'd like to surface some AX.25 state into the pdn-soundmodem browser UI, s
 
 **The pane is the part Tom will judge, and it has not been seen in a browser.** It slides up over the waterfall (button, or L; Esc closes), remembers whether it was open and how tall it was, resizes from a grip, and detaches to a popup window with the inline pane closing behind it. Cards order themselves live-first through a CSS `order` rather than by moving nodes, go dim after ten quiet minutes and are forgotten after six hours; each shows the pair, the modem, the state as a coloured pill, the per-direction figures with the worrying ones in amber, the concern as a banner, and a feed where a resend is a filled amber RESEND tag on the line, a poll a POLL outline, a gap GAP, a repeat AGAIN xN, and rejects, busy, refusals and protocol faults in red. What could not be done from this sandbox is look at it: Chrome cannot open a socket here (EACCES on the UDP socket it needs at start-up), so the layout is verified only through the node:vm page probe, which now drives the pane with a scripted connection and a resend and reads the cards back; the shim gained real `append` and `appendChild` to make that possible. Tom should open it on GB7RDG-2 before trusting the proportions.
 
-**Blocked on a packet.net release, deliberately.** The observer is on an unpushed packet.net branch. This repo builds against the checkout with `-p:Ax25SourcePath=/path/to/packet.net/src/Packet.Ax25/Packet.Ax25.csproj`, the FlexSourcePath pattern, and CI cannot build the branch until `Packet.Ax25` is released with it and the pin in `Directory.Packages.props` moves past 0.23.0. That release is Tom's step, as is the licence note: 0.23.0 is MIT and later Packet.Ax25 is AGPL-3.0-or-later, which CLAUDE.md allows alongside this library's GPL (M0LTE.Flex is the precedent) and the csproj comment says so. Tests: five server-side (a heard frame is narrated on its link, after its flat row; a browser opens on the links known; nothing heard sends no empty list; `/links` serves the page; the spectrum opt-out stops the binary lines and nothing else), one frame-log replay round trip, and the page probe's driven pane. 2144 passed with the local checkout.
+**Released the same day, in order.** The observer merged to packet.net main (PR #793) and shipped as `lib-v0.31.0` once `ci` and `interop` were green on the merge commit; after nuget.org indexed it, the `Packet.Ax25` and `Packet.Core` pins here moved from 0.23.0 to 0.31.0 and the build was checked against the published package rather than the checkout before merging. `-p:Ax25SourcePath=/path/to/packet.net/src/Packet.Ax25/Packet.Ax25.csproj` stays as the FlexSourcePath-style override for iterating against a checkout. Licence: 0.23.0 was MIT and Packet.Ax25 from 0.26.0 is AGPL-3.0-or-later, which CLAUDE.md allows alongside this library's GPL (M0LTE.Flex is the precedent); Tom directed the pin move. Tests: five server-side (a heard frame is narrated on its link, after its flat row; a browser opens on the links known; nothing heard sends no empty list; `/links` serves the page; the spectrum opt-out stops the binary lines and nothing else), one frame-log replay round trip, and the page probe's driven pane. 2144 passed with the local checkout.
 
 ### 2026-09-02 (later) - the transmit side becomes a scheduler: a queue per transmitter, and a hold through the reply window that carrier sense cannot provide
 
