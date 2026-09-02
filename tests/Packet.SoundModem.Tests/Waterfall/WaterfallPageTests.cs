@@ -492,6 +492,77 @@ public class WaterfallPageTests
     }
 
     /// <summary>
+    /// The AX.25 links pane: frames grouped by the pair of stations exchanging them, each card
+    /// saying in words what the last frame did, and a frame sent for the second time marked so
+    /// that it cannot be missed.
+    /// </summary>
+    /// <remarks>
+    /// The server sends one <c>links</c> message on connect and one <c>link</c> message per frame,
+    /// and everything asserted here is what the page makes of them: which card a line lands on,
+    /// what the card's header and figures say, and that the resend carries its tag. None of it
+    /// is visible to a server-side test, and "a retry is obvious" was the request.
+    /// </remarks>
+    [Fact]
+    public async Task The_Links_Pane_Groups_Frames_By_Link_And_Makes_A_Resend_Obvious()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw while building link cards");
+        probe.Connected.Should().BeTrue("the page needs the config to label a card with its modem");
+
+        // The pane is closed until asked for, and the button says what is going on behind it:
+        // one link up, and amber because that link is waiting on an answer.
+        probe.LinksHiddenBefore.Should().BeTrue("the pane is on demand, not always there");
+        probe.LinksHiddenAfter.Should().BeFalse();
+        probe.LinksOnArrival.N.Should().Be("1", "one of the two pairs is a link that is up");
+        probe.LinksOnArrival.Summary.Should().Contain("2 pairs heard").And.Contain("1 waiting on an answer");
+        probe.LinksOnArrival.ButtonClass.Should().Contain("alert", "an unanswered poll is the thing worth looking up for");
+        probe.LinksAfterEvent.ButtonClass.Should().NotContain("alert", "the poll has been answered");
+        probe.LinksAfterEvent.ButtonClass.Should().Contain("on", "the pane is open");
+
+        // One card per pair, the live one first regardless of the order they arrived in.
+        probe.LinkCards.Should().HaveCount(2, "two pairs of stations were heard");
+        LinkCard live = probe.LinkCards[0];
+        LinkCard beacon = probe.LinkCards[1];
+        live.ClassName.Should().Be("lk live", "a link that is up must be styled apart from a beacon");
+        live.Head.Should().Contain("M0LTE-9").And.Contain("GB7RDG-2").And.Contain(">connected<")
+            .And.Contain("AFSK1200", "the card says which modem the link is on");
+        live.Stats.Should().Contain("1 resend", "the figures count what went wrong")
+            .And.Contain("1 unacknowledged");
+        live.ConcernHidden.Should().BeTrue("the concern went away with the answer");
+        beacon.ClassName.Should().Contain("idle", "nothing has been heard on it for hours");
+        beacon.Head.Should().Contain("GB7BEX").And.Contain(">no link<");
+        beacon.Stats.Should().Contain("GB7BEX").And.NotContain(">ID<", "a beacon's addressee never sends anything");
+
+        // The feed reads as a transcript: oldest first, worded, and the link coming up in green.
+        live.Feed.Should().HaveCount(4);
+        live.Feed[0].Html.Should().Contain("calls GB7RDG-2");
+        live.Feed[1].ClassName.Should().Be("ln tx up", "the node's answer was ours, and brought the link up");
+        live.Feed[2].Html.Should().Contain("hello &lt;node&gt;",
+            "text off the air is quoted, and escaped, because a payload is not markup");
+
+        // The decisive line: the resend, tagged as such, with what it carried under it.
+        LinkFeedLine resend = live.Feed[3];
+        resend.ClassName.Should().Be("ln tx");
+        resend.Html.Should().Contain("resends #0")
+            .And.Contain("class=\"tag resend\"", "a retry has to be obvious, not inferred from a sequence number")
+            .And.Contain(">RESEND<")
+            .And.Contain("Welcome to GB7RDG-2");
+
+        // And a beacon through a digipeater says which one.
+        beacon.Feed.Should().ContainSingle().Which.Html.Should().Contain("beacon").And.Contain("via MB7UXX*");
+    }
+
+    /// <summary>
     /// Finds a panel row by something only it contains. Rows were addressed by index, which made
     /// every test depend on how many other things the probe happened to drive first - adding one
     /// step broke two unrelated tests. Order still matters and is asserted where it means
@@ -601,6 +672,20 @@ public class WaterfallPageTests
         return port;
     }
 
+    /// <summary>The links button and the pane's summary line, as the page left them.</summary>
+    private sealed record LinksButton(string N, string Summary, string ButtonClass);
+
+    private sealed record LinkFeedLine(string ClassName, string Html);
+
+    /// <summary>One card of the links pane: its parts as built, and its feed line by line.</summary>
+    private sealed record LinkCard(
+        string ClassName,
+        string Head,
+        string Stats,
+        string Concern,
+        bool ConcernHidden,
+        LinkFeedLine[] Feed);
+
     /// <summary>One state of the header's transmit readout, as the page left it.</summary>
     private sealed record TxReadout(
         string ClassName,
@@ -644,5 +729,10 @@ public class WaterfallPageTests
         string[] ChipsOnArrival,
         string[] ChipsAttached,
         string[] ChipsDetached,
+        bool LinksHiddenBefore,
+        bool LinksHiddenAfter,
+        LinksButton LinksOnArrival,
+        LinksButton LinksAfterEvent,
+        LinkCard[] LinkCards,
         string[] Thrown);
 }

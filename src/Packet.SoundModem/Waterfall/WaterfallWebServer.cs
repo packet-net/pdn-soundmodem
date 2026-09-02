@@ -1,10 +1,13 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Net;
 using System.Net.WebSockets;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading.Channels;
 using M0LTE.Dsp;
+using Packet.Ax25;
+using Packet.Ax25.Monitor;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Dsp;
 using Packet.SoundModem.Modems;
@@ -193,11 +196,23 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         public required Channel<(WebSocketMessageType Kind, byte[] Payload)> Queue { get; init; }
 
         private int _audio;
+        private int _spectrum = 1;
 
         public bool AudioEnabled
         {
             get => Volatile.Read(ref _audio) != 0;
             set => Volatile.Write(ref _audio, value ? 1 : 0);
+        }
+
+        /// <summary>
+        /// Whether this client wants waterfall lines. On by default; a detached links window
+        /// turns it off, because it draws no waterfall and thirty lines a second is most of what
+        /// a connection carries.
+        /// </summary>
+        public bool SpectrumEnabled
+        {
+            get => Volatile.Read(ref _spectrum) != 0;
+            set => Volatile.Write(ref _spectrum, value ? 1 : 0);
         }
     }
     private WaterfallSource? _source;
@@ -224,6 +239,26 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     private double _transmitSwrSum;
     private int _transmitSwrCount;
     private byte[]? _transmitMessage;
+
+    /// <summary>
+    /// The links pane's source: every AX.25 frame this station hears or sends, read as part of a
+    /// link between two stations rather than on its own, so the page can group frames by who is
+    /// talking to whom and say in words when one of them is retrying. Public so the daemon can
+    /// warm it from the frame log before the first browser arrives, and so a caller can read the
+    /// same picture the page shows.
+    /// </summary>
+    /// <remarks>
+    /// Fed under <see cref="_stateLock"/>, like the transmit readout and the host ports: a
+    /// browser connecting takes its opening snapshot under the same lock, so a frame either lands
+    /// in that snapshot or is broadcast to it afterwards, never both and never neither.
+    /// </remarks>
+    public Ax25LinkObserver Links { get; } = new(new Ax25LinkObserverOptions { RecentPerLink = LinkFeedLength });
+
+    /// <summary>
+    /// How many frames each link's card opens with. The page's own cap too; a card is a feed of
+    /// one conversation, and a hundred lines is a long way back into one.
+    /// </summary>
+    private const int LinkFeedLength = 100;
 
     /// <summary>Creates a server for <paramref name="channel"/>'s audio on
     /// <paramref name="port"/>.</summary>
@@ -823,7 +858,16 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         message[0] = transmit ? (byte)0x03 : (byte)0x01;
         BinaryPrimitives.WriteUInt32LittleEndian(message.AsSpan(1), (uint)index);
         bins.CopyTo(message.AsSpan(5));
-        Broadcast(WebSocketMessageType.Binary, message);
+        lock (_clientsLock)
+        {
+            foreach (WaterfallClient client in _clients)
+            {
+                if (client.SpectrumEnabled)
+                {
+                    client.Queue.Writer.TryWrite((WebSocketMessageType.Binary, message));
+                }
+            }
+        }
     }
 
     /// <summary>Frame event (receive thread): attribute the just-decoded frame to its burst
@@ -875,6 +919,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // handed on, which is the operator's own configuration answering back.
             plainIl2p: quality.PlainIl2p,
             monitorOnly: quality.MonitorOnly);
+
+        ObserveLink(subChannel, frame, transmitted: false);
     }
 
     /// <summary>Frame event (transmit thread): list what this station has just sent, so the
@@ -918,6 +964,140 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             from, to, frame.Length, snrDb: null, burstLines: null, offsetHz: null,
             corrected: null, crc: null, transmitted: true,
             txTrimHz: trimHz == 0 ? null : trimHz);
+
+        ObserveLink(subChannel, frame, transmitted: true);
+    }
+
+    /// <summary>
+    /// Reads a frame into <see cref="Links"/> and tells every browser what it meant for its
+    /// link, alongside the flat <c>frame</c> row it has already been sent. Nothing for bytes that
+    /// are not AX.25: the flat panel already lists those, and there is no link for them to be
+    /// part of.
+    /// </summary>
+    private void ObserveLink(int subChannel, byte[] frame, bool transmitted)
+    {
+        lock (_stateLock)
+        {
+            Ax25LinkEvent? evt = Links.Observe(
+                subChannel.ToString(CultureInfo.InvariantCulture), frame, _options.TimeProvider.GetUtcNow(), transmitted);
+            if (evt is null || Links.Snapshot(evt.LinkId) is not { } link)
+            {
+                return;
+            }
+
+            Broadcast(WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                type = "link",
+                link = LinkJson(link, withRecent: false),
+                @event = LinkEventJson(evt),
+            }, Json));
+        }
+    }
+
+    /// <summary>
+    /// Every link the observer holds, for a browser that has just connected: the cards it
+    /// opens with, each with its own backlog. Null when nothing has been heard.
+    /// </summary>
+    private byte[]? BuildLinksMessage()
+    {
+        IReadOnlyList<Ax25LinkSnapshot> links = Links.Snapshot();
+        if (links.Count == 0)
+        {
+            return null;
+        }
+
+        return JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            type = "links",
+            links = links.Select(l => LinkJson(l, withRecent: true)),
+        }, Json);
+    }
+
+    /// <summary>
+    /// A link as the page draws its card: the pair, where it stands, what each side has sent,
+    /// and the one thing wrong with it if anything is. Field names are short because there is
+    /// one of these per frame on a busy channel.
+    /// </summary>
+    private static object LinkJson(Ax25LinkSnapshot link, bool withRecent) => new
+    {
+        id = link.Id,
+        sub = int.TryParse(link.Port, NumberStyles.Integer, CultureInfo.InvariantCulture, out int sub) ? sub : (int?)null,
+        a = link.A.ToString(),
+        b = link.B.ToString(),
+        state = LinkStateName(link.State),
+        inferred = link.Inferred ? true : (bool?)null,
+        modulo = link.Modulo,
+        first = link.FirstSeen.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
+        last = link.LastSeen.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
+        ab = SideJson(link.AtoB),
+        ba = SideJson(link.BtoA),
+        concern = link.Concern,
+        recent = withRecent ? link.Recent.Select(LinkEventJson) : null,
+    };
+
+    private static object SideJson(Ax25LinkSideStats side) => new
+    {
+        frames = side.Frames,
+        data = side.DataFrames,
+        bytes = side.DataBytes,
+        resends = side.Resends,
+        polls = side.Polls,
+        pollsOpen = side.PollsUnanswered,
+        rejects = side.Rejects,
+        callsOpen = side.CallsUnanswered,
+        busy = side.Busy ? true : (bool?)null,
+        awaiting = side.AwaitingAck,
+    };
+
+    /// <summary>One frame on a link, as one line of its card's feed.</summary>
+    private static object LinkEventJson(Ax25LinkEvent evt) => new
+    {
+        at = evt.At.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
+        from = evt.From.ToString(),
+        to = evt.To.ToString(),
+        via = evt.Via.Count == 0 ? null : evt.Via,
+        kind = evt.FrameType.Mnemonic(),
+        cmd = evt.IsCommand,
+        pf = evt.PollFinal ? true : (bool?)null,
+        ns = evt.Ns,
+        nr = evt.Nr,
+        len = evt.InfoLength,
+        text = evt.Text,
+        say = evt.Narration,
+        flags = LinkFlagNames(evt.Flags),
+        count = evt.Count,
+        state = LinkStateName(evt.State),
+        tx = evt.Transmitted ? true : (bool?)null,
+    };
+
+    private static string LinkStateName(Ax25LinkState state) => state switch
+    {
+        Ax25LinkState.Calling => "calling",
+        Ax25LinkState.Connected => "connected",
+        Ax25LinkState.Disconnecting => "disconnecting",
+        Ax25LinkState.Disconnected => "disconnected",
+        _ => "unconnected",
+    };
+
+    /// <summary>The set flags as lower-camel names ("resend", "poll", "linkUp"), or null for none.</summary>
+    private static string[]? LinkFlagNames(Ax25LinkFlags flags)
+    {
+        if (flags == Ax25LinkFlags.None)
+        {
+            return null;
+        }
+
+        var names = new List<string>();
+        foreach (Ax25LinkFlags flag in Enum.GetValues<Ax25LinkFlags>())
+        {
+            if (flag != Ax25LinkFlags.None && flags.HasFlag(flag))
+            {
+                string name = flag.ToString();
+                names.Add(char.ToLowerInvariant(name[0]) + name[1..]);
+            }
+        }
+
+        return [.. names];
     }
 
     /// <summary>
@@ -1056,10 +1236,17 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         {
             using JsonDocument request = JsonDocument.Parse(utf8.ToArray());
             if (request.RootElement.TryGetProperty("type", out JsonElement type)
-                && type.GetString() == "audio"
                 && request.RootElement.TryGetProperty("on", out JsonElement on))
             {
-                client.AudioEnabled = on.ValueKind == JsonValueKind.True;
+                switch (type.GetString())
+                {
+                    case "audio":
+                        client.AudioEnabled = on.ValueKind == JsonValueKind.True;
+                        break;
+                    case "spectrum":
+                        client.SpectrumEnabled = on.ValueKind == JsonValueKind.True;
+                        break;
+                }
             }
         }
         catch (JsonException)
@@ -1215,8 +1402,10 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 return;
             }
 
+            // /links is the same page: it reads its own path and opens as the links pane alone,
+            // for a window an operator has torn off the waterfall.
             if (context.Request.HttpMethod == "GET" &&
-                context.Request.Url?.AbsolutePath is "/" or "/index.html")
+                context.Request.Url?.AbsolutePath is "/" or "/index.html" or "/links")
             {
                 byte[] page = LoadPage();
                 context.Response.ContentType = "text/html; charset=utf-8";
@@ -1289,10 +1478,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         // instant instead and a change racing the handshake arrives twice or not at all.
         byte[]? transmit;
         byte[]? hosts;
+        byte[]? links;
         lock (_stateLock)
         {
             transmit = _transmitMessage;
             hosts = _hostPortsMessage;
+            links = BuildLinksMessage();
             lock (_clientsLock)
             {
                 _clients.Add(client);
@@ -1327,6 +1518,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                     .ConfigureAwait(false);
             }
 
+            if (links is not null)
+            {
+                await socket.SendAsync(links, WebSocketMessageType.Text, true, _stopping.Token)
+                    .ConfigureAwait(false);
+            }
+
             Task send = SendLoopAsync(socket, queue);
             var buffer = new byte[1024];
             while (socket.State == WebSocketState.Open && !_stopping.IsCancellationRequested)
@@ -1338,7 +1535,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                     break;
                 }
 
-                // The only thing a browser asks for: start or stop sending it audio.
+                // What a browser asks for: audio on or off, waterfall lines on or off.
                 if (received.MessageType == WebSocketMessageType.Text && received.Count > 0)
                 {
                     TryApplyClientRequest(client, buffer.AsSpan(0, received.Count));

@@ -332,6 +332,62 @@ internal sealed class FrameLog : IAsyncDisposable
         return frames;
     }
 
+    /// <summary>
+    /// The last <paramref name="count"/> frames with their bytes, <b>oldest first</b>, for
+    /// replaying through something that reads frames rather than rows: the waterfall's link
+    /// observer, which a restart would otherwise leave knowing nothing about links that were
+    /// up a moment ago. Same reader, same shrug on a log that cannot be read.
+    /// </summary>
+    internal IReadOnlyList<(LoggedFrame Frame, byte[] Payload)> RecentWithPayload(int count)
+    {
+        if (count <= 0)
+        {
+            return [];
+        }
+
+        var frames = new List<(LoggedFrame, byte[])>(count);
+        try
+        {
+            using var reader = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = Path,
+                Mode = SqliteOpenMode.ReadOnly,
+            }.ToString());
+            reader.Open();
+            using SqliteCommand query = reader.CreateCommand();
+            query.CommandText = """
+                SELECT heard_at, sub_channel, mode, source, destination,
+                       length, corrected, crc_valid, offset_hz, direction, tx_trim_hz, payload
+                FROM frames ORDER BY id DESC LIMIT $count
+                """;
+            query.Parameters.AddWithValue("$count", count);
+            using SqliteDataReader row = query.ExecuteReader();
+            while (row.Read())
+            {
+                frames.Add((new LoggedFrame(
+                    DateTimeOffset.Parse(row.GetString(0), System.Globalization.CultureInfo.InvariantCulture),
+                    row.GetInt32(1),
+                    row.GetString(2),
+                    row.IsDBNull(3) ? null : row.GetString(3),
+                    row.IsDBNull(4) ? null : row.GetString(4),
+                    row.GetInt32(5),
+                    row.IsDBNull(6) ? null : row.GetInt32(6),
+                    row.IsDBNull(7) ? null : row.GetInt32(7) != 0,
+                    row.IsDBNull(8) ? null : row.GetDouble(8),
+                    string.Equals(row.GetString(9), "tx", StringComparison.Ordinal),
+                    row.IsDBNull(10) ? null : row.GetDouble(10)),
+                    (byte[])row.GetValue(11)));
+            }
+        }
+        catch (Exception e) when (e is SqliteException or IOException or FormatException or InvalidCastException)
+        {
+            return [];
+        }
+
+        frames.Reverse();
+        return frames;
+    }
+
     private void WriteLoop()
     {
         using SqliteCommand insert = _connection.CreateCommand();

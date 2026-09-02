@@ -113,11 +113,15 @@ function el(id) {
     id, textContent: "", innerHTML: "", value: "0.8", checked: false, disabled: false,
     width: 800, height: 300, style: {}, children: [], dataset: {},
     className: "",
-    getContext: () => ctx2d, appendChild: noop, removeChild: noop, insertBefore: noop,
+    getContext: () => ctx2d, removeChild: noop, insertBefore: noop,
     addEventListener: noop, removeEventListener: noop, getBoundingClientRect: () => ({ width: 800, height: 300, left: 0, top: 0 }),
     querySelector: () => el(id + "-q"), querySelectorAll: () => [], focus: noop, scrollTo: noop,
-    append: noop, setAttribute: noop, getAttribute: () => null,
+    setAttribute: noop, getAttribute: () => null,
     closest: () => null, contains: () => false, add: noop, options: [], selectedIndex: 0,
+    // Real as well, because the links pane builds each card from parts held in hand and appends
+    // feed lines at the bottom - the opposite end from the frames panel's prepend.
+    append(...nodes) { for (const node of nodes) { node._parent = this; this.children.push(node); } },
+    appendChild(node) { node._parent = this; this.children.push(node); return node; },
     click() { this.onclick && this.onclick({ preventDefault: noop }); },
     // Real enough for the decoded-frames panel, which builds rows with createElement, sets their
     // innerHTML and prepends them - so the markup it produces can be read back and asserted on.
@@ -315,6 +319,61 @@ const frames = sandbox.document.getElementById("frames").children;
 const rows = frames.map(c => c.innerHTML);
 const rowClasses = frames.map(c => c.className);
 
+// The AX.25 links pane, driven with the two messages the server sends it: every link it knows
+// on connect, then one frame live. Two pairs on two modems, one of them up and waiting on an
+// answer; then the frame this pane exists for, a data frame being sent for the second time.
+// What is read back is the card as built - header, figures, concern, feed - because "a resend is
+// obvious" is a claim about the markup and nothing on the server can see it.
+run(`showLinks(false)`);
+const linksHiddenBefore = sandbox.document.getElementById("links").hidden === true;
+run(`onLinks({type:"links", links:[
+  {id:"0|GB7RDG-2<>M0LTE-9", sub:0, a:"M0LTE-9", b:"GB7RDG-2", state:"connected", inferred:null, modulo:8,
+   first:"2026-09-02T12:00:00.000Z", last:"${new Date().toISOString()}",
+   ab:{frames:3, data:1, bytes:12, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:0},
+   ba:{frames:2, data:1, bytes:49, resends:0, polls:1, pollsOpen:1, rejects:0, callsOpen:0, busy:null, awaiting:1},
+   concern:"GB7RDG-2 timed out waiting and is polling",
+   recent:[
+     {at:"2026-09-02T12:00:00.000Z", from:"M0LTE-9", to:"GB7RDG-2", via:null, kind:"SABM", cmd:true, pf:true, ns:null, nr:null, len:0, text:null, say:"calls GB7RDG-2", flags:null, count:null, state:"calling", tx:null},
+     {at:"2026-09-02T12:00:01.000Z", from:"GB7RDG-2", to:"M0LTE-9", via:null, kind:"UA", cmd:false, pf:true, ns:null, nr:null, len:0, text:null, say:"accepts the call; link up", flags:["final","linkUp"], count:null, state:"connected", tx:true},
+     {at:"2026-09-02T12:00:02.000Z", from:"M0LTE-9", to:"GB7RDG-2", via:null, kind:"I", cmd:true, pf:null, ns:0, nr:0, len:12, text:"hello <node>", say:"sends #0, 12 bytes", flags:null, count:null, state:"connected", tx:null}
+   ]},
+  {id:"1|GB7BEX<>ID", sub:1, a:"GB7BEX", b:"ID", state:"unconnected", inferred:null, modulo:8,
+   first:"2026-09-02T11:00:00.000Z", last:"2026-09-02T11:00:00.000Z",
+   ab:{frames:1, data:0, bytes:0, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:null},
+   ba:{frames:0, data:0, bytes:0, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:null},
+   concern:null,
+   recent:[
+     {at:"2026-09-02T11:00:00.000Z", from:"GB7BEX", to:"ID", via:["MB7UXX*"], kind:"UI", cmd:true, pf:null, ns:null, nr:null, len:18, text:"GB7BEX BBS Exeter", say:"beacon, 18 bytes", flags:["digipeated"], count:null, state:"unconnected", tx:null}
+   ]}
+]})`);
+const linksOnArrival = {
+  n: sandbox.document.getElementById("linksN").textContent,
+  summary: sandbox.document.getElementById("linksSummary").textContent,
+  buttonClass: sandbox.document.getElementById("linksBtn").className,
+};
+run(`onLinkEvent({type:"link",
+  link:{id:"0|GB7RDG-2<>M0LTE-9", sub:0, a:"M0LTE-9", b:"GB7RDG-2", state:"connected", inferred:null, modulo:8,
+   first:"2026-09-02T12:00:00.000Z", last:"${new Date().toISOString()}",
+   ab:{frames:3, data:1, bytes:12, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:0},
+   ba:{frames:3, data:1, bytes:49, resends:1, polls:1, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:1},
+   concern:null, recent:null},
+  event:{at:"${new Date().toISOString()}", from:"GB7RDG-2", to:"M0LTE-9", via:null, kind:"I", cmd:true, pf:null, ns:0, nr:1, len:49, text:"Welcome to GB7RDG-2", say:"resends #0", flags:["resend"], count:null, state:"connected", tx:true}})`);
+run(`showLinks(true)`);
+const linksHiddenAfter = sandbox.document.getElementById("links").hidden === true;
+const linkCards = sandbox.document.getElementById("linkCards").children.map(card => ({
+  className: card.className,
+  head: card.children[0]?.innerHTML ?? "",
+  stats: card.children[1]?.innerHTML ?? "",
+  concern: card.children[2]?.textContent ?? "",
+  concernHidden: card.children[2]?.hidden === true,
+  feed: (card.children[3]?.children ?? []).map(row => ({ className: row.className, html: row.innerHTML })),
+}));
+const linksAfterEvent = {
+  n: sandbox.document.getElementById("linksN").textContent,
+  summary: sandbox.document.getElementById("linksSummary").textContent,
+  buttonClass: sandbox.document.getElementById("linksBtn").className,
+};
+
 // The opening backlog out of the station's frame log. Driven last, and after the live rows are
 // captured above, so what it does to a panel that already has rows in it can be seen - which is
 // the reconnect case. Timestamps: one from today so the row shows a clock time, one from a past
@@ -352,6 +411,11 @@ console.log(JSON.stringify({
   historyTag,
   historyRows: afterHistory.map(c => c.innerHTML),
   historyRowClasses: afterHistory.map(c => c.className),
+  linksHiddenBefore,
+  linksHiddenAfter,
+  linksOnArrival,
+  linksAfterEvent,
+  linkCards,
   // What the stylesheet makes of a row that is both ours and from before the page opened,
   // against the two rows it is made of.
   txHistBorder: borderLeft("fr tx hist"),

@@ -940,6 +940,198 @@ public class WaterfallWebServerTests : IAsyncLifetime
         beacon.Should().NotThrow();
     }
 
+    /// <summary>
+    /// A heard AX.25 frame is told to the browser twice: once as the flat row it always was, and
+    /// once as what it meant for the pair of stations it passed between.
+    /// </summary>
+    /// <remarks>
+    /// The links pane groups frames by who was talking to whom on which modem, and says in
+    /// words what each frame did. The flat panel stays exactly as it was, so a browser that
+    /// never opens the pane sees nothing different.
+    /// </remarks>
+    [Fact]
+    public async Task A_Heard_Frame_Is_Narrated_On_The_Link_It_Belongs_To()
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        var transmitter = new Afsk1200Modem(SampleRate, _ => { });
+        _channel.ProcessReceive(transmitter.Modulate(TestFrame(), txDelayMilliseconds: 100));
+        _channel.ProcessReceive(new float[SampleRate / 4]);
+
+        // The flat row first, as ever; then the link.
+        JsonDocument? link = null;
+        var seen = new List<string>();
+        while (link is null)
+        {
+            JsonDocument message = await NextTextAsync(socket);
+            string type = message.RootElement.GetProperty("type").GetString()!;
+            seen.Add(type);
+            if (type == "link")
+            {
+                link = message;
+            }
+            else
+            {
+                message.Dispose();
+            }
+        }
+
+        // The row the panel already lists comes first, and nothing else came between.
+        seen.Should().Equal("frame", "link");
+
+        JsonElement card = link.RootElement.GetProperty("link");
+        card.GetProperty("id").GetString().Should().Be("0|GB7RDG<>M0LTE-9", "one link per pair per modem");
+        card.GetProperty("sub").GetInt32().Should().Be(0);
+        card.GetProperty("a").GetString().Should().Be("M0LTE-9", "the first station heard is side A");
+        card.GetProperty("b").GetString().Should().Be("GB7RDG");
+        card.GetProperty("state").GetString().Should().Be("unconnected", "a UI frame makes no connection");
+        card.GetProperty("ab").GetProperty("frames").GetInt32().Should().Be(1);
+        card.GetProperty("ba").GetProperty("frames").GetInt32().Should().Be(0);
+        card.GetProperty("concern").ValueKind.Should().Be(JsonValueKind.Null, "nothing is wrong with a beacon");
+        card.GetProperty("recent").ValueKind.Should().Be(
+            JsonValueKind.Null, "the live message carries the one frame, not the whole backlog again");
+
+        JsonElement evt = link.RootElement.GetProperty("event");
+        evt.GetProperty("kind").GetString().Should().Be("UI");
+        evt.GetProperty("from").GetString().Should().Be("M0LTE-9");
+        evt.GetProperty("to").GetString().Should().Be("GB7RDG");
+        evt.GetProperty("len").GetInt32().Should().Be(8);
+        evt.GetProperty("text").GetString().Should().Be("hi there", "printable text is shown as it was sent");
+        evt.GetProperty("say").GetString().Should().Be("unconnected");
+        evt.GetProperty("tx").ValueKind.Should().Be(JsonValueKind.Null, "somebody else sent this one");
+        evt.GetProperty("flags").ValueKind.Should().Be(JsonValueKind.Null);
+        link.Dispose();
+    }
+
+    /// <summary>
+    /// A browser that connects after the station has been listening opens on every link it
+    /// knows about, each with the frames that made it what it is.
+    /// </summary>
+    /// <remarks>
+    /// The pane would otherwise open empty on a busy channel, and a connection that has been up
+    /// for an hour would appear to begin with whatever frame happened to come next.
+    /// </remarks>
+    [Fact]
+    public async Task A_Browser_Opens_On_The_Links_The_Station_Already_Knows()
+    {
+        var heardAt = new DateTimeOffset(2026, 9, 2, 10, 15, 0, TimeSpan.Zero);
+        _server.Links.Observe("0", TestFrame(), heardAt);
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+
+        (_, byte[] first) = await Receive(socket);
+        using JsonDocument config = JsonDocument.Parse(first);
+        config.RootElement.GetProperty("type").GetString().Should()
+            .Be("config", "the config still comes first");
+
+        using JsonDocument links = await NextTextAsync(socket);
+        links.RootElement.GetProperty("type").GetString().Should().Be("links");
+
+        JsonElement cards = links.RootElement.GetProperty("links");
+        cards.GetArrayLength().Should().Be(1);
+        JsonElement card = cards[0];
+        card.GetProperty("id").GetString().Should().Be("0|GB7RDG<>M0LTE-9");
+        card.GetProperty("state").GetString().Should().Be("unconnected");
+        DateTimeOffset.Parse(card.GetProperty("last").GetString()!).Should()
+            .Be(heardAt, "a card says when its pair was last heard, not when the browser arrived");
+
+        JsonElement backlog = card.GetProperty("recent");
+        backlog.GetArrayLength().Should().Be(1, "the card opens with the frames behind it");
+        JsonElement recent = backlog[0];
+        recent.GetProperty("from").GetString().Should().Be("M0LTE-9");
+        recent.GetProperty("say").GetString().Should().Be("unconnected");
+        recent.GetProperty("text").GetString().Should().Be("hi there");
+    }
+
+    [Fact]
+    public async Task A_Browser_With_Nothing_Heard_Yet_Gets_No_Empty_Links_Message()
+    {
+        // The pane draws its own "nothing heard yet" note; an empty list would only make it
+        // clear a panel that was already clear, on every reconnect.
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        _server.SetRadioStatus("bounding the wait");
+
+        using JsonDocument next = await NextTextAsync(socket);
+        next.RootElement.GetProperty("type").GetString().Should().Be("radio", "there were no links to send");
+    }
+
+    [Fact]
+    public async Task The_Links_Pane_Has_A_Page_Of_Its_Own_To_Detach_Into()
+    {
+        // The same page, served at a second path: it reads its own address and opens as the
+        // links pane alone, for a browser window with no waterfall behind it.
+        using var http = new HttpClient();
+
+        string page = await http.GetStringAsync($"http://127.0.0.1:{_port}/links", _cancellation.Token);
+
+        page.Should().Contain("<!doctype html>").And.Contain("linkCards");
+    }
+
+    /// <summary>
+    /// A browser that says it does not want the spectrum stops getting it, and goes on getting
+    /// everything else.
+    /// </summary>
+    /// <remarks>
+    /// The detached links window has no waterfall to paint, and thirty binary lines a second
+    /// for nothing would be the cost of leaving it open. Text messages, the links among them,
+    /// must keep coming or the window is pointless.
+    /// </remarks>
+    [Fact]
+    public async Task A_Browser_That_Declines_The_Spectrum_Stops_Getting_It_And_Nothing_Else()
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+
+        var tone = new float[SampleRate];
+        for (int n = 0; n < tone.Length; n++)
+        {
+            tone[n] = 0.3f * MathF.Sin(2 * MathF.PI * 1700 * n / SampleRate);
+        }
+
+        await socket.SendAsync(
+            Encoding.UTF8.GetBytes("""{"type":"spectrum","on":false}"""),
+            WebSocketMessageType.Text, true, _cancellation.Token);
+
+        // The request is applied by the server's receive loop asynchronously, so lines already
+        // queued, or produced before it lands, may still arrive. Each round feeds a second of
+        // tone and then a text message to read up to; the opt-out has taken once a whole round
+        // arrives with no spectrum line in it, and it must then hold for the round after.
+        int cleanRounds = 0;
+        for (int round = 0; round < 20 && cleanRounds < 2; round++)
+        {
+            await Task.Delay(50);
+            _channel.ProcessReceive(tone);
+            _server.SetRadioStatus($"round {round}");
+
+            bool spectrum = false;
+            bool marker = false;
+            while (!marker)
+            {
+                (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
+                if (kind == WebSocketMessageType.Binary)
+                {
+                    spectrum |= payload[0] == 0x01;
+                    continue;
+                }
+
+                using JsonDocument text = JsonDocument.Parse(payload);
+                marker = text.RootElement.GetProperty("type").GetString() == "radio"
+                    && text.RootElement.GetProperty("status").GetString() == $"round {round}";
+            }
+
+            cleanRounds = spectrum ? 0 : cleanRounds + 1;
+        }
+
+        cleanRounds.Should().Be(2, "the spectrum must stop once declined, and stay stopped");
+    }
+
     private async Task<(WebSocketMessageType Kind, byte[] Payload)> Receive(ClientWebSocket socket)
     {
         var buffer = new byte[64 * 1024];

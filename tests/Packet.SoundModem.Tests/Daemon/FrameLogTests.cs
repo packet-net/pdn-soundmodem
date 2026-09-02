@@ -585,6 +585,46 @@ public class FrameLogTests : IDisposable
         log.Recent(0).Should().BeEmpty("asking for none is not a query worth running");
     }
 
+    /// <summary>
+    /// The frames themselves come back, oldest first and each saying whose it was, so the link
+    /// observer can be walked through them on start-up as if it had been listening all along.
+    /// </summary>
+    /// <remarks>
+    /// The waterfall's links pane is rebuilt from what the observer has seen. Without this a
+    /// restart would open with every card missing, and the first frame of a link that has been
+    /// up for an hour would be narrated as a stranger's, with the observer guessing at its
+    /// state from a lone RR.
+    /// </remarks>
+    [Fact]
+    public async Task The_Backlog_Can_Be_Replayed_Frame_By_Frame_With_Its_Bytes()
+    {
+        await using FrameLog log = FrameLog.Open(DbPath, _time);
+        log.Record(0, Frame(from: "G0AAA"), Quality(), audioHz: 1500, rfHz: 7_051_600);
+        log.RecordTransmitted(0, Frame(from: "M0LTE"), "bpsk300-il2pc", 1500, 7_051_600);
+        log.Record(1, [1, 2, 3, 4], Quality("freedv-datac1"), null, null);
+
+        for (int i = 0; i < 100 && log.Recent(10).Count < 3; i++)
+        {
+            await Task.Delay(20);
+        }
+
+        IReadOnlyList<(Packet.SoundModem.Waterfall.LoggedFrame Frame, byte[] Payload)> replay =
+            log.RecentWithPayload(2);
+
+        // The last two, oldest first, bytes intact: the one we sent and the one that will not
+        // parse. Both are in the record and both are for the observer to make of what it can.
+        replay.Should().HaveCount(2, "the newest two were asked for");
+        replay[0].Frame.From.Should().Be("M0LTE");
+        replay[0].Frame.Transmitted.Should().BeTrue("the observer must know which side we are");
+        replay[0].Payload.Should().Equal(Frame(from: "M0LTE"));
+        replay[1].Frame.SubChannel.Should().Be(1);
+        replay[1].Frame.Transmitted.Should().BeFalse();
+        replay[1].Payload.Should().Equal([1, 2, 3, 4]);
+        replay[1].Frame.HeardAt.Should().Be(new DateTimeOffset(2026, 8, 2, 14, 30, 0, TimeSpan.Zero));
+
+        log.RecentWithPayload(0).Should().BeEmpty("asking for none is not a query worth running");
+    }
+
     [Fact]
     public async Task Recording_Does_Not_Wait_On_The_Disk()
     {
