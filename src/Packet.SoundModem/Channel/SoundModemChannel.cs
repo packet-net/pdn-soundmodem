@@ -756,8 +756,16 @@ public sealed class SoundModemChannel
                 $"output rate {output.SampleRate} != channel rate {SampleRate}", nameof(output));
         }
 
-        while (!cancellation.IsCancellationRequested)
+        while (true)
         {
+            // Thrown rather than tested in the while condition, because cancelling this loop has
+            // always faulted the task with OperationCanceledException and callers rely on it -
+            // the old `await reader.WaitToReadAsync(cancellation)` threw from the await. With the
+            // scheduler's own wait now able to return immediately when work is already queued,
+            // a plain `while (!IsCancellationRequested)` let the loop exit cleanly instead, which
+            // is a silent stop for a transmitter that was cancelled. Race-dependent, so it passed
+            // locally in Debug and failed on CI in Release.
+            cancellation.ThrowIfCancellationRequested();
             await WaitForWorkAsync(cancellation).ConfigureAwait(false);
 
             // Whose turn is it? While a turnaround hold is running the answer is only the
