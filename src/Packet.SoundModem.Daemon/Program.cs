@@ -1233,6 +1233,22 @@ if (waterfallConfig is not null)
         },
         // One bind for every listener; the waterfall no longer carries its own.
         bindAddress);
+
+    // The links pane opens on the links the station already knows about. The log has the
+    // bytes of every frame it heard or sent, so the observer is simply shown them again, in
+    // order and with their own timestamps: a link that was up when this process last stopped is
+    // up on the first page load rather than after its next frame. Two thousand frames is an
+    // afternoon on a busy port and a few milliseconds of work.
+    if (frameLog is not null)
+    {
+        foreach ((LoggedFrame logged, byte[] payload) in frameLog.RecentWithPayload(2000))
+        {
+            waterfallServer.Links.Observe(
+                logged.SubChannel.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                payload, logged.HeardAt, logged.Transmitted);
+        }
+    }
+
     try
     {
         waterfallServer.Start();

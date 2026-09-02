@@ -18,10 +18,14 @@
          a pack/publish round trip per change is friction with nothing to show for it.
          Unset (the default and what CI uses), the published package is consumed. -->
     <PackageReference Include="M0LTE.Flex" Condition="'$(FlexSourcePath)' == ''" />
-    <!-- The AX.25 codec, so nothing here has to reimplement one. MIT, so it sits under this
-         library's GPL-3.0-or-later without complication, and the dependency runs the safe way
-         round: packet.net's AX.25 package knows nothing about this modem. -->
-    <PackageReference Include="Packet.Ax25" />
+    <!-- The AX.25 codec and link observer, so nothing here has to reimplement either. The
+         pinned 0.23.0 is MIT; from 0.26.0 the package is AGPL-3.0-or-later, which CLAUDE.md
+         allows alongside this library's GPL-3.0-or-later (M0LTE.Flex is the precedent). The
+         dependency runs the safe way round: packet.net's AX.25 package knows nothing about
+         this modem. Build against a local packet.net checkout with
+         `-p:Ax25SourcePath=/path/to/packet.net/src/Packet.Ax25/Packet.Ax25.csproj`, the
+         same pattern as FlexSourcePath, while the two are developed together. -->
+    <PackageReference Include="Packet.Ax25" Condition="'$(Ax25SourcePath)' == ''" />
     <PackageReference Include="M0LTE.Radio.Audio" />
     <!-- Same local-checkout override pattern as FlexSourcePath, for the FEC, IL2P and
          ARDOP packages - the receive campaigns iterate across these repos. -->
@@ -39,6 +43,10 @@
 
   <ItemGroup Condition="'$(FlexSourcePath)' != ''">
     <ProjectReference Include="$(FlexSourcePath)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(Ax25SourcePath)' != ''">
+    <ProjectReference Include="$(Ax25SourcePath)" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(Il2pSourcePath)' != ''">

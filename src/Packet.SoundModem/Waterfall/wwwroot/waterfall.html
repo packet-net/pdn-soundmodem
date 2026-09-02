@@ -208,6 +208,125 @@
   .fr.hist.tx { border-left-color: #31d2f2; }
   #frames .empty { padding: 14px 12px; color: var(--muted); font-family: var(--sans); font-size: 12px; }
 
+
+  /* ---------- AX.25 links pane ---------- */
+  /* One card per pair of stations per modem, each with its own feed of what the two said to each
+     other, worded rather than notated: "resends #3" and not "I P F=0 S=3 R=1". Slides up over the
+     waterfall on demand and leaves the frames panel alone, because the two answer different
+     questions - that one is what the radio heard, this one is what the stations meant. */
+  #linksBtn .n { margin-left: 6px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  #linksBtn.on .n { color: #12141a; }
+  /* Something on some link is waiting for an answer that has not come: the one figure worth
+     looking up from the waterfall for, so it is the one that changes colour. */
+  #linksBtn.alert:not(.on) .n { color: var(--amber); font-weight: 700; }
+
+  #links {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 45%; min-height: 160px; max-height: 92%;
+    display: flex; flex-direction: column; z-index: 5;
+    background: rgba(13,17,23,.97); border-top: 1px solid #2a3441;
+    box-shadow: 0 -10px 28px rgba(0,0,0,.55);
+  }
+  #links[hidden] { display: none; }
+  #linksGrip {
+    flex: none; height: 8px; cursor: ns-resize; touch-action: none;
+    background: linear-gradient(#3a4656, #3a4656) center / 44px 2px no-repeat;
+  }
+  #linksGrip:hover { background-color: #161c25; }
+  .links-bar {
+    flex: none; display: flex; align-items: center; gap: 8px; padding: 2px 12px 6px;
+    border-bottom: 1px solid var(--edge);
+  }
+  .links-bar h2 {
+    font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 600;
+  }
+  .links-bar h2 span { margin-left: 8px; font-family: var(--mono); letter-spacing: 0; text-transform: none; }
+  .links-bar h2 span.alert { color: var(--amber); }
+  .links-bar .hint { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+  #linkCards {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 10px; display: grid; gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); grid-auto-rows: minmax(220px, 1fr);
+  }
+  #linkCards .empty { grid-column: 1 / -1; align-self: start; color: var(--muted); font-size: 12px; padding: 4px 2px; }
+
+  .lk {
+    display: flex; flex-direction: column; min-height: 0; order: 1;
+    background: var(--panel); border: 1px solid var(--edge); border-radius: 4px; overflow: hidden;
+  }
+  /* A link that is up, or trying to be, sorts ahead of the beacons and the finished ones: the
+     grid honours order, so a card changes group without being moved in the document. */
+  .lk.live { order: 0; border-color: #2f4a3a; }
+  .lk.concern { border-color: var(--amber-dim); }
+  /* Nothing heard on it for a while. Dimmed like a backlog row in the frames panel, and for the
+     same reason: it must not read as a link that is busy right now. */
+  .lk.idle { opacity: .6; }
+  .lk-head {
+    flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    border-bottom: 1px solid var(--edge); font-family: var(--mono); font-size: 12px; min-width: 0;
+  }
+  .lk-head .pair { font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lk-head .pair b { color: var(--amber); font-weight: 600; }
+  .lk-head .pair .x { color: var(--muted); font-weight: 400; margin: 0 4px; }
+  .lk-head .modem { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .lk-head .modem i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  .lk-head .st {
+    margin-left: auto; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap;
+    padding: 1px 7px; border-radius: 9px; border: 1px solid var(--edge); color: var(--muted);
+  }
+  .lk-head .st.connected { color: #7bd88f; border-color: #2f4a3a; }
+  .lk-head .st.calling, .lk-head .st.disconnecting { color: var(--amber); border-color: var(--amber-dim); }
+  .lk-stats {
+    flex: none; padding: 4px 10px; font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+    line-height: 1.6; border-bottom: 1px solid #141a23;
+  }
+  .lk-stats b { color: var(--ink); font-weight: 500; }
+  .lk-stats .arrow { margin: 0 3px; }
+  .lk-stats .warn { color: var(--amber); }
+  .lk-concern {
+    flex: none; padding: 4px 10px; font-size: 11px; color: var(--amber);
+    background: rgba(245,168,60,.08); border-bottom: 1px solid #3a2f1a;
+  }
+  .lk-concern[hidden] { display: none; }
+  .lk-feed { flex: 1; min-height: 0; overflow-y: auto; font-family: var(--mono); font-size: 11px; }
+  .ln {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px;
+    padding: 3px 10px; border-bottom: 1px solid #141a23; line-height: 1.5;
+  }
+  .ln .t { color: var(--muted); flex: none; }
+  .ln .from { color: var(--amber); font-weight: 600; flex: none; }
+  /* Ours, in the cyan the rest of the page uses for transmit. */
+  .ln.tx .from { color: #7fe3f7; }
+  .ln .say { color: var(--ink); }
+  .ln.up .say { color: #7bd88f; }
+  .ln.down .say { color: var(--muted); }
+  .ln.bad .say { color: #f0b45a; }
+  /* What to look at. Filled for the things that mean data is being sent twice, red for a
+     refusal or a fault, outlined for a request still waiting on its answer. */
+  .ln .tag {
+    flex: none; font-size: 9px; font-weight: 700; letter-spacing: .08em; padding: 0 4px;
+    border-radius: 2px; vertical-align: 1px; white-space: nowrap;
+  }
+  .ln .tag.resend, .ln .tag.missed { color: #0c1016; background: #f0b45a; }
+  .ln .tag.reject, .ln .tag.busy, .ln .tag.refused, .ln .tag.error { color: #ffd0c4; background: #7a1f14; }
+  .ln .tag.poll, .ln .tag.repeat { color: var(--amber); border: 1px solid var(--amber-dim); }
+  .ln .tag.odd { color: var(--muted); border: 1px solid var(--edge); }
+  .ln .tag.via { color: var(--muted); border: 1px solid var(--edge); font-weight: 500; letter-spacing: 0; }
+  /* The text a data frame carried, when it was text: quoted under the line, clipped rather than
+     allowed to push the rest of the feed out of the card. */
+  .ln .txt {
+    flex-basis: 100%; white-space: pre-wrap; word-break: break-word; color: #b9c6d2;
+    margin: 1px 0 2px; padding-left: 8px; border-left: 2px solid #2a3441; max-height: 4.6em; overflow: hidden;
+  }
+
+  /* /links: the pane on its own in a window of its own, with nothing of the waterfall drawn -
+     the page tells the server not to send it spectrum lines either. */
+  body.detached header .ctl, body.detached #chips, body.detached #spec, body.detached #ruler,
+  body.detached #wfwrap, body.detached #log, body.detached #tip { display: none; }
+  body.detached #links {
+    position: static; flex: 1; height: auto !important; min-height: 0; max-height: none;
+    border-top: 0; box-shadow: none;
+  }
+  body.detached #linksGrip, body.detached #linksDetach, body.detached #linksClose, body.detached .hint { display: none; }
+
   @media (max-width: 900px) { #log { display: none; } }
 </style>
 </head>
@@ -239,6 +358,13 @@
     <div class="ctl-row">
       <button id="listen" class="seg-btn">Listen</button>
       <input id="vol" type="range" min="0" max="1" step="0.02" value="0.7" disabled>
+    </div>
+  </div>
+
+  <div class="ctl">
+    <label for="linksBtn">AX.25</label>
+    <div class="ctl-row">
+      <button id="linksBtn" class="seg-btn" title="What the stations heard are saying to each other, one card per link (L)">Links<span class="n" id="linksN"></span></button>
     </div>
   </div>
 
@@ -276,6 +402,17 @@
       <canvas id="wf"></canvas>
       <canvas id="overlay"></canvas>
     </div>
+    <section id="links" hidden>
+      <div id="linksGrip" title="Drag to resize"></div>
+      <div class="links-bar">
+        <h2>AX.25 links<span id="linksSummary"></span></h2>
+        <span class="hint">L to show or hide</span>
+        <div class="spacer"></div>
+        <button class="btn" id="linksDetach" title="Open the links in a window of their own, with no waterfall behind them">Detach</button>
+        <button class="btn" id="linksClose" title="Close (L or Esc)">Close</button>
+      </div>
+      <div id="linkCards"><div class="empty">Nothing heard yet. A card appears here for every pair of stations heard talking on each modem: connections as they are made, used and dropped, and beacons and other unconnected traffic too.</div></div>
+    </section>
   </div>
   <aside id="log">
     <h2>Decoded frames<span id="survey" hidden></span></h2>
@@ -290,7 +427,7 @@
 /* ---------- persisted UI state ---------- */
 const LS = "pdnsm-waterfall";
 const ui = Object.assign(
-  { dialHz: null, sideband: null, spanHz: 3000, floorDb: -95, topDb: -35 },
+  { dialHz: null, sideband: null, spanHz: 3000, floorDb: -95, topDb: -35, linksOpen: false, linksH: null },
   JSON.parse(localStorage.getItem(LS) || "{}"));
 const save = () => localStorage.setItem(LS, JSON.stringify(ui));
 
@@ -920,6 +1057,243 @@ function logCapture(ev) {
   while (list.children.length > 100) list.lastChild.remove();
 }
 
+/* ---------- AX.25 links pane ---------- */
+// The server reads every frame it hears or sends into a link observer, and reports each one
+// twice over: the card as it now stands (who, where, how much, and the one thing wrong with it
+// if anything is) and the line to add to that card's feed, already worded. Nothing here decides
+// what a frame meant; this only draws what it was told. Cards are kept by link id and built
+// from parts held in hand rather than looked up, so a card is one object and not a selector.
+const detached = (location.pathname || "/") === "/links";
+const cards = new Map();          // link id -> { el, head, stats, concern, feed, link }
+let cardsEmpty = true;
+const CARD_FEED = 100;            // lines a card keeps; the server keeps the same
+const LIVE_STATES = ["calling", "connected", "disconnecting"];
+const IDLE_AFTER_MS = 10 * 60 * 1000;         // dimmed after this long without a frame
+const FORGET_AFTER_MS = 6 * 60 * 60 * 1000;   // dropped after this long, as the server does
+
+function linksOpen() { return !$("links").hidden; }
+
+function showLinks(on) {
+  if (detached) on = true;
+  $("links").hidden = !on;
+  ui.linksOpen = on; save();
+  updateLinksButton();
+}
+
+function isLive(link) { return LIVE_STATES.includes(link.state); }
+
+// The button's figure is the number of links up or being set up, amber when any of them is
+// waiting on an answer that has not come - the one thing worth looking up from the waterfall
+// for. The pane's own summary says the rest.
+function updateLinksButton() {
+  const all = [...cards.values()].map(c => c.link);
+  const live = all.filter(isLive).length;
+  const concerns = all.filter(l => l.concern).length;
+  const b = $("linksBtn");
+  b.classList.toggle("on", linksOpen());
+  b.classList.toggle("alert", concerns > 0);
+  $("linksN").textContent = live ? String(live) : "";
+  const bits = [];
+  if (live) bits.push(`${live} up`);
+  if (all.length) bits.push(`${all.length} pair${all.length === 1 ? "" : "s"} heard`);
+  if (concerns) bits.push(`${concerns} waiting on an answer`);
+  const summary = $("linksSummary");
+  summary.textContent = bits.join(" · ");
+  summary.classList.toggle("alert", concerns > 0);
+}
+
+function modemLabel(sub) {
+  const i = cfg ? cfg.modems.findIndex(m => m.sub === sub) : -1;
+  if (i < 0) return sub == null ? "" : `<span class="modem">modem ${sub}</span>`;
+  const m = cfg.modems[i];
+  return `<span class="modem"><i style="background:${hueFor(i)}"></i>${m.sub} · ${esc(m.modeName || m.mode)}</span>`;
+}
+
+function fmtBytes(n) { return n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} kB`; }
+function plural(n, word) { return `${n} ${word}${n === 1 ? "" : "s"}`; }
+
+// One direction of a link. Frames always; everything else only when there is some, because a
+// line of zeros says nothing and hides the one figure that is not zero.
+function sideText(from, s) {
+  const bits = [plural(s.frames, "frame")];
+  if (s.data) bits.push(`${s.data} data, ${fmtBytes(s.bytes)}`);
+  if (s.awaiting) bits.push(`${s.awaiting} unacknowledged`);
+  if (s.resends) bits.push(`<span class="warn">${plural(s.resends, "resend")}</span>`);
+  if (s.rejects) bits.push(`<span class="warn">${plural(s.rejects, "reject")}</span>`);
+  if (s.polls) bits.push(plural(s.polls, "poll") + (s.pollsOpen ? ` <span class="warn">(${s.pollsOpen} unanswered)</span>` : ""));
+  if (s.callsOpen) bits.push(`<span class="warn">${plural(s.callsOpen, "call")} unanswered</span>`);
+  if (s.busy) bits.push(`<span class="warn">busy</span>`);
+  return `<b>${esc(from)}</b><span class="arrow">›</span>${bits.join(" · ")}`;
+}
+
+function stateWord(link) {
+  if (link.state === "unconnected") return "no link";
+  return link.state;
+}
+
+function cardFor(link) {
+  let c = cards.get(link.id);
+  if (c) return c;
+  if (cardsEmpty) { $("linkCards").replaceChildren(); cardsEmpty = false; }
+  const el = document.createElement("section");
+  const head = document.createElement("div"); head.className = "lk-head";
+  const stats = document.createElement("div"); stats.className = "lk-stats";
+  const concern = document.createElement("div"); concern.className = "lk-concern"; concern.hidden = true;
+  const feed = document.createElement("div"); feed.className = "lk-feed";
+  el.append(head, stats, concern, feed);
+  c = { el, head, stats, concern, feed, link };
+  cards.set(link.id, c);
+  // Newest pair first; the live ones sort ahead of the rest by CSS order, not by moving them.
+  $("linkCards").prepend(el);
+  return c;
+}
+
+function renderCard(c, link) {
+  c.link = link;
+  const idle = Date.now() - Date.parse(link.last);
+  c.el.className = "lk" + (isLive(link) ? " live" : "") + (link.concern ? " concern" : "")
+    + (!isLive(link) && idle > IDLE_AFTER_MS ? " idle" : "");
+  const joined = link.inferred
+    ? ` <span class="modem" title="This link was already up when the station started listening, so what was sent before then is unknown">joined late</span>`
+    : "";
+  const modulo = link.modulo === 128 ? ` <span class="modem" title="Extended mode: sequence numbers count to 127">mod 128</span>` : "";
+  c.head.innerHTML = `<span class="pair"><b>${esc(link.a)}</b><span class="x">&lt;&gt;</span><b>${esc(link.b)}</b></span>`
+    + modemLabel(link.sub) + joined + modulo
+    + `<span class="st ${esc(link.state)}">${esc(stateWord(link))}</span>`;
+  // A side that has never sent anything gets no line: a beacon's addressee is not a station.
+  c.stats.innerHTML = [[link.a, link.ab], [link.b, link.ba]]
+    .filter(([, s]) => s.frames > 0).map(([who, s]) => sideText(who, s)).join("<br>");
+  c.concern.hidden = !link.concern;
+  c.concern.textContent = link.concern ? `! ${link.concern}` : "";
+}
+
+function tag(cls, text, title) {
+  return `<span class="tag ${cls}" title="${esc(title)}">${text}</span>`;
+}
+
+// A line of a card's feed: when, who, what it did in words, and a tag for anything the words
+// alone would let pass - a frame being sent for the second time is the whole reason this pane
+// exists, and it has to be visible from across the room.
+function lineFor(ev) {
+  const row = document.createElement("div");
+  const flags = ev.flags || [];
+  const has = f => flags.includes(f);
+  row.className = "ln" + (ev.tx ? " tx" : "") + (has("linkUp") ? " up" : "") + (has("linkDown") ? " down" : "")
+    + (has("protocolError") || has("unexpected") || has("refused") ? " bad" : "");
+  const tags = [];
+  if (has("resend")) tags.push(tag("resend", "RESEND", "Sent before and not acknowledged, so sent again"));
+  if (has("missed")) tags.push(tag("missed", "GAP", "Frames between this one and the last heard from this side were missed, here or by the other side"));
+  if (has("repeat")) tags.push(tag("repeat", `AGAIN x${ev.count}`, "The same request, still unanswered, sent again"));
+  else if (has("poll")) tags.push(tag("poll", "POLL", "Waited for an acknowledgement that did not come, and is now asking for one"));
+  if (has("reject")) tags.push(tag("reject", "REJECT", "Asks the other side to go back and resend"));
+  if (has("busy")) tags.push(tag("busy", "BUSY", "Cannot take more data for now"));
+  if (has("refused")) tags.push(tag("refused", "REFUSED", "The other side will not connect"));
+  if (has("protocolError")) tags.push(tag("error", "FAULT", "A frame the other side could not accept: a protocol error"));
+  if (has("unexpected")) tags.push(tag("odd", "NO LINK", "Numbered traffic on a link that is not up"));
+  if (ev.via) tags.push(tag("via", `via ${esc(ev.via.join(","))}`, "Digipeater path; * marks a digipeater that has already repeated it"));
+  const text = ev.text != null ? `<span class="txt">${esc(ev.text)}</span>` : "";
+  row.innerHTML = `<span class="t">${stampFor(ev)}</span><span class="from">${esc(ev.from)}</span>`
+    + `<span class="say">${esc(ev.say)}</span>${tags.join("")}${text}`;
+  return row;
+}
+
+// Oldest at the top, newest at the bottom, as a transcript reads - and kept at the bottom unless
+// the operator has scrolled up to read something, in which case it stays where they put it.
+function addLine(c, ev) {
+  const feed = c.feed;
+  const atBottom = !(feed.scrollHeight > 0) || feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 8;
+  feed.append(lineFor(ev));
+  while (feed.children.length > CARD_FEED) feed.firstChild.remove();
+  if (atBottom) feed.scrollTop = feed.scrollHeight;
+}
+
+// Every link the server knows, on connect. Rebuilt rather than added to: a reconnect sends the
+// lot again, and by then it includes what was live before the drop.
+function onLinks(msg) {
+  cards.clear();
+  $("linkCards").replaceChildren();
+  cardsEmpty = true;
+  // Sent most recent first; prepended one at a time, so walked backwards to land the same way.
+  for (const link of [...(msg.links || [])].reverse()) {
+    const c = cardFor(link);
+    renderCard(c, link);
+    for (const ev of link.recent || []) addLine(c, ev);
+  }
+  updateLinksButton();
+}
+
+// One frame, live: the card it belongs to as it now stands, and the line it adds.
+function onLinkEvent(msg) {
+  const c = cardFor(msg.link);
+  renderCard(c, msg.link);
+  addLine(c, msg.event);
+  updateLinksButton();
+}
+
+// Time passing with nothing heard: dim, then drop, on the server's own schedule. Nothing
+// arrives to say a link has been forgotten, so the page has to keep the same clock.
+function reviewCards() {
+  const now = Date.now();
+  for (const [id, c] of cards) {
+    const idle = now - Date.parse(c.link.last);
+    if (idle > FORGET_AFTER_MS) { c.el.remove(); cards.delete(id); continue; }
+    c.el.classList.toggle("idle", !isLive(c.link) && idle > IDLE_AFTER_MS);
+  }
+  if (!cards.size && !cardsEmpty) {
+    $("linkCards").innerHTML = `<div class="empty">Nothing heard for a while. A card appears here for every pair of stations heard talking on each modem.</div>`;
+    cardsEmpty = true;
+  }
+  updateLinksButton();
+}
+
+function initLinksPane() {
+  if (detached) {
+    document.body.classList.add("detached");
+    document.title = "pdn-soundmodem · links";
+    const wm = document.querySelector(".wordmark span");
+    if (wm) wm.textContent = "links";
+    $("links").hidden = false;
+  } else {
+    if (ui.linksH) $("links").style.height = `${ui.linksH}px`;
+    if (ui.linksOpen) $("links").hidden = false;
+  }
+  $("linksBtn").onclick = () => showLinks(!linksOpen());
+  $("linksClose").onclick = () => showLinks(false);
+  $("linksDetach").onclick = () => {
+    window.open("/links", "pdnsm-links", "popup=yes,width=1180,height=640");
+    showLinks(false);
+  };
+  document.addEventListener("keydown", e => {
+    if (detached || e.altKey || e.ctrlKey || e.metaKey) return;
+    const tagName = e.target && e.target.tagName;
+    if (tagName === "INPUT" || tagName === "SELECT" || tagName === "TEXTAREA") return;
+    if (e.key === "l" || e.key === "L") { showLinks(!linksOpen()); e.preventDefault(); }
+    else if (e.key === "Escape" && linksOpen()) showLinks(false);
+  });
+  // The top edge drags. Height is measured from the bottom of the display, so the pane grows
+  // upward under the pointer and stops short of covering the spectrum entirely.
+  const grip = $("linksGrip");
+  grip.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const move = ev => {
+      const r = $("display").getBoundingClientRect();
+      const h = Math.max(160, Math.min(r.height * 0.92, r.bottom - ev.clientY));
+      $("links").style.height = `${h}px`;
+      ui.linksH = Math.round(h);
+    };
+    const up = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      save();
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+  });
+  updateLinksButton();
+  setInterval(reviewCards, 30 * 1000);
+}
+
 /* ---------- hover readout ---------- */
 const tip = $("tip");
 function hookHover(el) {
@@ -941,6 +1315,7 @@ function hookHover(el) {
   el.addEventListener("mouseleave", () => tip.style.display = "none");
 }
 hookHover(spec); hookHover(wf);
+initLinksPane();
 
 /* ---------- socket ---------- */
 let ws = null;               // the live socket; toggleAudio needs to reach it
@@ -952,6 +1327,9 @@ function connect() {
     $("conn").textContent = "live"; $("conn").className = "live";
     // A reconnect starts with audio off server-side; ask again if the operator had it on.
     if (audioOn()) { requestAudio(true); }
+    // A detached links window has no waterfall to paint, so it asks not to be sent one - and
+    // has to ask again on every reconnect, because the server starts every socket with it on.
+    if (detached) { ws.send(JSON.stringify({ type: "spectrum", on: false })); }
   };
   ws.onclose = () => {
     $("conn").textContent = "reconnecting…"; $("conn").className = "dead";
@@ -980,6 +1358,10 @@ function connect() {
         onCapture(msg);
       } else if (msg.type === "survey") {
         setSurveyStatus(msg);
+      } else if (msg.type === "links") {
+        onLinks(msg);
+      } else if (msg.type === "link") {
+        onLinkEvent(msg);
       }
       return;
     }
