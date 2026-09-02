@@ -647,6 +647,36 @@ public sealed class SoundModemChannel
         }
     }
 
+    /// <summary>
+    /// How long until the hold lets somebody else transmit - the exact wait, so the scheduler
+    /// sleeps once rather than polling.
+    /// </summary>
+    /// <remarks>
+    /// Floored at one tick of a millisecond so a hold that expires between the eligibility check
+    /// and this call cannot produce a zero-length wait, and capped by what the hold itself can be
+    /// (its window, or the ceiling, whichever bites first) so a lost wake-up cannot strand the
+    /// scheduler. A renewal shortens nothing and lengthens by at most one window, because the
+    /// loop re-checks after every wait.
+    /// </remarks>
+    private TimeSpan RemainingHold()
+    {
+        lock (_txGate)
+        {
+            if (_quietOwner is null)
+            {
+                return MinimumSchedulerWait;
+            }
+
+            TimeSpan left = _quietWindow - _time.GetElapsedTime(_quietFrom);
+            TimeSpan untilCeiling = MaxTurnaroundHold - _time.GetElapsedTime(_quietOwnerSince);
+            TimeSpan wait = left < untilCeiling ? left : untilCeiling;
+            return wait < MinimumSchedulerWait ? MinimumSchedulerWait : wait;
+        }
+    }
+
+    /// <summary>Never wait zero: a scheduler that polls with no delay is a spinning core.</summary>
+    private static readonly TimeSpan MinimumSchedulerWait = TimeSpan.FromMilliseconds(1);
+
     private bool IsHeldLocked(object source)
     {
         if (_quietOwner is null || ReferenceEquals(source, _quietOwner))
@@ -779,7 +809,13 @@ public sealed class SoundModemChannel
                 source = NextEligibleSource();
                 if (source is null)
                 {
-                    await Delay(Csma.SlotTimeMilliseconds, cancellation).ConfigureAwait(false);
+                    // Wait out what is left of the hold rather than polling at slot intervals.
+                    // Exact, and safe against a slot time of zero: a host may set one, and
+                    // LinBPQ was sending exactly that to this station until its config gained a
+                    // SLOTTIME line, which would have made this a busy loop burning a core for
+                    // the length of every hold. The channel-access roll below still uses the
+                    // operator's slot time, because there it IS the channel-access parameter.
+                    await Delay(RemainingHold(), cancellation).ConfigureAwait(false);
                 }
             }
 
@@ -974,5 +1010,8 @@ public sealed class SoundModemChannel
     }
 
     private Task Delay(int milliseconds, CancellationToken cancellation) =>
-        Task.Delay(TimeSpan.FromMilliseconds(milliseconds), _time, cancellation);
+        Delay(TimeSpan.FromMilliseconds(milliseconds), cancellation);
+
+    private Task Delay(TimeSpan wait, CancellationToken cancellation) =>
+        Task.Delay(wait, _time, cancellation);
 }
