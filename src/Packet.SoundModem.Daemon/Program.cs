@@ -1089,6 +1089,17 @@ if (fmConfig.Enabled)
             : matching.TrimFor(destination);
     };
 }
+// One transmitter at a time makes every receiver on this radio deaf, however many there are. So
+// after a frame that will be answered, stay off the air long enough for the answer to arrive
+// rather than keying over it with somebody else's traffic. Carrier sense cannot do this: at the
+// moment we would roll p-persistence the reply has not started, so there is nothing to hear.
+// Only AX.25 traffic gets a hold - Ax25ReplyExpectation says "no opinion" for anything it cannot
+// read as AX.25, and no opinion means the channel behaves exactly as it always did.
+channel.QuietAfterTransmit = (_sub, frame) =>
+    Packet.SoundModem.Modems.Ax25ReplyExpectation.ExpectsReply(frame)
+        ? channel.TurnaroundHold
+        : null;
+
 channel.FrameTransmittedWithTrim += (subChannel, frame, trimHz) =>
 {
     Console.WriteLine(ActivityLog.Transmitted(
@@ -1940,7 +1951,11 @@ if (ardopModem is not null)
                     rejected: null,
                     // ARDOP owns this channel's timing: its bursts wait on neither the inhibit nor
                     // the p-persistence roll.
-                    ownsChannelTiming: true).ConfigureAwait(false);
+                    ownsChannelTiming: true,
+                    // The shifter identifies the ARDOP transmitter, so its own consecutive bursts
+                    // share a keyup and nothing else joins one: an ARQ turnaround must not be held
+                    // up by a packet frame appended behind it, nor a packet frame by ARDOP.
+                    source: ardopShift).ConfigureAwait(false);
             }
             catch (Exception refused) when (refused is InvalidOperationException or ArgumentException)
             {
@@ -2564,7 +2579,11 @@ if (identifiers.Count > 0)
                         var audio = new float[lead + tone.Length];
                         tone.CopyTo(audio, lead);
                         return audio;
-                    }).ConfigureAwait(false);
+                    },
+                    // This sub-channel's identifier is the transmitter, so the CW ident takes its
+                    // own keyup rather than lengthening somebody else's - the station is deaf for
+                    // whatever it appends itself to.
+                    source: owed).ConfigureAwait(false);
 
                     // Stamped only on success: an ident the radio refused was not sent, and
                     // clearing the debt for it would mean the station quietly stopped identifying.

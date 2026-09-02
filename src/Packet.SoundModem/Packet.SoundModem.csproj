@@ -18,6 +18,10 @@
          a pack/publish round trip per change is friction with nothing to show for it.
          Unset (the default and what CI uses), the published package is consumed. -->
     <PackageReference Include="M0LTE.Flex" Condition="'$(FlexSourcePath)' == ''" />
+    <!-- The AX.25 codec, so nothing here has to reimplement one. MIT, so it sits under this
+         library's GPL-3.0-or-later without complication, and the dependency runs the safe way
+         round: packet.net's AX.25 package knows nothing about this modem. -->
+    <PackageReference Include="Packet.Ax25" />
     <PackageReference Include="M0LTE.Radio.Audio" />
     <!-- Same local-checkout override pattern as FlexSourcePath, for the FEC, IL2P and
          ARDOP packages - the receive campaigns iterate across these repos. -->

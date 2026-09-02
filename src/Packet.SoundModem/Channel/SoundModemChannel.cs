@@ -34,12 +34,47 @@ public delegate void ReceiveTap(ReadOnlySpan<float> samples);
 /// p-persistent CSMA gated on the aggregated <see cref="ChannelBusy"/>, PTT keying, and
 /// device-paced audio with a drain before unkey (sample-domain TX-complete).
 /// </summary>
+/// <remarks>
+/// <para><b>The transmit side is a scheduler, not a queue.</b> Everything that can key this
+/// radio - each KISS modem, the paging endpoint, ARDOP, the CW ident - is a <i>transmitter</i>
+/// with a queue of its own, and the channel serves them round robin. There is nothing special
+/// about there being two, or about their being modems; the number and the kinds are open.</para>
+/// <para><b>What makes that necessary is half duplex.</b> Keying up makes EVERY receiver on this
+/// radio deaf, not just the one whose traffic caused it, so one transmitter's frame is airtime
+/// taken from all of the others and silence imposed on all of them. Two rules follow, and both
+/// are properties of the shared resource rather than of any protocol: a keyup carries one
+/// transmitter's traffic (see <see cref="RunTransmitterAsync"/>), and a transmission that expects
+/// an answer keeps the rest quiet until the answer has had its chance (see
+/// <see cref="QuietAfterTransmit"/> and <see cref="TurnaroundHold"/>).</para>
+/// </remarks>
 public sealed class SoundModemChannel
 {
     private readonly Dictionary<int, IModem> _modems = [];
     private readonly List<ReceiveTap> _receiveTaps = [];
-    private readonly Channel<(Func<int, float[]> Modulate, TaskCompletionSource Done, Action<Exception>? Rejected, bool OwnsTiming)> _txQueue =
-        System.Threading.Channels.Channel.CreateUnbounded<(Func<int, float[]>, TaskCompletionSource, Action<Exception>?, bool)>();
+
+    /// <summary>One queued transmission, with the identity that decides whose keyup it is.</summary>
+    private sealed record TxItem(
+        Func<int, float[]> Modulate,
+        TaskCompletionSource Done,
+        Action<Exception>? Rejected,
+        bool OwnsTiming,
+        object Source,
+        TimeSpan? QuietAfter);
+
+    // A queue PER TRANSMITTER rather than one for the channel. With a single queue a deferred
+    // frame at the head blocks everything behind it, including the link that is not deferred -
+    // so the moment any transmission can be held back, per-source queues stop being a nicety.
+    private readonly object _txGate = new();
+    private readonly Dictionary<object, Queue<TxItem>> _txQueues = new(ReferenceEqualityComparer.Instance);
+    private readonly List<object> _txOrder = [];
+    private TaskCompletionSource _txSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // The turnaround hold: after a transmission that expects an answer, the other transmitters
+    // stay off the air until that answer has had its chance. See TurnaroundHold.
+    private object? _quietOwner;
+    private long _quietFrom;
+    private long _quietOwnerSince;
+    private TimeSpan _quietWindow;
     private readonly TimeProvider _time;
     private readonly Random _random;
     private readonly SpectrumSource? _spectrum;
@@ -128,8 +163,16 @@ public sealed class SoundModemChannel
         // burst-SNR figure - the lesson of the branch-index offsets, applied before the second
         // number exists rather than after it bites.
         modem.FrameDecoded += (frame, quality) =>
+        {
+            // Anything decoded on this modem renews its hold, because it means the exchange this
+            // station is holding the channel for is alive. Deliberately an over-approximation:
+            // the channel does not parse addresses, so somebody else's frame on the same
+            // sub-channel renews it too. That costs the others at most one more window each, and
+            // a carrier we can decode is one CSMA would have deferred to anyway.
+            NoteHeard(modem);
             FrameReceivedWithQuality?.Invoke(
                 subChannel, frame, quality with { SnrDb = _burstSnr.MeasureBurst(subChannel) });
+        };
         if (_constellationSink is { } sink && modem is IConstellationSource psk)
         {
             var constellation = new ConstellationSource(frame => sink(subChannel, frame));
@@ -284,7 +327,11 @@ public sealed class SoundModemChannel
                     applied = ResolveTrim(TransmitTrimHz?.Invoke(subChannel, frame));
                     return ApplyTransmitTrim(modem.Modulate(frame, txDelay), applied);
                 },
-                rejection => TransmitRejected?.Invoke(subChannel, frame, rejection))
+                rejection => TransmitRejected?.Invoke(subChannel, frame, rejection),
+                // The modem is the keyup's identity: this sub-channel's frames run back-to-back
+                // under one PTT, another sub-channel's do not.
+                source: modem,
+                quietAfter: QuietAfterTransmit?.Invoke(subChannel, frame))
             .ConfigureAwait(false);
 
         FrameTransmitted?.Invoke(subChannel, frame);
@@ -333,8 +380,22 @@ public sealed class SoundModemChannel
     /// mean deferring partly to its own signal - a shifted ARDOP centre sits inside a packet
     /// modem's passband and trips its busy detector. Everything else leaves this false.
     /// </param>
+    /// <param name="source">
+    /// Who is transmitting - the identity a keyup is held for. Consecutive transmissions carrying
+    /// the same <paramref name="source"/> share one keyup and the token preamble that goes with
+    /// it; a different one ends the keyup and contends for its own. Null means "no identity", and
+    /// is treated as unique per transmission, so an unidentified caller never rides on somebody
+    /// else's keyup. See <see cref="RunTransmitterAsync"/>.
+    /// </param>
+    /// <param name="quietAfter">
+    /// How long to keep the OTHER transmitters off the air once this one has finished, so that a
+    /// reply to it is not transmitted over. Null (the default) never holds. See
+    /// <see cref="QuietAfterTransmit"/> for the frame-addressed form and for why the decision
+    /// belongs to the caller.
+    /// </param>
     public Task EnqueueTransmit(
-        Func<int, float[]> modulate, Action<Exception>? rejected = null, bool ownsChannelTiming = false)
+        Func<int, float[]> modulate, Action<Exception>? rejected = null, bool ownsChannelTiming = false,
+        object? source = null, TimeSpan? quietAfter = null)
     {
         ArgumentNullException.ThrowIfNull(modulate);
         if (ReceiveOnlyReason is string receiveOnly)
@@ -347,10 +408,66 @@ public sealed class SoundModemChannel
             return faulted;
         }
 
+        object identity = source ?? new object();
         return !ownsChannelTiming && TransmitInhibit is not null
-            ? EnqueueWhenPermittedAsync(modulate, rejected)
-            : EnqueueNow(modulate, rejected, ownsChannelTiming);
+            ? EnqueueWhenPermittedAsync(modulate, rejected, identity, quietAfter)
+            : EnqueueNow(modulate, rejected, ownsChannelTiming, identity, quietAfter);
     }
+
+    /// <summary>
+    /// Asked, per frame, how long this station should stay off the air after sending it so that
+    /// the reply is not transmitted over by one of the channel's OTHER modems. Null (the default
+    /// hook, and a null result) never holds, which is the behaviour of a channel that says
+    /// nothing about reply timing.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Why it is a hook.</b> Carrier sense cannot solve this: at the moment we roll
+    /// p-persistence the reply has not started, so there is nothing to detect and deferring is
+    /// down to luck. The only tool is prediction, and predicting means knowing whether a frame is
+    /// the kind that gets an answer - which is a property of the PROTOCOL the frame belongs to,
+    /// not of the modem carrying it. So the modem asks and does not guess. The AX.25 answer lives
+    /// in <see cref="Modems.Ax25ReplyExpectation"/>, and anything else this channel ever carries
+    /// brings its own or leaves this null and keeps today's behaviour exactly. Same shape and
+    /// same reasoning as <see cref="TransmitTrimHz"/>.</para>
+    /// <para>The window itself is a calculation, not a fitted constant: the peer needs its own
+    /// TXDELAY to key up and a few p-persistence slots to win the channel, both of which are
+    /// wall-clock KISS parameters this channel already holds. It is very nearly independent of
+    /// baud rate, because what is being waited out is the far end keying up rather than anything
+    /// being sent. See <see cref="TurnaroundHold"/>.</para>
+    /// </remarks>
+    public Func<int, byte[], TimeSpan?>? QuietAfterTransmit { get; set; }
+
+    /// <summary>
+    /// The turnaround window <see cref="QuietAfterTransmit"/> implementations should use: long
+    /// enough for the far end to key up and win the channel, and no longer.
+    /// </summary>
+    /// <remarks>
+    /// <para>Calculated, not fitted. What is being waited out is the far end KEYING UP, which is
+    /// its own TXDELAY (it runs the same convention, so ours is the fair estimate of theirs),
+    /// plus its rig and decode latency, for which a second TXDELAY is the honest allowance, plus
+    /// one slot of contention. Note what that makes it nearly independent of: baud rate. Nothing
+    /// here is a symbol count - TXDELAY and slot time are wall-clock KISS parameters - so a
+    /// 9600 Bd link waits about as long as a 300 Bd one, which is the opposite of what the
+    /// intuition says.</para>
+    /// <para>On the shipped defaults (300 ms, 100 ms) that is 700 ms. Against 4,997 real
+    /// turnarounds in GB7RDG-2's frame log it covers 80 % of them, and the curve is a knee:
+    /// another 600 ms buys only 11 more points (1.30 s covers 91 %).</para>
+    /// <para>Slot time deliberately carries little weight, because a host may set it to zero and
+    /// one does: LinBPQ configures this very station with TXDELAY 300 ms, persistence 50 and
+    /// <b>slot time 0</b>, which turns the p-persistence backoff into a spin and leaves this hold
+    /// as the only thing keeping the station off the air after its own transmission. A window
+    /// built mostly out of slot time would have quietly become 300 ms there.</para>
+    /// </remarks>
+    public TimeSpan TurnaroundHold =>
+        TimeSpan.FromMilliseconds((2 * Csma.TxDelayMilliseconds) + Csma.SlotTimeMilliseconds);
+
+    /// <summary>
+    /// A ceiling on how long one transmitter can keep the hold by being answered. Not a fairness
+    /// knob for the ordinary case - an exchange that keeps getting replies is exactly what the
+    /// hold is for. This is the backstop for the pathological one, where a busy frequency renews
+    /// the hold indefinitely and every other transmitter on the channel is muted for good.
+    /// </summary>
+    public TimeSpan MaxTurnaroundHold { get; set; } = TimeSpan.FromSeconds(15);
 
     /// <summary>
     /// Set to say the channel has no transmitter at all, with the reason an operator or a host
@@ -420,7 +537,8 @@ public sealed class SoundModemChannel
     /// </summary>
     public TimeSpan TransmitInhibitTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
-    private async Task EnqueueWhenPermittedAsync(Func<int, float[]> modulate, Action<Exception>? rejected)
+    private async Task EnqueueWhenPermittedAsync(
+        Func<int, float[]> modulate, Action<Exception>? rejected, object source, TimeSpan? quietAfter)
     {
         // The injected clock, per the repo's wall-clock discipline - this was the library's
         // one Stopwatch and its one bare Task.Delay, which no test could virtualise.
@@ -439,21 +557,188 @@ public sealed class SoundModemChannel
             await Task.Delay(InhibitPollInterval, _time).ConfigureAwait(false);
         }
 
-        await EnqueueNow(modulate, rejected, ownsChannelTiming: false).ConfigureAwait(false);
+        await EnqueueNow(modulate, rejected, ownsChannelTiming: false, source, quietAfter)
+            .ConfigureAwait(false);
     }
 
     /// <summary>Coarse on purpose: this gates against sessions lasting minutes.</summary>
     private static readonly TimeSpan InhibitPollInterval = TimeSpan.FromMilliseconds(50);
 
-    private Task EnqueueNow(Func<int, float[]> modulate, Action<Exception>? rejected, bool ownsChannelTiming)
+    private Task EnqueueNow(
+        Func<int, float[]> modulate, Action<Exception>? rejected, bool ownsChannelTiming, object source,
+        TimeSpan? quietAfter)
     {
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_txQueue.Writer.TryWrite((modulate, done, rejected, ownsChannelTiming)))
+        var item = new TxItem(modulate, done, rejected, ownsChannelTiming, source, quietAfter);
+        lock (_txGate)
         {
-            done.SetException(new InvalidOperationException("transmit queue closed"));
+            if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue))
+            {
+                queue = new Queue<TxItem>();
+                _txQueues[source] = queue;
+                _txOrder.Add(source);
+            }
+
+            queue.Enqueue(item);
+            _txSignal.TrySetResult();
         }
 
         return done.Task;
+    }
+
+    /// <summary>Renews the hold when the link it protects is heard from.</summary>
+    private void NoteHeard(object source)
+    {
+        lock (_txGate)
+        {
+            if (_quietOwner is not null && ReferenceEquals(source, _quietOwner))
+            {
+                _quietFrom = _time.GetTimestamp();
+            }
+        }
+    }
+
+    /// <summary>Blocks until some transmitter has something queued.</summary>
+    private async Task WaitForWorkAsync(CancellationToken cancellation)
+    {
+        while (true)
+        {
+            Task signal;
+            lock (_txGate)
+            {
+                if (_txOrder.Count > 0)
+                {
+                    return;
+                }
+
+                // Replaced under the same lock an enqueue takes, so an enqueue either saw a
+                // non-empty queue above or will complete the instance we are about to await.
+                _txSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                signal = _txSignal.Task;
+            }
+
+            await signal.WaitAsync(cancellation).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// The transmitter whose turn it is, or null while every transmitter with traffic is waiting
+    /// out somebody else's turnaround.
+    /// </summary>
+    /// <remarks>
+    /// Round robin over the sources that have work, skipping any the hold is keeping quiet. A
+    /// transmission that owns the channel's timing is never held: ARDOP is running the channel
+    /// rather than sharing it, and its own ARQ turnarounds are what it is protecting.
+    /// </remarks>
+    private object? NextEligibleSource()
+    {
+        lock (_txGate)
+        {
+            foreach (object source in _txOrder)
+            {
+                Queue<TxItem> queue = _txQueues[source];
+                if (queue.Count > 0 && (queue.Peek().OwnsTiming || !IsHeldLocked(source)))
+                {
+                    return source;
+                }
+            }
+
+            return null;
+        }
+    }
+
+    private bool IsHeldLocked(object source)
+    {
+        if (_quietOwner is null || ReferenceEquals(source, _quietOwner))
+        {
+            return false;
+        }
+
+        return _time.GetElapsedTime(_quietOwnerSince) < MaxTurnaroundHold
+            && _time.GetElapsedTime(_quietFrom) < _quietWindow;
+    }
+
+    /// <summary>Takes the next item from one transmitter's queue, or null when it has run dry.</summary>
+    private TxItem? TakeFrom(object source)
+    {
+        lock (_txGate)
+        {
+            if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue) || queue.Count == 0)
+            {
+                return null;
+            }
+
+            TxItem item = queue.Dequeue();
+            if (queue.Count == 0)
+            {
+                _txQueues.Remove(source);
+                _txOrder.Remove(source);
+            }
+            else
+            {
+                // Round robin: a transmitter that has just had a keyup goes to the back, so a
+                // long backlog on one link cannot mute the other indefinitely.
+                _txOrder.Remove(source);
+                _txOrder.Add(source);
+            }
+
+            return item;
+        }
+    }
+
+    private TxItem? PeekFrom(object source)
+    {
+        lock (_txGate)
+        {
+            return _txQueues.TryGetValue(source, out Queue<TxItem>? queue) && queue.Count > 0
+                ? queue.Peek()
+                : null;
+        }
+    }
+
+    /// <summary>Starts, renews or clears the turnaround hold after a keyup.</summary>
+    private void SetHold(object? keyupSource, TimeSpan? quietAfter)
+    {
+        lock (_txGate)
+        {
+            if (keyupSource is null || quietAfter is not TimeSpan window || window <= TimeSpan.Zero)
+            {
+                _quietOwner = null;
+                return;
+            }
+
+            long now = _time.GetTimestamp();
+            if (!ReferenceEquals(_quietOwner, keyupSource))
+            {
+                _quietOwnerSince = now;
+            }
+
+            _quietOwner = keyupSource;
+            _quietFrom = now;
+            _quietWindow = window;
+        }
+    }
+
+    /// <summary>Fails every queued transmission - a keyup or a device that has died takes them all.</summary>
+    private void FaultEverything(Exception reason)
+    {
+        List<TxItem> queued = [];
+        lock (_txGate)
+        {
+            foreach (Queue<TxItem> queue in _txQueues.Values)
+            {
+                queued.AddRange(queue);
+            }
+
+            _txQueues.Clear();
+            _txOrder.Clear();
+        }
+
+        foreach (TxItem item in queued)
+        {
+            item.Done.TrySetException(reason);
+            item.Rejected?.Invoke(reason);
+        }
     }
 
     /// <summary>
@@ -471,9 +756,25 @@ public sealed class SoundModemChannel
                 $"output rate {output.SampleRate} != channel rate {SampleRate}", nameof(output));
         }
 
-        var reader = _txQueue.Reader;
-        while (await reader.WaitToReadAsync(cancellation).ConfigureAwait(false))
+        while (!cancellation.IsCancellationRequested)
         {
+            await WaitForWorkAsync(cancellation).ConfigureAwait(false);
+
+            // Whose turn is it? While a turnaround hold is running the answer is only the
+            // transmitter it protects; everyone else waits a slot and asks again. This is the
+            // half CSMA cannot do: at this instant the reply we are protecting has not started,
+            // so carrier sense has nothing to detect and deferring would be down to the roll.
+            object? source = null;
+            while (source is null)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                source = NextEligibleSource();
+                if (source is null)
+                {
+                    await Delay(Csma.SlotTimeMilliseconds, cancellation).ConfigureAwait(false);
+                }
+            }
+
             // Classic p-persistence (AX.25 §6.4): when the channel is clear, roll p; on
             // failure wait one slot and try again; while busy, keep waiting slots.
             //
@@ -481,7 +782,7 @@ public sealed class SoundModemChannel
             // channel discipline against ARQ turnaround budgets, and the busy it would be
             // deferring to is partly its own signal - at a shifted centre it sits inside a
             // packet modem's passband and asserts that modem's busy detector.
-            while (!(reader.TryPeek(out var next) && next.OwnsTiming))
+            while (!(PeekFrom(source) is { OwnsTiming: true }))
             {
                 if (ChannelBusy)
                 {
@@ -500,6 +801,11 @@ public sealed class SoundModemChannel
             _transmitting = true;
             TransmittingChanged?.Invoke(true);
             bool keyed = false;
+            // Declared out here because the finally that starts the turnaround hold needs them:
+            // the hold has to be set while receive is still gated, so that its window starts at
+            // the unkey rather than wherever this loop next gets scheduled.
+            object? keyupSource = null;
+            TimeSpan? quietAfter = null;
             try
             {
                 try
@@ -513,25 +819,45 @@ public sealed class SoundModemChannel
                     // one: the answer is definite, the frames are lost, and the loop survives
                     // to try the next keyup. FlexTxContendedException lands here by design -
                     // "another station holds the PA" is an outcome, not a broken radio.
-                    while (reader.TryRead(out var queued))
-                    {
-                        queued.Done.TrySetException(keyFailure);
-                        queued.Rejected?.Invoke(keyFailure);
-                    }
-
+                    FaultEverything(keyFailure);
                     PttFailed?.Invoke(keyFailure);
                     continue;
                 }
 
-                bool first = true;
-                (Func<int, float[]> Modulate, TaskCompletionSource Done, Action<Exception>? Rejected, bool OwnsTiming)? inFlight = null;
+                // keyupSource stays null until something has actually gone out, so a keyup whose
+                // first frame the modem refuses is still free to be taken by whatever follows.
+                TxItem? inFlight = null;
                 try
                 {
-                    while (reader.TryRead(out var item))
+                    // ONE TRANSMITTER PER KEYUP, which per-source queues now make structural:
+                    // this loop can only ever see one transmitter's traffic. Draining the whole
+                    // channel put several transmitters' frames under one PTT - on a station with modems at
+                    // 850 Hz and 2150 Hz, one burst starting on one and finishing on the other,
+                    // the waterfall picture that looks like a frame torn in half and is really
+                    // two whole frames sharing a keyup.
+                    //
+                    // What it cost was hearing. Receive is gated for the length of a keyup, so an
+                    // appended frame kept us transmitting for another 0.7 to 3.4 s at 300 Bd,
+                    // straight through the window the answer to the frame we just sent arrives
+                    // in. GB7RDG-2's frame log measured it, and the classification was exact
+                    // rather than a heuristic: a shared keyup's inter-frame gap IS the appended
+                    // burst rendered with the token preamble below (0.667 s for that station's
+                    // 15 B RR), while a separate keyup's is the same burst with a full TXDELAY,
+                    // plus the tail, plus the p-persistence wait (0.887 + 0.020 + more). Of the
+                    // 83 frames sent with ANOTHER MODEM's frame appended behind them, 2 were
+                    // answered within 6 s - 2.4 %, against 35.5 % of the 14,634 that ended their
+                    // keyup. Being second cost a little copy too, a strong adjacent burst ending
+                    // as yours begins being worth a decibel or two at the knee (bpsk300 behind
+                    // the AFSK ident, 24 trials: 10 of 24 at -4 dB AWGN against 22 of 24 in its
+                    // own keyup). The token preamble below was the obvious suspect and was
+                    // measured to be innocent - it scored the same as a full one on every row -
+                    // but its premise, that the far end is already locked to this waveform, is
+                    // still only true while the modem stays the same.
+                    while (TakeFrom(source) is { } item)
                     {
                         inFlight = item;
                         // Subsequent frames in one keyup need only a token preamble.
-                        int txDelay = first ? Csma.TxDelayMilliseconds : 30;
+                        int txDelay = keyupSource is null ? Csma.TxDelayMilliseconds : 30;
                         float[] samples;
                         try
                         {
@@ -548,7 +874,10 @@ public sealed class SoundModemChannel
                             continue;
                         }
 
-                        first = false;
+                        keyupSource = item.Source;
+                        // The hold belongs to the LAST thing actually sent, so a keyup that ends
+                        // with a frame nobody will answer does not keep the others waiting.
+                        quietAfter = item.QuietAfter;
                         // Told before the write, not after it. A real device's Write blocks until its
                         // buffer has room, so a burst longer than the buffer does not return from it
                         // until most of the burst has already played - and a display told afterwards
@@ -591,12 +920,7 @@ public sealed class SoundModemChannel
                         dying.Rejected?.Invoke(deviceFailure);
                     }
 
-                    while (reader.TryRead(out var queued))
-                    {
-                        queued.Done.TrySetException(deviceFailure);
-                        queued.Rejected?.Invoke(deviceFailure);
-                    }
-
+                    FaultEverything(deviceFailure);
                     throw;
                 }
             }
@@ -630,6 +954,10 @@ public sealed class SoundModemChannel
                 {
                     modem.ResetCarrierState();
                 }
+
+                // Set before receive reopens, so the window starts at the unkey rather than
+                // wherever this loop next gets scheduled.
+                SetHold(keyed ? keyupSource : null, keyed ? quietAfter : null);
 
                 TransmittingChanged?.Invoke(false);
                 _transmitting = false;
