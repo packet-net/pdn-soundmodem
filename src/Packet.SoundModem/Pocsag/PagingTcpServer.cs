@@ -14,7 +14,7 @@ namespace Packet.SoundModem.Pocsag;
 /// decoded off the channel. Pages are deliberately NOT exposed as KISS frames - paging
 /// is a one-way medium carrying pages, not AX.25 - but transmission goes through the
 /// same channel-access path as every other mode (CSMA, PTT, TXDELAY, sample-domain
-/// TX-complete) via <see cref="SoundModemChannel.EnqueueTransmit(Func{int,float[]},Action{Exception},bool)"/>.
+/// TX-complete) via <see cref="SoundModemChannel.EnqueueTransmit(Func{int,float[]},Action{Exception},bool,object,System.TimeSpan?)"/>.
 /// </summary>
 /// <remarks>
 /// <para>Grammar (client → server; replies go to the submitting client only):</para>
@@ -276,8 +276,13 @@ public sealed class PagingTcpServer : IAsyncDisposable
         int id = Interlocked.Increment(ref _nextId);
         // The spec preamble (576 bits) doubles as the TXDELAY budget; honour a longer
         // configured TXDELAY by stretching it (the preamble is the settling time).
-        Task sent = _channel.EnqueueTransmit(txDelay => _encoder.Modulate(
-            [page], Math.Max(PocsagEncoder.PreambleBits, (int)((long)txDelay * _baud / 1000))));
+        Task sent = _channel.EnqueueTransmit(
+            txDelay => _encoder.Modulate(
+                [page], Math.Max(PocsagEncoder.PreambleBits, (int)((long)txDelay * _baud / 1000))),
+            // The encoder identifies the paging transmitter, so a run of pages still shares one
+            // keyup - it is the same waveform to the same pagers. Only another transmitter (a
+            // packet modem) ends it.
+            source: _encoder);
 
         // A channel with no transmitter at all refuses synchronously - that answer belongs
         // to the client, not a journal, and a false OK teaches it the page went somewhere.
