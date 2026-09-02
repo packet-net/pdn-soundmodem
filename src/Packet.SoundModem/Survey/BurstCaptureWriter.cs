@@ -91,7 +91,13 @@ public sealed class BurstCaptureWriter : IDisposable
         _maxBytes = maxBytes;
         _time = time ?? TimeProvider.System;
         Directory.CreateDirectory(directory);
-        _writer = Task.Run(WriteLoop);
+        // A thread of its own, not a pool work item. The loop lives for the life of the station
+        // and blocks on the queue, which is what LongRunning is for; and the pool is the wrong
+        // place to wait in any case: under heavy DSP load a queued item can sit unstarted for
+        // seconds, which on the CI runner twice held a capture past Dispose's whole five-second
+        // budget and lost it (the survey test that reads its capture back failed at 5.1 s both
+        // times, only there, and never on a quiet machine).
+        _writer = Task.Factory.StartNew(WriteLoop, TaskCreationOptions.LongRunning);
     }
 
     /// <summary>Captures written to disk.</summary>
