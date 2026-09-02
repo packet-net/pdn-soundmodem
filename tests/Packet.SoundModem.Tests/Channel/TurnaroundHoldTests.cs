@@ -184,6 +184,32 @@ public class TurnaroundHoldTests
         await Ignore(transmitter);
     }
 
+    [Fact]
+    public async Task A_Zero_Slot_Time_Does_Not_Turn_The_Hold_Into_A_Spin()
+    {
+        // A host may set slot time to zero and LinBPQ was sending exactly that to the live
+        // station. The scheduler must wait out the hold rather than poll at slot intervals,
+        // because a zero-length poll is a core spinning for the length of every hold. The
+        // observable part is that the held frame still goes out; the wait being a single sleep
+        // rather than a spin is what RemainingHold buys.
+        (SoundModemChannel channel, FakeTimeProvider time) = Station();
+        channel.Csma.SlotTimeMilliseconds = 0;
+        channel.TurnaroundHold.Should().Be(TimeSpan.FromMilliseconds(600),
+            "the window must not collapse with the slot time");
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        Task poll = channel.EnqueueTransmit(2, Poll());
+        Task held = channel.EnqueueTransmit(0, Broadcast());
+        Task transmitter = await StartAsync(channel, time, cancellation.Token);
+
+        await poll.WaitAsync(TimeSpan.FromSeconds(15));
+        held.IsCompleted.Should().BeFalse("the turnaround is still running");
+        await held.WaitAsync(TimeSpan.FromSeconds(15)); // must release, not hang
+
+        await cancellation.CancelAsync();
+        await Ignore(transmitter);
+    }
+
     private static async Task Ignore(Task transmitter)
     {
         try
