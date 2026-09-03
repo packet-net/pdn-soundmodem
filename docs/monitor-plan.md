@@ -351,7 +351,7 @@ The coordinator updates this list as phases land. `[ ]` not started, `[~]` in pr
 - [x] **Phase 0** - this document. PR #385.
 - [x] **Phase 1** - the `Station` extraction out of `Program.cs`, no behaviour change. PR #387.
 - [x] **Phase 2** - `WaterfallWebServer` under a path base, page URLs relative, the two-server router. Can run beside Phase 1 in its own worktree. PR #386.
-- [ ] **Phase 3** - directory client, monitor host, picker page, `monitor` config, CONFIG.md, example config, memory measured. Needs 1 and 2. PR:
+- [x] **Phase 3** - directory client, monitor host, picker page, `monitor` config, CONFIG.md, example config, memory measured. Needs 1 and 2. PR #388.
 - [ ] **Phase 4** - release, container, tunnel, DNS, rate limit, soak, operator etiquette. Needs Tom's decisions in section 5. PR:
 
 ## 8. Decisions
