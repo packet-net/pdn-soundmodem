@@ -9,6 +9,10 @@
 
   <ItemGroup>
     <None Include="Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
+    <!-- A real capture of the UberSDR directory, taken 2026-09-03 and kept verbatim: what the
+         directory client is tested against is what the directory actually served, including the
+         three instances with no "tls" field and the six whose tuning range was never reported. -->
+    <None Include="Monitor/instances.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
@@ -41,8 +45,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The page probe is run by Node from the test output directory. -->
+    <!-- The page probes are run by Node from the test output directory. -->
     <None Include="Waterfall/browser/page-probe.mjs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Monitor/browser/monitor-probe.mjs" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- The sample modem plugin, loaded by path at run time rather than referenced.
