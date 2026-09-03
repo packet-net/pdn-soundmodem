@@ -452,7 +452,13 @@ internal sealed class FrameLog : IAsyncDisposable
         await _writer.ConfigureAwait(false);
         _pending.Dispose();
         _connection.Dispose();
-        SqliteConnection.ClearAllPools();
+
+        // This log's pool, not every log's. Disposing a connection returns it to a pool keyed on
+        // the connection string, which keeps the file handle open; clearing that pool is what
+        // releases the file. ClearAllPools did the job while a process held exactly one frame
+        // log, but a process holding one per station would have had each closing station reach
+        // across and shut every other station's handle too.
+        SqliteConnection.ClearPool(_connection);
     }
 
     private sealed record Entry(
