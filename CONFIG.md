@@ -1816,6 +1816,13 @@ to be live - takes down that receiver and no other. Its page and its row say wha
 is built again a minute later if somebody is still watching. That is what a single station answers
 with a restart, applied to one receiver instead of to the process.
 
+**A crawler can build every station without touching a single receiver.** Following each row's
+link is what builds that receiver's station, and stations are kept, so anything that walks the
+picker's links takes the process to its maximum memory in one pass. It costs the receivers
+nothing - none of them is contacted - but it costs this container everything it was going to cost
+eventually, all at once. Size for every listed receiver, not for the ones you expect people to
+watch.
+
 **Memory is the sizing question**, and it is the modems rather than the plumbing (measured
 2026-09-03, x86-64, .NET 10): about **31 MB per station** for the three-modem 40 m band plan above,
 against 86 MB for the process with no receiver picked. Almost all of that is the
