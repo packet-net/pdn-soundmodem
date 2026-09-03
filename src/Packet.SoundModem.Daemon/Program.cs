@@ -301,6 +301,16 @@ if (configPath is not null)
             Console.Error.WriteLine($"modem plugin: FAILED {load.Path} - {load.Failure}");
         }
     }
+
+    // Flavour B: this file describes a monitor rather than a station, so nothing below applies to
+    // it. There is no device to open, no PTT to check, no KISS port to bind and no transmitter to
+    // plan a filter for; the monitor host owns the rest of this process. Dispatched here, after
+    // the plugins are loaded and before the first line of station start-up, which is what keeps
+    // the station path exactly as it was.
+    if (config.Monitor is not null)
+    {
+        return await MonitorStartup.RunAsync(config);
+    }
 }
 
 // --waterfall/--dial override (or stand in for) the config's waterfall section.
