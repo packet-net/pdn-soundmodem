@@ -238,9 +238,12 @@ internal sealed class MonitorHost : IAsyncDisposable
                 return existing;
             }
 
+            // Reserved before it is built, so that a directory refresh landing while the
+            // channel and the modems are going up cannot give this slug to somebody else and
+            // leave the station answering on a URL the picker no longer points at.
+            _directory.Bind(slug, receiver.Host);
             var station = new MonitorStation(this, receiver);
             _stations[slug] = station;
-            _directory.Bind(slug, receiver.Host);
             return station;
         }
     }
