@@ -289,11 +289,7 @@ internal sealed class FrameLog : IAsyncDisposable
         var frames = new List<LoggedFrame>(count);
         try
         {
-            using var reader = new SqliteConnection(new SqliteConnectionStringBuilder
-            {
-                DataSource = Path,
-                Mode = SqliteOpenMode.ReadOnly,
-            }.ToString());
+            using var reader = new SqliteConnection(ReaderConnectionString(Path));
             reader.Open();
             using SqliteCommand query = reader.CreateCommand();
             // Newest first out of the index, then reversed: "the last N" is a descending
@@ -348,11 +344,7 @@ internal sealed class FrameLog : IAsyncDisposable
         var frames = new List<(LoggedFrame, byte[])>(count);
         try
         {
-            using var reader = new SqliteConnection(new SqliteConnectionStringBuilder
-            {
-                DataSource = Path,
-                Mode = SqliteOpenMode.ReadOnly,
-            }.ToString());
+            using var reader = new SqliteConnection(ReaderConnectionString(Path));
             reader.Open();
             using SqliteCommand query = reader.CreateCommand();
             query.CommandText = """
@@ -452,8 +444,32 @@ internal sealed class FrameLog : IAsyncDisposable
         await _writer.ConfigureAwait(false);
         _pending.Dispose();
         _connection.Dispose();
-        SqliteConnection.ClearAllPools();
+
+        // This log's pools, not every log's. Disposing a connection returns it to a pool keyed
+        // on the connection string, which keeps the file handle open; clearing that pool is what
+        // finally releases it. There are TWO of them per log, because Recent and RecentWithPayload
+        // open read-only connections and that is a different string and so a different pool -
+        // clearing only the writer's leaves the file open on any station whose backlog was ever
+        // read, which on a monitor is every station a visitor has looked at. ClearAllPools did
+        // the job while a process held exactly one frame log, and would have had each closing
+        // station reach across and shut every other station's handles the moment it held more.
+        SqliteConnection.ClearPool(_connection);
+        using (var reader = new SqliteConnection(ReaderConnectionString(Path)))
+        {
+            SqliteConnection.ClearPool(reader);
+        }
     }
+
+    /// <summary>
+    /// The connection string the backlog readers use. Read-only, and therefore a different
+    /// connection string - and a different pool - from the writer's ReadWriteCreate one, which
+    /// is the whole reason <see cref="DisposeAsync"/> has to clear both.
+    /// </summary>
+    private static string ReaderConnectionString(string path) => new SqliteConnectionStringBuilder
+    {
+        DataSource = path,
+        Mode = SqliteOpenMode.ReadOnly,
+    }.ToString();
 
     private sealed record Entry(
         DateTimeOffset HeardAt,
