@@ -598,6 +598,36 @@ public class WaterfallPageTests
         probe.FailedCall.Feed[0].Html.Should().Contain("got no answer in 3 minutes; the call has failed")
             .And.Contain("class=\"tag timeout\"").And.Contain(">NO ANSWER<");
         probe.FailedCall.Feed[1].Html.Should().Contain("calls GB7RDG-2");
+        probe.FailedCall.Head.Should().Contain("class=\"save\"", "every card can be saved as a transcript");
+
+        // The transcript: a markdown table, oldest line first, the classic decode beside the
+        // words, and the gap since the line before. The failed call is two lines, three minutes
+        // apart, the second of which has no frame behind it.
+        var failed = probe.TranscriptFailed.Split('\n');
+        failed[0].Should().Be("# EI0RSI-1 <> GB7RDG-2");
+        failed[2].Should().StartWith("Heard on modem 0").And.Contain("2 lines").And.Contain("the link is disconnected");
+        failed[4].Should().Be("| Time (UTC) | Delta | Classic | What happened |");
+        failed[5].Should().Be("|---|---|---|---|");
+        failed[6].Should().MatchRegex(@"^\| \d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} \|  \| `EI0RSI-1>GB7RDG-2 <SABM C P>` \| EI0RSI-1 calls GB7RDG-2 \|$");
+        failed[7].Should().MatchRegex(@"^\| \d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} \| \+3m 00s \|  \| EI0RSI-1 got no answer in 3 minutes; the call has failed \[NO ANSWER\] \|$");
+        failed[8].Should().BeEmpty("the document ends with a newline");
+        failed.Should().HaveCount(9);
+
+        // Our own link: the text of a data frame goes in the classic column in its own code span,
+        // the pid and length in the decode, and a resend is tagged in words.
+        var ours = probe.TranscriptOurs.Split('\n');
+        ours[0].Should().Be("# M0LTE-9 <> GB7RDG-2");
+        ours[2].Should().Contain("which transmits as GB7RDG-2").And.Contain("4 lines").And.Contain("the link is connected");
+        ours.Skip(6).Take(4).Select(row => row.Split(" | ")[2]).Should().Equal(
+            "`M0LTE-9>GB7RDG-2 <SABM C P>`",
+            "`GB7RDG-2>M0LTE-9 <UA R F>`",
+            "`M0LTE-9>GB7RDG-2 <I C S0 R0 pid=F0 len=12>` `hello <node>`",
+            "`GB7RDG-2>M0LTE-9 <I C S0 R1 pid=F0 len=49>` `Welcome to GB7RDG-2`");
+        ours.Skip(6).Take(4).Select(row => row.Split(" | ")[3].TrimEnd('|', ' ')).Should().Equal(
+            "M0LTE-9 calls GB7RDG-2",
+            "GB7RDG-2 accepts the call; link up",
+            "M0LTE-9 sends #0, 12 bytes",
+            "GB7RDG-2 resends #0 [RESEND]");
 
         // UI frames on: the beacons show, newest first after the links.
         probe.LinksAfterEvent.UiCount.Should().Be("2", "the filter says how many cards it is hiding");
@@ -817,6 +847,8 @@ public class WaterfallPageTests
         LinkCard[] LinkCards,
         CardSlot[] CardsAfterSecondLink,
         CardSlot[] CardsAfterCall,
+        string TranscriptFailed,
+        string TranscriptOurs,
         CardSlot[] CardsAfterTimeout,
         FailedCard? FailedCall,
         CardSlot[] CardsWithUi,
