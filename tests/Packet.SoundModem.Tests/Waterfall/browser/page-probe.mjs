@@ -415,14 +415,17 @@ const linkCards = sandbox.document.getElementById("linkCards").children.map(card
 const linksAfterEvent = linkBar();
 // A second link comes up between two other stations, newer than ours, and lands above it. Then
 // each filter in turn: UI frames on shows the beacons; Mine on leaves only the link this
-// station is one end of, which it knows from having answered on it.
+// station is one end of, which it knows from having answered on it. Half a minute ago rather
+// than now: the call scripted below is timed at now and has to sort above this, and a fast
+// runner gets both into the same millisecond (the v0.52.0 release run did), where "newer"
+// is a tie and the page keeps the card it already had on top.
 run(`onLinkEvent({type:"link",
   link:{id:"0|G4ABC-1<>GB7IOW-1", sub:0, a:"G4ABC-1", b:"GB7IOW-1", state:"connected", inferred:null, modulo:8,
-   first:"${new Date().toISOString()}", last:"${new Date().toISOString()}",
+   first:"${minutesAgo(0.5)}", last:"${minutesAgo(0.5)}",
    ab:{frames:1, data:0, bytes:0, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:0},
    ba:{frames:1, data:0, bytes:0, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:0},
    concern:null, recent:null},
-  event:{at:"${new Date().toISOString()}", from:"GB7IOW-1", to:"G4ABC-1", via:null, kind:"UA", cmd:false, pf:true, ns:null, nr:null, len:0, text:null, say:"accepts the call; link up", flags:["final","linkUp"], count:null, state:"connected", tx:null}})`);
+  event:{at:"${minutesAgo(0.5)}", from:"GB7IOW-1", to:"G4ABC-1", via:null, kind:"UA", cmd:false, pf:true, ns:null, nr:null, len:0, text:null, say:"accepts the call; link up", flags:["final","linkUp"], count:null, state:"connected", tx:null}})`);
 const cardsAfterSecondLink = shownCards();
 sandbox.document.getElementById("linksUi").click();
 const cardsWithUi = shownCards();
