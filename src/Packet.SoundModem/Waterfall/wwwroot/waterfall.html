@@ -478,6 +478,16 @@
 <script>
 "use strict";
 
+/* ---------- where this page is served from ---------- */
+// Everything this page reaches for - its socket, its survey links, the window it tears the links
+// pane off into - hangs off this, so that one page works both ways round with nothing configured
+// into it. The rule is the served path up to and including its last "/": a station that is its
+// own site is served at "/" and "/links", and both give "/", exactly what the URLs here were
+// written as; a site that offers several receivers serves one at "/r/m9psy-1/" and
+// "/r/m9psy-1/links", and both give "/r/m9psy-1/".
+const pagePath = location.pathname || "/";
+const base = pagePath.slice(0, pagePath.lastIndexOf("/") + 1) || "/";
+
 /* ---------- persisted UI state ---------- */
 const LS = "pdnsm-waterfall";
 const ui = Object.assign(
@@ -1143,8 +1153,8 @@ function logCapture(ev) {
     `<i>${ev.snrDb.toFixed(1)} dB</i>`,
   ];
   row.innerHTML = `<span class="t">${t}</span> <span class="from">${esc(ev.verdict)}</span>`
-    + `<span class="arrow">·</span><a class="dl" href="/survey/${encodeURIComponent(ev.file)}" download>audio</a>`
-    + `<span class="arrow">·</span><a class="dl" href="/survey/${encodeURIComponent(ev.file.replace(/\.wav$/, ".json"))}" target="_blank">details</a>`
+    + `<span class="arrow">·</span><a class="dl" href="${base}survey/${encodeURIComponent(ev.file)}" download>audio</a>`
+    + `<span class="arrow">·</span><a class="dl" href="${base}survey/${encodeURIComponent(ev.file.replace(/\.wav$/, ".json"))}" target="_blank">details</a>`
     + `<br><span class="d">${bits.join(" · ")}</span>`;
   const list = $("frames");
   list.prepend(row);
@@ -1157,7 +1167,7 @@ function logCapture(ev) {
 // if anything is) and the line to add to that card's feed, already worded. Nothing here decides
 // what a frame meant; this only draws what it was told. Cards are kept by link id and built
 // from parts held in hand rather than looked up, so a card is one object and not a selector.
-const detached = (location.pathname || "/") === "/links";
+const detached = pagePath.endsWith("/links");
 const cards = new Map();          // link id -> { el, head, stats, concern, feed, link, events }
 const CARD_FEED = 100;            // lines a card shows; the server sends the same on connect
 // Events a card remembers for its transcript, which is longer than what it shows: the rows are
@@ -1560,7 +1570,7 @@ function initLinksPane() {
     if (c) saveTranscript(c);
   };
   $("linksDetach").onclick = () => {
-    window.open("/links", "pdnsm-links", "popup=yes,width=1180,height=640");
+    window.open(`${base}links`, "pdnsm-links", "popup=yes,width=1180,height=640");
     showLinks(false);
   };
   document.addEventListener("keydown", e => {
@@ -1624,7 +1634,7 @@ function connect() {
   // Same scheme as the page: an https page (the public monitor behind a Cloudflare tunnel) may only
   // open wss://, and a browser silently refuses ws:// there as mixed content.
   const scheme = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${scheme}://${location.host}/ws`);
+  ws = new WebSocket(`${scheme}://${location.host}${base}ws`);
   ws.binaryType = "arraybuffer";
   ws.onopen = () => {
     $("conn").textContent = "live"; $("conn").className = "live";
