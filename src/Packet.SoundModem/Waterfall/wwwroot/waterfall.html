@@ -1621,7 +1621,10 @@ initLinksPane();
 let ws = null;               // the live socket; toggleAudio needs to reach it
 
 function connect() {
-  ws = new WebSocket(`ws://${location.host}/ws`);
+  // Same scheme as the page: an https page (the public monitor behind a Cloudflare tunnel) may only
+  // open wss://, and a browser silently refuses ws:// there as mixed content.
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${scheme}://${location.host}/ws`);
   ws.binaryType = "arraybuffer";
   ws.onopen = () => {
     $("conn").textContent = "live"; $("conn").className = "live";

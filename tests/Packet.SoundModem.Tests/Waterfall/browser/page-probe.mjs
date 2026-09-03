@@ -175,10 +175,19 @@ class AudioContext_ {
   }
 }
 
+// The page opens its socket with the scheme it was served over. The test server is plain http, so the
+// wrapper records the URL the page asked for and then connects over ws:// regardless; PROTOCOL=https:
+// lets a test check that an https page asks for wss:// (a browser refuses ws:// there as mixed content).
+const protocol = process.env.PROTOCOL || "http:";
+let socketUrl = null;
+class WebSocket_ extends WebSocket {
+  constructor(url, protocols) { socketUrl = String(url); super(socketUrl.replace(/^wss:/, "ws:"), protocols); }
+}
+
 const sandbox = {
-  document: document_, WebSocket, console, fetch, AudioContext: AudioContext_,
+  document: document_, WebSocket: WebSocket_, console, fetch, AudioContext: AudioContext_,
   setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame: cb => setTimeout(() => cb(performance.now()), 16),
-  cancelAnimationFrame: clearTimeout, performance, location: { host: `127.0.0.1:${process.env.PORT}`, protocol: "http:" },
+  cancelAnimationFrame: clearTimeout, performance, location: { host: `127.0.0.1:${process.env.PORT}`, protocol },
   devicePixelRatio: 1, Int16Array, Float32Array, Uint8Array, Uint8ClampedArray, ArrayBuffer, DataView,
   Math, JSON, Date, Object, Array, String, Number, Boolean, Error, Map, Set, Promise, parseFloat, parseInt, isNaN,
   matchMedia: () => ({ matches: false, addEventListener: noop }),
@@ -498,6 +507,7 @@ const publicPage = {
 };
 
 console.log(JSON.stringify({
+  socketUrl,
   publicPage,
   txKeyed,
   txKeyedBadSwr,

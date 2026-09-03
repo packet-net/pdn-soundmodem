@@ -681,7 +681,7 @@ public class WaterfallPageTests
     /// couple of seconds of silence as the answer: on a loaded runner the first block can be
     /// later than that, and the test that plays audio is the one run that must not give up early.
     /// </param>
-    private static async Task<Probe> RunProbeAsync(string node, int port, bool audio = false)
+    private static async Task<Probe> RunProbeAsync(string node, int port, bool audio = false, string? protocol = null)
     {
         string here = Path.GetDirectoryName(typeof(WaterfallPageTests).Assembly.Location)!;
         var start = new ProcessStartInfo(node)
@@ -694,6 +694,7 @@ public class WaterfallPageTests
         start.Environment["PAGE"] = pageFile.FullName;
         start.Environment["PORT"] = port.ToString();
         if (audio) start.Environment["AUDIO"] = "1";
+        if (protocol is not null) start.Environment["PROTOCOL"] = protocol;
 
         using Process probe = Process.Start(start)!;
         string stdout = await probe.StandardOutput.ReadToEndAsync();
@@ -854,9 +855,32 @@ public class WaterfallPageTests
         probe.ChipsAttached[0].Should().NotContain("host");
     }
 
+    [Fact]
+    public async Task A_Page_Served_Over_Https_Opens_Its_Socket_Over_Wss()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = new WaterfallWebServer(channel, port, new WaterfallOptions());
+        server.Start();
+
+        Probe plain = await RunProbeAsync(node, port);
+        Probe secure = await RunProbeAsync(node, port, protocol: "https:");
+
+        plain.SocketUrl.Should().Be($"ws://127.0.0.1:{port}/ws", "an http page keeps the plain socket");
+        secure.SocketUrl.Should().Be($"wss://127.0.0.1:{port}/ws",
+            "behind a tunnel the page is https, and a browser silently refuses ws:// from there as mixed content");
+        secure.Connected.Should().BeTrue("with the right scheme the handshake goes through as before");
+        secure.Thrown.Should().BeEmpty();
+    }
+
     private sealed record PublicPage(string Title, string BodyClass, string About, bool AboutHidden);
 
     private sealed record Probe(
+        string? SocketUrl,
         PublicPage PublicPage,
         bool Connected,
         string? ClickError,
