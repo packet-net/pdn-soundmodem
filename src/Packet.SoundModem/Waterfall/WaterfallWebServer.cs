@@ -2,8 +2,6 @@ using System.Buffers.Binary;
 using System.Globalization;
 using System.Net;
 using System.Net.WebSockets;
-using System.Reflection;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -86,6 +84,18 @@ public sealed class WaterfallOptions
     /// <summary>One paragraph for the visitor: what the window is, that it is receive only. Null
     /// shows none.</summary>
     public string? About { get; set; }
+
+    /// <summary>
+    /// Where the list of receivers is, for a page that is one receiver of a site that offers
+    /// several: the page shows a way back to it beside the receiver credit. Null (the default)
+    /// shows none, which is right for a station that is its own site - there is nothing to go
+    /// back to.
+    /// </summary>
+    /// <remarks>
+    /// Relative, and normally "../": the site may sit behind a tunnel, under a hostname the
+    /// daemon has never been told, so an absolute URL built here would be a guess.
+    /// </remarks>
+    public string? PickerUrl { get; set; }
 }
 
 /// <summary>
@@ -490,7 +500,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
 
         _radioStatus = status;
-        _configMessage = BuildConfigMessage();
+        if (_source is not null)
+        {
+            _configMessage = BuildConfigMessage(); // before Start, Start's own build picks it up
+        }
+
         Broadcast(WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(
             new { type = "radio", status }, Json));
     }
@@ -737,6 +751,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             about = _options.About,
             receiver = _receiverDescription,
             receiverUrl = _receiverUrl,
+            pickerUrl = _options.PickerUrl,
             modems = _bands.Select(b => new
             {
                 sub = b.SubChannel,
@@ -2059,21 +2074,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// links pane was reported empty on the main page and fine at /links, which is the same page
     /// in a fresh window; a tab from before the upgrade is the one explanation found that fits.
     /// </remarks>
-    private static readonly Lazy<(byte[] Bytes, string Version)> Page = new(LoadPage);
-
-    private static (byte[] Bytes, string Version) LoadPage()
-    {
-        var assembly = Assembly.GetExecutingAssembly();
-        string name = assembly.GetManifestResourceNames()
-            .Single(n => n.EndsWith("waterfall.html", StringComparison.Ordinal));
-        using Stream stream = assembly.GetManifestResourceStream(name)!;
-        using var memory = new MemoryStream();
-        stream.CopyTo(memory);
-        byte[] raw = memory.ToArray();
-        string version = Convert.ToHexStringLower(SHA256.HashData(raw))[..12];
-        string text = Encoding.UTF8.GetString(raw).Replace("__PAGE_VERSION__", version, StringComparison.Ordinal);
-        return (Encoding.UTF8.GetBytes(text), version);
-    }
+    private static readonly Lazy<(byte[] Bytes, string Version)> Page =
+        new(() => EmbeddedPage.Load("waterfall.html"));
 
     /// <summary>Stops listening and drops every client.</summary>
     public async ValueTask DisposeAsync()

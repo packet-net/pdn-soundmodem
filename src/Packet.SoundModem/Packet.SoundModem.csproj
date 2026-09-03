@@ -68,6 +68,10 @@
     <!-- The browser waterfall page, served whole by WaterfallWebServer - a single
          self-contained file, no external assets. -->
     <EmbeddedResource Include="Waterfall/wwwroot/waterfall.html" />
+    <!-- The picker: the front page of a site that offers several receivers. Served by the
+         daemon's monitor host rather than by a waterfall server, and self-contained the same
+         way. Embedded here because it is one design with the page it links to. -->
+    <EmbeddedResource Include="Waterfall/wwwroot/monitor.html" />
   </ItemGroup>
 
   <ItemGroup>
