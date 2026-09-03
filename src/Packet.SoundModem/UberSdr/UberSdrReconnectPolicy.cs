@@ -49,6 +49,10 @@ internal sealed class UberSdrReconnectPolicy
 
     private int _consecutive;
 
+    /// <summary>Back to the foot of the ladder, as one healthy session does - for a caller that
+    /// learns of health some other way than a session ending.</summary>
+    public void Reset() => _consecutive = 0;
+
     /// <summary>Delay to wait after an attempt with the given outcome, before the next.</summary>
     public TimeSpan After(UberSdrReconnectOutcome outcome)
     {

@@ -15,6 +15,10 @@ public readonly record struct UberSdrEndpoint(string Host, int Port, bool Ssl)
     /// <summary>WebSocket scheme for the stream.</summary>
     public string WebSocketScheme => Ssl ? "wss" : "ws";
 
+    /// <summary>The receiver's own page, as a link for a visitor: the scheme and host, with the
+    /// default port left off.</summary>
+    public string PublicUrl => $"{(Ssl ? "https" : "http")}://{this}/";
+
     /// <summary>The endpoint as an operator would write it, with the default port left off.</summary>
     public override string ToString() =>
         Port == (Ssl ? 443 : 80) ? Host : $"{Host}:{Port}";

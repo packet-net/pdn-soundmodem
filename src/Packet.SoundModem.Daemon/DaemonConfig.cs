@@ -440,6 +440,27 @@ public sealed class UberSdrConfig
     /// scaling. For bringing a quiet instance up to soundcard-like levels on the waterfall.</summary>
     public double? Gain { get; set; }
 
+    /// <summary>
+    /// Hold a session on the receiver only while somebody has the waterfall page open. For a
+    /// public monitor: with nobody watching there is nothing to show, and the receiver's slot
+    /// and this address's daily allowance are better left alone. Off (the default) connects at
+    /// start-up and stays connected, as a station feeding a node must.
+    /// </summary>
+    /// <remarks>
+    /// With this on, a receiver that cannot be reached is not fatal: the daemon keeps the page
+    /// up, tells the viewer, and tries again on the usual ladder for as long as anyone waits.
+    /// The pre-flight at start-up still runs, so a wrong host or a refused IQ mode is still a
+    /// configuration error.
+    /// </remarks>
+    public bool OnDemand { get; set; }
+
+    /// <summary>
+    /// With <see cref="OnDemand"/>, how long the session is kept after the last viewer leaves,
+    /// in seconds. Default 60: a page refresh, a tab switch or a flaky connection should not
+    /// cost the receiver a tear-down and rebuild each time. 0 closes at once.
+    /// </summary>
+    public int LingerSeconds { get; set; } = 60;
+
     /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
@@ -649,6 +670,22 @@ public sealed class WaterfallConfig
 
     /// <summary>FFT length override; 0 = the rate default (2048 at 12 kHz, 8192 at 48 kHz).</summary>
     public int FftSize { get; set; }
+
+    /// <summary>
+    /// The page is for the public, not the operator: it takes the <see cref="Title"/> and
+    /// <see cref="About"/> below, credits and links the receiver it listens through, and hides
+    /// the KISS host badges, which name ports on a box a visitor cannot reach. Nothing else
+    /// changes, and nothing is removed from the operator's page. Off by default.
+    /// </summary>
+    public bool Public { get; set; }
+
+    /// <summary>Public page title, in the tab and at the top of the page. Null keeps the
+    /// page's own.</summary>
+    public string? Title { get; set; }
+
+    /// <summary>One paragraph for the visitor on a public page: what the window is, and that it
+    /// is receive only. Null shows none.</summary>
+    public string? About { get; set; }
 
     /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]

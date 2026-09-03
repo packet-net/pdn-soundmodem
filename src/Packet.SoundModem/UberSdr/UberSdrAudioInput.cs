@@ -35,7 +35,7 @@ namespace Packet.SoundModem.UberSdr;
 /// <para>Protocol per <c>docs/ms110d/ota-capture-client-plan.md</c>; the framing is decoded by
 /// <see cref="PcmBinaryDecoder"/>, which is a port from the upstream Go client.</para>
 /// </remarks>
-public sealed class UberSdrAudioInput : IAudioInput, IDisposable
+public sealed class UberSdrAudioInput : IUberSdrSession
 {
     private const string UserAgent = "pdn-soundmodem (ubersdr: receive device)";
 
@@ -158,24 +158,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         // the reply stays a start-up error, because a config typo retried forever is a silence
         // nobody can explain.
         bool refusedForNow = connection.RefusedForNow;
-        if (!refusedForNow)
-        {
-            if (!connection.Allowed)
-            {
-                throw new InvalidOperationException(
-                    $"{endpoint} refused the connection: {connection.Reason ?? "no reason given"}");
-            }
-
-            if (connection.AllowedIqModes is { Count: > 0 } modes
-                && !connection.Bypassed
-                && !modes.Contains(tuning.Mode, StringComparer.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    $"{endpoint} does not offer IQ mode '{tuning.Mode}' to this client - it allows "
-                    + $"{string.Join(", ", modes)}. Set \"ubersdr\": {{ \"mode\": \"{modes[0]}\" }}, or "
-                    + "ask the receiver's operator for access.");
-            }
-        }
+        RequireAcceptable(endpoint, tuning, connection);
 
         string? description = Describe(
             await FetchDescriptionAsync(endpoint, cancellation).ConfigureAwait(false));
@@ -649,13 +632,46 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
     }
 
     /// <summary>
+    /// The pre-flight verdict as a start-up error: a refusal that time will not lift, or an IQ
+    /// mode the instance does not offer this client, each with the sentence an operator needs.
+    /// A refusal that only time can lift (<see cref="ConnectionResponse.RefusedForNow"/>)
+    /// passes, because the receive loop knows how to wait for that one.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The reply says this configuration will never
+    /// stream from this instance as it stands.</exception>
+    internal static void RequireAcceptable(
+        UberSdrEndpoint endpoint, UberSdrTuning tuning, ConnectionResponse connection)
+    {
+        if (connection.RefusedForNow)
+        {
+            return;
+        }
+
+        if (!connection.Allowed)
+        {
+            throw new InvalidOperationException(
+                $"{endpoint} refused the connection: {connection.Reason ?? "no reason given"}");
+        }
+
+        if (connection.AllowedIqModes is { Count: > 0 } modes
+            && !connection.Bypassed
+            && !modes.Contains(tuning.Mode, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"{endpoint} does not offer IQ mode '{tuning.Mode}' to this client - it allows "
+                + $"{string.Join(", ", modes)}. Set \"ubersdr\": {{ \"mode\": \"{modes[0]}\" }}, or "
+                + "ask the receiver's operator for access.");
+        }
+    }
+
+    /// <summary>
     /// <c>POST /connection</c>: whether we may stream at all, and whether the mode we want is on
     /// offer. Asked before the WebSocket so a refusal arrives as a sentence rather than as a
     /// socket that closes for no stated reason. Refusals come back as the reply itself
     /// (<see cref="ConnectionResponse.Allowed"/> false) - the caller decides which refusals are
     /// errors and which are "wait"; only an unreachable or non-UberSDR endpoint throws.
     /// </summary>
-    private static async Task<ConnectionResponse> PreflightAsync(
+    internal static async Task<ConnectionResponse> PreflightAsync(
         UberSdrEndpoint endpoint, string sessionId, UberSdrTuning tuning, CancellationToken cancellation)
     {
         var body = new JsonObject { ["user_session_id"] = sessionId };
@@ -708,7 +724,7 @@ public sealed class UberSdrAudioInput : IAudioInput, IDisposable
         return reply;
     }
 
-    private static async Task<string?> FetchDescriptionAsync(
+    internal static async Task<string?> FetchDescriptionAsync(
         UberSdrEndpoint endpoint, CancellationToken cancellation)
     {
         try

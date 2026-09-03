@@ -220,6 +220,12 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   config runs unchanged on somebody else's antenna. Receive only, and the channel says so
   once (`ReceiveOnlyReason`) rather than each host interface finding out separately. See the
   amendment log entry below.
+- ✅ Public monitor over an UberSDR receiver (2026-09-03): `"ubersdr": { "onDemand": true }`
+  holds a session on the receiver only while somebody has the waterfall open (held for a
+  linger after the last leaves), and `"waterfall": { "public": true }` dresses the page for a
+  visitor: a title, an about paragraph, a credit and link for the receiver, no KISS host
+  badges. Built for https://40m-monitor.ukpacketradio.network; see
+  [docs/40m-monitor-plan.md](40m-monitor-plan.md).
 - ⬜ DCD-over-KISS extension (awaiting an agreed NinoTNC-ecosystem format); Windows
   audio backend (deferred 2026-07-15); extra decode-only listeners; multi-decoder banks
   for the PSK modes.

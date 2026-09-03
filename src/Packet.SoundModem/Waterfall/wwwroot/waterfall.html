@@ -45,6 +45,13 @@
   .radio-status { margin-left: 10px; padding: 1px 7px; border-radius: 9px;
                   background: rgba(255,255,255,.06); font-size: 12px; }
   .radio-status.bad { background: rgba(255,120,90,.16); color: #ff9a7a; }
+  .radio-status.quiet { color: var(--muted); }
+  /* Public deployment: a paragraph for a visitor who has never seen a packet waterfall, and
+     whose receiver they are hearing. Not shown on the operator's own page. */
+  #about { padding: 7px 14px; background: var(--panel); border-bottom: 1px solid var(--edge);
+           font-size: 13px; line-height: 1.45; color: var(--muted); }
+  #about a { color: var(--amber); text-decoration: none; }
+  #about a:hover { text-decoration: underline; }
   .seg-btn { font: inherit; color: var(--fg); background: #1a1d22; border: 1px solid #2b3038;
              border-radius: 6px; padding: 3px 10px; cursor: pointer; }
   .seg-btn.on { background: var(--amber); color: #12141a; border-color: var(--amber); }
@@ -435,6 +442,7 @@
   <div id="meta"><span id="conn" class="dead">connecting…</span><br><span id="stats"></span></div>
 </header>
 
+<div id="about" hidden></div>
 <div id="chips"></div>
 
 <main>
@@ -591,7 +599,31 @@ function setRadioStatus(status) {
   if (!status) { el.hidden = true; el.textContent = ""; return; }
   el.hidden = false;
   el.textContent = status;
-  el.classList.toggle("bad", /UNLOCKED|reboot|unknown/i.test(status));
+  el.classList.toggle("bad", /UNLOCKED|reboot|unknown|unreachable|refus|gave up|could not/i.test(status));
+  el.classList.toggle("quiet", /^(idle|no viewers|connecting)\b/i.test(status));
+}
+
+// A deployment on the open internet: a title of its own, a paragraph of what the visitor is
+// looking at, and whose receiver it is. It is somebody else's receiver; the credit and the link
+// to their own page are the least it can do. The operator's page is untouched by all of this.
+function applyPublicFlavour() {
+  if (!cfg.publicMonitor) return;
+  document.body.classList.add("public");
+  const title = cfg.title || "packet monitor";
+  document.title = detached ? `${title} · links` : title;
+  const wm = document.querySelector(".wordmark");
+  wm.querySelector("b").textContent = title;
+  wm.querySelector("span").textContent = detached ? "links" : "pdn-soundmodem";
+  const parts = [];
+  if (cfg.about) parts.push(esc(cfg.about));
+  if (cfg.receiver || cfg.receiverUrl) {
+    const name = esc(cfg.receiver || cfg.receiverUrl);
+    const who = cfg.receiverUrl
+      ? `<a href="${esc(cfg.receiverUrl)}" target="_blank" rel="noopener">${name}</a>` : name;
+    parts.push(`Heard on ${who}, an UberSDR web receiver; the session is opened only while somebody has this page open.`);
+  }
+  $("about").innerHTML = parts.join(" ");
+  $("about").hidden = detached || !parts.length;
 }
 
 // ---------------------------------------------------------------- receive audio (opt-in)
@@ -772,6 +804,7 @@ function renderChips() {
 // port, and the multiplexed one, which reaches every modem by nibble. Nothing at all when the
 // station has not said what it serves - an absent badge is honest, a green one would not be.
 function hostBadge(sub) {
+  if (cfg.publicMonitor) return "";
   const reach = hostPorts.filter(p => p.sub == null || p.sub === sub);
   if (!reach.length) return "";
   const clients = reach.reduce((n, p) => n + (p.clients || 0), 0);
@@ -1609,6 +1642,7 @@ function connect() {
         const first = !cfg;
         cfg = msg;
         if (first) { initControls(); checkPageVersion(msg.page); }
+        applyPublicFlavour();
         setRadioStatus(cfg.radioStatus);
         renderChips(); resizeAll(); drawRuler(); drawOverlay();
       } else if (msg.type === "radio") {
