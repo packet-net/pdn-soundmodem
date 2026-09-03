@@ -156,6 +156,36 @@ public class OnDemandUberSdrInputTests
     }
 
     [Fact]
+    public async Task A_Refusal_Is_Told_Apart_From_Everything_Else_That_Will_Not_Open()
+    {
+        // A host listing several receivers has to be able to say which of them is refusing it
+        // rather than which is broken: "the daily allowance for this monitor is used up, back
+        // tomorrow" is a sentence a visitor can act on, and "unreachable" is not the same thing.
+        // The ladder already knows the difference; this is that knowledge, readable from outside.
+        using var h = new Harness();
+        h.Input.Refused.Should().BeFalse("nothing has been asked of the receiver yet");
+
+        h.Input.SetViewers(1);
+        (await h.NextAttemptAsync()).SetException(
+            new InvalidOperationException("rx.example.org refused the connection: quota spent"));
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        h.Input.Refused.Should().BeTrue();
+
+        // A transport failure is not a refusal, however it is retried.
+        h.Time.Advance(TimeSpan.FromMinutes(1));
+        (await h.NextAttemptAsync()).SetException(new HttpRequestException("connection refused"));
+        await Eventually(() => h.Input.Refused == false);
+        h.Input.Phase.Should().Be(OnDemandPhase.Retrying);
+
+        // And a session that opens clears it. Past the transient cap, so the rung the ladder has
+        // climbed to by now does not matter.
+        h.Time.Advance(TimeSpan.FromSeconds(30));
+        (await h.NextAttemptAsync()).SetResult(new FakeSession { SessionLive = true });
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Live);
+        h.Input.Refused.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task A_Failed_Open_With_Nobody_Waiting_Goes_Idle_Without_Retrying()
     {
         using var h = new Harness();
