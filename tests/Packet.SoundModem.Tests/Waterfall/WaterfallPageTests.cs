@@ -37,7 +37,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port);
         server.Start();
 
@@ -93,7 +93,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port);
         server.Start();
 
@@ -145,7 +145,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port);
         server.Start();
 
@@ -188,7 +188,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port);
         server.Start();
 
@@ -245,7 +245,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port);
         server.Start();
 
@@ -277,7 +277,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port);
         server.Start();
 
@@ -313,7 +313,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port);
         server.Start();
 
@@ -353,7 +353,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port);
         server.Start();
 
@@ -406,7 +406,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port);
         server.Start();
 
@@ -468,7 +468,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port);
         server.Start();
 
@@ -520,7 +520,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port);
         server.Start();
 
@@ -763,14 +763,6 @@ public class WaterfallPageTests
         return "";
     }
 
-    private static int FreePort()
-    {
-        using var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        probe.Start();
-        int port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        return port;
-    }
 
     /// <summary>
     /// The links button, the pane's summary line and its two filters, as the page left them.
@@ -833,7 +825,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port, new WaterfallOptions
         {
             Public = true,
@@ -872,7 +864,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port, new WaterfallOptions());
         server.Start();
 
@@ -905,7 +897,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = WaterfallWebServer.Routed(channel);
         await using var router = new WaterfallRouter(port);
         router.Add(ReceiverBase, server);
@@ -931,7 +923,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int routerPort = FreePort();
+        int routerPort = FreePorts.Next();
         await using var routed = WaterfallWebServer.Routed(channel);
         await using var router = new WaterfallRouter(routerPort);
         router.Add(ReceiverBase, routed);
@@ -940,7 +932,7 @@ public class WaterfallPageTests
 
         var ownChannel = new SoundModemChannel(SampleRate, randomSeed: 7);
         ownChannel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int ownPort = FreePort();
+        int ownPort = FreePorts.Next();
         await using var own = new WaterfallWebServer(ownChannel, ownPort);
         own.Start();
 
@@ -966,7 +958,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = WaterfallWebServer.Routed(channel);
         await using var router = new WaterfallRouter(port);
         router.Add(ReceiverBase, server);
@@ -1000,7 +992,7 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int routerPort = FreePort();
+        int routerPort = FreePorts.Next();
         await using var routed = WaterfallWebServer.Routed(channel);
         await using var router = new WaterfallRouter(routerPort);
         router.Add(ReceiverBase, routed);
@@ -1009,7 +1001,7 @@ public class WaterfallPageTests
 
         var ownChannel = new SoundModemChannel(SampleRate, randomSeed: 7);
         ownChannel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        int ownPort = FreePort();
+        int ownPort = FreePorts.Next();
         await using var own = new WaterfallWebServer(ownChannel, ownPort);
         own.Start();
 

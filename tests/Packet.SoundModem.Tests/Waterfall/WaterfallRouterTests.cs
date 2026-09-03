@@ -41,7 +41,7 @@ public class WaterfallRouterTests : IAsyncLifetime
         _dalgety = WaterfallWebServer.Routed(
             _dalgetyChannel, new WaterfallOptions { Public = true, Title = "Dalgety Bay" });
 
-        _port = FreePort();
+        _port = FreePorts.Next();
         _router = new WaterfallRouter(_port);
     }
 
@@ -253,7 +253,7 @@ public class WaterfallRouterTests : IAsyncLifetime
     public async Task The_Longest_Matching_Prefix_Gets_The_Request()
     {
         await using var nested = new Receivers(3);
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var router = new WaterfallRouter(port);
 
         // Registered inside-out, so that "the one registered first" and "the longest" cannot be
@@ -391,12 +391,4 @@ public class WaterfallRouterTests : IAsyncLifetime
         }
     }
 
-    private static int FreePort()
-    {
-        var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        return port;
-    }
 }

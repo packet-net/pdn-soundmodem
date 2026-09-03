@@ -23,7 +23,7 @@ public class WaterfallDeclaredBandTests : IAsyncLifetime
     public ValueTask InitializeAsync()
     {
         _channel.AddModem(0, sink => ModemCatalog.Create("afsk1200", SampleRate, sink));
-        _server = new WaterfallWebServer(_channel, FreePort(), new WaterfallOptions
+        _server = new WaterfallWebServer(_channel, FreePorts.Next(), new WaterfallOptions
         {
             DeclaredBands =
             [
@@ -39,14 +39,6 @@ public class WaterfallDeclaredBandTests : IAsyncLifetime
 
     public async ValueTask DisposeAsync() => await _server.DisposeAsync();
 
-    private static int FreePort()
-    {
-        var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        return port;
-    }
 
     [Fact]
     public void A_Band_That_Cannot_Be_Probed_Is_Still_Drawn()
@@ -80,7 +72,7 @@ public class WaterfallDeclaredBandTests : IAsyncLifetime
         // "0 Hz" with its dashed centre line at DC.
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => ModemCatalog.Create("bpsk300", SampleRate, sink));
-        await using var server = new WaterfallWebServer(channel, FreePort(), new WaterfallOptions
+        await using var server = new WaterfallWebServer(channel, FreePorts.Next(), new WaterfallOptions
         {
             DeclaredBands = [new DeclaredBand(0, "bpsk300", 0, null)],
         });

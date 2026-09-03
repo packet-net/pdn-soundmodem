@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using M0LTE.Dsp;
-using Packet.SoundModem.Modems;
 using Packet.SoundModem.UberSdr;
 
 namespace Packet.SoundModem.Daemon;

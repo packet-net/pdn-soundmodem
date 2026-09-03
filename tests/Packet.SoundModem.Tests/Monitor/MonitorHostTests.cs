@@ -242,7 +242,7 @@ public class MonitorHostTests
                 _receivers[host] = new Receiver();
             }
 
-            int port = FreePort();
+            int port = FreePorts.Next();
             _host = new MonitorHost(new MonitorHostOptions
             {
                 Directory = new UberSdrDirectoryOptions
@@ -427,14 +427,6 @@ public class MonitorHostTests
             ]}
             """;
 
-        private static int FreePort()
-        {
-            using var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return port;
-        }
     }
 
     /// <summary>

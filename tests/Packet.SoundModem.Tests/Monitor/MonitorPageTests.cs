@@ -189,7 +189,6 @@ public class MonitorPageTests
     private sealed class Harness : IAsyncDisposable
     {
         private readonly MonitorHost _host;
-        private readonly CancellationTokenSource _stopping = new();
         private string? _failure;
 
         private Harness(int port, string? coldFailure)
@@ -227,7 +226,7 @@ public class MonitorPageTests
 
         internal static async Task<Harness> StartAsync(string? coldFailure = null)
         {
-            var harness = new Harness(FreePort(), coldFailure);
+            var harness = new Harness(FreePorts.Next(), coldFailure);
             (await harness._host.StartAsync()).Should().Be(0);
             return harness;
         }
@@ -239,7 +238,6 @@ public class MonitorPageTests
         public async ValueTask DisposeAsync()
         {
             await _host.DisposeAsync();
-            _stopping.Dispose();
         }
 
         /// <summary>Three receivers: two with room, one full.</summary>
@@ -272,13 +270,5 @@ public class MonitorPageTests
             ]}
             """;
 
-        private static int FreePort()
-        {
-            using var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-            probe.Start();
-            int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-            probe.Stop();
-            return port;
-        }
     }
 }
