@@ -538,7 +538,8 @@ internal sealed record StationOptions
     /// <summary>The wall clock the starvation watch and its grace timer run on.</summary>
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
-    /// <summary>How long an orderly shutdown is given before the station reports itself
-    /// stalled.</summary>
+    /// <summary>How long the orderly shutdown a starvation fault asks for is given to happen. If
+    /// the loop is still inside <c>Read</c> when it is up, the station reports itself stalled; if
+    /// it got out, nothing further is said.</summary>
     public TimeSpan StalledShutdownGrace { get; init; } = TimeSpan.FromSeconds(15);
 }
