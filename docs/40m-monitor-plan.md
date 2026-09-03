@@ -1,6 +1,6 @@
 # 40m-monitor - a public HF packet monitor over one UberSDR receiver
 
-**Status: 4.1 and 4.2 built on `feat/ubersdr-on-demand`, 2026-09-03; 4.3 to follow the release.** Written at Tom's request for a public-facing deployment of pdn-soundmodem at https://40m-monitor.ukpacketradio.network, showing the 7050-7052 kHz packet window that GB7RDG-2 works, as heard by a public UberSDR receiver.
+**Status: 4.1 and 4.2 built on `feat/ubersdr-on-demand`, 2026-09-03. 4.3: CT 146 `40m-monitor` is up on a pre-release build, connect-on-demand verified against M9PSY-1 from inside the container; the tunnel and DNS are the remaining steps, then the release .deb replaces the pre-release one.** Written at Tom's request for a public-facing deployment of pdn-soundmodem at https://40m-monitor.ukpacketradio.network, showing the 7050-7052 kHz packet window that GB7RDG-2 works, as heard by a public UberSDR receiver.
 
 ## 1. What it is
 
@@ -75,7 +75,12 @@ Config as deployed:
     { "subChannel": 2, "mode": "bpsk300",                 "rfFrequency": 7051600 }
   ],
   "frameLog": { "path": "/var/lib/pdn-soundmodem/frames.db" },
-  "waterfall": { "port": 8099, "public": true, "title": "40 m packet monitor" },
+  "waterfall": {
+    "port": 8099,
+    "public": true,
+    "title": "40 m packet monitor",
+    "about": "The 7050-7052 kHz packet window on 40 m, the one GB7RDG-2 works, as heard by a public web receiver in Scotland. Receive only: this page decodes what it hears and shows the AX.25 links and frames; nothing is transmitted."
+  },
   "bind": "127.0.0.1"
 }
 ```
