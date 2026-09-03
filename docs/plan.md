@@ -226,6 +226,7 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   visitor: a title, an about paragraph, a credit and link for the receiver, no KISS host
   badges. Built for https://m9psy-1-monitor.ukpacketradio.network; see
   [docs/40m-monitor-plan.md](40m-monitor-plan.md).
+- ⬜ Public monitor over many UberSDR receivers, planned (2026-09-03): one deployment at https://monitor.ukpacketradio.network with a picker that lists receivers live from the UberSDR directory, at most one session per receiver however many visitors are watching it, and the same binary in two config flavours (`"device"` as today, or a new `"monitor"` section); see [docs/monitor-plan.md](monitor-plan.md).
 - ⬜ DCD-over-KISS extension (awaiting an agreed NinoTNC-ecosystem format); Windows
   audio backend (deferred 2026-07-15); extra decode-only listeners; multi-decoder banks
   for the PSK modes.
