@@ -1779,6 +1779,14 @@ browser actually attaches. So a crawler cannot cost anybody a session. Once buil
 kept for the life of the process, so the links pane and the frame log survive a visitor leaving
 and coming back - which is the whole reason a quiet band looks alive.
 
+**An `ardop` entry declares a band and decodes nothing, in this flavour.** ARDOP is not a
+demodulator but a whole virtual TNC with its own host interface, and a monitor has no host
+interface, so the entry above takes part in the band plan (which is what keeps the dial and every
+other modem's audio centre the same as the single-station deployment's) and draws its band on
+every receiver's waterfall, and no ARDOP frame is decoded or listed. Keep it if you want the
+overlay to match the node's band plan; drop it if a shaded region that never lights up would
+mislead. Nothing else changes either way.
+
 **One session per receiver, however many people are watching it.** The fan-out is in this daemon:
 ten visitors on one receiver are ten browsers on one page, which is one viewer count, which is one
 session. Each receiver's session is dropped `lingerSeconds` after the last browser watching *that
