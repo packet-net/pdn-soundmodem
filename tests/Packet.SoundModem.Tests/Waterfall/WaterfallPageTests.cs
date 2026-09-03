@@ -557,16 +557,18 @@ public class WaterfallPageTests
         beacon.Head.Should().Contain("GB7BEX").And.Contain(">no link<");
         beacon.Stats.Should().Contain("GB7BEX").And.NotContain(">ID<", "a beacon's addressee never sends anything");
 
-        // The feed reads as a transcript: oldest first, worded, and the link coming up in green.
+        // The feed reads newest first, worded, and the link coming up in green. The three lines
+        // from the backlog were placed without the arrival light; the one that came live has it.
         live.Feed.Should().HaveCount(4);
-        live.Feed[0].Html.Should().Contain("calls GB7RDG-2");
-        live.Feed[1].ClassName.Should().Be("ln tx up", "the node's answer was ours, and brought the link up");
-        live.Feed[2].Html.Should().Contain("hello &lt;node&gt;",
+        live.Feed[3].Html.Should().Contain("calls GB7RDG-2");
+        live.Feed[2].ClassName.Should().Be("ln tx up", "the node's answer was ours, and brought the link up");
+        live.Feed[1].Html.Should().Contain("hello &lt;node&gt;",
             "text off the air is quoted, and escaped, because a payload is not markup");
 
-        // The decisive line: the resend, tagged as such, with what it carried under it.
-        LinkFeedLine resend = live.Feed[3];
-        resend.ClassName.Should().Be("ln tx");
+        // The decisive line: the resend, tagged as such, with what it carried under it, at the top
+        // because it is the latest, and lit because it has just arrived.
+        LinkFeedLine resend = live.Feed[0];
+        resend.ClassName.Should().Be("ln tx new");
         resend.Html.Should().Contain("resends #0")
             .And.Contain("class=\"tag resend\"", "a retry has to be obvious, not inferred from a sequence number")
             .And.Contain(">RESEND<")
@@ -580,6 +582,22 @@ public class WaterfallPageTests
             "0|G4ABC-1<>GB7IOW-1", "0|GB7RDG-2<>M0LTE-9", "0|ID<>M0XYZ-3", "1|GB7BEX<>ID");
         probe.CardsAfterSecondLink.Where(c => !c.Hidden).Select(c => c.Id).Should().Equal(
             "0|G4ABC-1<>GB7IOW-1", "0|GB7RDG-2<>M0LTE-9");
+
+        // A call nothing answers: at the top while it is a call, then when the station gives up
+        // on it, below the links that are up, no longer live, with the line saying why on top.
+        probe.CardsAfterCall.Where(c => !c.Hidden).Select(c => c.Id).Should().Equal(
+            "0|EI0RSI-1<>GB7RDG-2", "0|G4ABC-1<>GB7IOW-1", "0|GB7RDG-2<>M0LTE-9");
+        probe.CardsAfterTimeout.Where(c => !c.Hidden).Select(c => c.Id).Should().Equal(
+            "0|G4ABC-1<>GB7IOW-1", "0|GB7RDG-2<>M0LTE-9", "0|EI0RSI-1<>GB7RDG-2");
+        probe.FailedCall.Should().NotBeNull();
+        probe.FailedCall!.ClassName.Should().Be("lk", "a call given up on is not live");
+        probe.FailedCall.Head.Should().Contain(">disconnected<");
+        probe.FailedCall.ConcernHidden.Should().BeTrue("nothing is waiting any more");
+        probe.FailedCall.Feed.Should().HaveCount(2);
+        probe.FailedCall.Feed[0].ClassName.Should().Be("ln bad new");
+        probe.FailedCall.Feed[0].Html.Should().Contain("got no answer in 3 minutes; the call has failed")
+            .And.Contain("class=\"tag timeout\"").And.Contain(">NO ANSWER<");
+        probe.FailedCall.Feed[1].Html.Should().Contain("calls GB7RDG-2");
 
         // UI frames on: the beacons show, newest first after the links.
         probe.LinksAfterEvent.UiCount.Should().Be("2", "the filter says how many cards it is hiding");
@@ -745,6 +763,9 @@ public class WaterfallPageTests
         bool ConcernHidden,
         LinkFeedLine[] Feed);
 
+    /// <summary>The card for the call nothing answered, once the station has given up on it.</summary>
+    private sealed record FailedCard(string ClassName, string Head, bool ConcernHidden, LinkFeedLine[] Feed);
+
     /// <summary>One state of the header's transmit readout, as the page left it.</summary>
     private sealed record TxReadout(
         string ClassName,
@@ -795,6 +816,9 @@ public class WaterfallPageTests
         LinksBar LinksAfterEvent,
         LinkCard[] LinkCards,
         CardSlot[] CardsAfterSecondLink,
+        CardSlot[] CardsAfterCall,
+        CardSlot[] CardsAfterTimeout,
+        FailedCard? FailedCall,
         CardSlot[] CardsWithUi,
         LinksBar LinksWithUi,
         CardSlot[] CardsMine,
