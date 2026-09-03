@@ -466,6 +466,59 @@ public sealed class UberSdrConfig
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
+/// <summary>
+/// Flavour B: one daemon fronting many UberSDR web receivers, with a page that lists them and a
+/// visitor picking one. Null (the default) is flavour A, one receiver or one radio per process.
+/// </summary>
+/// <remarks>
+/// <para>Mutually exclusive with <see cref="DaemonConfig.Device"/>. The two say incompatible
+/// things about what this process is: a station has one input and can transmit through it, while
+/// a monitor has one input per receiver and can transmit through none of them.</para>
+/// <para>Receive only, and no host interfaces: a monitor configures no KISS, no PTT, no config
+/// API, no survey and no paging, and none of them are reachable on its port. What it serves is
+/// the picker, one page per receiver, and the JSON the picker polls.</para>
+/// <para>See <c>docs/monitor-plan.md</c> and CONFIG.md's <c>monitor</c> section.</para>
+/// </remarks>
+public sealed class MonitorConfig
+{
+    /// <summary>Where the list of receivers comes from: the UberSDR project's public
+    /// directory, or anything that serves the same JSON. An absolute http or https URL.</summary>
+    public string Directory { get; set; } = "https://instances.ubersdr.org/api/instances";
+
+    /// <summary>How often the directory is fetched again, in minutes. 0 fetches once, at
+    /// start-up, and never again.</summary>
+    public int RefreshMinutes { get; set; } = 5;
+
+    /// <summary>How long a receiver's session is held after the last viewer of that receiver
+    /// leaves, in seconds. The same linger the single-receiver flavour uses, per receiver.</summary>
+    public int LingerSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// When non-empty, the only hosts offered - which is how a smoke test runs the picker
+    /// against two receivers rather than fifty. Matched on the directory's <c>host</c>, case
+    /// insensitively.
+    /// </summary>
+    public List<string> Allow { get; set; } = [];
+
+    /// <summary>
+    /// Hosts never offered, whatever else says otherwise: <see cref="Deny"/> beats
+    /// <see cref="Allow"/>. This is how an operator who asks not to be listed is not listed,
+    /// so it is not a convenience and it is tested.
+    /// </summary>
+    public List<string> Deny { get; set; } = [];
+
+    /// <summary>
+    /// The modems every receiver is given, in the same schema as the top-level
+    /// <see cref="DaemonConfig.Modems"/>. Inside this section rather than at the top level so
+    /// that one file cannot half-describe a station in one flavour and a monitor in the other.
+    /// </summary>
+    public List<ModemConfig> Modems { get; set; } = [];
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
 /// <summary>Frame log: every frame heard, written to a SQLite file. Null = not kept.</summary>
 public sealed class FrameLogConfig
 {
@@ -687,6 +740,14 @@ public sealed class WaterfallConfig
     /// is receive only. Null shows none.</summary>
     public string? About { get; set; }
 
+    /// <summary>
+    /// Whether the file actually said <c>"port"</c>, as opposed to taking the default. A station
+    /// on a LAN may reasonably let the default stand; a monitor is a public site, and coming up
+    /// on a port nobody chose is not something to do quietly.
+    /// </summary>
+    [JsonIgnore]
+    public bool PortWasStated { get; internal set; }
+
     /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
@@ -734,6 +795,15 @@ public sealed class DaemonConfig
     public bool SidebandWasStated { get; private set; }
 
     /// <summary>
+    /// Whether the file actually said "device", as opposed to taking the default. "device" and
+    /// "monitor" are exclusive, and refusing a monitor config because <c>Device</c> holds the
+    /// string "default" that nobody wrote would be refusing it for a value the operator never
+    /// typed.
+    /// </summary>
+    [JsonIgnore]
+    public bool DeviceWasStated { get; private set; }
+
+    /// <summary>
     /// Pins the dial instead of letting the daemon choose one - for a net frequency, or to
     /// match another application. Only meaningful alongside <see cref="ModemConfig.RfFrequency"/>.
     /// Unset (the default) the daemon picks a dial that centres every modem in the passband and
@@ -778,6 +848,10 @@ public sealed class DaemonConfig
 
     /// <summary>Browser waterfall endpoint; null = disabled.</summary>
     public WaterfallConfig? Waterfall { get; set; }
+
+    /// <summary>Flavour B: many web receivers behind one page. Null = the single-station
+    /// flavour, which is everything else in this file. Exclusive with <see cref="Device"/>.</summary>
+    public MonitorConfig? Monitor { get; set; }
 
     /// <summary>
     /// Change this station's configuration at runtime over HTTP. Omit it (the default) and there
@@ -847,6 +921,26 @@ public sealed class DaemonConfig
                 "the file contains only `null` - there is nothing to configure from. A minimal "
                 + "working file is {\"device\": \"default\", \"modems\": [{\"subChannel\": 0, "
                 + "\"mode\": \"afsk1200\"}]}");
+        config.DeviceWasStated = StatesKey(path, "device");
+        if (config.Waterfall is not null)
+        {
+            config.Waterfall.PortWasStated = StatesKey(path, "waterfall", "port");
+        }
+
+        if (config.Monitor is not null)
+        {
+            ValidateMonitor(config);
+
+            // Everything below this is about a station: an ARDOP TNC, a KISS port, a dial, a
+            // PTT. A monitor has none of them, and letting the station checks run over an empty
+            // "modems" list would answer a monitor file with a diagnostic about a modem the
+            // operator never wrote. The monitor's own modems were checked above.
+            config.ModemPlugins ??= [];
+            RequireBind(config);
+            config.Warnings = CollectWarnings(config);
+            return config;
+        }
+
         // ARDOP is no longer exclusive with the packet modems: it shares the channel, and the
         // daemon holds packet transmissions while an ARQ session is up (SoundModemChannel's
         // TransmitInhibit). What is not allowed is asking for it twice.
@@ -948,17 +1042,151 @@ public sealed class DaemonConfig
                 + "scan and no default location, deliberately.");
         }
 
+        RequireBind(config);
+
+        config.SidebandWasStated = StatesKey(path, "sideband");
+        ValidatePorts(config);
+        config.Warnings = CollectWarnings(config);
+        return config;
+    }
+
+    /// <summary>The bind setting, which every flavour has and every listener uses.</summary>
+    private static void RequireBind(DaemonConfig config)
+    {
         if (ParseBind(config.Bind) is null)
         {
             throw new InvalidDataException(
                 $"\"bind\": \"{config.Bind}\" is not an IP address. Use \"127.0.0.1\" for "
                 + "loopback only, \"*\" for every interface, or the address of one interface.");
         }
+    }
 
-        config.SidebandWasStated = StatesKey(path, "sideband");
-        ValidatePorts(config);
-        config.Warnings = CollectWarnings(config);
-        return config;
+    /// <summary>
+    /// What a <c>monitor</c> section has to say before this process can be one, every failure a
+    /// sentence naming the setting and what to do about it.
+    /// </summary>
+    /// <remarks>
+    /// Refused here rather than at start-up so the operator gets one exit 2 with a reason and
+    /// systemd's RestartPreventExitStatus=2 stops retrying, which is the contract every other
+    /// configuration error in this file already keeps.
+    /// </remarks>
+    private static void ValidateMonitor(DaemonConfig config)
+    {
+        MonitorConfig monitor = config.Monitor!;
+
+        if (config.DeviceWasStated)
+        {
+            throw new InvalidDataException(
+                $"this file sets both \"device\" (\"{config.Device}\") and \"monitor\". They say "
+                + "incompatible things about what this process is: \"device\" is one radio or one "
+                + "receiver with a KISS port and a transmitter, \"monitor\" is many web receivers "
+                + "behind one page with neither. Remove whichever one you did not mean.");
+        }
+
+        if (monitor.Modems.Count == 0)
+        {
+            throw new InvalidDataException(
+                "\"monitor\".\"modems\" is empty. Every receiver gets the same modems, and a "
+                + "monitor with none would connect to receivers and decode nothing. Give it the "
+                + "band plan you want watched, e.g. [{\"subChannel\": 0, \"mode\": "
+                + "\"afsk300-il2pc\", \"rfFrequency\": 7050300}].");
+        }
+
+        if (config.Waterfall is null)
+        {
+            throw new InvalidDataException(
+                "\"monitor\" needs a \"waterfall\" section: the picker and every receiver's page "
+                + "are served on its \"port\", and the page's viewers are what asks for a "
+                + "receiver. Add {\"waterfall\": {\"port\": 8099, \"title\": \"...\"}}.");
+        }
+
+        if (!config.Waterfall.PortWasStated)
+        {
+            throw new InvalidDataException(
+                "\"waterfall\" has no \"port\". A monitor serves its whole site on that one port "
+                + $"and would otherwise come up on {config.Waterfall.Port}, which is the "
+                + "single-station default and not a decision anybody made - and this is a site "
+                + "meant to be reached from outside, usually through a tunnel pointed at a port "
+                + "somebody chose. Set it, e.g. {\"waterfall\": {\"port\": 8099}}.");
+        }
+
+        // Forced rather than checked. A picker is a page for strangers by definition - it lists
+        // other people's receivers and invites anyone to watch one - so an operator's console
+        // dressing on it would be a setting that could only ever be wrong.
+        config.Waterfall.Public = true;
+
+        foreach ((string name, int seconds) in (ReadOnlySpan<(string, int)>)
+            [
+                ("refreshMinutes", monitor.RefreshMinutes),
+                ("lingerSeconds", monitor.LingerSeconds),
+            ])
+        {
+            if (seconds < 0)
+            {
+                throw new InvalidDataException(
+                    $"\"monitor\".\"{name}\" is {seconds}. That is a number of "
+                    + (name == "refreshMinutes" ? "minutes" : "seconds")
+                    + " to wait, so it cannot be negative - use 0 or a positive number.");
+            }
+        }
+
+        if (!Uri.TryCreate(monitor.Directory, UriKind.Absolute, out Uri? directory)
+            || (directory.Scheme != Uri.UriSchemeHttp && directory.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new InvalidDataException(
+                $"\"monitor\".\"directory\" is \"{monitor.Directory}\", which is not an absolute "
+                + "http or https URL. It is where the list of receivers is fetched from; the "
+                + "public one is https://instances.ubersdr.org/api/instances.");
+        }
+
+        foreach ((string list, List<string> hosts) in (ReadOnlySpan<(string, List<string>)>)
+            [("allow", monitor.Allow), ("deny", monitor.Deny)])
+        {
+            foreach (string host in hosts)
+            {
+                if (!IsPlausibleHostname(host))
+                {
+                    throw new InvalidDataException(
+                        $"\"monitor\".\"{list}\" contains \"{host}\", which is not a hostname. "
+                        + "Each entry is a receiver's host exactly as the directory gives it, "
+                        + "e.g. \"m9psy-1.instance.ubersdr.org\" - no scheme, no port, no path.");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether a string could be a hostname: labels of letters, digits and hyphens separated by
+    /// dots, no scheme, no port, no path. Deliberately not a DNS resolution - an allow list has
+    /// to be writable for a receiver that is temporarily down - and deliberately not permissive,
+    /// because "https://host/" in a deny list would silently match nothing and leave an operator
+    /// believing they had been taken off the list.
+    /// </summary>
+    internal static bool IsPlausibleHostname(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host) || host.Length > 253 || host.StartsWith('.')
+            || host.EndsWith('.'))
+        {
+            return false;
+        }
+
+        foreach (string label in host.Split('.'))
+        {
+            if (label.Length == 0 || label.Length > 63 || label.StartsWith('-') || label.EndsWith('-'))
+            {
+                return false;
+            }
+
+            foreach (char c in label)
+            {
+                if (c is not ((>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '-'))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Things worth saying out loud that are not worth refusing to start over.</summary>
@@ -983,6 +1211,12 @@ public sealed class DaemonConfig
 
         Unknown(null, config.UnknownSettings);
         Unknown("waterfall", config.Waterfall?.UnknownSettings);
+        Unknown("monitor", config.Monitor?.UnknownSettings);
+        foreach (ModemConfig modem in config.Monitor?.Modems ?? [])
+        {
+            Unknown($"monitor modem {modem.SubChannel}", modem.UnknownSettings);
+        }
+
         Unknown("api", config.Api?.UnknownSettings);
         Unknown("ubersdr", config.UberSdr?.UnknownSettings);
         Unknown("frameLog", config.FrameLog?.UnknownSettings);
@@ -1067,7 +1301,7 @@ public sealed class DaemonConfig
     /// the document rather than the object, because a defaulted value and a value written down
     /// that happens to equal the default are indistinguishable once deserialized.
     /// </summary>
-    private static bool StatesKey(string path, string key)
+    private static bool StatesKey(string path, params string[] keys)
     {
         try
         {
@@ -1078,9 +1312,26 @@ public sealed class DaemonConfig
                     CommentHandling = JsonCommentHandling.Skip,
                     AllowTrailingCommas = true,
                 });
-            return document.RootElement.ValueKind == JsonValueKind.Object
-                && document.RootElement.EnumerateObject().Any(
+
+            JsonElement at = document.RootElement;
+            foreach (string key in keys)
+            {
+                if (at.ValueKind != JsonValueKind.Object)
+                {
+                    return false;
+                }
+
+                JsonProperty found = at.EnumerateObject().FirstOrDefault(
                     p => p.Name.Equals(key, StringComparison.OrdinalIgnoreCase));
+                if (found.Value.ValueKind == JsonValueKind.Undefined)
+                {
+                    return false;
+                }
+
+                at = found.Value;
+            }
+
+            return true;
         }
         catch (Exception)
         {

@@ -44,7 +44,18 @@ public sealed class UberSdrAudioInput : IUberSdrSession
     /// on a dead stream.</summary>
     public static readonly TimeSpan ReconnectGiveUpAfter = TimeSpan.FromMinutes(5);
 
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    // One client for every instance this process talks to, with a connection lifetime rather
+    // than the default infinite one. The default pins a DNS answer for as long as the process
+    // runs, which did not matter while the host came out of a config file and the process was
+    // restarted to change it; it matters when hosts come out of a directory that can move them,
+    // because a tunnel host that moves leaves a process that has been up for a week dialling an
+    // address nobody is listening on. Five minutes is the usual figure for this: long enough
+    // that the pool still does its job, short enough that a move is picked up by itself.
+    private static readonly HttpClient Http = new(
+        new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) })
+    {
+        Timeout = TimeSpan.FromSeconds(15),
+    };
 
     private readonly UberSdrEndpoint _endpoint;
     private readonly UberSdrTuning _tuning;

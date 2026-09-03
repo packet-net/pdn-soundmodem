@@ -148,6 +148,30 @@ public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
         }
     }
 
+    /// <summary>
+    /// True while the last thing the receiver said was "not you, not now": an HTTP 429, or a
+    /// daily listening allowance this address has spent. Cleared by a session that opens.
+    /// </summary>
+    /// <remarks>
+    /// Told apart from every other reason a session will not open because it is the one an
+    /// operator and a visitor can both act on - by waiting - and because a host listing several
+    /// receivers has to be able to say which of them is refusing it rather than which is broken.
+    /// The reconnect ladder already knows the difference (<see cref="UberSdrReconnectOutcome"/>);
+    /// this only makes what it knows readable from outside.
+    /// </remarks>
+    public bool Refused
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _refused;
+            }
+        }
+    }
+
+    private bool _refused;
+
     /// <summary>True only while an open session is expected to be delivering audio. Idle,
     /// connecting, retrying and a session's own between-attempt quiet are all false, and all
     /// deliberate; the daemon's starvation watch stands down on this.</summary>
@@ -330,6 +354,7 @@ public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
             }
 
             _policy.Reset();
+            _refused = false;
             session.Lost += reason => OnLost(generation, reason);
             Volatile.Write(ref _session, session);
             Monitor.PulseAll(_gate);
@@ -427,6 +452,7 @@ public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
 
     private Action? BeginRetry(UberSdrReconnectOutcome outcome, string reason)
     {
+        _refused = outcome == UberSdrReconnectOutcome.Refused;
         int generation = ++_generation;
         TimeSpan delay = _policy.After(outcome);
         ArmTimer(delay, () => OnRetryDue(generation));
@@ -474,6 +500,13 @@ public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
 
     private Action? SetPhase(OnDemandPhase phase, string? detail = null)
     {
+        if (phase == OnDemandPhase.Idle)
+        {
+            // Nobody is waiting, so nothing is being refused: a refusal is a state of an attempt,
+            // and there is no attempt.
+            _refused = false;
+        }
+
         _phase = phase;
         string sentence = detail ?? SentenceFor(phase);
         _status = sentence;

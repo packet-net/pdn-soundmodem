@@ -33,7 +33,7 @@ public class WaterfallPlainIl2pTests : IAsyncLifetime
     {
         _channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         _channel.AddModem(0, sink => ModemCatalog.Create("bpsk300", SampleRate, sink));
-        _port = FreePort();
+        _port = FreePorts.Next();
         _server = new WaterfallWebServer(_channel, _port);
     }
 
@@ -162,12 +162,4 @@ public class WaterfallPlainIl2pTests : IAsyncLifetime
         return audio;
     }
 
-    private static int FreePort()
-    {
-        var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        return port;
-    }
 }

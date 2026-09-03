@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>packet monitor</title>
+<style>
+  /* The waterfall page's palette, so a visitor moving between the two sees one site. */
+  :root {
+    --bg: #0a0d11;
+    --panel: #11161d;
+    --edge: #1e2632;
+    --ink: #d9e2ea;
+    --muted: #7c8894;
+    --amber: #f5a83c;
+    --trace: #56c8dd;
+    --warn: #ff9a7a;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
+    --sans: system-ui, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { color-scheme: dark; }
+  * { scrollbar-width: thin; scrollbar-color: #2a3441 #0d1117; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: #0d1117; }
+  ::-webkit-scrollbar-thumb { background: #2a3441; border-radius: 5px; border: 2px solid #0d1117; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--sans); min-height: 100%; }
+
+  header {
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+    padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--edge);
+  }
+  .wordmark { font-family: var(--mono); font-size: 14px; letter-spacing: .02em; white-space: nowrap; }
+  .wordmark b { color: var(--amber); font-weight: 600; }
+  .wordmark span { color: var(--muted); }
+  #summary { font-size: 12px; color: var(--muted); }
+  #stale { font-size: 12px; color: var(--warn); }
+  #stale[hidden] { display: none; }
+
+  #about { padding: 7px 14px; background: var(--panel); border-bottom: 1px solid var(--edge);
+           font-size: 13px; line-height: 1.45; color: var(--muted); }
+  #about[hidden] { display: none; }
+
+  main { padding: 12px 14px 28px; max-width: 1100px; }
+
+  .head, .row {
+    display: grid; align-items: baseline; gap: 10px;
+    grid-template-columns: 8.5em minmax(0, 1fr) 10em 6em 5em 5.5em;
+  }
+  .head {
+    font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+    padding: 6px 10px; border-bottom: 1px solid var(--edge);
+  }
+  .row {
+    position: relative; padding: 9px 10px; border-bottom: 1px solid var(--edge);
+    font-size: 14px; line-height: 1.35;
+  }
+  .row:hover { background: #141a22; }
+  .row.watched { background: rgba(86,200,221,.06); }
+  .row.off { color: var(--muted); }
+  /* The whole row is the link, but the receiver's own page has to be reachable from inside it -
+     a link inside a link is not markup a browser will parse, so the row's link is stretched over
+     the row with a pseudo-element and the other one is lifted above it. */
+  .row a.pick { color: var(--ink); text-decoration: none; font-family: var(--mono); }
+  .row a.pick::after { content: ""; position: absolute; inset: 0; }
+  .row:hover a.pick { color: var(--amber); }
+  .row a.own { position: relative; z-index: 1; color: var(--muted); text-decoration: none;
+               font-size: 12px; }
+  .row a.own:hover { color: var(--amber); text-decoration: underline; }
+  .row.off a.pick { color: var(--muted); }
+  .row.off a.pick::after { content: none; }
+
+  .name { color: var(--ink); }
+  .where { color: var(--muted); font-size: 12px; }
+  .fig { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .state { font-size: 12px; }
+  .state.live { color: var(--trace); }
+  .state.busy { color: var(--amber); }
+  .state.bad { color: var(--warn); }
+  .state.quiet { color: var(--muted); }
+
+  #empty { padding: 18px 10px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+  #empty[hidden] { display: none; }
+
+  footer { padding: 4px 14px 24px; max-width: 1100px; color: var(--muted); font-size: 12px;
+           line-height: 1.5; }
+  footer a { color: var(--amber); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  @media (max-width: 760px) {
+    .head { display: none; }
+    .row { grid-template-columns: 1fr auto; row-gap: 2px; }
+    .row .name { grid-column: 1 / -1; }
+    .row .where { grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wordmark"><b id="title">packet monitor</b> <span>pdn-soundmodem</span></div>
+  <div id="summary"></div>
+  <div id="stale" hidden></div>
+</header>
+<div id="about" hidden></div>
+
+<main>
+  <div class="head">
+    <div>Station</div><div>Receiver</div><div>Where</div><div>State</div><div>Signal</div><div>Slots</div>
+  </div>
+  <div id="rows"></div>
+  <div id="empty"></div>
+</main>
+
+<footer id="footer"></footer>
+
+<script>
+"use strict";
+
+// Where this page is served from, and therefore where its API is. The same rule the waterfall
+// page uses: the served path up to and including its last "/". Relative, because the site may
+// sit behind a tunnel under a hostname this daemon has never been told, so an absolute URL
+// built here would be a guess.
+const pagePath = location.pathname || "/";
+const base = pagePath.slice(0, pagePath.lastIndexOf("/") + 1) || "/";
+
+// Which edition of this page the tab is running. The daemon writes a hash of the page's own
+// text in here as it serves it and repeats the same hash in every snapshot; a tab left open
+// across an upgrade hears a different one and reloads itself, once, and never twice for the
+// same version. A page nothing stamped (the test probe runs this script straight from the
+// source file) cannot loop, because the placeholder is recognised and left alone.
+const PAGE_VERSION = "__PAGE_VERSION__";
+function checkPageVersion(served) {
+  if (!served || served === PAGE_VERSION || PAGE_VERSION.startsWith("__")) return;
+  let last = null;
+  try { last = sessionStorage.getItem("pdnsm-picker-reloaded"); sessionStorage.setItem("pdnsm-picker-reloaded", served); }
+  catch { return; }
+  if (last !== served) location.reload();
+}
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+// A URL this page is prepared to put in an href, or null. Escaping the four HTML characters is
+// not enough by itself: "javascript:..." contains none of them and would run in the visitor's
+// session on this site's origin, and every string here came from a third party by way of a public
+// directory. The daemon refuses one too, at the point it reads it; this is the second of the two,
+// because the page is what actually writes the attribute.
+const link = u => /^https?:\/\//i.test(String(u || "")) ? String(u) : null;
+
+// The clock a visitor reads is their own, so a time is sent as an instant and rendered here.
+function clock(iso) {
+  const t = Date.parse(iso);
+  if (isNaN(t)) return "";
+  return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function viewersText(n) {
+  return n === 1 ? "1 watching" : n + " watching";
+}
+
+// What a row says it is doing, in a visitor's words rather than the state machine's. The
+// awkward answers are said plainly: a receiver that is full, and one whose daily allowance
+// this site has spent, are both cases where nothing is wrong and nothing will happen, and a
+// visitor who is not told that is left to guess.
+function stateOf(r) {
+  if (r.state === "faulted") return { text: r.status || "not working just now", cls: "bad" };
+  if (r.state === "refused") {
+    return { text: "this receiver's daily allowance for this monitor is used up, back tomorrow", cls: "bad" };
+  }
+  if (r.state === "retrying") return { text: "unreachable, trying again", cls: "bad" };
+  if (r.state === "live") return { text: viewersText(r.viewers), cls: "live" };
+  if (r.state === "connecting") return { text: "connecting", cls: "busy" };
+  if (r.state === "lingering") return { text: "just left", cls: "busy" };
+  if (!r.offered) return { text: r.why || "not available", cls: "quiet" };
+  return { text: "free", cls: "quiet" };
+}
+
+// Live first, so a visitor sees where the other visitors already are, then by callsign.
+function order(a, b) {
+  const watched = r => (r.viewers > 0 ? 0 : 1);
+  if (watched(a) !== watched(b)) return watched(a) - watched(b);
+  if (a.viewers !== b.viewers) return b.viewers - a.viewers;
+  return String(a.callsign || a.host).localeCompare(String(b.callsign || b.host));
+}
+
+function rowHtml(r) {
+  const state = stateOf(r);
+  const slots = r.maxClients > 0
+    ? (r.availableClients === 0 ? "full" : r.availableClients + " of " + r.maxClients)
+    : "";
+  const signal = r.snrDb == null ? "" : r.snrDb + " dB";
+  const pick = r.offered
+    ? '<a class="pick" href="' + esc(base + "r/" + r.slug + "/") + '">' + esc(r.callsign || r.host) + "</a>"
+    : '<a class="pick">' + esc(r.callsign || r.host) + "</a>";
+  const own = link(r.publicUrl)
+    ? ' <a class="own" href="' + esc(link(r.publicUrl)) + '" target="_blank" rel="noopener">its own page</a>'
+    : "";
+  return '<div class="row' + (r.viewers > 0 ? " watched" : "") + (r.offered ? "" : " off") + '">'
+    + "<div>" + pick + "</div>"
+    + '<div class="name">' + esc(r.name || "") + own + "</div>"
+    + '<div class="where">' + esc(r.location || "") + "</div>"
+    + '<div class="state ' + state.cls + '">' + esc(state.text) + "</div>"
+    + '<div class="fig">' + esc(signal) + "</div>"
+    + '<div class="fig">' + esc(slots) + "</div>"
+    + "</div>";
+}
+
+function render(snap) {
+  checkPageVersion(snap.page);
+
+  const title = snap.title || "packet monitor";
+  document.title = title;
+  $("title").textContent = title;
+  $("about").innerHTML = snap.about ? esc(snap.about) : "";
+  $("about").hidden = !snap.about;
+
+  const receivers = (snap.receivers || []).slice().sort(order);
+  $("rows").innerHTML = receivers.map(rowHtml).join("");
+
+  const offered = receivers.filter(r => r.offered).length;
+  const watching = receivers.reduce((n, r) => n + (r.viewers || 0), 0);
+  $("summary").textContent =
+    offered + (offered === 1 ? " receiver" : " receivers")
+    + (receivers.length > offered ? " (" + (receivers.length - offered) + " not available)" : "")
+    + (watching > 0 ? ", " + watching + " being watched" : "");
+
+  // Two different silences, and they must not read the same. A directory that has gone away
+  // leaves the last list it gave us, which is still worth showing and has to say how old it is;
+  // a daemon that has never reached it has nothing at all, and has to say that instead.
+  if (snap.staleSince) {
+    $("stale").textContent = "the receiver directory is unreachable, this list is from " + clock(snap.staleSince);
+    $("stale").hidden = false;
+  } else if (snap.problem) {
+    $("stale").textContent = "the receiver directory is unreachable";
+    $("stale").hidden = false;
+  } else {
+    $("stale").hidden = true;
+  }
+
+  if (receivers.length === 0) {
+    $("empty").textContent = snap.problem
+      ? "The receiver directory cannot be reached (" + snap.problem + "), and nothing has been listed yet. "
+        + "This page fills in by itself as soon as it answers; nothing needs doing here."
+      : "No receivers are listed yet.";
+    $("empty").hidden = false;
+  } else {
+    $("empty").hidden = true;
+  }
+
+  $("footer").innerHTML =
+    "Receive only. This site decodes what these receivers hear and shows the AX.25 links and frames; "
+    + "nothing is transmitted. Each receiver is asked for one session however many people are watching it, "
+    + "and the session is dropped shortly after the last one leaves. "
+    + "An operator who would rather not be listed here has only to say so.";
+}
+
+let failures = 0;
+async function poll() {
+  try {
+    const r = await fetch(base + "api/instances", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    render(await r.json());
+    failures = 0;
+  } catch (e) {
+    // The daemon being restarted under a visitor is the ordinary case; one miss says nothing,
+    // and the list on screen is still the last true thing anybody knew.
+    if (++failures >= 3) {
+      $("stale").textContent = "this page cannot reach the monitor; the list below may be out of date";
+      $("stale").hidden = false;
+    }
+  }
+}
+
+poll();
+setInterval(poll, 10000);
+</script>
+</body>
+</html>

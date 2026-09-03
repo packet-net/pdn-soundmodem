@@ -68,7 +68,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         _channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         _channel.AddModem(0, sink => ModemCatalog.Create("afsk300-il2pc", SampleRate, sink, new ModemOptions(CentreFrequencyHz: CentreHz)));
         _channel.TransmittedAudio += samples => _transmittedSamples += samples.Length;
-        _port = FreePort();
+        _port = FreePorts.Next();
         _server = new WaterfallWebServer(
             _channel, _port, new WaterfallOptions { LinesPerSecond = LinesPerSecond, TimeProvider = _time });
     }
@@ -323,7 +323,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         long transmitted = 0;
         channel.TransmittedAudio += samples => transmitted += samples.Length;
         await using var server = new WaterfallWebServer(
-            channel, FreePort(), new WaterfallOptions { LinesPerSecond = LinesPerSecond, TimeProvider = _time });
+            channel, FreePorts.Next(), new WaterfallOptions { LinesPerSecond = LinesPerSecond, TimeProvider = _time });
         server.Start();
         using ClientWebSocket socket = await ConnectAsync(server.Port);
 
@@ -412,7 +412,7 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         var slow = new SlowToModulate(SampleRate, _time, _cancellation.Token);
         channel.AddModem(0, _ => slow);
         await using var server = new WaterfallWebServer(
-            channel, FreePort(), new WaterfallOptions { LinesPerSecond = LinesPerSecond, TimeProvider = _time });
+            channel, FreePorts.Next(), new WaterfallOptions { LinesPerSecond = LinesPerSecond, TimeProvider = _time });
         server.Start();
         using ClientWebSocket socket = await ConnectAsync(server.Port);
 
@@ -889,12 +889,4 @@ public class WaterfallTransmitPacingTests : IAsyncLifetime
         return (result.MessageType, buffer[..result.Count]);
     }
 
-    private static int FreePort()
-    {
-        using var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        probe.Start();
-        int port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        return port;
-    }
 }

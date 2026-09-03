@@ -52,6 +52,7 @@
            font-size: 13px; line-height: 1.45; color: var(--muted); }
   #about a { color: var(--amber); text-decoration: none; }
   #about a:hover { text-decoration: underline; }
+  #about a.back { white-space: nowrap; }
   .seg-btn { font: inherit; color: var(--fg); background: #1a1d22; border: 1px solid #2b3038;
              border-radius: 6px; padding: 3px 10px; cursor: pointer; }
   .seg-btn.on { background: var(--amber); color: #12141a; border-color: var(--amber); }
@@ -628,9 +629,20 @@ function applyPublicFlavour() {
   if (cfg.about) parts.push(esc(cfg.about));
   if (cfg.receiver || cfg.receiverUrl) {
     const name = esc(cfg.receiver || cfg.receiverUrl);
-    const who = cfg.receiverUrl
-      ? `<a href="${esc(cfg.receiverUrl)}" target="_blank" rel="noopener">${name}</a>` : name;
+    // Only an http or https URL goes in an href. Escaping the four HTML characters does not
+    // touch a scheme, and "javascript:..." carries none of them - on a public monitor this
+    // string reaches the page from a third-party directory by way of the daemon, which refuses
+    // one too. Two checks, because this is the one that writes the attribute.
+    const href = /^https?:\/\//i.test(String(cfg.receiverUrl || "")) ? String(cfg.receiverUrl) : null;
+    const who = href
+      ? `<a href="${esc(href)}" target="_blank" rel="noopener">${name}</a>` : name;
     parts.push(`Heard on ${who}, an UberSDR web receiver; the session is opened only while somebody has this page open.`);
+  }
+  // One receiver of a site that offers several: a way back to the list. Relative, because the
+  // site may sit behind a tunnel under a hostname this daemon has never been told. A station
+  // that is its own site sends no picker URL and gets no link, there being nothing to go back to.
+  if (cfg.pickerUrl && !detached) {
+    parts.push(`<a class="back" href="${esc(cfg.pickerUrl)}">All receivers</a>`);
   }
   $("about").innerHTML = parts.join(" ");
   $("about").hidden = detached || !parts.length;

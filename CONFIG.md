@@ -49,6 +49,7 @@ with `su -` and drop the prefix.)
 | `flex` | object | see below | FlexRadio slice params - [below](#flex) |
 | `ubersdr` | object | see below | UberSDR stream params - [below](#ubersdr) |
 | `deadFeed` | object | *(per-device defaults)* | Dead-feed protection: restart when the input dies silently - [below](#deadfeed) |
+| `monitor` | object | *(not a monitor)* | Front many web receivers behind one page instead of running one station - [below](#monitor). Exclusive with `device` |
 
 ---
 
@@ -830,6 +831,11 @@ Omit the section to disable it. `dialFrequencyHz` is only the page's opening def
 browser can retune its own copy, and it is inherited from a band plan when there is one. The
 waterfall binds to the top-level [`bind`](#kissport-and-bind) like everything else; there is no
 authentication, so opening it beyond loopback means a reverse proxy or VPN.
+
+**With a [`monitor`](#monitor) section this is the whole site's port**, not one station's: the
+picker is served at `/`, each receiver's page under `/r/<slug>/`, and `public` is forced true
+because a picker is a page for strangers by definition. `title` and `about` dress the picker and
+every receiver's page alike, so the two flavours are configured the same way.
 
 ## `idBeacons`
 
@@ -1675,7 +1681,180 @@ waiting; with nobody waiting it goes back to idle. The dead-feed watches stand d
 so an empty page does not restart the service every half minute. Each change of state goes to
 the journal with the viewer count: `ubersdr: live, 2 viewers: M9PSY-1, ...`.
 
+**With a [`monitor`](#monitor) section this section still applies**, to every receiver the monitor
+fronts: `mode`, `password`, `ssbLowHz`, `ssbHighHz`, `startupGuardMs` and `gain` are honoured as
+they are here. `onDemand` is implied - a monitor is on demand by definition - and the linger comes
+from `monitor.lingerSeconds` rather than from here, because it is a property of the site rather
+than of one receiver.
+
 ---
+
+## `monitor`
+
+Everything so far describes **one station**: one radio or one web receiver, one KISS port, one
+page. A `monitor` section turns the same daemon into something else - **one site fronting many
+UberSDR web receivers**, with a front page that lists them and a visitor picking one. Same binary,
+same package, same tests; the configuration is the switch.
+
+```json
+{
+  "monitor": {
+    "directory": "https://instances.ubersdr.org/api/instances",
+    "refreshMinutes": 5,
+    "lingerSeconds": 60,
+    "allow": [],
+    "deny": [],
+    "modems": [
+      { "subChannel": 0, "mode": "afsk300-il2pc",           "rfFrequency": 7050300 },
+      { "subChannel": 1, "mode": "ardop", "bandwidth": 500, "rfFrequency": 7050950 },
+      { "subChannel": 2, "mode": "bpsk300",                 "rfFrequency": 7051600 }
+    ]
+  },
+  "frameLog": { "path": "/var/lib/pdn-soundmodem" },
+  "waterfall": {
+    "port": 8099,
+    "title": "UK packet monitor",
+    "about": "The 7050-7052 kHz packet window on 40 m, as heard by public web receivers. Pick a receiver to watch. Receive only: this site decodes what it hears and shows the AX.25 links and frames; nothing is transmitted."
+  },
+  "bind": "127.0.0.1"
+}
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `directory` | string | `"https://instances.ubersdr.org/api/instances"` | Where the list of receivers comes from. An absolute http or https URL |
+| `refreshMinutes` | int | `5` | How often it is fetched again. 0 fetches once, at start-up, and never again |
+| `lingerSeconds` | int | `60` | How long each receiver's session is held after the last viewer of *that receiver* leaves |
+| `allow` | array | *(everything)* | When non-empty, the only hosts listed. Matched on the directory's `host`, case insensitively |
+| `deny` | array | *(nothing)* | Hosts never listed, whatever else says otherwise. **`deny` beats `allow`** |
+| `modems` | array | *(required)* | The modems every receiver is given, same schema as the top-level [`modems`](#modems) |
+
+**`monitor` and [`device`](#device) are mutually exclusive.** They say incompatible things about
+what the process is: `device` is one radio or one receiver with a KISS port and a transmitter,
+`monitor` is many web receivers behind one page with neither. Both set is an exit 2 naming both.
+
+**What is served, and what is not.** One port, `waterfall.port`, and on it:
+
+| Path | What |
+|---|---|
+| `/` and `/index.html` | The picker: one row per receiver, sorted so that the ones people are already watching are at the top |
+| `/api/instances` | What the picker polls, every 10 s: the list, each receiver's state and viewer count, and how old the list is |
+| `/r/<slug>/` | That receiver's page - the waterfall, the AX.25 links pane, the decoded frames, the browser audio |
+| `/r/<slug>/ws` and `/r/<slug>/links` | That page's own socket and its torn-off links window |
+| `/robots.txt` | Asks crawlers to leave `/r/` and `/api/` alone; see below |
+| anything else | 404 |
+
+There is **no KISS, no PTT, no transmitter, no [`api`](#api), no [`survey`](#survey), no
+[`paging`](#paging) and no ARDOP host** in this flavour, and none of them is reachable on that
+port. A monitor is a display. `waterfall.public` is forced true, because a picker that lists other
+people's receivers and invites anyone to watch one is a page for strangers by definition.
+
+**Everything the directory says is treated as somebody else's writing.** A `host` that is not a
+hostname is ignored, with one journal line, rather than carried into a station that then cannot
+open; and a `public_url` that is not an absolute `http` or `https` URL is dropped in favour of the
+receiver's own endpoint, because that string goes into a link on the picker and on the receiver's
+page, and a `javascript:` URL there would run in every visitor's session on this site.
+
+**The slug is derived from the receiver's host**, which is the only field the directory guarantees
+unique: lower-case it, strip a trailing `.tunnel.ubersdr.org` or `.instance.ubersdr.org`, replace
+every run of anything outside `a-z`, `0-9` and `-` with one hyphen, trim the ends. So
+`m9psy-1.instance.ubersdr.org` is `/r/m9psy-1/` and `reading-ubersdr.m0lte.uk` is
+`/r/reading-ubersdr-m0lte-uk/`. It is ugly for a receiver on its own domain; the picker shows the
+callsign and the location, so the slug is only ever seen in the address bar - and it does not
+change when an unrelated receiver appears, which is what makes a bookmark keep working.
+
+**Which receivers are listed.** In order: `deny`, then `allow` when it is non-empty, then whether
+the directory says the receiver is online, then whether it offers the IQ mode
+[`ubersdr.mode`](#ubersdr) asks for (a receiver that lists no IQ modes at all is not offering
+ours), then whether it has an antenna connected, then - only where
+the receiver actually *reported* a tuning range - whether that range covers the RF window the
+configured modems occupy. A receiver that fails any of those is not listed at all. A receiver with
+**no free listener slot is listed and shown as full**, because that is one a visitor may well come
+back to; a picker that silently dropped it would read as this site being broken.
+
+**`deny` is how an operator's wishes are honoured.** If the operator of a receiver would rather
+not be listed here, their host goes in `deny` and they are gone from the picker within
+`refreshMinutes`. That is the answer to give when asked, and it should be given before anyone has
+to ask. `deny` beats `allow`, so it cannot be defeated by editing the other list.
+
+**`allow` is also how you run a smoke test**: two hosts in `allow` and the site fronts two
+receivers rather than fifty.
+
+**Stations are built lazily and kept.** Nothing exists for a receiver nobody has picked, and
+picking one costs the *receiver* nothing: the first request for `/r/<slug>/` builds that
+receiver's channel, modems, frame log and page, and the receiver itself is not contacted until a
+browser actually attaches. So a crawler cannot cost anybody a session. Once built, a station is
+kept for the life of the process, so the links pane and the frame log survive a visitor leaving
+and coming back - which is the whole reason a quiet band looks alive.
+
+**An `ardop` entry declares a band and decodes nothing, in this flavour.** ARDOP is not a
+demodulator but a whole virtual TNC with its own host interface, and a monitor has no host
+interface, so the entry above takes part in the band plan (which is what keeps the dial and every
+other modem's audio centre the same as the single-station deployment's) and draws its band on
+every receiver's waterfall, and no ARDOP frame is decoded or listed. Keep it if you want the
+overlay to match the node's band plan; drop it if a shaded region that never lights up would
+mislead. Nothing else changes either way.
+
+**One session per receiver, however many people are watching it.** The fan-out is in this daemon:
+ten visitors on one receiver are ten browsers on one page, which is one viewer count, which is one
+session. Each receiver's session is dropped `lingerSeconds` after the last browser watching *that
+receiver* leaves. This is the promise the design makes to the people whose antennas these are.
+
+**The per-address daily allowance is per receiver, and this site has one egress address.** Fifty
+receivers means fifty independent allowances, each of which this site can exhaust on its own. When
+one is spent the picker says so in that receiver's own row, in words - "this receiver's daily
+allowance for this monitor is used up, back tomorrow" - and the receiver's page says so in its
+status chip. Nobody should have to guess why a receiver went quiet.
+
+**[`frameLog`](#framelog)`.path` is a directory here, not a file.** A monitor keeps one log per
+receiver, `frames-<slug>.db` inside it. The directory is created if it is missing; a path that is
+a file, or that names one (anything ending `.db`), is an exit 2 with the reason rather than a
+SQLite error from inside whichever receiver a visitor happened to pick first. Omit the section and
+nothing is written down.
+
+**When the directory is down**, the last good list is kept and the picker says how old it is: "the
+receiver directory is unreachable, this list is from 19:42". Nothing watching a receiver is
+affected - a station outlives whatever the directory last said about its receiver, and a receiver
+that leaves the directory keeps its page for as long as anybody is on it, and simply stops being
+offered. A cold start that has never reached the directory shows an empty picker and says why. One
+journal line per outage, not one per refresh.
+
+**A receiver whose stream breaks** - a dead feed, or a stream that stops delivering while claiming
+to be live - takes down that receiver and no other. Its page and its row say what happened, and it
+is built again a minute later if somebody is still watching. That is what a single station answers
+with a restart, applied to one receiver instead of to the process.
+
+**A crawler can build every station without touching a single receiver.** Following each row's
+link is what builds that receiver's station, and stations are kept, so anything that walks the
+picker's links takes the process to its maximum memory in one pass. It costs the receivers
+nothing - none of them is contacted - but it costs this container everything it was going to cost
+eventually, all at once. Size for every listed receiver, not for the ones you expect people to
+watch.
+
+`/robots.txt` asks crawlers to leave `/r/` and `/api/` alone and leaves the picker itself
+indexable, which is the page somebody searching for this would want to find. **It is a courtesy,
+not a control**: a crawler that ignores it will do exactly what the paragraph above describes, and
+what actually bounds the damage is the rate limit in front of the site and having sized the
+container for every listed receiver. The picker's own poll of `/api/instances` is unaffected -
+`robots.txt` governs crawlers, not the page's own fetches.
+
+**Memory is the sizing question**, and it is the modems rather than the plumbing (measured
+2026-09-03, x86-64, .NET 10): about **31 MB per station** for the three-modem 40 m band plan above,
+against 86 MB for the process with no receiver picked. Almost all of that is the
+frequency-diversity banks - `afsk300-il2pc` runs 11 decoder branches by default and `bpsk300` runs
+9 - so `"offsetPairs": 0` on both brings it to about **3.5 MB per station** at the cost of the
+off-frequency coverage those banks buy. Fifty receivers all picked is therefore about 1.6 GB as
+configured above, or 260 MB with the banks off. Nothing is freed by a visitor leaving, because the
+station is kept.
+
+**Validation**, all exit 2 with the reason: `monitor` alongside `device`; an empty `monitor.modems`;
+a modem in it that will not build (they are built once at start-up, against a throwaway channel,
+so that a mode this configuration cannot make is one message here rather than a 404 on every
+request for every receiver); no `waterfall` section, or one with no `port` written down, since a
+site meant to be reached from outside should not come up on a number nobody chose; a negative `refreshMinutes` or `lingerSeconds`; a `directory` that is not
+an absolute http or https URL; and an `allow` or `deny` entry that is not a hostname - that last
+one because an entry with a scheme or a port in it would silently match nothing and leave an
+operator believing they had been taken off a list they are still on.
 
 ## `deadFeed`
 
@@ -1839,6 +2018,15 @@ enumerated yet at boot, for instance - still restarts on its own as usual.
 | `ptt` alongside a `ubersdr:` device | `--device ubersdr: is a receive-only station … Remove "ptt".` |
 | `ubersdr:` with no `rfFrequency` and no `dialFrequency` | `the UberSDR instance … has to be told where to listen` |
 | `ptt.type` not `serial` or `cm108` | `unknown ptt type 'X'` |
+| [`monitor`](#monitor) alongside `device` | `this file sets both "device" (…) and "monitor" … Remove whichever one you did not mean.` |
+| `monitor.modems` empty | `"monitor"."modems" is empty … a monitor with none would connect to receivers and decode nothing` - with an entry to copy |
+| `monitor` with no `waterfall` | `"monitor" needs a "waterfall" section: the picker and every receiver's page are served on its "port"` |
+| `monitor` with a `waterfall` that has no `port` | `"waterfall" has no "port" … not a decision anybody made` |
+| `monitor.modems` naming a modem that will not build | the same refusal a station gets, e.g. `mode 'X' does not run IL2P+CRC, so it has no separate plain-IL2P reading to release` |
+| `monitor.refreshMinutes` or `monitor.lingerSeconds` negative | `That is a number of minutes/seconds to wait, so it cannot be negative` |
+| `monitor.directory` not an absolute http or https URL | `which is not an absolute http or https URL` - with the public one to copy |
+| `monitor.allow` or `monitor.deny` entry that is not a hostname | `which is not a hostname … no scheme, no port, no path` |
+| `frameLog.path` a file, or naming one, under `monitor` | `A monitor keeps one log per receiver, so this is a DIRECTORY here …` |
 
 The mode suggestion is worth knowing about, because a hyphen is easy to lose among 38 names:
 

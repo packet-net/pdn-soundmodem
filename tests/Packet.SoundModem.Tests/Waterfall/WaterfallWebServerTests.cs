@@ -25,7 +25,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
     {
         _channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         _channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
-        _port = FreePort();
+        _port = FreePorts.Next();
         _server = new WaterfallWebServer(_channel, _port);
     }
 
@@ -41,14 +41,6 @@ public class WaterfallWebServerTests : IAsyncLifetime
         _cancellation.Dispose();
     }
 
-    private static int FreePort()
-    {
-        var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-        probe.Stop();
-        return port;
-    }
 
     private static byte[] TestFrame()
     {
@@ -438,7 +430,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
         int asked = 0;
         await using var server = new WaterfallWebServer(
             new SoundModemChannel(SampleRate, randomSeed: 5),
-            FreePort(),
+            FreePorts.Next(),
             new WaterfallOptions
             {
                 FrameHistory = count =>
@@ -509,7 +501,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
 
         await using var server = new WaterfallWebServer(
             new SoundModemChannel(SampleRate, randomSeed: 5),
-            FreePort(),
+            FreePorts.Next(),
             new WaterfallOptions { FrameHistory = _ => logged });
         server.Start();
 
@@ -563,7 +555,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
         // drop its connection.
         await using var server = new WaterfallWebServer(
             new SoundModemChannel(SampleRate, randomSeed: 5),
-            FreePort(),
+            FreePorts.Next(),
             new WaterfallOptions { FrameHistory = _ => throw new InvalidOperationException("disk") });
         server.Start();
 
@@ -962,7 +954,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
     {
         // Start order is the daemon's business, not a reason to crash a receive thread.
         await using var unstarted = new WaterfallWebServer(
-            new SoundModemChannel(SampleRate, randomSeed: 3), FreePort());
+            new SoundModemChannel(SampleRate, randomSeed: 3), FreePorts.Next());
 
         Action report = () => unstarted.ReportFrame(2, "IDFrame", "M0LTE", null, 0, null, true);
         Action beacon = () => unstarted.ReportIdBeacon(1, "afsk300-multi11", "KK4HEJ", "IDENT", 17);
@@ -1092,7 +1084,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 3, 10, 4, 17, TimeSpan.Zero));
         await using var server = new WaterfallWebServer(
-            new SoundModemChannel(SampleRate, randomSeed: 5), FreePort(), new WaterfallOptions { TimeProvider = clock });
+            new SoundModemChannel(SampleRate, randomSeed: 5), FreePorts.Next(), new WaterfallOptions { TimeProvider = clock });
         server.Start();
         server.Links.Observe("0", CallFrame(), clock.GetUtcNow());
 
@@ -1279,7 +1271,7 @@ public class WaterfallWebServerTests : IAsyncLifetime
     [Fact]
     public async Task A_Public_Page_Is_Told_Its_Title_And_Whose_Receiver_It_Listens_Through()
     {
-        int port = FreePort();
+        int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(_channel, port, new WaterfallOptions
         {
             Public = true,
