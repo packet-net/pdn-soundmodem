@@ -23,6 +23,9 @@ namespace Packet.SoundModem.Tests.Waterfall;
 public class WaterfallPageTests
 {
     private const int SampleRate = 12000;
+
+    /// <summary>Where a site that offers several receivers serves one of them.</summary>
+    private const string ReceiverBase = "/r/m9psy-1/";
     private const double ToneHz = 1000;
     private const float ToneAmplitude = 0.25f;
 
@@ -681,7 +684,12 @@ public class WaterfallPageTests
     /// couple of seconds of silence as the answer: on a loaded runner the first block can be
     /// later than that, and the test that plays audio is the one run that must not give up early.
     /// </param>
-    private static async Task<Probe> RunProbeAsync(string node, int port, bool audio = false, string? protocol = null)
+    /// <param name="pathname">
+    /// The path the page is being served at, which is what everything it reaches for is relative
+    /// to. Null is the root, which is where a station that is its own site serves it.
+    /// </param>
+    private static async Task<Probe> RunProbeAsync(
+        string node, int port, bool audio = false, string? protocol = null, string? pathname = null)
     {
         string here = Path.GetDirectoryName(typeof(WaterfallPageTests).Assembly.Location)!;
         var start = new ProcessStartInfo(node)
@@ -695,6 +703,7 @@ public class WaterfallPageTests
         start.Environment["PORT"] = port.ToString();
         if (audio) start.Environment["AUDIO"] = "1";
         if (protocol is not null) start.Environment["PROTOCOL"] = protocol;
+        if (pathname is not null) start.Environment["PATHNAME"] = pathname;
 
         using Process probe = Process.Start(start)!;
         string stdout = await probe.StandardOutput.ReadToEndAsync();
@@ -877,10 +886,154 @@ public class WaterfallPageTests
         secure.Thrown.Should().BeEmpty();
     }
 
+    /// <summary>
+    /// A page served under a receiver's prefix opens its socket under that prefix - the whole of
+    /// what makes one process able to serve fifty receivers' pages on one port.
+    /// </summary>
+    /// <remarks>
+    /// The page works its base out from its own path and nothing tells it: there is no build step
+    /// and no configuration in it, and a page that had to be told where it was would be a
+    /// different page per receiver. This runs the shipping script against a real router with a
+    /// real routed server behind it, so what is proved is the whole path - the base the page
+    /// derived, the URL it built, and the upgrade arriving at the server the prefix names.
+    /// </remarks>
+    [Fact]
+    public async Task A_Page_Served_Under_A_Prefix_Opens_Its_Socket_Under_That_Prefix()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = WaterfallWebServer.Routed(channel);
+        await using var router = new WaterfallRouter(port);
+        router.Add(ReceiverBase, server);
+        server.Start();
+        router.Start();
+
+        Probe probe = await RunProbeAsync(node, port, pathname: ReceiverBase);
+
+        probe.SocketUrl.Should().Be($"ws://127.0.0.1:{port}{ReceiverBase}ws");
+        probe.Connected.Should().BeTrue("the socket has to reach the server the prefix names");
+        probe.Thrown.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// The links window a page tears off is that page's receiver's links window, and at the root
+    /// it is the same "/links" it always was.
+    /// </summary>
+    [Fact]
+    public async Task A_Page_Served_Under_A_Prefix_Opens_Its_Links_Window_Under_That_Prefix()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int routerPort = FreePort();
+        await using var routed = WaterfallWebServer.Routed(channel);
+        await using var router = new WaterfallRouter(routerPort);
+        router.Add(ReceiverBase, routed);
+        routed.Start();
+        router.Start();
+
+        var ownChannel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        ownChannel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int ownPort = FreePort();
+        await using var own = new WaterfallWebServer(ownChannel, ownPort);
+        own.Start();
+
+        Probe prefixed = await RunProbeAsync(node, routerPort, pathname: ReceiverBase);
+        Probe root = await RunProbeAsync(node, ownPort);
+
+        prefixed.LinksWindowUrl.Should().Be($"{ReceiverBase}links");
+        root.LinksWindowUrl.Should().Be(
+            "/links", "a station that is its own site opens exactly what it opened before");
+        prefixed.Thrown.Should().BeEmpty();
+        root.Thrown.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// A capture's audio and its sidecar are fetched from the receiver's own survey, not from
+    /// whatever happens to sit at the root of the site.
+    /// </summary>
+    [Fact]
+    public async Task Survey_Links_Are_Relative_To_The_Pages_Base()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = WaterfallWebServer.Routed(channel);
+        await using var router = new WaterfallRouter(port);
+        router.Add(ReceiverBase, server);
+        server.Start();
+        router.Start();
+
+        Probe probe = await RunProbeAsync(node, port, pathname: ReceiverBase);
+
+        probe.Thrown.Should().BeEmpty();
+        probe.FrameRows[RowWith(probe.FrameRows, "unclaimed")].Should()
+            .Contain($"{ReceiverBase}survey/20260804-151909-1144hz-unclaimed.wav")
+            .And.Contain($"{ReceiverBase}survey/20260804-151909-1144hz-unclaimed.json")
+            .And.NotContain("\"/survey/", "an absolute link would fetch another receiver's capture");
+    }
+
+    /// <summary>
+    /// The torn-off links window knows it is one under a prefix as well as at the root, and
+    /// connects back to its own receiver.
+    /// </summary>
+    /// <remarks>
+    /// It is the same page, and the only thing that tells it apart is its path: it hides the
+    /// waterfall, asks the server not to send it spectrum lines, and shows the links pane alone.
+    /// Reading the last segment rather than the whole path is what makes that work under a prefix,
+    /// and "/links" has to keep meaning what it meant.
+    /// </remarks>
+    [Fact]
+    public async Task The_Links_Window_Recognises_Itself_Under_A_Prefix()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int routerPort = FreePort();
+        await using var routed = WaterfallWebServer.Routed(channel);
+        await using var router = new WaterfallRouter(routerPort);
+        router.Add(ReceiverBase, routed);
+        routed.Start();
+        router.Start();
+
+        var ownChannel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        ownChannel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int ownPort = FreePort();
+        await using var own = new WaterfallWebServer(ownChannel, ownPort);
+        own.Start();
+
+        Probe prefixed = await RunProbeAsync(node, routerPort, pathname: $"{ReceiverBase}links");
+        Probe root = await RunProbeAsync(node, ownPort, pathname: "/links");
+        Probe waterfall = await RunProbeAsync(node, ownPort);
+
+        prefixed.Detached.Should().BeTrue("the window at <base>links is the links window");
+        prefixed.SocketUrl.Should().Be($"ws://127.0.0.1:{routerPort}{ReceiverBase}ws",
+            "and it belongs to the receiver whose page it was torn off");
+        prefixed.Connected.Should().BeTrue();
+        root.Detached.Should().BeTrue("/links is what it always was");
+        root.SocketUrl.Should().Be($"ws://127.0.0.1:{ownPort}/ws");
+        waterfall.Detached.Should().BeFalse("the page itself is not a links window");
+        prefixed.Thrown.Should().BeEmpty();
+        root.Thrown.Should().BeEmpty();
+    }
+
     private sealed record PublicPage(string Title, string BodyClass, string About, bool AboutHidden);
 
     private sealed record Probe(
         string? SocketUrl,
+        string? LinksWindowUrl,
+        bool Detached,
         PublicPage PublicPage,
         bool Connected,
         string? ClickError,

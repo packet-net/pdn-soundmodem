@@ -181,7 +181,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
     private readonly SoundModemChannel _channel;
     private readonly WaterfallOptions _options;
-    private readonly HttpListener _listener;
+
+    // Null on a server that a router serves (see Routed): the front door owns the port, which is
+    // the thing that actually has to be single, and fifty receivers under one hostname must not
+    // mean fifty listeners. A station that is its own site keeps its own listener, as it always
+    // had, and nothing about that path changes.
+    private readonly HttpListener? _listener;
     private readonly CancellationTokenSource _stopping = new();
     private readonly Dictionary<int, BandActivityTracker> _trackers = [];
     private readonly List<ModemBand> _bands = [];
@@ -296,25 +301,56 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// <param name="options">Display defaults; null = defaults.</param>
     /// <param name="bind">Bind address; "*" listens on all interfaces.</param>
     public WaterfallWebServer(SoundModemChannel channel, int port, WaterfallOptions? options = null, string bind = "127.0.0.1")
+        : this(channel, options)
     {
-        ArgumentNullException.ThrowIfNull(channel);
-        _channel = channel;
-        _options = options ?? new WaterfallOptions();
         Port = port;
-        _listener = new HttpListener();
+        var listener = new HttpListener();
         // HttpListener wants "+" for "every interface" and rejects the literal 0.0.0.0 that a
         // TcpListener is perfectly happy with - the daemon uses one bind setting for both, so
         // translate here rather than make the operator know which listener wants which spelling.
         bool everyInterface = bind is "*" or "0.0.0.0" or "::" or "[::]";
-        _listener.Prefixes.Add($"http://{(everyInterface ? "+" : bind)}:{port}/");
+        listener.Prefixes.Add($"http://{(everyInterface ? "+" : bind)}:{port}/");
+        _listener = listener;
         Url = $"http://{(everyInterface ? "127.0.0.1" : bind)}:{port}/";
     }
 
-    /// <summary>The listen port.</summary>
-    public int Port { get; }
+    /// <summary>
+    /// Creates a server for <paramref name="channel"/>'s audio with no listener and no port of
+    /// its own, to be served by a <see cref="WaterfallRouter"/> under a path base such as
+    /// <c>/r/m9psy-1/</c>.
+    /// </summary>
+    /// <remarks>
+    /// Everything else about it is the same server: <see cref="Start"/> still measures the bands
+    /// and hooks the channel, and <see cref="TryServeAsync"/> serves the same routes under the
+    /// base the router hands it. What it does not do is bind a port, because a site that offers
+    /// several receivers has one front door and one port, not one of each per receiver.
+    /// </remarks>
+    /// <param name="channel">The channel whose audio and decodes feed the display.</param>
+    /// <param name="options">Display defaults; null = defaults.</param>
+    public static WaterfallWebServer Routed(SoundModemChannel channel, WaterfallOptions? options = null) =>
+        new(channel, options);
 
-    /// <summary>A URL the page is reachable at.</summary>
-    public string Url { get; }
+    private WaterfallWebServer(SoundModemChannel channel, WaterfallOptions? options)
+    {
+        ArgumentNullException.ThrowIfNull(channel);
+        _channel = channel;
+        _options = options ?? new WaterfallOptions();
+        Url = "";
+    }
+
+    /// <summary>The listen port: this server's own, or the router's once one is serving it.</summary>
+    public int Port { get; private set; }
+
+    /// <summary>A URL the page is reachable at; empty on a routed server until it is registered
+    /// with a router, which is what tells it where it is being served from.</summary>
+    public string Url { get; private set; }
+
+    /// <summary>Told where a router is serving it from, so that it can say where it is.</summary>
+    internal void ServedAt(int port, string url)
+    {
+        Port = port;
+        Url = url;
+    }
 
     /// <summary>
     /// A transmit meter sample - forward power in watts and SWR - or <c>(null, null)</c> for a
@@ -518,11 +554,16 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// API serves.
     /// </summary>
     /// <remarks>
-    /// The waterfall owns the socket; it deliberately does not own what this does with it. The
-    /// handler is responsible for its own authentication - this class applies none, because the
-    /// page it serves needs none and the two must not inherit each other's answer.
+    /// <para>The waterfall owns the socket; it deliberately does not own what this does with it.
+    /// The handler is responsible for its own authentication - this class applies none, because
+    /// the page it serves needs none and the two must not inherit each other's answer.</para>
+    /// <para>The second argument is the request path relative to the base this server is served
+    /// under, so a handler matches on <c>/api/config</c> whether the station is a site of its own
+    /// or one receiver of a site that offers several. Reading
+    /// <c>context.Request.Url.AbsolutePath</c> instead would see <c>/r/m9psy-1/api/config</c> and
+    /// match nothing.</para>
     /// </remarks>
-    public Func<HttpListenerContext, Task<bool>>? ApiHandler { get; set; }
+    public Func<HttpListenerContext, string, Task<bool>>? ApiHandler { get; set; }
 
     /// <summary>
     /// What this station has heard, served at <c>/metrics</c> (Prometheus text) and
@@ -566,6 +607,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// Measures every modem's band, hooks the channel (receive tap + frame events) and
     /// starts listening. Call before audio flows and after all modems are added.
     /// </summary>
+    /// <remarks>
+    /// A routed server (see <see cref="Routed"/>) does everything here except the listening,
+    /// which is its router's: the band probe, the channel subscriptions and the link expiry timer
+    /// are the station's own work either way, and are what a server has to have done before the
+    /// first browser arrives.
+    /// </remarks>
     public void Start()
     {
         var source = new WaterfallSource(
@@ -637,8 +684,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _channel.FrameTransmittedWithTrim += OnFrameTransmitted;
         _linkExpiry = _options.TimeProvider.CreateTimer(
             _ => ExpireLinks(), null, LinkExpiryPeriod, LinkExpiryPeriod);
-        _listener.Start();
-        _acceptLoop = AcceptLoopAsync();
+        if (_listener is { } listener)
+        {
+            listener.Start();
+            _acceptLoop = AcceptLoopAsync(listener);
+        }
     }
 
     /// <summary>
@@ -1449,14 +1499,14 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
     }
 
-    private async Task AcceptLoopAsync()
+    private async Task AcceptLoopAsync(HttpListener listener)
     {
         while (!_stopping.IsCancellationRequested)
         {
             HttpListenerContext context;
             try
             {
-                context = await _listener.GetContextAsync().ConfigureAwait(false);
+                context = await listener.GetContextAsync().ConfigureAwait(false);
             }
             catch (Exception) when (_stopping.IsCancellationRequested)
             {
@@ -1473,13 +1523,54 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
     private async Task ServeAsync(HttpListenerContext context)
     {
+        // Our own listener carries nothing but us, so everything on it is under our base, which
+        // is the whole site: the one request TryServeAsync declines here is one HttpListener
+        // could not give a URL for, which nothing this server serves could have answered anyway.
+        if (!await TryServeAsync(context, RootBase).ConfigureAwait(false))
+        {
+            NotFound(context);
+        }
+    }
+
+    /// <summary>The base a server that is a site of its own serves under: the whole site.</summary>
+    internal const string RootBase = "/";
+
+    /// <summary>
+    /// Serves one request that arrived on somebody else's listener, under
+    /// <paramref name="pathBase"/> - so that a router can put several receivers' pages on one
+    /// port, each under its own prefix.
+    /// </summary>
+    /// <remarks>
+    /// The routes are the ones this server has always had, read relative to the base: the page at
+    /// the base itself and at <c>index.html</c> and <c>links</c>, the captures under
+    /// <c>survey/</c>, the API and metrics where they are configured, and a WebSocket upgrade at
+    /// any path under the base. The base is the router's to know rather than this server's, so
+    /// nothing here has to be told twice or kept in step.
+    /// </remarks>
+    /// <param name="context">The request, which this method answers and closes.</param>
+    /// <param name="pathBase">The prefix this server is served under; "/" is the whole site. It
+    /// starts and ends with a slash.</param>
+    /// <returns>
+    /// True if the request was under the base and has been answered (with a 404 of its own if it
+    /// named nothing this server serves). False if it was not, in which case nothing has been
+    /// written to the response and the caller still owns it.
+    /// </returns>
+    public async Task<bool> TryServeAsync(HttpListenerContext context, string pathBase)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ValidatePathBase(pathBase, nameof(pathBase));
+        if (!TryStripBase(context.Request.Url?.AbsolutePath, pathBase, out string requestPath))
+        {
+            return false;
+        }
+
         try
         {
             if (context.Request.IsWebSocketRequest)
             {
                 HttpListenerWebSocketContext upgrade = await context.AcceptWebSocketAsync(null).ConfigureAwait(false);
                 await ServeWebSocketAsync(upgrade.WebSocket).ConfigureAwait(false);
-                return;
+                return true;
             }
 
             // Anything under /api/ belongs to whoever installed the handler, not to the
@@ -1488,10 +1579,10 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // and this library knows nothing about any of that. Unhandled falls through to 404,
             // so a station with no handler installed serves exactly what it always did.
             if (ApiHandler is { } api
-                && context.Request.Url?.AbsolutePath.StartsWith("/api/", StringComparison.Ordinal) == true
-                && await api(context).ConfigureAwait(false))
+                && requestPath.StartsWith("/api/", StringComparison.Ordinal)
+                && await api(context, requestPath).ConfigureAwait(false))
             {
-                return;
+                return true;
             }
 
             // Metrics, unauthenticated by design: a scraper is a machine on a schedule and every
@@ -1501,9 +1592,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // Off unless a station asks for it (see the daemon's "metrics" config).
             if (context.Request.HttpMethod == "GET"
                 && Metrics is { } metrics
-                && context.Request.Url?.AbsolutePath is "/metrics" or "/metrics/frames")
+                && requestPath is "/metrics" or "/metrics/frames")
             {
-                bool frames = context.Request.Url.AbsolutePath.EndsWith("frames", StringComparison.Ordinal);
+                bool frames = requestPath.EndsWith("frames", StringComparison.Ordinal);
                 byte[] body = System.Text.Encoding.UTF8.GetBytes(
                     frames ? metrics.LineProtocol() : metrics.Exposition());
 
@@ -1515,13 +1606,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 context.Response.ContentLength64 = body.Length;
                 await context.Response.OutputStream.WriteAsync(body).ConfigureAwait(false);
                 context.Response.Close();
-                return;
+                return true;
             }
 
             // /links is the same page: it reads its own path and opens as the links pane alone,
             // for a window an operator has torn off the waterfall.
             if (context.Request.HttpMethod == "GET" &&
-                context.Request.Url?.AbsolutePath is "/" or "/index.html" or "/links")
+                requestPath is "/" or "/index.html" or "/links")
             {
                 byte[] page = Page.Value.Bytes;
                 context.Response.ContentType = "text/html; charset=utf-8";
@@ -1538,13 +1629,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 context.Response.ContentLength64 = page.Length;
                 await context.Response.OutputStream.WriteAsync(page).ConfigureAwait(false);
                 context.Response.Close();
-                return;
+                return true;
             }
 
             if (context.Request.HttpMethod == "GET"
-                && context.Request.Url?.AbsolutePath is { } path
-                && path.StartsWith("/survey/", StringComparison.Ordinal)
-                && TryResolveCapture(path["/survey/".Length..], out string file))
+                && requestPath.StartsWith("/survey/", StringComparison.Ordinal)
+                && TryResolveCapture(requestPath["/survey/".Length..], out string file))
             {
                 context.Response.ContentType = file.EndsWith(".wav", StringComparison.Ordinal)
                     ? "audio/wav"
@@ -1556,9 +1646,93 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 }
 
                 context.Response.Close();
-                return;
+                return true;
             }
 
+            NotFound(context);
+        }
+        catch (Exception)
+        {
+            try
+            {
+                context.Response.Abort();
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Strips the base a server is served under off a request path, so the routes below it can be
+    /// compared against the paths this server has always known. "/" is the whole site and strips
+    /// nothing at all, which is what keeps a station that is its own site byte-identical to what
+    /// it was. False means the request is not under this base and is not this server's business.
+    /// </summary>
+    internal static bool TryStripBase(string? absolutePath, string pathBase, out string path)
+    {
+        if (absolutePath is null)
+        {
+            // A request HttpListener could not give a URL for is under nobody's base.
+            path = "";
+            return false;
+        }
+
+        if (pathBase == RootBase)
+        {
+            path = absolutePath;
+            return true;
+        }
+
+        if (absolutePath.StartsWith(pathBase, StringComparison.Ordinal))
+        {
+            // Cut before the base's own trailing slash, so what is left starts with one: the base
+            // itself becomes "/" and /r/x/ws becomes /ws.
+            path = absolutePath[(pathBase.Length - 1)..];
+            return true;
+        }
+
+        path = "";
+        return false;
+    }
+
+    /// <summary>
+    /// The shape of a path base, checked wherever one is accepted: it starts and ends with a
+    /// slash, and holds nothing but lower-case letters, digits, hyphens and slashes.
+    /// </summary>
+    /// <remarks>
+    /// The character rule is the plan's slug rule, and it is here so that matching a base against
+    /// a request path can stay a plain string comparison. A base with anything else in it would
+    /// have to be compared as a browser sends it, percent-encoded, upper and lower case, and a
+    /// prefix that matched a page's URL but not its socket's would be a receiver that loads and
+    /// never connects.
+    /// </remarks>
+    internal static void ValidatePathBase(string pathBase, string parameterName)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(pathBase, parameterName);
+        if (!pathBase.StartsWith('/') || !pathBase.EndsWith('/'))
+        {
+            throw new ArgumentException(
+                $"a path base starts and ends with a slash: \"{pathBase}\"", parameterName);
+        }
+
+        foreach (char c in pathBase)
+        {
+            if (c is not ((>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '/'))
+            {
+                throw new ArgumentException(
+                    $"a path base holds only lower-case letters, digits, hyphens and slashes: \"{pathBase}\"",
+                    parameterName);
+            }
+        }
+    }
+
+    private static void NotFound(HttpListenerContext context)
+    {
+        try
+        {
             context.Response.StatusCode = 404;
             context.Response.Close();
         }
@@ -1682,9 +1856,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 viewers = _clients.Count;
             }
 
+            // Straight after the count changed, as on the way in, and before the tidying up: a
+            // watcher that reads Viewers and a watcher that listens for the event should not be
+            // able to disagree for as long as it takes to dispose a socket. The invocation stays
+            // outside the lock, because a subscriber's work is not this lock's business.
+            RaiseViewersChanged(viewers);
             queue.Writer.TryComplete();
             socket.Dispose();
-            RaiseViewersChanged(viewers);
         }
     }
 
@@ -1918,8 +2096,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
         try
         {
-            _listener.Stop();
-            _listener.Close();
+            _listener?.Stop();
+            _listener?.Close();
         }
         catch (ObjectDisposedException)
         {

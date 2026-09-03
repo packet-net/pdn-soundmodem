@@ -1232,11 +1232,18 @@ public class WaterfallWebServerTests : IAsyncLifetime
         await Receive(second);
         _server.Viewers.Should().Be(2);
 
+        // Waited for on the event rather than on the property. The two are set one after the
+        // other and not under one lock, so a wait on the count can win the race to the assertion
+        // below by the width of those few statements - which it did, once, in a full run.
+        int reported() { lock (counts) return counts.Count; }
+
         await first.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
-        await Until(() => _server.Viewers == 1, "the closed page is no longer a viewer");
+        await Until(() => reported() == 3, "the closed page is no longer a viewer");
+        _server.Viewers.Should().Be(1);
 
         await second.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
-        await Until(() => _server.Viewers == 0, "the last page leaving reports nobody");
+        await Until(() => reported() == 4, "the last page leaving reports nobody");
+        _server.Viewers.Should().Be(0);
 
         lock (counts)
         {
