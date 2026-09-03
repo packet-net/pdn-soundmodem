@@ -341,7 +341,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// <summary>The listen port: this server's own, or the router's once one is serving it.</summary>
     public int Port { get; private set; }
 
-    /// <summary>A URL the page is reachable at, empty until a routed server has a router.</summary>
+    /// <summary>A URL the page is reachable at; empty on a routed server until it is registered
+    /// with a router, which is what tells it where it is being served from.</summary>
     public string Url { get; private set; }
 
     /// <summary>Told where a router is serving it from, so that it can say where it is.</summary>
