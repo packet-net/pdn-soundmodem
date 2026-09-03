@@ -554,11 +554,16 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// API serves.
     /// </summary>
     /// <remarks>
-    /// The waterfall owns the socket; it deliberately does not own what this does with it. The
-    /// handler is responsible for its own authentication - this class applies none, because the
-    /// page it serves needs none and the two must not inherit each other's answer.
+    /// <para>The waterfall owns the socket; it deliberately does not own what this does with it.
+    /// The handler is responsible for its own authentication - this class applies none, because
+    /// the page it serves needs none and the two must not inherit each other's answer.</para>
+    /// <para>The second argument is the request path relative to the base this server is served
+    /// under, so a handler matches on <c>/api/config</c> whether the station is a site of its own
+    /// or one receiver of a site that offers several. Reading
+    /// <c>context.Request.Url.AbsolutePath</c> instead would see <c>/r/m9psy-1/api/config</c> and
+    /// match nothing.</para>
     /// </remarks>
-    public Func<HttpListenerContext, Task<bool>>? ApiHandler { get; set; }
+    public Func<HttpListenerContext, string, Task<bool>>? ApiHandler { get; set; }
 
     /// <summary>
     /// What this station has heard, served at <c>/metrics</c> (Prometheus text) and
@@ -1519,8 +1524,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     private async Task ServeAsync(HttpListenerContext context)
     {
         // Our own listener carries nothing but us, so everything on it is under our base, which
-        // is the whole site. The only request TryServeAsync can decline here is one with no URL
-        // at all, which is the 404 it always was.
+        // is the whole site: the one request TryServeAsync declines here is one HttpListener
+        // could not give a URL for, which nothing this server serves could have answered anyway.
         if (!await TryServeAsync(context, RootBase).ConfigureAwait(false))
         {
             NotFound(context);
@@ -1553,6 +1558,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     public async Task<bool> TryServeAsync(HttpListenerContext context, string pathBase)
     {
         ArgumentNullException.ThrowIfNull(context);
+        ValidatePathBase(pathBase, nameof(pathBase));
         if (!TryStripBase(context.Request.Url?.AbsolutePath, pathBase, out string requestPath))
         {
             return false;
@@ -1574,7 +1580,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // so a station with no handler installed serves exactly what it always did.
             if (ApiHandler is { } api
                 && requestPath.StartsWith("/api/", StringComparison.Ordinal)
-                && await api(context).ConfigureAwait(false))
+                && await api(context, requestPath).ConfigureAwait(false))
             {
                 return true;
             }
@@ -1667,13 +1673,20 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// </summary>
     internal static bool TryStripBase(string? absolutePath, string pathBase, out string path)
     {
+        if (absolutePath is null)
+        {
+            // A request HttpListener could not give a URL for is under nobody's base.
+            path = "";
+            return false;
+        }
+
         if (pathBase == RootBase)
         {
-            path = absolutePath ?? "";
+            path = absolutePath;
             return true;
         }
 
-        if (absolutePath is not null && absolutePath.StartsWith(pathBase, StringComparison.Ordinal))
+        if (absolutePath.StartsWith(pathBase, StringComparison.Ordinal))
         {
             // Cut before the base's own trailing slash, so what is left starts with one: the base
             // itself becomes "/" and /r/x/ws becomes /ws.
@@ -1683,6 +1696,37 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
         path = "";
         return false;
+    }
+
+    /// <summary>
+    /// The shape of a path base, checked wherever one is accepted: it starts and ends with a
+    /// slash, and holds nothing but lower-case letters, digits, hyphens and slashes.
+    /// </summary>
+    /// <remarks>
+    /// The character rule is the plan's slug rule, and it is here so that matching a base against
+    /// a request path can stay a plain string comparison. A base with anything else in it would
+    /// have to be compared as a browser sends it, percent-encoded, upper and lower case, and a
+    /// prefix that matched a page's URL but not its socket's would be a receiver that loads and
+    /// never connects.
+    /// </remarks>
+    internal static void ValidatePathBase(string pathBase, string parameterName)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(pathBase, parameterName);
+        if (!pathBase.StartsWith('/') || !pathBase.EndsWith('/'))
+        {
+            throw new ArgumentException(
+                $"a path base starts and ends with a slash: \"{pathBase}\"", parameterName);
+        }
+
+        foreach (char c in pathBase)
+        {
+            if (c is not ((>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '/'))
+            {
+                throw new ArgumentException(
+                    $"a path base holds only lower-case letters, digits, hyphens and slashes: \"{pathBase}\"",
+                    parameterName);
+            }
+        }
     }
 
     private static void NotFound(HttpListenerContext context)

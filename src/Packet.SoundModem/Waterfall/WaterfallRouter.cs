@@ -70,19 +70,19 @@ public sealed class WaterfallRouter : IAsyncDisposable
     /// starts and ends with a slash: "/r/m9psy-1/".
     /// </summary>
     /// <remarks>
-    /// Registration is what tells a routed server where it is, so that it can say so: its
+    /// <para>Call <see cref="WaterfallWebServer.Start"/> on the server first. A server that has
+    /// not started has measured no bands and has no config message to hand a browser, and the
+    /// first request can arrive on the next line.</para>
+    /// <para>Registration is what tells a routed server where it is, so that it can say so: its
     /// <see cref="WaterfallWebServer.Url"/> and <see cref="WaterfallWebServer.Port"/> are this
-    /// router's until it is registered, and empty and zero before.
+    /// router's while it is registered, and empty and zero either side of that. One server serves
+    /// one receiver under one base, so registering the same server twice is refused rather than
+    /// left to say whichever of the two it was told last.</para>
     /// </remarks>
     public void Add(string pathBase, WaterfallWebServer server)
     {
         ArgumentNullException.ThrowIfNull(server);
-        ArgumentException.ThrowIfNullOrEmpty(pathBase);
-        if (!pathBase.StartsWith('/') || !pathBase.EndsWith('/'))
-        {
-            throw new ArgumentException(
-                $"a path base starts and ends with a slash: \"{pathBase}\"", nameof(pathBase));
-        }
+        WaterfallWebServer.ValidatePathBase(pathBase, nameof(pathBase));
 
         lock (_routesLock)
         {
@@ -91,27 +91,45 @@ public sealed class WaterfallRouter : IAsyncDisposable
                 throw new ArgumentException($"{pathBase} is already served", nameof(pathBase));
             }
 
+            if (Array.Exists(_routes, r => ReferenceEquals(r.Value, server)))
+            {
+                throw new ArgumentException("that server is already served under another base", nameof(server));
+            }
+
             _routes = [.. _routes, new KeyValuePair<string, WaterfallWebServer>(pathBase, server)];
         }
 
         server.ServedAt(Port, Url + pathBase[1..]);
     }
 
-    /// <summary>Stops serving <paramref name="pathBase"/>. True if it was being served.</summary>
+    /// <summary>
+    /// Stops serving <paramref name="pathBase"/>. True if it was being served. The server it was
+    /// serving is left alone, apart from being told it is nowhere: a URL it no longer answers on
+    /// is worse than none at all.
+    /// </summary>
     public bool Remove(string pathBase)
     {
+        WaterfallWebServer? removed = null;
         lock (_routesLock)
         {
-            KeyValuePair<string, WaterfallWebServer>[] left =
-                Array.FindAll(_routes, r => r.Key != pathBase);
-            if (left.Length == _routes.Length)
+            foreach (KeyValuePair<string, WaterfallWebServer> route in _routes)
+            {
+                if (route.Key == pathBase)
+                {
+                    removed = route.Value;
+                }
+            }
+
+            if (removed is null)
             {
                 return false;
             }
 
-            _routes = left;
-            return true;
+            _routes = Array.FindAll(_routes, r => r.Key != pathBase);
         }
+
+        removed.ServedAt(0, "");
+        return true;
     }
 
     /// <summary>Starts listening. Servers can be added before or after.</summary>
@@ -160,8 +178,12 @@ public sealed class WaterfallRouter : IAsyncDisposable
             // A prefix typed without its trailing slash. The page works out what its socket and
             // its links are relative to from its own path, so /r/m9psy-1 would leave it hanging
             // them off /r/ and connecting to nothing at all. One redirect saves a page that would
-            // otherwise load and then sit there dead.
-            if (path is not null && Match(path + "/") is not null)
+            // otherwise load and then sit there dead. A GET or a HEAD only: this is here for an
+            // address somebody typed, and redirecting anything else would invite a client to
+            // repeat a request that was never going to be served.
+            if (path is not null
+                && context.Request.HttpMethod is "GET" or "HEAD"
+                && Match(path + "/") is not null)
             {
                 context.Response.Redirect(path + "/" + context.Request.Url?.Query);
                 context.Response.Close();

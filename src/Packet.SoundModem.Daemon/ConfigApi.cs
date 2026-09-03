@@ -228,9 +228,14 @@ internal sealed class ConfigApi
     }
 
     /// <summary>Handles one request under <c>/api/</c>; false leaves it a 404.</summary>
-    public async Task<bool> HandleAsync(HttpListenerContext context)
+    /// <param name="context">The request.</param>
+    /// <param name="path">
+    /// Its path relative to the base the waterfall server is served under, so that this matches
+    /// on /api/config whether the station is a site of its own or one receiver of a site that
+    /// offers several.
+    /// </param>
+    public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
-        string path = context.Request.Url?.AbsolutePath ?? "";
         if (path is not ("/api/config" or "/api/proposals"))
         {
             return false;

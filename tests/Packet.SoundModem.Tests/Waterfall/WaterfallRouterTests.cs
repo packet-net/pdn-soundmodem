@@ -43,16 +43,18 @@ public class WaterfallRouterTests : IAsyncLifetime
 
         _port = FreePort();
         _router = new WaterfallRouter(_port);
-        _router.Add(ReadingBase, _reading);
-        _router.Add(DalgetyBase, _dalgety);
     }
 
     public ValueTask InitializeAsync()
     {
-        // Each server still starts itself: the band probe and the channel subscriptions are the
-        // station's own work either way, and only the listening moved out.
+        // Each server still starts itself, and does so before it is registered: the band probe and
+        // the channel subscriptions are the station's own work either way, only the listening
+        // moved out, and a server registered before it has started could be asked for a page it
+        // has nothing to say on.
         _reading.Start();
         _dalgety.Start();
+        _router.Add(ReadingBase, _reading);
+        _router.Add(DalgetyBase, _dalgety);
         _router.Start();
         return ValueTask.CompletedTask;
     }
@@ -194,7 +196,158 @@ public class WaterfallRouterTests : IAsyncLifetime
         HttpResponseMessage response = await http.GetAsync("/r/reading", _cancellation.Token);
 
         response.StatusCode.Should().Be(HttpStatusCode.Found);
-        response.Headers.Location!.ToString().Should().EndWith(ReadingBase);
+        response.Headers.Location!.ToString().Should().Be(ReadingBase);
+
+        // Whatever was after the "?" is the page's, and is still there afterwards.
+        HttpResponseMessage queried =
+            await http.GetAsync("/r/reading?tab=links", _cancellation.Token);
+
+        queried.StatusCode.Should().Be(HttpStatusCode.Found);
+        queried.Headers.Location!.ToString().Should().Be($"{ReadingBase}?tab=links");
+
+        // A method nobody typed into an address bar is not redirected: it is a 404, as it would
+        // have been under the base itself.
+        HttpResponseMessage posted = await http.PostAsync(
+            "/r/reading", new StringContent(""), _cancellation.Token);
+
+        posted.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// A handler installed under a receiver's API sees the path relative to that receiver, so one
+    /// written for a station that is its own site works unchanged under a prefix.
+    /// </summary>
+    /// <remarks>
+    /// The daemon's config API matches on "/api/config" exactly. Handed the request's own path it
+    /// would see "/r/reading/api/config", match nothing and 404 - which is a station that answers
+    /// its own API everywhere except where it is actually served.
+    /// </remarks>
+    [Fact]
+    public async Task An_Api_Handler_Is_Given_The_Path_Under_Its_Own_Base()
+    {
+        string? seen = null;
+        _reading.ApiHandler = async (context, path) =>
+        {
+            seen = path;
+            byte[] body = Encoding.UTF8.GetBytes("{}");
+            context.Response.ContentLength64 = body.Length;
+            await context.Response.OutputStream.WriteAsync(body, _cancellation.Token);
+            context.Response.Close();
+            return true;
+        };
+
+        using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{_port}") };
+
+        (await http.GetStringAsync($"{ReadingBase}api/config", _cancellation.Token)).Should().Be("{}");
+
+        seen.Should().Be("/api/config", "the handler matches on its own routes, not on where it is served");
+    }
+
+    /// <summary>The longest registered prefix a path is under is the one that gets it.</summary>
+    /// <remarks>
+    /// Two things at once: a base is not a bare string prefix, so /r/ab/ is nothing to do with
+    /// /r/a/ despite starting with the same four characters; and a base nested inside another
+    /// gets its own requests rather than its parent's, whichever order they were registered in.
+    /// </remarks>
+    [Fact]
+    public async Task The_Longest_Matching_Prefix_Gets_The_Request()
+    {
+        await using var nested = new Receivers(3);
+        int port = FreePort();
+        await using var router = new WaterfallRouter(port);
+
+        // Registered inside-out, so that "the one registered first" and "the longest" cannot be
+        // the same answer.
+        router.Add("/r/a/b/", nested[0]);
+        router.Add("/r/a/", nested[1]);
+        router.Add("/r/ab/", nested[2]);
+        router.Start();
+
+        foreach ((string path, string title) in ((string, string)[])
+                 [("/r/a/b/ws", "receiver 0"), ("/r/a/ws", "receiver 1"), ("/r/ab/ws", "receiver 2")])
+        {
+            using var socket = new ClientWebSocket();
+            await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{port}{path}"), _cancellation.Token);
+            using JsonDocument config = await NextOfTypeAsync(socket, "config");
+            config.RootElement.GetProperty("title").GetString().Should().Be(title, "{0} is its own", path);
+        }
+    }
+
+    [Fact]
+    public async Task A_Registered_Server_Is_Told_Where_It_Is_Served_From()
+    {
+        // A station journals a URL for somebody to paste, and on a routed server the only thing
+        // that knows the port is the router.
+        _reading.Port.Should().Be(_port);
+        _reading.Url.Should().Be($"http://127.0.0.1:{_port}{ReadingBase}");
+    }
+
+    [Fact]
+    public async Task A_Removed_Prefix_Stops_Being_Served_And_Its_Server_Forgets_Where_It_Was()
+    {
+        using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{_port}") };
+        (await http.GetAsync(ReadingBase, _cancellation.Token)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        _router.Remove(ReadingBase).Should().BeTrue();
+
+        (await http.GetAsync(ReadingBase, _cancellation.Token)).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        _reading.Url.Should().BeEmpty("a URL it no longer answers on is worse than none at all");
+        _reading.Port.Should().Be(0);
+        _router.Remove(ReadingBase).Should().BeFalse("it has already gone");
+
+        // The other receiver is untouched, which is the whole point of taking one out.
+        (await http.GetAsync(DalgetyBase, _cancellation.Token)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// A receiver picked while the site is up is served from the moment it is registered - which
+    /// is the only way stations can be created on demand rather than all fifty at start-up.
+    /// </summary>
+    [Fact]
+    public async Task A_Server_Added_After_The_Router_Started_Is_Served_Straight_Away()
+    {
+        const string LateBase = "/r/g4eyr/";
+        using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{_port}") };
+
+        (await http.GetAsync(LateBase, _cancellation.Token)).StatusCode.Should()
+            .Be(HttpStatusCode.NotFound, "nobody has picked this receiver yet");
+
+        await using var late = new Receivers(1);
+        _router.Add(LateBase, late[0]);
+
+        (await http.GetStringAsync(LateBase, _cancellation.Token)).Should().Contain("<!doctype html>");
+        _router.Remove(LateBase);
+    }
+
+    /// <summary>
+    /// A handful of started routed servers, each with its own channel, disposed together.
+    /// </summary>
+    private sealed class Receivers : IAsyncDisposable
+    {
+        private readonly WaterfallWebServer[] _servers;
+
+        public Receivers(int count)
+        {
+            _servers = new WaterfallWebServer[count];
+            for (int n = 0; n < count; n++)
+            {
+                var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+                channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+                _servers[n] = WaterfallWebServer.Routed(
+                    channel, new WaterfallOptions { Public = true, Title = $"receiver {n}" });
+                _servers[n].Start();
+            }
+        }
+
+        public WaterfallWebServer this[int at] => _servers[at];
+
+        public async ValueTask DisposeAsync()
+        {
+            foreach (WaterfallWebServer server in _servers)
+            {
+                await server.DisposeAsync();
+            }
+        }
     }
 
     private async Task<ClientWebSocket> ConnectAsync(string path)
