@@ -3,6 +3,8 @@ using System.Globalization;
 using System.Net;
 using System.Net.WebSockets;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using M0LTE.Dsp;
@@ -602,6 +604,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             dialHz = _options.DialFrequencyHz,
             radioStatus = _radioStatus,
             sideband = _options.Sideband,
+            page = Page.Value.Version,
             modems = _bands.Select(b => new
             {
                 sub = b.SubChannel,
@@ -1407,7 +1410,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             if (context.Request.HttpMethod == "GET" &&
                 context.Request.Url?.AbsolutePath is "/" or "/index.html" or "/links")
             {
-                byte[] page = LoadPage();
+                byte[] page = Page.Value.Bytes;
                 context.Response.ContentType = "text/html; charset=utf-8";
                 // The page carries no version in its URL and the daemon served it with no
                 // freshness information at all - no Cache-Control, no ETag, no Last-Modified -
@@ -1730,7 +1733,22 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }, Json));
     }
 
-    private static byte[] LoadPage()
+    /// <summary>
+    /// The page as served, and the version written into it. The version is a hash of the page's
+    /// own text, so it changes with every edit and never has to be remembered by anyone.
+    /// </summary>
+    /// <remarks>
+    /// The config message carries the same version, and the page compares the two: a tab that
+    /// loaded the page before an upgrade and kept its socket reconnecting afterwards is running
+    /// the old script against the new daemon, and reloads itself once it hears the mismatch. The
+    /// no-cache header on the page stops a browser serving a stale copy on the next navigation;
+    /// this covers the tab that never navigates, which is how a waterfall is normally left. The
+    /// links pane was reported empty on the main page and fine at /links, which is the same page
+    /// in a fresh window; a tab from before the upgrade is the one explanation found that fits.
+    /// </remarks>
+    private static readonly Lazy<(byte[] Bytes, string Version)> Page = new(LoadPage);
+
+    private static (byte[] Bytes, string Version) LoadPage()
     {
         var assembly = Assembly.GetExecutingAssembly();
         string name = assembly.GetManifestResourceNames()
@@ -1738,7 +1756,10 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         using Stream stream = assembly.GetManifestResourceStream(name)!;
         using var memory = new MemoryStream();
         stream.CopyTo(memory);
-        return memory.ToArray();
+        byte[] raw = memory.ToArray();
+        string version = Convert.ToHexStringLower(SHA256.HashData(raw))[..12];
+        string text = Encoding.UTF8.GetString(raw).Replace("__PAGE_VERSION__", version, StringComparison.Ordinal);
+        return (Encoding.UTF8.GetBytes(text), version);
     }
 
     /// <summary>Stops listening and drops every client.</summary>
