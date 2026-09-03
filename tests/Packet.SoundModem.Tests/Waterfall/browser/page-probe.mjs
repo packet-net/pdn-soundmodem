@@ -7,7 +7,7 @@
 // that wasn't a multiple of the element size. Both are JavaScript semantics rather than pixels,
 // which is why a DOM shim costs nothing in fidelity - everything that mattered was in the engine.
 //
-// Usage: PAGE=<html> PORT=<n> node page-probe.mjs
+// Usage: PAGE=<html> PORT=<n> [AUDIO=1] node page-probe.mjs
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
@@ -233,12 +233,15 @@ catch (e) { clickError = String(e); }
 // A second of audio is 25 blocks at the 40 ms the server sends; wait for enough of them to prove
 // a stream rather than a first packet, and give a busy machine longer to produce them than a
 // fixed window would - it returns as soon as they are there. Only one of this suite's runs feeds
-// the channel any audio at all, so a run with nothing playing after the first couple of seconds
-// stops waiting rather than spending the whole budget proving silence.
+// the channel any audio at all, and it says so (AUDIO=1) and is waited for in full: a loaded
+// runner has delivered the first block later than any short silence would allow, and taking
+// that silence as the answer failed a release. Every other run stops waiting after a couple of
+// seconds of nothing rather than spending the whole budget proving silence.
+const expectAudio = process.env.AUDIO === "1";
 const quietBy = Date.now() + 2500;
 await untilTrue(
-  () => { const p = sandbox.__stats().played; return p > 25 || (p === 0 && Date.now() > quietBy); },
-  10000);
+  () => { const p = sandbox.__stats().played; return p > 25 || (!expectAudio && p === 0 && Date.now() > quietBy); },
+  expectAudio ? 20000 : 10000);
 const whilePlaying = sandbox.__stats();
 const listening = run("audioOn()");
 const label = run(`document.getElementById("listen").textContent`);

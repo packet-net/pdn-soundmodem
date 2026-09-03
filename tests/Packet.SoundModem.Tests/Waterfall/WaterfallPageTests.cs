@@ -39,9 +39,16 @@ public class WaterfallPageTests
         server.Start();
 
         using var feeding = new CancellationTokenSource();
-        Task tone = Task.Run(() => FeedTone(channel, feeding.Token));
+        // A thread of its own, not a pool work item: this loop sleeps between blocks for as long
+        // as the probe runs, and a pool item that blocks is the pattern that lost the first cut
+        // of v0.50.0 (the capture writer, same runner, same load). As a pool item it lost the
+        // first cut of v0.51.0 too: with the rest of the suite loading the pool, the feeder had
+        // not started by the time the page had clicked Listen and given up on silence, so the
+        // page heard nothing and the test said audio was not reaching the speakers.
+        Task tone = Task.Factory.StartNew(() => FeedTone(channel, feeding.Token),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
-        Probe probe = await RunProbeAsync(node, port);
+        Probe probe = await RunProbeAsync(node, port, audio: true);
         await feeding.CancelAsync();
         await tone;
 
@@ -621,7 +628,12 @@ public class WaterfallPageTests
         }
     }
 
-    private static async Task<Probe> RunProbeAsync(string node, int port)
+    /// <param name="audio">
+    /// This run feeds the channel a tone, so the probe should wait for it rather than take a
+    /// couple of seconds of silence as the answer: on a loaded runner the first block can be
+    /// later than that, and the test that plays audio is the one run that must not give up early.
+    /// </param>
+    private static async Task<Probe> RunProbeAsync(string node, int port, bool audio = false)
     {
         string here = Path.GetDirectoryName(typeof(WaterfallPageTests).Assembly.Location)!;
         var start = new ProcessStartInfo(node)
@@ -633,6 +645,7 @@ public class WaterfallPageTests
         using var pageFile = new PageFile();
         start.Environment["PAGE"] = pageFile.FullName;
         start.Environment["PORT"] = port.ToString();
+        if (audio) start.Environment["AUDIO"] = "1";
 
         using Process probe = Process.Start(start)!;
         string stdout = await probe.StandardOutput.ReadToEndAsync();
