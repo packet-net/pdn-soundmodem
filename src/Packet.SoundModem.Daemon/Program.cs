@@ -2796,10 +2796,12 @@ using var station = new Station(new StationOptions
 });
 
 // This process runs one station, so a station fault IS the daemon's fault: journal the
-// sentence the station wrote, take the exit-1 retry contract, and let systemd rebuild the
-// device session from scratch - which is what each of these paths did for itself before there
-// was a Station type. A host running fifty would update one row of a table instead, which is
-// the whole reason the decision moved out here.
+// sentence the station wrote, and take the proven restart contract every one of these
+// detectors has always taken - orderly shutdown, exit 1, systemd rebuilds the device session
+// from scratch (Restart=on-failure in the shipped unit; the capture campaign's unit is
+// Restart=always). That is what each of these paths did for itself before there was a Station
+// type. A host running fifty would update one row of a table instead, which is the whole
+// reason the decision moved out here.
 station.Faulted += fault =>
 {
     stationJournal.WriteError(fault.Reason);

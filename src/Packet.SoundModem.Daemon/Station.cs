@@ -395,13 +395,17 @@ internal sealed record StationOptions
     /// zeros at full rate; measured 2026-08-07: 6.8 h of zeros recorded), so the silence watch is
     /// the one that sees it. If instead the DAX UDP path breaks while the TCP session stays up,
     /// <c>FlexAudioInput.Read</c> waits 200 ms for packets and returns 0 - paced, not a spin -
-    /// and only the starvation watch can see that.</description></item>
+    /// and only the starvation watch can see that. A dead TCP session raises
+    /// <c>Client.Disconnected</c>, which is the host's to handle.</description></item>
     /// <item><description><b>ubersdr</b> - <c>Read</c> waits 100 ms and returns 0 when the ring is
     /// empty. A hung established WebSocket (half-open TCP; .NET sends pings but by default never
     /// times out missing pongs) starves the ring while the pump sits in <c>ReceiveAsync</c>
     /// believing the session is live: starvation's case. An instance whose SDR feed dies but keeps
     /// streaming delivers exact-zero IQ, which demodulates to exact-zero audio: silence's case.
-    /// Deliberate quiet is declared by <see cref="SessionLive"/>.</description></item>
+    /// Deliberate quiet - reconnect backoff, quota refusals, an on-demand receiver nobody is
+    /// watching - is declared by <see cref="SessionLive"/> and postpones starvation; a receiver
+    /// unreachable past five minutes is the input's own <c>Lost</c> event, which the host
+    /// handles, so no death is reported two ways.</description></item>
     /// <item><description><b>alsa</b> - <c>AlsaPcm.Read</c> BLOCKS until the span fills and never
     /// returns 0, which is why starvation is polled from a timer and not from the loop. A card
     /// that dies outright (USB unplug: -ENODEV) makes <c>Read</c> throw. Silence is off by
@@ -409,6 +413,8 @@ internal sealed record StationOptions
     /// <item><description><b>wavloop</b> - paces itself and always returns a full buffer; it can
     /// neither starve nor die, and a silent recording looping is legitimate. Both off.</description></item>
     /// </list>
+    /// <para>No 0-return above is a busy spin - each has already waited inside <c>Read</c> - so
+    /// the loop needs no backoff of its own.</para>
     /// </summary>
     public required DeadFeedDevice DeviceKind { get; init; }
 
