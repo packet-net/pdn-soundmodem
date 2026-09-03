@@ -113,7 +113,7 @@ function el(id) {
     id, textContent: "", innerHTML: "", value: "0.8", checked: false, disabled: false,
     width: 800, height: 300, style: {}, children: [], dataset: {},
     className: "",
-    getContext: () => ctx2d, removeChild: noop, insertBefore: noop,
+    getContext: () => ctx2d, removeChild: noop,
     addEventListener: noop, removeEventListener: noop, getBoundingClientRect: () => ({ width: 800, height: 300, left: 0, top: 0 }),
     querySelector: () => el(id + "-q"), querySelectorAll: () => [], focus: noop, scrollTo: noop,
     setAttribute: noop, getAttribute: () => null,
@@ -133,6 +133,14 @@ function el(id) {
       for (const node of nodes) { node._parent = this; this.children.push(node); }
     },
     remove() { const kids = this._parent?.children; const at = kids?.indexOf(this) ?? -1; if (at >= 0) kids.splice(at, 1); },
+    // Real, with a null reference meaning the end, as in a browser: the links pane keeps its
+    // cards in order by taking one out and putting it back where it now belongs.
+    insertBefore(node, ref) {
+      node._parent = this;
+      const at = ref ? this.children.indexOf(ref) : -1;
+      if (at < 0) this.children.push(node); else this.children.splice(at, 0, node);
+      return node;
+    },
     get firstChild() { return this.children[0] ?? null; },
     get lastChild() { return this.children[this.children.length - 1] ?? null; },
   };
@@ -320,40 +328,72 @@ const rows = frames.map(c => c.innerHTML);
 const rowClasses = frames.map(c => c.className);
 
 // The AX.25 links pane, driven with the two messages the server sends it: every link it knows
-// on connect, then one frame live. Two pairs on two modems, one of them up and waiting on an
-// answer; then the frame this pane exists for, a data frame being sent for the second time.
-// What is read back is the card as built - header, figures, concern, feed - because "a resend is
-// obvious" is a claim about the markup and nothing on the server can see it.
+// on connect, then one frame live. On connect: a link that is up and waiting on an answer, a
+// beacon heard twenty minutes ago through a digipeater, a beacon this station repeated itself
+// (sent under the originator's call, which must not make that call ours), and a link that
+// finished two hours ago, which is too old to show. Then the frame this pane exists for, a data
+// frame being sent for the second time. What is read back is the card as built - header,
+// figures, concern, feed - because "a resend is obvious" is a claim about the markup and nothing
+// on the server can see it; and then which cards each filter leaves showing, in which order.
+const minutesAgo = m => new Date(Date.now() - m * 60 * 1000).toISOString();
+const noSide = `{frames:0, data:0, bytes:0, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:null}`;
 run(`showLinks(false)`);
 const linksHiddenBefore = sandbox.document.getElementById("links").hidden === true;
 run(`onLinks({type:"links", links:[
+  {id:"1|GB7BEX<>ID", sub:1, a:"GB7BEX", b:"ID", state:"unconnected", inferred:null, modulo:8,
+   first:"${minutesAgo(80)}", last:"${minutesAgo(20)}",
+   ab:{frames:1, data:0, bytes:0, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:null},
+   ba:${noSide},
+   concern:null,
+   recent:[
+     {at:"${minutesAgo(20)}", from:"GB7BEX", to:"ID", via:["MB7UXX*"], kind:"UI", cmd:true, pf:null, ns:null, nr:null, len:18, text:"GB7BEX BBS Exeter", say:"beacon, 18 bytes", flags:["digipeated"], count:null, state:"unconnected", tx:null}
+   ]},
   {id:"0|GB7RDG-2<>M0LTE-9", sub:0, a:"M0LTE-9", b:"GB7RDG-2", state:"connected", inferred:null, modulo:8,
-   first:"2026-09-02T12:00:00.000Z", last:"${new Date().toISOString()}",
+   first:"${minutesAgo(3)}", last:"${minutesAgo(1)}",
    ab:{frames:3, data:1, bytes:12, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:0},
    ba:{frames:2, data:1, bytes:49, resends:0, polls:1, pollsOpen:1, rejects:0, callsOpen:0, busy:null, awaiting:1},
    concern:"GB7RDG-2 timed out waiting and is polling",
    recent:[
-     {at:"2026-09-02T12:00:00.000Z", from:"M0LTE-9", to:"GB7RDG-2", via:null, kind:"SABM", cmd:true, pf:true, ns:null, nr:null, len:0, text:null, say:"calls GB7RDG-2", flags:null, count:null, state:"calling", tx:null},
-     {at:"2026-09-02T12:00:01.000Z", from:"GB7RDG-2", to:"M0LTE-9", via:null, kind:"UA", cmd:false, pf:true, ns:null, nr:null, len:0, text:null, say:"accepts the call; link up", flags:["final","linkUp"], count:null, state:"connected", tx:true},
-     {at:"2026-09-02T12:00:02.000Z", from:"M0LTE-9", to:"GB7RDG-2", via:null, kind:"I", cmd:true, pf:null, ns:0, nr:0, len:12, text:"hello <node>", say:"sends #0, 12 bytes", flags:null, count:null, state:"connected", tx:null}
+     {at:"${minutesAgo(3)}", from:"M0LTE-9", to:"GB7RDG-2", via:null, kind:"SABM", cmd:true, pf:true, ns:null, nr:null, len:0, text:null, say:"calls GB7RDG-2", flags:null, count:null, state:"calling", tx:null},
+     {at:"${minutesAgo(3)}", from:"GB7RDG-2", to:"M0LTE-9", via:null, kind:"UA", cmd:false, pf:true, ns:null, nr:null, len:0, text:null, say:"accepts the call; link up", flags:["final","linkUp"], count:null, state:"connected", tx:true},
+     {at:"${minutesAgo(2)}", from:"M0LTE-9", to:"GB7RDG-2", via:null, kind:"I", cmd:true, pf:null, ns:0, nr:0, len:12, text:"hello <node>", say:"sends #0, 12 bytes", flags:null, count:null, state:"connected", tx:null}
    ]},
-  {id:"1|GB7BEX<>ID", sub:1, a:"GB7BEX", b:"ID", state:"unconnected", inferred:null, modulo:8,
-   first:"2026-09-02T11:00:00.000Z", last:"2026-09-02T11:00:00.000Z",
+  {id:"0|ID<>M0XYZ-3", sub:0, a:"M0XYZ-3", b:"ID", state:"unconnected", inferred:null, modulo:8,
+   first:"${minutesAgo(2)}", last:"${minutesAgo(2)}",
    ab:{frames:1, data:0, bytes:0, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:null},
-   ba:{frames:0, data:0, bytes:0, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:null},
+   ba:${noSide},
    concern:null,
    recent:[
-     {at:"2026-09-02T11:00:00.000Z", from:"GB7BEX", to:"ID", via:["MB7UXX*"], kind:"UI", cmd:true, pf:null, ns:null, nr:null, len:18, text:"GB7BEX BBS Exeter", say:"beacon, 18 bytes", flags:["digipeated"], count:null, state:"unconnected", tx:null}
+     {at:"${minutesAgo(2)}", from:"M0XYZ-3", to:"ID", via:["GB7RDG-2*"], kind:"UI", cmd:true, pf:null, ns:null, nr:null, len:9, text:"M0XYZ-3 QRV", say:"beacon, 9 bytes", flags:["digipeated"], count:null, state:"unconnected", tx:true}
+   ]},
+  {id:"0|G4ABC-1<>GB7IOW-1", sub:0, a:"G4ABC-1", b:"GB7IOW-1", state:"disconnected", inferred:null, modulo:8,
+   first:"${minutesAgo(150)}", last:"${minutesAgo(120)}",
+   ab:{frames:4, data:1, bytes:30, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:0},
+   ba:{frames:4, data:1, bytes:30, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:0},
+   concern:null,
+   recent:[
+     {at:"${minutesAgo(120)}", from:"G4ABC-1", to:"GB7IOW-1", via:null, kind:"DISC", cmd:true, pf:true, ns:null, nr:null, len:0, text:null, say:"disconnects", flags:null, count:null, state:"disconnecting", tx:null}
    ]}
 ]})`);
-const linksOnArrival = {
+const linkBar = () => ({
   n: sandbox.document.getElementById("linksN").textContent,
   summary: sandbox.document.getElementById("linksSummary").textContent,
   buttonClass: sandbox.document.getElementById("linksBtn").className,
-};
+  uiClass: sandbox.document.getElementById("linksUi").className,
+  uiCount: sandbox.document.getElementById("linksUi").querySelector(".n").textContent,
+  mineClass: sandbox.document.getElementById("linksMine").className,
+  mineCount: sandbox.document.getElementById("linksMine").querySelector(".n").textContent,
+  mineTitle: sandbox.document.getElementById("linksMine").title ?? "",
+  emptyHidden: sandbox.document.getElementById("linksEmpty").hidden === true,
+  empty: sandbox.document.getElementById("linksEmpty").textContent,
+});
+const shownCards = () => sandbox.document.getElementById("linkCards").children
+  .map(card => ({ id: card.dataset.link, className: card.className, hidden: card.hidden === true }));
+const linksOnArrival = linkBar();
+const cardsOnArrival = shownCards();
 run(`onLinkEvent({type:"link",
   link:{id:"0|GB7RDG-2<>M0LTE-9", sub:0, a:"M0LTE-9", b:"GB7RDG-2", state:"connected", inferred:null, modulo:8,
-   first:"2026-09-02T12:00:00.000Z", last:"${new Date().toISOString()}",
+   first:"${minutesAgo(3)}", last:"${new Date().toISOString()}",
    ab:{frames:3, data:1, bytes:12, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:0},
    ba:{frames:3, data:1, bytes:49, resends:1, polls:1, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:1},
    concern:null, recent:null},
@@ -361,18 +401,35 @@ run(`onLinkEvent({type:"link",
 run(`showLinks(true)`);
 const linksHiddenAfter = sandbox.document.getElementById("links").hidden === true;
 const linkCards = sandbox.document.getElementById("linkCards").children.map(card => ({
+  id: card.dataset.link,
   className: card.className,
+  hidden: card.hidden === true,
   head: card.children[0]?.innerHTML ?? "",
   stats: card.children[1]?.innerHTML ?? "",
   concern: card.children[2]?.textContent ?? "",
   concernHidden: card.children[2]?.hidden === true,
   feed: (card.children[3]?.children ?? []).map(row => ({ className: row.className, html: row.innerHTML })),
 }));
-const linksAfterEvent = {
-  n: sandbox.document.getElementById("linksN").textContent,
-  summary: sandbox.document.getElementById("linksSummary").textContent,
-  buttonClass: sandbox.document.getElementById("linksBtn").className,
-};
+const linksAfterEvent = linkBar();
+// A second link comes up between two other stations, newer than ours, and lands above it. Then
+// each filter in turn: UI frames on shows the beacons; Mine on leaves only the link this
+// station is one end of, which it knows from having answered on it.
+run(`onLinkEvent({type:"link",
+  link:{id:"0|G4ABC-1<>GB7IOW-1", sub:0, a:"G4ABC-1", b:"GB7IOW-1", state:"connected", inferred:null, modulo:8,
+   first:"${new Date().toISOString()}", last:"${new Date().toISOString()}",
+   ab:{frames:1, data:0, bytes:0, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:0},
+   ba:{frames:1, data:0, bytes:0, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:0},
+   concern:null, recent:null},
+  event:{at:"${new Date().toISOString()}", from:"GB7IOW-1", to:"G4ABC-1", via:null, kind:"UA", cmd:false, pf:true, ns:null, nr:null, len:0, text:null, say:"accepts the call; link up", flags:["final","linkUp"], count:null, state:"connected", tx:null}})`);
+const cardsAfterSecondLink = shownCards();
+sandbox.document.getElementById("linksUi").click();
+const cardsWithUi = shownCards();
+const linksWithUi = linkBar();
+sandbox.document.getElementById("linksUi").click();
+sandbox.document.getElementById("linksMine").click();
+const cardsMine = shownCards();
+const linksMine = linkBar();
+sandbox.document.getElementById("linksMine").click();
 
 // The opening backlog out of the station's frame log. Driven last, and after the live rows are
 // captured above, so what it does to a panel that already has rows in it can be seen - which is
@@ -414,8 +471,14 @@ console.log(JSON.stringify({
   linksHiddenBefore,
   linksHiddenAfter,
   linksOnArrival,
+  cardsOnArrival,
   linksAfterEvent,
   linkCards,
+  cardsAfterSecondLink,
+  cardsWithUi,
+  linksWithUi,
+  cardsMine,
+  linksMine,
   // What the stylesheet makes of a row that is both ours and from before the page opened,
   // against the two rows it is made of.
   txHistBorder: borderLeft("fr tx hist"),

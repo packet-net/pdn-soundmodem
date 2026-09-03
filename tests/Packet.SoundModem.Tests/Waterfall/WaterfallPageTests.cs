@@ -523,23 +523,30 @@ public class WaterfallPageTests
         // one link up, and amber because that link is waiting on an answer.
         probe.LinksHiddenBefore.Should().BeTrue("the pane is on demand, not always there");
         probe.LinksHiddenAfter.Should().BeFalse();
-        probe.LinksOnArrival.N.Should().Be("1", "one of the two pairs is a link that is up");
-        probe.LinksOnArrival.Summary.Should().Contain("2 pairs heard").And.Contain("1 waiting on an answer");
+        probe.LinksOnArrival.N.Should().Be("1", "one of the pairs is a link that is up");
+        probe.LinksOnArrival.Summary.Should().Contain("1 of 3 pairs shown").And.Contain("1 waiting on an answer");
         probe.LinksOnArrival.ButtonClass.Should().Contain("alert", "an unanswered poll is the thing worth looking up for");
         probe.LinksAfterEvent.ButtonClass.Should().NotContain("alert", "the poll has been answered");
         probe.LinksAfterEvent.ButtonClass.Should().Contain("on", "the pane is open");
 
-        // One card per pair, the live one first regardless of the order they arrived in.
-        probe.LinkCards.Should().HaveCount(2, "two pairs of stations were heard");
-        LinkCard live = probe.LinkCards[0];
-        LinkCard beacon = probe.LinkCards[1];
+        // The link finished two hours ago is not on the page at all; the live one is first
+        // regardless of the order they arrived in; and the beacon and the repeated beacon are
+        // there but hidden, this being a pane about links.
+        LinkCard live = probe.LinkCards.Should().ContainSingle(c => c.Id == "0|GB7RDG-2<>M0LTE-9").Subject;
+        LinkCard beacon = probe.LinkCards.Should().ContainSingle(c => c.Id == "1|GB7BEX<>ID").Subject;
+        probe.LinkCards.Should().HaveCount(3, "the pair last heard two hours ago is forgotten on arrival");
+        probe.LinkCards[0].Should().BeSameAs(live, "a link that is up sorts ahead of the beacons");
+        live.Hidden.Should().BeFalse();
+        beacon.Hidden.Should().BeTrue("unconnected traffic is hidden until asked for");
         live.ClassName.Should().Be("lk live", "a link that is up must be styled apart from a beacon");
         live.Head.Should().Contain("M0LTE-9").And.Contain("GB7RDG-2").And.Contain(">connected<")
-            .And.Contain("AFSK1200", "the card says which modem the link is on");
+            .And.Contain("AFSK1200", "the card says which modem the link is on")
+            .And.Contain("<b class=\"me\" title=\"This station\">GB7RDG-2</b>",
+                "the end this station answered from is marked as its own");
         live.Stats.Should().Contain("1 resend", "the figures count what went wrong")
             .And.Contain("1 unacknowledged");
         live.ConcernHidden.Should().BeTrue("the concern went away with the answer");
-        beacon.ClassName.Should().Contain("idle", "nothing has been heard on it for hours");
+        beacon.ClassName.Should().Contain("idle", "nothing has been heard on it for twenty minutes");
         beacon.Head.Should().Contain("GB7BEX").And.Contain(">no link<");
         beacon.Stats.Should().Contain("GB7BEX").And.NotContain(">ID<", "a beacon's addressee never sends anything");
 
@@ -560,6 +567,28 @@ public class WaterfallPageTests
 
         // And a beacon through a digipeater says which one.
         beacon.Feed.Should().ContainSingle().Which.Html.Should().Contain("beacon").And.Contain("via MB7UXX*");
+
+        // A newer link between two other stations lands above ours: newest connection first.
+        probe.CardsAfterSecondLink.Select(c => c.Id).Should().Equal(
+            "0|G4ABC-1<>GB7IOW-1", "0|GB7RDG-2<>M0LTE-9", "0|ID<>M0XYZ-3", "1|GB7BEX<>ID");
+        probe.CardsAfterSecondLink.Where(c => !c.Hidden).Select(c => c.Id).Should().Equal(
+            "0|G4ABC-1<>GB7IOW-1", "0|GB7RDG-2<>M0LTE-9");
+
+        // UI frames on: the beacons show, newest first after the links.
+        probe.LinksAfterEvent.UiCount.Should().Be("2", "the filter says how many cards it is hiding");
+        probe.LinksWithUi.UiClass.Should().Contain("on");
+        probe.CardsWithUi.Should().OnlyContain(c => !c.Hidden);
+        probe.LinksWithUi.Summary.Should().Contain("4 pairs heard");
+
+        // Mine on: only the link this station is one end of. It knows GB7RDG-2 is its own from
+        // having transmitted as it; M0XYZ-3's beacon went out of this transmitter too, but as
+        // a repeat of somebody else's frame, and that must not make M0XYZ-3 ours.
+        probe.LinksMine.MineClass.Should().Contain("on");
+        probe.LinksMine.MineCount.Should().Be("1");
+        probe.LinksMine.MineTitle.Should().Contain("as GB7RDG-2.").And.NotContain("M0XYZ-3");
+        probe.CardsMine.Where(c => !c.Hidden).Select(c => c.Id).Should().Equal("0|GB7RDG-2<>M0LTE-9");
+        probe.LinksMine.Summary.Should().Contain("1 of 4 pairs shown");
+        probe.LinksMine.EmptyHidden.Should().BeTrue("something is showing");
     }
 
     /// <summary>
@@ -672,14 +701,31 @@ public class WaterfallPageTests
         return port;
     }
 
-    /// <summary>The links button and the pane's summary line, as the page left them.</summary>
-    private sealed record LinksButton(string N, string Summary, string ButtonClass);
+    /// <summary>
+    /// The links button, the pane's summary line and its two filters, as the page left them.
+    /// </summary>
+    private sealed record LinksBar(
+        string N,
+        string Summary,
+        string ButtonClass,
+        string UiClass,
+        string UiCount,
+        string MineClass,
+        string MineCount,
+        string MineTitle,
+        bool EmptyHidden,
+        string Empty);
 
     private sealed record LinkFeedLine(string ClassName, string Html);
 
+    /// <summary>A card's place in the pane: which link, how styled, and whether a filter hides it.</summary>
+    private sealed record CardSlot(string Id, string ClassName, bool Hidden);
+
     /// <summary>One card of the links pane: its parts as built, and its feed line by line.</summary>
     private sealed record LinkCard(
+        string Id,
         string ClassName,
+        bool Hidden,
         string Head,
         string Stats,
         string Concern,
@@ -731,8 +777,14 @@ public class WaterfallPageTests
         string[] ChipsDetached,
         bool LinksHiddenBefore,
         bool LinksHiddenAfter,
-        LinksButton LinksOnArrival,
-        LinksButton LinksAfterEvent,
+        LinksBar LinksOnArrival,
+        CardSlot[] CardsOnArrival,
+        LinksBar LinksAfterEvent,
         LinkCard[] LinkCards,
+        CardSlot[] CardsAfterSecondLink,
+        CardSlot[] CardsWithUi,
+        LinksBar LinksWithUi,
+        CardSlot[] CardsMine,
+        LinksBar LinksMine,
         string[] Thrown);
 }

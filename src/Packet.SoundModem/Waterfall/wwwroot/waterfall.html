@@ -19,6 +19,17 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
+  /* The scrollbars in the page's own colours. Left alone they are the browser's, white on a page
+     that is dark everywhere else, and the frames panel and every card feed has one. color-scheme
+     makes the browser draw its own chrome dark (bars, the scroll corner, form controls); the two
+     properties pin the colours where that is honoured, and the -webkit- rules cover the engines
+     that still only listen to those. */
+  html { color-scheme: dark; }
+  * { scrollbar-width: thin; scrollbar-color: #2a3441 #0d1117; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: #0d1117; }
+  ::-webkit-scrollbar-thumb { background: #2a3441; border-radius: 5px; border: 2px solid #0d1117; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a4656; }
   body {
     background: var(--bg); color: var(--ink); font-family: var(--sans);
     display: flex; flex-direction: column; overflow: hidden;
@@ -221,7 +232,7 @@
   #linksBtn.alert:not(.on) .n { color: var(--amber); font-weight: 700; }
 
   #links {
-    position: absolute; left: 0; right: 0; bottom: 0; height: 45%; min-height: 160px; max-height: 92%;
+    position: absolute; left: 0; right: 0; bottom: 0; height: 55%; min-height: 160px; max-height: 92%;
     display: flex; flex-direction: column; z-index: 5;
     background: rgba(13,17,23,.97); border-top: 1px solid #2a3441;
     box-shadow: 0 -10px 28px rgba(0,0,0,.55);
@@ -233,38 +244,56 @@
   }
   #linksGrip:hover { background-color: #161c25; }
   .links-bar {
-    flex: none; display: flex; align-items: center; gap: 8px; padding: 2px 12px 6px;
+    flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 2px 12px 6px;
     border-bottom: 1px solid var(--edge);
   }
   .links-bar h2 {
     font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 600;
+    white-space: nowrap;
   }
   .links-bar h2 span { margin-left: 8px; font-family: var(--mono); letter-spacing: 0; text-transform: none; }
   .links-bar h2 span.alert { color: var(--amber); }
   .links-bar .hint { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+  /* The two filters, pills like the state pill on a card: lit amber while they are on. Each
+     carries a figure, so what a filter is hiding (or would show) can be read without trying it. */
+  .links-bar .tog {
+    font: inherit; font-size: 11px; color: var(--muted); background: transparent; cursor: pointer;
+    border: 1px solid var(--edge); border-radius: 9px; padding: 1px 9px; white-space: nowrap;
+  }
+  .links-bar .tog:hover { color: var(--ink); }
+  .links-bar .tog.on { color: var(--amber); border-color: var(--amber-dim); }
+  .links-bar .tog .n { margin-left: 5px; font-family: var(--mono); }
+  .links-bar .tog .n:empty { display: none; }
+  #linksEmpty { flex: none; color: var(--muted); font-size: 12px; padding: 12px 14px; }
+  #linksEmpty[hidden] { display: none; }
+  /* Room to read a feed in: a card is a transcript, and a transcript in a 400px box is a
+     ticker. Wide columns, and a row tall enough for a header, the figures and a dozen lines;
+     the min() keeps a card inside a narrow window rather than off the side of it. */
   #linkCards {
     flex: 1; min-height: 0; overflow-y: auto; padding: 10px; display: grid; gap: 10px;
-    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); grid-auto-rows: minmax(220px, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(min(560px, 100%), 1fr)); grid-auto-rows: minmax(300px, 1fr);
   }
-  #linkCards .empty { grid-column: 1 / -1; align-self: start; color: var(--muted); font-size: 12px; padding: 4px 2px; }
 
   .lk {
-    display: flex; flex-direction: column; min-height: 0; order: 1;
+    display: flex; flex-direction: column; min-height: 0;
     background: var(--panel); border: 1px solid var(--edge); border-radius: 4px; overflow: hidden;
   }
-  /* A link that is up, or trying to be, sorts ahead of the beacons and the finished ones: the
-     grid honours order, so a card changes group without being moved in the document. */
-  .lk.live { order: 0; border-color: #2f4a3a; }
+  /* Filtered out, not forgotten: the card keeps its feed and its place for when the filter is
+     turned off again. .lk's display would otherwise beat the browser's rule for [hidden]. */
+  .lk[hidden] { display: none; }
+  .lk.live { border-color: #2f4a3a; }
   .lk.concern { border-color: var(--amber-dim); }
   /* Nothing heard on it for a while. Dimmed like a backlog row in the frames panel, and for the
      same reason: it must not read as a link that is busy right now. */
   .lk.idle { opacity: .6; }
   .lk-head {
-    flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-    border-bottom: 1px solid var(--edge); font-family: var(--mono); font-size: 12px; min-width: 0;
+    flex: none; display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+    border-bottom: 1px solid var(--edge); font-family: var(--mono); font-size: 13px; min-width: 0;
   }
   .lk-head .pair { font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .lk-head .pair b { color: var(--amber); font-weight: 600; }
+  /* This station's own end, in the cyan the rest of the page uses for what it transmits. */
+  .lk-head .pair b.me { color: #7fe3f7; }
   .lk-head .pair .x { color: var(--muted); font-weight: 400; margin: 0 4px; }
   .lk-head .modem { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; }
   .lk-head .modem i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
@@ -275,21 +304,21 @@
   .lk-head .st.connected { color: #7bd88f; border-color: #2f4a3a; }
   .lk-head .st.calling, .lk-head .st.disconnecting { color: var(--amber); border-color: var(--amber-dim); }
   .lk-stats {
-    flex: none; padding: 4px 10px; font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+    flex: none; padding: 5px 12px; font-family: var(--mono); font-size: 11px; color: var(--muted);
     line-height: 1.6; border-bottom: 1px solid #141a23;
   }
   .lk-stats b { color: var(--ink); font-weight: 500; }
   .lk-stats .arrow { margin: 0 3px; }
   .lk-stats .warn { color: var(--amber); }
   .lk-concern {
-    flex: none; padding: 4px 10px; font-size: 11px; color: var(--amber);
+    flex: none; padding: 5px 12px; font-size: 12px; color: var(--amber);
     background: rgba(245,168,60,.08); border-bottom: 1px solid #3a2f1a;
   }
   .lk-concern[hidden] { display: none; }
-  .lk-feed { flex: 1; min-height: 0; overflow-y: auto; font-family: var(--mono); font-size: 11px; }
+  .lk-feed { flex: 1; min-height: 0; overflow-y: auto; font-family: var(--mono); font-size: 12px; }
   .ln {
     display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px;
-    padding: 3px 10px; border-bottom: 1px solid #141a23; line-height: 1.5;
+    padding: 3px 12px; border-bottom: 1px solid #141a23; line-height: 1.5;
   }
   .ln .t { color: var(--muted); flex: none; }
   .ln .from { color: var(--amber); font-weight: 600; flex: none; }
@@ -327,7 +356,7 @@
   }
   body.detached #linksGrip, body.detached #linksDetach, body.detached #linksClose, body.detached .hint { display: none; }
 
-  @media (max-width: 900px) { #log { display: none; } }
+  @media (max-width: 900px) { #log, .links-bar .hint { display: none; } }
 </style>
 </head>
 <body>
@@ -406,12 +435,15 @@
       <div id="linksGrip" title="Drag to resize"></div>
       <div class="links-bar">
         <h2>AX.25 links<span id="linksSummary"></span></h2>
+        <button class="tog" id="linksUi" title="Show the cards for unconnected traffic as well: beacons, IDs and the other UI frames, which never make a link">UI frames<span class="n"></span></button>
+        <button class="tog" id="linksMine" title="Only the links this station is one end of">Mine<span class="n"></span></button>
         <span class="hint">L to show or hide</span>
         <div class="spacer"></div>
         <button class="btn" id="linksDetach" title="Open the links in a window of their own, with no waterfall behind them">Detach</button>
         <button class="btn" id="linksClose" title="Close (L or Esc)">Close</button>
       </div>
-      <div id="linkCards"><div class="empty">Nothing heard yet. A card appears here for every pair of stations heard talking on each modem: connections as they are made, used and dropped, and beacons and other unconnected traffic too.</div></div>
+      <div id="linksEmpty">Nothing heard yet. A card appears here for every pair of stations heard talking on each modem: connections as they are made, used and dropped, and, with UI frames on, beacons and other unconnected traffic too.</div>
+      <div id="linkCards"></div>
     </section>
   </div>
   <aside id="log">
@@ -427,11 +459,26 @@
 /* ---------- persisted UI state ---------- */
 const LS = "pdnsm-waterfall";
 const ui = Object.assign(
-  { dialHz: null, sideband: null, spanHz: 3000, floorDb: -95, topDb: -35, linksOpen: false, linksH: null },
+  { dialHz: null, sideband: null, spanHz: 3000, floorDb: -95, topDb: -35, linksOpen: false, linksH: null, linksUi: false, linksMine: false },
   JSON.parse(localStorage.getItem(LS) || "{}"));
 const save = () => localStorage.setItem(LS, JSON.stringify(ui));
 
 /* ---------- config from the server (arrives on the socket) ---------- */
+// Which edition of this page the tab is running: the server writes a hash of the page's text
+// in here as it serves it, and announces the same hash in every config message. The two differ
+// on a tab that was open before the daemon was upgraded and has been reconnecting ever since:
+// the old script, with no idea of the new messages, against the new server. That tab reloads
+// itself, once. Once, and never for the same version twice, so a page the server did not stamp
+// (the test probe runs this script straight from the source file) cannot loop.
+const PAGE_VERSION = "__PAGE_VERSION__";
+function checkPageVersion(served) {
+  if (!served || served === PAGE_VERSION || PAGE_VERSION.startsWith("__")) return;
+  let last = null;
+  try { last = sessionStorage.getItem("pdnsm-reloaded"); sessionStorage.setItem("pdnsm-reloaded", served); }
+  catch { return; }
+  if (last !== served) location.reload();
+}
+
 let cfg = null;              // {sampleRate, binWidthHz, lineLength, linesPerSecond, dialHz, sideband, modems[]}
 let lastLine = -1;           // index of the newest drawn line
 let lastBins = null;         // newest raw line (Uint8Array)
@@ -1065,11 +1112,21 @@ function logCapture(ev) {
 // from parts held in hand rather than looked up, so a card is one object and not a selector.
 const detached = (location.pathname || "/") === "/links";
 const cards = new Map();          // link id -> { el, head, stats, concern, feed, link }
-let cardsEmpty = true;
 const CARD_FEED = 100;            // lines a card keeps; the server keeps the same
 const LIVE_STATES = ["calling", "connected", "disconnecting"];
-const IDLE_AFTER_MS = 10 * 60 * 1000;         // dimmed after this long without a frame
-const FORGET_AFTER_MS = 6 * 60 * 60 * 1000;   // dropped after this long, as the server does
+const IDLE_AFTER_MS = 10 * 60 * 1000;    // dimmed after this long without a frame
+// Dropped after this long. The server remembers a link for hours and sends the lot on connect,
+// which is right for a log and wrong for a screen: a pair last heard this morning is not
+// something to look at now, and every such card pushes a live one further down.
+const FORGET_AFTER_MS = 60 * 60 * 1000;
+// The callsigns this station has transmitted under lately, each with when it last did. That is
+// how the page knows which end of a link is "me": nobody configures it, the transmitter says.
+// It is a set and not one call because a node answers as several (its own, its BBS, its chat
+// server), and because AX.25 sometimes has the station send under a callsign that is not its
+// own at all: a user connecting onward through a node goes out under the user's call. Such a
+// call is ours for as long as we keep sending under it and forgotten on the same clock as a
+// card, which is what stops it hanging around once the user has gone.
+const ours = new Map();           // callsign -> ms of the last frame sent under it
 
 function linksOpen() { return !$("links").hidden; }
 
@@ -1077,29 +1134,90 @@ function showLinks(on) {
   if (detached) on = true;
   $("links").hidden = !on;
   ui.linksOpen = on; save();
-  updateLinksButton();
+  applyLinkFilters();
 }
 
 function isLive(link) { return LIVE_STATES.includes(link.state); }
+function isOurs(link) { return ours.has(link.a) || ours.has(link.b); }
 
-// The button's figure is the number of links up or being set up, amber when any of them is
-// waiting on an answer that has not come - the one thing worth looking up from the waterfall
-// for. The pane's own summary says the rest.
-function updateLinksButton() {
-  const all = [...cards.values()].map(c => c.link);
-  const live = all.filter(isLive).length;
-  const concerns = all.filter(l => l.concern).length;
+// A frame this station sent, under whatever source call it carried. Not one it merely repeated:
+// a digipeated frame goes out under the originator's call with our own marked as having
+// repeated it (the * on the path), and the originator is not us.
+function noteOurs(ev) {
+  if (!ev.tx || !ev.from) return;
+  if ((ev.via || []).some(v => v.endsWith("*"))) return;
+  const at = Date.parse(ev.at);
+  if (!(ours.get(ev.from) >= at)) ours.set(ev.from, at);
+}
+
+function forgetOld(now) {
+  for (const [call, at] of ours) if (now - at > FORGET_AFTER_MS) ours.delete(call);
+  for (const [id, c] of cards) if (now - c.at > FORGET_AFTER_MS) { c.el.remove(); cards.delete(id); }
+}
+
+// The two filters. Unconnected traffic - beacons, IDs, everything sent as a UI frame - is hidden
+// unless asked for: it is most of what is heard on a busy channel and none of what this pane is
+// for, and its cards were burying the links. "Mine" keeps only the links this station is one end
+// of. A hidden card is kept, feed and all, and only its display is taken away, so changing a
+// filter shows what was missed and not just what comes after.
+function shows(c) {
+  if (!ui.linksUi && c.link.state === "unconnected") return false;
+  if (ui.linksMine && !isOurs(c.link)) return false;
+  return true;
+}
+
+// Everything the pane and its button say about themselves, from the cards as they stand. The
+// button's figure is the number of links up or being set up, amber when any of them is waiting on
+// an answer that has not come - the one thing worth looking up from the waterfall for.
+function applyLinkFilters() {
+  const now = Date.now();
+  forgetOld(now);
+  const all = [...cards.values()];
+  let shown = 0, unconnected = 0, mine = 0;
+  for (const c of all) {
+    const on = shows(c);
+    c.el.hidden = !on;
+    if (on) shown++;
+    if (c.link.state === "unconnected") unconnected++;
+    if (isOurs(c.link)) mine++;
+  }
+  const live = all.filter(c => isLive(c.link)).length;
+  const concerns = all.filter(c => c.link.concern).length;
   const b = $("linksBtn");
   b.classList.toggle("on", linksOpen());
   b.classList.toggle("alert", concerns > 0);
   $("linksN").textContent = live ? String(live) : "";
+
   const bits = [];
   if (live) bits.push(`${live} up`);
-  if (all.length) bits.push(`${all.length} pair${all.length === 1 ? "" : "s"} heard`);
+  if (all.length) bits.push(shown === all.length ? `${plural(all.length, "pair")} heard` : `${shown} of ${plural(all.length, "pair")} shown`);
   if (concerns) bits.push(`${concerns} waiting on an answer`);
   const summary = $("linksSummary");
   summary.textContent = bits.join(" · ");
   summary.classList.toggle("alert", concerns > 0);
+
+  const uiBtn = $("linksUi"), mineBtn = $("linksMine");
+  uiBtn.classList.toggle("on", ui.linksUi);
+  uiBtn.querySelector(".n").textContent = unconnected ? String(unconnected) : "";
+  mineBtn.classList.toggle("on", ui.linksMine);
+  mineBtn.querySelector(".n").textContent = mine ? String(mine) : "";
+  const calls = [...ours.keys()].sort();
+  mineBtn.title = "Only the links this station is one end of. " + (calls.length
+    ? `It has transmitted in the last hour as ${calls.join(", ")}.`
+    : "It has not transmitted in the last hour, so nothing is known to be its own yet.");
+
+  const empty = $("linksEmpty");
+  empty.hidden = shown > 0;
+  if (!all.length) {
+    empty.textContent = "Nothing heard yet. A card appears here for every pair of stations heard talking on each modem: connections as they are made, used and dropped, and, with UI frames on, beacons and other unconnected traffic too.";
+  } else if (!shown) {
+    const why = [];
+    if (!ui.linksUi && unconnected) why.push(`${plural(unconnected, "card")} of unconnected traffic (turn on UI frames to see them)`);
+    if (ui.linksMine) why.push(calls.length
+      ? `${plural(all.length - mine, "link")} between other stations (Mine is on)`
+      : "every link, because Mine is on and this station has not transmitted in the last hour, so it does not yet know which callsigns are its own");
+    empty.textContent = `Hidden: ${why.join("; ")}.`;
+  }
 }
 
 function modemLabel(sub) {
@@ -1134,30 +1252,52 @@ function stateWord(link) {
 function cardFor(link) {
   let c = cards.get(link.id);
   if (c) return c;
-  if (cardsEmpty) { $("linkCards").replaceChildren(); cardsEmpty = false; }
   const el = document.createElement("section");
   const head = document.createElement("div"); head.className = "lk-head";
   const stats = document.createElement("div"); stats.className = "lk-stats";
   const concern = document.createElement("div"); concern.className = "lk-concern"; concern.hidden = true;
   const feed = document.createElement("div"); feed.className = "lk-feed";
   el.append(head, stats, concern, feed);
-  c = { el, head, stats, concern, feed, link };
+  c = { el, head, stats, concern, feed, link, at: 0 };
   cards.set(link.id, c);
-  // Newest pair first; the live ones sort ahead of the rest by CSS order, not by moving them.
-  $("linkCards").prepend(el);
   return c;
+}
+
+// Where a card sits: the links that are up or being set up first, newest connection at the top,
+// so the current ones are in view and a pair that has gone quiet is pushed down the screen by
+// each one heard after it, and off the bottom in the end. A live link is ordered by when it was
+// made rather than by its last frame, so two busy links do not swap places with every exchange.
+function sortsBefore(a, b) {
+  const la = isLive(a.link), lb = isLive(b.link);
+  if (la !== lb) return la;
+  return (la ? a.since : a.at) > (lb ? b.since : b.at);
+}
+
+function placeCard(c) {
+  const box = $("linkCards");
+  c.el.remove();
+  let before = null;
+  for (const el of box.children) {
+    const other = cards.get(el.dataset.link);
+    if (other && sortsBefore(c, other)) { before = el; break; }
+  }
+  box.insertBefore(c.el, before);
 }
 
 function renderCard(c, link) {
   c.link = link;
-  const idle = Date.now() - Date.parse(link.last);
+  c.at = Date.parse(link.last);
+  c.since = Date.parse(link.first);
+  c.el.dataset.link = link.id;
+  const idle = Date.now() - c.at;
   c.el.className = "lk" + (isLive(link) ? " live" : "") + (link.concern ? " concern" : "")
     + (!isLive(link) && idle > IDLE_AFTER_MS ? " idle" : "");
   const joined = link.inferred
     ? ` <span class="modem" title="This link was already up when the station started listening, so what was sent before then is unknown">joined late</span>`
     : "";
   const modulo = link.modulo === 128 ? ` <span class="modem" title="Extended mode: sequence numbers count to 127">mod 128</span>` : "";
-  c.head.innerHTML = `<span class="pair"><b>${esc(link.a)}</b><span class="x">&lt;&gt;</span><b>${esc(link.b)}</b></span>`
+  const end = call => `<b${ours.has(call) ? ` class="me" title="This station"` : ""}>${esc(call)}</b>`;
+  c.head.innerHTML = `<span class="pair">${end(link.a)}<span class="x">&lt;&gt;</span>${end(link.b)}</span>`
     + modemLabel(link.sub) + joined + modulo
     + `<span class="st ${esc(link.state)}">${esc(stateWord(link))}</span>`;
   // A side that has never sent anything gets no line: a beacon's addressee is not a station.
@@ -1165,6 +1305,7 @@ function renderCard(c, link) {
     .filter(([, s]) => s.frames > 0).map(([who, s]) => sideText(who, s)).join("<br>");
   c.concern.hidden = !link.concern;
   c.concern.textContent = link.concern ? `! ${link.concern}` : "";
+  placeCard(c);
 }
 
 function tag(cls, text, title) {
@@ -1208,42 +1349,37 @@ function addLine(c, ev) {
 }
 
 // Every link the server knows, on connect. Rebuilt rather than added to: a reconnect sends the
-// lot again, and by then it includes what was live before the drop.
+// lot again, and by then it includes what was live before the drop. What this station sent is
+// read out of every feed first, so the cards are built already knowing which end is ours.
 function onLinks(msg) {
   cards.clear();
   $("linkCards").replaceChildren();
-  cardsEmpty = true;
-  // Sent most recent first; prepended one at a time, so walked backwards to land the same way.
-  for (const link of [...(msg.links || [])].reverse()) {
+  const now = Date.now();
+  const links = (msg.links || []).filter(link => now - Date.parse(link.last) <= FORGET_AFTER_MS);
+  for (const link of links) for (const ev of link.recent || []) noteOurs(ev);
+  for (const link of links) {
     const c = cardFor(link);
     renderCard(c, link);
     for (const ev of link.recent || []) addLine(c, ev);
   }
-  updateLinksButton();
+  applyLinkFilters();
 }
 
 // One frame, live: the card it belongs to as it now stands, and the line it adds.
 function onLinkEvent(msg) {
+  noteOurs(msg.event);
   const c = cardFor(msg.link);
   renderCard(c, msg.link);
   addLine(c, msg.event);
-  updateLinksButton();
+  applyLinkFilters();
 }
 
-// Time passing with nothing heard: dim, then drop, on the server's own schedule. Nothing
-// arrives to say a link has been forgotten, so the page has to keep the same clock.
+// Time passing with nothing heard: dim, then drop. Nothing arrives to say a link has gone
+// quiet, so the page keeps its own clock.
 function reviewCards() {
   const now = Date.now();
-  for (const [id, c] of cards) {
-    const idle = now - Date.parse(c.link.last);
-    if (idle > FORGET_AFTER_MS) { c.el.remove(); cards.delete(id); continue; }
-    c.el.classList.toggle("idle", !isLive(c.link) && idle > IDLE_AFTER_MS);
-  }
-  if (!cards.size && !cardsEmpty) {
-    $("linkCards").innerHTML = `<div class="empty">Nothing heard for a while. A card appears here for every pair of stations heard talking on each modem.</div>`;
-    cardsEmpty = true;
-  }
-  updateLinksButton();
+  for (const c of cards.values()) c.el.classList.toggle("idle", !isLive(c.link) && now - c.at > IDLE_AFTER_MS);
+  applyLinkFilters();
 }
 
 function initLinksPane() {
@@ -1259,6 +1395,8 @@ function initLinksPane() {
   }
   $("linksBtn").onclick = () => showLinks(!linksOpen());
   $("linksClose").onclick = () => showLinks(false);
+  $("linksUi").onclick = () => { ui.linksUi = !ui.linksUi; save(); applyLinkFilters(); };
+  $("linksMine").onclick = () => { ui.linksMine = !ui.linksMine; save(); applyLinkFilters(); };
   $("linksDetach").onclick = () => {
     window.open("/links", "pdnsm-links", "popup=yes,width=1180,height=640");
     showLinks(false);
@@ -1290,7 +1428,7 @@ function initLinksPane() {
     grip.addEventListener("pointermove", move);
     grip.addEventListener("pointerup", up);
   });
-  updateLinksButton();
+  applyLinkFilters();
   setInterval(reviewCards, 30 * 1000);
 }
 
@@ -1341,7 +1479,7 @@ function connect() {
       if (msg.type === "config") {
         const first = !cfg;
         cfg = msg;
-        if (first) { initControls(); }
+        if (first) { initControls(); checkPageVersion(msg.page); }
         setRadioStatus(cfg.radioStatus);
         renderChips(); resizeAll(); drawRuler(); drawOverlay();
       } else if (msg.type === "radio") {

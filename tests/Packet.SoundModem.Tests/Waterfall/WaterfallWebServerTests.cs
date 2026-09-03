@@ -80,6 +80,26 @@ public class WaterfallWebServerTests : IAsyncLifetime
         page.Should().Contain("<!doctype html>").And.Contain("waterfall");
     }
 
+    /// <summary>
+    /// The page is served with its own version written in, and the config message announces
+    /// the same version: that is how a tab left open across an upgrade finds out it is stale.
+    /// </summary>
+    [Fact]
+    public async Task The_Page_Carries_The_Version_The_Config_Announces()
+    {
+        using var http = new HttpClient();
+        string page = await http.GetStringAsync($"http://127.0.0.1:{_port}/", _cancellation.Token);
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        using JsonDocument config = await NextTextAsync(socket);
+
+        string version = config.RootElement.GetProperty("page").GetString()!;
+        version.Should().MatchRegex("^[0-9a-f]{12}$", "a hash of the page's text, not a number anyone has to bump");
+        page.Should().Contain($"const PAGE_VERSION = \"{version}\";", "the served page must know its own version")
+            .And.NotContain("__PAGE_VERSION__", "the placeholder must not reach a browser");
+    }
+
     [Fact]
     public async Task A_Captures_Audio_Can_Be_Fetched_And_Nothing_Else_Can()
     {
