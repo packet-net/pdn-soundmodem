@@ -455,93 +455,16 @@ if (modems.Count == 0)
 {
     modems.Add(new ModemConfig());
 }
+// Where the station's own lines go. This process runs exactly one station, so its journal
+// carries no tag and reads byte for byte as it did before there was a Station type; a host
+// running several gives each one its slug, so fifty of them in one journal are readable.
+var stationJournal = StationJournal.Console();
 
-// Mode names are checked HERE, before the band planner and the transmit-filter plan rather than
-// in the per-modem loop that builds them. Those two ask the catalogue what a mode occupies, and
-// the catalogue answers an unknown mode with its defaults - so a plugin that failed to load used
-// to be planned as a baseband mode and only diagnosed afterwards, by which time the operator had
-// read a band plan built on a fiction.
-foreach (ModemConfig unchecked_ in modems)
+// Mode names are checked, and the rate the shared channel runs at is settled, before the band
+// planner and the transmit-filter plan: both ask the catalogue what a mode occupies, and the
+// catalogue answers an unknown mode with its defaults.
+if (!StationFactory.TryResolveDspRate(modems, stationJournal, out int DspRate))
 {
-    if (DaemonConfig.IsArdop(unchecked_.Mode) || ModemCatalog.IsKnown(unchecked_.Mode))
-    {
-        continue;
-    }
-
-    Console.Error.WriteLine($"modem {unchecked_.SubChannel}: unknown mode '{unchecked_.Mode}'");
-    ReportUnknownMode(unchecked_.Mode);
-    return 2;
-}
-
-// Checked rather than left to ModemCatalog.Create's throw: 38 mode names is plenty to mistype,
-// and "unknown mode 'fsk9600il2p'" with a stack trace under it does not tell you that the name
-// you wanted was one hyphen away.
-void ReportUnknownMode(string mode)
-{
-    // A qualified name is a plugin mode, and "unknown mode" is the wrong diagnosis for one: the
-    // operator did not mistype it, the plugin that provides it is not loaded. Without this the
-    // failure sits under a "FAILED /path - no such file" line and reads as two unrelated problems.
-    int separator = mode.IndexOf(':', StringComparison.Ordinal);
-    if (separator > 0)
-    {
-        string pluginId = mode[..separator];
-        Console.Error.WriteLine(
-            ModemPluginRegistry.IsPluginRegistered(pluginId)
-                ? $"  modem plugin '{pluginId}' is loaded and does not provide it - it provides: "
-                    + string.Join(", ", ModemPluginRegistry.RegisteredModes
-                        .Where(m => m.StartsWith(pluginId + ":", StringComparison.Ordinal)))
-                : $"  no modem plugin registered for '{pluginId}' - check the \"modemPlugins\" "
-                    + "path, and any plugin failure reported above");
-    }
-
-    string[] near = ModemCatalog.NearestModes(mode);
-    if (near.Length > 0)
-    {
-        Console.Error.WriteLine($"  did you mean: {string.Join(", ", near)}");
-    }
-
-    Console.Error.WriteLine(
-        $"  the {ModemCatalog.KnownModes.Count} built-in mode names are listed at "
-        + "https://github.com/packet-net/pdn-soundmodem/blob/main/docs/modes.md");
-}
-
-// The shared channel runs at one of two rates, so a mode declaring a third has nowhere to run:
-// the decision below would silently hand it 12000 and it would demodulate nothing while looking
-// configured. Only a plugin mode can get here - every built-in declares 12000 or 48000.
-ModemConfig? oddRate = modems.FirstOrDefault(
-    m => ModemPluginRegistry.IsRegistered(m.Mode)
-        && ModemCatalog.DspRateFor(m.Mode) is not (12000 or 48000));
-if (oddRate is not null)
-{
-    Console.Error.WriteLine(
-        $"modem {oddRate.SubChannel}: mode '{oddRate.Mode}' runs at "
-        + $"{ModemCatalog.DspRateFor(oddRate.Mode)} Hz, and the shared audio channel runs at "
-        + "12000 or 48000. A plugin mode has to declare one of those and resample internally if "
-        + "its own DSP wants something else.");
-    return 2;
-}
-
-// ARDOP's engine is native 12 kHz; on a 48 kHz channel (any fsk9600/c4fsk/freedv/ms110d
-// modem present) ArdopChannelBridge decimates its receive audio down and upsamples its
-// bursts back up, so it shares the channel either way.
-int DspRate = modems.Any(m => ModemCatalog.DspRateFor(m.Mode) == 48000) ? 48000 : 12000;
-
-// PLUGIN MODES ONLY, and the distinction is the whole point. Every built-in mode's DSP is
-// rate-parameterised and is built at whatever the channel settled on - afsk1200 beside fsk9600
-// runs the pair at 48 kHz and always has, which is a supported and ordinary arrangement. A plugin
-// mode is different: its descriptor names one rate, the catalogue refuses to build it at any
-// other, and so a 12 kHz plugin mode sharing a channel with any 48 kHz mode simply cannot work.
-// Saying which two modes cannot share beats the exception the build would otherwise throw.
-ModemConfig? wrongRate = modems.FirstOrDefault(
-    m => ModemPluginRegistry.IsRegistered(m.Mode) && ModemCatalog.DspRateFor(m.Mode) != DspRate);
-if (wrongRate is not null)
-{
-    string forcedBy = modems.First(m => ModemCatalog.DspRateFor(m.Mode) == DspRate).Mode;
-    Console.Error.WriteLine(
-        $"modem {wrongRate.SubChannel}: mode '{wrongRate.Mode}' runs at "
-        + $"{ModemCatalog.DspRateFor(wrongRate.Mode)} Hz, but this channel runs at {DspRate} Hz "
-        + $"because '{forcedBy}' needs it. They cannot share one sound card - give them separate "
-        + "daemons, or drop one.");
     return 2;
 }
 
@@ -689,33 +612,13 @@ var frameLogRfByModem = modems.ToDictionary(
     m => m.SubChannel,
     m => (Audio: m.Frequency, Rf: m.RfFrequency));
 
-// Every frame the station hears, written down. Subscribed to the same event the KISS servers
-// and the waterfall use, so it records what was actually decoded rather than a second opinion.
+// Every frame the station hears, written down.
 FrameLog? frameLog = null;
-if (frameLogConfig is not null)
+if (frameLogConfig is not null
+    && !StationFactory.TryOpenFrameLog(
+        frameLogConfig.Path, modems, channel, stationJournal, out frameLog))
 {
-    try
-    {
-        frameLog = FrameLog.Open(frameLogConfig.Path);
-    }
-    catch (Exception e) when (e is IOException or UnauthorizedAccessException or SqliteException)
-    {
-        Console.Error.WriteLine(
-            $"cannot open the frame log at {frameLogConfig.Path}\n"
-            + $"  {e.Message}\n"
-            + "  Set by \"frameLog\".\"path\". The service user must be able to write to its\n"
-            + "  directory; remove the \"frameLog\" section to run without one.");
-        return 2;
-    }
-
-    channel.FrameReceivedWithQuality += (sub, frame, quality) =>
-    {
-        (double? audio, double? rf) = frameLogRfByModem.TryGetValue(sub, out var placement)
-            ? placement
-            : (null, null);
-        frameLog.Record(sub, frame, quality, audio, rf);
-    };
-    Console.WriteLine($"frame log: {frameLog.Path}");
+    return 2;
 }
 
 await using var frameLogLifetime = frameLog;
@@ -728,85 +631,12 @@ await using var frameLogLifetime = frameLog;
 PskDetector bpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFor("bpsk300");
 PskDetector qpskDetector = pskDetectorOverride ?? ModemCatalog.DefaultDetectorFor("qpsk2400");
 
-foreach (ModemConfig modemConfig in modems)
+// Every configured modem onto the channel, and a line each saying what was built. Shared with
+// the many-receiver flavour, which builds the same modems for every receiver it fronts: two
+// copies of this loop would be two answers to what a config actually runs.
+if (!StationFactory.TryAddModems(channel, modems, DspRate, pskDetectorOverride, stationJournal))
 {
-    int subChannel = modemConfig.SubChannel;
-    string mode = modemConfig.Mode;
-    double? frequency = modemConfig.Frequency;
-    if (DaemonConfig.IsArdop(mode))
-    {
-        // Not a demodulator: a whole virtual TNC with its own host protocol. Wired below,
-        // against the same channel, as a receive tap plus a priority transmitter.
-        continue;
-    }
-
-    // The mode name was checked before the band plan was drawn, so by here it is known.
-    if (frequency is not null && !ModemCatalog.AcceptsCentreFrequency(mode))
-    {
-        // The same wording as ModemCatalog.Create's own refusal: this message had drifted
-        // to claim only afsk*/bpsk*/qpsk* accept a frequency, a mode family after the
-        // spec-fixed ms110d-*/freedv-* ones learned to take one by decoration.
-        Console.Error.WriteLine(
-            $"modem {subChannel}: mode '{mode}' occupies the audio band from DC upwards and " +
-            "has no centre frequency to move - drop the frequency override (the " +
-            "afsk*/bpsk*/qpsk* and spec-fixed ms110d-*/freedv-* modes accept one)");
-        return 2;
-    }
-
-    // Refused rather than ignored, same as the frequency override above: an operator who wrote
-    // this down believes their modem changed behaviour, and on a mode with no second plain
-    // reading to release there is nothing for it to change. Named modes rather than a pattern,
-    // because fsk9600-il2p and fsk4800-il2p do run the CRC despite their names.
-    if (modemConfig.AcceptPlainIl2p && !ModemCatalog.RunsIl2pCrc(mode))
-    {
-        Console.Error.WriteLine(
-            $"modem {subChannel}: mode '{mode}' does not run IL2P+CRC, so it has no separate "
-            + "plain-IL2P reading to release - drop \"acceptPlainIl2p\"");
-        Console.Error.WriteLine(
-            "  it applies to the IL2P+CRC modes: afsk300-il2pc, afsk1200-il2p, bpsk*, qpsk*, "
-            + "fsk9600-il2p, fsk4800-il2p, c4fsk*, freedv-*, ms110d-*");
-        return 2;
-    }
-
-    try
-    {
-        channel.AddModem(subChannel, sink => ModemCatalog.Create(mode, DspRate, sink,
-            new ModemOptions(
-                CentreFrequencyHz: frequency,
-                OffsetPairs: modemConfig.OffsetPairs,
-                OffsetStepHz: modemConfig.OffsetStepHz,
-                Detector: pskDetectorOverride,
-                AcceptPlainIl2p: modemConfig.AcceptPlainIl2p)));
-    }
-    catch (Exception failure) when (failure is ArgumentException or InvalidOperationException)
-    {
-        // A built-in factory that threw here would be our bug and a stack trace would be the
-        // right output. A plugin's can throw for reasons that are entirely the plugin's own -
-        // a geometry it will not accept, a rate it will not run - and that is an operator's
-        // problem with somebody else's assembly, not a crash to be reported against this one.
-        Console.Error.WriteLine($"modem {subChannel}: mode '{mode}' would not build");
-        Console.Error.WriteLine($"  {failure.Message}");
-        return 2;
-    }
-    Console.WriteLine($"modem {subChannel}: {mode}{(frequency is { } f ? $" @ {f} Hz" : "")}");
-    if (mode.StartsWith("ms110d-wn", StringComparison.Ordinal)
-        && int.TryParse(mode.AsSpan("ms110d-wn".Length), out int wn)
-        && Packet.SoundModem.Ms110d.Ms110dModem.PoorStatusNote(wn) is { } poorNote)
-    {
-        Console.WriteLine($"modem {subChannel}: {poorNote}");
-    }
-
-    if (modemConfig.AcceptPlainIl2p)
-    {
-        // Said out loud because it removes the one check that separates a frame from noise the
-        // FEC happened to like, and a host has no way to know: such a frame arrives as an
-        // ordinary KISS data frame like any other. Nothing is printed in the default case, where
-        // the same frames are read and shown and simply not handed on, because that costs the
-        // host nothing and would be a line on every IL2P+CRC modem on the station.
-        Console.WriteLine(
-            "  passing plain IL2P (no trailing CRC) to the host: those frames are checked by "
-            + "Reed-Solomon alone");
-    }
+    return 2;
 }
 
 if (modems.Any(m => m.Mode.StartsWith("bpsk", StringComparison.Ordinal)))
@@ -993,12 +823,8 @@ Dictionary<int, string> modeBySubChannel = modems
     .Where(m => !DaemonConfig.IsArdop(m.Mode))
     .ToDictionary(m => m.SubChannel, m => m.Mode);
 
-// What the station is doing, one line per frame, in the journal. FrameReceivedWithQuality
-// rather than FrameReceived: the mode, the CRC verdict, the FEC corrections and the frequency
-// offset are all already measured per frame, and they are what turn "something decoded" into
-// something an operator can act on.
-channel.FrameReceivedWithQuality += (subChannel, frame, quality) =>
-    Console.WriteLine(ActivityLog.Received(subChannel, frame, quality));
+// What the station is doing, one line per frame, in the journal.
+StationFactory.JournalReceivedFrames(channel, stationJournal);
 
 // How far off our centre each station we hear is transmitting. Measured always: it costs a
 // dictionary write per frame, it is the evidence for whether answering them off-centre is worth
@@ -1608,81 +1434,18 @@ if (rawCaptureConfig is not null)
 using var rawCaptureLifetime = new Disposer(() => rawCapture?.Dispose());
 
 // Ghost demodulators for the station identifications a NinoTNC sends alongside its PSK SSB data
-// modes rather than within them (300 AFSK AX.25, 200 Hz above the carrier - see IdBeaconGhost).
-// Without one, an ident is a recurring burst in the middle of the channel that every station can
-// see and none can read. Attached here because a ghost reports to the waterfall and the frame
-// log, and both have to exist first; the console line stands alone when neither is configured.
-//
-// Receive taps, not modems: no KISS sub-channel (a host asking for packet data should not have to
-// filter idents out of it), no contribution to carrier sense, and nothing drawn on the waterfall -
-// the ident rides on a modem that already has a band there.
+// modes rather than within them. Wired here rather than earlier because a ghost reports to the
+// waterfall and the frame log, and both have to exist first; what one is and why is in
+// StationFactory.WireIdBeacons, which the many-receiver flavour calls too.
 if (idBeacons)
 {
-    var ghostCentres = new HashSet<long>();
-    foreach (ModemConfig modemConfig in modems)
-    {
-        // Two PSK modems tuned to the same centre would hear the same TNC's ident twice and list
-        // it twice. A band plan gives them different centres, so this is insurance rather than
-        // the normal case - but the duplicate would be indistinguishable from two real beacons.
-        double centre = IdBeaconGhost.CentreHzFor(modemConfig.Frequency);
-        if (!IdBeaconGhost.AppliesTo(modemConfig.Mode) || !ghostCentres.Add((long)Math.Round(centre)))
-        {
-            continue;
-        }
-
-        IdBeaconGhost ghost = IdBeaconGhost.TryCreate(
-            modemConfig.SubChannel, modemConfig.Mode, modemConfig.Frequency, DspRate)!;
-
-        // The ident's RF frequency follows its audio offset from the modem it accompanies, so a
-        // band-planned station gets a real frequency in the log rather than a blank column.
-        double? ghostRfHz = modemConfig.RfFrequency + IdBeaconGhost.BeaconOffsetHz;
-        ghost.BeaconHeard += (frame, quality) =>
-        {
-            Ax25AddressParser.TryParse(frame, out string source, out string destination);
-
-            // Alongside the rx[N] lines, and distinct from them: this is a station saying who it
-            // is on a channel where its data is unreadable to us, which is worth its own word.
-            Console.WriteLine(
-                $"id[{ghost.SubChannel}] {(source.Length > 0 ? source : "?")}"
-                + $">{(destination.Length > 0 ? destination : "?")} {frame.Length} bytes");
-
-            waterfallServer?.ReportIdBeacon(
-                ghost.SubChannel,
-                quality.Mode,
-                string.IsNullOrWhiteSpace(source) ? null : source,
-                string.IsNullOrWhiteSpace(destination) ? null : destination,
-                frame.Length,
-                // How far the identifying station's dial sits from ours, measured off its carrier.
-                quality.FrequencyOffsetHz);
-
-            frameLog?.Record(
-                ghost.SubChannel, frame, quality, ghost.CentreHz, ghostRfHz,
-                modeName: $"ID beacon ({ModeNames.Display(quality.Mode)})");
-
-            // And the survey, which learns its decodes from the channel's own event - an event a
-            // receive tap does not raise. Without this an ident the station successfully read was
-            // still filed as a burst nothing decoded, captured, and charged to the capture budget
-            // and the frequency cooldown that a real unknown signal needs. Same shape as the
-            // ARDOP omission of 2026-08-05, and found the same way: by opening a capture.
-            survey?.NoteDecode(ghost.SubChannel, frame, quality);
-        };
-
-        channel.AddReceiveTap(ghost.Process);
-
-        // A tap is not one of the channel's modems, so the unkey sweep that resets them misses
-        // this: without it the demodulator carries its pre-keyup carrier state across the silence.
-        channel.TransmittingChanged += keyed =>
-        {
-            if (!keyed)
-            {
-                ghost.ResetCarrierState();
-            }
-        };
-
-        Console.WriteLine(
-            $"modem {modemConfig.SubChannel}: id beacons - listening in "
-            + $"{ghost.Mode} @ {ghost.CentreHz:0.#} Hz");
-    }
+    StationFactory.WireIdBeacons(
+        channel, modems, DspRate, waterfallServer, frameLog,
+        // The survey learns its decodes from the channel's own event, which a receive tap does
+        // not raise; without this an ident the station read would be filed as a burst nothing
+        // decoded, and charged to the capture budget.
+        (sub, frame, quality) => survey?.NoteDecode(sub, frame, quality),
+        stationJournal);
 }
 
 // The radio's transmit meters, when there is a radio that has them.
@@ -1732,10 +1495,7 @@ if (pttSpec is not null)
 // One bind for every listener - KISS, per-modem ports, waterfall, paging and ARDOP.
 System.Net.IPAddress listenAddress = DaemonConfig.ParseBind(bindAddress)!;
 
-// Where the station's own lines go. This process runs exactly one station, so its journal
-// carries no tag and reads byte for byte as it did before there was a Station type; a host
-// running several gives each one its slug, so fifty of them in one journal are readable.
-var stationJournal = StationJournal.Console();
+
 
 // Set when the radio's session dies, so the exit code says "retry me" rather than "I am done".
 bool radioLost = false;
