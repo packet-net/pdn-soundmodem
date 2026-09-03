@@ -303,6 +303,15 @@
   }
   .lk-head .st.connected { color: #7bd88f; border-color: #2f4a3a; }
   .lk-head .st.calling, .lk-head .st.disconnecting { color: var(--amber); border-color: var(--amber-dim); }
+  /* Saves the card's feed as a markdown transcript. Quiet until the pointer is on the card, so
+     a column of cards does not read as a column of buttons. */
+  .lk-head .save {
+    font: inherit; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap;
+    padding: 1px 7px; border-radius: 9px; border: 1px solid var(--edge); color: var(--muted);
+    background: transparent; cursor: pointer; opacity: .5;
+  }
+  .lk:hover .lk-head .save, .lk-head .save:focus-visible { opacity: 1; }
+  .lk-head .save:hover { color: var(--ink); border-color: var(--muted); }
   .lk-stats {
     flex: none; padding: 5px 12px; font-family: var(--mono); font-size: 11px; color: var(--muted);
     line-height: 1.6; border-bottom: 1px solid #141a23;
@@ -1116,8 +1125,12 @@ function logCapture(ev) {
 // what a frame meant; this only draws what it was told. Cards are kept by link id and built
 // from parts held in hand rather than looked up, so a card is one object and not a selector.
 const detached = (location.pathname || "/") === "/links";
-const cards = new Map();          // link id -> { el, head, stats, concern, feed, link }
-const CARD_FEED = 100;            // lines a card keeps; the server keeps the same
+const cards = new Map();          // link id -> { el, head, stats, concern, feed, link, events }
+const CARD_FEED = 100;            // lines a card shows; the server sends the same on connect
+// Events a card remembers for its transcript, which is longer than what it shows: the rows are
+// a window, the transcript is the record, and a page left open through a session should be able
+// to save the whole of it.
+const TRANSCRIPT_MAX = 2000;
 const LIVE_STATES = ["calling", "connected", "disconnecting"];
 const IDLE_AFTER_MS = 10 * 60 * 1000;    // dimmed after this long without a frame
 // Dropped after this long. The server remembers a link for hours and sends the lot on connect,
@@ -1263,7 +1276,7 @@ function cardFor(link) {
   const concern = document.createElement("div"); concern.className = "lk-concern"; concern.hidden = true;
   const feed = document.createElement("div"); feed.className = "lk-feed";
   el.append(head, stats, concern, feed);
-  c = { el, head, stats, concern, feed, link, at: 0 };
+  c = { el, head, stats, concern, feed, link, at: 0, events: [] };
   cards.set(link.id, c);
   return c;
 }
@@ -1304,7 +1317,8 @@ function renderCard(c, link) {
   const end = call => `<b${ours.has(call) ? ` class="me" title="This station"` : ""}>${esc(call)}</b>`;
   c.head.innerHTML = `<span class="pair">${end(link.a)}<span class="x">&lt;&gt;</span>${end(link.b)}</span>`
     + modemLabel(link.sub) + joined + modulo
-    + `<span class="st ${esc(link.state)}">${esc(stateWord(link))}</span>`;
+    + `<span class="st ${esc(link.state)}">${esc(stateWord(link))}</span>`
+    + `<button class="save" title="Save this card's feed as a markdown transcript, oldest line first, with the classic monitor decode beside each line">transcript</button>`;
   // A side that has never sent anything gets no line: a beacon's addressee is not a station.
   c.stats.innerHTML = [[link.a, link.ab], [link.b, link.ba]]
     .filter(([, s]) => s.frames > 0).map(([who, s]) => sideText(who, s)).join("<br>");
@@ -1317,31 +1331,122 @@ function tag(cls, text, title) {
   return `<span class="tag ${cls}" title="${esc(title)}">${text}</span>`;
 }
 
-// A line of a card's feed: when, who, what it did in words, and a tag for anything the words
-// alone would let pass - a frame being sent for the second time is the whole reason this pane
-// exists, and it has to be visible from across the room.
+// The tags a line can carry, for anything the words alone would let pass - a frame being sent
+// for the second time is the whole reason this pane exists, and it has to be visible from across
+// the room. One list for the card and for the transcript, so the two say the same things.
+function tagsFor(ev) {
+  const flags = ev.flags || [];
+  const has = f => flags.includes(f);
+  const tags = [];
+  if (has("resend")) tags.push(["resend", "RESEND", "Sent before and not acknowledged, so sent again"]);
+  if (has("missed")) tags.push(["missed", "GAP", "Frames between this one and the last heard from this side were missed, here or by the other side"]);
+  if (has("repeat")) tags.push(["repeat", `AGAIN x${ev.count}`, "The same request, still unanswered, sent again"]);
+  else if (has("poll")) tags.push(["poll", "POLL", "Waited for an acknowledgement that did not come, and is now asking for one"]);
+  if (has("reject")) tags.push(["reject", "REJECT", "Asks the other side to go back and resend"]);
+  if (has("busy")) tags.push(["busy", "BUSY", "Cannot take more data for now"]);
+  if (has("refused")) tags.push(["refused", "REFUSED", "The other side will not connect"]);
+  if (has("timeout")) tags.push(["timeout", "NO ANSWER", "Nothing answered for longer than any station keeps trying, so this is given up on"]);
+  if (has("protocolError")) tags.push(["error", "FAULT", "A frame the other side could not accept: a protocol error"]);
+  if (has("unexpected")) tags.push(["odd", "NO LINK", "Numbered traffic on a link that is not up"]);
+  return tags;
+}
+
+// A line of a card's feed: when, who, what it did in words, and its tags.
 function lineFor(ev) {
   const row = document.createElement("div");
   const flags = ev.flags || [];
   const has = f => flags.includes(f);
   row.className = "ln" + (ev.tx ? " tx" : "") + (has("linkUp") ? " up" : "") + (has("linkDown") ? " down" : "")
     + (has("protocolError") || has("unexpected") || has("refused") || has("timeout") ? " bad" : "");
-  const tags = [];
-  if (has("resend")) tags.push(tag("resend", "RESEND", "Sent before and not acknowledged, so sent again"));
-  if (has("missed")) tags.push(tag("missed", "GAP", "Frames between this one and the last heard from this side were missed, here or by the other side"));
-  if (has("repeat")) tags.push(tag("repeat", `AGAIN x${ev.count}`, "The same request, still unanswered, sent again"));
-  else if (has("poll")) tags.push(tag("poll", "POLL", "Waited for an acknowledgement that did not come, and is now asking for one"));
-  if (has("reject")) tags.push(tag("reject", "REJECT", "Asks the other side to go back and resend"));
-  if (has("busy")) tags.push(tag("busy", "BUSY", "Cannot take more data for now"));
-  if (has("refused")) tags.push(tag("refused", "REFUSED", "The other side will not connect"));
-  if (has("timeout")) tags.push(tag("timeout", "NO ANSWER", "Nothing answered for longer than any station keeps trying, so this is given up on"));
-  if (has("protocolError")) tags.push(tag("error", "FAULT", "A frame the other side could not accept: a protocol error"));
-  if (has("unexpected")) tags.push(tag("odd", "NO LINK", "Numbered traffic on a link that is not up"));
+  const tags = tagsFor(ev).map(([cls, text, title]) => tag(cls, esc(text), title));
   if (ev.via) tags.push(tag("via", `via ${esc(ev.via.join(","))}`, "Digipeater path; * marks a digipeater that has already repeated it"));
   const text = ev.text != null ? `<span class="txt">${esc(ev.text)}</span>` : "";
   row.innerHTML = `<span class="t">${stampFor(ev)}</span><span class="from">${esc(ev.from)}</span>`
     + `<span class="say">${esc(ev.say)}</span>${tags.join("")}${text}`;
   return row;
+}
+
+/* ---------- transcript ---------- */
+// The frame as a classic monitor prints it, "GB7RDG-2>EI0RSI-1 <I C P S0 R1 pid=F0 len=49>":
+// the shape read off a TNC for forty years, so a transcript can be checked against one, and
+// what someone who distrusts the words in the next column will want. The line the observer adds
+// when it gives up on a call has no frame behind it and gets nothing here.
+function classicFor(ev) {
+  if (!ev.kind) return "";
+  const path = `${ev.from}>${ev.to}${ev.via ? "," + ev.via.join(",") : ""}`;
+  const bits = [ev.kind, ev.cmd ? "C" : "R"];
+  if (ev.pf) bits.push(ev.cmd ? "P" : "F");
+  if (ev.ns != null) bits.push(`S${ev.ns}`);
+  if (ev.nr != null) bits.push(`R${ev.nr}`);
+  if (ev.kind === "I" || ev.kind === "UI") {
+    if (ev.pid != null) bits.push(`pid=${ev.pid.toString(16).toUpperCase().padStart(2, "0")}`);
+    bits.push(`len=${ev.len}`);
+  }
+  return `${path} <${bits.join(" ")}>`;
+}
+
+// How long after the line before it, in the units a person would use for that gap.
+function deltaText(ms) {
+  const s = Math.max(0, ms) / 1000;
+  if (s < 60) return `+${s.toFixed(1)} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `+${m}m ${String(Math.floor(s - m * 60)).padStart(2, "0")}s`;
+  const h = Math.floor(m / 60);
+  return `+${h}h ${String(m - h * 60).padStart(2, "0")}m`;
+}
+
+// A card's feed as a markdown document: oldest line first, which is the order a transcript
+// reads in and the reverse of the card, one table row per line with the time, the gap since the
+// line before, the classic decode and the words. Times are UTC, as a log is.
+function transcriptFor(c) {
+  const link = c.link;
+  // A table cell cannot hold a bar or a line break; anything else the text has is kept, inside
+  // a code span fenced longer than any run of backticks in it.
+  const cell = v => String(v ?? "").replace(/\|/g, "\\|").replace(/[\r\n\t]+/g, " ");
+  const code = v => {
+    const text = cell(v);
+    const fence = "`".repeat(Math.max(0, ...(text.match(/`+/g) || []).map(r => r.length)) + 1);
+    return fence.length > 1 ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`;
+  };
+  const utc = at => isNaN(at) ? "" : new Date(at).toISOString().replace("T", " ").replace(/\.(\d{3})Z$/, ".$1");
+  const modem = cfg ? cfg.modems.find(m => m.sub === link.sub) : null;
+  const events = c.events;
+  const first = events.length ? Date.parse(events[0].at) : NaN;
+  const last = events.length ? Date.parse(events[events.length - 1].at) : NaN;
+  const mine = [link.a, link.b].filter(call => ours.has(call));
+  const out = [];
+  out.push(`# ${link.a} <> ${link.b}`);
+  out.push("");
+  out.push(`Heard on modem ${link.sub}${modem ? ` (${modem.modeName || modem.mode})` : ""} of the pdn-soundmodem${location.host ? ` at ${location.host}` : ""}`
+    + `${mine.length ? `, which transmits as ${mine.join(" and ")}` : ""}. `
+    + `${events.length} ${events.length === 1 ? "line" : "lines"}`
+    + (events.length ? `, ${utc(first)} to ${utc(last)} UTC` : "")
+    + `; the link is ${stateWord(link)}${link.inferred ? ", joined late" : ""}${link.concern ? `; ${link.concern}` : ""}. `
+    + `Saved ${utc(Date.now())} UTC.`);
+  out.push("");
+  out.push("| Time (UTC) | Delta | Classic | What happened |");
+  out.push("|---|---|---|---|");
+  let prev = NaN;
+  for (const ev of events) {
+    const at = Date.parse(ev.at);
+    const delta = isNaN(at) || isNaN(prev) ? "" : deltaText(at - prev);
+    if (!isNaN(at)) prev = at;
+    const classic = classicFor(ev);
+    const frame = (classic ? code(classic) : "") + (ev.text != null && ev.text !== "" ? ` ${code(ev.text)}` : "");
+    const words = [cell(ev.from), cell(ev.say), ...tagsFor(ev).map(([, text]) => `[${cell(text)}]`)].join(" ");
+    out.push(`| ${utc(at)} | ${delta} | ${frame} | ${words} |`);
+  }
+  return out.join("\n") + "\n";
+}
+
+function saveTranscript(c) {
+  const stamp = new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "");
+  const name = `${c.link.a}_${c.link.b}_modem${c.link.sub}_${stamp}.md`.replace(/[^\w.-]+/g, "_");
+  const url = URL.createObjectURL(new Blob([transcriptFor(c)], { type: "text/markdown;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // Newest at the top, so the line to look at is the first one on every card and the oldest fall
@@ -1350,6 +1455,8 @@ function lineFor(ev) {
 // not, or a reconnect would light every line on the pane. If the operator has scrolled down to
 // read something older, what they are reading stays put.
 function addLine(c, ev, live) {
+  c.events.push(ev);
+  if (c.events.length > TRANSCRIPT_MAX) c.events.splice(0, c.events.length - TRANSCRIPT_MAX);
   const feed = c.feed;
   const row = lineFor(ev);
   if (live) {
@@ -1413,6 +1520,12 @@ function initLinksPane() {
   $("linksClose").onclick = () => showLinks(false);
   $("linksUi").onclick = () => { ui.linksUi = !ui.linksUi; save(); applyLinkFilters(); };
   $("linksMine").onclick = () => { ui.linksMine = !ui.linksMine; save(); applyLinkFilters(); };
+  // One listener for every card's transcript button: a card's head is rebuilt on every frame.
+  $("linkCards").onclick = e => {
+    if (!e.target.closest(".save")) return;
+    const c = cards.get(e.target.closest(".lk")?.dataset.link);
+    if (c) saveTranscript(c);
+  };
   $("linksDetach").onclick = () => {
     window.open("/links", "pdnsm-links", "popup=yes,width=1180,height=640");
     showLinks(false);

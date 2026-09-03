@@ -358,7 +358,7 @@ run(`onLinks({type:"links", links:[
    recent:[
      {at:"${minutesAgo(3)}", from:"M0LTE-9", to:"GB7RDG-2", via:null, kind:"SABM", cmd:true, pf:true, ns:null, nr:null, len:0, text:null, say:"calls GB7RDG-2", flags:null, count:null, state:"calling", tx:null},
      {at:"${minutesAgo(3)}", from:"GB7RDG-2", to:"M0LTE-9", via:null, kind:"UA", cmd:false, pf:true, ns:null, nr:null, len:0, text:null, say:"accepts the call; link up", flags:["final","linkUp"], count:null, state:"connected", tx:true},
-     {at:"${minutesAgo(2)}", from:"M0LTE-9", to:"GB7RDG-2", via:null, kind:"I", cmd:true, pf:null, ns:0, nr:0, len:12, text:"hello <node>", say:"sends #0, 12 bytes", flags:null, count:null, state:"connected", tx:null}
+     {at:"${minutesAgo(2)}", from:"M0LTE-9", to:"GB7RDG-2", via:null, kind:"I", cmd:true, pf:null, ns:0, nr:0, pid:240, len:12, text:"hello <node>", say:"sends #0, 12 bytes", flags:null, count:null, state:"connected", tx:null}
    ]},
   {id:"0|ID<>M0XYZ-3", sub:0, a:"M0XYZ-3", b:"ID", state:"unconnected", inferred:null, modulo:8,
    first:"${minutesAgo(2)}", last:"${minutesAgo(2)}",
@@ -399,7 +399,7 @@ run(`onLinkEvent({type:"link",
    ab:{frames:3, data:1, bytes:12, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:0},
    ba:{frames:3, data:1, bytes:49, resends:1, polls:1, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:1},
    concern:null, recent:null},
-  event:{at:"${new Date().toISOString()}", from:"GB7RDG-2", to:"M0LTE-9", via:null, kind:"I", cmd:true, pf:null, ns:0, nr:1, len:49, text:"Welcome to GB7RDG-2", say:"resends #0", flags:["resend"], count:null, state:"connected", tx:true}})`);
+  event:{at:"${new Date().toISOString()}", from:"GB7RDG-2", to:"M0LTE-9", via:null, kind:"I", cmd:true, pf:null, ns:0, nr:1, pid:240, len:49, text:"Welcome to GB7RDG-2", say:"resends #0", flags:["resend"], count:null, state:"connected", tx:true}})`);
 run(`showLinks(true)`);
 const linksHiddenAfter = sandbox.document.getElementById("links").hidden === true;
 const linkCards = sandbox.document.getElementById("linkCards").children.map(card => ({
@@ -464,6 +464,11 @@ run(`onLinkEvent({type:"link",
   event:{at:"${new Date(Date.now() + 180000).toISOString()}", from:"EI0RSI-1", to:"GB7RDG-2", via:null, kind:null, cmd:false, pf:null, ns:null, nr:null, len:0, text:null, say:"got no answer in 3 minutes; the call has failed", flags:["timeout"], count:null, state:"disconnected", tx:null}})`);
 const cardsAfterTimeout = shownCards();
 const failedCall = callCard();
+// The transcript reads the other way up from the card, oldest line first, with the classic
+// monitor decode beside the words. Built for the failed call and for the station's own link,
+// which has data frames with text and a resend in it.
+const transcriptFailed = run(`transcriptFor(cards.get("0|EI0RSI-1<>GB7RDG-2"))`);
+const transcriptOurs = run(`transcriptFor(cards.get("0|GB7RDG-2<>M0LTE-9"))`);
 
 // The opening backlog out of the station's frame log. Driven last, and after the live rows are
 // captured above, so what it does to a panel that already has rows in it can be seen - which is
@@ -510,6 +515,8 @@ console.log(JSON.stringify({
   linkCards,
   cardsAfterSecondLink,
   cardsAfterCall,
+  transcriptFailed,
+  transcriptOurs,
   cardsAfterTimeout,
   failedCall,
   cardsWithUi,

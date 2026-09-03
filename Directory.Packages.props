@@ -44,8 +44,8 @@
     <!-- AX.25 codec and link observer from packet.net. AGPL-3.0-or-later since 0.26.0 (0.23.0
          was the last MIT release), permitted on the same GPLv3 §13 footing as M0LTE.Flex above.
          Packet.Core moves with it: each Packet.Ax25 depends on the matching version. -->
-    <PackageVersion Include="Packet.Ax25" Version="0.32.0" />
-    <PackageVersion Include="Packet.Core" Version="0.32.0" />
+    <PackageVersion Include="Packet.Ax25" Version="0.33.0" />
+    <PackageVersion Include="Packet.Core" Version="0.33.0" />
 
     <!-- Testing - xUnit v3 with Microsoft Testing Platform (MTP) runner -->
     <PackageVersion Include="xunit.v3" Version="3.2.2" />

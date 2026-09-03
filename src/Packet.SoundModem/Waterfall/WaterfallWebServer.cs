@@ -1106,6 +1106,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         pf = evt.PollFinal ? true : (bool?)null,
         ns = evt.Ns,
         nr = evt.Nr,
+        pid = evt.Pid,
         len = evt.InfoLength,
         text = evt.Text,
         say = evt.Narration,
