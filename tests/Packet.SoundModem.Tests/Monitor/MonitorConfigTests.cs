@@ -111,6 +111,44 @@ public class MonitorConfigTests : IDisposable
     }
 
     [Fact]
+    public void A_Monitor_Whose_Waterfall_Has_No_Port_Is_A_Configuration_Error()
+    {
+        // A station on a LAN may reasonably let the default stand. A monitor is a public site
+        // served entirely on this one port, usually through a tunnel pointed at it, and coming up
+        // on the single-station default because nobody wrote a number down is not something to do
+        // quietly.
+        DaemonConfig? config = Load(
+            Working.Replace("\"waterfall\": { \"port\": 8099, \"title\": \"UK packet monitor\" },",
+                            "\"waterfall\": { \"title\": \"UK packet monitor\" },"),
+            out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"waterfall\" has no \"port\"")
+            .And.Contain("8107", "the message names the default it would otherwise have taken")
+            .And.Contain("not a decision anybody made");
+        ShouldGuideTheOperator(error);
+    }
+
+    [Fact]
+    public void A_Modem_The_Monitor_Cannot_Build_Is_A_Configuration_Error()
+    {
+        // The mode-name and rate checks do not build anything, so a modem that cannot actually be
+        // made used to get all the way through start-up and then fail once per station, once per
+        // request, as a 404 with a stack trace behind it. Built once now, against a throwaway
+        // channel, so it is one message here instead.
+        var journal = new StationJournal("", _ => { }, Errors.Add);
+        var channel = new Packet.SoundModem.Channel.SoundModemChannel(12000);
+
+        bool built = StationFactory.TryAddModems(
+            channel,
+            [new ModemConfig { SubChannel = 0, Mode = "afsk1200", AcceptPlainIl2p = true }],
+            12000, null, journal);
+
+        built.Should().BeFalse();
+        Errors.Should().Contain(e => e.Contains("does not run IL2P+CRC"));
+    }
+
+    [Fact]
     public void A_Directory_That_Is_Not_A_Url_Is_A_Configuration_Error()
     {
         foreach (string bad in (string[])["instances.ubersdr.org", "/api/instances", "ftp://x/y", ""])

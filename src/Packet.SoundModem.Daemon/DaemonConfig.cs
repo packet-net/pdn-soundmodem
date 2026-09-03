@@ -740,6 +740,14 @@ public sealed class WaterfallConfig
     /// is receive only. Null shows none.</summary>
     public string? About { get; set; }
 
+    /// <summary>
+    /// Whether the file actually said <c>"port"</c>, as opposed to taking the default. A station
+    /// on a LAN may reasonably let the default stand; a monitor is a public site, and coming up
+    /// on a port nobody chose is not something to do quietly.
+    /// </summary>
+    [JsonIgnore]
+    public bool PortWasStated { get; internal set; }
+
     /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
@@ -914,6 +922,11 @@ public sealed class DaemonConfig
                 + "working file is {\"device\": \"default\", \"modems\": [{\"subChannel\": 0, "
                 + "\"mode\": \"afsk1200\"}]}");
         config.DeviceWasStated = StatesKey(path, "device");
+        if (config.Waterfall is not null)
+        {
+            config.Waterfall.PortWasStated = StatesKey(path, "waterfall", "port");
+        }
+
         if (config.Monitor is not null)
         {
             ValidateMonitor(config);
@@ -1085,6 +1098,16 @@ public sealed class DaemonConfig
                 "\"monitor\" needs a \"waterfall\" section: the picker and every receiver's page "
                 + "are served on its \"port\", and the page's viewers are what asks for a "
                 + "receiver. Add {\"waterfall\": {\"port\": 8099, \"title\": \"...\"}}.");
+        }
+
+        if (!config.Waterfall.PortWasStated)
+        {
+            throw new InvalidDataException(
+                "\"waterfall\" has no \"port\". A monitor serves its whole site on that one port "
+                + $"and would otherwise come up on {config.Waterfall.Port}, which is the "
+                + "single-station default and not a decision anybody made - and this is a site "
+                + "meant to be reached from outside, usually through a tunnel pointed at a port "
+                + "somebody chose. Set it, e.g. {\"waterfall\": {\"port\": 8099}}.");
         }
 
         // Forced rather than checked. A picker is a page for strangers by definition - it lists
@@ -1278,7 +1301,7 @@ public sealed class DaemonConfig
     /// the document rather than the object, because a defaulted value and a value written down
     /// that happens to equal the default are indistinguishable once deserialized.
     /// </summary>
-    private static bool StatesKey(string path, string key)
+    private static bool StatesKey(string path, params string[] keys)
     {
         try
         {
@@ -1289,9 +1312,26 @@ public sealed class DaemonConfig
                     CommentHandling = JsonCommentHandling.Skip,
                     AllowTrailingCommas = true,
                 });
-            return document.RootElement.ValueKind == JsonValueKind.Object
-                && document.RootElement.EnumerateObject().Any(
+
+            JsonElement at = document.RootElement;
+            foreach (string key in keys)
+            {
+                if (at.ValueKind != JsonValueKind.Object)
+                {
+                    return false;
+                }
+
+                JsonProperty found = at.EnumerateObject().FirstOrDefault(
                     p => p.Name.Equals(key, StringComparison.OrdinalIgnoreCase));
+                if (found.Value.ValueKind == JsonValueKind.Undefined)
+                {
+                    return false;
+                }
+
+                at = found.Value;
+            }
+
+            return true;
         }
         catch (Exception)
         {

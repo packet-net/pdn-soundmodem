@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using M0LTE.Dsp;
+using Packet.SoundModem.Channel;
 using Packet.SoundModem.UberSdr;
 
 namespace Packet.SoundModem.Daemon;
@@ -50,6 +51,20 @@ internal static class MonitorStartup
                 "\"monitor\".\"modems\" has no \"rfFrequency\". A web receiver has no dial already "
                 + "set to read off, so the band plan is the only thing that can tune it: give "
                 + "every modem an \"rfFrequency\" and the dial is worked out from them.");
+            return 2;
+        }
+
+        // Built once, here, against a channel nothing will ever read. The mode-name and rate
+        // checks above do not build anything, so a modem this configuration cannot actually make
+        // - "acceptPlainIl2p" on a mode with no separate plain reading, a plugin refusing its own
+        // geometry - used to get all the way through start-up, and then fail once per station,
+        // once per request, as a 404 with a stack trace behind it. One exit 2 instead. Its lines
+        // are swallowed because every station prints its own; its refusals are not.
+        if (!StationFactory.TryAddModems(
+                new SoundModemChannel(dspRate), modems, dspRate,
+                detectorOverride: null,
+                new StationJournal("", _ => { }, journal.WriteError)))
+        {
             return 2;
         }
 
