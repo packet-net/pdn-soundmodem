@@ -1072,16 +1072,9 @@ if (waterfallConfig is not null)
             Public = waterfallConfig.Public,
             Title = waterfallConfig.Title,
             About = waterfallConfig.About,
-            // What each modem is meant to occupy. The centre so the label reads as the
-            // operator placed it rather than as the probe measured it, and a width for ARDOP,
-            // which is a receive tap rather than an IModem and so cannot be probed at all.
-            DeclaredBands = [.. modems.Select(m => new DeclaredBand(
-                m.SubChannel,
-                DaemonConfig.IsArdop(m.Mode) ? "ardop" : m.Mode,
-                m.Frequency ?? (DaemonConfig.IsArdop(m.Mode) ? ArdopChannelBridge.NativeCentreHz : 0),
-                DaemonConfig.IsArdop(m.Mode)
-                    ? m.Bandwidth ?? ArdopChannelBridge.WidestBandwidthHz
-                    : null))],
+            // What each modem is meant to occupy; see StationFactory.DeclaredBandsFor, which the
+            // many-receiver flavour calls too.
+            DeclaredBands = StationFactory.DeclaredBandsFor(modems),
             // The decoded-frames panel opens on what the station has already written down, so a
             // browser arriving mid-afternoon is shown the channel rather than an empty list. Null
             // when there is no frame log: nothing to show, and nothing pretending otherwise.
@@ -1090,19 +1083,11 @@ if (waterfallConfig is not null)
         // One bind for every listener; the waterfall no longer carries its own.
         bindAddress);
 
-    // The links pane opens on the links the station already knows about. The log has the
-    // bytes of every frame it heard or sent, so the observer is simply shown them again, in
-    // order and with their own timestamps: a link that was up when this process last stopped is
-    // up on the first page load rather than after its next frame. Two thousand frames is an
-    // afternoon on a busy port and a few milliseconds of work.
+    // The links pane opens on the links the station already knows about; see
+    // StationFactory.BackfillLinks, which the many-receiver flavour calls too.
     if (frameLog is not null)
     {
-        foreach ((LoggedFrame logged, byte[] payload) in frameLog.RecentWithPayload(2000))
-        {
-            waterfallServer.Links.Observe(
-                logged.SubChannel.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                payload, logged.HeardAt, logged.Transmitted);
-        }
+        StationFactory.BackfillLinks(waterfallServer, frameLog);
     }
 
     try

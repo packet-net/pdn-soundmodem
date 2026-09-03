@@ -1740,13 +1740,20 @@ what the process is: `device` is one radio or one receiver with a KISS port and 
 | `/` and `/index.html` | The picker: one row per receiver, sorted so that the ones people are already watching are at the top |
 | `/api/instances` | What the picker polls, every 10 s: the list, each receiver's state and viewer count, and how old the list is |
 | `/r/<slug>/` | That receiver's page - the waterfall, the AX.25 links pane, the decoded frames, the browser audio |
-| `/r/<slug>/ws`, `/r/<slug>/links`, `/r/<slug>/survey/...` | That page's own socket, torn-off links window and captures |
+| `/r/<slug>/ws` and `/r/<slug>/links` | That page's own socket and its torn-off links window |
+| `/robots.txt` | Asks crawlers to leave `/r/` and `/api/` alone; see below |
 | anything else | 404 |
 
 There is **no KISS, no PTT, no transmitter, no [`api`](#api), no [`survey`](#survey), no
 [`paging`](#paging) and no ARDOP host** in this flavour, and none of them is reachable on that
 port. A monitor is a display. `waterfall.public` is forced true, because a picker that lists other
 people's receivers and invites anyone to watch one is a page for strangers by definition.
+
+**Everything the directory says is treated as somebody else's writing.** A `host` that is not a
+hostname is ignored, with one journal line, rather than carried into a station that then cannot
+open; and a `public_url` that is not an absolute `http` or `https` URL is dropped in favour of the
+receiver's own endpoint, because that string goes into a link on the picker and on the receiver's
+page, and a `javascript:` URL there would run in every visitor's session on this site.
 
 **The slug is derived from the receiver's host**, which is the only field the directory guarantees
 unique: lower-case it, strip a trailing `.tunnel.ubersdr.org` or `.instance.ubersdr.org`, replace
@@ -1758,7 +1765,8 @@ change when an unrelated receiver appears, which is what makes a bookmark keep w
 
 **Which receivers are listed.** In order: `deny`, then `allow` when it is non-empty, then whether
 the directory says the receiver is online, then whether it offers the IQ mode
-[`ubersdr.mode`](#ubersdr) asks for, then whether it has an antenna connected, then - only where
+[`ubersdr.mode`](#ubersdr) asks for (a receiver that lists no IQ modes at all is not offering
+ours), then whether it has an antenna connected, then - only where
 the receiver actually *reported* a tuning range - whether that range covers the RF window the
 configured modems occupy. A receiver that fails any of those is not listed at all. A receiver with
 **no free listener slot is listed and shown as full**, because that is one a visitor may well come
@@ -1823,6 +1831,13 @@ nothing - none of them is contacted - but it costs this container everything it 
 eventually, all at once. Size for every listed receiver, not for the ones you expect people to
 watch.
 
+`/robots.txt` asks crawlers to leave `/r/` and `/api/` alone and leaves the picker itself
+indexable, which is the page somebody searching for this would want to find. **It is a courtesy,
+not a control**: a crawler that ignores it will do exactly what the paragraph above describes, and
+what actually bounds the damage is the rate limit in front of the site and having sized the
+container for every listed receiver. The picker's own poll of `/api/instances` is unaffected -
+`robots.txt` governs crawlers, not the page's own fetches.
+
 **Memory is the sizing question**, and it is the modems rather than the plumbing (measured
 2026-09-03, x86-64, .NET 10): about **31 MB per station** for the three-modem 40 m band plan above,
 against 86 MB for the process with no receiver picked. Almost all of that is the
@@ -1833,7 +1848,10 @@ configured above, or 260 MB with the banks off. Nothing is freed by a visitor le
 station is kept.
 
 **Validation**, all exit 2 with the reason: `monitor` alongside `device`; an empty `monitor.modems`;
-no `waterfall` section; a negative `refreshMinutes` or `lingerSeconds`; a `directory` that is not
+a modem in it that will not build (they are built once at start-up, against a throwaway channel,
+so that a mode this configuration cannot make is one message here rather than a 404 on every
+request for every receiver); no `waterfall` section, or one with no `port` written down, since a
+site meant to be reached from outside should not come up on a number nobody chose; a negative `refreshMinutes` or `lingerSeconds`; a `directory` that is not
 an absolute http or https URL; and an `allow` or `deny` entry that is not a hostname - that last
 one because an entry with a scheme or a port in it would silently match nothing and leave an
 operator believing they had been taken off a list they are still on.
@@ -2003,6 +2021,8 @@ enumerated yet at boot, for instance - still restarts on its own as usual.
 | [`monitor`](#monitor) alongside `device` | `this file sets both "device" (…) and "monitor" … Remove whichever one you did not mean.` |
 | `monitor.modems` empty | `"monitor"."modems" is empty … a monitor with none would connect to receivers and decode nothing` - with an entry to copy |
 | `monitor` with no `waterfall` | `"monitor" needs a "waterfall" section: the picker and every receiver's page are served on its "port"` |
+| `monitor` with a `waterfall` that has no `port` | `"waterfall" has no "port" … not a decision anybody made` |
+| `monitor.modems` naming a modem that will not build | the same refusal a station gets, e.g. `mode 'X' does not run IL2P+CRC, so it has no separate plain-IL2P reading to release` |
 | `monitor.refreshMinutes` or `monitor.lingerSeconds` negative | `That is a number of minutes/seconds to wait, so it cannot be negative` |
 | `monitor.directory` not an absolute http or https URL | `which is not an absolute http or https URL` - with the public one to copy |
 | `monitor.allow` or `monitor.deny` entry that is not a hostname | `which is not a hostname … no scheme, no port, no path` |
