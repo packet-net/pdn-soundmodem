@@ -27,8 +27,8 @@ namespace Packet.SoundModem.Daemon;
 /// </remarks>
 internal sealed class Station : IDisposable
 {
-    /// <summary>How often the health probes below are polled, from the receive loop.</summary>
-    private const int HealthPollMs = 10_000;
+    /// <summary>How often the health probes are polled, from the receive loop.</summary>
+    private static readonly TimeSpan HealthPollPeriod = TimeSpan.FromSeconds(10);
 
     private readonly StationOptions _options;
     private readonly StationJournal _journal;
@@ -50,8 +50,11 @@ internal sealed class Station : IDisposable
 
     /// <summary>Cancelled by the host's token or by this station's own fault, whichever comes
     /// first. The plan's "its own CancellationTokenSource": a station that stops does not have
-    /// to stop the process to do it.</summary>
-    private readonly CancellationTokenSource _stopping = new();
+    /// to stop the process to do it. Linked in the constructor rather than when the loop starts,
+    /// so a station built now and started later is stoppable in between - fifty of them
+    /// constructed before their threads run would otherwise poll a starvation watch against a
+    /// token nothing could cancel.</summary>
+    private readonly CancellationTokenSource _stopping;
 
     // Whether the station itself is keyed, for the silence watch. A keyed Flex is not receiving
     // and its DAX stream delivers exact zeros, which is byte-for-byte what a dead feed looks
@@ -62,20 +65,37 @@ internal sealed class Station : IDisposable
     private int _keyedNow;
     private int _keyedSinceRead;
 
-    // Rooted for the life of the station rather than disposed with the starvation timer: it is
-    // armed precisely when the receive loop can no longer run its own shutdown, so nothing on
-    // the loop's side will ever be alive to take it down.
+    /// <summary>Kept so <see cref="Dispose"/> can take it off the channel again. The channel has
+    /// no RemoveReceiveTap, but its events do unsubscribe, and a station that outlived its
+    /// subscription would go on writing flags nobody reads.</summary>
+    private readonly Action<bool> _keyedHandler;
+
+    // Whether the loop is inside _input.Read right now. A Read that blocks for ever (the ALSA
+    // stall family) is the one failure cancellation cannot reach, and this flag is how the grace
+    // timer tells that apart from a loop that stopped tidily.
+    private int _insideRead;
+
+    // The grace timer, and the gate that stops one being armed after the station has closed.
+    // Armed by a starvation fault and taken down again when the loop returns or the station is
+    // disposed: a station that got out of its loop is not stalled, however it got out.
+    private readonly Lock _graceGate = new();
     private ITimer? _starvationGrace;
+    private bool _closed;
 
     /// <summary>Builds the station's watches and arms them. The loop turns in <see cref="Run"/>.</summary>
-    public Station(StationOptions options)
+    /// <param name="options">What this station is made of.</param>
+    /// <param name="stopping">The host's token. Cancelling it stops this station; the station can
+    /// also stop itself, and from the loop's side the two are the same event.</param>
+    public Station(StationOptions options, CancellationToken stopping = default)
     {
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(options.BlockMilliseconds, 0);
         _options = options;
         _journal = options.Journal;
         _channel = options.Channel;
         _input = options.Input;
         _time = options.TimeProvider;
+        _stopping = CancellationTokenSource.CreateLinkedTokenSource(stopping);
 
         // Decimate the source to the DSP rate. When it already runs at the DSP rate (a 48 kHz
         // mode's full-bandwidth DAX, --capture-rate 12000, or a 12 kHz virtual card) there is
@@ -88,7 +108,7 @@ internal sealed class Station : IDisposable
 
         // 100 ms RX blocks for the packet modes; 20 ms when ARDOP runs - its ARQ timing budgets
         // (IRS ACK inside the ISS repeat window) want RX latency low.
-        int blockSamples = _inputRate / (1000 / options.BlockMilliseconds);
+        int blockSamples = _inputRate * options.BlockMilliseconds / 1000;
         _inputBuffer = new float[blockSamples];
         _dspBuffer = new float[_decimator?.MaxOutput(blockSamples) ?? blockSamples];
 
@@ -98,7 +118,7 @@ internal sealed class Station : IDisposable
         _silenceMessage = SilenceMessage(options.DeviceKind, silenceSeconds);
         _starvationMessage = StarvationMessage(options.DeviceKind, starvationSeconds);
 
-        _channel.TransmittingChanged += keyed =>
+        _keyedHandler = keyed =>
         {
             Volatile.Write(ref _keyedNow, keyed ? 1 : 0);
             if (keyed)
@@ -106,6 +126,7 @@ internal sealed class Station : IDisposable
                 Interlocked.Exchange(ref _keyedSinceRead, 1);
             }
         };
+        _channel.TransmittingChanged += _keyedHandler;
 
         StarvationWatch? starvation = starvationSeconds > 0
             ? new StarvationWatch(_time, starvationSeconds)
@@ -132,23 +153,33 @@ internal sealed class Station : IDisposable
     public IAudioInput Input => _input;
 
     /// <summary>
-    /// Turns the receive loop until <paramref name="hostToken"/> is cancelled, the station
-    /// faults, or the input dies. Synchronous and blocking, because every input's
-    /// <c>Read</c> is: a host running more than one station gives each its own thread.
+    /// Turns the receive loop until the host's token is cancelled, the station faults, or the
+    /// input dies. Synchronous and blocking, because every input's <c>Read</c> is: a host
+    /// running more than one station gives each its own thread.
     /// </summary>
-    public void Run(CancellationToken hostToken)
+    public void Run()
     {
-        // One token from here on: the host stopping the station and the station stopping itself
-        // are the same event as far as the loop and the starvation timer are concerned.
-        using CancellationTokenRegistration stop = hostToken.Register(
-            static state => ((CancellationTokenSource)state!).Cancel(), _stopping);
+        try
+        {
+            RunLoop();
+        }
+        finally
+        {
+            // Out of the loop, however it got out - so this station is not stalled, and a grace
+            // timer left armed to say that it is would end the host's process for nothing.
+            CloseGrace();
+        }
+    }
 
-        long nextHealthPoll = Environment.TickCount64 + HealthPollMs;
+    private void RunLoop()
+    {
+        long lastHealthPoll = _time.GetTimestamp();
         while (!_stopping.IsCancellationRequested)
         {
             int got;
             try
             {
+                Volatile.Write(ref _insideRead, 1);
                 got = _input.Read(_inputBuffer);
             }
             catch (InvalidOperationException deviceDeath)
@@ -161,6 +192,12 @@ internal sealed class Station : IDisposable
                     $"receive feed dead: the input device failed ({deviceDeath.Message}) - "
                     + "restarting to reopen it");
                 break;
+            }
+            finally
+            {
+                // Cleared whichever way Read left: what the grace timer reads to tell a wedged
+                // Read from a loop that got out.
+                Volatile.Write(ref _insideRead, 0);
             }
 
             if (got == 0)
@@ -206,9 +243,9 @@ internal sealed class Station : IDisposable
             // reads. The dropped-write counters ride the same poll - they were dead counters
             // before it: a full disk left a station keeping an empty frame log for weeks with
             // nothing anywhere saying so.
-            if (Environment.TickCount64 >= nextHealthPoll)
+            if (_time.GetElapsedTime(lastHealthPoll) >= HealthPollPeriod)
             {
-                nextHealthPoll = Environment.TickCount64 + HealthPollMs;
+                lastHealthPoll = _time.GetTimestamp();
                 if (_options.XrunCounters?.Invoke() is (int captureXruns, int playbackXruns)
                     && _xrunWatch.Poll(captureXruns, playbackXruns) is string lostAudio)
                 {
@@ -239,7 +276,9 @@ internal sealed class Station : IDisposable
     /// <inheritdoc />
     public void Dispose()
     {
+        _channel.TransmittingChanged -= _keyedHandler;
         _starvationTimer?.Dispose();
+        CloseGrace();
         _stopping.Dispose();
     }
 
@@ -303,17 +342,59 @@ internal sealed class Station : IDisposable
         }
 
         Fault(_starvationMessage);
+        ArmGrace();
+    }
 
-        // If the receive loop is stuck inside a blocked Read (the ALSA stall family) the
-        // orderly path can never run - it only re-checks cancellation when Read returns. Give
-        // it a grace period, then say so; ending the process is the host's decision, not this
-        // station's. Assigned to a field so the timer stays rooted while the station lives.
-        _starvationGrace = _time.CreateTimer(
-            _ => Faulted?.Invoke(new StationFault(
-                "receive feed starved: the orderly shutdown stalled (the input's Read is "
-                + "blocked) - exiting hard so the service restarts",
-                Stalled: true)),
-            null, _options.StalledShutdownGrace, Timeout.InfiniteTimeSpan);
+    /// <summary>
+    /// Starts the clock on the orderly shutdown a starvation fault has just asked for.
+    /// </summary>
+    /// <remarks>
+    /// If the receive loop is stuck inside a blocked <c>Read</c> (the ALSA stall family) that
+    /// shutdown can never run: the loop only re-checks cancellation when <c>Read</c> returns, and
+    /// nothing short of ending the process recovers it. So wait the grace period and then look:
+    /// still inside <c>Read</c> is a stalled station and is said so; anything else got out under
+    /// its own steam and is simply down. Ending the process is the host's decision either way and
+    /// never this station's, which is why both answers are just an event.
+    /// </remarks>
+    private void ArmGrace()
+    {
+        lock (_graceGate)
+        {
+            if (_closed)
+            {
+                return;
+            }
+
+            _starvationGrace = _time.CreateTimer(
+                _ =>
+                {
+                    if (Volatile.Read(ref _insideRead) == 0)
+                    {
+                        return;   // the loop got out; this station is down, not wedged
+                    }
+
+                    Faulted?.Invoke(new StationFault(
+                        "receive feed starved: the orderly shutdown stalled (the input's Read is "
+                        + "blocked) - exiting hard so the service restarts",
+                        Stalled: true));
+                },
+                null, _options.StalledShutdownGrace, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    /// <summary>No more grace timers, and down with any already armed. Called when the loop
+    /// returns and again on dispose, so one cannot outlive the loop it was watching.</summary>
+    private void CloseGrace()
+    {
+        ITimer? grace;
+        lock (_graceGate)
+        {
+            _closed = true;
+            grace = _starvationGrace;
+            _starvationGrace = null;
+        }
+
+        grace?.Dispose();
     }
 
     /// <summary>Says the station is down and stops its loop. The host decides what it costs.</summary>

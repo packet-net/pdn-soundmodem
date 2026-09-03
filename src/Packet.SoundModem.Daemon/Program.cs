@@ -2714,86 +2714,88 @@ long captureDropsSeen = 0;
 // The station: the input, the channel it feeds, the watches that decide the feed has died,
 // and the loop that turns between them. One implementation for every device kind, so a
 // second flavour of deployment cannot quietly grow a second opinion about a dead feed.
-using var station = new Station(new StationOptions
-{
-    Channel = channel,
-    Input = input,
-    DspRate = DspRate,
-    Journal = stationJournal,
-    DeviceKind = deadFeedDevice,
-    DeadFeed = deadFeedConfig,
-    BlockMilliseconds = ardopModem is null ? 100 : 20,
-    SessionLive = uberSdrSessionLive,
+using var station = new Station(
+    new StationOptions
+    {
+        Channel = channel,
+        Input = input,
+        DspRate = DspRate,
+        Journal = stationJournal,
+        DeviceKind = deadFeedDevice,
+        DeadFeed = deadFeedConfig,
+        BlockMilliseconds = ardopModem is null ? 100 : 20,
+        SessionLive = uberSdrSessionLive,
 
-    // A station that has deliberately given up its slice is silent on purpose, and restarting
-    // it is the one response guaranteed to be wrong. Measured on the live 40 m station,
-    // 2026-08-14: the contention policy stood down at 07:07:18 and the silence watch restarted
-    // the process at 07:07:45, which took a fresh slice and resumed exactly the fight the
-    // stand-down existed to end. Under real contention that is a loop - create, lose, stand
-    // down, thirty seconds of silence, restart - and the dead-feed message already warned it
-    // would be ("a deliberately muted DAX stream restart-loops this way"), without knowing that
-    // the mute could be our own doing.
-    //
-    // The watch is for a feed that died WITHOUT explanation. This one has one, it is already in
-    // the journal above, and the operator instruction there is to stop the other client and
-    // restart the service by hand.
-    SilenceExcuse = () => flex?.Station.Health == M0LTE.Flex.FlexStationHealth.Contended
-        ? "receive feed silent because this station stood down from a contested slice, "
-            + "which is deliberate - not restarting. Stop whatever else is claiming the "
-            + "radio and restart this service."
-        : null,
+        // A station that has deliberately given up its slice is silent on purpose, and restarting
+        // it is the one response guaranteed to be wrong. Measured on the live 40 m station,
+        // 2026-08-14: the contention policy stood down at 07:07:18 and the silence watch restarted
+        // the process at 07:07:45, which took a fresh slice and resumed exactly the fight the
+        // stand-down existed to end. Under real contention that is a loop - create, lose, stand
+        // down, thirty seconds of silence, restart - and the dead-feed message already warned it
+        // would be ("a deliberately muted DAX stream restart-loops this way"), without knowing that
+        // the mute could be our own doing.
+        //
+        // The watch is for a feed that died WITHOUT explanation. This one has one, it is already in
+        // the journal above, and the operator instruction there is to stop the other client and
+        // restart the service by hand.
+        SilenceExcuse = () => flex?.Station.Health == M0LTE.Flex.FlexStationHealth.Contended
+            ? "receive feed silent because this station stood down from a contested slice, "
+                + "which is deliberate - not restarting. Stop whatever else is claiming the "
+                + "radio and restart this service."
+            : null,
 
-    // The sound card is the one device with xrun counters, and they are the difference between
-    // "the band is quiet" and "this machine will not schedule us".
-    XrunCounters = alsaIn is null && alsaOut is null
-        ? null
-        : () => (alsaIn?.Xruns ?? 0, alsaOut?.Xruns ?? 0),
+        // The sound card is the one device with xrun counters, and they are the difference between
+        // "the band is quiet" and "this machine will not schedule us".
+        XrunCounters = alsaIn is null && alsaOut is null
+            ? null
+            : () => (alsaIn?.Xruns ?? 0, alsaOut?.Xruns ?? 0),
 
-    HealthChecks =
-    [
-        // A full disk left a station keeping an empty frame log for weeks with nothing anywhere
-        // saying so: this counter was a dead one until the receive loop started reading it.
-        () =>
-        {
-            if (frameLog is null)
+        HealthChecks =
+        [
+            // A full disk left a station keeping an empty frame log for weeks with nothing anywhere
+            // saying so: this counter was a dead one until the receive loop started reading it.
+            () =>
             {
-                return null;
-            }
+                if (frameLog is null)
+                {
+                    return null;
+                }
 
-            long logDrops = frameLog.Dropped;
-            if (logDrops <= frameLogDropsSeen)
+                long logDrops = frameLog.Dropped;
+                if (logDrops <= frameLogDropsSeen)
+                {
+                    return null;
+                }
+
+                string line =
+                    $"frame log: {logDrops - frameLogDropsSeen} frames dropped unwritten "
+                    + $"({logDrops} total) - the disk cannot keep up, is full, or is unwritable";
+                frameLogDropsSeen = logDrops;
+                return line;
+            },
+
+            () =>
             {
-                return null;
-            }
+                if (survey is null)
+                {
+                    return null;
+                }
 
-            string line =
-                $"frame log: {logDrops - frameLogDropsSeen} frames dropped unwritten "
-                + $"({logDrops} total) - the disk cannot keep up, is full, or is unwritable";
-            frameLogDropsSeen = logDrops;
-            return line;
-        },
+                long captureDrops = survey.DroppedCaptures;
+                if (captureDrops <= captureDropsSeen)
+                {
+                    return null;
+                }
 
-        () =>
-        {
-            if (survey is null)
-            {
-                return null;
-            }
-
-            long captureDrops = survey.DroppedCaptures;
-            if (captureDrops <= captureDropsSeen)
-            {
-                return null;
-            }
-
-            string line =
-                $"survey: {captureDrops - captureDropsSeen} captures dropped unwritten "
-                + $"({captureDrops} total) - the disk cannot keep up, is full, or is unwritable";
-            captureDropsSeen = captureDrops;
-            return line;
-        },
-    ],
-});
+                string line =
+                    $"survey: {captureDrops - captureDropsSeen} captures dropped unwritten "
+                    + $"({captureDrops} total) - the disk cannot keep up, is full, or is unwritable";
+                captureDropsSeen = captureDrops;
+                return line;
+            },
+        ],
+    },
+    cancellation.Token);
 
 // This process runs one station, so a station fault IS the daemon's fault: journal the
 // sentence the station wrote, and take the proven restart contract every one of these
@@ -2818,7 +2820,7 @@ station.Faulted += fault =>
     cancellation.Cancel();
 };
 
-station.Run(cancellation.Token);
+station.Run();
 
 try
 {

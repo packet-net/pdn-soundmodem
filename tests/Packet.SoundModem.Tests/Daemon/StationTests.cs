@@ -71,7 +71,84 @@ public class StationTests : IDisposable
         }
     }
 
-    private StationJournal Journal(string tag = "") => new(tag, _out.Add, _errors.Add);
+    /// <summary>The ALSA stall: a card that stops producing period interrupts leaves
+    /// <c>Read</c> blocked for ever, so cancellation never reaches the loop and the orderly
+    /// shutdown cannot run. The one case a station is entitled to call itself stalled.</summary>
+    private sealed class WedgedInput(int sampleRate) : IAudioInput, IDisposable
+    {
+        private readonly ManualResetEventSlim _entered = new(false);
+        private readonly ManualResetEventSlim _release = new(false);
+
+        public int SampleRate { get; } = sampleRate;
+
+        public void WaitUntilWedged() =>
+            _entered.Wait(TimeSpan.FromSeconds(10)).Should().BeTrue("the loop should be in Read");
+
+        public void Release() => _release.Set();
+
+        public int Read(Span<float> buffer)
+        {
+            _entered.Set();
+            _release.Wait();
+            return 0;
+        }
+
+        public void Dispose()
+        {
+            _release.Set();
+            _entered.Dispose();
+            _release.Dispose();
+        }
+    }
+
+    /// <summary>An input that plays one recording out at the loop's block size and then goes
+    /// quiet, so a station can be driven with real modulated audio.</summary>
+    private sealed class RecordingInput(int sampleRate, float[] audio) : IAudioInput
+    {
+        private int _position;
+
+        public int SampleRate { get; } = sampleRate;
+
+        public int Read(Span<float> buffer)
+        {
+            Thread.Sleep(1);
+            buffer.Clear();
+            int taken = Math.Min(buffer.Length, audio.Length - _position);
+            if (taken > 0)
+            {
+                audio.AsSpan(_position, taken).CopyTo(buffer);
+                _position += taken;
+            }
+
+            return buffer.Length;
+        }
+    }
+
+    // Written by the loop thread and read by the test thread, so both ends take the list's lock.
+    private StationJournal Journal(string tag = "") => new(
+        tag,
+        line => { lock (_out) { _out.Add(line); } },
+        line => { lock (_errors) { _errors.Add(line); } });
+
+    private List<string> Errors()
+    {
+        lock (_errors)
+        {
+            return [.. _errors];
+        }
+    }
+
+    private async Task UntilAsync(Func<bool> condition, string because)
+    {
+        using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        while (!condition())
+        {
+            giveUp.Token.ThrowIfCancellationRequested();
+            await Task.Delay(5, giveUp.Token);
+        }
+
+        condition().Should().BeTrue(because);
+    }
 
     /// <summary>The CT 146 shape: a receive-only UberSDR station at 12 kHz, dead-feed thresholds
     /// left at the device family's own defaults, which is how the live one runs.</summary>
@@ -87,9 +164,9 @@ public class StationTests : IDisposable
         };
 
     /// <summary>Runs the station on a thread of its own, as a host with more than one would.</summary>
-    private static Task RunAsync(DaemonStation station, CancellationToken token)
+    private static Task RunAsync(DaemonStation station)
         => Task.Factory.StartNew(
-            () => station.Run(token),
+            station.Run,
             CancellationToken.None,
             TaskCreationOptions.LongRunning,
             TaskScheduler.Default);
@@ -98,23 +175,19 @@ public class StationTests : IDisposable
     public async Task A_Station_Runs_Its_Receive_Loop_Until_Its_Token_Is_Cancelled()
     {
         var input = new TestInput(12000, level: 0.1f);
-        using var station = new DaemonStation(UberSdrOptions(input, Journal()));
         using var stopping = new CancellationTokenSource();
+        using var station = new DaemonStation(UberSdrOptions(input, Journal()), stopping.Token);
 
-        Task running = RunAsync(station, stopping.Token);
+        Task running = RunAsync(station);
 
         // The loop is turning: it keeps asking the input for audio.
-        while (input.Reads < 5)
-        {
-            await Task.Delay(5);
-        }
-
+        await UntilAsync(() => input.Reads >= 5, "the loop keeps asking the input for audio");
         running.IsCompleted.Should().BeFalse("nothing has asked the station to stop");
 
         await stopping.CancelAsync();
         await running.WaitAsync(TimeSpan.FromSeconds(5));
 
-        _errors.Should().BeEmpty("a station stopped by its host has nothing to report");
+        Errors().Should().BeEmpty("a station stopped by its host has nothing to report");
         _out.Should().BeEmpty("a receive loop that is working says nothing at all");
     }
 
@@ -125,31 +198,84 @@ public class StationTests : IDisposable
         // An input that never delivers: the hung-WebSocket case, where Read returns 0 forever
         // and the silence watch has nothing to look at.
         var input = new TestInput(12000, level: 0, deliver: false);
-        using var station = new DaemonStation(UberSdrOptions(input, Journal(), clock));
+        using var stopping = new CancellationTokenSource();
+        using var station = new DaemonStation(UberSdrOptions(input, Journal(), clock), stopping.Token);
         var faults = new List<StationFault>();
         station.Faulted += faults.Add;
-        using var stopping = new CancellationTokenSource();
 
-        Task running = RunAsync(station, stopping.Token);
-        while (input.Reads < 2)
-        {
-            await Task.Delay(5);
-        }
+        Task running = RunAsync(station);
+        await UntilAsync(() => input.Reads >= 2, "the loop is turning");
 
         clock.Advance(TimeSpan.FromSeconds(30));
 
-        faults.Should().ContainSingle().Which.Stalled.Should().BeFalse(
-            "the loop can still be brought down tidily");
+        faults.Should().ContainSingle().Which.Should().Be(new StationFault(
+            "receive feed starved: an open session delivered no audio for 30 s - a hung stream "
+            + "- restarting to reconnect afresh",
+            Stalled: false));
 
         // The station stopped itself, without the host having to ask - and without ending the
         // process, which is what this whole extraction exists to make possible.
         await running.WaitAsync(TimeSpan.FromSeconds(5));
+    }
 
-        // The grace period passing is a second, different fault: the one a host answers by
-        // ending the process. The station still does not do it.
+    [Fact]
+    public async Task A_Station_That_Stopped_Tidily_Does_Not_Report_A_Stalled_Shutdown()
+    {
+        // The grace timer exists for a loop that CANNOT be brought down. This one came down on
+        // its own the moment Read returned, so the grace period passing means nothing, and a
+        // host told otherwise would end a whole process because one receiver went quiet.
+        var clock = new FakeTimeProvider();
+        var input = new TestInput(12000, level: 0, deliver: false);
+        using var stopping = new CancellationTokenSource();
+        using var station = new DaemonStation(UberSdrOptions(input, Journal(), clock), stopping.Token);
+        var faults = new List<StationFault>();
+        station.Faulted += faults.Add;
+
+        Task running = RunAsync(station);
+        await UntilAsync(() => input.Reads >= 2, "the loop is turning");
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        await running.WaitAsync(TimeSpan.FromSeconds(5));
+
+        clock.Advance(TimeSpan.FromMinutes(5));
+
+        faults.Should().ContainSingle("the starvation is the only thing that happened");
+        faults[0].Stalled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_Station_Wedged_Inside_Read_Reports_A_Stalled_Shutdown()
+    {
+        // The ALSA stall, and the only case that earns the second fault: cancellation cannot
+        // reach a loop sitting inside a Read that never returns, so after the grace period the
+        // station says so and the host decides what that costs. The station still does not exit.
+        var clock = new FakeTimeProvider();
+        using var input = new WedgedInput(12000);
+        using var stopping = new CancellationTokenSource();
+        StationOptions options = UberSdrOptions(input, Journal(), clock) with
+        {
+            DeviceKind = DeadFeedDevice.Alsa,
+        };
+        using var station = new DaemonStation(options, stopping.Token);
+        var faults = new List<StationFault>();
+        station.Faulted += faults.Add;
+
+        Task running = RunAsync(station);
+        input.WaitUntilWedged();
+
+        clock.Advance(TimeSpan.FromSeconds(30));
+        faults.Should().ContainSingle().Which.Stalled.Should().BeFalse("the shutdown has only just been asked for");
+        running.IsCompleted.Should().BeFalse("Read has not returned, so the loop cannot get out");
+
         clock.Advance(TimeSpan.FromSeconds(15));
         faults.Should().HaveCount(2);
-        faults[1].Stalled.Should().BeTrue("nothing short of ending the process recovers this");
+        faults[1].Should().Be(new StationFault(
+            "receive feed starved: the orderly shutdown stalled (the input's Read is blocked) - "
+            + "exiting hard so the service restarts",
+            Stalled: true));
+
+        input.Release();
+        await running.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -163,16 +289,16 @@ public class StationTests : IDisposable
         {
             DeadFeed = new DeadFeedConfig { SilenceSeconds = 1, StarvationSeconds = 0 },
         };
-        using var station = new DaemonStation(options);
+        using var stopping = new CancellationTokenSource();
+        using var station = new DaemonStation(options, stopping.Token);
 
         // Journalling a fault is the host's, which is what puts the station's tag on it - and
         // is how fifty stations in one journal stay readable.
         station.Faulted += fault => journal.WriteError(fault.Reason);
-        using var stopping = new CancellationTokenSource();
 
-        await RunAsync(station, stopping.Token).WaitAsync(TimeSpan.FromSeconds(10));
+        await RunAsync(station).WaitAsync(TimeSpan.FromSeconds(10));
 
-        _errors.Should().ContainSingle().Which.Should().Be(
+        Errors().Should().ContainSingle().Which.Should().Be(
             "m9psy-1: receive feed dead: 1 s of unbroken digital silence from the receiver's IQ "
             + "stream - its SDR feed has likely died - restarting to reconnect afresh");
     }
@@ -188,29 +314,73 @@ public class StationTests : IDisposable
         // which is the case every live node station is in.
         foreach (string tag in new[] { "m9psy-1", "" })
         {
-            _errors.Clear();
+            lock (_errors)
+            {
+                _errors.Clear();
+            }
+
             var input = new TestInput(12000, level: 0);
             StationOptions options = UberSdrOptions(input, Journal(tag)) with
             {
                 DeadFeed = new DeadFeedConfig { SilenceSeconds = 1, StarvationSeconds = 0 },
                 SilenceExcuse = () => Excuse,
             };
-            using var station = new DaemonStation(options);
+            using var stopping = new CancellationTokenSource();
+            using var station = new DaemonStation(options, stopping.Token);
             station.Faulted += fault => throw new InvalidOperationException(
                 $"an excused silence is not a fault: {fault.Reason}");
-            using var stopping = new CancellationTokenSource();
 
-            Task running = RunAsync(station, stopping.Token);
-            while (_errors.Count == 0)
-            {
-                await Task.Delay(5);
-            }
+            Task running = RunAsync(station);
+            await UntilAsync(() => Errors().Count > 0, "the excused silence is journalled");
 
             await stopping.CancelAsync();
             await running.WaitAsync(TimeSpan.FromSeconds(5));
 
-            _errors[0].Should().Be(tag.Length == 0 ? Excuse : $"m9psy-1: {Excuse}");
+            Errors()[0].Should().Be(tag.Length == 0 ? Excuse : $"m9psy-1: {Excuse}");
         }
+    }
+
+    [Fact]
+    public async Task The_Health_Poll_Reports_Lost_Audio_And_Unwritten_Rows()
+    {
+        // Every ten seconds while audio is flowing, and in this order: what the sound device
+        // lost, then whatever else the host has hung on the poll (the frame log's and the
+        // survey's dropped-write counters, which were dead counters until this read them).
+        var clock = new FakeTimeProvider();
+        var input = new TestInput(12000, level: 0.1f);
+        int captureXruns = 0;
+        int playbackXruns = 0;
+        string? logDrops = null;
+        StationOptions options = UberSdrOptions(input, Journal("m9psy-1"), clock) with
+        {
+            XrunCounters = () => (captureXruns, playbackXruns),
+            HealthChecks = [() => logDrops],
+        };
+        using var stopping = new CancellationTokenSource();
+        using var station = new DaemonStation(options, stopping.Token);
+
+        Task running = RunAsync(station);
+        await UntilAsync(() => input.Reads >= 2, "the loop is turning");
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await UntilAsync(() => input.Reads >= 10, "the poll has come round with nothing to say");
+        Errors().Should().BeEmpty("a healthy station's poll is silent");
+
+        captureXruns = 3;
+        playbackXruns = 1;
+        logDrops = "frame log: 2 frames dropped unwritten (2 total) - the disk cannot keep up, "
+            + "is full, or is unwritable";
+        clock.Advance(TimeSpan.FromSeconds(10));
+        await UntilAsync(() => Errors().Count >= 2, "both probes have something to say");
+
+        await stopping.CancelAsync();
+        await running.WaitAsync(TimeSpan.FromSeconds(5));
+
+        List<string> errors = Errors();
+        errors[0].Should().StartWith(
+            "m9psy-1: audio: 3 capture overruns, 1 playback underrun (4 since start)");
+        errors[1].Should().Be($"m9psy-1: {logDrops}");
+        errors.Should().HaveCount(2, "an xrun is reported once, as a delta, not every poll");
     }
 
     [Fact]
@@ -225,16 +395,13 @@ public class StationTests : IDisposable
         {
             SessionLive = () => false,
         };
-        using var station = new DaemonStation(options);
+        using var stopping = new CancellationTokenSource();
+        using var station = new DaemonStation(options, stopping.Token);
         var faults = new List<StationFault>();
         station.Faulted += faults.Add;
-        using var stopping = new CancellationTokenSource();
 
-        Task running = RunAsync(station, stopping.Token);
-        while (input.Reads < 2)
-        {
-            await Task.Delay(5);
-        }
+        Task running = RunAsync(station);
+        await UntilAsync(() => input.Reads >= 2, "the loop is turning");
 
         clock.Advance(TimeSpan.FromMinutes(10));
         faults.Should().BeEmpty("quiet with nobody watching is the arrangement, not a fault");
@@ -254,20 +421,19 @@ public class StationTests : IDisposable
         // moved.
         var clock = new FakeTimeProvider();
 
-        // A feed that stops delivering at all, and then a shutdown that cannot get out of a
-        // blocked Read.
-        var hung = new TestInput(12000, level: 0, deliver: false);
-        await RunUntilStoppedAsync(UberSdrOptions(hung, Journal(), clock), running: async () =>
-        {
-            while (hung.Reads < 2)
+        // A feed that stops delivering at all, and then a shutdown that cannot get out of the
+        // blocked Read it is sitting in.
+        using var wedged = new WedgedInput(12000);
+        await RunUntilStoppedAsync(
+            UberSdrOptions(wedged, Journal(), clock),
+            running: async () =>
             {
-                await Task.Delay(5);
-            }
-
-            clock.Advance(TimeSpan.FromSeconds(30));
-        });
-
-        clock.Advance(TimeSpan.FromSeconds(15));
+                wedged.WaitUntilWedged();
+                clock.Advance(TimeSpan.FromSeconds(30));
+                clock.Advance(TimeSpan.FromSeconds(15));
+                await UntilAsync(() => Errors().Count >= 2, "starved, then stalled");
+                wedged.Release();
+            });
 
         // A feed that keeps delivering exact zeros.
         var silent = new TestInput(12000, level: 0);
@@ -280,7 +446,7 @@ public class StationTests : IDisposable
         };
         await RunUntilStoppedAsync(UberSdrOptions(dead, Journal(), clock));
 
-        _errors.Should().Equal(
+        Errors().Should().Equal(
         [
             "receive feed starved: an open session delivered no audio for 30 s - a hung stream "
                 + "- restarting to reconnect afresh",
@@ -297,11 +463,11 @@ public class StationTests : IDisposable
     /// <summary>Runs one station to its fault, journalling it the way the daemon's host does.</summary>
     private async Task RunUntilStoppedAsync(StationOptions options, Func<Task>? running = null)
     {
-        using var station = new DaemonStation(options);
-        station.Faulted += fault => options.Journal.WriteError(fault.Reason);
         using var stopping = new CancellationTokenSource();
+        using var station = new DaemonStation(options, stopping.Token);
+        station.Faulted += fault => options.Journal.WriteError(fault.Reason);
 
-        Task loop = RunAsync(station, stopping.Token);
+        Task loop = RunAsync(station);
         if (running is not null)
         {
             await running();
@@ -313,32 +479,69 @@ public class StationTests : IDisposable
     [Fact]
     public async Task Two_Stations_In_One_Process_Keep_Separate_Frame_Logs()
     {
-        // Flavour B writes frames-<slug>.db per station under one directory. The daemon wires
-        // each station's channel to its own log, so what a receiver heard is filed under that
-        // receiver and nothing else.
-        string firstPath = Path.Combine(_dir, "frames-m9psy-1.db");
-        string secondPath = Path.Combine(_dir, "frames-g4eyr.db");
+        // Flavour B writes frames-<slug>.db per station under one directory. Two stations run
+        // here at once, each with its own channel, its own modem, its own recording and its own
+        // log, wired the way the daemon wires them - and what one hears must not turn up in the
+        // other's file.
+        string firstPath = System.IO.Path.Combine(_dir, "frames-m9psy-1.db");
+        string secondPath = System.IO.Path.Combine(_dir, "frames-g4eyr.db");
         FrameLog first = FrameLog.Open(firstPath);
         FrameLog second = FrameLog.Open(secondPath);
 
-        using var stationOne = new DaemonStation(
-            UberSdrOptions(new TestInput(12000, level: 0.1f), Journal("m9psy-1")));
-        using var stationTwo = new DaemonStation(
-            UberSdrOptions(new TestInput(12000, level: 0.1f), Journal("g4eyr")));
+        using var stoppingOne = new CancellationTokenSource();
+        using var stoppingTwo = new CancellationTokenSource();
+        StationOptions optionsOne = Listening(Modulate("M0LTE"), Journal("m9psy-1"));
+        StationOptions optionsTwo = Listening(Modulate("G4EYR"), Journal("g4eyr"));
+        using var stationOne = new DaemonStation(optionsOne, stoppingOne.Token);
+        using var stationTwo = new DaemonStation(optionsTwo, stoppingTwo.Token);
         stationOne.Channel.Should().NotBeSameAs(stationTwo.Channel);
 
-        first.Record(0, Frame("M0LTE"), Quality(), audioHz: 850, rfHz: 7_050_300);
-        second.Record(0, Frame("G4EYR"), Quality(), audioHz: 2150, rfHz: 7_051_600);
+        // Exactly the daemon's wiring: every frame this station's channel decodes goes to this
+        // station's own log, and to no other's.
+        stationOne.Channel.FrameReceivedWithQuality += (sub, frame, quality) =>
+            first.Record(sub, frame, quality, audioHz: 1700, rfHz: 7_050_300);
+        stationTwo.Channel.FrameReceivedWithQuality += (sub, frame, quality) =>
+            second.Record(sub, frame, quality, audioHz: 1700, rfHz: 7_051_600);
+
+        Task runningOne = RunAsync(stationOne);
+        Task runningTwo = RunAsync(stationTwo);
+        await UntilAsync(
+            () => first.Recent(10).Count > 0 && second.Recent(10).Count > 0,
+            "each station decoded its own recording into its own log");
+
+        await stoppingOne.CancelAsync();
+        await stoppingTwo.CancelAsync();
+        await Task.WhenAll(runningOne, runningTwo).WaitAsync(TimeSpan.FromSeconds(10));
 
         // One station closing must not reach across and shut every other station's connection
-        // pool, which is what a process-wide ClearAllPools did.
+        // pools, which is what a process-wide ClearAllPools did - and there are two pools per
+        // log, because the backlog reads above opened a read-only one.
         await first.DisposeAsync();
 
-        second.Record(0, Frame("M0LTE-2"), Quality(), audioHz: 2150, rfHz: 7_051_600);
+        second.Record(0, Frame("M0LTE-2"), Quality(), audioHz: 1700, rfHz: 7_051_600);
         await second.DisposeAsync();
 
         ReadSources(firstPath).Should().Equal(["M0LTE"]);
         ReadSources(secondPath).Should().Equal(["G4EYR", "M0LTE-2"]);
+    }
+
+    /// <summary>A station listening to one recording on an AFSK1200 modem, with the dead-feed
+    /// watches off: the recording runs out and the silence afterwards is the test's doing.</summary>
+    private StationOptions Listening(float[] audio, StationJournal journal)
+    {
+        StationOptions options = UberSdrOptions(new RecordingInput(12000, audio), journal) with
+        {
+            DeadFeed = new DeadFeedConfig { SilenceSeconds = 0, StarvationSeconds = 0 },
+        };
+        options.Channel.AddModem(0, sink => new Afsk1200Modem(12000, sink));
+        return options;
+    }
+
+    /// <summary>One AX.25 UI frame as audio, through the same modem that will hear it.</summary>
+    private static float[] Modulate(string from)
+    {
+        var modulator = new Afsk1200Modem(12000, _ => { });
+        return modulator.Modulate(Frame(from), txDelayMilliseconds: 100);
     }
 
     /// <summary>An AX.25 UI frame, so the log has a real callsign to file the row under.</summary>

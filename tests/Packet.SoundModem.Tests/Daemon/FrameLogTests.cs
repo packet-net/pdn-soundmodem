@@ -161,6 +161,51 @@ public class FrameLogTests : IDisposable
     }
 
     [Fact]
+    public async Task A_Disposed_Log_Holds_No_Handles_On_Its_File()
+    {
+        // There are TWO connection pools per log, not one: the writer opens ReadWriteCreate and
+        // the backlog readers (Recent, RecentWithPayload) open ReadOnly, which is a different
+        // connection string and therefore a different pool. Disposing returns each connection to
+        // its own pool, which keeps the file open until that pool is cleared - so clearing only
+        // the writer's left every log whose backlog had ever been read holding its file. Harmless
+        // in a process with one log; on a monitor with one per station it is a handle per
+        // receiver anybody has looked at, kept for the life of the process.
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "counts open handles through /proc");
+
+        await using (FrameLog log = FrameLog.Open(DbPath, _time))
+        {
+            log.Record(0, Frame(), Quality(), null, null);
+            log.Recent(10);              // opens, and pools, a read-only connection
+            log.RecentWithPayload(10);
+        }
+
+        OpenHandles(DbPath).Should().Be(0, "a closed log lets go of its file");
+    }
+
+    /// <summary>How many file descriptors this process holds on <paramref name="path"/>.</summary>
+    private static int OpenHandles(string path)
+    {
+        string full = System.IO.Path.GetFullPath(path);
+        int held = 0;
+        foreach (string descriptor in Directory.EnumerateFileSystemEntries("/proc/self/fd"))
+        {
+            try
+            {
+                if (File.ResolveLinkTarget(descriptor, returnFinalTarget: true)?.FullName == full)
+                {
+                    held++;
+                }
+            }
+            catch (IOException)
+            {
+                // A descriptor closed while we were looking is not one that is open.
+            }
+        }
+
+        return held;
+    }
+
+    [Fact]
     public async Task A_Heard_Frame_Is_Written_With_Who_When_And_How_Well()
     {
         List<Dictionary<string, object?>> rows = await ReadBackAsync(
