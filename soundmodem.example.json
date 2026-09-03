@@ -114,5 +114,46 @@
   // for ALSA, where genuinely-silent wired inputs exist). Thresholds in seconds, 0 = off;
   // omit for per-device defaults. See CONFIG.md § deadFeed.
   // "deadFeed": { "silenceSeconds": 30, "starvationSeconds": 30 },
+  //
+  // ---------------------------------------------------------------------------------------
+  // The OTHER thing this daemon can be. Everything above describes one station: one radio or
+  // one web receiver, one KISS port, one page. A "monitor" section instead makes it one site
+  // fronting MANY UberSDR web receivers, with a front page listing them and a visitor picking
+  // one. Same binary, same package; the configuration is the switch, and "monitor" is
+  // mutually exclusive with "device". Receive only, and there is no KISS, no PTT, no config
+  // API and no survey in this flavour - a monitor is a display. Full reference: CONFIG.md
+  // § monitor. Delete "device", "kissPort", "modems" and "ptt" above and uncomment this:
+  //
+  // "monitor": {
+  //   // Where the list of receivers comes from. Fetched again every "refreshMinutes".
+  //   "directory": "https://instances.ubersdr.org/api/instances",
+  //   "refreshMinutes": 5,
+  //   // How long each receiver's session is held after the last viewer of THAT receiver
+  //   // leaves. One session per receiver, however many people are watching it.
+  //   "lingerSeconds": 60,
+  //   // "allow" non-empty lists only those hosts - which is how you run this against two
+  //   // receivers for a smoke test. "deny" is how an operator who asks not to be listed is
+  //   // not listed, and it beats "allow". Both match the directory's "host", case-insensitively.
+  //   "allow": [],
+  //   "deny": [],
+  //   // The modems every receiver is given, same schema as "modems" above. Give them all an
+  //   // "rfFrequency": a web receiver has no dial already set to read off, so the band plan
+  //   // is the only thing that can tune it.
+  //   "modems": [
+  //     { "subChannel": 0, "mode": "afsk300-il2pc",           "rfFrequency": 7050300 },
+  //     { "subChannel": 1, "mode": "ardop", "bandwidth": 500, "rfFrequency": 7050950 },
+  //     { "subChannel": 2, "mode": "bpsk300",                 "rfFrequency": 7051600 }
+  //   ]
+  // },
+  // // The picker is served at "/" on this port and each receiver's page under "/r/<slug>/".
+  // // "public" is forced true here: a picker is a page for strangers by definition.
+  // "waterfall": {
+  //   "port": 8099,
+  //   "title": "UK packet monitor",
+  //   "about": "The 7050-7052 kHz packet window on 40 m, as heard by public web receivers. Pick a receiver to watch. Receive only: this site decodes what it hears and shows the AX.25 links and frames; nothing is transmitted."
+  // },
+  // // A DIRECTORY under "monitor", not a file: one frames-<slug>.db per receiver inside it.
+  // "frameLog": { "path": "/var/lib/pdn-soundmodem" },
+  // ---------------------------------------------------------------------------------------
   "bind": "127.0.0.1"
 }
