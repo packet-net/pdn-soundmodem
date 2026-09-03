@@ -7,7 +7,7 @@
 // that wasn't a multiple of the element size. Both are JavaScript semantics rather than pixels,
 // which is why a DOM shim costs nothing in fidelity - everything that mattered was in the engine.
 //
-// Usage: PAGE=<html> PORT=<n> [AUDIO=1] node page-probe.mjs
+// Usage: PAGE=<html> PORT=<n> [AUDIO=1] [PROTOCOL=https:] [PATHNAME=/r/x/] node page-probe.mjs
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
@@ -175,10 +175,16 @@ class AudioContext_ {
   }
 }
 
+let linksWindowUrl = null;
+
 // The page opens its socket with the scheme it was served over. The test server is plain http, so the
 // wrapper records the URL the page asked for and then connects over ws:// regardless; PROTOCOL=https:
 // lets a test check that an https page asks for wss:// (a browser refuses ws:// there as mixed content).
 const protocol = process.env.PROTOCOL || "http:";
+// Where the page thinks it is being served from. Everything it reaches for is relative to this:
+// "/" and "/links" are a station that is its own site, "/r/x/" and "/r/x/links" one receiver of a
+// site that offers several. The default is what a browser reports at the root.
+const pathname = process.env.PATHNAME || "/";
 let socketUrl = null;
 class WebSocket_ extends WebSocket {
   constructor(url, protocols) { socketUrl = String(url); super(socketUrl.replace(/^wss:/, "ws:"), protocols); }
@@ -187,10 +193,14 @@ class WebSocket_ extends WebSocket {
 const sandbox = {
   document: document_, WebSocket: WebSocket_, console, fetch, AudioContext: AudioContext_,
   setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame: cb => setTimeout(() => cb(performance.now()), 16),
-  cancelAnimationFrame: clearTimeout, performance, location: { host: `127.0.0.1:${process.env.PORT}`, protocol },
+  cancelAnimationFrame: clearTimeout, performance,
+  location: { host: `127.0.0.1:${process.env.PORT}`, protocol, pathname },
   devicePixelRatio: 1, Int16Array, Float32Array, Uint8Array, Uint8ClampedArray, ArrayBuffer, DataView,
   Math, JSON, Date, Object, Array, String, Number, Boolean, Error, Map, Set, Promise, parseFloat, parseInt, isNaN,
   matchMedia: () => ({ matches: false, addEventListener: noop }),
+  // The torn-off links window: which URL the page asked for is the whole question, so the window
+  // is never opened, only recorded.
+  open: (url) => { linksWindowUrl = String(url); return null; },
   ResizeObserver: class { observe() {} unobserve() {} disconnect() {} },
   Option: class { constructor(text, value) { this.text = text; this.value = value; this.selected = false; } },
   Image: class { },
@@ -506,8 +516,15 @@ const publicPage = {
   aboutHidden: sandbox.document.getElementById("about").hidden === true,
 };
 
+// Tearing the links pane off into a window of its own, last, because it closes the pane behind it
+// and everything above wanted the pane as it was.
+sandbox.document.getElementById("linksDetach").click();
+
 console.log(JSON.stringify({
   socketUrl,
+  linksWindowUrl,
+  // Whether the page decided it is the torn-off links window rather than the waterfall.
+  detached: run("detached"),
   publicPage,
   txKeyed,
   txKeyedBadSwr,
