@@ -328,6 +328,11 @@
   .ln.up .say { color: #7bd88f; }
   .ln.down .say { color: var(--muted); }
   .ln.bad .say { color: #f0b45a; }
+  /* A line that has just arrived is lit for a moment, so the eye is drawn to the card that
+     changed rather than left to compare a wall of feeds against what they said before. */
+  .ln.new { animation: arrive 1.6s ease-out 1; }
+  @keyframes arrive { from { background: rgba(88,166,255,.32); } to { background: transparent; } }
+  @media (prefers-reduced-motion: reduce) { .ln.new { animation: none; } }
   /* What to look at. Filled for the things that mean data is being sent twice, red for a
      refusal or a fault, outlined for a request still waiting on its answer. */
   .ln .tag {
@@ -335,7 +340,7 @@
     border-radius: 2px; vertical-align: 1px; white-space: nowrap;
   }
   .ln .tag.resend, .ln .tag.missed { color: #0c1016; background: #f0b45a; }
-  .ln .tag.reject, .ln .tag.busy, .ln .tag.refused, .ln .tag.error { color: #ffd0c4; background: #7a1f14; }
+  .ln .tag.reject, .ln .tag.busy, .ln .tag.refused, .ln .tag.timeout, .ln .tag.error { color: #ffd0c4; background: #7a1f14; }
   .ln .tag.poll, .ln .tag.repeat { color: var(--amber); border: 1px solid var(--amber-dim); }
   .ln .tag.odd { color: var(--muted); border: 1px solid var(--edge); }
   .ln .tag.via { color: var(--muted); border: 1px solid var(--edge); font-weight: 500; letter-spacing: 0; }
@@ -1320,7 +1325,7 @@ function lineFor(ev) {
   const flags = ev.flags || [];
   const has = f => flags.includes(f);
   row.className = "ln" + (ev.tx ? " tx" : "") + (has("linkUp") ? " up" : "") + (has("linkDown") ? " down" : "")
-    + (has("protocolError") || has("unexpected") || has("refused") ? " bad" : "");
+    + (has("protocolError") || has("unexpected") || has("refused") || has("timeout") ? " bad" : "");
   const tags = [];
   if (has("resend")) tags.push(tag("resend", "RESEND", "Sent before and not acknowledged, so sent again"));
   if (has("missed")) tags.push(tag("missed", "GAP", "Frames between this one and the last heard from this side were missed, here or by the other side"));
@@ -1329,6 +1334,7 @@ function lineFor(ev) {
   if (has("reject")) tags.push(tag("reject", "REJECT", "Asks the other side to go back and resend"));
   if (has("busy")) tags.push(tag("busy", "BUSY", "Cannot take more data for now"));
   if (has("refused")) tags.push(tag("refused", "REFUSED", "The other side will not connect"));
+  if (has("timeout")) tags.push(tag("timeout", "NO ANSWER", "Nothing answered for longer than any station keeps trying, so this is given up on"));
   if (has("protocolError")) tags.push(tag("error", "FAULT", "A frame the other side could not accept: a protocol error"));
   if (has("unexpected")) tags.push(tag("odd", "NO LINK", "Numbered traffic on a link that is not up"));
   if (ev.via) tags.push(tag("via", `via ${esc(ev.via.join(","))}`, "Digipeater path; * marks a digipeater that has already repeated it"));
@@ -1338,14 +1344,24 @@ function lineFor(ev) {
   return row;
 }
 
-// Oldest at the top, newest at the bottom, as a transcript reads - and kept at the bottom unless
-// the operator has scrolled up to read something, in which case it stays where they put it.
-function addLine(c, ev) {
+// Newest at the top, so the line to look at is the first one on every card and the oldest fall
+// off the bottom: a card is a window on the last few exchanges, not a transcript. A line that
+// arrives live is lit for a moment; one placed while a card is being built from its backlog is
+// not, or a reconnect would light every line on the pane. If the operator has scrolled down to
+// read something older, what they are reading stays put.
+function addLine(c, ev, live) {
   const feed = c.feed;
-  const atBottom = !(feed.scrollHeight > 0) || feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 8;
-  feed.append(lineFor(ev));
-  while (feed.children.length > CARD_FEED) feed.firstChild.remove();
-  if (atBottom) feed.scrollTop = feed.scrollHeight;
+  const row = lineFor(ev);
+  if (live) {
+    // Taken off on a clock rather than at the animation's end: a line in a card a filter is
+    // hiding never animates, and would light up whenever the filter was next turned off.
+    row.classList.add("new");
+    setTimeout(() => row.classList.remove("new"), 2000);
+  }
+  const reading = feed.scrollTop > 0;
+  feed.prepend(row);
+  while (feed.children.length > CARD_FEED) feed.lastChild.remove();
+  if (reading) feed.scrollTop += row.offsetHeight;
 }
 
 // Every link the server knows, on connect. Rebuilt rather than added to: a reconnect sends the
@@ -1370,7 +1386,7 @@ function onLinkEvent(msg) {
   noteOurs(msg.event);
   const c = cardFor(msg.link);
   renderCard(c, msg.link);
-  addLine(c, msg.event);
+  addLine(c, msg.event, true);
   applyLinkFilters();
 }
 

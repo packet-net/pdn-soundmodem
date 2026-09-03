@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using AwesomeAssertions;
 using M0LTE.Radio.Audio;
+using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Waterfall;
@@ -52,22 +53,32 @@ public class WaterfallWebServerTests : IAsyncLifetime
     private static byte[] TestFrame()
     {
         var frame = new byte[24];
-        Write(frame, 0, "GB7RDG", 0, last: false);
-        Write(frame, 7, "M0LTE", 9, last: true);
+        WriteAddress(frame, 0, "GB7RDG", 0, last: false);
+        WriteAddress(frame, 7, "M0LTE", 9, last: true);
         frame[14] = 0x03;
         frame[15] = 0xF0;
         Encoding.ASCII.GetBytes("hi there").CopyTo(frame, 16);
         return frame;
+    }
 
-        static void Write(byte[] frame, int at, string call, int ssid, bool last)
+    /// <summary>EI0RSI-1 calling GB7RDG-2: a SABM command with P set.</summary>
+    private static byte[] CallFrame()
+    {
+        var frame = new byte[15];
+        WriteAddress(frame, 0, "GB7RDG", 2, last: false, command: true);
+        WriteAddress(frame, 7, "EI0RSI", 1, last: true);
+        frame[14] = 0x3F;
+        return frame;
+    }
+
+    private static void WriteAddress(byte[] frame, int at, string call, int ssid, bool last, bool command = false)
+    {
+        for (int n = 0; n < 6; n++)
         {
-            for (int n = 0; n < 6; n++)
-            {
-                frame[at + n] = (byte)((n < call.Length ? call[n] : ' ') << 1);
-            }
-
-            frame[at + 6] = (byte)(0x60 | (ssid << 1) | (last ? 1 : 0));
+            frame[at + n] = (byte)((n < call.Length ? call[n] : ' ') << 1);
         }
+
+        frame[at + 6] = (byte)((command ? 0xE0 : 0x60) | (ssid << 1) | (last ? 1 : 0));
     }
 
     [Fact]
@@ -1064,6 +1075,57 @@ public class WaterfallWebServerTests : IAsyncLifetime
         recent.GetProperty("from").GetString().Should().Be("M0LTE-9");
         recent.GetProperty("say").GetString().Should().Be("unconnected");
         recent.GetProperty("text").GetString().Should().Be("hi there");
+    }
+
+    /// <summary>
+    /// A call nothing answers is given up on after a while, and the browser is told the same
+    /// way it is told about a frame: the card as it now stands and a line for its feed.
+    /// </summary>
+    /// <remarks>
+    /// The observer learns the time only from the frames it is handed, and a call nobody answers
+    /// is followed by no frame. On GB7RDG-2 that left a card saying "calling" thirteen minutes
+    /// after the one SABM behind it. The server's clock asks the observer to give up on such
+    /// calls every few seconds.
+    /// </remarks>
+    [Fact]
+    public async Task A_Call_Nothing_Answers_Is_Given_Up_On_And_The_Browser_Told()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 9, 3, 10, 4, 17, TimeSpan.Zero));
+        await using var server = new WaterfallWebServer(
+            new SoundModemChannel(SampleRate, randomSeed: 5), FreePort(), new WaterfallOptions { TimeProvider = clock });
+        server.Start();
+        server.Links.Observe("0", CallFrame(), clock.GetUtcNow());
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(
+            new Uri($"ws://127.0.0.1:{server.Url.Split(':')[^1].TrimEnd('/')}/ws"), _cancellation.Token);
+        await Receive(socket);   // config
+        using (JsonDocument links = await NextTextAsync(socket))
+        {
+            links.RootElement.GetProperty("links")[0].GetProperty("state").GetString().Should().Be("calling");
+        }
+
+        // Two minutes on, still waiting: nothing is said.
+        clock.Advance(TimeSpan.FromMinutes(2));
+        // Three, plus the clock's own period: given up on.
+        clock.Advance(TimeSpan.FromMinutes(1) + WaterfallWebServer.LinkExpiryPeriod);
+
+        using JsonDocument message = await NextTextAsync(socket);
+        message.RootElement.GetProperty("type").GetString().Should().Be("link");
+        JsonElement card = message.RootElement.GetProperty("link");
+        card.GetProperty("id").GetString().Should().Be("0|EI0RSI-1<>GB7RDG-2");
+        card.GetProperty("state").GetString().Should().Be("disconnected", "the call has failed");
+        card.GetProperty("concern").ValueKind.Should().Be(JsonValueKind.Null, "nothing is waiting any more");
+
+        JsonElement evt = message.RootElement.GetProperty("event");
+        evt.GetProperty("kind").ValueKind.Should().Be(JsonValueKind.Null, "no frame was behind this line");
+        evt.GetProperty("from").GetString().Should().Be("EI0RSI-1", "the station that was waiting");
+        evt.GetProperty("to").GetString().Should().Be("GB7RDG-2");
+        evt.GetProperty("say").GetString().Should().Be("got no answer in 3 minutes; the call has failed");
+        evt.GetProperty("flags").EnumerateArray().Select(f => f.GetString()).Should().Equal("timeout");
+        evt.GetProperty("state").GetString().Should().Be("disconnected");
+        DateTimeOffset.Parse(evt.GetProperty("at").GetString()!).Should()
+            .Be(new DateTimeOffset(2026, 9, 3, 10, 7, 17, TimeSpan.Zero), "timed at the moment the wait ran out");
     }
 
     [Fact]

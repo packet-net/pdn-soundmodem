@@ -118,8 +118,7 @@ function el(id) {
     querySelector: () => el(id + "-q"), querySelectorAll: () => [], focus: noop, scrollTo: noop,
     setAttribute: noop, getAttribute: () => null,
     closest: () => null, contains: () => false, add: noop, options: [], selectedIndex: 0,
-    // Real as well, because the links pane builds each card from parts held in hand and appends
-    // feed lines at the bottom - the opposite end from the frames panel's prepend.
+    // Real as well, because the links pane builds each card from parts held in hand.
     append(...nodes) { for (const node of nodes) { node._parent = this; this.children.push(node); } },
     appendChild(node) { node._parent = this; this.children.push(node); return node; },
     click() { this.onclick && this.onclick({ preventDefault: noop }); },
@@ -433,6 +432,35 @@ sandbox.document.getElementById("linksMine").click();
 const cardsMine = shownCards();
 const linksMine = linkBar();
 sandbox.document.getElementById("linksMine").click();
+// A call comes in that nothing answers. It goes to the top while it is a call; when the station
+// gives up on it (the server's observer does, after three minutes, with a line that is not a
+// frame: no kind) the card drops below the links that are up and the line says why.
+const callCard = () => {
+  const card = sandbox.document.getElementById("linkCards").children.find(c => c.dataset.link === "0|EI0RSI-1<>GB7RDG-2");
+  return card ? {
+    className: card.className,
+    head: card.children[0]?.innerHTML ?? "",
+    concernHidden: card.children[2]?.hidden === true,
+    feed: (card.children[3]?.children ?? []).map(row => ({ className: row.className, html: row.innerHTML })),
+  } : null;
+};
+run(`onLinkEvent({type:"link",
+  link:{id:"0|EI0RSI-1<>GB7RDG-2", sub:0, a:"EI0RSI-1", b:"GB7RDG-2", state:"calling", inferred:null, modulo:8,
+   first:"${new Date().toISOString()}", last:"${new Date().toISOString()}",
+   ab:{frames:1, data:0, bytes:0, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:1, busy:null, awaiting:null},
+   ba:${noSide},
+   concern:null, recent:null},
+  event:{at:"${new Date().toISOString()}", from:"EI0RSI-1", to:"GB7RDG-2", via:null, kind:"SABM", cmd:true, pf:true, ns:null, nr:null, len:0, text:null, say:"calls GB7RDG-2", flags:null, count:null, state:"calling", tx:null}})`);
+const cardsAfterCall = shownCards();
+run(`onLinkEvent({type:"link",
+  link:{id:"0|EI0RSI-1<>GB7RDG-2", sub:0, a:"EI0RSI-1", b:"GB7RDG-2", state:"disconnected", inferred:null, modulo:8,
+   first:"${new Date().toISOString()}", last:"${new Date().toISOString()}",
+   ab:{frames:1, data:0, bytes:0, resends:0, polls:0, pollsOpen:0, rejects:0, callsOpen:0, busy:null, awaiting:null},
+   ba:${noSide},
+   concern:null, recent:null},
+  event:{at:"${new Date(Date.now() + 180000).toISOString()}", from:"EI0RSI-1", to:"GB7RDG-2", via:null, kind:null, cmd:false, pf:null, ns:null, nr:null, len:0, text:null, say:"got no answer in 3 minutes; the call has failed", flags:["timeout"], count:null, state:"disconnected", tx:null}})`);
+const cardsAfterTimeout = shownCards();
+const failedCall = callCard();
 
 // The opening backlog out of the station's frame log. Driven last, and after the live rows are
 // captured above, so what it does to a panel that already has rows in it can be seen - which is
@@ -478,6 +506,9 @@ console.log(JSON.stringify({
   linksAfterEvent,
   linkCards,
   cardsAfterSecondLink,
+  cardsAfterCall,
+  cardsAfterTimeout,
+  failedCall,
   cardsWithUi,
   linksWithUi,
   cardsMine,

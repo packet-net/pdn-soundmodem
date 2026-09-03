@@ -262,6 +262,16 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// </summary>
     private const int LinkFeedLength = 100;
 
+    /// <summary>
+    /// How often the observer is asked to give up on calls nothing has answered. It only learns
+    /// the time from the frames it is handed, and a call nobody answers is followed by no frame,
+    /// so without this a card would say "calling" until it was forgotten an hour later. The
+    /// observer's own wait is three minutes; ten seconds of slack on top of that is not visible.
+    /// </summary>
+    internal static readonly TimeSpan LinkExpiryPeriod = TimeSpan.FromSeconds(10);
+
+    private ITimer? _linkExpiry;
+
     /// <summary>Creates a server for <paramref name="channel"/>'s audio on
     /// <paramref name="port"/>.</summary>
     /// <param name="channel">The channel whose audio and decodes feed the display.</param>
@@ -560,6 +570,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _channel.TransmittingChanged += OnTransmittingChanged;
         _channel.FrameReceivedWithQuality += OnFrame;
         _channel.FrameTransmittedWithTrim += OnFrameTransmitted;
+        _linkExpiry = _options.TimeProvider.CreateTimer(
+            _ => ExpireLinks(), null, LinkExpiryPeriod, LinkExpiryPeriod);
         _listener.Start();
         _acceptLoop = AcceptLoopAsync();
     }
@@ -998,6 +1010,33 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
 
     /// <summary>
+    /// Gives up on the calls and hang-ups nothing has answered, and tells every browser about
+    /// each one the same way a frame is told: the card as it now stands and the line for its
+    /// feed. Under <see cref="_stateLock"/> for the same reason frames are, so a browser
+    /// connecting sees each link either in its opening snapshot or in a broadcast, never both.
+    /// </summary>
+    private void ExpireLinks()
+    {
+        lock (_stateLock)
+        {
+            foreach (Ax25LinkEvent evt in Links.Expire(_options.TimeProvider.GetUtcNow()))
+            {
+                if (Links.Snapshot(evt.LinkId) is not { } link)
+                {
+                    continue;
+                }
+
+                Broadcast(WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    type = "link",
+                    link = LinkJson(link, withRecent: false),
+                    @event = LinkEventJson(evt),
+                }, Json));
+            }
+        }
+    }
+
+    /// <summary>
     /// Every link the observer holds, for a browser that has just connected: the cards it
     /// opens with, each with its own backlog. Null when nothing has been heard.
     /// </summary>
@@ -1052,14 +1091,17 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         awaiting = side.AwaitingAck,
     };
 
-    /// <summary>One frame on a link, as one line of its card's feed.</summary>
+    /// <summary>
+    /// One frame on a link, as one line of its card's feed. Or the observer giving up on a call
+    /// nothing answered, which is a line with no frame behind it: <c>kind</c> is null then.
+    /// </summary>
     private static object LinkEventJson(Ax25LinkEvent evt) => new
     {
         at = evt.At.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
         from = evt.From.ToString(),
         to = evt.To.ToString(),
         via = evt.Via.Count == 0 ? null : evt.Via,
-        kind = evt.FrameType.Mnemonic(),
+        kind = evt.FrameType?.Mnemonic(),
         cmd = evt.IsCommand,
         pf = evt.PollFinal ? true : (bool?)null,
         ns = evt.Ns,
@@ -1770,6 +1812,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _channel.FrameTransmittedWithTrim -= OnFrameTransmitted;
         _channel.TransmittedAudio -= OnTransmittedAudio;
         _channel.TransmittingChanged -= OnTransmittingChanged;
+        _linkExpiry?.Dispose();
+        _linkExpiry = null;
         lock (_transmitLock)
         {
             _transmitPacer?.Dispose();
