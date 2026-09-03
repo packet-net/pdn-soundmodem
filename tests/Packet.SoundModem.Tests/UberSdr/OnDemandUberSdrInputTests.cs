@@ -1,0 +1,387 @@
+using System.Net.Http;
+using Microsoft.Extensions.Time.Testing;
+using Packet.SoundModem.UberSdr;
+
+namespace Packet.SoundModem.Tests.UberSdr;
+
+/// <summary>
+/// The connect-on-demand state machine behind the public 40 m monitor
+/// (<c>docs/40m-monitor-plan.md</c>): a session on somebody else's receiver exists only while
+/// a browser has the page open, survives a viewer's brief absence, and is retried rather than
+/// restarted into. Driven here with a fake session and a fake clock; the socket side is
+/// <see cref="UberSdrAudioInput"/>'s and is covered elsewhere.
+/// </summary>
+public class OnDemandUberSdrInputTests
+{
+    private static readonly TimeSpan Linger = TimeSpan.FromSeconds(60);
+    private static readonly UberSdrEndpoint Endpoint = new("rx.example.org", 443, true);
+
+    [Fact]
+    public void Starts_Idle_And_Reads_Nothing_Until_Somebody_Is_Watching()
+    {
+        using var h = new Harness();
+
+        h.Input.Phase.Should().Be(OnDemandPhase.Idle);
+        h.Input.SessionLive.Should().BeFalse();
+        h.Input.Read(new float[64]).Should().Be(0);
+        h.Attempts.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task The_First_Viewer_Opens_The_Receiver_And_Audio_Then_Flows()
+    {
+        using var h = new Harness();
+
+        h.Input.SetViewers(1);
+        h.Input.Phase.Should().Be(OnDemandPhase.Connecting);
+        TaskCompletionSource<IUberSdrSession> attempt = await h.NextAttemptAsync();
+        var session = new FakeSession { SessionLive = true };
+        attempt.SetResult(session);
+
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Live);
+        h.Input.SessionLive.Should().BeTrue();
+        h.Input.Read(new float[64]).Should().Be(64);
+        session.Reads.Should().Be(1);
+        h.Attempts.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task The_Last_Viewer_Leaving_Holds_The_Session_For_The_Linger_Then_Closes_It()
+    {
+        using var h = new Harness();
+        FakeSession session = await h.GoLiveAsync();
+
+        h.Input.SetViewers(0);
+        h.Input.Phase.Should().Be(OnDemandPhase.Lingering);
+        session.Disposed.Should().BeFalse();
+
+        h.Time.Advance(Linger - TimeSpan.FromSeconds(1));
+        h.Input.Phase.Should().Be(OnDemandPhase.Lingering);
+        session.Disposed.Should().BeFalse("a refresh should not cost the receiver a session");
+
+        h.Time.Advance(TimeSpan.FromSeconds(1));
+        h.Input.Phase.Should().Be(OnDemandPhase.Idle);
+        session.Disposed.Should().BeTrue();
+        h.Input.SessionLive.Should().BeFalse();
+        h.Input.Read(new float[64]).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task A_Viewer_Returning_Inside_The_Linger_Keeps_The_Same_Session()
+    {
+        using var h = new Harness();
+        FakeSession session = await h.GoLiveAsync();
+
+        h.Input.SetViewers(0);
+        h.Time.Advance(TimeSpan.FromSeconds(30));
+        h.Input.SetViewers(1);
+
+        h.Input.Phase.Should().Be(OnDemandPhase.Live);
+        h.Time.Advance(Linger * 2);
+        h.Input.Phase.Should().Be(OnDemandPhase.Live, "the cancelled linger must not fire later");
+        session.Disposed.Should().BeFalse();
+        h.Attempts.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task More_Viewers_Share_The_One_Session()
+    {
+        using var h = new Harness();
+        await h.GoLiveAsync();
+
+        h.Input.SetViewers(2);
+        h.Input.SetViewers(3);
+        h.Input.SetViewers(1);
+
+        h.Input.Phase.Should().Be(OnDemandPhase.Live);
+        h.Attempts.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task A_Viewer_Who_Leaves_While_Connecting_Still_Gets_The_Session_Closed()
+    {
+        using var h = new Harness();
+
+        h.Input.SetViewers(1);
+        TaskCompletionSource<IUberSdrSession> attempt = await h.NextAttemptAsync();
+        h.Input.SetViewers(0);
+        var session = new FakeSession();
+        attempt.SetResult(session);
+
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Lingering);
+        session.Disposed.Should().BeFalse();
+        h.Time.Advance(Linger);
+        h.Input.Phase.Should().Be(OnDemandPhase.Idle);
+        session.Disposed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task A_Failed_Open_Is_Retried_On_The_Ladder_While_Somebody_Waits()
+    {
+        using var h = new Harness();
+
+        h.Input.SetViewers(1);
+        (await h.NextAttemptAsync()).SetException(new HttpRequestException("connection refused"));
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        h.Attempts.Should().Be(1);
+
+        // First transient rung is one second.
+        h.Time.Advance(TimeSpan.FromMilliseconds(999));
+        h.Attempts.Should().Be(1);
+        h.Time.Advance(TimeSpan.FromMilliseconds(1));
+        TaskCompletionSource<IUberSdrSession> second = await h.NextAttemptAsync();
+        h.Input.Phase.Should().Be(OnDemandPhase.Connecting);
+
+        second.SetResult(new FakeSession { SessionLive = true });
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Live);
+        h.Attempts.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task A_Refusal_Waits_On_The_Long_Rung()
+    {
+        using var h = new Harness();
+
+        h.Input.SetViewers(1);
+        // What the pre-flight throws for "allowed: false" with no transport error underneath.
+        (await h.NextAttemptAsync()).SetException(
+            new InvalidOperationException("rx.example.org refused the connection: not on the list"));
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+
+        h.Time.Advance(TimeSpan.FromSeconds(59));
+        h.Attempts.Should().Be(1, "a refusal is not something to re-ask every second");
+        h.Time.Advance(TimeSpan.FromSeconds(1));
+        await h.NextAttemptAsync();
+        h.Attempts.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task A_Failed_Open_With_Nobody_Waiting_Goes_Idle_Without_Retrying()
+    {
+        using var h = new Harness();
+
+        h.Input.SetViewers(1);
+        TaskCompletionSource<IUberSdrSession> attempt = await h.NextAttemptAsync();
+        h.Input.SetViewers(0);
+        attempt.SetException(new HttpRequestException("connection refused"));
+
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Idle);
+        h.Time.Advance(TimeSpan.FromMinutes(20));
+        h.Attempts.Should().Be(1, "nobody is waiting for a retry");
+    }
+
+    [Fact]
+    public async Task The_Last_Viewer_Leaving_Abandons_A_Pending_Retry()
+    {
+        using var h = new Harness();
+
+        h.Input.SetViewers(1);
+        (await h.NextAttemptAsync()).SetException(new HttpRequestException("connection refused"));
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+
+        h.Input.SetViewers(0);
+        h.Input.Phase.Should().Be(OnDemandPhase.Idle);
+        h.Time.Advance(TimeSpan.FromMinutes(1));
+        h.Attempts.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task A_Session_That_Gives_Up_Is_Reopened_Rather_Than_Restarted_Into()
+    {
+        using var h = new Harness();
+        FakeSession first = await h.GoLiveAsync();
+
+        first.GiveUp("rx.example.org has been unreachable for 5 minutes");
+
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await Eventually(() => first.Disposed);
+        h.Input.SessionLive.Should().BeFalse();
+        h.Input.Read(new float[64]).Should().Be(0);
+
+        h.Time.Advance(TimeSpan.FromSeconds(1));
+        TaskCompletionSource<IUberSdrSession> attempt = await h.NextAttemptAsync();
+        var second = new FakeSession { SessionLive = true };
+        attempt.SetResult(second);
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Live);
+        h.Input.Read(new float[64]).Should().Be(64);
+        second.Reads.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task A_Healthy_Session_Resets_The_Ladder()
+    {
+        using var h = new Harness();
+
+        h.Input.SetViewers(1);
+        (await h.NextAttemptAsync()).SetException(new HttpRequestException("refused"));
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        h.Time.Advance(TimeSpan.FromSeconds(1));
+        (await h.NextAttemptAsync()).SetException(new HttpRequestException("refused"));
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        h.Time.Advance(TimeSpan.FromSeconds(2));
+        FakeSession session = new() { SessionLive = true };
+        (await h.NextAttemptAsync()).SetResult(session);
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Live);
+
+        session.GiveUp("gone");
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        h.Time.Advance(TimeSpan.FromSeconds(1));
+        await h.NextAttemptAsync();
+        h.Attempts.Should().Be(4, "the healthy session put the ladder back to one second");
+    }
+
+    [Fact]
+    public async Task Dispose_Closes_The_Open_Session()
+    {
+        var h = new Harness();
+        FakeSession session = await h.GoLiveAsync();
+
+        h.Input.Dispose();
+
+        session.Disposed.Should().BeTrue();
+        h.Input.Read(new float[64]).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task A_Session_Arriving_After_Dispose_Is_Closed_Not_Kept()
+    {
+        var h = new Harness();
+        h.Input.SetViewers(1);
+        TaskCompletionSource<IUberSdrSession> attempt = await h.NextAttemptAsync();
+
+        h.Input.Dispose();
+        var session = new FakeSession();
+        attempt.SetResult(session);
+
+        await Eventually(() => session.Disposed);
+    }
+
+    [Fact]
+    public async Task Phase_Changes_Are_Announced_And_Live_Names_The_Receiver()
+    {
+        using var h = new Harness(description: "M9PSY-1, Somewhere, reference offset 0 Hz");
+        await h.GoLiveAsync();
+        h.Input.SetViewers(0);
+        h.Time.Advance(Linger);
+
+        h.Phases.Select(p => p.Phase).Should().Equal(
+            OnDemandPhase.Connecting, OnDemandPhase.Live, OnDemandPhase.Lingering, OnDemandPhase.Idle);
+        h.Phases[1].Sentence.Should().Be("M9PSY-1, Somewhere, reference offset 0 Hz");
+        h.Phases[2].Sentence.Should().Contain("60 s");
+        h.Phases[3].Sentence.Should().Contain("when someone is watching");
+        h.Phases.Select(p => p.Sentence).Should().OnlyContain(s => s.All(c => c < 128), "the chip and the journal are ASCII");
+    }
+
+    private static async Task Eventually(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline)
+            {
+                throw new TimeoutException("condition not met within 5 s");
+            }
+
+            await Task.Delay(5);
+        }
+    }
+
+    private sealed class FakeSession : IUberSdrSession
+    {
+        public ConnectionResponse Connection { get; } = new() { Allowed = true, MaxSessionTime = 3600 };
+        public bool SessionLive { get; set; }
+        public bool Disposed { get; private set; }
+        public int Reads { get; private set; }
+        public int SampleRate => 12000;
+
+        public event Action<string>? Lost;
+
+        public int Read(Span<float> destination)
+        {
+            Reads++;
+            destination.Fill(0.25f);
+            return destination.Length;
+        }
+
+        public void Dispose() => Disposed = true;
+
+        public void GiveUp(string reason) => Lost?.Invoke(reason);
+    }
+
+    /// <summary>One input over a fake clock and an opener the test completes by hand, one
+    /// attempt at a time.</summary>
+    private sealed class Harness : IDisposable
+    {
+        private readonly SemaphoreSlim _attemptStarted = new(0);
+        private readonly Queue<TaskCompletionSource<IUberSdrSession>> _pending = new();
+        private int _attempts;
+
+        public Harness(string? description = null)
+        {
+            Input = new OnDemandUberSdrInput(
+                Endpoint,
+                new ConnectionResponse { Allowed = true, MaxSessionTime = 3600 },
+                description,
+                sampleRate: 12000,
+                Linger,
+                open: _ =>
+                {
+                    var attempt = new TaskCompletionSource<IUberSdrSession>(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+                    lock (_pending)
+                    {
+                        _attempts++;
+                        _pending.Enqueue(attempt);
+                    }
+
+                    _attemptStarted.Release();
+                    return attempt.Task;
+                },
+                log: null,
+                Time);
+            Input.PhaseChanged += (phase, sentence) =>
+            {
+                lock (Phases)
+                {
+                    Phases.Add((phase, sentence));
+                }
+            };
+        }
+
+        public FakeTimeProvider Time { get; } = new();
+        public OnDemandUberSdrInput Input { get; }
+        public List<(OnDemandPhase Phase, string Sentence)> Phases { get; } = [];
+
+        public int Attempts
+        {
+            get
+            {
+                lock (_pending)
+                {
+                    return _attempts;
+                }
+            }
+        }
+
+        public async Task<TaskCompletionSource<IUberSdrSession>> NextAttemptAsync()
+        {
+            (await _attemptStarted.WaitAsync(TimeSpan.FromSeconds(5)))
+                .Should().BeTrue("the input should have asked to open a session");
+            lock (_pending)
+            {
+                return _pending.Dequeue();
+            }
+        }
+
+        public async Task<FakeSession> GoLiveAsync()
+        {
+            Input.SetViewers(1);
+            var session = new FakeSession { SessionLive = true };
+            (await NextAttemptAsync()).SetResult(session);
+            await Eventually(() => Input.Phase == OnDemandPhase.Live);
+            return session;
+        }
+
+        public void Dispose() => Input.Dispose();
+    }
+}

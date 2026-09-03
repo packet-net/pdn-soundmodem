@@ -69,6 +69,23 @@ public sealed class WaterfallOptions
     /// caught and shrugged off, but it should not be the way that is discovered.</para>
     /// </remarks>
     public Func<int, IReadOnlyList<LoggedFrame>>? FrameHistory { get; set; }
+
+    /// <summary>
+    /// The page is on the open internet for anybody to watch, not on a LAN for the operator.
+    /// The page hides what only means something to an operator (which KISS hosts are attached)
+    /// and shows what a stranger needs instead: a title, a paragraph of what they are looking
+    /// at, and whose receiver it is. Nothing is removed from the operator's page; this only
+    /// hides.
+    /// </summary>
+    public bool Public { get; set; }
+
+    /// <summary>The page's title on a public deployment, in the tab and at the top of the page.
+    /// Null falls back to the page's own.</summary>
+    public string? Title { get; set; }
+
+    /// <summary>One paragraph for the visitor: what the window is, that it is receive only. Null
+    /// shows none.</summary>
+    public string? About { get; set; }
 }
 
 /// <summary>
@@ -444,6 +461,54 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
     private string? _radioStatus;
 
+    /// <summary>
+    /// Whose receiver the audio comes from, for the public page's credit line: how the receiver
+    /// describes itself and where its own page is. It is somebody else's receiver; the page
+    /// says so and links to it. Null for either shows what there is.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="SetRadioStatus"/> because the status says what the session is
+    /// doing right now and changes by the minute, while the credit is fixed for the life of the
+    /// deployment; a visitor should see whose receiver it is while it is idle too.
+    /// </remarks>
+    public void SetReceiver(string? description, string? url)
+    {
+        if (description == _receiverDescription && url == _receiverUrl)
+        {
+            return;
+        }
+
+        _receiverDescription = description;
+        _receiverUrl = url;
+        if (_source is not null)
+        {
+            _configMessage = BuildConfigMessage(); // before Start, Start's own build picks it up
+        }
+    }
+
+    private string? _receiverDescription;
+    private string? _receiverUrl;
+
+    /// <summary>
+    /// How many browsers have the page open, whenever that changes. Raised after each page
+    /// attaches and after each detaches, with the new count, from the connection's own thread
+    /// and outside any lock. For a host that only wants to do something while somebody is
+    /// watching; the count is the whole message.
+    /// </summary>
+    public event Action<int>? ViewersChanged;
+
+    /// <summary>Browsers with the page open right now.</summary>
+    public int Viewers
+    {
+        get
+        {
+            lock (_clientsLock)
+            {
+                return _clients.Count;
+            }
+        }
+    }
+
     /// <summary>The measured per-modem display bands (populated by <see cref="Start"/>).</summary>
     public IReadOnlyList<ModemBand> Bands => _bands;
 
@@ -617,6 +682,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             radioStatus = _radioStatus,
             sideband = _options.Sideband,
             page = Page.Value.Version,
+            publicMonitor = _options.Public,
+            title = _options.Title,
+            about = _options.About,
+            receiver = _receiverDescription,
+            receiverUrl = _receiverUrl,
             modems = _bands.Select(b => new
             {
                 sub = b.SubChannel,
@@ -1525,6 +1595,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         byte[]? transmit;
         byte[]? hosts;
         byte[]? links;
+        int viewers;
         lock (_stateLock)
         {
             transmit = _transmitMessage;
@@ -1533,8 +1604,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             lock (_clientsLock)
             {
                 _clients.Add(client);
+                viewers = _clients.Count;
             }
         }
+
+        RaiseViewersChanged(viewers);
 
         try
         {
@@ -1605,10 +1679,28 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             lock (_clientsLock)
             {
                 _clients.Remove(client);
+                viewers = _clients.Count;
             }
 
             queue.Writer.TryComplete();
             socket.Dispose();
+            RaiseViewersChanged(viewers);
+        }
+    }
+
+    /// <summary>
+    /// A subscriber's fault stays its own: a viewer count is advisory, and a throw here would
+    /// otherwise fault the page's connection (on attach) or be lost in a finally (on detach).
+    /// </summary>
+    private void RaiseViewersChanged(int viewers)
+    {
+        try
+        {
+            ViewersChanged?.Invoke(viewers);
+        }
+        catch (Exception)
+        {
+            // The count will be right again on the next change.
         }
     }
 

@@ -566,6 +566,23 @@ if (deviceIsUberSdr)
         Console.Error.WriteLine(malformed.Message);
         return 2;
     }
+
+    if (uberSdrConfig?.OnDemand == true)
+    {
+        if (uberSdrConfig.LingerSeconds < 0)
+        {
+            Console.Error.WriteLine("\"ubersdr\".\"lingerSeconds\" cannot be negative");
+            return 2;
+        }
+
+        if (waterfallConfig is null)
+        {
+            Console.Error.WriteLine(
+                "\"ubersdr\".\"onDemand\" needs a \"waterfall\" section: the page's viewers are "
+                + "what asks for the receiver, and without one the station would never hear anything");
+            return 2;
+        }
+    }
 }
 
 if (!deviceIsFlex && !deviceIsUberSdr && captureRate % DspRate != 0)
@@ -1216,6 +1233,9 @@ if (waterfallConfig is not null)
             Sideband = bandPlan?.Sideband ?? waterfallConfig.Sideband,
             LinesPerSecond = waterfallConfig.LinesPerSecond,
             FftSize = waterfallConfig.FftSize,
+            Public = waterfallConfig.Public,
+            Title = waterfallConfig.Title,
+            About = waterfallConfig.About,
             // What each modem is meant to occupy. The centre so the label reads as the
             // operator placed it rather than as the probe measured it, and a width for ARDOP,
             // which is a receive tap rather than an IModem and so cannot be probed at all.
@@ -2071,6 +2091,9 @@ await using var pagingLifetime = pagingServer;
 int flexPacketBuffer = ardopModem is null ? 3 : 6;
 FlexRuntime? flex = null;
 UberSdrAudioInput? uberSdr = null;
+// Whether the UberSDR input, in either of its forms, has a session to be starved of. Null for
+// every other device: their quiet is never deliberate.
+Func<bool>? uberSdrSessionLive = null;
 IPttControl ptt;
 IAudioOutput playback;
 IAudioInput input;
@@ -2144,54 +2167,103 @@ else if (deviceIsUberSdr)
         Gain = (float)(uberSdrConfig?.Gain ?? 1.0),
     };
 
-    try
+    string audioBanner =
+        $"audio: {uberSdrEndpoint} {uberSdrTuning.Mode} IQ at {RfPlan.Mhz(receiveDialHz.Value)} -> "
+        + $"{planSideband.ToUpperInvariant()} {uberSdrTuning.SsbLowHz:F0}-{uberSdrTuning.SsbHighHz:F0} Hz "
+        + $"audio at {DspRate} Hz (RECEIVE ONLY";
+    ConnectionResponse uberSdrConnection;
+    string? uberSdrReceiver;
+
+    if (uberSdrConfig?.OnDemand == true)
     {
-        uberSdr = await UberSdrAudioInput.OpenAsync(
-            uberSdrEndpoint, uberSdrTuning, Console.Error.WriteLine, cancellation.Token);
+        // A public monitor on somebody else's receiver: the session exists only while a browser
+        // has the waterfall open, and is held for the linger after the last one leaves. The
+        // pre-flight still runs here, so a wrong host or a refused IQ mode is still an error
+        // at start-up; but a receiver that is merely down is not fatal - the page stays up and
+        // says so, and the input keeps trying for as long as anyone is waiting.
+        OnDemandUberSdrInput onDemand;
+        try
+        {
+            onDemand = await OnDemandUberSdrInput.OpenAsync(
+                uberSdrEndpoint, uberSdrTuning, TimeSpan.FromSeconds(uberSdrConfig.LingerSeconds),
+                Console.Error.WriteLine, cancellation.Token);
+        }
+        catch (Exception e) when (e is InvalidOperationException or WebSocketException
+                                    or HttpRequestException or IOException)
+        {
+            Console.Error.WriteLine(DeviceDiagnostics.UberSdr(device, configPath, e));
+            return 1;
+        }
+
+        input = onDemand;
+        uberSdrSessionLive = () => onDemand.SessionLive;
+        uberSdrConnection = onDemand.Connection;
+        uberSdrReceiver = onDemand.ReceiverDescription;
+        Console.WriteLine($"{audioBanner}, on demand: connected while the waterfall has a viewer, "
+            + $"held {uberSdrConfig.LingerSeconds} s after the last leaves)");
+
+        // The page shows the input's own sentence for what it is doing, and credits the
+        // receiver whether or not a session is up. The viewer count flows the other way.
+        waterfallServer!.SetReceiver(uberSdrReceiver, uberSdrEndpoint.PublicUrl);
+        waterfallServer.SetRadioStatus(onDemand.Status);
+        onDemand.PhaseChanged += (_, sentence) => waterfallServer.SetRadioStatus(sentence);
+        waterfallServer.ViewersChanged += onDemand.SetViewers;
     }
-    catch (Exception e) when (e is InvalidOperationException or WebSocketException
-                                or HttpRequestException or IOException)
+    else
     {
-        Console.Error.WriteLine(DeviceDiagnostics.UberSdr(device, configPath, e));
-        return 1;
+        try
+        {
+            uberSdr = await UberSdrAudioInput.OpenAsync(
+                uberSdrEndpoint, uberSdrTuning, Console.Error.WriteLine, cancellation.Token);
+        }
+        catch (Exception e) when (e is InvalidOperationException or WebSocketException
+                                    or HttpRequestException or IOException)
+        {
+            Console.Error.WriteLine(DeviceDiagnostics.UberSdr(device, configPath, e));
+            return 1;
+        }
+
+        input = uberSdr;
+        uberSdrSessionLive = () => uberSdr.SessionLive;
+        uberSdrConnection = uberSdr.Connection;
+        uberSdrReceiver = uberSdr.ReceiverDescription;
+        Console.WriteLine($"{audioBanner})");
+        if (uberSdrReceiver is not null)
+        {
+            waterfallServer?.SetRadioStatus(uberSdrReceiver);
+        }
+
+        // A receiver that stays unreachable is not something to sit quietly on. Exit 1 so the
+        // unit restarts and tries afresh, exactly as for a Flex whose session dies (exit 2 is
+        // reserved for "your configuration is wrong", which restarting could never fix).
+        uberSdr.Lost += reason =>
+        {
+            Console.Error.WriteLine($"ubersdr: {reason}");
+            radioLost = true;
+            cancellation.Cancel();
+        };
     }
 
     ptt = new NullPtt();
     playback = new NullAudioOutput(DspRate);
-    input = uberSdr;
-    Console.WriteLine(
-        $"audio: {uberSdrEndpoint} {uberSdrTuning.Mode} IQ at {RfPlan.Mhz(receiveDialHz.Value)} -> "
-        + $"{planSideband.ToUpperInvariant()} {uberSdrTuning.SsbLowHz:F0}-{uberSdrTuning.SsbHighHz:F0} Hz "
-        + $"audio at {DspRate} Hz (RECEIVE ONLY)");
-    if (uberSdr.ReceiverDescription is string receiver)
+    if (uberSdrReceiver is not null)
     {
-        Console.WriteLine($"ubersdr: {receiver}");
-        waterfallServer?.SetRadioStatus(receiver);
+        Console.WriteLine($"ubersdr: {uberSdrReceiver}");
     }
 
-    if (uberSdr.Connection.RefusedForNow)
+    if (uberSdrConnection.RefusedForNow)
     {
         Console.Error.WriteLine(
             "ubersdr: the receiver is refusing this address for now "
-            + $"({uberSdr.Connection.Reason ?? "daily listening allowance exhausted"}). The station "
+            + $"({uberSdrConnection.Reason ?? "daily listening allowance exhausted"}). The station "
             + "is up and will start hearing audio when the receiver lets us back in.");
     }
     else
     {
         Console.WriteLine(
-            $"ubersdr: session limit {uberSdr.Connection.MaxSessionTime} s - the stream is picked up "
+            $"ubersdr: session limit {uberSdrConnection.MaxSessionTime} s - the stream is picked up "
             + "again each time the receiver ends one");
     }
-
-    // A receiver that stays unreachable is not something to sit quietly on. Exit 1 so the unit
-    // restarts and tries afresh, exactly as for a Flex whose session dies (exit 2 is reserved
-    // for "your configuration is wrong", which restarting could never fix).
-    uberSdr.Lost += reason =>
-    {
-        Console.Error.WriteLine($"ubersdr: {reason}");
-        radioLost = true;
-        cancellation.Cancel();
-    };
 }
 else if (deviceIsFlex)
 {
@@ -2718,10 +2790,11 @@ using ITimer? starvationTimer = starvationWatch is null ? null : wallClock.Creat
             return; // already shutting down; firing now would relabel a clean stop as a fault
         }
 
-        if (uberSdr is not null && !uberSdr.SessionLive)
+        if (uberSdrSessionLive is not null && !uberSdrSessionLive())
         {
-            // Quiet between UberSDR sessions is the reconnect policy pacing itself; see
-            // SessionLive for why restarting through it would hammer a public receiver.
+            // Quiet between UberSDR sessions is the reconnect policy pacing itself, and quiet
+            // with nobody watching an on-demand receiver is the whole idea; see SessionLive for
+            // why restarting through either would hammer a public receiver.
             starvationWatch.NoteExpectedQuiet();
             return;
         }

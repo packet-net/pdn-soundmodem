@@ -752,6 +752,23 @@ for confirming you are hearing the band at a sane level before trusting the deco
 | `sideband` | string | `"usb"` | `"usb"` (RF = dial + audio) or `"lsb"` (RF = dial − audio) |
 | `linesPerSecond` | int | `30` | Waterfall line / display frame rate |
 | `fftSize` | int | `0` | 0 = rate default (2048 at 12 kHz, 8192 at 48 kHz) |
+| `public` | bool | `false` | Dress the page for the public rather than the operator; see below |
+| `title` | string | *(none)* | Public page title, in the tab and the top bar |
+| `about` | string | *(none)* | One paragraph for the visitor, shown under the top bar |
+
+**`public` is for a page on the open internet.** It takes the `title` and `about`, credits and
+links the web receiver the station listens through (when the device is `ubersdr:`), and hides
+the KISS host badges, which name ports on a box a visitor cannot reach. Nothing else changes,
+and nothing is removed from the operator's page; the waterfall, the links pane, the decoded
+frames and *Listen* all stay. The natural pairing is `"ubersdr": { "onDemand": true }`, so the
+receiver is only asked for while somebody is looking:
+
+```json
+"device": "ubersdr:m9psy-1.instance.ubersdr.org",
+"ubersdr": { "onDemand": true, "lingerSeconds": 60 },
+"waterfall": { "port": 8099, "public": true, "title": "40 m packet monitor",
+               "about": "The 7050-7052 kHz packet window, receive only." }
+```
 
 **The page can play the received audio.** Press *Listen* in the top bar and the station's
 receive audio streams to the browser, so you can hear the channel you are watching - an SSB
@@ -1624,6 +1641,8 @@ it does on a Flex.
 | `ssbHighHz` | number | `3450` | Upper edge, likewise |
 | `startupGuardMs` | int | `1000` | Audio discarded after each connect |
 | `gain` | number | `1.0` | Linear gain on the demodulated audio |
+| `onDemand` | bool | `false` | Hold a session only while the waterfall page has a viewer |
+| `lingerSeconds` | int | `60` | With `onDemand`, how long the session is kept after the last viewer leaves |
 
 **`ssbLowHz`/`ssbHighHz` are the receive filter**, and unlike a rig's they are actually yours to
 choose - holding the complex baseband is what makes that possible. The default clears the whole
@@ -1637,6 +1656,24 @@ every session and a stripe on the waterfall. It costs about a second per reconne
 **`gain` is for the display, not the decoders.** Everything downstream is floating point and
 level-independent; measured off `m9psy-1`, the demodulated audio lands around −26 dBFS RMS,
 which is soundcard-like already. Raise it if a quiet instance makes the waterfall hard to read.
+
+**`onDemand` is for a public monitor, not a node.** A station feeding a node needs the receiver
+all day; a page for the public has nothing to show while nobody is looking, and the receiver's
+slot and this address's daily listening allowance are better left alone until somebody is. With
+`onDemand` the daemon still runs the receiver's pre-flight at start-up (so a wrong host or a
+refused IQ mode is still an error) and then sits idle: the first browser to open the waterfall
+opens the session, every further browser shares it, and the last one leaving starts the
+`lingerSeconds` clock, after which the session is closed. The linger is what stops a page
+refresh, a tab switch or a flaky connection from costing the receiver a tear-down and rebuild
+each time; 0 closes at once. It needs a `waterfall` section, because the page's viewers are
+what asks for the receiver.
+
+A receiver that cannot be reached is not fatal in this mode. The page stays up and says what
+is wrong in the status chip at the top (unreachable, refused for the day, gave up), and the
+daemon keeps trying on the same backoff it uses for a lost session, for as long as anyone is
+waiting; with nobody waiting it goes back to idle. The dead-feed watches stand down while idle,
+so an empty page does not restart the service every half minute. Each change of state goes to
+the journal with the viewer count: `ubersdr: live, 2 viewers: M9PSY-1, ...`.
 
 ---
 

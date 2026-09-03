@@ -1214,6 +1214,98 @@ public class WaterfallWebServerTests : IAsyncLifetime
         cleanRounds.Should().Be(2, "the spectrum must stop once declined, and stay stopped");
     }
 
+    [Fact]
+    public async Task Viewers_Are_Counted_As_Browsers_Come_And_Go()
+    {
+        // The count is what an on-demand receiver runs on: a session while it is above zero,
+        // none once it has been zero for the linger.
+        var counts = new List<int>();
+        _server.ViewersChanged += n => { lock (counts) counts.Add(n); };
+
+        using var first = new ClientWebSocket();
+        await first.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(first);   // config: the page is attached by the time it arrives
+        _server.Viewers.Should().Be(1);
+
+        using var second = new ClientWebSocket();
+        await second.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await Receive(second);
+        _server.Viewers.Should().Be(2);
+
+        await first.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
+        await Until(() => _server.Viewers == 1, "the closed page is no longer a viewer");
+
+        await second.CloseAsync(WebSocketCloseStatus.NormalClosure, null, _cancellation.Token);
+        await Until(() => _server.Viewers == 0, "the last page leaving reports nobody");
+
+        lock (counts)
+        {
+            counts.Should().Equal([1, 2, 1, 0], "every change is reported, with the new count");
+        }
+    }
+
+    [Fact]
+    public async Task A_Viewer_Count_Subscriber_That_Throws_Costs_The_Page_Nothing()
+    {
+        _server.ViewersChanged += _ => throw new InvalidOperationException("not the page's problem");
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        using JsonDocument config = await NextTextAsync(socket);
+
+        config.RootElement.GetProperty("type").GetString().Should().Be("config");
+        socket.State.Should().Be(WebSocketState.Open);
+    }
+
+    [Fact]
+    public async Task An_Operators_Page_Is_Not_Dressed_For_The_Public()
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        using JsonDocument config = await NextTextAsync(socket);
+
+        config.RootElement.GetProperty("publicMonitor").GetBoolean().Should().BeFalse();
+        config.RootElement.GetProperty("title").ValueKind.Should().Be(JsonValueKind.Null);
+        config.RootElement.GetProperty("receiver").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task A_Public_Page_Is_Told_Its_Title_And_Whose_Receiver_It_Listens_Through()
+    {
+        int port = FreePort();
+        await using var server = new WaterfallWebServer(_channel, port, new WaterfallOptions
+        {
+            Public = true,
+            Title = "40 m packet monitor",
+            About = "The 7050-7052 kHz packet window, receive only.",
+        });
+        server.SetReceiver("M9PSY-1, Dalgety Bay, Scotland, UK", "https://m9psy-1.instance.ubersdr.org/");
+        server.Start();
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws"), _cancellation.Token);
+        using JsonDocument config = await NextTextAsync(socket);
+
+        JsonElement root = config.RootElement;
+        root.GetProperty("publicMonitor").GetBoolean().Should().BeTrue();
+        root.GetProperty("title").GetString().Should().Be("40 m packet monitor");
+        root.GetProperty("about").GetString().Should().Be("The 7050-7052 kHz packet window, receive only.");
+        root.GetProperty("receiver").GetString().Should().Be("M9PSY-1, Dalgety Bay, Scotland, UK",
+            "it is somebody else's receiver, and the page credits them");
+        root.GetProperty("receiverUrl").GetString().Should().Be("https://m9psy-1.instance.ubersdr.org/");
+    }
+
+    private async Task Until(Func<bool> condition, string because)
+    {
+        while (!condition())
+        {
+            _cancellation.Token.ThrowIfCancellationRequested();
+            await Task.Delay(10, _cancellation.Token);
+        }
+
+        condition().Should().BeTrue(because);
+    }
+
     private async Task<(WebSocketMessageType Kind, byte[] Payload)> Receive(ClientWebSocket socket)
     {
         var buffer = new byte[64 * 1024];

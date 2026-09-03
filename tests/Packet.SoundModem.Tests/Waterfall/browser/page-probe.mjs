@@ -488,7 +488,17 @@ run(`onHistory({frames: [
 const historyTag = sandbox.__text().slice(beforeHistory);
 const afterHistory = sandbox.document.getElementById("frames").children;
 
+// What a public deployment dresses the page with, as the handshake left it: the title, the
+// about strip with the receiver credit, and the body class the stylesheet keys off.
+const publicPage = {
+  title: sandbox.document.title,
+  bodyClass: sandbox.document.body.className,
+  about: sandbox.document.getElementById("about").innerHTML,
+  aboutHidden: sandbox.document.getElementById("about").hidden === true,
+};
+
 console.log(JSON.stringify({
+  publicPage,
   txKeyed,
   txKeyedBadSwr,
   txHeld,

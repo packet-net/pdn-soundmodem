@@ -27,6 +27,9 @@
   // "dialFrequency") - that is what tunes the receiver. e.g.:
   //   "device": "ubersdr:m9psy-1.instance.ubersdr.org",
   //   "ubersdr": { "mode": "iq48" },   // also: password, ssbLowHz/ssbHighHz, gain
+  // For a public monitor page, "onDemand": true holds a session on the receiver only while
+  // somebody has the waterfall open ("lingerSeconds", default 60, keeps it across a page
+  // refresh); pair it with "public": true in "waterfall" below.
   "captureRate": 48000,
   // Modems can be placed by absolute RF frequency instead of audio centre - state the band
   // plan the way you think of it and the daemon works out the dial, tells you what to set,
@@ -81,6 +84,10 @@
   // rig dial the RF scale derives from (0 = unset; every browser can retune its own copy);
   // "sideband" is "usb" or "lsb"; "bind" "*" opens it beyond loopback.
   // "waterfall": { "port": 8107, "dialFrequencyHz": 14105000, "sideband": "usb" },
+  // "public": true dresses the page for strangers rather than the operator: a "title", an
+  // "about" paragraph, a credit and link for the web receiver it listens through, and no KISS
+  // host badges. Nothing else changes.
+  // "waterfall": { "port": 8099, "public": true, "title": "40 m packet monitor", "about": "..." },
   // POCSAG paging endpoint (optional; DAPNET/POCSAG-compatible waveform, local paging
   // API - line-based TCP: "PAGE <ric> <function> ALPHA|NUMERIC|TONE [text]").
   // "paging": { "port": 8106, "baud": 1200, "invertPolarity": false },

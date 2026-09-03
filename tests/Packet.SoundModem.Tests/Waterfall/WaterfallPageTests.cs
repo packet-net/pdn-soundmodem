@@ -806,7 +806,58 @@ public class WaterfallPageTests
         bool SwrHidden,
         string SwrClass);
 
+    /// <summary>
+    /// A page for the public says what it is and whose receiver it listens through, and does not
+    /// show a visitor which KISS ports have a host on them.
+    /// </summary>
+    /// <remarks>
+    /// Page behaviour the server cannot see: it sends the same config either way and only the
+    /// flags differ. The host-port snapshot is set so that the operator's page would badge the
+    /// chip, which is what makes "no badge" a measurement rather than an absence.
+    /// </remarks>
+    [Fact]
+    public async Task A_Public_Page_Names_Itself_Credits_The_Receiver_And_Hides_The_Host_Badges()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePort();
+        await using var server = new WaterfallWebServer(channel, port, new WaterfallOptions
+        {
+            Public = true,
+            Title = "40 m packet monitor",
+            About = "The 7050-7052 kHz packet window, receive only.",
+        });
+        server.SetReceiver("M9PSY-1, Dalgety Bay, Scotland, UK", "https://m9psy-1.instance.ubersdr.org/");
+        server.SetHostPorts([new HostPortStatus(8105, null, 1), new HostPortStatus(8101, 0, 1)]);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw while dressing itself for the public");
+        probe.Connected.Should().BeTrue();
+
+        probe.PublicPage.Title.Should().Be("40 m packet monitor", "the tab says what the page is");
+        probe.PublicPage.BodyClass.Should().Contain("public");
+        probe.PublicPage.AboutHidden.Should().BeFalse("the about strip is what a visitor reads first");
+        probe.PublicPage.About.Should().Contain("The 7050-7052 kHz packet window, receive only.")
+            .And.Contain("M9PSY-1, Dalgety Bay, Scotland, UK", "it is somebody else's receiver")
+            .And.Contain("href=\"https://m9psy-1.instance.ubersdr.org/\"", "and the credit links to it");
+
+        // The chip is still the chip; only the badge is gone, on arrival and on every update.
+        probe.ChipsOnArrival.Should().ContainSingle();
+        probe.ChipsOnArrival[0].Should().Contain("AFSK1200")
+            .And.NotContain("host", "which KISS ports have a host is nothing to a visitor");
+        probe.ChipsAttached.Should().ContainSingle();
+        probe.ChipsAttached[0].Should().NotContain("host");
+    }
+
+    private sealed record PublicPage(string Title, string BodyClass, string About, bool AboutHidden);
+
     private sealed record Probe(
+        PublicPage PublicPage,
         bool Connected,
         string? ClickError,
         bool Listening,
