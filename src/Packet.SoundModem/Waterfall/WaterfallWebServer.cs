@@ -1856,9 +1856,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 viewers = _clients.Count;
             }
 
+            // Straight after the count changed, as on the way in, and before the tidying up: a
+            // watcher that reads Viewers and a watcher that listens for the event should not be
+            // able to disagree for as long as it takes to dispose a socket. The invocation stays
+            // outside the lock, because a subscriber's work is not this lock's business.
+            RaiseViewersChanged(viewers);
             queue.Writer.TryComplete();
             socket.Dispose();
-            RaiseViewersChanged(viewers);
         }
     }
 
