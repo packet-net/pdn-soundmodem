@@ -20,8 +20,9 @@
     <PackageReference Include="M0LTE.Flex" Condition="'$(FlexSourcePath)' == ''" />
     <!-- The AX.25 codec and link observer, so nothing here has to reimplement either. The
          package is AGPL-3.0-or-later (0.23.0 was the last MIT release; the pin moved to
-         0.31.0 for the link observer and 0.32.0 for its giving up on unanswered calls),
-         which CLAUDE.md allows alongside this library's
+         0.31.0 for the link observer, 0.32.0 for its giving up on unanswered calls and
+         0.33.0 for acknowledgements counting as a link), which CLAUDE.md allows alongside
+         this library's
          GPL-3.0-or-later by way of GPLv3 §13, the same footing as M0LTE.Flex. The
          dependency runs the safe way round: packet.net's AX.25 package knows nothing about
          this modem. Build against a local packet.net checkout with
