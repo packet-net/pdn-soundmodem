@@ -1,6 +1,6 @@
 # 40m-monitor - a public HF packet monitor over one UberSDR receiver
 
-**Status: 4.1 and 4.2 built on `feat/ubersdr-on-demand`, 2026-09-03. 4.3: CT 146 `40m-monitor` is up on a pre-release build, connect-on-demand verified against M9PSY-1 from inside the container; the tunnel and DNS are the remaining steps, then the release .deb replaces the pre-release one.** Written at Tom's request for a public-facing deployment of pdn-soundmodem at https://40m-monitor.ukpacketradio.network, showing the 7050-7052 kHz packet window that GB7RDG-2 works, as heard by a public UberSDR receiver.
+**Status: shipped in v0.54.0 (PR #382) and deployed, 2026-09-03.** Live at https://m9psy-1-monitor.ukpacketradio.network from CT 146 `m9psy-1-monitor` on proxmox1; the page, the WebSocket and the connect-on-demand cycle against M9PSY-1 were checked through the tunnel. Left to do: an overnight soak, and a word with M9PSY-1's operator about the per-address allowance (4.4) before announcing. Written at Tom's request for a public-facing deployment of pdn-soundmodem at https://m9psy-1-monitor.ukpacketradio.network, showing the 7050-7052 kHz packet window that GB7RDG-2 works, as heard by a public UberSDR receiver.
 
 ## 1. What it is
 
@@ -56,11 +56,11 @@ Nothing is removed from the operator page; `public` only hides.
 
 ### 4.3 Deployment
 
-- **Container**: new unprivileged LXC on proxmox1 (`root@10.45.0.10`), Debian 13, `keyctl=1,nesting=1`, `net0` on `vmbr0` by DHCP, rootfs on `local-zfs`, `swap: 512`, `onboot: 1`. Name `40m-monitor`.
+- **Container**: new unprivileged LXC on proxmox1 (`root@10.45.0.10`), Debian 13, `keyctl=1,nesting=1`, `net0` on `vmbr0` by DHCP, rootfs on `local-zfs`, `swap: 512`, `onboot: 1`. Name `m9psy-1-monitor`: one deployment is one receiver, so the container, the tunnel and the hostname are all named after the receiver, and a second receiver gets a second set.
 - **Daemon**: the `.deb` from the first release that carries 4.1 and 4.2 (so a release is a step, below). `bind` is loopback; only the waterfall port is reached by the tunnel.
-- **Tunnel**: `cloudflared` inside the container on its own remotely-managed tunnel `40m-monitor`, ingress `40m-monitor.ukpacketradio.network -> http://localhost:8099`, same shape as the move-wiki container: a localhost origin cannot break when the DHCP lease moves.
-- **DNS**: `ukpacketradio.network` is already on Cloudflare (nameservers `braden`/`sonia`, the same pair as `fann.ing`), so no migration; the tunnel route creates the CNAME. Confirm the zone is in Tom's account before assuming.
-- **Cloudflare**: WebSockets are on by default; add a rate-limit rule on the hostname (the free plan allows one) so a scraper cannot hold hundreds of sockets open.
+- **Tunnel**: `cloudflared` inside the container on its own remotely-managed tunnel `m9psy-1-monitor`, ingress `m9psy-1-monitor.ukpacketradio.network -> http://127.0.0.1:8099`, same shape as the move-wiki container: a loopback origin cannot break when the DHCP lease moves. The ingress also rewrites the origin Host header to `127.0.0.1:8099`: the daemon's listener is bound by address and answers 404 to any other Host, which is what the tunnel sends by default.
+- **DNS**: `ukpacketradio.network` is already on Cloudflare (nameservers `braden`/`sonia`, the same pair as `fann.ing`), so no migration; a proxied CNAME to `<tunnel id>.cfargotunnel.com`. The hostname is one level under the zone on purpose: the free universal certificate covers `*.ukpacketradio.network` and nothing deeper, so `m9psy-1.monitor.ukpacketradio.network` would have needed Advanced Certificate Manager (paid). Tom chose the single-level name.
+- **Cloudflare**: WebSockets are on by default; one rate-limit rule on the hostname (the free plan allows one): 60 requests per 10 s per address, blocked for 10 s, so a scraper cannot hold hundreds of sockets open. A page load is well under ten requests.
 - **Upkeep**: `unattended-upgrades` covering Debian security and the cloudflared repo, as CT 145 has.
 
 Config as deployed:

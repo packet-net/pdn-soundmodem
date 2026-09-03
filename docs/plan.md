@@ -224,7 +224,7 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   holds a session on the receiver only while somebody has the waterfall open (held for a
   linger after the last leaves), and `"waterfall": { "public": true }` dresses the page for a
   visitor: a title, an about paragraph, a credit and link for the receiver, no KISS host
-  badges. Built for https://40m-monitor.ukpacketradio.network; see
+  badges. Built for https://m9psy-1-monitor.ukpacketradio.network; see
   [docs/40m-monitor-plan.md](40m-monitor-plan.md).
 - ⬜ DCD-over-KISS extension (awaiting an agreed NinoTNC-ecosystem format); Windows
   audio backend (deferred 2026-07-15); extra decode-only listeners; multi-decoder banks
