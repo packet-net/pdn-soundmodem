@@ -226,7 +226,7 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   visitor: a title, an about paragraph, a credit and link for the receiver, no KISS host
   badges. Built for https://m9psy-1-monitor.ukpacketradio.network; see
   [docs/40m-monitor-plan.md](40m-monitor-plan.md).
-- ⬜ Public monitor over many UberSDR receivers, code done (2026-09-03), not yet deployed: a `"monitor"` config section fronts the receivers the UberSDR directory lists, with a picker at `/`, each receiver's page at `/r/<slug>/`, and at most one session per receiver however many visitors are watching it. Same binary and same package as the single-station flavour, which is unchanged. What is left is the container, the tunnel, DNS and the soak at https://monitor.ukpacketradio.network; see [docs/monitor-plan.md](monitor-plan.md) and the amendment log entry below.
+- ✅ Public monitor over many UberSDR receivers (2026-09-03): a `"monitor"` config section fronts the receivers the UberSDR directory lists, with a picker at `/`, each receiver's page at `/r/<slug>/`, and at most one session per receiver however many visitors are watching it. Same binary and same package as the single-station flavour, which is unchanged. Live at https://monitor.ukpacketradio.network from CT 146, which replaces the single-receiver site; an overnight soak and a word with the receivers' operators are still to come. See [docs/monitor-plan.md](monitor-plan.md) and the amendment log entry below.
 - ⬜ DCD-over-KISS extension (awaiting an agreed NinoTNC-ecosystem format); Windows
   audio backend (deferred 2026-07-15); extra decode-only listeners; multi-decoder banks
   for the PSK modes.
@@ -248,6 +248,16 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   committed corpora don't yet).
 
 ## Amendment log
+
+### 2026-09-03 (Phase 4) - the picker goes live at monitor.ukpacketradio.network, and the single-receiver site is retired
+
+Phase 4 of [docs/monitor-plan.md](monitor-plan.md), which is deployment rather than code: pdn-soundmodem v0.55.0 in the `monitor` flavour is live at https://monitor.ukpacketradio.network, listing 49 of the 50 UberSDR receivers the directory offers and serving each one's page under `/r/<slug>/`. Nothing was changed in the source to get there.
+
+**It reuses the container the single-receiver site was on rather than adding one.** Tom, asked whether the two should run side by side: "Take down the M9PSY-1 instance and infrastructure, it's not required any more." So CT 146 on proxmox1 is now `monitor` at 3072 MB rather than `m9psy-1-monitor` at 1024 MB, its tunnel is renamed from `m9psy-1-monitor` to `monitor` with the same id and the same token, its ingress and the zone's one rate-limit rule point at the new hostname, and the `m9psy-1-monitor` CNAME is deleted. The frame history the old site collected was carried over as `frames-m9psy-1.db`, which is what this flavour calls that receiver's log, so `/r/m9psy-1/` kept it rather than starting empty. [docs/40m-monitor-plan.md](40m-monitor-plan.md) is left as the record of what that site was.
+
+**The measurement held.** 172 MB of RSS with two receivers watched and back to idle, against Phase 3's prediction of 148 MB for two - about 24 MB above it, which is the difference between a station that was built and idle and one that has carried a live stream through twenty demodulators. The sizing argument is unchanged: every listed receiver picked in one process is of the order of 1.6 GB, stations are never torn down, so the container is 3 GB.
+
+**Validated through the tunnel, not just on loopback.** The picker, `/api/instances`, `/robots.txt`, a receiver's page and a 404 for one that does not exist; then a real WebSocket held for 30 s, which walked `connecting -> live -> lingering -> idle` in the journal with the receiver's slug on every line; then two receivers watched at the same time, one connection each. Still open before announcing: an overnight soak, and a word with the busiest receivers' operators about the per-address allowance. And nobody has yet seen the picker in a real browser.
 
 ### 2026-09-03 (Phase 3) - one daemon, many web receivers, and a picker in front of them
 
