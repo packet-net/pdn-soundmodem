@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems;
@@ -155,8 +156,29 @@ internal sealed class MonitorHost : IAsyncDisposable
             return true;
         }
 
+        if (readOnlyMethod && path == "/robots.txt")
+        {
+            await WriteAsync(context, "text/plain; charset=utf-8", Robots).ConfigureAwait(false);
+            return true;
+        }
+
         return false;
     }
+
+    /// <summary>
+    /// What this site asks crawlers not to walk: the receivers' pages and the API. The picker
+    /// itself stays indexable, which is the page anybody searching for this would want.
+    /// </summary>
+    /// <remarks>
+    /// A courtesy and not a control. Following a receiver's link is what builds that receiver's
+    /// station, so a crawler that walked all of them would take this process to its full memory
+    /// in one pass - and a crawler that ignores this file will do exactly that. What actually
+    /// bounds it is the rate limit in front of the site and sizing the container for every
+    /// listed receiver; this only means a well-behaved crawler does not do it by accident, and
+    /// that fifty near-identical waterfall pages do not end up in a search index.
+    /// </remarks>
+    private static readonly byte[] Robots =
+        Encoding.ASCII.GetBytes("User-agent: *\nDisallow: /r/\nDisallow: /api/\n");
 
     /// <summary>
     /// The first request for a receiver: builds its station if it is one this monitor offers, and
@@ -199,6 +221,7 @@ internal sealed class MonitorHost : IAsyncDisposable
         }
         catch (Exception e)
         {
+            _directory.Unbind(slug);
             // A station that will not build is this monitor's bug, not the visitor's, and the one
             // thing that must not happen is for it to disappear into an aborted response with
             // nothing anywhere saying why. Say it, and answer with the 404 the router would give
@@ -345,7 +368,21 @@ internal sealed class MonitorHost : IAsyncDisposable
         await _router.DisposeAsync().ConfigureAwait(false);
         foreach (MonitorStation station in Stations())
         {
-            await station.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await station.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                // One station that will not come down tidily - a receive loop still inside a
+                // blocked Read when the wait runs out - must not stop the others being closed.
+                // Their frame logs are SQLite files with writer threads, and leaving them
+                // unclosed because an unrelated receiver was wedged is how a shutdown loses
+                // somebody's afternoon of frames.
+                _journal.WriteError(
+                    $"{station.Slug}: did not shut down tidily - "
+                    + $"{UberSdrDirectory.Ascii(e.Message)}");
+            }
         }
 
         _directory.Dispose();
@@ -418,6 +455,24 @@ internal sealed class MonitorHost : IAsyncDisposable
                 _frameLog = log;
             }
 
+            try
+            {
+                Build(host, receiver);
+            }
+            catch
+            {
+                // Half a station is worse than none: a frame log with a writer thread and an open
+                // SQLite handle, a server subscribed to the channel, possibly a route already
+                // registered - and no reference to any of it anywhere, because the constructor
+                // never returned one. Take down what was built before letting the failure out.
+                Unbuild();
+                throw;
+            }
+        }
+
+        /// <summary>The half of construction that can fail with something already built.</summary>
+        private void Build(MonitorHost host, DirectoryReceiver receiver)
+        {
             Server = WaterfallWebServer.Routed(_channel, new WaterfallOptions
             {
                 DialFrequencyHz = host._options.DialHz,
@@ -435,7 +490,7 @@ internal sealed class MonitorHost : IAsyncDisposable
 
             // Whose receiver it is, from the directory, before any session has ever been opened:
             // a visitor should see the callsign and where it is while the page is still idle.
-            Server.SetReceiver(receiver.Description, receiver.PublicUrl ?? receiver.Endpoint.PublicUrl);
+            Server.SetReceiver(receiver.Description, receiver.PublicUrl);
             Server.SetRadioStatus($"{receiver.Description} - waiting for a viewer");
 
             if (host._options.IdBeacons)
@@ -453,6 +508,7 @@ internal sealed class MonitorHost : IAsyncDisposable
             Server.ViewersChanged += OnViewersChanged;
             Server.Start();
             _host._router.Add($"/r/{Slug}/", Server);
+            _routed = true;
             _journal.Write($"station: {Server.Url} for {receiver.Endpoint}");
         }
 
@@ -462,7 +518,11 @@ internal sealed class MonitorHost : IAsyncDisposable
         /// the directory, because the page it serves has to go on saying whose receiver it is.</summary>
         internal DirectoryReceiver Receiver { get; }
 
-        internal WaterfallWebServer Server { get; }
+        internal WaterfallWebServer Server { get; private set; } = null!;
+
+        // Whether the route was registered, so that taking a half-built station down does not
+        // ask the router to forget a prefix it never had.
+        private bool _routed;
 
         /// <summary>How the receiver describes itself, once a session has ever been opened.</summary>
         internal string? Description
@@ -548,31 +608,43 @@ internal sealed class MonitorHost : IAsyncDisposable
                 _attaching = true;
             }
 
-            OnDemandUberSdrInput input;
             try
             {
-                input = await _host._options
-                    .OpenInput(Receiver, _journal.ErrorSink, _host._stopping.Token)
-                    .ConfigureAwait(false);
+                await OpenAndRunAsync().ConfigureAwait(false);
             }
-            catch (Exception e) when (e is InvalidOperationException or WebSocketException
-                                        or System.Net.Http.HttpRequestException or IOException
-                                        or OperationCanceledException)
+            catch (Exception e)
             {
-                lock (_gate)
-                {
-                    _attaching = false;
-                }
-
+                // Every exception, not a list of them. A list is a guess at what can go wrong two
+                // libraries down, and the guess was wrong: a directory host that would not parse
+                // as a URI threw UriFormatException, which was not on the list, and left this
+                // station marked as attaching for ever - idle on the picker, a viewer waiting, no
+                // retry, and not one word anywhere. Whatever it is, this station is down, says
+                // so, and is picked up again by the same ladder.
                 if (!_host._stopping.IsCancellationRequested)
                 {
                     Fault(
                         $"cannot reach {Receiver.Endpoint}: {UberSdrDirectory.Ascii(e.Message)}. "
                         + $"Trying again in {RebuildAfter.TotalSeconds:F0} s while anybody is watching.");
                 }
-
-                return;
             }
+            finally
+            {
+                // In a finally, because "the attempt is over" has to be true down every path out
+                // of here, including the ones nobody thought of. Left set, this station never
+                // tries again and never says why.
+                lock (_gate)
+                {
+                    _attaching = false;
+                }
+            }
+        }
+
+        /// <summary>The attempt itself: the pre-flight, the wiring, and the loop it starts.</summary>
+        private async Task OpenAndRunAsync()
+        {
+            OnDemandUberSdrInput input = await _host._options
+                .OpenInput(Receiver, _journal.ErrorSink, _host._stopping.Token)
+                .ConfigureAwait(false);
 
             Station station;
             lock (_gate)
@@ -585,12 +657,11 @@ internal sealed class MonitorHost : IAsyncDisposable
 
                 _input = input;
                 _fault = null;
-                _attaching = false;
 
                 input.PhaseChanged += (_, sentence) => Server.SetRadioStatus(Chip(sentence));
                 if (input.ReceiverDescription is { Length: > 0 } described)
                 {
-                    Server.SetReceiver(described, Receiver.PublicUrl ?? Receiver.Endpoint.PublicUrl);
+                    Server.SetReceiver(described, Receiver.PublicUrl);
                 }
 
                 Server.SetRadioStatus(Chip(input.Status));
@@ -757,12 +828,61 @@ internal sealed class MonitorHost : IAsyncDisposable
                         if (Server.Viewers > 0)
                         {
                             _ = AttachAsync();
+                            return;
                         }
 
-                        // Nobody watching: nothing to do. The next viewer to arrive raises
-                        // ViewersChanged, which attaches, which is the polite way round.
+                        // Nobody came back inside the window, so there is nothing to rebuild for
+                        // and nothing more to say. The fault goes with it: it described a session
+                        // that no longer exists, and leaving it standing would have the picker
+                        // telling every visitor that a receiver is "not working just now" when
+                        // nothing has been asked of it for a minute and it may well be fine. The
+                        // row goes back to free, and the next viewer to arrive raises
+                        // ViewersChanged and finds out for themselves in a second or two, which
+                        // is the polite way round.
+                        bool cleared;
+                        lock (_gate)
+                        {
+                            cleared = _fault is not null;
+                            _fault = null;
+                        }
+
+                        if (cleared)
+                        {
+                            Server.SetRadioStatus($"{Receiver.Description} - waiting for a viewer");
+                        }
                     },
                     null, RebuildAfter, Timeout.InfiniteTimeSpan);
+            }
+        }
+
+        /// <summary>
+        /// Takes down whatever <see cref="Build"/> managed to put up. Synchronous and
+        /// best-effort: this runs on the way out of a constructor that is about to throw, so the
+        /// failure that is already travelling is the one worth keeping.
+        /// </summary>
+        private void Unbuild()
+        {
+            try
+            {
+                if (_routed)
+                {
+                    _host._router.Remove($"/r/{Slug}/");
+                    _routed = false;
+                }
+
+                if (Server is { } server)
+                {
+                    server.ViewersChanged -= OnViewersChanged;
+                    server.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                }
+
+                _frameLog?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+            catch (Exception e)
+            {
+                _journal.WriteError(
+                    $"could not fully take down a station that would not build - "
+                    + UberSdrDirectory.Ascii(e.Message));
             }
         }
 

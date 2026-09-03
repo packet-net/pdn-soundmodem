@@ -629,8 +629,13 @@ function applyPublicFlavour() {
   if (cfg.about) parts.push(esc(cfg.about));
   if (cfg.receiver || cfg.receiverUrl) {
     const name = esc(cfg.receiver || cfg.receiverUrl);
-    const who = cfg.receiverUrl
-      ? `<a href="${esc(cfg.receiverUrl)}" target="_blank" rel="noopener">${name}</a>` : name;
+    // Only an http or https URL goes in an href. Escaping the four HTML characters does not
+    // touch a scheme, and "javascript:..." carries none of them - on a public monitor this
+    // string reaches the page from a third-party directory by way of the daemon, which refuses
+    // one too. Two checks, because this is the one that writes the attribute.
+    const href = /^https?:\/\//i.test(String(cfg.receiverUrl || "")) ? String(cfg.receiverUrl) : null;
+    const who = href
+      ? `<a href="${esc(href)}" target="_blank" rel="noopener">${name}</a>` : name;
     parts.push(`Heard on ${who}, an UberSDR web receiver; the session is opened only while somebody has this page open.`);
   }
   // One receiver of a site that offers several: a way back to the list. Relative, because the

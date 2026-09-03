@@ -141,6 +141,13 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? "" : s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+// A URL this page is prepared to put in an href, or null. Escaping the four HTML characters is
+// not enough by itself: "javascript:..." contains none of them and would run in the visitor's
+// session on this site's origin, and every string here came from a third party by way of a public
+// directory. The daemon refuses one too, at the point it reads it; this is the second of the two,
+// because the page is what actually writes the attribute.
+const link = u => /^https?:\/\//i.test(String(u || "")) ? String(u) : null;
+
 // The clock a visitor reads is their own, so a time is sent as an instant and rendered here.
 function clock(iso) {
   const t = Date.parse(iso);
@@ -186,8 +193,8 @@ function rowHtml(r) {
   const pick = r.offered
     ? '<a class="pick" href="' + esc(base + "r/" + r.slug + "/") + '">' + esc(r.callsign || r.host) + "</a>"
     : '<a class="pick">' + esc(r.callsign || r.host) + "</a>";
-  const own = r.publicUrl
-    ? ' <a class="own" href="' + esc(r.publicUrl) + '" target="_blank" rel="noopener">its own page</a>'
+  const own = link(r.publicUrl)
+    ? ' <a class="own" href="' + esc(link(r.publicUrl)) + '" target="_blank" rel="noopener">its own page</a>'
     : "";
   return '<div class="row' + (r.viewers > 0 ? " watched" : "") + (r.offered ? "" : " off") + '">'
     + "<div>" + pick + "</div>"

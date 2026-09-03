@@ -89,13 +89,18 @@ internal sealed record UberSdrDirectoryDto
 /// room is left to wonder whether this site is broken.
 /// </param>
 /// <param name="Why">Why it cannot be picked, in a visitor's words. Null when it can.</param>
+/// <param name="SafeUrl">
+/// The receiver's own page as the directory gave it, if that was an absolute http or https URL,
+/// and null if it was anything else. Read it through <see cref="PublicUrl"/>, which falls back to
+/// the endpoint's own URL rather than handing a page a link it cannot vouch for.
+/// </param>
 internal sealed record DirectoryReceiver(
     string Slug,
     UberSdrEndpoint Endpoint,
     string Callsign,
     string Name,
     string Location,
-    string? PublicUrl,
+    string? SafeUrl,
     int? SnrDb,
     string? LoadStatus,
     int AvailableClients,
@@ -106,6 +111,19 @@ internal sealed record DirectoryReceiver(
     /// <summary>The directory's host, which is what allow and deny match on and what the slug
     /// is derived from.</summary>
     internal string Host => Endpoint.Host;
+
+    /// <summary>
+    /// The receiver's own page, as a link a visitor can be given: always an absolute http or
+    /// https URL, because it is put in an <c>href</c> on the picker and on the receiver's page.
+    /// </summary>
+    /// <remarks>
+    /// Whatever the directory said, checked; and the endpoint's own URL where that was not a
+    /// link. Escaping the four HTML characters is not enough on its own - a
+    /// <c>javascript:</c> URL contains none of them and runs in the visitor's session on this
+    /// site's origin, which is a stored cross-site scripting hole with a third party holding
+    /// the pen. Everything here came off somebody else's server.
+    /// </remarks>
+    internal string PublicUrl => SafeUrl ?? Endpoint.PublicUrl;
 
     /// <summary>How the picker and the receiver's own status chip name it before any session has
     /// been opened: the directory's callsign and where it says it is.</summary>
@@ -157,6 +175,13 @@ internal sealed class UberSdrDirectory : IDisposable
         new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5) })
     {
         Timeout = TimeSpan.FromSeconds(20),
+
+        // The whole directory was 660 kB on the day this was written, for fifty receivers. Eight
+        // megabytes is room for a directory ten times that size and is still a bound: this reads
+        // a URL out of a config file into memory on a timer, and an endpoint that answered with
+        // an endless stream - a misconfigured proxy, a moved hostname now serving something else
+        // entirely - would otherwise be an out-of-memory kill rather than one journal line.
+        MaxResponseContentBufferSize = 8 * 1024 * 1024,
     };
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -170,6 +195,10 @@ internal sealed class UberSdrDirectory : IDisposable
     // working because an unrelated instance appeared and collided with it, so a slug in here is
     // that host's for the life of the process and a newcomer takes the fallback instead.
     private readonly ConcurrentDictionary<string, string> _bound = new(StringComparer.Ordinal);
+
+    // Hosts already complained about, so a directory carrying one bad entry produces one line
+    // rather than one every refresh for as long as it is there.
+    private readonly HashSet<string> _complainedAbout = new(StringComparer.OrdinalIgnoreCase);
 
     // Read by every request the picker makes and written by the refresh timer. Replaced whole, so
     // a reader holds one consistent snapshot and never a half-updated list.
@@ -269,6 +298,11 @@ internal sealed class UberSdrDirectory : IDisposable
     /// nothing later takes it away from the host it names.</summary>
     internal void Bind(string slug, string host) => _bound[slug] = host;
 
+    /// <summary>Gives a slug back, for a station that was reserved one and then would not build.
+    /// A reservation held for a station that does not exist would keep the short slug away from
+    /// every later receiver for nothing.</summary>
+    internal void Unbind(string slug) => _bound.TryRemove(slug, out _);
+
     /// <summary>One line for a fetch that failed, and a snapshot that says the list is old.</summary>
     private void Fail(string reason)
     {
@@ -298,9 +332,23 @@ internal sealed class UberSdrDirectory : IDisposable
                      .Where(i => !string.IsNullOrWhiteSpace(i.Host))
                      .OrderBy(i => i.Host, StringComparer.Ordinal))
         {
-            if (Excluded(instance) is null)
+            string? why = Excluded(instance);
+            if (why is null)
             {
                 usable.Add(instance);
+                continue;
+            }
+
+            // Said out loud once per host, ever, and only for the exclusions that mean the
+            // directory itself is carrying something wrong. The ordinary ones - offline, full,
+            // denied - are the mechanism working and are visible on the picker anyway; a line
+            // each, every five minutes, would bury the ones that are not.
+            if (why == "not a usable hostname" && _complainedAbout.Add(instance.Host!))
+            {
+                _journal.WriteError(
+                    $"directory: \"{Ascii(instance.Host!)}\" is not a hostname, so that entry is "
+                    + "being ignored. Nothing here can fix it; the receiver's operator or the "
+                    + "directory can.");
             }
         }
 
@@ -325,7 +373,7 @@ internal sealed class UberSdrDirectory : IDisposable
                 instance.Callsign?.Trim() ?? "",
                 instance.Name?.Trim() ?? "",
                 instance.Location?.Trim() ?? "",
-                instance.PublicUrl,
+                HttpUrlOrNull(instance.PublicUrl),
                 instance.Snr0To30Mhz,
                 instance.LoadStatus,
                 available,
@@ -358,13 +406,27 @@ internal sealed class UberSdrDirectory : IDisposable
             return "not in the allow list";
         }
 
+        // Everything below this point is a fact about the receiver. This is a fact about the
+        // string: a host with a space in it, or a scheme, or a path, is not something this
+        // process can build an endpoint from, and the failure it would otherwise cause happens
+        // much later and somewhere far less obvious - a pre-flight throwing UriFormatException
+        // from inside a station that a visitor is waiting on.
+        if (!DaemonConfig.IsPlausibleHostname(host))
+        {
+            return "not a usable hostname";
+        }
+
         if (instance.IsOnline == false)
         {
             return "offline";
         }
 
-        if (instance.PublicIqModes is { Count: > 0 } modes
-            && !modes.Contains(_options.IqMode, StringComparer.OrdinalIgnoreCase))
+        // A receiver that does not say which IQ modes it offers is not offering ours. The plan's
+        // filter is "public_iq_modes contains the mode the daemon uses", and an absent or empty
+        // list satisfies that in no reading; treating silence as consent would put a receiver on
+        // the picker that every visitor picking it would find unreachable.
+        if (instance.PublicIqModes is not { Count: > 0 } modes
+            || !modes.Contains(_options.IqMode, StringComparer.OrdinalIgnoreCase))
         {
             return $"does not offer {_options.IqMode}";
         }
@@ -421,16 +483,22 @@ internal sealed class UberSdrDirectory : IDisposable
         var taken = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach ((string slug, List<string> hosts) in wanted)
         {
-            // The station that already answers on this slug keeps it; everybody else in the
-            // collision takes the fallback, whether or not one of them is bound.
-            string? bound = _bound.TryGetValue(slug, out string? owner) && hosts.Contains(owner)
-                ? owner
-                : null;
+            _bound.TryGetValue(slug, out string? owner);
+            bool ownerListed = owner is not null && hosts.Contains(owner);
+
+            // A slug that has ever served a station belongs to that host for the life of the
+            // process, and that has to hold when the host is no longer in the directory as well
+            // as when it is. The station is still built, still registered on the router and still
+            // reachable by anybody who bookmarked it; handing its slug to a receiver that has
+            // just appeared would serve one operator's receiver under another operator's name,
+            // which is worse than an ugly URL by some distance.
+            bool heldForAnAbsentee = owner is not null && !ownerListed;
             bool contested = hosts.Count > 1;
 
             foreach (string host in hosts)
             {
-                string chosen = !contested || host == bound ? slug : FullSlugFor(host);
+                bool keepsIt = !heldForAnAbsentee && (!contested || host == owner);
+                string chosen = keepsIt ? slug : FullSlugFor(host);
                 if (taken.TryGetValue(chosen, out string? already))
                 {
                     _journal.WriteError(
@@ -445,14 +513,23 @@ internal sealed class UberSdrDirectory : IDisposable
                 assigned[host] = chosen;
             }
 
-            if (contested)
+            if (heldForAnAbsentee)
             {
                 _journal.Write(
-                    $"directory: {hosts.Count} receivers want /r/{slug}/ ({string.Join(", ", hosts)}), "
-                    + "so "
-                    + (bound is null
+                    $"directory: /r/{slug}/ is still {Ascii(owner!)}'s, which the directory has "
+                    + $"stopped listing but which this process is still serving, so "
+                    + $"{string.Join(", ", hosts.Select(Ascii))} "
+                    + (hosts.Count == 1 ? "is" : "are")
+                    + " served under their full hosts instead");
+            }
+            else if (contested)
+            {
+                _journal.Write(
+                    $"directory: {hosts.Count} receivers want /r/{slug}/ "
+                    + $"({string.Join(", ", hosts.Select(Ascii))}), so "
+                    + (owner is null
                         ? "each is served under its full host instead"
-                        : $"{bound} keeps it and the others are served under their full hosts"));
+                        : $"{Ascii(owner)} keeps it and the others are served under their full hosts"));
             }
         }
 
@@ -489,6 +566,25 @@ internal sealed class UberSdrDirectory : IDisposable
 
         return Sanitise(lowered);
     }
+
+    /// <summary>
+    /// <paramref name="url"/> if it is an absolute http or https URL, and null if it is anything
+    /// else - a relative path, a <c>javascript:</c> or <c>data:</c> URL, or a string that is not
+    /// a URL at all.
+    /// </summary>
+    /// <remarks>
+    /// The scheme is the part that matters and the part HTML escaping does not touch. A
+    /// <c>javascript:</c> URL carries none of the four characters an escaper looks for, and it
+    /// runs on this site's origin in the visitor's session - so a receiver operator, or anybody
+    /// who could get an entry into the directory, could run code on every visitor to this
+    /// monitor. Refused here, at the point the value enters this process, rather than at each of
+    /// the places it is later rendered, because there is no bottom to the list of those.
+    /// </remarks>
+    internal static string? HttpUrlOrNull(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out Uri? parsed)
+        && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps)
+            ? url
+            : null;
 
     /// <summary>The whole host, sanitised: what a slug falls back to when two of them collide.</summary>
     internal static string FullSlugFor(string host) => Sanitise(host.ToLowerInvariant());

