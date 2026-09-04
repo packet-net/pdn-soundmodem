@@ -1821,6 +1821,8 @@ absolute http or https URL; a `callsign` over 16, `operator` over 40, `location`
 `frames` that is not `"always"` or `"watched"`; and an `audioRate` outside 6000 to 48000 or that
 does not divide the channel's DSP rate, which is answered with the list of rates that do.
 
+---
+
 ## `monitor`
 
 Everything so far describes **one station**: one radio or one web receiver, one KISS port, one

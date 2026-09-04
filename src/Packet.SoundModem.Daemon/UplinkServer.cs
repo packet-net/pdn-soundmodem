@@ -270,9 +270,9 @@ internal sealed class UplinkServer : IAsyncDisposable
             return null;
         }
 
-        string scheme = request.Headers["X-Forwarded-Proto"] is "https"
-            ? "https"
-            : request.Url.Scheme == "wss" ? "https" : "http";
+        // HttpListener never yields a ws or wss scheme, so the only two answers are what the
+        // proxy in front said and http.
+        string scheme = request.Headers["X-Forwarded-Proto"] is "https" ? "https" : "http";
         return $"{scheme}://{request.Url.Authority}";
     }
 
