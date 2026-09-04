@@ -513,7 +513,17 @@ run(`onHistory({frames: [
   {at: "${todayAt}", sub: 0, mode: "bpsk300-il2pc", from: "GB7RDG-2", to: "EI0RSI-1", lenBytes: 31, offsetHz: 8.6, corrected: 0, crc: true, hist: true}
 ]})`);
 const historyTag = sandbox.__text().slice(beforeHistory);
-const afterHistory = sandbox.document.getElementById("frames").children;
+// Copied out here rather than read at the end: the panel is driven again below, and the backlog
+// is a question about what onHistory left behind and not about what happened to it afterwards.
+const afterHistory = sandbox.document.getElementById("frames").children.map(
+  c => ({ html: c.innerHTML, className: c.className }));
+
+// A frame whose callsigns and mode are not what the local AX.25 parser would ever have produced.
+// Every string on a relayed frame arrives over a socket from somebody else's station, so the
+// panel has to escape them rather than depend on a parser that frame never went through. Driven
+// last, after every other capture, so it can add a row without moving anybody else's.
+run(`onFrameEvent({sub:0, mode:'<i>bpsk300</i>', from:'<img src=x onerror=boom>', to:'M0LTE"&<3', line:0, burstLines:9, lenBytes:24, snrDb:9.5})`);
+const hostileRow = sandbox.document.getElementById("frames").children[0].innerHTML;
 
 // What a public deployment dresses the page with, as the handshake left it: the title, the
 // about strip with the receiver credit, and the body class the stylesheet keys off.
@@ -558,8 +568,9 @@ console.log(JSON.stringify({
   captureTag,
   surveyStatus,
   historyTag,
-  historyRows: afterHistory.map(c => c.innerHTML),
+  historyRows: afterHistory.map(c => c.html),
   historyRowClasses: afterHistory.map(c => c.className),
+  hostileRow,
   linksHiddenBefore,
   linksHiddenAfter,
   linksOnArrival,
