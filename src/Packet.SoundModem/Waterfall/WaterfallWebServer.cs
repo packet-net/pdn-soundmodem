@@ -519,6 +519,18 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
         Broadcast(WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(
             new { type = "radio", status }, Json));
+
+        if (Relay is { } relay)
+        {
+            try
+            {
+                relay.Radio(status);
+            }
+            catch (Exception)
+            {
+                // As for audio and frames: the relay's message, the relay's problem.
+            }
+        }
     }
 
     private string? _radioStatus;
@@ -597,6 +609,38 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// neither, which is the default: a station publishes what it hears only when asked to.
     /// </summary>
     public Telemetry.StationTelemetry? Metrics { get; set; }
+
+    /// <summary>
+    /// Somewhere else this station's display stream goes, alongside the browsers: the uplink to a
+    /// public monitor site. Null (the default) is a station that publishes nothing, and is what
+    /// every station is until it is given a <c>publish</c> block.
+    /// </summary>
+    /// <remarks>
+    /// <para>Additive in every direction. Nothing a browser is sent depends on this being set,
+    /// nothing is diverted to it, and a relay that throws costs its own message and nothing else.
+    /// What it is offered is what the page is already being shown: the receive audio, the
+    /// station's own transmissions at the rate they are painted, every frame that reaches the
+    /// panel, and the status sentence.</para>
+    /// <para>Set before <see cref="Start"/>, or at any time after it; each offer reads the
+    /// property rather than capturing it.</para>
+    /// </remarks>
+    public IWaterfallRelay? Relay { get; set; }
+
+    /// <summary>
+    /// Whether the audio now being fed to <see cref="SoundModemChannel.ProcessReceive"/> is a
+    /// station's own transmission rather than something it heard, so that the line it produces is
+    /// marked as ours. Default false, which is every ordinary station.
+    /// </summary>
+    /// <remarks>
+    /// <para>The monitor's side of the flag <see cref="_lineIsTransmit"/> carries on a station.
+    /// A relayed station's audio arrives already labelled - the uplink's audio message says which
+    /// kind each block is - but it arrives as ordinary receive audio through an
+    /// <c>IAudioInput</c>, and there is nothing about it here to tell the two apart.</para>
+    /// <para>Set by the input immediately before it returns a block. Reading a block and
+    /// processing it are the same thread, and a block is never half transmitted and half
+    /// received, so this is exact rather than nearly right.</para>
+    /// </remarks>
+    public bool IncomingIsTransmit { get; set; }
 
     /// <summary>
     /// What the signal survey has been doing - captures kept, captures a budget refused, and the
@@ -700,6 +744,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
             // The listener feed is a stream of its own and has nothing to do with the transform.
             BroadcastAudio(samples);
+
+            // And the uplink, which is a third stream of its own: the samples as they arrived,
+            // before the blocking and the s16 conversion BroadcastAudio does for a browser, and
+            // not conditional on anybody here having pressed Listen.
+            OfferAudio(samples, transmitted: false);
         });
 
         // Draw what we transmit, so the display stays continuous across a keyup instead of
@@ -977,6 +1026,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 foreach (ArraySegment<float> piece in due)
                 {
                     source.Process(piece.AsSpan());
+
+                    // The uplink gets our own transmission from here rather than from
+                    // TransmittedAudio, and that is the whole reason the hook is in this method:
+                    // released at the rate real time passes, so a relayed picture trails the
+                    // modulator by exactly as much as the station's own does, for free.
+                    OfferAudio(piece.AsSpan(), transmitted: true);
                 }
             }
             finally
@@ -986,12 +1041,46 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Offers a block of audio to the relay, if there is one and anybody at the far end is
+    /// watching.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="IWaterfallRelay.Wanted"/> is read before anything is done with the samples, so
+    /// a station whose uplink is idle - which is a station nobody has picked, which is nearly
+    /// always - spends one property read per block and nothing else.
+    /// </remarks>
+    private void OfferAudio(ReadOnlySpan<float> samples, bool transmitted)
+    {
+        if (Relay is not { } relay)
+        {
+            return;
+        }
+
+        try
+        {
+            if (relay.Wanted)
+            {
+                relay.Audio(samples, transmitted);
+            }
+        }
+        catch (Exception)
+        {
+            // The uplink is a courtesy and this is the receive loop. A relay that throws loses
+            // this block; the station carries on hearing, decoding and passing traffic, which is
+            // what it is for. Saying so is the relay's own job - it has the journal and the
+            // context, and this class has neither.
+        }
+    }
+
 
 
     private void OnLine(long index, ReadOnlyMemory<byte> line)
     {
         ReadOnlySpan<byte> bins = line.Span;
-        bool transmit = _lineIsTransmit;
+        // Ours because we are transmitting, or ours because the station this audio was relayed
+        // from was. A monitor never sets the first and a station never sets the second.
+        bool transmit = _lineIsTransmit || IncomingIsTransmit;
 
         // Our own transmission is not a signal we heard. Feeding it to the trackers would report
         // a huge SNR and attribute it to whatever frame decoded next.
@@ -1080,7 +1169,10 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // both at once, so it is the place to say so - and to say whether the frame was
             // handed on, which is the operator's own configuration answering back.
             plainIl2p: quality.PlainIl2p,
-            monitorOnly: quality.MonitorOnly);
+            monitorOnly: quality.MonitorOnly,
+            // For a relay, and for nobody else: a monitor folds its own links out of these bytes
+            // rather than being sent a summary of them.
+            raw: frame);
 
         // Everything above lists the frame; this last step makes a claim about the channel, and
         // an RS-only reading is not evidence for one. A withheld frame stood on Reed-Solomon
@@ -1140,7 +1232,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 : "?",
             from, to, frame.Length, snrDb: null, burstLines: null, offsetHz: null,
             corrected: null, crc: null, transmitted: true,
-            txTrimHz: trimHz == 0 ? null : trimHz);
+            txTrimHz: trimHz == 0 ? null : trimHz,
+            raw: frame);
 
         ObserveLink(subChannel, frame, transmitted: true);
     }
@@ -1373,12 +1466,18 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             corrected: null, crc: true, idBeacon: true);
     }
 
+    // `raw` is the frame's own bytes, where the caller has them, and exists for the relay: a
+    // monitor reads them into its own link observer rather than being sent a summary of them.
+    // Nothing is sent to a browser that was not sent before - the panel already has everything it
+    // draws. Null from the two public Report* entry points, whose callers decoded somewhere this
+    // class cannot see and have no bytes to give.
     private void BroadcastFrame(
         int subChannel, string mode, string? from, string? to, int lengthBytes,
         double? snrDb, int? burstLines, double? offsetHz, int? corrected, bool? crc,
         bool idBeacon = false, bool transmitted = false,
         string? note = null, string? headerType = null, string? frameHex = null,
-        bool plainIl2p = false, bool monitorOnly = false, double? txTrimHz = null)
+        bool plainIl2p = false, bool monitorOnly = false, double? txTrimHz = null,
+        byte[]? raw = null)
     {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
         {
@@ -1420,6 +1519,93 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             monitorOnly = monitorOnly ? true : (bool?)null,
         }, Json);
         Broadcast(WebSocketMessageType.Text, message);
+
+        if (Relay is not { } relay)
+        {
+            return;
+        }
+
+        try
+        {
+            // Not gated on Wanted, unlike the audio: a frame is a few hundred bytes and they are
+            // what makes a quiet band look alive to somebody arriving an hour later, so they go
+            // up whether or not anybody is watching this second. What the far end does with one
+            // it did not ask for is the far end's business.
+            relay.Frame(new RelayedFrame
+            {
+                SubChannel = subChannel,
+                Mode = mode,
+                From = from,
+                To = to,
+                LengthBytes = lengthBytes,
+                SnrDb = snrDb,
+                BurstLines = burstLines,
+                OffsetHz = offsetHz,
+                CorrectedBytes = corrected,
+                CrcValid = crc,
+                IdBeacon = idBeacon,
+                Transmitted = transmitted,
+                TransmitTrimHz = txTrimHz,
+                Note = note,
+                HeaderType = headerType,
+                FrameHex = frameHex,
+                PlainIl2p = plainIl2p,
+                MonitorOnly = monitorOnly,
+                At = _options.TimeProvider.GetUtcNow(),
+                Raw = raw,
+            });
+        }
+        catch (Exception)
+        {
+            // One frame lost off the uplink. The panel has it, the log has it, the journal has
+            // it, and the station has not noticed.
+        }
+    }
+
+    /// <summary>
+    /// Lists a frame that arrived over an uplink rather than out of this process's own decoder,
+    /// and reads it into the links panel.
+    /// </summary>
+    /// <remarks>
+    /// <para>The monitor's side of the seam, and the reason there is one at all: a relayed
+    /// station's decodes are its own, made by its modems with its diversity settings on its
+    /// antenna, and a monitor runs no modem for it. <see cref="SoundModemChannel"/>'s frame
+    /// events cannot be raised from outside that class and it has no injection point, so this is
+    /// the entry point instead - everything <c>OnFrame</c> does after the measurement, with the
+    /// fields taken from the argument rather than from a channel event.</para>
+    /// <para>The link is folded here, from <see cref="RelayedFrame.Raw"/>, rather than being sent
+    /// as a message of its own: one <see cref="Ax25LinkObserver"/> implementation over the same
+    /// bytes, so the cards cannot disagree with the station's, and the fold survives the station
+    /// going off the air. A frame with no bytes - an ident ghost, or a decoder that hands none
+    /// over - is listed and makes no link, exactly as it does on the station.</para>
+    /// <para>Nothing here is offered to <see cref="Relay"/> in turn. It would not be a loop, but
+    /// it would be a station relaying somebody else's decodes as its own, and a monitor never
+    /// publishes and a station never accepts an uplink.</para>
+    /// </remarks>
+    /// <param name="frame">The frame, as the uplink carried it.</param>
+    public void PushFrame(RelayedFrame frame)
+    {
+        ArgumentNullException.ThrowIfNull(frame);
+        if (_source is null)
+        {
+            return;   // not started; nothing to tag the frame onto and nobody to tell
+        }
+
+        BroadcastFrame(
+            frame.SubChannel, frame.Mode, frame.From, frame.To, frame.LengthBytes,
+            frame.SnrDb, frame.BurstLines, frame.OffsetHz, frame.CorrectedBytes, frame.CrcValid,
+            idBeacon: frame.IdBeacon, transmitted: frame.Transmitted,
+            note: frame.Note, headerType: frame.HeaderType, frameHex: frame.FrameHex,
+            plainIl2p: frame.PlainIl2p, monitorOnly: frame.MonitorOnly,
+            txTrimHz: frame.TransmitTrimHz);
+
+        // The same rule OnFrame applies, for the same reason: a frame Reed-Solomon alone stood
+        // behind is not evidence that the pair of callsigns in it were ever talking, so it is
+        // listed and makes no card.
+        if (frame.Raw is { Length: > 0 } raw && !frame.MonitorOnly)
+        {
+            ObserveLink(frame.SubChannel, raw, frame.Transmitted);
+        }
     }
 
     /// <summary>How many audio blocks a second at <see cref="AudioBlockMilliseconds"/> each.</summary>
