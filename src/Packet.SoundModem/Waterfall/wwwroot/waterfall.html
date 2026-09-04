@@ -389,7 +389,10 @@
     <span id="radioStatus" class="radio-status" hidden></span>
   </div>
 
-  <div class="ctl">
+  <!-- Named, along with the span and the levels below, so the public flavour can take them
+       away: on somebody else's receiver the dial and the sideband arrive with the band plan,
+       and a visitor moving them can only make the picture wrong. -->
+  <div class="ctl" id="dialCtl">
     <label for="dial">Dial · MHz</label>
     <div class="ctl-row">
       <input id="dial" inputmode="decimal" spellcheck="false" placeholder="-">
@@ -399,7 +402,7 @@
     </div>
   </div>
 
-  <div class="ctl">
+  <div class="ctl" id="spanCtl">
     <label for="span">Span</label>
     <div class="ctl-row"><select id="span"></select></div>
   </div>
@@ -419,7 +422,7 @@
     </div>
   </div>
 
-  <div class="ctl">
+  <div class="ctl" id="levelCtl">
     <label>Level · dBFS</label>
     <div class="ctl-row">
       <input type="range" id="floor" min="-100" max="-45" step="1" title="Floor">
@@ -491,9 +494,11 @@ const base = pagePath.slice(0, pagePath.lastIndexOf("/") + 1) || "/";
 
 /* ---------- persisted UI state ---------- */
 const LS = "pdnsm-waterfall";
-const ui = Object.assign(
-  { dialHz: null, sideband: null, spanHz: 3000, floorDb: -95, topDb: -35, linksOpen: false, linksH: null, linksUi: false, linksMine: false },
-  JSON.parse(localStorage.getItem(LS) || "{}"));
+// Named rather than written inline because the public flavour has to be able to put a viewer
+// back on them: it hides the controls that set these, and a value one receiver left in storage
+// could otherwise never be corrected by somebody looking at another receiver on the same site.
+const UI_DEFAULTS = { dialHz: null, sideband: null, spanHz: 3000, floorDb: -95, topDb: -35, linksOpen: false, linksH: null, linksUi: false, linksMine: false };
+const ui = Object.assign({}, UI_DEFAULTS, JSON.parse(localStorage.getItem(LS) || "{}"));
 const save = () => localStorage.setItem(LS, JSON.stringify(ui));
 
 /* ---------- config from the server (arrives on the socket) ---------- */
@@ -614,12 +619,19 @@ function setRadioStatus(status) {
   el.classList.toggle("quiet", /^(idle|no viewers|connecting)\b/i.test(status));
 }
 
+// Everything the public flavour takes out of the header, by id: controls a visitor cannot
+// usefully act on, because what they set arrives with the receiver's band plan and moving it can
+// only make the picture wrong - the dial and its sideband, the span, and the floor and top of the
+// colour scale, which is the same kind of knob.
+const PUBLIC_HIDES = ["dialCtl", "spanCtl", "levelCtl"];
+
 // A deployment on the open internet: a title of its own, a paragraph of what the visitor is
 // looking at, and whose receiver it is. It is somebody else's receiver; the credit and the link
 // to their own page are the least it can do. The operator's page is untouched by all of this.
 function applyPublicFlavour() {
   if (!cfg.publicMonitor) return;
   document.body.classList.add("public");
+  for (const id of PUBLIC_HIDES) $(id).hidden = true;
   const title = cfg.title || "packet monitor";
   document.title = detached ? `${title} · links` : title;
   const wm = document.querySelector(".wordmark");
@@ -757,6 +769,15 @@ function initControls() {
   $("listen").onclick = () => toggleAudio();
   $("vol").oninput = () => { if (audioGain) audioGain.gain.value = parseFloat($("vol").value); };
 
+  // A public page hides these, so nothing stored can be put right by the person looking at it -
+  // and one site serves fifty receivers off one origin, so what is stored may well be another
+  // receiver's dial. Start from the defaults there and let the config below have its say.
+  if (cfg.publicMonitor) {
+    ui.dialHz = UI_DEFAULTS.dialHz; ui.sideband = UI_DEFAULTS.sideband;
+    ui.spanHz = UI_DEFAULTS.spanHz;
+    ui.floorDb = UI_DEFAULTS.floorDb; ui.topDb = UI_DEFAULTS.topDb;
+  }
+
   if (ui.dialHz == null && cfg.dialHz > 0) ui.dialHz = cfg.dialHz;
   if (ui.sideband == null) ui.sideband = (cfg.sideband || "usb").toLowerCase();
 
@@ -863,7 +884,9 @@ function drawRuler() {
       rctx.fillText(fmtRfKhz(af), x + (af === 0 ? 2 : 0), h * 0.30);
     }
   }
-  if (!dialSet()) {
+  // Addressed to whoever can act on it. A public page has no dial control, so on one this line
+  // would be an instruction to do something the reader cannot do.
+  if (!dialSet() && !(cfg && cfg.publicMonitor)) {
     rctx.fillStyle = "#4c5560"; rctx.textAlign = "left";
     rctx.font = `${9 * d}px ${getComputedStyle(document.body).getPropertyValue("--sans")}`;
     rctx.fillText("Set the dial frequency to see RF", 6 * d, h * 0.30);
