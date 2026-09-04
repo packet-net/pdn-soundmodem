@@ -34,19 +34,29 @@ public interface IWaterfallRelay
     /// A block of audio, exactly as the station's own modems and display see it.
     /// </summary>
     /// <param name="samples">
-    /// The block. Received audio is the channel's own receive tap, at the channel's sample rate;
-    /// transmitted audio is what the display pacer has just released, so it arrives at the rate
-    /// real time passes rather than in one lump per keyup, and it carries
-    /// <see cref="WaterfallWebServer.TransmitDisplayGainDb"/>'s scaling because that is the audio
+    /// The block. Received audio is what the station drew its own picture from, at the channel's
+    /// sample rate; transmitted audio is what the display pacer has just released, so it arrives
+    /// at the rate real time passes rather than in one lump per keyup, and it carries
+    /// <see cref="WaterfallWebServer.TransmitDisplayGainDb"/>'s scaling because that too is what
     /// the picture is drawn from.
     /// </param>
     /// <param name="transmitted">
-    /// False for audio the station heard, true for the station's own transmission. A block is
-    /// never half one and half the other.
+    /// False for audio the station heard, true for the station's own transmission.
     /// </param>
     /// <remarks>
-    /// The span is the caller's buffer and is not valid after the call returns: an implementation
-    /// that keeps the samples must copy them.
+    /// <para><b>One kind at a time.</b> A block is never half one and half the other, and nor is
+    /// the stream: the two do not interleave, because received audio is offered only while the
+    /// station is drawing it, which is exactly when it is not drawing a transmission. That holds
+    /// across the drain after a key-up, where the pacer goes on painting a burst the sound card
+    /// has not finished playing while the input has already started delivering again; those
+    /// received blocks are kept out of the station's own picture and out of this. A client can
+    /// therefore accumulate fixed-length blocks per direction and never has to flush a short one
+    /// at a switch.</para>
+    /// <para>The span is the caller's buffer and is not valid after the call returns: an
+    /// implementation that keeps the samples must copy them.</para>
+    /// <para>No display lock is held across this call, so a slow implementation costs itself and
+    /// the station's own audio thread rather than the display. It still costs the audio thread,
+    /// which is the reason for the "return promptly" rule above: this is called from it.</para>
     /// </remarks>
     void Audio(ReadOnlySpan<float> samples, bool transmitted);
 
