@@ -122,7 +122,10 @@ internal static class UplinkWire
             // site's origin in every visitor's session. Refused here rather than at each of the
             // places it is later rendered, because there is no bottom to the list of those.
             Site = UberSdrDirectory.HttpUrlOrNull(site),
-            Daemon = Capped(root, "daemon", 40),
+            // "version" is the name the station's client actually writes; "daemon" is the name
+            // this document's prose used first. Both are read, so that neither end had to guess
+            // which the other chose, and an older or newer station is not refused over a label.
+            Daemon = Capped(root, "version", 40) ?? Capped(root, "daemon", 40),
             AudioRate = audioRate,
             BlockSamples = blockSamples,
             DialHz = Double(root, "dialHz") is { } dial && dial >= 0 ? dial : 0,
@@ -140,7 +143,10 @@ internal static class UplinkWire
         bands = [];
         why = null;
 
-        if (!root.TryGetProperty("bands", out JsonElement list))
+        // Same two names, same reason: the wire calls the list "modems", as the browser's own
+        // config message does, and the plan's prose calls them bands.
+        if (!root.TryGetProperty("modems", out JsonElement list)
+            && !root.TryGetProperty("bands", out list))
         {
             return true;   // a station with nothing to draw is a station with an empty waterfall
         }

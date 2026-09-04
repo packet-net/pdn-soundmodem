@@ -117,6 +117,20 @@ internal sealed class MonitorHost : IAsyncDisposable
     /// <returns>0 when the site is up, or the exit code to leave with.</returns>
     internal async Task<int> StartAsync()
     {
+        if (_uplinks is { Entries.Count: > 0 } configured)
+        {
+            // Before the directory's first fetch, not after it: slugs are assigned as a list is
+            // read, so a reservation made afterwards would arrive to find the short slug already
+            // given to a receiver. Reserved by the mechanism that already exists for a receiver's
+            // own slug - a slug held for a host the directory does not list pushes any newcomer
+            // onto its full sanitised host. A station wins, because its slug is a callsign
+            // somebody was issued and a receiver's is derived from a hostname.
+            foreach (UplinkEntry entry in configured.Entries)
+            {
+                _directory.Bind(entry.Slug, UberSdrDirectory.UplinkHostName);
+            }
+        }
+
         await _directory.StartAsync(_stopping.Token).ConfigureAwait(false);
 
         try
@@ -139,15 +153,6 @@ internal sealed class MonitorHost : IAsyncDisposable
 
         if (_uplinks is { Entries.Count: > 0 } uplinks)
         {
-            // Reserved before anything can be listed under them, by the mechanism that already
-            // exists for a receiver's slug: a slug held for a host the directory does not list
-            // pushes any newcomer onto its full sanitised host. A station wins because its slug
-            // is a callsign somebody was issued and a receiver's is derived from a hostname.
-            foreach (UplinkEntry entry in uplinks.Entries)
-            {
-                _directory.Bind(entry.Slug, UberSdrDirectory.UplinkHostName);
-            }
-
             _journal.Write(
                 $"monitor: accepting uplinks at /uplink from {uplinks.Entries.Count} station"
                 + (uplinks.Entries.Count == 1 ? "" : "s") + " ("

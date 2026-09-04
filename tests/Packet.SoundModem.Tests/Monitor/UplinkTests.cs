@@ -356,6 +356,63 @@ public class UplinkTests
     }
 
     [Fact]
+    public async Task A_Hello_With_Only_Its_Required_Fields_Is_Enough()
+    {
+        await using var h = await Harness.StartAsync();
+
+        // The station's client omits a null rather than writing one, so every optional field can
+        // be absent from the wire. A parser that read them positionally, or that assumed a null
+        // would be there to find, would refuse a perfectly good station.
+        ClientWebSocket socket = await StubStation.ConnectAsync(h.Port, h.Token);
+        using (socket)
+        {
+            await socket.SendAsync(
+                Encoding.UTF8.GetBytes(
+                    $$"""
+                    {"type":"hello","protocol":1,"callsign":"{{Callsign}}",
+                     "audioRate":12000,"blockSamples":480}
+                    """),
+                WebSocketMessageType.Text, true, CancellationToken.None);
+
+            await h.UntilAsync(async () =>
+                (await h.StationsAsync()).Any(r =>
+                    r.GetProperty("offered").GetBoolean()));
+        }
+
+        JsonElement row = await h.RowAsync(Slug);
+        row.GetProperty("callsign").GetString().Should().Be(Callsign);
+        foreach (string absent in (string[])["operator", "location", "radio", "publicUrl"])
+        {
+            row.GetProperty(absent).ValueKind.Should().Be(
+                JsonValueKind.Null, "{0} was never sent", absent);
+        }
+
+        row.GetProperty("modes").GetArrayLength().Should().Be(
+            0, "a station with nothing to draw is a station with an empty waterfall");
+    }
+
+    [Fact]
+    public async Task The_Viewer_Count_Is_Repeated_On_A_Heartbeat()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+        await StubStation.UntilAsync(() => station.Demands.Count >= 1, "the demand on connecting");
+
+        // The station's client reconnects after 45 s of silence, so something has to come down
+        // this socket well inside that. The count repeated every twenty seconds is that
+        // something, which is why the heartbeat is the demand rather than a message of its own.
+        h.Time.Advance(UplinkServer.DemandHeartbeat + TimeSpan.FromSeconds(1));
+        await StubStation.UntilAsync(
+            () => station.Demands.Count >= 2, "the viewer count repeated on the heartbeat");
+
+        h.Time.Advance(UplinkServer.DemandHeartbeat);
+        await StubStation.UntilAsync(() => station.Demands.Count >= 3, "and again");
+        station.Demands.Should().AllSatisfy(v => v.Should().Be(0));
+    }
+
+    [Fact]
     public async Task Two_Viewers_On_One_Station_Ask_For_One_Stream()
     {
         await using var h = await Harness.StartAsync();

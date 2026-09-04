@@ -24,7 +24,14 @@ namespace Packet.SoundModem.Tests.Monitor;
 /// </remarks>
 internal sealed class StubStation : IAsyncDisposable
 {
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    /// <summary>
+    /// The station's own serialiser, which omits a null rather than writing one - so every
+    /// optional field really is absent from the wire in these tests, as it is in production.
+    /// </summary>
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
 
     private readonly ClientWebSocket _socket;
     private readonly List<int> _demands = [];
@@ -108,11 +115,13 @@ internal sealed class StubStation : IAsyncDisposable
     {
         ClientWebSocket socket = await ConnectAsync(port, token);
         var station = new StubStation(socket, audioRate, blockSamples);
+        // The field names the station's own client writes, and the same omit-nulls serialiser it
+        // uses: a monitor that only ever saw a test's tidy JSON would not have been tested at all.
         await station.SendAsync(new
         {
             type = "hello",
             protocol = 1,
-            daemon = "0.55.2",
+            version = "0.55.2",
             callsign,
             @operator = op,
             location,
@@ -123,7 +132,7 @@ internal sealed class StubStation : IAsyncDisposable
             dialHz,
             sideband = "usb",
             frames = "always",
-            bands = bands ?? [new
+            modems = bands ?? [new
             {
                 sub = 0, mode = "afsk300-il2pc", lowHz = 700.0, highHz = 1000.0, centreHz = 850.0,
             }],
@@ -193,10 +202,10 @@ internal sealed class StubStation : IAsyncDisposable
             offsetHz = -3.2,
             corrected = 0,
             crc = true,
-            id = false,
-            tx = transmitted,
-            plain = false,
-            monitorOnly = false,
+            id = (bool?)null,
+            tx = transmitted ? true : (bool?)null,
+            plain = (bool?)null,
+            monitorOnly = (bool?)null,
             at = (at ?? DateTimeOffset.UtcNow).ToString("O"),
             raw = raw is null ? null : Convert.ToBase64String(raw),
         });

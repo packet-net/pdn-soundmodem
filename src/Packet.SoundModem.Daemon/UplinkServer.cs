@@ -185,9 +185,34 @@ internal sealed class UplinkServer : IAsyncDisposable
             return true;   // the upgrade died under us; there is nobody left to tell
         }
 
-        var session = new UplinkSession(this, entry, socket);
+        var session = new UplinkSession(this, entry, socket, PublicUrlFor(context.Request));
         await session.RunAsync().ConfigureAwait(false);
         return true;
+    }
+
+    /// <summary>
+    /// This site's own public origin, if the upgrade came in under a name worth repeating back.
+    /// </summary>
+    /// <remarks>
+    /// So that a station can journal "publish: live at https://monitor.example/r/gb7rdg-2/" rather
+    /// than just its slug. Null where the <c>Host</c> header is a loopback or a bare address,
+    /// which is what a tunnel that rewrites the header leaves - CT 146's ingress does exactly
+    /// that, deliberately, because this process's listener matches on Host. A guess would be
+    /// worse than nothing: the station falls back to naming its slug, and it is the one that
+    /// knows the public hostname, because it is in its own config.
+    /// </remarks>
+    private static string? PublicUrlFor(HttpListenerRequest request)
+    {
+        if (request.Url?.Host is not { Length: > 0 } host
+            || host is "localhost" || IPAddress.TryParse(host, out _))
+        {
+            return null;
+        }
+
+        string scheme = request.Headers["X-Forwarded-Proto"] is "https"
+            ? "https"
+            : request.Url.Scheme == "wss" ? "https" : "http";
+        return $"{scheme}://{request.Url.Authority}";
     }
 
     /// <summary>The entry this token belongs to, or null.</summary>
@@ -362,6 +387,8 @@ internal sealed class UplinkServer : IAsyncDisposable
         private readonly SemaphoreSlim _sending = new(1, 1);
         private readonly CancellationTokenSource _stopping;
 
+        private readonly string? _origin;
+
         private RelayStation? _station;
         private UplinkHello? _hello;
         private int _demanded = -1;
@@ -369,12 +396,16 @@ internal sealed class UplinkServer : IAsyncDisposable
         private long _bytes;
         private long _windowStart;
         private long _byteAllowance;
+        private int _closing;
+        private string? _closingBecause;
 
-        internal UplinkSession(UplinkServer server, UplinkEntry entry, WebSocket socket)
+        internal UplinkSession(
+            UplinkServer server, UplinkEntry entry, WebSocket socket, string? origin)
         {
             _server = server;
             _entry = entry;
             _socket = socket;
+            _origin = origin;
             _stopping = CancellationTokenSource.CreateLinkedTokenSource(server._options.Stopping);
             _windowStart = server._options.TimeProvider.GetTimestamp();
         }
@@ -398,6 +429,9 @@ internal sealed class UplinkServer : IAsyncDisposable
             }
             finally
             {
+                // A supersede or a shutdown said why before this loop noticed, and its sentence is
+                // the true one: what the loop saw was the close frame that sentence produced.
+                closing = _closingBecause ?? closing;
                 _heartbeat?.Dispose();
                 if (_hello is { } hello && _station is { } station)
                 {
@@ -409,6 +443,7 @@ internal sealed class UplinkServer : IAsyncDisposable
                 }
 
                 await CloseAsync(closing).ConfigureAwait(false);
+                _socket.Dispose();
                 _stopping.Dispose();
                 _sending.Dispose();
             }
@@ -424,8 +459,7 @@ internal sealed class UplinkServer : IAsyncDisposable
 
                 if (refusal is not null)
                 {
-                    _server.Refuse(_entry, refusal);
-                    return refusal;
+                    return End(new Stop(refusal, Refuse: true));
                 }
 
                 if (payload is null)
@@ -435,22 +469,47 @@ internal sealed class UplinkServer : IAsyncDisposable
 
                 if (!Allowed(payload.Length))
                 {
-                    const string flooding =
-                        "sent more than twice the rate its own hello declared";
-                    _server.Refuse(_entry, flooding);
-                    return flooding;
+                    return End(new Stop(
+                        "sent more than twice the rate its own hello declared", Refuse: true));
                 }
 
-                string? stop = kind == WebSocketMessageType.Binary
+                Stop? stop = kind == WebSocketMessageType.Binary
                     ? OnBinary(payload)
                     : await OnTextAsync(payload).ConfigureAwait(false);
-                if (stop is not null)
+                if (stop is { } ending)
                 {
-                    return stop;
+                    return End(ending);
                 }
             }
 
             return "the monitor is shutting down";
+        }
+
+        /// <summary>
+        /// Says why this connection is over, and applies the backoff where it is deserved.
+        /// </summary>
+        /// <remarks>
+        /// Two kinds of ending, and they are not the same thing. Breaking a size or a rate cap is
+        /// a bug in what the station is sending, so its token is refused for a while and its own
+        /// reconnect ladder treats that as something a person has to fix. Everything else - a
+        /// mismatched callsign, a protocol version, a goodbye - is one closed connection and one
+        /// journal line, because a station that reconnects having fixed it should be let straight
+        /// back in.
+        /// </remarks>
+        private string End(Stop stop)
+        {
+            if (stop.Refuse)
+            {
+                _server.Refuse(_entry, stop.Reason);
+            }
+            else
+            {
+                _server._journal.Write(
+                    $"uplink: {UberSdrDirectory.Ascii(_entry.Callsign)} "
+                    + UberSdrDirectory.Ascii(stop.Reason));
+            }
+
+            return stop.Reason;
         }
 
         /// <summary>
@@ -519,11 +578,11 @@ internal sealed class UplinkServer : IAsyncDisposable
         }
 
         /// <summary>A binary message, which is audio and can be nothing else.</summary>
-        private string? OnBinary(byte[] payload)
+        private Stop? OnBinary(byte[] payload)
         {
             if (_hello is not { } hello || _station is not { } station)
             {
-                return "sent audio before its hello";
+                return new Stop("sent audio before its hello", Refuse: true);
             }
 
             // Exactly the length its hello declared, checked before a sample is read. Nothing in
@@ -531,14 +590,16 @@ internal sealed class UplinkServer : IAsyncDisposable
             int expected = 4 + (2 * hello.BlockSamples);
             if (payload.Length != expected)
             {
-                return $"sent an audio message of {payload.Length} bytes where its hello declared "
-                    + $"{expected}";
+                return new Stop(
+                    $"sent an audio message of {payload.Length} bytes where its hello declared "
+                    + $"{expected}", Refuse: true);
             }
 
             if (payload[0] != 0x02)
             {
-                return $"sent a binary message of type {payload[0]}, and 0x02 (audio) is the only "
-                    + "one there is";
+                return new Stop(
+                    $"sent a binary message of type {payload[0]}, and 0x02 (audio) is the only "
+                    + "one there is", Refuse: true);
             }
 
             bool transmitted = payload[1] != 0;
@@ -553,7 +614,7 @@ internal sealed class UplinkServer : IAsyncDisposable
         }
 
         /// <summary>A text message: the hello, a frame, a status sentence, or a goodbye.</summary>
-        private async Task<string?> OnTextAsync(byte[] payload)
+        private async Task<Stop?> OnTextAsync(byte[] payload)
         {
             JsonElement root;
             try
@@ -563,14 +624,14 @@ internal sealed class UplinkServer : IAsyncDisposable
             }
             catch (JsonException)
             {
-                return "sent a text message that is not JSON";
+                return new Stop("sent a text message that is not JSON", Refuse: true);
             }
 
             if (root.ValueKind != JsonValueKind.Object
                 || !root.TryGetProperty("type", out JsonElement type)
                 || type.ValueKind != JsonValueKind.String)
             {
-                return "sent a message with no \"type\"";
+                return new Stop("sent a message with no \"type\"", Refuse: true);
             }
 
             switch (type.GetString())
@@ -601,9 +662,9 @@ internal sealed class UplinkServer : IAsyncDisposable
 
                 case "bye":
                     string? why = UplinkWire.Capped(root, "reason", 200);
-                    return why is { Length: > 0 }
-                        ? UberSdrDirectory.Ascii(why)
-                        : "the station said goodbye";
+                    return new Stop(
+                        why is { Length: > 0 } ? UberSdrDirectory.Ascii(why) : "said goodbye",
+                        Refuse: false);
 
                 default:
                     // Counted by being ignored. A message type this version does not know is what
@@ -613,19 +674,22 @@ internal sealed class UplinkServer : IAsyncDisposable
             }
         }
 
-        private async Task<string?> OnHelloAsync(JsonElement root)
+        private async Task<Stop?> OnHelloAsync(JsonElement root)
         {
             if (_hello is not null)
             {
-                return "sent a second hello on one connection";
+                return new Stop("sent a second hello on one connection", Refuse: false);
             }
 
             if (!UplinkWire.TryReadHello(root, _entry, out UplinkHello? hello, out string? why))
             {
+                // Closed with the sentence and no backoff: a mismatched callsign or a protocol
+                // version is something a person fixes and reconnects, and refusing the token for
+                // a quarter of an hour would punish them for having noticed.
                 await SendAsync(
                     JsonSerializer.SerializeToUtf8Bytes(
                         new { type = "refused", reason = why }, Json)).ConfigureAwait(false);
-                return why!;
+                return new Stop(why!, Refuse: false);
             }
 
             _hello = hello;
@@ -650,7 +714,7 @@ internal sealed class UplinkServer : IAsyncDisposable
                     $"uplink: could not build a station for "
                     + $"{UberSdrDirectory.Ascii(_entry.Callsign)} - "
                     + UberSdrDirectory.Ascii(e.ToString()));
-                return "this site could not build a station for it";
+                return new Stop("this site could not build a station for it", Refuse: false);
             }
 
             _station = station;
@@ -680,12 +744,12 @@ internal sealed class UplinkServer : IAsyncDisposable
                         type = "welcome",
                         protocol = Protocol,
                         slug = station.Slug,
-                        // A path rather than a URL, and deliberately: this site sits behind a
-                        // tunnel that rewrites the Host header, so the only absolute URL this
-                        // process could build here would be the loopback one it is bound to. The
-                        // station has the public hostname already - it is in its own publish.url -
-                        // and composing the two is the one place both halves are known.
                         path = $"/r/{station.Slug}/",
+                        // Only where the upgrade arrived under a name worth repeating back. A
+                        // tunnel that rewrites the Host header leaves this null, and the station
+                        // names its slug instead: a guessed URL in somebody's journal is worse
+                        // than none, and the station is the end that knows the public hostname.
+                        url = _origin is null ? null : $"{_origin}/r/{station.Slug}/",
                     }, Json)).ConfigureAwait(false);
 
             // Straight away, so a station that connects while somebody is already watching starts
@@ -709,17 +773,36 @@ internal sealed class UplinkServer : IAsyncDisposable
         /// <inheritdoc />
         public void Close(string reason) => _ = CloseAsync(reason);
 
+        /// <summary>
+        /// Sends the close frame, once, with the first reason anybody gave.
+        /// </summary>
+        /// <remarks>
+        /// <para><c>CloseOutputAsync</c> rather than <c>CloseAsync</c>, and no cancellation
+        /// anywhere near it. Cancelling the token a <c>ReceiveAsync</c> is waiting on makes .NET
+        /// abort the WebSocket, which is a TCP reset: the station's operator would read "the
+        /// remote party closed the connection without completing the close handshake" instead of
+        /// the sentence saying what happened, which is the one thing a close reason is for.</para>
+        /// <para>The socket is disposed by <see cref="RunAsync"/> and by nothing else, so a close
+        /// asked for from another connection's thread cannot pull it out from under the loop that
+        /// owns it. If the station never answers the close frame, the deadline below aborts the
+        /// read rather than leaving it there for ever.</para>
+        /// </remarks>
         internal async Task CloseAsync(string reason)
         {
+            if (Interlocked.Exchange(ref _closing, 1) == 1)
+            {
+                return;
+            }
+
+            _closingBecause = reason;
             try
             {
-                await _stopping.CancelAsync().ConfigureAwait(false);
                 if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
                 {
                     // Truncated to what a close frame can carry (123 bytes), and ASCII, because
                     // it is read on somebody else's console.
                     string ascii = UberSdrDirectory.Ascii(reason);
-                    await _socket.CloseAsync(
+                    await _socket.CloseOutputAsync(
                         WebSocketCloseStatus.NormalClosure,
                         ascii.Length > 120 ? ascii[..120] : ascii,
                         CancellationToken.None).ConfigureAwait(false);
@@ -730,15 +813,31 @@ internal sealed class UplinkServer : IAsyncDisposable
             {
                 // Closing a socket that has already gone is not an event.
             }
-            finally
+
+            try
             {
-                _socket.Dispose();
+                _stopping.CancelAfter(TimeSpan.FromSeconds(5));
+            }
+            catch (ObjectDisposedException)
+            {
+                // The loop this would have woken has already come down of its own accord.
             }
         }
 
+        /// <summary>Why a connection is ending, and whether the station's token pays for it.</summary>
+        private readonly record struct Stop(string Reason, bool Refuse);
+
         private async Task SendAsync(byte[] message)
         {
-            await _sending.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                await _sending.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                return;   // a heartbeat that fired as this connection was going down
+            }
+
             try
             {
                 if (_socket.State == WebSocketState.Open)
@@ -755,7 +854,13 @@ internal sealed class UplinkServer : IAsyncDisposable
             }
             finally
             {
-                _sending.Release();
+                try
+                {
+                    _sending.Release();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
             }
         }
     }
