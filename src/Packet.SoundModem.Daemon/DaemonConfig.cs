@@ -482,6 +482,24 @@ public sealed class UberSdrConfig
 /// </remarks>
 public sealed class MonitorConfig
 {
+    /// <summary>
+    /// This site's own address as the world reaches it, e.g.
+    /// <c>"https://monitor.ukpacketradio.network"</c>. Empty (the default) works it out from each
+    /// request's <c>Host</c> header instead.
+    /// </summary>
+    /// <remarks>
+    /// <para>What it is for is the <c>welcome</c> a station gets on its uplink: the address of
+    /// its own page here, so its journal reads "publish: live at
+    /// https://monitor.ukpacketradio.network/r/gb7rdg-2/" rather than naming its slug. The
+    /// header-derived answer is null behind a tunnel that rewrites <c>Host</c>, which is what
+    /// this site itself runs behind, and the site owner is the one who knows the name the world
+    /// uses.</para>
+    /// <para>A scheme, a host and an optional port, and nothing after them, because the site is
+    /// served from the root of its port. A trailing slash is accepted and normalised away while
+    /// the file is read, so everything downstream sees one shape.</para>
+    /// </remarks>
+    public string PublicUrl { get; set; } = "";
+
     /// <summary>Where the list of receivers comes from: the UberSDR project's public
     /// directory, or anything that serves the same JSON. An absolute http or https URL.</summary>
     public string Directory { get; set; } = "https://instances.ubersdr.org/api/instances";
@@ -1286,6 +1304,51 @@ public sealed class DaemonConfig
                 + "public one is https://instances.ubersdr.org/api/instances.");
         }
 
+        if (monitor.PublicUrl is { Length: > 0 } publicUrl)
+        {
+            // Before anything is quoted back, and it is the one refusal here that does not
+            // quote: a URL with a username and password in it would put the password in the
+            // journal, which is the last place a message about a mistake should leave it.
+            if (Uri.TryCreate(publicUrl, UriKind.Absolute, out Uri? site)
+                && site.UserInfo.Length > 0)
+            {
+                throw new InvalidDataException(
+                    "\"monitor\".\"publicUrl\" carries credentials, and this message does not "
+                    + "repeat it back because that would write them to the journal. It is the "
+                    + "address visitors reach this site at, which is a scheme, a host and an "
+                    + "optional port and nothing else: nothing signs in to a public monitor "
+                    + "page. Write it as \"https://monitor.ukpacketradio.network\".");
+            }
+
+            if (site is null
+                || (site.Scheme != Uri.UriSchemeHttp && site.Scheme != Uri.UriSchemeHttps)
+                || site.AbsolutePath != "/"
+                || site.Query.Length > 0
+                || site.Fragment.Length > 0)
+            {
+                throw new InvalidDataException(
+                    $"\"monitor\".\"publicUrl\" is {Quoted(publicUrl)}. It is this site's own "
+                    + "address as the world reaches it, which is a scheme, a host and an optional "
+                    + "port and nothing after them, e.g. "
+                    + "\"https://monitor.ukpacketradio.network\" - with or without a trailing "
+                    + "slash, both being the same address. A path, a query or a fragment is "
+                    + "refused because the site is served from the root of its port and every "
+                    + "link on its pages is written from there. Leave it out to work the address "
+                    + "out from each request instead, which is right for a site nothing rewrites "
+                    + "the Host header in front of.");
+            }
+
+            // Normalised as the file is read, so the one place that uses it can append
+            // "/r/<slug>/" without wondering whether the operator wrote the slash. IdnHost rather
+            // than Authority because this string goes into the journal, and a punycode host is
+            // what the wire carries anyway. An IPv6 literal is taken from Host instead, which
+            // keeps the square brackets: without them the colon before a port is the address's
+            // own, and the URL means something else or nothing at all.
+            string host = site.HostNameType == UriHostNameType.IPv6 ? site.Host : site.IdnHost;
+            monitor.PublicUrl = $"{site.Scheme}://{host}"
+                + (site.IsDefaultPort ? "" : $":{site.Port}");
+        }
+
         foreach ((string list, List<string> hosts) in (ReadOnlySpan<(string, List<string>)>)
             [("allow", monitor.Allow), ("deny", monitor.Deny)])
         {
@@ -1543,8 +1606,8 @@ public sealed class DaemonConfig
                 throw new InvalidDataException(
                     $"\"monitor\".\"uplinks\" gives {named} a \"tokenSha256\" that is not 64 hex "
                     + "characters. This site stores the HASH of the token it issued, never the "
-                    + "token: run \"pdn-soundmodem --uplink-token\", paste the hash here and give "
-                    + "the token to the station's operator.");
+                    + $"token: run \"pdn-soundmodem --uplink-token {uplink.Callsign}\", paste the "
+                    + "hash here and give the token to the station's operator.");
             }
 
             if (slugs.TryGetValue(uplink.Slug, out string? already))

@@ -43,6 +43,8 @@ public class MonitorConfigTests : IDisposable
         config.Monitor!.Modems.Should().ContainSingle();
         config.Monitor.RefreshMinutes.Should().Be(5);
         config.Monitor.LingerSeconds.Should().Be(60);
+        config.Monitor.PublicUrl.Should().BeEmpty(
+            "with no address written down the site works one out from each request");
         config.Warnings.Should().BeEmpty();
 
         // Forced, not defaulted: a picker is a page for strangers by definition, so an operator's
@@ -161,6 +163,74 @@ public class MonitorConfigTests : IDisposable
             error.Should().Contain("\"monitor\".\"directory\"")
                 .And.Contain("https://instances.ubersdr.org/api/instances",
                     "the message says what a good one looks like");
+        }
+    }
+
+    [Fact]
+    public void A_Public_Url_Means_The_Same_With_Or_Without_Its_Trailing_Slash()
+    {
+        // The site is served from the root of its port, so those are one address written twice.
+        // Normalised as the file is read rather than where it is used, so there is one shape
+        // downstream and nowhere that has to wonder whether the operator wrote the slash.
+        foreach (string written in (string[])
+            ["https://monitor.ukpacketradio.network", "https://monitor.ukpacketradio.network/"])
+        {
+            DaemonConfig? config = Load(WithPublicUrl(written), out string error);
+
+            error.Should().BeEmpty();
+            config!.Monitor!.PublicUrl.Should().Be("https://monitor.ukpacketradio.network");
+        }
+
+        // A port that is not the scheme's own is part of the address and stays; the scheme's own
+        // is not part of what anybody's address bar shows, so it goes.
+        Load(WithPublicUrl("http://10.45.0.128:8099/"), out _)!.Monitor!.PublicUrl
+            .Should().Be("http://10.45.0.128:8099");
+        Load(WithPublicUrl("https://monitor.ukpacketradio.network:443"), out _)!.Monitor!.PublicUrl
+            .Should().Be("https://monitor.ukpacketradio.network");
+
+        // An IPv6 literal keeps its square brackets. Without them the colon before the port is
+        // one of the address's own, and what a station would be told is an address that means
+        // something else or nothing at all.
+        Load(WithPublicUrl("https://[2001:db8::1]:8443/"), out _)!.Monitor!.PublicUrl
+            .Should().Be("https://[2001:db8::1]:8443");
+        Load(WithPublicUrl("http://[2001:db8::1]"), out _)!.Monitor!.PublicUrl
+            .Should().Be("http://[2001:db8::1]");
+    }
+
+    [Fact]
+    public void A_Public_Url_With_Credentials_Is_Refused_Without_Repeating_Them()
+    {
+        // The one refusal in this file that does not quote the value back. Everything else here
+        // reads better for naming what was written, but a password named in a refusal is a
+        // password in the journal, which is where it would then stay.
+        DaemonConfig? config = Load(
+            WithPublicUrl("https://tom:hunter2@monitor.ukpacketradio.network"), out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"monitor\".\"publicUrl\"").And.Contain("carries credentials");
+        error.Should().NotContain("hunter2", "a refusal must not write the password to the journal");
+        error.Should().NotContain("tom:", "nor the rest of the credential");
+        ShouldGuideTheOperator(error);
+    }
+
+    [Fact]
+    public void A_Public_Url_That_Is_Not_This_Sites_Own_Address_Is_A_Configuration_Error()
+    {
+        // Anything after the host is refused rather than carried: every link on this site is
+        // written from the root of its port, so an address with a path in it would be one the
+        // station was told and nobody else's page agreed with.
+        foreach (string bad in (string[])
+                 ["monitor.ukpacketradio.network", "ftp://monitor.ukpacketradio.network",
+                  "https://monitor.ukpacketradio.network/r/", "https://monitor.example/?from=cf",
+                  "https://monitor.example/#top"])
+        {
+            DaemonConfig? config = Load(WithPublicUrl(bad), out string error);
+
+            config.Should().BeNull("\"{0}\" is not this site's own address", bad);
+            error.Should().Contain("\"monitor\".\"publicUrl\"")
+                .And.Contain("https://monitor.ukpacketradio.network",
+                    "the message says what a good one looks like");
+            ShouldGuideTheOperator(error);
         }
     }
 
@@ -371,6 +441,10 @@ public class MonitorConfigTests : IDisposable
         error.Should().Contain("cannot be a path segment", "the missing slug is caught first");
         config.Should().BeNull();
     }
+
+    /// <summary>The working monitor config with a public address written into it.</summary>
+    private static string WithPublicUrl(string url) =>
+        Working.Replace("\"monitor\": {", $"\"monitor\": {{\n    \"publicUrl\": \"{url}\",");
 
     /// <summary>The working monitor config with an uplink table dropped into it.</summary>
     private static string WithUplinks(string uplinks) =>

@@ -24,6 +24,7 @@ using Packet.SoundModem.Ms110d;
 // pdn-soundmodem: headless soundcard packet modem daemon.
 //
 //   pdn-soundmodem [--config soundmodem.json]
+//   pdn-soundmodem --uplink-token CALLSIGN
 //   pdn-soundmodem [--device default] [--capture-rate 48000] [--kiss 8105]
 //                  [--bind 127.0.0.1|*]
 //                  [--modem N:MODE[:FREQ]]... [--ptt serial:/dev/ttyUSB0[:rts|:dtr]]
@@ -125,6 +126,11 @@ using Packet.SoundModem.Ms110d;
 // used to tune the receiver rather than printed for the operator to dial in. The "ubersdr"
 // config section carries the stream's parameters (mode, password, SSB filter edges, gain).
 
+// --uplink-token CALLSIGN mints one uplink token for that station and prints it with the hash
+// that goes in this site's "monitor"."uplinks" entry, then exits. Run it on the monitor: the
+// hash stays here, the token is given to that station's operator once, and nothing is written
+// to any file. See CONFIG.md § monitor.uplinks.
+
 // 9600-family and freedv-* modems need 48 kHz DSP (the FreeDV engine is native 8 kHz, and
 // 48000 = 6·8000 while 12000 has no integer ratio); everything else runs at 12 kHz.
 
@@ -194,7 +200,9 @@ for (int i = 0; i < args.Length; i++)
         case "--flex-ant": flexAnt = Next(); break;
         case "--flex-mode": flexMode = Next(); break;
         case "--flex-daxch": flexDaxCh = Next(); break;
-        case "--uplink-token": return UplinkToken.Print();
+        // Takes the callsign the token is for, and says so rather than throwing when it is
+        // missing: this is often the first thing a new site owner runs.
+        case "--uplink-token": return UplinkToken.Print(i + 1 < args.Length ? args[++i] : null);
         case "--help":
             Console.WriteLine("see source header for usage");
             return 0;

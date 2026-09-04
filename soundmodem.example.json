@@ -160,6 +160,13 @@
   // § monitor. Delete "device", "kissPort", "modems" and "ptt" above and uncomment this:
   //
   // "monitor": {
+  //   // This site's own address as the world reaches it, scheme and host (and port if it is
+  //   // not the scheme's), nothing after them. Leave it out and it is worked out from each
+  //   // request, which is right until something in front rewrites the Host header - a tunnel
+  //   // leaves "127.0.0.1:8099" here, and then the only thing that knows the public name is
+  //   // this line. It is what a relayed station is told its own page is at, so its journal
+  //   // reads "publish: live at https://monitor.ukpacketradio.network/r/gb7rdg-2/".
+  //   "publicUrl": "https://monitor.ukpacketradio.network",
   //   // Where the list of receivers comes from. Fetched again every "refreshMinutes".
   //   "directory": "https://instances.ubersdr.org/api/instances",
   //   "refreshMinutes": 5,
@@ -183,10 +190,11 @@
   //   ],
   //   // The other end of "publish": private stations this site accepts an uplink from, listed
   //   // in the same picker as the receivers and tagged "station". Empty (the default) accepts
-  //   // none and /uplink is a 404. Run "pdn-soundmodem --uplink-token" to mint a token: it
-  //   // prints the token and its hash, writes neither anywhere, and you keep the hash here and
-  //   // give the token to the station's operator once. The callsign is bound to the token, the
-  //   // slug never comes off the wire, and removing an entry needs a restart.
+  //   // none and /uplink is a 404. Run "pdn-soundmodem --uplink-token GB7RDG-2" to mint one
+  //   // station's token: it prints the token and the whole entry to paste in here, writes
+  //   // neither anywhere, and you keep the hash and give the token to that station's operator
+  //   // once. The callsign is bound to the token, the slug never comes off the wire, and
+  //   // removing an entry needs a restart.
   //   "uplinks": [
   //     {
   //       "callsign": "GB7RDG-2",

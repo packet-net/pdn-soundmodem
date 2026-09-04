@@ -246,10 +246,25 @@ internal sealed class UplinkServer : IAsyncDisposable
             return true;   // the upgrade died under us; there is nobody left to tell
         }
 
-        var session = new UplinkSession(this, entry, socket, PublicUrlFor(context.Request));
+        var session = new UplinkSession(this, entry, socket, OriginFor(context.Request));
         await session.RunAsync().ConfigureAwait(false);
         return true;
     }
+
+    /// <summary>
+    /// The origin this site tells a station its page is on: what the site owner wrote down, or
+    /// what the upgrade arrived under when they wrote nothing.
+    /// </summary>
+    /// <remarks>
+    /// Configured beats derived, because the derivation cannot work behind a tunnel that rewrites
+    /// the <c>Host</c> header and this site runs behind one: what reaches this process is
+    /// <c>127.0.0.1:8099</c>, and the owner is the one who knows the name the world uses. See
+    /// CONFIG.md's <c>monitor.publicUrl</c>.
+    /// </remarks>
+    private string? OriginFor(HttpListenerRequest request) =>
+        _options.PublicUrl is { Length: > 0 } configured
+            ? configured
+            : PublicUrlFor(request);
 
     /// <summary>
     /// This site's own public origin, if the upgrade came in under a name worth repeating back.
@@ -259,8 +274,9 @@ internal sealed class UplinkServer : IAsyncDisposable
     /// than just its slug. Null where the <c>Host</c> header is a loopback or a bare address,
     /// which is what a tunnel that rewrites the header leaves - CT 146's ingress does exactly
     /// that, deliberately, because this process's listener matches on Host. A guess would be
-    /// worse than nothing: the station falls back to naming its slug, and it is the one that
-    /// knows the public hostname, because it is in its own config.
+    /// worse than nothing: the station falls back to naming its slug. A site behind such a tunnel
+    /// says the answer outright in <c>monitor.publicUrl</c>, which is what
+    /// <see cref="OriginFor"/> prefers.
     /// </remarks>
     private static string? PublicUrlFor(HttpListenerRequest request)
     {
@@ -936,10 +952,11 @@ internal sealed class UplinkServer : IAsyncDisposable
                         protocol = Protocol,
                         slug = station.Slug,
                         path = $"/r/{station.Slug}/",
-                        // Only where the upgrade arrived under a name worth repeating back. A
-                        // tunnel that rewrites the Host header leaves this null, and the station
-                        // names its slug instead: a guessed URL in somebody's journal is worse
-                        // than none, and the station is the end that knows the public hostname.
+                        // This site's own "monitor"."publicUrl" where it has one, and otherwise
+                        // only where the upgrade arrived under a name worth repeating back. A
+                        // tunnel that rewrites the Host header leaves this null on a site that
+                        // has not written its address down, and the station names its slug
+                        // instead: a guessed URL in somebody's journal is worse than none.
                         url = _origin is null ? null : $"{_origin}/r/{station.Slug}/",
                     }, Json)).ConfigureAwait(false);
 
@@ -1121,6 +1138,12 @@ internal sealed record UplinkServerOptions
 {
     /// <summary>The stations this site will accept, from <c>monitor.uplinks</c>.</summary>
     public required IReadOnlyList<UplinkConfig> Uplinks { get; init; }
+
+    /// <summary>
+    /// This site's public origin from <c>monitor.publicUrl</c>: a scheme, a host and an optional
+    /// port, no trailing slash. Empty derives one from each upgrade's own <c>Host</c> header.
+    /// </summary>
+    public string PublicUrl { get; init; } = "";
 
     /// <summary>Where this endpoint's own lines go. Station lines go to the station's journal.</summary>
     public required StationJournal Journal { get; init; }

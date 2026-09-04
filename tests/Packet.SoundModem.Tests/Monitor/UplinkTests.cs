@@ -57,6 +57,9 @@ public class UplinkTests
     private const string Callsign = "GB7RDG-2";
     private const string Slug = "gb7rdg-2";
 
+    /// <summary>What a site behind a tunnel writes in "monitor"."publicUrl".</summary>
+    private const string PublicUrl = "https://monitor.ukpacketradio.network";
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task An_Uplink_With_No_Token_Is_Refused()
     {
@@ -127,6 +130,40 @@ public class UplinkTests
         (await h.GetAsync($"/r/{Slug}/")).Should().Contain("<!doctype html>");
         (await h.StatusAsync("/r/somewhere-else/")).Should().Be(
             System.Net.HttpStatusCode.NotFound, "a station cannot ask for a page");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task A_Station_Is_Told_The_Address_Of_Its_Own_Page()
+    {
+        await using var h = await Harness.StartAsync(publicUrl: PublicUrl);
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+
+        // Which is what the station's own journal reads back as "publish: live at <url>". The
+        // upgrade arrives on 127.0.0.1 here, exactly as it does behind a tunnel that rewrites the
+        // Host header, so this URL can only have come from the site's own configuration.
+        station.Welcome!.Value.GetProperty("url").GetString().Should().Be($"{PublicUrl}/r/{Slug}/");
+        h.Lines.Should().Contain(
+            line => line.Contains($"published as {PublicUrl}/", StringComparison.Ordinal),
+            "start-up says the address this site is reached at, once");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task A_Site_That_Has_Not_Said_Its_Address_Tells_A_Station_No_Url()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+
+        // 127.0.0.1 is a bare address and not a name worth repeating back, and a guessed URL in
+        // somebody else's journal is worse than none: the station is told its slug and nothing
+        // more, and names that instead. This is the behaviour every site had before there was
+        // anywhere to write the address down.
+        station.Welcome!.Value.GetProperty("url").ValueKind.Should().Be(JsonValueKind.Null);
+        station.Welcome!.Value.GetProperty("slug").GetString().Should().Be(Slug);
+        h.Lines.Should().NotContain(line => line.Contains("published as", StringComparison.Ordinal));
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -1033,7 +1070,7 @@ public class UplinkTests
         private readonly ScratchDirectory _scratch = new("pdnsm-uplink-tests");
         private readonly List<Browser> _browsers = [];
 
-        private Harness(int port, string directoryJson)
+        private Harness(int port, string directoryJson, string publicUrl)
         {
             Port = port;
             (Token, string hash) = UplinkToken.Mint();
@@ -1048,6 +1085,7 @@ public class UplinkTests
                 },
                 Port = port,
                 Bind = "127.0.0.1",
+                PublicUrl = publicUrl,
                 Modems = [new ModemConfig { SubChannel = 0, Mode = "afsk1200", Frequency = 1700 }],
                 Uplinks =
                 [
@@ -1083,9 +1121,10 @@ public class UplinkTests
 
         internal List<string> Errors { get; } = [];
 
-        internal static async Task<Harness> StartAsync(string? directoryJson = null)
+        internal static async Task<Harness> StartAsync(
+            string? directoryJson = null, string publicUrl = "")
         {
-            var harness = new Harness(FreePorts.Next(), directoryJson ?? DirectoryJson);
+            var harness = new Harness(FreePorts.Next(), directoryJson ?? DirectoryJson, publicUrl);
             (await harness._host.StartAsync()).Should().Be(0, "the site has to come up");
             return harness;
         }
