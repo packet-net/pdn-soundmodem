@@ -130,7 +130,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     /// </summary>
     private static readonly TimeSpan ShortSession = TimeSpan.FromSeconds(30);
 
-    /// <summary>How long a planned goodbye and close is given before the socket is just dropped.</summary>
+    /// <summary>How long a planned goodbye is given to reach the site before the socket goes.</summary>
     private static readonly TimeSpan GoodbyeTimeout = TimeSpan.FromSeconds(2);
 
     /// <summary>An outage says so once and then at this interval, not once a minute.</summary>
@@ -179,6 +179,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     private volatile Channel<Outgoing>? _outgoing;
 
     private volatile Task? _run;
+    private volatile Task? _sending;
     private int _viewers;
     private int _generation;
     private int _seenGeneration;
@@ -383,8 +384,31 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     }
 
     /// <summary>Stops publishing: says goodbye if there is anybody to say it to, and closes.</summary>
+    /// <remarks>
+    /// The <c>bye</c> of 4.2 goes through the ordinary send queue and is waited for, and only then
+    /// is anything cancelled. It has to be that way round: cancelling the receive loop aborts the
+    /// socket, so a goodbye written afterwards would have nowhere to go and the site's journal
+    /// would read "connection closed" rather than "GB7RDG-2 is shutting down". It is a courtesy on
+    /// a courtesy, so it is bounded and every failure of it is shrugged off.
+    /// </remarks>
     public async ValueTask DisposeAsync()
     {
+        if (_outgoing is { } outgoing && _sending is { } sending)
+        {
+            Send(outgoing, WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(
+                new { type = "bye", reason = "the station is shutting down" }, Json));
+            outgoing.Writer.TryComplete();
+            try
+            {
+                await Task.WhenAny(sending, Task.Delay(GoodbyeTimeout, _time))
+                    .ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // A socket that has already gone. There was nobody to say goodbye to.
+            }
+        }
+
         await _stopping.CancelAsync().ConfigureAwait(false);
         if (_run is { } run)
         {
@@ -504,6 +528,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             WatchdogPeriod);
 
         Task send = SendLoopAsync(socket, outgoing, session.Token);
+        _sending = send;
         string? reason;
         try
         {
@@ -528,7 +553,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             }
 
             DrainQueue(outgoing);
-            await GoodbyeAsync(socket).ConfigureAwait(false);
+            _sending = null;
         }
 
         TimeSpan lived = _time.GetElapsedTime(opened);
@@ -545,36 +570,6 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                 reason ?? $"{_uri.Host} closed the uplink after {lived.TotalMinutes:F0} min")
             : (UberSdrReconnectOutcome.ShortSession,
                 reason ?? $"{_uri.Host} dropped the uplink after {lived.TotalSeconds:F0} s");
-    }
-
-    /// <summary>
-    /// The optional <c>bye</c> of 4.2, on a planned stop, so the site's journal says the station
-    /// went off air rather than that a socket closed.
-    /// </summary>
-    private async Task GoodbyeAsync(ClientWebSocket socket)
-    {
-        if (!_stopping.IsCancellationRequested || socket.State != WebSocketState.Open)
-        {
-            return;
-        }
-
-        try
-        {
-            using var deadline = new CancellationTokenSource(GoodbyeTimeout, _time);
-            await socket.SendAsync(
-                JsonSerializer.SerializeToUtf8Bytes(
-                    new { type = "bye", reason = "the station is shutting down" }, Json),
-                WebSocketMessageType.Text,
-                endOfMessage: true,
-                deadline.Token).ConfigureAwait(false);
-            await socket.CloseAsync(
-                WebSocketCloseStatus.NormalClosure, "going off air", deadline.Token)
-                .ConfigureAwait(false);
-        }
-        catch (Exception)
-        {
-            // A goodbye is a courtesy on a courtesy. Nothing here delays a shutdown.
-        }
     }
 
     /// <summary>Opens the socket, with the token as a header rather than a query parameter.</summary>

@@ -527,6 +527,28 @@ public class UplinkClientTests
         monitor.AudioMessages.Should().BeEmpty();
     }
 
+    /// <summary>
+    /// A planned stop says goodbye first, so the site's journal reads "GB7RDG-2 is shutting down"
+    /// rather than "connection closed" (4.2).
+    /// </summary>
+    [Fact]
+    public async Task A_Planned_Stop_Says_Goodbye_Before_The_Socket_Goes()
+    {
+        var clock = new FakeTimeProvider();
+        await using var monitor = new StubMonitor();
+        await using WaterfallWebServer server = StationServer(clock);
+        var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
+        client.Start();
+        await Until(() => client.Publishing, "the welcome");
+
+        await client.DisposeAsync();
+
+        await Until(() => monitor.TextMessagesOfType("bye").Any(), "the goodbye");
+        monitor.TextMessagesOfType("bye").Single()
+            .GetProperty("reason").GetString().Should().Contain("shutting down");
+        client.Publishing.Should().BeFalse();
+    }
+
     /// <summary>The station's own transmissions are part of what a viewer hears, flagged as ours.</summary>
     [Fact]
     public async Task The_Uplink_Sends_Its_Own_Transmitted_Audio_Flagged_As_Ours()
