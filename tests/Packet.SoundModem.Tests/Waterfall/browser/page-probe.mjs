@@ -244,6 +244,9 @@ const connected = await until("!!(ws && ws.readyState === 1 && cfg)", 20000);
 // time other than the moment a host connected would say nothing about attachment.
 const chips = () => sandbox.document.getElementById("chips").children.map(c => c.innerHTML);
 const chipsOnArrival = chips();
+// A chip's tooltip is a property rather than markup, so it is captured beside the markup: the
+// public flavour drops it, and nothing reading innerHTML alone could see that it had.
+const chipTitlesOnArrival = sandbox.document.getElementById("chips").children.map(c => c.title ?? null);
 
 // What the page has written on its canvases from the handshake alone: the ruler's RF scale, and
 // the line that asks for a dial when there is none. A public page cannot be given a dial by the
@@ -542,6 +545,7 @@ console.log(JSON.stringify({
   txHeld,
   txHeldNoSwr,
   chipsOnArrival,
+  chipTitlesOnArrival,
   chipsAttached,
   chipsDetached,
   drawnOnArrival,

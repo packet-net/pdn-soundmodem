@@ -117,6 +117,12 @@
 
   .spacer { flex: 1; }
   #meta { font-family: var(--mono); font-size: 10px; color: var(--muted); text-align: right; line-height: 1.5; }
+  /* Its own line rather than a <br> before it, so that the public flavour hiding it takes the
+     line away as well instead of leaving an empty one under the connection state. The second
+     rule is what makes hiding it work at all: the first would otherwise beat the browser's own
+     rule for [hidden], author styles winning over the user agent's whatever their specificity. */
+  #stats { display: block; }
+  #stats[hidden] { display: none; }
   #meta .live { color: #7bd88f; }
   #meta .dead { color: #f27e7e; }
 
@@ -408,7 +414,7 @@
   </div>
 
   <div class="ctl">
-    <label for="listen">Audio</label>
+    <label for="listen" id="audioLabel">Audio</label>
     <div class="ctl-row">
       <button id="listen" class="seg-btn">Listen</button>
       <input id="vol" type="range" min="0" max="1" step="0.02" value="0.7" disabled>
@@ -416,7 +422,7 @@
   </div>
 
   <div class="ctl">
-    <label for="linksBtn">AX.25</label>
+    <label for="linksBtn" id="linksLabel">AX.25</label>
     <div class="ctl-row">
       <button id="linksBtn" class="seg-btn" title="What the stations heard are saying to each other, one card per link (L)">Links<span class="n" id="linksN"></span></button>
     </div>
@@ -443,7 +449,7 @@
   </div>
 
   <div class="spacer"></div>
-  <div id="meta"><span id="conn" class="dead">connecting…</span><br><span id="stats"></span></div>
+  <div id="meta"><span id="conn" class="dead">connecting…</span><span id="stats"></span></div>
 </header>
 
 <div id="about" hidden></div>
@@ -529,7 +535,7 @@ let fpsCount = 0, fpsShown = 0;
 
 // Categorical identity hues for modem markers, fixed order, validated (OKLCH dark band,
 // CVD + normal-vision ΔE, ≥3:1 on the surface) - identity is never color-alone: every
-// marker ships with its sub-channel + mode text.
+// marker ships with its mode text, and with its sub-channel too on the operator's page.
 const MODEM_HUES = ["#31d2f2", "#3ee686", "#7aa2ff", "#ff5fd2"];
 const hueFor = i => MODEM_HUES[i % MODEM_HUES.length];
 
@@ -619,15 +625,17 @@ function setRadioStatus(status) {
   el.classList.toggle("quiet", /^(idle|no viewers|connecting)\b/i.test(status));
 }
 
-// Everything the public flavour takes out of the header, by id: controls a visitor cannot
-// usefully act on, because what they set arrives with the receiver's band plan and moving it can
-// only make the picture wrong - the dial and its sideband, the span, and the floor and top of the
-// colour scale, which is the same kind of knob.
-const PUBLIC_HIDES = ["dialCtl", "spanCtl", "levelCtl"];
+// Everything the public flavour takes out of the header, by id. Two kinds: controls a visitor
+// cannot usefully act on, because what they set arrives from the receiver's band plan and moving
+// it can only make the picture wrong (the dial and its sideband, the span, the display levels);
+// and text that names the obvious or reports on the machinery (the labels over the two controls
+// that are left, and the frame rate and bin width of the spectrum).
+const PUBLIC_HIDES = ["dialCtl", "spanCtl", "levelCtl", "audioLabel", "linksLabel", "stats"];
 
 // A deployment on the open internet: a title of its own, a paragraph of what the visitor is
 // looking at, and whose receiver it is. It is somebody else's receiver; the credit and the link
-// to their own page are the least it can do. The operator's page is untouched by all of this.
+// to their own page are the least it can do. What is left in the strip is the receiver's state,
+// that credit and the listen control. The operator's page is untouched by all of this.
 function applyPublicFlavour() {
   if (!cfg.publicMonitor) return;
   document.body.classList.add("public");
@@ -835,10 +843,17 @@ function renderChips() {
     const chip = document.createElement("div");
     chip.className = "chip";
     const rf = dialSet() ? ` <span class="rf">${fmtRfMhz(m.centreHz)}</span>` : "";
+    // On a public page the chip is only a key to the coloured bands on the waterfall: which mode
+    // is which colour, and where on the band it is. The KISS sub-channel and the audio centre
+    // are for whoever has something to plug into it, and so is the mode's full name in the
+    // tooltip; the visitor gets the RF frequency, which is the one they can act on.
+    const name = m.modeName || m.mode;
     chip.innerHTML = `<i style="background:${hueFor(i)}"></i>` +
-      `<span><b>${m.sub} · ${m.modeName || m.mode}</b> ${Math.round(m.centreHz)} Hz${rf}</span>` +
+      (cfg.publicMonitor
+        ? `<span><b>${name}</b>${rf || ` ${Math.round(m.centreHz)} Hz`}</span>`
+        : `<span><b>${m.sub} · ${name}</b> ${Math.round(m.centreHz)} Hz${rf}</span>`) +
       hostBadge(m.sub);
-    chip.title = `${m.mode}\nband ${Math.round(m.lowHz)}-${Math.round(m.highHz)} Hz`;
+    if (!cfg.publicMonitor) chip.title = `${m.mode}\nband ${Math.round(m.lowHz)}-${Math.round(m.highHz)} Hz`;
     return chip;
   }));
 }
