@@ -514,6 +514,54 @@ public class UplinkTests
             "one log per station, named as every other station's is");
     }
 
+    /// <summary>
+    /// A relayed frame Reed-Solomon alone stood behind is written down as one, and comes back out
+    /// of the station's own backlog still saying so.
+    /// </summary>
+    /// <remarks>
+    /// <para>The monitor is where this matters most. A visitor reading a public page has no other
+    /// way to tell an RS-only row from a verified one than the badge on it, and the page they get
+    /// after a restart is built entirely out of the station's log - so if the flag is lost on the
+    /// way in or on the way out, somebody else's unverified callsign pair is presented to the
+    /// public as a station that was definitely there.</para>
+    /// <para>Nothing on this path is special-cased for it: the wire carries <c>plain</c> both
+    /// ways, <c>RelayStation.Log</c> hands it to <c>FrameLog.Record</c> inside an ordinary
+    /// <c>FrameQuality</c>, and the backlog is the same <c>Recent</c> a station's own page uses.
+    /// That is exactly why it is worth a test - there is no code here that would notice if it
+    /// stopped happening (issue #403).</para>
+    /// </remarks>
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task A_Relayed_Rs_Only_Frame_Is_Logged_And_Replayed_As_One()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+
+        // The GB7BPQ case as it arrives over an uplink: read on Reed-Solomon alone, and withheld
+        // by the station that heard it from its own host.
+        await station.SendFrameAsync(
+            Ax25.Ui("GB7BPQ", "BEACON", "rs only, over the wire"),
+            plainIl2p: true, monitorOnly: true);
+        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
+
+        h.LastLoggedFlags().Should().Be(
+            (1L, 1L), "the relayed row records what stood behind the frame and what became of it");
+
+        // And a browser arriving afterwards - which is every browser, after a restart - is sent
+        // the same two fields a live relayed frame carried.
+        await using Browser watching = await h.WatchAsync(Slug);
+        JsonElement history = await watching.UntilTextAsync("history");
+        JsonElement row = history.GetProperty("frames").EnumerateArray().Single();
+        row.GetProperty("from").GetString().Should().Be("GB7BPQ");
+        row.GetProperty("plain").GetBoolean().Should().BeTrue(
+            "the RS ONLY badge on a relayed row must survive the log as well");
+        row.GetProperty("monitorOnly").GetBoolean().Should().BeTrue(
+            "and the tooltip still says the station kept it from its host");
+        row.GetProperty("crc").ValueKind.Should().Be(
+            JsonValueKind.Null, "nothing checked a CRC on it, here or at the station");
+    }
+
     [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Frame_Dated_Outside_This_Sites_Clock_Is_Logged_At_This_Sites_Clock()
     {
@@ -1143,6 +1191,23 @@ public class UplinkTests
             using SqliteDataReader row = read.ExecuteReader();
             row.Read().Should().BeTrue("the log has a frame in it");
             return (row.GetString(0), row.GetString(1), row.GetString(2));
+        }
+
+        /// <summary>
+        /// The two decode flags on the newest logged row: what stood behind the frame, and
+        /// whether the station that heard it passed it on. Null where the column says nothing.
+        /// </summary>
+        internal (long? PlainIl2p, long? MonitorOnly) LastLoggedFlags()
+        {
+            using SqliteConnection connection = OpenLog();
+            using SqliteCommand read = connection.CreateCommand();
+            read.CommandText =
+                "SELECT plain_il2p, monitor_only FROM frames ORDER BY id DESC LIMIT 1";
+            using SqliteDataReader row = read.ExecuteReader();
+            row.Read().Should().BeTrue("the log has a frame in it");
+            return (
+                row.IsDBNull(0) ? null : row.GetInt64(0),
+                row.IsDBNull(1) ? null : row.GetInt64(1));
         }
 
         private SqliteConnection OpenLog()

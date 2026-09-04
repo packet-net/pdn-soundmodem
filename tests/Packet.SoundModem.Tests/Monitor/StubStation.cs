@@ -202,9 +202,16 @@ internal sealed class StubStation : IAsyncDisposable
     }
 
     /// <summary>A frame, in the shape 4.2 carries one.</summary>
+    /// <param name="plainIl2p">
+    /// Send it as a plain IL2P reading - Reed-Solomon alone stood behind it at the station that
+    /// heard it. Takes <c>crc</c> to null with it, because a frame with no trailing CRC is a
+    /// frame no CRC was checked on, and that is the pair a real station puts on the wire.
+    /// </param>
+    /// <param name="monitorOnly">Whether the station withheld it from its own KISS host.</param>
     internal Task SendFrameAsync(
         byte[]? raw, string mode = "afsk300-il2pc", int sub = 0, string? from = "M0LTE",
-        string? to = "GB7RDG-2", bool transmitted = false, DateTimeOffset? at = null) =>
+        string? to = "GB7RDG-2", bool transmitted = false, DateTimeOffset? at = null,
+        bool plainIl2p = false, bool monitorOnly = false) =>
         SendAsync(new
         {
             type = "frame",
@@ -217,11 +224,11 @@ internal sealed class StubStation : IAsyncDisposable
             burstLines = 8,
             offsetHz = -3.2,
             corrected = 0,
-            crc = true,
+            crc = plainIl2p ? (bool?)null : true,
             id = (bool?)null,
             tx = transmitted ? true : (bool?)null,
-            plain = (bool?)null,
-            monitorOnly = (bool?)null,
+            plain = plainIl2p ? true : (bool?)null,
+            monitorOnly = monitorOnly ? true : (bool?)null,
             at = (at ?? DateTimeOffset.UtcNow).ToString("O"),
             raw = raw is null ? null : Convert.ToBase64String(raw),
         });

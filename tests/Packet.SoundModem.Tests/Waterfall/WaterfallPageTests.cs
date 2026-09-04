@@ -253,7 +253,8 @@ public class WaterfallPageTests
 
         probe.Thrown.Should().BeEmpty("the page must not throw while listing a backlog");
 
-        // Oldest last in a newest-first panel: the transmitted row is the one at the bottom.
+        // Newest first, so the transmitted row is third of the four the probe sends: only the
+        // RS-only row, which goes in oldest of all, sits below it.
         probe.HistoryRows[2].Should().Contain("M0LTE").And.Contain(">TX<",
             "a logged transmission carries the same badge a live one does");
         probe.HistoryRowClasses[2].Should().Be("fr tx hist");
