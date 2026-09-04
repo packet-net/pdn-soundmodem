@@ -473,7 +473,12 @@ public class UplinkClientTests
         var clock = new FakeTimeProvider();
         await using var monitor = new StubMonitor();
         await using WaterfallWebServer server = StationServer(clock);
-        await using var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
+        var journal = new List<string>();
+        await using var client = new UplinkClient(
+            server,
+            SettingsFor(monitor.Url),
+            clock,
+            line => { lock (journal) { journal.Add(line); } });
         client.Start();
         await Until(() => client.Publishing, "the welcome");
 
@@ -497,6 +502,18 @@ public class UplinkClientTests
 
         await Task.Delay(250);
         monitor.AudioMessages.Should().HaveCount(sent, "nobody is watching any more");
+
+        // Said in pairs. A viewer who arrives and leaves inside a minute used to leave "1
+        // watching, sending audio" as the last word on the subject, so the journal read as
+        // though the station were still sending.
+        string[] said;
+        lock (journal)
+        {
+            said = [.. journal];
+        }
+
+        said.Should().ContainSingle(l => l.Contains("watching, sending audio"));
+        said.Should().ContainSingle(l => l.Contains("nobody watching, audio stopped"));
     }
 
     /// <summary>
@@ -1046,6 +1063,25 @@ public class UplinkClientTests
         said.Where(l => l.Contains("Retrying in")).Should().ContainSingle(
             "four sessions, each welcomed and dropped, inside fifteen minutes of the clock");
         client.ConnectAttempts.Should().BeGreaterThanOrEqualTo(4, "it kept trying regardless");
+    }
+
+    /// <summary>The record of the ladder is capped, so a site that is down for a year costs nothing.</summary>
+    [Fact]
+    public async Task The_Reconnect_Ladder_Is_Not_Remembered_For_Ever()
+    {
+        var clock = new FakeTimeProvider();
+        await using WaterfallWebServer server = StationServer(clock);
+        int dead = FreePorts.Next();
+        await using var client = new UplinkClient(
+            server, SettingsFor($"ws://127.0.0.1:{dead}/uplink"), clock);
+        client.Start();
+
+        await UntilAdvancing(
+            clock, () => client.RetryCount > 70, "seventy failures", stepSeconds: 60);
+
+        client.RetryWaits.Should().HaveCount(64, "the first 64 are kept and the rest counted");
+        client.RetryCount.Should().BeGreaterThan(70);
+        client.RunTask!.IsFaulted.Should().BeFalse();
     }
 
     /// <summary>

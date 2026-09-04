@@ -1029,6 +1029,24 @@ public class DaemonConfigTests : IDisposable
         ShouldGuideTheOperator(error, path);
     }
 
+    /// <summary>
+    /// The one refusal that cannot be made while the file is being read still reads like every
+    /// other one: an operator should not be able to tell which kind of check stopped them.
+    /// </summary>
+    [Fact]
+    public void A_Refusal_Found_After_The_File_Was_Read_Is_Framed_Like_Every_Other()
+    {
+        string path = PublishingStation();
+        string problem = DaemonConfig.PublishRateProblem(
+            new PublishConfig { AudioRate = 7000 }, 12000)!;
+
+        string error = DaemonConfig.ConfigurationError(path, problem);
+
+        error.Should().Contain("7000 Hz", "the sentence itself is still there");
+        error.Should().Contain("6000, 12000");
+        ShouldGuideTheOperator(error, path);
+    }
+
     [Fact]
     public void A_Typo_Inside_The_Publish_Block_Is_Called_Out()
     {

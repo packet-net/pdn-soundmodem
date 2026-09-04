@@ -486,7 +486,10 @@ if (!StationFactory.TryResolveDspRate(modems, stationJournal, out int DspRate))
 if (publishConfig is not null
     && DaemonConfig.PublishRateProblem(publishConfig, DspRate) is { } publishRateProblem)
 {
-    Console.Error.WriteLine(publishRateProblem);
+    // Through the same frame every other refusal in the file gets - the file name, the recovery
+    // text and the CONFIG.md link - because where a check had to live is not something an
+    // operator reading journalctl should be able to tell.
+    Console.Error.WriteLine(DaemonConfig.ConfigurationError(configPath!, publishRateProblem));
     return 2;
 }
 

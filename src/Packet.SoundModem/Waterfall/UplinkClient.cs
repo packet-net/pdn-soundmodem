@@ -227,6 +227,9 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     private long _dropsSaidAt;
     private long _lastHeardAt;
     private volatile bool _freshOutage = true;
+    private volatile bool _saidWatching;
+    private long _sessionOpenedAt;
+    private int _retryCount;
     private readonly List<TimeSpan> _retryWaits = [];
     private readonly Lock _waitsLock = new();
 
@@ -303,11 +306,18 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     /// <summary>Queued messages the bounded send queue dropped because the upstream could not keep up.</summary>
     internal long DroppedMessages => Interlocked.Read(ref _droppedMessages);
 
-    /// <summary>The reconnect waits taken so far, in order, for tests to hold the ladder to 4.3.</summary>
+    /// <summary>
+    /// The first <see cref="RetryWaitsKept"/> reconnect waits taken, in order, for tests to hold
+    /// the ladder to 4.3. Capped: a station whose site is unreachable for a year would otherwise
+    /// retain a million of these to serve a diagnostic nobody is reading.
+    /// </summary>
     internal IReadOnlyList<TimeSpan> RetryWaits
     {
         get { lock (_waitsLock) { return [.. _retryWaits]; } }
     }
+
+    /// <summary>Reconnect waits taken in total, capped or not.</summary>
+    internal int RetryCount => Volatile.Read(ref _retryCount);
 
     /// <summary>The loop, for a test that wants to be sure it has not ended or faulted.</summary>
     internal Task? RunTask => _run;
@@ -438,7 +448,12 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             outgoing.Writer.TryComplete();
             try
             {
-                await Task.WhenAny(sending, Task.Delay(GoodbyeTimeout, _time))
+                // TimeProvider.System deliberately, and it is the one place in this class that
+                // does not take the injected clock. This is a safety net on a shutdown path, and
+                // under a FakeTimeProvider - which is how every test here is written - a delay on
+                // the injected clock never fires, so the net would be inert in exactly the tests
+                // that would catch it being needed.
+                await Task.WhenAny(sending, Task.Delay(GoodbyeTimeout, TimeProvider.System))
                     .ConfigureAwait(false);
             }
             catch (Exception)
@@ -488,7 +503,10 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             }
             catch (Exception failure)
             {
-                outcome = UberSdrReconnectOutcome.Transient;
+                // A session that opened and then died is not a transport failure, whatever killed
+                // it, so it takes the same rung the normal return path would have given it. Only
+                // a connect that never opened a socket is Transient.
+                outcome = Classify(Interlocked.Read(ref _sessionOpenedAt));
                 reason = Ascii(failure.Message);
             }
 
@@ -500,9 +518,13 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             // The wait first, so the line an operator reads says when this will be tried again
             // rather than leaving them to guess whether anything is still happening.
             TimeSpan wait = _policy.After(outcome);
+            Interlocked.Increment(ref _retryCount);
             lock (_waitsLock)
             {
-                _retryWaits.Add(wait);
+                if (_retryWaits.Count < RetryWaitsKept)
+                {
+                    _retryWaits.Add(wait);
+                }
             }
 
             if (outcome == UberSdrReconnectOutcome.Refused)
@@ -529,10 +551,12 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     private async Task<(UberSdrReconnectOutcome Outcome, string Reason)> SessionAsync()
     {
         Interlocked.Increment(ref _connectAttempts);
+        Interlocked.Exchange(ref _sessionOpenedAt, 0);
         using var session = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token);
         using ClientWebSocket socket = await ConnectAsync(session.Token).ConfigureAwait(false);
 
         long opened = _time.GetTimestamp();
+        Interlocked.Exchange(ref _sessionOpenedAt, opened);
         Volatile.Write(ref _lastHeardAt, opened);
         var outgoing = System.Threading.Channels.Channel.CreateBounded<Outgoing>(
             new BoundedChannelOptions(QueueDepth)
@@ -593,6 +617,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             // accumulated for a socket that has gone.
             _outgoing = null;
             Volatile.Write(ref _viewers, 0);
+            _saidWatching = false;
             Interlocked.Increment(ref _generation);
             outgoing.Writer.TryComplete();
             await session.CancelAsync().ConfigureAwait(false);
@@ -615,15 +640,24 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             return (UberSdrReconnectOutcome.Healthy, "");
         }
 
-        // A session that ran is a healthy one, whatever ended it. One that did not is the failure
-        // the ShortSession rung exists for: a monitor accepting and dropping at once would
-        // otherwise be reconnected to every second for ever, by every station it does it to.
-        return lived >= ShortSession
+        return Classify(opened) == UberSdrReconnectOutcome.Healthy
             ? (UberSdrReconnectOutcome.Healthy,
                 reason ?? $"{_uri.Host} closed the uplink after {lived.TotalMinutes:F0} min")
             : (UberSdrReconnectOutcome.ShortSession,
                 reason ?? $"{_uri.Host} dropped the uplink after {lived.TotalSeconds:F0} s");
     }
+
+    /// <summary>
+    /// Which rung a session that has just ended belongs on. A session that ran is a healthy one,
+    /// whatever ended it; one that did not is the failure the ShortSession rung exists for, since
+    /// a monitor accepting and dropping at once would otherwise be reconnected to every second
+    /// for ever, by every station it does it to. A connect that never opened is Transient.
+    /// </summary>
+    private UberSdrReconnectOutcome Classify(long opened) => opened == 0
+        ? UberSdrReconnectOutcome.Transient
+        : _time.GetElapsedTime(opened) >= ShortSession
+            ? UberSdrReconnectOutcome.Healthy
+            : UberSdrReconnectOutcome.ShortSession;
 
     /// <summary>Opens the socket, with the token as a header rather than a query parameter.</summary>
     private async Task<ClientWebSocket> ConnectAsync(CancellationToken cancellation)
@@ -881,11 +915,22 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
 
         // Whichever way it went, a half-assembled block belongs to the other side of it.
         Interlocked.Increment(ref _generation);
-        if (DueToSay(ref _viewersSaidAt, ViewersSaidEvery))
+
+        // Said in pairs or not at all. Rate-limiting both halves through one gate let a viewer who
+        // arrived and left inside a minute leave "1 watching, sending audio" as the last word on
+        // the subject, so the journal read as though the station were still sending.
+        if (viewers > 0)
         {
-            Say(viewers > 0
-                ? $"{viewers} watching, sending audio"
-                : "nobody watching, audio stopped");
+            if (DueToSay(ref _viewersSaidAt, ViewersSaidEvery))
+            {
+                _saidWatching = true;
+                Say($"{viewers} watching, sending audio");
+            }
+        }
+        else if (_saidWatching)
+        {
+            _saidWatching = false;
+            Say("nobody watching, audio stopped");
         }
     }
 

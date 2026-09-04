@@ -1391,11 +1391,30 @@ public sealed class DaemonConfig
             }
         }
 
-        return $"\"publish\".\"audioRate\" is {rate} Hz and this station's channel runs at "
+        string problem =
+            $"\"publish\".\"audioRate\" is {rate} Hz and this station's channel runs at "
             + $"{dspRate} Hz, which {rate} does not divide. The audio is decimated rather than "
-            + "resampled, so it has to be an integer divisor: "
-            + string.Join(", ", divisors) + ".";
+            + "resampled, so it has to be an integer divisor";
+
+        // No station runs a channel below 6000 Hz today, so the list is never empty in practice.
+        // Ending the sentence "an integer divisor: ." if one ever did would not be honest.
+        return divisors.Count > 0
+            ? $"{problem}: {string.Join(", ", divisors)}."
+            : $"{problem}, and this channel has none in {MinimumAudioRate} to {MaximumAudioRate}.";
     }
+
+    /// <summary>
+    /// A problem found after the file was read, in the same frame every refusal inside
+    /// <see cref="Load"/> comes out in: the file, the sentence, and how to recover.
+    /// </summary>
+    /// <remarks>
+    /// For the checks that cannot run while the file is being read because they need something
+    /// settled later - <see cref="PublishRateProblem"/> is the only one today, and it needs the
+    /// channel's DSP rate. An operator reading <c>journalctl</c> should not be able to tell which
+    /// kind of check refused their station.
+    /// </remarks>
+    internal static string ConfigurationError(string path, string problem) =>
+        Describe(path, problem);
 
     /// <summary>
     /// The rate this station publishes at: what the operator asked for, or the channel's own rate
