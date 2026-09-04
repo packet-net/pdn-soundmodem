@@ -1787,16 +1787,30 @@ all.
 names any modem whose band falls outside it. The audio is decimated rather than resampled, which
 is why the rate has to be an integer divisor of the channel's.
 
-**Nothing can come back down.** The site sends one message type, carrying one integer: how many
-people are watching. There is no transmit, no configuration, no KISS and no restart, and that is
-structural rather than a matter of the page hiding buttons - the uplink client holds no channel,
-no PTT, no KISS server and no config API, and a test asserts it. See
+**Nothing can come back down.** The only message the site sends that this station acts on carries
+one integer: how many people are watching. There is no transmit, no configuration, no KISS and no
+restart, and that is structural rather than a matter of the page hiding buttons - the uplink
+client holds no channel, no PTT, no KISS server and no config API, and a test asserts it. See
 [`monitor`](#monitor) for the other end of the same rule.
 
 **The uplink never faults this station.** It is a courtesy. A site that is down, a token that is
 wrong, a network that has gone: each writes a line and retries, and none of them touches the exit
 code, the dead-feed watches or anything a node is doing. A permanently misconfigured `publish`
 block is a journal line every quarter of an hour and nothing louder.
+
+**If the site will not have this station, the journal says why, on the first attempt.** A
+`callsign` that does not match the token it was issued, or a protocol version the site does not
+speak, is answered with the site's own sentence and a closed connection, and that sentence is this
+station's first line about it rather than a generic one a quarter of an hour later:
+
+```
+publish: monitor.ukpacketradio.network refused this station: says it is GB7RDG-2 and this token was issued to GB7RDG. Retrying in 1 min and saying no more about it for an hour; the station is unaffected
+```
+
+It is retried a minute later, doubling to a quarter of an hour, and said once an hour until it is
+fixed, which is one field in this block or one line of the site's own config. A site that is
+merely down or falling over is a different thing and keeps the shorter ladder and the
+quarter-hourly line.
 
 **Leaving is deleting the block**, and it takes effect at the next restart; the socket goes and
 the station leaves the picker within seconds. The site keeps a `deny` of its own for the other
