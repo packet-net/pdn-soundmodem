@@ -1496,6 +1496,7 @@ public sealed class DaemonConfig
     internal static int PublishedAudioRate(PublishConfig publish, int dspRate) =>
         publish.AudioRate ?? Math.Min(dspRate, DefaultAudioRate);
 
+    /// <summary>
     /// What a <c>monitor.uplinks</c> entry has to say before this site will accept a station's
     /// connection on it. Every failure is an exit 2 naming the entry and what to do about it.
     /// </summary>
