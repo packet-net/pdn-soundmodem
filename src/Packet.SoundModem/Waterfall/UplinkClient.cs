@@ -80,7 +80,8 @@ public sealed record UplinkSettings
 /// <para><b>It cannot act on the station, structurally</b> (4.6). It holds a
 /// <see cref="WaterfallWebServer"/>, a settings record, a socket and some buffers: no
 /// <see cref="Channel.SoundModemChannel"/>, so it cannot enqueue a transmission; no PTT, no KISS
-/// server, no configuration API and no station. The one message it will read carries one integer.
+/// server, no configuration API and no station. The messages it will read carry one integer, a
+/// slug and the site's reason for not having this station, and not one of them reaches anything.
 /// <c>UplinkClientTests</c> holds that claim to a reflection test over this type's fields, so
 /// adding a field that could act fails the build rather than review.</para>
 /// <para><b>It never faults the station</b> (decision 8). Every failure is a journal line and a
@@ -606,10 +607,10 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
 
         Task send = SendLoopAsync(socket, outgoing, session.Token);
         _sending = send;
-        string? reason;
+        Ending ending;
         try
         {
-            reason = await ReceiveLoopAsync(socket, outgoing, session.Token).ConfigureAwait(false);
+            ending = await ReceiveLoopAsync(socket, outgoing, session.Token).ConfigureAwait(false);
         }
         finally
         {
@@ -640,11 +641,20 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             return (UberSdrReconnectOutcome.Healthy, "");
         }
 
+        if (ending.Refused)
+        {
+            // The site read the hello and will not have this station. That is somebody's mistake
+            // to fix rather than a site that is busy or falling over, so it takes the Refused rung
+            // and its own hourly line, and the operator reads the site's own sentence on the first
+            // attempt rather than a generic one whenever the shared outage gate next opens.
+            return (UberSdrReconnectOutcome.Refused, ending.Reason!);
+        }
+
         return Classify(opened) == UberSdrReconnectOutcome.Healthy
             ? (UberSdrReconnectOutcome.Healthy,
-                reason ?? $"{_uri.Host} closed the uplink after {lived.TotalMinutes:F0} min")
+                ending.Reason ?? $"{_uri.Host} closed the uplink after {lived.TotalMinutes:F0} min")
             : (UberSdrReconnectOutcome.ShortSession,
-                reason ?? $"{_uri.Host} dropped the uplink after {lived.TotalSeconds:F0} s");
+                ending.Reason ?? $"{_uri.Host} dropped the uplink after {lived.TotalSeconds:F0} s");
     }
 
     /// <summary>
@@ -738,16 +748,16 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     }
 
     /// <summary>
-    /// The one message the monitor may send that does anything, and the counter for everything
-    /// else it might send.
+    /// The one message the monitor may send that does anything, the one that says this station is
+    /// not welcome, and the counter for everything else it might send.
     /// </summary>
     /// <remarks>
-    /// The <c>switch</c> below is the whole inbound surface of a published station: two names, one
-    /// of which carries an integer and the other a slug. Anything else - a <c>config</c>, a KISS
-    /// frame, a request to transmit - is counted and dropped, because there is nothing here for it
-    /// to reach (4.6).
+    /// The <c>switch</c> below is the whole inbound surface of a published station: three names,
+    /// one carrying an integer, one a slug and one the site's reason for not having this station
+    /// at all. Anything else - a <c>config</c>, a KISS frame, a request to transmit - is counted
+    /// and dropped, because there is nothing here for it to reach (4.6).
     /// </remarks>
-    private async Task<string?> ReceiveLoopAsync(
+    private async Task<Ending> ReceiveLoopAsync(
         ClientWebSocket socket, Channel<Outgoing> outgoing, CancellationToken cancellation)
     {
         byte[] buffer = ArrayPool<byte>.Shared.Rent(8 * 1024);
@@ -764,14 +774,19 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                         .ConfigureAwait(false);
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
-                        return null;
+                        // The close frame's description is the site's own sentence, and for a
+                        // monitor that closes a hello it will not accept without sending a
+                        // refused message first it is the only place that sentence appears.
+                        return SiteEnded(socket.CloseStatusDescription);
                     }
 
                     if (message.WrittenCount + result.Count > MaxIncomingBytes)
                     {
                         // Reassembled with a hard cap, as 4.2 requires of both ends. A monitor
                         // that sends more than this is not one this station understands.
-                        return $"{_uri.Host} sent a message over {MaxIncomingBytes} bytes";
+                        return new Ending(
+                            $"{_uri.Host} sent a message over {MaxIncomingBytes} bytes",
+                            Refused: false);
                     }
 
                     message.Write(buffer.AsSpan(0, result.Count));
@@ -785,19 +800,26 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                     continue;
                 }
 
-                Apply(message.WrittenSpan, outgoing);
+                Ending ending = Apply(message.WrittenSpan, outgoing);
+                if (ending.Reason is not null)
+                {
+                    // The site has said no, in a message rather than in a close frame. Ending
+                    // this session is the whole of what that message does, and it is no more
+                    // than the close frame following it does anyway (4.6).
+                    return ending;
+                }
             }
 
-            return null;
+            return default;
         }
         catch (OperationCanceledException)
         {
             // The session ending, from the watchdog or from a stop. Not news in itself.
-            return null;
+            return default;
         }
         catch (WebSocketException e)
         {
-            return Ascii(e.Message);
+            return new Ending(Ascii(e.Message), Refused: false);
         }
         finally
         {
@@ -805,8 +827,11 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
         }
     }
 
-    /// <summary>Reads one inbound message. Two names are known; everything else is dropped.</summary>
-    private void Apply(ReadOnlySpan<byte> utf8, Channel<Outgoing> outgoing)
+    /// <summary>
+    /// Reads one inbound message. Three names are known; everything else is dropped. The one
+    /// return value is why this session should end, if the message said so.
+    /// </summary>
+    private Ending Apply(ReadOnlySpan<byte> utf8, Channel<Outgoing> outgoing)
     {
         try
         {
@@ -815,38 +840,56 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                 || !document.RootElement.TryGetProperty("type", out JsonElement type))
             {
                 Interlocked.Increment(ref _ignoredMessages);
-                return;
+                return default;
             }
 
             if (type.ValueKind != JsonValueKind.String)
             {
                 Interlocked.Increment(ref _ignoredMessages);
-                return;
+                return default;
             }
 
             switch (type.GetString())
             {
                 case "demand":
                     ApplyDemand(document.RootElement);
-                    break;
+                    return default;
 
                 case "welcome":
                     ApplyWelcome(document.RootElement, outgoing);
-                    break;
+                    return default;
+
+                case "refused":
+                    // Nothing is applied and nothing is started: the site's sentence goes to the
+                    // journal and this session ends on it. It is the one thing an operator whose
+                    // callsign does not match their token has to read, and the monitor sends it
+                    // just before it closes.
+                    Ending refusal = SiteEnded(TextOrNull(document.RootElement, "reason"));
+                    if (refusal.Reason is null)
+                    {
+                        // A refusal with no sentence in it, or one whose reason is not a string.
+                        // Counted and dropped like anything else this station cannot read, and
+                        // the session runs on until the site closes it, which it is about to.
+                        Interlocked.Increment(ref _ignoredMessages);
+                    }
+
+                    return refusal;
 
                 default:
                     // No arm reaches anything: the station has nothing here that could act on a
                     // message even if the site were taken over.
                     Interlocked.Increment(ref _ignoredMessages);
-                    break;
+                    return default;
             }
         }
         catch (Exception e) when (e is JsonException or InvalidOperationException)
         {
             // Unreadable, or readable and not the shape it claimed. Either way it is counted and
             // dropped: 4.6's promise is that nothing the monitor sends can do anything to this
-            // station, and a message that ended the session would be doing something.
+            // station, and a message this station could not even read ending the session would be
+            // doing something.
             Interlocked.Increment(ref _ignoredMessages);
+            return default;
         }
     }
 
@@ -1128,12 +1171,48 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     private static string Site(string text) => Ascii(
         text.Length <= MaxSiteTextLength ? text : text[..MaxSiteTextLength] + "...");
 
+    /// <summary>
+    /// The site's own words for why a session is ending, dressed for this station's journal, and
+    /// whether they amount to a refusal.
+    /// </summary>
+    /// <remarks>
+    /// <para>Words that arrive before the <c>welcome</c> are a refusal: the site has read the
+    /// hello and will not have this station, which is a callsign that does not match the token or
+    /// a protocol version the site does not speak. Somebody has to fix that, so it belongs on the
+    /// Refused ladder with its own hourly line rather than on ShortSession's, whose fifteen-minute
+    /// gate is shared with every other outage and can hold the real reason back for a quarter of
+    /// an hour after the mistake was made. After the welcome the same words are only how a session
+    /// ended, and its length decides the rung as it always did.</para>
+    /// <para>A close that says nothing at all is left alone: that is the accepts-and-drops case
+    /// ShortSession exists for, and there is no sentence to pass on anyway.</para>
+    /// </remarks>
+    private Ending SiteEnded(string? reason)
+    {
+        if (reason is not { Length: > 0 })
+        {
+            return default;
+        }
+
+        bool refused = _outgoing is null;
+        return new Ending(
+            refused
+                ? $"{_uri.Host} refused this station: {Site(reason)}"
+                : $"{_uri.Host} closed the uplink: {Site(reason)}",
+            refused);
+    }
+
     /// <summary>What this daemon is, for the monitor's own diagnostics.</summary>
     private static readonly string DaemonVersion =
         (typeof(UplinkClient).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? typeof(UplinkClient).Assembly.GetName().Version?.ToString()
             ?? "unknown").Split('+')[0];
+
+    /// <summary>
+    /// Why a session ended: the sentence for the journal, or null for one that ended without a
+    /// word, and whether the site refused this station rather than merely dropping it.
+    /// </summary>
+    private readonly record struct Ending(string? Reason, bool Refused);
 
     /// <summary>One queued message and where its array came from.</summary>
     private readonly record struct Outgoing(

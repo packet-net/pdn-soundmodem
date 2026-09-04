@@ -86,6 +86,24 @@ public class UplinkClientTests
         /// <summary>Whether to complete the handshake. False leaves the station waiting.</summary>
         public bool SendWelcome { get; set; } = true;
 
+        /// <summary>
+        /// Refuse the hello with this sentence and never welcome the station, as the monitor
+        /// does for a callsign that does not match the token the connection presented.
+        /// </summary>
+        public string? RefuseTheHello { get; set; }
+
+        /// <summary>
+        /// Refuse with the close frame alone, for a monitor that closes without sending the
+        /// application-level <c>refused</c> message first.
+        /// </summary>
+        public bool RefuseInTheCloseFrameOnly { get; set; }
+
+        /// <summary>
+        /// Close with no reason text at all, so the <c>refused</c> message is the only place the
+        /// site's sentence appears.
+        /// </summary>
+        public bool CloseWithoutSayingWhy { get; set; }
+
         /// <summary>The credential the last upgrade presented.</summary>
         public string? Authorization { get; private set; }
 
@@ -195,6 +213,34 @@ public class UplinkClientTests
                     lock (_gate)
                     {
                         _received.Add((result.MessageType, [.. message]));
+                    }
+
+                    // A hello this site will not have: the sentence, then the close, and no
+                    // welcome ever. The monitor's own OnHelloAsync sends both and either half is
+                    // enough on its own, which is why each half can be switched off here.
+                    if (RefuseTheHello is { } refusal)
+                    {
+                        if (!RefuseInTheCloseFrameOnly)
+                        {
+                            // Serialised rather than interpolated, so a reason with a quote, a
+                            // newline or a byte above 0x7F in it reaches the station as itself.
+                            await socket.SendAsync(
+                                JsonSerializer.SerializeToUtf8Bytes(
+                                    new { type = "refused", reason = refusal }),
+                                WebSocketMessageType.Text,
+                                endOfMessage: true,
+                                _stopping.Token);
+                        }
+
+                        await socket.CloseOutputAsync(
+                            WebSocketCloseStatus.NormalClosure,
+                            CloseWithoutSayingWhy
+                                ? null
+
+                                // As the monitor truncates it: a close frame carries 123 bytes.
+                                : refusal[..Math.Min(120, refusal.Length)],
+                            _stopping.Token);
+                        return;
                     }
 
                     // The hello, and then the handshake this station is waiting on.
@@ -320,6 +366,15 @@ public class UplinkClientTests
         }
 
         throw new TimeoutException($"timed out waiting for {what}");
+    }
+
+    /// <summary>A snapshot of a journal the client is still writing to, taken under its lock.</summary>
+    private static string[] Lines(List<string> journal)
+    {
+        lock (journal)
+        {
+            return [.. journal];
+        }
     }
 
     /// <summary>One block of received audio at the channel rate, with recognisable content.</summary>
@@ -722,6 +777,203 @@ public class UplinkClientTests
     }
 
     /// <summary>
+    /// A site that reads the hello and will not have this station says why, and the station puts
+    /// that sentence in its journal on the first attempt rather than a generic one later.
+    /// </summary>
+    /// <remarks>
+    /// Issue #401, seen live while a station's callsign was being changed. The socket upgraded,
+    /// so this is not the HTTP 401 refusal above; the site accepted the connection and then
+    /// refused the hello on the wire. It used to be classified as a short session, which put the
+    /// line behind the fifteen-minute outage gate shared with every other outage - eighteen
+    /// minutes, in the incident - and said "dropped the uplink after 0 s" when it arrived, which
+    /// tells an operator nothing about the mistake they have just made.
+    /// </remarks>
+    [Fact]
+    public async Task A_Site_That_Refuses_The_Hello_Says_The_Site_Reason_At_Once()
+    {
+        const string Refusal = "says it is GB7RDG-2 and this token was issued to GB7RDG";
+        var clock = new FakeTimeProvider();
+        await using var monitor = new StubMonitor { RefuseTheHello = Refusal };
+        await using WaterfallWebServer server = StationServer(clock);
+        var journal = new List<string>();
+        await using var client = new UplinkClient(
+            server,
+            SettingsFor(monitor.Url),
+            clock,
+            line => { lock (journal) { journal.Add(line); } });
+        client.Start();
+
+        // Not one tick of the clock has moved: the reason is said on the attempt it happened on,
+        // which is the whole of this issue. Nothing here waits out a quiet period.
+        await Until(() => Lines(journal).Any(l => l.Contains(Refusal, StringComparison.Ordinal)),
+            "the site's own reason, on the first attempt");
+
+        Lines(journal).Should().Contain(
+            l => l.Contains("refused this station", StringComparison.Ordinal),
+            "the sentence is the site's and is attributed to it");
+        Lines(journal).Should().NotContain(
+            l => l.Contains("dropped the uplink", StringComparison.Ordinal),
+            "the generic sentence is what an operator was left with before, and it names nothing "
+            + "they could act on");
+
+        // The refusal ladder, not the short-session one: 60 s doubling, rather than 5 s doubling
+        // to five minutes. A mistake somebody has to fix is not retried every five seconds.
+        TimeSpan[] expected =
+        [
+            TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(240),
+        ];
+
+        for (int step = 0; step < expected.Length; step++)
+        {
+            int taken = step + 1;
+            await Until(() => client.RetryWaits.Count >= taken, $"refusal {taken}");
+            client.RetryWaits[step].Should().Be(expected[step]);
+            await UntilAdvancing(clock, () => monitor.Attempts > taken, $"attempt {taken + 1}");
+        }
+
+        string[] said = Lines(journal);
+        said.Where(l => l.Contains(Refusal, StringComparison.Ordinal)).Should().ContainSingle(
+            "three refusals inside seven minutes of the clock, and one line about them: a "
+            + "refusal is said once an hour, as a refused token is");
+        said.Should().AllSatisfy(
+            l => l.Should().MatchRegex("^[\\x20-\\x7e]*$", "journal lines are plain ASCII"));
+        client.Publishing.Should().BeFalse("it was never welcomed");
+        client.RunTask!.IsFaulted.Should().BeFalse("a site saying no is not a fault");
+    }
+
+    /// <summary>
+    /// The same, for a site that closes without sending the <c>refused</c> message: the close
+    /// frame's own reason text is the only place its sentence appears, and it is read.
+    /// </summary>
+    [Fact]
+    public async Task A_Close_Before_The_Welcome_Takes_Its_Reason_From_The_Close_Frame()
+    {
+        const string Refusal = "speaks uplink protocol 2 and this site speaks 1";
+        var clock = new FakeTimeProvider();
+        await using var monitor = new StubMonitor
+        {
+            RefuseTheHello = Refusal,
+            RefuseInTheCloseFrameOnly = true,
+        };
+        await using WaterfallWebServer server = StationServer(clock);
+        var journal = new List<string>();
+        await using var client = new UplinkClient(
+            server,
+            SettingsFor(monitor.Url),
+            clock,
+            line => { lock (journal) { journal.Add(line); } });
+        client.Start();
+
+        await Until(() => Lines(journal).Any(l => l.Contains(Refusal, StringComparison.Ordinal)),
+            "the close frame's reason");
+
+        await Until(() => client.RetryWaits.Count >= 1, "the first wait");
+        client.RetryWaits[0].Should().Be(
+            TimeSpan.FromSeconds(60),
+            "a close carrying a reason before the welcome is a refusal, whichever way the site "
+            + "chose to say it, and 5 s is the rung for a site that accepts and drops");
+    }
+
+    /// <summary>
+    /// The <c>refused</c> message on its own is enough: a site that sends it and then closes
+    /// without a word in the close frame has still said why, and the station reads it.
+    /// </summary>
+    /// <remarks>
+    /// The two above would pass on the close frame alone, because a real monitor says it twice
+    /// and the stub does too. This is the test that holds the message arm: with
+    /// <c>case "refused"</c> deleted, only this one fails.
+    /// </remarks>
+    [Fact]
+    public async Task A_Refused_Message_Alone_Says_Why_And_Takes_The_Refusal_Ladder()
+    {
+        const string Refusal = "says it is GB7RDG-2 and this token was issued to GB7RDG";
+        var clock = new FakeTimeProvider();
+        await using var monitor = new StubMonitor
+        {
+            RefuseTheHello = Refusal,
+            CloseWithoutSayingWhy = true,
+        };
+        await using WaterfallWebServer server = StationServer(clock);
+        var journal = new List<string>();
+        await using var client = new UplinkClient(
+            server,
+            SettingsFor(monitor.Url),
+            clock,
+            line => { lock (journal) { journal.Add(line); } });
+        client.Start();
+
+        await Until(() => Lines(journal).Any(l => l.Contains(Refusal, StringComparison.Ordinal)),
+            "the reason, from the message rather than the close frame");
+
+        Lines(journal).Should().Contain(
+            l => l.Contains("refused this station", StringComparison.Ordinal));
+        Lines(journal).Should().NotContain(
+            l => l.Contains("dropped the uplink", StringComparison.Ordinal));
+
+        await Until(() => client.RetryWaits.Count >= 1, "the first wait");
+        client.RetryWaits[0].Should().Be(
+            TimeSpan.FromSeconds(60),
+            "a station the site will not have waits on the refusal ladder however the site said "
+            + "so, and 5 s is the rung for a site that accepts and drops");
+    }
+
+    /// <summary>
+    /// The site's words go into this station's journal as one printable line, however they were
+    /// written: flattened to ASCII and capped, as everything a semi-trusted publisher sends is.
+    /// </summary>
+    /// <remarks>
+    /// A newline would forge a second journal line, a byte above 0x7F comes back as
+    /// <c>&lt;XX&gt;</c> hex escapes in journalctl's pager under a C locale, and four hundred
+    /// characters would bury the sentence saying when the next attempt is. The refusal path is
+    /// the newest way for a site's own writing to reach a station's console, so it goes through
+    /// the same cap and the same flattening as the rest, and this is what says so.
+    /// </remarks>
+    [Fact]
+    public async Task A_Refusal_The_Site_Wrote_Badly_Is_Still_One_Printable_Line()
+    {
+        const string Crafted = "start\nCRAFTED publish: fake journal line\r\u00e9";
+        string refusal = Crafted + new string('A', 400);
+        var clock = new FakeTimeProvider();
+        await using var monitor = new StubMonitor
+        {
+            RefuseTheHello = refusal,
+
+            // The 400 characters would not fit a close frame anyway, so this is the message path.
+            CloseWithoutSayingWhy = true,
+        };
+        await using WaterfallWebServer server = StationServer(clock);
+        var journal = new List<string>();
+        await using var client = new UplinkClient(
+            server,
+            SettingsFor(monitor.Url),
+            clock,
+            line => { lock (journal) { journal.Add(line); } });
+        client.Start();
+
+        await Until(() => Lines(journal).Any(l => l.Contains("CRAFTED", StringComparison.Ordinal)),
+            "the site's badly written reason");
+
+        string[] said = Lines(journal);
+        said.Where(l => l.Contains("CRAFTED", StringComparison.Ordinal)).Should().ContainSingle(
+            "the newline in it is not a line break in the journal");
+        said.Should().AllSatisfy(
+            l => l.Should().MatchRegex("^[\\x20-\\x7e]*$", "journal lines are plain ASCII"));
+
+        // The site's own words, as they ended up in the line, between the attribution and the
+        // sentence that follows them.
+        string line = said.Single(l => l.Contains("CRAFTED", StringComparison.Ordinal));
+        const string Opens = "refused this station: ";
+        string quoted = line[(line.IndexOf(Opens, StringComparison.Ordinal) + Opens.Length)
+            ..line.IndexOf(". Retrying in", StringComparison.Ordinal)];
+
+        quoted.Should().HaveLength(203, "200 characters of the site's writing, and an ellipsis");
+        quoted.Should().StartWith("start?CRAFTED publish: fake journal line??",
+            "the newline, the carriage return and the accented character are each one question "
+            + "mark, so the crafted text is inert in the middle of a line");
+        quoted.Should().EndWith("...");
+    }
+
+    /// <summary>
     /// The site being down or hostile costs the station nothing: no fault, no exit code, no
     /// stopped receive path, and a loop that is still going.
     /// </summary>
@@ -801,6 +1053,12 @@ public class UplinkClientTests
             "{\"type\":\"demand\",\"viewers\":\"2\"}",
             "{\"type\":1}",
             "{\"type\":\"welcome\",\"url\":7}",
+
+            // A refusal with nothing readable in it: no reason at all, and a reason that is not
+            // a string. This is the one arm that ends a session on the site's say-so, so it has
+            // to be as hard to trip as every other one - neither of these costs the session.
+            "{\"type\":\"refused\"}",
+            "{\"type\":\"refused\",\"reason\":7}",
 
             // And things that are not messages at all.
             "not json at all",
