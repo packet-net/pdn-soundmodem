@@ -143,6 +143,7 @@ internal static class MonitorStartup
                 Port = waterfall.Port,
                 Bind = config.Bind,
                 Modems = modems,
+                PublicUrl = monitor.PublicUrl,
                 Uplinks = monitor.Uplinks,
                 Linger = linger,
                 DspRate = dspRate,

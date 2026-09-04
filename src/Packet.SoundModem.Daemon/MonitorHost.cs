@@ -74,6 +74,7 @@ internal sealed class MonitorHost : IAsyncDisposable
             _uplinks = new UplinkServer(new UplinkServerOptions
             {
                 Uplinks = options.Uplinks,
+                PublicUrl = options.PublicUrl,
                 Journal = _journal,
                 Station = RelayStationForAsync,
                 DisplayLineRate = rate =>
@@ -150,7 +151,11 @@ internal sealed class MonitorHost : IAsyncDisposable
             return 2;
         }
 
-        _journal.Write($"monitor: {_router.Url}");
+        _journal.Write(
+            $"monitor: {_router.Url}"
+            + (_options.PublicUrl is { Length: > 0 } published
+                ? $", published as {published}/"
+                : ""));
         _journal.Write(
             "monitor: receive only - no KISS, no transmitter, no configuration API on this port");
 
@@ -1171,6 +1176,13 @@ internal sealed record MonitorHostOptions
 
     /// <summary>Dead-feed thresholds; null takes the UberSDR family's defaults.</summary>
     public DeadFeedConfig? DeadFeed { get; init; }
+
+    /// <summary>
+    /// This site's own address as the world reaches it, from <c>monitor.publicUrl</c>, already
+    /// normalised to a scheme, a host and an optional port with no trailing slash. Empty derives
+    /// it from each request's <c>Host</c> header.
+    /// </summary>
+    public string PublicUrl { get; init; } = "";
 
     /// <summary>
     /// The private stations this site accepts an uplink from. Empty (the default) is a monitor

@@ -482,6 +482,24 @@ public sealed class UberSdrConfig
 /// </remarks>
 public sealed class MonitorConfig
 {
+    /// <summary>
+    /// This site's own address as the world reaches it, e.g.
+    /// <c>"https://monitor.ukpacketradio.network"</c>. Empty (the default) works it out from each
+    /// request's <c>Host</c> header instead.
+    /// </summary>
+    /// <remarks>
+    /// <para>What it is for is the <c>welcome</c> a station gets on its uplink: the address of
+    /// its own page here, so its journal reads "publish: live at
+    /// https://monitor.ukpacketradio.network/r/gb7rdg-2/" rather than naming its slug. The
+    /// header-derived answer is null behind a tunnel that rewrites <c>Host</c>, which is what
+    /// this site itself runs behind, and the site owner is the one who knows the name the world
+    /// uses.</para>
+    /// <para>A scheme, a host and an optional port, and nothing after them, because the site is
+    /// served from the root of its port. A trailing slash is accepted and normalised away while
+    /// the file is read, so everything downstream sees one shape.</para>
+    /// </remarks>
+    public string PublicUrl { get; set; } = "";
+
     /// <summary>Where the list of receivers comes from: the UberSDR project's public
     /// directory, or anything that serves the same JSON. An absolute http or https URL.</summary>
     public string Directory { get; set; } = "https://instances.ubersdr.org/api/instances";
@@ -1286,6 +1304,35 @@ public sealed class DaemonConfig
                 + "public one is https://instances.ubersdr.org/api/instances.");
         }
 
+        if (monitor.PublicUrl is { Length: > 0 } publicUrl)
+        {
+            if (!Uri.TryCreate(publicUrl, UriKind.Absolute, out Uri? site)
+                || (site.Scheme != Uri.UriSchemeHttp && site.Scheme != Uri.UriSchemeHttps)
+                || site.AbsolutePath != "/"
+                || site.Query.Length > 0
+                || site.Fragment.Length > 0
+                || site.UserInfo.Length > 0)
+            {
+                throw new InvalidDataException(
+                    $"\"monitor\".\"publicUrl\" is {Quoted(publicUrl)}. It is this site's own "
+                    + "address as the world reaches it, which is a scheme, a host and an optional "
+                    + "port and nothing after them, e.g. "
+                    + "\"https://monitor.ukpacketradio.network\" - with or without a trailing "
+                    + "slash, both being the same address. A path, a query or a fragment is "
+                    + "refused because the site is served from the root of its port and every "
+                    + "link on its pages is written from there. Leave it out to work the address "
+                    + "out from each request instead, which is right for a site nothing rewrites "
+                    + "the Host header in front of.");
+            }
+
+            // Normalised as the file is read, so the one place that uses it can append
+            // "/r/<slug>/" without wondering whether the operator wrote the slash. IdnHost rather
+            // than Authority because this string goes into the journal, and a punycode host is
+            // what the wire carries anyway.
+            monitor.PublicUrl = $"{site.Scheme}://{site.IdnHost}"
+                + (site.IsDefaultPort ? "" : $":{site.Port}");
+        }
+
         foreach ((string list, List<string> hosts) in (ReadOnlySpan<(string, List<string>)>)
             [("allow", monitor.Allow), ("deny", monitor.Deny)])
         {
@@ -1543,8 +1590,8 @@ public sealed class DaemonConfig
                 throw new InvalidDataException(
                     $"\"monitor\".\"uplinks\" gives {named} a \"tokenSha256\" that is not 64 hex "
                     + "characters. This site stores the HASH of the token it issued, never the "
-                    + "token: run \"pdn-soundmodem --uplink-token\", paste the hash here and give "
-                    + "the token to the station's operator.");
+                    + $"token: run \"pdn-soundmodem --uplink-token {uplink.Callsign}\", paste the "
+                    + "hash here and give the token to the station's operator.");
             }
 
             if (slugs.TryGetValue(uplink.Slug, out string? already))

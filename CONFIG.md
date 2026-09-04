@@ -1833,6 +1833,7 @@ same package, same tests; the configuration is the switch.
 ```json
 {
   "monitor": {
+    "publicUrl": "https://monitor.ukpacketradio.network",
     "directory": "https://instances.ubersdr.org/api/instances",
     "refreshMinutes": 5,
     "lingerSeconds": 60,
@@ -1855,6 +1856,7 @@ same package, same tests; the configuration is the switch.
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
+| `publicUrl` | string | *(worked out per request)* | This site's own address as the world reaches it, e.g. `"https://monitor.ukpacketradio.network"`. Scheme, host and optional port only; a trailing slash is accepted and ignored - [below](#monitoruplinks) |
 | `directory` | string | `"https://instances.ubersdr.org/api/instances"` | Where the list of receivers comes from. An absolute http or https URL |
 | `refreshMinutes` | int | `5` | How often it is fetched again. 0 fetches once, at start-up, and never again |
 | `lingerSeconds` | int | `60` | How long each receiver's session is held after the last viewer of *that receiver* leaves |
@@ -1986,7 +1988,9 @@ a modem in it that will not build (they are built once at start-up, against a th
 so that a mode this configuration cannot make is one message here rather than a 404 on every
 request for every receiver); no `waterfall` section, or one with no `port` written down, since a
 site meant to be reached from outside should not come up on a number nobody chose; a negative `refreshMinutes` or `lingerSeconds`; a `directory` that is not
-an absolute http or https URL; and an `allow` or `deny` entry that is not a hostname - that last
+an absolute http or https URL; a `publicUrl` that is not an absolute http or https URL, or that
+carries a path, a query or a fragment, this site being served from the root of its port; and an
+`allow` or `deny` entry that is not a hostname - that last
 one because an entry with a scheme or a port in it would silently match nothing and leave an
 operator believing they had been taken off a list they are still on. The `uplinks` entries have
 their own conditions, [below](#monitoruplinks).
@@ -2022,13 +2026,15 @@ as the web receivers, tagged `station`.
 |---|---|---|---|
 | `callsign` | string | *(required)* | The callsign this station must say it is. A connection whose `publish.callsign` does not match is closed with the reason |
 | `slug` | string | *(required)* | The path its page is served under, `/r/<slug>/`. Lower-case letters, digits and hyphens; normally the callsign lower-cased |
-| `tokenSha256` | string | *(required)* | The SHA-256 of the token issued to that station, as 64 hex characters. `pdn-soundmodem --uplink-token` prints a token and this hash together |
+| `tokenSha256` | string | *(required)* | The SHA-256 of the token issued to that station, as 64 hex characters. `pdn-soundmodem --uplink-token GB7RDG-2` prints a token and this hash together |
 
-**Issuing a token.** Run `pdn-soundmodem --uplink-token` on the monitor. It prints a fresh token
-and its hash and writes neither anywhere: put the hash in this list, give the token to the
-station's operator once, and they paste it into their own `publish.token`. The token is 256 bits
-from the system's cryptographic random source, so it is worth possessing and worth not inventing
-by hand.
+**Issuing a token.** Run `pdn-soundmodem --uplink-token GB7RDG-2` on the monitor, naming the
+station the token is for. It prints a fresh token and the whole entry to paste into this list,
+and writes neither anywhere: keep the hash here, give the token to the station's operator once,
+and they paste it into their own `publish.token`. The callsign is an argument rather than an
+example in the printed entry, so that what comes out is that station's entry and not one with
+somebody else's callsign in it waiting to be edited. The token is 256 bits from the system's
+cryptographic random source, so it is worth possessing and worth not inventing by hand.
 
 **The hash, and not the token.** This site only ever compares, so it never needs the plaintext,
 and a config file that leaks does not hand out working uplinks. Plain SHA-256 with no salt and no
@@ -2045,6 +2051,17 @@ derived: the URL a visitor bookmarks should not be a function that might change.
 receiver whose hostname would give the same one is served under its full sanitised host instead,
 with a line saying so. A station wins because its slug is a callsign somebody was issued and a
 receiver's is derived from a hostname.
+
+**A station is told the address of its own page here**, in the `welcome` it gets when it
+connects, so its own journal reads `publish: live at
+https://monitor.ukpacketradio.network/r/gb7rdg-2/` rather than `publish: live as gb7rdg-2`. That
+address is [`monitor.publicUrl`](#monitor) where it is set, and otherwise the `Host` header of the
+station's own connection. **Set it on any site behind a tunnel**: `cloudflared` and its like
+rewrite `Host` on the way in - CT 146's ingress leaves `127.0.0.1:8099` - and a loopback name or a
+bare address is not one worth repeating back, so a site that has not written its address down
+tells the station nothing and the station names its slug instead. A guessed URL in somebody else's
+journal is worse than none. Written with or without a trailing slash it means the same thing, and
+`/r/<slug>/` is appended to it.
 
 **One connection per token.** A second connection authenticating the same token closes the first,
 with a close reason saying so, because a station whose socket has half-closed must not be locked
@@ -2085,7 +2102,7 @@ somebody's transceiver would be inventing them.
 **Validation**, all exit 2 with the reason: a `callsign` that is not a callsign with an optional
 SSID; a `slug` that is not a usable path segment, which is answered with the one the callsign
 would have given; a `tokenSha256` that is not 64 hex characters, which is answered with
-`--uplink-token`; two entries with the same `slug`, because one page cannot be two stations; the
+`--uplink-token CALLSIGN`; two entries with the same `slug`, because one page cannot be two stations; the
 same `callsign` twice; and the same `tokenSha256` twice, because a token names one station and the
 same one on two entries cannot say which of them is connecting.
 
@@ -2259,6 +2276,7 @@ enumerated yet at boot, for instance - still restarts on its own as usual.
 | `monitor.refreshMinutes` or `monitor.lingerSeconds` negative | `That is a number of minutes/seconds to wait, so it cannot be negative` |
 | `monitor.directory` not an absolute http or https URL | `which is not an absolute http or https URL` - with the public one to copy |
 | `monitor.allow` or `monitor.deny` entry that is not a hostname | `which is not a hostname … no scheme, no port, no path` |
+| `monitor.publicUrl` with a path, a query or a fragment, or not http/https | `a scheme, a host and an optional port and nothing after them` - the site is served from the root of its port |
 | `frameLog.path` a file, or naming one, under `monitor` | `A monitor keeps one log per receiver, so this is a DIRECTORY here …` |
 | [`publish`](#publish) alongside `monitor` | `this file sets both "publish" and "monitor" … one process is not both` |
 | `publish` on a `ubersdr:` device | `A receiver like that is already on the monitor site in its own right …` |
