@@ -40,6 +40,46 @@ internal sealed class RelayStation : IMonitorStation
     /// </remarks>
     internal const int MaxHeldFrames = 20;
 
+    /// <summary>
+    /// The display line rate to draw a relayed station at: the site's own, where the station's
+    /// audio rate allows it, and the next one down that does where it does not. 0 means this
+    /// site cannot draw that rate at all.
+    /// </summary>
+    /// <remarks>
+    /// <para><see cref="Dsp.WaterfallSource"/> hops <c>sampleRate / linesPerSecond</c> samples
+    /// per line, so the line rate has to divide the sample rate exactly, and the hop has to fit
+    /// inside the transform. Thirty lines a second does not divide 8000 or 16000 - and those are
+    /// two of the rates a 48 kHz station is offered by its own start-up, because <c>publish</c>
+    /// validates <c>audioRate</c> as an integer divisor of its channel. So a station following
+    /// its own daemon's advice was refused here, with a sentence naming nothing it could change
+    /// and a .NET stack trace in this site's journal.</para>
+    /// <para>Deriving the rate rather than refusing it is the answer that needs no agreement
+    /// between the two ends: 8000 and 16000 are drawn at 25 lines a second instead of 30, which
+    /// nobody can see, and every rate <c>publish</c> will accept is one this site can draw. A
+    /// rate no line rate divides - a prime one, which only a hand-written client would send - is
+    /// still refused, and now at the boundary with a sentence about rates rather than a stack
+    /// trace.</para>
+    /// </remarks>
+    internal static int LineRateFor(int sampleRate, int wanted, int fftSize)
+    {
+        if (sampleRate <= 0 || wanted <= 0)
+        {
+            return 0;
+        }
+
+        // The transform WaterfallSource would pick for this rate, if the site has not pinned one.
+        int transform = fftSize > 0 ? fftSize : sampleRate >= 24000 ? 8192 : 2048;
+        for (int lines = Math.Min(wanted, sampleRate); lines >= 1; lines--)
+        {
+            if (sampleRate % lines == 0 && sampleRate / lines <= transform)
+            {
+                return lines;
+            }
+        }
+
+        return 0;
+    }
+
     private readonly MonitorHostOptions _options;
     private readonly WaterfallRouter _router;
     private readonly SoundModemChannel _channel;
@@ -174,7 +214,7 @@ internal sealed class RelayStation : IMonitorStation
         {
             DialFrequencyHz = Hello.DialHz,
             Sideband = Hello.Sideband,
-            LinesPerSecond = _options.LinesPerSecond,
+            LinesPerSecond = LineRateFor(Hello.AudioRate, _options.LinesPerSecond, _options.FftSize),
             FftSize = _options.FftSize,
             Public = true,
             Title = _options.Title,

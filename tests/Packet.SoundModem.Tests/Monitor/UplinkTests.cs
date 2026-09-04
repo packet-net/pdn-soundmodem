@@ -222,6 +222,80 @@ public class UplinkTests
         config.GetProperty("receiverKind").GetString().Should().Be("station");
     }
 
+    [Theory]
+    [InlineData(6000, 30)]
+    [InlineData(8000, 25)]
+    [InlineData(9600, 30)]
+    [InlineData(11025, 25)]
+    [InlineData(12000, 30)]
+    [InlineData(16000, 25)]
+    [InlineData(24000, 30)]
+    [InlineData(48000, 30)]
+    public async Task Every_Audio_Rate_The_Station_Side_Offers_Is_One_This_Site_Can_Draw(
+        int audioRate, int expectedLines)
+    {
+        await using var h = await Harness.StartAsync();
+
+        // publish validates audioRate as an integer divisor of the station's channel rate, so a
+        // 48 kHz station is offered 8000 and 16000 by its own start-up - and thirty lines a
+        // second divides neither. A station following its own daemon's advice used to be refused
+        // here with a sentence naming nothing it could change, and a stack trace in this site's
+        // journal. The line rate comes down to the next one that fits instead.
+        await using var station = await StubStation.OpenAsync(
+            h.Port, h.Token, Callsign, audioRate: audioRate, blockSamples: audioRate / 25);
+        await station.WelcomedAsync();
+
+        await using Browser browser = await h.WatchAsync(Slug);
+        JsonElement config = await browser.UntilTextAsync("config");
+        config.GetProperty("sampleRate").GetInt32().Should().Be(audioRate);
+        config.GetProperty("linesPerSecond").GetInt32().Should().Be(expectedLines);
+
+        h.Errors.Should().NotContain(
+            line => line.Contains("could not build", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task An_Audio_Rate_This_Site_Cannot_Draw_Is_Refused_Without_A_Stack_Trace()
+    {
+        await using var h = await Harness.StartAsync();
+
+        // A prime rate: no line rate divides it, so there is no waterfall to be had. Only a
+        // hand-written client sends one, and the answer is still a sentence about rates rather
+        // than an exception from inside a constructor.
+        await using var station = await StubStation.OpenAsync(
+            h.Port, h.Token, Callsign, audioRate: 15013, blockSamples: 600);
+        await station.ClosedAsync();
+
+        station.ClosedBecause.Should().Contain("a whole number of lines a second divides")
+            .And.Contain("12000", "and names a rate that works")
+            .And.HaveLength(
+                station.ClosedBecause!.Length,
+                "the whole sentence has to fit a close frame, which is where its operator reads it");
+        station.ClosedBecause!.Length.Should().BeLessThanOrEqualTo(120);
+        (await h.StationsAsync()).Should().BeEmpty();
+        string[] everything = [.. h.Lines, .. h.Errors];
+        everything.Should().NotContain(line => line.Contains("   at ", StringComparison.Ordinal))
+            .And.NotContain(line => line.Contains("System.ArgumentException", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_Block_Longer_Than_A_Message_Is_Named_At_The_Door()
+    {
+        await using var h = await Harness.StartAsync();
+
+        // The hello's cap and the reader's used to disagree: a station declaring a second of
+        // audio was welcomed and then had its first audio message refused for being over the
+        // message cap, which named the wrong thing and cost it a minute of backoff.
+        await using var station = await StubStation.OpenAsync(
+            h.Port, h.Token, Callsign, blockSamples: 12000);
+        await station.ClosedAsync();
+
+        station.Welcome.Should().BeNull("it is refused at the door, not after being welcomed");
+        station.ClosedBecause.Should().Contain("one message carries 8190")
+            .And.Contain("4.2's 40 ms is 480 here", "and says what its own block should have been");
+        station.ClosedBecause!.Length.Should().BeLessThanOrEqualTo(120);
+    }
+
     [Fact]
     public async Task Relayed_Audio_Becomes_A_Waterfall_Line()
     {

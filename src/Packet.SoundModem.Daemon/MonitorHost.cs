@@ -75,6 +75,8 @@ internal sealed class MonitorHost : IAsyncDisposable
                 Uplinks = options.Uplinks,
                 Journal = _journal,
                 Station = RelayStationFor,
+                DisplayLineRate = rate =>
+                    RelayStation.LineRateFor(rate, options.LinesPerSecond, options.FftSize),
                 TimeProvider = _time,
                 Stopping = _stopping.Token,
             });

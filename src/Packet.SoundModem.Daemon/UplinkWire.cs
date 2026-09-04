@@ -38,8 +38,15 @@ internal static class UplinkWire
     /// <param name="hello">What it said about itself, when this returns true.</param>
     /// <param name="why">The refusal, when it returns false. Written to be read by the operator
     /// of the station, whose console it will appear on.</param>
+    /// <param name="lineRateFor">
+    /// The display line rate this site would draw a given audio rate at, or 0 for a rate it
+    /// cannot draw at all. Checked here, at the boundary, because the alternative is a
+    /// constructor throwing halfway through building a station and an untrusted station's choice
+    /// putting a stack trace in a public site's journal.
+    /// </param>
     internal static bool TryReadHello(
-        JsonElement root, UplinkEntry entry, out UplinkHello? hello, out string? why)
+        JsonElement root, UplinkEntry entry, Func<int, int> lineRateFor,
+        out UplinkHello? hello, out string? why)
     {
         hello = null;
 
@@ -82,15 +89,25 @@ internal static class UplinkWire
             return false;
         }
 
-        // At most a second of audio in one message, so that the length check on every binary
-        // message that follows is a small number rather than something a station could make
-        // enormous by declaring it.
+        if (lineRateFor(audioRate) is not > 0)
+        {
+            // Short enough to survive a close frame, which carries 123 bytes and is where the
+            // station's own operator reads it.
+            why = $"relays at {audioRate} Hz; this site needs a rate a whole number of lines a "
+                + "second divides, e.g. 12000";
+            return false;
+        }
+
+        // Capped at what one message may actually carry, not at a second of audio. The two used
+        // to disagree: a station declaring more than this was welcomed and then had its first
+        // audio message refused for being over the message cap, which named the wrong thing and
+        // cost it a minute of backoff for a mistake this sentence could have named at the door.
         if (Int(root, "blockSamples") is not { } blockSamples
-            || blockSamples < 1 || blockSamples > audioRate)
+            || blockSamples < 1 || blockSamples > UplinkServer.MaxBlockSamples)
         {
             why = $"declares an audio block of {Int(root, "blockSamples")?.ToString(
-                CultureInfo.InvariantCulture) ?? "no"} samples, which cannot be right at "
-                + $"{audioRate} Hz";
+                CultureInfo.InvariantCulture) ?? "no"} samples; one message carries "
+                + $"{UplinkServer.MaxBlockSamples}, and 4.2's 40 ms is {audioRate / 25} here";
             return false;
         }
 

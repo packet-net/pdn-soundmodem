@@ -50,6 +50,19 @@ internal sealed class UplinkServer : IAsyncDisposable
     /// <summary>The most a relayed frame's own bytes may be, decoded.</summary>
     internal const int MaxRawFrameBytes = 2048;
 
+    /// <summary>
+    /// The most samples one audio message may carry, which is what a message may carry less its
+    /// four-byte header.
+    /// </summary>
+    /// <remarks>
+    /// Derived from the message cap rather than stated beside it, because the two used to be
+    /// separate numbers that disagreed: a station could declare a block the hello accepted and
+    /// the reader then refused, with a sentence about message sizes rather than about the block
+    /// length that caused it. 4.2's own blocks are 40 ms, which is 1920 samples at 48 kHz, so
+    /// this is four times more than the format asks for.
+    /// </remarks>
+    internal const int MaxBlockSamples = (MaxTextBytes - 4) / 2;
+
     /// <summary>The lowest and highest relayed audio rate this will accept.</summary>
     internal const int MinAudioRate = 6000;
 
@@ -681,7 +694,9 @@ internal sealed class UplinkServer : IAsyncDisposable
                 return new Stop("sent a second hello on one connection", Refuse: false);
             }
 
-            if (!UplinkWire.TryReadHello(root, _entry, out UplinkHello? hello, out string? why))
+            if (!UplinkWire.TryReadHello(
+                    root, _entry, _server._options.DisplayLineRate,
+                    out UplinkHello? hello, out string? why))
             {
                 // Closed with the sentence and no backoff: a mismatched callsign or a protocol
                 // version is something a person fixes and reconnects, and refusing the token for
@@ -710,10 +725,16 @@ internal sealed class UplinkServer : IAsyncDisposable
             }
             catch (Exception e)
             {
+                // e.Message, never e.ToString(). A station chooses what it says, and a public
+                // site's journal should not carry a stack trace with this process's own source
+                // paths in it because somebody sent an awkward number. Everything a station can
+                // actually get wrong is refused above, by name; anything reaching here is this
+                // site's own bug, and the one line says so.
                 _server._journal.WriteError(
                     $"uplink: could not build a station for "
                     + $"{UberSdrDirectory.Ascii(_entry.Callsign)} - "
-                    + UberSdrDirectory.Ascii(e.ToString()));
+                    + $"{e.GetType().Name}: {UberSdrDirectory.Ascii(e.Message)}. This is a fault "
+                    + "in this site rather than in what the station sent.");
                 return new Stop("this site could not build a station for it", Refuse: false);
             }
 
@@ -910,6 +931,13 @@ internal sealed record UplinkServerOptions
     /// for the life of the process afterwards.
     /// </summary>
     public required Func<UplinkEntry, UplinkHello, RelayStation> Station { get; init; }
+
+    /// <summary>
+    /// The display line rate this site would draw a given relayed audio rate at, or 0 for one it
+    /// cannot draw at all. Asked at the boundary so that a rate this site cannot use is a
+    /// sentence about rates rather than an exception from inside a constructor.
+    /// </summary>
+    public required Func<int, int> DisplayLineRate { get; init; }
 
     /// <summary>The clock the delays, the heartbeat and the rate window run on.</summary>
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
