@@ -93,11 +93,18 @@ internal sealed class StubStation : IAsyncDisposable
 
         try
         {
-            await socket.ConnectAsync(
-                new Uri($"ws://127.0.0.1:{port}/uplink"), CancellationToken.None);
+            // Bounded, so that an upgrade this site never answers fails here with its own name
+            // on it rather than as a test that simply stopped.
+            using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/uplink"), giveUp.Token);
         }
-        catch
+        catch (Exception refused)
         {
+            // CollectHttpResponseDetails puts the status on the socket rather than on the
+            // exception, and the socket is about to go, so it is carried across here. A station
+            // has to be able to tell "my token is wrong" from "the site is down", and so does a
+            // test asserting which of the two this was.
+            refused.Data["HttpStatusCode"] = (int)socket.HttpStatusCode;
             socket.Dispose();
             throw;
         }

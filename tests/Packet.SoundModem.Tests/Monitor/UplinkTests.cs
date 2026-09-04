@@ -11,6 +11,22 @@ using Packet.SoundModem.UberSdr;
 namespace Packet.SoundModem.Tests.Monitor;
 
 /// <summary>
+/// These run one at a time, though the class still runs beside every other class.
+/// </summary>
+/// <remarks>
+/// Each test here stands up a whole site - an <c>HttpListener</c> on a real port, a directory, a
+/// relayed station with its own receive thread and frame-log writer - and drives it over real
+/// sockets. Forty-odd of those at once starves the runner's own scheduler: the process goes
+/// completely idle with every test parked on a continuation that has nowhere to run, about one
+/// run in three, and no test times out because none of them is doing anything. Nothing in the
+/// daemon is at fault - it has no synchronization context to be starved of - so the answer is to
+/// stop asking the runner to hold forty sites open at the same moment rather than to make the
+/// daemon quieter.
+/// </remarks>
+[CollectionDefinition(nameof(UplinkTests), DisableParallelization = true)]
+public sealed class UplinkTestsCollection;
+
+/// <summary>
 /// The monitor's side of a private station's uplink: who is let in, what a relayed station is
 /// once it is, and what neither a mistake nor an attack can make this site do.
 /// </summary>
@@ -23,12 +39,25 @@ namespace Packet.SoundModem.Tests.Monitor;
 /// <para>The clock is fake, so a linger is sixty seconds of nothing rather than sixty seconds of
 /// waiting, and the one test that is genuinely about elapsed time says so.</para>
 /// </remarks>
+[Collection(nameof(UplinkTests))]
 public class UplinkTests
 {
+    /// <summary>
+    /// How long any one of these gets before it is failed by name.
+    /// </summary>
+    /// <remarks>
+    /// Every test here is a whole site on a real port driven over real sockets, and the slowest
+    /// of them is under a second, so thirty is a safety net rather than a budget. It is here
+    /// because the alternative is not a slow test but a silent one: a wedged runner goes
+    /// completely idle with nothing to report, and a test that fails with its own name on it is
+    /// worth a great deal more than a build that stops.
+    /// </remarks>
+    private const int TestTimeoutMs = 30_000;
+
     private const string Callsign = "GB7RDG-2";
     private const string Slug = "gb7rdg-2";
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task An_Uplink_With_No_Token_Is_Refused()
     {
         await using var h = await Harness.StartAsync();
@@ -41,7 +70,7 @@ public class UplinkTests
         (await h.StationsAsync()).Should().BeEmpty("nothing is built for a connection that is not let in");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task An_Uplink_With_A_Wrong_Token_Is_Refused_And_Delayed()
     {
         await using var h = await Harness.StartAsync();
@@ -65,7 +94,7 @@ public class UplinkTests
         (await h.StationsAsync()).Should().BeEmpty();
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task An_Uplink_Whose_Callsign_Does_Not_Match_Its_Token_Is_Refused()
     {
         await using var h = await Harness.StartAsync();
@@ -80,7 +109,7 @@ public class UplinkTests
         (await h.StationsAsync()).Should().BeEmpty("no page is built for a station that could not say who it is");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Station_Cannot_Choose_Its_Own_Slug()
     {
         await using var h = await Harness.StartAsync();
@@ -98,7 +127,7 @@ public class UplinkTests
             System.Net.HttpStatusCode.NotFound, "a station cannot ask for a page");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Second_Connection_On_One_Token_Closes_The_First()
     {
         await using var h = await Harness.StartAsync();
@@ -117,7 +146,55 @@ public class UplinkTests
         (await h.StationsAsync()).Should().ContainSingle("one station, however many sockets have claimed it");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task A_Socket_That_Never_Says_Hello_Is_Closed()
+    {
+        await using var h = await Harness.StartAsync();
+
+        // The token is checked on the upgrade, so until a hello arrives there is no station, no
+        // slug and nothing for the one-connection-per-token rule to apply to. A socket that said
+        // nothing was held for the life of the process, costing a WebSocket, a semaphore, a
+        // linked cancellation source and a read buffer, with nothing in the journal about it.
+        using ClientWebSocket silent = await StubStation.ConnectAsync(h.Port, h.Token);
+        silent.State.Should().Be(WebSocketState.Open);
+
+        h.Time.Advance(UplinkServer.HelloDeadline + TimeSpan.FromSeconds(1));
+
+        var buffer = new byte[256];
+        WebSocketReceiveResult closed = await silent.ReceiveAsync(
+            buffer, new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+        closed.MessageType.Should().Be(WebSocketMessageType.Close);
+        silent.CloseStatusDescription.Should().Contain("says hello first");
+        (await h.StationsAsync()).Should().BeEmpty();
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task One_Token_Holds_One_Socket_That_Has_Not_Said_Hello()
+    {
+        await using var h = await Harness.StartAsync();
+
+        using ClientWebSocket first = await StubStation.ConnectAsync(h.Port, h.Token);
+
+        // Before the hello there was no cap of any kind: one token could open sockets until this
+        // process ran out of handles. The class's claim that the token table caps how many
+        // stations this site can hold was true of stations and not of sockets.
+        WebSocketException refused = await Assert.ThrowsAsync<WebSocketException>(
+            () => StubStation.ConnectAsync(h.Port, h.Token));
+        Status(refused).Should().Be(429);
+        h.Errors.Should().Contain(line =>
+            line.Contains(Callsign, StringComparison.Ordinal)
+            && line.Contains("already has a connection waiting", StringComparison.Ordinal));
+
+        // And the slot comes back, so a station that reconnects is not locked out by its own
+        // last attempt.
+        await first.CloseAsync(
+            WebSocketCloseStatus.NormalClosure, "",
+            new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Connected_Station_Is_Offered_And_A_Disconnected_One_Is_Not()
     {
         await using var h = await Harness.StartAsync();
@@ -139,7 +216,7 @@ public class UplinkTests
         gone.GetProperty("state").GetString().Should().Be("offline");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Disconnected_Station_Keeps_Its_Page_Its_History_And_Its_Links()
     {
         await using var h = await Harness.StartAsync();
@@ -173,7 +250,7 @@ public class UplinkTests
             0, "the links panel is folded from the frames' own bytes and outlives the station");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Reconnecting_Station_Comes_Back_Under_The_Same_Slug_And_The_Same_Log()
     {
         await using var h = await Harness.StartAsync();
@@ -194,7 +271,7 @@ public class UplinkTests
         (await h.StationsAsync()).Should().ContainSingle("the same station came back, not a second one");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Reconnecting_Station_Is_Listed_As_It_Now_Describes_Itself()
     {
         await using var h = await Harness.StartAsync();
@@ -227,7 +304,7 @@ public class UplinkTests
         config.GetProperty("receiverUrl").GetString().Should().Be("https://new.example/");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Station_That_Comes_Back_At_A_New_Rate_Is_Drawn_At_The_New_Rate()
     {
         await using var h = await Harness.StartAsync();
@@ -262,7 +339,7 @@ public class UplinkTests
             && line.Contains("12000 -> 6000", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Relayed_Station_Builds_No_Modems()
     {
         await using var h = await Harness.StartAsync();
@@ -290,7 +367,7 @@ public class UplinkTests
         config.GetProperty("receiverKind").GetString().Should().Be("station");
     }
 
-    [Theory]
+    [Theory(Timeout = TestTimeoutMs)]
     [InlineData(6000, 30)]
     [InlineData(8000, 25)]
     [InlineData(9600, 30)]
@@ -322,7 +399,7 @@ public class UplinkTests
             line => line.Contains("could not build", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task An_Audio_Rate_This_Site_Cannot_Draw_Is_Refused_Without_A_Stack_Trace()
     {
         await using var h = await Harness.StartAsync();
@@ -346,7 +423,7 @@ public class UplinkTests
             .And.NotContain(line => line.Contains("System.ArgumentException", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Block_Longer_Than_A_Message_Is_Named_At_The_Door()
     {
         await using var h = await Harness.StartAsync();
@@ -364,7 +441,7 @@ public class UplinkTests
         station.ClosedBecause!.Length.Should().BeLessThanOrEqualTo(120);
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task Relayed_Audio_Becomes_A_Waterfall_Line()
     {
         await using var h = await Harness.StartAsync();
@@ -382,7 +459,7 @@ public class UplinkTests
             5, "a spectrum line is a type byte, a line index and one byte per bin");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task Relayed_Transmit_Audio_Becomes_A_Line_Marked_As_Ours()
     {
         await using var h = await Harness.StartAsync();
@@ -403,7 +480,7 @@ public class UplinkTests
             "a block is never half transmitted and half received, and nor is the stream");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Relayed_Frame_Is_Written_To_The_Stations_Own_Frame_Log()
     {
         await using var h = await Harness.StartAsync();
@@ -424,7 +501,7 @@ public class UplinkTests
             "one log per station, named as every other station's is");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Relayed_Frame_Reaches_The_Monitors_Own_Links_Panel()
     {
         await using var h = await Harness.StartAsync();
@@ -443,7 +520,7 @@ public class UplinkTests
         card.Should().Contain("M0LTE").And.Contain("GB7RDG-2");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Relayed_Frame_Is_Tagged_Onto_The_Burst_That_Carried_It()
     {
         await using var h = await Harness.StartAsync();
@@ -470,7 +547,7 @@ public class UplinkTests
         frame.GetProperty("line").GetInt64().Should().BeGreaterThanOrEqualTo(30);
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Viewer_Arriving_Sends_Demand_And_Leaving_Sends_It_Again_After_The_Linger()
     {
         await using var h = await Harness.StartAsync();
@@ -502,7 +579,7 @@ public class UplinkTests
             () => station.Demands[^1] == 0, "the demand after the linger");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Hello_With_Only_Its_Required_Fields_Is_Enough()
     {
         await using var h = await Harness.StartAsync();
@@ -538,7 +615,7 @@ public class UplinkTests
             0, "a station with nothing to draw is a station with an empty waterfall");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task The_Viewer_Count_Is_Repeated_On_A_Heartbeat()
     {
         await using var h = await Harness.StartAsync();
@@ -559,7 +636,7 @@ public class UplinkTests
         station.Demands.Should().AllSatisfy(v => v.Should().Be(0));
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Stations_Own_Status_Sentence_Becomes_The_Pages_Status_Line()
     {
         await using var h = await Harness.StartAsync();
@@ -582,7 +659,7 @@ public class UplinkTests
             .And.Contain("IC-7300, 7.049450 MHz USB", "and says what its own radio is doing");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Message_Type_This_Site_Does_Not_Know_Is_Dropped_And_Not_Fatal()
     {
         await using var h = await Harness.StartAsync();
@@ -604,7 +681,7 @@ public class UplinkTests
         (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean().Should().BeTrue();
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task Two_Viewers_On_One_Station_Ask_For_One_Stream()
     {
         await using var h = await Harness.StartAsync();
@@ -624,7 +701,7 @@ public class UplinkTests
         (await h.RowAsync(Slug)).GetProperty("viewers").GetInt32().Should().Be(2);
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Station_Nobody_Is_Watching_Stands_Its_Dead_Feed_Watch_Down()
     {
         await using var h = await Harness.StartAsync();
@@ -648,7 +725,7 @@ public class UplinkTests
         station.Connected.Should().BeTrue();
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Station_Slug_Pushes_A_Colliding_Receiver_Onto_Its_Full_Slug()
     {
         // A receiver whose host sanitises to exactly the slug this site has promised a station.
@@ -678,7 +755,7 @@ public class UplinkTests
         station.Welcome!.Value.GetProperty("slug").GetString().Should().Be(Slug);
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task An_Oversized_Hello_Closes_The_Connection()
     {
         await using var h = await Harness.StartAsync();
@@ -705,7 +782,7 @@ public class UplinkTests
         h.Errors.Should().Contain(line => line.Contains("over 8192 bytes", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task An_Audio_Message_Of_The_Wrong_Length_Closes_The_Connection()
     {
         await using var h = await Harness.StartAsync();
@@ -725,7 +802,7 @@ public class UplinkTests
             && line.Contains("audio message", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Flooding_Station_Is_Dropped_And_Named()
     {
         await using var h = await Harness.StartAsync();
@@ -754,7 +831,7 @@ public class UplinkTests
             && line.Contains("twice the rate", StringComparison.Ordinal));
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task An_Overrunning_Jitter_Buffer_Drops_The_Oldest_Audio()
     {
         bool transmit = false;
@@ -784,7 +861,7 @@ public class UplinkTests
         transmit.Should().BeFalse();
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Station_Site_Url_That_Is_Not_Http_Is_Refused()
     {
         await using var h = await Harness.StartAsync();
@@ -805,7 +882,7 @@ public class UplinkTests
         config.GetProperty("receiverUrl").ValueKind.Should().Be(JsonValueKind.Null);
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task A_Stations_Name_In_The_Journal_Is_Ascii()
     {
         await using var h = await Harness.StartAsync();
@@ -824,7 +901,7 @@ public class UplinkTests
             "a station's words in the journal are ASCII whatever it sent");
     }
 
-    [Fact]
+    [Fact(Timeout = TestTimeoutMs)]
     public async Task The_Instances_Api_Says_Which_Rows_Are_Stations()
     {
         await using var h = await Harness.StartAsync();
@@ -1067,8 +1144,11 @@ public class UplinkTests
 
         internal async Task ConnectAsync(int port, string slug)
         {
+            // Bounded, so that a page which never answers fails here with its own name on it
+            // rather than as a test that simply stopped.
+            using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             await _socket.ConnectAsync(
-                new Uri($"ws://127.0.0.1:{port}/r/{slug}/ws"), CancellationToken.None);
+                new Uri($"ws://127.0.0.1:{port}/r/{slug}/ws"), giveUp.Token);
             _reading = Task.Run(ReadAsync);
         }
 
@@ -1219,11 +1299,15 @@ public class UplinkTests
             {
                 if (_socket.State == WebSocketState.Open)
                 {
+                    // Bounded: a browser closing is not what any of these tests is about, and a
+                    // close handshake that never completes must not hang the suite.
                     await _socket.CloseAsync(
-                        WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+                        WebSocketCloseStatus.NormalClosure, "",
+                        new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
                 }
             }
-            catch (Exception e) when (e is WebSocketException or ObjectDisposedException)
+            catch (Exception e) when (e is WebSocketException or ObjectDisposedException
+                                          or OperationCanceledException)
             {
                 // A socket already gone is a browser already closed.
             }
@@ -1249,10 +1333,13 @@ public class UplinkTests
     /// <summary>Whether every character is printable ASCII, which journalctl's pager needs.</summary>
     private static bool IsAscii(string line) => line.All(c => c >= ' ' && c <= '~');
 
-    private static int Status(WebSocketException refused) =>
-        refused.Data.Contains("HttpStatusCode")
-            ? (int)refused.Data["HttpStatusCode"]!
-            : (int)(refused.Message.Contains("401", StringComparison.Ordinal) ? 401 : 0);
+    /// <summary>The HTTP status the upgrade was refused with, off the socket that carried it.</summary>
+    private static int Status(WebSocketException refused)
+    {
+        refused.Data.Contains("HttpStatusCode").Should().BeTrue(
+            "the stub records the status a refused upgrade came back with");
+        return (int)refused.Data["HttpStatusCode"]!;
+    }
 
     /// <summary>A minimal AX.25 UI frame, so a relayed frame has real bytes behind it.</summary>
     private static class Ax25

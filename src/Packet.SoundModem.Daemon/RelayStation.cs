@@ -276,18 +276,18 @@ internal sealed class RelayStation : IMonitorStation
     /// </remarks>
     private void StartLoop()
     {
-        Station station;
-        CancellationTokenSource loopStopping;
         lock (_gate)
         {
             if (_disposed)
             {
                 return;
             }
+        }
 
-            loopStopping = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token);
-            _loopStopping = loopStopping;
-            station = new Station(
+        // Built outside the lock: a Station arms its starvation watch on this same clock, and a
+        // TimeProvider holds its own lock while running a callback that takes this one.
+        var loopStopping = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token);
+        Station station = new Station(
                 new StationOptions
                 {
                     Channel = _channel,
@@ -305,7 +305,25 @@ internal sealed class RelayStation : IMonitorStation
                     HealthChecks = [FrameLogDropCheck(), JitterDropCheck()],
                 },
                 loopStopping.Token);
-            _station = station;
+
+        bool wanted;
+        lock (_gate)
+        {
+            wanted = !_disposed;
+            if (wanted)
+            {
+                _loopStopping = loopStopping;
+                _station = station;
+            }
+        }
+
+        if (!wanted)
+        {
+            // Disposed while this was being built. Take it back down rather than starting a loop
+            // nothing will ever stop.
+            station.Dispose();
+            loopStopping.Dispose();
+            return;
         }
 
         station.Faulted += OnFault;
@@ -656,11 +674,13 @@ internal sealed class RelayStation : IMonitorStation
     private void OnViewersChanged(int viewers)
     {
         bool announce = false;
+        bool armLinger = false;
+        ITimer? cancelled = null;
         lock (_gate)
         {
             if (viewers > 0)
             {
-                _linger?.Dispose();
+                cancelled = _linger;
                 _linger = null;
                 if (_demand != viewers)
                 {
@@ -670,10 +690,38 @@ internal sealed class RelayStation : IMonitorStation
             }
             else if (_demand != 0 && _linger is null && !_disposed)
             {
-                // The same linger a receiver's session gets, and for the same reason: a page
-                // refresh or a tab switch must not stop and restart a home station's stream.
-                _linger = _time.CreateTimer(
-                    _ => LingerExpired(), null, _options.Linger, Timeout.InfiniteTimeSpan);
+                armLinger = true;
+            }
+        }
+
+        // Outside the lock, both of them, and this is not tidiness. A TimeProvider holds its own
+        // lock while it runs a callback, and the callbacks here take this station's lock; taking
+        // them in the other order - this lock, then the clock's, to make or unmake a timer - is a
+        // deadlock waiting for a viewer to arrive at the moment a linger expires. It hung the
+        // test class about one run in three before it was found.
+        cancelled?.Dispose();
+
+        if (armLinger)
+        {
+            // The same linger a receiver's session gets, and for the same reason: a page refresh
+            // or a tab switch must not stop and restart a home station's stream.
+            ITimer timer = _time.CreateTimer(
+                _ => LingerExpired(), null, _options.Linger, Timeout.InfiniteTimeSpan);
+            bool kept;
+            lock (_gate)
+            {
+                // Somebody may have arrived while this was being made, which is the whole reason
+                // to check rather than assume.
+                kept = _linger is null && !_disposed && _demand != 0 && Server.Viewers == 0;
+                if (kept)
+                {
+                    _linger = timer;
+                }
+            }
+
+            if (!kept)
+            {
+                timer.Dispose();
             }
         }
 
@@ -685,19 +733,27 @@ internal sealed class RelayStation : IMonitorStation
 
     private void LingerExpired()
     {
+        ITimer? spent;
+        bool announce = false;
         lock (_gate)
         {
-            _linger?.Dispose();
+            spent = _linger;
             _linger = null;
-            if (Server.Viewers > 0 || _demand == 0)
+            if (Server.Viewers == 0 && _demand != 0)
             {
-                return;   // somebody came back inside the window
+                _demand = 0;
+                announce = true;
             }
-
-            _demand = 0;
         }
 
-        Announce();
+        // This is the timer's own callback, so the clock's lock is already this thread's; the
+        // rule is about not taking it while holding the station's.
+        spent?.Dispose();
+
+        if (announce)
+        {
+            Announce();
+        }
     }
 
     // ------------------------------------------------------------------ what the picker is told
@@ -891,17 +947,19 @@ internal sealed class RelayStation : IMonitorStation
     {
         Station? station;
         Task? running;
+        ITimer? linger;
         lock (_gate)
         {
             _disposed = true;
-            _linger?.Dispose();
+            linger = _linger;
             _linger = null;
             station = _station;
             _station = null;
             running = _running;
         }
 
-        await _stopping.CancelAsync().ConfigureAwait(false);
+        linger?.Dispose();   // outside the lock, for the reason OnViewersChanged gives
+        await _stopping.CancelAsync().ConfigureAwait(false);   // and any live loop's own with it
         Server.ViewersChanged -= OnViewersChanged;
 
         // The input first: its Read is what the loop is sitting in, and disposing it is what lets

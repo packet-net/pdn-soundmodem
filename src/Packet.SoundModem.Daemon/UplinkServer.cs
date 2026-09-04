@@ -116,6 +116,21 @@ internal sealed class UplinkServer : IAsyncDisposable
     /// </remarks>
     private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// How long an authenticated socket has to say <c>hello</c> before it is closed.
+    /// </summary>
+    /// <remarks>
+    /// <para>The token check happens on the upgrade, and until a hello arrives there is no
+    /// station, no slug and nothing for the one-connection-per-token rule to apply to. So an
+    /// authenticated socket that simply said nothing was held for as long as the process lived,
+    /// costing a <c>WebSocket</c>, a semaphore, a linked cancellation source and a read buffer
+    /// each, with nothing in the journal about it. The class's claim that the token table caps
+    /// how many stations this site can hold was true of stations and not of sockets.</para>
+    /// <para>Ten seconds is far longer than a hello takes on any link a station could publish
+    /// over, and short enough that a mistake clears itself.</para>
+    /// </remarks>
+    internal static readonly TimeSpan HelloDeadline = TimeSpan.FromSeconds(10);
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private readonly UplinkServerOptions _options;
@@ -195,6 +210,23 @@ internal sealed class UplinkServer : IAsyncDisposable
             return true;
         }
 
+        // One socket per token may be waiting to say hello. After the hello there is a slug and
+        // Supersede's newcomer-wins rule takes over; before it there was nothing at all, so one
+        // token could open sockets until this process ran out of handles.
+        if (Interlocked.Increment(ref entry.Pending) > 1)
+        {
+            Interlocked.Decrement(ref entry.Pending);
+            _journal.WriteError(
+                $"uplink: {UberSdrDirectory.Ascii(entry.Callsign)} already has a connection "
+                + "waiting to say hello, so this one is refused. A station opens one socket; more "
+                + "than one at a time is a bug in whatever is connecting.");
+            await RefuseAsync(
+                context, HttpStatusCode.TooManyRequests,
+                "uplink: a connection from this station is already waiting to say hello")
+                .ConfigureAwait(false);
+            return true;
+        }
+
         WebSocket socket;
         try
         {
@@ -205,6 +237,7 @@ internal sealed class UplinkServer : IAsyncDisposable
         }
         catch (Exception e) when (e is WebSocketException or HttpListenerException or IOException)
         {
+            Interlocked.Decrement(ref entry.Pending);
             return true;   // the upgrade died under us; there is nobody left to tell
         }
 
@@ -430,6 +463,8 @@ internal sealed class UplinkServer : IAsyncDisposable
         private long _windowStart;
         private long _byteAllowance;
         private int _closing;
+        private int _helloed;
+        private int _pendingCleared;
         private string? _closingBecause;
 
         internal UplinkSession(
@@ -447,6 +482,18 @@ internal sealed class UplinkServer : IAsyncDisposable
         internal async Task RunAsync()
         {
             string closing = "closed";
+            using ITimer deadline = _server._options.TimeProvider.CreateTimer(
+                _ =>
+                {
+                    if (Volatile.Read(ref _helloed) == 0)
+                    {
+                        _ = CloseAsync(
+                            $"said nothing for {HelloDeadline.TotalSeconds:F0} s; a station says "
+                            + "hello first");
+                    }
+                },
+                null, HelloDeadline, Timeout.InfiniteTimeSpan);
+
             try
             {
                 closing = await ReadAsync().ConfigureAwait(false);
@@ -465,6 +512,7 @@ internal sealed class UplinkServer : IAsyncDisposable
                 // A supersede or a shutdown said why before this loop noticed, and its sentence is
                 // the true one: what the loop saw was the close frame that sentence produced.
                 closing = _closingBecause ?? closing;
+                ClearPending();
                 _heartbeat?.Dispose();
                 if (_hello is { } hello && _station is { } station)
                 {
@@ -728,6 +776,8 @@ internal sealed class UplinkServer : IAsyncDisposable
             }
 
             _hello = hello;
+            Volatile.Write(ref _helloed, 1);
+            ClearPending();
 
             // Twice the bitrate its own hello declared, over ten seconds, plus 16 kB of headroom
             // for the frames and the status sentences that ride the same socket.
@@ -868,6 +918,23 @@ internal sealed class UplinkServer : IAsyncDisposable
             }
         }
 
+        /// <summary>
+        /// Gives this token's one waiting-to-say-hello slot back, once and once only.
+        /// </summary>
+        /// <remarks>
+        /// Called both when a hello arrives and when the session ends, because either may come
+        /// first and neither may leave the slot held. A hello that is read and then refused - a
+        /// mismatched callsign, an unusable rate - still gives the slot back, so an operator
+        /// correcting their config is not locked out by their own last attempt.
+        /// </remarks>
+        private void ClearPending()
+        {
+            if (Interlocked.Exchange(ref _pendingCleared, 1) == 0)
+            {
+                Interlocked.Decrement(ref _entry.Pending);
+            }
+        }
+
         /// <summary>Why a connection is ending, and whether the station's token pays for it.</summary>
         private readonly record struct Stop(string Reason, bool Refuse);
 
@@ -940,6 +1007,13 @@ internal sealed class UplinkEntry(string callsign, string slug, byte[] tokenSha2
     /// <summary>When this station's connections stop being refused, after it broke the
     /// protocol.</summary>
     internal DateTimeOffset RefusedUntil { get; set; } = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// Sockets authenticated on this token that have not yet said hello. At most one, which is
+    /// the cap that did not exist before a hello arrived. A field rather than a property because
+    /// it is only ever touched through <see cref="Interlocked"/>.
+    /// </summary>
+    internal int Pending;
 }
 
 /// <summary>What an <see cref="UplinkServer"/> needs to answer <c>/uplink</c>.</summary>
