@@ -266,6 +266,54 @@ public class WaterfallPageTests
     }
 
     /// <summary>
+    /// A frame's callsigns and mode reach the panel escaped, whatever characters are in them.
+    /// </summary>
+    /// <remarks>
+    /// <para>The row is built with <c>innerHTML</c> and these three fields went into it raw. On a
+    /// station that is safe by coincidence: <c>Ax25AddressParser.TryReadAddress</c> allows a
+    /// callsign nothing but <c>[A-Z0-9]</c> and an SSID, and a mode name comes out of the
+    /// catalogue. It is a dependency on a parser rather than on an escape, and nothing on the page
+    /// said so.</para>
+    /// <para>A frame relayed from somebody else's station arrives as strings over a socket and
+    /// goes through no such parser, so the coincidence stops holding the moment there is an
+    /// uplink. Closed here, ahead of the phase that adds one (docs/uplink-plan.md 4.6).</para>
+    /// </remarks>
+    [Fact]
+    public async Task A_Frame_From_A_Callsign_With_Angle_Brackets_Is_Escaped_On_The_Page()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw while listing a hostile frame");
+
+        // Every one of the three arrives as text rather than as markup: no tag the row did not
+        // build itself, and the characters still readable as themselves.
+        probe.HostileRow.Should().NotContain("<img", "a source callsign is not markup")
+            .And.NotContain("<i>bpsk300</i>", "and neither is a mode name")
+            .And.Contain("&lt;img src=x onerror=boom&gt;")
+            .And.Contain("&lt;i&gt;bpsk300&lt;/i&gt;")
+            .And.Contain("M0LTE&quot;&amp;&lt;3", "a destination is escaped the same way");
+
+        // And the row is still the row: the panel's own markup around the escaped text.
+        probe.HostileRow.Should().Contain("<span class=\"from\">").And.Contain("24 B");
+
+        // The band chip is built from the config message rather than from a frame event, and on a
+        // relayed station its mode name is off that station's own hello. Same gap, same fix, and
+        // it is the chip that a public page shows.
+        probe.HostileChip.Should().NotContain("<img", "a mode name is not markup either")
+            .And.Contain("&lt;img src=x onerror=boom&gt;")
+            .And.Contain("850 Hz", "and the chip is still the chip");
+    }
+
+    /// <summary>
     /// The survey on the page: a capture tagged where it happened and listed with its audio, and
     /// the status strip that says what a budget has been refusing.
     /// </summary>
@@ -1196,6 +1244,8 @@ public class WaterfallPageTests
         string[] HistoryTag,
         string[] HistoryRows,
         string[] HistoryRowClasses,
+        string HostileRow,
+        string HostileChip,
         string? TxHistBorder,
         string? TxBorder,
         string? HistBorder,

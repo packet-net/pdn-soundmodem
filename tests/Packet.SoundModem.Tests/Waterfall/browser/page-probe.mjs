@@ -513,7 +513,23 @@ run(`onHistory({frames: [
   {at: "${todayAt}", sub: 0, mode: "bpsk300-il2pc", from: "GB7RDG-2", to: "EI0RSI-1", lenBytes: 31, offsetHz: 8.6, corrected: 0, crc: true, hist: true}
 ]})`);
 const historyTag = sandbox.__text().slice(beforeHistory);
-const afterHistory = sandbox.document.getElementById("frames").children;
+// Copied out here rather than read at the end: the panel is driven again below, and the backlog
+// is a question about what onHistory left behind and not about what happened to it afterwards.
+const afterHistory = sandbox.document.getElementById("frames").children.map(
+  c => ({ html: c.innerHTML, className: c.className }));
+
+// A frame whose callsigns and mode are not what the local AX.25 parser would ever have produced.
+// Every string on a relayed frame arrives over a socket from somebody else's station, so the
+// panel has to escape them rather than depend on a parser that frame never went through. Driven
+// last, after every other capture, so it can add a row without moving anybody else's.
+run(`onFrameEvent({sub:0, mode:'<i>bpsk300</i>', from:'<img src=x onerror=boom>', to:'M0LTE"&<3', line:0, burstLines:9, lenBytes:24, snrDb:9.5})`);
+const hostileRow = sandbox.document.getElementById("frames").children[0].innerHTML;
+
+// The same question for the band chip, which is built from the config message's modems rather
+// than from a frame event and reaches innerHTML the same way. On a relayed station that mode name
+// is the station's own hello, so it is a string over a socket exactly as a frame's callsigns are.
+run(`cfg.modems.push({sub: 9, mode: '<img src=x onerror=boom>', modeName: null, lowHz: 800, highHz: 900, centreHz: 850}); renderChips();`);
+const hostileChip = sandbox.document.getElementById("chips").children.map(c => c.innerHTML).pop();
 
 // What a public deployment dresses the page with, as the handshake left it: the title, the
 // about strip with the receiver credit, and the body class the stylesheet keys off.
@@ -534,7 +550,13 @@ const publicPage = {
 // and everything above wanted the pane as it was.
 sandbox.document.getElementById("linksDetach").click();
 
-console.log(JSON.stringify({
+// Written with a callback rather than console.log followed by process.exit, and the exit deferred
+// until the write has actually reached the pipe. console.log to a pipe is asynchronous, and
+// exiting on the next line truncates whatever is still buffered - which lands as a JSON parse
+// error at a buffer boundary in whichever test happened to be running, on a loaded machine and
+// not on an idle one. The exit itself is needed: the page holds timers and a socket open, so
+// nothing here ends on its own.
+process.stdout.write(JSON.stringify({
   socketUrl,
   linksWindowUrl,
   // Whether the page decided it is the torn-off links window rather than the waterfall.
@@ -558,8 +580,10 @@ console.log(JSON.stringify({
   captureTag,
   surveyStatus,
   historyTag,
-  historyRows: afterHistory.map(c => c.innerHTML),
+  historyRows: afterHistory.map(c => c.html),
   historyRowClasses: afterHistory.map(c => c.className),
+  hostileRow,
+  hostileChip,
   linksHiddenBefore,
   linksHiddenAfter,
   linksOnArrival,
@@ -595,5 +619,4 @@ console.log(JSON.stringify({
   blocksAfterStop: sandbox.__stats().played - at,
   stoppedLabel: run(`document.getElementById("listen").textContent`),
   thrown,
-}));
-process.exit(0);
+}) + "\n", () => process.exit(0));
