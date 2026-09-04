@@ -146,11 +146,16 @@ public class UplinkTests
 
         var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await station.WelcomedAsync();
-        await station.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "hello from the shed"));
         await using (Browser watching = await h.WatchAsync(Slug))
         {
+            // The browser first, then the frame: a frame is broadcast to whoever is watching when
+            // it arrives, and one sent into an empty room is only ever seen again as history.
+            await watching.UntilTextAsync("config");
+            await station.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "hello from the shed"));
             await watching.UntilTextAsync("frame");
         }
+
+        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
 
         await station.DisposeAsync();
         await h.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
