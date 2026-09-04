@@ -7,7 +7,7 @@
 // that wasn't a multiple of the element size. Both are JavaScript semantics rather than pixels,
 // which is why a DOM shim costs nothing in fidelity - everything that mattered was in the engine.
 //
-// Usage: PAGE=<html> PORT=<n> [AUDIO=1] [PROTOCOL=https:] [PATHNAME=/r/x/] node page-probe.mjs
+// Usage: PAGE=<html> PORT=<n> [AUDIO=1] [PROTOCOL=https:] [PATHNAME=/r/x/] [STORED=<json>] node page-probe.mjs
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
@@ -190,6 +190,13 @@ class WebSocket_ extends WebSocket {
   constructor(url, protocols) { socketUrl = String(url); super(socketUrl.replace(/^wss:/, "ws:"), protocols); }
 }
 
+// This origin's one localStorage key, as the page finds it when it opens. Empty unless STORED
+// says otherwise: one site serves every receiver off a single origin, and the operator's own page
+// shares it too, so "what does this flavour do with a value somebody else left here" is a real
+// question and needs a way to be asked. Writes are kept, because the page saves as a viewer works.
+const stored = new Map();
+if (process.env.STORED) stored.set("pdnsm-waterfall", process.env.STORED);
+
 const sandbox = {
   document: document_, WebSocket: WebSocket_, console, fetch, AudioContext: AudioContext_,
   setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame: cb => setTimeout(() => cb(performance.now()), 16),
@@ -206,7 +213,8 @@ const sandbox = {
   Image: class { },
   getComputedStyle: () => ({ getPropertyValue: () => "12px monospace", font: "12px monospace", color: "#fff" }),
   Intl, TextDecoder, TextEncoder, URL, URLSearchParams, Uint16Array, Int32Array, navigator: { userAgent: 'probe' },
-  addEventListener: noop, localStorage: { getItem: () => null, setItem: noop },
+  addEventListener: noop,
+  localStorage: { getItem: key => stored.get(key) ?? null, setItem: (key, value) => { stored.set(key, String(value)); } },
   __stats: () => ({ played, peak }),
   __text: () => [...drawnText],
 };
@@ -252,6 +260,17 @@ const chipTitlesOnArrival = sandbox.document.getElementById("chips").children.ma
 // the line that asks for a dial when there is none. A public page cannot be given a dial by the
 // person reading it, so both of those are questions about what the config alone achieved.
 const drawnOnArrival = sandbox.__text();
+
+// The links pane's Mine filter as the handshake left it, before anything below clicks it. Three
+// answers rather than one, because the interesting case is a stale value: `stored` is what the
+// page found in localStorage, `on` is what it decided to do about it, and `hidden` is whether the
+// button that could put it right is on the page at all. A public flavour must not be filtering by
+// a button a visitor cannot see.
+const mineOnArrival = {
+  hidden: sandbox.document.getElementById("linksMine").hidden === true,
+  on: run("ui.linksMine === true") === true,
+  stored: run(`JSON.parse(localStorage.getItem(LS) || "{}").linksMine === true`) === true,
+};
 
 let clickError = null;
 try { vm.runInContext(`document.getElementById("listen").click()`, sandbox); }
@@ -571,6 +590,7 @@ process.stdout.write(JSON.stringify({
   chipsAttached,
   chipsDetached,
   drawnOnArrival,
+  mineOnArrival,
   ordinaryTag,
   identTag,
   heardTag,
