@@ -135,6 +135,9 @@ through the Flex's DAX audio, no sound card in path.
   (`FlexRadio/FlexDaxIqSource.cs` over the M0LTE.Flex `VitaPacketReceived` event; 238k IQ samples/2s,
   0 loss on the 6500). Remaining: daemon/CLI wiring to select channels and place their offsets.
 
+### #13 - A second Flex slice, receive only, on another band *(parked, Tom's request 2026-09-04)*
+Tom: "I'd like the ability for pdn-soundmodem's flex support to be able to create a second slice, so that for example it could listen to 20m packet as well as being a transceiver on 40m packet." Not for now. The shape when it comes: the daemon opens a second headless slice on its own DAX channel (the 6500 has four of each), receive only, and runs a second `Station` over it with its own modems, frame log and waterfall page, which the `Station` extraction of the monitor work (PR #387, [monitor-plan.md](monitor-plan.md)) makes a wiring job rather than a rewrite. The 40 m slice keeps PTT and the KISS host; the second slice never transmits. Config shape to decide then: a second `device: flex:<radio>:<slice>` entry with its own `modems`, or a `listen` block beside the main one. Ties in with [uplink-plan.md](uplink-plan.md): a listening slice is a station the public monitor could show. Known constraint from the IQ work above: a second slice cannot self-capture during TX (RX blanks), so the two bands are independent receivers only while the first is not keyed.
+
 ---
 
 ## Cross-cutting follow-ups (issues from live-RF validation, 2026-07-17)
