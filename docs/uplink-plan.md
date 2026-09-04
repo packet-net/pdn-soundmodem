@@ -1,6 +1,6 @@
 # Private stations on monitor.ukpacketradio.network - a station-initiated uplink
 
-**Status: planned, 2026-09-04. Revised the same day after Tom's first read, and the revision changes what goes up the wire.** Nothing is built. Verified against `main` at `eb4e42a` (v0.55.0, the tree that is live in CT 146). The successor project to [docs/monitor-plan.md](monitor-plan.md), which put fifty UberSDR web receivers behind one picker at https://monitor.ukpacketradio.network; this adds a second kind of thing to that picker, and it is somebody's actual station.
+**Status: accepted 2026-09-04, work starting.** Tom: "I'm happy with the plan. Get the in-flight work landed, then run the plan." It was revised twice on the day it was written, once to send audio rather than the waterfall and once to send that audio uncompressed; both revisions are Tom's and both are in section 8. Nothing is built yet. Verified against `main` at `eb4e42a` (v0.55.0, the tree that is live in CT 146). The successor project to [docs/monitor-plan.md](monitor-plan.md), which put fifty UberSDR web receivers behind one picker at https://monitor.ukpacketradio.network; this adds a second kind of thing to that picker, and it is somebody's actual station.
 
 Tom, and this is the whole brief:
 
@@ -10,7 +10,7 @@ Yes, and the first station to opt in is GB7RDG-2.
 
 The constraint from the monitor plan carries straight over and is still the thing everything bends around: one code base, one binary, one `.deb`, one set of tests, and the flavours are configuration. This project adds a third configuration, not a third program. **Flavour A** is the ordinary station: a config with a `device`, running at somebody's house on ALSA or on a Flex, feeding a node. It gains one new optional section, `publish`, and with that section absent nothing about it changes at all. **Flavour B** is the monitor: one process, the picker, the receivers. It gains a way to accept uplinks. **A station never accepts uplinks and a monitor never publishes one**, and the daemon says so if a config asks for both.
 
-This document is written to be executed by sub-agents working one phase at a time under a coordinator, as the monitor plan was, so each phase in section 6 is a self-contained brief. Section 7 is the checklist the coordinator keeps up to date. Section 8 is the decisions, all but one of them already taken.
+This document is written to be executed by sub-agents working one phase at a time under a coordinator, as the monitor plan was, so each phase in section 6 is a self-contained brief. Section 7 is the checklist the coordinator keeps up to date. Section 8 is the decisions, all of them taken.
 
 ## 1. What it is
 
@@ -22,7 +22,7 @@ An operator with a real station - a transceiver on an antenna - puts one block i
 
 > why are we sending the waterfall and not just the audio? Much more bandwidth efficient, and rendering the waterfall isn't high CPU.
 
-Right on both counts, and it turns out to be the smaller change as well. The station relays its receive audio, its decoded frames and, through those frames, its links. The monitor runs the same FFT and the same painting it already runs for every UberSDR receiver it shows, over audio that arrives from a socket instead of from a receiver's IQ stream. **The decodes stay the station's own**: the monitor runs no modems for a relayed station, so what the page lists is what that operator's daemon actually decoded, with their modes, their diversity settings and their dial. See 4.1 for what this does to the seam, which is that it nearly removes it.
+Right on both counts, and it turns out to be the smaller change as well. The station relays its receive audio, its decoded frames and, through those frames, its links. **The audio is 16-bit PCM, uncompressed, exactly the samples the station's own modems are reading**, which is a decision of its own and is in 4.5. The monitor runs the same FFT and the same painting it already runs for every UberSDR receiver it shows, over audio that arrives from a socket instead of from a receiver's IQ stream. **The decodes stay the station's own**: the monitor runs no modems for a relayed station, so what the page lists is what that operator's daemon actually decoded, with their modes, their diversity settings and their dial. See 4.1 for what this does to the seam, which is that it nearly removes it.
 
 **Nothing flows until somebody is watching.** The socket sits idle. When a visitor opens the station's page the monitor says so and audio starts; when the last one leaves it stops, after the same 60-second linger the receivers get. Audio flows for anyone watching, whether or not they have pressed Listen, because the audio is what the waterfall is drawn from. Decoded frames are the exception and flow all the time, because they are well under a kilobit a second and they are what makes a quiet band look alive to somebody arriving an hour later.
 
@@ -36,6 +36,7 @@ Right on both counts, and it turns out to be the smaller change as well. The sta
 
 - **Not a way in.** The uplink cannot carry a command. See 4.6; it is the section to read first if you are worried, and it is the one whose tests matter most.
 - **Not monitor-side demodulation.** Audio goes up; the decoding does not follow it. The monitor builds no modems for a relayed station and every frame on the page came from the station's own decoder. A design that demodulated on the monitor was considered and rejected, and 4.1 keeps the reasons on the record, because it is the obvious thing to try once audio is already crossing the wire.
+- **Not a compressed feed.** No codec, no companding. What crosses the wire and what a visitor hears is modem audio, sample for sample, so it is usable by somebody working on a decoder and not only by somebody looking at a picture. 4.5.
 - **Not a node service.** Nothing about the uplink touches KISS, the node, transmit, or the station's own operation. A station whose uplink is down is a station with a slightly quieter journal.
 - **Not federation.** Stations do not talk to each other, nothing is combined across them, and there is no dedupe, no "heard by three stations" view and no cross-station correlation. Each is its own independent monitor that happens to share a hostname. Same answer as the monitor plan gave for receivers, and for the same reason: it is a different project with a different data model.
 - **Not open to anyone.** A station is on the site because the site owner issued it a token. There is no sign-up, no self-service and no discovery.
@@ -115,13 +116,9 @@ The slug rule is `UberSdrDirectory.SlugFor` (:555-568): lower-case, strip a trai
 
 `Program.cs` is 2606 lines of top-level statements. The device dispatch is one `if/else` chain: pipe :1865, wav-loop :1894, ubersdr :1908, flex :2029, ALSA :2295. The `Station` is built at :2472-2560 and run at :2578; `Station` (545 lines) owns the receive loop, the three watches and the fault model, raises `Faulted` and never ends the process itself (:18-20).
 
-`Program.cs`:1971 is worth naming even though this project no longer uses it:
+**What "on demand" means on a private station, plainly, because it is easy to misread.** A private station is a transceiver. Its radio is on, its receiver is receiving and its modems are decoding, all the time, whether or not anybody anywhere is watching. That is what the station is for, and the uplink does not change it by one sample. **The only thing that is on demand is the uplink stream itself**: the socket carries no audio until the first site viewer arrives and stops carrying it after the last one leaves. That is true for every device type, ALSA and Flex alike, because it is a property of the uplink and not of the radio. There is no receiver session for a site visitor to open, and nothing a site visitor does reaches the station's radio at all.
 
-```csharp
-waterfallServer.ViewersChanged += onDemand.SetViewers;
-```
-
-That line, inside `if (uberSdrConfig?.OnDemand == true)`, is the entire on-demand mechanism: browsers attach, `OnDemandUberSdrInput.SetViewers` (:220-263) opens the session; the count reaches zero, the linger arms, the session is dropped. The first draft of this plan made the monitor's viewers count towards it, so a relayed station on a web receiver would open its session when somebody on the site opened its page. **Tom's decision of 2026-09-04 that a station on `ubersdr:` may not publish removes the only device that has an on-demand path**, so that wiring, and the `SetRelayViewers` it needed, are out of scope. ALSA and Flex inputs are opened at start-up and held, and `Station.cs`:490-500 explains why an ALSA `Read` could not be made on-demand even if somebody wanted it. If the decision is ever reversed, `SetRelayViewers` is the one method that makes on-demand work again, and this paragraph is where to start.
+The one case where a station's own *input* was itself on demand is the UberSDR-fed one, which Tom's decision of 2026-09-04 rules out (4.3): `Program.cs`:1971 wires `waterfallServer.ViewersChanged += onDemand.SetViewers;` inside `if (uberSdrConfig?.OnDemand == true)`, so a browser attaching makes `OnDemandUberSdrInput.SetViewers` (:220-263) open a session on somebody else's web receiver and the linger drop it again, and if that decision is ever reversed then a `WaterfallWebServer.SetRelayViewers(int)` that adds the site's viewers to `_clients.Count` is the one method that would extend it to the site. ALSA and Flex inputs are opened at start-up and held, and `Station.cs`:490-500 explains why an ALSA `Read` could not be made on-demand even if somebody wanted it.
 
 The reconnect precedent is `UberSdrReconnectPolicy` (`src/Packet.SoundModem/UberSdr/UberSdrReconnectPolicy.cs`, 81 lines): outcomes `Healthy`, `Transient`, `Refused`, `ShortSession` (:11-33), and ladders at :42-48 - a flat 1 s breath after a healthy session, 1 s doubling to 30 s for a transport failure, 60 s doubling to 15 minutes for a refusal, and the first failure of a run waits exactly the base rather than twice it (:68-69). The give-up clock is five minutes (`UberSdrAudioInput.cs`:45), measured on `GetTimestamp` rather than `UtcNow` because an NTP step used to trip it early (:341-343).
 
@@ -210,8 +207,8 @@ A header rather than a query parameter because a query parameter is written to e
 
 **Up, station to monitor:**
 
-- `hello`, text, once and first, before anything else: the protocol version, the daemon version, the station's identity from its `publish` block, the audio rate, the **codec**, the block length, the dial and sideband, and the bands as `{sub, mode, lowHz, highHz, centreHz}`. The monitor answers with `welcome` or closes.
-- **audio**, binary, `[0x02][kind][2 bytes pad][payload]`, only while somebody is watching. `kind` is 0 for received and 1 for the station's own transmission, which is the one field the browser format does not have and the one the monitor needs for `IncomingIsTransmit`. The 4-byte header and the 40 ms block length are the browser format's, so there is one definition of both.
+- `hello`, text, once and first, before anything else: the protocol version, the daemon version, the station's identity from its `publish` block, the audio rate, the block length, the dial and sideband, and the bands as `{sub, mode, lowHz, highHz, centreHz}`. The monitor answers with `welcome` or closes.
+- **audio**, binary, `[0x02][kind][2 bytes pad][s16 LE mono at the declared rate]`, only while somebody is watching. `kind` is 0 for received and 1 for the station's own transmission, which is the one field the browser format does not have and the one the monitor needs for `IncomingIsTransmit`. Everything else about it - the 4-byte header, the 40 ms block, the sample format - is the browser format's, so there is one definition of each and there is nothing in the payload to decode. The length is therefore always exactly `4 + 2 * blockSamples` bytes, which is what the monitor checks it against.
 - `frame`, text: the display fields of a `frame` message, plus `at` (UTC, ISO 8601), plus `raw` (base64 of the AX.25 bytes, absent on an ident ghost or a reported frame that had none). Always, whether or not anybody is watching.
 - `bye`, text, optional: a reason, sent before a planned disconnect, so the journal says "GB7RDG-2: going off air for the night" rather than "GB7RDG-2: connection closed".
 
@@ -236,7 +233,6 @@ A header rather than a query parameter because a query parameter is written to e
   "radio": "IC-7300 into a doublet at 10 m",
   "site": "https://gb7rdg.example/",
   "audioRate": 12000,
-  "codec": "ulaw",
   "frames": "always"
 }
 ```
@@ -244,8 +240,7 @@ A header rather than a query parameter because a query parameter is written to e
 - `url` and `token` are required and there is no default for either. `token` carries the same comment `CONFIG.md` gives `api.key` and that UberSDR gives `instance_uuid`: issued once, pasted in once, not edited by hand.
 - `callsign` is required, because a station on a public page that will not say who it is has no business being there, and because the monitor checks it against the token (4.4).
 - `operator`, `location`, `radio` and `site` are optional and are what the credit line and the picker row are made of. `site` is refused unless it is an absolute http or https URL, by exactly the check the directory's `public_url` goes through (`UberSdrDirectory.HttpUrlOrNull` :583-587).
-- `audioRate` is the relayed audio rate, defaulting to the channel's DSP rate capped at 12000, decimated by the existing `Decimator` (`Station.cs`:105-107 builds one for exactly this job). Integer divisors only; anything else is a start-up refusal rather than a resampler. The relayed waterfall spans 0 to `audioRate/2`, so a 48 kHz station that leaves the default gets a 0 to 6 kHz picture, and start-up says so and names any modem whose band falls outside it.
-- `codec` is `ulaw` (the default) or `pcm16`. See 4.5 and section 8.
+- `audioRate` is the relayed audio rate, defaulting to the channel's DSP rate capped at 12000, decimated by the existing `Decimator` (`Station.cs`:105-107 builds one for exactly this job). Integer divisors of the DSP rate only; anything else is a start-up refusal rather than a resampler. The relayed waterfall spans 0 to `audioRate/2`, so a 48 kHz station that leaves the default gets a 0 to 6 kHz picture, and start-up says so and names any modem whose band falls outside it. It is also the only lever an operator on a thin upload has, there being no codec (4.5): 48000 costs 770 kbit/s while somebody is watching and 6000 costs 98, the latter at the price of a 0 to 3 kHz picture and of any modem above 3 kHz.
 - `frames` is `always` (the default) or `watched`.
 
 **Validation, all exit 2**, in the style of `Program.cs`:503-518 and `DaemonConfig.ValidateMonitor` (:1073-1156):
@@ -255,8 +250,7 @@ A header rather than a query parameter because a query parameter is written to e
 - `url` absent, or not an absolute `ws` or `wss` URL. Plain `ws` to anything but a loopback host is a warning, not a refusal: it is the shape of a smoke test and the shape of a mistake, and the operator should be the one to decide which.
 - `token` absent or shorter than 32 characters.
 - `callsign` absent, or not a plausible callsign with an optional SSID. There is a parser to lean on in `Ax25AddressParser` (:44-79).
-- `audioRate` not a divisor of the channel's DSP rate, or not in 8000..48000.
-- `codec` not one of the two names.
+- `audioRate` not a divisor of the channel's DSP rate, or not in 6000..48000.
 - No `waterfall` section: the uplink is a client of the waterfall server, and without one there is nothing to publish. Same sentence shape as the on-demand check at `Program.cs`:512-517.
 - Field lengths: callsign 16, operator 40, location 60, radio 60. Refused at start-up with the limit named, so the operator finds out at once rather than seeing their sentence cut in half on somebody else's website.
 
@@ -270,7 +264,7 @@ A header rather than a query parameter because a query parameter is written to e
 - **Reconnects** on `UberSdrReconnectPolicy`, which needs no changes: `Healthy` for a session that carried traffic, `Transient` for a transport failure (1 s doubling to 30), `Refused` for HTTP 401, 403 or 429 on the upgrade (60 s doubling to 15 minutes), which needs `CollectHttpResponseDetails = true` as `UberSdrAudioInput.cs`:621 sets it. A refused token says so once an hour rather than every minute: it is a mistake somebody has to fix, not a condition that clears itself.
 - **Never faults the station.** The uplink is a courtesy. It writes a line and retries for ever; it does not raise `Station.Faulted`, it does not set `radioLost`, and it does not touch the exit code. A node whose owner is asleep must not stop passing traffic because a website is down. Tom, 2026-09-04, asked for exactly this.
 - **`Wanted`** is its own state, from the last `demand`, and false whenever the socket is down. It gates the audio and nothing else; frames go up regardless.
-- **Encoding**: decimate to `audioRate` if needed, assemble 40 ms blocks, encode, send. Received and transmitted audio are never mixed in one block, so `kind` is a property of the block rather than of a sample.
+- **Blocking**: decimate to `audioRate` if needed, convert to `s16` with the same `Audio.Pcm16.FromFloat` `BroadcastAudio` uses (:1478), assemble 40 ms blocks, send. There is no encoding step, because there is no codec. Received and transmitted audio are never mixed in one block, so `kind` is a property of the block rather than of a sample.
 
 ### 4.4 The monitor side: `RelayStation`, tokens, rows
 
@@ -321,40 +315,43 @@ Nothing in a row says who else is watching, or how many, or what state anything 
 
 A relayed station needs its own, and the right change is a `cfg.receiverKind` field the page switches on, not a sentence sent from the server: the sentence contains an anchor built around an escaped name, so a server-supplied sentence would be either unescapable or a new injection path. Two sentences in the page, one per kind, and the station's says whose radio it is, that they are hearing it live, and that their own transmissions are in what you hear.
 
-### 4.5 Bandwidth, and the codec
+### 4.5 Bandwidth, and why the audio is not compressed
+
+Tom, 2026-09-04, on the proposal to send mu-law:
+
+> losing the ability to get pure modem audio, this seems a shame because others might want to use that audio as a means to tune their own modem designs.
+
+So: **no codec.** The station sends 16-bit PCM, exactly the samples its own modems are reading, and what reaches the site is modem audio rather than a rendering of it. That makes the stream a research artefact as well as a picture. Somebody working on a decoder can point it at what a real station on a real antenna is actually hearing, at 3 a.m., on a band they do not live under; the Listen button hands out those samples; and the record button of roadmap #14 (`docs/roadmap.md`, 2026-09-04) hands out a WAV that is the samples rather than a companded copy of them. A companded or perceptually coded stream would have been fine for both of the things this project set out to do and useless for the third, and the third is the one nobody would have noticed losing until they wanted it.
 
 All figures are the wire, including the 8-byte client-to-server WebSocket frame header (2 base, 2 extended length, 4 mask). TLS and TCP add about 3 per cent on top. The audio block is the browser format's 40 ms, so 480 samples at 12 kHz and 1920 at 48 kHz, and there are 25 blocks a second.
 
-| Stream | 12 kHz station | 48 kHz station |
+| Stream | `audioRate` 12000, the default | `audioRate` 48000, a station option |
 |---|---|---|
-| Audio, `pcm16` | 24.3 kB/s, **194 kbit/s** | 96.3 kB/s, **770 kbit/s** |
-| Audio, `ulaw` | 12.3 kB/s, **98 kbit/s** | 48.3 kB/s, **386 kbit/s** |
-| Audio, `ulaw` at the default `audioRate` of 12000 | 12.3 kB/s, **98 kbit/s** | 12.3 kB/s, **98 kbit/s** |
+| Audio, 16-bit PCM | 24.3 kB/s, **194 kbit/s** | 96.3 kB/s, **770 kbit/s** |
 | Frames | about 400 bytes each with the base64 AX.25 bytes: **0.4 kbit/s** at 500 an hour, 3.2 kbit/s on a channel doing one a second |
 | Down, and the heartbeat | one short JSON message every 20 s |
 
 So the three cases that matter, on the defaults:
 
 - **Nobody watching:** under 1 kbit/s averaged, almost all of it decoded frames. This is what "an idle opt-in costs a home connection nothing" has to survive, and it does.
-- **Somebody watching:** **99 kbit/s** upstream, whether or not they pressed Listen.
-- **Ten people watching:** still 99 kbit/s. The station sends one stream and the monitor fans it out, which is the same promise the monitor makes to receiver operators about sessions, and it is a test rather than a hope.
+- **Somebody watching:** **194 kbit/s** upstream, whether or not they pressed Listen, because the audio is what the picture is drawn from.
+- **Ten people watching:** still 194 kbit/s. The station sends one stream and the monitor fans it out, which is the same promise the monitor makes to receiver operators about sessions, and it is a test rather than a hope.
 
-Against the previous revision's spectrum-up design, which cost 86 kbit/s watched and 290 watched-and-listening: a wash for a viewer who only looks, three times better for one who listens, and the picture is better as well, because the monitor renders at the page's own 30 lines a second rather than the 10 the wire could afford.
+**The ADSL caveat, said honestly rather than buried.** A UK FTTC line uploads 10 to 20 Mbit/s and FTTP a great deal more, so 194 kbit/s is one to two per cent of it and nobody will notice. **ADSL is different**: a typical ADSL upload is 800 kbit/s to 1 Mbit/s, so a watched station is using a fifth to a quarter of it, and that is enough to be felt by a video call or anything else sharing the line - not continuously, but for as long as somebody has the page open. There is no codec to fall back on, by decision, so an operator on ADSL has exactly two levers: set `audioRate` to 6000 and accept a 0 to 3 kHz picture at 98 kbit/s, or not opt in. `CONFIG.md` should say this in the `publish` section rather than leaving it to be discovered, and it should say it as a fact about their line rather than as a warning. **A 48 kHz station cannot sensibly publish from ADSL at all**, and start-up should say so when it sees `audioRate` 48000.
 
-**The codec, costed.** Compressing the audio is where the bandwidth case actually lives, and the choice has to be made on what it does to a picture, not only to a voice.
+**What was costed and declined**, kept because the question will come back and because the arithmetic was done:
 
-| | payload | on the wire | effect on the waterfall | effect on Listen | dependency |
-|---|---|---|---|---|---|
-| `pcm16` | 192 kbit/s | 194 | none; it is the samples | none | none |
-| **`ulaw`** (G.711 mu-law) | 96 | **98** | companded, so quantisation noise tracks the signal at about 38 dB down; after the FFT's 30 dB of processing gain it sits far below any real band noise. The one visible case is a station 40 dB over the noise floor, where the floor lifts by about 2 dB for the length of the burst | telephone-grade and entirely adequate for SSB | none; a 256-entry table each way, about thirty lines |
-| IMA ADPCM, 4-bit | 48 | 49 | **disqualifying.** The adaptive step tracks the loudest thing in the block, so a strong burst in one modem slot lifts the whole displayed noise floor by 15 to 20 dB for its duration, greying out the slots either side of it | audibly hissy on a quiet band | none, about sixty lines |
-| Opus at 32 kbit/s | 32 | 34 | unknown until measured. Per-band energy is preserved exactly, which is what a burst is; fine structure inside a band is synthesised at low rates, which is what a narrow carrier is. Better than mu-law at masking (the noise is shaped per band rather than broadband), worse at carrying a picture it was never designed for | the best of the four | `libopus0` by P/Invoke (Debian trixie 1.5.2-2 on amd64, arm64, armel, armhf, i386, ppc64el, riscv64 and s390x, BSD-3-Clause, so a `Depends:` line on the `.deb`), or the managed `Concentus` 2.2.2 from NuGet, also BSD-3-Clause |
+| | on the wire, 12 kHz | why not |
+|---|---|---|
+| **16-bit PCM** | **194 kbit/s** | chosen: the samples, unaltered |
+| mu-law (G.711) | 98 | halves it for thirty lines of table-driven code and no dependency, and its quantisation noise sits about 38 dB below the signal, which after the FFT's 30 dB of processing gain is invisible on the picture. But it is lossy, and the audio stops being modem audio |
+| IMA ADPCM, 4-bit | 49 | lossy, and worse than that: the adaptive step tracks the loudest thing in the block, so a strong burst in one modem slot lifts the whole displayed noise floor 15 to 20 dB and greys out the slots either side of it |
+| Opus at 32 kbit/s | 34 | lossy, perceptual, and a dependency: `libopus0` by P/Invoke (Debian trixie 1.5.2-2 on amd64, arm64, armel, armhf, i386, ppc64el, riscv64 and s390x, BSD-3-Clause, so a `Depends:` line on the `.deb`) or the managed `Concentus` 2.2.2 from NuGet, also BSD-3-Clause. It preserves per-band energy exactly and synthesises fine structure inside a band at low rates, which is the wrong trade for a waterfall and for a decoder alike |
+| FLAC, or any lossless coder | about 160, on noise-like audio | it would keep every sample, which meets the objection. Declined for now anyway: a new dependency and a decode step at both ends for perhaps a fifth, when the thing being protected is precisely that the wire is trivially inspectable. Worth revisiting only if somebody on a thin line actually asks |
 
-**Recommended: `ulaw`, with `pcm16` available and a codec name in the `hello` so a third can be added later without a protocol change.** It halves the stream for about thirty lines of table-driven code at each end and no new dependency at all, and being a companded waveform codec its quantisation noise tracks the signal about 38 dB down, which after the FFT's processing gain is invisible except perhaps as a two-decibel floor lift under a very strong burst. Opus would be a third of that again, but it buys it with either a native library in the `.deb` or a 2 MB managed port, and with a perceptual model asked to carry a picture rather than a sound; that is a trade to make on a measurement, which Phase 4 can produce, rather than on a guess now.
+`permessage-deflate` would have been the free version of that last row and is not available: .NET's `HttpListener` does not negotiate WebSocket compression and the monitor is the server.
 
-**CPU.** Mu-law encoding at 12 kHz is a table lookup per sample and is not measurable against a station already running twenty demodulators. Opus on a Pi 4 at mono 12 kHz would be a small fraction of a core; the figure is **unmeasured** and should not be quoted until it is. On the monitor, a watched relayed station costs thirty 2048-point FFTs a second and no demodulators at all, which is less than any receiver it already shows.
-
-**What is not being done, and why.** `permessage-deflate` would take perhaps a fifth off `pcm16` and nothing off `ulaw`, and it is not available: .NET's `HttpListener` does not negotiate WebSocket compression and the monitor is the server. Decimating below 12 kHz would narrow the relayed waterfall below the 0 to 6 kHz that a station's modem slots live in.
+**CPU.** There is nothing to encode, so the station's cost is a float-to-`s16` conversion per sample, which is what `BroadcastAudio` already does for every listening browser (:1478). On the monitor, a watched relayed station costs thirty 2048-point FFTs a second and no demodulators at all, which is less than any receiver it already shows.
 
 ### 4.6 Structurally one way
 
@@ -371,7 +368,7 @@ The remaining honest exposure runs the other way and should be said plainly: **a
 - **The same URL check.** `site` goes through `HttpUrlOrNull` (`UberSdrDirectory.cs`:583-587) at the boundary and is checked again by both pages at the place that writes the attribute (`monitor.html`:140, `waterfall.html`:656). That is the fix for the `javascript:` hole the PR #388 review found, and a station is exactly the same class of input.
 - **The same journal flattening.** Anything from a station that reaches the journal goes through `UberSdrDirectory.Ascii` (:623-637), because `journalctl`'s pager under a C locale renders a byte above 0x7F as `<E2><80><94>` and `SourceTextTests` cannot catch runtime data.
 - **A gap to close while we are here.** `waterfall.html`:1142-1145 writes a frame's `from` and `to` into `innerHTML` **without** `esc()`, unlike every neighbouring site (:1355, :1410, :1457). It is currently safe only because `Ax25AddressParser.TryReadAddress` (:58-61) restricts a callsign to `[A-Z0-9]` and an SSID. That is an implicit dependency on a parser the relayed path does not go through, since a relayed frame's `from` arrives as a string over a socket. Escape it in Phase 1 and stop depending on the coincidence.
-- **Message and rate caps.** A `hello` over 8 KB, a text message over 16 KB, an audio message that is not exactly the length its declared codec and block size imply: close the connection, journal one line, apply the `Refused` backoff to that token. A sustained rate over twice the declared audio bitrate: same. The monitor's fan-out queue to browsers is already bounded and drops oldest (:1770-1777), so a flood cannot back up there; the uplink reader and the input's jitter buffer are what have to be bounded, and `UberSdrAudioInput`'s unbounded accumulator (:453) is the pattern to avoid. The jitter buffer drops the oldest audio when it overruns, which is what a late block deserves.
+- **Message and rate caps.** A `hello` over 8 KB, a text message over 16 KB, an audio message that is not exactly `4 + 2 * blockSamples` bytes for the rate the `hello` declared: close the connection, journal one line, apply the `Refused` backoff to that token. A sustained rate over twice that declared bitrate: same. The monitor's fan-out queue to browsers is already bounded and drops oldest (:1770-1777), so a flood cannot back up there; the uplink reader and the input's jitter buffer are what have to be bounded, and `UberSdrAudioInput`'s unbounded accumulator (:453) is the pattern to avoid. The jitter buffer drops the oldest audio when it overruns, which is what a late block deserves.
 - **A cap on uplinks**, which is the size of the token table: an unauthenticated upgrade is refused before anything is allocated. Bad tokens get a fixed 1 s delay and a counted journal line, so a guessing run is slow, visible, and additionally sitting behind Cloudflare's 60-requests-per-10-seconds rule.
 
 **TLS and the tunnel.** The uplink goes to the same hostname as the browsers, so it is `wss` terminated by Cloudflare and carried to the container over the existing `cloudflared` tunnel. WebSockets are on by default on the zone. Two things to check in Phase 4 rather than assume: that the one rate-limit rule (block, 60 requests per 10 s per address, mitigated for 10 s) does not count a long-lived socket as anything more than the single upgrade request that opened it, and that neither Cloudflare nor `cloudflared` drops an idle WebSocket. The 20-second `demand` heartbeat exists so that the second question has an answer we control rather than one we hope for.
@@ -420,11 +417,11 @@ The whole suite is about 5 minutes and currently 2200-odd tests with about 179 s
 
 ### 6.1 Phase 1: the seam
 
-**Scope.** `IWaterfallRelay` and `RelayedFrame` in the library. `WaterfallWebServer` gains the `Relay` property and offers it audio at the receive tap and at the paced transmit loop, frames from `BroadcastFrame`, and the status sentence from `SetRadioStatus`; `BroadcastFrame` gains an optional `raw`. It also gains `PushFrame` and `IncomingIsTransmit` for the monitor's side. The mu-law codec, as a pair of static table-driven converters in `src/Packet.SoundModem/Audio/`, with round-trip and level tests. The `from`/`to` escaping gap at `waterfall.html`:1142-1145 is closed. The wire format of 4.2 is the normative reference and this document is where it lives.
+**Scope.** `IWaterfallRelay` and `RelayedFrame` in the library. `WaterfallWebServer` gains the `Relay` property and offers it audio at the receive tap and at the paced transmit loop, frames from `BroadcastFrame`, and the status sentence from `SetRadioStatus`; `BroadcastFrame` gains an optional `raw`. It also gains `PushFrame` and `IncomingIsTransmit` for the monitor's side. The `from`/`to` escaping gap at `waterfall.html`:1142-1145 is closed. The wire format of 4.2 is the normative reference and this document is where it lives.
 
 **Out of scope.** Any socket. Any config key. Anything in the daemon. `UplinkClient`, `UplinkAudioInput`, `RelayStation`.
 
-**Files expected to change.** `src/Packet.SoundModem/Waterfall/WaterfallWebServer.cs`; new `src/Packet.SoundModem/Waterfall/IWaterfallRelay.cs`; new `src/Packet.SoundModem/Audio/MuLaw.cs`; `src/Packet.SoundModem/Waterfall/wwwroot/waterfall.html`; `tests/Packet.SoundModem.Tests/Waterfall/WaterfallWebServerTests.cs`, `WaterfallPageTests.cs`, `browser/page-probe.mjs`; new `tests/Packet.SoundModem.Tests/Waterfall/WaterfallRelayTests.cs`; new `tests/Packet.SoundModem.Tests/Audio/MuLawTests.cs`.
+**Files expected to change.** `src/Packet.SoundModem/Waterfall/WaterfallWebServer.cs`; new `src/Packet.SoundModem/Waterfall/IWaterfallRelay.cs`; `src/Packet.SoundModem/Waterfall/wwwroot/waterfall.html`; `tests/Packet.SoundModem.Tests/Waterfall/WaterfallWebServerTests.cs`, `WaterfallPageTests.cs`, `browser/page-probe.mjs`; new `tests/Packet.SoundModem.Tests/Waterfall/WaterfallRelayTests.cs`.
 
 **Tests to add.**
 
@@ -440,8 +437,6 @@ The whole suite is about 5 minutes and currently 2200-odd tests with about 179 s
 - `A_Pushed_Frame_Is_Tagged_Onto_The_Current_Line`
 - `Incoming_Transmit_Marks_A_Line_As_Ours`
 - `A_Channel_With_No_Modems_Still_Draws_Its_Declared_Bands`
-- `Mu_Law_Round_Trips_Within_Its_Quantisation_Step`
-- `Mu_Law_Noise_Sits_Far_Below_A_Full_Scale_Tone` (an FFT of encoded and decoded white noise, asserting the floor)
 - `A_Frame_From_A_Callsign_With_Angle_Brackets_Is_Escaped_On_The_Page` (page probe)
 
 **Acceptance criteria.**
@@ -452,13 +447,13 @@ The whole suite is about 5 minutes and currently 2200-odd tests with about 179 s
 4. Nothing is removed from `WaterfallWebServer` and nothing existing is changed except `BroadcastFrame`'s signature, which gains an optional parameter.
 5. No `Console` use has appeared anywhere in `src/Packet.SoundModem/`.
 
-**How flavour A is proven unchanged.** Criteria 2, 3 and 4, plus a smoke run of a station config on `main` and on the branch, with stdout and stderr captured and diffed after normalising the temp path and the ephemeral port - the method used in PR #387 and PR #388, and the one that found the two byte-identical.
+**What must not change, and how it is proven.** Flavour A and flavour B both, since this phase is in the shared library: criteria 2, 3 and 4, plus a smoke run of a station config on `main` and on the branch, with stdout and stderr captured and diffed after normalising the temp path and the ephemeral port - the method used in PR #387 and PR #388, and the one that found the two byte-identical.
 
 ### 6.2 Phase 2: the station side
 
 **Depends on Phase 1. Can run in parallel with Phase 3 in a separate worktree**, since it touches the station path and Phase 3 touches `MonitorHost`, and both are written against 4.2.
 
-**Scope.** `PublishConfig` and its validation, including the `ubersdr:` refusal. `UplinkClient` in the library: connect, `hello`, `demand`, the reconnect ladder, the keepalive, the decimation to `audioRate`, the mu-law encode, the 40 ms blocking, the transmitted-audio flag, the journal lines. The wiring in `Program.cs`. `publish.token` redacted by the config API.
+**Scope.** `PublishConfig` and its validation, including the `ubersdr:` refusal. `UplinkClient` in the library: connect, `hello`, `demand`, the reconnect ladder, the keepalive, the decimation to `audioRate`, the 40 ms `s16` blocking, the transmitted-audio flag, the journal lines. The wiring in `Program.cs`. `publish.token` redacted by the config API.
 
 **Out of scope.** Anything in `MonitorHost`. The picker. The token table. `--uplink-token`. `CONFIG.md` and the example config, which are Phase 3's so they land in one piece.
 
@@ -495,7 +490,7 @@ The whole suite is about 5 minutes and currently 2200-odd tests with about 179 s
 4. A station with a `publish` block and no local browser sends nothing at all until the stub monitor says a viewer arrived, proven by counting bytes on the stub's socket over ten seconds.
 5. `CONFIG.md` is untouched; Phase 3 documents both ends at once.
 
-**How flavour A is proven unchanged.** Criterion 2, plus the whole suite: nothing in this phase is reachable without a `publish` block, and the one shared file, `ConfigApi.cs`, has its own tests.
+**What must not change, and how it is proven.** Flavour A without a `publish` block, by criterion 2; flavour B, which this phase does not touch at all; and the live node, which does not get this code until Phase 4. Nothing in this phase is reachable without a `publish` block, and the one shared file, `ConfigApi.cs`, has its own tests.
 
 ### 6.3 Phase 3: the monitor side
 
@@ -547,31 +542,39 @@ The whole suite is about 5 minutes and currently 2200-odd tests with about 179 s
 5. The token helper produces a token and a hash that the monitor accepts, demonstrated end to end.
 6. The picker looked at in a real browser, with a station and a receiver in the list, before the PR is opened.
 
-**How flavour A is proven unchanged.** No flavour-A code path is touched in this phase. Run the CT 146 monitor config once more, with no `uplinks` configured, and diff the journal against the Phase 1 capture.
+**What must not change, and how it is proven.** Flavour A, no path of which is touched in this phase. Flavour B with no `uplinks` configured: run the CT 146 monitor config once more and diff the journal against the Phase 1 capture, and confirm from `/api/instances` that every receiver row is what it was, field for field.
 
 ### 6.4 Phase 4: deployment
 
 **Depends on Phases 2 and 3. Needs a token issued.**
 
-**Scope.** Tag a release so there is a `.deb`. Generate a token for GB7RDG-2 and put its hash in the monitor's config. Upgrade the monitor, upgrade GB7RDG-2, add its `publish` block, restart both. Validate through the tunnel: the picker lists it in the one list with its category, the page loads, the waterfall runs off relayed audio, Listen works, the frame log fills, `/api/instances` says `kind: station`. **Listen to a real keyup** and say whether -35 dB is the right level for the station's own transmitted audio (4.1). **Look at the waterfall during a strong burst** and say whether mu-law's floor lift is visible at all; if it is, that is the measurement that decides the Opus question in section 8. Soak overnight with a tab open and a tab closed, and read both journals for reconnects, for audio flowing with nobody watching, and for anything a watch did that it should not have. Write the deployment facts into the project memory the way the monitor deployment is recorded. Then tell the people who would want a token.
+**Scope.** Tag a release so there is a `.deb`. Generate a token for GB7RDG-2 and put its hash in the monitor's config. Upgrade the monitor, upgrade GB7RDG-2, add its `publish` block, restart both. Validate through the tunnel: the picker lists it in the one list with its category, the page loads, the waterfall runs off relayed audio, Listen works, the frame log fills, `/api/instances` says `kind: station`. **Listen to a real keyup** and say whether -35 dB is the right level for the station's own transmitted audio (4.1). **Measure the actual upstream rate** on the station's own line with a watched page and with none, and check it against 4.5's 194 kbit/s and under 1 kbit/s; a station on ADSL is the one that would feel a mistake here. Soak overnight with a tab open and a tab closed, and read both journals for reconnects, for audio flowing with nobody watching, and for anything a watch did that it should not have. Write the deployment facts into the project memory the way the monitor deployment is recorded. Then tell the people who would want a token.
 
 **Out of scope.** Any code change that is not a deployment fix.
 
-**Acceptance criteria.** GB7RDG-2 is on https://monitor.ukpacketradio.network and can be watched and listened to from outside the LAN. Its own journal, over the soak, shows every line it showed before the `publish` block was added, plus the `publish:` lines and nothing else. No audio flows with nobody watching. The uplink survives the night, or reconnects and says why. The memory figure from Phase 3 matches what the container actually uses. The two on-air judgements above are written down.
+**Acceptance criteria.** GB7RDG-2 is on https://monitor.ukpacketradio.network and can be watched and listened to from outside the LAN. No audio flows with nobody watching. The uplink survives the night, or reconnects and says why. The memory figure from Phase 3 matches what the container actually uses. The keyup level and the measured upstream rate are written down.
+
+**What must not change, and how it is proven.** **The live node keeps working**, and this is the one that matters most: GB7RDG-2 carries traffic, and its journal over the soak must show every line it showed before the `publish` block was added, in the same order, plus the `publish:` lines and nothing else. Its KISS hosts stay attached, its node keeps passing frames, and its transmit path is not touched. The public site keeps working for its existing receivers throughout: the picker still lists them, and a receiver page opened before the upgrade and after it behaves the same.
 
 ## 7. Order of work
 
 The coordinator updates this list as phases land. `[ ]` not started, `[~]` in progress, `[x]` done.
 
 - [x] **Phase 0** - this document. PR: #393
-- [ ] **Phase 1** - `IWaterfallRelay`, the audio and frame hooks, `PushFrame`, `IncomingIsTransmit`, mu-law, the escaping fix. PR:
+- [ ] **Phase 1** - `IWaterfallRelay`, the audio and frame hooks, `PushFrame`, `IncomingIsTransmit`, the escaping fix. PR:
 - [ ] **Phase 2** - the `publish` block, `UplinkClient`, reconnects, the token redaction. Needs 1; can run beside 3. PR:
 - [ ] **Phase 3** - `/uplink`, tokens, `UplinkAudioInput`, `RelayStation`, `/api/instances`, the picker, the second credit sentence, CONFIG.md, the example config, memory measured. Needs 1; can run beside 2. PR:
-- [ ] **Phase 4** - release, monitor config, GB7RDG-2 opted in, validated live, the two on-air judgements, soaked, recorded, announced. Needs 2 and 3. PR:
+- [ ] **Phase 4** - release, monitor config, GB7RDG-2 opted in, validated live, the keyup level judged and the upstream rate measured, soaked, recorded, announced. Needs 2 and 3. PR:
 
 ## 8. Decisions
 
-### Taken by Tom, in the brief
+Every decision below was taken by Tom. Nothing is open, and the plan is accepted:
+
+> I'm happy with the plan. Get the in-flight work landed, then run the plan - again with you as the coordinator and using sub-agents of models of your choice.
+
+So: the in-flight work lands first, then Phase 1, then Phases 2 and 3 in parallel worktrees, then Phase 4. One PR per phase, a fresh reviewer per PR, and the coordinator coordinates rather than writing the code - the way the v0.55.0 monitor refactor was run.
+
+### In the brief
 
 - **Private stations can opt in.** In his words: "Perhaps individual private pdn-soundmodems (which won't be UberSDR receivers, but full blown transceivers) could also opt in to be selectable on monitor.ukpacketradio.network? i.e. we can see and listen to what each others' stations are hearing?"
 - **The station dials out**, with a config block naming the monitor and a token the site owner issues. No inbound connection to a home station, ever.
@@ -581,7 +584,7 @@ The coordinator updates this list as phases land. `[ ]` not started, `[~]` in pr
 - **Same page, same history.** `/r/<slug>/`, the same receiver page, its own frame log on the monitor, and a credit line naming the station and its operator.
 - **GB7RDG-2 is the first**, and it is a live node carrying traffic.
 
-### Taken by Tom, 2026-09-04, after reading the first draft
+### 2026-09-04, on the first draft
 
 - **Audio goes up, not the waterfall.** In his words: "why are we sending the waterfall and not just the audio? Much more bandwidth efficient, and rendering the waterfall isn't high CPU." Taken as: the station relays audio, frames and status; the monitor renders the picture with the code it already runs; the modems stay on the station so the decodes are still the station's own. This is what 4.1 calls option 3 and it supersedes the first draft's spectrum-up design, together with its wire format, its max-hold decimation and its `linesPerSecond` knob. Monitor-side demodulation stays rejected and stays on the record as 4.1's option 1, because it is what somebody will try next.
 - **The station's own transmitted audio is part of what a viewer hears**, flagged so the monitor paints it as ours, matching roadmap #14 (`docs/roadmap.md`, 2026-09-04): "our own transmitted audio is included when the station is a pdn-soundmodem transceiver ... so the take is what the station was working, not just what it heard".
@@ -591,11 +594,10 @@ The coordinator updates this list as phases land. `[ ]` not started, `[~]` in pr
 - **There is no relayed line rate**, this being superseded by the design change; the monitor renders at the page's own 30 lines a second.
 - **The token follows UberSDR's pattern as far as it can.** Tom: "how does UberSDR itself work? Copy that pattern." What UberSDR does is in 3.6: the instance mints its own UUID, keeps it in one config key it is told not to edit, and posts it with no credential at all, because the collector calls the instance back on its public URL to check it is real. A station behind NAT has nothing to call back to, so the pattern is copied in every respect except that the identifier is issued by the site rather than minted by the station. 4.4.
 - **Removing a station may need a restart.** Accepted.
-- **A station on a web receiver may not publish.** A `publish` block on a `device` starting `ubersdr:` is exit 2 at start-up, with a sentence saying why, and it is documented in `CONFIG.md`. This also removes the only device with an on-demand path, and with it the `SetRelayViewers` the first draft needed (3.4).
+- **A station on a web receiver may not publish.** A `publish` block on a `device` starting `ubersdr:` is exit 2 at start-up, with a sentence saying why, and it is documented in `CONFIG.md`. It also settles what "on demand" means everywhere else: see 3.4, which is the paragraph to read if anybody thinks a site visitor can reach a station's radio.
 - **The uplink never faults the station.** Never. A node passing traffic at 3 a.m. does not restart because a website is unreachable, and the cost is that a permanently misconfigured `publish` block is a journal line every fifteen minutes and nothing louder.
 
-### Being asked of Tom
+### 2026-09-04, on the second draft
 
-**The codec, and it is the only one left.** The recommendation is `ulaw`, at 98 kbit/s while somebody is watching and under 1 kbit/s while nobody is, with `pcm16` available for anyone with bandwidth to spare and a codec name in the `hello` so a third can arrive later without a protocol change. The full costing is in 4.5. In short: mu-law halves the stream for thirty lines of table-driven code at each end and no dependency at all, and its quantisation noise is invisible on the waterfall except perhaps as a two-decibel floor lift under a very strong burst; IMA ADPCM would halve it again and is disqualified because its noise is broadband and signal-tracking, so a loud burst in one modem slot would grey out the slots either side of it; and Opus at 32 kbit/s would be a third of mu-law but costs either a `libopus0` dependency on the `.deb` or a 2 MB managed port, and asks a perceptual codec to carry a picture it was never designed for.
-
-What this decision actually turns on, and why it is worth waiting for a measurement: 98 kbit/s is under a tenth of a poor ADSL upload and about half a per cent of FTTP, so the bandwidth saving from Opus buys very little on a real home line. Phase 4 looks at a real waterfall during a real strong burst and says whether mu-law's floor lift can be seen at all. If it cannot, mu-law is the answer and Opus is a nice-to-have that nobody needs; if it can, that is the moment to spend the dependency.
+- **No codec.** In his words, refusing the recommended mu-law: "losing the ability to get pure modem audio, this seems a shame because others might want to use that audio as a means to tune their own modem designs." Taken as: 16-bit PCM, exactly as the station's modems hear it. `publish.audioRate` defaults to 12000, which is 194 kbit/s upstream while somebody is watching and under 1 kbit/s while nobody is; 48000 is available as a station option for the wide modes, at 770 kbit/s. No companding, no compression, no `codec` key. mu-law, IMA ADPCM, Opus and lossless coding were all costed and 4.5 keeps the costings as the record of what was declined and why, along with the ADSL caveat that having no codec creates.
+- **The plan is accepted and the work starts**, as above.
