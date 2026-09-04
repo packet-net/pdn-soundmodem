@@ -363,6 +363,16 @@ outside. So a plain IL2P frame is decoded, and it appears:
   the point: a row in the panel naming GB7BPQ is worth more than another WAV of the same beacon
   every ten minutes, and it leaves the capture budget for bursts nobody has explained yet.
 
+Where it does **not** appear is the page's **links pane** (2026-09-04, at the operator's request).
+That pane says who is talking to whom and how the link is doing, which is a claim about the
+channel, and the pair of callsigns in an RS-only reading is exactly as unverified as the rest of
+the frame: a bit error in an address field would otherwise mint a station nobody heard and a link
+nobody made. The same goes for the pane's start-up backfill out of the [frame log](#framelog) - a
+`monitor_only` row is skipped there too, so a restart does not put back the cards the live path
+declined. It is the same rule the [metrics](#only-frames-that-vouched-for-themselves) station list
+has always applied, now applied to the pane beside it. Nothing else changes: the frame is still
+listed, still logged, still in the journal, and `acceptPlainIl2p` still decides the host.
+
 What it does **not** do by default is give the frame to your KISS host. That is the one thing
 `acceptPlainIl2p` decides:
 

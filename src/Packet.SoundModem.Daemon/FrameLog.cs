@@ -296,7 +296,8 @@ internal sealed class FrameLog : IAsyncDisposable
             // query, and the panel wants them in the order they happened.
             query.CommandText = """
                 SELECT heard_at, sub_channel, mode, source, destination,
-                       length, corrected, crc_valid, offset_hz, direction, tx_trim_hz
+                       length, corrected, crc_valid, offset_hz, direction, tx_trim_hz,
+                       monitor_only
                 FROM frames ORDER BY id DESC LIMIT $count
                 """;
             query.Parameters.AddWithValue("$count", count);
@@ -316,7 +317,10 @@ internal sealed class FrameLog : IAsyncDisposable
                     // Anything that is not 'tx' is a receive, including a row from a log written
                     // before the column existed: those were all heard.
                     string.Equals(row.GetString(9), "tx", StringComparison.Ordinal),
-                    row.IsDBNull(10) ? null : row.GetDouble(10)));
+                    row.IsDBNull(10) ? null : row.GetDouble(10),
+                    // Null on a row written before the column existed, and on every transmission:
+                    // not withheld, because nothing said it was.
+                    !row.IsDBNull(11) && row.GetInt32(11) != 0));
             }
         }
         catch (Exception e) when (e is SqliteException or IOException or FormatException)
@@ -334,6 +338,12 @@ internal sealed class FrameLog : IAsyncDisposable
     /// observer, which a restart would otherwise leave knowing nothing about links that were
     /// up a moment ago. Same reader, same shrug on a log that cannot be read.
     /// </summary>
+    /// <remarks>
+    /// Every row, withheld ones included, each saying which it was on
+    /// <see cref="LoggedFrame.MonitorOnly"/>: what to do with an RS-only reading is the caller's
+    /// question, and the answer differs between the links pane (which skips them) and anything
+    /// re-reading the record of what the station heard.
+    /// </remarks>
     internal IReadOnlyList<(LoggedFrame Frame, byte[] Payload)> RecentWithPayload(int count)
     {
         if (count <= 0)
@@ -349,7 +359,8 @@ internal sealed class FrameLog : IAsyncDisposable
             using SqliteCommand query = reader.CreateCommand();
             query.CommandText = """
                 SELECT heard_at, sub_channel, mode, source, destination,
-                       length, corrected, crc_valid, offset_hz, direction, tx_trim_hz, payload
+                       length, corrected, crc_valid, offset_hz, direction, tx_trim_hz,
+                       monitor_only, payload
                 FROM frames ORDER BY id DESC LIMIT $count
                 """;
             query.Parameters.AddWithValue("$count", count);
@@ -367,8 +378,9 @@ internal sealed class FrameLog : IAsyncDisposable
                     row.IsDBNull(7) ? null : row.GetInt32(7) != 0,
                     row.IsDBNull(8) ? null : row.GetDouble(8),
                     string.Equals(row.GetString(9), "tx", StringComparison.Ordinal),
-                    row.IsDBNull(10) ? null : row.GetDouble(10)),
-                    (byte[])row.GetValue(11)));
+                    row.IsDBNull(10) ? null : row.GetDouble(10),
+                    !row.IsDBNull(11) && row.GetInt32(11) != 0),
+                    (byte[])row.GetValue(12)));
             }
         }
         catch (Exception e) when (e is SqliteException or IOException or FormatException or InvalidCastException)

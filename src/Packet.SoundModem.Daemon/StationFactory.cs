@@ -316,15 +316,26 @@ internal static class StationFactory
     /// Opens the links pane on the links the station already knows about.
     /// </summary>
     /// <remarks>
-    /// The log has the bytes of every frame it heard or sent, so the observer is simply shown
-    /// them again, in order and with their own timestamps: a link that was up when this process
-    /// last stopped is up on the first page load rather than after its next frame. Two thousand
-    /// frames is an afternoon on a busy port and a few milliseconds of work.
+    /// <para>The log has the bytes of every frame it heard or sent, so the observer is simply
+    /// shown them again, in order and with their own timestamps: a link that was up when this
+    /// process last stopped is up on the first page load rather than after its next frame. Two
+    /// thousand frames is an afternoon on a busy port and a few milliseconds of work.</para>
+    /// <para>Every row but a withheld one. A frame read on Reed-Solomon alone does not make a
+    /// link when it is heard, and replaying it out of the log must not make one either, or a
+    /// restart would put back exactly the cards the live path refuses. The test is the log's own
+    /// <c>monitor_only</c> column rather than a null <c>crc_valid</c>, which is also null on
+    /// HDLC, on FX.25 and on our own transmissions - reading it as "withheld" would empty the
+    /// pane on every port that does not run IL2P+CRC.</para>
     /// </remarks>
     internal static void BackfillLinks(WaterfallWebServer server, FrameLog frameLog)
     {
         foreach ((LoggedFrame logged, byte[] payload) in frameLog.RecentWithPayload(2000))
         {
+            if (logged.MonitorOnly)
+            {
+                continue;
+            }
+
             server.Links.Observe(
                 logged.SubChannel.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 payload, logged.HeardAt, logged.Transmitted);

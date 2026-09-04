@@ -86,6 +86,49 @@ public class WaterfallPlainIl2pTests : IAsyncLifetime
         message.Dispose();
     }
 
+    /// <summary>
+    /// The operator's rule, over real audio: an RS-only reading is listed and is not a link.
+    /// </summary>
+    /// <remarks>
+    /// Reed-Solomon alone stood behind these bytes, which is why the station keeps them from its
+    /// host; the pair of callsigns in them is exactly as unverified as the rest of the frame. So
+    /// the links pane - which says who is talking to whom, and is read as a statement about the
+    /// channel - must not open a card for GB7BPQ on the strength of it, and the frames panel must
+    /// go on listing it badged RS ONLY, because that is where an operator judges it for what it
+    /// is. The whole burst has been fed by the time the row arrives, so an empty pane here is the
+    /// pane the browser would see and not a race with the decoder.
+    /// </remarks>
+    [Fact]
+    public async Task A_Withheld_Plain_Frame_Is_Listed_And_Makes_No_Link()
+    {
+        JsonDocument message = await FirstFrameAsync(Transmission("bpsk300-nocrc"));
+
+        message.RootElement.GetProperty("from").GetString().Should().Be("GB7BPQ",
+            "the frames panel lists it exactly as it did before");
+        message.RootElement.GetProperty("monitorOnly").GetBoolean().Should().BeTrue();
+        message.Dispose();
+
+        _server.Links.Snapshot().Should().BeEmpty(
+            "an unverified reading names no station as heard and opens no link");
+    }
+
+    /// <summary>
+    /// And the same station saying the same thing with a CRC behind it still does, so what was
+    /// removed is the unverified reading rather than the beacon.
+    /// </summary>
+    [Fact]
+    public async Task A_Verified_Frame_From_The_Same_Station_Still_Makes_Its_Link()
+    {
+        JsonDocument message = await FirstFrameAsync(Transmission("bpsk300"));
+
+        message.RootElement.GetProperty("crc").GetBoolean().Should().BeTrue();
+        message.Dispose();
+
+        _server.Links.Snapshot().Should().ContainSingle(
+            "a frame something checked is evidence of who was on the channel")
+            .Which.Id.Should().Be("0|BEACON<>GB7BPQ");
+    }
+
     private async Task<JsonDocument> FirstFrameAsync(float[] audio)
     {
         using var socket = new ClientWebSocket();
