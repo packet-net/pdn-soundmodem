@@ -765,4 +765,304 @@ public class DaemonConfigTests : IDisposable
         config!.Warnings.Should().ContainSingle()
             .Which.Should().Contain("modemPlugins[0]: \"pathh\"");
     }
+
+    // ---- publish: a station offering itself to a public monitor site -----------------------
+    //
+    // Section 4.3 of docs/uplink-plan.md. All of these are exit 2 at start-up rather than a
+    // station that comes up and quietly does not publish, because an operator who has written the
+    // block wants to know now, and because the alternative is a permanently silent uplink nobody
+    // notices for a month.
+
+    /// <summary>The whole block, valid, for a test to break one thing at a time.</summary>
+    private const string PublishBlock = """
+          "publish": {
+            "url": "wss://monitor.example/uplink",
+            "token": "pdnsm_0123456789012345678901234567890123456789",
+            "callsign": "GB7RDG-2",
+            "operator": "Tom M0LTE",
+            "location": "Reading, England"
+          }
+        """;
+
+    /// <summary>A station with a waterfall and the block above, with one part replaced.</summary>
+    private string PublishingStation(string block = PublishBlock, string device = "null") =>
+        WriteConfig($$"""
+            {
+              "device": "{{device}}",
+              "waterfall": { "port": 8107 },
+            {{block}}
+            }
+            """);
+
+    [Fact]
+    public void A_Valid_Publish_Block_Loads()
+    {
+        string path = PublishingStation();
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config.Should().NotBeNull();
+        config!.Publish.Should().NotBeNull();
+        config.Publish!.Callsign.Should().Be("GB7RDG-2");
+        config.Publish.Frames.Should().Be("always", "frames go up whether or not anybody watches");
+        DaemonConfig.PublishedAudioRate(config.Publish, 48000).Should().Be(12000,
+            "a 48 kHz station that says nothing gets the 194 kbit/s default, not 770");
+        DaemonConfig.PublishedAudioRate(config.Publish, 12000).Should().Be(12000);
+    }
+
+    [Fact]
+    public void A_Publish_Block_Without_A_Token_Is_A_Configuration_Error()
+    {
+        string path = PublishingStation("""
+              "publish": { "url": "wss://monitor.example/uplink", "callsign": "GB7RDG-2" }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"publish\".\"token\" is missing");
+        error.Should().Contain("Ask the site owner",
+            "there is no default and no way to generate one locally");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void A_Publish_Token_Too_Short_To_Be_One_Is_A_Configuration_Error()
+    {
+        string path = PublishingStation("""
+              "publish": {
+                "url": "wss://monitor.example/uplink",
+                "token": "hunter2",
+                "callsign": "GB7RDG-2"
+              }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"publish\".\"token\" is too short");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void A_Publish_Block_Without_A_Callsign_Is_A_Configuration_Error()
+    {
+        string path = PublishingStation("""
+              "publish": {
+                "url": "wss://monitor.example/uplink",
+                "token": "pdnsm_0123456789012345678901234567890123456789"
+              }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"publish\".\"callsign\" is missing");
+        error.Should().Contain("has to say whose it is",
+            "a station on a public page that will not say who it is has no business being there");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void A_Publish_Block_Without_A_Waterfall_Is_A_Configuration_Error()
+    {
+        string path = WriteConfig($$"""
+            {
+              "device": "null",
+            {{PublishBlock}}
+            }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"publish\" needs a \"waterfall\" section");
+        error.Should().Contain("nothing to publish");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void A_Publish_Block_On_A_Web_Receiver_Is_A_Configuration_Error()
+    {
+        string path = PublishingStation(device: "ubersdr:m9psy-1.instance.ubersdr.org");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("somebody else's public web receiver");
+        error.Should().Contain("twice under two names",
+            "the sentence says why rather than just refusing");
+        error.Should().Contain("daily listening allowance");
+        error.Should().Contain("\"deny\"", "and it says where to go instead");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void Publish_And_Monitor_Together_Is_A_Configuration_Error()
+    {
+        string path = WriteConfig($$"""
+            {
+              "waterfall": { "port": 8099 },
+              "monitor": { "modems": [ { "subChannel": 0, "mode": "afsk1200" } ] },
+            {{PublishBlock}}
+            }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("both \"publish\" and \"monitor\"");
+        error.Should().Contain("one process is not both");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Theory]
+    [InlineData("https://monitor.example/uplink")]
+    [InlineData("monitor.example/uplink")]
+    [InlineData("")]
+    public void A_Publish_Url_That_Is_Not_Ws_Or_Wss_Is_A_Configuration_Error(string url)
+    {
+        string path = PublishingStation($$"""
+              "publish": {
+                "url": "{{url}}",
+                "token": "pdnsm_0123456789012345678901234567890123456789",
+                "callsign": "GB7RDG-2"
+              }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("not an absolute ws or wss URL");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void An_Unencrypted_Uplink_To_Another_Machine_Is_A_Warning_Not_A_Refusal()
+    {
+        // The shape of a smoke test and the shape of a mistake, and only the operator knows which.
+        string path = PublishingStation("""
+              "publish": {
+                "url": "ws://monitor.example/uplink",
+                "token": "pdnsm_0123456789012345678901234567890123456789",
+                "callsign": "GB7RDG-2"
+              }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config.Should().NotBeNull();
+        config!.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("unencrypted ws to monitor.example");
+    }
+
+    [Fact]
+    public void An_Audio_Rate_Outside_The_Publishable_Range_Is_A_Configuration_Error()
+    {
+        string path = PublishingStation("""
+              "publish": {
+                "url": "wss://monitor.example/uplink",
+                "token": "pdnsm_0123456789012345678901234567890123456789",
+                "callsign": "GB7RDG-2",
+                "audioRate": 96000
+              }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"publish\".\"audioRate\" is 96000 Hz");
+        error.Should().Contain("6000 to 48000");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    /// <summary>
+    /// The audio is decimated to the published rate rather than resampled, so the rate has to
+    /// divide the channel's. Checked against the DSP rate, which is settled from the modem set
+    /// after any plugins have loaded, so it is its own function rather than part of the load.
+    /// </summary>
+    [Fact]
+    public void An_Audio_Rate_That_Does_Not_Divide_The_Dsp_Rate_Is_A_Configuration_Error()
+    {
+        var publish = new PublishConfig { AudioRate = 8000 };
+
+        string? at12k = DaemonConfig.PublishRateProblem(publish, 12000);
+
+        at12k.Should().NotBeNull();
+        at12k.Should().Contain("8000 Hz").And.Contain("12000 Hz");
+        at12k.Should().Contain("integer divisor");
+        at12k.Should().Contain("6000, 12000", "the message names the rates that would work");
+
+        DaemonConfig.PublishRateProblem(publish, 48000).Should().BeNull(
+            "8000 divides 48000, which is the station a 48 kHz mode makes");
+        DaemonConfig.PublishRateProblem(new PublishConfig(), 12000).Should().BeNull(
+            "the default is the channel's own rate capped at 12000, which always divides it");
+        DaemonConfig.PublishRateProblem(new PublishConfig(), 48000).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("\"callsign\": \"NOT A CALLSIGN AT ALL\"", "not a callsign")]
+    [InlineData("\"callsign\": \"GB7RDG-42\"", "not a callsign")]
+    [InlineData("\"callsign\": \"GB7RDG-2\", \"operator\": \"forty characters is the limit and this one is longer\"", "the limit is 40")]
+    [InlineData("\"callsign\": \"GB7RDG-2\", \"frames\": \"sometimes\"", "\"always\"")]
+    [InlineData("\"callsign\": \"GB7RDG-2\", \"site\": \"javascript:alert(1)\"", "absolute http or https URL")]
+    public void A_Publish_Field_The_Site_Would_Have_To_Show_Is_Checked_Here(
+        string fields, string expected)
+    {
+        // Everything a station says about itself lands on somebody else's public page, so the
+        // caps and the URL check are here, at the point the operator can still fix it, rather
+        // than as a truncation or a broken link on the site.
+        string path = PublishingStation($$"""
+              "publish": {
+                "url": "wss://monitor.example/uplink",
+                "token": "pdnsm_0123456789012345678901234567890123456789",
+                {{fields}}
+              }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain(expected);
+        ShouldGuideTheOperator(error, path);
+    }
+
+    /// <summary>
+    /// The one refusal that cannot be made while the file is being read still reads like every
+    /// other one: an operator should not be able to tell which kind of check stopped them.
+    /// </summary>
+    [Fact]
+    public void A_Refusal_Found_After_The_File_Was_Read_Is_Framed_Like_Every_Other()
+    {
+        string path = PublishingStation();
+        string problem = DaemonConfig.PublishRateProblem(
+            new PublishConfig { AudioRate = 7000 }, 12000)!;
+
+        string error = DaemonConfig.ConfigurationError(path, problem);
+
+        error.Should().Contain("7000 Hz", "the sentence itself is still there");
+        error.Should().Contain("6000, 12000");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void A_Typo_Inside_The_Publish_Block_Is_Called_Out()
+    {
+        string path = PublishingStation("""
+              "publish": {
+                "url": "wss://monitor.example/uplink",
+                "token": "pdnsm_0123456789012345678901234567890123456789",
+                "callsign": "GB7RDG-2",
+                "audioRateHz": 6000
+              }
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("publish: \"audioRateHz\"");
+    }
 }

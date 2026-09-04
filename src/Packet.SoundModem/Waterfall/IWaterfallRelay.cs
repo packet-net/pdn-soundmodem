@@ -52,6 +52,13 @@ public interface IWaterfallRelay
     /// received blocks are kept out of the station's own picture and out of this. A client can
     /// therefore accumulate fixed-length blocks per direction and never has to flush a short one
     /// at a switch.</para>
+    /// <para><b>Not interleaved is not the same as not concurrent</b>, and an implementation that
+    /// keeps state has to know the difference. The two kinds do not interleave in the stream, but
+    /// the two calls can be in flight at once: received audio is offered on the station's audio
+    /// read thread and a transmission from the display pacer's timer callback, and at the tail of
+    /// a key-up the receive tap can pass its gate, queue on the display lock behind the pacer, and
+    /// be released exactly as the pacer moves on to its offers. Neither call is made under a lock,
+    /// so anything an implementation keeps between calls must be safe for two threads.</para>
     /// <para>The span is the caller's buffer and is not valid after the call returns: an
     /// implementation that keeps the samples must copy them.</para>
     /// <para>No display lock is held across this call, so a slow implementation costs itself and

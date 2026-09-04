@@ -209,6 +209,7 @@ PagingConfig? paging = null;
 FlexConfig? flexConfig = null;
 UberSdrConfig? uberSdrConfig = null;
 WaterfallConfig? waterfallConfig = null;
+PublishConfig? publishConfig = null;
 SurveyConfig? surveyConfig = null;
 MetricsConfig? metricsConfig = null;
 FrequencyMatchingConfig? frequencyMatching = null;
@@ -268,6 +269,7 @@ if (configPath is not null)
     flexConfig = config.Flex;
     uberSdrConfig = config.UberSdr;
     waterfallConfig = config.Waterfall;
+    publishConfig = config.Publish;
     apiConfig = config.Api;
     surveyConfig = config.Survey;
     metricsConfig = config.Metrics;
@@ -475,6 +477,19 @@ var stationJournal = StationJournal.Console();
 // catalogue answers an unknown mode with its defaults.
 if (!StationFactory.TryResolveDspRate(modems, stationJournal, out int DspRate))
 {
+    return 2;
+}
+
+// The one "publish" check that could not be made while the file was being read: the audio is
+// decimated to the published rate rather than resampled, so that rate has to divide the channel's,
+// and the channel's is not settled until the modem set is - after any modem plugins have loaded.
+if (publishConfig is not null
+    && DaemonConfig.PublishRateProblem(publishConfig, DspRate) is { } publishRateProblem)
+{
+    // Through the same frame every other refusal in the file gets - the file name, the recovery
+    // text and the CONFIG.md link - because where a check had to live is not something an
+    // operator reading journalctl should be able to tell.
+    Console.Error.WriteLine(DaemonConfig.ConfigurationError(configPath!, publishRateProblem));
     return 2;
 }
 
@@ -2462,6 +2477,70 @@ DeadFeedDevice deadFeedDevice =
     : deviceIsUberSdr ? DeadFeedDevice.UberSdr
     : deviceIsFlex ? (flex!.Mock is null ? DeadFeedDevice.Flex : DeadFeedDevice.WavLoop)
     : DeadFeedDevice.Alsa;
+
+// The uplink to a public monitor site: this station's own display stream, offered outward over
+// one socket the station dials out on. Nothing here is reachable without a "publish" block, and
+// nothing about a station that has one depends on it - the uplink writes a journal line and
+// retries for ever, and it never faults the station, sets the exit code or touches the radio
+// (docs/uplink-plan.md, decision 8). It is the waterfall server's relay, so it is offered exactly
+// what the page is already being shown.
+Packet.SoundModem.Waterfall.UplinkClient? uplink = null;
+if (publishConfig is not null)
+{
+    int publishRate = DaemonConfig.PublishedAudioRate(publishConfig, DspRate);
+
+    // A modem above half the published rate is not in the published picture at all, and finding
+    // that out by looking at the site would be a poor way to learn it.
+    string outside = string.Join(", ", waterfallServer!.Bands
+        .Where(b => b.HighHz > publishRate / 2.0)
+        .Select(b => $"modem {b.SubChannel} ({b.Mode}, to {b.HighHz:F0} Hz)"));
+    if (outside.Length > 0)
+    {
+        Console.Error.WriteLine(
+            $"publish: WARNING - the published audio spans 0 to {publishRate / 2} Hz, so "
+            + $"{outside} will not appear on the site. Raise \"publish\".\"audioRate\" to a "
+            + $"divisor of {DspRate} that covers it, or accept the narrower picture.");
+    }
+
+    // 4.5's ADSL caveat, said as a fact about their line rather than as a warning about ours.
+    if (publishRate >= 48000)
+    {
+        Console.Error.WriteLine(
+            "publish: WARNING - 48000 Hz audio is about 770 kbit/s upstream while somebody is "
+            + "watching. That is fine on FTTC or FTTP and most of an ADSL upload; there is no "
+            + "codec, by decision, so the lever is \"publish\".\"audioRate\".");
+    }
+
+    uplink = new Packet.SoundModem.Waterfall.UplinkClient(
+        waterfallServer,
+        new Packet.SoundModem.Waterfall.UplinkSettings
+        {
+            Url = publishConfig.Url!,
+            Token = publishConfig.Token!,
+            Callsign = publishConfig.Callsign!,
+            Operator = publishConfig.Operator,
+            Location = publishConfig.Location,
+            Radio = publishConfig.Radio,
+            Site = publishConfig.Site,
+            ChannelRate = DspRate,
+            AudioRate = publishRate,
+            FramesOnlyWhileWatched = publishConfig.Frames == "watched",
+            // The dial and sideband the band plan settled on, so a relayed page draws the same RF
+            // scale this station's own page draws rather than being told a second time.
+            DialHz = waterfallConfig!.DialFrequencyHz != 0
+                ? waterfallConfig.DialFrequencyHz
+                : receiveDialHz ?? 0,
+            Sideband = bandPlan?.Sideband ?? waterfallConfig.Sideband,
+        },
+        TimeProvider.System,
+        stationJournal.ErrorSink);
+    waterfallServer.Relay = uplink;
+    uplink.Start();
+}
+
+// Disposal runs in reverse declaration order, so this stops after the station has stopped feeding
+// it and before the waterfall server it publishes from goes, which is the order a goodbye needs.
+await using var uplinkLifetime = uplink;
 
 long frameLogDropsSeen = 0;
 long captureDropsSeen = 0;

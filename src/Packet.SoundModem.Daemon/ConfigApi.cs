@@ -90,24 +90,43 @@ internal sealed class ConfigApi
                 ?? ".",
             "pending-config.json");
 
+    /// <summary>What a redacted secret reads as, so the answer still says one is set.</summary>
+    private const string Hidden = "(set, not shown)";
+
     /// <summary>
-    /// The configuration with <c>api.key</c> blanked, for serving back to a caller.
+    /// The configuration with <c>api.key</c> and <c>publish.token</c> blanked, for serving back to
+    /// a caller.
     /// </summary>
     /// <remarks>
-    /// The caller already knows the key - they just presented it - so this is not keeping a secret
-    /// from them. It is keeping it out of everywhere the *answer* subsequently goes: a terminal
-    /// scrollback, a pasted diagnostic, a screenshot of a station's config. Secrets escape through
-    /// their echoes more often than through their sockets.
+    /// <para>The caller already knows the key - they just presented it - so this is not keeping a
+    /// secret from them. It is keeping it out of everywhere the *answer* subsequently goes: a
+    /// terminal scrollback, a pasted diagnostic, a screenshot of a station's config. Secrets
+    /// escape through their echoes more often than through their sockets.</para>
+    /// <para><c>publish.token</c> is the second one and it is not the caller's at all: it is the
+    /// credential a monitor site issued this station, and holding this station's API key is no
+    /// reason to be handed it.</para>
     /// </remarks>
     public static string Redact(string json)
     {
         try
         {
             JsonNode? root = JsonNode.Parse(json);
+            bool redacted = false;
             if (root?["api"] is JsonObject api && api.ContainsKey("key"))
             {
-                api["key"] = "(set, not shown)";
-                return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+                api["key"] = Hidden;
+                redacted = true;
+            }
+
+            if (root?["publish"] is JsonObject publish && publish.ContainsKey("token"))
+            {
+                publish["token"] = Hidden;
+                redacted = true;
+            }
+
+            if (redacted)
+            {
+                return root!.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
             }
 
             return json;

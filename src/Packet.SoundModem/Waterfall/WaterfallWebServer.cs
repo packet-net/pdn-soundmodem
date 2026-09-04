@@ -533,6 +533,14 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// The sentence <see cref="SetRadioStatus"/> was last given, or null for a station with
+    /// nothing to say. For anything that attaches after it was set and needs the current value
+    /// rather than the next change: a browser gets it with its config message, and an
+    /// <see cref="Relay"/> attached later has no other way to learn it.
+    /// </summary>
+    public string? RadioStatus => _radioStatus;
+
     private string? _radioStatus;
 
     /// <summary>

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Packet.SoundModem.UberSdr;
 
 namespace Packet.SoundModem.Daemon;
 
@@ -753,6 +754,70 @@ public sealed class WaterfallConfig
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
+/// <summary>
+/// Publishing this station to a public monitor site: the station dials out, the site lists it
+/// while the socket is up, and a visitor gets the page this station's own operator sees. Null
+/// (the default) publishes nothing, and is what every station is until somebody adds this block.
+/// </summary>
+/// <remarks>
+/// <para>Section 4.3 of <c>docs/uplink-plan.md</c>. Strictly one way: audio, frames and a status
+/// sentence go up, a viewer count comes down, and there is nothing in the protocol that could
+/// transmit, retune or reconfigure anything here. Leaving is deleting this block and restarting.
+/// </para>
+/// <para>Mutually exclusive with <see cref="DaemonConfig.Monitor"/>: a station publishes and a
+/// monitor accepts, and one process is not both.</para>
+/// </remarks>
+public sealed class PublishConfig
+{
+    /// <summary>The site's uplink endpoint, an absolute <c>ws</c> or <c>wss</c> URL. Required.</summary>
+    public string? Url { get; set; }
+
+    /// <summary>
+    /// The token the site owner issued this station. Required, and there is no default: issued
+    /// once, pasted in once, not edited by hand, exactly as <c>api.key</c> is.
+    /// </summary>
+    public string? Token { get; set; }
+
+    /// <summary>
+    /// This station's callsign, with an optional SSID. Required: a station on a public page that
+    /// will not say who it is has no business being there, and the site checks it against the
+    /// token.
+    /// </summary>
+    public string? Callsign { get; set; }
+
+    /// <summary>Who runs it, for the credit line and the picker row. Optional.</summary>
+    public string? Operator { get; set; }
+
+    /// <summary>Roughly where it is, for the picker row. Optional.</summary>
+    public string? Location { get; set; }
+
+    /// <summary>The radio and antenna, for the credit line. Optional.</summary>
+    public string? Radio { get; set; }
+
+    /// <summary>The operator's own page, an absolute http or https URL. Optional.</summary>
+    public string? Site { get; set; }
+
+    /// <summary>
+    /// What rate the audio is published at, in Hz. An integer divisor of the channel's DSP rate,
+    /// 6000 to 48000; unset takes the DSP rate capped at 12000. The relayed picture spans 0 to
+    /// half of this, so a modem above that edge is not published and start-up says so. It is also
+    /// the only lever an operator on a thin upload has, there being no codec: 12000 costs about
+    /// 194 kbit/s upstream while somebody is watching, 6000 about 98, and 48000 about 770.
+    /// </summary>
+    public int? AudioRate { get; set; }
+
+    /// <summary>
+    /// <c>"always"</c> (the default) publishes decoded frames whether or not anybody is watching,
+    /// which is what makes a quiet band look alive to somebody arriving an hour later and costs
+    /// well under a kilobit a second. <c>"watched"</c> holds them back until somebody is.
+    /// </summary>
+    public string Frames { get; set; } = "always";
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
 /// <summary>pdn-soundmodem daemon configuration file. JSON, with comments and trailing
 /// commas accepted (see <see cref="Options"/>) and case-insensitive key matching - the
 /// shipped soundmodem.example.json relies on that and annotates itself. Full reference:
@@ -853,6 +918,10 @@ public sealed class DaemonConfig
     /// flavour, which is everything else in this file. Exclusive with <see cref="Device"/>.</summary>
     public MonitorConfig? Monitor { get; set; }
 
+    /// <summary>Publishing this station to a public monitor site; null publishes nothing, which
+    /// is the default. Exclusive with <see cref="Monitor"/>. See <see cref="PublishConfig"/>.</summary>
+    public PublishConfig? Publish { get; set; }
+
     /// <summary>
     /// Change this station's configuration at runtime over HTTP. Omit it (the default) and there
     /// is no such surface at all.
@@ -925,6 +994,14 @@ public sealed class DaemonConfig
         if (config.Waterfall is not null)
         {
             config.Waterfall.PortWasStated = StatesKey(path, "waterfall", "port");
+        }
+
+        // Before the flavour split, because "publish" is refused on both sides of it: a station
+        // has to be told what is wrong with its block, and a monitor has to be told that a
+        // monitor does not publish.
+        if (config.Publish is not null)
+        {
+            ValidatePublish(config);
         }
 
         if (config.Monitor is not null)
@@ -1156,6 +1233,233 @@ public sealed class DaemonConfig
     }
 
     /// <summary>
+    /// What a <c>publish</c> section has to say before this station can appear on somebody else's
+    /// website, every failure a sentence naming the setting and what to do about it.
+    /// </summary>
+    /// <remarks>
+    /// <para>Section 4.3 of <c>docs/uplink-plan.md</c>. Refused here rather than at start-up for
+    /// the reason every other check in this file is: one exit 2 with a reason, and systemd's
+    /// <c>RestartPreventExitStatus=2</c> stops retrying instead of crash-looping on a typo.</para>
+    /// <para>The one check that is not here is <c>audioRate</c> dividing the channel's DSP rate,
+    /// which is <see cref="PublishRateProblem"/>: the DSP rate is settled from the modem set after
+    /// any plugins have loaded, so this file cannot know it yet without guessing at a mode it has
+    /// not been told about.</para>
+    /// </remarks>
+    private static void ValidatePublish(DaemonConfig config)
+    {
+        PublishConfig publish = config.Publish!;
+
+        if (config.Monitor is not null)
+        {
+            throw new InvalidDataException(
+                "this file sets both \"publish\" and \"monitor\". A station publishes itself to a "
+                + "monitor site and a monitor accepts stations; one process is not both. Remove "
+                + "whichever one you did not mean - a site lists a station through its own "
+                + "\"monitor\".\"uplinks\", not through a \"publish\" block of its own.");
+        }
+
+        // Tom's decision of 2026-09-04, and the sentence says why rather than just refusing.
+        if (UberSdrDevice.IsUberSdr(config.Device))
+        {
+            throw new InvalidDataException(
+                $"\"publish\" on \"device\": \"{config.Device}\", which is somebody else's public "
+                + "web receiver. A receiver like that is already on the monitor site in its own "
+                + "right, so relaying it a second time through this daemon would show one "
+                + "operator's antenna twice under two names and spend that receiver's daily "
+                + "listening allowance on the site's behalf without the site knowing. Publish "
+                + "from a station with a radio of its own; to have a say about which receivers "
+                + "the site lists, use the site's own \"monitor\".\"allow\" and \"deny\".");
+        }
+
+        if (config.Waterfall is null)
+        {
+            throw new InvalidDataException(
+                "\"publish\" needs a \"waterfall\" section: the uplink publishes what the "
+                + "waterfall server already computes - the audio, the frames and the status "
+                + "sentence - and without one there is nothing to publish. Add "
+                + "{\"waterfall\": {\"port\": 8107}}, or remove \"publish\".");
+        }
+
+        if (!Uri.TryCreate(publish.Url, UriKind.Absolute, out Uri? url)
+            || (url.Scheme != "ws" && url.Scheme != "wss"))
+        {
+            throw new InvalidDataException(
+                $"\"publish\".\"url\" is {Quoted(publish.Url)}, which is not an absolute ws or wss "
+                + "URL. It is the site's uplink endpoint, given to you with the token, e.g. "
+                + "\"wss://monitor.ukpacketradio.network/uplink\".");
+        }
+
+        if (publish.Token is not { Length: >= MinimumTokenLength })
+        {
+            throw new InvalidDataException(
+                "\"publish\".\"token\" is "
+                + (string.IsNullOrEmpty(publish.Token) ? "missing" : "too short")
+                + $" - it is the credential the site issued this station, at least "
+                + $"{MinimumTokenLength} characters, and there is no default. Ask the site owner "
+                + "for one, paste it in as it was given, and do not edit it by hand.");
+        }
+
+        if (!IsPlausibleCallsign(publish.Callsign))
+        {
+            throw new InvalidDataException(
+                $"\"publish\".\"callsign\" is {Quoted(publish.Callsign)}, which is not a callsign "
+                + "with an optional SSID (e.g. \"GB7RDG-2\"). A station on a public page has to "
+                + "say whose it is, and the site checks this against the token it issued.");
+        }
+
+        if (publish.Site is { Length: > 0 }
+            && (!Uri.TryCreate(publish.Site, UriKind.Absolute, out Uri? site)
+                || (site.Scheme != Uri.UriSchemeHttp && site.Scheme != Uri.UriSchemeHttps)))
+        {
+            throw new InvalidDataException(
+                $"\"publish\".\"site\" is {Quoted(publish.Site)}, which is not an absolute http or "
+                + "https URL. It is linked from a public page in your name, so it goes through "
+                + "the same check the site applies to every other URL it is handed - remove it, "
+                + "or write it out in full as \"https://example.org/\".");
+        }
+
+        foreach ((string name, string? value, int limit) in (ReadOnlySpan<(string, string?, int)>)
+            [
+                ("callsign", publish.Callsign, 16),
+                ("operator", publish.Operator, 40),
+                ("location", publish.Location, 60),
+                ("radio", publish.Radio, 60),
+            ])
+        {
+            if (value is not null && value.Length > limit)
+            {
+                throw new InvalidDataException(
+                    $"\"publish\".\"{name}\" is {value.Length} characters and the limit is "
+                    + $"{limit}. Said here rather than cut in half on somebody else's website: "
+                    + "shorten it to something that reads as a picker row.");
+            }
+        }
+
+        if (publish.Frames is not ("always" or "watched"))
+        {
+            throw new InvalidDataException(
+                $"\"publish\".\"frames\" is {Quoted(publish.Frames)}. It is \"always\" (the "
+                + "default: decoded frames go up whether or not anybody is watching, which costs "
+                + "well under a kilobit a second and is what makes a quiet band look alive) or "
+                + "\"watched\".");
+        }
+
+        if (publish.AudioRate is { } rate && rate is < MinimumAudioRate or > MaximumAudioRate)
+        {
+            throw new InvalidDataException(
+                $"\"publish\".\"audioRate\" is {rate} Hz, and the range is {MinimumAudioRate} to "
+                + $"{MaximumAudioRate}. It is the rate this station's audio is published at, so "
+                + "the relayed picture spans 0 to half of it; leave it out for the default of "
+                + "12000, which is about 194 kbit/s upstream while somebody is watching.");
+        }
+    }
+
+    /// <summary>Shortest token accepted. The site issues 43 url-safe base64 characters.</summary>
+    private const int MinimumTokenLength = 32;
+
+    /// <summary>Publishable audio rates, in Hz (4.3).</summary>
+    private const int MinimumAudioRate = 6000;
+
+    /// <summary>Publishable audio rates, in Hz (4.3).</summary>
+    private const int MaximumAudioRate = 48000;
+
+    /// <summary>The default published rate: the channel's own rate, capped (4.5, decision "no codec").</summary>
+    internal const int DefaultAudioRate = 12000;
+
+    /// <summary>
+    /// What is wrong with <c>publish.audioRate</c> against the channel this station actually runs,
+    /// or null if nothing is. Separate from <see cref="ValidatePublish"/> because the DSP rate is
+    /// not settled until the modem set is known and any modem plugins have loaded, which is after
+    /// this file has been read.
+    /// </summary>
+    /// <param name="publish">The section, already through <see cref="ValidatePublish"/>.</param>
+    /// <param name="dspRate">The rate the station's audio channel runs at.</param>
+    internal static string? PublishRateProblem(PublishConfig publish, int dspRate)
+    {
+        int rate = PublishedAudioRate(publish, dspRate);
+        if (dspRate % rate == 0)
+        {
+            return null;
+        }
+
+        var divisors = new List<int>();
+        for (int candidate = MinimumAudioRate; candidate <= Math.Min(dspRate, MaximumAudioRate); candidate++)
+        {
+            if (dspRate % candidate == 0)
+            {
+                divisors.Add(candidate);
+            }
+        }
+
+        string problem =
+            $"\"publish\".\"audioRate\" is {rate} Hz and this station's channel runs at "
+            + $"{dspRate} Hz, which {rate} does not divide. The audio is decimated rather than "
+            + "resampled, so it has to be an integer divisor";
+
+        // No station runs a channel below 6000 Hz today, so the list is never empty in practice.
+        // Ending the sentence "an integer divisor: ." if one ever did would not be honest.
+        return divisors.Count > 0
+            ? $"{problem}: {string.Join(", ", divisors)}."
+            : $"{problem}, and this channel has none in {MinimumAudioRate} to {MaximumAudioRate}.";
+    }
+
+    /// <summary>
+    /// A problem found after the file was read, in the same frame every refusal inside
+    /// <see cref="Load"/> comes out in: the file, the sentence, and how to recover.
+    /// </summary>
+    /// <remarks>
+    /// For the checks that cannot run while the file is being read because they need something
+    /// settled later - <see cref="PublishRateProblem"/> is the only one today, and it needs the
+    /// channel's DSP rate. An operator reading <c>journalctl</c> should not be able to tell which
+    /// kind of check refused their station.
+    /// </remarks>
+    internal static string ConfigurationError(string path, string problem) =>
+        Describe(path, problem);
+
+    /// <summary>
+    /// The rate this station publishes at: what the operator asked for, or the channel's own rate
+    /// capped at <see cref="DefaultAudioRate"/> - so a 48 kHz station that says nothing gets a 0
+    /// to 6 kHz picture at 194 kbit/s rather than 770.
+    /// </summary>
+    internal static int PublishedAudioRate(PublishConfig publish, int dspRate) =>
+        publish.AudioRate ?? Math.Min(dspRate, DefaultAudioRate);
+
+    /// <summary>
+    /// Whether a string could be a callsign with an optional SSID: up to six letters and digits,
+    /// optionally <c>-0</c> to <c>-15</c>. The same shape <c>Ax25AddressParser</c> reads off the
+    /// air, deliberately not a validity check against any licensing authority's real format -
+    /// this is a label on a page, and the token is what says the station is who it claims.
+    /// </summary>
+    internal static bool IsPlausibleCallsign(string? callsign)
+    {
+        if (string.IsNullOrWhiteSpace(callsign))
+        {
+            return false;
+        }
+
+        string[] parts = callsign.Split('-');
+        if (parts.Length > 2 || parts[0].Length is 0 or > 6)
+        {
+            return false;
+        }
+
+        foreach (char c in parts[0])
+        {
+            if (c is not ((>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9')))
+            {
+                return false;
+            }
+        }
+
+        return parts.Length == 1
+            || (parts[1].Length is 1 or 2 && int.TryParse(parts[1], out int ssid) && ssid is >= 0 and <= 15);
+    }
+
+    /// <summary>A value as it should read in a message: quoted, or the word for its absence.</summary>
+    private static string Quoted(string? value) =>
+        value is null ? "missing" : $"\"{value}\"";
+
+    /// <summary>
     /// Whether a string could be a hostname: labels of letters, digits and hyphens separated by
     /// dots, no scheme, no port, no path. Deliberately not a DNS resolution - an allow list has
     /// to be writable for a receiver that is temporarily down - and deliberately not permissive,
@@ -1236,6 +1540,22 @@ public sealed class DaemonConfig
         for (int i = 0; i < config.ModemPlugins.Count; i++)
         {
             Unknown($"modemPlugins[{i}]", config.ModemPlugins[i].UnknownSettings);
+        }
+
+        Unknown("publish", config.Publish?.UnknownSettings);
+
+        // Plain ws off the machine is the shape of a smoke test and the shape of a mistake, and
+        // only the operator knows which: the token and everything this station says about itself
+        // would cross their network in clear. Warned rather than refused, deliberately (4.3).
+        if (config.Publish?.Url is { Length: > 0 } published
+            && Uri.TryCreate(published, UriKind.Absolute, out Uri? uplink)
+            && uplink.Scheme == "ws"
+            && !uplink.IsLoopback)
+        {
+            warnings.Add(
+                $"publish: \"url\" is \"{published}\", which is unencrypted ws to {uplink.Host}. "
+                + "The token and everything this station publishes cross the network in clear. "
+                + "Use wss unless this is a test on your own wire.");
         }
 
         return warnings;
