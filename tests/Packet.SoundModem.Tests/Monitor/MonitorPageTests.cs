@@ -43,8 +43,15 @@ public class MonitorPageTests
         probe.AboutHidden.Should().BeFalse();
         probe.PollMs.Should().Equal([10000], "the picker is a table that changes once a minute");
 
-        // Three receivers listed, one of them full, all three drawn.
-        probe.Rows.Should().HaveCount(3);
+        // Five columns, and none of them for what a receiver is doing. That is a fact about this
+        // site's machinery rather than about the band, and it is not what a visitor came for.
+        probe.Headings.Should().Equal(["Station", "Receiver", "Where", "Signal", "Slots"]);
+
+        // Two of the three receivers can be picked, and both are drawn.
+        probe.Rows.Should().HaveCount(2);
+        probe.RowCells.Should().OnlyContain(
+            cells => cells.Length == 5, "a row carries one cell per column and no more");
+
         string dalgety = probe.Rows.Single(r => r.Contains("M9PSY-1"));
         dalgety.Should().Contain("href=\"/r/m9psy-1/\"", "the row links to that receiver's page")
             .And.Contain("Dalgety Bay, Scotland, UK")
@@ -54,12 +61,20 @@ public class MonitorPageTests
             .And.Contain("https://m9psy-1.instance.ubersdr.org/",
                 "a link to the receiver's own page: it is somebody else's receiver");
 
-        // A receiver with no room is listed and says so, rather than vanishing and leaving the
-        // visitor to wonder whether this site is broken.
-        string full = probe.Rows.Single(r => r.Contains("G4EYR"));
-        full.Should().Contain("full").And.NotContain("href=\"/r/g4eyr/\"");
+        // Every row is a link, because every row is a receiver that can be picked.
+        probe.RowCells.Select(cells => cells[0]).Should().OnlyContain(
+            first => first.Contains("<a class=\"pick\" href=\"/r/"),
+            "a row a visitor cannot follow has no business being on a page they came here to pick from");
 
-        probe.Summary.Should().Contain("2 receivers").And.Contain("1 not available");
+        // None of the words the state column used to put in a row, in any of its cases, and no
+        // tint on a row somebody is watching either: the page says nothing about who else is here.
+        string table = string.Join("", probe.Rows);
+        table.Should().NotContain("free").And.NotContain("watching").And.NotContain("watched")
+            .And.NotContain("connecting").And.NotContain("just left")
+            .And.NotContain("daily allowance").And.NotContain("not working just now");
+
+        probe.Summary.Should().Contain("2 receivers").And.Contain("1 not available")
+            .And.NotContain("watch", "the count across the top no longer says how many are watching");
         probe.StaleHidden.Should().BeTrue("the directory answered");
         probe.EmptyHidden.Should().BeTrue();
         probe.Footer.Should().Contain("Receive only")
@@ -69,6 +84,47 @@ public class MonitorPageTests
 
         // No map, no flags, no images: it is a list.
         string.Join("", probe.Rows).Should().NotContain("<img").And.NotContain("<svg");
+    }
+
+    [Fact]
+    public async Task The_Picker_Page_Leaves_Out_A_Receiver_With_No_Room()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        await using var host = await Harness.StartAsync();
+        Probe probe = await RunProbeAsync(node, host.Port);
+
+        // The API says what it has always said: the receiver is there, it is not on offer, and
+        // why. Nothing downstream of it has to guess, and the page is not the only reader.
+        using JsonDocument snapshot = JsonDocument.Parse(await host.InstancesAsync());
+        JsonElement full = snapshot.RootElement.GetProperty("receivers").EnumerateArray()
+            .Single(r => r.GetProperty("callsign").GetString() == "G4EYR");
+        full.GetProperty("offered").GetBoolean().Should().BeFalse();
+        full.GetProperty("why").GetString().Should().Be("full");
+
+        // The page does not draw it. A visitor can do nothing with a receiver that has no room,
+        // and it comes back by itself at the next refresh with a slot going spare.
+        probe.Rows.Should().NotContain(r => r.Contains("G4EYR"));
+
+        // The count still admits it exists, so a list that is shorter than the directory's does
+        // not read as receivers having quietly disappeared.
+        probe.Summary.Should().Contain("2 receivers").And.Contain("1 not available");
+    }
+
+    [Fact]
+    public async Task The_Picker_Page_Lists_Receivers_In_Callsign_Order()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        await using var host = await Harness.StartAsync();
+        Probe probe = await RunProbeAsync(node, host.Port);
+
+        // By callsign and by nothing else. The directory hands these over in host order, which
+        // puts m9psy-1 before reading-ubersdr and so M9PSY-1 before M0LTE; the page does not.
+        probe.Rows[0].Should().Contain("M0LTE");
+        probe.Rows[1].Should().Contain("M9PSY-1");
     }
 
     [Fact]
@@ -88,7 +144,7 @@ public class MonitorPageTests
         probe.Stale.Should().StartWith("the receiver directory is unreachable, this list is from ")
             .And.MatchRegex(@"\d\d?[:.]\d\d");
         probe.Rows.Should().HaveCount(
-            3, "a directory that has gone away leaves the last list it gave, which is still true");
+            2, "a directory that has gone away leaves the last list it gave, which is still true");
     }
 
     [Fact]
@@ -147,6 +203,8 @@ public class MonitorPageTests
         bool EmptyHidden,
         string Footer,
         string[] Rows,
+        string[][] RowCells,
+        string[] Headings,
         int[] PollMs,
         bool Reloaded,
         string[] Thrown);
@@ -215,6 +273,7 @@ public class MonitorPageTests
     private sealed class Harness : IAsyncDisposable
     {
         private readonly MonitorHost _host;
+        private readonly HttpClient _http;
         private string? _failure;
 
         private Harness(int port, string? coldFailure, string directoryJson)
@@ -247,6 +306,7 @@ public class MonitorPageTests
                 OpenInput = (receiver, log, token) => throw new InvalidOperationException(
                     "no receiver is picked in these tests"),
             });
+            _http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
         }
 
         private readonly string _directoryJson;
@@ -266,8 +326,12 @@ public class MonitorPageTests
 
         internal Task RefreshAsync() => _host.RefreshDirectoryAsync();
 
+        /// <summary>What the API says, as against what the page made of it.</summary>
+        internal Task<string> InstancesAsync() => _http.GetStringAsync("/api/instances");
+
         public async ValueTask DisposeAsync()
         {
+            _http.Dispose();
             await _host.DisposeAsync();
         }
 

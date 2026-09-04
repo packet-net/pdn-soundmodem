@@ -85,8 +85,22 @@ while (Date.now() < deadline && el("summary").textContent === "") {
   await new Promise(r => setTimeout(r, 25));
 }
 
-// Each row as its own string, so an assertion can say which receiver it is about.
+// Each row as its own string, so an assertion can say which receiver it is about, and each
+// row's cells as their own strings, so an assertion about a column that should no longer exist
+// can count them. A cell holds text and at most an anchor, never another div, so splitting the
+// row's inside on the closing tag is exact.
 const rows = el("rows").innerHTML.split('<div class="row').slice(1).map(r => '<div class="row' + r);
+const rowCells = rows.map(row => row
+  .slice(row.indexOf(">") + 1, row.lastIndexOf("</div>"))
+  .split("</div>")
+  .slice(0, -1)
+  .map(cell => cell.slice(cell.indexOf(">") + 1)));
+
+// The column headings, read out of the page's own text rather than out of the render, because
+// the header is static markup: a column dropped from the rows and left in the header would look
+// right in every string this probe returns and wrong on screen.
+const head = html.slice(html.indexOf('<div class="head">'), html.indexOf('<div id="rows">'));
+const headings = head.split("<div>").slice(1).map(h => h.slice(0, h.indexOf("</div>")));
 
 console.log(JSON.stringify({
   title: document_.title,
@@ -100,6 +114,8 @@ console.log(JSON.stringify({
   emptyHidden: el("empty").hidden === true,
   footer: el("footer").innerHTML,
   rows,
+  rowCells,
+  headings,
   pollMs: timers,
   fetched,
   reloaded: sandbox.__reloaded,

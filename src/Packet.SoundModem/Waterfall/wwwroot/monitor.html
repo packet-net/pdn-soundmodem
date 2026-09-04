@@ -45,7 +45,7 @@
 
   .head, .row {
     display: grid; align-items: baseline; gap: 10px;
-    grid-template-columns: 8.5em minmax(0, 1fr) 10em 6em 5em 5.5em;
+    grid-template-columns: 8.5em minmax(0, 1fr) 10em 5em 5.5em;
   }
   .head {
     font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
@@ -56,8 +56,6 @@
     font-size: 14px; line-height: 1.35;
   }
   .row:hover { background: #141a22; }
-  .row.watched { background: rgba(86,200,221,.06); }
-  .row.off { color: var(--muted); }
   /* The whole row is the link, but the receiver's own page has to be reachable from inside it -
      a link inside a link is not markup a browser will parse, so the row's link is stretched over
      the row with a pseudo-element and the other one is lifted above it. */
@@ -67,17 +65,10 @@
   .row a.own { position: relative; z-index: 1; color: var(--muted); text-decoration: none;
                font-size: 12px; }
   .row a.own:hover { color: var(--amber); text-decoration: underline; }
-  .row.off a.pick { color: var(--muted); }
-  .row.off a.pick::after { content: none; }
 
   .name { color: var(--ink); }
   .where { color: var(--muted); font-size: 12px; }
   .fig { font-family: var(--mono); font-size: 12px; color: var(--muted); }
-  .state { font-size: 12px; }
-  .state.live { color: var(--trace); }
-  .state.busy { color: var(--amber); }
-  .state.bad { color: var(--warn); }
-  .state.quiet { color: var(--muted); }
 
   #empty { padding: 18px 10px; color: var(--muted); font-size: 14px; line-height: 1.5; }
   #empty[hidden] { display: none; }
@@ -105,7 +96,7 @@
 
 <main>
   <div class="head">
-    <div>Station</div><div>Receiver</div><div>Where</div><div>State</div><div>Signal</div><div>Slots</div>
+    <div>Station</div><div>Receiver</div><div>Where</div><div>Signal</div><div>Slots</div>
   </div>
   <div id="rows"></div>
   <div id="empty"></div>
@@ -155,52 +146,28 @@ function clock(iso) {
   return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function viewersText(n) {
-  return n === 1 ? "1 watching" : n + " watching";
-}
-
-// What a row says it is doing, in a visitor's words rather than the state machine's. The
-// awkward answers are said plainly: a receiver that is full, and one whose daily allowance
-// this site has spent, are both cases where nothing is wrong and nothing will happen, and a
-// visitor who is not told that is left to guess.
-function stateOf(r) {
-  if (r.state === "faulted") return { text: r.status || "not working just now", cls: "bad" };
-  if (r.state === "refused") {
-    return { text: "this receiver's daily allowance for this monitor is used up, back tomorrow", cls: "bad" };
-  }
-  if (r.state === "retrying") return { text: "unreachable, trying again", cls: "bad" };
-  if (r.state === "live") return { text: viewersText(r.viewers), cls: "live" };
-  if (r.state === "connecting") return { text: "connecting", cls: "busy" };
-  if (r.state === "lingering") return { text: "just left", cls: "busy" };
-  if (!r.offered) return { text: r.why || "not available", cls: "quiet" };
-  return { text: "free", cls: "quiet" };
-}
-
-// Live first, so a visitor sees where the other visitors already are, then by callsign.
+// By callsign, and by nothing else. There is nothing on this page that would explain any other
+// order, and an order whose reason a visitor cannot see is one they will read a meaning into.
 function order(a, b) {
-  const watched = r => (r.viewers > 0 ? 0 : 1);
-  if (watched(a) !== watched(b)) return watched(a) - watched(b);
-  if (a.viewers !== b.viewers) return b.viewers - a.viewers;
   return String(a.callsign || a.host).localeCompare(String(b.callsign || b.host));
 }
 
+// Every row here is a receiver that can be picked, so every row is a link; the ones that cannot
+// be are not drawn at all, which is render()'s doing. Slots are therefore always a count and
+// never the word "full". Nothing in a row says who else is watching, or how many: that is a fact
+// about the other visitors rather than about the receiver, and it is not what anybody came for.
 function rowHtml(r) {
-  const state = stateOf(r);
-  const slots = r.maxClients > 0
-    ? (r.availableClients === 0 ? "full" : r.availableClients + " of " + r.maxClients)
-    : "";
+  const slots = r.maxClients > 0 ? r.availableClients + " of " + r.maxClients : "";
   const signal = r.snrDb == null ? "" : r.snrDb + " dB";
-  const pick = r.offered
-    ? '<a class="pick" href="' + esc(base + "r/" + r.slug + "/") + '">' + esc(r.callsign || r.host) + "</a>"
-    : '<a class="pick">' + esc(r.callsign || r.host) + "</a>";
+  const pick =
+    '<a class="pick" href="' + esc(base + "r/" + r.slug + "/") + '">' + esc(r.callsign || r.host) + "</a>";
   const own = link(r.publicUrl)
     ? ' <a class="own" href="' + esc(link(r.publicUrl)) + '" target="_blank" rel="noopener">its own page</a>'
     : "";
-  return '<div class="row' + (r.viewers > 0 ? " watched" : "") + (r.offered ? "" : " off") + '">'
+  return '<div class="row">'
     + "<div>" + pick + "</div>"
     + '<div class="name">' + esc(r.name || "") + own + "</div>"
     + '<div class="where">' + esc(r.location || "") + "</div>"
-    + '<div class="state ' + state.cls + '">' + esc(state.text) + "</div>"
     + '<div class="fig">' + esc(signal) + "</div>"
     + '<div class="fig">' + esc(slots) + "</div>"
     + "</div>";
@@ -215,15 +182,17 @@ function render(snap) {
   $("about").innerHTML = snap.about ? esc(snap.about) : "";
   $("about").hidden = !snap.about;
 
-  const receivers = (snap.receivers || []).slice().sort(order);
+  // Only what a visitor can act on. A receiver that is full, or that has left the directory
+  // while a station of ours was still holding it, is not drawn: there is nothing to pick and
+  // nothing anybody looking at this page can do about it, and it returns by itself at the next
+  // refresh. The API still carries it, and the count below still admits it exists.
+  const all = snap.receivers || [];
+  const receivers = all.filter(r => r.offered).sort(order);
   $("rows").innerHTML = receivers.map(rowHtml).join("");
 
-  const offered = receivers.filter(r => r.offered).length;
-  const watching = receivers.reduce((n, r) => n + (r.viewers || 0), 0);
   $("summary").textContent =
-    offered + (offered === 1 ? " receiver" : " receivers")
-    + (receivers.length > offered ? " (" + (receivers.length - offered) + " not available)" : "")
-    + (watching > 0 ? ", " + watching + " being watched" : "");
+    receivers.length + (receivers.length === 1 ? " receiver" : " receivers")
+    + (all.length > receivers.length ? " (" + (all.length - receivers.length) + " not available)" : "");
 
   // Two different silences, and they must not read the same. A directory that has gone away
   // leaves the last list it gave us, which is still worth showing and has to say how old it is;
@@ -242,7 +211,10 @@ function render(snap) {
     $("empty").textContent = snap.problem
       ? "The receiver directory cannot be reached (" + snap.problem + "), and nothing has been listed yet. "
         + "This page fills in by itself as soon as it answers; nothing needs doing here."
-      : "No receivers are listed yet.";
+      : all.length > 0
+        ? "No receiver can be picked just now: every one of them is full or has gone from the "
+          + "directory. This page fills in by itself as soon as that changes; nothing needs doing here."
+        : "No receivers are listed yet.";
     $("empty").hidden = false;
   } else {
     $("empty").hidden = true;
