@@ -937,6 +937,52 @@ public class WaterfallPageTests
     /// drawing is below the dial rather than above it, so the scale can only have come from the
     /// config the visitor has no control for.</para>
     /// </remarks>
+    /// <summary>
+    /// The credit on a relayed station's page: whose radio it is, that it is live, and that their
+    /// own transmissions are in what you hear - and every word of it escaped.
+    /// </summary>
+    /// <remarks>
+    /// Two sentences in the page, one per kind, chosen by a word from the server rather than
+    /// written by it. The sentence contains an anchor built around an escaped name, so a
+    /// server-supplied sentence would be either unescapable or a second way for a third party's
+    /// words to arrive as markup - which is the hole PR #388's review found in the picker, and a
+    /// relayed station is exactly the same class of input.
+    /// </remarks>
+    [Fact]
+    public async Task A_Relayed_Stations_Credit_Names_The_Operator_And_Escapes_Their_Words()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port, new WaterfallOptions
+        {
+            Public = true,
+            Title = "UK packet monitor",
+            ReceiverKind = "station",
+            DeclaredBands = [new DeclaredBand(0, "afsk300-il2pc", 850, 300)],
+        });
+        server.SetReceiver(
+            "GB7RDG-2, <script>alert(1)</script>, Reading", "javascript:alert(2)");
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty();
+        probe.Connected.Should().BeTrue();
+        probe.PublicPage.About.Should()
+            .Contain("a private station relaying its own receiver to this site live")
+            .And.Contain("its own transmissions are in what you hear")
+            .And.NotContain("UberSDR web receiver", "this is not one, and the page says which")
+            .And.Contain("GB7RDG-2", "the credit names the station");
+
+        // The operator's words are theirs and are escaped; a scheme that is not http or https
+        // does not get to write an href, whatever the daemon let through.
+        probe.PublicPage.About.Should().NotContain("<script>").And.NotContain("javascript:");
+        probe.PublicPage.About.Should().Contain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    }
+
     [Fact]
     public async Task The_Public_Page_Hides_The_Sideband_And_Span_Controls()
     {

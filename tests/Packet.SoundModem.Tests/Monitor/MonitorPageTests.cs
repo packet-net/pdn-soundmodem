@@ -209,6 +209,108 @@ public class MonitorPageTests
         bool Reloaded,
         string[] Thrown);
 
+    [Fact]
+    public async Task The_Picker_Lists_A_Station_And_A_Receiver_In_One_List()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        await using var host = await Harness.StartAsync(uplinks: true);
+        await using var station = await StubStation.OpenAsync(host.Port, host.Token, "GB7RDG-2",
+            site: "https://gb7rdg.example/");
+        await station.WelcomedAsync();
+        await UntilRowAsync(host);
+
+        Probe probe = await RunProbeAsync(node, host.Port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw with two kinds of thing in it");
+
+        // Tom, on how the two should appear: "One list with two categories". So there is one
+        // table, in one order, and the category is a word in the first cell rather than a second
+        // heading over a second table.
+        probe.Headings.Should().Equal(["Station", "Receiver", "Where", "Signal", "Slots"]);
+        probe.Rows.Should().HaveCount(3, "two receivers and a station, in one list");
+        probe.RowCells.Should().OnlyContain(cells => cells.Length == 5);
+        probe.Rows.Count(r => r.Contains("<span class=\"kind\">station</span>")).Should().Be(1);
+        probe.Rows.Count(r => r.Contains("<span class=\"kind\">receiver</span>")).Should().Be(2);
+
+        // Sorted by callsign and by nothing else, as before: a station is not lifted to the top
+        // for being new, and the order a visitor sees has a reason they can see.
+        probe.Rows.Select(r => r.Contains("GB7RDG-2")).Should().Equal([true, false, false],
+            "G comes before M0LTE and M9PSY-1");
+
+        string row = probe.Rows.Single(r => r.Contains("GB7RDG-2"));
+        row.Should().Contain("href=\"/r/gb7rdg-2/\"", "the row links to that station's page")
+            .And.Contain("Tom M0LTE", "whose station it is")
+            .And.Contain("Reading, England", "and where")
+            .And.Contain("IC-7300 into a doublet", "and what they are listening with")
+            .And.Contain("AFSK300", "and the modes it runs")
+            .And.Contain("https://gb7rdg.example/", "and a link to their own page");
+
+        // The two figures a station has no honest answer for are blank, not borrowed.
+        string[] cells = probe.RowCells[probe.Rows.ToList().FindIndex(r => r.Contains("GB7RDG-2"))];
+        cells[3].Should().BeEmpty("a station has no signal figure of a web receiver's kind");
+        cells[4].Should().BeEmpty("and no listener slots");
+
+        probe.Summary.Should().Contain("2 receivers").And.Contain("1 station");
+        probe.Footer.Should().Contain("somebody's own transceiver")
+            .And.Contain("nothing on this site can transmit through one")
+            .And.Contain("public record of the callsigns it heard",
+                "the site says what it does with what it is sent, before anybody has to ask");
+    }
+
+    [Fact]
+    public async Task A_Station_String_With_A_Script_Tag_Reaches_The_Page_Escaped()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        await using var host = await Harness.StartAsync(uplinks: true);
+
+        // A relayed station is a semi-trusted publisher: the site vouches for nothing about it
+        // except that the token belongs to that operator, and everything it sends reaches a
+        // public page. Same class of input as the third-party directory's strings, and the same
+        // two answers - escape every one of them, and let no scheme but http or https write an
+        // href. PR #388 found the second of those the hard way.
+        await using var station = await StubStation.OpenAsync(
+            host.Port, host.Token, "GB7RDG-2",
+            op: "<script>alert(1)</script>",
+            location: "<img src=x onerror=alert(2)>",
+            radio: "\"><b>bold</b>",
+            site: "javascript:alert(3)");
+        await station.WelcomedAsync();
+        await UntilRowAsync(host);
+
+        Probe probe = await RunProbeAsync(node, host.Port);
+
+        probe.Thrown.Should().BeEmpty();
+        string row = probe.Rows.Single(r => r.Contains("GB7RDG-2"));
+        row.Should().NotContain("<script>").And.NotContain("<img").And.NotContain("<b>")
+            .And.NotContain("javascript:", "no scheme but http or https writes an href here");
+        row.Should().Contain("&lt;script&gt;alert(1)&lt;/script&gt;")
+            .And.Contain("&lt;img src=x onerror=alert(2)&gt;")
+            .And.Contain("&quot;&gt;&lt;b&gt;bold&lt;/b&gt;");
+        row.Should().NotContain(
+            "class=\"own\"", "a station with no usable site URL gets no link at all");
+    }
+
+    /// <summary>Waits for the station's row to appear in the API the picker polls.</summary>
+    private static async Task UntilRowAsync(Harness host)
+    {
+        for (int attempt = 0; attempt < 200; attempt++)
+        {
+            if ((await host.InstancesAsync()).Contains(
+                    "\"kind\":\"station\"", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            await Task.Delay(20);
+        }
+
+        Assert.Fail("the station never appeared in /api/instances");
+    }
+
     private static async Task<Probe> RunProbeAsync(string node, int port)
     {
         string here = Path.GetDirectoryName(typeof(MonitorPageTests).Assembly.Location)!;
@@ -276,13 +378,25 @@ public class MonitorPageTests
         private readonly HttpClient _http;
         private string? _failure;
 
-        private Harness(int port, string? coldFailure, string directoryJson)
+        private Harness(int port, string? coldFailure, string directoryJson, bool uplinks)
         {
             _failure = coldFailure;
             _directoryJson = directoryJson;
             Port = port;
+            (Token, string hash) = UplinkToken.Mint();
             _host = new MonitorHost(new MonitorHostOptions
             {
+                Uplinks = uplinks
+                    ?
+                    [
+                        new UplinkConfig
+                        {
+                            Callsign = "GB7RDG-2",
+                            Slug = "gb7rdg-2",
+                            TokenSha256 = hash,
+                        },
+                    ]
+                    : [],
                 Directory = new UberSdrDirectoryOptions
                 {
                     Url = "https://instances.example.org/api/instances",
@@ -313,11 +427,14 @@ public class MonitorPageTests
 
         internal int Port { get; }
 
+        /// <summary>The token this site has issued to its one configured station.</summary>
+        internal string Token { get; }
+
         internal static async Task<Harness> StartAsync(
-            string? coldFailure = null, string? directoryJson = null)
+            string? coldFailure = null, string? directoryJson = null, bool uplinks = false)
         {
             var harness = new Harness(
-                FreePorts.Next(), coldFailure, directoryJson ?? DirectoryJson);
+                FreePorts.Next(), coldFailure, directoryJson ?? DirectoryJson, uplinks);
             (await harness._host.StartAsync()).Should().Be(0);
             return harness;
         }

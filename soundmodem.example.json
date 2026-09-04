@@ -115,6 +115,41 @@
   // omit for per-device defaults. See CONFIG.md § deadFeed.
   // "deadFeed": { "silenceSeconds": 30, "starvationSeconds": 30 },
   //
+  // Offer this station to a public monitor site. One block, plus a token the site owner issues,
+  // and this station appears alongside the web receivers at monitor.ukpacketradio.network with
+  // its own page: the waterfall, the AX.25 links panel, the frames it decoded and a Listen
+  // button. The station DIALS OUT - no port to open, no certificate, no DNS - and nothing flows
+  // until somebody is watching. STRICTLY ONE WAY: the only message the site sends back is how
+  // many people are watching, so nothing there can transmit, retune or reconfigure anything
+  // here, and a site that is down never faults this station. 16-bit PCM, no codec, so what a
+  // visitor hears is modem audio sample for sample: 194 kbit/s upstream while somebody is
+  // watching at the default 12000, under 1 kbit/s while nobody is, and one stream however many
+  // are watching. ADSL uploads will feel that; "audioRate": 6000 halves it at the price of a
+  // 0-3 kHz picture. Leaving is deleting this block and restarting. Full reference: CONFIG.md
+  // § publish. Mutually exclusive with "monitor" below.
+  //
+  // "publish": {
+  //   // The site's uplink endpoint and the token it issued you. Both are given to you
+  //   // together; paste the token in as it was given and do not edit it by hand.
+  //   "url": "wss://monitor.ukpacketradio.network/uplink",
+  //   "token": "pdnsm_...",
+  //   // Required: a station on a public page has to say whose it is, and the site checks this
+  //   // against the token. The rest is what the credit line and the picker row are made of.
+  //   "callsign": "GB7RDG-2",
+  //   "operator": "Tom M0LTE",
+  //   "location": "Reading, England",
+  //   "radio": "IC-7300 into a doublet at 10 m",
+  //   "site": "https://gb7rdg.example/",
+  //   // The rate the audio is relayed at: an integer divisor of the channel's DSP rate, 6000
+  //   // to 48000. The relayed waterfall spans 0 to half of it, so a 48 kHz station leaving the
+  //   // default gets a 0-6 kHz picture and start-up says which modems fall outside it.
+  //   "audioRate": 12000,
+  //   // "always" (the default) sends decoded frames whether or not anybody is watching, which
+  //   // is what makes a quiet band look alive to somebody arriving an hour later; "watched"
+  //   // holds them back.
+  //   "frames": "always"
+  // },
+  //
   // ---------------------------------------------------------------------------------------
   // The OTHER thing this daemon can be. Everything above describes one station: one radio or
   // one web receiver, one KISS port, one page. A "monitor" section instead makes it one site
@@ -145,6 +180,19 @@
   //   "modems": [
   //     { "subChannel": 0, "mode": "afsk300-il2pc", "rfFrequency": 7050300 },
   //     { "subChannel": 2, "mode": "bpsk300",       "rfFrequency": 7051600 }
+  //   ],
+  //   // The other end of "publish": private stations this site accepts an uplink from, listed
+  //   // in the same picker as the receivers and tagged "station". Empty (the default) accepts
+  //   // none and /uplink is a 404. Run "pdn-soundmodem --uplink-token" to mint a token: it
+  //   // prints the token and its hash, writes neither anywhere, and you keep the hash here and
+  //   // give the token to the station's operator once. The callsign is bound to the token, the
+  //   // slug never comes off the wire, and removing an entry needs a restart.
+  //   "uplinks": [
+  //     {
+  //       "callsign": "GB7RDG-2",
+  //       "slug": "gb7rdg-2",
+  //       "tokenSha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+  //     }
   //   ]
   // },
   // // The picker is served at "/" on this port and each receiver's page under "/r/<slug>/".

@@ -143,6 +143,8 @@ internal static class MonitorStartup
                 Port = waterfall.Port,
                 Bind = config.Bind,
                 Modems = modems,
+                Uplinks = monitor.Uplinks,
+                Linger = linger,
                 DspRate = dspRate,
                 DialHz = waterfall.DialFrequencyHz != 0 ? waterfall.DialFrequencyHz : plan.DialHz,
                 Sideband = plan.Sideband,

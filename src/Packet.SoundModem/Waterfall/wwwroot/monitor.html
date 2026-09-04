@@ -69,6 +69,11 @@
   .name { color: var(--ink); }
   .where { color: var(--muted); font-size: 12px; }
   .fig { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  /* One list, two categories. A small unobtrusive word in the first cell rather than two tables:
+     what a visitor does with either row is identical, and a second heading would say otherwise. */
+  .kind { font-family: var(--sans); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+          color: var(--muted); margin-left: 6px; }
+  .kit { display: block; color: var(--muted); font-size: 12px; }
 
   #empty { padding: 18px 10px; color: var(--muted); font-size: 14px; line-height: 1.5; }
   #empty[hidden] { display: none; }
@@ -152,21 +157,36 @@ function order(a, b) {
   return String(a.callsign || a.host).localeCompare(String(b.callsign || b.host));
 }
 
-// Every row here is a receiver that can be picked, so every row is a link; the ones that cannot
+// Every row here is something that can be picked, so every row is a link; the ones that cannot
 // be are not drawn at all, which is render()'s doing. Slots are therefore always a count and
 // never the word "full". Nothing in a row says who else is watching, or how many: that is a fact
 // about the other visitors rather than about the receiver, and it is not what anybody came for.
+//
+// One list with two categories, and the same five cells for both. A private station is somebody's
+// actual transceiver relaying what it hears; a receiver is a public web SDR. The two figures a
+// station has no honest answer for - a signal figure and free listener slots, which are facts
+// about a web receiver - are left blank rather than borrowed, and the category is one small word
+// in the first cell.
+const isStation = r => r.kind === "station";
 function rowHtml(r) {
-  const slots = r.maxClients > 0 ? r.availableClients + " of " + r.maxClients : "";
-  const signal = r.snrDb == null ? "" : r.snrDb + " dB";
+  const station = isStation(r);
+  const slots = !station && r.maxClients > 0 ? r.availableClients + " of " + r.maxClients : "";
+  const signal = station || r.snrDb == null ? "" : r.snrDb + " dB";
   const pick =
-    '<a class="pick" href="' + esc(base + "r/" + r.slug + "/") + '">' + esc(r.callsign || r.host) + "</a>";
+    '<a class="pick" href="' + esc(base + "r/" + r.slug + "/") + '">' + esc(r.callsign || r.host) + "</a>"
+    + '<span class="kind">' + (station ? "station" : "receiver") + "</span>";
   const own = link(r.publicUrl)
     ? ' <a class="own" href="' + esc(link(r.publicUrl)) + '" target="_blank" rel="noopener">its own page</a>'
     : "";
+  // A station's own words about itself, and they are somebody else's writing exactly as the
+  // directory's are: the daemon caps their length and this escapes every one of them.
+  const kit = station
+    ? [r.radio, (r.modes || []).join(", ")].filter(Boolean).join(" - ")
+    : "";
   return '<div class="row">'
     + "<div>" + pick + "</div>"
-    + '<div class="name">' + esc(r.name || "") + own + "</div>"
+    + '<div class="name">' + esc((station ? r.operator : r.name) || "") + own
+    + (kit ? '<span class="kit">' + esc(kit) + "</span>" : "") + "</div>"
     + '<div class="where">' + esc(r.location || "") + "</div>"
     + '<div class="fig">' + esc(signal) + "</div>"
     + '<div class="fig">' + esc(slots) + "</div>"
@@ -190,8 +210,13 @@ function render(snap) {
   const receivers = all.filter(r => r.offered).sort(order);
   $("rows").innerHTML = receivers.map(rowHtml).join("");
 
+  // Counted by category, and the stations named only when there are any: a site with none reads
+  // exactly as it did before there was a second kind of thing to list.
+  const stations = receivers.filter(isStation).length;
+  const webRx = receivers.length - stations;
   $("summary").textContent =
-    receivers.length + (receivers.length === 1 ? " receiver" : " receivers")
+    webRx + (webRx === 1 ? " receiver" : " receivers")
+    + (stations > 0 ? " and " + stations + (stations === 1 ? " station" : " stations") : "")
     + (all.length > receivers.length ? " (" + (all.length - receivers.length) + " not available)" : "");
 
   // Two different silences, and they must not read the same. A directory that has gone away
@@ -224,7 +249,15 @@ function render(snap) {
     "Receive only. This site decodes what these receivers hear and shows the AX.25 links and frames; "
     + "nothing is transmitted. Each receiver is asked for one session however many people are watching it, "
     + "and the session is dropped shortly after the last one leaves. "
-    + "An operator who would rather not be listed here has only to say so.";
+    + "An operator who would rather not be listed here has only to say so."
+    // Said only where there is a station to say it about, and said before anybody has to ask:
+    // a station on this list sent us its frames, and this site is a public record of them.
+    + (stations > 0
+      ? " A station is somebody's own transceiver, listed because its operator opted in and sent "
+        + "audio to this site; nothing on this site can transmit through one or reach its radio. "
+        + "The frames it decodes are logged and shown here, and its page keeps them after it goes "
+        + "off air, so this is a public record of the callsigns it heard."
+      : "");
 }
 
 let failures = 0;

@@ -96,6 +96,21 @@ public sealed class WaterfallOptions
     /// daemon has never been told, so an absolute URL built here would be a guess.
     /// </remarks>
     public string? PickerUrl { get; set; }
+
+    /// <summary>
+    /// What kind of thing the audio on this page comes from, for the public page's credit line:
+    /// <c>"station"</c> for a private station relaying its own receiver over an uplink, and null
+    /// (the default) for a web receiver, which is what every page was before there was a second
+    /// kind.
+    /// </summary>
+    /// <remarks>
+    /// A word the page switches on rather than a sentence the server writes, and the difference
+    /// matters: the credit contains an anchor built around an escaped name, so a server-supplied
+    /// sentence would be either unescapable or a second way for somebody else's words to reach a
+    /// visitor's browser as markup. Two sentences live in the page, one per kind, and only which
+    /// of them to use crosses the wire. See <c>docs/uplink-plan.md</c> 4.4.
+    /// </remarks>
+    public string? ReceiverKind { get; set; }
 }
 
 /// <summary>
@@ -843,6 +858,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             about = _options.About,
             receiver = _receiverDescription,
             receiverUrl = _receiverUrl,
+            receiverKind = _options.ReceiverKind,
             pickerUrl = _options.PickerUrl,
             modems = _bands.Select(b => new
             {

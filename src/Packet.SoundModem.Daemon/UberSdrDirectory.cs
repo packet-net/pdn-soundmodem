@@ -296,7 +296,36 @@ internal sealed class UberSdrDirectory : IDisposable
 
     /// <summary>Remembers that a station has been built under <paramref name="slug"/>, so that
     /// nothing later takes it away from the host it names.</summary>
+    /// <remarks>
+    /// <para>Also how a relayed private station reserves its slug, with
+    /// <see cref="UplinkHostName"/> for a host: no receiver can ever be listed under that name,
+    /// so the reservation reads as held for an absentee and <see cref="AssignSlugs"/> pushes any
+    /// receiver wanting the same slug onto its full sanitised host. A station wins because its
+    /// slug is a callsign somebody was issued and a receiver's is derived from a hostname. The
+    /// mechanism is the one that was already here and already tested; the only new thing is who
+    /// calls it, and when - at start-up, from the uplink table, before any station has connected.
+    /// See <c>docs/uplink-plan.md</c> 4.4.</para>
+    /// </remarks>
     internal void Bind(string slug, string host) => _bound[slug] = host;
+
+    /// <summary>
+    /// The host a relayed station's slug is reserved against. Not a hostname, deliberately: it
+    /// has to be a string the directory can never hand back, or a receiver could take a slug the
+    /// site had promised to a station.
+    /// </summary>
+    internal const string UplinkHostName = "<uplink>";
+
+    /// <summary>
+    /// The slug a callsign gives: lower-cased and reduced to the path-segment character set, so
+    /// <c>GB7RDG-2</c> is <c>gb7rdg-2</c>.
+    /// </summary>
+    /// <remarks>
+    /// Used to suggest one in a configuration error, not to derive one. The slug a station is
+    /// served under is written in the config next to its callsign, so that the URL a visitor
+    /// bookmarks is a decision somebody took rather than a function that might change.
+    /// </remarks>
+    internal static string SlugForCallsign(string callsign) =>
+        Sanitise(callsign.ToLowerInvariant());
 
     /// <summary>Gives a slug back, for a station that was reserved one and then would not build.
     /// A reservation held for a station that does not exist would keep the short slug away from

@@ -49,6 +49,7 @@ with `su -` and drop the prefix.)
 | `flex` | object | see below | FlexRadio slice params - [below](#flex) |
 | `ubersdr` | object | see below | UberSDR stream params - [below](#ubersdr) |
 | `deadFeed` | object | *(per-device defaults)* | Dead-feed protection: restart when the input dies silently - [below](#deadfeed) |
+| `publish` | object | *(publishing nothing)* | Offer this station to a public monitor site over an outbound uplink - [below](#publish). Exclusive with `monitor` |
 | `monitor` | object | *(not a monitor)* | Front many web receivers behind one page instead of running one station - [below](#monitor). Exclusive with `device` |
 
 ---
@@ -1701,6 +1702,127 @@ than of one receiver.
 
 ---
 
+## `publish`
+
+A station with a real radio can **offer itself to a public monitor site**: one block here, a token
+from the site owner, and it appears alongside the web receivers at
+https://monitor.ukpacketradio.network with its own page - the waterfall, the AX.25 links panel,
+the decoded frames and a Listen button. The station dials out, so nothing has to be opened, held
+or forwarded on a home connection. Absent (the default), nothing about this daemon changes at all.
+
+```json
+{
+  "device": "default",
+  "modems": [ { "subChannel": 0, "mode": "afsk300-il2pc", "rfFrequency": 7050300 } ],
+  "waterfall": { "port": 8107 },
+  "publish": {
+    "url": "wss://monitor.ukpacketradio.network/uplink",
+    "token": "pdnsm_...",
+    "callsign": "GB7RDG-2",
+    "operator": "Tom M0LTE",
+    "location": "Reading, England",
+    "radio": "IC-7300 into a doublet at 10 m",
+    "site": "https://gb7rdg.example/",
+    "audioRate": 12000,
+    "frames": "always"
+  }
+}
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `url` | string | *(required)* | The site's uplink endpoint, an absolute `ws` or `wss` URL. Given to you with the token |
+| `token` | string | *(required)* | The credential the site issued this station. **Issued once, pasted in once, not edited by hand** - the same rule `api.key` has |
+| `callsign` | string | *(required)* | Whose station this is. The site checks it against the token it issued, and refuses the connection if the two disagree |
+| `operator` | string | *(none)* | Whose radio it is, for the credit line and the picker row |
+| `location` | string | *(none)* | Where it is |
+| `radio` | string | *(none)* | What it is listening with |
+| `site` | string | *(none)* | Your own page, linked from the picker. An absolute `http` or `https` URL |
+| `audioRate` | int | `12000` (or the channel rate, if lower) | The rate the audio is relayed at, in Hz. An integer divisor of the channel's DSP rate, 6000 to 48000 |
+| `frames` | string | `"always"` | `"always"` sends decoded frames whether or not anybody is watching; `"watched"` holds them back |
+
+**The site issues the token; nothing here mints one.** There is no sign-up and no discovery: a
+station is on the site because its owner asked for a token and was given one. The site holds only
+the SHA-256 of it, so a leaked config file on the site's side hands out nothing. This is UberSDR's
+own pattern - one opaque string in one config key, generated once, not edited by hand - with the
+single difference that the site issues it rather than the station minting it, because a station
+behind NAT has no public URL for the site to call back on and a self-minted identifier with no
+callback is not a credential at all.
+
+**Nothing flows until somebody is watching.** The socket sits idle. When a visitor opens this
+station's page the site says so and audio starts; when the last one leaves it stops, after the
+same sixty-second linger the web receivers get, so a page refresh does not stop and restart the
+stream. Decoded frames are the exception and go up all the time by default, because they are well
+under a kilobit a second and they are what makes a quiet band look alive to somebody arriving an
+hour later.
+
+**Only the uplink is on demand, not the radio.** This is a transceiver: its receiver is receiving
+and its modems are decoding whether or not anybody anywhere is watching, and the uplink does not
+change that by one sample. Nothing a site visitor does reaches this station's radio.
+
+**The audio is 16-bit PCM, uncompressed** - exactly the samples this station's own modems are
+reading, sample for sample. There is no codec and there will not be one: what crosses the wire is
+modem audio rather than a rendering of it, so it is usable by somebody working on a decoder and
+not only by somebody looking at a picture. The site runs the FFT and paints the waterfall; the
+decodes stay yours, made by your modems with your diversity settings on your antenna.
+
+**Your own transmissions are part of what a visitor hears**, flagged so the site paints them as
+yours. They arrive at the rate they actually leave the radio, and at the display's own -35 dB, so
+a keyup does not deafen anybody listening.
+
+**What it costs a home connection.** At the default 12000, **194 kbit/s upstream while somebody is
+watching**, and under 1 kbit/s while nobody is - and it is one stream however many people are
+watching, because the site fans it out. On FTTC or FTTP that is one to two per cent of the upload
+and nobody will notice. **ADSL is different**: a typical ADSL upload is 800 kbit/s to 1 Mbit/s, so
+a watched station is using a fifth to a quarter of it for as long as somebody has the page open,
+which a video call sharing the line will feel. There being no codec, the two levers are
+`"audioRate": 6000` - 98 kbit/s, at the price of a 0 to 3 kHz picture and of any modem above 3
+kHz - or not opting in. A 48 kHz station costs 770 kbit/s and cannot sensibly publish from ADSL at
+all.
+
+**`audioRate` decides how much of the band the site sees.** The relayed waterfall spans 0 to
+`audioRate/2`, so a 48 kHz station that leaves the default gets a 0 to 6 kHz picture and start-up
+names any modem whose band falls outside it. The audio is decimated rather than resampled, which
+is why the rate has to be an integer divisor of the channel's.
+
+**Nothing can come back down.** The site sends one message type, carrying one integer: how many
+people are watching. There is no transmit, no configuration, no KISS and no restart, and that is
+structural rather than a matter of the page hiding buttons - the uplink client holds no channel,
+no PTT, no KISS server and no config API, and a test asserts it. See
+[`monitor`](#monitor) for the other end of the same rule.
+
+**The uplink never faults this station.** It is a courtesy. A site that is down, a token that is
+wrong, a network that has gone: each writes a line and retries, and none of them touches the exit
+code, the dead-feed watches or anything a node is doing. A permanently misconfigured `publish`
+block is a journal line every quarter of an hour and nothing louder.
+
+**Leaving is deleting the block**, and it takes effect at the next restart; the socket goes and
+the station leaves the picker within seconds. The site keeps a `deny` of its own for the other
+direction.
+
+**What a site visitor can see is a public record.** Every frame this station decodes is listed on
+its page and written into a log the site keeps, and that log outlives the station going off air.
+That is no more than any other monitor site publishes, and it is worth knowing before opting in.
+
+**`publish.token` is redacted by the [config API](#api)**, which reads back `"(set, not shown)"`
+for it as it does for `api.key`: a station running the API on its LAN must not hand its uplink
+token to anyone holding the API key.
+
+**Validation**, all exit 2 with the reason: `publish` alongside [`monitor`](#monitor), because one
+process is not both; `publish` on a `device` that starts `ubersdr:`, because a public web receiver
+is already on the site in its own right and relaying it a second time would show one operator's
+antenna twice under two names and spend that receiver's daily allowance on the site's behalf
+without the site knowing; no [`waterfall`](#waterfall) section, since the uplink publishes what the
+waterfall server computes and without one there is nothing to publish; a `url` that is not an
+absolute `ws` or `wss` URL; a `token` shorter than 32 characters, or missing, there being no
+default; a `callsign` that is not a callsign with an optional SSID; a `site` that is not an
+absolute http or https URL; a `callsign` over 16, `operator` over 40, `location` over 60 or
+`radio` over 60 characters, said here rather than cut in half on somebody else's website; a
+`frames` that is not `"always"` or `"watched"`; and an `audioRate` outside 6000 to 48000 or that
+does not divide the channel's DSP rate, which is answered with the list of rates that do.
+
+---
+
 ## `monitor`
 
 Everything so far describes **one station**: one radio or one web receiver, one KISS port, one
@@ -1739,6 +1861,7 @@ same package, same tests; the configuration is the switch.
 | `allow` | array | *(everything)* | When non-empty, the only hosts listed. Matched on the directory's `host`, case insensitively |
 | `deny` | array | *(nothing)* | Hosts never listed, whatever else says otherwise. **`deny` beats `allow`** |
 | `modems` | array | *(required)* | The modems every receiver is given, same schema as the top-level [`modems`](#modems) |
+| `uplinks` | array | *(none)* | Private stations this site accepts an uplink from - [below](#monitoruplinks) |
 
 **`monitor` and [`device`](#device) are mutually exclusive.** They say incompatible things about
 what the process is: `device` is one radio or one receiver with a KISS port and a transmitter,
@@ -1752,6 +1875,7 @@ what the process is: `device` is one radio or one receiver with a KISS port and 
 | `/api/instances` | What the picker polls, every 10 s: the list, each receiver's state and viewer count, and how old the list is |
 | `/r/<slug>/` | That receiver's page - the waterfall, the AX.25 links pane, the decoded frames, the browser audio |
 | `/r/<slug>/ws` and `/r/<slug>/links` | That page's own socket and its torn-off links window |
+| `/uplink` | Where a private station's own daemon connects, with the token this site issued it - [below](#monitoruplinks). Absent, and a 404, on a site with no `uplinks` configured |
 | `/robots.txt` | Asks crawlers to leave `/r/` and `/api/` alone; see below |
 | anything else | 404 |
 
@@ -1864,7 +1988,106 @@ request for every receiver); no `waterfall` section, or one with no `port` writt
 site meant to be reached from outside should not come up on a number nobody chose; a negative `refreshMinutes` or `lingerSeconds`; a `directory` that is not
 an absolute http or https URL; and an `allow` or `deny` entry that is not a hostname - that last
 one because an entry with a scheme or a port in it would silently match nothing and leave an
-operator believing they had been taken off a list they are still on.
+operator believing they had been taken off a list they are still on. The `uplinks` entries have
+their own conditions, [below](#monitoruplinks).
+
+### `monitor.uplinks`
+
+The other end of [`publish`](#publish): the private stations this site will accept a connection
+from, and how each of them appears. Empty (the default) accepts none, and `/uplink` is a 404 like
+any other path this site does not serve. A station in this list is somebody's actual transceiver -
+their radio, their antenna and their electricity - and it appears on the picker in the same list
+as the web receivers, tagged `station`.
+
+```json
+{
+  "monitor": {
+    "directory": "https://instances.ubersdr.org/api/instances",
+    "modems": [ { "subChannel": 0, "mode": "afsk300-il2pc", "rfFrequency": 7050300 } ],
+    "uplinks": [
+      {
+        "callsign": "GB7RDG-2",
+        "slug": "gb7rdg-2",
+        "tokenSha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      }
+    ]
+  },
+  "frameLog": { "path": "/var/lib/pdn-soundmodem" },
+  "waterfall": { "port": 8099, "title": "UK packet monitor" },
+  "bind": "127.0.0.1"
+}
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `callsign` | string | *(required)* | The callsign this station must say it is. A connection whose `publish.callsign` does not match is closed with the reason |
+| `slug` | string | *(required)* | The path its page is served under, `/r/<slug>/`. Lower-case letters, digits and hyphens; normally the callsign lower-cased |
+| `tokenSha256` | string | *(required)* | The SHA-256 of the token issued to that station, as 64 hex characters. `pdn-soundmodem --uplink-token` prints a token and this hash together |
+
+**Issuing a token.** Run `pdn-soundmodem --uplink-token` on the monitor. It prints a fresh token
+and its hash and writes neither anywhere: put the hash in this list, give the token to the
+station's operator once, and they paste it into their own `publish.token`. The token is 256 bits
+from the system's cryptographic random source, so it is worth possessing and worth not inventing
+by hand.
+
+**The hash, and not the token.** This site only ever compares, so it never needs the plaintext,
+and a config file that leaks does not hand out working uplinks. Plain SHA-256 with no salt and no
+work factor is deliberate rather than an oversight: at 256 random bits there is no dictionary to
+defend against, and a work factor would only cost this process time on every connection. The
+comparison is constant-time, over the raw bytes, as the [config API](#api)'s key check is.
+
+**The callsign is bound to the token**, which is what stops one station claiming another's page,
+and **the slug never comes off the wire at all**, so a station has no way to ask for one. Both are
+decisions somebody took and wrote down here, which is why the slug is written out rather than
+derived: the URL a visitor bookmarks should not be a function that might change.
+
+**A station's slug beats a receiver's.** Each configured slug is reserved at start-up, so a web
+receiver whose hostname would give the same one is served under its full sanitised host instead,
+with a line saying so. A station wins because its slug is a callsign somebody was issued and a
+receiver's is derived from a hostname.
+
+**One connection per token.** A second connection authenticating the same token closes the first,
+with a close reason saying so, because a station whose socket has half-closed must not be locked
+out by its own ghost.
+
+**A station is listed while its socket is up.** Its page, its frame log and its links panel are
+built on its first connection and kept for the life of the process, exactly as a receiver's
+station is, so a station that goes off air keeps its history and its page and simply stops being
+offered on the picker - `"offered": false`, `"why": "not connected just now"`.
+
+**Removing a station needs a restart.** Take its entry out and restart; there is no live reload.
+That is accepted rather than overlooked: this is a list of people the site owner invited, and it
+changes about as often as the container does.
+
+**Everything a station sends is treated as somebody else's writing**, exactly as the receiver
+directory's strings are. Lengths are capped at the boundary - callsign 16, operator 40, location
+60, radio 60, mode 24 - and over a cap is a refused connection or a dropped message rather than a
+truncation, so nothing arrives half-said. A `site` URL goes through the same absolute-http-or-https
+check the directory's `public_url` does. Anything reaching the journal is flattened to ASCII. A
+message over its size cap, an audio block that is not the length the station's own hello declared,
+or a sustained rate over twice what it declared: the connection is closed, one line is journalled
+naming the station, and that token is not accepted again for a minute. A token this site has not
+issued is held for a second and counted, at most one journal line a minute.
+
+**What a station cannot do.** The only message this site sends down an uplink is how many people
+are watching. There is no path by which a connection can transmit, retune, reconfigure or restart
+anything, and none by which a station's own bytes reach a browser unexamined: every message is
+parsed into typed fields here and this site re-serialises its own. What a station *can* do is say
+it heard a callsign it did not, which is the ordinary exposure any publisher has - the token was
+issued to a person, the credit line names them, and taking their entry out removes them.
+
+**`/api/instances` says which is which.** Every row gains `kind`, `receiver` or `station`. A
+station's row carries `callsign`, `operator`, `location`, `radio`, `modes`, `publicUrl`, `offered`,
+`why`, `state`, `status` and `viewers`; `host`, `snrDb`, `loadStatus`, `availableClients` and
+`maxClients` are null, because they are facts about a web receiver and inventing them for
+somebody's transceiver would be inventing them.
+
+**Validation**, all exit 2 with the reason: a `callsign` that is not a callsign with an optional
+SSID; a `slug` that is not a usable path segment, which is answered with the one the callsign
+would have given; a `tokenSha256` that is not 64 hex characters, which is answered with
+`--uplink-token`; two entries with the same `slug`, because one page cannot be two stations; the
+same `callsign` twice; and the same `tokenSha256` twice, because a token names one station and the
+same one on two entries cannot say which of them is connecting.
 
 ## `deadFeed`
 
@@ -2037,6 +2260,17 @@ enumerated yet at boot, for instance - still restarts on its own as usual.
 | `monitor.directory` not an absolute http or https URL | `which is not an absolute http or https URL` - with the public one to copy |
 | `monitor.allow` or `monitor.deny` entry that is not a hostname | `which is not a hostname … no scheme, no port, no path` |
 | `frameLog.path` a file, or naming one, under `monitor` | `A monitor keeps one log per receiver, so this is a DIRECTORY here …` |
+| [`publish`](#publish) alongside `monitor` | `this file sets both "publish" and "monitor" … one process is not both` |
+| `publish` on a `ubersdr:` device | `A receiver like that is already on the monitor site in its own right …` |
+| `publish` with no `waterfall` | `"publish" needs a "waterfall" section: the uplink publishes what the waterfall server already computes` |
+| `publish.url` not an absolute ws or wss URL | `which is not an absolute ws or wss URL` - with the endpoint's shape to copy |
+| `publish.token` missing or under 32 characters | `it is the credential the site issued this station … do not edit it by hand` |
+| `publish.callsign` not a callsign | `A station on a public page has to say whose it is` |
+| `publish.site` not an absolute http or https URL | `It is linked from a public page in your name` |
+| `publish` callsign/operator/location/radio over its limit | `Said here rather than cut in half on somebody else's website` |
+| `publish.audioRate` outside 6000-48000, or not dividing the channel rate | `the audio is decimated rather than resampled, so it has to be an integer divisor` - with the rates that are |
+| [`monitor.uplinks`](#monitoruplinks) entry with no callsign, an unusable slug or a bad hash | `has no business being there` / `cannot be a path segment` / `not 64 hex characters` - each with what to write instead |
+| Two `monitor.uplinks` entries sharing a slug, a callsign or a token hash | `One page cannot be two stations` / `lists it twice` / `a token names one station` |
 
 The mode suggestion is worth knowing about, because a hyphen is easy to lose among 38 names:
 

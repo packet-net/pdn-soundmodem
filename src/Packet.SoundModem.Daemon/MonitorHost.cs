@@ -51,7 +51,9 @@ internal sealed class MonitorHost : IAsyncDisposable
     private readonly CancellationTokenSource _stopping;
 
     private readonly Lock _stationsLock = new();
-    private readonly Dictionary<string, MonitorStation> _stations = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IMonitorStation> _stations = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _relayGate = new(1, 1);
+    private readonly UplinkServer? _uplinks;
 
     internal MonitorHost(MonitorHostOptions options, CancellationToken stopping = default)
     {
@@ -63,6 +65,23 @@ internal sealed class MonitorHost : IAsyncDisposable
         _directory = new UberSdrDirectory(
             options.Directory, _journal, options.TimeProvider, options.FetchDirectory);
         _router = new WaterfallRouter(options.Port, options.Bind) { FrontDoor = FrontDoorAsync };
+
+        // Null rather than empty when no station is configured, so that every uplink code path
+        // in this class is one null check away from not existing at all. A monitor with no
+        // "uplinks" is byte for byte the monitor it was before this endpoint existed.
+        if (options.Uplinks.Count > 0)
+        {
+            _uplinks = new UplinkServer(new UplinkServerOptions
+            {
+                Uplinks = options.Uplinks,
+                Journal = _journal,
+                Station = RelayStationForAsync,
+                DisplayLineRate = rate =>
+                    RelayStation.LineRateFor(rate, options.LinesPerSecond, options.FftSize),
+                TimeProvider = _time,
+                Stopping = _stopping.Token,
+            });
+        }
     }
 
     /// <summary>The port the whole site answers on.</summary>
@@ -101,6 +120,20 @@ internal sealed class MonitorHost : IAsyncDisposable
     /// <returns>0 when the site is up, or the exit code to leave with.</returns>
     internal async Task<int> StartAsync()
     {
+        if (_uplinks is { Entries.Count: > 0 } configured)
+        {
+            // Before the directory's first fetch, not after it: slugs are assigned as a list is
+            // read, so a reservation made afterwards would arrive to find the short slug already
+            // given to a receiver. Reserved by the mechanism that already exists for a receiver's
+            // own slug - a slug held for a host the directory does not list pushes any newcomer
+            // onto its full sanitised host. A station wins, because its slug is a callsign
+            // somebody was issued and a receiver's is derived from a hostname.
+            foreach (UplinkEntry entry in configured.Entries)
+            {
+                _directory.Bind(entry.Slug, UberSdrDirectory.UplinkHostName);
+            }
+        }
+
         await _directory.StartAsync(_stopping.Token).ConfigureAwait(false);
 
         try
@@ -120,6 +153,19 @@ internal sealed class MonitorHost : IAsyncDisposable
         _journal.Write($"monitor: {_router.Url}");
         _journal.Write(
             "monitor: receive only - no KISS, no transmitter, no configuration API on this port");
+
+        if (_uplinks is { Entries.Count: > 0 } uplinks)
+        {
+            _journal.Write(
+                $"monitor: accepting uplinks at /uplink from {uplinks.Entries.Count} station"
+                + (uplinks.Entries.Count == 1 ? "" : "s") + " ("
+                + string.Join(
+                    ", ",
+                    uplinks.Entries.Select(e => $"{UberSdrDirectory.Ascii(e.Callsign)} -> "
+                        + $"/r/{e.Slug}/"))
+                + ")");
+        }
+
         return 0;
     }
 
@@ -136,6 +182,15 @@ internal sealed class MonitorHost : IAsyncDisposable
         }
 
         bool readOnlyMethod = context.Request.HttpMethod is "GET" or "HEAD";
+
+        // Before the /r/ branch and before anything read-only, because it is neither: it is a
+        // WebSocket upgrade a station made, carrying the token this site issued it. Everything
+        // about what happens next is UplinkServer's, including refusing it.
+        if (_uplinks is { } uplinks
+            && await uplinks.TryServeAsync(context).ConfigureAwait(false))
+        {
+            return true;
+        }
 
         if (path.StartsWith("/r/", StringComparison.Ordinal))
         {
@@ -214,7 +269,7 @@ internal sealed class MonitorHost : IAsyncDisposable
             return true;
         }
 
-        MonitorStation station;
+        IMonitorStation station;
         try
         {
             station = Ensure(slug, receiver);
@@ -252,11 +307,11 @@ internal sealed class MonitorHost : IAsyncDisposable
     /// This receiver's station, built and registered if it did not exist. Under a lock because
     /// two browsers arriving together must not build two of it.
     /// </summary>
-    private MonitorStation Ensure(string slug, DirectoryReceiver receiver)
+    private IMonitorStation Ensure(string slug, DirectoryReceiver receiver)
     {
         lock (_stationsLock)
         {
-            if (_stations.TryGetValue(slug, out MonitorStation? existing))
+            if (_stations.TryGetValue(slug, out IMonitorStation? existing))
             {
                 return existing;
             }
@@ -271,11 +326,67 @@ internal sealed class MonitorHost : IAsyncDisposable
         }
     }
 
-    private MonitorStation[] Stations()
+    private IMonitorStation[] Stations()
     {
         lock (_stationsLock)
         {
             return [.. _stations.Values];
+        }
+    }
+
+    /// <summary>
+    /// The relayed station this uplink belongs to, built on its first hello and kept for the life
+    /// of the process afterwards.
+    /// </summary>
+    /// <remarks>
+    /// Built on the hello rather than lazily on a request, because the site's promise is that a
+    /// station is listed while its uplink is up, and a page that had to be asked for before it
+    /// existed could not be. Kept afterwards for the same reason a receiver's station is: its
+    /// page, its frame log and its links panel outlive the station going off the air, which is
+    /// most of what makes a quiet band look alive.
+    /// </remarks>
+    private async Task<RelayStation> RelayStationForAsync(UplinkEntry entry, UplinkHello hello)
+    {
+        // One at a time, because building or rebuilding one is not something two hellos racing
+        // on one token should ever do twice; the per-token registration that would otherwise
+        // serialise them does not exist until a hello has been read.
+        await _relayGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            IMonitorStation? existing;
+            lock (_stationsLock)
+            {
+                _stations.TryGetValue(entry.Slug, out existing);
+            }
+
+            if (existing is RelayStation relay)
+            {
+                // What it says about itself this time, which may not be what it said last time.
+                await relay.ApplyAsync(hello).ConfigureAwait(false);
+                return relay;
+            }
+
+            if (existing is not null)
+            {
+                // Unreachable: the slug was bound to the uplink at start-up, so no receiver can
+                // ever have been given it. Said out loud rather than cast, because the one thing
+                // that must not happen is a station being served on another operator's page.
+                throw new InvalidOperationException(
+                    $"/r/{entry.Slug}/ is already a receiver's page, so "
+                    + $"{UberSdrDirectory.Ascii(entry.Callsign)} cannot be served there");
+            }
+
+            var station = new RelayStation(_options, _router, entry, hello, _stopping.Token);
+            lock (_stationsLock)
+            {
+                _stations[entry.Slug] = station;
+            }
+
+            return station;
+        }
+        finally
+        {
+            _relayGate.Release();
         }
     }
 
@@ -291,19 +402,31 @@ internal sealed class MonitorHost : IAsyncDisposable
     private byte[] InstancesJson()
     {
         DirectorySnapshot snapshot = _directory.Snapshot;
-        Dictionary<string, MonitorStation> stations = Stations().ToDictionary(
+        Dictionary<string, IMonitorStation> stations = Stations().ToDictionary(
             s => s.Slug, StringComparer.Ordinal);
 
         var rows = new List<object>(snapshot.Receivers.Count);
         foreach (DirectoryReceiver receiver in snapshot.Receivers)
         {
-            stations.Remove(receiver.Slug, out MonitorStation? station);
+            stations.Remove(receiver.Slug, out IMonitorStation? station);
+
+            // The receiver off THIS fetch every time, and the station only for what the directory
+            // cannot know: what its session is doing and how many people are watching. A station
+            // holds the receiver it was built from and never refreshes it, so asking the station
+            // for the whole row froze every figure in it - the free-slot count, the SNR, whether
+            // it is offered at all - from the first browser that opened its page. Which on a live
+            // site is every receiver anybody has ever clicked, and a picker saying "19 of 20"
+            // about a receiver that filled up an hour ago is worse than one saying nothing.
             rows.Add(Row(receiver, station, listed: true));
         }
 
-        foreach (MonitorStation orphan in stations.Values)
+        // Whatever is left: a receiver's station whose receiver has since left the directory, and
+        // every relayed station, which is never in the directory at all. Both are still being
+        // watched by whoever is watching them, and a picker whose totals did not add up would be
+        // a picker nobody could trust.
+        foreach (IMonitorStation orphan in stations.Values)
         {
-            rows.Add(Row(orphan.Receiver, orphan, listed: false));
+            rows.Add(orphan.Row(listed: false));
         }
 
         return JsonSerializer.SerializeToUtf8Bytes(
@@ -320,12 +443,27 @@ internal sealed class MonitorHost : IAsyncDisposable
             Json);
     }
 
-    private static object Row(DirectoryReceiver receiver, MonitorStation? station, bool listed)
+    /// <summary>
+    /// One receiver's row: everything the directory last said about it, decorated with what this
+    /// process knows about the station in front of it.
+    /// </summary>
+    /// <param name="receiver">
+    /// The receiver as the directory has it <b>now</b>, not as the station remembers it. The
+    /// station's own copy is the one it was built from and is deliberately never refreshed,
+    /// because its page has to go on saying whose receiver it is after the directory has stopped
+    /// listing it; that is the right answer for a page and the wrong one for this row.
+    /// </param>
+    private static object Row(DirectoryReceiver receiver, IMonitorStation? station, bool listed)
     {
         (string state, string? status) = station?.State() ?? ("unpicked", null);
         return new
         {
             slug = receiver.Slug,
+            // Which of the two kinds of thing this site lists. A receiver is a public web SDR
+            // this process opens a session on; a station is somebody's own transceiver relaying
+            // what it hears. Everything else on a row means something different for each, so a
+            // reader that does not know which it has cannot read the rest of it.
+            kind = "receiver",
             host = receiver.Host,
             receiver.Callsign,
             receiver.Name,
@@ -366,7 +504,14 @@ internal sealed class MonitorHost : IAsyncDisposable
     {
         await _stopping.CancelAsync().ConfigureAwait(false);
         await _router.DisposeAsync().ConfigureAwait(false);
-        foreach (MonitorStation station in Stations())
+        if (_uplinks is not null)
+        {
+            // Before the stations, so that a station reading its socket is not still pushing
+            // audio into a channel that is being taken down under it.
+            await _uplinks.DisposeAsync().ConfigureAwait(false);
+        }
+
+        foreach (IMonitorStation station in Stations())
         {
             try
             {
@@ -386,6 +531,7 @@ internal sealed class MonitorHost : IAsyncDisposable
         }
 
         _directory.Dispose();
+        _relayGate.Dispose();
         _stopping.Dispose();
     }
 
@@ -401,7 +547,7 @@ internal sealed class MonitorHost : IAsyncDisposable
     /// that fails leaves a page that is up and saying so rather than a request that hangs for
     /// fifteen seconds and then fails.
     /// </remarks>
-    private sealed class MonitorStation : IAsyncDisposable
+    private sealed class MonitorStation : IMonitorStation
     {
         private readonly MonitorHost _host;
         private readonly StationJournal _journal;
@@ -519,20 +665,25 @@ internal sealed class MonitorHost : IAsyncDisposable
             _journal.Write($"station: {Server.Url} for {receiver.Endpoint}");
         }
 
-        internal string Slug { get; }
+        /// <inheritdoc />
+        public string Slug { get; }
 
         /// <summary>What the directory last said about this receiver. Kept even after it leaves
         /// the directory, because the page it serves has to go on saying whose receiver it is.</summary>
         internal DirectoryReceiver Receiver { get; }
 
-        internal WaterfallWebServer Server { get; private set; } = null!;
+        /// <inheritdoc />
+        public WaterfallWebServer Server { get; private set; } = null!;
+
+        /// <inheritdoc />
+        public object Row(bool listed) => MonitorHost.Row(Receiver, this, listed);
 
         // Whether the route was registered, so that taking a half-built station down does not
         // ask the router to forget a prefix it never had.
         private bool _routed;
 
         /// <summary>How the receiver describes itself, once a session has ever been opened.</summary>
-        internal string? Description
+        public string? Description
         {
             get
             {
@@ -544,7 +695,7 @@ internal sealed class MonitorHost : IAsyncDisposable
         }
 
         /// <summary>This station's state and its own sentence, for the picker.</summary>
-        internal (string State, string? Status) State()
+        public (string State, string? Status) State()
         {
             lock (_gate)
             {
@@ -931,6 +1082,48 @@ internal sealed class MonitorHost : IAsyncDisposable
     }
 }
 
+/// <summary>
+/// One thing this site lists and serves a page for, whichever of the two kinds it is.
+/// </summary>
+/// <remarks>
+/// <para>The split exists because the site now holds two kinds of thing that a visitor cannot
+/// tell apart and the host has almost nothing to say to: a <c>MonitorStation</c> over an UberSDR
+/// web receiver, and a <see cref="RelayStation"/> over a private station's uplink. What the host
+/// actually asks of either is on this interface and is four things - which slug it is under, what
+/// serves its page, what to say about it in the picker, and how to take it down - and everything
+/// else about them is their own.</para>
+/// <para>Neither is ever removed from the host's table: there is no <c>Remove</c> anywhere,
+/// because a station outliving whatever it was built for is what keeps its page, its links and
+/// its log alive.</para>
+/// </remarks>
+internal interface IMonitorStation : IAsyncDisposable
+{
+    /// <summary>The path segment its page is served under.</summary>
+    string Slug { get; }
+
+    /// <summary>The page, its socket, and the viewer count that drives everything on demand.</summary>
+    WaterfallWebServer Server { get; }
+
+    /// <summary>Its state and its own sentence, for the picker and for <c>/api/instances</c>.</summary>
+    (string State, string? Status) State();
+
+    /// <summary>
+    /// How the thing behind this station describes itself, once anything has been opened. Null
+    /// until then, and null for a relayed station, which describes itself in its own row's
+    /// fields rather than in one sentence.
+    /// </summary>
+    string? Description { get; }
+
+    /// <summary>
+    /// Its row in <c>/api/instances</c>, which is the whole of what this site says about it.
+    /// </summary>
+    /// <param name="listed">
+    /// Whether the directory still lists the receiver behind this station. Meaningless for a
+    /// relayed station, which is in nobody's directory and answers for itself.
+    /// </param>
+    object Row(bool listed);
+}
+
 /// <summary>Everything a <see cref="MonitorHost"/> needs to front a directory of receivers.</summary>
 internal sealed record MonitorHostOptions
 {
@@ -978,6 +1171,20 @@ internal sealed record MonitorHostOptions
 
     /// <summary>Dead-feed thresholds; null takes the UberSDR family's defaults.</summary>
     public DeadFeedConfig? DeadFeed { get; init; }
+
+    /// <summary>
+    /// The private stations this site accepts an uplink from. Empty (the default) is a monitor
+    /// with no <c>/uplink</c> endpoint at all.
+    /// </summary>
+    public IReadOnlyList<UplinkConfig> Uplinks { get; init; } = [];
+
+    /// <summary>
+    /// How long after the last viewer of a relayed station leaves before it is told to stop
+    /// sending. The same <c>monitor.lingerSeconds</c> a receiver's session is held for, and for
+    /// the same reason: a page refresh or a tab switch must not stop and restart a home station's
+    /// stream.
+    /// </summary>
+    public TimeSpan Linger { get; init; } = TimeSpan.FromSeconds(60);
 
     /// <summary>Where a station's lines go, given its slug. The empty tag is the host's own.</summary>
     public Func<string, StationJournal> Journal { get; init; } = StationJournal.Console;
