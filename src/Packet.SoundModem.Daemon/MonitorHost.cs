@@ -52,6 +52,7 @@ internal sealed class MonitorHost : IAsyncDisposable
 
     private readonly Lock _stationsLock = new();
     private readonly Dictionary<string, IMonitorStation> _stations = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _relayGate = new(1, 1);
     private readonly UplinkServer? _uplinks;
 
     internal MonitorHost(MonitorHostOptions options, CancellationToken stopping = default)
@@ -74,7 +75,7 @@ internal sealed class MonitorHost : IAsyncDisposable
             {
                 Uplinks = options.Uplinks,
                 Journal = _journal,
-                Station = RelayStationFor,
+                Station = RelayStationForAsync,
                 DisplayLineRate = rate =>
                     RelayStation.LineRateFor(rate, options.LinesPerSecond, options.FftSize),
                 TimeProvider = _time,
@@ -344,17 +345,29 @@ internal sealed class MonitorHost : IAsyncDisposable
     /// page, its frame log and its links panel outlive the station going off the air, which is
     /// most of what makes a quiet band look alive.
     /// </remarks>
-    private RelayStation RelayStationFor(UplinkEntry entry, UplinkHello hello)
+    private async Task<RelayStation> RelayStationForAsync(UplinkEntry entry, UplinkHello hello)
     {
-        lock (_stationsLock)
+        // One at a time, because building or rebuilding one is not something two hellos racing
+        // on one token should ever do twice; the per-token registration that would otherwise
+        // serialise them does not exist until a hello has been read.
+        await _relayGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
         {
-            if (_stations.TryGetValue(entry.Slug, out IMonitorStation? existing))
+            IMonitorStation? existing;
+            lock (_stationsLock)
             {
-                if (existing is RelayStation relay)
-                {
-                    return relay;
-                }
+                _stations.TryGetValue(entry.Slug, out existing);
+            }
 
+            if (existing is RelayStation relay)
+            {
+                // What it says about itself this time, which may not be what it said last time.
+                await relay.ApplyAsync(hello).ConfigureAwait(false);
+                return relay;
+            }
+
+            if (existing is not null)
+            {
                 // Unreachable: the slug was bound to the uplink at start-up, so no receiver can
                 // ever have been given it. Said out loud rather than cast, because the one thing
                 // that must not happen is a station being served on another operator's page.
@@ -364,8 +377,16 @@ internal sealed class MonitorHost : IAsyncDisposable
             }
 
             var station = new RelayStation(_options, _router, entry, hello, _stopping.Token);
-            _stations[entry.Slug] = station;
+            lock (_stationsLock)
+            {
+                _stations[entry.Slug] = station;
+            }
+
             return station;
+        }
+        finally
+        {
+            _relayGate.Release();
         }
     }
 
@@ -510,6 +531,7 @@ internal sealed class MonitorHost : IAsyncDisposable
         }
 
         _directory.Dispose();
+        _relayGate.Dispose();
         _stopping.Dispose();
     }
 

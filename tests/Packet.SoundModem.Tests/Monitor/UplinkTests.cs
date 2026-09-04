@@ -195,6 +195,74 @@ public class UplinkTests
     }
 
     [Fact]
+    public async Task A_Reconnecting_Station_Is_Listed_As_It_Now_Describes_Itself()
+    {
+        await using var h = await Harness.StartAsync();
+
+        var first = await StubStation.OpenAsync(
+            h.Port, h.Token, Callsign, op: "Tom M0LTE", radio: "IC-7300 into a doublet at 10 m");
+        await first.WelcomedAsync();
+        await first.DisposeAsync();
+        await h.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+
+        // An operator changes their publish block and restarts, which is the whole way any of
+        // this is configured. Their words used to stay whatever the first hello said for the
+        // life of the site, with nothing in either journal saying why.
+        await using var again = await StubStation.OpenAsync(
+            h.Port, h.Token, Callsign, op: "Someone Else", location: "Newbury, England",
+            radio: "FT-991A into a vertical", site: "https://new.example/");
+        await again.WelcomedAsync();
+        await h.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+
+        JsonElement row = await h.RowAsync(Slug);
+        row.GetProperty("operator").GetString().Should().Be("Someone Else");
+        row.GetProperty("location").GetString().Should().Be("Newbury, England");
+        row.GetProperty("radio").GetString().Should().Be("FT-991A into a vertical");
+        row.GetProperty("publicUrl").GetString().Should().Be("https://new.example/");
+
+        await using Browser browser = await h.WatchAsync(Slug);
+        JsonElement config = await browser.UntilTextAsync("config");
+        config.GetProperty("receiver").GetString().Should()
+            .Contain("Someone Else").And.Contain("Newbury");
+        config.GetProperty("receiverUrl").GetString().Should().Be("https://new.example/");
+    }
+
+    [Fact]
+    public async Task A_Station_That_Comes_Back_At_A_New_Rate_Is_Drawn_At_The_New_Rate()
+    {
+        await using var h = await Harness.StartAsync();
+
+        var first = await StubStation.OpenAsync(h.Port, h.Token, Callsign, audioRate: 12000);
+        await first.WelcomedAsync();
+        await first.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "before the change"));
+        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
+        await first.DisposeAsync();
+        await h.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+
+        // CONFIG.md tells an operator on ADSL that audioRate is one of their two levers. The
+        // channel was built at the old rate and the audio checked against the new block length,
+        // so the audio was accepted and painted at the wrong rate and the page was silently
+        // wrong until somebody restarted the public site.
+        await using var again = await StubStation.OpenAsync(
+            h.Port, h.Token, Callsign, audioRate: 6000, blockSamples: 240);
+        await again.WelcomedAsync();
+
+        await using Browser browser = await h.WatchAsync(Slug);
+        JsonElement config = await browser.UntilTextAsync("config");
+        config.GetProperty("sampleRate").GetInt32().Should().Be(6000);
+
+        await again.SendSecondsAsync(0.5);
+        (await browser.UntilBinaryAsync(0x01))[0].Should().Be(
+            0x01, "and the new rate's audio draws lines on the rebuilt page");
+
+        // The page was rebuilt and the log was not: the history is still there.
+        h.LoggedFrames().Should().Be(1, "the frame log is the same file and the same history");
+        h.Lines.Should().Contain(line =>
+            line.Contains("came back with a different audio rate", StringComparison.Ordinal)
+            && line.Contains("12000 -> 6000", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task A_Relayed_Station_Builds_No_Modems()
     {
         await using var h = await Harness.StartAsync();

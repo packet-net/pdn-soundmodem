@@ -106,6 +106,16 @@ internal sealed class UplinkServer : IAsyncDisposable
     /// <summary>How often, at most, a run of bad tokens is mentioned in the journal.</summary>
     private static readonly TimeSpan BadTokenQuiet = TimeSpan.FromMinutes(1);
 
+    /// <summary>
+    /// How long a close frame is given to reach a station before the socket is simply dropped.
+    /// </summary>
+    /// <remarks>
+    /// Every wait on this path is bounded, including the polite ones. A station that has stopped
+    /// reading its socket - crashed, suspended, behind a NAT that has forgotten it - must not be
+    /// able to hold a send here for ever, because a shutdown or a rebuild waits behind it.
+    /// </remarks>
+    private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(5);
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private readonly UplinkServerOptions _options;
@@ -384,7 +394,17 @@ internal sealed class UplinkServer : IAsyncDisposable
 
         foreach (UplinkSession session in sessions)
         {
-            await session.CloseAsync("the monitor is shutting down").ConfigureAwait(false);
+            try
+            {
+                await session.CloseAsync("the monitor is shutting down")
+                    .WaitAsync(CloseTimeout).ConfigureAwait(false);
+            }
+            catch (Exception e) when (e is TimeoutException or WebSocketException
+                                          or ObjectDisposedException)
+            {
+                // One station that will not come down tidily must not stop the others being told,
+                // and must not stop this process shutting down at all.
+            }
         }
     }
 
@@ -721,7 +741,7 @@ internal sealed class UplinkServer : IAsyncDisposable
             RelayStation station;
             try
             {
-                station = _server._options.Station(_entry, hello);
+                station = await _server._options.Station(_entry, hello).ConfigureAwait(false);
             }
             catch (Exception e)
             {
@@ -821,18 +841,21 @@ internal sealed class UplinkServer : IAsyncDisposable
                 if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
                 {
                     // Truncated to what a close frame can carry (123 bytes), and ASCII, because
-                    // it is read on somebody else's console.
+                    // it is read on somebody else's console. Bounded, because a station that has
+                    // stopped reading must not hold this send open.
                     string ascii = UberSdrDirectory.Ascii(reason);
+                    using var giveUp = new CancellationTokenSource(CloseTimeout);
                     await _socket.CloseOutputAsync(
                         WebSocketCloseStatus.NormalClosure,
                         ascii.Length > 120 ? ascii[..120] : ascii,
-                        CancellationToken.None).ConfigureAwait(false);
+                        giveUp.Token).ConfigureAwait(false);
                 }
             }
             catch (Exception e) when (e is WebSocketException or IOException
                                           or ObjectDisposedException or OperationCanceledException)
             {
-                // Closing a socket that has already gone is not an event.
+                // Closing a socket that has already gone, or one that would not take the frame
+                // inside the timeout. Either way it is going.
             }
 
             try
@@ -863,15 +886,17 @@ internal sealed class UplinkServer : IAsyncDisposable
             {
                 if (_socket.State == WebSocketState.Open)
                 {
+                    using var giveUp = new CancellationTokenSource(CloseTimeout);
                     await _socket.SendAsync(
                         message, WebSocketMessageType.Text, endOfMessage: true,
-                        CancellationToken.None).ConfigureAwait(false);
+                        giveUp.Token).ConfigureAwait(false);
                 }
             }
             catch (Exception e) when (e is WebSocketException or IOException
-                                          or ObjectDisposedException)
+                                          or ObjectDisposedException or OperationCanceledException)
             {
-                // The station has gone. The read loop is about to find that out and say so once.
+                // The station has gone, or has stopped reading. The read loop is about to find
+                // that out and say so once.
             }
             finally
             {
@@ -930,7 +955,7 @@ internal sealed record UplinkServerOptions
     /// The station a hello belongs to, built if this is the first time it has connected and kept
     /// for the life of the process afterwards.
     /// </summary>
-    public required Func<UplinkEntry, UplinkHello, RelayStation> Station { get; init; }
+    public required Func<UplinkEntry, UplinkHello, Task<RelayStation>> Station { get; init; }
 
     /// <summary>
     /// The display line rate this site would draw a given relayed audio rate at, or 0 for one it

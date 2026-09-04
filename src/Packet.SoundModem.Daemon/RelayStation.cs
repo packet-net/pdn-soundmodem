@@ -82,11 +82,14 @@ internal sealed class RelayStation : IMonitorStation
 
     private readonly MonitorHostOptions _options;
     private readonly WaterfallRouter _router;
-    private readonly SoundModemChannel _channel;
     private readonly TimeProvider _time;
     private readonly CancellationTokenSource _stopping;
     private readonly FrameLog? _frameLog;
-    private readonly UplinkAudioInput _input;
+
+    // Rebuilt when a station reconnects having changed something structural, so neither is
+    // readonly. The frame log is, and stays: it is the same file and the same history.
+    private SoundModemChannel _channel;
+    private UplinkAudioInput _input;
 
     private readonly Lock _gate = new();
     private readonly Lock _holdGate = new();
@@ -95,6 +98,11 @@ internal sealed class RelayStation : IMonitorStation
     private IUplinkLink? _link;
     private Station? _station;
     private Task? _running;
+
+    // Cancelled to stop one receive loop without stopping the station. Disposing the input is not
+    // enough on its own: a loop whose Read returns nothing simply goes round again, which is
+    // exactly what it should do for a station that is off the air, so a rebuild has to say so.
+    private CancellationTokenSource? _loopStopping;
     private ITimer? _linger;
     private int _demand;
     private string? _stationStatus;
@@ -125,16 +133,7 @@ internal sealed class RelayStation : IMonitorStation
         Hello = hello;
         Journal = options.Journal(Slug);
 
-        // The station's own rate, and no modems: this process decodes nothing for it. The
-        // receive-only reason is said here for the same reason MonitorStation says it - the
-        // channel is the same class a transmitting station uses, so it is told once, here.
-        _channel = new SoundModemChannel(hello.AudioRate)
-        {
-            ReceiveOnlyReason =
-                "this station receives only: its audio is relayed from "
-                + $"{UberSdrDirectory.Ascii(entry.Callsign)}'s own receiver over a one-way "
-                + "uplink, and nothing on this site can reach its transmitter.",
-        };
+        _channel = NewChannel();
 
         if (options.FrameLogDirectory is { Length: > 0 } directory)
         {
@@ -169,10 +168,7 @@ internal sealed class RelayStation : IMonitorStation
             throw;
         }
 
-        _input = new UplinkAudioInput(hello.AudioRate, transmit => Server.IncomingIsTransmit = transmit)
-        {
-            BeforeRead = ReleaseDueFrames,
-        };
+        _input = NewInput();
         StartLoop();
     }
 
@@ -185,8 +181,12 @@ internal sealed class RelayStation : IMonitorStation
     /// <summary>The callsign this station's token was issued to. Never comes off the wire.</summary>
     internal string Callsign { get; }
 
-    /// <summary>What it said about itself when it connected.</summary>
-    internal UplinkHello Hello { get; }
+    /// <summary>What it said about itself when it last connected.</summary>
+    /// <remarks>
+    /// Replaced on every reconnect by <see cref="ApplyAsync"/>, not frozen at the first one: an
+    /// operator who changes their <c>publish</c> block and restarts has to see the change.
+    /// </remarks>
+    internal UplinkHello Hello { get; private set; }
 
     /// <summary>This station's own journal, tagged with its slug.</summary>
     internal StationJournal Journal { get; }
@@ -207,6 +207,22 @@ internal sealed class RelayStation : IMonitorStation
     internal string Credit => string.Join(
         ", ",
         new[] { Callsign, Hello.Operator, Hello.Location }.Where(p => !string.IsNullOrEmpty(p)));
+
+    /// <summary>
+    /// The station's own rate, and no modems: this process decodes nothing for it.
+    /// </summary>
+    /// <remarks>
+    /// The receive-only reason is said here for the same reason <c>MonitorStation</c> says it -
+    /// the channel is the same class a transmitting station uses, so it is told once, in one
+    /// place, and anything that could ever put something on the air gets the same answer.
+    /// </remarks>
+    private SoundModemChannel NewChannel() => new(Hello.AudioRate)
+    {
+        ReceiveOnlyReason =
+            "this station receives only: its audio is relayed from "
+            + $"{UberSdrDirectory.Ascii(Callsign)}'s own receiver over a one-way uplink, and "
+            + "nothing on this site can reach its transmitter.",
+    };
 
     private void Build()
     {
@@ -243,6 +259,12 @@ internal sealed class RelayStation : IMonitorStation
         Journal.Write($"station: {Server.Url} for {UberSdrDirectory.Ascii(Callsign)}");
     }
 
+    private UplinkAudioInput NewInput() =>
+        new(Hello.AudioRate, transmit => Server.IncomingIsTransmit = transmit)
+        {
+            BeforeRead = ReleaseDueFrames,
+        };
+
     /// <summary>
     /// Starts the receive loop over the uplink's audio.
     /// </summary>
@@ -255,6 +277,7 @@ internal sealed class RelayStation : IMonitorStation
     private void StartLoop()
     {
         Station station;
+        CancellationTokenSource loopStopping;
         lock (_gate)
         {
             if (_disposed)
@@ -262,6 +285,8 @@ internal sealed class RelayStation : IMonitorStation
                 return;
             }
 
+            loopStopping = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token);
+            _loopStopping = loopStopping;
             station = new Station(
                 new StationOptions
                 {
@@ -279,7 +304,7 @@ internal sealed class RelayStation : IMonitorStation
                     TimeProvider = _time,
                     HealthChecks = [FrameLogDropCheck(), JitterDropCheck()],
                 },
-                _stopping.Token);
+                loopStopping.Token);
             _station = station;
         }
 
@@ -294,6 +319,7 @@ internal sealed class RelayStation : IMonitorStation
                 finally
                 {
                     Stopped(station);
+                    loopStopping.Dispose();
                 }
             },
             CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
@@ -302,6 +328,176 @@ internal sealed class RelayStation : IMonitorStation
     /// <summary>The status chip, which always names the station: the sentence says what its
     /// uplink is doing and not whose radio it is.</summary>
     private string Chip(string sentence) => $"{Credit} - {sentence}";
+
+    // ------------------------------------------------------------------ reconnecting
+
+    /// <summary>
+    /// Applies what a station said about itself this time, which may not be what it said last
+    /// time.
+    /// </summary>
+    /// <remarks>
+    /// <para>An operator changes their <c>publish</c> block and restarts their daemon; that is
+    /// the whole way any of this is configured, and CONFIG.md tells somebody on ADSL that
+    /// <c>audioRate</c> is one of their two levers. A station whose new hello was welcomed and
+    /// then discarded went on being drawn at the old rate while its audio was checked against the
+    /// new block length, so the page was silently wrong until somebody restarted the public site,
+    /// and their new operator, location, radio and site never appeared at all.</para>
+    /// <para>Most of a hello is words, and words are applied in place: the credit, the picker row
+    /// and the status chip all read <see cref="Hello"/>. The rest - the rate, the dial, the
+    /// sideband, the bands - is what the channel and the waterfall were built from, and changing
+    /// any of it rebuilds them. That costs whoever is watching a reconnect of their page, which
+    /// is exactly the moment a page needs rebuilding anyway. <b>The frame log is kept</b>, so the
+    /// history and the links survive it.</para>
+    /// </remarks>
+    internal async Task ApplyAsync(UplinkHello hello)
+    {
+        ArgumentNullException.ThrowIfNull(hello);
+        UplinkHello was = Hello;
+        Hello = hello;
+
+        if (!Structural(was, hello))
+        {
+            // Words only. SetReceiver rebuilds the config message, so a browser that arrives
+            // after this gets the new credit and the new link.
+            Server.SetReceiver(Credit, hello.Site);
+            Server.SetRadioStatus(Chip(_stationStatus ?? "connected"));
+            return;
+        }
+
+        Journal.Write(
+            $"uplink: {UberSdrDirectory.Ascii(Callsign)} came back with a different "
+            + $"{string.Join(" and ", Changes(was, hello))}, so its page is being rebuilt; its "
+            + "frame log and its links are kept");
+        await RebuildAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>Whether the difference between two hellos is one the built objects hold.</summary>
+    private static bool Structural(UplinkHello was, UplinkHello now) =>
+        was.AudioRate != now.AudioRate
+        || was.DialHz != now.DialHz
+        || !string.Equals(was.Sideband, now.Sideband, StringComparison.Ordinal)
+        || !was.Bands.SequenceEqual(now.Bands);
+
+    /// <summary>What changed, for the one journal line that says a page is being rebuilt.</summary>
+    private static IEnumerable<string> Changes(UplinkHello was, UplinkHello now)
+    {
+        if (was.AudioRate != now.AudioRate)
+        {
+            yield return $"audio rate ({was.AudioRate} -> {now.AudioRate} Hz)";
+        }
+
+        if (was.DialHz != now.DialHz)
+        {
+            yield return "dial";
+        }
+
+        if (!string.Equals(was.Sideband, now.Sideband, StringComparison.Ordinal))
+        {
+            yield return "sideband";
+        }
+
+        if (!was.Bands.SequenceEqual(now.Bands))
+        {
+            yield return "band plan";
+        }
+    }
+
+    /// <summary>
+    /// Takes this station's page and channel down and puts them back up from the current hello.
+    /// </summary>
+    /// <remarks>
+    /// Everything but the frame log: that is the same file and the same history, and reopening it
+    /// would be the one part of this with anything to lose. The route goes and comes back under
+    /// the same prefix, so a bookmark still works and a browser that was watching reconnects to a
+    /// page built from what the station is actually sending now.
+    /// </remarks>
+    private async Task RebuildAsync()
+    {
+        UplinkAudioInput oldInput;
+        Station? oldStation;
+        Task? running;
+        WaterfallWebServer oldServer;
+        CancellationTokenSource? oldLoop;
+        lock (_gate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            oldInput = _input;
+            oldStation = _station;
+            running = _running;
+            oldServer = Server;
+            oldLoop = _loopStopping;
+            _station = null;
+            _loopStopping = null;
+        }
+
+        // The loop is stopped by its own token rather than by taking its input away: a Read that
+        // returns nothing is a station that is off the air, which is a thing the loop is meant to
+        // sit through rather than end on.
+        if (oldLoop is not null)
+        {
+            await oldLoop.CancelAsync().ConfigureAwait(false);
+        }
+
+        if (_routed)
+        {
+            _router.Remove($"/r/{Slug}/");
+            _routed = false;
+        }
+
+        oldServer.ViewersChanged -= OnViewersChanged;
+
+        // The input first: its Read is what the loop is sitting in, and disposing it is what lets
+        // the loop notice. The loop's own Stopped will find _station null and not restart it.
+        oldInput.Dispose();
+        if (running is not null)
+        {
+            try
+            {
+                await running.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                Journal.WriteError(
+                    "uplink: the old receive loop did not stop inside five seconds; rebuilding "
+                    + "the page anyway");
+            }
+        }
+
+        if (oldStation is not null)
+        {
+            oldStation.Faulted -= OnFault;
+            oldStation.Dispose();
+        }
+
+        try
+        {
+            await oldServer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))
+                .ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            Journal.WriteError(
+                "uplink: the old page did not close inside five seconds; rebuilding anyway");
+        }
+
+
+        // Anything still held against the old input's sample counts belongs to audio that no
+        // longer exists.
+        lock (_holdGate)
+        {
+            _held.Clear();
+        }
+
+        _channel = NewChannel();
+        Build();
+        _input = NewInput();
+        _input.Connected = true;
+        StartLoop();
+    }
 
     // ------------------------------------------------------------------ the uplink's own side
 
@@ -717,7 +913,17 @@ internal sealed class RelayStation : IMonitorStation
         }
 
         station?.Dispose();
-        await Server.DisposeAsync().ConfigureAwait(false);
+        try
+        {
+            await Server.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5))
+                .ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // A browser that will not let go must not stop this station's frame log being closed
+            // tidily, which is where somebody's afternoon of frames is.
+        }
+
         if (_frameLog is not null)
         {
             await _frameLog.DisposeAsync().ConfigureAwait(false);
