@@ -1611,9 +1611,17 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// bytes, so the cards cannot disagree with the station's, and the fold survives the station
     /// going off the air. A frame with no bytes - an ident ghost, or a decoder that hands none
     /// over - is listed and makes no link, exactly as it does on the station.</para>
-    /// <para>Nothing here is offered to <see cref="Relay"/> in turn. It would not be a loop, but
-    /// it would be a station relaying somebody else's decodes as its own, and a monitor never
-    /// publishes and a station never accepts an uplink.</para>
+    /// <para><b>A pushed frame is offered to <see cref="Relay"/> like any other</b>, because this
+    /// is <see cref="BroadcastFrame"/> and that is what it does. Nothing is suppressed here and no
+    /// flag says otherwise: on a monitor <see cref="Relay"/> is null, because a monitor never
+    /// publishes and a station never accepts an uplink, and the daemon refuses a configuration
+    /// that asks for both. A server given both anyway would forward the frame whole, bytes
+    /// included, which is the less surprising of the two things to arrive at by accident.</para>
+    /// <para><see cref="RelayedFrame.At"/> is not read here. It is the station's own clock, and it
+    /// is on the wire for the frame log and for holding a frame until the audio that carried it
+    /// has been painted, both of which are the caller's business. The row a browser is sent
+    /// carries no time at all - the page stamps a live row with its own - and the burst tag comes
+    /// from this display's line count rather than from the station's.</para>
     /// </remarks>
     /// <param name="frame">The frame, as the uplink carried it.</param>
     public void PushFrame(RelayedFrame frame)
@@ -1630,7 +1638,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             idBeacon: frame.IdBeacon, transmitted: frame.Transmitted,
             note: frame.Note, headerType: frame.HeaderType, frameHex: frame.FrameHex,
             plainIl2p: frame.PlainIl2p, monitorOnly: frame.MonitorOnly,
-            txTrimHz: frame.TransmitTrimHz);
+            txTrimHz: frame.TransmitTrimHz, raw: frame.Raw);
 
         // The same rule OnFrame applies, for the same reason: a frame Reed-Solomon alone stood
         // behind is not evidence that the pair of callsigns in it were ever talking, so it is

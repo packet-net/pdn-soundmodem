@@ -716,6 +716,54 @@ public class WaterfallRelayTests : IDisposable
     }
 
     /// <summary>
+    /// A pushed frame that Reed-Solomon alone stood behind is listed and opens no link, and
+    /// neither does one that arrived with no bytes.
+    /// </summary>
+    /// <remarks>
+    /// The rule <c>OnFrame</c> applies to a local decode, applied to a relayed one for the same
+    /// reason (PR #394): a reading that only Reed-Solomon vouched for is not evidence that the
+    /// pair of callsigns in it were ever talking, so a corrupt or forged pair read out of one must
+    /// not open a card or name a station as heard. It stays in the frames panel badged RS ONLY.
+    /// The no-bytes half is the ident ghost's case arriving from the other end.
+    /// </remarks>
+    [Fact]
+    public async Task A_Pushed_Frame_Reed_Solomon_Alone_Stood_Behind_Makes_No_Link()
+    {
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        using ClientWebSocket socket = await ConnectAsync(port);
+
+        RelayedFrame Pushed() => new()
+        {
+            SubChannel = 0, Mode = "bpsk300-il2pc", From = "M0LTE-9", To = "GB7RDG",
+            LengthBytes = 24, At = DateTimeOffset.UnixEpoch, Raw = TestFrame(),
+        };
+
+        server.PushFrame(Pushed() with { MonitorOnly = true, PlainIl2p = true });
+        server.Links.Snapshot().Should().BeEmpty(
+            "Reed-Solomon alone is not evidence that these two stations were talking");
+
+        server.PushFrame(Pushed() with { Raw = null });
+        server.Links.Snapshot().Should().BeEmpty("there are no bytes to read a link out of");
+
+        // The ordinary one, so the two refusals above are refusals rather than a panel that never
+        // works at all.
+        server.PushFrame(Pushed());
+        server.Links.Snapshot().Should().ContainSingle()
+            .Which.Id.Should().Be("0|GB7RDG<>M0LTE-9");
+
+        // And all three are listed: withheld from the links pane is not withheld from the panel.
+        const string marker = "three-pushed";
+        server.SetRadioStatus(marker);
+        List<(WebSocketMessageType Kind, byte[] Payload)> messages = await DrainAsync(socket, marker);
+        messages.Count(m => Describe(m) == "frame").Should().Be(3, "every one of them is listed");
+        messages.Count(m => Describe(m) == "link").Should().Be(1, "only one of them made a card");
+    }
+
+    /// <summary>
     /// Nothing is offered to a relay once the server has been disposed.
     /// </summary>
     /// <remarks>
