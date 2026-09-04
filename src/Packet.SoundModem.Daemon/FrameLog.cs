@@ -151,9 +151,15 @@ internal sealed class FrameLog : IAsyncDisposable
     /// uses it to name the frame type - "ARDOP ConReq500M" rather than a column of identical
     /// "ARDOP" rows, since with ARDOP the frame type is most of what the entry says.
     /// </param>
+    /// <param name="at">
+    /// When it was decoded, for a frame that was decoded somewhere else: a relayed station's own
+    /// clock, so the monitor's copy of its log carries the station's times rather than the times
+    /// they happened to cross the wire. Null is this process's own clock, which is every frame
+    /// this process decoded itself.
+    /// </param>
     internal void Record(
         int subChannel, byte[] frame, FrameQuality quality, double? audioHz, double? rfHz,
-        string? modeName = null)
+        string? modeName = null, DateTimeOffset? at = null)
     {
         if (Backlogged())
         {
@@ -162,7 +168,7 @@ internal sealed class FrameLog : IAsyncDisposable
 
         Ax25AddressParser.TryParse(frame, out string source, out string destination);
         _pending.Add(new Entry(
-            _time.GetUtcNow(),
+            at ?? _time.GetUtcNow(),
             Transmitted: false,
             subChannel,
             quality.Mode,
@@ -214,9 +220,13 @@ internal sealed class FrameLog : IAsyncDisposable
     /// measurement of somebody else's transmitter, and averaging the two together would mix what
     /// a station did with what we did about it.
     /// </param>
+    /// <param name="at">
+    /// When it went out, for a transmission made somewhere else: a relayed station's own clock.
+    /// Null is this process's own, which is every frame this process sent itself.
+    /// </param>
     internal void RecordTransmitted(
         int subChannel, byte[] frame, string mode, double? audioHz, double? rfHz,
-        double? txTrimHz = null)
+        double? txTrimHz = null, DateTimeOffset? at = null)
     {
         if (Backlogged())
         {
@@ -225,7 +235,7 @@ internal sealed class FrameLog : IAsyncDisposable
 
         Ax25AddressParser.TryParse(frame, out string source, out string destination);
         _pending.Add(new Entry(
-            _time.GetUtcNow(),
+            at ?? _time.GetUtcNow(),
             Transmitted: true,
             subChannel,
             mode,
