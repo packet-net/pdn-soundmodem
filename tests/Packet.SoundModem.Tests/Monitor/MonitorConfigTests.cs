@@ -258,6 +258,124 @@ public class MonitorConfigTests : IDisposable
         Directory.Exists(pasted).Should().BeFalse();
     }
 
+    // ------------------------------------------------------------------ monitor.uplinks
+
+    /// <summary>The uplink table, as a working monitor config would carry it.</summary>
+    private const string OneUplink = """
+        "uplinks": [
+          {
+            "callsign": "GB7RDG-2",
+            "slug": "gb7rdg-2",
+            "tokenSha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+          }
+        ],
+        """;
+
+    [Fact]
+    public void A_Monitor_With_Uplinks_Loads_And_One_Without_Accepts_None()
+    {
+        DaemonConfig? config = Load(WithUplinks(OneUplink), out string error);
+
+        error.Should().BeEmpty();
+        config!.Monitor!.Uplinks.Should().ContainSingle();
+        config.Monitor.Uplinks[0].Callsign.Should().Be("GB7RDG-2");
+        config.Monitor.Uplinks[0].Slug.Should().Be("gb7rdg-2");
+        config.Warnings.Should().BeEmpty();
+
+        // And the default, which is the monitor that is already deployed: no table, no endpoint,
+        // nothing about it anywhere.
+        Load(Working, out _)!.Monitor!.Uplinks.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void An_Uplink_Without_A_Callsign_Is_A_Configuration_Error()
+    {
+        Load(WithUplinks(OneUplink.Replace("\"GB7RDG-2\"", "\"\"")), out string error)
+            .Should().BeNull();
+
+        error.Should().Contain("callsign")
+            .And.Contain("has no business being there",
+                "a station on a public page that will not say who it is");
+        ShouldGuideTheOperator(error);
+    }
+
+    [Fact]
+    public void An_Uplink_Slug_That_Is_Not_A_Path_Segment_Is_A_Configuration_Error()
+    {
+        Load(WithUplinks(OneUplink.Replace("\"gb7rdg-2\"", "\"GB7RDG 2/\"")), out string error)
+            .Should().BeNull();
+
+        error.Should().Contain("GB7RDG 2/").And.Contain("cannot be a path segment")
+            .And.Contain("/r/gb7rdg-2/", "and it says what the callsign would have given");
+        ShouldGuideTheOperator(error);
+    }
+
+    [Fact]
+    public void An_Uplink_Token_Hash_That_Is_Not_A_Hash_Is_A_Configuration_Error()
+    {
+        Load(WithUplinks(OneUplink.Replace(
+            "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            "hunter2")), out string error).Should().BeNull();
+
+        error.Should().Contain("64 hex characters")
+            .And.Contain("--uplink-token", "the message says how to make one")
+            .And.Contain("never the token",
+                "and why this site holds the hash rather than the token");
+        ShouldGuideTheOperator(error);
+    }
+
+    [Fact]
+    public void Two_Uplinks_With_One_Slug_Is_A_Configuration_Error()
+    {
+        const string twice = """
+            "uplinks": [
+              { "callsign": "GB7RDG-2", "slug": "gb7rdg-2",
+                "tokenSha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" },
+              { "callsign": "M0LTE-7", "slug": "gb7rdg-2",
+                "tokenSha256": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752" }
+            ],
+            """;
+
+        Load(WithUplinks(twice), out string error).Should().BeNull();
+        error.Should().Contain("gb7rdg-2").And.Contain("One page cannot be two stations");
+        ShouldGuideTheOperator(error);
+    }
+
+    [Fact]
+    public void One_Token_For_Two_Stations_Is_A_Configuration_Error()
+    {
+        const string shared = """
+            "uplinks": [
+              { "callsign": "GB7RDG-2", "slug": "gb7rdg-2",
+                "tokenSha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" },
+              { "callsign": "M0LTE-7", "slug": "m0lte-7",
+                "tokenSha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" }
+            ],
+            """;
+
+        // A token names one station. The same one twice cannot say which of them is connecting,
+        // and the one-connection-per-token rule would have them closing each other's sockets.
+        Load(WithUplinks(shared), out string error).Should().BeNull();
+        error.Should().Contain("another entry already has").And.Contain("a token of its own");
+        ShouldGuideTheOperator(error);
+    }
+
+    [Fact]
+    public void An_Unknown_Key_In_An_Uplink_Is_Reported()
+    {
+        DaemonConfig? config = Load(
+            WithUplinks(OneUplink.Replace("\"slug\"", "\"slugg\"")), out string error);
+
+        // Ignored silently by the deserialiser, which is exactly what makes it worth saying: a
+        // station with a typo for a slug would be served under an empty path segment.
+        error.Should().Contain("cannot be a path segment", "the missing slug is caught first");
+        config.Should().BeNull();
+    }
+
+    /// <summary>The working monitor config with an uplink table dropped into it.</summary>
+    private static string WithUplinks(string uplinks) =>
+        Working.Replace("\"monitor\": {", "\"monitor\": {\n    " + uplinks);
+
     private List<string> Errors { get; } = [];
 
     private DaemonConfig? Load(string json, out string error)

@@ -1,0 +1,1043 @@
+using System.Diagnostics;
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
+using AwesomeAssertions;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Time.Testing;
+using Packet.SoundModem.Daemon;
+using Packet.SoundModem.UberSdr;
+
+namespace Packet.SoundModem.Tests.Monitor;
+
+/// <summary>
+/// The monitor's side of a private station's uplink: who is let in, what a relayed station is
+/// once it is, and what neither a mistake nor an attack can make this site do.
+/// </summary>
+/// <remarks>
+/// <para>Driven against a real <see cref="MonitorHost"/> on a real port, with a real
+/// <see cref="ClientWebSocket"/> standing in for the station and real browsers watching the page,
+/// because every promise here is about a socket. The station is <see cref="StubStation"/>, which
+/// speaks the wire format of <c>docs/uplink-plan.md</c> 4.2 and can also send things a
+/// well-behaved station never would.</para>
+/// <para>The clock is fake, so a linger is sixty seconds of nothing rather than sixty seconds of
+/// waiting, and the one test that is genuinely about elapsed time says so.</para>
+/// </remarks>
+public class UplinkTests
+{
+    private const string Callsign = "GB7RDG-2";
+    private const string Slug = "gb7rdg-2";
+
+    [Fact]
+    public async Task An_Uplink_With_No_Token_Is_Refused()
+    {
+        await using var h = await Harness.StartAsync();
+
+        WebSocketException refused = await Assert.ThrowsAsync<WebSocketException>(
+            () => StubStation.ConnectAsync(h.Port, token: null));
+
+        Status(refused).Should().Be(
+            401, "the endpoint is on the public port and the token is the whole credential");
+        (await h.StationsAsync()).Should().BeEmpty("nothing is built for a connection that is not let in");
+    }
+
+    [Fact]
+    public async Task An_Uplink_With_A_Wrong_Token_Is_Refused_And_Delayed()
+    {
+        await using var h = await Harness.StartAsync();
+
+        // On the real clock, because the delay is what makes a guessing run cost something and a
+        // fake one would let it be skipped. It is not the defence - 256 bits is - but it is the
+        // reason an attempt is not free.
+        var elapsed = Stopwatch.StartNew();
+        WebSocketException refused = await Assert.ThrowsAsync<WebSocketException>(
+            () => StubStation.ConnectAsync(h.Port, "pdnsm_not-a-token-this-site-ever-issued"));
+        elapsed.Stop();
+
+        Status(refused).Should().Be(401);
+        elapsed.Elapsed.Should().BeGreaterThan(
+            UplinkServer.BadTokenDelay - TimeSpan.FromMilliseconds(150),
+            "a wrong token is held before it is told so");
+
+        h.Errors.Should().ContainSingle(
+            line => line.Contains("token this site has not issued", StringComparison.Ordinal),
+            "a run of guesses is visible in the journal, counted, and at most one line a minute");
+        (await h.StationsAsync()).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task An_Uplink_Whose_Callsign_Does_Not_Match_Its_Token_Is_Refused()
+    {
+        await using var h = await Harness.StartAsync();
+
+        // The token is real. What it is not is a licence to be somebody else: the callsign is
+        // bound to the token, which is what stops one station claiming another's page.
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, "M0LTE-7");
+        await station.ClosedAsync();
+
+        station.Welcome.Should().BeNull();
+        station.ClosedBecause.Should().Contain("M0LTE-7").And.Contain(Callsign);
+        (await h.StationsAsync()).Should().BeEmpty("no page is built for a station that could not say who it is");
+    }
+
+    [Fact]
+    public async Task A_Station_Cannot_Choose_Its_Own_Slug()
+    {
+        await using var h = await Harness.StartAsync();
+
+        // "slug" is not a field of the wire format at all. Sent anyway, it is one more thing this
+        // parser ignores, and the page is where the site's own table says it is.
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.SendAsync(new { type = "hello", protocol = 1, callsign = Callsign, slug = "somewhere-else" });
+        await station.WelcomedAsync();
+
+        station.Welcome!.Value.GetProperty("slug").GetString().Should().Be(Slug);
+        station.Welcome!.Value.GetProperty("path").GetString().Should().Be($"/r/{Slug}/");
+        (await h.GetAsync($"/r/{Slug}/")).Should().Contain("<!doctype html>");
+        (await h.StatusAsync("/r/somewhere-else/")).Should().Be(
+            System.Net.HttpStatusCode.NotFound, "a station cannot ask for a page");
+    }
+
+    [Fact]
+    public async Task A_Second_Connection_On_One_Token_Closes_The_First()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var first = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await first.WelcomedAsync();
+
+        // A station whose socket has half-closed - a NAT entry dropped, a router rebooted - must
+        // not be locked out by its own ghost, so the newcomer wins.
+        await using var second = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await second.WelcomedAsync();
+        await first.ClosedAsync();
+
+        first.ClosedBecause.Should().Contain("another connection authenticated");
+        second.Connected.Should().BeTrue();
+        (await h.StationsAsync()).Should().ContainSingle("one station, however many sockets have claimed it");
+    }
+
+    [Fact]
+    public async Task A_Connected_Station_Is_Offered_And_A_Disconnected_One_Is_Not()
+    {
+        await using var h = await Harness.StartAsync();
+
+        var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+        await h.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+
+        JsonElement live = await h.RowAsync(Slug);
+        live.GetProperty("kind").GetString().Should().Be("station");
+        live.GetProperty("callsign").GetString().Should().Be(Callsign);
+        live.GetProperty("why").ValueKind.Should().Be(JsonValueKind.Null);
+
+        await station.DisposeAsync();
+        await h.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+
+        JsonElement gone = await h.RowAsync(Slug);
+        gone.GetProperty("why").GetString().Should().Be("not connected just now");
+        gone.GetProperty("state").GetString().Should().Be("offline");
+    }
+
+    [Fact]
+    public async Task A_Disconnected_Station_Keeps_Its_Page_Its_History_And_Its_Links()
+    {
+        await using var h = await Harness.StartAsync();
+
+        var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+        await station.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "hello from the shed"));
+        await using (Browser watching = await h.WatchAsync(Slug))
+        {
+            await watching.UntilTextAsync("frame");
+        }
+
+        await station.DisposeAsync();
+        await h.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+
+        // The page is still there, and so is everything the station sent while it was up. This is
+        // the whole reason a station is never torn down: a quiet band an hour later still looks
+        // like a band somebody has been listening to.
+        (await h.GetAsync($"/r/{Slug}/")).Should().Contain("<!doctype html>");
+        await using Browser after = await h.WatchAsync(Slug);
+        JsonElement history = await after.UntilTextAsync("history");
+        history.GetProperty("frames").EnumerateArray().Should().ContainSingle(
+            f => f.GetProperty("from").GetString() == "M0LTE");
+        JsonElement links = await after.UntilTextAsync("links");
+        links.GetProperty("links").GetArrayLength().Should().BeGreaterThan(
+            0, "the links panel is folded from the frames' own bytes and outlives the station");
+    }
+
+    [Fact]
+    public async Task A_Reconnecting_Station_Comes_Back_Under_The_Same_Slug_And_The_Same_Log()
+    {
+        await using var h = await Harness.StartAsync();
+
+        var first = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await first.WelcomedAsync();
+        await first.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "before the gap"));
+        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
+        await first.DisposeAsync();
+        await h.UntilAsync(async () => !(await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+
+        await using var again = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await again.WelcomedAsync();
+        again.Welcome!.Value.GetProperty("slug").GetString().Should().Be(Slug);
+
+        await again.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "after the gap"));
+        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 2));
+        (await h.StationsAsync()).Should().ContainSingle("the same station came back, not a second one");
+    }
+
+    [Fact]
+    public async Task A_Relayed_Station_Builds_No_Modems()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+
+        await using Browser browser = await h.WatchAsync(Slug);
+        JsonElement config = await browser.UntilTextAsync("config");
+
+        // The bands on the page are the ones off the wire, edge for edge. That is only possible
+        // when nothing enumerable carries them: the server draws a declared band exactly when the
+        // channel has no modem on that sub-channel, so a band drawn at the declared edges is the
+        // proof there is no modem behind it. This site runs none for a relayed station, which is
+        // what keeps the decodes the operator's own - and what makes a station cost 20 demodulators
+        // less than a receiver.
+        JsonElement band = config.GetProperty("modems").EnumerateArray().Single();
+        band.GetProperty("sub").GetInt32().Should().Be(0);
+        band.GetProperty("mode").GetString().Should().Be("afsk300-il2pc");
+        band.GetProperty("lowHz").GetDouble().Should().Be(700);
+        band.GetProperty("highHz").GetDouble().Should().Be(1000);
+        band.GetProperty("centreHz").GetDouble().Should().Be(850);
+        config.GetProperty("sampleRate").GetInt32().Should().Be(
+            12000, "the channel runs at the rate the station said it is relaying at");
+        config.GetProperty("receiverKind").GetString().Should().Be("station");
+    }
+
+    [Fact]
+    public async Task Relayed_Audio_Becomes_A_Waterfall_Line()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+        await using Browser browser = await h.WatchAsync(Slug);
+        await browser.UntilTextAsync("config");
+        await StubStation.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
+
+        await station.SendSecondsAsync(0.5);
+
+        byte[] line = await browser.UntilBinaryAsync(0x01);
+        line.Length.Should().BeGreaterThan(
+            5, "a spectrum line is a type byte, a line index and one byte per bin");
+    }
+
+    [Fact]
+    public async Task Relayed_Transmit_Audio_Becomes_A_Line_Marked_As_Ours()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+        await using Browser browser = await h.WatchAsync(Slug);
+        await browser.UntilTextAsync("config");
+
+        // The station's own transmissions are part of what a visitor hears and sees, flagged so
+        // the monitor paints them as ours: the take is what the station was working, not only
+        // what it heard.
+        await station.SendSecondsAsync(0.5, transmitted: true);
+
+        byte[] ours = await browser.UntilBinaryAsync(0x03);
+        ours[0].Should().Be(0x03);
+        browser.Binaries(0x01).Should().BeEmpty(
+            "a block is never half transmitted and half received, and nor is the stream");
+    }
+
+    [Fact]
+    public async Task A_Relayed_Frame_Is_Written_To_The_Stations_Own_Frame_Log()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+
+        var heardAt = new DateTimeOffset(2026, 9, 4, 11, 22, 33, TimeSpan.Zero);
+        await station.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "into the log"), at: heardAt);
+        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
+
+        (string from, string mode, string at) = h.LastLoggedFrame();
+        from.Should().Be("M0LTE");
+        mode.Should().Be("afsk300-il2pc");
+        at.Should().Contain(
+            "11:22:33", "the log carries the station's own clock, not the wire's");
+        File.Exists(Path.Combine(h.FrameLogDirectory, $"frames-{Slug}.db")).Should().BeTrue(
+            "one log per station, named as every other station's is");
+    }
+
+    [Fact]
+    public async Task A_Relayed_Frame_Reaches_The_Monitors_Own_Links_Panel()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+        await using Browser browser = await h.WatchAsync(Slug);
+        await browser.UntilTextAsync("config");
+
+        await station.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "and into the links panel"));
+
+        // Folded here from the frame's own bytes rather than sent as a summary of them: one
+        // implementation of a link card, so the site's and the station's cannot disagree.
+        JsonElement link = await browser.UntilTextAsync("link");
+        string card = link.GetProperty("link").GetRawText();
+        card.Should().Contain("M0LTE").And.Contain("GB7RDG-2");
+    }
+
+    [Fact]
+    public async Task A_Relayed_Frame_Is_Tagged_Onto_The_Burst_That_Carried_It()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+        await using Browser browser = await h.WatchAsync(Slug);
+        await browser.UntilTextAsync("config");
+
+        // A frame crosses the wire as soon as the station decodes it, but the audio that carried
+        // the burst is still in the jitter buffer here. Both go to a browser down one ordered
+        // queue, so the test is an ordering one: the frame must arrive after the lines its own
+        // audio produced, not among them.
+        browser.Forget();
+        await station.SendSecondsAsync(1.5);
+        await station.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "on the burst"));
+
+        JsonElement frame = await browser.UntilTextAsync("frame");
+        int linesBefore = browser.BinariesBefore(0x01, "frame");
+        linesBefore.Should().BeGreaterThanOrEqualTo(
+            30,
+            "the frame waits for the audio it belongs to; listed on arrival it would be tagged "
+            + "five to twelve lines above its own burst");
+        frame.GetProperty("line").GetInt64().Should().BeGreaterThanOrEqualTo(30);
+    }
+
+    [Fact]
+    public async Task A_Viewer_Arriving_Sends_Demand_And_Leaving_Sends_It_Again_After_The_Linger()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+        await StubStation.UntilAsync(
+            () => station.Demands.Count >= 1, "the demand a station gets on connecting");
+        station.Demands[0].Should().Be(0, "nothing flows until somebody is watching");
+
+        Browser browser = await h.WatchAsync(Slug);
+        await StubStation.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
+
+        await browser.DisposeAsync();
+        await h.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("viewers").GetInt32() == 0);
+
+        // The same linger a receiver's session gets, and for the same reason: a page refresh or a
+        // tab switch must not stop and restart a home station's stream. The count is repeated on
+        // the heartbeat while the linger runs, which is why this asks whether a zero ever went out
+        // rather than counting messages.
+        h.Time.Advance(Harness.Linger - TimeSpan.FromSeconds(1));
+        await Task.Delay(200);
+        List<int> sinceWatched = [.. station.Demands.SkipWhile(v => v == 0)];
+        sinceWatched.Should().NotContain(
+            0, "nothing is stopped inside the linger, however many heartbeats pass");
+
+        h.Time.Advance(TimeSpan.FromSeconds(1));
+        await StubStation.UntilAsync(
+            () => station.Demands[^1] == 0, "the demand after the linger");
+    }
+
+    [Fact]
+    public async Task Two_Viewers_On_One_Station_Ask_For_One_Stream()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+
+        await using Browser first = await h.WatchAsync(Slug);
+        await StubStation.UntilAsync(() => station.Demands.Contains(1), "a demand for one viewer");
+        await using Browser second = await h.WatchAsync(Slug);
+        await StubStation.UntilAsync(() => station.Demands.Contains(2), "a demand for two viewers");
+
+        // Ten people watching cost the station one stream, exactly as ten people watching a
+        // receiver cost its operator one session. The monitor fans it out.
+        station.Demands.Should().Equal([0, 1, 2]);
+        (await h.StationsAsync()).Should().ContainSingle();
+        (await h.RowAsync(Slug)).GetProperty("viewers").GetInt32().Should().Be(2);
+    }
+
+    [Fact]
+    public async Task A_Station_Nobody_Is_Watching_Stands_Its_Dead_Feed_Watch_Down()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+
+        // Quiet with nobody watching is the whole design, so the starvation watch is stood down
+        // by SessionLive rather than firing every threshold. Wound well past it, several times
+        // over, because the watch is polled from a timer and would fire on any one of them.
+        for (int i = 0; i < 5; i++)
+        {
+            h.Time.Advance(TimeSpan.FromSeconds(60));
+            await Task.Delay(20);
+        }
+
+        h.Errors.Should().NotContain(
+            line => line.Contains("starved", StringComparison.Ordinal),
+            "a station nobody has picked is not a broken one");
+        (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean().Should().BeTrue();
+        station.Connected.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task A_Station_Slug_Pushes_A_Colliding_Receiver_Onto_Its_Full_Slug()
+    {
+        // A receiver whose host sanitises to exactly the slug this site has promised a station.
+        const string colliding = """
+            {"count": 1, "instances": [
+              {"host": "gb7rdg-2.instance.ubersdr.org", "port": 443, "tls": true,
+               "callsign": "GB7RDG-2", "name": "somebody else's receiver",
+               "location": "nowhere", "public_url": "https://gb7rdg-2.instance.ubersdr.org/",
+               "is_online": true, "available_clients": 5, "max_clients": 20,
+               "public_iq_modes": ["iq48"], "antenna_connected": true, "load_status": "ok",
+               "snr_0_30_mhz": 10,
+               "tuning_range": {"min_frequency": 10000, "max_frequency": 30000000, "reported": true}}
+            ]}
+            """;
+        await using var h = await Harness.StartAsync(directoryJson: colliding);
+
+        // The station wins, by the mechanism that already existed for a receiver's own slug: its
+        // slug is a callsign somebody was issued, and a receiver's is derived from a hostname.
+        JsonDocument snapshot = JsonDocument.Parse(await h.GetAsync("/api/instances"));
+        string[] slugs = [.. snapshot.RootElement.GetProperty("receivers").EnumerateArray()
+            .Select(r => r.GetProperty("slug").GetString()!)];
+        slugs.Should().Equal(["gb7rdg-2-instance-ubersdr-org"]);
+        snapshot.Dispose();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+        station.Welcome!.Value.GetProperty("slug").GetString().Should().Be(Slug);
+    }
+
+    [Fact]
+    public async Task An_Oversized_Hello_Closes_The_Connection()
+    {
+        await using var h = await Harness.StartAsync();
+
+        ClientWebSocket socket = await StubStation.ConnectAsync(h.Port, h.Token);
+        using (socket)
+        {
+            // Capped before a byte of it is parsed, and closed rather than truncated: nothing
+            // should ever arrive on somebody's screen half-said.
+            string huge = "{\"type\":\"hello\",\"protocol\":1,\"callsign\":\""
+                + new string('A', UplinkServer.MaxHelloBytes) + "\"}";
+            await socket.SendAsync(
+                Encoding.UTF8.GetBytes(huge), WebSocketMessageType.Text, true,
+                CancellationToken.None);
+
+            var buffer = new byte[1024];
+            WebSocketReceiveResult result = await socket.ReceiveAsync(
+                buffer, new CancellationTokenSource(TimeSpan.FromSeconds(20)).Token);
+            result.MessageType.Should().Be(WebSocketMessageType.Close);
+            socket.CloseStatusDescription.Should().Contain("over");
+        }
+
+        (await h.StationsAsync()).Should().BeEmpty();
+        h.Errors.Should().Contain(line => line.Contains("over 8192 bytes", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task An_Audio_Message_Of_The_Wrong_Length_Closes_The_Connection()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+
+        // The one binary message there is has one length, and it is the one the station's own
+        // hello declared. Nothing in the payload is decoded, so there is nothing here for a
+        // malformed one to reach - which is why the length is the whole check.
+        await station.SendBinaryAsync(station.AudioMessage(false, new short[station.BlockSamples - 1]));
+        await station.ClosedAsync();
+
+        station.ClosedBecause.Should().Contain("audio message");
+        h.Errors.Should().Contain(line =>
+            line.Contains(Callsign, StringComparison.Ordinal)
+            && line.Contains("audio message", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_Flooding_Station_Is_Dropped_And_Named()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+
+        // Well past twice the bitrate its own hello declared, in no time at all, which is what a
+        // flood is. The fan-out queue to browsers is already bounded and drops oldest, so what
+        // has to be bounded is this reader and the jitter buffer behind it.
+        try
+        {
+            for (int i = 0; i < 2000 && station.Connected; i++)
+            {
+                await station.SendAudioAsync(transmitted: false);
+            }
+        }
+        catch (WebSocketException)
+        {
+            // Expected: the monitor hung up in the middle of the flood.
+        }
+
+        await station.ClosedAsync();
+        h.Errors.Should().Contain(line =>
+            line.Contains(Callsign, StringComparison.Ordinal)
+            && line.Contains("twice the rate", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task An_Overrunning_Jitter_Buffer_Drops_The_Oldest_Audio()
+    {
+        bool transmit = false;
+        var input = new UplinkAudioInput(1000, t => transmit = t, bufferSeconds: 1.0);
+
+        // Three seconds into a one-second buffer. A late block is worth less than a live one to
+        // somebody watching a waterfall, and a buffer that grew instead would turn a slow reader
+        // into a memory leak with a display minutes behind the band.
+        for (int i = 0; i < 30; i++)
+        {
+            input.Push(Enumerable.Repeat((short)(i + 1), 100).ToArray(), transmitted: false);
+        }
+
+        input.Buffered.Should().BeLessThanOrEqualTo(1000, "the buffer is bounded");
+        input.Dropped.Should().BeGreaterThan(0);
+        input.Accepted.Should().Be(3000);
+
+        // Dropped audio counts as consumed, which is what makes the frame hold self-correcting:
+        // a frame waiting on audio that was thrown away would otherwise wait for ever.
+        input.Consumed.Should().Be(input.Dropped);
+
+        // And what is left is the newest, not the oldest.
+        float[] read = new float[100];
+        input.Read(read).Should().Be(100);
+        read[0].Should().BeApproximately(
+            21 / 32768f, 1e-6f, "the ten blocks that fit are the last ten, not the first");
+        transmit.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_Station_Site_Url_That_Is_Not_Http_Is_Refused()
+    {
+        await using var h = await Harness.StartAsync();
+
+        // The scheme is the part HTML escaping does not touch: a javascript: URL carries none of
+        // the four characters an escaper looks for and would run on this site's origin in every
+        // visitor's session. The same check the directory's public_url goes through, at the same
+        // point - the boundary - because there is no bottom to the list of places it is rendered.
+        await using var station = await StubStation.OpenAsync(
+            h.Port, h.Token, Callsign, site: "javascript:alert(document.cookie)");
+        await station.WelcomedAsync();
+        await h.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+
+        (await h.RowAsync(Slug)).GetProperty("publicUrl").ValueKind.Should().Be(JsonValueKind.Null);
+
+        await using Browser browser = await h.WatchAsync(Slug);
+        JsonElement config = await browser.UntilTextAsync("config");
+        config.GetProperty("receiverUrl").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task A_Stations_Name_In_The_Journal_Is_Ascii()
+    {
+        await using var h = await Harness.StartAsync();
+
+        // journalctl's pager under a C locale renders a byte above 0x7F as <E2><80><94>, and
+        // SourceTextTests cannot catch runtime data. So everything a station sends that reaches
+        // the journal is flattened, exactly as the directory's strings are.
+        await using var station = await StubStation.OpenAsync(
+            h.Port, h.Token, Callsign, op: "Tom \u2014 M0LTE \u00b5", location: "R\u00e9ading");
+        await station.WelcomedAsync();
+
+        h.Lines.Should().Contain(line => line.Contains("connected", StringComparison.Ordinal));
+        string[] everything = [.. h.Lines, .. h.Errors];
+        everything.Should().OnlyContain(
+            line => IsAscii(line),
+            "a station's words in the journal are ASCII whatever it sent");
+    }
+
+    [Fact]
+    public async Task The_Instances_Api_Says_Which_Rows_Are_Stations()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(
+            h.Port, h.Token, Callsign, site: "https://gb7rdg.example/");
+        await station.WelcomedAsync();
+        await h.UntilAsync(async () => (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean());
+
+        using JsonDocument snapshot = JsonDocument.Parse(await h.GetAsync("/api/instances"));
+        JsonElement[] rows = [.. snapshot.RootElement.GetProperty("receivers").EnumerateArray()];
+
+        rows.Where(r => r.GetProperty("kind").GetString() == "receiver").Should().HaveCount(
+            2, "every receiver row now says which kind it is, and is otherwise what it was");
+
+        JsonElement row = rows.Single(r => r.GetProperty("kind").GetString() == "station");
+        row.GetProperty("slug").GetString().Should().Be(Slug);
+        row.GetProperty("callsign").GetString().Should().Be(Callsign);
+        row.GetProperty("operator").GetString().Should().Be("Tom M0LTE");
+        row.GetProperty("location").GetString().Should().Be("Reading, England");
+        row.GetProperty("radio").GetString().Should().Be("IC-7300 into a doublet at 10 m");
+        row.GetProperty("publicUrl").GetString().Should().Be("https://gb7rdg.example/");
+        row.GetProperty("modes").EnumerateArray().Should().ContainSingle();
+
+        // The five figures a station has no honest answer for. Present and null rather than
+        // absent, so a reader of this API sees one row shape.
+        foreach (string borrowed in (string[])
+            ["host", "snrDb", "loadStatus", "availableClients", "maxClients"])
+        {
+            row.GetProperty(borrowed).ValueKind.Should().Be(
+                JsonValueKind.Null,
+                "{0} is a fact about a web receiver, and inventing it would be inventing it",
+                borrowed);
+        }
+    }
+
+    /// <summary>
+    /// A monitor with two fake receivers, one configured uplink, a real frame-log directory and a
+    /// fake clock.
+    /// </summary>
+    private sealed class Harness : IAsyncDisposable
+    {
+        internal static readonly TimeSpan Linger = TimeSpan.FromSeconds(60);
+
+        private readonly MonitorHost _host;
+        private readonly HttpClient _http;
+        private readonly ScratchDirectory _scratch = new("pdnsm-uplink-tests");
+        private readonly List<Browser> _browsers = [];
+
+        private Harness(int port, string directoryJson)
+        {
+            Port = port;
+            (Token, string hash) = UplinkToken.Mint();
+            _host = new MonitorHost(new MonitorHostOptions
+            {
+                Directory = new UberSdrDirectoryOptions
+                {
+                    Url = "https://instances.example.org/api/instances",
+                    IqMode = "iq48",
+                    WindowLowHz = 7050136,
+                    WindowHighHz = 7051776,
+                },
+                Port = port,
+                Bind = "127.0.0.1",
+                Modems = [new ModemConfig { SubChannel = 0, Mode = "afsk1200", Frequency = 1700 }],
+                Uplinks =
+                [
+                    new UplinkConfig { Callsign = Callsign, Slug = Slug, TokenSha256 = hash },
+                ],
+                Linger = Linger,
+                DspRate = 12000,
+                DialHz = 7049450,
+                FrameLogDirectory = _scratch.FullName,
+                Title = "UK packet monitor",
+                About = "The 7050-7052 kHz packet window on 40 m. Receive only.",
+                IdBeacons = false,
+                TimeProvider = Time,
+                Journal = _ => new StationJournal("", Lines.Add, Errors.Add),
+                FetchDirectory = _ => Task.FromResult(directoryJson),
+                OpenInput = (_, _, _) => throw new InvalidOperationException(
+                    "no receiver is picked in these tests"),
+            });
+
+            _http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        }
+
+        internal int Port { get; }
+
+        /// <summary>The token this site has issued, in plain, as its operator would be given it.</summary>
+        internal string Token { get; }
+
+        internal string FrameLogDirectory => _scratch.FullName;
+
+        internal FakeTimeProvider Time { get; } = new();
+
+        internal List<string> Lines { get; } = [];
+
+        internal List<string> Errors { get; } = [];
+
+        internal static async Task<Harness> StartAsync(string? directoryJson = null)
+        {
+            var harness = new Harness(FreePorts.Next(), directoryJson ?? DirectoryJson);
+            (await harness._host.StartAsync()).Should().Be(0, "the site has to come up");
+            return harness;
+        }
+
+        internal Task<string> GetAsync(string path) => _http.GetStringAsync(path);
+
+        internal async Task<System.Net.HttpStatusCode> StatusAsync(string path) =>
+            (await _http.GetAsync(path)).StatusCode;
+
+        /// <summary>One row of /api/instances, by slug.</summary>
+        internal async Task<JsonElement> RowAsync(string slug)
+        {
+            using JsonDocument snapshot = JsonDocument.Parse(await GetAsync("/api/instances"));
+            return snapshot.RootElement.GetProperty("receivers").EnumerateArray()
+                .Single(r => r.GetProperty("slug").GetString() == slug).Clone();
+        }
+
+        /// <summary>Every relayed station this site holds, which is what "built" means here.</summary>
+        internal async Task<JsonElement[]> StationsAsync()
+        {
+            using JsonDocument snapshot = JsonDocument.Parse(await GetAsync("/api/instances"));
+            return [.. snapshot.RootElement.GetProperty("receivers").EnumerateArray()
+                .Where(r => r.GetProperty("kind").GetString() == "station")
+                .Select(r => r.Clone())];
+        }
+
+        /// <summary>A browser watching the station's page, on its own prefix.</summary>
+        internal async Task<Browser> WatchAsync(string slug)
+        {
+            var browser = new Browser();
+            await browser.ConnectAsync(Port, slug);
+            lock (_browsers)
+            {
+                _browsers.Add(browser);
+            }
+
+            return browser;
+        }
+
+        /// <summary>How many frames this station's own log holds, read while it is still open.</summary>
+        internal long LoggedFrames()
+        {
+            using SqliteConnection connection = OpenLog();
+            using SqliteCommand count = connection.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM frames";
+            return Convert.ToInt64(count.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        internal (string From, string Mode, string At) LastLoggedFrame()
+        {
+            using SqliteConnection connection = OpenLog();
+            using SqliteCommand read = connection.CreateCommand();
+            read.CommandText =
+                "SELECT source, mode, heard_at FROM frames ORDER BY id DESC LIMIT 1";
+            using SqliteDataReader row = read.ExecuteReader();
+            row.Read().Should().BeTrue("the log has a frame in it");
+            return (row.GetString(0), row.GetString(1), row.GetString(2));
+        }
+
+        private SqliteConnection OpenLog()
+        {
+            var connection = new SqliteConnection(
+                $"Data Source={Path.Combine(FrameLogDirectory, $"frames-{Slug}.db")};Mode=ReadOnly");
+            connection.Open();
+            return connection;
+        }
+
+        /// <summary>Waits on the condition rather than sleeping through a guess.</summary>
+        internal async Task UntilAsync(Func<Task<bool>> condition)
+        {
+            using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            while (!await condition())
+            {
+                giveUp.Token.ThrowIfCancellationRequested();
+                await Task.Delay(20, giveUp.Token);
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            Browser[] browsers;
+            lock (_browsers)
+            {
+                browsers = [.. _browsers];
+                _browsers.Clear();
+            }
+
+            foreach (Browser browser in browsers)
+            {
+                await browser.DisposeAsync();
+            }
+
+            _http.Dispose();
+            await _host.DisposeAsync();
+            SqliteConnection.ClearAllPools();
+            _scratch.Dispose();
+        }
+
+        /// <summary>Two receivers, so that a station is listed alongside them and not alone.</summary>
+        internal const string DirectoryJson = """
+            {"count": 2, "instances": [
+              {"host": "m9psy-1.instance.ubersdr.org", "port": 443, "tls": true,
+               "callsign": "M9PSY-1", "name": "RX888 with 40m Full Wave Loop (GPSDO)",
+               "location": "Dalgety Bay, Scotland, UK",
+               "public_url": "https://m9psy-1.instance.ubersdr.org/",
+               "is_online": true, "available_clients": 19, "max_clients": 20,
+               "public_iq_modes": ["iq48"], "antenna_connected": true, "load_status": "ok",
+               "snr_0_30_mhz": 31,
+               "tuning_range": {"min_frequency": 10000, "max_frequency": 30000000, "reported": true}},
+              {"host": "reading-ubersdr.m0lte.uk", "port": 443, "tls": true,
+               "callsign": "M0LTE", "name": "SDR with Active Loop",
+               "location": "Reading, England, UK",
+               "public_url": "https://reading-ubersdr.m0lte.uk/",
+               "is_online": true, "available_clients": 20, "max_clients": 20,
+               "public_iq_modes": ["iq48"], "antenna_connected": true, "load_status": "ok",
+               "snr_0_30_mhz": 21,
+               "tuning_range": {"min_frequency": 10000, "max_frequency": 30000000, "reported": true}}
+            ]}
+            """;
+    }
+
+    /// <summary>
+    /// A browser watching a page, keeping every message it was sent in the order it arrived.
+    /// </summary>
+    /// <remarks>
+    /// The order is the point for one of these tests: the spectrum lines and the frame rows go
+    /// down one bounded per-client queue, so "the frame arrived after the lines its own audio
+    /// produced" is a question this can actually answer.
+    /// </remarks>
+    private sealed class Browser : IAsyncDisposable
+    {
+        private readonly ClientWebSocket _socket = new();
+        private readonly List<(bool Binary, byte[] Payload)> _messages = [];
+        private readonly Lock _gate = new();
+        private readonly CancellationTokenSource _stopping = new();
+        private Task? _reading;
+        private bool _disposed;
+
+        internal async Task ConnectAsync(int port, string slug)
+        {
+            await _socket.ConnectAsync(
+                new Uri($"ws://127.0.0.1:{port}/r/{slug}/ws"), CancellationToken.None);
+            _reading = Task.Run(ReadAsync);
+        }
+
+        /// <summary>Throws away what has arrived so far, so a count starts from here.</summary>
+        internal void Forget()
+        {
+            lock (_gate)
+            {
+                _messages.Clear();
+            }
+        }
+
+        /// <summary>Every binary message of this type seen so far.</summary>
+        internal byte[][] Binaries(byte type)
+        {
+            lock (_gate)
+            {
+                return [.. _messages
+                    .Where(m => m.Binary && m.Payload.Length > 0 && m.Payload[0] == type)
+                    .Select(m => m.Payload)];
+            }
+        }
+
+        /// <summary>How many binary messages of this type arrived before the first text message
+        /// of this kind.</summary>
+        internal int BinariesBefore(byte type, string textType)
+        {
+            lock (_gate)
+            {
+                int count = 0;
+                foreach ((bool binary, byte[] payload) in _messages)
+                {
+                    if (binary)
+                    {
+                        if (payload.Length > 0 && payload[0] == type)
+                        {
+                            count++;
+                        }
+
+                        continue;
+                    }
+
+                    if (TypeOf(payload) == textType)
+                    {
+                        return count;
+                    }
+                }
+
+                return -1;
+            }
+        }
+
+        /// <summary>Waits for the first text message of this kind and returns it.</summary>
+        internal async Task<JsonElement> UntilTextAsync(string type)
+        {
+            JsonElement? found = null;
+            await StubStation.UntilAsync(
+                () =>
+                {
+                    lock (_gate)
+                    {
+                        foreach ((bool binary, byte[] payload) in _messages)
+                        {
+                            if (!binary && TypeOf(payload) == type)
+                            {
+                                found = JsonDocument.Parse(payload).RootElement.Clone();
+                                return true;
+                            }
+                        }
+                    }
+
+                    return false;
+                },
+                $"a \"{type}\" message");
+            return found!.Value;
+        }
+
+        /// <summary>Waits for the first binary message of this type and returns it.</summary>
+        internal async Task<byte[]> UntilBinaryAsync(byte type)
+        {
+            await StubStation.UntilAsync(
+                () => Binaries(type).Length > 0, $"a binary message of type {type}");
+            return Binaries(type)[0];
+        }
+
+        private static string? TypeOf(byte[] payload)
+        {
+            try
+            {
+                using JsonDocument message = JsonDocument.Parse(payload);
+                return message.RootElement.TryGetProperty("type", out JsonElement type)
+                    ? type.GetString()
+                    : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private async Task ReadAsync()
+        {
+            var buffer = new byte[256 * 1024];
+            try
+            {
+                while (!_stopping.IsCancellationRequested)
+                {
+                    int at = 0;
+                    WebSocketReceiveResult result;
+                    do
+                    {
+                        result = await _socket.ReceiveAsync(
+                            new ArraySegment<byte>(buffer, at, buffer.Length - at),
+                            _stopping.Token);
+                        at += result.Count;
+                    }
+                    while (!result.EndOfMessage && at < buffer.Length);
+
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        return;
+                    }
+
+                    lock (_gate)
+                    {
+                        _messages.Add((
+                            result.MessageType == WebSocketMessageType.Binary,
+                            buffer[..at]));
+                    }
+                }
+            }
+            catch (Exception e) when (e is OperationCanceledException or WebSocketException
+                                          or ObjectDisposedException)
+            {
+                // The page was closed, which is what every one of these tests does eventually.
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (_disposed)
+            {
+                return;   // a test disposed it, and so does the harness on the way out
+            }
+
+            _disposed = true;
+            try
+            {
+                if (_socket.State == WebSocketState.Open)
+                {
+                    await _socket.CloseAsync(
+                        WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+                }
+            }
+            catch (Exception e) when (e is WebSocketException or ObjectDisposedException)
+            {
+                // A socket already gone is a browser already closed.
+            }
+
+            await _stopping.CancelAsync();
+            if (_reading is not null)
+            {
+                try
+                {
+                    await _reading.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                catch (Exception)
+                {
+                    // Not what any of these tests is about.
+                }
+            }
+
+            _socket.Dispose();
+            _stopping.Dispose();
+        }
+    }
+
+    /// <summary>Whether every character is printable ASCII, which journalctl's pager needs.</summary>
+    private static bool IsAscii(string line) => line.All(c => c >= ' ' && c <= '~');
+
+    private static int Status(WebSocketException refused) =>
+        refused.Data.Contains("HttpStatusCode")
+            ? (int)refused.Data["HttpStatusCode"]!
+            : (int)(refused.Message.Contains("401", StringComparison.Ordinal) ? 401 : 0);
+
+    /// <summary>A minimal AX.25 UI frame, so a relayed frame has real bytes behind it.</summary>
+    private static class Ax25
+    {
+        internal static byte[] Ui(string from, string to, string text)
+        {
+            var frame = new List<byte>();
+            frame.AddRange(Address(to));
+            frame.AddRange(Address(from, last: true));
+            frame.Add(0x03);   // UI
+            frame.Add(0xF0);   // no layer 3
+            frame.AddRange(Encoding.ASCII.GetBytes(text));
+            return [.. frame];
+        }
+
+        private static byte[] Address(string callsign, bool last = false)
+        {
+            string call = callsign;
+            int ssid = 0;
+            int hyphen = callsign.IndexOf('-', StringComparison.Ordinal);
+            if (hyphen >= 0)
+            {
+                call = callsign[..hyphen];
+                ssid = int.Parse(callsign[(hyphen + 1)..], System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            byte[] field = new byte[7];
+            for (int i = 0; i < 6; i++)
+            {
+                field[i] = (byte)((i < call.Length ? call[i] : ' ') << 1);
+            }
+
+            field[6] = (byte)(0x60 | (ssid << 1) | (last ? 1 : 0));
+            return field;
+        }
+    }
+}
