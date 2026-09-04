@@ -740,15 +740,25 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 {
                     source.Process(samples);
                 }
+
+                // The uplink gets what the picture is drawn from, so it is inside this gate and
+                // not beside it. Outside, the drain tail after a key-up - the pacer painting
+                // audio the sound card has not finished playing while the input has already
+                // resumed delivering - would put received and transmitted blocks on the wire
+                // alternately. The monitor draws its picture from those blocks, so it would
+                // reproduce in somebody else's browser exactly the broadband haze this gate
+                // exists to prevent here, and a listener would hear the keyup and the band mixed
+                // together. It also makes a mixed stream impossible to block into the
+                // fixed-length audio messages of the uplink plan's 4.2 without breaking 4.3's
+                // rule that one block is never both kinds.
+                //
+                // Before the s16 blocking BroadcastAudio does for a browser, and not conditional
+                // on anybody here having pressed Listen.
+                OfferAudio(samples, transmitted: false);
             }
 
             // The listener feed is a stream of its own and has nothing to do with the transform.
             BroadcastAudio(samples);
-
-            // And the uplink, which is a third stream of its own: the samples as they arrived,
-            // before the blocking and the s16 conversion BroadcastAudio does for a browser, and
-            // not conditional on anybody here having pressed Listen.
-            OfferAudio(samples, transmitted: false);
         });
 
         // Draw what we transmit, so the display stays continuous across a keyup instead of

@@ -419,6 +419,56 @@ public class WaterfallRelayTests : IDisposable
     }
 
     /// <summary>
+    /// Once a keyup is over, the audio the station is still painting and the audio it has started
+    /// hearing again do not go up interleaved.
+    /// </summary>
+    /// <remarks>
+    /// <para>The pacer keeps painting for as long as the sound card is still playing, which
+    /// outlives the unkey whenever the device's Drain returns early - the normal case. In that
+    /// window the input has already resumed delivering blocks, and the station drops them from its
+    /// own picture on purpose, because one transform accumulator holding part of a burst and part
+    /// of the band noise comes out broadband.</para>
+    /// <para>The relay gets what the picture is drawn from, for the same reason: the monitor draws
+    /// its picture from these blocks, so an interleaved stream would reproduce that haze in
+    /// somebody else's browser and a listener would hear the keyup and the band at once. It also
+    /// makes the wire format possible at all - fixed-length audio messages (4.2) and never two
+    /// kinds in one block (4.3) cannot both be met by a client fed alternating blocks.</para>
+    /// </remarks>
+    [Fact]
+    public async Task The_Drain_After_A_Keyup_Relays_One_Kind_Of_Audio_At_A_Time()
+    {
+        var time = new FakeTimeProvider();
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        long transmitted = 0;
+        channel.TransmittedAudio += samples => transmitted += samples.Length;
+
+        await using WaterfallWebServer server = WaterfallWebServer.Routed(
+            channel, new WaterfallOptions { LinesPerSecond = LinesPerSecond, TimeProvider = time });
+        var relay = new RecordingRelay();
+        server.Relay = relay;
+        server.Start();
+
+        await TransmitAsync(channel, Payload(60));
+
+        // What a sound card does across a drain: a display tick's worth of time passes, and a
+        // block of received audio turns up, over and over until the queue is empty and past it.
+        int ticks = (int)((transmitted + SamplesPerTick - 1) / SamplesPerTick) + 4;
+        for (int tick = 0; tick < ticks; tick++)
+        {
+            time.Advance(PacerPeriod);
+            channel.ProcessReceive(new float[HopSamples]);
+        }
+
+        string sequence = string.Concat(relay.AudioBlocks.Select(b => b.Transmitted ? "T" : "r"));
+        sequence.Should().Contain("T").And.Contain("r", "both halves of the drain must be covered");
+        sequence.Should().MatchRegex(
+            "^T+r+$",
+            "the keyup goes up, then the band does: one switch, and never a received block in the "
+            + "middle of a transmission the monitor is still painting");
+    }
+
+    /// <summary>
     /// A relay that says nobody is watching is offered no audio at all, in either direction.
     /// </summary>
     /// <remarks>
