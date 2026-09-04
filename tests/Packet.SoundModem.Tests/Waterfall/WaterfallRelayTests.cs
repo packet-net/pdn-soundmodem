@@ -716,6 +716,43 @@ public class WaterfallRelayTests : IDisposable
     }
 
     /// <summary>
+    /// Nothing is offered to a relay once the server has been disposed.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SoundModemChannel"/> has no way to remove a receive tap, so the tap this server
+    /// registered goes on being called for as long as the channel lives. That costs a disposed
+    /// server nothing, having no browsers left to disappoint, but a relay is an object with a
+    /// socket and a lifetime of its own, and "the station stopped, so the uplink stopped" should
+    /// be a fact rather than a coincidence.
+    /// </remarks>
+    [Fact]
+    public async Task Nothing_Is_Offered_To_A_Relay_After_The_Server_Is_Disposed()
+    {
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        WaterfallWebServer server = WaterfallWebServer.Routed(channel);
+        var relay = new RecordingRelay();
+        server.Relay = relay;
+        server.Start();
+
+        channel.ProcessReceive(new float[HopSamples]);
+        server.ReportIdBeacon(0, "afsk300-multi11", "KK4HEJ", "IDENT", 17);
+        server.SetRadioStatus("before");
+        int offered = relay.Calls;
+        offered.Should().BeGreaterThan(2, "the relay was working before the stop");
+
+        await server.DisposeAsync();
+
+        // Everything the station could still do to it: the tap is still registered on the channel,
+        // and both public entry points still exist.
+        channel.ProcessReceive(new float[HopSamples * 4]);
+        server.ReportIdBeacon(0, "afsk300-multi11", "KK4HEJ", "IDENT", 17);
+        server.SetRadioStatus("after");
+
+        relay.Calls.Should().Be(offered, "a disposed server has stopped publishing");
+    }
+
+    /// <summary>
     /// A pushed frame is tagged onto the line the display has actually reached, which on a monitor
     /// is its own count over the audio it has been given.
     /// </summary>

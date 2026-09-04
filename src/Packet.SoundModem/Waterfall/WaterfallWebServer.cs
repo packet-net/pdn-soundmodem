@@ -520,7 +520,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         Broadcast(WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(
             new { type = "radio", status }, Json));
 
-        if (Relay is { } relay)
+        if (LiveRelay is { } relay)
         {
             try
             {
@@ -625,6 +625,19 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// property rather than capturing it.</para>
     /// </remarks>
     public IWaterfallRelay? Relay { get; set; }
+
+    /// <summary>
+    /// The relay to offer to, or null - including once this server has been disposed, so that
+    /// nothing is offered after a stop.
+    /// </summary>
+    /// <remarks>
+    /// The stop is worth being explicit about rather than leaving to the fact that a disposed
+    /// server has no browsers left to disappoint. <see cref="SoundModemChannel"/> has no way to
+    /// remove a receive tap, so the tap this server registered in <see cref="Start"/> keeps being
+    /// called for as long as the channel lives; without this, a disposed server would go on
+    /// handing a relay audio, and a relay is an object with a socket and a lifetime of its own.
+    /// </remarks>
+    private IWaterfallRelay? LiveRelay => _stopping.IsCancellationRequested ? null : Relay;
 
     /// <summary>
     /// Whether the audio now being fed to <see cref="SoundModemChannel.ProcessReceive"/> is a
@@ -1072,7 +1085,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// </remarks>
     private void OfferAudio(ReadOnlySpan<float> samples, bool transmitted)
     {
-        if (Relay is not { } relay)
+        if (LiveRelay is not { } relay)
         {
             return;
         }
@@ -1540,7 +1553,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }, Json);
         Broadcast(WebSocketMessageType.Text, message);
 
-        if (Relay is not { } relay)
+        if (LiveRelay is not { } relay)
         {
             return;
         }
