@@ -132,6 +132,58 @@ public class WaterfallRelayTests : IDisposable
     }
 
     /// <summary>
+    /// A relay that goes to sleep inside <see cref="IWaterfallRelay.Audio"/>, but only for the
+    /// station's own transmitted audio, so that what a stalled transmit offer does to the receive
+    /// path can be measured on its own.
+    /// </summary>
+    private sealed class BlockingRelay : IWaterfallRelay
+    {
+        private readonly ManualResetEventSlim _entered = new(false);
+        private readonly ManualResetEventSlim _release = new(false);
+        private readonly List<bool> _kinds = [];
+
+        public bool Wanted => true;
+
+        /// <summary>Set while a call is parked inside the transmit offer.</summary>
+        public bool Inside { get; private set; }
+
+        public IReadOnlyList<bool> Kinds
+        {
+            get { lock (_kinds) { return [.. _kinds]; } }
+        }
+
+        public void WaitUntilInside(CancellationToken token) => _entered.Wait(token);
+
+        public void Release() => _release.Set();
+
+        public void Audio(ReadOnlySpan<float> samples, bool transmitted)
+        {
+            lock (_kinds)
+            {
+                _kinds.Add(transmitted);
+            }
+
+            if (!transmitted)
+            {
+                return;
+            }
+
+            Inside = true;
+            _entered.Set();
+            _release.Wait();
+            Inside = false;
+        }
+
+        public void Frame(RelayedFrame frame)
+        {
+        }
+
+        public void Radio(string? status)
+        {
+        }
+    }
+
+    /// <summary>
     /// Attaching a relay changes nothing a browser is sent: same messages, same bytes, same order.
     /// </summary>
     /// <remarks>
@@ -308,6 +360,62 @@ public class WaterfallRelayTests : IDisposable
             (int)transmitted, "the whole keyup, once, and no silence after it");
         relay.AudioBlocks.Should().AllSatisfy(
             b => b.Transmitted.Should().BeTrue("nothing was received during a keyup"));
+    }
+
+    /// <summary>
+    /// A relay that is slow in the transmit offer does not stop the station reading its sound
+    /// card.
+    /// </summary>
+    /// <remarks>
+    /// <para>The offer used to be made inside <c>_sourceLock</c>, which is the lock the receive
+    /// tap takes to paint, on the station's own audio read thread. A relay that was slow there did
+    /// not merely lose its own block: it parked that thread, and the station stopped consuming
+    /// from the sound card for as long as the relay took. A website being unreachable must not do
+    /// that to a node passing traffic (uplink plan 4.3), so the offer is made below the lock over
+    /// the same list, in the same order.</para>
+    /// <para>The relay here blocks on transmitted audio only. A relay that blocked on everything
+    /// would stall the receive path through the documented "must return promptly" contract on
+    /// <see cref="IWaterfallRelay.Audio"/> instead, which is a different fault with a different
+    /// answer; this test is about the lock.</para>
+    /// </remarks>
+    [Fact]
+    public async Task A_Relay_Slow_In_The_Transmit_Offer_Does_Not_Hold_Up_The_Receive_Path()
+    {
+        var time = new FakeTimeProvider();
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        await using WaterfallWebServer server = WaterfallWebServer.Routed(
+            channel, new WaterfallOptions { LinesPerSecond = LinesPerSecond, TimeProvider = time });
+        var relay = new BlockingRelay();
+        server.Relay = relay;
+        server.Start();
+
+        await TransmitAsync(channel, Payload(60));
+
+        // One advance big enough to release the whole queue, so the pacer is inside the tick that
+        // empties it: the transmit pending count is already zero and the station is unkeyed, which
+        // is precisely the window in which the receive tap wants the source lock.
+        Task painting = Task.Run(() => time.Advance(TimeSpan.FromSeconds(30)), _cancellation.Token);
+        relay.WaitUntilInside(_cancellation.Token);
+
+        Task receiving = Task.Run(() => channel.ProcessReceive(new float[HopSamples]), _cancellation.Token);
+        // Awaited against a deadline rather than blocked on, so that the bug this pins shows up as
+        // a failed assertion with a sentence rather than as a suite that never finishes.
+        Task first = await Task.WhenAny(receiving, Task.Delay(TimeSpan.FromSeconds(5)));
+        bool returned = ReferenceEquals(first, receiving);
+        bool stillInside = relay.Inside;
+        relay.Release();
+        await receiving;
+        await painting;
+
+        stillInside.Should().BeTrue(
+            "the relay must still have been parked in the transmit offer, or this proves nothing");
+        returned.Should().BeTrue(
+            "the station's audio read thread must not wait on a relay that is painting a keyup");
+
+        // And it went through the gate rather than round it, which is what says it took the lock
+        // the relay would have been holding.
+        relay.Kinds.Should().Contain(false, "the received block was drawn as well as delivered");
     }
 
     /// <summary>

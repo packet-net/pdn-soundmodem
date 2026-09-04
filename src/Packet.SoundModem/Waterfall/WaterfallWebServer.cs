@@ -1026,18 +1026,28 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 foreach (ArraySegment<float> piece in due)
                 {
                     source.Process(piece.AsSpan());
-
-                    // The uplink gets our own transmission from here rather than from
-                    // TransmittedAudio, and that is the whole reason the hook is in this method:
-                    // released at the rate real time passes, so a relayed picture trails the
-                    // modulator by exactly as much as the station's own does, for free.
-                    OfferAudio(piece.AsSpan(), transmitted: true);
                 }
             }
             finally
             {
                 _lineIsTransmit = false;
             }
+        }
+
+        // The uplink gets our own transmission from here rather than from TransmittedAudio, and
+        // that is the whole reason the hook is in this method: released at the rate real time
+        // passes, so a relayed picture trails the modulator by exactly as much as the station's
+        // own does, for free.
+        //
+        // Below the lock, not inside it, and this matters more than it looks. _sourceLock is what
+        // the receive tap takes to paint, on the station's audio read thread; a relay that was
+        // slow inside it would not merely lose its own block, it would park that thread and stop
+        // the station consuming from its sound card for as long as it took. A website being
+        // unreachable must not do that to a node passing traffic. The same due list, in the same
+        // order, so the pacing is exactly what was painted.
+        foreach (ArraySegment<float> piece in due)
+        {
+            OfferAudio(piece.AsSpan(), transmitted: true);
         }
     }
 
