@@ -282,9 +282,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// same picture the page shows.
     /// </summary>
     /// <remarks>
-    /// Fed under <see cref="_stateLock"/>, like the transmit readout and the host ports: a
+    /// <para>Every frame except a <see cref="Modems.FrameQuality.MonitorOnly"/> one: a reading
+    /// Reed-Solomon alone stood behind is listed in the frames panel and written to the log, but
+    /// it is not evidence that the pair of callsigns in it were ever talking, so it makes no
+    /// link. The same rule applies to the start-up replay out of the frame log.</para>
+    /// <para>Fed under <see cref="_stateLock"/>, like the transmit readout and the host ports: a
     /// browser connecting takes its opening snapshot under the same lock, so a frame either lands
-    /// in that snapshot or is broadcast to it afterwards, never both and never neither.
+    /// in that snapshot or is broadcast to it afterwards, never both and never neither.</para>
     /// </remarks>
     public Ax25LinkObserver Links { get; } = new(new Ax25LinkObserverOptions { RecentPerLink = LinkFeedLength });
 
@@ -1070,7 +1074,22 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             plainIl2p: quality.PlainIl2p,
             monitorOnly: quality.MonitorOnly);
 
-        ObserveLink(subChannel, frame, transmitted: false);
+        // Everything above lists the frame; this last step makes a claim about the channel, and
+        // an RS-only reading is not evidence for one. A withheld frame stood on Reed-Solomon
+        // alone and is kept from the host for exactly that reason, so a corrupt or forged
+        // callsign pair read out of one must not open a card, name a station as heard, or move a
+        // link's state. It stays in the frames panel badged RS ONLY, in the frame log and in the
+        // journal, which is where an operator can weigh it for what it is (Tom's call, 2026-09-04).
+        //
+        // MonitorOnly and not DecodeConfidence.IsEvidence, deliberately, though the metrics
+        // endpoint uses the stricter test for its station list: IsEvidence also rejects a plain
+        // reading the operator asked to be given, and on a -nocrc port it would reject every
+        // frame there is and leave the pane permanently empty. The rule here is "the station
+        // itself would not pass this on", which is the operator's own configuration talking.
+        if (!quality.MonitorOnly)
+        {
+            ObserveLink(subChannel, frame, transmitted: false);
+        }
     }
 
     /// <summary>Frame event (transmit thread): list what this station has just sent, so the
