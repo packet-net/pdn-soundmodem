@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Net;
 using System.Net.WebSockets;
 using System.Reflection;
@@ -78,6 +79,9 @@ public class UplinkClientTests
 
         /// <summary>Accept the upgrade and drop it at once, as a site restarting would.</summary>
         public bool DropAtOnce { get; set; }
+
+        /// <summary>Welcome the station and then drop it, as a site that keeps falling over would.</summary>
+        public bool DropAfterWelcome { get; set; }
 
         /// <summary>Whether to complete the handshake. False leaves the station waiting.</summary>
         public bool SendWelcome { get; set; } = true;
@@ -208,6 +212,11 @@ public class UplinkClientTests
                         // A real monitor says how many people are watching straight away, and it
                         // is nearly always nobody.
                         await DemandAsync(0);
+                        if (DropAfterWelcome)
+                        {
+                            socket.Abort();
+                            return;
+                        }
                     }
                 }
             }
@@ -296,7 +305,7 @@ public class UplinkClientTests
     /// had not been registered yet and then wait for ever. Advancing repeatedly cannot miss it.
     /// </remarks>
     private static async Task UntilAdvancing(
-        FakeTimeProvider clock, Func<bool> condition, string what)
+        FakeTimeProvider clock, Func<bool> condition, string what, int stepSeconds = 1)
     {
         DateTime deadline = DateTime.UtcNow + Patience;
         while (DateTime.UtcNow < deadline)
@@ -306,7 +315,7 @@ public class UplinkClientTests
                 return;
             }
 
-            clock.Advance(TimeSpan.FromSeconds(1));
+            clock.Advance(TimeSpan.FromSeconds(stepSeconds));
             await Task.Delay(5);
         }
 
@@ -753,6 +762,7 @@ public class UplinkClientTests
         await Until(() => client.Publishing, "the welcome");
 
         int ignoredBefore = client.IgnoredMessages;
+        int upgradesBefore = monitor.Accepted;
         string[] mischief =
         [
             // The page's own protocol, which this is not.
@@ -762,14 +772,26 @@ public class UplinkClientTests
             // A transmit request, in every shape somebody might reach for.
             "{\"type\":\"transmit\",\"frame\":\"AAECAw==\"}",
             "{\"type\":\"kiss\",\"port\":0,\"data\":\"wADCAA==\"}",
-            "{\"type\":\"demand\",\"viewers\":1,\"transmit\":true}",
             "{\"type\":\"restart\"}",
             "{\"type\":\"welcome\",\"slug\":\"somebody-else\"}",
+
+            // Fields that are not the JSON type they should be. These used to throw
+            // InvalidOperationException out of the reader and tear the session down, which is the
+            // opposite of "counted and dropped" and would have put every station on the site into
+            // a permanent connect-and-drop loop the first time a monitor serialised a number as a
+            // string. Counted, not applied: the first sets no viewers and the second is not even
+            // a message type.
+            "{\"type\":\"demand\",\"viewers\":\"2\"}",
+            "{\"type\":1}",
+            "{\"type\":\"welcome\",\"url\":7}",
 
             // And things that are not messages at all.
             "not json at all",
             "{}",
             "[]",
+
+            // Last, so the viewer count below is this one's doing.
+            "{\"type\":\"demand\",\"viewers\":1,\"transmit\":true}",
         ];
 
         foreach (string message in mischief)
@@ -778,17 +800,252 @@ public class UplinkClientTests
         }
 
         await Until(
-            () => client.IgnoredMessages >= ignoredBefore + mischief.Length - 1,
-            "every message but the demand to be dropped");
+            () => client.IgnoredMessages >= ignoredBefore + mischief.Length - 2,
+            "every message but the two demands to be dropped");
 
         // The one with a "viewers" in it did what a demand does and nothing else: no transmit
         // happened because there is nothing here that could make one happen.
         await Until(() => client.Viewers == 1, "the one demand among them");
         client.Wanted.Should().BeTrue();
 
+        // And not one of them cost the session, which is the whole promise of 4.6 layer 2: a
+        // monitor that grows a message type, or types a field wrongly, does not take the site's
+        // stations off the air.
+        client.Publishing.Should().BeTrue();
+        monitor.Accepted.Should().Be(upgradesBefore, "nothing above caused a reconnect");
+
         // A second welcome changed nothing about the session it arrived in.
         monitor.TextMessagesOfType("hello").Should().ContainSingle(
             "nothing above made this station say hello again");
+    }
+
+    /// <summary>
+    /// The two kinds of audio arrive on two threads at once at the tail of a key-up, and no block
+    /// may come out holding any of the other kind's samples.
+    /// </summary>
+    /// <remarks>
+    /// <para>The review's finding, and the reason it mattered: a mixed block is the right length,
+    /// so 4.2's length check at the far end cannot see it. What a listener would get is the
+    /// station's key-up and the band spliced together, and what the waterfall would draw is the
+    /// broadband haze the server's own gate exists to prevent, reproduced in somebody else's
+    /// browser.</para>
+    /// <para>48 kHz decimated to 12 kHz on purpose, so the per-kind scratch buffer is on the path
+    /// rather than skipped. The two kinds are held at opposite signs, so a sample of the wrong one
+    /// is unmistakable. The first block seen of each kind is skipped and only that one: its
+    /// decimator is filling from silence, and after it each kind's input is a constant, so every
+    /// later block is flat.</para>
+    /// </remarks>
+    [Fact]
+    public async Task Two_Threads_Offering_Both_Kinds_At_Once_Never_Mix_Them_In_One_Block()
+    {
+        var clock = new FakeTimeProvider();
+        await using var monitor = new StubMonitor();
+        await using WaterfallWebServer server = StationServer(clock, rate: 48000);
+        await using var client = new UplinkClient(
+            server, SettingsFor(monitor.Url, channelRate: 48000, audioRate: 12000), clock);
+        client.Start();
+        await Until(() => client.Publishing, "the welcome");
+        await monitor.DemandAsync(1);
+        await Until(() => client.Wanted, "the demand");
+
+        const int calls = 200;
+        var heard = new float[2400];
+        var ours = new float[2400];
+        Array.Fill(heard, 0.8f);
+        Array.Fill(ours, -0.8f);
+
+        void Offer(float[] block, bool transmitted)
+        {
+            for (int i = 0; i < calls; i++)
+            {
+                client.Audio(block, transmitted);
+            }
+        }
+
+        var received = new Thread(() => Offer(heard, transmitted: false));
+        var transmitted = new Thread(() => Offer(ours, transmitted: true));
+        received.Start();
+        transmitted.Start();
+        received.Join();
+        transmitted.Join();
+
+        await Until(() => monitor.AudioMessages.Count > 20, "blocks to inspect");
+        await Task.Delay(250);
+
+        IReadOnlyList<byte[]> blocks = monitor.AudioMessages;
+        blocks.Should().HaveCountGreaterThan(20, "there has to be something to inspect");
+        blocks.Should().AllSatisfy(
+            b => b.Length.Should().Be(4 + (480 * 2)),
+            "a mixed block would be the right length too, which is why length is not the test");
+
+        var seen = new bool[2];
+        var mixed = new List<string>();
+        foreach (byte[] block in blocks)
+        {
+            int kind = block[1];
+            kind.Should().BeInRange(0, 1);
+            if (!seen[kind])
+            {
+                seen[kind] = true;   // the decimator filling from silence
+                continue;
+            }
+
+            for (int i = 0; i < 480; i++)
+            {
+                short sample = BinaryPrimitives.ReadInt16LittleEndian(block.AsSpan(4 + (i * 2)));
+                bool wrong = kind == 0 ? sample < 0 : sample > 0;
+                if (wrong)
+                {
+                    mixed.Add($"kind {kind} block, sample {i} = {sample}");
+                    break;
+                }
+            }
+        }
+
+        mixed.Should().BeEmpty(
+            "one block is never half heard and half transmitted (4.2), whichever threads the "
+            + "station's audio loop and its display pacer happen to be on");
+        seen.Should().AllSatisfy(k => k.Should().BeTrue("both kinds must have reached the site"));
+    }
+
+    /// <summary>
+    /// A clock that hands the test the repeating timers created on it, so a watchdog tick can be
+    /// fired by hand at the moment the thing it cancels has gone.
+    /// </summary>
+    /// <remarks>
+    /// Only repeating timers are kept. <c>Task.Delay</c> on a <see cref="TimeProvider"/> makes a
+    /// one-shot timer through the same method, and the reconnect ladder is full of them.
+    /// </remarks>
+    private sealed class TimerCatcher(FakeTimeProvider inner) : TimeProvider
+    {
+        private readonly List<(TimerCallback Callback, object? State)> _repeating = [];
+
+        public IReadOnlyList<(TimerCallback Callback, object? State)> Repeating
+        {
+            get { lock (_repeating) { return [.. _repeating]; } }
+        }
+
+        public override ITimer CreateTimer(
+            TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            if (period > TimeSpan.Zero && period != Timeout.InfiniteTimeSpan)
+            {
+                lock (_repeating) { _repeating.Add((callback, state)); }
+            }
+
+            return inner.CreateTimer(callback, state, dueTime, period);
+        }
+
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
+    }
+
+    /// <summary>
+    /// The silence watchdog cannot throw, whatever has been torn down under it. An exception out
+    /// of a timer callback has no caller to catch it and ends the process, which would be decision
+    /// 8 broken by the one part of this class that was outside a try.
+    /// </summary>
+    /// <remarks>
+    /// Driven rather than raced: the tick is captured as it is created and then fired by hand
+    /// after the session it belongs to has ended and disposed the source it cancels, which is
+    /// exactly the ordering a real tick lands in when a session ends under it. A plain
+    /// <c>Dispose</c> on an <c>ITimer</c> does not wait for a callback already running, so this is
+    /// reachable however carefully the disposal is ordered.
+    /// </remarks>
+    [Fact]
+    public async Task The_Silence_Watchdog_Cannot_Throw_When_The_Session_Ends_Under_It()
+    {
+        var clock = new FakeTimeProvider();
+        var catcher = new TimerCatcher(clock);
+        await using var monitor = new StubMonitor();
+        await using WaterfallWebServer server = StationServer(clock);
+        var client = new UplinkClient(server, SettingsFor(monitor.Url), catcher);
+        client.Start();
+        await Until(() => client.Publishing, "the welcome");
+        await Until(() => catcher.Repeating.Count >= 1, "the watchdog to be armed");
+
+        (TimerCallback tick, object? state) = catcher.Repeating[0];
+
+        // The session ends and takes its cancellation source with it.
+        await client.DisposeAsync();
+
+        // And now the tick that was already in flight lands, with the silence condition true so
+        // that it takes its cancelling branch rather than returning early.
+        clock.Advance(TimeSpan.FromSeconds(60));
+        Action landing = () => tick(state);
+
+        landing.Should().NotThrow(
+            "a timer callback is the one place in this class with no caller to catch for it, and "
+            + "an unhandled exception there aborts the daemon: decision 8 says a website cannot "
+            + "stop a node passing traffic");
+    }
+
+    /// <summary>
+    /// The sentence the station's status chip has now reaches the site on every session, not just
+    /// the next time it changes.
+    /// </summary>
+    /// <remarks>
+    /// A Flex station publishes its frequency reference long before the uplink exists, and
+    /// <c>SetRadioStatus</c> fires only on a change, so without this a relayed station's chip
+    /// would be empty until the radio said something new, and empty again after every reconnect.
+    /// </remarks>
+    [Fact]
+    public async Task The_Current_Radio_Sentence_Reaches_The_Site_On_Every_Session()
+    {
+        var clock = new FakeTimeProvider();
+        await using var monitor = new StubMonitor();
+        await using WaterfallWebServer server = StationServer(clock);
+
+        // Before the uplink exists at all, as a Flex station's reference is.
+        server.SetRadioStatus("reference: GPSDO locked");
+
+        await using var client = new UplinkClient(server, SettingsFor(monitor.Url), clock);
+        client.Start();
+        await Until(() => client.Publishing, "the welcome");
+
+        await Until(() => monitor.TextMessagesOfType("radio").Any(), "the status sentence");
+        monitor.TextMessagesOfType("radio").First()
+            .GetProperty("status").GetString().Should().Be("reference: GPSDO locked");
+    }
+
+    /// <summary>
+    /// A site that welcomes a station and then drops it, over and over, gets one journal line
+    /// every fifteen minutes and nothing louder.
+    /// </summary>
+    /// <remarks>
+    /// Decision 8's standard. The welcome used to clear the "said it once" flag, so a flapping
+    /// site wrote a line per cycle - about 2700 a day - with the rate limit never once applying.
+    /// </remarks>
+    [Fact]
+    public async Task A_Site_That_Welcomes_And_Drops_Over_And_Over_Says_So_Once()
+    {
+        var clock = new FakeTimeProvider();
+        await using var monitor = new StubMonitor { DropAfterWelcome = true };
+        await using WaterfallWebServer server = StationServer(clock);
+        var journal = new List<string>();
+        await using var client = new UplinkClient(
+            server,
+            SettingsFor(monitor.Url),
+            clock,
+            line => { lock (journal) { journal.Add(line); } });
+        client.Start();
+
+        await UntilAdvancing(clock, () => client.ConnectAttempts >= 4, "four flaps", stepSeconds: 5);
+
+        string[] said;
+        lock (journal)
+        {
+            said = [.. journal];
+        }
+
+        said.Where(l => l.Contains("Retrying in")).Should().ContainSingle(
+            "four sessions, each welcomed and dropped, inside fifteen minutes of the clock");
+        client.ConnectAttempts.Should().BeGreaterThanOrEqualTo(4, "it kept trying regardless");
     }
 
     /// <summary>
@@ -826,7 +1083,7 @@ public class UplinkClientTests
         held.Should().BeEquivalentTo(
             [
                 "Action`1", "Boolean", "CancellationTokenSource", "Channel`1", "Decimator[]",
-                "Int16[][]", "Int32", "Int32[]", "Int64", "List`1", "Lock", "Single[]", "Task",
+                "Int16[][]", "Int32", "Int32[]", "Int64", "List`1", "Lock", "Single[][]", "Task",
                 "TimeProvider", "UberSdrReconnectPolicy", "UplinkSettings", "Uri",
                 "WaterfallWebServer",
             ],

@@ -155,6 +155,16 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     /// <summary>Largest inbound message accepted. The one we expect is under a hundred bytes.</summary>
     private const int MaxIncomingBytes = 16 * 1024;
 
+    /// <summary>
+    /// Longest the site's own words are allowed to be in this station's journal. The site is a
+    /// semi-trusted publisher in this direction too: it may reconnect as often as it likes, and
+    /// each reconnect is a line.
+    /// </summary>
+    private const int MaxSiteTextLength = 200;
+
+    /// <summary>How many reconnect waits are remembered, so the record cannot grow for ever.</summary>
+    private const int RetryWaitsKept = 64;
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -169,11 +179,36 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     private readonly CancellationTokenSource _stopping = new();
     private readonly int _blockSamples;
 
-    /// <summary>One accumulator per kind: a block is never half heard and half transmitted.</summary>
+    /// <summary>
+    /// One accumulator, one decimator, one scratch buffer and one generation counter per kind:
+    /// a block is never half heard and half transmitted, and nothing about one kind's stream is
+    /// reachable from the other's.
+    /// </summary>
     private readonly short[][] _pending;
     private readonly int[] _fill = new int[2];
     private readonly Decimator?[] _decimators = new Decimator?[2];
-    private readonly float[] _decimated;
+    private readonly float[][] _decimated;
+    private readonly int[] _seenGeneration = new int[2];
+
+    /// <summary>
+    /// Held across the body of <see cref="Audio"/>, which is the only thing that touches the
+    /// buffers above.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>The two callers really can overlap</b>, and the reason is worth writing down
+    /// because the interface's own remarks read as though they cannot. Received audio arrives on
+    /// the station's audio read thread and the station's own transmission arrives from the
+    /// display pacer's timer callback, on whatever thread pool thread the timer fires on. At the
+    /// tail of a key-up the receive tap can pass its gate, queue on the server's display lock
+    /// behind the pacer, and be released exactly as the pacer moves on to its own offers, at
+    /// which point both are running outside every lock. Measured, once per key-up per 40 of them
+    /// at 200 us of work per call and rising from there; what it produced without this lock was a
+    /// block of the right length carrying audio of both kinds, which is undetectable at the far
+    /// end and is the one thing 4.2 says cannot happen.</para>
+    /// <para>Nothing under it blocks: a decimation, a float-to-s16 conversion and a
+    /// non-blocking queue write. It cannot park the station's audio thread on a socket.</para>
+    /// </remarks>
+    private readonly Lock _audioLock = new();
 
     /// <summary>Where the audio thread hands blocks to the sender; null while the socket is down.</summary>
     private volatile Channel<Outgoing>? _outgoing;
@@ -182,7 +217,6 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     private volatile Task? _sending;
     private int _viewers;
     private int _generation;
-    private int _seenGeneration;
     private int _connectAttempts;
     private int _ignoredMessages;
     private long _droppedMessages;
@@ -192,7 +226,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     private long _viewersSaidAt;
     private long _dropsSaidAt;
     private long _lastHeardAt;
-    private volatile bool _saidAnythingAboutThisOutage;
+    private volatile bool _freshOutage = true;
     private readonly List<TimeSpan> _retryWaits = [];
     private readonly Lock _waitsLock = new();
 
@@ -235,7 +269,8 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             _decimators[1] = new Decimator(settings.ChannelRate, factor);
         }
 
-        _decimated = new float[_decimators[0]?.MaxOutput(DecimationChunk) ?? DecimationChunk];
+        int scratch = _decimators[0]?.MaxOutput(DecimationChunk) ?? DecimationChunk;
+        _decimated = [new float[scratch], new float[scratch]];
     }
 
     /// <summary>Samples decimated at a time, so the scratch buffer is a fixed size.</summary>
@@ -305,30 +340,33 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             return;
         }
 
-        // A new session, or a gap in which nobody was watching: whatever was half assembled
-        // belongs to a stream that stopped, and sending it would put a splice on somebody's
-        // waterfall. Done here rather than by the reader thread because this method is the only
-        // writer of these buffers and that is what makes them lock-free.
-        int generation = Volatile.Read(ref _generation);
-        if (generation != _seenGeneration)
-        {
-            _seenGeneration = generation;
-            _fill[0] = 0;
-            _fill[1] = 0;
-        }
-
         int kind = transmitted ? 1 : 0;
-        if (_decimators[kind] is not { } decimator)
+        lock (_audioLock)
         {
-            Append(samples, kind, outgoing);
-            return;
-        }
+            // A new session, or a gap in which nobody was watching: whatever was half assembled
+            // belongs to a stream that stopped, and sending it would put a splice on somebody's
+            // waterfall. Per kind, because the other kind's half-block is not this caller's to
+            // throw away and the two arrive on different threads.
+            int generation = Volatile.Read(ref _generation);
+            if (generation != _seenGeneration[kind])
+            {
+                _seenGeneration[kind] = generation;
+                _fill[kind] = 0;
+            }
 
-        for (int offset = 0; offset < samples.Length; offset += DecimationChunk)
-        {
-            int take = Math.Min(DecimationChunk, samples.Length - offset);
-            int produced = decimator.Process(samples.Slice(offset, take), _decimated);
-            Append(_decimated.AsSpan(0, produced), kind, outgoing);
+            if (_decimators[kind] is not { } decimator)
+            {
+                Append(samples, kind, outgoing);
+                return;
+            }
+
+            float[] scratch = _decimated[kind];
+            for (int offset = 0; offset < samples.Length; offset += DecimationChunk)
+            {
+                int take = Math.Min(DecimationChunk, samples.Length - offset);
+                int produced = decimator.Process(samples.Slice(offset, take), scratch);
+                Append(scratch.AsSpan(0, produced), kind, outgoing);
+            }
         }
     }
 
@@ -512,15 +550,30 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
         // construction rather than by ordering luck (4.2).
         await SendHelloAsync(socket, session.Token).ConfigureAwait(false);
 
-        using ITimer watchdog = _time.CreateTimer(
+        // Awaited on the way out, and declared after the source it cancels so that it is disposed
+        // first. Both halves matter: a plain Dispose does not wait for a callback already running,
+        // so a tick that had read the clock and was about to cancel would reach a disposed source
+        // and throw ObjectDisposedException on a thread pool thread with nothing above it, which
+        // ends the process. That is decision 8 broken by the one piece of this class that was not
+        // inside a try, so it is now inside one as well.
+        await using ITimer watchdog = _time.CreateTimer(
             _ =>
             {
-                if (_time.GetElapsedTime(Volatile.Read(ref _lastHeardAt)) > SilenceTimeout)
+                try
                 {
-                    // Two demands missed. A hung established socket starves nothing here, but it
-                    // does leave the site listing a station that has gone, so it is ended and
-                    // remade rather than believed.
-                    session.Cancel();
+                    if (_time.GetElapsedTime(Volatile.Read(ref _lastHeardAt)) > SilenceTimeout)
+                    {
+                        // Two demands missed. A hung established socket starves nothing here, but
+                        // it does leave the site listing a station that has gone, so it is ended
+                        // and remade rather than believed.
+                        session.Cancel();
+                    }
+                }
+                catch (Exception)
+                {
+                    // A timer callback is the one place in this class with no caller to catch for
+                    // it, and an unhandled exception here would abort the daemon. The session is
+                    // ending under it, which is the only way this is reached.
                 }
             },
             null,
@@ -731,6 +784,12 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                 return;
             }
 
+            if (type.ValueKind != JsonValueKind.String)
+            {
+                Interlocked.Increment(ref _ignoredMessages);
+                return;
+            }
+
             switch (type.GetString())
             {
                 case "demand":
@@ -748,11 +807,21 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                     break;
             }
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
         {
+            // Unreadable, or readable and not the shape it claimed. Either way it is counted and
+            // dropped: 4.6's promise is that nothing the monitor sends can do anything to this
+            // station, and a message that ended the session would be doing something.
             Interlocked.Increment(ref _ignoredMessages);
         }
     }
+
+    /// <summary>The text of a property, or null if it is absent or is not a string.</summary>
+    private static string? TextOrNull(JsonElement message, string name) =>
+        message.TryGetProperty(name, out JsonElement value)
+        && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
 
     private void ApplyWelcome(JsonElement message, Channel<Outgoing> outgoing)
     {
@@ -763,17 +832,26 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             return;
         }
 
-        string? url = message.TryGetProperty("url", out JsonElement at) ? at.GetString() : null;
-        string? slug = message.TryGetProperty("slug", out JsonElement s) ? s.GetString() : null;
+        string? url = TextOrNull(message, "url");
+        string? slug = TextOrNull(message, "slug");
 
         // Only now: everything before this point could still be refused, and audio must not be
         // assembled for a socket the far end has not agreed to.
         Interlocked.Increment(ref _generation);
         _outgoing = outgoing;
-        _saidAnythingAboutThisOutage = false;
+        _freshOutage = true;
         Say(url is { Length: > 0 }
-            ? $"live at {Ascii(url)}"
-            : $"live as {Ascii(slug ?? _settings.Callsign)}");
+            ? $"live at {Site(url)}"
+            : $"live as {Site(slug ?? _settings.Callsign)}");
+
+        // The sentence the station has now, not the next change to it. SetRadioStatus fires only
+        // when it changes, and a Flex station's frequency reference is set long before the uplink
+        // exists, so without this a relayed station's status chip would stay empty until the
+        // radio said something new - and would empty again on every reconnect.
+        if (_server.RadioStatus is { Length: > 0 } status)
+        {
+            Radio(status);
+        }
     }
 
     private void ApplyDemand(JsonElement message)
@@ -786,7 +864,11 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
             return;
         }
 
+        // Guarded on the kind rather than caught: TryGetInt32 throws on anything that is not a
+        // number, and a monitor that serialised its viewer count as a string would otherwise put
+        // every station on the site into a permanent connect-and-drop loop.
         int viewers = message.TryGetProperty("viewers", out JsonElement count)
+            && count.ValueKind == JsonValueKind.Number
             && count.TryGetInt32(out int parsed) && parsed > 0
                 ? parsed
                 : 0;
@@ -925,19 +1007,21 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     /// </summary>
     private void SayOutage(string reason, TimeSpan wait)
     {
-        if (!_saidAnythingAboutThisOutage)
+        // One gate, always. A welcome used to clear the "said it once" flag, so a site that
+        // accepted, welcomed and dropped at 31 s was classified healthy, reconnected a second
+        // later and wrote a line every 32 s for ever: about 2700 a day, with the fifteen-minute
+        // limit never once applying. Decision 8's standard is a line every fifteen minutes and
+        // nothing louder, and this is now that whatever the site does.
+        if (!DueToSay(ref _outageSaidAt, OutageSaidEvery))
         {
-            _saidAnythingAboutThisOutage = true;
-            Volatile.Write(ref _outageSaidAt, _time.GetTimestamp());
-            Say($"{reason}. Retrying in {Plain(wait)}; the station is unaffected");
             return;
         }
 
-        if (DueToSay(ref _outageSaidAt, OutageSaidEvery))
-        {
-            Say($"still not publishing: {reason}. Retrying in {Plain(wait)}; the station is "
+        Say(_freshOutage
+            ? $"{reason}. Retrying in {Plain(wait)}; the station is unaffected"
+            : $"still not publishing: {reason}. Retrying in {Plain(wait)}; the station is "
                 + "unaffected");
-        }
+        _freshOutage = false;
     }
 
     /// <summary>
@@ -946,7 +1030,7 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
     /// </summary>
     private void SayRefused(string reason, TimeSpan wait)
     {
-        _saidAnythingAboutThisOutage = true;
+        _freshOutage = false;
         if (DueToSay(ref _refusalSaidAt, RefusalSaidEvery))
         {
             Say($"{reason}. Retrying in {Plain(wait)} and saying no more about it for an hour; "
@@ -991,6 +1075,13 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
 
         return clean.ToString();
     }
+
+    /// <summary>
+    /// The site's own words, fit to put in this station's journal: ASCII, and short. The site is
+    /// trusted to name itself and nothing more, and it may reconnect as often as it likes.
+    /// </summary>
+    private static string Site(string text) => Ascii(
+        text.Length <= MaxSiteTextLength ? text : text[..MaxSiteTextLength] + "...");
 
     /// <summary>What this daemon is, for the monitor's own diagnostics.</summary>
     private static readonly string DaemonVersion =
