@@ -1989,7 +1989,8 @@ so that a mode this configuration cannot make is one message here rather than a 
 request for every receiver); no `waterfall` section, or one with no `port` written down, since a
 site meant to be reached from outside should not come up on a number nobody chose; a negative `refreshMinutes` or `lingerSeconds`; a `directory` that is not
 an absolute http or https URL; a `publicUrl` that is not an absolute http or https URL, or that
-carries a path, a query or a fragment, this site being served from the root of its port; and an
+carries a path, a query or a fragment, this site being served from the root of its port, or that
+carries credentials, which is the one refusal here that does not quote the value back; and an
 `allow` or `deny` entry that is not a hostname - that last
 one because an entry with a scheme or a port in it would silently match nothing and leave an
 operator believing they had been taken off a list they are still on. The `uplinks` entries have
@@ -2277,6 +2278,7 @@ enumerated yet at boot, for instance - still restarts on its own as usual.
 | `monitor.directory` not an absolute http or https URL | `which is not an absolute http or https URL` - with the public one to copy |
 | `monitor.allow` or `monitor.deny` entry that is not a hostname | `which is not a hostname … no scheme, no port, no path` |
 | `monitor.publicUrl` with a path, a query or a fragment, or not http/https | `a scheme, a host and an optional port and nothing after them` - the site is served from the root of its port |
+| `monitor.publicUrl` with credentials in it | `carries credentials, and this message does not repeat it back` - nothing signs in to a public page, and the journal is no place for a password |
 | `frameLog.path` a file, or naming one, under `monitor` | `A monitor keeps one log per receiver, so this is a DIRECTORY here …` |
 | [`publish`](#publish) alongside `monitor` | `this file sets both "publish" and "monitor" … one process is not both` |
 | `publish` on a `ubersdr:` device | `A receiver like that is already on the monitor site in its own right …` |

@@ -187,6 +187,30 @@ public class MonitorConfigTests : IDisposable
             .Should().Be("http://10.45.0.128:8099");
         Load(WithPublicUrl("https://monitor.ukpacketradio.network:443"), out _)!.Monitor!.PublicUrl
             .Should().Be("https://monitor.ukpacketradio.network");
+
+        // An IPv6 literal keeps its square brackets. Without them the colon before the port is
+        // one of the address's own, and what a station would be told is an address that means
+        // something else or nothing at all.
+        Load(WithPublicUrl("https://[2001:db8::1]:8443/"), out _)!.Monitor!.PublicUrl
+            .Should().Be("https://[2001:db8::1]:8443");
+        Load(WithPublicUrl("http://[2001:db8::1]"), out _)!.Monitor!.PublicUrl
+            .Should().Be("http://[2001:db8::1]");
+    }
+
+    [Fact]
+    public void A_Public_Url_With_Credentials_Is_Refused_Without_Repeating_Them()
+    {
+        // The one refusal in this file that does not quote the value back. Everything else here
+        // reads better for naming what was written, but a password named in a refusal is a
+        // password in the journal, which is where it would then stay.
+        DaemonConfig? config = Load(
+            WithPublicUrl("https://tom:hunter2@monitor.ukpacketradio.network"), out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"monitor\".\"publicUrl\"").And.Contain("carries credentials");
+        error.Should().NotContain("hunter2", "a refusal must not write the password to the journal");
+        error.Should().NotContain("tom:", "nor the rest of the credential");
+        ShouldGuideTheOperator(error);
     }
 
     [Fact]
@@ -198,7 +222,7 @@ public class MonitorConfigTests : IDisposable
         foreach (string bad in (string[])
                  ["monitor.ukpacketradio.network", "ftp://monitor.ukpacketradio.network",
                   "https://monitor.ukpacketradio.network/r/", "https://monitor.example/?from=cf",
-                  "https://monitor.example/#top", "https://tom:secret@monitor.example"])
+                  "https://monitor.example/#top"])
         {
             DaemonConfig? config = Load(WithPublicUrl(bad), out string error);
 

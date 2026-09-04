@@ -1306,12 +1306,25 @@ public sealed class DaemonConfig
 
         if (monitor.PublicUrl is { Length: > 0 } publicUrl)
         {
-            if (!Uri.TryCreate(publicUrl, UriKind.Absolute, out Uri? site)
+            // Before anything is quoted back, and it is the one refusal here that does not
+            // quote: a URL with a username and password in it would put the password in the
+            // journal, which is the last place a message about a mistake should leave it.
+            if (Uri.TryCreate(publicUrl, UriKind.Absolute, out Uri? site)
+                && site.UserInfo.Length > 0)
+            {
+                throw new InvalidDataException(
+                    "\"monitor\".\"publicUrl\" carries credentials, and this message does not "
+                    + "repeat it back because that would write them to the journal. It is the "
+                    + "address visitors reach this site at, which is a scheme, a host and an "
+                    + "optional port and nothing else: nothing signs in to a public monitor "
+                    + "page. Write it as \"https://monitor.ukpacketradio.network\".");
+            }
+
+            if (site is null
                 || (site.Scheme != Uri.UriSchemeHttp && site.Scheme != Uri.UriSchemeHttps)
                 || site.AbsolutePath != "/"
                 || site.Query.Length > 0
-                || site.Fragment.Length > 0
-                || site.UserInfo.Length > 0)
+                || site.Fragment.Length > 0)
             {
                 throw new InvalidDataException(
                     $"\"monitor\".\"publicUrl\" is {Quoted(publicUrl)}. It is this site's own "
@@ -1328,8 +1341,11 @@ public sealed class DaemonConfig
             // Normalised as the file is read, so the one place that uses it can append
             // "/r/<slug>/" without wondering whether the operator wrote the slash. IdnHost rather
             // than Authority because this string goes into the journal, and a punycode host is
-            // what the wire carries anyway.
-            monitor.PublicUrl = $"{site.Scheme}://{site.IdnHost}"
+            // what the wire carries anyway. An IPv6 literal is taken from Host instead, which
+            // keeps the square brackets: without them the colon before a port is the address's
+            // own, and the URL means something else or nothing at all.
+            string host = site.HostNameType == UriHostNameType.IPv6 ? site.Host : site.IdnHost;
+            monitor.PublicUrl = $"{site.Scheme}://{host}"
                 + (site.IsDefaultPort ? "" : $":{site.Port}");
         }
 
