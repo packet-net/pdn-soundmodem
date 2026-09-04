@@ -148,6 +148,14 @@ public sealed class WaterfallOptions
 /// written down, and treating an unknown as withheld would throw away real history. What reads
 /// it is the start-up replay into the links pane, which such a row must not feed.
 /// </param>
+/// <param name="PlainIl2p">
+/// True for a row read as plain IL2P, with no trailing CRC behind it - Reed-Solomon alone
+/// (see <see cref="Modems.FrameQuality.PlainIl2p"/>). What the panel badges <b>RS ONLY</b>, and
+/// its own field rather than an inference from a null <paramref name="CrcValid"/>: that is also
+/// null on HDLC, on FX.25, on ARDOP and on our own transmissions. False on a row logged before
+/// the column existed, for the same reason as <paramref name="MonitorOnly"/>: what stood behind
+/// that frame was not written down, and a badge is a claim.
+/// </param>
 public sealed record LoggedFrame(
     DateTimeOffset HeardAt,
     int SubChannel,
@@ -160,7 +168,8 @@ public sealed record LoggedFrame(
     double? OffsetHz,
     bool Transmitted = false,
     double? TxTrimHz = null,
-    bool MonitorOnly = false);
+    bool MonitorOnly = false,
+    bool PlainIl2p = false);
 
 /// <summary>A band the host declares rather than the waterfall measuring it.</summary>
 /// <param name="SubChannel">Which modem, for ordering and labels.</param>
@@ -2233,6 +2242,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 // badges a logged transmission TX exactly as it badges a live one.
                 tx = f.Transmitted ? true : (bool?)null,
                 txTrimHz = f.TxTrimHz is { } trim ? Math.Round(trim, 1) : (double?)null,
+                // Both under the names a live frame uses, so the page's one row builder badges a
+                // replayed RS-only frame exactly as it badged it when it was heard - the badge
+                // off plain, the tooltip's wording off monitorOnly. A backlog row that dropped
+                // them lost the badge outright, which read as a frame something had checked.
+                plain = f.PlainIl2p ? true : (bool?)null,
+                monitorOnly = f.MonitorOnly ? true : (bool?)null,
                 hist = true,
             }),
         }, Json);

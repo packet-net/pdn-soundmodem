@@ -3,6 +3,7 @@ using System.Net.WebSockets;
 using System.Net;
 using System.Text.Json;
 using Packet.SoundModem.Channel;
+using Packet.SoundModem.Daemon;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Tests.Modems;
 using Packet.SoundModem.Waterfall;
@@ -127,6 +128,83 @@ public class WaterfallPlainIl2pTests : IAsyncLifetime
         _server.Links.Snapshot().Should().ContainSingle(
             "a frame something checked is evidence of who was on the channel")
             .Which.Id.Should().Be("0|BEACON<>GB7BPQ");
+    }
+
+    /// <summary>
+    /// And the same frame after a restart: written to a real frame log, replayed out of it into
+    /// a fresh server's opening backlog, and still marked as both.
+    /// </summary>
+    /// <remarks>
+    /// The panel's backlog is the only thing a browser sees of a channel that was busy before the
+    /// daemon was restarted. The badge is drawn from <c>plain</c>, so a backlog row that dropped
+    /// it listed GB7BPQ as though something had checked the frame - the one reading the badge
+    /// exists to prevent, and the one an operator gets for the whole quiet spell after a restart.
+    /// Real audio into a real SQLite file and back out through a socket, so what is pinned is the
+    /// whole path rather than either end of it.
+    /// </remarks>
+    [Fact]
+    public async Task A_Withheld_Plain_Frame_Replayed_From_The_Log_Is_Still_Marked_As_Both()
+    {
+        string directory = Directory.CreateTempSubdirectory("pdnsm-rsonly").FullName;
+        string path = Path.Combine(directory, "frames.db");
+        try
+        {
+            // The station that heard it, wired the way StationFactory wires one: a real bpsk300
+            // bank, and every frame it decodes written down with its quality.
+            var heard = new SoundModemChannel(SampleRate, randomSeed: 7);
+            heard.AddModem(0, sink => ModemCatalog.Create("bpsk300", SampleRate, sink));
+            await using (FrameLog writing = FrameLog.Open(path))
+            {
+                heard.FrameReceivedWithQuality += (sub, frame, quality) =>
+                    writing.Record(sub, frame, quality, audioHz: 2150, rfHz: 7_051_600);
+                heard.ProcessReceive(Transmission("bpsk300-nocrc"));
+                for (int i = 0; i < 100 && writing.Recent(10).Count == 0; i++)
+                {
+                    await Task.Delay(20);
+                }
+
+                writing.Recent(10).Should().ContainSingle("the burst has to have been logged")
+                    .Which.From.Should().Be("GB7BPQ");
+            }
+
+            // And the station that comes up next, on the file the one above left behind.
+            await using FrameLog restarted = FrameLog.Open(path);
+            int port = FreePorts.Next();
+            await using var server = new WaterfallWebServer(
+                new SoundModemChannel(SampleRate, randomSeed: 7), port,
+                new WaterfallOptions { FrameHistory = restarted.Recent });
+            server.Start();
+
+            using var socket = new ClientWebSocket();
+            using (CancellationTokenSource connecting = Budget())
+            {
+                await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws"), connecting.Token);
+            }
+
+            await Receive(socket);   // config
+            (_, byte[] payload) = await Receive(socket);
+            using JsonDocument history = JsonDocument.Parse(payload);
+            history.RootElement.GetProperty("type").GetString().Should().Be("history");
+            JsonElement row = history.RootElement.GetProperty("frames")[0];
+
+            row.GetProperty("from").GetString().Should().Be("GB7BPQ");
+            row.GetProperty("plain").GetBoolean().Should().BeTrue(
+                "the badge a live row carried is the badge the replayed row carries");
+            row.GetProperty("monitorOnly").GetBoolean().Should().BeTrue(
+                "and the tooltip still says the host was not given it");
+            row.GetProperty("crc").ValueKind.Should().Be(JsonValueKind.Null);
+            row.GetProperty("hist").GetBoolean().Should().BeTrue("it is still a backlog row");
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
     }
 
     private async Task<JsonDocument> FirstFrameAsync(float[] audio)

@@ -201,9 +201,9 @@ public class WaterfallPageTests
 
         // The probe drives the backlog last, over a panel that already holds four live rows -
         // which is the reconnect case, where the log by then holds those frames too. Rebuilt, not
-        // stacked: three rows, not seven.
+        // stacked: four rows, not eight.
         probe.HistoryRows.Should().HaveCount(
-            3, "a re-sent backlog rebuilds the panel rather than duplicating it");
+            4, "a re-sent backlog rebuilds the panel rather than duplicating it");
         probe.HistoryRowClasses.Should().AllSatisfy(
             row => row.Should().Contain("hist"),
             "a backlog must not read as a channel that is busy right now");
@@ -263,6 +263,45 @@ public class WaterfallPageTests
         probe.HistBorder.Should().NotContain("#31d2f2", "and grey is what says it is old");
         probe.TxHistBorder.Should().Contain(
             "#31d2f2", "a backlogged transmission must not lose the colour that says it is ours");
+    }
+
+    /// <summary>
+    /// A frame Reed-Solomon alone stood behind keeps its RS ONLY badge when it comes back out of
+    /// the log, tooltip and all.
+    /// </summary>
+    /// <remarks>
+    /// The badge is the whole point of listing one of these: on an IL2P+CRC modem the mode label
+    /// beside it says the opposite, and the panel is the one place an operator sees both at once.
+    /// The row builder draws it from <c>plain</c> and words the tooltip from <c>monitorOnly</c>,
+    /// so a backlog message that carried neither did not merely word the tooltip wrongly - the
+    /// badge was absent altogether, and every RS-only row heard before a restart read as a frame
+    /// something had checked (issue #403).
+    /// </remarks>
+    [Fact]
+    public async Task A_Backlogged_Rs_Only_Frame_Keeps_Its_Badge()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw while listing a backlog");
+
+        // Oldest of the backlog, so the bottom row of a newest-first panel.
+        probe.HistoryRows[3].Should().Contain("GB7BPQ").And.Contain(">RS ONLY<",
+            "a replayed RS-only frame carries the same badge the live one did");
+        probe.HistoryRows[3].Should().Contain("NOT passed to the KISS host",
+            "and the tooltip still says which way the operator's own configuration went");
+        probe.HistoryRowClasses[3].Should().Be(
+            "fr hist", "it is a station's frame and a backlog row, and neither of ours");
+        probe.HistoryRows[0].Should().NotContain(
+            ">RS ONLY<", "a frame with a CRC behind it is badged nothing of the sort");
     }
 
     /// <summary>

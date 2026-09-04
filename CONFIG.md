@@ -357,8 +357,9 @@ outside. So a plain IL2P frame is decoded, and it appears:
 
 - on the [waterfall](#waterfall) panel, **badged `RS ONLY`** in warning orange, with a tooltip
   saying whether it went to your host;
-- in the [frame log](#framelog), with `crc_valid` null and `monitor_only` recording whether it
-  reached the host;
+- in the [frame log](#framelog), with `crc_valid` null, `plain_il2p` 1 recording what stood behind
+  it and `monitor_only` recording whether it reached the host - both replayed to the panel on the
+  next page load, so a backlogged row carries the same badge it did live;
 - on the journal line, as `plain il2p (rs only, not passed to host)`;
 - as a decode for the [survey](#survey), so its burst stops being captured as `missed` - which is
   the point: a row in the panel naming GB7BPQ is worth more than another WAV of the same beacon
@@ -1009,7 +1010,8 @@ Omit the section and frames come and go without being written down. One row per 
 | `direction` | `rx` for a frame the station heard, `tx` for one it sent |
 | `sub_channel`, `mode`, `mode_name` | which modem carried it, and what it is - `bpsk300-il2pc` and `BPSK300 IL2Pc` |
 | `source`, `destination` | AX.25 callsigns where the frame carries them; null where it does not |
-| `length`, `corrected`, `crc_valid` | size, FEC corrections applied, whether the CRC checked - null on a received frame means there was no CRC to check, which on an IL2P+CRC modem means it was read as [plain IL2P](#acceptplainil2p); the next two columns say what became of such a frame |
+| `length`, `corrected`, `crc_valid` | size, FEC corrections applied, whether the CRC checked - null on a received frame means there was no CRC to check, which on an IL2P+CRC modem means it was read as [plain IL2P](#acceptplainil2p); the next three columns say what it was read as and what became of it |
+| `plain_il2p` | 1 for a frame read as [plain IL2P](#acceptplainil2p), with no trailing CRC behind it; 0 for one that had a CRC to check. A fact about the decode rather than about what became of the frame, which is why it is not the same column as `monitor_only` - and its own column rather than a null `crc_valid`, which is also null on HDLC, on FX.25, on ARDOP and on transmitted rows. What the waterfall panel draws its **`RS ONLY`** badge from, live and on the opening backlog alike. Null on transmitted rows and on rows logged before the column existed |
 | `trailer_near_bits` | on a frame delivered by [trailer corroboration](#acceptplainil2p): the measured distance, in wire bits, between the 32 trailer bits received and the trailer the payload implies (0-4). Null on every other row, so a `crc_valid`-null frame with this set is one the host received on the trailer's evidence |
 | `monitor_only` | 1 for a frame the station read, showed and withheld from the host; 0 for one the host received. Null on transmitted rows - withholding is a receive event - and on rows logged before the column existed, where it was not written down |
 | `erased_bytes` | bytes the decode erased on the receiver's own confidence flags before Reed-Solomon repaired the frame - how a frame beyond the errors-only budget was still read. Null when no erasures were needed, or before the column existed |
