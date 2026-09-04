@@ -114,11 +114,13 @@ public class UplinkTests
     {
         await using var h = await Harness.StartAsync();
 
-        // "slug" is not a field of the wire format at all. Sent anyway, it is one more thing this
-        // parser ignores, and the page is where the site's own table says it is.
-        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
-        await station.SendAsync(new { type = "hello", protocol = 1, callsign = Callsign, slug = "somewhere-else" });
+        // On the first and only hello, which is the one that is read. Sent on a second one it
+        // would never be looked at, because a second hello ends the session - so the test would
+        // have passed off the first welcome and proved nothing about the field.
+        await using var station = await StubStation.OpenAsync(
+            h.Port, h.Token, Callsign, extra: new { slug = "somewhere-else", path = "/r/nope/" });
         await station.WelcomedAsync();
+        station.Connected.Should().BeTrue("the field is ignored, not refused");
 
         station.Welcome!.Value.GetProperty("slug").GetString().Should().Be(Slug);
         station.Welcome!.Value.GetProperty("path").GetString().Should().Be($"/r/{Slug}/");
@@ -488,7 +490,10 @@ public class UplinkTests
         await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
         await station.WelcomedAsync();
 
-        var heardAt = new DateTimeOffset(2026, 9, 4, 11, 22, 33, TimeSpan.Zero);
+        // Inside the day either side of this site's clock that a relayed timestamp is held to,
+        // so what is being tested here is that the station's own time is kept rather than the
+        // moment its bytes crossed the wire.
+        DateTimeOffset heardAt = h.Time.GetUtcNow().AddMinutes(-7);
         await station.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "into the log"), at: heardAt);
         await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
 
@@ -496,9 +501,79 @@ public class UplinkTests
         from.Should().Be("M0LTE");
         mode.Should().Be("afsk300-il2pc");
         at.Should().Contain(
-            "11:22:33", "the log carries the station's own clock, not the wire's");
+            heardAt.UtcDateTime.ToString("HH:mm:ss"),
+            "the log carries the station's own clock, not the wire's");
         File.Exists(Path.Combine(h.FrameLogDirectory, $"frames-{Slug}.db")).Should().BeTrue(
             "one log per station, named as every other station's is");
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task A_Frame_Dated_Outside_This_Sites_Clock_Is_Logged_At_This_Sites_Clock()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+
+        // A station is a semi-trusted publisher, and its own timestamp is the one field it could
+        // use against itself: a frame dated in the year 9999 is written into this site's copy of
+        // its log and sorts above everything else on its page for ever. Self-harm rather than an
+        // attack, and treated like every other untrusted field here anyway.
+        await station.SendFrameAsync(
+            Ax25.Ui("M0LTE", "GB7RDG-2", "from the future"),
+            at: new DateTimeOffset(9999, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
+        h.LastLoggedFrame().At.Should().NotContain(
+            "9999", "a day either side of this site's clock, and nothing beyond it");
+
+        // And a plausible one is kept exactly, because it is the station's own and better than
+        // the moment its bytes happened to cross the wire.
+        DateTimeOffset heard = h.Time.GetUtcNow().AddMinutes(-5);
+        await station.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "five minutes ago"), at: heard);
+        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 2));
+        h.LastLoggedFrame().At.Should().Contain(heard.UtcDateTime.ToString("HH:mm:ss"));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task An_Unusable_Bearer_Value_Is_Delayed_And_Counted_Like_Any_Other_Guess()
+    {
+        await using var h = await Harness.StartAsync();
+
+        // A bearer value this site could never have issued - too long to be one of its tokens -
+        // is still somebody presenting something. It used to be refused instantly and silently,
+        // which made a run of them invisible in the journal.
+        var elapsed = Stopwatch.StartNew();
+        WebSocketException refused = await Assert.ThrowsAsync<WebSocketException>(
+            () => StubStation.ConnectAsync(h.Port, new string('x', 600)));
+        elapsed.Stop();
+
+        Status(refused).Should().Be(401);
+        elapsed.Elapsed.Should().BeGreaterThan(
+            UplinkServer.BadTokenDelay - TimeSpan.FromMilliseconds(150));
+        h.Errors.Should().ContainSingle(
+            line => line.Contains("token this site has not issued", StringComparison.Ordinal));
+    }
+
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task The_Tail_Of_A_Run_Of_Bad_Tokens_Is_Said_When_The_Window_Closes()
+    {
+        await using var h = await Harness.StartAsync();
+
+        // The line carries the count up to it, so a run that stops before the next line is due
+        // used to end with the journal reporting the first attempt and never mentioning the rest.
+        for (int i = 0; i < 5; i++)
+        {
+            await Assert.ThrowsAsync<WebSocketException>(
+                () => StubStation.ConnectAsync(h.Port, $"pdnsm_guess-{i}"));
+        }
+
+        h.Errors.Should().ContainSingle(
+            line => line.Contains("refused 1 connection", StringComparison.Ordinal),
+            "the first is said at once, and the rest are inside the quiet minute");
+
+        h.Time.Advance(TimeSpan.FromMinutes(1) + TimeSpan.FromSeconds(1));
+        await h.UntilAsync(() => Task.FromResult(h.Errors.Count == 2));
+        h.Errors[1].Should().Contain("refused 4 connections").And.Contain("5 in all");
     }
 
     [Fact(Timeout = TestTimeoutMs)]
@@ -842,7 +917,7 @@ public class UplinkTests
         // into a memory leak with a display minutes behind the band.
         for (int i = 0; i < 30; i++)
         {
-            input.Push(Enumerable.Repeat((short)(i + 1), 100).ToArray(), transmitted: false);
+            input.Push(Pcm(100, (short)(i + 1)), transmitted: false);
         }
 
         input.Buffered.Should().BeLessThanOrEqualTo(1000, "the buffer is bounded");
@@ -1328,6 +1403,19 @@ public class UplinkTests
             _socket.Dispose();
             _stopping.Dispose();
         }
+    }
+
+    /// <summary>A block of one repeated sample, in the little-endian bytes the wire carries.</summary>
+    private static byte[] Pcm(int samples, short value)
+    {
+        byte[] bytes = new byte[2 * samples];
+        for (int i = 0; i < samples; i++)
+        {
+            System.Buffers.Binary.BinaryPrimitives.WriteInt16LittleEndian(
+                bytes.AsSpan(2 * i, 2), value);
+        }
+
+        return bytes;
     }
 
     /// <summary>Whether every character is printable ASCII, which journalctl's pager needs.</summary>

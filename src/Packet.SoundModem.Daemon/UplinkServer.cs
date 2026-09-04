@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+using System.Buffers;
 using System.Net;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
@@ -142,6 +142,7 @@ internal sealed class UplinkServer : IAsyncDisposable
     private long _badTokens;
     private long _badTokensSaid;
     private DateTimeOffset _badTokenLine = DateTimeOffset.MinValue;
+    private ITimer? _badTokenTail;
 
     internal UplinkServer(UplinkServerOptions options)
     {
@@ -181,8 +182,8 @@ internal sealed class UplinkServer : IAsyncDisposable
             return true;
         }
 
-        string? presented = BearerToken(context.Request);
-        if (presented is null)
+        (bool offered, string? presented) = BearerToken(context.Request);
+        if (!offered)
         {
             // No delay: this is not a guess, it is a client that did not bring a token at all -
             // a crawler, a health check, somebody reading the plan.
@@ -193,7 +194,11 @@ internal sealed class UplinkServer : IAsyncDisposable
             return true;
         }
 
-        if (Match(presented) is not { } entry)
+        // A token that was offered and is unusable - empty, or longer than any token this site
+        // issues - is still somebody presenting something, so it is delayed and counted like any
+        // other wrong one. It used to fall into the arm above and be refused instantly and
+        // silently, which made a run of them invisible in the journal.
+        if (presented is null || Match(presented) is not { } entry)
         {
             await Task.Delay(BadTokenDelay, _options.Stopping).ConfigureAwait(false);
             NoteBadToken(context);
@@ -303,35 +308,103 @@ internal sealed class UplinkServer : IAsyncDisposable
     /// A header rather than a query parameter because a query parameter is written to every log
     /// between here and the station, Cloudflare's included.
     /// </remarks>
-    private static string? BearerToken(HttpListenerRequest request)
+    /// <returns>
+    /// Whether a bearer credential was offered at all, and the token where it is one this site
+    /// could have issued. The two are separate answers: nothing offered is a client that is not
+    /// trying, and something unusable offered is a client that is.
+    /// </returns>
+    private static (bool Offered, string? Token) BearerToken(HttpListenerRequest request)
     {
         if (request.Headers["Authorization"] is not { } header
             || !header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
-            return null;
+            return (false, null);
         }
 
         string token = header["Bearer ".Length..].Trim();
-        return token.Length is 0 or > 512 ? null : token;
+        return (true, token.Length is 0 or > 512 ? null : token);
     }
 
     /// <summary>One line for a run of bad tokens, at most one a minute, with the count.</summary>
+    /// <remarks>
+    /// The line carries the count accumulated up to it, so a run that stops before the next line
+    /// is due used to end with the journal reporting the first attempt and never mentioning the
+    /// other two hundred. A timer closes the window instead: whatever the run had reached when it
+    /// stopped is said once, when the quiet period is up.
+    /// </remarks>
     private void NoteBadToken(HttpListenerContext context)
     {
         long total = Interlocked.Increment(ref _badTokens);
         DateTimeOffset now = _options.TimeProvider.GetUtcNow();
+        string from = context.Request.RemoteEndPoint?.Address?.ToString() ?? "somewhere";
+        bool sayNow;
+        bool armTail = false;
         lock (_gate)
         {
-            if (now - _badTokenLine < BadTokenQuiet)
+            sayNow = now - _badTokenLine >= BadTokenQuiet;
+            if (sayNow)
             {
-                return;
+                _badTokenLine = now;
+                armTail = _badTokenTail is null;
             }
-
-            _badTokenLine = now;
         }
 
+        if (sayNow)
+        {
+            SayBadTokens(from);
+        }
+
+        if (!armTail)
+        {
+            return;
+        }
+
+        // Outside the lock: a TimeProvider holds its own lock while running a callback, and this
+        // callback takes ours.
+        ITimer tail = _options.TimeProvider.CreateTimer(
+            _ => BadTokenTail(from), null, BadTokenQuiet, Timeout.InfiniteTimeSpan);
+        ITimer? spare = null;
+        lock (_gate)
+        {
+            if (_badTokenTail is null)
+            {
+                _badTokenTail = tail;
+            }
+            else
+            {
+                spare = tail;
+            }
+        }
+
+        spare?.Dispose();
+    }
+
+    /// <summary>The quiet period is up: say what the run reached, if anything is left to say.</summary>
+    private void BadTokenTail(string from)
+    {
+        ITimer? spent;
+        lock (_gate)
+        {
+            spent = _badTokenTail;
+            _badTokenTail = null;
+        }
+
+        spent?.Dispose();
+        if (Interlocked.Read(ref _badTokens) > Interlocked.Read(ref _badTokensSaid))
+        {
+            SayBadTokens(from);
+        }
+    }
+
+    private void SayBadTokens(string from)
+    {
+        long total = Interlocked.Read(ref _badTokens);
         long since = total - Interlocked.Exchange(ref _badTokensSaid, total);
-        string from = context.Request.RemoteEndPoint?.Address?.ToString() ?? "somewhere";
+        if (since <= 0)
+        {
+            return;
+        }
+
         _journal.WriteError(
             $"uplink: refused {since} connection{(since == 1 ? "" : "s")} presenting a token this "
             + $"site has not issued (most recently from {UberSdrDirectory.Ascii(from)}, {total} "
@@ -425,6 +498,15 @@ internal sealed class UplinkServer : IAsyncDisposable
             _live.Clear();
         }
 
+        ITimer? tail;
+        lock (_gate)
+        {
+            tail = _badTokenTail;
+            _badTokenTail = null;
+        }
+
+        tail?.Dispose();
+
         foreach (UplinkSession session in sessions)
         {
             try
@@ -452,6 +534,14 @@ internal sealed class UplinkServer : IAsyncDisposable
         private readonly WebSocket _socket;
         private readonly SemaphoreSlim _sending = new(1, 1);
         private readonly CancellationTokenSource _stopping;
+
+        // One buffer per session, rented once and reused for every message, rather than a
+        // MemoryStream and an 8 kB chunk per 40 ms block. CLAUDE.md's zero-steady-state-allocation
+        // rule is about DSP hot paths, and a watched station's audio is one: 25 messages a second
+        // each throwing away 25 kB was 600 kB/s of garbage per station. The station's own client
+        // pools the identical path.
+        private byte[]? _message;
+        private byte[]? _chunk;
 
         private readonly string? _origin;
 
@@ -524,6 +614,18 @@ internal sealed class UplinkServer : IAsyncDisposable
                 }
 
                 await CloseAsync(closing).ConfigureAwait(false);
+                if (_message is { } message)
+                {
+                    ArrayPool<byte>.Shared.Return(message);
+                    _message = null;
+                }
+
+                if (_chunk is { } chunk)
+                {
+                    ArrayPool<byte>.Shared.Return(chunk);
+                    _chunk = null;
+                }
+
                 _socket.Dispose();
                 _stopping.Dispose();
                 _sending.Dispose();
@@ -535,7 +637,7 @@ internal sealed class UplinkServer : IAsyncDisposable
         {
             while (!_stopping.IsCancellationRequested)
             {
-                (WebSocketMessageType kind, byte[]? payload, string? refusal) =
+                (WebSocketMessageType kind, int? length, string? refusal) =
                     await ReceiveAsync().ConfigureAwait(false);
 
                 if (refusal is not null)
@@ -543,20 +645,20 @@ internal sealed class UplinkServer : IAsyncDisposable
                     return End(new Stop(refusal, Refuse: true));
                 }
 
-                if (payload is null)
+                if (length is not { } bytes)
                 {
                     return "the station closed the connection";
                 }
 
-                if (!Allowed(payload.Length))
+                if (!Allowed(bytes))
                 {
                     return End(new Stop(
                         "sent more than twice the rate its own hello declared", Refuse: true));
                 }
 
                 Stop? stop = kind == WebSocketMessageType.Binary
-                    ? OnBinary(payload)
-                    : await OnTextAsync(payload).ConfigureAwait(false);
+                    ? OnBinary(_message.AsSpan(0, bytes))
+                    : await OnTextAsync(_message.AsMemory(0, bytes)).ConfigureAwait(false);
                 if (stop is { } ending)
                 {
                     return End(ending);
@@ -600,37 +702,38 @@ internal sealed class UplinkServer : IAsyncDisposable
         /// The message, or a null payload for a clean close, or a refusal sentence for a message
         /// that broke a cap.
         /// </returns>
-        private async Task<(WebSocketMessageType Kind, byte[]? Payload, string? Refusal)>
-            ReceiveAsync()
+        private async Task<(WebSocketMessageType Kind, int? Length, string? Refusal)> ReceiveAsync()
         {
             // Capped before a byte of it is parsed, and the cap is the message's own limit rather
             // than the buffer's: an accumulator that grows to whatever arrives is the one
             // unbounded WebSocket buffer this tree already has, and it is not being copied here.
             int cap = _hello is null ? MaxHelloBytes : MaxTextBytes;
-            var message = new MemoryStream(4096);
-            byte[] chunk = new byte[8192];
+            _message ??= ArrayPool<byte>.Shared.Rent(MaxTextBytes);
+            _chunk ??= ArrayPool<byte>.Shared.Rent(8192);
+            int at = 0;
             WebSocketMessageType kind = WebSocketMessageType.Text;
 
             while (true)
             {
                 WebSocketReceiveResult result = await _socket
-                    .ReceiveAsync(chunk, _stopping.Token).ConfigureAwait(false);
+                    .ReceiveAsync(_chunk, _stopping.Token).ConfigureAwait(false);
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    return (kind, null, null);
+                    return (kind, null, null);   // null length is a clean close, not an empty one
                 }
 
                 kind = result.MessageType;
-                if (message.Length + result.Count > cap)
+                if (at + result.Count > cap)
                 {
                     return (kind, null,
                         $"sent a message over {cap} bytes, which this does not accept");
                 }
 
-                message.Write(chunk, 0, result.Count);
+                _chunk.AsSpan(0, result.Count).CopyTo(_message.AsSpan(at));
+                at += result.Count;
                 if (result.EndOfMessage)
                 {
-                    return (kind, message.ToArray(), null);
+                    return (kind, at, null);
                 }
             }
         }
@@ -659,7 +762,7 @@ internal sealed class UplinkServer : IAsyncDisposable
         }
 
         /// <summary>A binary message, which is audio and can be nothing else.</summary>
-        private Stop? OnBinary(byte[] payload)
+        private Stop? OnBinary(ReadOnlySpan<byte> payload)
         {
             if (_hello is not { } hello || _station is not { } station)
             {
@@ -683,23 +786,20 @@ internal sealed class UplinkServer : IAsyncDisposable
                     + "one there is", Refuse: true);
             }
 
-            bool transmitted = payload[1] != 0;
-            short[] pcm = new short[hello.BlockSamples];
-            for (int i = 0; i < pcm.Length; i++)
-            {
-                pcm[i] = BinaryPrimitives.ReadInt16LittleEndian(payload.AsSpan(4 + (2 * i), 2));
-            }
-
-            station.PushAudio(pcm, transmitted);
+            // The samples straight off the wire, with nothing allocated in between: the input
+            // reads them little-endian as it converts.
+            station.PushAudio(payload[4..], payload[1] != 0);
             return null;
         }
 
         /// <summary>A text message: the hello, a frame, a status sentence, or a goodbye.</summary>
-        private async Task<Stop?> OnTextAsync(byte[] payload)
+        private async Task<Stop?> OnTextAsync(ReadOnlyMemory<byte> payload)
         {
             JsonElement root;
             try
             {
+                // Cloned, because the buffer it was parsed out of is the pooled one and is about
+                // to be reused for the next message.
                 using JsonDocument document = JsonDocument.Parse(payload);
                 root = document.RootElement.Clone();
             }

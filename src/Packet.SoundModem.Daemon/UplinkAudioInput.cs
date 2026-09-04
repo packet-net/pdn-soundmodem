@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Buffers.Binary;
 using M0LTE.Radio.Audio;
 using Packet.SoundModem.Audio;
 
@@ -114,28 +116,33 @@ internal sealed class UplinkAudioInput : IAudioInput, IDisposable
     /// <param name="transmitted">
     /// False for audio the station heard, true for its own transmission.
     /// </param>
-    internal void Push(ReadOnlySpan<short> pcm, bool transmitted)
+    internal void Push(ReadOnlySpan<byte> pcm, bool transmitted)
     {
-        if (pcm.Length == 0)
+        int count = pcm.Length / 2;
+        if (count == 0)
         {
             return;
         }
 
-        var samples = new float[pcm.Length];
-        for (int i = 0; i < pcm.Length; i++)
+        // Rented, not allocated: this runs 25 times a second per watched station, and a float
+        // array per block is the sort of steady-state garbage CLAUDE.md's DSP rule exists to
+        // keep out of a receive path. Returned when the block is read or dropped.
+        float[] samples = ArrayPool<float>.Shared.Rent(count);
+        for (int i = 0; i < count; i++)
         {
-            samples[i] = Pcm16.ToFloat(pcm[i]);
+            samples[i] = Pcm16.ToFloat(BinaryPrimitives.ReadInt16LittleEndian(pcm[(2 * i)..]));
         }
 
         lock (_gate)
         {
             if (_disposed)
             {
+                ArrayPool<float>.Shared.Return(samples);
                 return;
             }
 
-            _blocks.Enqueue(new Block(samples, transmitted));
-            _accepted += samples.Length;
+            _blocks.Enqueue(new Block(samples, count, transmitted));
+            _accepted += count;
 
             // Oldest first, and one whole block at a time: half a block would leave a fragment
             // whose start nothing lines up with, and the display is being drawn from a stream
@@ -143,9 +150,10 @@ internal sealed class UplinkAudioInput : IAudioInput, IDisposable
             while (_accepted - _consumed > _capacitySamples && _blocks.Count > 1)
             {
                 Block oldest = _blocks.Dequeue();
-                int lost = oldest.Samples.Length - oldest.Offset;
+                int lost = oldest.Length - oldest.Offset;
                 _consumed += lost;
                 _dropped += lost;
+                ArrayPool<float>.Shared.Return(oldest.Samples);
             }
 
             _arrived.Set();
@@ -168,7 +176,8 @@ internal sealed class UplinkAudioInput : IAudioInput, IDisposable
             while (_blocks.Count > 0)
             {
                 Block block = _blocks.Dequeue();
-                _consumed += block.Samples.Length - block.Offset;
+                _consumed += block.Length - block.Offset;
+                ArrayPool<float>.Shared.Return(block.Samples);
             }
 
             _arrived.Reset();
@@ -224,14 +233,15 @@ internal sealed class UplinkAudioInput : IAudioInput, IDisposable
                    && _blocks.Peek().Transmitted == transmitted)
             {
                 Block block = _blocks.Peek();
-                int available = block.Samples.Length - block.Offset;
+                int available = block.Length - block.Offset;
                 int take = Math.Min(available, destination.Length - written);
                 block.Samples.AsSpan(block.Offset, take).CopyTo(destination[written..]);
                 written += take;
                 block.Offset += take;
-                if (block.Offset == block.Samples.Length)
+                if (block.Offset == block.Length)
                 {
                     _blocks.Dequeue();
+                    ArrayPool<float>.Shared.Return(block.Samples);
                 }
             }
 
@@ -254,7 +264,10 @@ internal sealed class UplinkAudioInput : IAudioInput, IDisposable
         lock (_gate)
         {
             _disposed = true;
-            _blocks.Clear();
+            while (_blocks.Count > 0)
+            {
+                ArrayPool<float>.Shared.Return(_blocks.Dequeue().Samples);
+            }
         }
 
         // Set rather than reset: a loop sitting in the wait has to come out of it, find nothing
@@ -266,10 +279,19 @@ internal sealed class UplinkAudioInput : IAudioInput, IDisposable
         _arrived.Set();
     }
 
-    /// <summary>One block as it arrived, with how much of it has been read.</summary>
-    private sealed class Block(float[] samples, bool transmitted)
+    /// <summary>
+    /// One block as it arrived, with how much of it has been read.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Samples"/> is rented from the pool and is longer than the block, which is why
+    /// <see cref="Length"/> exists: the array's own length is whatever the pool had to hand and
+    /// says nothing about how much audio is in it.
+    /// </remarks>
+    private sealed class Block(float[] samples, int length, bool transmitted)
     {
         internal float[] Samples { get; } = samples;
+
+        internal int Length { get; } = length;
 
         internal bool Transmitted { get; } = transmitted;
 

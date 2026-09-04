@@ -575,8 +575,8 @@ internal sealed class RelayStation : IMonitorStation
         live?.Demand(viewers);
     }
 
-    /// <summary>Audio off the wire.</summary>
-    internal void PushAudio(ReadOnlySpan<short> pcm, bool transmitted) =>
+    /// <summary>Audio off the wire, as the little-endian bytes it arrived as.</summary>
+    internal void PushAudio(ReadOnlySpan<byte> pcm, bool transmitted) =>
         _input.Push(pcm, transmitted);
 
     /// <summary>The station's own sentence about its radio, for the page's status chip.</summary>

@@ -118,33 +118,42 @@ internal sealed class StubStation : IAsyncDisposable
         string? op = "Tom M0LTE", string? location = "Reading, England",
         string? radio = "IC-7300 into a doublet at 10 m", string? site = null,
         int audioRate = 12000, int blockSamples = 480, double dialHz = 7049450,
-        object[]? bands = null)
+        object[]? bands = null, object? extra = null)
     {
         ClientWebSocket socket = await ConnectAsync(port, token);
         var station = new StubStation(socket, audioRate, blockSamples);
+
         // The field names the station's own client writes, and the same omit-nulls serialiser it
         // uses: a monitor that only ever saw a test's tidy JSON would not have been tested at all.
-        await station.SendAsync(new
+        var hello = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            type = "hello",
-            protocol = 1,
-            version = "0.55.2",
-            callsign,
-            @operator = op,
-            location,
-            radio,
-            site,
-            audioRate,
-            blockSamples,
-            dialHz,
-            sideband = "usb",
-            frames = "always",
-            modems = bands ?? [new
+            ["type"] = "hello",
+            ["protocol"] = 1,
+            ["version"] = "0.55.2",
+            ["callsign"] = callsign,
+            ["operator"] = op,
+            ["location"] = location,
+            ["radio"] = radio,
+            ["site"] = site,
+            ["audioRate"] = audioRate,
+            ["blockSamples"] = blockSamples,
+            ["dialHz"] = dialHz,
+            ["sideband"] = "usb",
+            ["frames"] = "always",
+            ["modems"] = bands ?? [new
             {
                 sub = 0, mode = "afsk300-il2pc", lowHz = 700.0, highHz = 1000.0, centreHz = 850.0,
             }],
-        });
+        };
 
+        // Anything else a test wants on the one hello that is actually read: a field this site
+        // has never heard of, or one it has to be shown ignoring.
+        foreach (System.Reflection.PropertyInfo more in extra?.GetType().GetProperties() ?? [])
+        {
+            hello[more.Name] = more.GetValue(extra);
+        }
+
+        await station.SendAsync(hello);
         return station;
     }
 

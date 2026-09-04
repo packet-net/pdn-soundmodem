@@ -256,7 +256,13 @@ internal static class UplinkWire
             FrameHex = Capped(root, "hex", NoteCap),
             PlainIl2p = Bool(root, "plain") ?? false,
             MonitorOnly = Bool(root, "monitorOnly") ?? false,
-            At = When(root, "at") ?? now,
+            // Clamped to a day either side of this site's own clock. A station is a semi-trusted
+            // publisher and this is the one field of its own it could use against itself: a frame
+            // dated in the year 9999 is written into the site's copy of its log and sorts above
+            // everything else on its page for ever. Self-harm rather than an attack, and treated
+            // like every other untrusted field here anyway. A day is wide enough for any clock a
+            // station could plausibly be running and narrow enough that nothing sorts wrongly.
+            At = Within(When(root, "at") ?? now, now),
             Raw = raw,
         };
     }
@@ -332,6 +338,13 @@ internal static class UplinkWire
                 _ => null,
             }
             : null;
+
+    /// <summary>How far a relayed frame's own timestamp may be from this site's clock.</summary>
+    private static readonly TimeSpan ClockWindow = TimeSpan.FromDays(1);
+
+    /// <summary>The station's time where it is plausible, and this site's where it is not.</summary>
+    private static DateTimeOffset Within(DateTimeOffset stated, DateTimeOffset now) =>
+        stated < now - ClockWindow || stated > now + ClockWindow ? now : stated;
 
     private static DateTimeOffset? When(JsonElement root, string name) =>
         root.TryGetProperty(name, out JsonElement element)
