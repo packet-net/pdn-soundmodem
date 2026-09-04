@@ -249,6 +249,18 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-09-04 - the public page goes minimal: no sideband, span or level controls, and the middle cut to the receiver, the credit and Listen
+
+Tom, having watched the deployed monitor at https://monitor.ukpacketradio.network/r/m9psy-1/: "We can probably lose the sideband selector and span controls. Thin out the text in the middle, go minimal. Remove the ARDOP span if we're not decoding it." All of it is the `public` flavour of `waterfall.html` and the flavour-B examples; nothing is removed from the operator's page, which is what `public` has always meant.
+
+**The controls go because their answers are not a visitor's to give.** The dial and the sideband arrive with the receiver's band plan and the span and the display levels with the page's own defaults, so a viewer who moved any of them could only end up reading the wrong frequencies off the ruler. Hidden rather than disabled: a control that cannot be worked is worse than no control. What they set still applies, and for two of them it could not have before now - `ui` is one localStorage key per origin and one origin serves fifty receivers, so a dial or a span left there by one receiver was being applied to the next, with nothing on a page that has no such control able to put it right. A public page now starts each of them from the page's own defaults and lets the config have its say. The ruler's "Set the dial frequency to see RF" goes with the dial control, being an instruction to do something the reader no longer can.
+
+**The middle is the receiver's state, whose receiver it is, and the listen control.** Gone: the frame-rate and bin-width status line, which describes the machinery rather than the band; the labels over the two controls that are left, because a button reading Listen is audio and one reading Links is AX.25; and, from each modem chip, the KISS sub-channel and the band edges it carried as a tooltip. The chips themselves stay, because they are the key to the coloured bands drawn on the waterfall, thinned to the mode and where it sits. The operator's `about` text is his and is untouched, and so is the receiver credit and its link.
+
+**The ARDOP entry is out of every flavour-B example** - `docs/monitor-plan.md` 4.5, the commented block in `soundmodem.example.json` and `CONFIG.md`'s `## monitor`, which keeps one sentence saying such an entry is accepted, draws its band and decodes nothing. The argument for keeping it was that it held the band plan identical to the single-receiver deployment's; measured, it does not, because the two packet modems are the outermost slots and the planner gives dial 7049450 with audio centres 850 and 2150 either way. The gap at sub-channel 1 is left as a gap, so that 0 and 2 here are 0 and 2 on GB7RDG-2. The single-receiver deployment's own three slots are its own business and are untouched.
+
+**Proved as a difference between two pages rather than a claim about one.** The Node probe reads the hidden set off the page's own list of ids on every run, public or not, and captures the chip tooltips and what the page drew on its canvases; both new tests probe a public server and an operator server and assert the operator's page still has everything the visitor's no longer does.
+
 ### 2026-09-03 (Phase 4) - the picker goes live at monitor.ukpacketradio.network, and the single-receiver site is retired
 
 Phase 4 of [docs/monitor-plan.md](monitor-plan.md), which is deployment rather than code: pdn-soundmodem v0.55.0 in the `monitor` flavour is live at https://monitor.ukpacketradio.network, listing 49 of the 50 UberSDR receivers the directory offers and serving each one's page under `/r/<slug>/`. Nothing was changed in the source to get there.

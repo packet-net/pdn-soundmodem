@@ -138,11 +138,13 @@
   //   "deny": [],
   //   // The modems every receiver is given, same schema as "modems" above. Give them all an
   //   // "rfFrequency": a web receiver has no dial already set to read off, so the band plan
-  //   // is the only thing that can tune it.
+  //   // is the only thing that can tune it. An "ardop" entry is accepted and would draw its
+  //   // band on every receiver's waterfall, but this flavour runs no virtual TNC, so nothing
+  //   // would ever decode there; slot 1 is GB7RDG-2's ARDOP one and is left out for that
+  //   // reason, the numbering kept so that 0 and 2 here are 0 and 2 on the node.
   //   "modems": [
-  //     { "subChannel": 0, "mode": "afsk300-il2pc",           "rfFrequency": 7050300 },
-  //     { "subChannel": 1, "mode": "ardop", "bandwidth": 500, "rfFrequency": 7050950 },
-  //     { "subChannel": 2, "mode": "bpsk300",                 "rfFrequency": 7051600 }
+  //     { "subChannel": 0, "mode": "afsk300-il2pc", "rfFrequency": 7050300 },
+  //     { "subChannel": 2, "mode": "bpsk300",       "rfFrequency": 7051600 }
   //   ]
   // },
   // // The picker is served at "/" on this port and each receiver's page under "/r/<slug>/".

@@ -166,9 +166,8 @@ A new embedded resource, `src/Packet.SoundModem/Waterfall/wwwroot/monitor.html`,
     "allow": [],
     "deny": [],
     "modems": [
-      { "subChannel": 0, "mode": "afsk300-il2pc",           "rfFrequency": 7050300 },
-      { "subChannel": 1, "mode": "ardop", "bandwidth": 500, "rfFrequency": 7050950 },
-      { "subChannel": 2, "mode": "bpsk300",                 "rfFrequency": 7051600 }
+      { "subChannel": 0, "mode": "afsk300-il2pc", "rfFrequency": 7050300 },
+      { "subChannel": 2, "mode": "bpsk300",       "rfFrequency": 7051600 }
     ]
   },
   "frameLog": { "path": "/var/lib/pdn-soundmodem" },
@@ -184,6 +183,7 @@ A new embedded resource, `src/Packet.SoundModem/Waterfall/wwwroot/monitor.html`,
 
 - `monitor` and `device` are **mutually exclusive**. Both set is exit 2 with a message naming both and saying to remove one; neither set is the existing behaviour, unchanged.
 - `monitor.modems` is the same modem schema as the top-level `modems`, applied to every receiver. It lives inside `monitor` rather than at the top level so that a config file cannot half-describe a station in one flavour and a monitor in the other.
+- **No `ardop` entry**, though one is accepted: this flavour configures no virtual TNC, so an `ardop` modem would draw its band on every receiver's waterfall and decode nothing. It used to be here, on the argument that it kept the band plan identical to the single-receiver deployment's; measured, it does not do that either, because the two packet modems are the outermost slots and the dial and both audio centres come out at 7049450 / 850 / 2150 with the entry or without it. The gap at sub-channel 1 is deliberate, so that what is numbered 0 and 2 here is numbered 0 and 2 on GB7RDG-2, whose standard slots these are.
 - `frameLog.path` is a **directory** in flavour B and a **file** in flavour A. The daemon creates the directory if it can and writes `frames-<slug>.db` per station. Getting this wrong should be an exit 2 with the reason, not a silent SQLite error.
 - `ubersdr` is still honoured in flavour B for the stream parameters it owns (`mode`, `ssbLowHz`, `ssbHighHz`, `startupGuardMs`, `gain`); `onDemand` is implied true and `lingerSeconds` comes from `monitor.lingerSeconds`.
 - Start-up validation, all exit 2: `monitor.modems` non-empty; `waterfall` present with a `port`; `waterfall.public` implied true and forced, because a picker on a LAN dressed as an operator console is nobody's requirement; `refreshMinutes` and `lingerSeconds` non-negative; `directory` a valid absolute http or https URL; every entry in `allow`/`deny` a plausible hostname.
@@ -383,6 +383,12 @@ Tom's, taken before any of it was built:
 - **Two flavours, one code base, configuration is the switch.** In Tom's words: "I don't want to lose the current deployment model - it's strictly the same code base, two flavours via configuration."
 - **The per-receiver flavour stays supported** and stays deployed as it is until Tom says otherwise. Whether CT 146 keeps running alongside the new site is open.
 
+### After the first look at the live site (2026-09-04)
+
+Tom, having watched https://monitor.ukpacketradio.network/r/m9psy-1/: "We can probably lose the sideband selector and span controls. Thin out the text in the middle, go minimal. Remove the ARDOP span if we're not decoding it."
+
+Taken as: on a public page, hide the controls whose answers arrive with the receiver's band plan rather than from the person looking at it (the dial and its sideband, the span, the display levels), and cut what is left between the top of the page and its panels to the receiver's state, the credit, and the listen control. Nothing is removed from the operator's page, as ever. The ARDOP entry is out of this document's 4.5, of `CONFIG.md` and of the example config; see 4.5 for what leaving it out does and does not change.
+
 ### Decisions taken while building Phase 3 (2026-09-03)
 
 Tom's are above; these are the implementer's, recorded here because each of them is a place where the plan was silent, or was wrong against the real code or the real directory, and somebody reading this later should not have to reconstruct why.
@@ -405,7 +411,7 @@ Tom's are above; these are the implementer's, recorded here because each of them
 
 - **Anything from the directory that reaches the journal is flattened to ASCII.** Receiver names and locations are somebody else's UTF-8 - the capture holds Greek and accented Latin - and `journalctl`'s pager under a C locale renders those as `<CE><95>`. `SourceTextTests` cannot catch it because it is runtime data rather than a source string. Journal lines name receivers by host or slug, which are ASCII by construction, and anything else that could reach one goes through `UberSdrDirectory.Ascii`. The pages get the real UTF-8, which is where it belongs.
 
-- **An `ardop` entry in `monitor.modems` declares a band and decodes nothing.** Section 2 says flavour B configures no ARDOP host, and 4.5's example config nonetheless carries an `ardop` modem entry. Both stand, and the consequence is worth writing down: the entry takes part in the band plan, which is what keeps the dial and the other modems' audio centres identical to the single-receiver deployment's, and it draws its band on every receiver's waterfall - but ARDOP decoding is `ArdopChannelBridge`, which is the virtual TNC and its host ports, so nothing decodes there. Documented in CONFIG.md rather than quietly left for a deployer to notice a shaded region that never lights up. Wiring a decode-only ARDOP tap is a real option and is not this phase's.
+- **An `ardop` entry in `monitor.modems` declares a band and decodes nothing.** Section 2 says flavour B configures no ARDOP host, and 4.5's example config nonetheless carries an `ardop` modem entry. Both stand, and the consequence is worth writing down: the entry takes part in the band plan, which is what keeps the dial and the other modems' audio centres identical to the single-receiver deployment's, and it draws its band on every receiver's waterfall - but ARDOP decoding is `ArdopChannelBridge`, which is the virtual TNC and its host ports, so nothing decodes there. Documented in CONFIG.md rather than quietly left for a deployer to notice a shaded region that never lights up. Wiring a decode-only ARDOP tap is a real option and is not this phase's. *Superseded 2026-09-04 on Tom's instruction: the entry is out of every flavour-B example. The band-plan half of the argument for keeping it did not hold either - the two packet modems are the outermost slots, so the plan is 7049450 / 850 / 2150 with the entry or without it.*
 
 - **Everything the directory says is somebody else's writing, and is treated as such (review of PR #388).** Three holes, all of them found by a reviewer driving the real thing rather than reading it. `public_url` went into an `href` on the picker and on every receiver's page having been escaped for four HTML characters, which does nothing about a scheme: a `javascript:` URL in the directory would have run in every visitor's session on this site's origin. It is now refused where it enters - absolute http or https only, falling back to the receiver's own endpoint - and refused again at both places that write the attribute, because that is the line that actually does the damage. A `host` that is not a hostname is ignored with one journal line, rather than travelling into a station whose pre-flight then threw `UriFormatException` from a code path that caught a list of other exception types and left the station marked as attaching for ever, idle on the picker with a viewer waiting and nothing anywhere saying why; that catch is now every exception and the flag is cleared in a `finally`. And `public_iq_modes` absent or empty passed the filter where 4.3 says the list must contain the mode - silence is not consent, and a receiver listed on that basis is one every visitor picking it would find unreachable.
 

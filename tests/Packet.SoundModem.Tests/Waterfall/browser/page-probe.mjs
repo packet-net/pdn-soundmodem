@@ -244,6 +244,14 @@ const connected = await until("!!(ws && ws.readyState === 1 && cfg)", 20000);
 // time other than the moment a host connected would say nothing about attachment.
 const chips = () => sandbox.document.getElementById("chips").children.map(c => c.innerHTML);
 const chipsOnArrival = chips();
+// A chip's tooltip is a property rather than markup, so it is captured beside the markup: the
+// public flavour drops it, and nothing reading innerHTML alone could see that it had.
+const chipTitlesOnArrival = sandbox.document.getElementById("chips").children.map(c => c.title ?? null);
+
+// What the page has written on its canvases from the handshake alone: the ruler's RF scale, and
+// the line that asks for a dial when there is none. A public page cannot be given a dial by the
+// person reading it, so both of those are questions about what the config alone achieved.
+const drawnOnArrival = sandbox.__text();
 
 let clickError = null;
 try { vm.runInContext(`document.getElementById("listen").click()`, sandbox); }
@@ -509,11 +517,17 @@ const afterHistory = sandbox.document.getElementById("frames").children;
 
 // What a public deployment dresses the page with, as the handshake left it: the title, the
 // about strip with the receiver credit, and the body class the stylesheet keys off.
+//
+// And what it takes away. Read on every run, public or not, so that "the operator's page still
+// has them" is a measurement in the same shape as "the visitor's page does not" rather than an
+// absence somebody has to trust. The ids are the page's own list, so the two cannot drift.
 const publicPage = {
   title: sandbox.document.title,
   bodyClass: sandbox.document.body.className,
   about: sandbox.document.getElementById("about").innerHTML,
   aboutHidden: sandbox.document.getElementById("about").hidden === true,
+  hidden: Object.fromEntries(run("PUBLIC_HIDES")
+    .map(id => [id, sandbox.document.getElementById(id).hidden === true])),
 };
 
 // Tearing the links pane off into a window of its own, last, because it closes the pane behind it
@@ -531,8 +545,10 @@ console.log(JSON.stringify({
   txHeld,
   txHeldNoSwr,
   chipsOnArrival,
+  chipTitlesOnArrival,
   chipsAttached,
   chipsDetached,
+  drawnOnArrival,
   ordinaryTag,
   identTag,
   heardTag,

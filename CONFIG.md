@@ -1705,9 +1705,8 @@ same package, same tests; the configuration is the switch.
     "allow": [],
     "deny": [],
     "modems": [
-      { "subChannel": 0, "mode": "afsk300-il2pc",           "rfFrequency": 7050300 },
-      { "subChannel": 1, "mode": "ardop", "bandwidth": 500, "rfFrequency": 7050950 },
-      { "subChannel": 2, "mode": "bpsk300",                 "rfFrequency": 7051600 }
+      { "subChannel": 0, "mode": "afsk300-il2pc", "rfFrequency": 7050300 },
+      { "subChannel": 2, "mode": "bpsk300",       "rfFrequency": 7051600 }
     ]
   },
   "frameLog": { "path": "/var/lib/pdn-soundmodem" },
@@ -1787,13 +1786,12 @@ browser actually attaches. So a crawler cannot cost anybody a session. Once buil
 kept for the life of the process, so the links pane and the frame log survive a visitor leaving
 and coming back - which is the whole reason a quiet band looks alive.
 
-**An `ardop` entry declares a band and decodes nothing, in this flavour.** ARDOP is not a
-demodulator but a whole virtual TNC with its own host interface, and a monitor has no host
-interface, so the entry above takes part in the band plan (which is what keeps the dial and every
-other modem's audio centre the same as the single-station deployment's) and draws its band on
-every receiver's waterfall, and no ARDOP frame is decoded or listed. Keep it if you want the
-overlay to match the node's band plan; drop it if a shaded region that never lights up would
-mislead. Nothing else changes either way.
+**An `ardop` entry is accepted, draws its band and decodes nothing**, because ARDOP is not a
+demodulator but a whole virtual TNC with its own host interface and a monitor has none - so leave
+it out, as the example above does. (The gap at sub-channel 1 is deliberate: these are GB7RDG-2's
+standard slots and slot 1 is its ARDOP one, so 0 and 2 here are 0 and 2 on the node. Leaving the
+entry out does not move anything: with it and without it the plan for the two modems above is dial
+7049450 with audio centres 850 and 2150.)
 
 **One session per receiver, however many people are watching it.** The fan-out is in this daemon:
 ten visitors on one receiver are ten browsers on one page, which is one viewer count, which is one

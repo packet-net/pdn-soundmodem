@@ -856,6 +856,146 @@ public class WaterfallPageTests
         probe.ChipsAttached[0].Should().NotContain("host");
     }
 
+    /// <summary>
+    /// A public page has no sideband selector, no span control and no display levels, and the
+    /// answers they would have given still arrive: the dial and the sideband from the receiver's
+    /// band plan, the span from the page's own default.
+    /// </summary>
+    /// <remarks>
+    /// <para>Tom, having watched the deployed monitor: "We can probably lose the sideband
+    /// selector and span controls." They are hidden rather than disabled because a control a
+    /// visitor cannot work is worse than no control, and because what they set is not theirs to
+    /// set: one site serves fifty receivers, each with its own dial, and a viewer who moved one
+    /// would only be reading the wrong frequencies off the ruler.</para>
+    /// <para>Both flavours are probed, so what the public flag hides is a difference between two
+    /// pages rather than a claim about one - the operator's page is untouched by all of this, and
+    /// this is where that is measured. LSB rather than USB on purpose: the RF the ruler ends up
+    /// drawing is below the dial rather than above it, so the scale can only have come from the
+    /// config the visitor has no control for.</para>
+    /// </remarks>
+    [Fact]
+    public async Task The_Public_Page_Hides_The_Sideband_And_Span_Controls()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var visitorChannel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        visitorChannel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int visitorPort = FreePorts.Next();
+        await using var visitorServer = new WaterfallWebServer(visitorChannel, visitorPort, new WaterfallOptions
+        {
+            Public = true,
+            Title = "40 m packet monitor",
+            DialFrequencyHz = 7047500,
+            Sideband = "lsb",
+        });
+        visitorServer.Start();
+
+        var operatorChannel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        operatorChannel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int operatorPort = FreePorts.Next();
+        await using var operatorServer = new WaterfallWebServer(operatorChannel, operatorPort, new WaterfallOptions
+        {
+            DialFrequencyHz = 7047500,
+            Sideband = "lsb",
+        });
+        operatorServer.Start();
+
+        Probe visitor = await RunProbeAsync(node, visitorPort);
+        Probe op = await RunProbeAsync(node, operatorPort);
+
+        visitor.Thrown.Should().BeEmpty();
+        visitor.Connected.Should().BeTrue();
+        op.Thrown.Should().BeEmpty();
+        op.Connected.Should().BeTrue();
+
+        visitor.PublicPage.Hidden["dialCtl"].Should().BeTrue(
+            "the dial and the sideband buttons sit in it, and neither is a visitor's to move");
+        visitor.PublicPage.Hidden["spanCtl"].Should().BeTrue("nor is how wide a slice is shown");
+        visitor.PublicPage.Hidden["levelCtl"].Should().BeTrue(
+            "nor the floor and top of the colour scale, which is the same kind of knob");
+
+        op.PublicPage.Hidden.Values.Should().AllSatisfy(hidden => hidden.Should().BeFalse(),
+            "nothing is taken off the operator's page; the flag only hides");
+
+        // And the settings still apply, arriving from the config rather than from a control. On
+        // LSB the ruler runs downwards from the dial, so 7044.50 is only reachable that way.
+        visitor.DrawnOnArrival.Should().Contain("7047.50", "the dial is the one the station planned")
+            .And.Contain("7044.50", "and the sideband it planned it on");
+        visitor.DrawnOnArrival.Should().NotContain("7050.50", "which is where USB would have put it");
+    }
+
+    /// <summary>
+    /// What is left between the top of the page and its panels, on a page for a visitor: the
+    /// receiver's state, whose receiver it is, and the listen control. Not the frame rate, not
+    /// the labels naming what a button plainly is, not the KISS sub-channel of a modem.
+    /// </summary>
+    /// <remarks>
+    /// Tom, on the deployed monitor: "Thin out the text in the middle, go minimal." The operator's
+    /// about text is his and is untouched, and the modem chips stay because they are the key to
+    /// the coloured bands drawn on the waterfall - thinned to the mode and where it sits, which is
+    /// the whole of what the key has to say to somebody who is not going to plug anything in.
+    /// </remarks>
+    [Fact]
+    public async Task The_Public_Page_Keeps_Only_The_Receiver_The_Credit_And_The_Listen_Control()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var visitorChannel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        visitorChannel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int visitorPort = FreePorts.Next();
+        await using var visitorServer = new WaterfallWebServer(visitorChannel, visitorPort, new WaterfallOptions
+        {
+            Public = true,
+            Title = "40 m packet monitor",
+            About = "The 7050-7052 kHz packet window, receive only.",
+        });
+        visitorServer.SetReceiver("M9PSY-1, Dalgety Bay, Scotland, UK", "https://m9psy-1.instance.ubersdr.org/");
+        visitorServer.Start();
+
+        var operatorChannel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        operatorChannel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int operatorPort = FreePorts.Next();
+        await using var operatorServer = new WaterfallWebServer(operatorChannel, operatorPort, new WaterfallOptions());
+        operatorServer.Start();
+
+        Probe visitor = await RunProbeAsync(node, visitorPort);
+        Probe op = await RunProbeAsync(node, operatorPort);
+
+        visitor.Thrown.Should().BeEmpty();
+        visitor.Connected.Should().BeTrue();
+        op.Connected.Should().BeTrue();
+
+        visitor.PublicPage.Hidden["stats"].Should().BeTrue(
+            "frames per second and hertz per bin describe the machinery, not the band");
+        visitor.PublicPage.Hidden["audioLabel"].Should().BeTrue("a button reading Listen is audio");
+        visitor.PublicPage.Hidden["linksLabel"].Should().BeTrue("and one reading Links is AX.25");
+
+        // The chip is the key to the coloured bands, so it stays - saying which mode and where,
+        // and no longer which KISS sub-channel or, in a tooltip, which band edges.
+        visitor.ChipsOnArrival.Should().ContainSingle();
+        visitor.ChipsOnArrival[0].Should().Contain("<b>AFSK1200</b>")
+            .And.Contain("1723 Hz", "where it sits is the one figure worth keeping")
+            .And.NotContain("<b>0", "the KISS sub-channel is for whoever plugs something in");
+        visitor.ChipTitlesOnArrival[0].Should().BeNull(
+            "and the band edges it used to carry as a tooltip go with it");
+        op.ChipsOnArrival[0].Should().Contain("<b>0 ");
+        op.ChipTitlesOnArrival[0].Should().Contain("afsk1200", "the operator's chip is what it was");
+
+        // The one paragraph a visitor reads is untouched: the operator's own words, then whose
+        // receiver this is and a link to it.
+        visitor.PublicPage.AboutHidden.Should().BeFalse();
+        visitor.PublicPage.About.Should().Contain("The 7050-7052 kHz packet window, receive only.")
+            .And.Contain("M9PSY-1, Dalgety Bay, Scotland, UK")
+            .And.Contain("href=\"https://m9psy-1.instance.ubersdr.org/\"");
+
+        // No dial is configured on either, so the ruler has no RF to show. It asks the operator
+        // for one and says nothing to a visitor, who has no control to answer with.
+        visitor.DrawnOnArrival.Should().NotContain("Set the dial frequency to see RF");
+        op.DrawnOnArrival.Should().Contain("Set the dial frequency to see RF");
+    }
+
     [Fact]
     public async Task A_Page_Served_Over_Https_Opens_Its_Socket_Over_Wss()
     {
@@ -1020,7 +1160,17 @@ public class WaterfallPageTests
         root.Thrown.Should().BeEmpty();
     }
 
-    private sealed record PublicPage(string Title, string BodyClass, string About, bool AboutHidden);
+    /// <summary>
+    /// How a public deployment dressed the page, and what it took away. <see cref="Hidden"/> is
+    /// read on every run, public or not, keyed by the page's own list of ids, so that what the
+    /// operator still has is measured in the same shape as what the visitor no longer does.
+    /// </summary>
+    private sealed record PublicPage(
+        string Title,
+        string BodyClass,
+        string About,
+        bool AboutHidden,
+        IReadOnlyDictionary<string, bool> Hidden);
 
     private sealed record Probe(
         string? SocketUrl,
@@ -1057,8 +1207,10 @@ public class WaterfallPageTests
         TxReadout? TxHeld,
         TxReadout? TxHeldNoSwr,
         string[] ChipsOnArrival,
+        string?[] ChipTitlesOnArrival,
         string[] ChipsAttached,
         string[] ChipsDetached,
+        string[] DrawnOnArrival,
         bool LinksHiddenBefore,
         bool LinksHiddenAfter,
         LinksBar LinksOnArrival,
