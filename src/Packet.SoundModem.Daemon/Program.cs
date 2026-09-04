@@ -194,6 +194,7 @@ for (int i = 0; i < args.Length; i++)
         case "--flex-ant": flexAnt = Next(); break;
         case "--flex-mode": flexMode = Next(); break;
         case "--flex-daxch": flexDaxCh = Next(); break;
+        case "--uplink-token": return UplinkToken.Print();
         case "--help":
             Console.WriteLine("see source header for usage");
             return 0;

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Packet.SoundModem.UberSdr;
@@ -515,6 +516,62 @@ public sealed class MonitorConfig
     /// </summary>
     public List<ModemConfig> Modems { get; set; } = [];
 
+    /// <summary>
+    /// Private stations this site accepts an uplink from, each with the callsign it must say it
+    /// is, the slug its page is served under, and the SHA-256 of the token issued to it. Empty
+    /// (the default) accepts none, and <c>/uplink</c> refuses every connection.
+    /// </summary>
+    /// <remarks>
+    /// The other half of <c>publish</c>, which is what a station puts in its own config. See
+    /// <c>docs/uplink-plan.md</c> and CONFIG.md's <c>monitor.uplinks</c>.
+    /// </remarks>
+    public List<UplinkConfig> Uplinks { get; set; } = [];
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
+/// <summary>
+/// One private station this monitor will list: who it is, where its page goes, and the hash of
+/// the token that proves it.
+/// </summary>
+/// <remarks>
+/// <para>The site issues the token; a station cannot mint one and cannot ask for a slug. Both of
+/// those are decisions somebody took, written down here, and the wire carries neither: a
+/// connection presents a token and says which callsign it is, and everything else about how it
+/// appears comes from this entry. See <c>docs/uplink-plan.md</c> 4.4.</para>
+/// <para>Removing an entry needs a restart, which is accepted (uplink-plan section 8).</para>
+/// </remarks>
+public sealed class UplinkConfig
+{
+    /// <summary>
+    /// The callsign this station must say it is in its <c>hello</c>, and the name its row on the
+    /// picker carries. A station whose <c>publish.callsign</c> does not match is refused.
+    /// </summary>
+    public string Callsign { get; set; } = "";
+
+    /// <summary>
+    /// The path segment its page is served under, <c>/r/&lt;slug&gt;/</c>. Lower-case letters,
+    /// digits and hyphens; normally the callsign lower-cased, so <c>GB7RDG-2</c> is
+    /// <c>gb7rdg-2</c>. Written down rather than derived, so the URL a visitor bookmarks is a
+    /// decision somebody took and not a function that might change.
+    /// </summary>
+    public string Slug { get; set; } = "";
+
+    /// <summary>
+    /// The SHA-256 of the token issued to this station, as 64 hex characters.
+    /// <c>pdn-soundmodem --uplink-token</c> prints a token and this hash together.
+    /// </summary>
+    /// <remarks>
+    /// Hashed at rest because the monitor only ever compares: it never needs the plaintext, and a
+    /// config file that leaks does not hand out working uplinks. Plain SHA-256 with no salt and
+    /// no work factor is deliberate rather than an oversight - the token is 256 bits from
+    /// <c>RandomNumberGenerator</c>, so there is no dictionary to defend against, and a work
+    /// factor would only cost this process time on every connection.
+    /// </remarks>
+    public string TokenSha256 { get; set; } = "";
+
     /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
@@ -648,6 +705,20 @@ public enum DeadFeedDevice
     /// device (<c>--wav-loop</c>), or the in-process mock radio (<c>flex:mock</c>), whose
     /// DAX-RX path deliberately delivers nothing between injected frames.</summary>
     WavLoop,
+
+    /// <summary>
+    /// A private station's audio arriving over an uplink socket, on a monitor
+    /// (<c>monitor.uplinks</c>). Silence off, starvation on.
+    /// </summary>
+    /// <remarks>
+    /// Silence is off because what arrives is 16-bit PCM of somebody else's band, and a quiet
+    /// band quantised to 16 bits can genuinely be exact zeros for a while - so the watch that
+    /// catches a Flex padding a dead stream would here be catching a quiet evening. Starvation is
+    /// on and means something precise: this site asked for audio and the station's socket
+    /// delivered none, which is a half-open connection rather than a quiet band, and the answer
+    /// is to drop the socket so the station reconnects.
+    /// </remarks>
+    Uplink,
 }
 
 /// <summary>
@@ -696,7 +767,7 @@ public sealed class DeadFeedConfig
         (double silence, double starvation) = device switch
         {
             DeadFeedDevice.Flex or DeadFeedDevice.UberSdr => (30.0, 30.0),
-            DeadFeedDevice.Alsa => (0.0, 30.0),
+            DeadFeedDevice.Alsa or DeadFeedDevice.Uplink => (0.0, 30.0),
             _ => (0.0, 0.0),
         };
 
@@ -1230,6 +1301,8 @@ public sealed class DaemonConfig
                 }
             }
         }
+
+        ValidateUplinks(monitor);
     }
 
     /// <summary>
@@ -1424,6 +1497,84 @@ public sealed class DaemonConfig
     internal static int PublishedAudioRate(PublishConfig publish, int dspRate) =>
         publish.AudioRate ?? Math.Min(dspRate, DefaultAudioRate);
 
+    /// What a <c>monitor.uplinks</c> entry has to say before this site will accept a station's
+    /// connection on it. Every failure is an exit 2 naming the entry and what to do about it.
+    /// </summary>
+    /// <remarks>
+    /// All three fields are the site owner's decisions rather than the station's, so all three
+    /// are required and none is derived: a station cannot ask for a slug, cannot claim a callsign
+    /// it was not issued a token for, and cannot mint a token at all. See
+    /// <c>docs/uplink-plan.md</c> 4.4.
+    /// </remarks>
+    private static void ValidateUplinks(MonitorConfig monitor)
+    {
+        var slugs = new Dictionary<string, string>(StringComparer.Ordinal);
+        var callsigns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var hashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (UplinkConfig uplink in monitor.Uplinks)
+        {
+            string named = uplink.Callsign.Length > 0
+                ? $"\"{uplink.Callsign}\""
+                : uplink.Slug.Length > 0 ? $"the entry for \"{uplink.Slug}\"" : "an entry";
+
+            if (!IsPlausibleCallsign(uplink.Callsign))
+            {
+                throw new InvalidDataException(
+                    $"\"monitor\".\"uplinks\" has {named} for a \"callsign\". A station on a "
+                    + "public page that will not say who it is has no business being there, and "
+                    + "the callsign is what its token is issued against: one to six letters and "
+                    + "digits with an optional -SSID, e.g. \"GB7RDG-2\".");
+            }
+
+            if (!IsUsableSlug(uplink.Slug))
+            {
+                throw new InvalidDataException(
+                    $"\"monitor\".\"uplinks\" gives {named} the slug \"{uplink.Slug}\", which "
+                    + "cannot be a path segment. It is lower-case letters, digits and hyphens "
+                    + "with no hyphen at either end - normally the callsign lower-cased, so "
+                    + $"\"{uplink.Callsign}\" would be "
+                    + $"\"{UberSdrDirectory.SlugForCallsign(uplink.Callsign)}\", and the page is "
+                    + $"served at /r/{UberSdrDirectory.SlugForCallsign(uplink.Callsign)}/.");
+            }
+
+            if (!IsSha256Hex(uplink.TokenSha256))
+            {
+                throw new InvalidDataException(
+                    $"\"monitor\".\"uplinks\" gives {named} a \"tokenSha256\" that is not 64 hex "
+                    + "characters. This site stores the HASH of the token it issued, never the "
+                    + "token: run \"pdn-soundmodem --uplink-token\", paste the hash here and give "
+                    + "the token to the station's operator.");
+            }
+
+            if (slugs.TryGetValue(uplink.Slug, out string? already))
+            {
+                throw new InvalidDataException(
+                    $"\"monitor\".\"uplinks\" gives both {already} and {named} the slug "
+                    + $"\"{uplink.Slug}\". One page cannot be two stations: give each its own, "
+                    + "normally its own callsign lower-cased.");
+            }
+
+            if (!callsigns.Add(uplink.Callsign))
+            {
+                throw new InvalidDataException(
+                    $"\"monitor\".\"uplinks\" lists {named} twice. One entry per station: a "
+                    + "second token for the same callsign would let two stations claim to be it, "
+                    + "and only one of them could have the page.");
+            }
+
+            if (!hashes.Add(uplink.TokenSha256))
+            {
+                throw new InvalidDataException(
+                    $"\"monitor\".\"uplinks\" gives {named} a \"tokenSha256\" another entry "
+                    + "already has. A token names one station, so the same one twice cannot say "
+                    + "which of them is connecting: issue each a token of its own.");
+            }
+
+            slugs[uplink.Slug] = named;
+        }
+    }
+
     /// <summary>
     /// Whether a string could be a callsign with an optional SSID: up to six letters and digits,
     /// optionally <c>-0</c> to <c>-15</c>. The same shape <c>Ax25AddressParser</c> reads off the
@@ -1458,6 +1609,23 @@ public sealed class DaemonConfig
     /// <summary>A value as it should read in a message: quoted, or the word for its absence.</summary>
     private static string Quoted(string? value) =>
         value is null ? "missing" : $"\"{value}\"";
+
+    /// <summary>
+    /// Whether a string can be the path segment a station's page is served under: exactly what
+    /// <c>WaterfallWebServer.ValidatePathBase</c> accepts, checked here so that a typo is one
+    /// sentence at start-up rather than an exception from inside a route registration.
+    /// </summary>
+    private static bool IsUsableSlug(string? slug) =>
+        !string.IsNullOrEmpty(slug)
+        && slug.Length <= 63
+        && !slug.StartsWith('-')
+        && !slug.EndsWith('-')
+        && slug.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');
+
+    /// <summary>Whether a string is 64 hex characters, which is a SHA-256 written down.</summary>
+    private static bool IsSha256Hex(string? hash) =>
+        hash is { Length: 64 }
+        && hash.All(c => c is (>= '0' and <= '9') or (>= 'a' and <= 'f') or (>= 'A' and <= 'F'));
 
     /// <summary>
     /// Whether a string could be a hostname: labels of letters, digits and hyphens separated by
@@ -1519,6 +1687,13 @@ public sealed class DaemonConfig
         foreach (ModemConfig modem in config.Monitor?.Modems ?? [])
         {
             Unknown($"monitor modem {modem.SubChannel}", modem.UnknownSettings);
+        }
+
+        foreach (UplinkConfig station in config.Monitor?.Uplinks ?? [])
+        {
+            Unknown(
+                $"monitor uplink {(station.Callsign.Length > 0 ? station.Callsign : station.Slug)}",
+                station.UnknownSettings);
         }
 
         Unknown("api", config.Api?.UnknownSettings);

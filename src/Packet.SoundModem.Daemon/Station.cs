@@ -310,6 +310,10 @@ internal sealed class Station : IDisposable
             DeadFeedDevice.UberSdr =>
                 $"receive feed starved: an open session delivered no audio for "
                 + $"{starvationSeconds:F0} s - a hung stream - restarting to reconnect afresh",
+            DeadFeedDevice.Uplink =>
+                $"receive feed starved: this site asked a connected station for audio and got "
+                + $"none for {starvationSeconds:F0} s - a half-open socket - dropping it so the "
+                + "station reconnects",
             _ =>
                 $"receive feed starved: the sound device returned no samples for "
                 + $"{starvationSeconds:F0} s - a stalled or unplugged card - restarting to "
