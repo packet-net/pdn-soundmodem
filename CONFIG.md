@@ -769,7 +769,9 @@ for confirming you are hearing the band at a sane level before trusting the deco
 
 **`public` is for a page on the open internet.** It takes the `title` and `about`, credits and
 links the web receiver the station listens through (when the device is `ubersdr:`), and hides
-the KISS host badges, which name ports on a box a visitor cannot reach. Nothing else changes,
+the KISS host badges, which name ports on a box a visitor cannot reach, and the links pane's
+*Mine* filter, which keeps only the links this station is one end of and means nothing on a page
+whose receiver never transmits. Nothing else changes,
 and nothing is removed from the operator's page; the waterfall, the links pane, the decoded
 frames and *Listen* all stay. The natural pairing is `"ubersdr": { "onDemand": true }`, so the
 receiver is only asked for while somebody is looking:

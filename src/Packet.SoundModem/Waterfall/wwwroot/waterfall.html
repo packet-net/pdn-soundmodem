@@ -625,12 +625,14 @@ function setRadioStatus(status) {
   el.classList.toggle("quiet", /^(idle|no viewers|connecting)\b/i.test(status));
 }
 
-// Everything the public flavour takes out of the header, by id. Two kinds: controls a visitor
+// Everything the public flavour takes off the page, by id. Three kinds: controls a visitor
 // cannot usefully act on, because what they set arrives from the receiver's band plan and moving
 // it can only make the picture wrong (the dial and its sideband, the span, the display levels);
-// and text that names the obvious or reports on the machinery (the labels over the two controls
-// that are left, and the frame rate and bin width of the spectrum).
-const PUBLIC_HIDES = ["dialCtl", "spanCtl", "levelCtl", "audioLabel", "linksLabel", "stats"];
+// text that names the obvious or reports on the machinery (the labels over the two controls
+// that are left, and the frame rate and bin width of the spectrum); and, in the links pane, the
+// Mine filter, which asks for the links this station is one end of - this flavour is receive only
+// and has no station of its own, so the filter has nothing to mean and could only empty the pane.
+const PUBLIC_HIDES = ["dialCtl", "spanCtl", "levelCtl", "audioLabel", "linksLabel", "stats", "linksMine"];
 
 // A deployment on the open internet: a title of its own, a paragraph of what the visitor is
 // looking at, and whose receiver it is. It is somebody else's receiver; the credit and the link
@@ -779,11 +781,15 @@ function initControls() {
 
   // A public page hides these, so nothing stored can be put right by the person looking at it -
   // and one site serves fifty receivers off one origin, so what is stored may well be another
-  // receiver's dial. Start from the defaults there and let the config below have its say.
+  // receiver's dial. Start from the defaults there and let the config below have its say. The
+  // Mine filter goes the same way and for the sharper version of the same reason: the operator's
+  // own page can leave it on in the one storage key this origin has, and a visitor arriving after
+  // that would get a links pane silently filtered by a button that is no longer on the page.
   if (cfg.publicMonitor) {
     ui.dialHz = UI_DEFAULTS.dialHz; ui.sideband = UI_DEFAULTS.sideband;
     ui.spanHz = UI_DEFAULTS.spanHz;
     ui.floorDb = UI_DEFAULTS.floorDb; ui.topDb = UI_DEFAULTS.topDb;
+    ui.linksMine = UI_DEFAULTS.linksMine;
   }
 
   if (ui.dialHz == null && cfg.dialHz > 0) ui.dialHz = cfg.dialHz;

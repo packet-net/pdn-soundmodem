@@ -688,8 +688,15 @@ public class WaterfallPageTests
     /// The path the page is being served at, which is what everything it reaches for is relative
     /// to. Null is the root, which is where a station that is its own site serves it.
     /// </param>
+    /// <param name="stored">
+    /// What this origin's one localStorage key already holds when the page opens, as the JSON the
+    /// page writes there. Null is a browser that has never had the page open. A site serves every
+    /// receiver, and the operator's own page, off a single origin and a single key, so a value
+    /// left behind by one of them is what the next one starts from.
+    /// </param>
     private static async Task<Probe> RunProbeAsync(
-        string node, int port, bool audio = false, string? protocol = null, string? pathname = null)
+        string node, int port, bool audio = false, string? protocol = null, string? pathname = null,
+        string? stored = null)
     {
         string here = Path.GetDirectoryName(typeof(WaterfallPageTests).Assembly.Location)!;
         var start = new ProcessStartInfo(node)
@@ -704,6 +711,7 @@ public class WaterfallPageTests
         if (audio) start.Environment["AUDIO"] = "1";
         if (protocol is not null) start.Environment["PROTOCOL"] = protocol;
         if (pathname is not null) start.Environment["PATHNAME"] = pathname;
+        if (stored is not null) start.Environment["STORED"] = stored;
 
         using Process probe = Process.Start(start)!;
         string stdout = await probe.StandardOutput.ReadToEndAsync();
@@ -778,6 +786,14 @@ public class WaterfallPageTests
         string MineTitle,
         bool EmptyHidden,
         string Empty);
+
+    /// <summary>
+    /// The links pane's Mine filter as the handshake left it, before any test clicks it:
+    /// <see cref="Stored"/> is what the page found in localStorage, <see cref="On"/> what it
+    /// decided to do about it, and <see cref="Hidden"/> whether the button that could put it
+    /// right is on the page at all.
+    /// </summary>
+    private sealed record MineFilter(bool Hidden, bool On, bool Stored);
 
     private sealed record LinkFeedLine(string ClassName, string Html);
 
@@ -996,6 +1012,83 @@ public class WaterfallPageTests
         op.DrawnOnArrival.Should().Contain("Set the dial frequency to see RF");
     }
 
+    /// <summary>
+    /// A public page has no Mine filter in its links pane, and does not filter by one even when a
+    /// value left in this origin's storage says it is on.
+    /// </summary>
+    /// <remarks>
+    /// <para>Tom: "Mine wants removing from the public view." The filter keeps only the links this
+    /// station is one end of, and the page learns which callsigns those are from watching itself
+    /// transmit. A public flavour is receive only and never transmits, so the button asks a
+    /// question that has no answer on that page.</para>
+    /// <para>Hiding it is not enough by itself. The page's ui state is one localStorage key per
+    /// origin, and one origin serves the picker, every receiver's page and, on a station that is
+    /// its own site, the operator's page too - so an operator who left Mine on has left it on for
+    /// the next visitor, who would then be reading a pane filtered by a button that is no longer
+    /// there to turn off. Both browsers here open with that value already stored, and both
+    /// flavours are probed, so the difference between them is measured rather than asserted.</para>
+    /// </remarks>
+    [Fact]
+    public async Task The_Public_Page_Hides_The_Mine_Filter()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        // What an operator's page leaves behind in the one key this origin has.
+        const string MineLeftOn = """{"linksMine":true}""";
+
+        var visitorChannel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        visitorChannel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int visitorPort = FreePorts.Next();
+        await using var visitorServer = new WaterfallWebServer(visitorChannel, visitorPort, new WaterfallOptions
+        {
+            Public = true,
+            Title = "40 m packet monitor",
+        });
+        visitorServer.Start();
+
+        var operatorChannel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        operatorChannel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int operatorPort = FreePorts.Next();
+        await using var operatorServer = new WaterfallWebServer(operatorChannel, operatorPort, new WaterfallOptions());
+        operatorServer.Start();
+
+        Probe visitor = await RunProbeAsync(node, visitorPort, stored: MineLeftOn);
+        Probe op = await RunProbeAsync(node, operatorPort, stored: MineLeftOn);
+
+        visitor.Thrown.Should().BeEmpty();
+        visitor.Connected.Should().BeTrue();
+        op.Thrown.Should().BeEmpty();
+        op.Connected.Should().BeTrue();
+
+        // Both browsers really did open with the filter left on, or neither half of this proves
+        // anything at all.
+        visitor.MineOnArrival.Stored.Should().BeTrue("the stale value is the whole point of the test");
+        op.MineOnArrival.Stored.Should().BeTrue("and the operator's browser starts from the same one");
+
+        // The visitor's page: no button, and the filter off in spite of what was stored.
+        visitor.MineOnArrival.Hidden.Should().BeTrue(
+            "a receive-only page has no station of its own for Mine to mean anything about");
+        visitor.PublicPage.Hidden["linksMine"].Should().BeTrue("and the page's own list of what it hides says so");
+        visitor.MineOnArrival.On.Should().BeFalse(
+            "a stored value must not be left filtering a pane whose button is gone");
+
+        // The operator's page is untouched: the button is there and it honours what was stored.
+        op.MineOnArrival.Hidden.Should().BeFalse("nothing is taken off the operator's page");
+        op.MineOnArrival.On.Should().BeTrue("where the button is there to turn it back off");
+        op.PublicPage.Hidden.Values.Should().AllSatisfy(hidden => hidden.Should().BeFalse(),
+            "the flag only hides, and only on the visitor's page");
+
+        // And it shows in the pane rather than only in the state. A link between two other
+        // stations is exactly what the filter takes away: the visitor is shown it, the operator,
+        // who asked for this, is not.
+        const string BetweenOthers = "0|G4ABC-1<>GB7IOW-1";
+        visitor.CardsAfterSecondLink.Should().ContainSingle(card => card.Id == BetweenOthers)
+            .Which.Hidden.Should().BeFalse("a public links pane shows every pair the receiver heard");
+        op.CardsAfterSecondLink.Should().ContainSingle(card => card.Id == BetweenOthers)
+            .Which.Hidden.Should().BeTrue("the operator asked for their own links only, and got them");
+    }
+
     [Fact]
     public async Task A_Page_Served_Over_Https_Opens_Its_Socket_Over_Wss()
     {
@@ -1211,6 +1304,7 @@ public class WaterfallPageTests
         string[] ChipsAttached,
         string[] ChipsDetached,
         string[] DrawnOnArrival,
+        MineFilter MineOnArrival,
         bool LinksHiddenBefore,
         bool LinksHiddenAfter,
         LinksBar LinksOnArrival,
