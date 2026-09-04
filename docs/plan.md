@@ -249,6 +249,14 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-09-04 (later) - the picker loses its state column, and lists only the receivers you can pick
+
+**The column goes.** Tom, on the picker's column that said "free", "2 watching", "connecting" or "just left" for each receiver: "get rid of the column altogether- this is a fact the viewer doesn't care about." Gone with it: the header cell over it, the `stateOf` and `viewersText` functions behind it, the CSS that coloured it, and the live-first order, which that column was the only thing on the page that explained. The list is by callsign now, and by nothing else.
+
+**And the rows nobody can act on go with it.** On the same instruction, the picker lists only the receivers a visitor can pick: one that is full, or that has left the directory while a station of ours is still holding it, is simply absent until a refresh brings it back, and every row that is left is a link. `/api/instances` is untouched and still carries `state`, `viewers`, `why` and `status` for every one of them, because the page is not its only reader; the count across the top still says how many are not available, so a list shorter than the directory's does not read as receivers having quietly disappeared. What the picker no longer says is a receiver's own trouble - that its daily allowance for this monitor is spent, or that a station is not working just now - and that is unchanged on the receiver's own page, in the status chip, which is where a visitor who picked it is.
+
+**Proved on the shipping page.** The Node probe now reads the table's headings out of the page's own text and splits each rendered row into its cells, so a column dropped from the rows and left in the header is a test failure rather than something to notice on screen. The tests assert five columns and five cells a row, that every row is a link, that none of the state column's words appear anywhere in the table, that the order is by callsign where the directory's own order is not, and that the full receiver is in the API with `offered` false and `why` "full" and is not on the page at all.
+
 ### 2026-09-04 - the public page goes minimal: no sideband, span or level controls, and the middle cut to the receiver, the credit and Listen
 
 Tom, having watched the deployed monitor at https://monitor.ukpacketradio.network/r/m9psy-1/: "We can probably lose the sideband selector and span controls. Thin out the text in the middle, go minimal. Remove the ARDOP span if we're not decoding it." All of it is the `public` flavour of `waterfall.html` and the flavour-B examples; nothing is removed from the operator's page, which is what `public` has always meant.
