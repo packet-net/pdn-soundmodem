@@ -132,4 +132,39 @@ public class ConfigApiTests : IDisposable
 
         ConfigApi.Redact(json).Should().Be(json);
     }
+
+    /// <summary>
+    /// The uplink token is not the caller's secret at all: it is the credential a monitor site
+    /// issued this station, and holding this station's API key is no reason to be handed it.
+    /// </summary>
+    [Fact]
+    public void A_Publish_Token_Is_Not_Read_Back_By_The_Config_Api()
+    {
+        string redacted = ConfigApi.Redact("""
+            {
+              "device": "null",
+              "api": {"key": "the-api-key"},
+              "publish": {
+                "url": "wss://monitor.example/uplink",
+                "token": "pdnsm_the-site-issued-this-and-it-is-not-yours",
+                "callsign": "GB7RDG-2"
+              }
+            }
+            """);
+
+        redacted.Should().NotContain("pdnsm_the-site-issued-this-and-it-is-not-yours");
+        redacted.Should().NotContain("the-api-key", "both secrets go, not one of them");
+        redacted.Should().Contain("not shown");
+        redacted.Should().Contain("wss://monitor.example/uplink",
+            "the rest of the block is still served, so an operator can read their own config back");
+        redacted.Should().Contain("GB7RDG-2");
+    }
+
+    [Fact]
+    public void A_Publish_Block_With_No_Token_Passes_Through_Redaction_Unchanged()
+    {
+        const string json = """{"device": "null", "publish": {"callsign": "GB7RDG-2"}}""";
+
+        ConfigApi.Redact(json).Should().Be(json);
+    }
 }
