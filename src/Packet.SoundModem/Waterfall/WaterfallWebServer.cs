@@ -126,6 +126,13 @@ public sealed class WaterfallOptions
 /// <paramref name="OffsetHz"/>, which measures somebody else's transmitter rather than
 /// commanding our own.
 /// </param>
+/// <param name="MonitorOnly">
+/// True for a row the station read and did not pass to its host - Reed-Solomon alone stood
+/// behind it (see <see cref="Modems.FrameQuality.MonitorOnly"/>). False on a row logged before
+/// the column existed, which is the truth available: whether that frame was withheld was not
+/// written down, and treating an unknown as withheld would throw away real history. What reads
+/// it is the start-up replay into the links pane, which such a row must not feed.
+/// </param>
 public sealed record LoggedFrame(
     DateTimeOffset HeardAt,
     int SubChannel,
@@ -137,7 +144,8 @@ public sealed record LoggedFrame(
     bool? CrcValid,
     double? OffsetHz,
     bool Transmitted = false,
-    double? TxTrimHz = null);
+    double? TxTrimHz = null,
+    bool MonitorOnly = false);
 
 /// <summary>A band the host declares rather than the waterfall measuring it.</summary>
 /// <param name="SubChannel">Which modem, for ordering and labels.</param>
