@@ -151,11 +151,20 @@ internal sealed class RelayStation : IMonitorStation
     /// <summary>This station's own journal, tagged with its slug.</summary>
     internal StationJournal Journal { get; }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Null, always. A receiver's station has one sentence the receiver itself supplied once a
+    /// session was open; a relayed station says who and what it is in its row's own fields, off
+    /// its hello, and a second summary of the same words would only be another thing to keep in
+    /// step.
+    /// </remarks>
+    public string? Description => null;
+
     /// <summary>Whether its uplink is up right now.</summary>
     internal bool Connected => _input.Connected;
 
-    /// <summary>How this station is credited on its page and named in the picker.</summary>
-    internal string Description => string.Join(
+    /// <summary>How this station is credited on its page and named in its status chip.</summary>
+    internal string Credit => string.Join(
         ", ",
         new[] { Callsign, Hello.Operator, Hello.Location }.Where(p => !string.IsNullOrEmpty(p)));
 
@@ -179,7 +188,7 @@ internal sealed class RelayStation : IMonitorStation
             TimeProvider = _time,
         });
 
-        Server.SetReceiver(Description, Hello.Site);
+        Server.SetReceiver(Credit, Hello.Site);
         Server.SetRadioStatus(Chip("connected"));
 
         if (_frameLog is not null)
@@ -252,7 +261,7 @@ internal sealed class RelayStation : IMonitorStation
 
     /// <summary>The status chip, which always names the station: the sentence says what its
     /// uplink is doing and not whose radio it is.</summary>
-    private string Chip(string sentence) => $"{Description} - {sentence}";
+    private string Chip(string sentence) => $"{Credit} - {sentence}";
 
     // ------------------------------------------------------------------ the uplink's own side
 

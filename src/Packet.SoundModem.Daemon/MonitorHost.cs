@@ -386,7 +386,15 @@ internal sealed class MonitorHost : IAsyncDisposable
         foreach (DirectoryReceiver receiver in snapshot.Receivers)
         {
             stations.Remove(receiver.Slug, out IMonitorStation? station);
-            rows.Add(station?.Row(listed: true) ?? Row(receiver, station: null, listed: true));
+
+            // The receiver off THIS fetch every time, and the station only for what the directory
+            // cannot know: what its session is doing and how many people are watching. A station
+            // holds the receiver it was built from and never refreshes it, so asking the station
+            // for the whole row froze every figure in it - the free-slot count, the SNR, whether
+            // it is offered at all - from the first browser that opened its page. Which on a live
+            // site is every receiver anybody has ever clicked, and a picker saying "19 of 20"
+            // about a receiver that filled up an hour ago is worse than one saying nothing.
+            rows.Add(Row(receiver, station, listed: true));
         }
 
         // Whatever is left: a receiver's station whose receiver has since left the directory, and
@@ -412,7 +420,17 @@ internal sealed class MonitorHost : IAsyncDisposable
             Json);
     }
 
-    private static object Row(DirectoryReceiver receiver, MonitorStation? station, bool listed)
+    /// <summary>
+    /// One receiver's row: everything the directory last said about it, decorated with what this
+    /// process knows about the station in front of it.
+    /// </summary>
+    /// <param name="receiver">
+    /// The receiver as the directory has it <b>now</b>, not as the station remembers it. The
+    /// station's own copy is the one it was built from and is deliberately never refreshed,
+    /// because its page has to go on saying whose receiver it is after the directory has stopped
+    /// listing it; that is the right answer for a page and the wrong one for this row.
+    /// </param>
+    private static object Row(DirectoryReceiver receiver, IMonitorStation? station, bool listed)
     {
         (string state, string? status) = station?.State() ?? ("unpicked", null);
         return new
@@ -641,7 +659,7 @@ internal sealed class MonitorHost : IAsyncDisposable
         private bool _routed;
 
         /// <summary>How the receiver describes itself, once a session has ever been opened.</summary>
-        internal string? Description
+        public string? Description
         {
             get
             {
@@ -1064,6 +1082,13 @@ internal interface IMonitorStation : IAsyncDisposable
 
     /// <summary>Its state and its own sentence, for the picker and for <c>/api/instances</c>.</summary>
     (string State, string? Status) State();
+
+    /// <summary>
+    /// How the thing behind this station describes itself, once anything has been opened. Null
+    /// until then, and null for a relayed station, which describes itself in its own row's
+    /// fields rather than in one sentence.
+    /// </summary>
+    string? Description { get; }
 
     /// <summary>
     /// Its row in <c>/api/instances</c>, which is the whole of what this site says about it.

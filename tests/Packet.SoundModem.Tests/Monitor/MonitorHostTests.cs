@@ -352,6 +352,60 @@ public class MonitorHostTests
 
     private sealed record Row(string State, int Viewers);
 
+    [Fact]
+    public async Task A_Receivers_Row_Follows_The_Directory_After_Its_Page_Has_Been_Opened()
+    {
+        await using var h = await Harness.StartAsync();
+
+        // Both start at what the directory says.
+        (await h.FiguresAsync(DalgetySlug)).Should().Be((19, "ok", true));
+        (await h.FiguresAsync(ReadingSlug)).Should().Be((20, "ok", true));
+
+        // Opening one receiver's page builds its station, which holds a copy of what the
+        // directory said at that moment and never refreshes it - deliberately, because its page
+        // has to go on saying whose receiver it is after the directory stops listing it.
+        await h.GetAsync($"/r/{DalgetySlug}/");
+        (await h.RowAsync(DalgetySlug)).State.Should().Be("idle");
+
+        h.Directory(DirectoryFull);
+        await h.RefreshAsync();
+
+        // The row is the directory's, not the station's. A picker that went on saying "19 of 20"
+        // about a receiver that filled up an hour ago is worse than one that says nothing, and
+        // on a live site this is every receiver anybody has ever clicked.
+        (await h.FiguresAsync(ReadingSlug)).Should().Be(
+            (1, "busy", true), "the receiver nobody opened follows the directory, so it refreshed");
+        (await h.FiguresAsync(DalgetySlug)).Should().Be(
+            (0, "critical", false),
+            "and so does the one somebody opened - its station is still there and still watched, "
+            + "but what the directory says about the receiver is the directory's to say");
+
+        // And what only the station knows is still the station's.
+        (await h.RowAsync(DalgetySlug)).State.Should().Be("idle");
+    }
+
+    /// <summary>The same two receivers, both now full and one of them offline.</summary>
+    private const string DirectoryFull = """
+        {"count": 2, "instances": [
+          {"host": "m9psy-1.instance.ubersdr.org", "port": 443, "tls": true,
+           "callsign": "M9PSY-1", "name": "RX888 with 40m Full Wave Loop (GPSDO)",
+           "location": "Dalgety Bay, Scotland, UK",
+           "public_url": "https://m9psy-1.instance.ubersdr.org/",
+           "is_online": true, "available_clients": 0, "max_clients": 20,
+           "public_iq_modes": ["iq48"], "antenna_connected": true, "load_status": "critical",
+           "snr_0_30_mhz": 31,
+           "tuning_range": {"min_frequency": 10000, "max_frequency": 30000000, "reported": true}},
+          {"host": "reading-ubersdr.m0lte.uk", "port": 443, "tls": true,
+           "callsign": "M0LTE", "name": "SDR with Active Loop",
+           "location": "Reading, England, UK",
+           "public_url": "https://reading-ubersdr.m0lte.uk/",
+           "is_online": true, "available_clients": 1, "max_clients": 20,
+           "public_iq_modes": ["iq48"], "antenna_connected": true, "load_status": "busy",
+           "snr_0_30_mhz": 21,
+           "tuning_range": {"min_frequency": 10000, "max_frequency": 30000000, "reported": true}}
+        ]}
+        """;
+
     /// <summary>A monitor host with fake receivers, a fake directory and a fake clock.</summary>
     private sealed class Harness : IAsyncDisposable
     {
@@ -430,8 +484,14 @@ public class MonitorHostTests
             _http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
         }
 
-        private readonly string _directoryJson;
+        private string _directoryJson;
         private Exception? _openFailure;
+
+        /// <summary>Serves a different directory from the next fetch on.</summary>
+        internal void Directory(string json) => _directoryJson = json;
+
+        /// <summary>Fetches it again now, as the refresh timer would.</summary>
+        internal Task RefreshAsync() => _host.RefreshDirectoryAsync();
 
         internal FakeTimeProvider Time { get; } = new();
 
@@ -482,6 +542,18 @@ public class MonitorHostTests
 
         internal async Task<HttpStatusCode> StatusAsync(string path) =>
             (await _http.GetAsync(path)).StatusCode;
+
+        /// <summary>The three figures on a row that are the directory's and not this process's.</summary>
+        internal async Task<(int Available, string? Load, bool Offered)> FiguresAsync(string slug)
+        {
+            using JsonDocument snapshot = JsonDocument.Parse(await GetAsync("/api/instances"));
+            JsonElement row = snapshot.RootElement.GetProperty("receivers").EnumerateArray()
+                .Single(r => r.GetProperty("slug").GetString() == slug);
+            return (
+                row.GetProperty("availableClients").GetInt32(),
+                row.GetProperty("loadStatus").GetString(),
+                row.GetProperty("offered").GetBoolean());
+        }
 
         internal async Task<Row> RowAsync(string slug)
         {
