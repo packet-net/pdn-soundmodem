@@ -418,6 +418,51 @@ public class UplinkTests
     }
 
     [Fact]
+    public async Task A_Stations_Own_Status_Sentence_Becomes_The_Pages_Status_Line()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+
+        // A message type the plan's 4.2 does not list and the station's client sends anyway: its
+        // radio status sentence, which is the third thing IWaterfallRelay offers. It belongs in
+        // the chip a visitor reads, alongside whose station it is.
+        await station.SendAsync(new { type = "radio", status = "IC-7300, 7.049450 MHz USB" });
+        await h.UntilAsync(async () =>
+            (await h.RowAsync(Slug)).GetProperty("status").GetString()!.Contains(
+                "IC-7300", StringComparison.Ordinal));
+
+        await using Browser browser = await h.WatchAsync(Slug);
+        JsonElement config = await browser.UntilTextAsync("config");
+        config.GetProperty("radioStatus").GetString().Should()
+            .Contain(Callsign, "the chip always names the station")
+            .And.Contain("IC-7300, 7.049450 MHz USB", "and says what its own radio is doing");
+    }
+
+    [Fact]
+    public async Task A_Message_Type_This_Site_Does_Not_Know_Is_Dropped_And_Not_Fatal()
+    {
+        await using var h = await Harness.StartAsync();
+
+        await using var station = await StubStation.OpenAsync(h.Port, h.Token, Callsign);
+        await station.WelcomedAsync();
+
+        // The uplink protocol spans two machines running whatever versions their operators have
+        // installed, so it is additive: a message this version has never heard of is what an
+        // older monitor sees of a newer station, and hanging up over one would take a station off
+        // the site for having been upgraded. Dropped, and the socket carries on.
+        await station.SendAsync(new { type = "survey", captures = 3 });
+        await station.SendAsync(new { type = "config", sampleRate = 48000 });
+        await station.SendAsync(new { type = "tx", enable = true });
+        await station.SendFrameAsync(Ax25.Ui("M0LTE", "GB7RDG-2", "still listening"));
+
+        await h.UntilAsync(() => Task.FromResult(h.LoggedFrames() == 1));
+        station.Connected.Should().BeTrue("nothing there could have closed this socket");
+        (await h.RowAsync(Slug)).GetProperty("offered").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
     public async Task Two_Viewers_On_One_Station_Ask_For_One_Stream()
     {
         await using var h = await Harness.StartAsync();
