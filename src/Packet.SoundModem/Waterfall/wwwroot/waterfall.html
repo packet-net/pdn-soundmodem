@@ -847,7 +847,9 @@ function renderChips() {
     // is which colour, and where on the band it is. The KISS sub-channel and the audio centre
     // are for whoever has something to plug into it, and so is the mode's full name in the
     // tooltip; the visitor gets the RF frequency, which is the one they can act on.
-    const name = m.modeName || m.mode;
+    // Escaped, like the same expression in modemLabel: a mode name is the catalogue's on a
+    // station and the station's own hello on a relayed one, which is a string over a socket.
+    const name = esc(m.modeName || m.mode);
     chip.innerHTML = `<i style="background:${hueFor(i)}"></i>` +
       (cfg.publicMonitor
         ? `<span><b>${name}</b>${rf || ` ${Math.round(m.centreHz)} Hz`}</span>`

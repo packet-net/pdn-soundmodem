@@ -525,6 +525,12 @@ const afterHistory = sandbox.document.getElementById("frames").children.map(
 run(`onFrameEvent({sub:0, mode:'<i>bpsk300</i>', from:'<img src=x onerror=boom>', to:'M0LTE"&<3', line:0, burstLines:9, lenBytes:24, snrDb:9.5})`);
 const hostileRow = sandbox.document.getElementById("frames").children[0].innerHTML;
 
+// The same question for the band chip, which is built from the config message's modems rather
+// than from a frame event and reaches innerHTML the same way. On a relayed station that mode name
+// is the station's own hello, so it is a string over a socket exactly as a frame's callsigns are.
+run(`cfg.modems.push({sub: 9, mode: '<img src=x onerror=boom>', modeName: null, lowHz: 800, highHz: 900, centreHz: 850}); renderChips();`);
+const hostileChip = sandbox.document.getElementById("chips").children.map(c => c.innerHTML).pop();
+
 // What a public deployment dresses the page with, as the handshake left it: the title, the
 // about strip with the receiver credit, and the body class the stylesheet keys off.
 //
@@ -571,6 +577,7 @@ console.log(JSON.stringify({
   historyRows: afterHistory.map(c => c.html),
   historyRowClasses: afterHistory.map(c => c.className),
   hostileRow,
+  hostileChip,
   linksHiddenBefore,
   linksHiddenAfter,
   linksOnArrival,

@@ -304,6 +304,13 @@ public class WaterfallPageTests
 
         // And the row is still the row: the panel's own markup around the escaped text.
         probe.HostileRow.Should().Contain("<span class=\"from\">").And.Contain("24 B");
+
+        // The band chip is built from the config message rather than from a frame event, and on a
+        // relayed station its mode name is off that station's own hello. Same gap, same fix, and
+        // it is the chip that a public page shows.
+        probe.HostileChip.Should().NotContain("<img", "a mode name is not markup either")
+            .And.Contain("&lt;img src=x onerror=boom&gt;")
+            .And.Contain("850 Hz", "and the chip is still the chip");
     }
 
     /// <summary>
@@ -1238,6 +1245,7 @@ public class WaterfallPageTests
         string[] HistoryRows,
         string[] HistoryRowClasses,
         string HostileRow,
+        string HostileChip,
         string? TxHistBorder,
         string? TxBorder,
         string? HistBorder,
