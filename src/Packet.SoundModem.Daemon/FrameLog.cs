@@ -81,6 +81,7 @@ internal sealed class FrameLog : IAsyncDisposable
                     length            INTEGER NOT NULL,
                     corrected         INTEGER,
                     crc_valid         INTEGER,
+                    plain_il2p        INTEGER,
                     trailer_near_bits INTEGER,
                     monitor_only      INTEGER,
                     erased_bytes      INTEGER,
@@ -110,8 +111,9 @@ internal sealed class FrameLog : IAsyncDisposable
     /// those, every INSERT would fail and every frame would be silently dropped. <c>direction</c>
     /// can be added NOT NULL with a default and no backfill because the old rows are all
     /// receives, so <c>'rx'</c> is the truth about them rather than a guess.
-    /// <c>trailer_near_bits</c> and <c>monitor_only</c> stay null on old rows: whether a frame
-    /// was corroborated or withheld was not written down at the time, and null says so.
+    /// <c>trailer_near_bits</c>, <c>monitor_only</c> and <c>plain_il2p</c> stay null on old rows:
+    /// whether a frame was corroborated, withheld, or read without a CRC behind it was not
+    /// written down at the time, and null says so.
     /// </remarks>
     private static void Migrate(SqliteConnection connection)
     {
@@ -124,6 +126,7 @@ internal sealed class FrameLog : IAsyncDisposable
                      ("chased_bits", "INTEGER"),
                      ("snr_db", "REAL"),
                      ("tx_trim_hz", "REAL"),
+                     ("plain_il2p", "INTEGER"),
                  })
         {
             using SqliteCommand columns = connection.CreateCommand();
@@ -183,6 +186,11 @@ internal sealed class FrameLog : IAsyncDisposable
             // campaign found the gap by diffing this log against an offline re-decode.
             quality.TrailerNearBits,
             quality.MonitorOnly,
+            // And this third one is what the reading WAS rather than what became of it: crc_valid
+            // is null on HDLC, on FX.25 and on ARDOP too, so a row cannot be read back as RS-only
+            // unless the log says so outright. Without it a browser opening on the backlog loses
+            // the RS ONLY badge every one of these frames carried live.
+            quality.PlainIl2p,
             quality.ErasedBytes,
             quality.ChasedBits,
             // Band-tracker convention (in-band over a rolling minimum floor), NOT the sim
@@ -205,9 +213,9 @@ internal sealed class FrameLog : IAsyncDisposable
     /// so the caller passes it, and <c>corrected</c>, <c>crc_valid</c> and <c>offset_hz</c> are
     /// left null rather than filled with plausible values: they are receive measurements, and
     /// inventing them for our own transmission would be inventing a measurement of ourselves.
-    /// (Same reasoning as the waterfall's TX rows.) <c>trailer_near_bits</c> and
-    /// <c>monitor_only</c> stay null too: corroborating a trailer and withholding a frame from
-    /// the host are things that happen to a receive.</para>
+    /// (Same reasoning as the waterfall's TX rows.) <c>trailer_near_bits</c>, <c>monitor_only</c>
+    /// and <c>plain_il2p</c> stay null too: corroborating a trailer, withholding a frame from the
+    /// host and reading one without a CRC behind it are all things that happen to a receive.</para>
     /// <para><c>heard_at</c> holds when it went out - see the note on the class.</para>
     /// </remarks>
     /// <param name="mode">
@@ -247,6 +255,7 @@ internal sealed class FrameLog : IAsyncDisposable
             CrcValid: null,
             TrailerNearBits: null,
             MonitorOnly: null,
+            PlainIl2p: null,
             ErasedBytes: null,
             ChasedBits: null,
             SnrDb: null,
@@ -307,7 +316,7 @@ internal sealed class FrameLog : IAsyncDisposable
             query.CommandText = """
                 SELECT heard_at, sub_channel, mode, source, destination,
                        length, corrected, crc_valid, offset_hz, direction, tx_trim_hz,
-                       monitor_only
+                       monitor_only, plain_il2p
                 FROM frames ORDER BY id DESC LIMIT $count
                 """;
             query.Parameters.AddWithValue("$count", count);
@@ -330,7 +339,11 @@ internal sealed class FrameLog : IAsyncDisposable
                     row.IsDBNull(10) ? null : row.GetDouble(10),
                     // Null on a row written before the column existed, and on every transmission:
                     // not withheld, because nothing said it was.
-                    !row.IsDBNull(11) && row.GetInt32(11) != 0));
+                    !row.IsDBNull(11) && row.GetInt32(11) != 0,
+                    // Same reading of null, and the same reason: an old row never said whether
+                    // Reed-Solomon stood alone behind it, so the panel does not badge it as if
+                    // it had. What the panel draws the RS ONLY badge from on a backlog row.
+                    !row.IsDBNull(12) && row.GetInt32(12) != 0));
             }
         }
         catch (Exception e) when (e is SqliteException or IOException or FormatException)
@@ -370,7 +383,7 @@ internal sealed class FrameLog : IAsyncDisposable
             query.CommandText = """
                 SELECT heard_at, sub_channel, mode, source, destination,
                        length, corrected, crc_valid, offset_hz, direction, tx_trim_hz,
-                       monitor_only, payload
+                       monitor_only, plain_il2p, payload
                 FROM frames ORDER BY id DESC LIMIT $count
                 """;
             query.Parameters.AddWithValue("$count", count);
@@ -389,8 +402,9 @@ internal sealed class FrameLog : IAsyncDisposable
                     row.IsDBNull(8) ? null : row.GetDouble(8),
                     string.Equals(row.GetString(9), "tx", StringComparison.Ordinal),
                     row.IsDBNull(10) ? null : row.GetDouble(10),
-                    !row.IsDBNull(11) && row.GetInt32(11) != 0),
-                    (byte[])row.GetValue(12)));
+                    !row.IsDBNull(11) && row.GetInt32(11) != 0,
+                    !row.IsDBNull(12) && row.GetInt32(12) != 0),
+                    (byte[])row.GetValue(13)));
             }
         }
         catch (Exception e) when (e is SqliteException or IOException or FormatException or InvalidCastException)
@@ -408,18 +422,20 @@ internal sealed class FrameLog : IAsyncDisposable
         insert.CommandText = """
             INSERT INTO frames
               (heard_at, direction, sub_channel, mode, mode_name, source, destination,
-               length, corrected, crc_valid, trailer_near_bits, monitor_only, erased_bytes,
-               chased_bits, snr_db, offset_hz, audio_hz, rf_hz, payload, tx_trim_hz)
+               length, corrected, crc_valid, trailer_near_bits, monitor_only, plain_il2p,
+               erased_bytes, chased_bits, snr_db, offset_hz, audio_hz, rf_hz, payload,
+               tx_trim_hz)
             VALUES
               ($heard_at, $direction, $sub, $mode, $mode_name, $source, $destination,
-               $length, $corrected, $crc, $trailer, $monitor, $erased, $chased, $snr,
+               $length, $corrected, $crc, $trailer, $monitor, $plain, $erased, $chased, $snr,
                $offset, $audio, $rf, $payload, $tx_trim)
             """;
         foreach (string name in new[]
                  {
                      "$heard_at", "$direction", "$sub", "$mode", "$mode_name", "$source",
                      "$destination", "$length", "$corrected", "$crc", "$trailer", "$monitor",
-                     "$erased", "$chased", "$snr", "$offset", "$audio", "$rf", "$payload", "$tx_trim",
+                     "$plain", "$erased", "$chased", "$snr", "$offset", "$audio", "$rf", "$payload",
+                     "$tx_trim",
                  })
         {
             insert.Parameters.Add(new SqliteParameter(name, DBNull.Value));
@@ -441,6 +457,7 @@ internal sealed class FrameLog : IAsyncDisposable
                 insert.Parameters["$crc"].Value = entry.CrcValid is bool crc ? crc ? 1 : 0 : DBNull.Value;
                 insert.Parameters["$trailer"].Value = (object?)entry.TrailerNearBits ?? DBNull.Value;
                 insert.Parameters["$monitor"].Value = entry.MonitorOnly is bool monitor ? monitor ? 1 : 0 : DBNull.Value;
+                insert.Parameters["$plain"].Value = entry.PlainIl2p is bool plain ? plain ? 1 : 0 : DBNull.Value;
                 insert.Parameters["$erased"].Value = (object?)entry.ErasedBytes ?? DBNull.Value;
                 insert.Parameters["$chased"].Value = (object?)entry.ChasedBits ?? DBNull.Value;
                 insert.Parameters["$snr"].Value = (object?)entry.SnrDb ?? DBNull.Value;
@@ -506,6 +523,7 @@ internal sealed class FrameLog : IAsyncDisposable
         bool? CrcValid,
         int? TrailerNearBits,
         bool? MonitorOnly,
+        bool? PlainIl2p,
         int? ErasedBytes,
         int? ChasedBits,
         double? SnrDb,

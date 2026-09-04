@@ -129,6 +129,58 @@ public class FrameLogTests : IDisposable
         SqliteConnection.ClearAllPools();
     }
 
+    /// <summary>
+    /// A log in the schema as it shipped up to and including PR #394: every column this code
+    /// wrote before <c>plain_il2p</c>, holding one withheld RS-only row. This is what the live
+    /// node and the public monitor have on disk right now.
+    /// </summary>
+    private void WriteLogInThePrePlainIl2pSchema()
+    {
+        using (var old = new SqliteConnection($"Data Source={DbPath}"))
+        {
+            old.Open();
+            using SqliteCommand create = old.CreateCommand();
+            create.CommandText = """
+                CREATE TABLE frames (
+                    id                INTEGER PRIMARY KEY,
+                    heard_at          TEXT    NOT NULL,
+                    direction         TEXT    NOT NULL DEFAULT 'rx',
+                    sub_channel       INTEGER NOT NULL,
+                    mode              TEXT    NOT NULL,
+                    mode_name         TEXT    NOT NULL,
+                    source            TEXT,
+                    destination       TEXT,
+                    length            INTEGER NOT NULL,
+                    corrected         INTEGER,
+                    crc_valid         INTEGER,
+                    trailer_near_bits INTEGER,
+                    monitor_only      INTEGER,
+                    erased_bytes      INTEGER,
+                    chased_bits       INTEGER,
+                    snr_db            REAL,
+                    offset_hz         REAL,
+                    audio_hz          REAL,
+                    rf_hz             REAL,
+                    payload           BLOB    NOT NULL,
+                    tx_trim_hz        REAL
+                );
+                CREATE INDEX frames_heard_at ON frames(heard_at);
+                CREATE INDEX frames_source ON frames(source);
+                INSERT INTO frames
+                  (heard_at, direction, sub_channel, mode, mode_name, source, destination,
+                   length, corrected, crc_valid, monitor_only, offset_hz, audio_hz, rf_hz,
+                   payload)
+                VALUES
+                  ('2026-09-03T11:00:00.0000000+00:00', 'rx', 0, 'bpsk300-il2pc',
+                   'BPSK300 IL2Pc', 'GB7BPQ', 'BEACON', 4, 0, NULL, 1, -2.5, 1500.0, 7051600.0,
+                   X'01020304');
+                """;
+            create.ExecuteNonQuery();
+        }
+
+        SqliteConnection.ClearAllPools();
+    }
+
     private static FrameQuality Quality(string mode = "bpsk300-il2pc") =>
         new(mode, FrameBytes: 32, CorrectedBytes: 2, CrcValid: true,
             FrequencyOffsetHz: -3.5, EmphasisDb: null);
@@ -223,6 +275,7 @@ public class FrameLogTests : IDisposable
         row["crc_valid"].Should().Be(1L);
         row["trailer_near_bits"].Should().BeNull("the CRC verified; no trailer was corroborated");
         row["monitor_only"].Should().Be(0L, "the host received this one");
+        row["plain_il2p"].Should().Be(0L, "a CRC stood behind it");
         row["offset_hz"].Should().Be(-3.5);
         row["audio_hz"].Should().Be(2150.0);
         row["rf_hz"].Should().Be(7_051_600.0, "where it was heard on the band is the useful column");
@@ -268,6 +321,7 @@ public class FrameLogTests : IDisposable
         row["crc_valid"].Should().BeNull("we did not check a CRC, we wrote one");
         row["trailer_near_bits"].Should().BeNull("corroborating a trailer is a receive event");
         row["monitor_only"].Should().BeNull("and so is withholding a frame from the host");
+        row["plain_il2p"].Should().BeNull("and so is reading a frame with no CRC behind it");
         row["offset_hz"].Should().BeNull("we did not measure our own carrier against itself");
     }
 
@@ -321,6 +375,36 @@ public class FrameLogTests : IDisposable
         rows[1]["trailer_near_bits"].Should().Be(3L, "and new rows carry the evidence");
         rows[1]["monitor_only"].Should().Be(0L);
         rows[1]["erased_bytes"].Should().BeNull("this frame needed no erasures");
+    }
+
+    /// <summary>
+    /// The schema every deployed station is holding right now: everything up to and including
+    /// <c>monitor_only</c>, and no <c>plain_il2p</c>. It gains the column on open, with no
+    /// manual step, and its existing rows keep their history and gain no invented facts.
+    /// </summary>
+    /// <remarks>
+    /// The column that matters here is the one the panel badges from. An old RS-only row cannot
+    /// gain it retrospectively - what stood behind that frame was not written down - so it reads
+    /// back unbadged, exactly as it did before this change, and every frame heard after the
+    /// upgrade carries it.
+    /// </remarks>
+    [Fact]
+    public async Task A_Log_From_Before_The_Plain_Il2p_Column_Gains_It_And_Keeps_Its_History()
+    {
+        WriteLogInThePrePlainIl2pSchema();
+
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.Record(0, Frame(), new FrameQuality(
+                "bpsk300-il2pc", FrameBytes: 32, CorrectedBytes: 0, CrcValid: null,
+                PlainIl2p: true, MonitorOnly: true), null, null));
+
+        rows.Should().HaveCount(2, "a station's existing history must survive the upgrade");
+        rows[0]["source"].Should().Be("GB7BPQ", "the old row is untouched");
+        rows[0]["monitor_only"].Should().Be(1L, "including the column it did have");
+        rows[0]["plain_il2p"].Should().BeNull(
+            "what stood behind a pre-upgrade row was not written down, and a badge is a claim");
+        rows[1]["plain_il2p"].Should().Be(1L, "and every frame heard after the upgrade says so");
+        rows[1]["monitor_only"].Should().Be(1L);
     }
 
     /// <summary>A frame that leaned on confidence erasures writes the count down, so a log
@@ -448,6 +532,41 @@ public class FrameLogTests : IDisposable
         row["trailer_near_bits"].Should().BeNull("nothing corroborated this reading");
         row["mode"].Should().Be("bpsk300-il2pc-multi9");
         row["length"].Should().Be(46L);
+    }
+
+    /// <summary>
+    /// What stood behind a frame goes into the log and comes back out of the backlog, so the
+    /// panel's opening list badges an RS-only row the way the live row was badged.
+    /// </summary>
+    /// <remarks>
+    /// <c>monitor_only</c> alone is not enough and never was: it changes the wording of the
+    /// badge's tooltip, and <see cref="Packet.SoundModem.Modems.FrameQuality.PlainIl2p"/> is what
+    /// decides the badge exists. Nor can it be inferred from a null <c>crc_valid</c>, which is
+    /// also null on HDLC, on FX.25, on ARDOP and on our own transmissions - so the second frame
+    /// here, delivered on a CRC, must come back saying plainly that it was not one of these.
+    /// </remarks>
+    [Fact]
+    public async Task An_Rs_Only_Frame_Comes_Back_Out_Of_The_Backlog_Still_Saying_So()
+    {
+        await using FrameLog log = FrameLog.Open(DbPath, _time);
+        log.Record(0, Frame(from: "GB7BPQ"), new FrameQuality(
+            "bpsk300-il2pc", FrameBytes: 46, CorrectedBytes: 0, CrcValid: null,
+            PlainIl2p: true, MonitorOnly: true), audioHz: 2150, rfHz: 7_051_600);
+        log.Record(0, Frame(from: "G0AAA"), Quality(), audioHz: 2150, rfHz: 7_051_600);
+
+        for (int i = 0; i < 100 && log.Recent(10).Count < 2; i++)
+        {
+            await Task.Delay(20);
+        }
+
+        IReadOnlyList<Packet.SoundModem.Waterfall.LoggedFrame> recent = log.Recent(10);
+        recent.Select(f => f.From).Should().Equal("GB7BPQ", "G0AAA");
+        recent[0].PlainIl2p.Should().BeTrue(
+            "Reed-Solomon alone stood behind it, and the panel badges a backlog row from this");
+        recent[0].MonitorOnly.Should().BeTrue("and the tooltip's wording comes from this");
+        recent[0].CrcValid.Should().BeNull("no CRC was checked, which is a different question");
+        recent[1].PlainIl2p.Should().BeFalse("a CRC stood behind the second one");
+        recent[1].MonitorOnly.Should().BeFalse();
     }
 
     /// <summary>

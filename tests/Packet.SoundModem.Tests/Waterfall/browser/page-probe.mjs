@@ -526,7 +526,11 @@ const todayAt = new Date(Date.UTC(
 // The station logs what it sends as well as what it hears, so the backlog carries both: the
 // transmitted one goes in oldest, where it lands at the bottom of a newest-first panel.
 const beforeHistory = sandbox.__text().length;
+// The oldest of them is one Reed-Solomon alone stood behind, withheld from the host: it carried
+// the RS ONLY badge when it was heard, and a backlog row that lost it reads as a frame something
+// checked. Oldest, so it lands at the bottom and leaves every other row where it was.
 run(`onHistory({frames: [
+  {at: "2024-11-03T19:00:00.000Z", sub: 0, mode: "bpsk300-il2pc", from: "GB7BPQ", to: "BEACON", lenBytes: 46, plain: true, monitorOnly: true, hist: true},
   {at: "2024-11-03T20:00:00.000Z", sub: 0, mode: "bpsk300-il2pc", from: "M0LTE", to: "GB7RDG-2", lenBytes: 18, tx: true, hist: true},
   {at: "2024-11-03T21:04:00.000Z", sub: 1, mode: "afsk300-il2pc", from: "GB7BEX-15", to: "GB7IOW-1", lenBytes: 22, corrected: 2, crc: false, hist: true},
   {at: "${todayAt}", sub: 0, mode: "bpsk300-il2pc", from: "GB7RDG-2", to: "EI0RSI-1", lenBytes: 31, offsetHz: 8.6, corrected: 0, crc: true, hist: true}

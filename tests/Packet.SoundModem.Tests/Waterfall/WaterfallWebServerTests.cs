@@ -523,6 +523,58 @@ public class WaterfallWebServerTests : IAsyncLifetime
             JsonValueKind.Null, "receive measurements stay unmeasured on our own frame");
     }
 
+    /// <summary>
+    /// The backlog says which of its frames Reed-Solomon alone stood behind, so a reload shows
+    /// the same RS ONLY badge a live frame gets, with the same tooltip.
+    /// </summary>
+    /// <remarks>
+    /// The page builds the badge from <c>plain</c> and words its tooltip from <c>monitorOnly</c>,
+    /// and a backlog message carrying neither lost the badge outright - a frame nothing but RS
+    /// checked, listed after a restart looking like one something had. Both fields go under the
+    /// names the live <c>frame</c> message already uses, so there is one row builder and it
+    /// cannot drift.
+    /// </remarks>
+    [Fact]
+    public async Task The_Backlog_Marks_The_Frames_Reed_Solomon_Alone_Stood_Behind()
+    {
+        var logged = new[]
+        {
+            new LoggedFrame(
+                new DateTimeOffset(2026, 9, 3, 11, 0, 0, TimeSpan.Zero),
+                0, "bpsk300-il2pc", "GB7BPQ", "BEACON", 46, 0, null, 27.0,
+                MonitorOnly: true, PlainIl2p: true),
+            new LoggedFrame(
+                new DateTimeOffset(2026, 9, 3, 11, 1, 0, TimeSpan.Zero),
+                0, "bpsk300-il2pc", "GB7RDG-2", "M0LTE", 31, 0, true, 8.6),
+        };
+
+        await using var server = new WaterfallWebServer(
+            new SoundModemChannel(SampleRate, randomSeed: 5),
+            FreePorts.Next(),
+            new WaterfallOptions { FrameHistory = _ => logged });
+        server.Start();
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(
+            new Uri($"ws://127.0.0.1:{server.Url.Split(':')[^1].TrimEnd('/')}/ws"), _cancellation.Token);
+
+        await Receive(socket);   // config
+        (_, byte[] second) = await Receive(socket);
+        using JsonDocument history = JsonDocument.Parse(second);
+        JsonElement frames = history.RootElement.GetProperty("frames");
+
+        frames[0].GetProperty("plain").GetBoolean().Should().BeTrue(
+            "the badge is drawn from this, and a backlogged RS-only row must keep it");
+        frames[0].GetProperty("monitorOnly").GetBoolean().Should().BeTrue(
+            "and the tooltip says whether the host was given the frame");
+        frames[0].GetProperty("crc").ValueKind.Should().Be(
+            JsonValueKind.Null, "no CRC was checked - which is not the same question");
+
+        frames[1].GetProperty("plain").ValueKind.Should().Be(
+            JsonValueKind.Null, "a CRC stood behind this one, and absent means no");
+        frames[1].GetProperty("monitorOnly").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
     [Fact]
     public async Task A_Station_With_No_Frame_Log_Sends_No_Backlog()
     {
