@@ -550,7 +550,13 @@ const publicPage = {
 // and everything above wanted the pane as it was.
 sandbox.document.getElementById("linksDetach").click();
 
-console.log(JSON.stringify({
+// Written with a callback rather than console.log followed by process.exit, and the exit deferred
+// until the write has actually reached the pipe. console.log to a pipe is asynchronous, and
+// exiting on the next line truncates whatever is still buffered - which lands as a JSON parse
+// error at a buffer boundary in whichever test happened to be running, on a loaded machine and
+// not on an idle one. The exit itself is needed: the page holds timers and a socket open, so
+// nothing here ends on its own.
+process.stdout.write(JSON.stringify({
   socketUrl,
   linksWindowUrl,
   // Whether the page decided it is the torn-off links window rather than the waterfall.
@@ -613,5 +619,4 @@ console.log(JSON.stringify({
   blocksAfterStop: sandbox.__stats().played - at,
   stoppedLabel: run(`document.getElementById("listen").textContent`),
   thrown,
-}));
-process.exit(0);
+}) + "\n", () => process.exit(0));
