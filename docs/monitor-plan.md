@@ -383,6 +383,12 @@ Tom's, taken before any of it was built:
 - **Two flavours, one code base, configuration is the switch.** In Tom's words: "I don't want to lose the current deployment model - it's strictly the same code base, two flavours via configuration."
 - **The per-receiver flavour stays supported** and stays deployed as it is until Tom says otherwise. Whether CT 146 keeps running alongside the new site is open.
 
+### After the first look at the live site (2026-09-04)
+
+Tom, having watched https://monitor.ukpacketradio.network/r/m9psy-1/: "We can probably lose the sideband selector and span controls. Thin out the text in the middle, go minimal. Remove the ARDOP span if we're not decoding it."
+
+Taken as: on a public page, hide the controls whose answers arrive with the receiver's band plan rather than from the person looking at it (the dial and its sideband, the span, the display levels), and cut what is left between the top of the page and its panels to the receiver's state, the credit, and the listen control. Nothing is removed from the operator's page, as ever. The ARDOP entry is out of this document's 4.5, of `CONFIG.md` and of the example config; see 4.5 for what leaving it out does and does not change.
+
 ### Decisions taken while building Phase 3 (2026-09-03)
 
 Tom's are above; these are the implementer's, recorded here because each of them is a place where the plan was silent, or was wrong against the real code or the real directory, and somebody reading this later should not have to reconstruct why.
