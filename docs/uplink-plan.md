@@ -404,6 +404,8 @@ A sketch, as the monitor plan's was before it was built.
 - **Rate limit**: unchanged. A station is one upgrade request per reconnect.
 - **Upkeep**: unchanged.
 
+**As deployed, 2026-09-04 (v0.56.0).** Monitor: CT 146 upgraded, token issued inside the container with `pdn-soundmodem --uplink-token` (plaintext kept only in a root-only file there and never printed), one `monitor.uplinks` entry added and nothing else changed, backup `soundmodem.json.pre-uplink`; all 49 receivers, the picker and the pages unchanged through both restarts. Node: GB7RDG-2 upgraded by Tom, then a `publish` block added and nothing else (backup `soundmodem.json.pre-publish`); the start-up journal after the restart is identical to the one before it line for line, plus `publish: publishing to monitor.ukpacketradio.network as GB7RDG-2` and `publish: live as gb7rdg-2`, and both KISS hosts reattached within 25 s. The `live as <slug>` form rather than a URL is because the tunnel rewrites Host to `127.0.0.1:8099`, so the site cannot name itself. Upstream rate measured on the node's own socket: 0.048 kbit/s with nobody watching, 198.9 kbit/s with one viewer (predicted 194 plus framing), 0.052 kbit/s again 90 s after the viewer left, with the station journalling `1 watching, sending audio` and, after the 60 s linger, `nobody watching, audio stopped`. A station has no row and no page until its first hello. The relayed-station memory delta could not be isolated on the box because receivers came and went during the measurement; the Phase 3 figure stands. Left for the soak: both journals overnight, the keyup level, the announcement.
+
 Announcing is a separate step and comes after a soak. The people to tell are the ones who would want a token.
 
 ## 6. Phases
@@ -573,7 +575,7 @@ The coordinator updates this list as phases land. `[ ]` not started, `[~]` in pr
 - [x] **Phase 1** - `IWaterfallRelay`, the audio and frame hooks, `PushFrame`, `IncomingIsTransmit`, the escaping fix. PR: #395
 - [x] **Phase 2** - the `publish` block, `UplinkClient`, reconnects, the token redaction. Needs 1; can run beside 3. PR: #397
 - [x] **Phase 3** - `/uplink`, tokens, `UplinkAudioInput`, `RelayStation`, `/api/instances`, the picker, the second credit sentence, CONFIG.md, the example config, memory measured. Needs 1; can run beside 2. PR: #398
-- [ ] **Phase 4** - release, monitor config, GB7RDG-2 opted in, validated live, the keyup level judged and the upstream rate measured, soaked, recorded, announced. Needs 2 and 3. PR:
+- [~] **Phase 4** - release, monitor config, GB7RDG-2 opted in, validated live, the keyup level judged and the upstream rate measured, soaked, recorded, announced. Needs 2 and 3. Release v0.56.0 (2026-09-04); live, rate measured, memory recorded; soak, keyup level and announcement outstanding. PR: #399 (link fix in the same release)
 
 ## 8. Decisions
 
