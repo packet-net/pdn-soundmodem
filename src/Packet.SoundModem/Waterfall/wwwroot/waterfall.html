@@ -658,7 +658,15 @@ function applyPublicFlavour() {
     const href = /^https?:\/\//i.test(String(cfg.receiverUrl || "")) ? String(cfg.receiverUrl) : null;
     const who = href
       ? `<a href="${esc(href)}" target="_blank" rel="noopener">${name}</a>` : name;
-    parts.push(`Heard on ${who}, an UberSDR web receiver; the session is opened only while somebody has this page open.`);
+    // Two sentences, one per kind of thing the audio comes from, chosen by a word from the
+    // server rather than written by it: the sentence carries an anchor built around an escaped
+    // name, so a server-supplied sentence would be either unescapable or a second way for
+    // somebody else's words to arrive as markup. A relayed station is somebody's actual radio -
+    // their antenna, their electricity, their transmissions in what you hear - and the credit
+    // says so, because that is the least it can do.
+    parts.push(cfg.receiverKind === "station"
+      ? `Heard on ${who}, a private station relaying its own receiver to this site live; its own transmissions are in what you hear.`
+      : `Heard on ${who}, an UberSDR web receiver; the session is opened only while somebody has this page open.`);
   }
   // One receiver of a site that offers several: a way back to the list. Relative, because the
   // site may sit behind a tunnel under a hostname this daemon has never been told. A station
