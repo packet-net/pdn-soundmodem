@@ -367,6 +367,13 @@ public class UplinkTests
         config.GetProperty("sampleRate").GetInt32().Should().Be(
             12000, "the channel runs at the rate the station said it is relaying at");
         config.GetProperty("receiverKind").GetString().Should().Be("station");
+
+        // The same two levels a receiver's page climbs (#399): this page is at /r/<slug>/ too,
+        // and "../" would only reach /r/, which the router answers with a 404.
+        string picker = new Uri(new Uri($"http://127.0.0.1:{h.Port}/r/{Slug}/"),
+            config.GetProperty("pickerUrl").GetString()!).AbsolutePath;
+        picker.Should().Be("/");
+        (await h.StatusAsync(picker)).Should().Be(System.Net.HttpStatusCode.OK);
     }
 
     [Theory(Timeout = TestTimeoutMs)]

@@ -235,7 +235,10 @@ internal sealed class RelayStation : IMonitorStation
             Public = true,
             Title = _options.Title,
             About = _options.About,
-            PickerUrl = "../",
+            // Two levels, not one, for the reason #399 gives for a receiver's page: a relayed
+            // station's page is served at /r/<slug>/ too, so "../" only climbs to /r/, which the
+            // router answers with a 404.
+            PickerUrl = "../../",
             // What its modems occupy, off the wire. Nothing enumerable carries them because this
             // process runs none of them, which is exactly what DeclaredBands is for.
             DeclaredBands = Hello.Bands,
