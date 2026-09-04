@@ -482,7 +482,14 @@ internal sealed class MonitorHost : IAsyncDisposable
                 Public = true,
                 Title = host._options.Title,
                 About = host._options.About,
-                PickerUrl = "../",
+                // The page is always served at /r/<slug>/, one level under /r/, which is itself
+                // one level under the picker at the site root. Two levels up, not one: "../"
+                // resolves to /r/, which the router answers with a 404, since only slugs are
+                // routed there. Relative rather than an absolute "/", so this keeps working if
+                // the site is ever mounted under a prefix of its own; nothing in MonitorHost or
+                // WaterfallRouter has such a prefix today, but the receivers' own pages already
+                // work out their sockets relative to their own path for the same reason.
+                PickerUrl = "../../",
                 DeclaredBands = StationFactory.DeclaredBandsFor(host._options.Modems),
                 FrameHistory = _frameLog is null ? null : _frameLog.Recent,
                 TimeProvider = host._time,

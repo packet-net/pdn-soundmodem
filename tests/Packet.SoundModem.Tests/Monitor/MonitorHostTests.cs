@@ -302,6 +302,30 @@ public class MonitorHostTests
         }
     }
 
+    [Fact]
+    public async Task A_Receivers_All_Receivers_Link_Resolves_To_The_Picker()
+    {
+        // The bug this pins: a receiver's page is always served at /r/<slug>/ (the router
+        // redirects the slash-less form there before the page ever loads), and its "All
+        // receivers" link is cfg.pickerUrl resolved against that path. A value of "../" resolves
+        // one level up, to /r/, which the router answers with a 404 - only the picker at the site
+        // root should be behind that link.
+        await using var h = await Harness.StartAsync();
+        await h.GetAsync($"/r/{DalgetySlug}/");
+
+        using ClientWebSocket watching = await h.WatchAsync(DalgetySlug);
+        using JsonDocument config = await NextOfTypeAsync(watching, "config");
+        string pickerUrl = config.RootElement.GetProperty("pickerUrl").GetString()!;
+
+        var pagePath = new Uri($"http://monitor.example/r/{DalgetySlug}/");
+        var resolved = new Uri(pagePath, pickerUrl);
+        resolved.AbsolutePath.Should().Be(
+            "/", "that is the picker; anywhere else is a link the router has nothing behind");
+
+        (await h.StatusAsync(resolved.AbsolutePath)).Should().Be(
+            HttpStatusCode.OK, "the link a receiver's page gives its visitors must actually load");
+    }
+
     /// <summary>The next message of one type off a page's socket.</summary>
     private static async Task<JsonDocument> NextOfTypeAsync(ClientWebSocket socket, string type)
     {
