@@ -66,13 +66,15 @@ public class MonitorPageTests
             first => first.Contains("<a class=\"pick\" href=\"/r/"),
             "a row a visitor cannot follow has no business being on a page they came here to pick from");
 
-        // None of the words the state column used to put in a row, in any of its cases.
+        // None of the words the state column used to put in a row, in any of its cases, and no
+        // tint on a row somebody is watching either: the page says nothing about who else is here.
         string table = string.Join("", probe.Rows);
-        table.Should().NotContain("free").And.NotContain("watching").And.NotContain("connecting")
-            .And.NotContain("just left").And.NotContain("daily allowance")
-            .And.NotContain("not working just now");
+        table.Should().NotContain("free").And.NotContain("watching").And.NotContain("watched")
+            .And.NotContain("connecting").And.NotContain("just left")
+            .And.NotContain("daily allowance").And.NotContain("not working just now");
 
-        probe.Summary.Should().Contain("2 receivers").And.Contain("1 not available");
+        probe.Summary.Should().Contain("2 receivers").And.Contain("1 not available")
+            .And.NotContain("watch", "the count across the top no longer says how many are watching");
         probe.StaleHidden.Should().BeTrue("the directory answered");
         probe.EmptyHidden.Should().BeTrue();
         probe.Footer.Should().Contain("Receive only")

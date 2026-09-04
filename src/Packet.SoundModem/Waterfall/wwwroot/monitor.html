@@ -56,7 +56,6 @@
     font-size: 14px; line-height: 1.35;
   }
   .row:hover { background: #141a22; }
-  .row.watched { background: rgba(86,200,221,.06); }
   /* The whole row is the link, but the receiver's own page has to be reachable from inside it -
      a link inside a link is not markup a browser will parse, so the row's link is stretched over
      the row with a pseudo-element and the other one is lifted above it. */
@@ -155,7 +154,8 @@ function order(a, b) {
 
 // Every row here is a receiver that can be picked, so every row is a link; the ones that cannot
 // be are not drawn at all, which is render()'s doing. Slots are therefore always a count and
-// never the word "full".
+// never the word "full". Nothing in a row says who else is watching, or how many: that is a fact
+// about the other visitors rather than about the receiver, and it is not what anybody came for.
 function rowHtml(r) {
   const slots = r.maxClients > 0 ? r.availableClients + " of " + r.maxClients : "";
   const signal = r.snrDb == null ? "" : r.snrDb + " dB";
@@ -164,7 +164,7 @@ function rowHtml(r) {
   const own = link(r.publicUrl)
     ? ' <a class="own" href="' + esc(link(r.publicUrl)) + '" target="_blank" rel="noopener">its own page</a>'
     : "";
-  return '<div class="row' + (r.viewers > 0 ? " watched" : "") + '">'
+  return '<div class="row">'
     + "<div>" + pick + "</div>"
     + '<div class="name">' + esc(r.name || "") + own + "</div>"
     + '<div class="where">' + esc(r.location || "") + "</div>"
@@ -190,11 +190,9 @@ function render(snap) {
   const receivers = all.filter(r => r.offered).sort(order);
   $("rows").innerHTML = receivers.map(rowHtml).join("");
 
-  const watching = receivers.reduce((n, r) => n + (r.viewers || 0), 0);
   $("summary").textContent =
     receivers.length + (receivers.length === 1 ? " receiver" : " receivers")
-    + (all.length > receivers.length ? " (" + (all.length - receivers.length) + " not available)" : "")
-    + (watching > 0 ? ", " + watching + " being watched" : "");
+    + (all.length > receivers.length ? " (" + (all.length - receivers.length) + " not available)" : "");
 
   // Two different silences, and they must not read the same. A directory that has gone away
   // leaves the last list it gave us, which is still worth showing and has to say how old it is;
