@@ -33,15 +33,13 @@ public sealed class AlsaMixer : IAlsaMixer
     private const int FirstChannel = 0;
 
     private readonly object _gate = new();
-    private readonly Dictionary<string, IntPtr> _elements = new(StringComparer.OrdinalIgnoreCase);
     private IntPtr _mixer;
 
-    private AlsaMixer(IntPtr mixer, string card, List<string> controls, Dictionary<string, IntPtr> elements)
+    private AlsaMixer(IntPtr mixer, string card, List<string> controls)
     {
         _mixer = mixer;
         Card = card;
         Controls = controls;
-        _elements = elements;
     }
 
     /// <inheritdoc />
@@ -125,7 +123,6 @@ public sealed class AlsaMixer : IAlsaMixer
             }
 
             var names = new List<string>();
-            var elements = new Dictionary<string, IntPtr>(StringComparer.OrdinalIgnoreCase);
             for (IntPtr element = snd_mixer_first_elem(handle);
                  element != IntPtr.Zero;
                  element = snd_mixer_elem_next(element))
@@ -138,14 +135,14 @@ public sealed class AlsaMixer : IAlsaMixer
 
                 // Index 0 only. A card can present the same name twice ("Mic",0 and "Mic",1);
                 // the first is the one alsamixer puts under the cursor and the one an operator
-                // means, and a station has no way to say which of two it wanted.
-                if (snd_mixer_selem_get_index(element) != 0 || elements.ContainsKey(name))
+                // means, and a station has no way to say which of two it wanted. Names only:
+                // the element pointers are deliberately not kept, see TryElement.
+                if (snd_mixer_selem_get_index(element) != 0 || names.Contains(name))
                 {
                     continue;
                 }
 
                 names.Add(name);
-                elements[name] = element;
             }
 
             if (names.Count == 0)
@@ -155,7 +152,7 @@ public sealed class AlsaMixer : IAlsaMixer
                 return false;
             }
 
-            mixer = new AlsaMixer(handle, card, names, elements);
+            mixer = new AlsaMixer(handle, card, names);
             return true;
         }
         catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException
@@ -318,16 +315,21 @@ public sealed class AlsaMixer : IAlsaMixer
             {
                 snd_mixer_close(_mixer);
                 _mixer = IntPtr.Zero;
-                _elements.Clear();
             }
         }
     }
 
     /// <summary>
-    /// The element for a control name. Looked up in the map built at load rather than by
-    /// <c>snd_mixer_find_selem</c> on every call - same answer, no allocation of a selem id per
-    /// access - but the map itself came from the same enumeration <c>find_selem</c> searches.
+    /// The element for a control name, asked of alsa-lib on every access rather than cached.
     /// </summary>
+    /// <remarks>
+    /// Deliberately not a map built once at load. <c>snd_mixer_handle_events</c> is how a card
+    /// tells alsa-lib that its elements have changed, and it frees the ones that have gone - a USB
+    /// sound card unplugged while the daemon runs is exactly that - so a pointer kept from load
+    /// time is a use-after-free waiting for a re-plug. Looking it up costs one malloc and one free
+    /// per access, on a path that runs a handful of times at start-up and once per operator
+    /// change.
+    /// </remarks>
     private bool TryElement(string control, out IntPtr element)
     {
         element = IntPtr.Zero;
@@ -336,7 +338,22 @@ public sealed class AlsaMixer : IAlsaMixer
             return false;
         }
 
-        return _elements.TryGetValue(control, out element) && element != IntPtr.Zero;
+        if (snd_mixer_selem_id_malloc(out IntPtr id) < 0 || id == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        try
+        {
+            snd_mixer_selem_id_set_index(id, 0);
+            snd_mixer_selem_id_set_name(id, control);
+            element = snd_mixer_find_selem(_mixer, id);
+            return element != IntPtr.Zero;
+        }
+        finally
+        {
+            snd_mixer_selem_id_free(id);
+        }
     }
 
     private static bool HasVolume(IntPtr element, MixerDirection direction) =>
@@ -381,6 +398,21 @@ public sealed class AlsaMixer : IAlsaMixer
 
     [DllImport(Lib)]
     private static extern IntPtr snd_mixer_selem_get_name(IntPtr element);
+
+    [DllImport(Lib)]
+    private static extern int snd_mixer_selem_id_malloc(out IntPtr id);
+
+    [DllImport(Lib)]
+    private static extern void snd_mixer_selem_id_free(IntPtr id);
+
+    [DllImport(Lib)]
+    private static extern void snd_mixer_selem_id_set_index(IntPtr id, uint index);
+
+    [DllImport(Lib)]
+    private static extern void snd_mixer_selem_id_set_name(IntPtr id, string name);
+
+    [DllImport(Lib)]
+    private static extern IntPtr snd_mixer_find_selem(IntPtr mixer, IntPtr id);
 
     [DllImport(Lib)]
     private static extern uint snd_mixer_selem_get_index(IntPtr element);
