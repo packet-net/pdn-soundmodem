@@ -284,18 +284,24 @@ public class TxTestTests
     [Fact]
     public async Task A_Second_Test_Is_Refused_While_One_Is_Running()
     {
+        // The first is held on a busy channel rather than raced against: asking again and hoping
+        // the first has not finished passes on an idle machine and fails on a loaded one, which
+        // is what it did under full-suite load.
         await using var rig = new Rig();
+        rig.Band.ChannelBusy = true;
 
         Task<TxTestOutcome> first = rig.Runner.RunAsync(new TxTestRequest(true, 0, 2));
-        TxTestOutcome second;
-        do
+        while (rig.Reports.Count == 0)
         {
-            second = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
+            await Task.Delay(10);
         }
-        while (second.Refusal is null && !first.IsCompleted);
 
+        TxTestOutcome second = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
         second.Refusal.Should().Be("a test transmission is already running");
-        (await first).Ran.Should().BeTrue();
+
+        rig.Band.ChannelBusy = false;
+        (await first).Ran.Should().BeTrue("and the first is not disturbed by having been asked");
+        rig.Keying.Should().Equal(["key", "unkey"], "one test, one keyup");
     }
 
     [Fact]
