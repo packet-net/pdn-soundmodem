@@ -236,7 +236,12 @@ if (mixerShow is not null)
 
     using (showMixer)
     {
-        MixerSetup.Apply(showMixer!, new MixerSettings(), Console.WriteLine);
+        // Guarded for the same reason the start-up call is: TryOpen catches a missing symbol
+        // among the ten entry points it uses, and Apply reaches twenty more.
+        if (MixerSetup.TryApply(showMixer!, new MixerSettings(), Console.WriteLine, out _) is null)
+        {
+            return 1;
+        }
     }
 
     return 0;
@@ -2428,7 +2433,17 @@ else
     if (AlsaMixer.TryOpen(mixerCard, out AlsaMixer? openedMixer, out string mixerWhy))
     {
         mixer = openedMixer;
-        MixerSetup.Apply(mixer!, mixerWanted, Console.WriteLine);
+
+        // TryApply and not Apply: these are top-level statements with nothing above them to catch
+        // anything, and TryOpen only proves the ten entry points it uses itself. A libasound
+        // missing one of the twenty Apply reaches would otherwise be a crash at every start-up
+        // and a systemd restart loop, over a mixer. It costs the mixer instead.
+        if (MixerSetup.TryApply(mixer!, mixerWanted, Console.WriteLine, out string applyWhy) is null)
+        {
+            mixerWhyNot = $"{mixerCard} could not be read or set: {applyWhy}";
+            openedMixer!.Dispose();
+            mixer = null;
+        }
     }
     else
     {

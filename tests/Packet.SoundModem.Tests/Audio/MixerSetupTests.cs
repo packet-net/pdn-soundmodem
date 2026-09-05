@@ -276,6 +276,82 @@ public class MixerSetupTests
         report.Agc!.On.Should().BeFalse();
     }
 
+    /// <summary>
+    /// A mixer fault costs the mixer and never the station.
+    /// </summary>
+    /// <remarks>
+    /// The daemon runs this from top-level statements, which have nothing above them to catch
+    /// anything, so an EntryPointNotFoundException from any of the twenty entry points the apply
+    /// reaches - all of them outside AlsaMixer.TryOpen's catch - would be a crash at every
+    /// start-up and a systemd restart loop, over a mixer.
+    /// </remarks>
+    [Fact]
+    public void A_Libasound_Missing_A_Mixer_Symbol_Costs_The_Mixer_And_Not_The_Daemon()
+    {
+        var journal = new List<string>();
+
+        MixerReport? report = MixerSetup.TryApply(
+            new ThrowingMixer(),
+            new MixerSettings { CaptureGainPercent = 60, Agc = false },
+            journal.Add,
+            out string why);
+
+        report.Should().BeNull();
+        why.Should().Contain("EntryPointNotFoundException")
+            .And.Contain("snd_mixer_selem_set_capture_volume_all",
+                "a genuine fault has to stay visible rather than be swallowed");
+        journal.Should().ContainSingle(line => line.Contains(
+            "capture gain, AGC and mic boost are left as the card has them", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_Card_That_Answers_Normally_Comes_Back_From_The_Guarded_Apply_Too()
+    {
+        MixerReport? report = MixerSetup.TryApply(
+            FakeMixer.Cm108(), new MixerSettings { CaptureGainPercent = 60 }, null, out string why);
+
+        why.Should().BeEmpty();
+        report!.Capture!.Percent.Should().Be(60);
+    }
+
+    /// <summary>
+    /// A control the file never mentioned is never the subject of a journal line, whatever is
+    /// wrong with it - the same rule as the not-found line, and for the same reason.
+    /// </summary>
+    [Fact]
+    public void A_Control_The_Configuration_Never_Mentioned_Is_Never_Reported_Skipped()
+    {
+        // "Capture" exists and is a switch and nothing else, so reading a level off it fails.
+        // On a station that never mentioned the mixer that must be silent, not a line on every
+        // single start-up of every station of this card's model.
+        var mixer = new FakeMixer(
+            "hw:1",
+            new FakeControl { Name = "Capture", On = true },
+            new FakeControl { Name = "AGC", Capture = 40 });
+
+        var journal = new List<string>();
+        MixerReport report = MixerSetup.Apply(mixer, new MixerSettings(), journal.Add);
+
+        journal.Should().NotContain(line => line.Contains("skipped", StringComparison.Ordinal));
+        report.Capture.Should().BeNull();
+        report.Agc.Should().NotBeNull("a level standing in for a switch still reads back");
+    }
+
+    [Fact]
+    public void The_Same_Control_Is_Reported_Skipped_When_The_File_Did_Ask_For_It()
+    {
+        var mixer = new FakeMixer("hw:1", new FakeControl { Name = "Capture", On = true });
+
+        var journal = new List<string>();
+        MixerSetup.Apply(
+            mixer,
+            new MixerSettings { CaptureGainPercent = 50, CaptureControls = ["Capture"] },
+            journal.Add);
+
+        journal.Should().Contain(
+            "alsa: mixer: \"Capture\" on hw:1 has no capture volume, skipped");
+    }
+
     [Theory]
     [InlineData("plughw:CARD=Device,DEV=0", "hw:CARD=Device")]
     [InlineData("plughw:1,0", "hw:1")]

@@ -144,6 +144,43 @@ public static class MixerSetup
     }
 
     /// <summary>
+    /// <see cref="Apply"/>, with anything it throws turned into one journal line and a null.
+    /// </summary>
+    /// <remarks>
+    /// <para>What this is for is a <c>libasound</c> that has some of the mixer API and not the
+    /// rest. <see cref="AlsaMixer.TryOpen"/> catches a missing symbol among the ten entry points
+    /// it uses itself, but <see cref="Apply"/> then reaches twenty more - the selem id, the
+    /// find, the has/get/set families, the dB getters - and an <c>EntryPointNotFoundException</c>
+    /// from any of those would leave the daemon's top-level statements with nothing above them to
+    /// catch it. That is a crash at every start-up and a systemd restart loop, over a mixer.</para>
+    /// <para>Broad on purpose. A mixer is a convenience; a station receiving is not. Whatever
+    /// went wrong is named in the journal with its type, so a genuine bug in here is still
+    /// visible rather than silently swallowed.</para>
+    /// </remarks>
+    /// <param name="mixer">The card's mixer.</param>
+    /// <param name="wanted">What to set; every null is a control left alone.</param>
+    /// <param name="journal">Where each line goes as it is produced.</param>
+    /// <param name="why">What went wrong, when this returns null.</param>
+    /// <returns>The report, or null if the attempt threw.</returns>
+    public static MixerReport? TryApply(
+        IAlsaMixer mixer, MixerSettings wanted, Action<string>? journal, out string why)
+    {
+        why = "";
+        try
+        {
+            return Apply(mixer, wanted, journal);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            why = $"{e.GetType().Name}: {e.Message}";
+            journal?.Invoke(
+                $"{JournalPrefix}could not be read or set ({why}); capture gain, AGC and mic "
+                + "boost are left as the card has them");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// The first name in <paramref name="names"/> that this card has, or null. Case-insensitive:
     /// ALSA spells its own names consistently, but a configuration file is typed by a person.
     /// </summary>
@@ -184,16 +221,28 @@ public static class MixerSetup
             return null;
         }
 
+        // Said only when the file asked for this control, the same rule as the not-found line
+        // above and for the same reason: a card whose "Capture" is a switch and nothing else
+        // would otherwise put a skipped line in the journal of every station of that model, on
+        // every start-up, about a setting nobody has ever mentioned.
+        void Skipped()
+        {
+            if (percent is not null)
+            {
+                say($"\"{control}\" on {mixer.Card} has no {side} volume, skipped");
+            }
+        }
+
         if (percent is int target && !mixer.TrySetVolume(control, direction, target))
         {
-            say($"\"{control}\" on {mixer.Card} has no {side} volume, skipped");
+            Skipped();
             return null;
         }
 
         mixer.Refresh();
         if (!mixer.TryReadVolume(control, direction, out int read, out double? decibels))
         {
-            say($"\"{control}\" on {mixer.Card} has no {side} volume, skipped");
+            Skipped();
             return null;
         }
 
@@ -213,6 +262,15 @@ public static class MixerSetup
             return null;
         }
 
+        // As in Volume: only a control the file asked for is worth a line about.
+        void Skipped()
+        {
+            if (on is not null)
+            {
+                say($"\"{control}\" on {mixer.Card} has no on/off switch, skipped");
+            }
+        }
+
         if (on is bool state && !mixer.TrySetSwitch(control, state))
         {
             // Some cards present a boost as a level rather than a switch (an HDA "Mic Boost" is
@@ -225,7 +283,7 @@ public static class MixerSetup
             }
             else
             {
-                say($"\"{control}\" on {mixer.Card} has no on/off switch, skipped");
+                Skipped();
                 return null;
             }
         }
@@ -241,7 +299,7 @@ public static class MixerSetup
             return new MixerSwitchState(control, percent >= 50);
         }
 
-        say($"\"{control}\" on {mixer.Card} has no on/off switch, skipped");
+        Skipped();
         return null;
     }
 

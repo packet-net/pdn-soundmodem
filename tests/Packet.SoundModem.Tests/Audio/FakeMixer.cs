@@ -2,6 +2,45 @@ using Packet.SoundModem.Audio;
 
 namespace Packet.SoundModem.Tests.Audio;
 
+/// <summary>
+/// A card whose entry points are not all there, which is what a <c>libasound</c> too old or too
+/// stripped for part of the mixer API looks like from above.
+/// </summary>
+/// <remarks>
+/// <see cref="AlsaMixer.TryOpen"/> catches a missing symbol among the ten entry points it uses
+/// itself, but the twenty the apply then reaches are outside it, and the daemon's top-level
+/// statements have nothing above them to catch anything. So this throws from a setter, exactly
+/// where a real one would.
+/// </remarks>
+internal sealed class ThrowingMixer : IAlsaMixer
+{
+    public string Card => "hw:9";
+
+    public IReadOnlyList<string> Controls => ["Mic", "Auto Gain Control"];
+
+    public bool Disposed { get; private set; }
+
+    public void Refresh()
+    {
+    }
+
+    public bool TrySetVolume(string control, MixerDirection direction, int percent) =>
+        throw new EntryPointNotFoundException(
+            "Unable to find an entry point named 'snd_mixer_selem_set_capture_volume_all'");
+
+    public bool TryReadVolume(string control, MixerDirection direction, out int percent, out double? decibels) =>
+        throw new EntryPointNotFoundException(
+            "Unable to find an entry point named 'snd_mixer_selem_get_capture_volume'");
+
+    public bool TrySetSwitch(string control, bool on) => throw new EntryPointNotFoundException(
+        "Unable to find an entry point named 'snd_mixer_selem_set_capture_switch_all'");
+
+    public bool TryReadSwitch(string control, out bool on) => throw new EntryPointNotFoundException(
+        "Unable to find an entry point named 'snd_mixer_selem_get_capture_switch'");
+
+    public void Dispose() => Disposed = true;
+}
+
 /// <summary>One control on a made-up sound card.</summary>
 /// <remarks>
 /// A null level or switch means the control does not have that capability at all, which is the
@@ -85,11 +124,25 @@ internal sealed class FakeMixer : IAlsaMixer
     /// <summary>How many times the card was asked for fresh values.</summary>
     public int Refreshes { get; private set; }
 
+    /// <summary>
+    /// How long the card takes to answer a refresh. Non-zero opens the window between a write and
+    /// the read-back that follows it, which is the window two concurrent callers would interleave
+    /// in if nothing serialised them.
+    /// </summary>
+    public TimeSpan RefreshTakes { get; set; }
+
     /// <summary>Whether this fake has been disposed.</summary>
     public bool Disposed { get; private set; }
 
     /// <inheritdoc />
-    public void Refresh() => Refreshes++;
+    public void Refresh()
+    {
+        Refreshes++;
+        if (RefreshTakes > TimeSpan.Zero)
+        {
+            Thread.Sleep(RefreshTakes);
+        }
+    }
 
     /// <inheritdoc />
     public bool TrySetVolume(string control, MixerDirection direction, int percent)
