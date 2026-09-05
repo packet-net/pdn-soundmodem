@@ -111,12 +111,20 @@ internal sealed class ConfigApi
     /// <remarks>The state directory, which systemd creates and owns for the service user. Not
     /// beside the config file: <c>ProtectSystem=full</c> makes <c>/etc</c> read-only to the
     /// service, so that is the one place it reliably cannot write.</remarks>
-    public static string EphemeralPathFor(string configPath) =>
-        Path.Combine(
-            Environment.GetEnvironmentVariable("STATE_DIRECTORY")
-                ?? Path.GetDirectoryName(configPath)
-                ?? ".",
-            "pending-config.json");
+    public static string EphemeralPathFor(string configPath)
+    {
+        // Every branch has to yield a directory that Path.GetDirectoryName can find again.
+        // Path.GetDirectoryName("soundmodem.json") is the EMPTY STRING and not null, so the
+        // "?? \".\"" below never fired for a config named without a directory - which gave an
+        // ephemeral path of "pending-config.json", whose own directory name is empty, and
+        // Directory.CreateDirectory("") throws ArgumentException. On the bench that surfaced as a
+        // POST that set the card and then aborted the connection (2026-09-05).
+        string? state = Environment.GetEnvironmentVariable("STATE_DIRECTORY");
+        string directory = !string.IsNullOrEmpty(state)
+            ? state
+            : Path.GetDirectoryName(configPath) is { Length: > 0 } beside ? beside : ".";
+        return Path.Combine(directory, "pending-config.json");
+    }
 
     /// <summary>What a redacted secret reads as, so the answer still says one is set.</summary>
     private const string Hidden = "(set, not shown)";
@@ -300,7 +308,7 @@ internal sealed class ConfigApi
 
         if (path is "/api/mixer")
         {
-            await MixerAsync(context).ConfigureAwait(false);
+            await GuardedAsync(context, () => MixerAsync(context)).ConfigureAwait(false);
             return true;
         }
 
@@ -331,7 +339,7 @@ internal sealed class ConfigApi
                 return true;
 
             case "POST":
-                await ApplyAsync(context).ConfigureAwait(false);
+                await GuardedAsync(context, () => ApplyAsync(context)).ConfigureAwait(false);
                 return true;
 
             default:
@@ -502,13 +510,14 @@ internal sealed class ConfigApi
         string written;
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            EnsureDirectoryOf(target);
             File.WriteAllText(target, amended);
             written = declined + (persist
                 ? $"written to {_configPath}"
                 : "in force until the next restart, then the config file applies again");
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException
+                                    or ArgumentException or NotSupportedException)
         {
             // The card is set either way, and saying so matters: the operator can hear the
             // difference and would otherwise assume nothing happened.
@@ -516,7 +525,11 @@ internal sealed class ConfigApi
                 + $"({e.Message}), so this lasts only until the daemon restarts";
         }
 
-        Console.WriteLine($"api: mixer set - {report.Summary ?? "nothing found to set"}");
+        // The mixer's own lines have already been printed by the apply above, prefix and all, so
+        // this only has to say who asked and how long it lasts - not repeat them behind a second
+        // prefix.
+        Console.WriteLine(
+            $"api: mixer set over the API, {(persist ? "persisted" : "for this run")}");
 
         JsonObject answer = MixerApi.Describe(report);
         answer["applied"] = true;
@@ -562,10 +575,11 @@ internal sealed class ConfigApi
         string target = persist ? _configPath : _ephemeralPath;
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            EnsureDirectoryOf(target);
             File.WriteAllText(target, body);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException
+                                    or ArgumentException or NotSupportedException)
         {
             string extra = persist
                 ? " The shipped unit sets ProtectSystem=full, which makes /etc read-only to the "
@@ -596,6 +610,51 @@ internal sealed class ConfigApi
             """).ConfigureAwait(false);
 
         _requestRestart();
+    }
+
+    /// <summary>
+    /// Runs one handler and turns anything it throws into a 500 with the reason in it.
+    /// </summary>
+    /// <remarks>
+    /// The waterfall server's own catch-all aborts the connection, which is right for a page and
+    /// wrong for an API: a caller gets a closed socket with no status and no body, and has no way
+    /// to tell a bug from a network fault. Worse here than anywhere, because these handlers act
+    /// before they answer - the card is already set by the time a reply is written - so "nothing
+    /// came back" must never be allowed to mean "nothing happened". A bug that reaches this is
+    /// still a bug; it just has to arrive as one.
+    /// </remarks>
+    private static async Task GuardedAsync(HttpListenerContext context, Func<Task> handler)
+    {
+        try
+        {
+            await handler().ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine($"api: unhandled failure serving the request: {e}");
+            try
+            {
+                await RespondAsync(context, 500, $"the daemon failed while serving this: {e.Message}")
+                    .ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // The response had already started, so there is nothing left to say on it.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Makes sure the directory a file is about to be written to exists, and does nothing at all
+    /// when the path names no directory - which is a file beside the working directory, not an
+    /// error, and is what <c>Directory.CreateDirectory("")</c> would have thrown over.
+    /// </summary>
+    private static void EnsureDirectoryOf(string path)
+    {
+        if (Path.GetDirectoryName(path) is { Length: > 0 } directory)
+        {
+            Directory.CreateDirectory(directory);
+        }
     }
 
     private bool Authorised(HttpListenerRequest request)

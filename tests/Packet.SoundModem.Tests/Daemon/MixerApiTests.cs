@@ -166,6 +166,69 @@ public class MixerApiTests : IDisposable
         answer.StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
 
+    /// <summary>
+    /// A config file named without a directory - <c>--config soundmodem.json</c> from the
+    /// directory it sits in - must still give a one-run path that can be written.
+    /// </summary>
+    /// <remarks>
+    /// Found on the bench on 2026-09-05, from exactly that invocation.
+    /// <c>Path.GetDirectoryName("soundmodem.json")</c> is the empty string rather than null, so
+    /// the fallback never fired, the one-run path came out as a bare file name, and
+    /// <c>Directory.CreateDirectory("")</c> threw ArgumentException on the way to writing it. The
+    /// waterfall's catch-all then aborted the connection, so the POST set the card and answered
+    /// nothing at all - the worst possible shape for a failure, since the caller cannot tell it
+    /// from "nothing happened".
+    /// </remarks>
+    [Theory]
+    [InlineData("soundmodem.json")]
+    [InlineData("./soundmodem.json")]
+    [InlineData("/etc/pdn-soundmodem/soundmodem.json")]
+    public void A_One_Run_Path_Always_Names_A_Directory_That_Can_Be_Created(string configPath)
+    {
+        string pending = ConfigApi.EphemeralPathFor(configPath);
+
+        Path.GetFileName(pending).Should().Be("pending-config.json");
+        Path.GetDirectoryName(pending).Should().NotBeNullOrEmpty(
+            "Directory.CreateDirectory throws on an empty path, and that is where it is written");
+    }
+
+    [Fact]
+    public async Task A_Change_That_Cannot_Be_Written_Down_Still_Answers_In_Full()
+    {
+        // The card is set before the file is written, so a failure after that point must arrive as
+        // a complete answer saying so. An aborted connection would leave the operator believing
+        // nothing had happened while the station listened at a different gain.
+        string blocker = Path.Combine(_dir, $"blocker-{Guid.NewGuid():N}");
+        File.WriteAllText(blocker, "not a directory");
+        using var station = new Station(
+            _dir, FakeMixer.Cm108(), ephemeralPath: Path.Combine(blocker, "pending-config.json"));
+
+        JsonElement body = await station.PostAsync("""{"captureGainPercent": 45}""");
+
+        station.Card!.Find("Mic")!.Capture.Should().Be(45, "the card is set either way");
+        body.GetProperty("applied").GetBoolean().Should().BeTrue();
+        body.GetProperty("note").GetString().Should().Contain("could not be written");
+    }
+
+    [Fact]
+    public async Task Every_Answer_Carries_A_Body_And_Not_A_Closed_Socket()
+    {
+        using var station = new Station(_dir, FakeMixer.Cm108());
+
+        foreach (string url in (string[])[station.Url, station.Url + "?persist=true"])
+        {
+            HttpResponseMessage answer = await station.Client.PostAsync(
+                new Uri(url, UriKind.Absolute),
+                new StringContent("""{"captureGainPercent": 45}""", Encoding.UTF8, "application/json"));
+
+            answer.StatusCode.Should().Be(HttpStatusCode.OK);
+            string text = await answer.Content.ReadAsStringAsync();
+            text.Should().NotBeEmpty($"{url} must answer with something a caller can read");
+            JsonSerializer.Deserialize<JsonElement>(text)
+                .GetProperty("applied").GetBoolean().Should().BeTrue();
+        }
+    }
+
     [Fact]
     public void An_Amendment_Adds_The_Mixer_Block_And_Disturbs_Nothing_Else()
     {
@@ -264,11 +327,12 @@ public class MixerApiTests : IDisposable
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _serving;
 
-        public Station(string dir, FakeMixer? card, string? configText = null)
+        public Station(
+            string dir, FakeMixer? card, string? configText = null, string? ephemeralPath = null)
         {
             Card = card;
             ConfigPath = Path.Combine(dir, $"soundmodem-{Guid.NewGuid():N}.json");
-            EphemeralPath = Path.Combine(dir, $"pending-{Guid.NewGuid():N}.json");
+            EphemeralPath = ephemeralPath ?? Path.Combine(dir, $"pending-{Guid.NewGuid():N}.json");
             string running = configText ?? Running;
             File.WriteAllText(ConfigPath, running);
 
