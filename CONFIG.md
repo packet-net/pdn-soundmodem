@@ -830,8 +830,16 @@ unless a key said so.
 
 With an [`api`](#api) key set, the operator page grows a **Mixer** group beside the display levels:
 a capture-gain slider with the card's read-back beside it, and AGC and Mic Boost buttons. It is
-never on the public page. See [`api`](#api) for `/api/mixer` and what it does and does not
-persist.
+never on the public page, and it is not there at all on a station with no `api.key` or no sound
+card. See [`api`](#api) for `/api/mixer` and how long a change lasts.
+
+> **Where the key ends up.** The daemon never sends `api.key` to a page. The group asks for it
+> once and keeps it in that browser's `localStorage`, so it survives a reload and reaches nothing
+> else. Two things follow. It is stored **per origin**, so on a site that serves several receivers
+> from one hostname the key typed for one is sent to every receiver path on it - give such a site
+> its own key, or reach the operator page over SSH rather than that hostname. And the prompt shows
+> the current key in clear while it is open, which is a screen-sharing consideration rather than a
+> network one.
 
 ## Channel access is the host's, not the config's
 
@@ -1164,17 +1172,41 @@ boost into the capture range - and a station with no sound card at all answers
 `{"available": false, "why": "..."}` rather than a 404, so a caller can tell "no mixer here" from
 "no such endpoint". `POST` to one of those is a `409`.
 
-`?persist=true` writes the config file, but **only when writing it back would lose nothing**. A
-config file here is JSONC and most are full of comments, and this daemon does not serialise a
-parsed document over the top of somebody's notes. So a commented file is left exactly as it is,
-the card is still set for this run, and the reply says what to paste in to keep it:
+### How long a mixer change lasts
+
+Not the same answer as `/api/config`, and the reply says which. **Nothing ever resets a mixer**:
+a config file with no `alsa.mixer` block writes nothing to the card at all, so a level set here
+holds until something sets it again. What the one-run file buys is that a restart in between does
+not go back to some other level; it does not expire the change.
+
+So a plain `POST` answers:
 
 ```
+"persisted": false,
+"note": "The card is set now and stays set: nothing ever resets a mixer, so this level holds
+         until something sets it again. /var/lib/pdn-soundmodem/pending-config.json holds the
+         change for the next restart; the restart after that goes back to
+         /etc/pdn-soundmodem/soundmodem.json, which will not touch the mixer at all unless it has
+         an "alsa"."mixer" block. Add one to make this deliberate."
+```
+
+`?persist=true` writes the config file, and removes any one-run change that was waiting - without
+that, start-up would prefer the older one-run file and the persisted level would arrive a restart
+late. It writes **only when writing the file back would lose nothing**: a config file here is
+JSONC and most are full of comments, and this daemon does not serialise a parsed document over
+the top of somebody's notes. So a commented file is left exactly as it is, the card is still set,
+and the reply says what to paste in to keep it:
+
+```
+"persisted": false,
 "note": "/etc/pdn-soundmodem/soundmodem.json has comments or trailing commas in it, and this
          daemon never writes a config file back from a parsed document - it would delete them,
          so it was NOT written. To keep this, add {\"alsa\":{\"mixer\":{\"captureGainPercent\":45}}}
-         to it by hand. in force until the next restart, then the config file applies again"
+         to it by hand. ..."
 ```
+
+The file it amends is read at the moment of the write, not the copy this process started on, so
+an edit you made since start-up is not overwritten by a snapshot.
 
 The operator page therefore never persists: a trim you want to keep is worth a deliberate line in
 the file.
@@ -2571,8 +2603,9 @@ it has no config equivalent). The exceptions:
 | `--ardop PORT` | Used only if the file has no `ardop` section |
 
 Some options are command-line only and have no config equivalent - `--wav FILE` and
-`--wav-loop FILE` (decode a recording instead of live audio), `--quality-frames`, and
-`--psk-detector coherent|differential`.
+`--wav-loop FILE` (decode a recording instead of live audio), `--quality-frames`,
+`--psk-detector coherent|differential`, and `--mixer-show DEVICE` (print a sound card's
+[mixer](#alsa) and exit; it reads and never writes, so it works on a station that is running).
 
 ## Worked examples
 
