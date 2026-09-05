@@ -196,6 +196,19 @@ class WebSocket_ extends WebSocket {
 // question and needs a way to be asked. Writes are kept, because the page saves as a viewer works.
 const stored = new Map();
 if (process.env.STORED) stored.set("pdnsm-waterfall", process.env.STORED);
+// The station's API key as this browser holds it. The daemon never sends a key to a page, so
+// the only way the mixer group can act is for one to have been put in this origin's storage,
+// which is what the page's Key button does.
+if (process.env.APIKEY) stored.set("pdnsm-api-key", process.env.APIKEY);
+
+// A browser resolves a relative URL against the document's own URL; this sandbox has no document
+// URL and node's fetch refuses anything that is not absolute. The page asks for `${base}api/...`,
+// so that is what gets resolved. Always http, whatever PROTOCOL says the page thinks it was
+// served over: the test server is plain http either way, and the scheme question the page has to
+// answer is about its WebSocket, not this.
+const fetchOrigin = `http://127.0.0.1:${process.env.PORT}`;
+const fetch_ = (input, init) =>
+  fetch(typeof input === "string" && input.startsWith("/") ? fetchOrigin + input : input, init);
 
 // The tab's own storage, and the tab's own reload, which are what checkPageVersion is built out
 // of: it records the version it has reloaded for and reloads at most once for it. sessionStorage
@@ -206,7 +219,7 @@ const session = new Map();
 let reloads = 0;
 
 const sandbox = {
-  document: document_, WebSocket: WebSocket_, console, fetch, AudioContext: AudioContext_,
+  document: document_, WebSocket: WebSocket_, console, fetch: fetch_, AudioContext: AudioContext_,
   setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame: cb => setTimeout(() => cb(performance.now()), 16),
   cancelAnimationFrame: clearTimeout, performance,
   location: { host: `127.0.0.1:${process.env.PORT}`, protocol, pathname, reload: () => { reloads++; } },
@@ -605,7 +618,41 @@ sandbox.document.getElementById("linksDetach").click();
 // error at a buffer boundary in whichever test happened to be running, on a loaded machine and
 // not on an idle one. The exit itself is needed: the page holds timers and a socket open, so
 // nothing here ends on its own.
+// ---- Mixer group (#17), operator page only. The page probes /api/mixer as it initialises and
+// shows the group on the strength of the answer, so what is read here is that answer's effect: a
+// test that stands up no API handler gets a 404 and a group that stays hidden, which is what
+// every other test in this file is. MIXER=1 says to wait for one, because only then is there
+// something to wait for and a fixed wait would be added to every run.
+const mixerPanel = () => ({
+  hidden: run(`document.getElementById("mixerCtl").hidden`),
+  className: run(`document.getElementById("mixerCtl").className`),
+  read: run(`document.getElementById("mixRead").textContent`),
+  // A browser's input.value is always a string, whatever was assigned to it; the shim keeps
+  // whatever it was given, so the coercion happens here instead.
+  gain: run(`String(document.getElementById("mixGain").value)`),
+  gainDisabled: run(`document.getElementById("mixGain").disabled`),
+  agc: run(`document.getElementById("mixAgc").className`),
+  boost: run(`document.getElementById("mixBoost").className`),
+  keyHidden: run(`document.getElementById("mixKey").hidden`),
+});
+if (process.env.MIXER) {
+  await untilTrue(() => run(`document.getElementById("mixerCtl").hidden`) === false, 10000);
+}
+
+const mixerOnArrival = mixerPanel();
+let mixerAfterSet = null;
+if (process.env.MIXSET) {
+  // Driven through the page's own sender rather than a click: the DOM shim's addEventListener is
+  // a no-op, and what is being checked is the request the page builds and what it does with the
+  // answer, which is all in that function.
+  await run(`mixSend(${process.env.MIXSET})`);
+  await untilTrue(() => run(`document.getElementById("mixRead").textContent`) !== mixerOnArrival.read, 10000);
+  mixerAfterSet = mixerPanel();
+}
+
 process.stdout.write(JSON.stringify({
+  mixerOnArrival,
+  mixerAfterSet,
   socketUrl,
   linksWindowUrl,
   // Whether the page decided it is the torn-off links window rather than the waterfall.
