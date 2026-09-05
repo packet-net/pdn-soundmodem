@@ -263,6 +263,48 @@ public sealed class PttConfig
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
 }
 
+/// <summary>
+/// The operator's transmitter test: a two-tone linearity check, or one tone for a carrier-level
+/// or FM deviation check. Present by default; there is nothing here that has to be switched on,
+/// because nothing happens until an operator asks for it.
+/// </summary>
+/// <remarks>
+/// A test transmission is a licensed transmission, so what this section holds is the two bounds
+/// on one: how long a test runs when nobody says, and the longest one that will be run whatever
+/// is asked for. The tones themselves are not settings - 700 and 1900 Hz is the pair everybody
+/// measures against, and the single-tone side takes its frequency per test.
+/// </remarks>
+public sealed class TxTestConfig
+{
+    /// <summary>
+    /// Whether the control exists at all. True by default. Setting it false takes the button off
+    /// the operator page, refuses <c>/api/txtest</c> and refuses <c>--two-tone</c>, for a station
+    /// whose operator would rather nothing on this box could key the radio without a frame behind
+    /// it.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>How long a test runs when the request does not say, in seconds. Default 5.</summary>
+    public double Seconds { get; set; } = 5;
+
+    /// <summary>
+    /// The longest test that will be run, in seconds, whatever is asked for. Default 30, and
+    /// clamped to 60 however this is set: a cap is a safety limit, so a typo here must not be able
+    /// to hold the PA up for an hour.
+    /// </summary>
+    public double MaxSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// What the burst peaks at, 0 to 1. Default 0.8, which is what the modulators themselves use,
+    /// so the test presents the transmitter with the same drive the data does.
+    /// </summary>
+    public double Amplitude { get; set; } = 0.8;
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
 /// <summary>POCSAG paging endpoint (DAPNET/POCSAG-compatible waveform; local paging
 /// API, pdn) - see PagingTcpServer for the line grammar.</summary>
 public sealed class PagingConfig
@@ -983,6 +1025,12 @@ public sealed class DaemonConfig
 
     /// <summary>PTT control; null = VOX / none.</summary>
     public PttConfig? Ptt { get; set; }
+
+    /// <summary>
+    /// The operator's transmitter test - a two-tone or single-tone keyup on demand. The defaults
+    /// stand when this is absent; there is nothing to switch on.
+    /// </summary>
+    public TxTestConfig TxTest { get; set; } = new();
 
     /// <summary>POCSAG paging endpoint; null = disabled.</summary>
     public PagingConfig? Paging { get; set; }
@@ -1766,6 +1814,7 @@ public sealed class DaemonConfig
         Unknown("rawCapture", config.RawCapture?.UnknownSettings);
         Unknown("deadFeed", config.DeadFeed?.UnknownSettings);
         Unknown("ptt", config.Ptt?.UnknownSettings);
+        Unknown("txTest", config.TxTest.UnknownSettings);
         Unknown("paging", config.Paging?.UnknownSettings);
         Unknown("ardop", config.Ardop?.UnknownSettings);
         Unknown("flex", config.Flex?.UnknownSettings);

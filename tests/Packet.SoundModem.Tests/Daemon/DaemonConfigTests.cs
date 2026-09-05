@@ -1048,6 +1048,55 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void The_Transmitter_Test_Is_On_By_Default_With_Its_Two_Bounds()
+    {
+        // There is nothing to switch on: nothing happens until an operator asks for it, and the
+        // two numbers here are the only ones that decide what a keyup can cost.
+        string path = WriteConfig("""{"device": "null"}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.TxTest.Enabled.Should().BeTrue();
+        config.TxTest.Seconds.Should().Be(5);
+        config.TxTest.MaxSeconds.Should().Be(30);
+        config.TxTest.Amplitude.Should().Be(
+            0.8, "the modulators' own peak, so the test measures what a frame gets");
+    }
+
+    [Fact]
+    public void The_Transmitter_Tests_Bounds_Are_Read_From_The_File()
+    {
+        string path = WriteConfig("""
+            {"device": "null", "txTest": {"seconds": 3, "maxSeconds": 10, "amplitude": 0.5}}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config!.TxTest.Seconds.Should().Be(3);
+        config.TxTest.MaxSeconds.Should().Be(10);
+        config.TxTest.Amplitude.Should().Be(0.5);
+    }
+
+    [Fact]
+    public void A_Typo_Inside_The_Transmitter_Test_Block_Is_Called_Out()
+    {
+        // A misspelt cap is a cap that is not there, and the setting it was meant to be is the
+        // one thing standing between a click and a PA held up for as long as it says.
+        string path = WriteConfig("""
+            {"device": "null", "txTest": {"maxSec": 10}}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("txTest: \"maxSec\"");
+        config.TxTest.MaxSeconds.Should().Be(30, "and the default still stands");
+    }
+
+    [Fact]
     public void A_Typo_Inside_The_Publish_Block_Is_Called_Out()
     {
         string path = PublishingStation("""

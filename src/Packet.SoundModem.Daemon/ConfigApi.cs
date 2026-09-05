@@ -39,6 +39,7 @@ internal sealed class ConfigApi
     private readonly string _key;
     private readonly string _configPath;
     private Func<IReadOnlyList<Survey.ModemProposal>>? _proposals;
+    private TxTestRunner? _txTest;
     private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
     private readonly string _ephemeralPath;
     private readonly Func<string> _runningJson;
@@ -78,6 +79,109 @@ internal sealed class ConfigApi
         _proposals = proposals;
         _prospectorCounts = counts;
     }
+
+    // ---------------------------------------------------------------- TX test
+    /// <summary>
+    /// Lets this API run the operator's transmitter test, at <c>/api/txtest</c>. Installed by the
+    /// daemon once the station's transmit path exists, and only where the page's own button is
+    /// installed - the two drive the same runner, so a curl and a click are the same act with the
+    /// same rules, and there is no second opinion about the cap.
+    /// </summary>
+    public void ServeTxTest(TxTestRunner runner) => _txTest = runner;
+
+    /// <summary>
+    /// Runs one test on behalf of an API caller and answers with what happened.
+    /// </summary>
+    /// <remarks>
+    /// Awaited rather than acknowledged, because the caller is a script or a person at a terminal
+    /// and "it went out" is the answer they want; the page, which cannot hold a socket open across
+    /// a keyup, gets the same outcome pushed to it instead. Bounded by the runner's own channel
+    /// wait, so a busy channel ends in a refusal rather than a hung request.
+    /// </remarks>
+    private async Task TxTestAsync(HttpListenerContext context)
+    {
+        if (_txTest is null)
+        {
+            await RespondAsync(context, 404,
+                "this station offers no transmitter test: it has no transmitter, or "
+                + "\"txTest\".\"enabled\" is false").ConfigureAwait(false);
+            return;
+        }
+
+        if (context.Request.HttpMethod != "POST")
+        {
+            await RespondAsync(context, 405,
+                "POST to transmit: {\"twoTone\": true, \"seconds\": 5} for the two-tone test, "
+                + "{\"twoTone\": false, \"toneHz\": 999, \"seconds\": 5} for a single tone, "
+                + "{\"stop\": true} to end one early").ConfigureAwait(false);
+            return;
+        }
+
+        string body;
+        using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
+        {
+            body = await reader.ReadToEndAsync().ConfigureAwait(false);
+        }
+
+        JsonNode? asked;
+        try
+        {
+            asked = string.IsNullOrWhiteSpace(body) ? new JsonObject() : JsonNode.Parse(body);
+        }
+        catch (JsonException bad)
+        {
+            await RespondAsync(context, 400, $"the body is not JSON: {bad.Message}")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        bool stop;
+        bool twoTone;
+        double toneHz;
+        double seconds;
+        try
+        {
+            stop = asked?["stop"]?.GetValue<bool>() == true;
+            twoTone = asked?["twoTone"]?.GetValue<bool>() ?? true;
+            toneHz = asked?["toneHz"]?.GetValue<double>() ?? Audio.TestTone.TwoToneLowHz;
+            seconds = asked?["seconds"]?.GetValue<double>() ?? 0;
+        }
+        catch (Exception wrongType) when (wrongType is InvalidOperationException or FormatException)
+        {
+            // A field of the wrong kind ("seconds": "5"), which is a caller's mistake and not a
+            // reason to drop the connection with no explanation.
+            await RespondAsync(context, 400,
+                "\"twoTone\" and \"stop\" are true or false, \"toneHz\" and \"seconds\" are "
+                + $"numbers: {wrongType.Message}").ConfigureAwait(false);
+            return;
+        }
+
+        if (stop)
+        {
+            _txTest.Stop();
+            await RespondJsonAsync(context, 200, TxTestStopped).ConfigureAwait(false);
+            return;
+        }
+
+        TxTestOutcome outcome = await _txTest
+            .RunAsync(new Waterfall.TxTestRequest(twoTone, toneHz, seconds))
+            .ConfigureAwait(false);
+
+        // 409 rather than 400 on a refusal: nothing about the request was malformed, the station
+        // was in no state to answer it - no PTT, a channel that would not clear, a test already
+        // running. A script can tell the two apart without reading the sentence.
+        await RespondJsonAsync(context, outcome.Ran ? 200 : 409, new JsonObject
+        {
+            ["transmitted"] = outcome.Ran,
+            ["sent"] = outcome.Ran ? outcome.Text : null,
+            ["refused"] = outcome.Refusal,
+        }.ToJsonString(new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
+    }
+
+    /// <summary>What a stop is answered with, and what it does and does not promise.</summary>
+    private const string TxTestStopped =
+        "{\n  \"stopped\": true,\n  \"note\": \"a test still waiting for the channel sends "
+        + "nothing; one already on the air fades out\"\n}";
 
     /// <summary>Where a non-persisted change is left for the next start-up to consume.</summary>
     /// <remarks>The state directory, which systemd creates and owns for the service user. Not
@@ -255,7 +359,7 @@ internal sealed class ConfigApi
     /// </param>
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
-        if (path is not ("/api/config" or "/api/proposals"))
+        if (path is not ("/api/config" or "/api/proposals" or "/api/txtest"))
         {
             return false;
         }
@@ -267,6 +371,12 @@ internal sealed class ConfigApi
             // an interactive login that does not exist.
             await RespondAsync(context, 401, "unauthorized: present the configured api key as "
                 + "\"Authorization: Bearer KEY\" or \"X-API-Key: KEY\"").ConfigureAwait(false);
+            return true;
+        }
+
+        if (path is "/api/txtest")
+        {
+            await TxTestAsync(context).ConfigureAwait(false);
             return true;
         }
 
