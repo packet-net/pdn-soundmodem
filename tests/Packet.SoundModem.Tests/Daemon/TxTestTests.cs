@@ -70,6 +70,22 @@ public class TxTestTests
             ? recording.Events
             : ((ThrowingPtt)Ptt).Events;
 
+        /// <summary>
+        /// Waits for the keying to settle before it is read. A transmission's task completes when
+        /// its audio has left the device, and the unkey comes after the tail and the whole
+        /// transmitter loop - so reading the events straight after awaiting the test is racing
+        /// them, which passes on an idle machine and fails under suite load.
+        /// </summary>
+        internal async Task SettledAsync(int events = 2)
+        {
+            using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (Keying.Count < events)
+            {
+                giveUp.Token.ThrowIfCancellationRequested();
+                await Task.Delay(20, giveUp.Token);
+            }
+        }
+
         internal List<string> Lines { get; } = [];
 
         internal List<string> Errors { get; } = [];
@@ -164,6 +180,7 @@ public class TxTestTests
         TxTestOutcome outcome = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
 
         outcome.Ran.Should().BeTrue();
+        await rig.SettledAsync();
         rig.Keying.Should().Equal(["key", "unkey"], "the radio is keyed for the test and let go");
 
         float[] audio = rig.Output.Snapshot();
@@ -180,6 +197,7 @@ public class TxTestTests
         TxTestOutcome outcome = await rig.Runner.RunAsync(new TxTestRequest(false, 999, 1));
 
         outcome.Ran.Should().BeTrue();
+        await rig.SettledAsync();
         rig.Keying.Should().Equal(["key", "unkey"]);
         Amplitude(rig.Output.Snapshot(), 999).Should().BeApproximately(0.8, 0.02);
 
@@ -301,6 +319,7 @@ public class TxTestTests
 
         rig.Band.ChannelBusy = false;
         (await first).Ran.Should().BeTrue("and the first is not disturbed by having been asked");
+        await rig.SettledAsync();
         rig.Keying.Should().Equal(["key", "unkey"], "one test, one keyup");
     }
 
@@ -350,6 +369,7 @@ public class TxTestTests
 
         inhibited = false;
         (await running).Ran.Should().BeTrue();
+        await rig.SettledAsync();
         rig.Keying.Should().Equal(["key", "unkey"]);
     }
 
