@@ -1434,10 +1434,13 @@ public class WaterfallPageTests
             "nor the floor and top of the colour scale, which is the same kind of knob");
         visitor.PublicPage.Hidden["mixerCtl"].Should().BeTrue(
             "and the sound card's own gain is a station's, never a visitor's");
+        visitor.PublicPage.Hidden["txTestCtl"].Should().BeTrue(
+            "and least of all the control that keys the transmitter");
 
-        // Every id the flag hides, except the mixer group, which hides itself for a second and
-        // separate reason and is asserted on its own below.
-        op.PublicPage.Hidden.Where(entry => entry.Key != "mixerCtl").Should()
+        // Every id the flag hides, except the two groups that hide themselves for a second and
+        // separate reason - the mixer when there is no config API behind it, the transmit test
+        // when the station sent no control - and are asserted on their own.
+        op.PublicPage.Hidden.Where(entry => entry.Key is not ("mixerCtl" or "txTestCtl")).Should()
             .AllSatisfy(entry => entry.Value.Should().BeFalse(),
                 "nothing is taken off the operator's page; the flag only hides");
 
@@ -1589,9 +1592,10 @@ public class WaterfallPageTests
         // The operator's page is untouched: the button is there and it honours what was stored.
         op.MineOnArrival.Hidden.Should().BeFalse("nothing is taken off the operator's page");
         op.MineOnArrival.On.Should().BeTrue("where the button is there to turn it back off");
-        // Except the mixer group, which takes itself off a page with no config API behind it
-        // whichever flavour that page is; see The_Public_Page_Hides_The_Sideband_And_Span_Controls.
-        op.PublicPage.Hidden.Where(entry => entry.Key != "mixerCtl").Should()
+        // Except the mixer group and the transmit test, which take themselves off a page that has
+        // no config API and no transmit control behind them whichever flavour that page is; see
+        // The_Public_Page_Hides_The_Sideband_And_Span_Controls.
+        op.PublicPage.Hidden.Where(entry => entry.Key is not ("mixerCtl" or "txTestCtl")).Should()
             .AllSatisfy(entry => entry.Value.Should().BeFalse(),
                 "the flag only hides, and only on the visitor's page");
 
