@@ -152,12 +152,27 @@ internal sealed class TxTestRunner
             return Refuse(cannot);
         }
 
-        if (Prepare(request, out string? why) is not { } prepared)
+        (Run Run, string Text, double AudioHz)? prepared;
+        string? why;
+        try
+        {
+            prepared = Prepare(request, out why);
+        }
+        catch (Exception unreadable)
+        {
+            // Reading the request cannot throw today - the two levels are checked when the config
+            // is read, and the tone frequency is refused before TestTone sees it - but it is the
+            // one step outside the net below, and a throw here would escape into a discarded
+            // Task.Run and leave the page amber for ever.
+            return Fail(unreadable);
+        }
+
+        if (prepared is not { } ready)
         {
             return Refuse(why ?? "a test transmission is already running");
         }
 
-        (Run run, string text, double audioHz) = prepared;
+        (Run run, string text, double audioHz) = ready;
         try
         {
             _options.Journal.Write($"tx test: {text}");

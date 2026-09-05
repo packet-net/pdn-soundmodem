@@ -768,7 +768,18 @@ public sealed class SoundModemChannel
             }
 
             TxItem item = queue.Dequeue();
-            item.Withdrawal.Dispose();
+
+            // Unregister, NOT Dispose. Dispose blocks until a callback that is already running
+            // has finished, and that callback is Withdraw, whose first act is to take this very
+            // lock - so a token firing in the few instructions between the dequeue above and
+            // this line would leave the transmitter holding _txGate and waiting for Withdraw
+            // while Withdraw waits for _txGate. Neither ever returns, the lock is held for the
+            // life of the process, and every enqueue and every keyup behind it stops silently.
+            // Unregister does not wait, and returns false when the callback is already under
+            // way - which is exactly this type's "silent once the transmission is under way"
+            // contract, since by then the item is out of the queue and Withdraw will find
+            // nothing to remove.
+            item.Withdrawal.Unregister();
             if (queue.Count == 0)
             {
                 _txQueues.Remove(source);
@@ -832,6 +843,11 @@ public sealed class SoundModemChannel
 
             _txQueues.Clear();
             _txOrder.Clear();
+            foreach (TxItem item in queued)
+            {
+                // Same reasoning as TakeFrom: never Dispose under this lock.
+                item.Withdrawal.Unregister();
+            }
         }
 
         foreach (TxItem item in queued)

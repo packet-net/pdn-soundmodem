@@ -367,6 +367,19 @@ else if (singleTone is { } singleToneAsked)
         false, singleToneAsked.Hz, singleToneAsked.Seconds);
 }
 
+// --bind is not validated anywhere the way a config file's "bind" is, so an address that is not
+// an address used to travel all the way to a null-forgiving ParseBind and surface as a
+// NullReferenceException from the KISS listener - or, once the waterfall gained a warning that
+// had to know whether the bind was loopback, as a FormatException before that. Said once, here,
+// in the same words the config file's own check uses.
+if (DaemonConfig.ParseBind(bindAddress) is null)
+{
+    Console.Error.WriteLine(
+        $"--bind {bindAddress} is not an IP address. Use \"127.0.0.1\" for loopback only, "
+        + "\"*\" for every interface, or the address of one interface.");
+    return 2;
+}
+
 // A web receiver has no transmitter, so a bench test on one is refused before anything is built
 // rather than after the station has come up around a page that will not exist.
 if (benchTxTest is not null && device.StartsWith("ubersdr:", StringComparison.OrdinalIgnoreCase))
@@ -1209,9 +1222,10 @@ if (benchTxTest is null && waterfallConfig is not null)
     // The same warning the KISS ports carry, for the same reason and now with a sharper one.
     // The page is read-only on a public deployment, but on an operator's own station it carries
     // the transmit test, and there is no password on it.
-    if (!Equals(bindAddress is "*" or "0.0.0.0"
-            ? System.Net.IPAddress.Any
-            : System.Net.IPAddress.Parse(bindAddress), System.Net.IPAddress.Loopback))
+    // Through the helper this file already uses rather than IPAddress.Parse, which throws on
+    // anything that is not an IP literal: the bind is checked at start-up above, so by here it
+    // reads, and asking twice with two different parsers is how the two answers drift apart.
+    if (!Equals(DaemonConfig.ParseBind(bindAddress), System.Net.IPAddress.Loopback))
     {
         Console.WriteLine(
             "waterfall: WARNING - listening beyond loopback. The page has no authentication, and "
@@ -2860,16 +2874,19 @@ if (benchTxTest is not null)
         // The transmitter ends by cancellation, which is how this path always ends it.
     }
 
+    // The receive loop first, and BEFORE the devices are closed. It notices the cancellation on
+    // its next block and returns; until it has, it is inside the input's Read, and closing an
+    // ALSA capture handle from under snd_pcm_readi on another thread is not something alsa-lib
+    // supports. A background thread, so an input whose Read is wedged cannot hold the process
+    // open either way - but it gets its five seconds to come out on its own first.
+    listening.Join(TimeSpan.FromSeconds(5));
+
     if (!deviceIsFlex)
     {
         (ptt as IDisposable)?.Dispose();
         (playback as IDisposable)?.Dispose();
         (input as IDisposable)?.Dispose();
     }
-
-    // The receive loop notices the cancellation on its next block and returns; it is a background
-    // thread, so an input whose Read is wedged cannot hold the process open either way.
-    listening.Join(TimeSpan.FromSeconds(5));
 
     // Exit 1 on a refusal, so a bench script can tell "it went out" from "it did not" without
     // reading the journal. Exit 2 stays what it has always been: your configuration is wrong.

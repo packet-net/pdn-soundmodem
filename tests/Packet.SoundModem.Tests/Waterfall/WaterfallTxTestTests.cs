@@ -180,7 +180,7 @@ public class WaterfallTxTestTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_Page_From_Somewhere_Else_Cannot_Open_A_Socket_And_Cannot_Key()
+    public async Task A_Page_From_Somewhere_Else_Cannot_Key_This_Radio()
     {
         // Browsers do not apply the same-origin policy to WebSockets and there is no preflight,
         // so without this any page the operator's browser happens to load can open a socket to
@@ -194,15 +194,55 @@ public class WaterfallTxTestTests : IAsyncLifetime
 
         using var attacker = new ClientWebSocket();
         attacker.Options.SetRequestHeader("Origin", "http://malice.example");
+        await attacker.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws"), _cancellation.Token);
+        await Receive(attacker);
 
-        Func<Task> connecting = () => attacker.ConnectAsync(
-            new Uri($"ws://127.0.0.1:{port}/ws"), _cancellation.Token);
+        await attacker.SendAsync(
+            Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":30}"""),
+            WebSocketMessageType.Text, true, _cancellation.Token);
+        await Task.Delay(300, _cancellation.Token);
 
-        await connecting.Should().ThrowAsync<WebSocketException>(
-            "a page served from somewhere else has no business on this socket");
-        _asked.Should().BeEmpty();
+        _asked.Should().BeEmpty("a page served from somewhere else may not key this radio");
         journal.Should().ContainSingle()
             .Which.Should().Contain("malice.example", "the operator has to be able to see it");
+
+        // The socket itself lives. Refusing the upgrade would cost a station behind a
+        // Host-rewriting proxy its whole page - waterfall, frames and all - where this costs it
+        // only the button, and a cloudflared tunnel rewrites Host by default.
+        attacker.State.Should().Be(WebSocketState.Open);
+    }
+
+    [Fact]
+    public async Task A_Socket_Opened_Before_The_Control_Existed_Still_Cannot_Key()
+    {
+        // The start-up window. The daemon installs the control seconds after the listener opens -
+        // the sound card and the PTT line come first - so a page that connects during that gap
+        // was admitted by a handshake check that had nothing to defend yet, and was never asked
+        // again. A background tab retrying every couple of seconds catches that window on every
+        // restart, which on a live station is every upgrade.
+        int port = FreePorts.Next();
+        var journal = new List<string>();
+        await using var server = new WaterfallWebServer(
+            Channel(), port, new WaterfallOptions { Log = journal.Add });
+        server.Start();
+
+        using var early = new ClientWebSocket();
+        early.Options.SetRequestHeader("Origin", "https://malice.example");
+        await early.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws"), _cancellation.Token);
+        await Receive(early);
+
+        // ... and only now does the station gain a transmitter.
+        server.SetTxTest(Control());
+
+        await early.SendAsync(
+            Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":2}"""),
+            WebSocketMessageType.Text, true, _cancellation.Token);
+        await Task.Delay(300, _cancellation.Token);
+
+        _asked.Should().BeEmpty("the origin is judged when the button is pressed, not at the door");
+        journal.Should().ContainSingle().Which.Should().Contain("malice.example");
+        early.State.Should().Be(
+            WebSocketState.Open, "and it keeps its page: only the button is refused");
     }
 
     [Fact]

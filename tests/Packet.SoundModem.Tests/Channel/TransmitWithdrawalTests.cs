@@ -190,6 +190,60 @@ public class TransmitWithdrawalTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Cancelling_Across_A_Take_Leaves_The_Channel_Answering()
+    {
+        // Six hundred cancellations racing the transmitter's dequeue, from four transmitters at
+        // once, each one having to end as either sent or withdrawn - and the channel still
+        // answering afterwards.
+        //
+        // What this does NOT do is force the interleaving that nearly shipped here: the
+        // transmitter holds the channel's lock to dequeue an item and then lets go of its
+        // withdrawal registration, and if that let-go WAITS for a callback that is already
+        // running - and that callback's first act is to take the same lock - neither ever
+        // returns. The lock is then held for the life of the process, the transmitter stops, and
+        // every enqueue behind it blocks with no log line and nothing to restart it. The window
+        // is a few instructions wide and this test passes with the faulty call in place, so what
+        // actually prevents it is Unregister and the comment beside it in TakeFrom; this is the
+        // coarser guard, and it is honest about being one.
+        _band.ChannelBusy = false;
+
+        var racing = new List<Task>();
+        for (int thread = 0; thread < 4; thread++)
+        {
+            racing.Add(Task.Run(async () =>
+            {
+                var source = new object();
+                for (int attempt = 0; attempt < 150; attempt++)
+                {
+                    using var withdraw = new CancellationTokenSource();
+                    Task queued = _channel.EnqueueTransmit(
+                        _ => Tone(60), source: source, withdraw: withdraw.Token);
+                    Task firing = Task.Run(withdraw.Cancel);
+
+                    // Either outcome is legal - taken and sent, or withdrawn first. What must
+                    // never happen is neither.
+                    try
+                    {
+                        await queued.WaitAsync(TimeSpan.FromSeconds(10));
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+
+                    await firing.WaitAsync(TimeSpan.FromSeconds(10));
+                }
+            }));
+        }
+
+        await Task.WhenAll(racing).WaitAsync(TimeSpan.FromSeconds(25));
+
+        // And the channel still answers. A wedged lock hangs this rather than failing it, which
+        // is what the waits above are for.
+        await _channel.EnqueueTransmit(_ => Tone(120)).WaitAsync(TimeSpan.FromSeconds(10));
+        _ptt.Events.Should().NotBeEmpty("the transmitter is still running");
+    }
+
+    [Fact]
     public async Task A_Transmission_With_No_Token_Behaves_Exactly_As_It_Always_Did()
     {
         _band.ChannelBusy = false;

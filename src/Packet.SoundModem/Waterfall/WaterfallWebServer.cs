@@ -217,6 +217,20 @@ public sealed record DeclaredBand(int SubChannel, string Mode, double CentreHz, 
 /// <param name="Clients">Hosts currently attached.</param>
 public readonly record struct HostPortStatus(int Port, int? SubChannel, int Clients);
 
+/// <summary>
+/// Where a page said it came from, and the host it reached this station on.
+/// </summary>
+/// <remarks>
+/// Browsers do not apply the same-origin policy to WebSockets and there is no preflight, so
+/// without this any page the operator's browser happens to load could open a socket to this
+/// station and key the transmitter. A browser sets <c>Origin</c> itself and script cannot change
+/// it, so a page from somewhere else cannot pretend to be this one; a non-browser client sends
+/// none at all and is left alone. See <see cref="WaterfallWebServer.OriginMayKey"/>.
+/// </remarks>
+/// <param name="Declared">The <c>Origin</c> header, or empty when there was none.</param>
+/// <param name="Served">The <c>Host</c> this request arrived on.</param>
+public readonly record struct PageOrigin(string Declared, string Served);
+
 /// <summary>One modem's display band, measured off its own modulator at start-up.</summary>
 /// <param name="SubChannel">KISS sub-channel.</param>
 /// <param name="Mode">Mode name.</param>
@@ -298,6 +312,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         /// point here is to end a receive that will otherwise wait for ever.
         /// </remarks>
         public required CancellationTokenSource Stop { get; init; }
+
+        /// <summary>Where this page said it came from, and where it reached us.</summary>
+        public PageOrigin From { get; init; }
 
         private int _audio;
         private int _spectrum = 1;
@@ -1832,7 +1849,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // air, so it is the station's business and every open page hears the outcome.
             if (type.GetString() == "txtest")
             {
-                ApplyTxTestRequest(request.RootElement);
+                ApplyTxTestRequest(request.RootElement, client);
                 return;
             }
 
@@ -1876,25 +1893,22 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// control, and they are the pages most likely to sit behind a tunnel or a proxy that could
     /// make a legitimate origin and host disagree.</para>
     /// </remarks>
-    internal bool OriginMayConnect(HttpListenerRequest request, out string origin)
+    internal static bool OriginMayKey(PageOrigin from)
     {
-        origin = request.Headers["Origin"] ?? "";
-        if (_txTest is null || origin.Length == 0)
+        if (from.Declared.Length == 0)
         {
+            // Not a browser: curl, a script, the test suite. Nothing to defend against - there
+            // are no ambient credentials for somebody else's page to borrow - and refusing these
+            // would break every machine client for no gain.
             return true;
         }
 
         // Compared on the host and port a browser would have connected to, so http and https,
         // and a page served under a path base, all compare equal. A malformed Origin is not a
         // browser's, and is refused rather than parsed generously.
-        if (!Uri.TryCreate(origin, UriKind.Absolute, out Uri? from))
-        {
-            return false;
-        }
-
-        string served = request.UserHostName ?? "";
-        return string.Equals(from.Authority, served, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(from.Host, served, StringComparison.OrdinalIgnoreCase);
+        return Uri.TryCreate(from.Declared, UriKind.Absolute, out Uri? declared)
+            && (string.Equals(declared.Authority, from.Served, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(declared.Host, from.Served, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -1905,12 +1919,28 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// level are the daemon's to say - this only reads the request and hands it over, so that a
     /// page cannot ask for anything the CLI switch could not ask for too.
     /// </remarks>
-    private void ApplyTxTestRequest(JsonElement request)
+    private void ApplyTxTestRequest(JsonElement request, WaterfallClient client)
     {
         if (_txTest is not { } control)
         {
             // No control installed: a public page, a relayed one, or a station with no
             // transmitter. Silently ignored - there is nobody to refuse on behalf of.
+            return;
+        }
+
+        if (!OriginMayKey(client.From))
+        {
+            // Judged here rather than at the handshake, for two reasons. The control is installed
+            // several seconds after the listener opens - the sound card and the PTT line come
+            // first - so a socket admitted during start-up would never be checked again, and a
+            // page retrying in a background tab catches that window on every restart. And
+            // refusing the upgrade would cost a station behind a Host-rewriting proxy its whole
+            // page, waterfall and frames and all, where this costs it only the button.
+            _options.Log?.Invoke(
+                $"waterfall: refused a transmit test from a page at {client.From.Declared} - this "
+                + $"station serves its page as {client.From.Served}, and a page from somewhere "
+                + "else may not key the radio. If a proxy in front of this station rewrites the "
+                + "Host header, make it pass the original through.");
             return;
         }
 
@@ -2153,25 +2183,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         {
             if (context.Request.IsWebSocketRequest)
             {
-                if (!OriginMayConnect(context.Request, out string refusedOrigin))
-                {
-                    // A browser sends Origin on every WebSocket handshake and cannot be made to
-                    // forge it, so this is the whole defence and it costs a legitimate page
-                    // nothing. Said out loud: an operator whose page has stopped working needs to
-                    // see which two names disagreed, and an operator whose PA was nearly keyed by
-                    // somebody else's tab needs to see that it happened.
-                    _options.Log?.Invoke(
-                        $"waterfall: refused a page from {refusedOrigin} - it is not served from "
-                        + $"{context.Request.UserHostName}, and this page carries a transmit "
-                        + "control. If a proxy in front of this station rewrites the Host header, "
-                        + "make it pass the original through.");
-                    context.Response.StatusCode = 403;
-                    context.Response.Close();
-                    return true;
-                }
-
+                // Where this page says it came from, and where it reached us. Recorded now and
+                // judged later, per message: see ApplyTxTestRequest.
+                var from = new PageOrigin(
+                    context.Request.Headers["Origin"] ?? "", context.Request.UserHostName ?? "");
                 HttpListenerWebSocketContext upgrade = await context.AcceptWebSocketAsync(null).ConfigureAwait(false);
-                await ServeWebSocketAsync(upgrade.WebSocket).ConfigureAwait(false);
+                await ServeWebSocketAsync(upgrade.WebSocket, from).ConfigureAwait(false);
                 return true;
             }
 
@@ -2427,7 +2444,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
     }
 
-    private async Task ServeWebSocketAsync(WebSocket socket)
+    private async Task ServeWebSocketAsync(WebSocket socket, PageOrigin from = default)
     {
         // Bounded per-client queue, oldest lines dropped: a stalled browser loses history,
         // never stalls the receive thread or other clients.
@@ -2449,6 +2466,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // Arriving counts as being heard from: a page has the whole silence deadline to
             // answer its first keep-alive, however long the handshake below takes.
             HeardAt = _options.TimeProvider.GetTimestamp(),
+            From = from,
         };
 
         // The retained state a browser opens with - what the last transmission did, and who is

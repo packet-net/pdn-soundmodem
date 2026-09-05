@@ -1854,10 +1854,6 @@ public sealed class DaemonConfig
         string.Equals(mode, "ardop", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Rejects two services asking for the same TCP port. Left to the OS this surfaces as a
-    /// bind failure from whichever listener happens to start second, naming neither setting.
-    /// </summary>
-    /// <summary>
     /// The transmitter test's two numbers, checked when the file is read rather than when the
     /// button is pressed.
     /// </summary>
@@ -1889,6 +1885,10 @@ public sealed class DaemonConfig
         }
     }
 
+    /// <summary>
+    /// Rejects two services asking for the same TCP port. Left to the OS this surfaces as a
+    /// bind failure from whichever listener happens to start second, naming neither setting.
+    /// </summary>
     private static void ValidatePorts(DaemonConfig config)
     {
         var claimed = new Dictionary<int, string>();
