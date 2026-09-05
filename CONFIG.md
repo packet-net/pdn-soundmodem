@@ -1215,6 +1215,13 @@ which is a fair question too - just not the same one. A log written by an earlie
 migrated in place on first open: the column is added with every existing row set to `rx`, which
 is what they all were.
 
+**The file is self-contained once the daemon stops.** While it runs, rows live in the write-ahead
+log beside it (`frames.db-wal`) and every SQLite reader sees them, which is what keeps the database
+readable while the modem is writing to it. On a clean shutdown the WAL is folded back into
+`frames.db`, so what you copy to another machine, `grep` for a callsign or check the size of is the
+whole log rather than an empty-looking 4 KB file with the traffic in a sidecar. If the daemon is
+killed outright the sidecar stays and nothing is lost - open the database and the rows are there.
+
 **It is written on a background thread** - the receive path queues and returns, so logging never
 delays a decode. If the disk fills or goes away the modem keeps decoding and drops log rows
 rather than stopping. **The file is WAL**, so you can read it with `sqlite3` or point a dashboard

@@ -36,6 +36,41 @@ internal sealed class FrameLog : IAsyncDisposable
         _writer = Task.Run(WriteLoop);
     }
 
+    /// <summary>
+    /// Folds the write-ahead log into the database file, so that what is left on disk after a
+    /// clean shutdown is one self-contained file.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Nothing here is about durability.</b> A committed row is durable in the WAL the
+    /// moment it is written and every SQLite reader sees it, because opening the database
+    /// recovers the WAL - which is exactly why the log has always been readable with
+    /// <c>sqlite3</c> while the modem holds it. This is about what an operator finds when they
+    /// look. Without it a station that has logged all day leaves a 4 KB <c>frames.db</c> beside a
+    /// <c>frames.db-wal</c> holding the traffic, and anything that reads the file rather than the
+    /// database - a copy to another machine that takes the one file, a <c>grep</c> for a callsign,
+    /// a size check - finds an empty-looking log and concludes the station is not recording.
+    /// Measured: it is what made a test transmission look unlogged when the row was there all
+    /// along.</para>
+    /// <para>Best effort, and last: a checkpoint that cannot get its lock leaves the WAL exactly
+    /// where it was, which is the behaviour this replaces, and a shutdown is no place to start
+    /// throwing over tidiness.</para>
+    /// </remarks>
+    private void Checkpoint()
+    {
+        try
+        {
+            using SqliteCommand checkpoint = _connection.CreateCommand();
+            checkpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            checkpoint.ExecuteNonQuery();
+        }
+        catch (SqliteException e)
+        {
+            Console.Error.WriteLine(
+                $"frame log: could not fold the write-ahead log into {Path} ({e.Message}); the "
+                + "rows are safe in the .db-wal beside it and any reader will see them");
+        }
+    }
+
     /// <summary>How many frames were dropped rather than written; 0 on a healthy station.</summary>
     internal long Dropped => Interlocked.Read(ref _dropped);
 
@@ -482,6 +517,7 @@ internal sealed class FrameLog : IAsyncDisposable
         _pending.CompleteAdding();
         await _writer.ConfigureAwait(false);
         _pending.Dispose();
+        Checkpoint();
         _connection.Dispose();
 
         // This log's pools, not every log's. Disposing a connection returns it to a pool keyed
