@@ -114,7 +114,17 @@ function el(id) {
     width: 800, height: 300, style: {}, children: [], dataset: {},
     className: "",
     getContext: () => ctx2d, removeChild: noop,
-    addEventListener: noop, removeEventListener: noop, getBoundingClientRect: () => ({ width: 800, height: 300, left: 0, top: 0 }),
+    // Recorded rather than dropped, so a handler the page attaches with addEventListener can be
+    // fired by __fire below. Nothing fires by itself and click() is untouched, so every test that
+    // was written against the no-op shim behaves exactly as it did.
+    _listeners: {},
+    addEventListener(type, fn) { (this._listeners[type] ||= []).push(fn); },
+    removeEventListener(type, fn) {
+      const list = this._listeners[type];
+      const at = list ? list.indexOf(fn) : -1;
+      if (at >= 0) list.splice(at, 1);
+    },
+    getBoundingClientRect: () => ({ width: 800, height: 300, left: 0, top: 0 }),
     querySelector: () => el(id + "-q"), querySelectorAll: () => [], focus: noop, scrollTo: noop,
     setAttribute: noop, getAttribute: () => null,
     closest: () => null, contains: () => false, add: noop, options: [], selectedIndex: 0,
@@ -238,6 +248,14 @@ const sandbox = {
   localStorage: { getItem: key => stored.get(key) ?? null, setItem: (key, value) => { stored.set(key, String(value)); } },
   sessionStorage: { getItem: key => session.get(key) ?? null, setItem: (key, value) => { session.set(key, String(value)); } },
   __stats: () => ({ played, peak }),
+  // Fires the handlers an element registered with addEventListener, as a browser does when the
+  // operator clicks or changes it. Probe-only: nothing in the page calls it.
+  __fire: (id, type) => {
+    const node = el(id);
+    for (const fn of (node._listeners[type] || []).slice()) {
+      fn({ preventDefault: noop, stopPropagation: noop, target: node, currentTarget: node });
+    }
+  },
   __text: () => [...drawnText],
 };
 sandbox.window = sandbox; sandbox.globalThis = sandbox; sandbox.self = sandbox;
@@ -640,19 +658,41 @@ if (process.env.MIXER) {
 }
 
 const mixerOnArrival = mixerPanel();
-let mixerAfterSet = null;
-if (process.env.MIXSET) {
-  // Driven through the page's own sender rather than a click: the DOM shim's addEventListener is
-  // a no-op, and what is being checked is the request the page builds and what it does with the
-  // answer, which is all in that function.
-  await run(`mixSend(${process.env.MIXSET})`);
-  await untilTrue(() => run(`document.getElementById("mixRead").textContent`) !== mixerOnArrival.read, 10000);
-  mixerAfterSet = mixerPanel();
+let mixerAfterGain = null;
+let mixerAfterAgc = null;
+let mixerAfterBoost = null;
+if (process.env.MIXGAIN) {
+  // Through the page's own handlers, as a browser fires them: the slider is moved and a "change"
+  // is dispatched, and the AGC and Boost buttons are clicked. That covers the wiring - which
+  // event each control listens for, what each handler sends, and that the Boost button the card
+  // has not got refuses to send anything - none of which calling mixSend by hand would prove.
+  const before = mixerPanel().read;
+  run(`document.getElementById("mixGain").value = ${process.env.MIXGAIN}`);
+  sandbox.__fire("mixGain", "change");
+  await untilTrue(() => run(`document.getElementById("mixRead").textContent`) !== before, 10000);
+  mixerAfterGain = mixerPanel();
+
+  const beforeAgc = mixerAfterGain.agc;
+  sandbox.__fire("mixAgc", "click");
+  await untilTrue(() => run(`document.getElementById("mixAgc").className`) !== beforeAgc, 10000);
+  mixerAfterAgc = mixerPanel();
+
+  // A control the card has not got: the button is disabled and its handler must send nothing, so
+  // this is a wait for something NOT to happen. A second of it is enough to catch a request that
+  // does go out, and the assertion is that the panel is unchanged.
+  const beforeBoost = mixerPanel();
+  sandbox.__fire("mixBoost", "click");
+  await wait(1000);
+  mixerAfterBoost = mixerPanel();
+  mixerAfterBoost.unchangedByBoost =
+    beforeBoost.read === mixerAfterBoost.read && beforeBoost.agc === mixerAfterBoost.agc;
 }
 
 process.stdout.write(JSON.stringify({
   mixerOnArrival,
-  mixerAfterSet,
+  mixerAfterGain,
+  mixerAfterAgc,
+  mixerAfterBoost,
   socketUrl,
   linksWindowUrl,
   // Whether the page decided it is the torn-off links window rather than the waterfall.

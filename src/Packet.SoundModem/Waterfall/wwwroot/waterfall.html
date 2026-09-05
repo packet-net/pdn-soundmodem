@@ -913,9 +913,24 @@ function mixFetch(method, body) {
   });
 }
 
+// Off the page entirely. Three ways to get here and they are all "there is nothing to show":
+// no config API at all (404), an API with no sound card behind it, or the daemon not answering.
+// Set explicitly rather than left as the markup's own hidden attribute, so a test can tell "the
+// page decided" from "the page never got that far".
+function mixHide() {
+  const ctl = $("mixerCtl");
+  ctl.hidden = true;
+  ctl.classList.remove("locked");
+  $("mixKey").hidden = true;
+  $("mixRead").textContent = "-";
+  $("mixRead").classList.remove("bad");
+}
+
 // Locked: the endpoint is there and wants a key this browser has not got. The group is shown
 // rather than hidden, because "your station has a mixer and this browser cannot reach it" is
-// something the operator can act on, and hiding it would look like the feature is missing.
+// something the operator can act on, and hiding it would look like the feature is missing. The
+// daemon will not say whether there is a card without the key - the key check is in front of
+// everything - so if it turns out there is not one, the answer to the next probe hides it again.
 function mixLocked() {
   $("mixerCtl").hidden = false;
   $("mixerCtl").classList.add("locked");
@@ -996,14 +1011,26 @@ async function initMixer() {
   try {
     answer = await mixFetch("GET");
   } catch {
-    return;   // no answer at all: leave the header as it was
+    mixHide();                       // no answer at all
+    return;
   }
 
-  if (answer.status === 401) { mixLocked(); }
-  else if (!answer.ok) { return; }   // 404: this station has no config API, so no group
-  else {
+  if (answer.status === 401) {
+    mixLocked();                     // an API, and this browser has no key for it
+  } else if (!answer.ok) {
+    mixHide();                       // 404: this station has no config API, so no group
+    return;
+  } else {
     const state = await answer.json();
-    if (!state.available) return;    // an API, but no sound card behind it
+    if (!state.available) {
+      // An API, but no sound card behind it - a flex: or ubersdr: station, or a card with no
+      // mixer. Hidden rather than left as it was, because this is also the path a locked group
+      // takes once a key has been supplied, and leaving it would sit there reading "key needed"
+      // for a mixer that does not exist.
+      mixHide();
+      return;
+    }
+
     mixShow(state);
   }
 
