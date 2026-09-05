@@ -49,6 +49,16 @@ public enum OnDemandPhase
 /// and a session that gives up, are retried on the same escalating ladder the session itself
 /// uses, for as long as anybody is watching, and reported through <see cref="PhaseChanged"/>
 /// rather than through the process exit code.</para>
+/// <para><b>What "for as long as anybody is watching" covers, and what it does not.</b> This
+/// wrapper's own ladder is abandoned the moment the last viewer leaves - a failed open with
+/// nobody waiting goes idle, a due retry with nobody waiting goes idle, and the last viewer
+/// leaving cancels a pending one. An open session's ladder is not: <see cref="UberSdrAudioInput"/>
+/// reconnects on a ladder of its own that knows nothing about viewers, and the only thing that
+/// stops it is this wrapper disposing the session, one linger after the count reaches zero. So a
+/// receiver that accepts and drops on the spot is re-asked for the length of the linger with
+/// nobody watching. Left as it stands deliberately (issue #409); what was missing was any way to
+/// read it in the journal, and every line now carries the count and names a wait nobody is
+/// waiting for.</para>
 /// <para><b>Reading while idle</b> behaves as the real input does with an empty ring: a short
 /// wait and zero samples, which the daemon's receive loop already treats as "nothing to say".
 /// The starvation watch reads <see cref="SessionLive"/>, false whenever no session is
@@ -56,16 +66,20 @@ public enum OnDemandPhase
 /// </remarks>
 public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
 {
-    private readonly Func<CancellationToken, Task<IUberSdrSession>> _open;
+    private readonly Func<UberSdrJournal, CancellationToken, Task<IUberSdrSession>> _open;
     private readonly TimeSpan _linger;
     private readonly TimeProvider _time;
     private readonly Action<string>? _log;
     private readonly CancellationTokenSource _stopping = new();
     private readonly object _gate = new();
     private readonly UberSdrReconnectPolicy _policy = new();
+    private readonly UberSdrJournal _sessionJournal;
 
     private IUberSdrSession? _session;
-    private OnDemandPhase _phase;
+
+    // Read without the lock by the session's own pump thread when it journals a line, so the
+    // count and the phase on that line are this instant's rather than a copy taken earlier.
+    private volatile OnDemandPhase _phase;
     private string _status;
     private int _viewers;
     private ITimer? _timer;
@@ -78,7 +92,7 @@ public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
         string? receiverDescription,
         int sampleRate,
         TimeSpan linger,
-        Func<CancellationToken, Task<IUberSdrSession>> open,
+        Func<UberSdrJournal, CancellationToken, Task<IUberSdrSession>> open,
         Action<string>? log,
         TimeProvider time)
     {
@@ -92,6 +106,9 @@ public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
         _log = log;
         _time = time;
         _status = SentenceFor(OnDemandPhase.Idle);
+        _sessionJournal = new UberSdrJournal(
+            sentence => Journal(sentence, beforeAWait: false),
+            sentence => Journal(sentence, beforeAWait: true));
     }
 
     /// <summary>Raised on every phase change, outside any lock, with the phase and a one-line
@@ -207,8 +224,8 @@ public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
         TimeProvider clock = time ?? TimeProvider.System;
         return new OnDemandUberSdrInput(
             endpoint, connection, description, tuning.OutputRate, linger,
-            async token => await UberSdrAudioInput.OpenAsync(endpoint, tuning, log, token, clock)
-                .ConfigureAwait(false),
+            async (journal, token) => await UberSdrAudioInput
+                .OpenAsync(endpoint, tuning, journal, token, clock).ConfigureAwait(false),
             log, clock);
     }
 
@@ -321,7 +338,7 @@ public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
             IUberSdrSession session;
             try
             {
-                session = await _open(stopping).ConfigureAwait(false);
+                session = await _open(_sessionJournal, stopping).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stopping.IsCancellationRequested)
             {
@@ -404,7 +421,7 @@ public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
             string gaveUp =
                 $"the session gave up after {UberSdrAudioInput.ReconnectGiveUpAfter.TotalMinutes:F0} "
                 + "minutes unreachable";
-            _log?.Invoke($"ubersdr: {reason}");
+            Journal(reason, beforeAWait: false);
             announce = _viewers == 0
                 ? SetPhase(OnDemandPhase.Idle, $"{gaveUp}; nobody is waiting")
                 : BeginRetry(UberSdrReconnectOutcome.Transient, gaveUp);
@@ -511,11 +528,46 @@ public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
         string sentence = detail ?? SentenceFor(phase);
         _status = sentence;
         int viewers = _viewers;
+
+        // Retrying is the one phase that is a wait before another attempt at the receiver. Both
+        // paths into it check that somebody is waiting first, so the clause should never appear
+        // here; if it ever does, the check has a hole in it and the journal says so.
+        bool beforeAWait = phase == OnDemandPhase.Retrying;
         return () =>
         {
-            _log?.Invoke($"ubersdr: {phase.ToString().ToLowerInvariant()}, {viewers} viewer{(viewers == 1 ? "" : "s")}: {sentence}");
+            _log?.Invoke(JournalLine(phase, viewers, sentence, beforeAWait));
             PhaseChanged?.Invoke(phase, sentence);
         };
+    }
+
+    /// <summary>One line about this receiver, with the count the page reports at this instant.
+    /// Called from the session's pump thread as well as this input's own, so it takes no
+    /// lock.</summary>
+    private void Journal(string sentence, bool beforeAWait) =>
+        _log?.Invoke(JournalLine(_phase, Volatile.Read(ref _viewers), sentence, beforeAWait));
+
+    /// <summary>
+    /// The one shape every ubersdr line this input writes takes: what it is doing, how many the
+    /// page says are watching, and the sentence.
+    /// </summary>
+    /// <remarks>
+    /// The phase lines carried the count from the start; the session's own lines - the stream
+    /// ending, the backoff before the next attempt, the reconnect - did not, so six hours of
+    /// them in issue #409 could not be read as "somebody had the page open all night" or
+    /// "the loop kept going after the last one left". Now every one of them does.
+    /// </remarks>
+    /// <param name="phase">What this input is doing.</param>
+    /// <param name="viewers">How many the page reports.</param>
+    /// <param name="sentence">The line itself, without the <c>ubersdr:</c> prefix.</param>
+    /// <param name="beforeAWait">The line announces a wait before another attempt at the
+    /// receiver. With nobody watching, that attempt is on nobody's behalf, and the line says
+    /// so in words: a zero is easy to read past, and this is the fault worth grepping for.</param>
+    internal static string JournalLine(
+        OnDemandPhase phase, int viewers, string sentence, bool beforeAWait)
+    {
+        string nobody = beforeAWait && viewers == 0 ? ", retrying for nobody" : "";
+        return $"ubersdr: {phase.ToString().ToLowerInvariant()}, {viewers} "
+            + $"viewer{(viewers == 1 ? "" : "s")}: {sentence}{nobody}";
     }
 
     private static Action? Both(Action? first, Action? second) =>

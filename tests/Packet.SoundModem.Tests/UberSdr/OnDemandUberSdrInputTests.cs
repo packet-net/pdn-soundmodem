@@ -302,6 +302,145 @@ public class OnDemandUberSdrInputTests
         h.Phases.Select(p => p.Sentence).Should().OnlyContain(s => s.All(c => c < 128), "the chip and the journal are ASCII");
     }
 
+    [Fact]
+    public async Task Every_Phase_Line_Says_How_Many_Are_Watching()
+    {
+        using var h = new Harness(description: "M9PSY-1, Somewhere");
+
+        h.Input.SetViewers(2);
+        (await h.NextAttemptAsync()).SetResult(new FakeSession { SessionLive = true });
+        await h.LinesReach(2);
+        h.Input.SetViewers(0);
+        h.Time.Advance(Linger);
+        await h.LinesReach(4);
+
+        h.Lines.Should().Equal(
+            "ubersdr: connecting, 2 viewers: connecting to rx.example.org",
+            "ubersdr: live, 2 viewers: M9PSY-1, Somewhere",
+            "ubersdr: lingering, 0 viewers: no viewers; holding the session with rx.example.org "
+                + "for 60 s",
+            "ubersdr: idle, 0 viewers: idle; connects to rx.example.org when someone is watching");
+        h.Lines.Should().OnlyContain(l => l.All(c => c < 128), "the journal is ASCII");
+    }
+
+    [Fact]
+    public async Task The_Sessions_Own_Lines_Carry_The_Count_The_Page_Reports_Now()
+    {
+        // Issue #409: the stream ending and the backoff that followed it were written by the
+        // session rather than by this wrapper, and carried no count at all, so a night of them
+        // could not be read as "somebody was watching" or "nobody was".
+        using var h = new Harness();
+        await h.GoLiveAsync();
+        await h.LinesReach(2);
+
+        h.Session.Note("stream from rx.example.org ended (the remote party closed the WebSocket "
+            + "connection without completing the close handshake.)");
+
+        h.Lines[^1].Should().Be(
+            "ubersdr: live, 1 viewer: stream from rx.example.org ended (the remote party closed "
+            + "the WebSocket connection without completing the close handshake.)");
+
+        // Read as the line is written, not copied when the session opened.
+        h.Input.SetViewers(3);
+        h.Session.Note("reconnected to rx.example.org");
+        h.Lines[^1].Should().Be("ubersdr: live, 3 viewers: reconnected to rx.example.org");
+    }
+
+    [Fact]
+    public async Task A_Backoff_The_Last_Viewer_Has_Left_Says_It_Is_Retrying_For_Nobody()
+    {
+        // The session's own reconnect loop knows nothing about viewers, and keeps going until
+        // the linger expires and this wrapper disposes it. That is the window #409's journal
+        // could not distinguish from somebody having the page open all night, so the line
+        // names it rather than leaving it to be inferred from a zero.
+        using var h = new Harness();
+        await h.GoLiveAsync();
+        await h.LinesReach(2);
+        h.Input.SetViewers(0);
+        await h.LinesReach(3);
+
+        h.Session.Waiting(
+            "the session ended after 41 ms with only 0 ms of audio; backing off 300s before "
+            + "reconnecting to rx.example.org");
+
+        h.Lines[^1].Should().Be(
+            "ubersdr: lingering, 0 viewers: the session ended after 41 ms with only 0 ms of "
+            + "audio; backing off 300s before reconnecting to rx.example.org, "
+            + "retrying for nobody");
+    }
+
+    [Fact]
+    public async Task A_Backoff_Somebody_Is_Waiting_For_Reads_As_It_Did_Plus_The_Count()
+    {
+        using var h = new Harness();
+        await h.GoLiveAsync();
+        await h.LinesReach(2);
+
+        h.Session.Waiting(
+            "the session ended after 41 ms with only 0 ms of audio; backing off 300s before "
+            + "reconnecting to rx.example.org");
+
+        h.Lines[^1].Should().Be(
+            "ubersdr: live, 1 viewer: the session ended after 41 ms with only 0 ms of audio; "
+            + "backing off 300s before reconnecting to rx.example.org");
+        h.Lines.Should().NotContain(l => l.Contains("nobody"));
+    }
+
+    [Fact]
+    public async Task The_Line_Announcing_A_Retry_Says_Who_Is_Waiting_For_It()
+    {
+        using var h = new Harness();
+
+        h.Input.SetViewers(1);
+        (await h.NextAttemptAsync()).SetException(new HttpRequestException("connection refused"));
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await h.LinesReach(2);
+
+        h.Lines[^1].Should().Be(
+            "ubersdr: retrying, 1 viewer: rx.example.org unreachable (connection refused); "
+            + "trying again in 1 s");
+    }
+
+    [Fact]
+    public async Task The_Last_Viewer_Leaving_During_A_Retry_Stops_It_Rather_Than_Retrying_For_Nobody()
+    {
+        // The wrapper's own ladder, as against the session's: this one does check, and the
+        // journal now shows it doing so.
+        using var h = new Harness();
+
+        h.Input.SetViewers(1);
+        (await h.NextAttemptAsync()).SetException(new HttpRequestException("connection refused"));
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await h.LinesReach(2);
+
+        h.Input.SetViewers(0);
+        await h.LinesReach(3);
+
+        h.Lines[^1].Should().Be(
+            "ubersdr: idle, 0 viewers: idle; connects to rx.example.org when someone is watching");
+        h.Time.Advance(TimeSpan.FromMinutes(20));
+        h.Attempts.Should().Be(1);
+        h.Lines.Should().NotContain(l => l.Contains("retrying for nobody"));
+    }
+
+    [Fact]
+    public async Task A_Session_Giving_Up_Says_How_Many_Were_Watching_When_It_Did()
+    {
+        using var h = new Harness();
+        FakeSession session = await h.GoLiveAsync();
+        await h.LinesReach(2);
+
+        session.GiveUp("stream from rx.example.org ended (connection reset)");
+        await Eventually(() => h.Input.Phase == OnDemandPhase.Retrying);
+        await h.LinesReach(4);
+
+        h.Lines[2].Should().Be(
+            "ubersdr: live, 1 viewer: stream from rx.example.org ended (connection reset)");
+        h.Lines[3].Should().Be(
+            "ubersdr: retrying, 1 viewer: rx.example.org unreachable (the session gave up after "
+            + "5 minutes unreachable); trying again in 1 s");
+    }
+
     private static async Task Eventually(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
@@ -344,6 +483,8 @@ public class OnDemandUberSdrInputTests
     {
         private readonly SemaphoreSlim _attemptStarted = new(0);
         private readonly Queue<TaskCompletionSource<IUberSdrSession>> _pending = new();
+        private readonly List<string> _lines = [];
+        private UberSdrJournal? _sessionJournal;
         private int _attempts;
 
         public Harness(string? description = null)
@@ -354,7 +495,7 @@ public class OnDemandUberSdrInputTests
                 description,
                 sampleRate: 12000,
                 Linger,
-                open: _ =>
+                open: (journal, _) =>
                 {
                     var attempt = new TaskCompletionSource<IUberSdrSession>(
                         TaskCreationOptions.RunContinuationsAsynchronously);
@@ -362,12 +503,19 @@ public class OnDemandUberSdrInputTests
                     {
                         _attempts++;
                         _pending.Enqueue(attempt);
+                        _sessionJournal = journal;
                     }
 
                     _attemptStarted.Release();
                     return attempt.Task;
                 },
-                log: null,
+                log: line =>
+                {
+                    lock (_lines)
+                    {
+                        _lines.Add(line);
+                    }
+                },
                 Time);
             Input.PhaseChanged += (phase, sentence) =>
             {
@@ -392,6 +540,37 @@ public class OnDemandUberSdrInputTests
                 }
             }
         }
+
+        /// <summary>Every journal line the input has written, in order.</summary>
+        public IReadOnlyList<string> Lines
+        {
+            get
+            {
+                lock (_lines)
+                {
+                    return _lines.ToArray();
+                }
+            }
+        }
+
+        /// <summary>The journal the input handed the session it last asked to open: where a real
+        /// <see cref="UberSdrAudioInput"/>'s reconnect loop writes its own lines.</summary>
+        public UberSdrJournal Session
+        {
+            get
+            {
+                lock (_pending)
+                {
+                    return _sessionJournal
+                        ?? throw new InvalidOperationException("nothing has asked to open yet");
+                }
+            }
+        }
+
+        /// <summary>Waits for the announcement of a phase change to reach the journal: the phase
+        /// itself is set under the lock and announced after it, so the two are not simultaneous.
+        /// </summary>
+        public Task LinesReach(int count) => Eventually(() => Lines.Count >= count);
 
         public async Task<TaskCompletionSource<IUberSdrSession>> NextAttemptAsync()
         {

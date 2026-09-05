@@ -11,6 +11,30 @@ using M0LTE.Dsp;
 namespace Packet.SoundModem.UberSdr;
 
 /// <summary>
+/// Where an UberSDR device's journal lines go, and what each one is about.
+/// </summary>
+/// <remarks>
+/// The always-on device needs nothing more than a sink: every line it writes is
+/// <c>ubersdr: &lt;sentence&gt;</c>. The on-demand wrapper writes the same sentences with the
+/// page's viewer count in front of them, and has to know which of them announce a wait before
+/// another attempt, because a wait entered with nobody watching is worth saying in words rather
+/// than leaving to be inferred from a zero (issue #409). Hence two methods rather than one
+/// <c>Action&lt;string&gt;</c>, and hence the sentence arriving without its <c>ubersdr:</c>
+/// prefix: whoever is writing the line decides what goes in front of it.
+/// </remarks>
+/// <param name="note">Writes a line about something that has happened.</param>
+/// <param name="beforeAWait">Writes a line that ends with "and the next attempt is in N
+/// seconds"; <paramref name="note"/> when the caller draws no distinction.</param>
+internal sealed class UberSdrJournal(Action<string> note, Action<string>? beforeAWait = null)
+{
+    /// <summary>A line about something that has happened.</summary>
+    public void Note(string sentence) => note(sentence);
+
+    /// <summary>A line that announces a wait before the next attempt.</summary>
+    public void Waiting(string sentence) => (beforeAWait ?? note)(sentence);
+}
+
+/// <summary>
 /// A live UberSDR instance as an <see cref="IAudioInput"/>: the receiver's IQ stream, SSB
 /// demodulated to real audio at the channel's DSP rate, so every modem, the waterfall and the
 /// frame log attach to a KiwiSDR-style web receiver exactly as they attach to a sound card.
@@ -59,7 +83,7 @@ public sealed class UberSdrAudioInput : IUberSdrSession
 
     private readonly UberSdrEndpoint _endpoint;
     private readonly UberSdrTuning _tuning;
-    private readonly Action<string>? _log;
+    private readonly UberSdrJournal? _journal;
     private readonly CancellationTokenSource _stopping = new();
     private readonly object _gate = new();
     private readonly float[] _ring;
@@ -83,13 +107,13 @@ public sealed class UberSdrAudioInput : IUberSdrSession
         int iqRate,
         ConnectionResponse connection,
         string? receiverDescription,
-        Action<string>? log,
+        UberSdrJournal? journal,
         TimeProvider time)
     {
         _endpoint = endpoint;
         _tuning = tuning;
         _iqRate = iqRate;
-        _log = log;
+        _journal = journal;
         _time = time;
         Connection = connection;
         ReceiverDescription = receiverDescription;
@@ -140,10 +164,31 @@ public sealed class UberSdrAudioInput : IUberSdrSession
     /// </summary>
     /// <exception cref="InvalidOperationException">The receiver refused the connection or the
     /// requested IQ mode; the message is written for an operator to act on.</exception>
-    public static async Task<UberSdrAudioInput> OpenAsync(
+    public static Task<UberSdrAudioInput> OpenAsync(
         UberSdrEndpoint endpoint,
         UberSdrTuning tuning,
         Action<string>? log,
+        CancellationToken cancellation,
+        TimeProvider? time = null)
+        => OpenAsync(
+            endpoint,
+            tuning,
+            log is null ? null : new UberSdrJournal(sentence => log($"ubersdr: {sentence}")),
+            cancellation,
+            time);
+
+    /// <summary>
+    /// Connects to <paramref name="endpoint"/> and starts streaming, writing the loop's lines
+    /// to <paramref name="journal"/>. The on-demand wrapper opens sessions this way so that it
+    /// can put the page's viewer count on every line the session writes, and mark a backoff
+    /// nobody is waiting for (issue #409).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The receiver refused the connection or the
+    /// requested IQ mode; the message is written for an operator to act on.</exception>
+    internal static async Task<UberSdrAudioInput> OpenAsync(
+        UberSdrEndpoint endpoint,
+        UberSdrTuning tuning,
+        UberSdrJournal? journal,
         CancellationToken cancellation,
         TimeProvider? time = null)
     {
@@ -175,14 +220,14 @@ public sealed class UberSdrAudioInput : IUberSdrSession
             await FetchDescriptionAsync(endpoint, cancellation).ConfigureAwait(false));
 
         var input = new UberSdrAudioInput(
-            endpoint, tuning, iqRate, connection, description, log, time ?? TimeProvider.System);
+            endpoint, tuning, iqRate, connection, description, journal, time ?? TimeProvider.System);
 
         try
         {
             if (refusedForNow)
             {
-                log?.Invoke(
-                    $"ubersdr: {endpoint} is refusing us for now "
+                journal?.Note(
+                    $"{endpoint} is refusing us for now "
                     + $"({connection.Reason ?? "daily listening allowance exhausted"}, "
                     + $"{connection.DailyTimeUsedSecs} s used today). The stream will be retried "
                     + "patiently; audio starts when the receiver lets us back in.");
@@ -316,7 +361,7 @@ public sealed class UberSdrAudioInput : IUberSdrSession
                 {
                     socket = await ConnectAsync(sessionId, cancellation).ConfigureAwait(false);
                     downSince = null;
-                    _log?.Invoke($"ubersdr: reconnected to {_endpoint}");
+                    _journal?.Note($"reconnected to {_endpoint}");
                 }
                 catch (OperationCanceledException)
                 {
@@ -326,7 +371,7 @@ public sealed class UberSdrAudioInput : IUberSdrSession
                 {
                     downSince = null; // refused is answered, not unreachable
                     TimeSpan wait = policy.After(UberSdrReconnectOutcome.Refused);
-                    _log?.Invoke($"ubersdr: {_endpoint} is refusing us for now ({e.Message}); "
+                    _journal?.Waiting($"{_endpoint} is refusing us for now ({e.Message}); "
                         + $"asking again in {wait.TotalMinutes:F0} min");
                     if (!await WaitAsync(wait))
                     {
@@ -351,7 +396,7 @@ public sealed class UberSdrAudioInput : IUberSdrSession
                     }
 
                     TimeSpan wait = policy.After(UberSdrReconnectOutcome.Transient);
-                    _log?.Invoke($"ubersdr: {_endpoint} unreachable ({e.Message}); "
+                    _journal?.Waiting($"{_endpoint} unreachable ({e.Message}); "
                         + $"retrying in {wait.TotalSeconds:F0}s");
                     if (!await WaitAsync(wait))
                     {
@@ -363,6 +408,8 @@ public sealed class UberSdrAudioInput : IUberSdrSession
             }
 
             long publishedBefore = Interlocked.Read(ref _published);
+            long openedAt = _time.GetTimestamp();
+            string? closeReason = null;
             Volatile.Write(ref _sessionLive, true);
             try
             {
@@ -375,13 +422,15 @@ public sealed class UberSdrAudioInput : IUberSdrSession
             }
             catch (Exception e)
             {
-                _log?.Invoke($"ubersdr: stream from {_endpoint} ended ({e.Message})");
+                closeReason = e.Message;
+                _journal?.Note($"stream from {_endpoint} ended ({e.Message})");
             }
             finally
             {
                 Volatile.Write(ref _sessionLive, false);
             }
 
+            TimeSpan lasted = _time.GetElapsedTime(openedAt);
             socket.Dispose();
             socket = null;
             if (cancellation.IsCancellationRequested)
@@ -397,10 +446,8 @@ public sealed class UberSdrAudioInput : IUberSdrSession
             bool healthy = delivered >= 10L * _tuning.OutputRate;
             TimeSpan pause = policy.After(
                 healthy ? UberSdrReconnectOutcome.Healthy : UberSdrReconnectOutcome.ShortSession);
-            _log?.Invoke(healthy
-                ? $"ubersdr: reconnecting to {_endpoint}"
-                : $"ubersdr: the session ended after only {delivered / (double)_tuning.OutputRate:F1} s "
-                    + $"of audio; backing off {pause.TotalSeconds:F0}s before reconnecting to {_endpoint}");
+            _journal?.Waiting(SessionEndedLine(
+                _endpoint, healthy, lasted, delivered, _tuning.OutputRate, closeReason, pause));
             if (!await WaitAsync(pause))
             {
                 break;
@@ -432,6 +479,46 @@ public sealed class UberSdrAudioInput : IUberSdrSession
                 return false;
             }
         }
+    }
+
+    /// <summary>
+    /// The line one ended session leaves behind, on its way into the wait for the next attempt.
+    /// </summary>
+    /// <remarks>
+    /// Two figures rather than one, both in milliseconds, because "the session ended after only
+    /// 0.0 s of audio" was every line of six hours of churn in issue #409 and could not tell a
+    /// receiver that accepts and drops on the spot from one that streams silence for a moment
+    /// and then goes: the first number is how long the socket was up, the second how much audio
+    /// came down it. The close reason is added only when nothing else carries it, because the
+    /// stream-ended line above already prints it whenever the receive threw.
+    /// </remarks>
+    /// <param name="endpoint">The receiver.</param>
+    /// <param name="healthy">The session delivered real audio, so this is the ordinary
+    /// max-session-time rollover rather than a receiver dropping us.</param>
+    /// <param name="lasted">Wall time from the socket opening to it closing.</param>
+    /// <param name="audioSamples">Audio samples delivered during the session.</param>
+    /// <param name="outputRate">The audio rate those samples were counted at, Hz.</param>
+    /// <param name="closeReason">What the receive loop threw, or null when the stream closed
+    /// with no error and no other line will say why it ended.</param>
+    /// <param name="pause">How long before the next attempt.</param>
+    internal static string SessionEndedLine(
+        UberSdrEndpoint endpoint,
+        bool healthy,
+        TimeSpan lasted,
+        long audioSamples,
+        int outputRate,
+        string? closeReason,
+        TimeSpan pause)
+    {
+        if (healthy)
+        {
+            return $"reconnecting to {endpoint}";
+        }
+
+        string why = closeReason is null ? " (the receiver closed the stream)" : "";
+        return $"the session ended after {lasted.TotalMilliseconds:F0} ms with only "
+            + $"{audioSamples * 1000 / outputRate} ms of audio{why}; backing off "
+            + $"{pause.TotalSeconds:F0}s before reconnecting to {endpoint}";
     }
 
     /// <summary>Receives one session's worth of IQ, converting and buffering as it arrives.</summary>
@@ -582,8 +669,8 @@ public sealed class UberSdrAudioInput : IUberSdrSession
         if (total - Interlocked.Read(ref _droppedReported) >= _tuning.OutputRate)
         {
             Interlocked.Exchange(ref _droppedReported, total);
-            _log?.Invoke(
-                $"ubersdr: WARNING - dropped {total} samples ({total / (double)_tuning.OutputRate:F1} s) "
+            _journal?.Note(
+                $"WARNING - dropped {total} samples ({total / (double)_tuning.OutputRate:F1} s) "
                 + "because the receive buffer filled. The machine is not keeping up with the stream.");
         }
     }

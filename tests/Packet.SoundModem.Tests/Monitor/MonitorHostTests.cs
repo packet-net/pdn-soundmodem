@@ -466,7 +466,7 @@ public class MonitorHostTests
                         $"{receiver.Callsign} UberSDR",
                         sampleRate: 12000,
                         Linger,
-                        open: _ =>
+                        open: (_, _) =>
                         {
                             var session = new FakeSession { SessionLive = true };
                             lock (fake.Opened)

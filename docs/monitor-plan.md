@@ -100,7 +100,7 @@ One `Station` owns:
 - one `WaterfallWebServer`, and therefore one `Ax25LinkObserver` (`Links`, WaterfallWebServer.cs:274);
 - one `OnDemandUberSdrInput`, wired to that server's `ViewersChanged` and `PhaseChanged` exactly as Program.cs:2209-2210 does today;
 - one receive loop with its `DeadFeedWatch`, `StarvationWatch` and `XrunWatch`, and its own `CancellationTokenSource`;
-- a tag on every journal line it writes, the slug, so fifty stations in one journal are readable: `m9psy-1: ubersdr: live, 2 viewers: ...`. Flavour A writes no tag, so its journal lines are byte-identical to today's;
+- a tag on every journal line it writes, the slug, so fifty stations in one journal are readable: `m9psy-1: ubersdr: live, 2 viewers: ...`. Flavour A writes no tag, so its journal lines are byte-identical to today's. Since #409 the phase, the viewer count and, on a wait entered with nobody watching, the words `retrying for nobody` are on every ubersdr line an on-demand receiver writes, including the session's own stream-ended, reconnected and backing-off lines, which used to carry no count at all;
 - a fault model that is **"this station is down and says so"**: a `Faulted` event carrying a sentence, the sentence shown in the page's radio status and in the picker, and no call to `Environment.Exit` and no process exit from anywhere inside it.
 
 Flavour A's process-level behaviour is preserved by the host, not by the station: the daemon subscribes to the single station's `Faulted`, journals it and exits 1, which is what `radioLost` does today at Program.cs:2982 and what `Restart=on-failure` reopens. Flavour B subscribes to the same event and updates one row of a table.
