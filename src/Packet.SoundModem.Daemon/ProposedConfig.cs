@@ -27,6 +27,13 @@ internal static class ProposedConfig
     /// not a policy this code gets to choose.</summary>
     public const int MaxSubChannel = 15;
 
+    /// <summary>How a configuration document is read: as JSONC, which is what one is.</summary>
+    private static readonly JsonDocumentOptions Jsonc = new()
+    {
+        CommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
+
     /// <summary>
     /// The configuration <paramref name="running"/> would become, with a modem added for
     /// <paramref name="proposal"/>. Null when it cannot be built, with
@@ -47,7 +54,10 @@ internal static class ProposedConfig
         JsonNode? root;
         try
         {
-            root = JsonNode.Parse(running);
+            // The same reader DaemonConfig loads a file with. A config file here is JSONC and
+            // most are full of comments, and a strict parse made every proposal on such a station
+            // come back as "the running configuration will not parse" at the first "//".
+            root = JsonNode.Parse(running, nodeOptions: null, Jsonc);
         }
         catch (JsonException e)
         {

@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Packet.SoundModem.Audio;
 using Packet.SoundModem.Modems;
 
 namespace Packet.SoundModem.Daemon;
@@ -40,6 +41,12 @@ internal sealed class ConfigApi
     private readonly string _configPath;
     private Func<IReadOnlyList<Survey.ModemProposal>>? _proposals;
     private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
+    private Func<MixerReport>? _mixerRead;
+    private Func<MixerChange, MixerReport>? _mixerApply;
+    private string _mixerWhyNot = "this station has no sound-card mixer";
+
+    /// <summary>One mixer change at a time; see the wait in <see cref="MixerAsync"/>.</summary>
+    private readonly SemaphoreSlim _mixerGate = new(1, 1);
     private readonly string _ephemeralPath;
     private readonly Func<string> _runningJson;
     private readonly Action _requestRestart;
@@ -79,16 +86,48 @@ internal sealed class ConfigApi
         _prospectorCounts = counts;
     }
 
+    /// <summary>
+    /// Where the sound card's mixer is, if this station has one. Installed by the daemon after
+    /// start-up, for the same reason as the proposals: the mixer is opened from the very
+    /// configuration this class serves.
+    /// </summary>
+    /// <param name="read">The card's state, read back fresh.</param>
+    /// <param name="apply">Applies a change to the card and returns what it then reads back.</param>
+    public void ServeMixer(Func<MixerReport> read, Func<MixerChange, MixerReport> apply)
+    {
+        _mixerRead = read;
+        _mixerApply = apply;
+    }
+
+    /// <summary>
+    /// Why this station has no mixer to offer, for the answer a caller gets instead of one.
+    /// </summary>
+    /// <remarks>
+    /// Said rather than left to a 404, because "there is no mixer here" and "this daemon is too
+    /// old to have the endpoint" are different things to an operator and to the page, which shows
+    /// its mixer group on the strength of this answer.
+    /// </remarks>
+    /// <param name="why">The sentence to serve.</param>
+    public void NoMixer(string why) => _mixerWhyNot = why;
+
     /// <summary>Where a non-persisted change is left for the next start-up to consume.</summary>
     /// <remarks>The state directory, which systemd creates and owns for the service user. Not
     /// beside the config file: <c>ProtectSystem=full</c> makes <c>/etc</c> read-only to the
     /// service, so that is the one place it reliably cannot write.</remarks>
-    public static string EphemeralPathFor(string configPath) =>
-        Path.Combine(
-            Environment.GetEnvironmentVariable("STATE_DIRECTORY")
-                ?? Path.GetDirectoryName(configPath)
-                ?? ".",
-            "pending-config.json");
+    public static string EphemeralPathFor(string configPath)
+    {
+        // Every branch has to yield a directory that Path.GetDirectoryName can find again.
+        // Path.GetDirectoryName("soundmodem.json") is the EMPTY STRING and not null, so the
+        // "?? \".\"" below never fired for a config named without a directory - which gave an
+        // ephemeral path of "pending-config.json", whose own directory name is empty, and
+        // Directory.CreateDirectory("") throws ArgumentException. On the bench that surfaced as a
+        // POST that set the card and then aborted the connection (2026-09-05).
+        string? state = Environment.GetEnvironmentVariable("STATE_DIRECTORY");
+        string directory = !string.IsNullOrEmpty(state)
+            ? state
+            : Path.GetDirectoryName(configPath) is { Length: > 0 } beside ? beside : ".";
+        return Path.Combine(directory, "pending-config.json");
+    }
 
     /// <summary>What a redacted secret reads as, so the answer still says one is set.</summary>
     private const string Hidden = "(set, not shown)";
@@ -255,7 +294,7 @@ internal sealed class ConfigApi
     /// </param>
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
-        if (path is not ("/api/config" or "/api/proposals"))
+        if (path is not ("/api/config" or "/api/proposals" or "/api/mixer"))
         {
             return false;
         }
@@ -267,6 +306,12 @@ internal sealed class ConfigApi
             // an interactive login that does not exist.
             await RespondAsync(context, 401, "unauthorized: present the configured api key as "
                 + "\"Authorization: Bearer KEY\" or \"X-API-Key: KEY\"").ConfigureAwait(false);
+            return true;
+        }
+
+        if (path is "/api/mixer")
+        {
+            await GuardedAsync(context, () => MixerAsync(context)).ConfigureAwait(false);
             return true;
         }
 
@@ -297,7 +342,7 @@ internal sealed class ConfigApi
                 return true;
 
             case "POST":
-                await ApplyAsync(context).ConfigureAwait(false);
+                await GuardedAsync(context, () => ApplyAsync(context)).ConfigureAwait(false);
                 return true;
 
             default:
@@ -370,6 +415,226 @@ internal sealed class ConfigApi
             .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// The sound card's mixer: what it reads back as, and a change applied to it live.
+    /// </summary>
+    /// <remarks>
+    /// <para>Unlike <c>/api/config</c> this does not restart anything. A mixer setting takes
+    /// effect on the card as it is written, the PCM stream is untouched, and restarting a station
+    /// to trim its capture gain would drop the waterfall the operator is trimming it against.</para>
+    /// <para>The write that follows is only so the next start-up sets the same thing, and it
+    /// keeps the same rule as every other change here: one run unless <c>?persist=true</c>. So an
+    /// experiment with the gain self-heals to the config file on the next restart, exactly as a
+    /// bad modem entry does.</para>
+    /// </remarks>
+    private async Task MixerAsync(HttpListenerContext context)
+    {
+        if (_mixerRead is null || _mixerApply is null)
+        {
+            if (context.Request.HttpMethod == "GET")
+            {
+                await RespondJsonAsync(
+                    context, 200,
+                    MixerApi.Unavailable(_mixerWhyNot).ToJsonString(Pretty)).ConfigureAwait(false);
+                return;
+            }
+
+            await RespondAsync(context, 409, _mixerWhyNot).ConfigureAwait(false);
+            return;
+        }
+
+        if (context.Request.HttpMethod == "GET")
+        {
+            await RespondJsonAsync(
+                context, 200, MixerApi.Describe(_mixerRead()).ToJsonString(Pretty))
+                .ConfigureAwait(false);
+            return;
+        }
+
+        if (context.Request.HttpMethod != "POST")
+        {
+            await RespondAsync(context, 405, "GET to read the card's mixer, POST to set it")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        string body;
+        using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
+        {
+            body = await reader.ReadToEndAsync().ConfigureAwait(false);
+        }
+
+        if (!MixerApi.TryParse(body, out MixerChange change, out string refusal))
+        {
+            await RespondAsync(context, 400, refusal).ConfigureAwait(false);
+            return;
+        }
+
+        // One change at a time. Applying is set-then-read across several calls into the card, so
+        // two overlapping POSTs would each be answered with the other's level - and the read-back
+        // is the answer, and the answer is the point. They would also both write the same file.
+        // The waterfall serves every request on its own task, so nothing else is stopping them.
+        await _mixerGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            // The card first. It is the thing the operator is listening to, and everything below
+            // is only about writing down what it is now set to.
+            MixerReport report = _mixerApply(change);
+
+            // Always built, and always from what this process is running: this is the document
+            // the next start-up would come up on, and it has to exist even if the persist path
+            // below cannot be taken.
+            string? oneRun = MixerApi.Amend(_runningJson(), change, out string why);
+            if (oneRun is null)
+            {
+                await RespondAsync(context, 500,
+                    "the card was set, but the change could not be folded into the running "
+                    + $"configuration: {why}").ConfigureAwait(false);
+                return;
+            }
+
+            // Its own branch, because the two failures have two different reasons to give and
+            // the fold-in's is the empty string when it is the validation that failed - which
+            // read as a sentence ending in a dangling colon with the actual reason discarded.
+            if (Validate(oneRun) is string wrong)
+            {
+                await RespondAsync(context, 500,
+                    "the card was set, but the running configuration with this change folded in "
+                    + $"would not load: {wrong}").ConfigureAwait(false);
+                return;
+            }
+
+            bool persist = string.Equals(
+                context.Request.QueryString["persist"], "true", StringComparison.OrdinalIgnoreCase);
+            string declined = "";
+            string document = oneRun;
+
+            if (persist)
+            {
+                // The file as it is NOW, not the snapshot this process started on. An operator
+                // who has edited soundmodem.json since start-up must not have those edits
+                // replaced by a months-old copy of it because they moved a slider.
+                if (!MixerApi.TryReadRewritable(_configPath, out string current, out string cannot))
+                {
+                    declined = $"{cannot}, so it was NOT written. To keep this, add "
+                        + $"{MixerApi.Snippet(change)} to it by hand. ";
+                    persist = false;
+                }
+                else if (MixerApi.Amend(current, change, out string fileWhy) is not string edited)
+                {
+                    declined = $"{_configPath} was NOT written: {fileWhy}. To keep this, add "
+                        + $"{MixerApi.Snippet(change)} to it by hand. ";
+                    persist = false;
+                }
+                else if (Validate(edited) is string invalid)
+                {
+                    // The file has been edited since start-up into something that would not load.
+                    // Writing this over the top would bury that, so it is left for the operator
+                    // to find, and the change lives on as a one-run instead.
+                    declined = $"{_configPath} was NOT written, because it has been edited into "
+                        + $"something that would not load ({invalid}). To keep this, fix the file "
+                        + $"and add {MixerApi.Snippet(change)} to it. ";
+                    persist = false;
+                }
+                else
+                {
+                    document = edited;
+                }
+            }
+
+            string target = persist ? _configPath : _ephemeralPath;
+            string written;
+            try
+            {
+                EnsureDirectoryOf(target);
+                File.WriteAllText(target, document);
+                written = declined + (persist
+                    ? PersistedNote()
+                    : OneRunNote());
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException
+                                        or ArgumentException or NotSupportedException)
+            {
+                // The card is set either way, and saying so matters: the operator can hear the
+                // difference and would otherwise assume nothing happened.
+                persist = false;
+                written = declined + $"The card is set and stays set, but {target} could not be "
+                    + $"written ({e.Message}), so nothing on disk records it.";
+            }
+
+            // The mixer's own lines have already been printed by the apply above, prefix and all,
+            // so this only has to say who asked and how long it lasts - not repeat them behind a
+            // second prefix.
+            Console.WriteLine(
+                $"api: mixer set over the API, {(persist ? "persisted" : "for this run")}");
+
+            JsonObject answer = MixerApi.Describe(report);
+            answer["applied"] = true;
+            answer["persisted"] = persist;
+            answer["note"] = written;
+            await RespondJsonAsync(context, 200, answer.ToJsonString(Pretty)).ConfigureAwait(false);
+        }
+        finally
+        {
+            _mixerGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// What a persisted mixer change actually did, which includes clearing any one-run change
+    /// that was waiting.
+    /// </summary>
+    /// <remarks>
+    /// The clearing is the point rather than tidiness. Start-up prefers the one-run file over the
+    /// config file, and this endpoint - alone among the writers here - does not restart, so a
+    /// one-run change POSTed earlier in the session would still be sitting there and would win at
+    /// the next restart. The station would come up on the older level, consume the file, and only
+    /// reach the persisted one at the restart after that.
+    /// </remarks>
+    private string PersistedNote()
+    {
+        string cleared = "";
+        try
+        {
+            if (File.Exists(_ephemeralPath))
+            {
+                File.Delete(_ephemeralPath);
+                cleared = " An earlier one-run change was waiting and has been removed, so the "
+                    + "file is what applies.";
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            cleared = $" WARNING: a one-run change is still waiting in {_ephemeralPath} and could "
+                + $"not be removed ({e.Message}); the next restart will apply that instead.";
+        }
+
+        return $"The card is set now, and {_configPath} has been written, so every restart from "
+            + $"here sets it too.{cleared}";
+    }
+
+    /// <summary>
+    /// What a one-run mixer change actually did. Deliberately not the sentence
+    /// <c>/api/config</c> uses, which is true there and false here.
+    /// </summary>
+    /// <remarks>
+    /// Two differences, both of which change what an operator should do next. That endpoint
+    /// restarts at once and the restart consumes the one-run file, so "in force until the next
+    /// restart" is exactly right for it; this one does not restart, so the file is still on disk
+    /// at the next restart and is applied then. And a mixer is never reset: a config file with no
+    /// <c>alsa.mixer</c> block writes nothing to the card at all, so once the one-run file has
+    /// been consumed the card simply keeps this level. Saying "until the next restart" would tell
+    /// an operator their change was temporary when it is, in practice, permanent.
+    /// </remarks>
+    private string OneRunNote() =>
+        "The card is set now and stays set: nothing ever resets a mixer, so this level holds "
+        + $"until something sets it again. {_ephemeralPath} holds the change for the next "
+        + $"restart; the restart after that goes back to {_configPath}, which will not touch the "
+        + "mixer at all unless it has an \"alsa\".\"mixer\" block. Add one to make this deliberate.";
+
+    /// <summary>Indented, because these answers are read by people as often as by scripts.</summary>
+    private static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true };
+
     private async Task ApplyAsync(HttpListenerContext context)
     {
         string body;
@@ -404,10 +669,11 @@ internal sealed class ConfigApi
         string target = persist ? _configPath : _ephemeralPath;
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            EnsureDirectoryOf(target);
             File.WriteAllText(target, body);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException
+                                    or ArgumentException or NotSupportedException)
         {
             string extra = persist
                 ? " The shipped unit sets ProtectSystem=full, which makes /etc read-only to the "
@@ -438,6 +704,51 @@ internal sealed class ConfigApi
             """).ConfigureAwait(false);
 
         _requestRestart();
+    }
+
+    /// <summary>
+    /// Runs one handler and turns anything it throws into a 500 with the reason in it.
+    /// </summary>
+    /// <remarks>
+    /// The waterfall server's own catch-all aborts the connection, which is right for a page and
+    /// wrong for an API: a caller gets a closed socket with no status and no body, and has no way
+    /// to tell a bug from a network fault. Worse here than anywhere, because these handlers act
+    /// before they answer - the card is already set by the time a reply is written - so "nothing
+    /// came back" must never be allowed to mean "nothing happened". A bug that reaches this is
+    /// still a bug; it just has to arrive as one.
+    /// </remarks>
+    private static async Task GuardedAsync(HttpListenerContext context, Func<Task> handler)
+    {
+        try
+        {
+            await handler().ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine($"api: unhandled failure serving the request: {e}");
+            try
+            {
+                await RespondAsync(context, 500, $"the daemon failed while serving this: {e.Message}")
+                    .ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // The response had already started, so there is nothing left to say on it.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Makes sure the directory a file is about to be written to exists, and does nothing at all
+    /// when the path names no directory - which is a file beside the working directory, not an
+    /// error, and is what <c>Directory.CreateDirectory("")</c> would have thrown over.
+    /// </summary>
+    private static void EnsureDirectoryOf(string path)
+    {
+        if (Path.GetDirectoryName(path) is { Length: > 0 } directory)
+        {
+            Directory.CreateDirectory(directory);
+        }
     }
 
     private bool Authorised(HttpListenerRequest request)

@@ -2,8 +2,11 @@ using System.Diagnostics;
 using System.Text.Json;
 using AwesomeAssertions;
 using Microsoft.Extensions.Time.Testing;
+using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
+using Packet.SoundModem.Daemon;
 using Packet.SoundModem.Modems;
+using Packet.SoundModem.Tests.Audio;
 using Packet.SoundModem.Waterfall;
 
 namespace Packet.SoundModem.Tests.Waterfall;
@@ -903,9 +906,125 @@ public class WaterfallPageTests
     /// <param name="pageText">The page to run, when it matters that it is the one the server
     /// stamped rather than the one in the assembly: the version check compares the stamp against
     /// what the server announces, and the embedded copy still carries the placeholder.</param>
+    /// <summary>
+    /// The operator page's Mixer group reads the sound card and sets it, through the station's
+    /// own config API (#17).
+    /// </summary>
+    /// <remarks>
+    /// <para>The page half of the feature, run as a browser runs it: the shipping script, real
+    /// <c>fetch</c>, a real <see cref="ConfigApi"/> on the waterfall's own listener, and a made-up
+    /// card behind it. Without this the group is only known to parse.</para>
+    /// <para>The card is the CM108 revision on the bench, which has no "Mic Boost" control at
+    /// all - so the Boost button has to come back marked missing rather than looking like a
+    /// setting the operator can reach, which is a page decision no server-side assertion sees.</para>
+    /// </remarks>
+    [Fact]
+    public async Task The_Operator_Pages_Mixer_Group_Reads_The_Card_And_Sets_It()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        const string key = "page-test-key-not-a-secret";
+        string dir = Directory.CreateTempSubdirectory("pdnsm-page-mixer").FullName;
+        try
+        {
+            string configPath = Path.Combine(dir, "soundmodem.json");
+            File.WriteAllText(configPath, """
+                {"device": "plughw:1,0", "modems": [ { "subChannel": 0, "mode": "afsk1200" } ]}
+                """);
+
+            var card = FakeMixer.Cm108();
+            var wanted = new MixerSettings();
+            var api = new ConfigApi(
+                key, configPath, Path.Combine(dir, "pending.json"),
+                runningJson: () => File.ReadAllText(configPath),
+                ephemeralInForce: false,
+                requestRestart: () => throw new InvalidOperationException(
+                    "a mixer change must never restart the station"));
+            api.ServeMixer(
+                read: () => MixerSetup.Apply(card, wanted, null),
+                apply: change => MixerSetup.Apply(
+                    card,
+                    wanted with
+                    {
+                        CaptureGainPercent = change.CaptureGainPercent,
+                        Agc = change.Agc,
+                        MicBoost = change.MicBoost,
+                        PlaybackPercent = change.PlaybackPercent,
+                    },
+                    null));
+
+            var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+            channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+            int port = FreePorts.Next();
+            await using var server = new WaterfallWebServer(channel, port);
+            server.ApiHandler = api.HandleAsync;
+            server.Start();
+
+            Probe probe = await RunProbeAsync(
+                node, port, apiKey: key, mixer: true, mixerGain: 80);
+
+            probe.Thrown.Should().BeEmpty("the page must not throw while driving the mixer");
+            probe.Connected.Should().BeTrue();
+
+            MixerPanel arrival = probe.MixerOnArrival!;
+            arrival.Hidden.Should().BeFalse("the station has a card and this browser has the key");
+            arrival.ClassName.Should().NotContain("locked");
+            arrival.KeyHidden.Should().BeTrue("there is nothing to ask for");
+            arrival.Read.Should().Be("57% / 7.9 dB", "the group opens showing the card, not a guess");
+            arrival.Gain.Should().Be("57");
+            arrival.GainDisabled.Should().BeFalse();
+            arrival.Agc.Should().Contain("on", "this card's AGC is on and the button says so");
+            arrival.Boost.Should().Contain(
+                "missing", "this CM108 revision has no mic boost control to offer");
+
+            // Moving the slider and dispatching "change", as a browser does when the operator lets
+            // go of it. The handler, not mixSend by hand: which event the slider listens for is
+            // part of what shipped.
+            MixerPanel gained = probe.MixerAfterGain!;
+            gained.Read.Should().Be("80% / 16.0 dB", "the readout is the card's answer, read back");
+            card.Find("Mic")!.Capture.Should().Be(80, "the request reached the card");
+
+            // And a click on the AGC button.
+            MixerPanel switched = probe.MixerAfterAgc!;
+            switched.Agc.Should().NotContain("on");
+            card.Find("Auto Gain Control")!.On.Should().BeFalse("the click reached the card");
+
+            // A click on the Boost button, which this card has no control for. It is disabled, so
+            // its handler must send nothing at all rather than a request the daemon has to refuse.
+            probe.MixerAfterBoost!.UnchangedByBoost.Should().BeTrue(
+                "a control the card has not got is not something a click can change");
+
+            // The same station, the same card, the same key in the browser, dressed for the
+            // public. This is the assertion the whole "operator page only" claim rests on, and it
+            // has to be made against a page that could otherwise have shown the group: a station
+            // with nothing to show proves nothing.
+            int publicPort = FreePorts.Next();
+            await using var publicServer = new WaterfallWebServer(
+                channel, publicPort, new WaterfallOptions { Public = true, Title = "packet monitor" });
+            publicServer.ApiHandler = api.HandleAsync;
+            publicServer.Start();
+
+            Probe visitor = await RunProbeAsync(node, publicPort, apiKey: key);
+
+            visitor.Thrown.Should().BeEmpty();
+            visitor.PublicPage.Hidden["mixerCtl"].Should().BeTrue(
+                "the sound card's gain is never a visitor's, whatever key their browser holds");
+            visitor.MixerOnArrival!.Read.Should().NotBe(
+                "57% / 7.9 dB", "a public page must not even read the card");
+            card.Find("Mic")!.Capture.Should().Be(
+                80, "and nothing a visitor's page did may have reached it");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     private static async Task<Probe> RunProbeAsync(
         string node, int port, bool audio = false, string? protocol = null, string? pathname = null,
-        string? stored = null, string? pageText = null)
+        string? stored = null, string? pageText = null, string? apiKey = null,
+        bool mixer = false, int? mixerGain = null)
     {
         string here = Path.GetDirectoryName(typeof(WaterfallPageTests).Assembly.Location)!;
         var start = new ProcessStartInfo(node)
@@ -921,6 +1040,12 @@ public class WaterfallPageTests
         if (protocol is not null) start.Environment["PROTOCOL"] = protocol;
         if (pathname is not null) start.Environment["PATHNAME"] = pathname;
         if (stored is not null) start.Environment["STORED"] = stored;
+        if (apiKey is not null) start.Environment["APIKEY"] = apiKey;
+        if (mixer) start.Environment["MIXER"] = "1";
+        if (mixerGain is int gain)
+        {
+            start.Environment["MIXGAIN"] = gain.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
 
         using Process probe = Process.Start(start)!;
         string stdout = await probe.StandardOutput.ReadToEndAsync();
@@ -1193,9 +1318,20 @@ public class WaterfallPageTests
         visitor.PublicPage.Hidden["spanCtl"].Should().BeTrue("nor is how wide a slice is shown");
         visitor.PublicPage.Hidden["levelCtl"].Should().BeTrue(
             "nor the floor and top of the colour scale, which is the same kind of knob");
+        visitor.PublicPage.Hidden["mixerCtl"].Should().BeTrue(
+            "and the sound card's own gain is a station's, never a visitor's");
 
-        op.PublicPage.Hidden.Values.Should().AllSatisfy(hidden => hidden.Should().BeFalse(),
-            "nothing is taken off the operator's page; the flag only hides");
+        // Every id the flag hides, except the mixer group, which hides itself for a second and
+        // separate reason and is asserted on its own below.
+        op.PublicPage.Hidden.Where(entry => entry.Key != "mixerCtl").Should()
+            .AllSatisfy(entry => entry.Value.Should().BeFalse(),
+                "nothing is taken off the operator's page; the flag only hides");
+
+        // Neither of these stations has a config API, so /api/mixer is a 404 on both and the
+        // group takes itself off the page. That is the operator's page deciding, not the public
+        // flag: what the flag does to it is the visitor assertion above.
+        op.PublicPage.Hidden["mixerCtl"].Should().BeTrue(
+            "an operator's page with no \"api\" section has no mixer group to show");
 
         // And the settings still apply, arriving from the config rather than from a control. On
         // LSB the ruler runs downwards from the dial, so 7044.50 is only reachable that way.
@@ -1339,8 +1475,11 @@ public class WaterfallPageTests
         // The operator's page is untouched: the button is there and it honours what was stored.
         op.MineOnArrival.Hidden.Should().BeFalse("nothing is taken off the operator's page");
         op.MineOnArrival.On.Should().BeTrue("where the button is there to turn it back off");
-        op.PublicPage.Hidden.Values.Should().AllSatisfy(hidden => hidden.Should().BeFalse(),
-            "the flag only hides, and only on the visitor's page");
+        // Except the mixer group, which takes itself off a page with no config API behind it
+        // whichever flavour that page is; see The_Public_Page_Hides_The_Sideband_And_Span_Controls.
+        op.PublicPage.Hidden.Where(entry => entry.Key != "mixerCtl").Should()
+            .AllSatisfy(entry => entry.Value.Should().BeFalse(),
+                "the flag only hides, and only on the visitor's page");
 
         // And it shows in the pane rather than only in the state. A link between two other
         // stations is exactly what the filter takes away: the visitor is shown it, the operator,
@@ -1588,5 +1727,35 @@ public class WaterfallPageTests
         LinksBar LinksMine,
         string StampedVersion,
         int[] ConfigReloads,
+        MixerPanel? MixerOnArrival,
+        MixerPanel? MixerAfterGain,
+        MixerPanel? MixerAfterAgc,
+        MixerPanel? MixerAfterBoost,
         string[] Thrown);
+
+    /// <summary>
+    /// The operator page's Mixer group as the page left it: whether it is on the page at all, the
+    /// gain it shows, and which of AGC and Mic Boost the card was found to have.
+    /// </summary>
+    /// <param name="Hidden">Whether the group is on the page. Null is a page that never touched
+    /// it, which is every flavour with no config API behind it.</param>
+    /// <param name="ClassName">The group's classes, which carry the locked state.</param>
+    /// <param name="Read">The readout beside the slider.</param>
+    /// <param name="Gain">The slider's position.</param>
+    /// <param name="GainDisabled">Whether the slider can be moved.</param>
+    /// <param name="Agc">The AGC button's classes: "on", "missing", or neither.</param>
+    /// <param name="Boost">The Mic Boost button's classes, the same way.</param>
+    /// <param name="KeyHidden">Whether the Key button is out of the way.</param>
+    /// <param name="UnchangedByBoost">Whether clicking the Boost button the card has not got
+    /// left the panel exactly as it was, which is what a disabled control has to do.</param>
+    private sealed record MixerPanel(
+        bool? Hidden,
+        string? ClassName,
+        string? Read,
+        string? Gain,
+        bool? GainDisabled,
+        string? Agc,
+        string? Boost,
+        bool? KeyHidden,
+        bool? UnchangedByBoost);
 }

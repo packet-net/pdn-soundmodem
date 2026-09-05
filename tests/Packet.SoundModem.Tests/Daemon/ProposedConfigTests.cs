@@ -26,6 +26,29 @@ public class ProposedConfigTests
         }
         """;
 
+    /// <summary>
+    /// A config file here is JSONC, and a strict parse made every proposal on a station with a
+    /// commented file come back as "the running configuration will not parse". Same defect as the
+    /// one the mixer API hit on the bench on 2026-09-05, in the neighbouring feature.
+    /// </summary>
+    [Fact]
+    public void A_Running_Configuration_With_Comments_In_It_Still_Yields_A_Proposal()
+    {
+        string commented = """
+            {
+              // as the shipped example is written, and as most real files are
+              "device": "flex:discover",
+              "modems": [ { "subChannel": 0, "mode": "afsk300-il2pc", "rfFrequency": 7050300 }, ],
+            }
+            """;
+
+        string? amended = ProposedConfig.Amend(commented, Proposal(), out string why);
+
+        why.Should().BeEmpty();
+        amended.Should().NotBeNull();
+        amended.Should().Contain("\"subChannel\": 1");
+    }
+
     [Fact]
     public void A_Proposal_Becomes_A_Configuration_The_Api_Would_Accept()
     {

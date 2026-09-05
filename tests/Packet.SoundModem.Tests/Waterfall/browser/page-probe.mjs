@@ -114,7 +114,17 @@ function el(id) {
     width: 800, height: 300, style: {}, children: [], dataset: {},
     className: "",
     getContext: () => ctx2d, removeChild: noop,
-    addEventListener: noop, removeEventListener: noop, getBoundingClientRect: () => ({ width: 800, height: 300, left: 0, top: 0 }),
+    // Recorded rather than dropped, so a handler the page attaches with addEventListener can be
+    // fired by __fire below. Nothing fires by itself and click() is untouched, so every test that
+    // was written against the no-op shim behaves exactly as it did.
+    _listeners: {},
+    addEventListener(type, fn) { (this._listeners[type] ||= []).push(fn); },
+    removeEventListener(type, fn) {
+      const list = this._listeners[type];
+      const at = list ? list.indexOf(fn) : -1;
+      if (at >= 0) list.splice(at, 1);
+    },
+    getBoundingClientRect: () => ({ width: 800, height: 300, left: 0, top: 0 }),
     querySelector: () => el(id + "-q"), querySelectorAll: () => [], focus: noop, scrollTo: noop,
     setAttribute: noop, getAttribute: () => null,
     closest: () => null, contains: () => false, add: noop, options: [], selectedIndex: 0,
@@ -196,6 +206,19 @@ class WebSocket_ extends WebSocket {
 // question and needs a way to be asked. Writes are kept, because the page saves as a viewer works.
 const stored = new Map();
 if (process.env.STORED) stored.set("pdnsm-waterfall", process.env.STORED);
+// The station's API key as this browser holds it. The daemon never sends a key to a page, so
+// the only way the mixer group can act is for one to have been put in this origin's storage,
+// which is what the page's Key button does.
+if (process.env.APIKEY) stored.set("pdnsm-api-key", process.env.APIKEY);
+
+// A browser resolves a relative URL against the document's own URL; this sandbox has no document
+// URL and node's fetch refuses anything that is not absolute. The page asks for `${base}api/...`,
+// so that is what gets resolved. Always http, whatever PROTOCOL says the page thinks it was
+// served over: the test server is plain http either way, and the scheme question the page has to
+// answer is about its WebSocket, not this.
+const fetchOrigin = `http://127.0.0.1:${process.env.PORT}`;
+const fetch_ = (input, init) =>
+  fetch(typeof input === "string" && input.startsWith("/") ? fetchOrigin + input : input, init);
 
 // The tab's own storage, and the tab's own reload, which are what checkPageVersion is built out
 // of: it records the version it has reloaded for and reloads at most once for it. sessionStorage
@@ -206,7 +229,7 @@ const session = new Map();
 let reloads = 0;
 
 const sandbox = {
-  document: document_, WebSocket: WebSocket_, console, fetch, AudioContext: AudioContext_,
+  document: document_, WebSocket: WebSocket_, console, fetch: fetch_, AudioContext: AudioContext_,
   setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame: cb => setTimeout(() => cb(performance.now()), 16),
   cancelAnimationFrame: clearTimeout, performance,
   location: { host: `127.0.0.1:${process.env.PORT}`, protocol, pathname, reload: () => { reloads++; } },
@@ -225,6 +248,14 @@ const sandbox = {
   localStorage: { getItem: key => stored.get(key) ?? null, setItem: (key, value) => { stored.set(key, String(value)); } },
   sessionStorage: { getItem: key => session.get(key) ?? null, setItem: (key, value) => { session.set(key, String(value)); } },
   __stats: () => ({ played, peak }),
+  // Fires the handlers an element registered with addEventListener, as a browser does when the
+  // operator clicks or changes it. Probe-only: nothing in the page calls it.
+  __fire: (id, type) => {
+    const node = el(id);
+    for (const fn of (node._listeners[type] || []).slice()) {
+      fn({ preventDefault: noop, stopPropagation: noop, target: node, currentTarget: node });
+    }
+  },
   __text: () => [...drawnText],
 };
 sandbox.window = sandbox; sandbox.globalThis = sandbox; sandbox.self = sandbox;
@@ -605,7 +636,63 @@ sandbox.document.getElementById("linksDetach").click();
 // error at a buffer boundary in whichever test happened to be running, on a loaded machine and
 // not on an idle one. The exit itself is needed: the page holds timers and a socket open, so
 // nothing here ends on its own.
+// ---- Mixer group (#17), operator page only. The page probes /api/mixer as it initialises and
+// shows the group on the strength of the answer, so what is read here is that answer's effect: a
+// test that stands up no API handler gets a 404 and a group that stays hidden, which is what
+// every other test in this file is. MIXER=1 says to wait for one, because only then is there
+// something to wait for and a fixed wait would be added to every run.
+const mixerPanel = () => ({
+  hidden: run(`document.getElementById("mixerCtl").hidden`),
+  className: run(`document.getElementById("mixerCtl").className`),
+  read: run(`document.getElementById("mixRead").textContent`),
+  // A browser's input.value is always a string, whatever was assigned to it; the shim keeps
+  // whatever it was given, so the coercion happens here instead.
+  gain: run(`String(document.getElementById("mixGain").value)`),
+  gainDisabled: run(`document.getElementById("mixGain").disabled`),
+  agc: run(`document.getElementById("mixAgc").className`),
+  boost: run(`document.getElementById("mixBoost").className`),
+  keyHidden: run(`document.getElementById("mixKey").hidden`),
+});
+if (process.env.MIXER) {
+  await untilTrue(() => run(`document.getElementById("mixerCtl").hidden`) === false, 10000);
+}
+
+const mixerOnArrival = mixerPanel();
+let mixerAfterGain = null;
+let mixerAfterAgc = null;
+let mixerAfterBoost = null;
+if (process.env.MIXGAIN) {
+  // Through the page's own handlers, as a browser fires them: the slider is moved and a "change"
+  // is dispatched, and the AGC and Boost buttons are clicked. That covers the wiring - which
+  // event each control listens for, what each handler sends, and that the Boost button the card
+  // has not got refuses to send anything - none of which calling mixSend by hand would prove.
+  const before = mixerPanel().read;
+  run(`document.getElementById("mixGain").value = ${process.env.MIXGAIN}`);
+  sandbox.__fire("mixGain", "change");
+  await untilTrue(() => run(`document.getElementById("mixRead").textContent`) !== before, 10000);
+  mixerAfterGain = mixerPanel();
+
+  const beforeAgc = mixerAfterGain.agc;
+  sandbox.__fire("mixAgc", "click");
+  await untilTrue(() => run(`document.getElementById("mixAgc").className`) !== beforeAgc, 10000);
+  mixerAfterAgc = mixerPanel();
+
+  // A control the card has not got: the button is disabled and its handler must send nothing, so
+  // this is a wait for something NOT to happen. A second of it is enough to catch a request that
+  // does go out, and the assertion is that the panel is unchanged.
+  const beforeBoost = mixerPanel();
+  sandbox.__fire("mixBoost", "click");
+  await wait(1000);
+  mixerAfterBoost = mixerPanel();
+  mixerAfterBoost.unchangedByBoost =
+    beforeBoost.read === mixerAfterBoost.read && beforeBoost.agc === mixerAfterBoost.agc;
+}
+
 process.stdout.write(JSON.stringify({
+  mixerOnArrival,
+  mixerAfterGain,
+  mixerAfterAgc,
+  mixerAfterBoost,
   socketUrl,
   linksWindowUrl,
   // Whether the page decided it is the torn-off links window rather than the waterfall.

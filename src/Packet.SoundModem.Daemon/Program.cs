@@ -112,6 +112,13 @@ using Packet.SoundModem.Ms110d;
 // (default 1) for BOTH paths; a headless client sharing a box with SmartSDR must pick a channel
 // SmartSDR is not using (it grabs DAX 1). See docs/flex-integration.md §4/§8.
 
+// --mixer-show DEVICE prints the sound card's mixer - every control it has, and the capture
+// gain, AGC, mic boost and playback level this station would drive - and exits. DEVICE is the
+// same string as --device (plughw:CARD=Device,DEV=0) or the card alone (hw:3). It only reads,
+// and reading a mixer does not touch the PCM, so it answers "what is my card called and where
+// is it set" on a station that is running. The "alsa" config section sets the same controls at
+// start-up; see CONFIG.md.
+
 // --device ubersdr:<instance> makes a RECEIVE-ONLY station out of a public UberSDR web
 // receiver: <instance> is a host (m9psy-1.instance.ubersdr.org), a host:port, or the https://
 // URL you would open in a browser. The daemon takes the receiver's IQ stream (iq48 - 48 kHz of
@@ -172,6 +179,9 @@ string? flexFreq = null;
 string? flexAnt = null;
 string? flexMode = null;
 string? flexDaxCh = null;
+// --mixer-show: print a card's mixer and exit. Reading a mixer does not touch the PCM, so this
+// answers "what are my card's control names and what is it set to" without stopping the station.
+string? mixerShow = null;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -200,6 +210,7 @@ for (int i = 0; i < args.Length; i++)
         case "--flex-ant": flexAnt = Next(); break;
         case "--flex-mode": flexMode = Next(); break;
         case "--flex-daxch": flexDaxCh = Next(); break;
+        case "--mixer-show": mixerShow = Next(); break;
         // Takes the callsign the token is for, and says so rather than throwing when it is
         // missing: this is often the first thing a new site owner runs.
         case "--uplink-token": return UplinkToken.Print(i + 1 < args.Length ? args[++i] : null);
@@ -212,8 +223,33 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 
+// Before anything else is built: this reads a card and exits, and it deliberately works while
+// another process holds the PCM, which is the state a station's mixer is usually asked about in.
+if (mixerShow is not null)
+{
+    string showCard = AlsaMixer.CardFor(mixerShow);
+    if (!AlsaMixer.TryOpen(showCard, out AlsaMixer? showMixer, out string showWhy))
+    {
+        Console.Error.WriteLine($"{MixerSetup.JournalPrefix}{showCard} has no mixer ({showWhy})");
+        return 1;
+    }
+
+    using (showMixer)
+    {
+        // Guarded for the same reason the start-up call is: TryOpen catches a missing symbol
+        // among the ten entry points it uses, and Apply reaches twenty more.
+        if (MixerSetup.TryApply(showMixer!, new MixerSettings(), Console.WriteLine, out _) is null)
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 var modems = new List<ModemConfig>();
 PttConfig? pttConfig = null;
+AlsaConfig? alsaConfig = null;
 PagingConfig? paging = null;
 FlexConfig? flexConfig = null;
 UberSdrConfig? uberSdrConfig = null;
@@ -274,6 +310,7 @@ if (configPath is not null)
     frameLogConfig = config.FrameLog;
     modems = config.Modems;
     pttConfig = config.Ptt;
+    alsaConfig = config.Alsa;
     paging = config.Paging;
     flexConfig = config.Flex;
     uberSdrConfig = config.UberSdr;
@@ -1531,6 +1568,9 @@ using var cancellation = new CancellationTokenSource();
 // Runtime configuration, on the waterfall's listener. Off unless a key is set, and refused
 // outright if there is no listener to hang it on - an "api" section on a station with no
 // waterfall is a setting that would silently do nothing.
+// Held beyond the block below because the sound card's mixer is opened much later, with the
+// audio device, and has to be handed to the API once it exists.
+ConfigApi? runtimeApi = null;
 if (apiConfig?.Key is { Length: > 0 } apiKey)
 {
     if (waterfallServer is null)
@@ -1550,7 +1590,7 @@ if (apiConfig?.Key is { Length: > 0 } apiKey)
     }
 
     string ephemeralPath = ConfigApi.EphemeralPathFor(configPath);
-    var configApi = new ConfigApi(
+    ConfigApi configApi = runtimeApi = new ConfigApi(
         apiKey, configPath, ephemeralPath,
         runningJson: () => apiConfigJson,
         ephemeralInForce: apiEphemeralInForce,
@@ -1888,6 +1928,12 @@ IAudioInput input;
 // the difference between "the band is quiet" and "this machine will not schedule us".
 AlsaAudioOutput? alsaOut = null;
 AlsaAudioInput? alsaIn = null;
+// The card's mixer, on the ALSA path only. Opened whether or not the configuration sets
+// anything, so the start-up log records the level the station is actually listening at - but
+// nothing is written to the card unless a key in "alsa"."mixer" said so.
+AlsaMixer? mixer = null;
+string mixerWhyNot = "this station has no sound card, so it has no mixer";
+MixerSettings mixerWanted = alsaConfig?.Mixer?.ToSettings() ?? new MixerSettings();
 
 if (PipeAudio.IsPipe(device) && wavLoopPath is null)
 {
@@ -2378,6 +2424,62 @@ else
     }
 
     Console.WriteLine($"audio: {device} capture {captureRate} Hz -> {DspRate} Hz");
+
+    // The card's mixer, through the same libasound the PCM above opened. Read even when the
+    // configuration asks for nothing, because a station's capture gain is the difference between
+    // clean audio and clipped audio and the start-up log should say what it is; written only
+    // where a key said so, so a file with no "alsa" section leaves every control alone.
+    string mixerCard = alsaConfig?.Mixer?.Card ?? AlsaMixer.CardFor(device);
+    if (AlsaMixer.TryOpen(mixerCard, out AlsaMixer? openedMixer, out string mixerWhy))
+    {
+        mixer = openedMixer;
+
+        // TryApply and not Apply: these are top-level statements with nothing above them to catch
+        // anything, and TryOpen only proves the ten entry points it uses itself. A libasound
+        // missing one of the twenty Apply reaches would otherwise be a crash at every start-up
+        // and a systemd restart loop, over a mixer. It costs the mixer instead.
+        if (MixerSetup.TryApply(mixer!, mixerWanted, Console.WriteLine, out string applyWhy) is null)
+        {
+            mixerWhyNot = $"{mixerCard} could not be read or set: {applyWhy}";
+            openedMixer!.Dispose();
+            mixer = null;
+        }
+    }
+    else
+    {
+        // Not a failure. A card with no mixer at all is a real thing (a bare I2S codec, a loopback
+        // device), and so is a libasound with no mixer functions in it - neither is a reason for
+        // a station to stop receiving.
+        mixerWhyNot = $"{mixerCard} has no mixer: {mixerWhy}";
+        Console.WriteLine(
+            $"{MixerSetup.JournalPrefix}{mixerCard} has no mixer ({mixerWhy}); capture gain, AGC "
+            + "and mic boost are left as the card has them");
+    }
+}
+
+using AlsaMixer? mixerLifetime = mixer;
+
+// The operator page's mixer group and any script that wants the card's state come through here,
+// under the same key as every other change. A station with no mixer says so rather than 404ing,
+// so the page can tell "no mixer here" from "this daemon is too old to have the endpoint".
+if (mixer is AlsaMixer liveMixer)
+{
+    runtimeApi?.ServeMixer(
+        read: () => MixerSetup.Apply(liveMixer, mixerWanted.LeaveEverything(), null),
+        apply: change => MixerSetup.Apply(
+            liveMixer,
+            mixerWanted with
+            {
+                CaptureGainPercent = change.CaptureGainPercent,
+                Agc = change.Agc,
+                MicBoost = change.MicBoost,
+                PlaybackPercent = change.PlaybackPercent,
+            },
+            Console.WriteLine));
+}
+else
+{
+    runtimeApi?.NoMixer(mixerWhyNot);
 }
 
 await using var flexLifetime = flex;
