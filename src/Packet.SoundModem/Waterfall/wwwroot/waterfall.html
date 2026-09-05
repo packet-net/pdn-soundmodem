@@ -1721,6 +1721,16 @@ function connect() {
   ws.onmessage = e => {
     if (typeof e.data === "string") {
       const msg = JSON.parse(e.data);
+      if (msg.type === "ping") {
+        // The server asks every twenty seconds whether anybody is still here, and stops counting
+        // a page that has said nothing for a minute - which is what lets an on-demand receiver
+        // go when a phone sleeps or a laptop lid closes without the socket ever closing. Answered
+        // here rather than from a timer of our own because a browser throttles a background tab's
+        // timers to once a minute or worse but delivers its messages unthrottled, so a tab left
+        // open overnight goes on answering.
+        ws.send(JSON.stringify({ type: "pong" }));
+        return;
+      }
       if (msg.type === "config") {
         const first = !cfg;
         cfg = msg;

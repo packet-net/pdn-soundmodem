@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using AwesomeAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Waterfall;
@@ -73,6 +74,75 @@ public class WaterfallPageTests
 
         probe.BlocksAfterStop.Should().Be(0, "a second click must stop the audio, not just the label");
         probe.StoppedLabel.Should().Be("Listen");
+    }
+
+    /// <summary>
+    /// The page answers the server's keep-alive, so a page somebody has left open is never
+    /// mistaken for one whose browser has gone (#411).
+    /// </summary>
+    /// <remarks>
+    /// The one assertion no server-side test can make. The keep-alive only works if the shipping
+    /// page answers what it is sent, and the page answers it from <c>onmessage</c> - which is
+    /// deliberate, because a browser throttles a background tab's timers and does not throttle its
+    /// messages. Here the real page script does the answering, in real V8, over a real socket,
+    /// while the server's clock is wound on far faster than the wall.
+    /// </remarks>
+    [Fact]
+    public async Task The_Page_Answers_The_Servers_Keep_Alive_And_Is_Never_Given_Up_On()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var clock = new FakeTimeProvider();
+        List<string> journal = [];
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port, new WaterfallOptions
+        {
+            TimeProvider = clock,
+            Log = line => { lock (journal) { journal.Add(line); } },
+        });
+        server.Start();
+
+        // Five seconds of the server's clock per twenty-five of the wall, so a probe run that
+        // lasts a few seconds is a page held open for twenty minutes and asked some sixty times.
+        // Slow enough that the page has a fifth of a second of real time to answer each round,
+        // which is a long time for a socket on loopback and a scripting engine with nothing else
+        // to do.
+        using var running = new CancellationTokenSource();
+        var wound = TimeSpan.Zero;
+        Task winding = Task.Run(async () =>
+        {
+            while (!running.IsCancellationRequested)
+            {
+                clock.Advance(WaterfallWebServer.KeepAlivePeriod);
+                wound += WaterfallWebServer.KeepAlivePeriod;
+                try
+                {
+                    await Task.Delay(25, running.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+        });
+
+        Probe probe = await RunProbeAsync(node, port);
+        await running.CancelAsync();
+        await winding;
+
+        probe.Thrown.Should().BeEmpty("the page must not throw while answering");
+        probe.Connected.Should().BeTrue("the page must reach the server before anything else can work");
+        wound.Should().BeGreaterThan(WaterfallWebServer.KeepAliveSilence * 5,
+            "the page has to be held open across several deadlines for this to prove anything");
+
+        lock (journal)
+        {
+            journal.Should().BeEmpty(
+                "a page that answers is never given up on, however long it is left open");
+        }
     }
 
     /// <summary>

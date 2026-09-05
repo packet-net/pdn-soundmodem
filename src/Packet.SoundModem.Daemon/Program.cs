@@ -1103,6 +1103,9 @@ if (waterfallConfig is not null)
             // browser arriving mid-afternoon is shown the channel rather than an empty list. Null
             // when there is no frame log: nothing to show, and nothing pretending otherwise.
             FrameHistory = frameLog is null ? null : frameLog.Recent,
+            // Where a page dropped for not answering says so. Untagged, like every other line
+            // this process writes, because it runs one station.
+            Log = stationJournal.Write,
         },
         // One bind for every listener; the waterfall no longer carries its own.
         bindAddress);

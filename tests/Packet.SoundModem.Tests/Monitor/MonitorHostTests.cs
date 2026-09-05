@@ -1,11 +1,13 @@
 using System.Net;
 using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 using AwesomeAssertions;
 using M0LTE.Radio.Audio;
 using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Daemon;
 using Packet.SoundModem.UberSdr;
+using Packet.SoundModem.Waterfall;
 
 namespace Packet.SoundModem.Tests.Monitor;
 
@@ -134,7 +136,7 @@ public class MonitorHostTests
         session.Disposed.Should().BeFalse();
 
         // And the cancelled linger must not fire later and take the session anyway.
-        h.Time.Advance(Harness.Linger * 2);
+        await AdvanceWatchingAsync(second, h.Time, Harness.Linger * 2);
         (await h.RowAsync(DalgetySlug)).State.Should().Be("live");
         session.Disposed.Should().BeFalse();
     }
@@ -254,7 +256,7 @@ public class MonitorHostTests
         h.Preflights(DalgetyHost).Should().Be(1);
 
         // And the ladder picks it up again rather than the station being wedged for good.
-        h.Time.Advance(MonitorHost.RebuildAfter);
+        await AdvanceWatchingAsync(watching, h.Time, MonitorHost.RebuildAfter);
         await h.UntilAsync(() => Task.FromResult(h.Preflights(DalgetyHost) >= 2));
     }
 
@@ -324,6 +326,40 @@ public class MonitorHostTests
 
         (await h.StatusAsync(resolved.AbsolutePath)).Should().Be(
             HttpStatusCode.OK, "the link a receiver's page gives its visitors must actually load");
+    }
+
+    /// <summary>
+    /// Moves the clock on with a browser watching, answering the server's keep-alive as the page
+    /// does.
+    /// </summary>
+    /// <remarks>
+    /// <para>One jump would be simpler and is no longer honest: the server stops counting a page
+    /// that has said nothing for <see cref="WaterfallWebServer.KeepAliveSilence"/> and drops its
+    /// socket (#411), so a test that jumped a silent socket over that deadline would be measuring
+    /// a receiver nobody was watching any more.</para>
+    /// <para>An answer every <see cref="WaterfallWebServer.KeepAlivePeriod"/>, which is twelve
+    /// per deadline, because a fake clock and a real socket keep different time: the jump happens
+    /// in no time at all while the answer is still crossing loopback, so the server reads it some
+    /// steps after the clock says it was sent. The millisecond is what makes twelve a margin
+    /// rather than a hope - a send to loopback completes without ever yielding the thread, so
+    /// without it this loop can run its whole span before the server gets a turn at any of the
+    /// answers.</para>
+    /// </remarks>
+    private static async Task AdvanceWatchingAsync(
+        ClientWebSocket socket, FakeTimeProvider clock, TimeSpan span)
+    {
+        using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        for (TimeSpan gone = TimeSpan.Zero; gone < span; gone += WaterfallWebServer.KeepAlivePeriod)
+        {
+            await socket.SendAsync(
+                Encoding.UTF8.GetBytes("{\"type\":\"pong\"}"),
+                WebSocketMessageType.Text, true, giveUp.Token);
+            await Task.Delay(1, giveUp.Token);
+            TimeSpan step = span - gone;
+            clock.Advance(step < WaterfallWebServer.KeepAlivePeriod
+                ? step
+                : WaterfallWebServer.KeepAlivePeriod);
+        }
     }
 
     /// <summary>The next message of one type off a page's socket.</summary>

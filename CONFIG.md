@@ -794,6 +794,17 @@ quietly start pulling ~24 KB/s, and several viewers cost nothing unless they eac
 Nothing is received while the station transmits, so the audio stops for the length of a keyup.
 That is silence, not a dropout.
 
+**Every page is asked whether it is still there.** The server sends each open page a keep-alive
+every 20 seconds and stops counting one that has said nothing at all for 60 seconds, closing its
+socket and writing one line: `page: viewer dropped, no reply for 60 s, 0 viewers` (with the
+station's slug in front of it on a monitor). Nothing to configure, and nothing to notice on a
+page that is open - the page answers from its message handler, so a tab in the background answers
+too. It matters because a socket whose browser has gone does not always close: a phone that goes
+to sleep, a laptop lid, a browser killed outright behind a Cloudflare tunnel all leave a
+connection that looks alive from here for ever, and before this that page went on being counted
+as a viewer - which, with `"ubersdr": { "onDemand": true }`, held somebody's receiver open all
+night for nobody (#411).
+
 **Your own transmissions are drawn.** Receive processing is gated off while transmitting - half
 duplex - so the waterfall used to freeze for the length of every keyup, which quietly compressed
 its time axis: a three-second transmission left no gap, and signals either side of it ended up
@@ -1706,6 +1717,11 @@ it has no viewers to count.
 The daemon writes a few `ubersdr:` lines of its own at start-up which carry no count, because
 they are the daemon's rather than the receiver's and none of them is part of a churn: the
 receiver description, the session limit, and the "refusing this address for now" line.
+
+The count itself is pages, and a page only counts while it is answering: see [the keep-alive
+above](#waterfall). Before it existed a browser that vanished without closing its socket was
+counted for ever, so the linger never started and the receiver was retried all night with nobody
+watching.
 
 **With a [`monitor`](#monitor) section this section still applies**, to every receiver the monitor
 fronts: `mode`, `password`, `ssbLowHz`, `ssbHighHz`, `startupGuardMs` and `gain` are honoured as

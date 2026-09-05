@@ -644,6 +644,9 @@ internal sealed class MonitorHost : IAsyncDisposable
                 DeclaredBands = StationFactory.DeclaredBandsFor(host._options.Modems),
                 FrameHistory = _frameLog is null ? null : _frameLog.Recent,
                 TimeProvider = host._time,
+                // This station's own tagged sink, so that a page dropped for not answering names
+                // the receiver whose session is about to be let go.
+                Log = _journal.Write,
             });
 
             // Whose receiver it is, from the directory, before any session has ever been opened:

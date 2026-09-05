@@ -245,6 +245,9 @@ internal sealed class RelayStation : IMonitorStation
             ReceiverKind = "station",
             FrameHistory = _frameLog is null ? null : _frameLog.Recent,
             TimeProvider = _time,
+            // This station's own tagged sink, so that a page dropped for not answering names the
+            // relayed station whose page it was on.
+            Log = Journal.Write,
         });
 
         Server.SetReceiver(Credit, Hello.Site);
