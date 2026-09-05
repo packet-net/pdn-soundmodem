@@ -864,6 +864,117 @@ public class WaterfallPageTests
         return at;
     }
 
+    // ---------------------------------------------------------------- TX test
+    /// <summary>
+    /// The transmit control, driven from the page as an operator drives it.
+    /// </summary>
+    /// <remarks>
+    /// The assertion is what the daemon received, over the page's own socket. Nothing server-side
+    /// can make it: the button could be wired to the wrong element, send the wrong shape, or read
+    /// the seconds box as a string, and every other test in this suite would stay green - which
+    /// is exactly how the Listen button once shipped completely non-functional.
+    /// </remarks>
+    [Fact]
+    public async Task The_Tx_Test_Button_Asks_The_Station_For_What_The_Operator_Chose()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        var asked = new List<TxTestRequest>();
+        WaterfallWebServer? server = null;
+        await using (server = new WaterfallWebServer(channel, port, new WaterfallOptions
+        {
+            TxTest = new TxTestControl
+            {
+                DefaultSeconds = 5,
+                MaxSeconds = 30,
+                Presets = [.. Packet.SoundModem.Audio.TestTone.BesselNullTonesHz.Select(TxTestPreset.For)],
+                Start = request =>
+                {
+                    lock (asked)
+                    {
+                        asked.Add(request);
+                    }
+
+                    // The station's own answer, which is what turns the button into Stop.
+                    server!.ReportTxTest(new TxTestStatus(
+                        "running", "two-tone 700+1900 Hz, 5.0 s, peak level 0.80"));
+                },
+                Stop = () => server!.ReportTxTest(new TxTestStatus(
+                    "done", "two-tone 700+1900 Hz, 5.0 s, peak level 0.80 - stopped after 1.2 s")),
+            },
+        }))
+        {
+            server.Start();
+            Probe probe = await RunProbeAsync(node, port, txTest: "stop");
+
+            probe.Thrown.Should().BeEmpty("the page must not throw around a transmit control");
+            probe.Connected.Should().BeTrue();
+            probe.TxTestOffered.Should().BeTrue("the operator's page carries the control");
+            probe.TxTestDisabled.Should().BeFalse("this station can transmit");
+
+            // Two tones, one free tone, and the four FM presets with the deviation each one
+            // calibrates - the whole reason 999 Hz is a preset rather than a number to remember.
+            probe.TxTestOptions.Should().Equal([
+                "Two tone 700+1900",
+                "One tone",
+                "500 Hz -> FM 1.2 kHz dev",
+                "999 Hz -> FM 2.4 kHz dev",
+                "1248 Hz -> FM 3.0 kHz dev",
+                "2079 Hz -> FM 5.0 kHz dev",
+            ]);
+
+            // What the station was actually asked for, off the wire: the two-tone pair for the
+            // page's own default length, as a number and not as the string in the box.
+            lock (asked)
+            {
+                asked.Should().ContainSingle("a click is one test, and a stop is not a second")
+                    .Which.Should().Be(new TxTestRequest(true, 700, 5));
+            }
+
+            probe.TxTestLabel.Should().Be(
+                "Stop", "while it is on the air the button is the way to end it");
+            probe.TxTestSaidAfter.Should().Contain(
+                "stopped after 1.2 s", "and the page shows the station's own words");
+        }
+    }
+
+    /// <summary>
+    /// A station that cannot key says so on the control rather than hiding it.
+    /// </summary>
+    [Fact]
+    public async Task A_Station_That_Cannot_Key_Shows_The_Reason_On_A_Dead_Button()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        var asked = new List<TxTestRequest>();
+        await using var server = new WaterfallWebServer(channel, port, new WaterfallOptions
+        {
+            TxTest = new TxTestControl
+            {
+                Refusal = "no \"ptt\" is configured, so this daemon does not key the radio",
+                Start = asked.Add,
+                Stop = () => { },
+            },
+        });
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port, txTest: "send");
+
+        probe.TxTestOffered.Should().BeTrue();
+        probe.TxTestDisabled.Should().BeTrue();
+        probe.TxTestSaid.Should().Contain("no \"ptt\" is configured");
+        probe.TxTestLabel.Should().BeNull("nothing was ever on the air, so nothing became Stop");
+        asked.Should().BeEmpty("and pressing it asks the station for nothing");
+    }
+
     private static void FeedTone(SoundModemChannel channel, CancellationToken token)
     {
         var block = new float[512];
@@ -906,6 +1017,8 @@ public class WaterfallPageTests
     /// <param name="pageText">The page to run, when it matters that it is the one the server
     /// stamped rather than the one in the assembly: the version check compares the stamp against
     /// what the server announces, and the embedded copy still carries the placeholder.</param>
+    /// <param name="txTest">Whether to press the TX test button: null leaves it alone, "send"
+    /// presses it once, "stop" presses it again while the test is on the air.</param>
     /// <summary>
     /// The operator page's Mixer group reads the sound card and sets it, through the station's
     /// own config API (#17).
@@ -1023,7 +1136,7 @@ public class WaterfallPageTests
 
     private static async Task<Probe> RunProbeAsync(
         string node, int port, bool audio = false, string? protocol = null, string? pathname = null,
-        string? stored = null, string? pageText = null, string? apiKey = null,
+        string? stored = null, string? pageText = null, string? txTest = null, string? apiKey = null,
         bool mixer = false, int? mixerGain = null)
     {
         string here = Path.GetDirectoryName(typeof(WaterfallPageTests).Assembly.Location)!;
@@ -1040,6 +1153,7 @@ public class WaterfallPageTests
         if (protocol is not null) start.Environment["PROTOCOL"] = protocol;
         if (pathname is not null) start.Environment["PATHNAME"] = pathname;
         if (stored is not null) start.Environment["STORED"] = stored;
+        if (txTest is not null) start.Environment["TXTEST"] = txTest;
         if (apiKey is not null) start.Environment["APIKEY"] = apiKey;
         if (mixer) start.Environment["MIXER"] = "1";
         if (mixerGain is int gain)
@@ -1320,10 +1434,13 @@ public class WaterfallPageTests
             "nor the floor and top of the colour scale, which is the same kind of knob");
         visitor.PublicPage.Hidden["mixerCtl"].Should().BeTrue(
             "and the sound card's own gain is a station's, never a visitor's");
+        visitor.PublicPage.Hidden["txTestCtl"].Should().BeTrue(
+            "and least of all the control that keys the transmitter");
 
-        // Every id the flag hides, except the mixer group, which hides itself for a second and
-        // separate reason and is asserted on its own below.
-        op.PublicPage.Hidden.Where(entry => entry.Key != "mixerCtl").Should()
+        // Every id the flag hides, except the two groups that hide themselves for a second and
+        // separate reason - the mixer when there is no config API behind it, the transmit test
+        // when the station sent no control - and are asserted on their own.
+        op.PublicPage.Hidden.Where(entry => entry.Key is not ("mixerCtl" or "txTestCtl")).Should()
             .AllSatisfy(entry => entry.Value.Should().BeFalse(),
                 "nothing is taken off the operator's page; the flag only hides");
 
@@ -1475,9 +1592,10 @@ public class WaterfallPageTests
         // The operator's page is untouched: the button is there and it honours what was stored.
         op.MineOnArrival.Hidden.Should().BeFalse("nothing is taken off the operator's page");
         op.MineOnArrival.On.Should().BeTrue("where the button is there to turn it back off");
-        // Except the mixer group, which takes itself off a page with no config API behind it
-        // whichever flavour that page is; see The_Public_Page_Hides_The_Sideband_And_Span_Controls.
-        op.PublicPage.Hidden.Where(entry => entry.Key != "mixerCtl").Should()
+        // Except the mixer group and the transmit test, which take themselves off a page that has
+        // no config API and no transmit control behind them whichever flavour that page is; see
+        // The_Public_Page_Hides_The_Sideband_And_Span_Controls.
+        op.PublicPage.Hidden.Where(entry => entry.Key is not ("mixerCtl" or "txTestCtl")).Should()
             .AllSatisfy(entry => entry.Value.Should().BeFalse(),
                 "the flag only hides, and only on the visitor's page");
 
@@ -1673,6 +1791,12 @@ public class WaterfallPageTests
         bool Detached,
         PublicPage PublicPage,
         bool Connected,
+        bool TxTestOffered,
+        string[] TxTestOptions,
+        bool TxTestDisabled,
+        string TxTestSaid,
+        string? TxTestLabel,
+        string? TxTestSaidAfter,
         string? ClickError,
         bool Listening,
         string Label,

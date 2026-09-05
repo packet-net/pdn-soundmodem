@@ -100,6 +100,20 @@
   .txfig.alarm { background: #7a1f14; border-radius: 3px; padding: 0 5px; }
   .txfig.alarm b, .txfig.alarm .k { color: #ffd0c4; }
 
+  /* TX test: the operator's own transmitter test. Never on a public page - the server sends no
+     txTest block to one, so the control is absent rather than hidden. Amber while it is on the
+     air, because this is the one control on this page that puts a signal out, and the sentence
+     under it is the same wording the journal writes. */
+  #txTestCtl select, #txTestCtl input { max-width: 110px; }
+  #txTestSeconds, #txTestHz { width: 48px; text-align: right; }
+  #txTestHz[hidden] { display: none; }
+  #txTestGo.on { background: var(--amber); color: #12141a; border-color: var(--amber); }
+  #txTestWhat {
+    font-family: var(--mono); font-size: 10px; color: var(--muted); max-width: 260px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #txTestWhat.bad { color: #ff9a7a; }
+
   #dial {
     font-family: var(--mono); font-variant-numeric: tabular-nums;
     font-size: 18px; width: 128px; color: var(--amber);
@@ -475,6 +489,20 @@
     </div>
   </div>
 
+  <!-- TX test: a two-tone linearity check, or one tone for a carrier level or an FM deviation
+       check. Operator page only; the server never sends a public page the block that reveals
+       this, so a visitor's page does not contain the control at all. -->
+  <div class="ctl" id="txTestCtl" hidden>
+    <label for="txTestGo">TX test</label>
+    <div class="ctl-row">
+      <select id="txTestKind" title="Two tones for a linearity check; one tone for a carrier level, or for an FM deviation check by Bessel null"></select>
+      <input id="txTestHz" inputmode="decimal" spellcheck="false" title="Tone frequency in Hz" hidden>
+      <input id="txTestSeconds" inputmode="decimal" spellcheck="false" title="Seconds on air">
+      <button class="btn" id="txTestGo" title="Key the radio and send the test through the normal transmit path at the station's transmit level">Send</button>
+    </div>
+    <span id="txTestWhat"></span>
+  </div>
+
   <div class="spacer"></div>
   <div id="meta"><span id="conn" class="dead">connecting…</span><span id="stats"></span></div>
 </header>
@@ -654,6 +682,107 @@ function setRadioStatus(status) {
   el.classList.toggle("quiet", /^(idle|no viewers|connecting)\b/i.test(status));
 }
 
+// ---------------------------------------------------------------- TX test
+// The one control on this page that puts a signal on the air. It exists only when the server
+// sent a txTest block, which it does only for the operator's own page - a public page and a
+// relayed one are never sent one, and a station with no transmitter is not either.
+//
+// Nothing is decided here. The duration is sent as typed and the daemon caps it, the tone is
+// sent as chosen and the daemon refuses one it will not send, and what comes back is the
+// daemon's own sentence, which is also the line in the journal. A page cannot ask for anything
+// the --two-tone switch could not ask for.
+let txTestRunning = false;
+
+function initTxTest() {
+  const control = cfg.txTest;
+  if (!control || cfg.publicMonitor) return;
+  const kind = $("txTestKind"), hz = $("txTestHz"), seconds = $("txTestSeconds"), go = $("txTestGo");
+
+  // Two tones for linearity; then one tone free; then the four FM presets, each labelled with
+  // the deviation its Bessel null calibrates - raise the transmit audio until the carrier
+  // disappears and the level at that point is that deviation.
+  const options = [
+    ["two", `Two tone ${Math.round(control.lowToneHz)}+${Math.round(control.highToneHz)}`],
+    ["tone", "One tone"],
+  ];
+  for (const p of control.presets || []) {
+    options.push([`tone:${p.toneHz}`,
+      `${Math.round(p.toneHz)} Hz -> FM ${(p.deviationHz / 1000).toFixed(1)} kHz dev`]);
+  }
+  for (const [value, text] of options) {
+    const option = document.createElement("option");
+    option.value = value; option.textContent = text;
+    kind.appendChild(option);
+  }
+
+  kind.value = "two";
+  hz.value = String(Math.round(control.lowToneHz));
+  seconds.value = String(control.defaultSeconds);
+  $("txTestCtl").hidden = false;
+
+  // The frequency box appears only for the free tone: the presets carry their own, and a box
+  // that could disagree with the label beside it would put the deviation reading out by exactly
+  // that much.
+  const chosenHz = () =>
+    kind.value === "tone" ? parseFloat(hz.value) : parseFloat(kind.value.slice(5));
+  const showKind = () => {
+    hz.hidden = kind.value !== "tone";
+    const tone = chosenHz();
+    txTestSay(control.refusal ? control.refusal
+      : kind.value === "two" ? ""
+      : isFinite(tone) && tone > 0
+        ? `FM null at ${(tone * 2.405 / 1000).toFixed(2)} kHz deviation`
+        : "", !!control.refusal);
+  };
+  kind.onchange = showKind;
+  hz.oninput = showKind;
+  showKind();
+
+  if (control.refusal) {
+    // Shown and disabled, with the reason: a control that is simply missing tells an operator
+    // who was looking for it nothing at all.
+    kind.disabled = hz.disabled = seconds.disabled = go.disabled = true;
+    return;
+  }
+
+  go.onclick = () => {
+    if (txTestRunning) { txTestSend({ stop: true }); return; }
+    const asked = parseFloat(seconds.value);
+    txTestSend({
+      twoTone: kind.value === "two",
+      toneHz: chosenHz(),
+      seconds: isFinite(asked) && asked > 0 ? asked : control.defaultSeconds,
+    });
+  };
+}
+
+function txTestSend(request) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(Object.assign({ type: "txtest" }, request)));
+  }
+}
+
+function txTestSay(text, bad) {
+  const el = $("txTestWhat");
+  el.textContent = text || "";
+  el.title = text || "";
+  el.classList.toggle("bad", !!bad);
+}
+
+// What the daemon says became of it. Every open page hears this, not only the one that asked:
+// two tabs on one station must not disagree about whether it is transmitting. Any state other
+// than "running" puts the button back, including "failed" - a keyup that threw must not leave
+// the control amber and reading Stop with nothing behind it.
+function onTxTest(msg) {
+  txTestRunning = msg.state === "running";
+  const go = $("txTestGo");
+  if (go) {
+    go.classList.toggle("on", txTestRunning);
+    go.textContent = txTestRunning ? "Stop" : "Send";
+  }
+  txTestSay(msg.text, msg.state === "refused" || msg.state === "failed");
+}
+
 // Everything the public flavour takes off the page, by id. Three kinds: controls a visitor
 // cannot usefully act on, because what they set arrives from the receiver's band plan and moving
 // it can only make the picture wrong (the dial and its sideband, the span, the display levels);
@@ -661,7 +790,11 @@ function setRadioStatus(status) {
 // that are left, and the frame rate and bin width of the spectrum); and, in the links pane, the
 // Mine filter, which asks for the links this station is one end of - this flavour is receive only
 // and has no station of its own, so the filter has nothing to mean and could only empty the pane.
-const PUBLIC_HIDES = ["dialCtl", "spanCtl", "levelCtl", "mixerCtl", "audioLabel", "linksLabel", "stats", "linksMine"];
+const PUBLIC_HIDES = ["dialCtl", "spanCtl", "levelCtl", "mixerCtl", "audioLabel", "linksLabel", "stats", "linksMine",
+  // TX test. Belt and braces: a public page is never sent the txTest block that reveals this,
+  // so the control is already absent - but a transmit control is the one thing on this page it
+  // would be worst to leave showing if that ever changed.
+  "txTestCtl"];
 
 // A deployment on the open internet: a title of its own, a paragraph of what the visitor is
 // looking at, and whose receiver it is. It is somebody else's receiver; the credit and the link
@@ -828,6 +961,9 @@ function initControls() {
     ui.floorDb = UI_DEFAULTS.floorDb; ui.topDb = UI_DEFAULTS.topDb;
     ui.linksMine = UI_DEFAULTS.linksMine;
   }
+
+  // TX test, before the dial: it reads nothing but the config and stores nothing.
+  initTxTest();
 
   if (ui.dialHz == null && cfg.dialHz > 0) ui.dialHz = cfg.dialHz;
   if (ui.sideband == null) ui.sideband = (cfg.sideband || "usb").toLowerCase();
@@ -1916,6 +2052,10 @@ function connect() {
     // A detached links window has no waterfall to paint, so it asks not to be sent one - and
     // has to ask again on every reconnect, because the server starts every socket with it on.
     if (detached) { ws.send(JSON.stringify({ type: "spectrum", on: false })); }
+    // TX test: a test that was running when the socket dropped belongs to the station, not to
+    // this page. Its outcome was broadcast while we were away, so start again from not-running
+    // rather than leaving a Stop button that would stop nothing.
+    if (txTestRunning) { onTxTest({ state: "", text: "" }); }
   };
   ws.onclose = () => {
     $("conn").textContent = "reconnecting…"; $("conn").className = "dead";
@@ -1951,6 +2091,8 @@ function connect() {
         setRadioStatus(msg.status);
       } else if (msg.type === "tx") {
         setTransmitReading(msg);
+      } else if (msg.type === "txtest") {
+        onTxTest(msg);
       } else if (msg.type === "hosts") {
         setHostPorts(msg);
       } else if (msg.type === "frame") {

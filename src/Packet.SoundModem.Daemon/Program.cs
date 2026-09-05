@@ -34,6 +34,7 @@ using Packet.SoundModem.Ms110d;
 //                  [--paging PORT[:BAUD]]
 //                  [--ardop PORT]
 //                  [--waterfall PORT] [--dial HZ]
+//                  [--two-tone SECONDS] [--tone HZ SECONDS]
 //
 // Modes: afsk1200, bpsk300 (IL2P+CRC), bpsk300-nocrc, bpsk1200 - the BPSK modes are a
 // differential frequency-diversity bank by default (parallel branches at stepped centres;
@@ -162,6 +163,13 @@ string? pttSpec = null;
 string? configPath = null;
 int? waterfallPort = null;
 double? dialHz = null;
+// TX test: one bounded test transmission, then exit. --two-tone SECONDS sends the 700/1900 Hz
+// pair for a linearity check; --tone HZ SECONDS sends one tone, for a carrier-level check or an
+// FM Bessel-null deviation check (999 Hz nulls at 2.4 kHz deviation, 500 at 1.2, 1248 at 3.0,
+// 2079 at 5.0). Both go out through the station's real transmit path at its real level, so what
+// is measured is what a frame gets, and both are bounded by "txTest"."maxSeconds".
+double? twoToneSeconds = null;
+(double Hz, double Seconds)? singleTone = null;
 bool qualityFrames = false;
 // PSK detection method. --psk-detector overrides it for every PSK mode; unset, the modes pick
 // their measured-best default: BPSK defaults to Differential (on real off-air HF, benchmarked
@@ -202,6 +210,11 @@ for (int i = 0; i < args.Length; i++)
         case "--wav-loop": wavLoopPath = Next(); break;
         case "--waterfall": waterfallPort = int.Parse(Next()); break;
         case "--dial": dialHz = double.Parse(Next()); break;
+        case "--two-tone": twoToneSeconds = double.Parse(Next()); break;
+        case "--tone":
+            double singleToneHz = double.Parse(Next());
+            singleTone = (singleToneHz, double.Parse(Next()));
+            break;
         case "--quality-frames": qualityFrames = true; break;
         case "--psk-detector": pskDetectorOverride = Enum.Parse<PskDetector>(Next(), ignoreCase: true); break;
         case "--paging": pagingSpec = Next(); break;
@@ -262,6 +275,7 @@ RawCaptureConfig? rawCaptureConfig = null;
 DeadFeedConfig? deadFeedConfig = null;
 bool idBeacons = true;
 ApiConfig? apiConfig = null;
+TxTestConfig txTestConfig = new();
 // What this process is running, verbatim, so the API can serve it back rather than re-serialise
 // a parsed object and quietly lose whatever the operator wrote that this version ignores.
 string apiConfigJson = "{}";
@@ -323,6 +337,7 @@ if (configPath is not null)
     rawCaptureConfig = config.RawCapture;
     deadFeedConfig = config.DeadFeed;
     idBeacons = config.IdBeacons;
+    txTestConfig = config.TxTest;
     ardopPort ??= config.Ardop?.Port;
     Console.WriteLine($"config: {configPath}");
 
@@ -357,8 +372,59 @@ if (configPath is not null)
     // the station path exactly as it was.
     if (config.Monitor is not null)
     {
+        if (twoToneSeconds is not null || singleTone is not null)
+        {
+            Console.Error.WriteLine(
+                "tx test: refused, this configuration describes a monitor rather than a station "
+                + "- it fronts other people's web receivers and has no transmitter of its own");
+            return 2;
+        }
+
         return await MonitorStartup.RunAsync(config);
     }
+}
+
+// One bounded test transmission and out, for a bench with no browser on it. The station is
+// built exactly as it would be to carry traffic - same device, same PTT, same level - because
+// the whole point is to measure what a frame gets; what does not come up is anything that
+// serves somebody else. See TxTestRunner, and the "txTest" section of CONFIG.md.
+Packet.SoundModem.Waterfall.TxTestRequest? benchTxTest = null;
+if (twoToneSeconds is not null && singleTone is not null)
+{
+    Console.Error.WriteLine("--two-tone and --tone are two ways to run one test; give one of them");
+    return 2;
+}
+else if (twoToneSeconds is double twoToneSecondsAsked)
+{
+    benchTxTest = new Packet.SoundModem.Waterfall.TxTestRequest(true, 0, twoToneSecondsAsked);
+}
+else if (singleTone is { } singleToneAsked)
+{
+    benchTxTest = new Packet.SoundModem.Waterfall.TxTestRequest(
+        false, singleToneAsked.Hz, singleToneAsked.Seconds);
+}
+
+// --bind is not validated anywhere the way a config file's "bind" is, so an address that is not
+// an address used to travel all the way to a null-forgiving ParseBind and surface as a
+// NullReferenceException from the KISS listener - or, once the waterfall gained a warning that
+// had to know whether the bind was loopback, as a FormatException before that. Said once, here,
+// in the same words the config file's own check uses.
+if (DaemonConfig.ParseBind(bindAddress) is null)
+{
+    Console.Error.WriteLine(
+        $"--bind {bindAddress} is not an IP address. Use \"127.0.0.1\" for loopback only, "
+        + "\"*\" for every interface, or the address of one interface.");
+    return 2;
+}
+
+// A web receiver has no transmitter, so a bench test on one is refused before anything is built
+// rather than after the station has come up around a page that will not exist.
+if (benchTxTest is not null && device.StartsWith("ubersdr:", StringComparison.OrdinalIgnoreCase))
+{
+    Console.Error.WriteLine(
+        "tx test: refused, this station's audio comes from a web receiver, which is a receiver "
+        + "and has no transmitter - there is nothing here to key");
+    return 1;
 }
 
 // --waterfall/--dial override (or stand in for) the config's waterfall section.
@@ -1114,7 +1180,11 @@ if (wavPath is not null)
 // before audio flows: Start() measures every modem's band off its own modulator and
 // registers the channel receive tap.
 Packet.SoundModem.Waterfall.WaterfallWebServer? waterfallServer = null;
-if (waterfallConfig is not null)
+// Not on a --two-tone/--tone run: such a run lives for a few seconds, and a page or a scraper
+// that attached to it would lose it again immediately. It also means a bench run does not stop
+// with "cannot serve the waterfall" when the operator has left the service holding the port -
+// which would be true, and would say nothing about the test they actually asked for.
+if (benchTxTest is null && waterfallConfig is not null)
 {
     waterfallServer = new Packet.SoundModem.Waterfall.WaterfallWebServer(
         channel,
@@ -1185,6 +1255,22 @@ if (waterfallConfig is not null)
     }
 
     Console.WriteLine($"waterfall: {waterfallServer.Url}");
+
+    // The same warning the KISS ports carry, for the same reason and now with a sharper one.
+    // The page is read-only on a public deployment, but on an operator's own station it carries
+    // the transmit test, and there is no password on it.
+    // Through the helper this file already uses rather than IPAddress.Parse, which throws on
+    // anything that is not an IP literal: the bind is checked at start-up above, so by here it
+    // reads, and asking twice with two different parsers is how the two answers drift apart.
+    if (!Equals(DaemonConfig.ParseBind(bindAddress), System.Net.IPAddress.Loopback))
+    {
+        Console.WriteLine(
+            "waterfall: WARNING - listening beyond loopback. The page has no authentication, and "
+            + (waterfallConfig.Public
+                ? "anything that can reach this port can watch this station."
+                : "on an operator's page it carries a transmit test: anything that can reach this "
+                  + "port can key your transmitter on your licence."));
+    }
 }
 
 await using var waterfallLifetime = waterfallServer;
@@ -1571,7 +1657,7 @@ using var cancellation = new CancellationTokenSource();
 // Held beyond the block below because the sound card's mixer is opened much later, with the
 // audio device, and has to be handed to the API once it exists.
 ConfigApi? runtimeApi = null;
-if (apiConfig?.Key is { Length: > 0 } apiKey)
+if (benchTxTest is null && apiConfig?.Key is { Length: > 0 } apiKey)
 {
     if (waterfallServer is null)
     {
@@ -1704,7 +1790,9 @@ void WatchClients(KissTcpServer server)
 // channel is no longer a reason to withhold it. (It was, when an ARDOP channel carried nothing
 // else; gating on the old top-level "ardop" setting would now silently leave the packet modems
 // with no host interface at all.)
-if (modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
+// A --two-tone/--tone run offers no KISS port: it lives for a few seconds and a host that
+// attached to it would lose its session again immediately.
+if (benchTxTest is null && modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
 {
     string shown = Equals(listenAddress, System.Net.IPAddress.Any) ? "0.0.0.0" : listenAddress.ToString();
 
@@ -1762,7 +1850,7 @@ if (modems.Any(m => !DaemonConfig.IsArdop(m.Mode)))
 await using var kissLifetime = new KissServerSet(kissServers);
 
 M0LTE.Ardop.Host.ArdopHostServer? ardopServer = null;
-if (ardopModem is not null)
+if (benchTxTest is null && ardopModem is not null)
 {
     // ARDOP runs its own channel discipline (ARQ timing budgets, negotiated leaders), so its
     // own bursts must never wait on a p-persistence roll - they go out through the channel's
@@ -1890,7 +1978,7 @@ if (ardopModem is not null)
 await using var ardopLifetime = ardopServer;
 
 Packet.SoundModem.Pocsag.PagingTcpServer? pagingServer = null;
-if (paging is not null)
+if (benchTxTest is null && paging is not null)
 {
     var polarity = paging.InvertPolarity
         ? M0LTE.Pocsag.PocsagPolarity.Inverted
@@ -2509,6 +2597,93 @@ _ = transmitter.ContinueWith(
     TaskContinuationOptions.OnlyOnFaulted,
     TaskScheduler.Default);
 
+// ---------------------------------------------------------------- TX test
+// The operator's transmitter test. Built here because this is the first point at which the
+// answer to "can this station key at all" is settled: the PTT line has been opened or found not
+// to exist, and the transmitter loop above is running. It is offered three ways - the operator
+// page's control, POST /api/txtest, and --two-tone/--tone - and all three go through this one
+// runner, so there is one set of rules and one cap rather than three.
+string? txTestRefusal =
+    !txTestConfig.Enabled
+        ? "\"txTest\".\"enabled\" is false in this station's configuration"
+    : channel.ReceiveOnlyReason is string txTestReceiveOnly
+        ? txTestReceiveOnly
+    : ptt is NullPtt
+        // Refused rather than left to VOX, deliberately. A test transmission has to be keyed and
+        // unkeyed by the station that made it; a VOX trip is the radio deciding, and "the daemon
+        // put a carrier up and something else decided when to stop" is not a transmission anybody
+        // should be able to start from a web page.
+        ? "no \"ptt\" is configured, so this daemon does not key the radio"
+    : null;
+
+// Which sub-channel a test is filed under in the frame log and the frames panel. A label, not a
+// choice: the transmit path is shared - one output device and one PTT line, whichever modem's
+// frame is going out - so a test measures the same path whatever this says. It is the
+// sub-channel a KISS frame on port 0 would reach: 0 where there is a modem there, and the lowest
+// configured otherwise.
+int txTestSubChannel = modems.Any(m => m.SubChannel == 0)
+    ? 0
+    : modems.Count > 0 ? modems.Min(m => m.SubChannel) : 0;
+
+var txTestRunner = new TxTestRunner(new TxTestOptions
+{
+    Channel = channel,
+    Journal = stationJournal,
+    DefaultSeconds = txTestConfig.Seconds,
+    MaxSeconds = txTestConfig.MaxSeconds,
+    Amplitude = txTestConfig.Amplitude,
+    Refusal = txTestRefusal,
+    SubChannel = txTestSubChannel,
+    Report = status => waterfallServer?.ReportTxTest(status),
+    Recorded = record =>
+    {
+        // Written down where transmissions are written down. The frame log's rows are frames and
+        // a tone burst is not one, so what the payload holds is the sentence describing what went
+        // out - which is what the panel shows beside the row, and what a monitor site is sent for
+        // a station that publishes to one. See CONFIG.md under "frameLog".
+        frameLog?.RecordTransmitted(
+            record.SubChannel,
+            record.Payload,
+            Packet.SoundModem.Waterfall.WaterfallWebServer.TestTransmissionMode,
+            record.AudioHz,
+            // No rf_hz: a test tone is not a modem with a planned RF centre, and a dial plus an
+            // audio frequency is only the answer on one sideband of one kind of station.
+            rfHz: null);
+        waterfallServer?.ReportTestTransmission(
+            record.SubChannel, record.Text, record.Payload.Length);
+
+        // A test is a transmission, so it owes the same identification a frame does. The ident
+        // clock is normally started by channel.FrameTransmitted, which a test never raises: it
+        // goes out through the delegate overload and carries no sub-channel of its own. Without
+        // this a station could key for tones all afternoon and never say who it was.
+        if (identifiers.TryGetValue(record.SubChannel, out StationIdentifier? owedForTest))
+        {
+            owedForTest.NoteTransmission();
+        }
+    },
+});
+
+// Never on a public page: a test transmission is the operator's own act and the control belongs
+// on the operator's own page, which is the only page this daemon serves that is not public.
+if (waterfallServer is not null && waterfallConfig?.Public != true)
+{
+    waterfallServer.SetTxTest(txTestRunner.Control);
+}
+
+runtimeApi?.ServeTxTest(txTestRunner);
+if (txTestRefusal is null)
+{
+    stationJournal.Write(
+        $"tx test: ready - two-tone {Packet.SoundModem.Audio.TestTone.TwoToneLowHz:F0}+"
+        + $"{Packet.SoundModem.Audio.TestTone.TwoToneHighHz:F0} Hz or a single tone, "
+        + $"{txTestConfig.Seconds:0.#} s by default, capped at "
+        + $"{Math.Clamp(txTestConfig.MaxSeconds, 1, TxTestRunner.CeilingSeconds):0.#} s");
+}
+else
+{
+    stationJournal.Write($"tx test: unavailable - {txTestRefusal}");
+}
+
 // Identification. Two halves: every frame a configured modem sends starts its clock, and a
 // slow poll sends the ident once one falls due. Polling rather than a timer per modem because
 // the decision is StationIdentifier's and depends on traffic as well as time - there is no
@@ -2599,7 +2774,9 @@ DeadFeedDevice deadFeedDevice =
 // (docs/uplink-plan.md, decision 8). It is the waterfall server's relay, so it is offered exactly
 // what the page is already being shown.
 Packet.SoundModem.Waterfall.UplinkClient? uplink = null;
-if (publishConfig is not null)
+// Not on a --two-tone run: a monitor site should not be dialled, credited with a station and
+// then dropped again for the sake of a five-second bench test.
+if (benchTxTest is null && publishConfig is not null)
 {
     int publishRate = DaemonConfig.PublishedAudioRate(publishConfig, DspRate);
 
@@ -2767,6 +2944,54 @@ station.Faulted += fault =>
     radioLost = true;
     cancellation.Cancel();
 };
+
+// --two-tone / --tone: transmit once and go.
+//
+// The receive loop goes on a thread of its own here, which is what Station.Run's own docs say a
+// host running it alongside anything else must do: it is synchronous and blocks until the station
+// stops, because every input's Read is. The station has to be listening for the test to defer to
+// a busy channel on the carrier sense a frame would - and calling Run in front of the test rather
+// than beside it is a test that never transmits at all, the transmitter having already been shut
+// down by the time it is asked. Measured on flex:mock before this was a thread: the burst sat on
+// the queue until the wall-clock bound gave up on it.
+if (benchTxTest is not null)
+{
+    var listening = new Thread(station.Run)
+    {
+        IsBackground = true,
+        Name = "tx-test-station",
+    };
+    listening.Start();
+
+    TxTestOutcome benchOutcome = await txTestRunner.RunAsync(benchTxTest);
+    cancellation.Cancel();
+    try
+    {
+        await transmitter;
+    }
+    catch (Exception)
+    {
+        // The transmitter ends by cancellation, which is how this path always ends it.
+    }
+
+    // The receive loop first, and BEFORE the devices are closed. It notices the cancellation on
+    // its next block and returns; until it has, it is inside the input's Read, and closing an
+    // ALSA capture handle from under snd_pcm_readi on another thread is not something alsa-lib
+    // supports. A background thread, so an input whose Read is wedged cannot hold the process
+    // open either way - but it gets its five seconds to come out on its own first.
+    listening.Join(TimeSpan.FromSeconds(5));
+
+    if (!deviceIsFlex)
+    {
+        (ptt as IDisposable)?.Dispose();
+        (playback as IDisposable)?.Dispose();
+        (input as IDisposable)?.Dispose();
+    }
+
+    // Exit 1 on a refusal, so a bench script can tell "it went out" from "it did not" without
+    // reading the journal. Exit 2 stays what it has always been: your configuration is wrong.
+    return benchOutcome.Ran ? 0 : 1;
+}
 
 station.Run();
 

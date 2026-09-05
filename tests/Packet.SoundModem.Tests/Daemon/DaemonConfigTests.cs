@@ -1048,6 +1048,100 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void The_Transmitter_Test_Is_On_By_Default_With_Its_Two_Bounds()
+    {
+        // There is nothing to switch on: nothing happens until an operator asks for it, and the
+        // two numbers here are the only ones that decide what a keyup can cost.
+        string path = WriteConfig("""{"device": "null"}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.TxTest.Enabled.Should().BeTrue();
+        config.TxTest.Seconds.Should().Be(5);
+        config.TxTest.MaxSeconds.Should().Be(30);
+        config.TxTest.Amplitude.Should().Be(
+            0.8, "the modulators' own peak, so the test measures what a frame gets");
+    }
+
+    [Fact]
+    public void The_Transmitter_Tests_Bounds_Are_Read_From_The_File()
+    {
+        string path = WriteConfig("""
+            {"device": "null", "txTest": {"seconds": 3, "maxSeconds": 10, "amplitude": 0.5}}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config!.TxTest.Seconds.Should().Be(3);
+        config.TxTest.MaxSeconds.Should().Be(10);
+        config.TxTest.Amplitude.Should().Be(0.5);
+    }
+
+    [Fact]
+    public void A_Typo_Inside_The_Transmitter_Test_Block_Is_Called_Out()
+    {
+        // A misspelt cap is a cap that is not there, and the setting it was meant to be is the
+        // one thing standing between a click and a PA held up for as long as it says.
+        string path = WriteConfig("""
+            {"device": "null", "txTest": {"maxSec": 10}}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("txTest: \"maxSec\"");
+        config.TxTest.MaxSeconds.Should().Be(30, "and the default still stands");
+    }
+
+    [Fact]
+    public void An_Impossible_Transmitter_Test_Level_Stops_Start_Up_With_A_Sentence()
+    {
+        // Without this the daemon starts, journals "tx test: ready", and then throws on every
+        // press - which, since the page discards what Start throws, looks exactly like a button
+        // that does nothing. A station that looks configured and is not is the failure here.
+        foreach (string bad in new[] { "1.5", "0", "-0.2" })
+        {
+            string path = WriteConfig(
+                "{\"device\": \"null\", \"txTest\": {\"amplitude\": " + bad + "}}");
+
+            DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+            config.Should().BeNull($"an amplitude of {bad} is not a level");
+            error.Should().Contain("txTest").And.Contain("amplitude");
+            ShouldGuideTheOperator(error, path);
+        }
+    }
+
+    [Fact]
+    public void A_Transmitter_Test_That_Would_Last_No_Time_Stops_Start_Up()
+    {
+        string path = WriteConfig("""{"device": "null", "txTest": {"seconds": 0}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("txTest").And.Contain("seconds");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void A_Cap_Beyond_The_Ceiling_Is_Accepted_And_Clamped_Rather_Than_Refused()
+    {
+        // The cap is clamped to 1..60 in force whatever the file says, so an over-large one is
+        // not a configuration error - the clamp is the safety property rather than a correction,
+        // and refusing to start over a number that cannot do any harm would be the wrong trade.
+        string path = WriteConfig("""{"device": "null", "txTest": {"maxSeconds": 3600}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config!.TxTest.MaxSeconds.Should().Be(3600, "the file says what it says");
+    }
+
+    [Fact]
     public void A_Typo_Inside_The_Publish_Block_Is_Called_Out()
     {
         string path = PublishingStation("""

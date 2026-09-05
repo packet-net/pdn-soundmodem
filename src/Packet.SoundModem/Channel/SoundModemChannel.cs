@@ -59,7 +59,14 @@ public sealed class SoundModemChannel
         Action<Exception>? Rejected,
         bool OwnsTiming,
         object Source,
-        TimeSpan? QuietAfter);
+        TimeSpan? QuietAfter)
+    {
+        /// <summary>
+        /// The token registration that withdraws this item, disposed once it has gone out or been
+        /// withdrawn, so a long-lived token does not accumulate registrations for finished work.
+        /// </summary>
+        public CancellationTokenRegistration Withdrawal { get; set; }
+    }
 
     // A queue PER TRANSMITTER rather than one for the channel. With a single queue a deferred
     // frame at the head blocks everything behind it, including the link that is not deferred -
@@ -393,9 +400,17 @@ public sealed class SoundModemChannel
     /// <see cref="QuietAfterTransmit"/> for the frame-addressed form and for why the decision
     /// belongs to the caller.
     /// </param>
+    /// <param name="withdraw">
+    /// Cancelling this takes the transmission back off the queue, so it never keys the radio and
+    /// the returned task is cancelled. For a caller that can change its mind while a transmission
+    /// waits out a busy channel - the operator's test transmission - where emptying the burst
+    /// would not be enough, the transmitter having already keyed by the time it asks for audio.
+    /// Silent once the transmission is under way; see <c>Withdraw</c>. The default cannot be
+    /// cancelled and costs nothing.
+    /// </param>
     public Task EnqueueTransmit(
         Func<int, float[]> modulate, Action<Exception>? rejected = null, bool ownsChannelTiming = false,
-        object? source = null, TimeSpan? quietAfter = null)
+        object? source = null, TimeSpan? quietAfter = null, CancellationToken withdraw = default)
     {
         ArgumentNullException.ThrowIfNull(modulate);
         if (ReceiveOnlyReason is string receiveOnly)
@@ -410,8 +425,8 @@ public sealed class SoundModemChannel
 
         object identity = source ?? new object();
         return !ownsChannelTiming && TransmitInhibit is not null
-            ? EnqueueWhenPermittedAsync(modulate, rejected, identity, quietAfter)
-            : EnqueueNow(modulate, rejected, ownsChannelTiming, identity, quietAfter);
+            ? EnqueueWhenPermittedAsync(modulate, rejected, identity, quietAfter, withdraw)
+            : EnqueueNow(modulate, rejected, ownsChannelTiming, identity, quietAfter, withdraw);
     }
 
     /// <summary>
@@ -538,13 +553,17 @@ public sealed class SoundModemChannel
     public TimeSpan TransmitInhibitTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     private async Task EnqueueWhenPermittedAsync(
-        Func<int, float[]> modulate, Action<Exception>? rejected, object source, TimeSpan? quietAfter)
+        Func<int, float[]> modulate, Action<Exception>? rejected, object source, TimeSpan? quietAfter,
+        CancellationToken withdraw)
     {
         // The injected clock, per the repo's wall-clock discipline - this was the library's
         // one Stopwatch and its one bare Task.Delay, which no test could virtualise.
         long waitedFrom = _time.GetTimestamp();
         while (TransmitInhibit?.Invoke() == true)
         {
+            // Withdrawn before it was ever queued, which is the cheapest place for it to happen.
+            withdraw.ThrowIfCancellationRequested();
+
             if (_time.GetElapsedTime(waitedFrom) > TransmitInhibitTimeout)
             {
                 var refusal = new InvalidOperationException(
@@ -557,7 +576,7 @@ public sealed class SoundModemChannel
             await Task.Delay(InhibitPollInterval, _time).ConfigureAwait(false);
         }
 
-        await EnqueueNow(modulate, rejected, ownsChannelTiming: false, source, quietAfter)
+        await EnqueueNow(modulate, rejected, ownsChannelTiming: false, source, quietAfter, withdraw)
             .ConfigureAwait(false);
     }
 
@@ -566,7 +585,7 @@ public sealed class SoundModemChannel
 
     private Task EnqueueNow(
         Func<int, float[]> modulate, Action<Exception>? rejected, bool ownsChannelTiming, object source,
-        TimeSpan? quietAfter)
+        TimeSpan? quietAfter, CancellationToken withdraw = default)
     {
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var item = new TxItem(modulate, done, rejected, ownsChannelTiming, source, quietAfter);
@@ -583,7 +602,57 @@ public sealed class SoundModemChannel
             _txSignal.TrySetResult();
         }
 
+        if (withdraw.CanBeCanceled)
+        {
+            // Registered after the enqueue, and Withdraw is a no-op on an item that is no longer
+            // in the queue, so a token that fires between the two is not a lost transmission.
+            item.Withdrawal = withdraw.Register(() => Withdraw(item));
+        }
+
         return done.Task;
+    }
+
+    /// <summary>
+    /// Takes a queued transmission back off the queue, so it never reaches the transmitter and
+    /// never causes a keyup.
+    /// </summary>
+    /// <remarks>
+    /// <para>The whole point is the keyup. A caller that has given up - an operator cancelling a
+    /// test transmission that has been waiting for a busy channel - must not have the radio key
+    /// up minutes later on their behalf, unannounced. Emptying the burst is not enough: the
+    /// transmitter has already keyed by the time it asks for the audio.</para>
+    /// <para>Silent when the item has already been taken for a keyup that is under way. Nothing
+    /// can be done about that one - the audio may already be in the sound card - so the task
+    /// completes normally as the transmission it was, and it is the caller's business to render
+    /// nothing if it no longer wants to be heard.</para>
+    /// </remarks>
+    private void Withdraw(TxItem item)
+    {
+        bool removed = false;
+        lock (_txGate)
+        {
+            if (_txQueues.TryGetValue(item.Source, out Queue<TxItem>? queue) && queue.Contains(item))
+            {
+                // Rebuilt without it rather than dequeued: the item may be behind others of the
+                // same source, and their order is the order they will go out in.
+                var kept = new Queue<TxItem>(queue.Where(queued => !ReferenceEquals(queued, item)));
+                removed = true;
+                if (kept.Count == 0)
+                {
+                    _txQueues.Remove(item.Source);
+                    _txOrder.Remove(item.Source);
+                }
+                else
+                {
+                    _txQueues[item.Source] = kept;
+                }
+            }
+        }
+
+        if (removed)
+        {
+            item.Done.TrySetCanceled();
+        }
     }
 
     /// <summary>Renews the hold when the link it protects is heard from.</summary>
@@ -699,6 +768,18 @@ public sealed class SoundModemChannel
             }
 
             TxItem item = queue.Dequeue();
+
+            // Unregister, NOT Dispose. Dispose blocks until a callback that is already running
+            // has finished, and that callback is Withdraw, whose first act is to take this very
+            // lock - so a token firing in the few instructions between the dequeue above and
+            // this line would leave the transmitter holding _txGate and waiting for Withdraw
+            // while Withdraw waits for _txGate. Neither ever returns, the lock is held for the
+            // life of the process, and every enqueue and every keyup behind it stops silently.
+            // Unregister does not wait, and returns false when the callback is already under
+            // way - which is exactly this type's "silent once the transmission is under way"
+            // contract, since by then the item is out of the queue and Withdraw will find
+            // nothing to remove.
+            item.Withdrawal.Unregister();
             if (queue.Count == 0)
             {
                 _txQueues.Remove(source);
@@ -762,6 +843,11 @@ public sealed class SoundModemChannel
 
             _txQueues.Clear();
             _txOrder.Clear();
+            foreach (TxItem item in queued)
+            {
+                // Same reasoning as TakeFrom: never Dispose under this lock.
+                item.Withdrawal.Unregister();
+            }
         }
 
         foreach (TxItem item in queued)
@@ -840,6 +926,16 @@ public sealed class SoundModemChannel
                 }
 
                 await Delay(Csma.SlotTimeMilliseconds, cancellation).ConfigureAwait(false);
+            }
+
+            // Withdrawn while we waited for the channel. Nothing is left to send for this
+            // source, so there is nothing to key for: a transmission taken back must not leave
+            // the radio keying up on an empty burst, which is the whole point of being able to
+            // take one back. Nothing else removes a queued item, so on every other path this is
+            // the item NextEligibleSource just found and the test never fires.
+            if (PeekFrom(source) is null)
+            {
+                continue;
             }
 
             _transmitting = true;

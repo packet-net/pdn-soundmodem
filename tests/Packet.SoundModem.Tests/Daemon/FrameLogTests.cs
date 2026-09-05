@@ -234,6 +234,43 @@ public class FrameLogTests : IDisposable
         OpenHandles(DbPath).Should().Be(0, "a closed log lets go of its file");
     }
 
+    [Fact]
+    public async Task A_Closed_Log_Is_One_Self_Contained_File_With_The_Rows_In_It()
+    {
+        // Durability was never the question: a committed row is safe in the write-ahead log the
+        // moment it is written, and every SQLite reader sees it because opening the database
+        // recovers the WAL. What was wrong is what an operator finds when they look. Without the
+        // closing checkpoint a station that had logged all day left a 4 KB frames.db beside a
+        // frames.db-wal holding the traffic, so anything reading the file rather than the database
+        // - a copy that takes the one file, a grep for a callsign, a glance at the size - found an
+        // empty-looking log. It is what made a transmitter test look unlogged on the bench when
+        // the row had been there all along.
+        await using (FrameLog log = FrameLog.Open(DbPath, _time))
+        {
+            log.Record(0, Frame(), Quality(), null, null);
+            log.RecordTransmitted(0, Frame("GB7RDG", "M0LTE"), "afsk1200", 1700, null);
+        }
+
+        new FileInfo(DbPath).Length.Should().BeGreaterThan(
+            4096, "a database holding rows is more than its schema page");
+        var wal = new FileInfo(DbPath + "-wal");
+        (!wal.Exists || wal.Length == 0).Should().BeTrue(
+            "the write-ahead log is folded in, so nothing of the log is left outside the file");
+
+        // The bytes are in the file itself, which is the whole point: this is the check a shell
+        // can make, and the one that failed on the bench.
+        string raw = System.Text.Encoding.Latin1.GetString(File.ReadAllBytes(DbPath));
+        raw.Should().Contain("M0LTE").And.Contain("GB7RDG");
+
+        // And it is still a database, read by a connection that has never seen the writer's.
+        using var reader = new SqliteConnection($"Data Source={DbPath};Mode=ReadOnly");
+        reader.Open();
+        using SqliteCommand count = reader.CreateCommand();
+        count.CommandText = "SELECT COUNT(*) FROM frames";
+        Convert.ToInt64(count.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture)
+            .Should().Be(2);
+    }
+
     /// <summary>How many file descriptors this process holds on <paramref name="path"/>.</summary>
     private static int OpenHandles(string path)
     {

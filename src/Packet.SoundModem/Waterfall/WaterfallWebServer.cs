@@ -124,6 +124,18 @@ public sealed class WaterfallOptions
     /// connection's own thread; a throw here costs the line and nothing else.
     /// </remarks>
     public Action<string>? Log { get; set; }
+
+    // ---------------------------------------------------------------- TX test
+    /// <summary>
+    /// The transmitter test the operator may ask this station for - a two-tone linearity check or
+    /// a single tone - or null (the default) for a page that offers none, which is every public
+    /// page, every relayed one and every station without a transmitter of its own.
+    /// </summary>
+    /// <remarks>
+    /// Installed by the host, because what a keyup costs is the daemon's business and not this
+    /// library's. See <see cref="TxTestControl"/>.
+    /// </remarks>
+    public TxTestControl? TxTest { get; set; }
 }
 
 /// <summary>
@@ -204,6 +216,20 @@ public sealed record DeclaredBand(int SubChannel, string Mode, double CentreHz, 
 /// </param>
 /// <param name="Clients">Hosts currently attached.</param>
 public readonly record struct HostPortStatus(int Port, int? SubChannel, int Clients);
+
+/// <summary>
+/// Where a page said it came from, and the host it reached this station on.
+/// </summary>
+/// <remarks>
+/// Browsers do not apply the same-origin policy to WebSockets and there is no preflight, so
+/// without this any page the operator's browser happens to load could open a socket to this
+/// station and key the transmitter. A browser sets <c>Origin</c> itself and script cannot change
+/// it, so a page from somewhere else cannot pretend to be this one; a non-browser client sends
+/// none at all and is left alone. See <see cref="WaterfallWebServer.OriginMayKey"/>.
+/// </remarks>
+/// <param name="Declared">The <c>Origin</c> header, or empty when there was none.</param>
+/// <param name="Served">The <c>Host</c> this request arrived on.</param>
+public readonly record struct PageOrigin(string Declared, string Served);
 
 /// <summary>One modem's display band, measured off its own modulator at start-up.</summary>
 /// <param name="SubChannel">KISS sub-channel.</param>
@@ -286,6 +312,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         /// point here is to end a receive that will otherwise wait for ever.
         /// </remarks>
         public required CancellationTokenSource Stop { get; init; }
+
+        /// <summary>Where this page said it came from, and where it reached us.</summary>
+        public PageOrigin From { get; init; }
 
         private int _audio;
         private int _spectrum = 1;
@@ -469,6 +498,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(channel);
         _channel = channel;
         _options = options ?? new WaterfallOptions();
+        _txTest = _options.TxTest;
         Url = "";
     }
 
@@ -960,6 +990,21 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             receiverUrl = _receiverUrl,
             receiverKind = _options.ReceiverKind,
             pickerUrl = _options.PickerUrl,
+            // TX test: null on every page that is not the operator's own, so the control is
+            // absent rather than hidden - a public page is never sent the shape of it.
+            txTest = _txTest is not { } test ? null : new
+            {
+                defaultSeconds = test.DefaultSeconds,
+                maxSeconds = test.MaxSeconds,
+                lowToneHz = test.LowToneHz,
+                highToneHz = test.HighToneHz,
+                refusal = test.Refusal,
+                presets = test.Presets.Select(p => new
+                {
+                    toneHz = p.ToneHz,
+                    deviationHz = Math.Round(p.DeviationHz),
+                }),
+            },
             modems = _bands.Select(b => new
             {
                 sub = b.SubChannel,
@@ -1789,13 +1834,26 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// </summary>
     internal const int AudioHeaderBytes = 4;
 
-    private static void TryApplyClientRequest(WaterfallClient client, ReadOnlySpan<byte> utf8)
+    private void TryApplyClientRequest(WaterfallClient client, ReadOnlySpan<byte> utf8)
     {
         try
         {
             using JsonDocument request = JsonDocument.Parse(utf8.ToArray());
-            if (request.RootElement.TryGetProperty("type", out JsonElement type)
-                && request.RootElement.TryGetProperty("on", out JsonElement on))
+            if (!request.RootElement.TryGetProperty("type", out JsonElement type))
+            {
+                return;
+            }
+
+            // TX test: the operator asking this station to key up. Handled apart from the two
+            // toggles below because it is not a per-client preference - it puts a signal on the
+            // air, so it is the station's business and every open page hears the outcome.
+            if (type.GetString() == "txtest")
+            {
+                ApplyTxTestRequest(request.RootElement, client);
+                return;
+            }
+
+            if (request.RootElement.TryGetProperty("on", out JsonElement on))
             {
                 switch (type.GetString())
                 {
@@ -1813,6 +1871,265 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // A browser sending nonsense loses nothing but its own request.
         }
     }
+
+    // ---------------------------------------------------------------- TX test
+    /// <summary>
+    /// Whether a WebSocket handshake may be accepted, given where the page that opened it came
+    /// from. Only asked of a station that has a transmit control installed.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Why this exists.</b> Browsers do not apply the same-origin policy to WebSockets
+    /// and there is no preflight, so without this any page the operator's browser happens to load
+    /// can open a socket to this station and key the transmitter. The default bind is loopback,
+    /// which does not help at all: the attacking page runs in the operator's own browser, on the
+    /// operator's own machine. A station serving its page to the shack over the LAN is reachable
+    /// from anything on it.</para>
+    /// <para><b>Why an origin check is enough, and why it is not applied everywhere.</b> A
+    /// browser sets <c>Origin</c> itself and script cannot change it, so a page from somewhere
+    /// else cannot pretend to be this one. A non-browser client - curl, a script, the test suite -
+    /// sends no <c>Origin</c> at all, and is left alone: it is not the thing being defended
+    /// against, and it has no ambient credentials to be abused. And the check is only applied
+    /// where there is something to defend: a public page and a relayed one carry no transmit
+    /// control, and they are the pages most likely to sit behind a tunnel or a proxy that could
+    /// make a legitimate origin and host disagree.</para>
+    /// </remarks>
+    internal static bool OriginMayKey(PageOrigin from)
+    {
+        if (string.IsNullOrEmpty(from.Declared))
+        {
+            // Not a browser: curl, a script, the test suite. Nothing to defend against - there
+            // are no ambient credentials for somebody else's page to borrow - and refusing these
+            // would break every machine client for no gain.
+            return true;
+        }
+
+        // Compared on the host and port a browser would have connected to, so http and https,
+        // and a page served under a path base, all compare equal. A malformed Origin is not a
+        // browser's, and is refused rather than parsed generously.
+        return Uri.TryCreate(from.Declared, UriKind.Absolute, out Uri? declared)
+            && (string.Equals(declared.Authority, from.Served, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(declared.Host, from.Served, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// One <c>txtest</c> message from the operator's page: start a test, or stop the one running.
+    /// </summary>
+    /// <remarks>
+    /// Nothing is decided here. Whether the station may transmit at all, how long for and at what
+    /// level are the daemon's to say - this only reads the request and hands it over, so that a
+    /// page cannot ask for anything the CLI switch could not ask for too.
+    /// </remarks>
+    private void ApplyTxTestRequest(JsonElement request, WaterfallClient client)
+    {
+        if (_txTest is not { } control)
+        {
+            // No control installed: a public page, a relayed one, or a station with no
+            // transmitter. Silently ignored - there is nobody to refuse on behalf of.
+            return;
+        }
+
+        if (!OriginMayKey(client.From))
+        {
+            // Judged here rather than at the handshake, for two reasons. The control is installed
+            // several seconds after the listener opens - the sound card and the PTT line come
+            // first - so a socket admitted during start-up would never be checked again, and a
+            // page retrying in a background tab catches that window on every restart. And
+            // refusing the upgrade would cost a station behind a Host-rewriting proxy its whole
+            // page, waterfall and frames and all, where this costs it only the button.
+            RefuseForeignOrigin(client);
+            return;
+        }
+
+        if (request.TryGetProperty("stop", out JsonElement stop) && stop.ValueKind == JsonValueKind.True)
+        {
+            control.Stop();
+            return;
+        }
+
+        bool twoTone = !request.TryGetProperty("twoTone", out JsonElement pair)
+            || pair.ValueKind != JsonValueKind.False;
+        double toneHz = request.TryGetProperty("toneHz", out JsonElement tone)
+            && tone.ValueKind == JsonValueKind.Number
+                ? tone.GetDouble()
+                : control.LowToneHz;
+        double seconds = request.TryGetProperty("seconds", out JsonElement length)
+            && length.ValueKind == JsonValueKind.Number
+                ? length.GetDouble()
+                : control.DefaultSeconds;
+
+        control.Start(new TxTestRequest(twoTone, toneHz, seconds));
+    }
+
+    private TxTestControl? _txTest;
+
+    /// <summary>
+    /// How often a refused origin reaches the journal. The refusal is free to send: anything that
+    /// can reach the port can send a <c>txtest</c> message as fast as it likes, and one line each
+    /// would push everything else the station has to say out of the journal. Same interval and
+    /// same wording as the daemon's transmit-drop suppressor, for the same reason.
+    /// </summary>
+    private static readonly TimeSpan OriginRefusalInterval = TimeSpan.FromMinutes(1);
+
+    private readonly Lock _originGate = new();
+    private long _originRefusedAt;
+    private int _originRefusalsSuppressed;
+    private bool _originRefusedBefore;
+
+    /// <summary>
+    /// Turns away a transmit test asked for by a page this station did not serve: the page is
+    /// told, every time, and the journal is told at most once a minute.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>The page is always told.</b> A silent refusal is indistinguishable from a broken
+    /// button, and the operator most likely to meet one is not an attacker at all - it is a
+    /// station behind a proxy that rewrites <c>Host</c>, whose own page is refused and who has
+    /// nothing to go on. Sent to the one client that asked rather than broadcast: the others have
+    /// not been refused anything and a status is not theirs to see.</para>
+    /// <para><b>The journal is rate limited</b>, because the message costs the sender nothing.</para>
+    /// </remarks>
+    private void RefuseForeignOrigin(WaterfallClient client)
+    {
+        string declared = Printable(client.From.Declared);
+        string served = Printable(client.From.Served);
+
+        client.Queue.Writer.TryWrite((WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            type = "txtest",
+            state = "refused",
+            text = $"refused, this page was served from {declared} and this station serves its "
+                + $"page as {served} - only a page it served may key it",
+        }, Json)));
+
+        bool say;
+        int suppressed = 0;
+        lock (_originGate)
+        {
+            long now = _options.TimeProvider.GetTimestamp();
+            say = !_originRefusedBefore
+                || _options.TimeProvider.GetElapsedTime(_originRefusedAt, now) >= OriginRefusalInterval;
+            if (say)
+            {
+                _originRefusedBefore = true;
+                _originRefusedAt = now;
+                suppressed = _originRefusalsSuppressed;
+                _originRefusalsSuppressed = 0;
+            }
+            else
+            {
+                _originRefusalsSuppressed++;
+            }
+        }
+
+        if (say)
+        {
+            _options.Log?.Invoke(
+                $"waterfall: refused a transmit test from a page at {declared} - this station "
+                + $"serves its page as {served}, and a page from somewhere else may not key the "
+                + "radio. If a proxy in front of this station rewrites the Host header, make it "
+                + "pass the original through."
+                + (suppressed > 0 ? $" (and {suppressed} more like it in the last minute)" : ""));
+        }
+    }
+
+    /// <summary>
+    /// A header value as it may be printed: plain ASCII, and short.
+    /// </summary>
+    /// <remarks>
+    /// <c>Origin</c> arrives from whoever opened the socket, and this line goes to the journal.
+    /// journalctl's pager renders anything above 0x7F as hex escapes under a C locale, and a
+    /// header long enough to fill a screen would bury the sentence explaining it - neither is
+    /// something the sender should get to choose.
+    /// </remarks>
+    private static string Printable(string header)
+    {
+        if (string.IsNullOrEmpty(header))
+        {
+            return "(none)";
+        }
+
+        var clean = new System.Text.StringBuilder(header.Length);
+        foreach (char c in header)
+        {
+            clean.Append(c is >= ' ' and <= '~' ? c : '?');
+            if (clean.Length == 80)
+            {
+                clean.Append("...");
+                break;
+            }
+        }
+
+        return clean.ToString();
+    }
+
+    /// <summary>
+    /// Installs (or removes) the operator's transmitter test after the server was built.
+    /// </summary>
+    /// <remarks>
+    /// The daemon has to: whether the station can key at all is settled by opening the sound card
+    /// and the PTT line, which happens long after the page is being served. Same shape as
+    /// <see cref="SetRadioStatus"/> - the config message is rebuilt so the next browser is offered
+    /// the current answer - and, like it, this is never called on a public or relayed page.
+    /// </remarks>
+    public void SetTxTest(TxTestControl? control)
+    {
+        _txTest = control;
+        if (_source is not null)
+        {
+            _configMessage = BuildConfigMessage(); // before Start, Start's own build picks it up
+        }
+    }
+
+    /// <summary>
+    /// Tells every open page what became of a test transmission. Called by whoever ran it, on its
+    /// own thread; a page that arrives afterwards is not told, because a test is an event rather
+    /// than a state and the frames panel already carries the record of one that happened.
+    /// </summary>
+    public void ReportTxTest(TxTestStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        Broadcast(WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            type = "txtest",
+            state = status.State,
+            text = status.Text,
+        }, Json));
+    }
+
+    /// <summary>
+    /// Lists a test transmission in the frames panel, so that a keyup carrying tones rather than
+    /// a frame is not an unexplained burst on the waterfall - here, and on the public monitor of
+    /// a station that publishes to one, which is where somebody else watching would otherwise
+    /// see a signal nothing accounts for.
+    /// </summary>
+    /// <remarks>
+    /// A frame row, deliberately, rather than a kind of its own: the panel, the frame log, the
+    /// backlog a browser opens on and the uplink all already carry transmitted rows, and the one
+    /// thing this needs that a frame does not have - what the test actually was - is the note
+    /// field an unattributable frame already uses. Nothing new crosses the wire.
+    /// </remarks>
+    /// <param name="subChannel">The modem the row is filed under; see the daemon's TxTest.</param>
+    /// <param name="text">What was sent, in the journal's own wording.</param>
+    /// <param name="lengthBytes">The length of the record the frame log keeps for it.</param>
+    public void ReportTestTransmission(int subChannel, string text, int lengthBytes)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(text);
+        if (_source is null)
+        {
+            return;   // not started; nobody to tell
+        }
+
+        BroadcastFrame(
+            subChannel, TestTransmissionMode, from: null, to: null, lengthBytes,
+            snrDb: null, burstLines: null, offsetHz: null, corrected: null, crc: null,
+            transmitted: true, note: text);
+    }
+
+    /// <summary>
+    /// The mode string a test transmission is filed under, in the panel and in the frame log. Not
+    /// a modem and not in the catalogue: it renders as "TX test", it sorts with the station's own
+    /// transmissions, and a query for what a modem sent never picks one up by accident.
+    /// </summary>
+    public const string TestTransmissionMode = "tx-test";
 
     /// <summary>
     /// Receive audio to whoever asked for it, as [0x02][s16 LE mono] at the channel rate.
@@ -1961,8 +2278,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         {
             if (context.Request.IsWebSocketRequest)
             {
+                // Where this page says it came from, and where it reached us. Recorded now and
+                // judged later, per message: see ApplyTxTestRequest.
+                var from = new PageOrigin(
+                    context.Request.Headers["Origin"] ?? "", context.Request.UserHostName ?? "");
                 HttpListenerWebSocketContext upgrade = await context.AcceptWebSocketAsync(null).ConfigureAwait(false);
-                await ServeWebSocketAsync(upgrade.WebSocket).ConfigureAwait(false);
+                await ServeWebSocketAsync(upgrade.WebSocket, from).ConfigureAwait(false);
                 return true;
             }
 
@@ -2218,7 +2539,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
     }
 
-    private async Task ServeWebSocketAsync(WebSocket socket)
+    private async Task ServeWebSocketAsync(WebSocket socket, PageOrigin from)
     {
         // Bounded per-client queue, oldest lines dropped: a stalled browser loses history,
         // never stalls the receive thread or other clients.
@@ -2240,6 +2561,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // Arriving counts as being heard from: a page has the whole silence deadline to
             // answer its first keep-alive, however long the handshake below takes.
             HeardAt = _options.TimeProvider.GetTimestamp(),
+            From = from,
         };
 
         // The retained state a browser opens with - what the last transmission did, and who is

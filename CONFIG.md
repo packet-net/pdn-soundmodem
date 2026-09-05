@@ -38,6 +38,7 @@ with `su -` and drop the prefix.)
 | `modems` | array | one `afsk1200` on sub-channel 0 | The modems sharing the channel - [below](#modems) |
 | `modemPlugins` | array | *(none)* | Load modem assemblies from outside this package - [below](#modemplugins) |
 | `ptt` | object | *(none - VOX)* | How the radio is keyed - [below](#ptt) |
+| `txTest` | object | *(on, 5 s, capped at 30 s)* | The operator's two-tone and single-tone transmitter test - [below](#txtest) |
 | `alsa` | object | *(card left as it is)* | The sound card's mixer: capture gain, AGC, mic boost - [below](#alsa) |
 | `waterfall` | object | *(disabled)* | Browser spectrum/waterfall page - [below](#waterfall) |
 | `paging` | object | *(disabled)* | POCSAG paging endpoint - [below](#paging) |
@@ -724,6 +725,141 @@ Serial PTT works out of the box because the unit already joins the `dialout` gro
 Which `/dev/hidraw*` node is yours is worth confirming rather than assuming - the number
 moves with what else is plugged in. `ls -l /sys/class/hidraw/*/device/` maps them to USB IDs.
 
+## `txTest`
+
+The operator's transmitter test: two equal tones at 700 and 1900 Hz for an SSB linearity check,
+or one tone for a carrier-level check or an FM deviation check. It keys PTT, sends the tones
+through the normal transmit path at the station's transmit level for a bounded time, and unkeys.
+
+```json
+"txTest": { "seconds": 5, "maxSeconds": 30 }
+```
+
+Nothing here has to be switched on: there is no timer and no start-up check, and nothing is ever
+transmitted until an operator asks for it. What the section holds is the two bounds on one test.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `enabled` | bool | `true` | `false` takes the control off the operator page and refuses `/api/txtest` and `--two-tone` |
+| `seconds` | number | `5` | How long a test runs when the request does not say |
+| `maxSeconds` | number | `30` | The longest test that will be run, whatever is asked for. **Clamped to 60 however this is set** - a cap is a safety limit, so a typo here must not be able to hold the PA up for an hour |
+| `amplitude` | number | `0.8` | What the burst peaks at, 0 to 1. The modulators' own figure, so the test presents the transmitter with the same drive the data does |
+
+**Three ways to ask for one, and one set of rules.** A control on the operator page (never on a
+public page); `POST /api/txtest`, which needs the [`api`](#api) key; and the `--two-tone` and
+`--tone` command-line switches. All three go through the same code, so a page cannot ask for
+anything the command line could not.
+
+```sh
+# Two tones for five seconds, through the API, on a station that is already running
+curl -s -X POST http://127.0.0.1:8107/api/txtest \
+     -H "X-API-Key: $KEY" -d '{"twoTone": true, "seconds": 5}'
+
+# One tone at 999 Hz, which nulls an FM carrier at 2.4 kHz deviation
+curl -s -X POST http://127.0.0.1:8107/api/txtest \
+     -H "X-API-Key: $KEY" -d '{"twoTone": false, "toneHz": 999, "seconds": 5}'
+
+# And the same two on a bench with no browser, which builds the station, transmits once and exits
+pdn-soundmodem --config /etc/pdn-soundmodem/soundmodem.json --two-tone 5
+pdn-soundmodem --config /etc/pdn-soundmodem/soundmodem.json --tone 999 5
+```
+
+`--two-tone` and `--tone` exit 0 when the tones went out and non-zero with a plain message when
+they did not. **They open the radio**, so the running service has to be stopped first - one
+process at a time owns the sound card. Nothing that serves anybody else comes up on such a run:
+no waterfall page, no API, no KISS port, no ARDOP, no paging endpoint and no uplink to a monitor
+site. A station whose audio comes from a web receiver is refused outright, having no transmitter.
+
+**The FM deviation presets.** The carrier of an FM signal disappears when the modulation index
+reaches 2.405 (the first zero of the Bessel function J0), so a single tone of a known frequency
+turns "the carrier has gone" on a spectrum display into a calibrated deviation. Raise the transmit
+audio until the carrier nulls; the level at that point is the deviation beside the tone:
+
+| Tone | Deviation at the null |
+|---|---|
+| 500 Hz | 1.2 kHz |
+| 999 Hz | 2.4 kHz |
+| 1248 Hz | 3.0 kHz |
+| 2079 Hz | 5.0 kHz |
+
+An AFSK1200 station on a 12.5 kHz channel wants about 2.5 to 3 kHz, so the 1248 Hz preset is the
+one to calibrate against and then back off from a little. The presets are offered whatever kind of
+radio the station has - the daemon does not know an FM radio from an SSB one - so they are labelled
+as FM deviation presets and mean nothing on SSB. The daemon cannot see the null itself either: that
+needs a receiver on the channel, which is somebody's panadapter, a public web receiver, or this
+station's own monitor page on a second receiver.
+
+**It is a licensed transmission**, and it is refused rather than fudged:
+
+- **No `ptt` section** - refused. A VOX station keys itself, and "the daemon put a carrier up and
+  the radio decided when to stop" is not a transmission anybody should be able to start from a web
+  page. Configure `ptt`, or key the radio by hand.
+- **A receive-only station** (a `ubersdr:` device, a `monitor` configuration) - refused, with the
+  same sentence every other transmission on that station is refused with.
+- **A tone below 50 Hz or above the channel's Nyquist** - refused rather than clamped: moving a
+  tone frequency silently would put the deviation read off its null out by exactly as much.
+- **A test already running** - refused; one at a time.
+- **A busy channel** - waited out, not refused. The test defers to carrier sense and to an ARDOP
+  session's hold on exactly the same terms a KISS frame does. After 60 s of not getting the
+  channel it is **withdrawn from the queue** and says so. That is the important word: an abandoned
+  test is taken off the channel, so it cannot key the radio ten minutes later when the band
+  finally clears. The same is true of Stop - a test that has not reached the air sends nothing at
+  all and never keys; only one already transmitting is heard, and that one fades out.
+- **A radio another station is holding** (an arbitrated Flex) - refused, with the radio's own
+  words. A PTT line that is simply gone is a *failure* rather than a refusal: the journal says
+  `tx test: failed: ...`, the API answers 500 rather than 409, and the page puts its button back.
+
+**The journal says what was asked and what happened**, in ASCII:
+
+```
+tx test: two-tone 700+1900 Hz, 5.0 s, peak level 0.80
+tx test: done, 5.0 s on air
+tx test: refused, no "ptt" is configured, so this daemon does not key the radio
+```
+
+**And it is recorded as a transmission.** A row goes into the [frame log](#framelog) and into the
+waterfall's frames panel, with `mode` = `tx-test` and `direction` = `tx` - which also means it
+reaches the public monitor of a station that [publishes](#publish) to one, so somebody watching
+sees what the burst was rather than an unexplained signal. The frame log's rows are frames and a
+tone burst is not one, so what its `payload` holds is the sentence above; `audio_hz` is the tone
+(or the midpoint of the pair) and `rf_hz` is left null, a test tone not being a modem with a
+planned RF centre.
+
+**Once it is on the air it runs to its length.** The burst is handed to the sound card in one
+piece, because the transmitter drains the device between queued transmissions and a test signal
+with a hole in it every few hundred milliseconds would be a poor instrument. Stop withdraws a test
+that is still waiting for the channel - that one never keys the radio at all - and `maxSeconds` is
+what bounds one that has started.
+
+**It arms the station's identification.** A test is a transmission, so it starts the
+[`identify`](#identify) clock exactly as a frame does: a station that keys for tones owes anyone
+sharing the band a callsign just as much as one that keys for data. A station with no `identify`
+block is unaffected. A `--two-tone` or `--tone` run arms the debt and then exits before the
+identification poll can act on it, so a bench run keys without identifying - the right answer
+for an operator standing at the radio with a dummy load on it, and the wrong one for anything
+else, so do not script one against an antenna.
+
+**The page has no password, and the operator page can key the transmitter.** Two consequences
+worth knowing. The daemon refuses a transmit test asked for by a page whose `Origin` is not the
+host it was served from, which is what stops a page the operator happens to be visiting from
+opening a socket to `127.0.0.1` and keying the radio - browsers do not apply the same-origin
+policy to WebSockets, so the socket itself is open to anything that can reach the port. Only the
+button is refused and never the page, so a reverse proxy that rewrites the `Host` header costs
+the operator the transmit test and nothing else; the journal says which two names disagreed.
+And [`bind`](#kissport-and-bind) decides who can reach the page at all: beyond
+loopback the daemon warns, because anything that can reach the port can key your transmitter.
+`POST /api/txtest` is the authenticated way in and always needs the [`api`](#api) key.
+
+**Two things it does not do.** The tones themselves are not configurable: 700 and 1900 Hz is the
+pair everybody measures against, and the single-tone side takes its frequency per test. And the
+test is filed under the sub-channel a KISS frame on port 0 would reach, which is a label rather
+than a choice - the station has one output device and one PTT line, so every modem's frames and
+this test go out over exactly the same path.
+
+**Refused at start-up**, with exit 2 and a sentence, if `amplitude` is not a level between 0 and 1
+or `seconds` is not above zero. `maxSeconds` needs no such check: it is clamped to 1..60 in force
+whatever the file says.
+
 ## `alsa`
 
 The sound card's own mixer: capture gain, the Auto Gain Control switch, Mic Boost, and the
@@ -1090,6 +1226,7 @@ byte at a time. There is no unauthenticated mode and no default key.
 GET  /api/config                     what this process is running
 POST /api/config                     replace it for one run
 POST /api/config?persist=true        replace it and write the config file
+POST /api/txtest                     transmit a two-tone or single-tone test
 GET  /api/mixer                      the sound card's mixer, as it reads back now
 POST /api/mixer                      set it, live, for one run
 POST /api/mixer?persist=true         set it and write the config file
@@ -1140,6 +1277,12 @@ shipped unit allows this with `ReadWritePaths=/etc/pdn-soundmodem`; on a hand-wr
 
 **Run without systemd and there is nothing to restart the daemon**, so an applied change stops it
 rather than reloading it. The daemon warns at start-up when it cannot see systemd around it.
+
+**`POST /api/txtest`** keys the radio and sends the operator's [transmitter test](#txtest). It
+answers when the test has finished, with `200` and what went out, or `409` and why not - `409`
+rather than `400` because nothing was wrong with the request, the station was in no state to
+answer it. `{"stop": true}` ends one early. See [`txTest`](#txtest) for the rules, the bounds and
+the FM deviation presets.
 
 ### `/api/mixer`
 
@@ -1247,6 +1390,12 @@ ourselves. Everything else - who to who, mode, length, where the modem sits, the
 recorded exactly as for a frame heard. A row is written once the audio has gone to the device, so
 a logged transmission is one that actually went on air.
 
+**A [transmitter test](#txtest) is a row too**, written the same way with `mode` = `tx-test`. It
+is not a frame and has no callsigns, so `source` and `destination` are null and `payload` holds the
+sentence describing what went out (`tx test: two-tone 700+1900 Hz, 5.0 s, peak level 0.80 - done,
+5.0 s on air`); `audio_hz` is the tone, or the midpoint of the pair, and `rf_hz` is null. Exclude
+them with `mode != 'tx-test'` when you are counting traffic.
+
 So "who have I heard on 40m today" is a query - and it now has to say that it means *heard*,
 since your own frames are in the table too:
 
@@ -1260,6 +1409,13 @@ Drop the `direction` clause and you are asking who has been on the channel, your
 which is a fair question too - just not the same one. A log written by an earlier version is
 migrated in place on first open: the column is added with every existing row set to `rx`, which
 is what they all were.
+
+**The file is self-contained once the daemon stops.** While it runs, rows live in the write-ahead
+log beside it (`frames.db-wal`) and every SQLite reader sees them, which is what keeps the database
+readable while the modem is writing to it. On a clean shutdown the WAL is folded back into
+`frames.db`, so what you copy to another machine, `grep` for a callsign or check the size of is the
+whole log rather than an empty-looking 4 KB file with the traffic in a sidecar. If the daemon is
+killed outright the sidecar stays and nothing is lost - open the database and the rows are there.
 
 **It is written on a background thread** - the receive path queues and returns, so logging never
 delays a decode. If the disk fills or goes away the modem keeps decoding and drops log rows
