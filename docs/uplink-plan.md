@@ -409,6 +409,8 @@ A sketch, as the monitor plan's was before it was built.
 
 **Amended 2026-09-04 (v0.56.1).** The station id was changed from GB7RDG-2 to GB7RDG at Tom's request (a new `monitor.uplinks` entry with slug `gb7rdg`, the node's `publish.callsign` to match, the frame log renamed; backups `soundmodem.json.pre-id-change` on both boxes); while the two sides disagreed the node was refused for 18 min and its journal did not say why, which became #401. v0.56.1 (PRs #405 #406 #407, released 2026-09-04) fixed that, gave the site `monitor.publicUrl` (#402) and kept the RS ONLY badge through replay (#403). CT 146 was upgraded and `"publicUrl": "https://monitor.ukpacketradio.network"` added to the `monitor` section (backup `soundmodem.json.pre-public-url`); the node, still on 0.56.0, reconnected within a second of the restart and now journals `publish: live at https://monitor.ukpacketradio.network/r/gb7rdg/`. The node's own upgrade to 0.56.1 is Tom's, at his convenience; it needs no config change. Release build flake on the self-hosted runner recorded as #408.
 
+**Soak, night of 2026-09-04 to 05 (read 06:30 UTC).** The uplink held: three drops in seven hours, each about 1 s, two of them the site's own restarts for 0.56.1 and one at 01:14 UTC where the socket closed without a close handshake and the node redialled at once. Nobody opened the GB7RDG page, so no audio was sent and there was nothing to check for audio with nobody watching; frames kept arriving (the site's log for the station was written at 06:22 UTC, the same second as a receive line in the node's own journal). No errors, no restarts, no KISS host churn on the node; node RSS about 156 MB, site RSS about 200 MB with 2.7 GB free, site journal 1.9 MB. Unrelated to the uplink: two tunnelled receivers (ct2hmr, ei4hq) cycled 0.0 s sessions and 300 s backoffs all night, filed separately. Soak done; the keyup level and the announcement are Tom's.
+
 Announcing is a separate step and comes after a soak. The people to tell are the ones who would want a token.
 
 ## 6. Phases
@@ -578,7 +580,7 @@ The coordinator updates this list as phases land. `[ ]` not started, `[~]` in pr
 - [x] **Phase 1** - `IWaterfallRelay`, the audio and frame hooks, `PushFrame`, `IncomingIsTransmit`, the escaping fix. PR: #395
 - [x] **Phase 2** - the `publish` block, `UplinkClient`, reconnects, the token redaction. Needs 1; can run beside 3. PR: #397
 - [x] **Phase 3** - `/uplink`, tokens, `UplinkAudioInput`, `RelayStation`, `/api/instances`, the picker, the second credit sentence, CONFIG.md, the example config, memory measured. Needs 1; can run beside 2. PR: #398
-- [~] **Phase 4** - release, monitor config, GB7RDG-2 opted in, validated live, the keyup level judged and the upstream rate measured, soaked, recorded, announced. Needs 2 and 3. Release v0.56.0 (2026-09-04); live, rate measured, memory recorded; id changed to GB7RDG; v0.56.1 (2026-09-04) with #401 #402 #403 deployed to the site; soak, keyup level and announcement outstanding. PRs: #399, #405, #406, #407
+- [~] **Phase 4** - release, monitor config, GB7RDG-2 opted in, validated live, the keyup level judged and the upstream rate measured, soaked, recorded, announced. Needs 2 and 3. Release v0.56.0 (2026-09-04); live, rate measured, memory recorded; id changed to GB7RDG; v0.56.1 (2026-09-04) with #401 #402 #403 deployed to the site; soaked overnight 2026-09-04/05 (three 1 s drops, two of them our restarts); keyup level and announcement are Tom's. PRs: #399, #405, #406, #407
 
 ## 8. Decisions
 
