@@ -513,7 +513,9 @@ const save = () => localStorage.setItem(LS, JSON.stringify(ui));
 // on a tab that was open before the daemon was upgraded and has been reconnecting ever since:
 // the old script, with no idea of the new messages, against the new server. That tab reloads
 // itself, once. Once, and never for the same version twice, so a page the server did not stamp
-// (the test probe runs this script straight from the source file) cannot loop.
+// (the test probe runs this script straight from the source file) cannot loop. Called on every
+// config rather than the first, because the config that says a tab is stale is the one it gets
+// when it reconnects, which is never its first.
 const PAGE_VERSION = "__PAGE_VERSION__";
 function checkPageVersion(served) {
   if (!served || served === PAGE_VERSION || PAGE_VERSION.startsWith("__")) return;
@@ -1734,7 +1736,13 @@ function connect() {
       if (msg.type === "config") {
         const first = !cfg;
         cfg = msg;
-        if (first) { initControls(); checkPageVersion(msg.page); }
+        if (first) { initControls(); }
+        // Every config, not only the first: a tab that was open across an upgrade gets its first
+        // reconnect two seconds after the daemon restarts, and that is the config that tells it
+        // it is stale. Checked only on the first one, it never found out, and an old page - which
+        // does not know how to answer the keep-alive - was dropped and reconnected once a minute
+        // for ever. checkPageVersion reloads once per version and no more.
+        checkPageVersion(msg.page);
         applyPublicFlavour();
         setRadioStatus(cfg.radioStatus);
         renderChips(); resizeAll(); drawRuler(); drawOverlay();

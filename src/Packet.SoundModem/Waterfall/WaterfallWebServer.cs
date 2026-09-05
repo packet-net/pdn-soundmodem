@@ -2204,6 +2204,17 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 // It left by another route between the list being taken and this line; its own
                 // finally has already uncounted it.
             }
+            catch (Exception e)
+            {
+                // Cancel runs the registrations the receive, the send and the queue left on this
+                // token, and wraps anything they throw in an AggregateException rather than
+                // swallowing it. Whatever it was belongs to that one connection; an exception out
+                // of a timer callback is unhandled on a pool thread and would end the station,
+                // and would abandon the rest of this sweep on the way out. The client is still
+                // marked and still silent, so the next sweep tries again five seconds later.
+                Journal($"page: could not drop a viewer that stopped answering "
+                    + $"({e.GetType().Name}); trying again shortly");
+            }
         }
     }
 

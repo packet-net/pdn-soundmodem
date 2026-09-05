@@ -795,15 +795,30 @@ Nothing is received while the station transmits, so the audio stops for the leng
 That is silence, not a dropout.
 
 **Every page is asked whether it is still there.** The server sends each open page a keep-alive
-every 20 seconds and stops counting one that has said nothing at all for 60 seconds, closing its
-socket and writing one line: `page: viewer dropped, no reply for 60 s, 0 viewers` (with the
-station's slug in front of it on a monitor). Nothing to configure, and nothing to notice on a
-page that is open - the page answers from its message handler, so a tab in the background answers
-too. It matters because a socket whose browser has gone does not always close: a phone that goes
-to sleep, a laptop lid, a browser killed outright behind a Cloudflare tunnel all leave a
+every 20 seconds and stops counting one that has said nothing at all for 60 seconds, dropping its
+socket without a close handshake and writing one line: `page: viewer dropped, no reply for 60 s,
+0 viewers` (with the station's slug in front of it on a monitor). Nothing to configure, and
+nothing to notice on a page that is open - the page answers from its message handler, so a tab in
+the background answers too, where a tab that had to speak first would not: browsers throttle a
+background tab's timers and do not throttle its messages. A tab the browser has frozen outright
+runs no JavaScript at all, so it is let go, and it reconnects when it wakes, which is the right
+answer. It matters because a socket whose browser has gone does not always close: a phone that
+goes to sleep, a laptop lid, a browser killed outright behind a Cloudflare tunnel all leave a
 connection that looks alive from here for ever, and before this that page went on being counted
 as a viewer - which, with `"ubersdr": { "onDemand": true }`, held somebody's receiver open all
 night for nobody (#411).
+
+**A tab that was already open when this release was deployed will churn until it is reloaded.**
+It is running the old page, which knows nothing about the keep-alive and cannot answer it, so it
+is dropped once a minute, shows "reconnecting" for two seconds and comes back, over and over, for
+as long as it stays open - three journal lines a minute on a receiver that has a session, and on
+one that is retrying it also cancels the backoff and reopens, so the ladder's 300 s cap becomes an
+attempt a minute. Nothing on this side can reach it: its JavaScript was fixed in the browser when
+it loaded. Reload the tab, or close it, and it stops. From this release on the page fixes itself:
+it compares the version the server announces against its own on every message the server sends it
+its settings in, not only the first, so a tab left open across a future upgrade reloads itself two
+seconds after the restart, before any deadline. A `page: viewer dropped` line arriving on a
+metronome every 62 seconds from one station is a stale tab, not the keep-alive misbehaving.
 
 **Your own transmissions are drawn.** Receive processing is gated off while transmitting - half
 duplex - so the waterfall used to freeze for the length of every keyup, which quietly compressed
