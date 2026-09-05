@@ -38,6 +38,7 @@ with `su -` and drop the prefix.)
 | `modems` | array | one `afsk1200` on sub-channel 0 | The modems sharing the channel - [below](#modems) |
 | `modemPlugins` | array | *(none)* | Load modem assemblies from outside this package - [below](#modemplugins) |
 | `ptt` | object | *(none - VOX)* | How the radio is keyed - [below](#ptt) |
+| `alsa` | object | *(card left as it is)* | The sound card's mixer: capture gain, AGC, mic boost - [below](#alsa) |
 | `waterfall` | object | *(disabled)* | Browser spectrum/waterfall page - [below](#waterfall) |
 | `paging` | object | *(disabled)* | POCSAG paging endpoint - [below](#paging) |
 | `ardop` | object | *(disabled)* | ARDOP virtual TNC - [below](#ardop) |
@@ -723,6 +724,113 @@ Serial PTT works out of the box because the unit already joins the `dialout` gro
 Which `/dev/hidraw*` node is yours is worth confirming rather than assuming - the number
 moves with what else is plugged in. `ls -l /sys/class/hidraw/*/device/` maps them to USB IDs.
 
+## `alsa`
+
+The sound card's own mixer: capture gain, the Auto Gain Control switch, Mic Boost, and the
+transmit-side playback level. Between them these decide whether the receive audio is clean,
+clipped or buried, and a reboot or a re-plug can silently reset them.
+
+```json
+"alsa": { "mixer": { "captureGainPercent": 60, "agc": false, "micBoost": false, "playbackPercent": 70 } }
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `captureGainPercent` | int | *(left alone)* | 0-100 of the card's own capture range |
+| `agc` | bool | *(left alone)* | Automatic gain control. **Recommended off for a data modem** |
+| `micBoost` | bool | *(left alone)* | Microphone boost. **Recommended off** unless the radio's output is genuinely low |
+| `playbackPercent` | int | *(left alone)* | 0-100, the level the radio is driven at |
+| `card` | string | *(from `device`)* | The mixer card, if not the one `device` implies |
+| `captureControls` | array | `["Mic", "Mic Capture", "Capture"]` | Names to look for the capture gain under, in order |
+| `agcControls` | array | `["Auto Gain Control", "AGC", "Mic AGC"]` | Names to look for the AGC switch under |
+| `micBoostControls` | array | `["Mic Boost", "Mic Boost (+20dB)", "Internal Mic Boost", "Mic Capture Boost"]` | Names to look for the boost under |
+| `playbackControls` | array | `["Speaker", "PCM", "Master", "Headphone"]` | Names to look for the playback level under |
+
+**Every key is optional and leaving one out leaves that control exactly as the card has it.**
+That is the point of the section: it pins the settings that matter without taking over the ones
+that do not, and a file with no `alsa` block behaves exactly as it did before this existed. There
+are no hidden defaults. Only a sound card has a mixer, so an `alsa` section alongside a `flex:` or
+`ubersdr:` device, or alongside `monitor`, is refused at start-up rather than silently ignored.
+
+### Percentages, not dB
+
+`captureGainPercent` and `playbackPercent` are percentages of the card's own range, which is what
+`alsamixer` shows for the same control - so what you type here and what you see there agree.
+
+dB was the alternative and was not chosen: ALSA can only set a level in dB on a card that
+publishes a dB scale, and plenty do not, while every card with a volume at all takes a raw one. A
+dB setting would therefore work on some cards and silently fail on others. The journal reports
+the dB anyway, when the card knows one, because dB is what a level actually sits on:
+
+```
+alsa: mixer: Mic capture 60% / 9.00 dB (set 60%), Auto Gain Control off, Speaker playback 70% / -11.10 dB (set 70%)
+```
+
+Cards quantise. A CM108's capture range is 36 steps, so a setting of 60% comes back as whatever
+step is nearest; the line prints both the read-back and what was asked for, and the read-back is
+the card's own answer rather than ours.
+
+### Control names differ by card
+
+There is no standard set of mixer control names. A CM108 calls its capture gain `Mic`; other
+cards say `Mic Capture` or `Capture`. So each setting has a list of names and takes the first one
+the card has, and the journal says which:
+
+```
+alsa: mixer: hw:3 has Mic, Auto Gain Control, Speaker
+```
+
+To see what yours is called, without stopping the station (reading a mixer does not touch the
+PCM):
+
+```
+pdn-soundmodem --mixer-show hw:3
+pdn-soundmodem --mixer-show plughw:CARD=Device,DEV=0
+```
+
+If your card names a control something none of the lists mention, put its name in the matching
+`*Controls` list. The list replaces the built-in one, so include the fallbacks you still want.
+
+**Many cards have no Mic Boost at all.** The CM108 revision on the bench folds its boost into the
+top of the capture range (36 steps spanning -12 to +23 dB), so there is nothing separate to
+switch. Asking for one on such a card is not an error; it is said once and skipped:
+
+```
+alsa: mixer: no control named "Mic Boost" on hw:3 (also tried "Mic Boost (+20dB)", "Internal Mic Boost", "Mic Capture Boost"), skipped
+```
+
+A control the file never mentioned is not reported missing - an absent key does nothing and says
+nothing. **A card with no mixer at all does not stop the daemon**: it is said once and the station
+carries on.
+
+```
+alsa: mixer: hw:3 has no mixer (snd_mixer_attach(hw:3): No such file or directory); capture gain, AGC and mic boost are left as the card has them
+```
+
+### Why AGC off
+
+Automatic gain control fights the modem's own level tracking and turns the noise floor into a
+moving target: it raises the gain in the gaps between frames and then pulls it down as a frame
+arrives, which is exactly backwards for a demodulator that is measuring SNR and holding a
+threshold. Mic Boost is +20 dB of gain ahead of everything, which is the wrong tool unless the
+radio's output really is too low to reach the card's range - reach for the capture gain first and
+watch the level meter on the waterfall page.
+
+Both are recommendations, not forced defaults. The daemon writes neither unless the file says so.
+
+### The mixer is read at every start-up
+
+On a sound card the mixer is opened and read whether or not the file asks for anything, so the
+journal records the level the station is actually listening at. Nothing is written to the card
+unless a key said so.
+
+### Setting it while watching the waterfall
+
+With an [`api`](#api) key set, the operator page grows a **Mixer** group beside the display levels:
+a capture-gain slider with the card's read-back beside it, and AGC and Mic Boost buttons. It is
+never on the public page. See [`api`](#api) for `/api/mixer` and what it does and does not
+persist.
+
 ## Channel access is the host's, not the config's
 
 There is deliberately **no `csma` section**. TXDELAY, P (persistence), SLOTTIME and TXTAIL are
@@ -972,6 +1080,9 @@ byte at a time. There is no unauthenticated mode and no default key.
 GET  /api/config                     what this process is running
 POST /api/config                     replace it for one run
 POST /api/config?persist=true        replace it and write the config file
+GET  /api/mixer                      the sound card's mixer, as it reads back now
+POST /api/mixer                      set it, live, for one run
+POST /api/mixer?persist=true         set it and write the config file
 ```
 
 `GET` reports the running configuration, the config file's path, and whether the station is
@@ -1019,6 +1130,41 @@ shipped unit allows this with `ReadWritePaths=/etc/pdn-soundmodem`; on a hand-wr
 
 **Run without systemd and there is nothing to restart the daemon**, so an applied change stops it
 rather than reloading it. The daemon warns at start-up when it cannot see systemd around it.
+
+### `/api/mixer`
+
+The sound card's [mixer](#alsa), for a script or for the operator page's Mixer group. Same key,
+same one-run default, and **no restart**: a mixer setting lands on the card as the request is
+served, the PCM stream is not touched, and restarting a station to trim its own capture gain
+would drop the very waterfall the operator is trimming it against.
+
+```
+$ curl -s -H "X-API-Key: $KEY" http://radio:8107/api/mixer
+{
+  "available": true,
+  "card": "hw:3",
+  "controls": [ "Mic", "Auto Gain Control", "Speaker" ],
+  "capture": { "control": "Mic", "percent": 57, "decibels": 7.95 },
+  "playback": { "control": "Speaker", "percent": 46, "decibels": -19.98 },
+  "agc": { "control": "Auto Gain Control", "on": true },
+  "micBoost": null,
+  "summary": "alsa: mixer: Mic capture 57% / 7.95 dB, Auto Gain Control on, Speaker playback 46% / -19.98 dB"
+}
+$ curl -sX POST -H "X-API-Key: $KEY" -d '{"captureGainPercent": 70, "agc": false}' http://radio:8107/api/mixer
+```
+
+`POST` takes only the settings you want changed, unlike `/api/config`, which takes a whole
+document. A control the body does not mention is left exactly as the card has it. Percentages
+outside 0-100 come back as `400` with the same sentence the config file's refusal carries.
+
+A control the card has not got reads back as `null` - `micBoost` above is a CM108 that folds its
+boost into the capture range - and a station with no sound card at all answers
+`{"available": false, "why": "..."}` rather than a 404, so a caller can tell "no mixer here" from
+"no such endpoint". `POST` to one of those is a `409`.
+
+> **`?persist=true` rewrites the config file from its parsed form, so comments in it are lost.**
+> The default (one run, written to the state directory) leaves the file alone, which is why the
+> operator page uses it: a trim you want to keep is worth a deliberate line in the file.
 
 ## `frameLog`
 
@@ -2325,6 +2471,9 @@ enumerated yet at boot, for instance - still restarts on its own as usual.
 | `flex.transmitFilterHighHz` outside 500-10000 (and not `0`) | `That is an audio cut-off in Hz … use 500-10000, 0 to leave the radio's own filter alone …` |
 | `ptt` alongside a `flex:` device | `--device flex: keys the radio itself; remove the conflicting --ptt …` |
 | `ptt` alongside a `ubersdr:` device | `--device ubersdr: is a receive-only station … Remove "ptt".` |
+| `alsa.mixer` percentage outside 0-100 | `"alsa"."mixer"."captureGainPercent" is 150 … use 0-100, or remove it to leave the control exactly as the card has it.` |
+| `alsa.mixer` alongside a `flex:`/`ubersdr:` device | `… which is not a sound card … Remove the "alsa" section, or point "device" at the card.` |
+| `alsa.mixer` alongside `monitor` | `A monitor fronts web receivers and has no sound card of its own …` |
 | `ubersdr:` with no `rfFrequency` and no `dialFrequency` | `the UberSDR instance … has to be told where to listen` |
 | `ptt.type` not `serial` or `cm108` | `unknown ptt type 'X'` |
 | [`monitor`](#monitor) alongside `device` | `this file sets both "device" (…) and "monitor" … Remove whichever one you did not mean.` |
