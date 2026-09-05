@@ -111,33 +111,28 @@ public class WaterfallPageTests
         // the page has to answer in: at this rate a deadline is 600 ms of wall clock, which is a
         // very long stall for a socket on loopback and a scripting engine with nothing else to
         // do, and this box does stall under suite load (#400).
-        // A thread of its own, not a pool work item, and Thread.Sleep rather than Task.Delay.
-        // What this loop measures is how much of the server's clock the page was held open
-        // across, and a pool task's 50 ms wait is 50 ms only while the pool is free: under
-        // full-suite load, with several node processes of this class competing for the box, it
-        // overshot far enough that a probe run of the usual length wound the clock less than half
-        // as far as the assertion needs and the test failed for lack of CPU rather than for
-        // anything the page did. Same reasoning as FeedTone below.
         using var running = new CancellationTokenSource();
         var wound = TimeSpan.Zero;
-        var winding = new Thread(() =>
+        Task winding = Task.Run(async () =>
         {
             while (!running.IsCancellationRequested)
             {
                 clock.Advance(WaterfallWebServer.KeepAlivePeriod);
                 wound += WaterfallWebServer.KeepAlivePeriod;
-                Thread.Sleep(50);
+                try
+                {
+                    await Task.Delay(50, running.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
             }
-        })
-        {
-            IsBackground = true,
-            Name = "keep-alive winder",
-        };
-        winding.Start();
+        });
 
         Probe probe = await RunProbeAsync(node, port);
         await running.CancelAsync();
-        winding.Join(TimeSpan.FromSeconds(5));
+        await winding;
 
         probe.Thrown.Should().BeEmpty("the page must not throw while answering");
         probe.Connected.Should().BeTrue("the page must reach the server before anything else can work");
