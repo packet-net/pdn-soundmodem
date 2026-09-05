@@ -124,6 +124,18 @@ public sealed class WaterfallOptions
     /// connection's own thread; a throw here costs the line and nothing else.
     /// </remarks>
     public Action<string>? Log { get; set; }
+
+    // ---------------------------------------------------------------- TX test
+    /// <summary>
+    /// The transmitter test the operator may ask this station for - a two-tone linearity check or
+    /// a single tone - or null (the default) for a page that offers none, which is every public
+    /// page, every relayed one and every station without a transmitter of its own.
+    /// </summary>
+    /// <remarks>
+    /// Installed by the host, because what a keyup costs is the daemon's business and not this
+    /// library's. See <see cref="TxTestControl"/>.
+    /// </remarks>
+    public TxTestControl? TxTest { get; set; }
 }
 
 /// <summary>
@@ -469,6 +481,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(channel);
         _channel = channel;
         _options = options ?? new WaterfallOptions();
+        _txTest = _options.TxTest;
         Url = "";
     }
 
@@ -960,6 +973,21 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             receiverUrl = _receiverUrl,
             receiverKind = _options.ReceiverKind,
             pickerUrl = _options.PickerUrl,
+            // TX test: null on every page that is not the operator's own, so the control is
+            // absent rather than hidden - a public page is never sent the shape of it.
+            txTest = _txTest is not { } test ? null : new
+            {
+                defaultSeconds = test.DefaultSeconds,
+                maxSeconds = test.MaxSeconds,
+                lowToneHz = test.LowToneHz,
+                highToneHz = test.HighToneHz,
+                refusal = test.Refusal,
+                presets = test.Presets.Select(p => new
+                {
+                    toneHz = p.ToneHz,
+                    deviationHz = Math.Round(p.DeviationHz),
+                }),
+            },
             modems = _bands.Select(b => new
             {
                 sub = b.SubChannel,
@@ -1789,13 +1817,26 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// </summary>
     internal const int AudioHeaderBytes = 4;
 
-    private static void TryApplyClientRequest(WaterfallClient client, ReadOnlySpan<byte> utf8)
+    private void TryApplyClientRequest(WaterfallClient client, ReadOnlySpan<byte> utf8)
     {
         try
         {
             using JsonDocument request = JsonDocument.Parse(utf8.ToArray());
-            if (request.RootElement.TryGetProperty("type", out JsonElement type)
-                && request.RootElement.TryGetProperty("on", out JsonElement on))
+            if (!request.RootElement.TryGetProperty("type", out JsonElement type))
+            {
+                return;
+            }
+
+            // TX test: the operator asking this station to key up. Handled apart from the two
+            // toggles below because it is not a per-client preference - it puts a signal on the
+            // air, so it is the station's business and every open page hears the outcome.
+            if (type.GetString() == "txtest")
+            {
+                ApplyTxTestRequest(request.RootElement);
+                return;
+            }
+
+            if (request.RootElement.TryGetProperty("on", out JsonElement on))
             {
                 switch (type.GetString())
                 {
@@ -1813,6 +1854,116 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // A browser sending nonsense loses nothing but its own request.
         }
     }
+
+    // ---------------------------------------------------------------- TX test
+    /// <summary>
+    /// One <c>txtest</c> message from the operator's page: start a test, or stop the one running.
+    /// </summary>
+    /// <remarks>
+    /// Nothing is decided here. Whether the station may transmit at all, how long for and at what
+    /// level are the daemon's to say - this only reads the request and hands it over, so that a
+    /// page cannot ask for anything the CLI switch could not ask for too.
+    /// </remarks>
+    private void ApplyTxTestRequest(JsonElement request)
+    {
+        if (_txTest is not { } control)
+        {
+            // No control installed: a public page, a relayed one, or a station with no
+            // transmitter. Silently ignored - there is nobody to refuse on behalf of.
+            return;
+        }
+
+        if (request.TryGetProperty("stop", out JsonElement stop) && stop.ValueKind == JsonValueKind.True)
+        {
+            control.Stop();
+            return;
+        }
+
+        bool twoTone = !request.TryGetProperty("twoTone", out JsonElement pair)
+            || pair.ValueKind != JsonValueKind.False;
+        double toneHz = request.TryGetProperty("toneHz", out JsonElement tone)
+            && tone.ValueKind == JsonValueKind.Number
+                ? tone.GetDouble()
+                : control.LowToneHz;
+        double seconds = request.TryGetProperty("seconds", out JsonElement length)
+            && length.ValueKind == JsonValueKind.Number
+                ? length.GetDouble()
+                : control.DefaultSeconds;
+
+        control.Start(new TxTestRequest(twoTone, toneHz, seconds));
+    }
+
+    private TxTestControl? _txTest;
+
+    /// <summary>
+    /// Installs (or removes) the operator's transmitter test after the server was built.
+    /// </summary>
+    /// <remarks>
+    /// The daemon has to: whether the station can key at all is settled by opening the sound card
+    /// and the PTT line, which happens long after the page is being served. Same shape as
+    /// <see cref="SetRadioStatus"/> - the config message is rebuilt so the next browser is offered
+    /// the current answer - and, like it, this is never called on a public or relayed page.
+    /// </remarks>
+    public void SetTxTest(TxTestControl? control)
+    {
+        _txTest = control;
+        if (_source is not null)
+        {
+            _configMessage = BuildConfigMessage(); // before Start, Start's own build picks it up
+        }
+    }
+
+    /// <summary>
+    /// Tells every open page what became of a test transmission. Called by whoever ran it, on its
+    /// own thread; a page that arrives afterwards is not told, because a test is an event rather
+    /// than a state and the frames panel already carries the record of one that happened.
+    /// </summary>
+    public void ReportTxTest(TxTestStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        Broadcast(WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            type = "txtest",
+            state = status.State,
+            text = status.Text,
+        }, Json));
+    }
+
+    /// <summary>
+    /// Lists a test transmission in the frames panel, so that a keyup carrying tones rather than
+    /// a frame is not an unexplained burst on the waterfall - here, and on the public monitor of
+    /// a station that publishes to one, which is where somebody else watching would otherwise
+    /// see a signal nothing accounts for.
+    /// </summary>
+    /// <remarks>
+    /// A frame row, deliberately, rather than a kind of its own: the panel, the frame log, the
+    /// backlog a browser opens on and the uplink all already carry transmitted rows, and the one
+    /// thing this needs that a frame does not have - what the test actually was - is the note
+    /// field an unattributable frame already uses. Nothing new crosses the wire.
+    /// </remarks>
+    /// <param name="subChannel">The modem the row is filed under; see the daemon's TxTest.</param>
+    /// <param name="text">What was sent, in the journal's own wording.</param>
+    /// <param name="lengthBytes">The length of the record the frame log keeps for it.</param>
+    public void ReportTestTransmission(int subChannel, string text, int lengthBytes)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(text);
+        if (_source is null)
+        {
+            return;   // not started; nobody to tell
+        }
+
+        BroadcastFrame(
+            subChannel, TestTransmissionMode, from: null, to: null, lengthBytes,
+            snrDb: null, burstLines: null, offsetHz: null, corrected: null, crc: null,
+            transmitted: true, note: text);
+    }
+
+    /// <summary>
+    /// The mode string a test transmission is filed under, in the panel and in the frame log. Not
+    /// a modem and not in the catalogue: it renders as "TX test", it sorts with the station's own
+    /// transmissions, and a query for what a modem sent never picks one up by accident.
+    /// </summary>
+    public const string TestTransmissionMode = "tx-test";
 
     /// <summary>
     /// Receive audio to whoever asked for it, as [0x02][s16 LE mono] at the channel rate.

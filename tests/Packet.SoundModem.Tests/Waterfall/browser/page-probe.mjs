@@ -281,6 +281,39 @@ const mineOnArrival = {
   stored: run(`JSON.parse(localStorage.getItem(LS) || "{}").linksMine === true`) === true,
 };
 
+// ---------------------------------------------------------------- TX test
+// The one control on this page that puts a signal on the air, driven the way an operator drives
+// it. What is asked for goes over the page's own socket to the real server, so the assertion the
+// test makes is what the daemon received - which is the only thing that matters and the one thing
+// a server-side test alone could never see. TXTEST=stop presses it a second time.
+const txTestCtl = sandbox.document.getElementById("txTestCtl");
+const txTestOffered = txTestCtl.hidden === false;
+const txTestOptions = sandbox.document.getElementById("txTestKind").children.map(o => o.textContent);
+const txTestDisabled = sandbox.document.getElementById("txTestGo").disabled === true;
+const txTestSaid = sandbox.document.getElementById("txTestWhat").textContent;
+let txTestLabel = null, txTestSaidAfter = null;
+if (process.env.TXTEST) {
+  run(`document.getElementById("txTestGo").click()`);
+  if (txTestDisabled) {
+    // A station that cannot key: the click must do nothing at all, and there is no answer coming
+    // to wait for. A moment is enough to catch one that did something.
+    await wait(300);
+  } else {
+    // The station answers over the socket, so wait for the page to have heard it rather than for
+    // a fixed pause: whether the button becomes Stop while a test is on the air is the state an
+    // operator reads to know their click landed.
+    await untilTrue(() => run("txTestRunning") === true, 10000);
+    txTestLabel = run(`document.getElementById("txTestGo").textContent`);
+    if (process.env.TXTEST === "stop") {
+      run(`document.getElementById("txTestGo").click()`);
+    }
+
+    await untilTrue(() => run("txTestRunning") === false, 20000);
+  }
+
+  txTestSaidAfter = run(`document.getElementById("txTestWhat").textContent`);
+}
+
 let clickError = null;
 try { vm.runInContext(`document.getElementById("listen").click()`, sandbox); }
 catch (e) { clickError = String(e); }
@@ -663,6 +696,12 @@ process.stdout.write(JSON.stringify({
   stampedVersion,
   configReloads,
   connected,
+  txTestOffered,
+  txTestOptions,
+  txTestDisabled,
+  txTestSaid,
+  txTestLabel,
+  txTestSaidAfter,
   clickError,
   listening,
   label,
