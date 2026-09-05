@@ -16,6 +16,18 @@ public class OnDemandUberSdrInputTests
     private static readonly TimeSpan Linger = TimeSpan.FromSeconds(60);
     private static readonly UberSdrEndpoint Endpoint = new("rx.example.org", 443, true);
 
+    /// <summary>The line #409 is about, composed by the receive loop's own function rather than
+    /// typed here, so these tests hold which of its lines are waits as well as how they read.
+    /// </summary>
+    private static UberSdrLine ShortSession => UberSdrAudioInput.SessionEndedLine(
+        Endpoint,
+        healthy: false,
+        lasted: TimeSpan.FromMilliseconds(41),
+        audioSamples: 0,
+        outputRate: 12000,
+        reasonAlreadyLogged: true,
+        pause: TimeSpan.FromSeconds(300));
+
     [Fact]
     public void Starts_Idle_And_Reads_Nothing_Until_Somebody_Is_Watching()
     {
@@ -333,16 +345,18 @@ public class OnDemandUberSdrInputTests
         await h.GoLiveAsync();
         await h.LinesReach(2);
 
-        h.Session.Note("stream from rx.example.org ended (the remote party closed the WebSocket "
-            + "connection without completing the close handshake.)");
+        h.Session(UberSdrAudioInput.StreamEndedLine(
+            Endpoint,
+            "The remote party closed the WebSocket connection without completing the close "
+            + "handshake."));
 
         h.Lines[^1].Should().Be(
-            "ubersdr: live, 1 viewer: stream from rx.example.org ended (the remote party closed "
+            "ubersdr: live, 1 viewer: stream from rx.example.org ended (The remote party closed "
             + "the WebSocket connection without completing the close handshake.)");
 
         // Read as the line is written, not copied when the session opened.
         h.Input.SetViewers(3);
-        h.Session.Note("reconnected to rx.example.org");
+        h.Session(UberSdrAudioInput.ReconnectedLine(Endpoint));
         h.Lines[^1].Should().Be("ubersdr: live, 3 viewers: reconnected to rx.example.org");
     }
 
@@ -359,14 +373,20 @@ public class OnDemandUberSdrInputTests
         h.Input.SetViewers(0);
         await h.LinesReach(3);
 
-        h.Session.Waiting(
-            "the session ended after 41 ms with only 0 ms of audio; backing off 300s before "
-            + "reconnecting to rx.example.org");
+        h.Session(ShortSession);
 
         h.Lines[^1].Should().Be(
             "ubersdr: lingering, 0 viewers: the session ended after 41 ms with only 0 ms of "
             + "audio; backing off 300s before reconnecting to rx.example.org, "
             + "retrying for nobody");
+
+        // And only on a wait. The stream ending is not one, however few are watching, so the
+        // clause stays off it: a grep that matches lines which are not retries says nothing.
+        h.Session(UberSdrAudioInput.StreamEndedLine(Endpoint, "connection reset"));
+        h.Lines[^1].Should().Be(
+            "ubersdr: lingering, 0 viewers: stream from rx.example.org ended (connection reset)");
+        h.Session(UberSdrAudioInput.ReconnectedLine(Endpoint));
+        h.Lines[^1].Should().Be("ubersdr: lingering, 0 viewers: reconnected to rx.example.org");
     }
 
     [Fact]
@@ -376,9 +396,7 @@ public class OnDemandUberSdrInputTests
         await h.GoLiveAsync();
         await h.LinesReach(2);
 
-        h.Session.Waiting(
-            "the session ended after 41 ms with only 0 ms of audio; backing off 300s before "
-            + "reconnecting to rx.example.org");
+        h.Session(ShortSession);
 
         h.Lines[^1].Should().Be(
             "ubersdr: live, 1 viewer: the session ended after 41 ms with only 0 ms of audio; "
@@ -484,7 +502,7 @@ public class OnDemandUberSdrInputTests
         private readonly SemaphoreSlim _attemptStarted = new(0);
         private readonly Queue<TaskCompletionSource<IUberSdrSession>> _pending = new();
         private readonly List<string> _lines = [];
-        private UberSdrJournal? _sessionJournal;
+        private Action<UberSdrLine>? _sessionJournal;
         private int _attempts;
 
         public Harness(string? description = null)
@@ -555,7 +573,7 @@ public class OnDemandUberSdrInputTests
 
         /// <summary>The journal the input handed the session it last asked to open: where a real
         /// <see cref="UberSdrAudioInput"/>'s reconnect loop writes its own lines.</summary>
-        public UberSdrJournal Session
+        public Action<UberSdrLine> Session
         {
             get
             {

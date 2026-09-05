@@ -95,70 +95,122 @@ public sealed class UberSdrAudioInputTests
     {
         // Issue #409: six hours of "the session ended after only 0.0 s of audio" could not tell
         // a receiver that accepts and drops on the spot from one that holds the socket for a
-        // moment first, and the two want different explanations. The close reason is left off,
-        // because the receive threw and the stream-ended line above already prints it.
-        string line = UberSdrAudioInput.SessionEndedLine(
+        // moment first, and the two want different explanations. Nothing is said about why it
+        // ended, because the receive threw and the stream-ended line above already said.
+        UberSdrLine line = UberSdrAudioInput.SessionEndedLine(
             Endpoint,
             healthy: false,
             lasted: TimeSpan.FromMilliseconds(41),
             audioSamples: 0,
             outputRate: 12000,
-            closeReason: "The remote party closed the WebSocket connection without completing "
-                + "the close handshake.",
+            reasonAlreadyLogged: true,
             pause: TimeSpan.FromSeconds(300));
 
-        line.Should().Be(
+        line.Sentence.Should().Be(
             "the session ended after 41 ms with only 0 ms of audio; backing off 300s before "
             + "reconnecting to rx.example.org");
+        line.BeforeAWait.Should().BeTrue("300 s of backoff is the wait #409 is about");
     }
 
     [Fact]
-    public void A_Session_That_Closed_With_No_Error_Carries_The_Reason_Itself()
+    public void A_Session_That_Ended_With_No_Error_Says_It_Is_Over_Because_Nothing_Else_Will()
     {
-        // Nothing threw, so no stream-ended line above this one says why the session stopped.
-        string line = UberSdrAudioInput.SessionEndedLine(
+        // Nothing threw, so there is no stream-ended line above this one and this is the only
+        // line saying the session is over. It still prints no reason, because there was none.
+        UberSdrLine line = UberSdrAudioInput.SessionEndedLine(
             Endpoint,
             healthy: false,
             lasted: TimeSpan.FromMilliseconds(2500),
             audioSamples: 14400,
             outputRate: 12000,
-            closeReason: null,
+            reasonAlreadyLogged: false,
             pause: TimeSpan.FromSeconds(5));
 
-        line.Should().Be(
+        line.Sentence.Should().Be(
             "the session ended after 2500 ms with only 1200 ms of audio (the receiver closed the "
             + "stream); backing off 5s before reconnecting to rx.example.org");
+        line.BeforeAWait.Should().BeTrue();
     }
 
     [Fact]
     public void The_Ordinary_Session_Rollover_Just_Says_It_Is_Reconnecting()
     {
         // Three hours of audio and the instance's max_session_time: unremarkable, and it stays
-        // the one-line event it has always been.
-        UberSdrAudioInput.SessionEndedLine(
+        // the one-line event it has always been. Still a wait, because even a rollover gets a
+        // breath before the next session rather than an instant reconnect.
+        UberSdrLine line = UberSdrAudioInput.SessionEndedLine(
             Endpoint,
             healthy: true,
             lasted: TimeSpan.FromHours(3),
             audioSamples: 129_600_000,
             outputRate: 12000,
-            closeReason: null,
-            pause: TimeSpan.FromSeconds(1))
-            .Should().Be("reconnecting to rx.example.org");
+            reasonAlreadyLogged: true,
+            pause: TimeSpan.FromSeconds(1));
+
+        line.Sentence.Should().Be("reconnecting to rx.example.org");
+        line.BeforeAWait.Should().BeTrue();
     }
 
     [Fact]
-    public void A_Journal_With_One_Sink_Writes_Both_Kinds_Of_Line_To_It()
+    public void Only_The_Lines_That_Announce_A_Wait_Are_Marked_As_Waits()
     {
-        // What the always-on device gets: no viewer count, because there are no viewers to
-        // count, and a backoff line indistinguishable in shape from any other.
-        var written = new List<string>();
-        var journal = new UberSdrJournal(sentence => written.Add($"ubersdr: {sentence}"));
+        // The whole of what the on-demand wrapper's "retrying for nobody" clause means is "this
+        // wait was entered on nobody's behalf", so which lines are waits is load-bearing, and it
+        // is decided here rather than at the call sites that write them (review of #410).
+        var waits = new TimeSpan[] { TimeSpan.FromMinutes(15), TimeSpan.FromSeconds(30) };
 
-        journal.Note("reconnected to rx.example.org");
-        journal.Waiting("rx.example.org unreachable (connection refused); retrying in 1s");
+        UberSdrAudioInput.ReconnectedLine(Endpoint).Should().Be(
+            new UberSdrLine("reconnected to rx.example.org", BeforeAWait: false));
+
+        UberSdrAudioInput.RefusingLine(Endpoint, "HTTP 429", waits[0]).Should().Be(
+            new UberSdrLine(
+                "rx.example.org is refusing us for now (HTTP 429); asking again in 15 min",
+                BeforeAWait: true));
+
+        UberSdrAudioInput.UnreachableLine(Endpoint, "connection refused", waits[1]).Should().Be(
+            new UberSdrLine(
+                "rx.example.org unreachable (connection refused); retrying in 30s",
+                BeforeAWait: true));
+
+        UberSdrAudioInput.StreamEndedLine(Endpoint, "connection reset").Should().Be(
+            new UberSdrLine(
+                "stream from rx.example.org ended (connection reset)", BeforeAWait: false));
+
+        UberSdrAudioInput.RefusedAtStartupLine(Endpoint, "quota spent", 86400).Should().Be(
+            new UberSdrLine(
+                "rx.example.org is refusing us for now (quota spent, 86400 s used today). The "
+                + "stream will be retried patiently; audio starts when the receiver lets us "
+                + "back in.",
+                BeforeAWait: false));
+
+        UberSdrAudioInput.BufferFilledLine(24000, 12000).Should().Be(
+            new UberSdrLine(
+                "WARNING - dropped 24000 samples (2.0 s) because the receive buffer filled. The "
+                + "machine is not keeping up with the stream.",
+                BeforeAWait: false));
+    }
+
+    [Fact]
+    public void The_Always_On_Device_Puts_The_Device_Name_In_Front_Of_Every_Line_And_Nothing_Else()
+    {
+        // Flavour A's journal is what it has always been: no viewer count, because a station
+        // streaming for months has no audience to count, and no wait ever marked. This is the
+        // adapter the public OpenAsync hands the receive loop, not one built here.
+        var written = new List<string>();
+        Action<UberSdrLine> journal = UberSdrAudioInput.Prefixed(written.Add)!;
+
+        journal(UberSdrAudioInput.ReconnectedLine(Endpoint));
+        journal(UberSdrAudioInput.UnreachableLine(
+            Endpoint, "connection refused", TimeSpan.FromSeconds(1)));
 
         written.Should().Equal(
             "ubersdr: reconnected to rx.example.org",
             "ubersdr: rx.example.org unreachable (connection refused); retrying in 1s");
+    }
+
+    [Fact]
+    public void A_Device_Asked_To_Write_Nowhere_Builds_No_Journal_At_All()
+    {
+        UberSdrAudioInput.Prefixed(null).Should().BeNull();
     }
 }

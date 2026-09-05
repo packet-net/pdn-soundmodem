@@ -66,14 +66,14 @@ public enum OnDemandPhase
 /// </remarks>
 public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
 {
-    private readonly Func<UberSdrJournal, CancellationToken, Task<IUberSdrSession>> _open;
+    private readonly Func<Action<UberSdrLine>, CancellationToken, Task<IUberSdrSession>> _open;
     private readonly TimeSpan _linger;
     private readonly TimeProvider _time;
     private readonly Action<string>? _log;
     private readonly CancellationTokenSource _stopping = new();
     private readonly object _gate = new();
     private readonly UberSdrReconnectPolicy _policy = new();
-    private readonly UberSdrJournal _sessionJournal;
+    private readonly Action<UberSdrLine> _sessionJournal;
 
     private IUberSdrSession? _session;
 
@@ -92,7 +92,7 @@ public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
         string? receiverDescription,
         int sampleRate,
         TimeSpan linger,
-        Func<UberSdrJournal, CancellationToken, Task<IUberSdrSession>> open,
+        Func<Action<UberSdrLine>, CancellationToken, Task<IUberSdrSession>> open,
         Action<string>? log,
         TimeProvider time)
     {
@@ -106,9 +106,7 @@ public sealed class OnDemandUberSdrInput : IAudioInput, IDisposable
         _log = log;
         _time = time;
         _status = SentenceFor(OnDemandPhase.Idle);
-        _sessionJournal = new UberSdrJournal(
-            sentence => Journal(sentence, beforeAWait: false),
-            sentence => Journal(sentence, beforeAWait: true));
+        _sessionJournal = line => Journal(line.Sentence, line.BeforeAWait);
     }
 
     /// <summary>Raised on every phase change, outside any lock, with the phase and a one-line
