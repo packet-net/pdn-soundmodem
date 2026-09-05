@@ -184,6 +184,60 @@ public class MixerApiTests : IDisposable
         document.RootElement.GetProperty("kissPort").GetInt32().Should().Be(8105);
     }
 
+    /// <summary>
+    /// A config file here is JSONC and every real one has comments in it. Found on the bench
+    /// CM108 on 2026-09-05: the card was set and the fold-in then failed at the first "//".
+    /// </summary>
+    [Fact]
+    public void A_Configuration_With_Comments_Is_Amended_Rather_Than_Refused()
+    {
+        string running = """
+            {
+              // #17 bench config. Every real config file on this network looks like this.
+              "device": "plughw:CARD=Device,DEV=0",
+              /* and the shipped example is most of the way to being a manual */
+              "modems": [ { "subChannel": 0, "mode": "afsk1200" }, ],
+            }
+            """;
+
+        string? amended = MixerApi.Amend(
+            running, new MixerChange { CaptureGainPercent = 45, Agc = false }, out string why);
+
+        why.Should().BeEmpty();
+        amended.Should().NotBeNull("a commented file is an ordinary file here, not a broken one");
+        using JsonDocument document = JsonDocument.Parse(amended!);
+        document.RootElement.GetProperty("alsa").GetProperty("mixer")
+            .GetProperty("captureGainPercent").GetInt32().Should().Be(45);
+        document.RootElement.GetProperty("device").GetString().Should().Be("plughw:CARD=Device,DEV=0");
+    }
+
+    [Fact]
+    public async Task Persisting_Into_A_Commented_File_Sets_The_Card_And_Declines_The_Write()
+    {
+        // The card is what the operator can hear, so it is set either way. What is declined is
+        // writing a parsed document over the top of their comments, which would delete them.
+        using var station = new Station(_dir, FakeMixer.Cm108(), configText: """
+            {
+              // the operator's own notes, which a round trip would silently delete
+              "device": "plughw:1,0",
+              "modems": [ { "subChannel": 0, "mode": "afsk1200" } ]
+            }
+            """);
+
+        JsonElement body = await station.PostAsync("""{"captureGainPercent": 45}""", persist: true);
+
+        station.Card!.Find("Mic")!.Capture.Should().Be(45, "the card is set whatever the file is");
+        body.GetProperty("persisted").GetBoolean().Should().BeFalse();
+        string note = body.GetProperty("note").GetString()!;
+        note.Should().Contain("comments or trailing commas");
+        note.Should().Contain("NOT written");
+        note.Should().Contain("{\"alsa\":{\"mixer\":{\"captureGainPercent\":45}}}",
+            "the operator is given the line to paste");
+        File.ReadAllText(station.ConfigPath).Should().Contain(
+            "the operator's own notes", "the file is left exactly as it was");
+        File.Exists(station.EphemeralPath).Should().BeTrue("the change still lasts this run");
+    }
+
     [Fact]
     public void An_Amendment_Keeps_What_The_File_Already_Said_About_The_Other_Controls()
     {
@@ -210,16 +264,17 @@ public class MixerApiTests : IDisposable
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _serving;
 
-        public Station(string dir, FakeMixer? card)
+        public Station(string dir, FakeMixer? card, string? configText = null)
         {
             Card = card;
             ConfigPath = Path.Combine(dir, $"soundmodem-{Guid.NewGuid():N}.json");
             EphemeralPath = Path.Combine(dir, $"pending-{Guid.NewGuid():N}.json");
-            File.WriteAllText(ConfigPath, Running);
+            string running = configText ?? Running;
+            File.WriteAllText(ConfigPath, running);
 
             var api = new ConfigApi(
                 Key, ConfigPath, EphemeralPath,
-                runningJson: () => Running,
+                runningJson: () => running,
                 ephemeralInForce: false,
                 requestRestart: () => throw new InvalidOperationException(
                     "a mixer change must never restart the station"));

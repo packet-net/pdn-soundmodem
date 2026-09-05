@@ -61,6 +61,19 @@ internal static class MixerApi
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
     /// <summary>
+    /// How a configuration document is read here: with comments and trailing commas, because a
+    /// pdn-soundmodem config file is JSONC and the shipped example is most of the way to being a
+    /// manual. <see cref="DaemonConfig"/> loads them the same way; a strict reader here meant
+    /// every real config file on the network answered a mixer change with a parse error at the
+    /// first "//" (found on the bench CM108, 2026-09-05).
+    /// </summary>
+    private static readonly JsonDocumentOptions Jsonc = new()
+    {
+        CommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
+
+    /// <summary>
     /// Reads a request body, or explains what is wrong with it.
     /// </summary>
     /// <param name="body">The request body.</param>
@@ -115,7 +128,7 @@ internal static class MixerApi
         JsonNode? root;
         try
         {
-            root = JsonNode.Parse(running);
+            root = JsonNode.Parse(running, nodeOptions: null, Jsonc);
         }
         catch (JsonException e)
         {
@@ -164,6 +177,81 @@ internal static class MixerApi
         }
 
         return document.ToJsonString(Indented);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="configPath"/> could be written back from a parsed document without
+    /// losing anything the operator put there, and what to say if not.
+    /// </summary>
+    /// <remarks>
+    /// <para>A config file here is JSONC, and the shipped example is most of the way to being a
+    /// manual: comments are a large part of what is in one. Serialising a parsed document over the
+    /// top of that would silently delete all of it, so this daemon does not do it - which is also
+    /// why <c>POST /api/config</c> writes the caller's own bytes rather than anything it built.
+    /// This is the one place that has no caller-supplied bytes to write, so it asks first.</para>
+    /// <para>Asked by parsing strictly. A file that a strict reader accepts has nothing in it that
+    /// a round trip could drop, whatever it happens to contain; one that it refuses has comments
+    /// or trailing commas, and both are the operator's.</para>
+    /// </remarks>
+    /// <param name="configPath">The station's configuration file.</param>
+    /// <param name="why">What an operator should read when this returns false.</param>
+    public static bool CanRewrite(string configPath, out string why)
+    {
+        why = "";
+        string text;
+        try
+        {
+            text = File.ReadAllText(configPath);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            why = $"{configPath} could not be read ({e.Message})";
+            return false;
+        }
+
+        try
+        {
+            _ = JsonNode.Parse(text);
+            return true;
+        }
+        catch (JsonException)
+        {
+            why = $"{configPath} has comments or trailing commas in it, and this daemon never "
+                + "writes a config file back from a parsed document - it would delete them";
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The line an operator can paste into their config file to keep a change, which is what
+    /// they are told to do when the file is one this daemon will not rewrite.
+    /// </summary>
+    /// <param name="change">What was set.</param>
+    public static string Snippet(MixerChange change)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+        var mixer = new JsonObject();
+        if (change.CaptureGainPercent is int capture)
+        {
+            mixer["captureGainPercent"] = capture;
+        }
+
+        if (change.Agc is bool agc)
+        {
+            mixer["agc"] = agc;
+        }
+
+        if (change.MicBoost is bool boost)
+        {
+            mixer["micBoost"] = boost;
+        }
+
+        if (change.PlaybackPercent is int playback)
+        {
+            mixer["playbackPercent"] = playback;
+        }
+
+        return new JsonObject { ["alsa"] = new JsonObject { ["mixer"] = mixer } }.ToJsonString();
     }
 
     /// <summary>What a station with no mixer to offer answers with.</summary>

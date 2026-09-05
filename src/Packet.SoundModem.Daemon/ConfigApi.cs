@@ -487,22 +487,33 @@ internal sealed class ConfigApi
 
         bool persist = string.Equals(
             context.Request.QueryString["persist"], "true", StringComparison.OrdinalIgnoreCase);
+        string declined = "";
+        if (persist && !MixerApi.CanRewrite(_configPath, out string cannot))
+        {
+            // The card is set and stays set. What is declined is only the write, because a config
+            // file here is JSONC and this daemon does not serialise a parsed document over the top
+            // of somebody's comments - see MixerApi.CanRewrite.
+            persist = false;
+            declined = $"{cannot}, so it was NOT written. To keep this, add "
+                + $"{MixerApi.Snippet(change)} to it by hand. ";
+        }
+
         string target = persist ? _configPath : _ephemeralPath;
         string written;
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             File.WriteAllText(target, amended);
-            written = persist
+            written = declined + (persist
                 ? $"written to {_configPath}"
-                : "in force until the next restart, then the config file applies again";
+                : "in force until the next restart, then the config file applies again");
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // The card is set either way, and saying so matters: the operator can hear the
             // difference and would otherwise assume nothing happened.
-            written = $"the card is set, but {target} could not be written ({e.Message}), so this "
-                + "lasts only until the daemon restarts";
+            written = declined + $"the card is set, but {target} could not be written "
+                + $"({e.Message}), so this lasts only until the daemon restarts";
         }
 
         Console.WriteLine($"api: mixer set - {report.Summary ?? "nothing found to set"}");

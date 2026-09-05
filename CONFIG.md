@@ -766,9 +766,11 @@ the dB anyway, when the card knows one, because dB is what a level actually sits
 alsa: mixer: Mic capture 60% / 9.00 dB (set 60%), Auto Gain Control off, Speaker playback 70% / -11.10 dB (set 70%)
 ```
 
-Cards quantise. A CM108's capture range is 36 steps, so a setting of 60% comes back as whatever
-step is nearest; the line prints both the read-back and what was asked for, and the read-back is
-the card's own answer rather than ours.
+Cards quantise, so **what is read back is the nearest step the card has, not the number you
+typed**. A CM108's capture range is 36 steps: 60% lands exactly and comes back as 60%, while 45%
+does not and comes back as 46%. Every line prints both the read-back and what was asked for, and
+the read-back is the card's own answer rather than ours - as does the `percent` field of
+[`/api/mixer`](#apimixer).
 
 ### Control names differ by card
 
@@ -1162,9 +1164,20 @@ boost into the capture range - and a station with no sound card at all answers
 `{"available": false, "why": "..."}` rather than a 404, so a caller can tell "no mixer here" from
 "no such endpoint". `POST` to one of those is a `409`.
 
-> **`?persist=true` rewrites the config file from its parsed form, so comments in it are lost.**
-> The default (one run, written to the state directory) leaves the file alone, which is why the
-> operator page uses it: a trim you want to keep is worth a deliberate line in the file.
+`?persist=true` writes the config file, but **only when writing it back would lose nothing**. A
+config file here is JSONC and most are full of comments, and this daemon does not serialise a
+parsed document over the top of somebody's notes. So a commented file is left exactly as it is,
+the card is still set for this run, and the reply says what to paste in to keep it:
+
+```
+"note": "/etc/pdn-soundmodem/soundmodem.json has comments or trailing commas in it, and this
+         daemon never writes a config file back from a parsed document - it would delete them,
+         so it was NOT written. To keep this, add {\"alsa\":{\"mixer\":{\"captureGainPercent\":45}}}
+         to it by hand. in force until the next restart, then the config file applies again"
+```
+
+The operator page therefore never persists: a trim you want to keep is worth a deliberate line in
+the file.
 
 ## `frameLog`
 
