@@ -167,17 +167,39 @@ public class AlsaMixerConfigTests : IDisposable
         config!.Alsa!.Mixer.Should().BeNull();
     }
 
+    /// <summary>
+    /// A typo has to be said out loud, not merely captured. Capturing it and never surfacing it
+    /// is the exact defect the comment above <c>CollectWarnings</c> was written about.
+    /// </summary>
     [Fact]
     public void A_Key_The_Daemon_Does_Not_Know_Is_Reported_Rather_Than_Dropped()
     {
         string path = WriteConfig("""
-            {"device": "plughw:1,0", "alsa": {"mixer": {"micGain": 60}}}
+            {"device": "plughw:1,0", "alsa": {"mixer": {"micGain": 60}, "cardName": "x"}}
             """);
 
         DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
 
         config!.Alsa!.Mixer!.UnknownSettings.Should().ContainKey(
             "micGain", "a typo must not look like an accepted setting");
+        config.Alsa.UnknownSettings.Should().ContainKey("cardName");
+
+        // Which is only worth anything if the operator is told, and start-up prints these.
+        config.Warnings.Should().ContainSingle(w => w.Contains("\"micGain\"", StringComparison.Ordinal)
+            && w.Contains("alsa mixer", StringComparison.Ordinal)
+            && w.Contains("IGNORED", StringComparison.Ordinal));
+        config.Warnings.Should().ContainSingle(w => w.Contains("\"cardName\"", StringComparison.Ordinal)
+            && w.Contains("alsa:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_File_With_A_Good_Mixer_Block_Warns_About_Nothing()
+    {
+        string path = WriteConfig("""
+            {"device": "plughw:1,0", "alsa": {"mixer": {"captureGainPercent": 60, "agc": false}}}
+            """);
+
+        DaemonConfig.TryLoad(path, out _)!.Warnings.Should().BeEmpty();
     }
 
     [Fact]

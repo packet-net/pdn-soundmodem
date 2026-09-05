@@ -1949,6 +1949,8 @@ public sealed class DaemonConfig
         Unknown("paging", config.Paging?.UnknownSettings);
         Unknown("ardop", config.Ardop?.UnknownSettings);
         Unknown("flex", config.Flex?.UnknownSettings);
+        Unknown("alsa", config.Alsa?.UnknownSettings);
+        Unknown("alsa mixer", config.Alsa?.Mixer?.UnknownSettings);
         foreach (ModemConfig modem in config.Modems)
         {
             Unknown($"modem {modem.SubChannel}", modem.UnknownSettings);
