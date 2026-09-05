@@ -1699,9 +1699,9 @@ phase lines (`ubersdr: live, 2 viewers: M9PSY-1, ...`) and the session's own lin
 stream ending, reconnecting and backing off (`ubersdr: live, 2 viewers: stream from ... ended
 (...)`). A wait before another attempt at the receiver with nobody watching says so in words,
 because that is the one worth grepping for: `ubersdr: lingering, 0 viewers: the session ended
-after 41 ms with only 0 ms of audio; backing off 300s before reconnecting to ..., retrying for
-nobody`. The always-on device writes the same sentences without a count, because it has no
-viewers to count.
+after 41 ms with only 0 ms of audio; backing off 300s before reconnecting to ...,
+retrying for nobody`. The always-on device writes the same sentences without a count, because
+it has no viewers to count.
 
 The daemon writes a few `ubersdr:` lines of its own at start-up which carry no count, because
 they are the daemon's rather than the receiver's and none of them is part of a churn: the
