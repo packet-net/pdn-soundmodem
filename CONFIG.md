@@ -766,7 +766,8 @@ pdn-soundmodem --config /etc/pdn-soundmodem/soundmodem.json --tone 999 5
 `--two-tone` and `--tone` exit 0 when the tones went out and non-zero with a plain message when
 they did not. **They open the radio**, so the running service has to be stopped first - one
 process at a time owns the sound card. Nothing that serves anybody else comes up on such a run:
-no KISS port, no ARDOP, no paging endpoint and no uplink to a monitor site.
+no waterfall page, no API, no KISS port, no ARDOP, no paging endpoint and no uplink to a monitor
+site. A station whose audio comes from a web receiver is refused outright, having no transmitter.
 
 **The FM deviation presets.** The carrier of an FM signal disappears when the modulation index
 reaches 2.405 (the first zero of the Bessel function J0), so a single tone of a known frequency
@@ -799,7 +800,13 @@ station's own monitor page on a second receiver.
 - **A test already running** - refused; one at a time.
 - **A busy channel** - waited out, not refused. The test defers to carrier sense and to an ARDOP
   session's hold on exactly the same terms a KISS frame does. After 60 s of not getting the
-  channel it gives up and says so, and sends nothing.
+  channel it is **withdrawn from the queue** and says so. That is the important word: an abandoned
+  test is taken off the channel, so it cannot key the radio ten minutes later when the band
+  finally clears. The same is true of Stop - a test that has not reached the air sends nothing at
+  all and never keys; only one already transmitting is heard, and that one fades out.
+- **A radio another station is holding** (an arbitrated Flex) - refused, with the radio's own
+  words. A PTT line that is simply gone is a *failure* rather than a refusal: the journal says
+  `tx test: failed: ...`, the API answers 500 rather than 409, and the page puts its button back.
 
 **The journal says what was asked and what happened**, in ASCII:
 
@@ -819,15 +826,34 @@ planned RF centre.
 
 **Once it is on the air it runs to its length.** The burst is handed to the sound card in one
 piece, because the transmitter drains the device between queued transmissions and a test signal
-with a hole in it every few hundred milliseconds would be a poor instrument. Stop cancels a test
-that is still waiting for the channel - that one sends nothing at all - and `maxSeconds` is what
-bounds one that has started.
+with a hole in it every few hundred milliseconds would be a poor instrument. Stop withdraws a test
+that is still waiting for the channel - that one never keys the radio at all - and `maxSeconds` is
+what bounds one that has started.
+
+**It arms the station's identification.** A test is a transmission, so it starts the
+[`identify`](#identify) clock exactly as a frame does: a station that keys for tones owes anyone
+sharing the band a callsign just as much as one that keys for data. A station with no `identify`
+block is unaffected.
+
+**The page has no password, and the operator page can key the transmitter.** Two consequences
+worth knowing. The daemon refuses a WebSocket handshake whose `Origin` is not the host the page
+was served from, which is what stops a page the operator happens to be visiting from opening a
+socket to `127.0.0.1` and keying the radio - browsers do not apply the same-origin policy to
+WebSockets. A reverse proxy in front of the operator page must therefore pass the original `Host`
+header through, or the page's own socket will be refused (the journal says which two names
+disagreed). And [`bind`](#kissport-and-bind) decides who can reach the page at all: beyond
+loopback the daemon warns, because anything that can reach the port can key your transmitter.
+`POST /api/txtest` is the authenticated way in and always needs the [`api`](#api) key.
 
 **Two things it does not do.** The tones themselves are not configurable: 700 and 1900 Hz is the
 pair everybody measures against, and the single-tone side takes its frequency per test. And the
 test is filed under the sub-channel a KISS frame on port 0 would reach, which is a label rather
 than a choice - the station has one output device and one PTT line, so every modem's frames and
 this test go out over exactly the same path.
+
+**Refused at start-up**, with exit 2 and a sentence, if `amplitude` is not a level between 0 and 1
+or `seconds` is not above zero. `maxSeconds` needs no such check: it is clamped to 1..60 in force
+whatever the file says.
 
 ## Channel access is the host's, not the config's
 
