@@ -197,11 +197,19 @@ class WebSocket_ extends WebSocket {
 const stored = new Map();
 if (process.env.STORED) stored.set("pdnsm-waterfall", process.env.STORED);
 
+// The tab's own storage, and the tab's own reload, which are what checkPageVersion is built out
+// of: it records the version it has reloaded for and reloads at most once for it. sessionStorage
+// is a different store from localStorage above and dies with the tab, as in a browser - which is
+// exactly why a reload cannot loop. Without both of these here the page's staleness check ran
+// into a ReferenceError, took its own catch, and quietly did nothing.
+const session = new Map();
+let reloads = 0;
+
 const sandbox = {
   document: document_, WebSocket: WebSocket_, console, fetch, AudioContext: AudioContext_,
   setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame: cb => setTimeout(() => cb(performance.now()), 16),
   cancelAnimationFrame: clearTimeout, performance,
-  location: { host: `127.0.0.1:${process.env.PORT}`, protocol, pathname },
+  location: { host: `127.0.0.1:${process.env.PORT}`, protocol, pathname, reload: () => { reloads++; } },
   devicePixelRatio: 1, Int16Array, Float32Array, Uint8Array, Uint8ClampedArray, ArrayBuffer, DataView,
   Math, JSON, Date, Object, Array, String, Number, Boolean, Error, Map, Set, Promise, parseFloat, parseInt, isNaN,
   matchMedia: () => ({ matches: false, addEventListener: noop }),
@@ -215,6 +223,7 @@ const sandbox = {
   Intl, TextDecoder, TextEncoder, URL, URLSearchParams, Uint16Array, Int32Array, navigator: { userAgent: 'probe' },
   addEventListener: noop,
   localStorage: { getItem: key => stored.get(key) ?? null, setItem: (key, value) => { stored.set(key, String(value)); } },
+  sessionStorage: { getItem: key => session.get(key) ?? null, setItem: (key, value) => { session.set(key, String(value)); } },
   __stats: () => ({ played, peak }),
   __text: () => [...drawnText],
 };
@@ -569,6 +578,23 @@ const publicPage = {
     .map(id => [id, sandbox.document.getElementById(id).hidden === true])),
 };
 
+// What a tab does with a config that arrives on a reconnect rather than on the first connection,
+// which is the only kind that can tell it that it is out of date. Driven through the page's own
+// socket handler, with the version the server announced replaced, because a probe cannot upgrade
+// the daemon under itself: the comparison the page makes is the same either way. Three configs,
+// and what matters is the count after each - the version it is running (no reload), a version it
+// is not (one), and that same version again (still one, because a page that reloaded once must
+// not reload again and again against a server it cannot catch up with).
+const configReloads = [];
+const deliverConfig = (version) => {
+  run(`ws.onmessage({ data: JSON.stringify(Object.assign({}, cfg, { page: ${JSON.stringify(version)} })) })`);
+  configReloads.push(reloads);
+};
+const stampedVersion = run("PAGE_VERSION");
+deliverConfig(run("cfg.page"));
+deliverConfig("0123456789ab");
+deliverConfig("0123456789ab");
+
 // Tearing the links pane off into a window of its own, last, because it closes the pane behind it
 // and everything above wanted the pane as it was.
 sandbox.document.getElementById("linksDetach").click();
@@ -634,6 +660,8 @@ process.stdout.write(JSON.stringify({
   rsBadgeBackground: badgeBackground("fr", "id rs"),
   identBadgeBackground: badgeBackground("fr", "id"),
   rsBadgeOnTxRowBackground: badgeBackground("fr tx", "id rs"),
+  stampedVersion,
+  configReloads,
   connected,
   clickError,
   listening,

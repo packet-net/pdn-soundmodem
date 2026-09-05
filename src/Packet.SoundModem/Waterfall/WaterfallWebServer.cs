@@ -111,6 +111,19 @@ public sealed class WaterfallOptions
     /// of them to use crosses the wire. See <c>docs/uplink-plan.md</c> 4.4.
     /// </remarks>
     public string? ReceiverKind { get; set; }
+
+    /// <summary>
+    /// Where this server's own journal lines go, or null (the default) for a server that says
+    /// nothing. One line per page dropped for silence, and nothing else: everything else this
+    /// server does is either visible on the page or already reported by whoever owns it.
+    /// </summary>
+    /// <remarks>
+    /// A bare delegate rather than a journal type, because the journal lives in the daemon and
+    /// this server lives in the library. The daemon hands over its station's tagged sink, so a
+    /// monitor fronting fifty receivers says which of them lost a viewer. Called on the
+    /// connection's own thread; a throw here costs the line and nothing else.
+    /// </remarks>
+    public Action<string>? Log { get; set; }
 }
 
 /// <summary>
@@ -261,8 +274,44 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     {
         public required Channel<(WebSocketMessageType Kind, byte[] Payload)> Queue { get; init; }
 
+        /// <summary>
+        /// How this one connection is told to stop, so the keep-alive sweep can end a page that
+        /// has stopped answering without touching any other. Linked to the server's own shutdown,
+        /// so stopping the server still stops every page.
+        /// </summary>
+        /// <remarks>
+        /// Cancelling the token the receive is waiting on, rather than <c>WebSocket.Abort</c>:
+        /// abort marks the socket Aborted and leaves a receive that is already parked parked, on
+        /// a socket that came from <c>HttpListener</c> - measured, .NET 10.0.7 - and the whole
+        /// point here is to end a receive that will otherwise wait for ever.
+        /// </remarks>
+        public required CancellationTokenSource Stop { get; init; }
+
         private int _audio;
         private int _spectrum = 1;
+        private long _heard;
+        private int _dropped;
+
+        /// <summary>
+        /// When this client was last heard from, as a <see cref="TimeProvider"/> timestamp: the
+        /// moment it joined, and then every message it sends, the keep-alive answer included.
+        /// </summary>
+        public long HeardAt
+        {
+            get => Interlocked.Read(ref _heard);
+            set => Interlocked.Exchange(ref _heard, value);
+        }
+
+        /// <summary>
+        /// Set by the keep-alive sweep on a client it has given up on, so that the receive loop's
+        /// finally - which does the uncounting for every kind of departure - knows this one left
+        /// because it stopped answering rather than because it said goodbye.
+        /// </summary>
+        public bool DroppedForSilence
+        {
+            get => Volatile.Read(ref _dropped) != 0;
+            set => Volatile.Write(ref _dropped, value ? 1 : 0);
+        }
 
         public bool AudioEnabled
         {
@@ -339,6 +388,45 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     internal static readonly TimeSpan LinkExpiryPeriod = TimeSpan.FromSeconds(10);
 
     private ITimer? _linkExpiry;
+
+    /// <summary>
+    /// How often every page is asked whether it is still there. Twenty seconds, the interval the
+    /// station uplink already runs its own heartbeat on and for the same reason: neither
+    /// Cloudflare nor <c>cloudflared</c> promises to keep an idle WebSocket open, and a message
+    /// every twenty seconds is an answer this side controls rather than one it hopes for.
+    /// </summary>
+    /// <remarks>
+    /// A message the page answers, rather than a WebSocket ping frame, because .NET exposes no
+    /// way to send one and no way to see a pong arrive. It is also the shape that survives a
+    /// phone: a browser throttles a background tab's timers to once a minute or worse, but
+    /// delivers WebSocket messages to it unthrottled, so a page that answers what it is sent goes
+    /// on answering all night while a page that had to speak first would be dropped for a
+    /// throttle it cannot control.
+    /// </remarks>
+    internal static readonly TimeSpan KeepAlivePing = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// How long a page may say nothing at all before it stops being counted as a viewer. Three
+    /// keep-alives missed: enough that a browser busy for a moment, or a tunnel with a hiccup,
+    /// keeps its place, and short enough that a receiver held open for a phone that went to sleep
+    /// is let go within about a minute rather than all night (#409).
+    /// </summary>
+    internal static readonly TimeSpan KeepAliveSilence = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// How often the two above are checked. The uplink's watchdog period, and for the same
+    /// reason: the deadline is what the wording promises, and a coarse sweep would make the drop
+    /// land anywhere up to a whole interval late.
+    /// </summary>
+    internal static readonly TimeSpan KeepAlivePeriod = TimeSpan.FromSeconds(5);
+
+    /// <summary>What the page is asked; it answers <c>{"type":"pong"}</c>, and any other message
+    /// it happens to send counts as an answer too.</summary>
+    private static readonly byte[] KeepAliveMessage =
+        System.Text.Encoding.UTF8.GetBytes("{\"type\":\"ping\"}");
+
+    private ITimer? _keepAlive;
+    private long _pingedAt;
 
     /// <summary>Creates a server for <paramref name="channel"/>'s audio on
     /// <paramref name="port"/>.</summary>
@@ -814,6 +902,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _channel.FrameTransmittedWithTrim += OnFrameTransmitted;
         _linkExpiry = _options.TimeProvider.CreateTimer(
             _ => ExpireLinks(), null, LinkExpiryPeriod, LinkExpiryPeriod);
+        _pingedAt = _options.TimeProvider.GetTimestamp();
+        _keepAlive = _options.TimeProvider.CreateTimer(
+            _ => SweepKeepAlive(), null, KeepAlivePeriod, KeepAlivePeriod);
         if (_listener is { } listener)
         {
             listener.Start();
@@ -2050,6 +2141,83 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Asks every page whether it is still there, and stops counting the ones that have not said
+    /// anything for <see cref="KeepAliveSilence"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>This is the whole of #411. A page socket whose far end vanished without a close
+    /// frame used to be waited on for ever: the receive had no deadline but the server's own
+    /// shutdown, and behind a Cloudflare tunnel TCP never fails either, because the server's peer
+    /// is a healthy local <c>cloudflared</c> rather than the browser. So a phone that went to
+    /// sleep held the viewer count above zero, an on-demand receiver never lingered, and #409's
+    /// two receivers were retried at their 300 s cap all night for nobody.</para>
+    /// <para>The connection is dropped rather than closed politely. A peer that has not answered
+    /// three keep-alives will not complete a close handshake either, and a polite close is
+    /// another unbounded wait on the same dead connection. Cancelling the token its receive is
+    /// waiting on ends that wait at once, and the receive loop's finally does the uncounting
+    /// exactly as it does for a page that said goodbye - same removal, same
+    /// <see cref="ViewersChanged"/>.</para>
+    /// </remarks>
+    private void SweepKeepAlive()
+    {
+        long now = _options.TimeProvider.GetTimestamp();
+        bool ask = _options.TimeProvider.GetElapsedTime(Interlocked.Read(ref _pingedAt))
+            >= KeepAlivePing;
+        List<WaterfallClient>? silent = null;
+        lock (_clientsLock)
+        {
+            foreach (WaterfallClient client in _clients)
+            {
+                if (_options.TimeProvider.GetElapsedTime(client.HeardAt) >= KeepAliveSilence)
+                {
+                    client.DroppedForSilence = true;
+                    (silent ??= []).Add(client);
+                }
+                else if (ask)
+                {
+                    client.Queue.Writer.TryWrite((WebSocketMessageType.Text, KeepAliveMessage));
+                }
+            }
+        }
+
+        if (ask)
+        {
+            Interlocked.Exchange(ref _pingedAt, now);
+        }
+
+        if (silent is null)
+        {
+            return;
+        }
+
+        // Outside the lock: ending a client's wait releases its receive loop, whose finally takes
+        // this same lock to uncount it.
+        foreach (WaterfallClient client in silent)
+        {
+            try
+            {
+                client.Stop.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // It left by another route between the list being taken and this line; its own
+                // finally has already uncounted it.
+            }
+            catch (Exception e)
+            {
+                // Cancel runs the registrations the receive, the send and the queue left on this
+                // token, and wraps anything they throw in an AggregateException rather than
+                // swallowing it. Whatever it was belongs to that one connection; an exception out
+                // of a timer callback is unhandled on a pool thread and would end the station,
+                // and would abandon the rest of this sweep on the way out. The client is still
+                // marked and still silent, so the next sweep tries again five seconds later.
+                Journal($"page: could not drop a viewer that stopped answering "
+                    + $"({e.GetType().Name}); trying again shortly");
+            }
+        }
+    }
+
     private async Task ServeWebSocketAsync(WebSocket socket)
     {
         // Bounded per-client queue, oldest lines dropped: a stalled browser loses history,
@@ -2062,7 +2230,17 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 FullMode = BoundedChannelFullMode.DropOldest,
                 SingleReader = true,
             });
-        var client = new WaterfallClient { Queue = queue };
+        // This connection's own stop, so the keep-alive can end this page without touching any
+        // other, and so that stopping the server still stops them all.
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token);
+        var client = new WaterfallClient
+        {
+            Queue = queue,
+            Stop = stop,
+            // Arriving counts as being heard from: a page has the whole silence deadline to
+            // answer its first keep-alive, however long the handshake below takes.
+            HeardAt = _options.TimeProvider.GetTimestamp(),
+        };
 
         // The retained state a browser opens with - what the last transmission did, and who is
         // attached to which KISS port - read at the instant this client joins the broadcast list,
@@ -2088,44 +2266,48 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
         try
         {
-            await socket.SendAsync(_configMessage, WebSocketMessageType.Text, true, _stopping.Token)
+            await socket.SendAsync(_configMessage, WebSocketMessageType.Text, true, stop.Token)
                 .ConfigureAwait(false);
             if (_surveyMessage is { } survey)
             {
-                await socket.SendAsync(survey, WebSocketMessageType.Text, true, _stopping.Token)
+                await socket.SendAsync(survey, WebSocketMessageType.Text, true, stop.Token)
                     .ConfigureAwait(false);
             }
 
             if (transmit is not null)
             {
-                await socket.SendAsync(transmit, WebSocketMessageType.Text, true, _stopping.Token)
+                await socket.SendAsync(transmit, WebSocketMessageType.Text, true, stop.Token)
                     .ConfigureAwait(false);
             }
 
             if (hosts is not null)
             {
-                await socket.SendAsync(hosts, WebSocketMessageType.Text, true, _stopping.Token)
+                await socket.SendAsync(hosts, WebSocketMessageType.Text, true, stop.Token)
                     .ConfigureAwait(false);
             }
 
             if (BuildHistoryMessage() is { } history)
             {
-                await socket.SendAsync(history, WebSocketMessageType.Text, true, _stopping.Token)
+                await socket.SendAsync(history, WebSocketMessageType.Text, true, stop.Token)
                     .ConfigureAwait(false);
             }
 
             if (links is not null)
             {
-                await socket.SendAsync(links, WebSocketMessageType.Text, true, _stopping.Token)
+                await socket.SendAsync(links, WebSocketMessageType.Text, true, stop.Token)
                     .ConfigureAwait(false);
             }
 
-            Task send = SendLoopAsync(socket, queue);
+            Task send = SendLoopAsync(socket, queue, stop.Token);
             var buffer = new byte[1024];
-            while (socket.State == WebSocketState.Open && !_stopping.IsCancellationRequested)
+            while (socket.State == WebSocketState.Open && !stop.IsCancellationRequested)
             {
                 WebSocketReceiveResult received =
-                    await socket.ReceiveAsync(buffer, _stopping.Token).ConfigureAwait(false);
+                    await socket.ReceiveAsync(buffer, stop.Token).ConfigureAwait(false);
+
+                // Anything at all is proof this page is still there - the keep-alive answer, a
+                // request to turn audio or the waterfall on or off, or its goodbye.
+                client.HeardAt = _options.TimeProvider.GetTimestamp();
                 if (received.MessageType == WebSocketMessageType.Close)
                 {
                     break;
@@ -2158,6 +2340,15 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 viewers = _clients.Count;
             }
 
+            // Before the count is announced, so that the journal reads in the order things
+            // happened: the page went, and then the receiver was told how many are left.
+            if (client.DroppedForSilence)
+            {
+                Journal($"page: viewer dropped, no reply for "
+                    + $"{KeepAliveSilence.TotalSeconds:F0} s, {viewers} "
+                    + $"viewer{(viewers == 1 ? "" : "s")}");
+            }
+
             // Straight after the count changed, as on the way in, and before the tidying up: a
             // watcher that reads Viewers and a watcher that listens for the event should not be
             // able to disagree for as long as it takes to dispose a socket. The invocation stays
@@ -2165,6 +2356,23 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             RaiseViewersChanged(viewers);
             queue.Writer.TryComplete();
             socket.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// One line to whoever owns this server's journal, tagged by them. A sink that throws costs
+    /// the line and nothing else - this is called from a finally, where an exception would take
+    /// the tidying up with it.
+    /// </summary>
+    private void Journal(string line)
+    {
+        try
+        {
+            _options.Log?.Invoke(line);
+        }
+        catch (Exception)
+        {
+            // A journal that will not take a line is not this connection's problem.
         }
     }
 
@@ -2253,14 +2461,22 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }, Json);
     }
 
-    private async Task SendLoopAsync(WebSocket socket, Channel<(WebSocketMessageType Kind, byte[] Payload)> queue)
+    /// <summary>Writes what a page is owed, in order, until its queue ends or it stops.</summary>
+    /// <param name="socket">The page's socket.</param>
+    /// <param name="queue">What it is owed.</param>
+    /// <param name="stopping">This connection's own stop, so that a page the keep-alive has given
+    /// up on stops being written to as well as stops being waited on.</param>
+    private async Task SendLoopAsync(
+        WebSocket socket,
+        Channel<(WebSocketMessageType Kind, byte[] Payload)> queue,
+        CancellationToken stopping)
     {
         try
         {
             await foreach ((WebSocketMessageType kind, byte[] payload) in
-                queue.Reader.ReadAllAsync(_stopping.Token).ConfigureAwait(false))
+                queue.Reader.ReadAllAsync(stopping).ConfigureAwait(false))
             {
-                await socket.SendAsync(payload, kind, true, _stopping.Token).ConfigureAwait(false);
+                await socket.SendAsync(payload, kind, true, stopping).ConfigureAwait(false);
             }
         }
         catch (Exception)
@@ -2380,6 +2596,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _channel.TransmittingChanged -= OnTransmittingChanged;
         _linkExpiry?.Dispose();
         _linkExpiry = null;
+        _keepAlive?.Dispose();
+        _keepAlive = null;
         lock (_transmitLock)
         {
             _transmitPacer?.Dispose();

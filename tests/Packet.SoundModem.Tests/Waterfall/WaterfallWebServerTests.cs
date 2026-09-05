@@ -887,15 +887,30 @@ public class WaterfallWebServerTests : IAsyncLifetime
         changed.Dispose();
     }
 
+    /// <summary>
+    /// The next text message off a page's socket that says something. The server's keep-alive is
+    /// skipped: it arrives every twenty seconds on any socket held that long (#411), it is a
+    /// question rather than news, and no test here is about it.
+    /// </summary>
     private async Task<JsonDocument> NextTextAsync(ClientWebSocket socket)
     {
         while (true)
         {
             (WebSocketMessageType kind, byte[] payload) = await Receive(socket);
-            if (kind == WebSocketMessageType.Text)
+            if (kind != WebSocketMessageType.Text)
             {
-                return JsonDocument.Parse(payload);
+                continue;
             }
+
+            var message = JsonDocument.Parse(payload);
+            if (message.RootElement.TryGetProperty("type", out JsonElement type)
+                && type.GetString() == "ping")
+            {
+                message.Dispose();
+                continue;
+            }
+
+            return message;
         }
     }
 
@@ -1149,10 +1164,10 @@ public class WaterfallWebServerTests : IAsyncLifetime
             links.RootElement.GetProperty("links")[0].GetProperty("state").GetString().Should().Be("calling");
         }
 
-        // Two minutes on, still waiting: nothing is said.
-        clock.Advance(TimeSpan.FromMinutes(2));
-        // Three, plus the clock's own period: given up on.
-        clock.Advance(TimeSpan.FromMinutes(1) + WaterfallWebServer.LinkExpiryPeriod);
+        // Three minutes, plus the clock's own period: nothing is said until the call is given up
+        // on. The browser answers the server's keep-alive as it goes, because a page that says
+        // nothing for a minute stops being counted and has its socket dropped (#411).
+        await WatchingFor(socket, clock, TimeSpan.FromMinutes(3) + WaterfallWebServer.LinkExpiryPeriod);
 
         using JsonDocument message = await NextTextAsync(socket);
         message.RootElement.GetProperty("type").GetString().Should().Be("link");
@@ -1344,6 +1359,36 @@ public class WaterfallWebServerTests : IAsyncLifetime
         root.GetProperty("receiver").GetString().Should().Be("M9PSY-1, Dalgety Bay, Scotland, UK",
             "it is somebody else's receiver, and the page credits them");
         root.GetProperty("receiverUrl").GetString().Should().Be("https://m9psy-1.instance.ubersdr.org/");
+    }
+
+    /// <summary>
+    /// Moves the clock on with a browser watching, answering the server's keep-alive as the page
+    /// does.
+    /// </summary>
+    /// <remarks>
+    /// <para>One jump would be simpler and is no longer honest: the server stops counting a page
+    /// that has said nothing for <see cref="WaterfallWebServer.KeepAliveSilence"/> and drops its
+    /// socket (#411), so a test that jumped a silent socket over that deadline would be watching
+    /// a page the server had rightly given up on.</para>
+    /// <para>An answer every <see cref="WaterfallWebServer.KeepAlivePeriod"/>, which is twelve per
+    /// deadline, and a millisecond of real sleep with it: a fake clock and a real socket keep
+    /// different time, and a send to loopback completes without ever yielding the thread, so
+    /// without the sleep this loop can run its whole span - minutes of clock in a millisecond of
+    /// wall time - before the server gets a turn at any of the answers.</para>
+    /// </remarks>
+    private async Task WatchingFor(ClientWebSocket socket, FakeTimeProvider clock, TimeSpan span)
+    {
+        for (TimeSpan gone = TimeSpan.Zero; gone < span; gone += WaterfallWebServer.KeepAlivePeriod)
+        {
+            await socket.SendAsync(
+                Encoding.UTF8.GetBytes("{\"type\":\"pong\"}"),
+                WebSocketMessageType.Text, true, _cancellation.Token);
+            await Task.Delay(1, _cancellation.Token);
+            TimeSpan step = span - gone;
+            clock.Advance(step < WaterfallWebServer.KeepAlivePeriod
+                ? step
+                : WaterfallWebServer.KeepAlivePeriod);
+        }
     }
 
     private async Task Until(Func<bool> condition, string because)

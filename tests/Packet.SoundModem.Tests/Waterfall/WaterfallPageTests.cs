@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using AwesomeAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Waterfall;
@@ -73,6 +74,116 @@ public class WaterfallPageTests
 
         probe.BlocksAfterStop.Should().Be(0, "a second click must stop the audio, not just the label");
         probe.StoppedLabel.Should().Be("Listen");
+    }
+
+    /// <summary>
+    /// The page answers the server's keep-alive, so a page somebody has left open is never
+    /// mistaken for one whose browser has gone (#411).
+    /// </summary>
+    /// <remarks>
+    /// The one assertion no server-side test can make. The keep-alive only works if the shipping
+    /// page answers what it is sent, and the page answers it from <c>onmessage</c> - which is
+    /// deliberate, because a browser throttles a background tab's timers and does not throttle its
+    /// messages. Here the real page script does the answering, in real V8, over a real socket,
+    /// while the server's clock is wound on far faster than the wall.
+    /// </remarks>
+    [Fact]
+    public async Task The_Page_Answers_The_Servers_Keep_Alive_And_Is_Never_Given_Up_On()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var clock = new FakeTimeProvider();
+        List<string> journal = [];
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port, new WaterfallOptions
+        {
+            TimeProvider = clock,
+            Log = line => { lock (journal) { journal.Add(line); } },
+        });
+        server.Start();
+
+        // Five seconds of the server's clock per fifty of the wall, so a probe run that lasts a
+        // few seconds is a page held open for several minutes and asked a dozen times or more.
+        // A hundredfold rather than any faster because the margin that matters is the real time
+        // the page has to answer in: at this rate a deadline is 600 ms of wall clock, which is a
+        // very long stall for a socket on loopback and a scripting engine with nothing else to
+        // do, and this box does stall under suite load (#400).
+        using var running = new CancellationTokenSource();
+        var wound = TimeSpan.Zero;
+        Task winding = Task.Run(async () =>
+        {
+            while (!running.IsCancellationRequested)
+            {
+                clock.Advance(WaterfallWebServer.KeepAlivePeriod);
+                wound += WaterfallWebServer.KeepAlivePeriod;
+                try
+                {
+                    await Task.Delay(50, running.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+        });
+
+        Probe probe = await RunProbeAsync(node, port);
+        await running.CancelAsync();
+        await winding;
+
+        probe.Thrown.Should().BeEmpty("the page must not throw while answering");
+        probe.Connected.Should().BeTrue("the page must reach the server before anything else can work");
+        wound.Should().BeGreaterThan(WaterfallWebServer.KeepAliveSilence * 5,
+            "the page has to be held open across several deadlines for this to prove anything");
+
+        lock (journal)
+        {
+            journal.Should().BeEmpty(
+                "a page that answers is never given up on, however long it is left open");
+        }
+    }
+
+    /// <summary>
+    /// A tab left open across an upgrade finds out on its next reconnect, not never: the version
+    /// check runs on every config the page is sent, and reloads the tab once.
+    /// </summary>
+    /// <remarks>
+    /// <para>This is what stops a page from before #412 - which cannot answer a keep-alive it has
+    /// never heard of - being dropped at sixty seconds, reconnecting two seconds later and being
+    /// dropped again for ever, three journal lines a minute, for as long as the tab is open. The
+    /// config that says a tab is stale is the one it gets when it reconnects, and that is never
+    /// its first, so a check inside the first-config guard could never fire.</para>
+    /// <para>Driven through the page's own socket handler with the announced version replaced,
+    /// because a probe cannot upgrade the daemon under itself; the comparison the page makes is
+    /// the same either way. The page has to be the one the server stamped, since the embedded
+    /// copy still carries the placeholder and the check rightly ignores that.</para>
+    /// </remarks>
+    [Fact]
+    public async Task A_Tab_Left_Open_Across_An_Upgrade_Reloads_Itself_Once()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        using var http = new HttpClient();
+        string served = await http.GetStringAsync($"http://127.0.0.1:{port}/");
+
+        Probe probe = await RunProbeAsync(node, port, pageText: served);
+
+        probe.Thrown.Should().BeEmpty();
+        probe.StampedVersion.Should().MatchRegex("^[0-9a-f]{12}$",
+            "the page under test has to be a stamped one, or the check would ignore it");
+        probe.ConfigReloads.Should().Equal([0, 1, 1],
+            "a reconnect that announces the version the tab is running changes nothing, one that "
+            + "announces another reloads the tab, and saying it again does not reload it twice");
     }
 
     /// <summary>
@@ -782,9 +893,19 @@ public class WaterfallPageTests
     /// receiver, and the operator's own page, off a single origin and a single key, so a value
     /// left behind by one of them is what the next one starts from.
     /// </param>
+    /// <param name="node">The node binary.</param>
+    /// <param name="port">The server the page is to talk to.</param>
+    /// <param name="audio">Whether the channel is being fed, which decides how long the probe
+    /// waits for sound.</param>
+    /// <param name="protocol">The page's own scheme, for the mixed-content question.</param>
+    /// <param name="pathname">Where the page thinks it is being served from.</param>
+    /// <param name="stored">What is already in this origin's localStorage.</param>
+    /// <param name="pageText">The page to run, when it matters that it is the one the server
+    /// stamped rather than the one in the assembly: the version check compares the stamp against
+    /// what the server announces, and the embedded copy still carries the placeholder.</param>
     private static async Task<Probe> RunProbeAsync(
         string node, int port, bool audio = false, string? protocol = null, string? pathname = null,
-        string? stored = null)
+        string? stored = null, string? pageText = null)
     {
         string here = Path.GetDirectoryName(typeof(WaterfallPageTests).Assembly.Location)!;
         var start = new ProcessStartInfo(node)
@@ -793,7 +914,7 @@ public class WaterfallPageTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        using var pageFile = new PageFile();
+        using var pageFile = new PageFile(pageText);
         start.Environment["PAGE"] = pageFile.FullName;
         start.Environment["PORT"] = port.ToString();
         if (audio) start.Environment["AUDIO"] = "1";
@@ -828,14 +949,22 @@ public class WaterfallPageTests
     /// </remarks>
     private sealed class PageFile : IDisposable
     {
-        public PageFile()
+        public PageFile(string? text = null)
         {
+            FullName = Path.Combine(
+                Path.GetTempPath(), $"pdnsm-page-{Guid.NewGuid():N}.html");
+            if (text is not null)
+            {
+                // A page as the server served it, stamp and all, for the one question the
+                // embedded copy cannot answer.
+                File.WriteAllText(FullName, text);
+                return;
+            }
+
             using Stream? resource = typeof(WaterfallWebServer).Assembly
                 .GetManifestResourceStream("Packet.SoundModem.Waterfall.wwwroot.waterfall.html");
             resource.Should().NotBeNull("the page ships embedded in the library");
 
-            FullName = Path.Combine(
-                Path.GetTempPath(), $"pdnsm-page-{Guid.NewGuid():N}.html");
             using FileStream file = File.Create(FullName);
             resource!.CopyTo(file);
         }
@@ -1457,5 +1586,7 @@ public class WaterfallPageTests
         LinksBar LinksWithUi,
         CardSlot[] CardsMine,
         LinksBar LinksMine,
+        string StampedVersion,
+        int[] ConfigReloads,
         string[] Thrown);
 }
