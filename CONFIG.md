@@ -1693,8 +1693,19 @@ A receiver that cannot be reached is not fatal in this mode. The page stays up a
 is wrong in the status chip at the top (unreachable, refused for the day, gave up), and the
 daemon keeps trying on the same backoff it uses for a lost session, for as long as anyone is
 waiting; with nobody waiting it goes back to idle. The dead-feed watches stand down while idle,
-so an empty page does not restart the service every half minute. Each change of state goes to
-the journal with the viewer count: `ubersdr: live, 2 viewers: M9PSY-1, ...`.
+so an empty page does not restart the service every half minute. Every line the receiver's own
+machinery writes to the journal carries the viewer count, not only the changes of state: the
+phase lines (`ubersdr: live, 2 viewers: M9PSY-1, ...`) and the session's own lines about the
+stream ending, reconnecting and backing off (`ubersdr: live, 2 viewers: stream from ... ended
+(...)`). A wait before another attempt at the receiver with nobody watching says so in words,
+because that is the one worth grepping for: `ubersdr: lingering, 0 viewers: the session ended
+after 41 ms with only 0 ms of audio; backing off 300s before reconnecting to ..., retrying for
+nobody`. The always-on device writes the same sentences without a count, because it has no
+viewers to count.
+
+The daemon writes a few `ubersdr:` lines of its own at start-up which carry no count, because
+they are the daemon's rather than the receiver's and none of them is part of a churn: the
+receiver description, the session limit, and the "refusing this address for now" line.
 
 **With a [`monitor`](#monitor) section this section still applies**, to every receiver the monitor
 fronts: `mode`, `password`, `ssbLowHz`, `ssbHighHz`, `startupGuardMs` and `gain` are honoured as
