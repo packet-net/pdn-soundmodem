@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Packet.SoundModem.Audio;
 using Packet.SoundModem.Modems;
 
 namespace Packet.SoundModem.Daemon;
@@ -40,6 +41,9 @@ internal sealed class ConfigApi
     private readonly string _configPath;
     private Func<IReadOnlyList<Survey.ModemProposal>>? _proposals;
     private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
+    private Func<MixerReport>? _mixerRead;
+    private Func<MixerChange, MixerReport>? _mixerApply;
+    private string _mixerWhyNot = "this station has no sound-card mixer";
     private readonly string _ephemeralPath;
     private readonly Func<string> _runningJson;
     private readonly Action _requestRestart;
@@ -78,6 +82,30 @@ internal sealed class ConfigApi
         _proposals = proposals;
         _prospectorCounts = counts;
     }
+
+    /// <summary>
+    /// Where the sound card's mixer is, if this station has one. Installed by the daemon after
+    /// start-up, for the same reason as the proposals: the mixer is opened from the very
+    /// configuration this class serves.
+    /// </summary>
+    /// <param name="read">The card's state, read back fresh.</param>
+    /// <param name="apply">Applies a change to the card and returns what it then reads back.</param>
+    public void ServeMixer(Func<MixerReport> read, Func<MixerChange, MixerReport> apply)
+    {
+        _mixerRead = read;
+        _mixerApply = apply;
+    }
+
+    /// <summary>
+    /// Why this station has no mixer to offer, for the answer a caller gets instead of one.
+    /// </summary>
+    /// <remarks>
+    /// Said rather than left to a 404, because "there is no mixer here" and "this daemon is too
+    /// old to have the endpoint" are different things to an operator and to the page, which shows
+    /// its mixer group on the strength of this answer.
+    /// </remarks>
+    /// <param name="why">The sentence to serve.</param>
+    public void NoMixer(string why) => _mixerWhyNot = why;
 
     /// <summary>Where a non-persisted change is left for the next start-up to consume.</summary>
     /// <remarks>The state directory, which systemd creates and owns for the service user. Not
@@ -255,7 +283,7 @@ internal sealed class ConfigApi
     /// </param>
     public async Task<bool> HandleAsync(HttpListenerContext context, string path)
     {
-        if (path is not ("/api/config" or "/api/proposals"))
+        if (path is not ("/api/config" or "/api/proposals" or "/api/mixer"))
         {
             return false;
         }
@@ -267,6 +295,12 @@ internal sealed class ConfigApi
             // an interactive login that does not exist.
             await RespondAsync(context, 401, "unauthorized: present the configured api key as "
                 + "\"Authorization: Bearer KEY\" or \"X-API-Key: KEY\"").ConfigureAwait(false);
+            return true;
+        }
+
+        if (path is "/api/mixer")
+        {
+            await MixerAsync(context).ConfigureAwait(false);
             return true;
         }
 
@@ -369,6 +403,119 @@ internal sealed class ConfigApi
             context, 200, body.ToJsonString(new JsonSerializerOptions { WriteIndented = true }))
             .ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// The sound card's mixer: what it reads back as, and a change applied to it live.
+    /// </summary>
+    /// <remarks>
+    /// <para>Unlike <c>/api/config</c> this does not restart anything. A mixer setting takes
+    /// effect on the card as it is written, the PCM stream is untouched, and restarting a station
+    /// to trim its capture gain would drop the waterfall the operator is trimming it against.</para>
+    /// <para>The write that follows is only so the next start-up sets the same thing, and it
+    /// keeps the same rule as every other change here: one run unless <c>?persist=true</c>. So an
+    /// experiment with the gain self-heals to the config file on the next restart, exactly as a
+    /// bad modem entry does.</para>
+    /// </remarks>
+    private async Task MixerAsync(HttpListenerContext context)
+    {
+        if (_mixerRead is null || _mixerApply is null)
+        {
+            if (context.Request.HttpMethod == "GET")
+            {
+                await RespondJsonAsync(
+                    context, 200,
+                    MixerApi.Unavailable(_mixerWhyNot).ToJsonString(Pretty)).ConfigureAwait(false);
+                return;
+            }
+
+            await RespondAsync(context, 409, _mixerWhyNot).ConfigureAwait(false);
+            return;
+        }
+
+        if (context.Request.HttpMethod == "GET")
+        {
+            await RespondJsonAsync(
+                context, 200, MixerApi.Describe(_mixerRead()).ToJsonString(Pretty))
+                .ConfigureAwait(false);
+            return;
+        }
+
+        if (context.Request.HttpMethod != "POST")
+        {
+            await RespondAsync(context, 405, "GET to read the card's mixer, POST to set it")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        string body;
+        using (var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8))
+        {
+            body = await reader.ReadToEndAsync().ConfigureAwait(false);
+        }
+
+        if (!MixerApi.TryParse(body, out MixerChange change, out string refusal))
+        {
+            await RespondAsync(context, 400, refusal).ConfigureAwait(false);
+            return;
+        }
+
+        // The card first, the file second. The card is the thing the operator is listening to,
+        // and a write that fails must not leave the station set to something its config file
+        // does not say.
+        MixerReport report = _mixerApply(change);
+
+        string? amended = MixerApi.Amend(_runningJson(), change, out string why);
+        if (amended is null)
+        {
+            await RespondAsync(context, 500,
+                $"the card was set, but the change could not be folded into the configuration: {why}")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        // Through the same validator an operator's own POST goes through. It cannot fail on a
+        // running configuration plus four checked numbers, which is exactly why it is worth
+        // running: if it ever does, something above here is wrong and the file must not be
+        // written from it.
+        if (Validate(amended) is string invalid)
+        {
+            await RespondAsync(context, 500,
+                $"the card was set, but the amended configuration would not load: {invalid}")
+                .ConfigureAwait(false);
+            return;
+        }
+
+        bool persist = string.Equals(
+            context.Request.QueryString["persist"], "true", StringComparison.OrdinalIgnoreCase);
+        string target = persist ? _configPath : _ephemeralPath;
+        string written;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.WriteAllText(target, amended);
+            written = persist
+                ? $"written to {_configPath}"
+                : "in force until the next restart, then the config file applies again";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // The card is set either way, and saying so matters: the operator can hear the
+            // difference and would otherwise assume nothing happened.
+            written = $"the card is set, but {target} could not be written ({e.Message}), so this "
+                + "lasts only until the daemon restarts";
+        }
+
+        Console.WriteLine($"api: mixer set - {report.Summary ?? "nothing found to set"}");
+
+        JsonObject answer = MixerApi.Describe(report);
+        answer["applied"] = true;
+        answer["persisted"] = persist;
+        answer["note"] = written;
+        await RespondJsonAsync(context, 200, answer.ToJsonString(Pretty)).ConfigureAwait(false);
+    }
+
+    /// <summary>Indented, because these answers are read by people as often as by scripts.</summary>
+    private static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true };
 
     private async Task ApplyAsync(HttpListenerContext context)
     {
