@@ -56,6 +56,11 @@ internal static class MixerApi
         PropertyNameCaseInsensitive = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true,
+        // A field this does not know is refused rather than dropped, which is the same answer the
+        // config file gives the same four keys. Dropped, {"captureGain": 45, "agc": false} would
+        // set the AGC, silently ignore the gain, and report success - and the caller's only clue
+        // would be a read-back they did not think to check.
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
 
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
@@ -89,8 +94,9 @@ internal static class MixerApi
         }
         catch (JsonException e)
         {
-            why = "the body must be a JSON object of mixer settings, e.g. "
-                + "{\"captureGainPercent\": 70, \"agc\": false}: " + e.Message;
+            why = "the body must be a JSON object of mixer settings - captureGainPercent, agc, "
+                + "micBoost, playbackPercent - e.g. {\"captureGainPercent\": 70, \"agc\": false}. "
+                + e.Message;
             return false;
         }
 
@@ -180,8 +186,8 @@ internal static class MixerApi
     }
 
     /// <summary>
-    /// Whether <paramref name="configPath"/> could be written back from a parsed document without
-    /// losing anything the operator put there, and what to say if not.
+    /// The file as it is right now, if writing it back from a parsed document would lose nothing
+    /// the operator put there; false and a sentence if it would.
     /// </summary>
     /// <remarks>
     /// <para>A config file here is JSONC, and the shipped example is most of the way to being a
@@ -194,13 +200,16 @@ internal static class MixerApi
     /// or trailing commas, and both are the operator's.</para>
     /// </remarks>
     /// <param name="configPath">The station's configuration file.</param>
+    /// <param name="text">The file as it is right now, when this returns true.</param>
     /// <param name="why">What an operator should read when this returns false.</param>
-    public static bool CanRewrite(string configPath, out string why)
+    public static bool TryReadRewritable(string configPath, out string text, out string why)
     {
         why = "";
-        string text;
+        text = "";
         try
         {
+            // Read here rather than taken from what the process started on: an operator who has
+            // edited the file since start-up must not have those edits replaced by a snapshot.
             text = File.ReadAllText(configPath);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

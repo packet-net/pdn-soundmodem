@@ -90,6 +90,13 @@ public class MixerApiTests : IDisposable
 
         body.GetProperty("persisted").GetBoolean().Should().BeFalse();
         File.Exists(station.EphemeralPath).Should().BeTrue("the next start-up sets what is set now");
+
+        // Not /api/config's sentence, which is true there and false here: that endpoint restarts
+        // at once and the restart consumes the one-run file, while this one does not restart, and
+        // a mixer is never reset by a file that does not mention it.
+        string note = body.GetProperty("note").GetString()!;
+        note.Should().Contain("stays set");
+        note.Should().NotContain("In force until the next restart");
         File.ReadAllText(station.ConfigPath).Should().Be(
             Running, "the config file is the description of the intended station");
 
@@ -110,6 +117,98 @@ public class MixerApiTests : IDisposable
         DaemonConfig? written = DaemonConfig.TryLoad(station.ConfigPath, out _);
         written!.Alsa!.Mixer!.Agc.Should().BeFalse();
         File.Exists(station.EphemeralPath).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// A persisted change has to clear the one-run change waiting beside it, or the next restart
+    /// applies the older one and the persisted level arrives a restart late.
+    /// </summary>
+    /// <remarks>
+    /// Start-up prefers the one-run file over the config file and consumes it, and this endpoint -
+    /// alone among the writers here - does not restart, so a one-run change POSTed earlier in the
+    /// session is still sitting there when the persisted one is written. <c>POST /api/config</c>
+    /// cannot reach this state because every POST there restarts at once.
+    /// </remarks>
+    [Fact]
+    public async Task A_Persisted_Change_Clears_The_One_Run_Change_Waiting_Beside_It()
+    {
+        using var station = new Station(_dir, FakeMixer.Cm108());
+
+        await station.PostAsync("""{"captureGainPercent": 45}""");
+        File.Exists(station.EphemeralPath).Should().BeTrue("this is the state that used to win");
+
+        JsonElement body = await station.PostAsync("""{"captureGainPercent": 70}""", persist: true);
+
+        body.GetProperty("persisted").GetBoolean().Should().BeTrue();
+        File.Exists(station.EphemeralPath).Should().BeFalse(
+            "the next restart must start from the file, not from the earlier one-run change");
+        body.GetProperty("note").GetString().Should().Contain("has been removed");
+        DaemonConfig.TryLoad(station.ConfigPath, out _)!
+            .Alsa!.Mixer!.CaptureGainPercent.Should().Be(70);
+    }
+
+    /// <summary>
+    /// The file is read at the moment of the write, so an operator's edits since start-up are not
+    /// replaced by the snapshot this process came up on.
+    /// </summary>
+    [Fact]
+    public async Task Persisting_Amends_The_File_As_It_Is_Now_And_Not_The_Start_Up_Snapshot()
+    {
+        using var station = new Station(_dir, FakeMixer.Cm108());
+
+        // The operator edits the file while the station runs, as they are entitled to.
+        File.WriteAllText(station.ConfigPath, """
+            {
+              "device": "plughw:1,0",
+              "kissPort": 8199,
+              "modems": [ { "subChannel": 0, "mode": "afsk1200" }, { "subChannel": 1, "mode": "bpsk300" } ]
+            }
+            """);
+
+        await station.PostAsync("""{"captureGainPercent": 65}""", persist: true);
+
+        DaemonConfig written = DaemonConfig.TryLoad(station.ConfigPath, out string error)!;
+        error.Should().BeEmpty();
+        written.KissPort.Should().Be(8199, "the operator's edit survives");
+        written.Modems.Should().HaveCount(2, "and so does the modem they added");
+        written.Alsa!.Mixer!.CaptureGainPercent.Should().Be(65);
+    }
+
+    [Fact]
+    public async Task A_File_Edited_Into_Something_That_Will_Not_Load_Is_Not_Written_Over()
+    {
+        using var station = new Station(_dir, FakeMixer.Cm108());
+
+        // Half-finished, as an operator's file can be while the station carries on running.
+        File.WriteAllText(station.ConfigPath, """
+            {"device": "plughw:1,0", "modems": [{"subChannel": 0, "mode": "afsk1200 "}]}
+            """);
+
+        JsonElement body = await station.PostAsync("""{"agc": false}""", persist: true);
+
+        body.GetProperty("persisted").GetBoolean().Should().BeFalse();
+        body.GetProperty("note").GetString().Should().Contain("would not load");
+        File.ReadAllText(station.ConfigPath).Should().Contain(
+            "afsk1200 ", "the operator has to find their own mistake, not have it buried");
+        station.Card!.Find("Auto Gain Control")!.On.Should().BeFalse("the card is set regardless");
+    }
+
+    [Fact]
+    public async Task An_Unknown_Field_In_The_Body_Is_Refused_Rather_Than_Dropped()
+    {
+        // Dropped, this would set the AGC, silently ignore the misspelled gain and report
+        // success - and the only clue would be a read-back the caller did not think to check.
+        using var station = new Station(_dir, FakeMixer.Cm108());
+
+        HttpResponseMessage answer = await station.Client.PostAsync(
+            new Uri(station.Url, UriKind.Absolute),
+            new StringContent(
+                """{"captureGain": 45, "agc": false}""", Encoding.UTF8, "application/json"));
+
+        answer.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await answer.Content.ReadAsStringAsync()).Should().Contain("captureGainPercent");
+        station.Card!.Find("Mic")!.Capture.Should().Be(57, "nothing reached the card");
+        station.Card.Find("Auto Gain Control")!.On.Should().BeTrue();
     }
 
     [Fact]
@@ -227,6 +326,36 @@ public class MixerApiTests : IDisposable
             JsonSerializer.Deserialize<JsonElement>(text)
                 .GetProperty("applied").GetBoolean().Should().BeTrue();
         }
+    }
+
+    /// <summary>
+    /// Two operators, or two tabs, changing the mixer at once each get their own answer.
+    /// </summary>
+    /// <remarks>
+    /// The waterfall serves every request on a task of its own, and applying is set-then-read
+    /// across several calls into the card, so without a lock two overlapping POSTs can each be
+    /// answered with the other's level - and the read-back is the answer, and the read-back is
+    /// the whole point of this endpoint. The card here takes a millisecond to refresh, which is
+    /// the window they would interleave in.
+    /// </remarks>
+    [Fact]
+    public async Task Two_Changes_At_Once_Each_Get_Their_Own_Read_Back()
+    {
+        FakeMixer card = FakeMixer.Cm108();
+        card.RefreshTakes = TimeSpan.FromMilliseconds(2);
+        using var station = new Station(_dir, card);
+
+        int[] wanted = [10, 20, 30, 40, 50, 60, 70, 80];
+        JsonElement[] answers = await Task.WhenAll(wanted.Select(percent =>
+            station.PostAsync($$"""{"captureGainPercent": {{percent}} }""")));
+
+        for (int i = 0; i < wanted.Length; i++)
+        {
+            answers[i].GetProperty("capture").GetProperty("percent").GetInt32().Should().Be(
+                wanted[i], "each caller is answered with the level it asked for, not another's");
+        }
+
+        wanted.Should().Contain(card.Find("Mic")!.Capture!.Value, "and one of them won the card");
     }
 
     [Fact]
@@ -427,11 +556,17 @@ public class MixerApiTests : IDisposable
                     return;
                 }
 
-                if (!await api.HandleAsync(context, context.Request.Url!.AbsolutePath))
+                // Each request on a task of its own, as WaterfallWebServer does
+                // (`_ = ServeAsync(context)`). Awaiting here instead would serialise every
+                // caller in the harness and make the concurrency test prove nothing.
+                _ = Task.Run(async () =>
                 {
-                    context.Response.StatusCode = 404;
-                    context.Response.Close();
-                }
+                    if (!await api.HandleAsync(context, context.Request.Url!.AbsolutePath))
+                    {
+                        context.Response.StatusCode = 404;
+                        context.Response.Close();
+                    }
+                });
             }
         }
     }
