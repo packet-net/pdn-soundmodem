@@ -485,11 +485,22 @@ internal sealed class ConfigApi
             // the next start-up would come up on, and it has to exist even if the persist path
             // below cannot be taken.
             string? oneRun = MixerApi.Amend(_runningJson(), change, out string why);
-            if (oneRun is null || Validate(oneRun) is not null)
+            if (oneRun is null)
             {
                 await RespondAsync(context, 500,
                     "the card was set, but the change could not be folded into the running "
                     + $"configuration: {why}").ConfigureAwait(false);
+                return;
+            }
+
+            // Its own branch, because the two failures have two different reasons to give and
+            // the fold-in's is the empty string when it is the validation that failed - which
+            // read as a sentence ending in a dangling colon with the actual reason discarded.
+            if (Validate(oneRun) is string wrong)
+            {
+                await RespondAsync(context, 500,
+                    "the card was set, but the running configuration with this change folded in "
+                    + $"would not load: {wrong}").ConfigureAwait(false);
                 return;
             }
 

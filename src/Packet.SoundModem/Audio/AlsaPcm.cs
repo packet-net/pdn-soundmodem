@@ -199,6 +199,11 @@ public sealed class AlsaPcm : IDisposable
     private static extern int snd_pcm_set_params(
         IntPtr pcm, int format, int access, uint channels, uint rate, int softResample, uint latency);
 
+    // snd_pcm_sframes_t and snd_pcm_uframes_t are C long, which is 32-bit on armhf and so is not
+    // the C# long and ulong declared here. Wrong on the armhf .deb the release builds; correct
+    // everywhere else. Left as it is on purpose rather than by oversight - see AlsaMixer's
+    // comment above its own volume bindings for the same fault fixed with CLong, and issue #417
+    // for why this one changes every call site and wants a 32-bit bench run of its own.
     [DllImport(Lib)]
     private static extern long snd_pcm_readi(IntPtr pcm, IntPtr buffer, ulong frames);
 
