@@ -512,17 +512,19 @@ internal sealed class ConfigApi
         {
             EnsureDirectoryOf(target);
             File.WriteAllText(target, amended);
+            // Each piece is a whole sentence, because they are read joined: a lower-case
+            // clause after a full stop reads as a mistake in a journal and on a page.
             written = declined + (persist
-                ? $"written to {_configPath}"
-                : "in force until the next restart, then the config file applies again");
+                ? $"Written to {_configPath}."
+                : "In force until the next restart, then the config file applies again.");
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException
                                     or ArgumentException or NotSupportedException)
         {
             // The card is set either way, and saying so matters: the operator can hear the
             // difference and would otherwise assume nothing happened.
-            written = declined + $"the card is set, but {target} could not be written "
-                + $"({e.Message}), so this lasts only until the daemon restarts";
+            written = declined + $"The card is set, but {target} could not be written "
+                + $"({e.Message}), so this lasts only until the daemon restarts.";
         }
 
         // The mixer's own lines have already been printed by the apply above, prefix and all, so
