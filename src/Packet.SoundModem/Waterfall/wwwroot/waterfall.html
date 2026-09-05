@@ -743,7 +743,9 @@ function txTestSay(text, bad) {
 }
 
 // What the daemon says became of it. Every open page hears this, not only the one that asked:
-// two tabs on one station must not disagree about whether it is transmitting.
+// two tabs on one station must not disagree about whether it is transmitting. Any state other
+// than "running" puts the button back, including "failed" - a keyup that threw must not leave
+// the control amber and reading Stop with nothing behind it.
 function onTxTest(msg) {
   txTestRunning = msg.state === "running";
   const go = $("txTestGo");
@@ -751,7 +753,7 @@ function onTxTest(msg) {
     go.classList.toggle("on", txTestRunning);
     go.textContent = txTestRunning ? "Stop" : "Send";
   }
-  txTestSay(msg.text, msg.state === "refused");
+  txTestSay(msg.text, msg.state === "refused" || msg.state === "failed");
 }
 
 // Everything the public flavour takes off the page, by id. Three kinds: controls a visitor

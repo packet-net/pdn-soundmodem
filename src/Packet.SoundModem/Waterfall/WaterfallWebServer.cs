@@ -1857,6 +1857,47 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
     // ---------------------------------------------------------------- TX test
     /// <summary>
+    /// Whether a WebSocket handshake may be accepted, given where the page that opened it came
+    /// from. Only asked of a station that has a transmit control installed.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Why this exists.</b> Browsers do not apply the same-origin policy to WebSockets
+    /// and there is no preflight, so without this any page the operator's browser happens to load
+    /// can open a socket to this station and key the transmitter. The default bind is loopback,
+    /// which does not help at all: the attacking page runs in the operator's own browser, on the
+    /// operator's own machine. A station serving its page to the shack over the LAN is reachable
+    /// from anything on it.</para>
+    /// <para><b>Why an origin check is enough, and why it is not applied everywhere.</b> A
+    /// browser sets <c>Origin</c> itself and script cannot change it, so a page from somewhere
+    /// else cannot pretend to be this one. A non-browser client - curl, a script, the test suite -
+    /// sends no <c>Origin</c> at all, and is left alone: it is not the thing being defended
+    /// against, and it has no ambient credentials to be abused. And the check is only applied
+    /// where there is something to defend: a public page and a relayed one carry no transmit
+    /// control, and they are the pages most likely to sit behind a tunnel or a proxy that could
+    /// make a legitimate origin and host disagree.</para>
+    /// </remarks>
+    internal bool OriginMayConnect(HttpListenerRequest request, out string origin)
+    {
+        origin = request.Headers["Origin"] ?? "";
+        if (_txTest is null || origin.Length == 0)
+        {
+            return true;
+        }
+
+        // Compared on the host and port a browser would have connected to, so http and https,
+        // and a page served under a path base, all compare equal. A malformed Origin is not a
+        // browser's, and is refused rather than parsed generously.
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out Uri? from))
+        {
+            return false;
+        }
+
+        string served = request.UserHostName ?? "";
+        return string.Equals(from.Authority, served, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(from.Host, served, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// One <c>txtest</c> message from the operator's page: start a test, or stop the one running.
     /// </summary>
     /// <remarks>
@@ -2112,6 +2153,23 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         {
             if (context.Request.IsWebSocketRequest)
             {
+                if (!OriginMayConnect(context.Request, out string refusedOrigin))
+                {
+                    // A browser sends Origin on every WebSocket handshake and cannot be made to
+                    // forge it, so this is the whole defence and it costs a legitimate page
+                    // nothing. Said out loud: an operator whose page has stopped working needs to
+                    // see which two names disagreed, and an operator whose PA was nearly keyed by
+                    // somebody else's tab needs to see that it happened.
+                    _options.Log?.Invoke(
+                        $"waterfall: refused a page from {refusedOrigin} - it is not served from "
+                        + $"{context.Request.UserHostName}, and this page carries a transmit "
+                        + "control. If a proxy in front of this station rewrites the Host header, "
+                        + "make it pass the original through.");
+                    context.Response.StatusCode = 403;
+                    context.Response.Close();
+                    return true;
+                }
+
                 HttpListenerWebSocketContext upgrade = await context.AcceptWebSocketAsync(null).ConfigureAwait(false);
                 await ServeWebSocketAsync(upgrade.WebSocket).ConfigureAwait(false);
                 return true;

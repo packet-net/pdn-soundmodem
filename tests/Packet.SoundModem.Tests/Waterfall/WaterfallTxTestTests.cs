@@ -180,6 +180,95 @@ public class WaterfallTxTestTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_Page_From_Somewhere_Else_Cannot_Open_A_Socket_And_Cannot_Key()
+    {
+        // Browsers do not apply the same-origin policy to WebSockets and there is no preflight,
+        // so without this any page the operator's browser happens to load can open a socket to
+        // this station and key the transmitter. The default bind is loopback, which does not help
+        // in the slightest: the attacking page runs in the operator's own browser.
+        int port = FreePorts.Next();
+        var journal = new List<string>();
+        await using var server = new WaterfallWebServer(
+            Channel(), port, new WaterfallOptions { TxTest = Control(), Log = journal.Add });
+        server.Start();
+
+        using var attacker = new ClientWebSocket();
+        attacker.Options.SetRequestHeader("Origin", "http://malice.example");
+
+        Func<Task> connecting = () => attacker.ConnectAsync(
+            new Uri($"ws://127.0.0.1:{port}/ws"), _cancellation.Token);
+
+        await connecting.Should().ThrowAsync<WebSocketException>(
+            "a page served from somewhere else has no business on this socket");
+        _asked.Should().BeEmpty();
+        journal.Should().ContainSingle()
+            .Which.Should().Contain("malice.example", "the operator has to be able to see it");
+    }
+
+    [Fact]
+    public async Task The_Stations_Own_Page_Connects_And_Keys_As_It_Always_Did()
+    {
+        // The other half: a browser showing this station's own page sends an Origin that matches
+        // the host it fetched the page from, and nothing about it changes.
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(
+            Channel(), port, new WaterfallOptions { TxTest = Control() });
+        server.Start();
+
+        using var page = new ClientWebSocket();
+        page.Options.SetRequestHeader("Origin", $"http://127.0.0.1:{port}");
+        await page.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws"), _cancellation.Token);
+        await Receive(page);
+
+        await page.SendAsync(
+            Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":3}"""),
+            WebSocketMessageType.Text, true, _cancellation.Token);
+        while (_asked.Count == 0)
+        {
+            await Task.Delay(20, _cancellation.Token);
+        }
+
+        _asked.Should().ContainSingle().Which.Should().Be(new TxTestRequest(true, 700, 3));
+    }
+
+    [Fact]
+    public async Task A_Client_That_Is_Not_A_Browser_Is_Left_Alone()
+    {
+        // curl, a script, this suite: no Origin header at all, and nothing to defend against -
+        // there are no ambient credentials for somebody else's page to borrow. Refusing these
+        // would break every machine client for no gain.
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(
+            Channel(), port, new WaterfallOptions { TxTest = Control() });
+        server.Start();
+
+        using ClientWebSocket socket = await OpenAsync(port);
+        (_, byte[] payload) = await Receive(socket);
+        JsonDocument.Parse(payload).RootElement.GetProperty("type").GetString()
+            .Should().Be("config");
+    }
+
+    [Fact]
+    public async Task A_Page_With_No_Transmit_Control_Is_Not_Origin_Checked_At_All()
+    {
+        // A public page and a relayed one carry nothing to defend, and they are the pages most
+        // likely to sit behind a tunnel or a proxy that could make a legitimate origin and host
+        // disagree. Checking them would be a way to break the public monitor for no benefit.
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(
+            Channel(), port, new WaterfallOptions { Public = true });
+        server.Start();
+
+        using var visitor = new ClientWebSocket();
+        visitor.Options.SetRequestHeader("Origin", "https://monitor.example");
+        await visitor.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws"), _cancellation.Token);
+
+        (_, byte[] payload) = await Receive(visitor);
+        JsonDocument.Parse(payload).RootElement.GetProperty("type").GetString()
+            .Should().Be("config");
+    }
+
+    [Fact]
     public async Task A_Test_Transmission_Is_Listed_In_The_Frames_Panel_Like_Any_Other_Keyup()
     {
         // So that a burst of tones is not an unexplained signal - here, and on the public monitor
