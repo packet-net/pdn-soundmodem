@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Packet.SoundModem.Audio;
 using Packet.SoundModem.UberSdr;
 
 namespace Packet.SoundModem.Daemon;
@@ -303,6 +304,125 @@ public sealed class TxTestConfig
     /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
+/// <summary>Sound-card settings that are not the PCM stream itself.</summary>
+public sealed class AlsaConfig
+{
+    /// <summary>The card's mixer; null leaves every control as the card has it.</summary>
+    public AlsaMixerConfig? Mixer { get; set; }
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+}
+
+/// <summary>
+/// The sound card's own mixer: capture gain, AGC, mic boost and the transmit-side level.
+/// </summary>
+/// <remarks>
+/// <para><b>Every setting is optional and absent means untouched.</b> The card's mixer is
+/// whatever <c>alsamixer</c>, a reboot or a re-plug last left it, and this section exists to pin
+/// the ones that matter without taking over the ones that do not. A file with no
+/// <c>alsa.mixer</c> block changes nothing about a station that was working before it existed.</para>
+/// <para><b>Percentages, not dB.</b> See <see cref="Packet.SoundModem.Audio.AlsaMixer"/>: not
+/// every card publishes a dB scale, every card with a volume answers a raw one, and a percentage
+/// is what <c>alsamixer</c> shows on the same card. The journal reports the dB the card says the
+/// setting came out at, when it knows one.</para>
+/// <para><b>Recommended for a data modem:</b> <c>agc: false</c>, because automatic gain fights
+/// the modem's own level tracking and turns the noise floor into a moving target, and
+/// <c>micBoost: false</c> unless the radio's output is genuinely low. Recommendations, not
+/// defaults: leave the key out and the control is not touched.</para>
+/// </remarks>
+public sealed class AlsaMixerConfig
+{
+    /// <summary>Capture gain, 0-100 as a percentage of the card's range; null leaves it.</summary>
+    public int? CaptureGainPercent { get; set; }
+
+    /// <summary>Automatic gain control on or off; null leaves it.</summary>
+    public bool? Agc { get; set; }
+
+    /// <summary>
+    /// Microphone boost on or off; null leaves it. Many cards have no such control - a CM108
+    /// folds its boost into the top of the capture range - and the journal says so and carries on.
+    /// </summary>
+    public bool? MicBoost { get; set; }
+
+    /// <summary>Transmit-side playback level, 0-100 as a percentage; null leaves it.</summary>
+    public int? PlaybackPercent { get; set; }
+
+    /// <summary>
+    /// The mixer card, when it is not the one the <c>device</c> string implies. Rarely needed:
+    /// <c>plughw:CARD=Device,DEV=0</c> gives <c>hw:CARD=Device</c> by itself.
+    /// </summary>
+    public string? Card { get; set; }
+
+    /// <summary>Names to look for the capture gain under, in order; null takes the built-in list.</summary>
+    public List<string>? CaptureControls { get; set; }
+
+    /// <summary>Names to look for the AGC switch under, in order; null takes the built-in list.</summary>
+    public List<string>? AgcControls { get; set; }
+
+    /// <summary>Names to look for the mic boost under, in order; null takes the built-in list.</summary>
+    public List<string>? MicBoostControls { get; set; }
+
+    /// <summary>Names to look for the playback level under, in order; null takes the built-in list.</summary>
+    public List<string>? PlaybackControls { get; set; }
+
+    /// <summary>Keys in this section the daemon does not know; reported at start-up.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? UnknownSettings { get; set; }
+
+    /// <summary>This section as the mixer layer wants it.</summary>
+    public MixerSettings ToSettings() => new()
+    {
+        CaptureGainPercent = CaptureGainPercent,
+        Agc = Agc,
+        MicBoost = MicBoost,
+        PlaybackPercent = PlaybackPercent,
+        CaptureControls = Names(CaptureControls, MixerSettings.DefaultCaptureControls),
+        AgcControls = Names(AgcControls, MixerSettings.DefaultAgcControls),
+        MicBoostControls = Names(MicBoostControls, MixerSettings.DefaultMicBoostControls),
+        PlaybackControls = Names(PlaybackControls, MixerSettings.DefaultPlaybackControls),
+    };
+
+    /// <summary>
+    /// Why a pair of percentages is not usable, or null when they are. One method, so the
+    /// start-up refusal and the API's 400 cannot drift apart: the operator gets the same
+    /// sentence whichever door they came in by.
+    /// </summary>
+    /// <param name="captureGainPercent">The capture gain asked for, or null.</param>
+    /// <param name="playbackPercent">The playback level asked for, or null.</param>
+    public static string? WhyNotUsable(int? captureGainPercent, int? playbackPercent)
+    {
+        foreach ((string name, int? percent) in (ReadOnlySpan<(string, int?)>)
+            [
+                ("captureGainPercent", captureGainPercent),
+                ("playbackPercent", playbackPercent),
+            ])
+        {
+            if (percent is < 0 or > 100)
+            {
+                return $"\"alsa\".\"mixer\".\"{name}\" is {percent}. That is a percentage of the "
+                    + "card's own volume range - use 0-100, or remove it to leave the control "
+                    + "exactly as the card has it.";
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>An override list if there is a usable one, else the built-in fallbacks.</summary>
+    private static IReadOnlyList<string> Names(List<string>? given, IReadOnlyList<string> fallback)
+    {
+        if (given is null)
+        {
+            return fallback;
+        }
+
+        List<string> usable = [.. given.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim())];
+        return usable.Count > 0 ? usable : fallback;
+    }
 }
 
 /// <summary>POCSAG paging endpoint (DAPNET/POCSAG-compatible waveform; local paging
@@ -1032,6 +1152,13 @@ public sealed class DaemonConfig
     /// </summary>
     public TxTestConfig TxTest { get; set; } = new();
 
+    /// <summary>
+    /// Sound-card settings beyond the PCM stream - today, the card's mixer. Null (the default)
+    /// leaves every mixer control exactly as the card has it, which is what every station did
+    /// before this section existed.
+    /// </summary>
+    public AlsaConfig? Alsa { get; set; }
+
     /// <summary>POCSAG paging endpoint; null = disabled.</summary>
     public PagingConfig? Paging { get; set; }
 
@@ -1139,6 +1266,8 @@ public sealed class DaemonConfig
         {
             ValidatePublish(config);
         }
+
+        ValidateAlsa(config);
 
         if (config.Monitor is not null)
         {
@@ -1262,6 +1391,57 @@ public sealed class DaemonConfig
         ValidatePorts(config);
         config.Warnings = CollectWarnings(config);
         return config;
+    }
+
+    /// <summary>
+    /// Whether a device string names a sound card, as opposed to a FlexRadio, a web receiver or
+    /// a pair of pipes. Only the first kind has a mixer.
+    /// </summary>
+    /// <param name="device">The <c>device</c> setting.</param>
+    public static bool IsSoundCard(string device) =>
+        !string.IsNullOrWhiteSpace(device)
+        && !FlexRadio.FlexDevice.IsFlex(device)
+        && !UberSdrDevice.IsUberSdr(device)
+        && !PipeAudio.IsPipe(device);
+
+    /// <summary>
+    /// What an <c>alsa</c> section has to say before this station can use it.
+    /// </summary>
+    /// <remarks>
+    /// Refused rather than ignored, the same rule the <c>api</c> section keeps: a mixer block on
+    /// a FlexRadio would silently do nothing, and a setting that silently does nothing is worse
+    /// than one that says so. Exit 2, so systemd's RestartPreventExitStatus=2 stops retrying and
+    /// the journal carries one readable sentence.
+    /// </remarks>
+    private static void ValidateAlsa(DaemonConfig config)
+    {
+        if (config.Alsa?.Mixer is not AlsaMixerConfig mixer)
+        {
+            return;
+        }
+
+        if (AlsaMixerConfig.WhyNotUsable(mixer.CaptureGainPercent, mixer.PlaybackPercent)
+            is string wrong)
+        {
+            throw new InvalidDataException(wrong);
+        }
+
+        if (config.Monitor is not null)
+        {
+            throw new InvalidDataException(
+                "this file sets both \"monitor\" and \"alsa\".\"mixer\". A monitor fronts web "
+                + "receivers and has no sound card of its own, so there is no mixer to set - "
+                + "remove the \"alsa\" section.");
+        }
+
+        if (!IsSoundCard(config.Device))
+        {
+            throw new InvalidDataException(
+                $"\"alsa\".\"mixer\" is set but \"device\" is \"{config.Device}\", which is not a "
+                + "sound card. Capture gain, AGC and mic boost are the card's mixer; a FlexRadio "
+                + "or a web receiver has none. Remove the \"alsa\" section, or point \"device\" at "
+                + "the card.");
+        }
     }
 
     /// <summary>The bind setting, which every flavour has and every listener uses.</summary>
@@ -1819,6 +1999,8 @@ public sealed class DaemonConfig
         Unknown("paging", config.Paging?.UnknownSettings);
         Unknown("ardop", config.Ardop?.UnknownSettings);
         Unknown("flex", config.Flex?.UnknownSettings);
+        Unknown("alsa", config.Alsa?.UnknownSettings);
+        Unknown("alsa mixer", config.Alsa?.Mixer?.UnknownSettings);
         foreach (ModemConfig modem in config.Modems)
         {
             Unknown($"modem {modem.SubChannel}", modem.UnknownSettings);

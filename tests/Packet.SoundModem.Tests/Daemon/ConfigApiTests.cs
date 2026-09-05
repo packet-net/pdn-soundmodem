@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text;
 using Packet.SoundModem.Daemon;
 
 namespace Packet.SoundModem.Tests.Daemon;
@@ -94,6 +96,86 @@ public class ConfigApiTests : IDisposable
         ConfigApi.PendingPath(configPath).Should().BeNull(
             "consuming it is what makes it one-run: the restart after this one returns the "
             + "station to its config file, so an experiment that goes wrong self-heals");
+    }
+
+    /// <summary>
+    /// <c>--config soundmodem.json</c> from the directory it sits in must give a one-run path that
+    /// can actually be written.
+    /// </summary>
+    /// <remarks>
+    /// <c>Path.GetDirectoryName("soundmodem.json")</c> is the empty string rather than null, so the
+    /// fallback here never fired for a config named without a directory: the one-run path came out
+    /// as a bare file name, whose own directory name is empty, and <c>Directory.CreateDirectory("")</c>
+    /// throws. Found through <c>/api/mixer</c> on the bench (2026-09-05), but this write path is
+    /// shared with <c>/api/config</c> and only an absolute <c>--config</c> had ever been used.
+    /// </remarks>
+    [Theory]
+    [InlineData("soundmodem.json")]
+    [InlineData("./soundmodem.json")]
+    [InlineData("/etc/pdn-soundmodem/soundmodem.json")]
+    public void A_One_Run_Path_Always_Names_A_Directory_That_Can_Be_Created(string configPath)
+    {
+        string pending = ConfigApi.EphemeralPathFor(configPath);
+
+        Path.GetFileName(pending).Should().Be("pending-config.json");
+        Path.GetDirectoryName(pending).Should().NotBeNullOrEmpty(
+            "Directory.CreateDirectory throws on an empty path, and that is where it is written");
+    }
+
+    /// <summary>
+    /// A POST that cannot be written down still answers, with a status and a reason.
+    /// </summary>
+    /// <remarks>
+    /// The waterfall's own catch-all aborts the connection, which is right for a page and wrong
+    /// for an API: a caller gets a closed socket with no status and no body and cannot tell a bug
+    /// from a network fault. The path here throws <c>ArgumentException</c> from the write, which
+    /// is the shape the bare-file-name fault took before it was fixed.
+    /// </remarks>
+    [Fact]
+    public async Task A_Configuration_That_Cannot_Be_Written_Down_Answers_Instead_Of_Aborting()
+    {
+        const string key = "test-key-not-a-secret";
+        string configPath = Path.Combine(_dir, "soundmodem.json");
+        File.WriteAllText(configPath, "{}");
+
+        var api = new ConfigApi(
+            key, configPath,
+            // A null character is the one thing a Linux path may not contain, so the write throws
+            // ArgumentException rather than an IOException - the class the catch used to miss.
+            ephemeralPath: Path.Combine(_dir, "pending\0config.json"),
+            runningJson: () => "{}",
+            ephemeralInForce: false,
+            requestRestart: () => { });
+
+        int port = FreePorts.Next();
+        using var listener = new HttpListener();
+        listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        listener.Start();
+        Task serving = Task.Run(async () =>
+        {
+            HttpListenerContext context = await listener.GetContextAsync();
+            if (!await api.HandleAsync(context, context.Request.Url!.AbsolutePath))
+            {
+                context.Response.StatusCode = 404;
+                context.Response.Close();
+            }
+        });
+
+        using var client = new HttpClient();
+        client.DefaultRequestHeaders.Add("X-API-Key", key);
+        HttpResponseMessage answer = await client.PostAsync(
+            new Uri($"http://127.0.0.1:{port}/api/config", UriKind.Absolute),
+            new StringContent(
+                """{"device": "null", "modems": [{"subChannel": 0, "mode": "afsk1200"}]}""",
+                Encoding.UTF8, "application/json"));
+
+        await serving;
+        listener.Close();
+
+        answer.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+        string text = await answer.Content.ReadAsStringAsync();
+        text.Should().NotBeEmpty("a closed socket tells a caller nothing at all");
+        text.Should().Contain("could not write", "and it has to say what went wrong");
     }
 
     [Fact]

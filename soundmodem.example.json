@@ -78,6 +78,18 @@
     // Add "port": 8110 to an entry to give that modem a TCP port of its own.
   ],
   "ptt": { "type": "cm108", "device": "/dev/hidraw0", "gpio": 3 },
+  // The sound card's own mixer (optional). Every key is optional and LEAVING ONE OUT LEAVES
+  // THAT CONTROL EXACTLY AS THE CARD HAS IT - which is why nothing here is set by default: the
+  // card is whatever alsamixer, a reboot or a re-plug last left it, and this is for pinning the
+  // ones that matter. Gains are percentages of the card's own range, the same number alsamixer
+  // shows; the journal reports the dB the card says it came out at. Recommended for a data
+  // modem: "agc": false (automatic gain fights the modem's own level tracking and turns the
+  // noise floor into a moving target) and "micBoost": false unless the radio's output is
+  // genuinely low. Many cards have no mic boost control at all - a CM108 folds it into the top
+  // of the capture range - and the journal says so and carries on. Control names differ by card
+  // revision, so run `pdn-soundmodem --mixer-show hw:1` to see what yours calls them (it only
+  // reads, and works while the station is running).
+  // "alsa": { "mixer": { "captureGainPercent": 60, "agc": false, "micBoost": false, "playbackPercent": 70 } },
   // Browser waterfall (optional): 30 fps spectrum + waterfall at http://<bind>:<port>/,
   // every modem's measured band overlaid (audio + RF centres), each decoded frame tagged
   // on its burst with callsign, SNR and frequency offset. "dialFrequencyHz" presets the

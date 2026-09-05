@@ -68,6 +68,17 @@
      readout with nothing to say would sit in the header showing dashes. */
   .ctl[hidden] { display: none; }
 
+  /* ---- Mixer: the sound card's own capture gain, AGC and mic boost. Operator page only. ---- */
+  #mixGain { width: 84px; }
+  #mixRead { font: 11px/1 var(--mono); color: var(--ink); min-width: 78px; white-space: nowrap; }
+  #mixRead.bad { color: #ff9a7a; }
+  /* A control the card has not got: still shown, so the operator can see it was looked for and
+     is not there, and not clickable, because there is nothing behind it to click. */
+  #mixerCtl .seg-btn.missing {
+    opacity: .4; text-decoration: line-through; cursor: default; border-style: dashed;
+  }
+  #mixerCtl.locked #mixRead { color: var(--muted); }
+
   /* What the transmitter did. Red while it is up, neutral once it is down - and the label says
      which, because two shades of pill are the same pill to anyone who cannot compare them side
      by side. The figures a keyed reading shows are the radio's meters now; the ones a held
@@ -451,6 +462,22 @@
     </div>
   </div>
 
+  <!-- Mixer: the sound card's own capture gain, AGC and mic boost, set through the config API
+       so the operator can trim the level while watching the waterfall. Operator page only - it
+       is in PUBLIC_HIDES, and a public monitor fronts web receivers and has no card anyway. The
+       whole group stays hidden unless the daemon answers /api/mixer with a card; see initMixer. -->
+  <div class="ctl" id="mixerCtl" hidden>
+    <label for="mixGain">Mixer</label>
+    <div class="ctl-row">
+      <input type="range" id="mixGain" min="0" max="100" step="1" value="0" disabled
+             title="Capture gain, per cent of the card's own range">
+      <span id="mixRead">-</span>
+      <button class="seg-btn" id="mixAgc" title="Automatic gain control. Off for a data modem: it fights the modem's own level tracking and turns the noise floor into a moving target.">AGC</button>
+      <button class="seg-btn" id="mixBoost" title="Microphone boost. Off unless the radio's output is genuinely low.">Boost</button>
+      <button class="btn" id="mixKey" hidden title="This station's api.key, kept in this browser only">Key</button>
+    </div>
+  </div>
+
   <!-- Forward power and SWR: live while keyed, and the transmission's average afterwards. A
        packet burst is a fraction of a second and the gaps between them are minutes, so a readout
        that existed only during the keyup was one an operator never managed to read. -->
@@ -763,7 +790,7 @@ function onTxTest(msg) {
 // that are left, and the frame rate and bin width of the spectrum); and, in the links pane, the
 // Mine filter, which asks for the links this station is one end of - this flavour is receive only
 // and has no station of its own, so the filter has nothing to mean and could only empty the pane.
-const PUBLIC_HIDES = ["dialCtl", "spanCtl", "levelCtl", "audioLabel", "linksLabel", "stats", "linksMine",
+const PUBLIC_HIDES = ["dialCtl", "spanCtl", "levelCtl", "mixerCtl", "audioLabel", "linksLabel", "stats", "linksMine",
   // TX test. Belt and braces: a public page is never sent the txTest block that reveals this,
   // so the control is already absent - but a transmit control is the one thing on this page it
   // would be worst to leave showing if that ever changed.
@@ -987,6 +1014,180 @@ function initControls() {
     ui.topDb = Math.round(Math.min(0, byteToDb(sorted[sorted.length - 1]) + 12));
     if (ui.topDb - ui.floorDb < 20) ui.topDb = ui.floorDb + 20;
     $("floor").value = ui.floorDb; $("top").value = ui.topDb; save();
+  });
+
+  initMixer();
+}
+
+/* ---------- Mixer (operator page only) ---------- */
+// The sound card's own capture gain, AGC and mic boost, beside the display levels, so the level
+// can be trimmed against the waterfall it changes. Every change goes to /api/mixer, which is the
+// station's config API under the station's own key: the card is set as the request is served and
+// the same change is written to the state directory for the next start-up. Nothing restarts -
+// restarting a station to nudge its capture gain would drop the very picture being trimmed
+// against - and, like every other change through that API, it is IN FORCE FOR ONE RUN. The
+// config file stays the description of the intended station; `?persist=true` by hand writes it.
+//
+// The whole group is hidden unless the daemon answers: 404 means this station has no config API
+// at all (no api.key), and "available": false means it has one but no sound card to mix. Which
+// leaves one case where it is shown but cannot act - the API is on and this browser has not been
+// given the key - and that is what the Key button is for. The key lives in this browser's
+// localStorage and nowhere else; the daemon never sends it to a page.
+const MIX_LS = "pdnsm-api-key";
+let mixWired = false;
+
+function mixKey() {
+  try { return localStorage.getItem(MIX_LS) || ""; } catch { return ""; }
+}
+
+function mixFetch(method, body) {
+  const headers = { "Content-Type": "application/json" };
+  const key = mixKey();
+  if (key) headers["X-API-Key"] = key;
+  return fetch(`${base}api/mixer`, {
+    method, headers, body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+// Off the page entirely. Three ways to get here and they are all "there is nothing to show":
+// no config API at all (404), an API with no sound card behind it, or the daemon not answering.
+// Set explicitly rather than left as the markup's own hidden attribute, so a test can tell "the
+// page decided" from "the page never got that far".
+function mixHide() {
+  const ctl = $("mixerCtl");
+  ctl.hidden = true;
+  ctl.classList.remove("locked");
+  $("mixKey").hidden = true;
+  $("mixRead").textContent = "-";
+  $("mixRead").classList.remove("bad");
+}
+
+// Locked: the endpoint is there and wants a key this browser has not got. The group is shown
+// rather than hidden, because "your station has a mixer and this browser cannot reach it" is
+// something the operator can act on, and hiding it would look like the feature is missing. The
+// daemon will not say whether there is a card without the key - the key check is in front of
+// everything - so if it turns out there is not one, the answer to the next probe hides it again.
+function mixLocked() {
+  $("mixerCtl").hidden = false;
+  $("mixerCtl").classList.add("locked");
+  $("mixGain").disabled = true;
+  $("mixRead").textContent = "key needed";
+  $("mixRead").classList.remove("bad");
+  $("mixKey").hidden = false;
+  for (const id of ["mixAgc", "mixBoost"]) {
+    $(id).classList.remove("on", "missing");
+    $(id).disabled = true;
+  }
+}
+
+// What the card says it is now. Read-back, not what we asked for: a card quantises a level to
+// its own steps and can decline a switch outright, and the operator must see the card.
+function mixShow(state) {
+  const ctl = $("mixerCtl");
+  ctl.hidden = false;
+  ctl.classList.remove("locked");
+  $("mixKey").hidden = true;
+
+  const gain = $("mixGain");
+  const capture = state.capture;
+  gain.disabled = !capture;
+  if (capture) gain.value = capture.percent;
+  const read = $("mixRead");
+  read.classList.remove("bad");
+  read.textContent = capture
+    ? `${capture.percent}%` + (capture.decibels == null ? "" : ` / ${capture.decibels.toFixed(1)} dB`)
+    : "no gain control";
+  read.title = state.summary || "";
+
+  for (const [id, control] of [["mixAgc", state.agc], ["mixBoost", state.micBoost]]) {
+    const button = $(id);
+    button.classList.toggle("missing", !control);
+    button.classList.toggle("on", !!control && control.on);
+    button.disabled = !control;
+    if (!control) {
+      // Named, because "this card has not got one" is the answer for a good number of CM108
+      // revisions, which fold the boost into the top of the capture range instead.
+      button.title = `${id === "mixAgc" ? "Automatic gain control" : "Microphone boost"}: `
+        + `${state.card} has no such control`;
+    }
+  }
+}
+
+async function mixSend(patch) {
+  let answer;
+  try {
+    answer = await mixFetch("POST", patch);
+  } catch {
+    $("mixRead").textContent = "not reachable";
+    $("mixRead").classList.add("bad");
+    return;
+  }
+
+  if (answer.status === 401) { mixLocked(); return; }
+  if (!answer.ok) {
+    // The daemon's own sentence, which is the same one the config file's refusal carries.
+    const text = await answer.text();
+    $("mixRead").textContent = "refused";
+    $("mixRead").classList.add("bad");
+    $("mixRead").title = text;
+    return;
+  }
+
+  const state = await answer.json();
+  mixShow(state);
+  if (state.note) $("mixRead").title = `${state.summary || ""}\n${state.note}`;
+}
+
+async function initMixer() {
+  // A public page has no mixer group at all, and a torn-off links window has no header to put
+  // one in. Both leave the endpoint alone rather than probing it.
+  if (cfg.publicMonitor || detached) return;
+
+  let answer;
+  try {
+    answer = await mixFetch("GET");
+  } catch {
+    mixHide();                       // no answer at all
+    return;
+  }
+
+  if (answer.status === 401) {
+    mixLocked();                     // an API, and this browser has no key for it
+  } else if (!answer.ok) {
+    mixHide();                       // 404: this station has no config API, so no group
+    return;
+  } else {
+    const state = await answer.json();
+    if (!state.available) {
+      // An API, but no sound card behind it - a flex: or ubersdr: station, or a card with no
+      // mixer. Hidden rather than left as it was, because this is also the path a locked group
+      // takes once a key has been supplied, and leaving it would sit there reading "key needed"
+      // for a mixer that does not exist.
+      mixHide();
+      return;
+    }
+
+    mixShow(state);
+  }
+
+  // Once. The Key button calls back in here to try the new key, and a second set of listeners
+  // would send every change twice.
+  if (mixWired) return;
+  mixWired = true;
+
+  // "change" and not "input": a drag is one request at the end of it, not sixty on the way.
+  $("mixGain").addEventListener("change", () => mixSend({ captureGainPercent: +$("mixGain").value }));
+  $("mixAgc").addEventListener("click", () => {
+    if (!$("mixAgc").disabled) mixSend({ agc: !$("mixAgc").classList.contains("on") });
+  });
+  $("mixBoost").addEventListener("click", () => {
+    if (!$("mixBoost").disabled) mixSend({ micBoost: !$("mixBoost").classList.contains("on") });
+  });
+  $("mixKey").addEventListener("click", () => {
+    const given = prompt("This station's api.key, to set its mixer from this browser:", mixKey());
+    if (given === null) return;
+    try { localStorage.setItem(MIX_LS, given.trim()); } catch { /* private mode: this session only */ }
+    initMixer();
   });
 }
 
