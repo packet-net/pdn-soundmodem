@@ -4,6 +4,7 @@ using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Daemon;
 using Packet.SoundModem.Modems;
+using M0LTE.Radio.Audio;
 using Packet.SoundModem.Tests.Channel;
 using Packet.SoundModem.Waterfall;
 
@@ -32,10 +33,12 @@ public class TxTestTests
         private readonly CancellationTokenSource _stop = new(TimeSpan.FromSeconds(30));
         private readonly Task _transmitter;
 
-        internal Rig(Func<TxTestOptions, TxTestOptions>? settings = null)
+        internal Rig(Func<TxTestOptions, TxTestOptions>? settings = null, IPttControl? ptt = null)
         {
+            Ptt = ptt ?? new RecordingPtt();
             Channel = new SoundModemChannel(Rate, randomSeed: 5);
             Channel.AddModem(0, sink => ModemCatalog.Create("afsk1200", Rate, sink));
+            Channel.AddModem(9, _ => Band);
             Channel.Csma.Persistence = 255;
             Channel.Csma.TxDelayMilliseconds = 20;
             Channel.Csma.TxTailMilliseconds = 0;
@@ -54,11 +57,18 @@ public class TxTestTests
 
         internal SoundModemChannel Channel { get; }
 
+        /// <summary>Whether the band is busy, as the transmitter's carrier sense sees it.</summary>
+        internal DeafModem Band { get; } = new();
+
         internal TxTestRunner Runner { get; }
 
         internal FakeAudioOutput Output { get; } = new(Rate);
 
-        internal RecordingPtt Ptt { get; } = new();
+        internal IPttControl Ptt { get; }
+
+        internal IReadOnlyList<string> Keying => Ptt is RecordingPtt recording
+            ? recording.Events
+            : ((ThrowingPtt)Ptt).Events;
 
         internal List<string> Lines { get; } = [];
 
@@ -81,6 +91,50 @@ public class TxTestTests
 
             _stop.Dispose();
         }
+    }
+
+    /// <summary>
+    /// A modem that hears whatever the test tells it to. Carrier sense is the path that matters
+    /// here: <c>RunTransmitterAsync</c> waits on a busy channel with no timeout at all, so a
+    /// transmission can sit queued - already accepted, already past the inhibit - for as long as
+    /// the band is occupied. That is where a cancelled test would key the radio later.
+    /// </summary>
+    private sealed class DeafModem : IModem
+    {
+        public string Mode => "afsk1200";
+
+        public event Action<byte[], FrameQuality>? FrameDecoded;
+
+        public bool CarrierDetect => false;
+
+        public bool ChannelBusy { get; set; }
+
+        public void Process(ReadOnlySpan<float> samples)
+        {
+        }
+
+        public float[] Modulate(ReadOnlySpan<byte> ax25Frame, int txDelayMilliseconds) => [];
+
+        public void ResetCarrierState() => FrameDecoded?.Invoke([], default!);
+    }
+
+    /// <summary>A radio that will not key - a dead serial lead, or a contended Flex.</summary>
+    private sealed class ThrowingPtt : IPttControl
+    {
+        internal List<string> Events { get; } = [];
+
+        internal Exception? Failure { get; set; } = new IOException("the PTT lead has gone");
+
+        public void Key()
+        {
+            Events.Add("key");
+            if (Failure is not null)
+            {
+                throw Failure;
+            }
+        }
+
+        public void Unkey() => Events.Add("unkey");
     }
 
     private static double Amplitude(IReadOnlyList<float> audio, double hz)
@@ -110,7 +164,7 @@ public class TxTestTests
         TxTestOutcome outcome = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
 
         outcome.Ran.Should().BeTrue();
-        rig.Ptt.Events.Should().Equal(["key", "unkey"], "the radio is keyed for the test and let go");
+        rig.Keying.Should().Equal(["key", "unkey"], "the radio is keyed for the test and let go");
 
         float[] audio = rig.Output.Snapshot();
         audio.Length.Should().BeGreaterThanOrEqualTo(Rate, "a one-second test is a second of audio");
@@ -126,7 +180,7 @@ public class TxTestTests
         TxTestOutcome outcome = await rig.Runner.RunAsync(new TxTestRequest(false, 999, 1));
 
         outcome.Ran.Should().BeTrue();
-        rig.Ptt.Events.Should().Equal(["key", "unkey"]);
+        rig.Keying.Should().Equal(["key", "unkey"]);
         Amplitude(rig.Output.Snapshot(), 999).Should().BeApproximately(0.8, 0.02);
 
         // And the operator is told what the tone is for, in the journal and on the page: this is
@@ -188,7 +242,7 @@ public class TxTestTests
 
         outcome.Ran.Should().BeFalse();
         outcome.Refusal.Should().Contain("no \"ptt\" is configured");
-        rig.Ptt.Events.Should().BeEmpty("a refused test never touches the radio");
+        rig.Keying.Should().BeEmpty("a refused test never touches the radio");
         rig.Output.Snapshot().Should().BeEmpty();
         rig.Errors.Should().ContainSingle()
             .Which.Should().StartWith("tx test: refused, no \"ptt\" is configured");
@@ -208,7 +262,7 @@ public class TxTestTests
 
         outcome.Ran.Should().BeFalse();
         outcome.Refusal.Should().Contain("receives only");
-        rig.Ptt.Events.Should().BeEmpty();
+        rig.Keying.Should().BeEmpty();
     }
 
     [Fact]
@@ -224,7 +278,7 @@ public class TxTestTests
         low.Ran.Should().BeFalse();
         low.Refusal.Should().Contain("50 Hz");
 
-        rig.Ptt.Events.Should().BeEmpty();
+        rig.Keying.Should().BeEmpty();
     }
 
     [Fact]
@@ -245,14 +299,13 @@ public class TxTestTests
     }
 
     [Fact]
-    public async Task Stopping_A_Test_That_Is_Waiting_For_The_Channel_Sends_Nothing_And_Unkeys()
+    public async Task Stopping_A_Test_That_Is_Waiting_For_The_Channel_Never_Keys_The_Radio()
     {
-        // The lost page and the changed mind. The transmission is already queued and cannot be
-        // taken back, so what has to be true is that it carries no tone: the keyup happens and
-        // PTT is straight back down.
-        var inhibited = true;
+        // The lost page and the changed mind. Emptying the burst is not enough: the transmitter
+        // keys before it asks for audio, so a cancelled test has to come off the queue entirely
+        // or the radio keys on the operator's behalf after they have walked away.
         await using var rig = new Rig();
-        rig.Channel.TransmitInhibit = () => inhibited;
+        rig.Band.ChannelBusy = true;
 
         Task<TxTestOutcome> running = rig.Runner.RunAsync(new TxTestRequest(true, 0, 5));
         while (rig.Reports.Count == 0)
@@ -261,12 +314,18 @@ public class TxTestTests
         }
 
         rig.Runner.Stop();
-        inhibited = false;
+        rig.Band.ChannelBusy = false;
 
         TxTestOutcome outcome = await running;
         outcome.Ran.Should().BeFalse("nothing reached the air");
-        rig.Output.Snapshot().Should().OnlyContain(sample => sample == 0);
-        rig.Ptt.Events.Should().Equal(["key", "unkey"], "PTT is never left up by a cancellation");
+        outcome.Refusal.Should().Contain("nothing was transmitted");
+
+        // And it stays that way. The channel has been free since the line above; give the
+        // transmitter every chance to key on a withdrawn transmission before believing it will not.
+        await Task.Delay(500);
+        rig.Keying.Should().BeEmpty("a withdrawn test never keys the radio, then or later");
+        rig.Output.Snapshot().Should().BeEmpty();
+        rig.Records.Should().BeEmpty();
     }
 
     [Fact]
@@ -281,11 +340,11 @@ public class TxTestTests
 
         Task<TxTestOutcome> running = rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
         await Task.Delay(200);
-        rig.Ptt.Events.Should().BeEmpty("the channel is held, so nothing is keyed");
+        rig.Keying.Should().BeEmpty("the channel is held, so nothing is keyed");
 
         inhibited = false;
         (await running).Ran.Should().BeTrue();
-        rig.Ptt.Events.Should().Equal(["key", "unkey"]);
+        rig.Keying.Should().Equal(["key", "unkey"]);
     }
 
     [Fact]
@@ -301,7 +360,10 @@ public class TxTestTests
             Time = clock,
             ChannelWait = TimeSpan.FromSeconds(20),
         });
-        rig.Channel.TransmitInhibit = () => true;
+        // Carrier sense, not the ARDOP inhibit: the transmission is accepted and queued, and the
+        // transmitter loops on a busy channel with no timeout of its own. This is the state a
+        // long carrier on the band puts a test into.
+        rig.Band.ChannelBusy = true;
 
         Task<TxTestOutcome> running = rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
         while (rig.Reports.Count == 0)
@@ -314,6 +376,124 @@ public class TxTestTests
         TxTestOutcome outcome = await running.WaitAsync(TimeSpan.FromSeconds(20));
         outcome.Ran.Should().BeFalse();
         outcome.Refusal.Should().Contain("did not clear");
+        outcome.Refusal.Should().Contain("nothing was transmitted");
+
+        // The half that matters. The operator has been told the test was given up on and has
+        // walked away; when the channel finally clears, the radio must not key on their behalf
+        // with an unlogged 5 ms blip.
+        rig.Band.ChannelBusy = false;
+        await Task.Delay(500);
+        rig.Keying.Should().BeEmpty("a test given up on never keys the radio afterwards");
+        rig.Output.Snapshot().Should().BeEmpty();
+        rig.Records.Should().BeEmpty();
+        rig.Lines.Should().NotContain(line => line.Contains("on air"));
+    }
+
+    [Fact]
+    public async Task A_Retry_Cannot_Queue_Behind_A_Test_That_Is_Still_On_The_Channel()
+    {
+        // The second consequence of a test that cannot be taken back: two transmissions under one
+        // source share a keyup, so a retry landing behind a stale one goes out as a blip followed
+        // by the real burst with only a token TXDELAY - a transient inside the very measurement
+        // the feature exists to make. The run is held open until the channel gives the
+        // transmission back, so the retry is refused instead.
+        await using var rig = new Rig();
+        rig.Band.ChannelBusy = true;
+
+        Task<TxTestOutcome> first = rig.Runner.RunAsync(new TxTestRequest(true, 0, 2));
+        while (rig.Reports.Count == 0)
+        {
+            await Task.Delay(10);
+        }
+
+        TxTestOutcome retry = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 2));
+        retry.Refusal.Should().Be("a test transmission is already running");
+
+        rig.Runner.Stop();
+        rig.Band.ChannelBusy = false;
+        (await first).Ran.Should().BeFalse();
+        rig.Keying.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task A_Keyup_That_Throws_Is_Reported_As_A_Failure_And_The_Radio_Is_Let_Go()
+    {
+        // A serial or hidraw lead that has been pulled. Nothing may escape the runner: the page
+        // must not be left amber reading "Stop", the API caller must not lose its connection, and
+        // the command line must not die before it has closed the radio down.
+        var ptt = new ThrowingPtt();
+        await using var rig = new Rig(ptt: ptt);
+
+        TxTestOutcome outcome = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
+
+        outcome.Ran.Should().BeFalse();
+        outcome.Failed.Should().BeTrue("a dead PTT lead is a fault, not the station saying no");
+        outcome.Refusal.Should().Contain("the PTT lead has gone");
+
+        rig.Keying.Should().Equal(["key"], "the keyup threw, so there was nothing to unkey");
+        rig.Errors.Should().ContainSingle()
+            .Which.Should().Be("tx test: failed: the PTT lead has gone");
+
+        // The page is told, and told something that puts the button back.
+        rig.Reports.Select(r => r.State).Should().Equal(["running", "failed"]);
+        rig.Reports[^1].Text.Should().Contain("the PTT lead has gone");
+        rig.Records.Should().BeEmpty("nothing went out, so nothing is written down");
+
+        // And the runner is free again rather than stuck holding a run that never ended.
+        ptt.Failure = null;
+        (await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1))).Ran.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task A_Radio_Another_Station_Is_Holding_Is_A_Refusal_Rather_Than_A_Fault()
+    {
+        // The arbitrated Flex. The transmitter's own keyup catch calls this an outcome and not a
+        // broken radio, and the operator's answer is the same sentence the journal carries - so
+        // it reads as the station saying no, not as something to retry blindly.
+        var ptt = new ThrowingPtt
+        {
+            Failure = new InvalidOperationException("another station holds the PA"),
+        };
+        await using var rig = new Rig(ptt: ptt);
+
+        TxTestOutcome outcome = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
+
+        outcome.Ran.Should().BeFalse();
+        outcome.Failed.Should().BeFalse();
+        outcome.Refusal.Should().Contain("holds the PA");
+        rig.Errors.Should().ContainSingle()
+            .Which.Should().Be("tx test: refused, another station holds the PA");
+        rig.Reports.Select(r => r.State).Should().Equal(["running", "refused"]);
+        rig.Keying.Should().Equal(["key"]);
+    }
+
+    [Fact]
+    public async Task The_Same_Refusal_Reaches_The_Journal_Once_A_Minute_And_The_Caller_Every_Time()
+    {
+        // With "enabled": false, or with no PTT, a page or a script can ask over and over. Every
+        // caller gets its answer; the journal gets one line and a count, which is what the
+        // transmit-drop suppressor already does for the same reason.
+        var clock = new FakeTimeProvider();
+        await using var rig = new Rig(o => o with
+        {
+            Time = clock,
+            Refusal = "\"txTest\".\"enabled\" is false in this station's configuration",
+        });
+
+        for (int i = 0; i < 20; i++)
+        {
+            TxTestOutcome refused = await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
+            refused.Refusal.Should().Contain("enabled");
+        }
+
+        rig.Errors.Should().ContainSingle("twenty refusals are one line, not twenty");
+        rig.Reports.Should().HaveCount(20, "but every caller is still answered");
+
+        clock.Advance(TimeSpan.FromMinutes(2));
+        await rig.Runner.RunAsync(new TxTestRequest(true, 0, 1));
+
+        rig.Errors.Should().HaveCount(2);
+        rig.Errors[1].Should().Contain("and 19 more like it in the last minute");
     }
 
     [Fact]

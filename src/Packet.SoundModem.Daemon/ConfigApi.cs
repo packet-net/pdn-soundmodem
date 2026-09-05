@@ -167,21 +167,25 @@ internal sealed class ConfigApi
             .RunAsync(new Waterfall.TxTestRequest(twoTone, toneHz, seconds))
             .ConfigureAwait(false);
 
-        // 409 rather than 400 on a refusal: nothing about the request was malformed, the station
-        // was in no state to answer it - no PTT, a channel that would not clear, a test already
-        // running. A script can tell the two apart without reading the sentence.
-        await RespondJsonAsync(context, outcome.Ran ? 200 : 409, new JsonObject
+        // Three answers, because a script should be able to tell them apart without reading the
+        // sentence. 200: it went out. 409 rather than 400: nothing was wrong with the request,
+        // the station was in no state to answer it - no PTT, a channel that would not clear, a
+        // test already running. 500: something threw - a PTT that failed, a device that died -
+        // which is a fault rather than an answer, and is worth a retry where a 409 is not.
+        int status = outcome.Ran ? 200 : outcome.Failed ? 500 : 409;
+        await RespondJsonAsync(context, status, new JsonObject
         {
             ["transmitted"] = outcome.Ran,
             ["sent"] = outcome.Ran ? outcome.Text : null,
-            ["refused"] = outcome.Refusal,
+            ["refused"] = outcome.Failed ? null : outcome.Refusal,
+            ["failed"] = outcome.Failed ? outcome.Refusal : null,
         }.ToJsonString(new JsonSerializerOptions { WriteIndented = true })).ConfigureAwait(false);
     }
 
     /// <summary>What a stop is answered with, and what it does and does not promise.</summary>
     private const string TxTestStopped =
-        "{\n  \"stopped\": true,\n  \"note\": \"a test still waiting for the channel sends "
-        + "nothing; one already on the air fades out\"\n}";
+        "{\n  \"stopped\": true,\n  \"note\": \"a test still waiting for the channel is "
+        + "withdrawn and never keys the radio; one already on the air fades out\"\n}";
 
     /// <summary>Where a non-persisted change is left for the next start-up to consume.</summary>
     /// <remarks>The state directory, which systemd creates and owns for the service user. Not
