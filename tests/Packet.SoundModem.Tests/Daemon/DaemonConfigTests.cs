@@ -1097,6 +1097,51 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void An_Impossible_Transmitter_Test_Level_Stops_Start_Up_With_A_Sentence()
+    {
+        // Without this the daemon starts, journals "tx test: ready", and then throws on every
+        // press - which, since the page discards what Start throws, looks exactly like a button
+        // that does nothing. A station that looks configured and is not is the failure here.
+        foreach (string bad in new[] { "1.5", "0", "-0.2" })
+        {
+            string path = WriteConfig(
+                "{\"device\": \"null\", \"txTest\": {\"amplitude\": " + bad + "}}");
+
+            DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+            config.Should().BeNull($"an amplitude of {bad} is not a level");
+            error.Should().Contain("txTest").And.Contain("amplitude");
+            ShouldGuideTheOperator(error, path);
+        }
+    }
+
+    [Fact]
+    public void A_Transmitter_Test_That_Would_Last_No_Time_Stops_Start_Up()
+    {
+        string path = WriteConfig("""{"device": "null", "txTest": {"seconds": 0}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("txTest").And.Contain("seconds");
+        ShouldGuideTheOperator(error, path);
+    }
+
+    [Fact]
+    public void A_Cap_Beyond_The_Ceiling_Is_Accepted_And_Clamped_Rather_Than_Refused()
+    {
+        // The cap is clamped to 1..60 in force whatever the file says, so an over-large one is
+        // not a configuration error - the clamp is the safety property rather than a correction,
+        // and refusing to start over a number that cannot do any harm would be the wrong trade.
+        string path = WriteConfig("""{"device": "null", "txTest": {"maxSeconds": 3600}}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config!.TxTest.MaxSeconds.Should().Be(3600, "the file says what it says");
+    }
+
+    [Fact]
     public void A_Typo_Inside_The_Publish_Block_Is_Called_Out()
     {
         string path = PublishingStation("""

@@ -1258,6 +1258,7 @@ public sealed class DaemonConfig
         RequireBind(config);
 
         config.SidebandWasStated = StatesKey(path, "sideband");
+        ValidateTxTest(config);
         ValidatePorts(config);
         config.Warnings = CollectWarnings(config);
         return config;
@@ -1856,6 +1857,38 @@ public sealed class DaemonConfig
     /// Rejects two services asking for the same TCP port. Left to the OS this surfaces as a
     /// bind failure from whichever listener happens to start second, naming neither setting.
     /// </summary>
+    /// <summary>
+    /// The transmitter test's two numbers, checked when the file is read rather than when the
+    /// button is pressed.
+    /// </summary>
+    /// <remarks>
+    /// <c>TestTone</c> refuses an amplitude outside 0 to 1 and a duration of zero, and without
+    /// this that refusal arrives on the first press - a station that journals <c>tx test: ready</c>
+    /// at start-up and then does nothing at all when asked. A configuration error should stop the
+    /// daemon with a sentence, which is what <c>identify</c>'s own amplitude check already does.
+    /// The cap needs no check of its own: it is clamped to 1..60 in force whatever it says, and
+    /// the clamp is the safety property rather than a correction.
+    /// </remarks>
+    private static void ValidateTxTest(DaemonConfig config)
+    {
+        TxTestConfig test = config.TxTest;
+        if (!double.IsFinite(test.Amplitude) || test.Amplitude <= 0 || test.Amplitude > 1)
+        {
+            throw new InvalidDataException(
+                $"\"txTest\".\"amplitude\": {test.Amplitude} is not a level. It is the peak the "
+                + "test burst reaches, above 0 and at most 1; the default 0.8 is what the "
+                + "modulators use, so the test presents the transmitter with the drive the data "
+                + "does.");
+        }
+
+        if (!double.IsFinite(test.Seconds) || test.Seconds <= 0)
+        {
+            throw new InvalidDataException(
+                $"\"txTest\".\"seconds\": {test.Seconds} is not a length. It is how long a test "
+                + "runs when the request does not say, in seconds, and it must be above zero.");
+        }
+    }
+
     private static void ValidatePorts(DaemonConfig config)
     {
         var claimed = new Dictionary<int, string>();

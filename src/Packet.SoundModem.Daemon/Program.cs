@@ -367,6 +367,16 @@ else if (singleTone is { } singleToneAsked)
         false, singleToneAsked.Hz, singleToneAsked.Seconds);
 }
 
+// A web receiver has no transmitter, so a bench test on one is refused before anything is built
+// rather than after the station has come up around a page that will not exist.
+if (benchTxTest is not null && device.StartsWith("ubersdr:", StringComparison.OrdinalIgnoreCase))
+{
+    Console.Error.WriteLine(
+        "tx test: refused, this station's audio comes from a web receiver, which is a receiver "
+        + "and has no transmitter - there is nothing here to key");
+    return 1;
+}
+
 // --waterfall/--dial override (or stand in for) the config's waterfall section.
 if (waterfallPort is int wfPort)
 {
@@ -1120,7 +1130,11 @@ if (wavPath is not null)
 // before audio flows: Start() measures every modem's band off its own modulator and
 // registers the channel receive tap.
 Packet.SoundModem.Waterfall.WaterfallWebServer? waterfallServer = null;
-if (waterfallConfig is not null)
+// Not on a --two-tone/--tone run: such a run lives for a few seconds, and a page or a scraper
+// that attached to it would lose it again immediately. It also means a bench run does not stop
+// with "cannot serve the waterfall" when the operator has left the service holding the port -
+// which would be true, and would say nothing about the test they actually asked for.
+if (benchTxTest is null && waterfallConfig is not null)
 {
     waterfallServer = new Packet.SoundModem.Waterfall.WaterfallWebServer(
         channel,
@@ -1191,6 +1205,21 @@ if (waterfallConfig is not null)
     }
 
     Console.WriteLine($"waterfall: {waterfallServer.Url}");
+
+    // The same warning the KISS ports carry, for the same reason and now with a sharper one.
+    // The page is read-only on a public deployment, but on an operator's own station it carries
+    // the transmit test, and there is no password on it.
+    if (!Equals(bindAddress is "*" or "0.0.0.0"
+            ? System.Net.IPAddress.Any
+            : System.Net.IPAddress.Parse(bindAddress), System.Net.IPAddress.Loopback))
+    {
+        Console.WriteLine(
+            "waterfall: WARNING - listening beyond loopback. The page has no authentication, and "
+            + (waterfallConfig.Public
+                ? "anything that can reach this port can watch this station."
+                : "on an operator's page it carries a transmit test: anything that can reach this "
+                  + "port can key your transmitter on your licence."));
+    }
 }
 
 await using var waterfallLifetime = waterfallServer;
@@ -1576,7 +1605,7 @@ ConfigApi? configApi = null;
 // Runtime configuration, on the waterfall's listener. Off unless a key is set, and refused
 // outright if there is no listener to hang it on - an "api" section on a station with no
 // waterfall is a setting that would silently do nothing.
-if (apiConfig?.Key is { Length: > 0 } apiKey)
+if (benchTxTest is null && apiConfig?.Key is { Length: > 0 } apiKey)
 {
     if (waterfallServer is null)
     {
@@ -2508,6 +2537,15 @@ var txTestRunner = new TxTestRunner(new TxTestOptions
             rfHz: null);
         waterfallServer?.ReportTestTransmission(
             record.SubChannel, record.Text, record.Payload.Length);
+
+        // A test is a transmission, so it owes the same identification a frame does. The ident
+        // clock is normally started by channel.FrameTransmitted, which a test never raises: it
+        // goes out through the delegate overload and carries no sub-channel of its own. Without
+        // this a station could key for tones all afternoon and never say who it was.
+        if (identifiers.TryGetValue(record.SubChannel, out StationIdentifier? owedForTest))
+        {
+            owedForTest.NoteTransmission();
+        }
     },
 });
 
@@ -2793,14 +2831,24 @@ station.Faulted += fault =>
     cancellation.Cancel();
 };
 
-station.Run();
-
-// --two-tone / --tone: transmit once and go. After station.Run() rather than before it, so that
-// the test defers to a busy channel on exactly the carrier sense a frame would - a bench run
-// that transmitted over somebody because it had not started listening yet would be a poor way
-// to prove the transmit path.
+// --two-tone / --tone: transmit once and go.
+//
+// The receive loop goes on a thread of its own here, which is what Station.Run's own docs say a
+// host running it alongside anything else must do: it is synchronous and blocks until the station
+// stops, because every input's Read is. The station has to be listening for the test to defer to
+// a busy channel on the carrier sense a frame would - and calling Run in front of the test rather
+// than beside it is a test that never transmits at all, the transmitter having already been shut
+// down by the time it is asked. Measured on flex:mock before this was a thread: the burst sat on
+// the queue until the wall-clock bound gave up on it.
 if (benchTxTest is not null)
 {
+    var listening = new Thread(station.Run)
+    {
+        IsBackground = true,
+        Name = "tx-test-station",
+    };
+    listening.Start();
+
     TxTestOutcome benchOutcome = await txTestRunner.RunAsync(benchTxTest);
     cancellation.Cancel();
     try
@@ -2819,10 +2867,16 @@ if (benchTxTest is not null)
         (input as IDisposable)?.Dispose();
     }
 
+    // The receive loop notices the cancellation on its next block and returns; it is a background
+    // thread, so an input whose Read is wedged cannot hold the process open either way.
+    listening.Join(TimeSpan.FromSeconds(5));
+
     // Exit 1 on a refusal, so a bench script can tell "it went out" from "it did not" without
     // reading the journal. Exit 2 stays what it has always been: your configuration is wrong.
     return benchOutcome.Ran ? 0 : 1;
 }
+
+station.Run();
 
 try
 {
