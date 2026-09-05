@@ -206,9 +206,10 @@ public sealed class AlsaMixer : IAlsaMixer
             }
 
             long raw = min + (long)Math.Round((max - min) * Math.Clamp(percent, 0, 100) / 100.0);
+            var value = new CLong((nint)raw);
             int err = direction == MixerDirection.Capture
-                ? snd_mixer_selem_set_capture_volume_all(element, raw)
-                : snd_mixer_selem_set_playback_volume_all(element, raw);
+                ? snd_mixer_selem_set_capture_volume_all(element, value)
+                : snd_mixer_selem_set_playback_volume_all(element, value);
             return err >= 0;
         }
     }
@@ -231,24 +232,25 @@ public sealed class AlsaMixer : IAlsaMixer
             }
 
             int err = direction == MixerDirection.Capture
-                ? snd_mixer_selem_get_capture_volume(element, FirstChannel, out long raw)
-                : snd_mixer_selem_get_playback_volume(element, FirstChannel, out raw);
+                ? snd_mixer_selem_get_capture_volume(element, FirstChannel, out CLong current)
+                : snd_mixer_selem_get_playback_volume(element, FirstChannel, out current);
             if (err < 0)
             {
                 return false;
             }
 
+            long raw = current.Value;
             percent = max > min
                 ? (int)Math.Round((raw - min) * 100.0 / (max - min))
                 : 100;
 
             // Hundredths of a dB, and only on a card that publishes a scale. Absent is normal.
             int dbErr = direction == MixerDirection.Capture
-                ? snd_mixer_selem_get_capture_dB(element, FirstChannel, out long hundredths)
+                ? snd_mixer_selem_get_capture_dB(element, FirstChannel, out CLong hundredths)
                 : snd_mixer_selem_get_playback_dB(element, FirstChannel, out hundredths);
             if (dbErr >= 0)
             {
-                decibels = hundredths / 100.0;
+                decibels = hundredths.Value / 100.0;
             }
 
             return true;
@@ -364,8 +366,10 @@ public sealed class AlsaMixer : IAlsaMixer
     private static (long Min, long Max)? Range(IntPtr element, MixerDirection direction)
     {
         int err = direction == MixerDirection.Capture
-            ? snd_mixer_selem_get_capture_volume_range(element, out long min, out long max)
-            : snd_mixer_selem_get_playback_volume_range(element, out min, out max);
+            ? snd_mixer_selem_get_capture_volume_range(element, out CLong low, out CLong high)
+            : snd_mixer_selem_get_playback_volume_range(element, out low, out high);
+        long min = low.Value;
+        long max = high.Value;
         return err < 0 || max < min ? null : (min, max);
     }
 
@@ -417,6 +421,12 @@ public sealed class AlsaMixer : IAlsaMixer
     [DllImport(Lib)]
     private static extern uint snd_mixer_selem_get_index(IntPtr element);
 
+    // Every level below is a C `long`, and a C `long` is NOT a C# long: it is 64-bit on LP64 and
+    // 32-bit on 32-bit ARM, which packaging/build-deb.sh maps armhf to and release.yml ships a
+    // .deb of. Declared as C# `long` there, an out-param would take a four-byte write into an
+    // eight-byte slot and, worse, a by-value argument would be passed as an aligned register pair
+    // while the callee read one register - so a configured capture gain would write an arbitrary
+    // raw level to the card. CLong is exactly this type on every platform.
     [DllImport(Lib)]
     private static extern int snd_mixer_selem_has_capture_volume(IntPtr element);
 
@@ -431,33 +441,33 @@ public sealed class AlsaMixer : IAlsaMixer
 
     [DllImport(Lib)]
     private static extern int snd_mixer_selem_get_capture_volume_range(
-        IntPtr element, out long min, out long max);
+        IntPtr element, out CLong min, out CLong max);
 
     [DllImport(Lib)]
     private static extern int snd_mixer_selem_get_playback_volume_range(
-        IntPtr element, out long min, out long max);
+        IntPtr element, out CLong min, out CLong max);
 
     [DllImport(Lib)]
-    private static extern int snd_mixer_selem_set_capture_volume_all(IntPtr element, long value);
+    private static extern int snd_mixer_selem_set_capture_volume_all(IntPtr element, CLong value);
 
     [DllImport(Lib)]
-    private static extern int snd_mixer_selem_set_playback_volume_all(IntPtr element, long value);
+    private static extern int snd_mixer_selem_set_playback_volume_all(IntPtr element, CLong value);
 
     [DllImport(Lib)]
     private static extern int snd_mixer_selem_get_capture_volume(
-        IntPtr element, int channel, out long value);
+        IntPtr element, int channel, out CLong value);
 
     [DllImport(Lib)]
     private static extern int snd_mixer_selem_get_playback_volume(
-        IntPtr element, int channel, out long value);
+        IntPtr element, int channel, out CLong value);
 
     [DllImport(Lib)]
     private static extern int snd_mixer_selem_get_capture_dB(
-        IntPtr element, int channel, out long value);
+        IntPtr element, int channel, out CLong value);
 
     [DllImport(Lib)]
     private static extern int snd_mixer_selem_get_playback_dB(
-        IntPtr element, int channel, out long value);
+        IntPtr element, int channel, out CLong value);
 
     [DllImport(Lib)]
     private static extern int snd_mixer_selem_set_capture_switch_all(IntPtr element, int value);
