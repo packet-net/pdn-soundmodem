@@ -1895,7 +1895,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// </remarks>
     internal static bool OriginMayKey(PageOrigin from)
     {
-        if (from.Declared.Length == 0)
+        if (string.IsNullOrEmpty(from.Declared))
         {
             // Not a browser: curl, a script, the test suite. Nothing to defend against - there
             // are no ambient credentials for somebody else's page to borrow - and refusing these
@@ -1936,11 +1936,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // page retrying in a background tab catches that window on every restart. And
             // refusing the upgrade would cost a station behind a Host-rewriting proxy its whole
             // page, waterfall and frames and all, where this costs it only the button.
-            _options.Log?.Invoke(
-                $"waterfall: refused a transmit test from a page at {client.From.Declared} - this "
-                + $"station serves its page as {client.From.Served}, and a page from somewhere "
-                + "else may not key the radio. If a proxy in front of this station rewrites the "
-                + "Host header, make it pass the original through.");
+            RefuseForeignOrigin(client);
             return;
         }
 
@@ -1965,6 +1961,105 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
 
     private TxTestControl? _txTest;
+
+    /// <summary>
+    /// How often a refused origin reaches the journal. The refusal is free to send: anything that
+    /// can reach the port can send a <c>txtest</c> message as fast as it likes, and one line each
+    /// would push everything else the station has to say out of the journal. Same interval and
+    /// same wording as the daemon's transmit-drop suppressor, for the same reason.
+    /// </summary>
+    private static readonly TimeSpan OriginRefusalInterval = TimeSpan.FromMinutes(1);
+
+    private readonly Lock _originGate = new();
+    private long _originRefusedAt;
+    private int _originRefusalsSuppressed;
+    private bool _originRefusedBefore;
+
+    /// <summary>
+    /// Turns away a transmit test asked for by a page this station did not serve: the page is
+    /// told, every time, and the journal is told at most once a minute.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>The page is always told.</b> A silent refusal is indistinguishable from a broken
+    /// button, and the operator most likely to meet one is not an attacker at all - it is a
+    /// station behind a proxy that rewrites <c>Host</c>, whose own page is refused and who has
+    /// nothing to go on. Sent to the one client that asked rather than broadcast: the others have
+    /// not been refused anything and a status is not theirs to see.</para>
+    /// <para><b>The journal is rate limited</b>, because the message costs the sender nothing.</para>
+    /// </remarks>
+    private void RefuseForeignOrigin(WaterfallClient client)
+    {
+        string declared = Printable(client.From.Declared);
+        string served = Printable(client.From.Served);
+
+        client.Queue.Writer.TryWrite((WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            type = "txtest",
+            state = "refused",
+            text = $"refused, this page was served from {declared} and this station serves its "
+                + $"page as {served} - only a page it served may key it",
+        }, Json)));
+
+        bool say;
+        int suppressed = 0;
+        lock (_originGate)
+        {
+            long now = _options.TimeProvider.GetTimestamp();
+            say = !_originRefusedBefore
+                || _options.TimeProvider.GetElapsedTime(_originRefusedAt, now) >= OriginRefusalInterval;
+            if (say)
+            {
+                _originRefusedBefore = true;
+                _originRefusedAt = now;
+                suppressed = _originRefusalsSuppressed;
+                _originRefusalsSuppressed = 0;
+            }
+            else
+            {
+                _originRefusalsSuppressed++;
+            }
+        }
+
+        if (say)
+        {
+            _options.Log?.Invoke(
+                $"waterfall: refused a transmit test from a page at {declared} - this station "
+                + $"serves its page as {served}, and a page from somewhere else may not key the "
+                + "radio. If a proxy in front of this station rewrites the Host header, make it "
+                + "pass the original through."
+                + (suppressed > 0 ? $" (and {suppressed} more like it in the last minute)" : ""));
+        }
+    }
+
+    /// <summary>
+    /// A header value as it may be printed: plain ASCII, and short.
+    /// </summary>
+    /// <remarks>
+    /// <c>Origin</c> arrives from whoever opened the socket, and this line goes to the journal.
+    /// journalctl's pager renders anything above 0x7F as hex escapes under a C locale, and a
+    /// header long enough to fill a screen would bury the sentence explaining it - neither is
+    /// something the sender should get to choose.
+    /// </remarks>
+    private static string Printable(string header)
+    {
+        if (string.IsNullOrEmpty(header))
+        {
+            return "(none)";
+        }
+
+        var clean = new System.Text.StringBuilder(header.Length);
+        foreach (char c in header)
+        {
+            clean.Append(c is >= ' ' and <= '~' ? c : '?');
+            if (clean.Length == 80)
+            {
+                clean.Append("...");
+                break;
+            }
+        }
+
+        return clean.ToString();
+    }
 
     /// <summary>
     /// Installs (or removes) the operator's transmitter test after the server was built.
@@ -2444,7 +2539,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
     }
 
-    private async Task ServeWebSocketAsync(WebSocket socket, PageOrigin from = default)
+    private async Task ServeWebSocketAsync(WebSocket socket, PageOrigin from)
     {
         // Bounded per-client queue, oldest lines dropped: a stalled browser loses history,
         // never stalls the receive thread or other clients.

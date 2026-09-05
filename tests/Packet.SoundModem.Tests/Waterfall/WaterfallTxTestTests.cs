@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using Microsoft.Extensions.Time.Testing;
 using System.Text;
 using System.Text.Json;
 using AwesomeAssertions;
@@ -210,6 +211,129 @@ public class WaterfallTxTestTests : IAsyncLifetime
         // Host-rewriting proxy its whole page - waterfall, frames and all - where this costs it
         // only the button, and a cloudflared tunnel rewrites Host by default.
         attacker.State.Should().Be(WebSocketState.Open);
+    }
+
+    [Fact]
+    public async Task A_Refused_Page_Is_Told_Why_Rather_Than_Left_Guessing()
+    {
+        // The operator most likely to meet this refusal is not an attacker at all: it is a
+        // station behind a proxy that rewrites Host, whose own page is refused. A silent refusal
+        // is indistinguishable from a broken button, and the page shows whatever it is told.
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(
+            Channel(), port, new WaterfallOptions { TxTest = Control() });
+        server.Start();
+
+        using var page = new ClientWebSocket();
+        page.Options.SetRequestHeader("Origin", "https://front-door.example");
+        await page.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws"), _cancellation.Token);
+        await Receive(page);
+
+        await page.SendAsync(
+            Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":2}"""),
+            WebSocketMessageType.Text, true, _cancellation.Token);
+
+        JsonElement status = default;
+        for (int i = 0; i < 40 && status.ValueKind == JsonValueKind.Undefined; i++)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(page);
+            if (kind != WebSocketMessageType.Text)
+            {
+                continue;
+            }
+
+            using JsonDocument message = JsonDocument.Parse(payload);
+            if (message.RootElement.GetProperty("type").GetString() == "txtest")
+            {
+                status = message.RootElement.Clone();
+            }
+        }
+
+        status.GetProperty("state").GetString().Should().Be("refused");
+        status.GetProperty("text").GetString().Should()
+            .Contain("front-door.example", "the operator has to see which two names disagreed")
+            .And.Contain("127.0.0.1");
+        _asked.Should().BeEmpty("and it is still refused");
+    }
+
+    [Fact]
+    public async Task A_Page_That_Keeps_Asking_Is_Answered_Every_Time_And_Journalled_Once()
+    {
+        // The message costs its sender nothing, so one journal line each is a way to push
+        // everything else the station has to say out of the journal.
+        var clock = new FakeTimeProvider();
+        var journal = new List<string>();
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(Channel(), port, new WaterfallOptions
+        {
+            TxTest = Control(),
+            TimeProvider = clock,
+            Log = line => { lock (journal) { journal.Add(line); } },
+        });
+        server.Start();
+
+        using var page = new ClientWebSocket();
+        page.Options.SetRequestHeader("Origin", "https://malice.example");
+        await page.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws"), _cancellation.Token);
+        await Receive(page);
+
+        const int Asks = 50;
+        for (int i = 0; i < Asks; i++)
+        {
+            await page.SendAsync(
+                Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":30}"""),
+                WebSocketMessageType.Text, true, _cancellation.Token);
+        }
+
+        // Counted by the answers, so this waits on the server having dealt with all of them
+        // rather than on a sleep: every ask is answered, which is the other half of the rule.
+        var refusals = 0;
+        while (refusals < Asks)
+        {
+            (WebSocketMessageType kind, byte[] payload) = await Receive(page);
+            if (kind != WebSocketMessageType.Text)
+            {
+                continue;
+            }
+
+            using JsonDocument message = JsonDocument.Parse(payload);
+            if (message.RootElement.GetProperty("type").GetString() == "txtest")
+            {
+                refusals++;
+            }
+        }
+
+        // Only the refusal lines: winding the clock below also runs the keep-alive sweep, which
+        // has its own line to write about a page that has stopped answering.
+        List<string> Refusals()
+        {
+            lock (journal)
+            {
+                return [.. journal.Where(line => line.Contains(
+                    "refused a transmit test", StringComparison.Ordinal))];
+            }
+        }
+
+        Refusals().Should().ContainSingle("fifty refusals are one line, not fifty");
+
+        // And the next minute says how many were held back. A fresh page asks it, because winding
+        // the clock past the silence deadline is what drops the one above.
+        clock.Advance(TimeSpan.FromMinutes(2));
+        using var later = new ClientWebSocket();
+        later.Options.SetRequestHeader("Origin", "https://malice.example");
+        await later.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws"), _cancellation.Token);
+        await Receive(later);
+        await later.SendAsync(
+            Encoding.UTF8.GetBytes("""{"type":"txtest","twoTone":true,"seconds":30}"""),
+            WebSocketMessageType.Text, true, _cancellation.Token);
+
+        while (Refusals().Count < 2)
+        {
+            await Task.Delay(20, _cancellation.Token);
+        }
+
+        Refusals()[1].Should().Contain($"and {Asks - 1} more like it in the last minute");
+        _asked.Should().BeEmpty("none of them keyed anything");
     }
 
     [Fact]
