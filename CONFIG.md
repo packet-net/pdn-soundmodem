@@ -833,15 +833,19 @@ what bounds one that has started.
 **It arms the station's identification.** A test is a transmission, so it starts the
 [`identify`](#identify) clock exactly as a frame does: a station that keys for tones owes anyone
 sharing the band a callsign just as much as one that keys for data. A station with no `identify`
-block is unaffected.
+block is unaffected. A `--two-tone` or `--tone` run arms the debt and then exits before the
+identification poll can act on it, so a bench run keys without identifying - the right answer
+for an operator standing at the radio with a dummy load on it, and the wrong one for anything
+else, so do not script one against an antenna.
 
 **The page has no password, and the operator page can key the transmitter.** Two consequences
-worth knowing. The daemon refuses a WebSocket handshake whose `Origin` is not the host the page
-was served from, which is what stops a page the operator happens to be visiting from opening a
-socket to `127.0.0.1` and keying the radio - browsers do not apply the same-origin policy to
-WebSockets. A reverse proxy in front of the operator page must therefore pass the original `Host`
-header through, or the page's own socket will be refused (the journal says which two names
-disagreed). And [`bind`](#kissport-and-bind) decides who can reach the page at all: beyond
+worth knowing. The daemon refuses a transmit test asked for by a page whose `Origin` is not the
+host it was served from, which is what stops a page the operator happens to be visiting from
+opening a socket to `127.0.0.1` and keying the radio - browsers do not apply the same-origin
+policy to WebSockets, so the socket itself is open to anything that can reach the port. Only the
+button is refused and never the page, so a reverse proxy that rewrites the `Host` header costs
+the operator the transmit test and nothing else; the journal says which two names disagreed.
+And [`bind`](#kissport-and-bind) decides who can reach the page at all: beyond
 loopback the daemon warns, because anything that can reach the port can key your transmitter.
 `POST /api/txtest` is the authenticated way in and always needs the [`api`](#api) key.
 
