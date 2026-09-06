@@ -107,6 +107,12 @@
   // "about" paragraph, a credit and link for the web receiver it listens through, and no KISS
   // host badges. Nothing else changes.
   // "waterfall": { "port": 8099, "public": true, "title": "40 m packet monitor", "about": "..." },
+  // "enableAudioControls": true puts the sound card's Mixer group (capture gain in dB, AGC, mic
+  // boost) on the operator's page and answers GET/POST api/mixer WITH NO "api" KEY. For a station
+  // whose page only you can reach - your own LAN, or over SSH - since it exposes the card's
+  // levels to anything that can reach this port, exactly as the page's TX test button does.
+  // Never on a "public" page. Leave it out and the group needs an "api"."key", as it always did.
+  // "waterfall": { "port": 8107, "enableAudioControls": true },
   // POCSAG paging endpoint (optional; DAPNET/POCSAG-compatible waveform, local paging
   // API - line-based TCP: "PAGE <ric> <function> ALPHA|NUMERIC|TONE [text]").
   // "paging": { "port": 8106, "baud": 1200, "invertPolarity": false },
