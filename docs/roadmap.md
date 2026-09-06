@@ -149,6 +149,8 @@ Tom: "ability to turn flex ATU on/off". Not for now. The shape when it comes: an
 ### #17 - Mixer, AGC and mic boost controls for CM108 sound cards *(delivered, PR #416)*
 Tom: "mixer / AGC / mic boost controls for CM108". Not for now. Today the daemon opens the CM108's PCM through ALSA (`AlsaPcm.cs`) and drives its GPIO for PTT (`ptt.type: cm108`, CONFIG.md), but the card's mixer is left however `alsamixer` last set it: capture volume, the Auto Gain Control switch and the +20 dB Mic Boost, which between them decide whether the receive audio is clean, clipped or buried, and which a reboot or a re-plug can silently reset. The shape when it comes: an `alsa.mixer` block in the config (capture gain in dB or percent, `agc` on or off, `micBoost` on or off, playback level for the transmit side) applied at start-up through the ALSA mixer API (`snd_mixer_*`, the same alsa-lib the PCM already uses; no shell-out to `amixer`), journalled as set and as read back so the start-up log records the card's actual state, and an operator-page control group beside the level meter so the operator can trim it while watching the waterfall, going through the config API so a change persists. AGC should default off for a data modem, since it fights the modem's own level tracking and turns the noise floor into a moving target; Mic Boost off unless the radio's output is genuinely low. Control names differ by card revision ("Mic", "Mic Capture", "Auto Gain Control"), so find them by name with a fallback and say in the journal which were found. Operator page only; the public page never shows it. Needs a CM108 on the bench.
 
+Amended 2026-09-06 at Tom's request: dB not percent; page and API changes persist across runs in a state file (default $STATE_DIRECTORY/mixer-state.json); a value in the config file is applied at start-up and wins over the state file.
+
 Shipped in PR #416, and proven on the bench CM108 (0d8c:0012) rather than only in tests: an `alsa.mixer` block (capture gain and playback level as percentages of the card's range, `agc`, `micBoost`, optional per-setting control-name lists), applied through `snd_mixer_*` at start-up and journalled as set and as read back; `GET`/`POST /api/mixer` under the config API's key, applied live with no restart; a Mixer group beside the display levels on the operator page and never on the public one; and `--mixer-show DEVICE`, which reads a card without touching the PCM. Absent keys change nothing, so every existing deployment is untouched. The bench revision has no "Mic Boost" control at all, which is what exercised the not-found path for real, and it found two bugs that are fixed here: a mixer change could not be folded into a config file with comments in it (the same defect was in `ProposedConfig`), and a POST could set the card and then abort the connection when `--config` named a file with no directory. Still needs Tom's bench: the page group driven from a real browser, `playbackPercent` heard on a transmission, a card that actually has a Mic Boost, and a CM108 unplugged while the daemon holds its mixer open.
 
 ### #18 - TX test button: a two-tone test transmission *(delivered, PR #415)*
@@ -182,6 +184,20 @@ Shipped in PR #415: an operator-page control (never public), `POST /api/txtest`,
   locks in the round-trip-at-a-shifted-centre behaviour; README/config/DaemonConfig document the
   coverage. The GB7RDG-was-~41-Hz-off case (#40) is now correctable in the field.
 - **#33** - flaky ARDOP host TCP test under full-suite load (races on port bind); harden the test.
+- **`POST /api/config?persist=true` still declines on a config file with comments in it**, because
+  it would have to serialise a parsed document over the top of them and delete them. The mixer
+  path no longer has that limitation - it does not touch the config file at all - but the general
+  config API does, and every real config file on this network has comments in it. The fix when it
+  comes: a surgical edit rather than a round trip. Walk the file's bytes with `Utf8JsonReader`
+  (`CommentHandling = Skip`, `AllowTrailingCommas = true`), track `TokenStartIndex` and
+  `BytesConsumed` to find the byte span of just the property being changed, splice the new value
+  in at the file's own indentation and line endings, and leave every other byte alone; write
+  atomically (temp file in the same directory, same mode, then rename) and re-read the result
+  through the normal loader to confirm it says what was asked before reporting success. Cases to
+  cover: a property present, absent from a section that exists, and a section that does not exist
+  at all; comments before, inside and after the span (the ones inside are lost, and the answer has
+  to say so); trailing commas; braces inside string values; CRLF; BOM; and a file that does not
+  parse, which is refused with nothing written.
 
 ---
 

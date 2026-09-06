@@ -108,6 +108,20 @@ It is already enabled at boot. If you would rather it didn't run, `sudo systemct
 KISS-over-TCP listens on port **8105** by default. Point LinBPQ, Direwolf-style APRS
 software, or the PDN node at it.
 
+### The one file the daemon writes for itself
+
+If you set an `api.key`, the operator page grows a **Mixer** group for the sound card's capture
+gain, AGC, mic boost and playback level, in dB. A change made there is kept: the daemon writes
+those four values, the device name and a timestamp to
+`/var/lib/pdn-soundmodem/mixer-state.json` and applies them again at the next start-up. That
+directory is created and owned by the service user through the unit's `StateDirectory=`, so
+nothing else needs opening up - **`/etc/pdn-soundmodem/soundmodem.json` is never written by the
+daemon**, and `/etc` stays read-only to the service. Anything you set in the config file's
+`alsa.mixer` block is applied first and wins over that file, so a level you wrote down on purpose
+is the level the station comes up on. A station with no `api.key` has no API and no page mixer
+control, so nothing writes the file at all. Delete it to start again;
+[CONFIG.md § alsa](CONFIG.md#alsa) has the detail.
+
 ## Permissions
 
 The service runs as the unprivileged `pdn-soundmodem` system user, which the package
@@ -130,7 +144,8 @@ Unplug and replug the interface, then restart the service.
 ## Upgrading
 
 Install the new `.deb` the same way. Your `/etc/pdn-soundmodem/soundmodem.json` is left
-alone, and if you had enabled the service it stays enabled.
+alone, and if you had enabled the service it stays enabled. So is everything under
+`/var/lib/pdn-soundmodem`, including the mixer levels the operator page last set.
 
 ## Uninstalling
 
@@ -147,7 +162,8 @@ sudo apt purge  pdn-soundmodem     # also removes the config and the system user
 | `/usr/lib/pdn-soundmodem/` | the self-contained binary and its native shims |
 | `/usr/lib/systemd/system/pdn-soundmodem.service` | the systemd unit |
 | `/usr/share/pdn-soundmodem/soundmodem.example.json` | the annotated example config |
-| `/etc/pdn-soundmodem/soundmodem.json` | your config, seeded on first install |
+| `/etc/pdn-soundmodem/soundmodem.json` | your config, seeded on first install; never written by the daemon |
+| `/var/lib/pdn-soundmodem/` | the service user's state: the frame log, and `mixer-state.json` |
 | `/usr/share/doc/pdn-soundmodem/` | copyright and changelog |
 
 ## Running without installing

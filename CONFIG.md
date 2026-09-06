@@ -39,7 +39,7 @@ with `su -` and drop the prefix.)
 | `modemPlugins` | array | *(none)* | Load modem assemblies from outside this package - [below](#modemplugins) |
 | `ptt` | object | *(none - VOX)* | How the radio is keyed - [below](#ptt) |
 | `txTest` | object | *(on, 5 s, capped at 30 s)* | The operator's two-tone and single-tone transmitter test - [below](#txtest) |
-| `alsa` | object | *(card left as it is)* | The sound card's mixer: capture gain, AGC, mic boost - [below](#alsa) |
+| `alsa` | object | *(card left as it is)* | The sound card's mixer in dB: capture gain, AGC, mic boost, playback level - [below](#alsa) |
 | `waterfall` | object | *(disabled)* | Browser spectrum/waterfall page - [below](#waterfall) |
 | `paging` | object | *(disabled)* | POCSAG paging endpoint - [below](#paging) |
 | `ardop` | object | *(disabled)* | ARDOP virtual TNC - [below](#ardop) |
@@ -867,16 +867,17 @@ transmit-side playback level. Between them these decide whether the receive audi
 clipped or buried, and a reboot or a re-plug can silently reset them.
 
 ```json
-"alsa": { "mixer": { "captureGainPercent": 60, "agc": false, "micBoost": false, "playbackPercent": 70 } }
+"alsa": { "mixer": { "captureGainDb": 6.0, "agc": false, "micBoost": false, "playbackDb": -8.0 } }
 ```
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `captureGainPercent` | int | *(left alone)* | 0-100 of the card's own capture range |
+| `captureGainDb` | number | *(left alone)* | Capture gain in dB, inside the card's own range |
 | `agc` | bool | *(left alone)* | Automatic gain control. **Recommended off for a data modem** |
 | `micBoost` | bool | *(left alone)* | Microphone boost. **Recommended off** unless the radio's output is genuinely low |
-| `playbackPercent` | int | *(left alone)* | 0-100, the level the radio is driven at |
+| `playbackDb` | number | *(left alone)* | The level the radio is driven at, in dB |
 | `card` | string | *(from `device`)* | The mixer card, if not the one `device` implies |
+| `stateFile` | string | *(see [below](#where-a-page-change-is-remembered))* | Where a change made on the operator page is remembered |
 | `captureControls` | array | `["Mic", "Mic Capture", "Capture"]` | Names to look for the capture gain under, in order |
 | `agcControls` | array | `["Auto Gain Control", "AGC", "Mic AGC"]` | Names to look for the AGC switch under |
 | `micBoostControls` | array | `["Mic Boost", "Mic Boost (+20dB)", "Internal Mic Boost", "Mic Capture Boost"]` | Names to look for the boost under |
@@ -888,25 +889,52 @@ that do not, and a file with no `alsa` block behaves exactly as it did before th
 are no hidden defaults. Only a sound card has a mixer, so an `alsa` section alongside a `flex:` or
 `ubersdr:` device, or alongside `monitor`, is refused at start-up rather than silently ignored.
 
-### Percentages, not dB
+> **Changed since 0.57.0.** `captureGainPercent` and `playbackPercent` are gone and are **not**
+> aliased: 60 used to mean 60% of the card's raw range and would now mean 60 dB, which on a CM108
+> is 37 dB past the top of the card. A file still carrying one warns at start-up, naming the key
+> that replaced it, and that control is left alone.
 
-`captureGainPercent` and `playbackPercent` are percentages of the card's own range, which is what
-`alsamixer` shows for the same control - so what you type here and what you see there agree.
+### dB, and the card's own range
 
-dB was the alternative and was not chosen: ALSA can only set a level in dB on a card that
-publishes a dB scale, and plenty do not, while every card with a volume at all takes a raw one. A
-dB setting would therefore work on some cards and silently fail on others. The journal reports
-the dB anyway, when the card knows one, because dB is what a level actually sits on:
+The levels are in dB, which is what a level actually sits on and what the radio at the other end
+of the lead is specified in; a percentage of a card's raw range means nothing until you know the
+range. **The range differs by card**, so it is printed beside the value everywhere the value
+appears - the start-up journal, `--mixer-show`, [`/api/mixer`](#apimixer) and the operator page:
 
 ```
-alsa: mixer: Mic capture 60% / 9.00 dB (set 60%), Auto Gain Control off, Speaker playback 70% / -11.10 dB (set 70%)
+alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB, config), Auto Gain Control off (config), Speaker playback -8.00 dB of -37.00 to 0.00 dB (set -8.00 dB, state file)
 ```
+
+`pdn-soundmodem --mixer-show hw:3` prints the same line for a card without touching the station.
+The bench CM108 is -12 to +23 dB on capture (36 raw steps, so whole dB) and -37 to 0 dB on
+playback.
 
 Cards quantise, so **what is read back is the nearest step the card has, not the number you
-typed**. A CM108's capture range is 36 steps: 60% lands exactly and comes back as 60%, while 45%
-does not and comes back as 46%. Every line prints both the read-back and what was asked for, and
-the read-back is the card's own answer rather than ours - as does the `percent` field of
-[`/api/mixer`](#apimixer).
+typed**: 6.4 dB on that CM108 comes back as 6.00 dB. Every line prints both the read-back and
+what was asked for, and the read-back is the card's own answer rather than ours.
+
+**A level outside the card's range is refused rather than clamped**, because clamping would tell
+you that you had 30 dB of gain when the card stops at 23. In the config file that is a journal
+line at start-up naming the range, and that one control is left alone while the rest are set - a
+station is not taken off the air over a level it could have carried on at. Over the API it is a
+`400` with the same sentence, before anything is touched.
+
+```
+alsa: mixer: captureGainDb 30.00 dB is outside the range of "Mic" on hw:3, which is -12.00 to 23.00 dB. The control is left exactly as the card has it.
+```
+
+**Some cards publish no dB scale at all**, only raw steps. ALSA cannot set a dB on those, and
+this daemon will not invent a mapping the card never published - so the setting is refused in
+words and the control is left alone. The read-back then reports the percentage `alsamixer`
+shows, and says which unit it is in:
+
+```
+alsa: mixer: "Mic" on hw:5 has no dB scale, so captureGainDb cannot be set - this card publishes only raw steps. The control is left exactly as the card has it.
+alsa: mixer: Mic capture 40% (no dB scale)
+```
+
+Mic Boost and AGC are switches, not levels, and stay switches: +20 dB ahead of everything is on
+or it is off, and there is no dB figure to type.
 
 ### Control names differ by card
 
@@ -960,14 +988,64 @@ Both are recommendations, not forced defaults. The daemon writes neither unless 
 
 On a sound card the mixer is opened and read whether or not the file asks for anything, so the
 journal records the level the station is actually listening at. Nothing is written to the card
-unless a key said so.
+unless a key said so, or a change made on the operator page was remembered from an earlier run.
+
+### Where a page change is remembered
+
+A change made on the operator page or through [`/api/mixer`](#apimixer) is written to a **mixer
+state file**, so it survives a restart. It is the daemon's own scribble and not a configuration
+document - nobody is expected to edit it - and **the config file is never written by it**, which
+is what lets that file stay JSONC full of your comments.
+
+```json
+{
+  "device": "plughw:CARD=Device,DEV=0",
+  "writtenAt": "2026-09-06T11:22:33+00:00",
+  "captureGainDb": 6,
+  "agc": false
+}
+```
+
+Where it lives, in order:
+
+1. `alsa.mixer.stateFile`, if you set it.
+2. `$STATE_DIRECTORY/mixer-state.json` when systemd sets one. The shipped unit has
+   `StateDirectory=pdn-soundmodem`, so on a packaged install that is
+   `/var/lib/pdn-soundmodem/mixer-state.json`, a directory systemd creates and hands to the
+   service user. **No packaging change and no writable `/etc` is needed** - `ProtectSystem=full`
+   stays exactly as it is.
+3. Otherwise `mixer-state.json` beside the config file, which is what a bare run from a terminal
+   gets.
+
+The path is journalled at every start-up, whether or not there is anything in the file yet.
+
+**Precedence, per control: this section wins, then the state file, then the card is left alone.**
+
+| The config file says | The state file holds | What is applied |
+|---|---|---|
+| `captureGainDb: -3` | `captureGainDb: 6` | `-3` dB, from the config file |
+| *(nothing)* | `captureGainDb: 6` | `6` dB, from the state file |
+| *(nothing)* | *(nothing)* | nothing at all: the card keeps whatever it had |
+
+So a level you wrote down on purpose is the level the station comes up on, every time, and the
+state file can only ever fill in for a control you did not write down. The journal says which
+source each value came from. A control the page changes that this section also pins **is** still
+changed and still remembered, and the API answer and the page both say that the file takes it
+back at the next start.
+
+Two things are ignored, each with one journal line and no fuss: a state file stamped with a
+different `device` (a level chosen for one card is not a level for another), and one that will
+not parse (delete it to start again).
 
 ### Setting it while watching the waterfall
 
 With an [`api`](#api) key set, the operator page grows a **Mixer** group beside the display levels:
-a capture-gain slider with the card's read-back beside it, and AGC and Mic Boost buttons. It is
-never on the public page, and it is not there at all on a station with no `api.key` or no sound
-card. See [`api`](#api) for `/api/mixer` and how long a change lasts.
+a capture-gain slider **bounded by the card's own dB range**, with the level and the range beside
+it, and AGC and Mic Boost buttons. A change is kept: it goes to the state file and the next
+start-up sets it again. The group is never on the public page, and it is not there at all on a
+station with no `api.key` or no sound card - which also means **a station without an `api.key`
+has no page mixer control and nothing ever writes the state file**. See [`api`](#api) for
+`/api/mixer`.
 
 > **Where the key ends up.** The daemon never sends `api.key` to a page. The group asks for it
 > once and keeps it in that browser's `localStorage`, so it survives a reload and reaches nothing
@@ -1228,8 +1306,8 @@ POST /api/config                     replace it for one run
 POST /api/config?persist=true        replace it and write the config file
 POST /api/txtest                     transmit a two-tone or single-tone test
 GET  /api/mixer                      the sound card's mixer, as it reads back now
-POST /api/mixer                      set it, live, for one run
-POST /api/mixer?persist=true         set it and write the config file
+POST /api/mixer                      set it, live, and remember it for the next start-up
+POST /api/mixer?persist=false        set it for this run only, without remembering it
 ```
 
 `GET` reports the running configuration, the config file's path, and whether the station is
@@ -1287,9 +1365,9 @@ the FM deviation presets.
 ### `/api/mixer`
 
 The sound card's [mixer](#alsa), for a script or for the operator page's Mixer group. Same key,
-same one-run default, and **no restart**: a mixer setting lands on the card as the request is
-served, the PCM stream is not touched, and restarting a station to trim its own capture gain
-would drop the very waterfall the operator is trimming it against.
+and **no restart**: a mixer setting lands on the card as the request is served, the PCM stream is
+not touched, and restarting a station to trim its own capture gain would drop the very waterfall
+the operator is trimming it against.
 
 ```
 $ curl -s -H "X-API-Key: $KEY" http://radio:8107/api/mixer
@@ -1297,18 +1375,33 @@ $ curl -s -H "X-API-Key: $KEY" http://radio:8107/api/mixer
   "available": true,
   "card": "hw:3",
   "controls": [ "Mic", "Auto Gain Control", "Speaker" ],
-  "capture": { "control": "Mic", "percent": 57, "decibels": 7.95 },
-  "playback": { "control": "Speaker", "percent": 46, "decibels": -19.98 },
-  "agc": { "control": "Auto Gain Control", "on": true },
+  "capture": {
+    "control": "Mic", "decibels": 8, "dbRange": { "min": -12, "max": 23 },
+    "percent": 57, "source": "config"
+  },
+  "playback": {
+    "control": "Speaker", "decibels": -20, "dbRange": { "min": -37, "max": 0 },
+    "percent": 46, "source": "state"
+  },
+  "agc": { "control": "Auto Gain Control", "on": true, "source": "none" },
   "micBoost": null,
-  "summary": "alsa: mixer: Mic capture 57% / 7.95 dB, Auto Gain Control on, Speaker playback 46% / -19.98 dB"
+  "summary": "alsa: mixer: Mic capture 8.00 dB of -12.00 to 23.00 dB, Auto Gain Control on, Speaker playback -20.00 dB of -37.00 to 0.00 dB"
 }
-$ curl -sX POST -H "X-API-Key: $KEY" -d '{"captureGainPercent": 70, "agc": false}' http://radio:8107/api/mixer
+$ curl -sX POST -H "X-API-Key: $KEY" -d '{"captureGainDb": 6, "agc": false}' http://radio:8107/api/mixer
 ```
 
+Every level comes with `dbRange`, the card's own span, because that is what a slider is drawn
+between and what "6 dB" has to be read against. `source` says what pinned this control:
+`config` (the [`alsa.mixer`](#alsa) block, which wins at every start-up), `state` (a change made
+here or on the page, in the [state file](#where-a-page-change-is-remembered)), or `none`.
+`dbRange` is `null` on a card that publishes only raw steps, and the summary says "no dB scale"
+in words - such a control cannot be set in dB and a `POST` that tries is a `400`.
+
 `POST` takes only the settings you want changed, unlike `/api/config`, which takes a whole
-document. A control the body does not mention is left exactly as the card has it. Percentages
-outside 0-100 come back as `400` with the same sentence the config file's refusal carries.
+document. A control the body does not mention is left exactly as the card has it. A level outside
+the card's range comes back as `400` with the range in it, before anything is touched, and so
+does a body still carrying `captureGainPercent` or `playbackPercent`, naming the key that
+replaced it.
 
 A control the card has not got reads back as `null` - `micBoost` above is a CM108 that folds its
 boost into the capture range - and a station with no sound card at all answers
@@ -1317,42 +1410,49 @@ boost into the capture range - and a station with no sound card at all answers
 
 ### How long a mixer change lasts
 
-Not the same answer as `/api/config`, and the reply says which. **Nothing ever resets a mixer**:
-a config file with no `alsa.mixer` block writes nothing to the card at all, so a level set here
-holds until something sets it again. What the one-run file buys is that a restart in between does
-not go back to some other level; it does not expire the change.
+**It is kept.** Unlike everything else under `/api/`, a mixer change persists by default: it is
+written to the [state file](#where-a-page-change-is-remembered) and applied at the next start-up.
+A trim made on the page is meant to stay made, and there is nothing to restart, so there is
+nothing for a one-run default to insure against.
 
-So a plain `POST` answers:
+```
+"persisted": true,
+"warn": false,
+"stateFile": "/var/lib/pdn-soundmodem/mixer-state.json",
+"note": "Remembered in /var/lib/pdn-soundmodem/mixer-state.json, so the next start-up sets it again."
+```
+
+`?persist=false` is the one-run try, for a value you are listening to rather than keeping: the
+card is set and nothing is written down.
+
+**The config file is never written.** It stays the description of the intended station,
+hand-edited and full of your comments, and it wins at start-up. So a change to a control the file
+pins is real, is remembered, and is still taken back the next time the daemon starts - and the
+answer says so, with `"warn": true` so the page puts the sentence in front of the operator:
+
+```
+"persisted": true,
+"warn": true,
+"note": "captureGainDb is set in the config file as -3.00 dB; this change lasts until the next
+         start. Remembered in /var/lib/pdn-soundmodem/mixer-state.json, so the next start-up sets
+         it again."
+```
+
+A state file that cannot be written costs the persistence and never the change. The card is set,
+the answer is `"persisted": false` with the reason in the note, and the page shows it:
 
 ```
 "persisted": false,
-"note": "The card is set now and stays set: nothing ever resets a mixer, so this level holds
-         until something sets it again. /var/lib/pdn-soundmodem/pending-config.json holds the
-         change for the next restart; the restart after that goes back to
-         /etc/pdn-soundmodem/soundmodem.json, which will not touch the mixer at all unless it has
-         an "alsa"."mixer" block. Add one to make this deliberate."
+"warn": true,
+"note": "The card is set and stays set, but /var/lib/pdn-soundmodem/mixer-state.json could not be
+         written (Access to the path is denied), so nothing on disk records it and the next
+         start-up will not set it."
 ```
 
-`?persist=true` writes the config file, and removes any one-run change that was waiting - without
-that, start-up would prefer the older one-run file and the persisted level would arrive a restart
-late. It writes **only when writing the file back would lose nothing**: a config file here is
-JSONC and most are full of comments, and this daemon does not serialise a parsed document over
-the top of somebody's notes. So a commented file is left exactly as it is, the card is still set,
-and the reply says what to paste in to keep it:
-
-```
-"persisted": false,
-"note": "/etc/pdn-soundmodem/soundmodem.json has comments or trailing commas in it, and this
-         daemon never writes a config file back from a parsed document - it would delete them,
-         so it was NOT written. To keep this, add {\"alsa\":{\"mixer\":{\"captureGainPercent\":45}}}
-         to it by hand. ..."
-```
-
-The file it amends is read at the moment of the write, not the copy this process started on, so
-an edit you made since start-up is not overwritten by a snapshot.
-
-The operator page therefore never persists: a trim you want to keep is worth a deliberate line in
-the file.
+> `POST /api/config?persist=true` is the other writer and it is unchanged: it still declines on a
+> config file with comments or trailing commas in it, because it would have to serialise a parsed
+> document over the top of them. The mixer path does not have that limitation, because it does
+> not touch the config file at all.
 
 ## `frameLog`
 
@@ -2672,7 +2772,7 @@ enumerated yet at boot, for instance - still restarts on its own as usual.
 | `flex.transmitFilterHighHz` outside 500-10000 (and not `0`) | `That is an audio cut-off in Hz … use 500-10000, 0 to leave the radio's own filter alone …` |
 | `ptt` alongside a `flex:` device | `--device flex: keys the radio itself; remove the conflicting --ptt …` |
 | `ptt` alongside a `ubersdr:` device | `--device ubersdr: is a receive-only station … Remove "ptt".` |
-| `alsa.mixer` percentage outside 0-100 | `"alsa"."mixer"."captureGainPercent" is 150 … use 0-100, or remove it to leave the control exactly as the card has it.` |
+| `alsa.mixer` level outside the card's range | *(not a start-up refusal: the card's range is unknown until the card is open, so it is one journal line naming the range and that control is left alone)* |
 | `alsa.mixer` alongside a `flex:`/`ubersdr:` device | `… which is not a sound card … Remove the "alsa" section, or point "device" at the card.` |
 | `alsa.mixer` alongside `monitor` | `A monitor fronts web receivers and has no sound card of its own …` |
 | `ubersdr:` with no `rfFrequency` and no `dialFrequency` | `the UberSDR instance … has to be told where to listen` |
@@ -2761,7 +2861,8 @@ it has no config equivalent). The exceptions:
 Some options are command-line only and have no config equivalent - `--wav FILE` and
 `--wav-loop FILE` (decode a recording instead of live audio), `--quality-frames`,
 `--psk-detector coherent|differential`, and `--mixer-show DEVICE` (print a sound card's
-[mixer](#alsa) and exit; it reads and never writes, so it works on a station that is running).
+[mixer](#alsa) - every control it has, where each level is and the dB range it can be set
+between - and exit; it reads and never writes, so it works on a station that is running).
 
 ## Worked examples
 
