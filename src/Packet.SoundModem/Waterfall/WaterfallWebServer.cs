@@ -2245,24 +2245,6 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// The level of the audio just in from the sound card, sent to every open page five times a
-    /// second, so an operator moving the capture gain can see where the level is landing.
-    /// </summary>
-    /// <remarks>
-    /// <para><b>Free when nobody is watching</b>, which is the same rule the audio relay keeps:
-    /// with no viewers the meter is reset and nothing is accumulated, so the cost of the feature
-    /// on a station serving nobody is one volatile read per audio block. The reset matters as
-    /// much as the skip - a half-interval kept across a gap of hours would be handed to the next
-    /// viewer as their first reading, showing them a peak from whenever the last one left.</para>
-    /// <para><b>Sent rather than subscribed to.</b> It is under 60 bytes five times a second, so
-    /// a request/cancel protocol would cost more code than it could ever save bytes; and a page
-    /// that opens the Mixer group late (the group appears on the answer to its own probe of
-    /// <c>/api/mixer</c>) then has a meter already reading rather than one that starts blank.
-    /// Every page that gets this message is an operator's own page: the server only offers it
-    /// when the daemon asked for it, and the daemon asks only for a station with a sound card.
-    /// </para>
-    /// </remarks>
-    /// <summary>
     /// One block of audio exactly as the sound card delivered it, for the level meter's clip
     /// indicator. Called before any resampling; does nothing on a page that has no meter.
     /// </summary>
@@ -2288,6 +2270,24 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// The level of the audio just in from the sound card, sent to every open page five times a
+    /// second, so an operator moving the capture gain can see where the level is landing.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Free when nobody is watching</b>, which is the same rule the audio relay keeps:
+    /// with no viewers the meter is reset and nothing is accumulated, so the cost of the feature
+    /// on a station serving nobody is one volatile read per audio block. The reset matters as
+    /// much as the skip - a half-interval kept across a gap of hours would be handed to the next
+    /// viewer as their first reading, showing them a peak from whenever the last one left.</para>
+    /// <para><b>Sent rather than subscribed to.</b> It is under 60 bytes five times a second, so
+    /// a request/cancel protocol would cost more code than it could ever save bytes; and a page
+    /// that opens the Mixer group late (the group appears on the answer to its own probe of
+    /// <c>/api/mixer</c>) then has a meter already reading rather than one that starts blank.
+    /// Every page that gets this message is an operator's own page: the server only offers it
+    /// when the daemon asked for it, and the daemon asks only for a station with a sound card.
+    /// </para>
+    /// </remarks>
     private void MeterInput(ReadOnlySpan<float> samples)
     {
         if (_levelMeter is not Audio.InputLevelMeter meter)
