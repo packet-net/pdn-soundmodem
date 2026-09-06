@@ -146,7 +146,13 @@ internal static class UplinkWire
             AudioRate = audioRate,
             BlockSamples = blockSamples,
             DialHz = Double(root, "dialHz") is { } dial && dial >= 0 ? dial : 0,
-            Sideband = Capped(root, "sideband", 3) is "lsb" ? "lsb" : "usb",
+            // Anything else is taken as USB, which is what a station that says nothing is.
+            Sideband = Capped(root, "sideband", 3) switch
+            {
+                "lsb" => "lsb",
+                "fm" => "fm",
+                _ => "usb",
+            },
             Bands = bands!,
         };
 
@@ -391,7 +397,7 @@ internal sealed record UplinkHello
     /// <summary>Its dial, for the page's RF scale. 0 is "not set", as everywhere else.</summary>
     public double DialHz { get; init; }
 
-    /// <summary>Which sideband it is on.</summary>
+    /// <summary>Which kind of radio it is on: "usb", "lsb", or "fm" for a channel radio.</summary>
     public string Sideband { get; init; } = "usb";
 
     /// <summary>What its modems occupy, for the waterfall's overlay. It runs them, not us.</summary>

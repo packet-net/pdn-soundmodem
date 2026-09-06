@@ -22,7 +22,11 @@ public sealed class WaterfallOptions
     /// frequencies only until the operator enters a dial.</summary>
     public double DialFrequencyHz { get; set; }
 
-    /// <summary>"usb" (RF = dial + audio) or "lsb" (RF = dial − audio); the page default.</summary>
+    /// <summary>
+    /// The kind of radio behind the page: "usb" (RF = dial + audio), "lsb" (RF = dial - audio),
+    /// or "fm". FM is a channel radio, whose demodulated audio has no RF meaning at all - the
+    /// page then labels audio as audio and shows the dial once, as the channel.
+    /// </summary>
     public string Sideband { get; set; } = "usb";
 
     /// <summary>Waterfall line rate (display frame rate). Default 30.</summary>

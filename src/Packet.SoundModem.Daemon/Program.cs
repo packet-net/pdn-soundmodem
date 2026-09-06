@@ -149,6 +149,7 @@ int kissPort = 8105;
 string bindAddress = "127.0.0.1";
 string sideband = "usb";
 bool sidebandWasStated = false;
+bool waterfallSidebandWasStated = false;
 double? dialFrequency = null;
 FrameLogConfig? frameLogConfig = null;
 // 300 ms is a RADIO allowance, not a modem requirement - the modems themselves acquire
@@ -321,6 +322,7 @@ if (configPath is not null)
     bindAddress = config.Bind;
     sideband = config.Sideband;
     sidebandWasStated = config.SidebandWasStated;
+    waterfallSidebandWasStated = config.WaterfallSidebandWasStated;
     dialFrequency = config.DialFrequency;
     frameLogConfig = config.FrameLog;
     modems = config.Modems;
@@ -532,22 +534,24 @@ foreach (string spec in modemSpecs)
 // about the dial and say nothing.
 if (FlexDevice.IsFlex(device) && FlexDevice.Parse(device).Headless)
 {
-    string? impliedSideband = flexTuning.Mode.ToUpperInvariant() switch
-    {
-        "DIGU" or "USB" => "usb",
-        "DIGL" or "LSB" => "lsb",
-        _ => null,
-    };
+    string? impliedSideband = RfPlan.SidebandForSliceMode(flexTuning.Mode);
 
     if (impliedSideband is not null)
     {
         bool statedExplicitly = sidebandWasStated;
         if (statedExplicitly && !string.Equals(sideband, impliedSideband, StringComparison.OrdinalIgnoreCase))
         {
+            // What the disagreement would cost, which is not the same thing when one of the two
+            // is FM: that is not a mirrored plan but a plan for a different kind of radio.
+            string consequence =
+                RfPlan.IsFmRadio(sideband) || RfPlan.IsFmRadio(impliedSideband)
+                    ? "One of those is a channel radio and the other is not, so the modems would "
+                      + "be placed for a radio this is not"
+                    : "Every modem would land mirrored about the dial";
             Console.Error.WriteLine(
                 $"\"sideband\": \"{sideband}\" contradicts the Flex slice mode {flexTuning.Mode}, "
-                + $"which is {impliedSideband.ToUpperInvariant()}. Every modem would land mirrored "
-                + "about the dial. Drop \"sideband\" - the slice mode already says which it is.");
+                + $"which is {impliedSideband.ToUpperInvariant()}. {consequence}. "
+                + "Drop \"sideband\" - the slice mode already says which it is.");
             return 2;
         }
 
@@ -724,6 +728,18 @@ if (bandPlan is not null)
     }
 }
 
+// What kind of radio the page is told this station is on: the band plan's answer where there is
+// one, then the "waterfall" section's own, and failing both the top-level "sideband" - but only
+// when it says FM. An SSB page told nothing draws a USB scale, as it always has, and changing
+// that would move the page of every LSB station placed by audio centre; an FM page told nothing
+// draws an RF scale that is a lie, which is the whole of issue #413. So FM falls through and the
+// two sidebands do not.
+string pageSideband =
+    bandPlan?.Sideband
+    ?? (!waterfallSidebandWasStated && RfPlan.IsFmRadio(sideband) ? sideband : null)
+    ?? waterfallConfig?.Sideband
+    ?? "usb";
+
 var channel = new SoundModemChannel(DspRate);
 if (deviceIsUberSdr)
 {
@@ -842,6 +858,16 @@ foreach (ModemConfig modemConfig in modems)
         return 2;
     }
 
+    if (id.RfFrequency is not null && bandPlan is not null && bandPlan.IsFm)
+    {
+        Console.Error.WriteLine(
+            $"modem {subChannel}: \"identify\".\"rfFrequency\" has no meaning on FM. The channel "
+            + "is the RF and the ident is an audio tone sent over it, not an offset from a dial, "
+            + "so there is no arithmetic to turn one into the other. Set "
+            + "\"identify\".\"toneHz\" instead.");
+        return 2;
+    }
+
     if (id.RfFrequency is not null && bandPlan is null)
     {
         Console.Error.WriteLine(
@@ -852,11 +878,21 @@ foreach (ModemConfig modemConfig in modems)
         return 2;
     }
 
+    // Where this modem's audio actually sits, for an ident told to default to it. On SSB the
+    // planner has already written that back into "frequency"; on FM it deliberately writes
+    // nothing back, because there is nothing to work out, so the plan is the only place the
+    // centre is written down. A baseband mode has none either way and is refused below.
+    double? plannedCentreHz =
+        bandPlan?.Modems.FirstOrDefault(m => m.Slot.SubChannel == subChannel)
+            is { AudioCentreHz: > 0 } placed
+            ? placed.AudioCentreHz
+            : null;
+
     double? toneHz =
         id.ToneHz
         ?? (id.RfFrequency is double identRf && bandPlan is not null
             ? (bandPlan.IsUpperSideband ? identRf - bandPlan.DialHz : bandPlan.DialHz - identRf)
-            : modemConfig.Frequency);
+            : modemConfig.Frequency ?? plannedCentreHz);
 
     if (toneHz is not double tone)
     {
@@ -889,7 +925,9 @@ foreach (ModemConfig modemConfig in modems)
     identifiers[subChannel] = identifier;
     Console.WriteLine(
         $"modem {subChannel}: identifying as {identifier.Text} in CW @ {tone:F0} Hz"
-        + (bandPlan is not null
+        // Not on FM, where the tone is a tone on the channel and adding it to one would be the
+        // same false arithmetic the page stopped doing.
+        + (bandPlan is not null && !bandPlan.IsFm
             ? $" = {RfPlan.Mhz(bandPlan.IsUpperSideband ? bandPlan.DialHz + tone : bandPlan.DialHz - tone)}"
             : "")
         + $", {id.Wpm:F0} wpm, every {id.IntervalMinutes:F0} min while transmitting "
@@ -1202,7 +1240,7 @@ if (benchTxTest is null && waterfallConfig is not null)
             DialFrequencyHz = waterfallConfig.DialFrequencyHz != 0
                 ? waterfallConfig.DialFrequencyHz
                 : receiveDialHz ?? 0,
-            Sideband = bandPlan?.Sideband ?? waterfallConfig.Sideband,
+            Sideband = pageSideband,
             LinesPerSecond = waterfallConfig.LinesPerSecond,
             FftSize = waterfallConfig.FftSize,
             Public = waterfallConfig.Public,
@@ -1380,7 +1418,7 @@ if (surveyConfig is not null)
         DialFrequencyHz = waterfallConfig?.DialFrequencyHz is > 0
             ? waterfallConfig.DialFrequencyHz
             : receiveDialHz ?? 0,
-        Sideband = bandPlan?.Sideband ?? waterfallConfig?.Sideband ?? "usb",
+        Sideband = pageSideband,
     };
 
     if (surveyConfig.Capture is { Length: > 0 } wanted)
@@ -2122,6 +2160,19 @@ else if (wavLoopPath is not null)
 else if (deviceIsUberSdr)
 {
     string planSideband = bandPlan?.Sideband ?? sideband;
+
+    // A web receiver hands this daemon single-sideband IQ and nothing else, so "fm" here is not
+    // a radio it can be: taken as USB, as everything that is not LSB is below, it would
+    // demodulate the wrong thing and say nothing about it.
+    if (RfPlan.IsFmRadio(planSideband))
+    {
+        Console.Error.WriteLine(
+            $"\"sideband\": \"fm\" cannot be served by {uberSdrEndpoint}: a web receiver is an "
+            + "SSB receiver, and this station would be demodulating one sideband of an FM "
+            + "signal. Point \"device\" at a sound card fed by the FM radio instead.");
+        return 2;
+    }
+
     var uberSdrTuning = new UberSdrTuning
     {
         // The receiver is tuned to the dial itself, so the suppressed carrier lands at DC in the
@@ -2921,7 +2972,7 @@ if (benchTxTest is null && publishConfig is not null)
             DialHz = waterfallConfig!.DialFrequencyHz != 0
                 ? waterfallConfig.DialFrequencyHz
                 : receiveDialHz ?? 0,
-            Sideband = bandPlan?.Sideband ?? waterfallConfig.Sideband,
+            Sideband = pageSideband,
         },
         TimeProvider.System,
         stationJournal.ErrorSink);

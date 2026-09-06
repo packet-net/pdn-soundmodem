@@ -292,6 +292,47 @@ public class MonitorConfigTests : IDisposable
     }
 
     [Fact]
+    public async Task A_Monitor_On_Fm_Is_Refused_Rather_Than_Tuned_To_A_Sideband()
+    {
+        // Every receiver a monitor fronts is a web receiver, and a web receiver is an SSB
+        // receiver. "fm" would fall into the "not upper, so lower" arm of the tuning and the
+        // whole site would demodulate one sideband of an FM signal without a word about it. The
+        // planner refused the file outright before FM was a radio kind at all (#413), so this is
+        // the refusal that has to replace the one FM support takes away.
+        DaemonConfig? config = Load(
+            Working.Replace("\"waterfall\":", "\"sideband\": \"fm\", \"waterfall\":")
+                .Replace("7050300", "145300000"),
+            out string error);
+        config.Should().NotBeNull(error);
+
+        var said = new List<string>();
+        int exit = await MonitorStartup.RunAsync(
+            config!, new StationJournal("", said.Add, said.Add));
+
+        exit.Should().Be(2, "a site that cannot serve this radio must not start pretending to");
+        said.Should().Contain(line => line.Contains("cannot be served by a monitor", StringComparison.Ordinal));
+        said.Should().Contain(line => line.Contains("SSB receiver", StringComparison.Ordinal));
+        said.Should().NotContain(
+            line => line.Contains("monitor: iq48", StringComparison.Ordinal),
+            "it has to stop before it tunes anything");
+    }
+
+    [Fact]
+    public void A_Monitor_Files_Radio_Kind_Is_Checked_Like_A_Stations()
+    {
+        // The kind check sits above the flavour split, so a monitor file goes through it too.
+        // Below the split it would never be asked, and a misspelt kind in one would be taken as
+        // USB in silence.
+        Load(Working.Replace("\"waterfall\": {", "\"waterfall\": { \"sideband\": \"am\","), out string page)
+            .Should().BeNull();
+        page.Should().Contain("\"waterfall\".\"sideband\"").And.Contain("\"fm\"");
+
+        Load(Working.Replace("\"waterfall\":", "\"sideband\": \"am\", \"waterfall\":"), out string top)
+            .Should().BeNull();
+        top.Should().Contain("\"sideband\"").And.Contain("not a kind of radio this knows");
+    }
+
+    [Fact]
     public void A_Monitor_Frame_Log_Path_Is_A_Directory()
     {
         var journal = new StationJournal("", _ => { }, Errors.Add);

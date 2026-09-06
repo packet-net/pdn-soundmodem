@@ -312,6 +312,10 @@ const chipTitlesOnArrival = sandbox.document.getElementById("chips").children.ma
 // person reading it, so both of those are questions about what the config alone achieved.
 const drawnOnArrival = sandbox.__text();
 
+// What the dial control calls what goes in its box. An FM set has no dial in the SSB sense: what
+// is entered there is the channel, and the label says so.
+const dialWhat = sandbox.document.getElementById("dialWhat").textContent;
+
 // The links pane's Mine filter as the handshake left it, before anything below clicks it. Three
 // answers rather than one, because the interesting case is a stale value: `stored` is what the
 // page found in localStorage, `on` is what it decided to do about it, and `hidden` is whether the
@@ -842,6 +846,7 @@ process.stdout.write(JSON.stringify({
   chipsAttached,
   chipsDetached,
   drawnOnArrival,
+  dialWhat,
   mineOnArrival,
   ordinaryTag,
   identTag,

@@ -137,6 +137,27 @@ public class SignalSurveyTests : IDisposable
     }
 
     [Fact]
+    public void On_Fm_A_Capture_Carries_No_Band_Frequency()
+    {
+        // A channel radio's audio is not offset from anything, so dial plus audio is not a band
+        // frequency there, it is a number. The sidecar says the audio figure and stops (#413).
+        SignalSurveyOptions fm = Options();
+        fm.Sideband = "fm";
+        fm.DialFrequencyHz = 145_300_000;
+
+        var survey = new SignalSurvey(fm, Bands, SampleRate, BinWidthHz, LinesPerSecond, LineLength);
+        Play(survey, 944, 1344, burstLines: 60);
+        Settle(survey);
+
+        BurstCapture capture = Captures().Should().ContainSingle().Subject;
+        capture.AudioCentreHz.Should().BeApproximately(1144, 25, "the audio is still measured");
+        capture.RfCentreHz.Should().BeNull(
+            "on FM there is no RF to work out from an audio frequency, and inventing one is "
+            + "exactly what issue #413 is about");
+        capture.DialHz.Should().Be(145_300_000, "the channel it was heard on is a fact");
+    }
+
+    [Fact]
     public void A_Burst_In_Our_Own_Slot_That_Did_Not_Decode_Is_Captured_As_A_Miss()
     {
         // The more valuable capture of the two: the station was listening and could not read it.

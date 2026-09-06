@@ -468,11 +468,13 @@
        away: on somebody else's receiver the dial and the sideband arrive with the band plan,
        and a visitor moving them can only make the picture wrong. -->
   <div class="ctl" id="dialCtl">
-    <label for="dial">Dial · MHz</label>
+    <label for="dial"><span id="dialWhat">Dial</span> &middot; MHz</label>
     <div class="ctl-row">
       <input id="dial" inputmode="decimal" spellcheck="false" placeholder="-">
+      <!-- Three kinds of radio, not two sidebands: on FM the box below is a channel and none of
+           the RF arithmetic the other two imply applies to it. -->
       <div class="seg" id="sideband">
-        <button data-sb="usb">USB</button><button data-sb="lsb">LSB</button>
+        <button data-sb="usb">USB</button><button data-sb="lsb">LSB</button><button data-sb="fm">FM</button>
       </div>
     </div>
   </div>
@@ -1032,11 +1034,19 @@ function playAudio(buf) {
 }
 
 const dialSet = () => ui.dialHz != null && ui.dialHz > 0;
+// An FM set is a channel radio: what comes out of the demodulator is audio, and 1700 Hz of it is
+// not "channel + 1.7 kHz" of RF. So there is no arithmetic to do anywhere on an FM page, and
+// rfShown - not dialSet - is what every RF label on it hangs off.
+const fm = () => ui.sideband === "fm";
+const rfShown = () => dialSet() && !fm();
 const rfAt = af => ui.sideband === "lsb" ? ui.dialHz - af : ui.dialHz + af;
 const fmtRfKhz = af => (rfAt(af) / 1000).toFixed(2);
 // Six decimals is Hz precision on MHz; trailing zeros are noise on a dial you would read as
 // 7.0516. toFixed(5) was both coarser than the modems are placed and left a stray zero.
 const fmtRfMhz = af => (rfAt(af) / 1e6).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+// A channel is written the way it is set on a 2 m or 70 cm radio: three decimals at least, and
+// more only where the channel really has them. 145.300 MHz, not 145.3.
+const fmtChanMhz = hz => (hz / 1e6).toFixed(6).replace(/(\.\d{3}\d*?)0+$/, "$1");
 
 /* ---------- canvases ---------- */
 const spec = $("spec"), ruler = $("ruler"), wf = $("wf"), overlay = $("overlay");
@@ -1099,6 +1109,9 @@ function initControls() {
   const showDial = () => {
     dial.value = dialSet() ? (ui.dialHz / 1e6).toFixed(6) : "";
     dial.classList.toggle("unset", !dialSet());
+    // An FM radio has no dial in the SSB sense; what goes in the box is the channel it is set
+    // to, and leaving it empty is a perfectly good answer there.
+    $("dialWhat").textContent = fm() ? "Channel" : "Dial";
   };
   showDial();
   dial.addEventListener("change", () => {
@@ -1114,7 +1127,7 @@ function initControls() {
   sb.addEventListener("click", e => {
     if (!e.target.dataset.sb) return;
     ui.sideband = e.target.dataset.sb;
-    save(); showSb(); drawRuler(); drawOverlay(); renderChips();
+    save(); showSb(); showDial(); drawRuler(); drawOverlay(); renderChips();
   });
 
   const span = $("span");
@@ -1459,7 +1472,9 @@ function renderChips() {
   $("chips").replaceChildren(...cfg.modems.map((m, i) => {
     const chip = document.createElement("div");
     chip.className = "chip";
-    const rf = dialSet() ? ` <span class="rf">${fmtRfMhz(m.centreHz)}</span>` : "";
+    // On FM this is the channel, said once per chip and never added to the tone.
+    const rf = !dialSet() ? ""
+      : ` <span class="rf">${fm() ? fmtChanMhz(ui.dialHz) : fmtRfMhz(m.centreHz)}</span>`;
     // On a public page the chip is only a key to the coloured bands on the waterfall: which mode
     // is which colour, and where on the band it is. The KISS sub-channel and the audio centre
     // are for whoever has something to plug into it, and so is the mode's full name in the
@@ -1525,14 +1540,22 @@ function drawRuler() {
     rctx.textAlign = af === 0 ? "left" : "center";
     rctx.fillStyle = "#7c8894";
     rctx.fillText(af >= 1000 ? (af / 1000) + "k" : af + "", x + (af === 0 ? 2 : 0), h - 8 * d);
-    if (dialSet()) {
+    if (rfShown()) {
       rctx.fillStyle = "#f5a83c";
       rctx.fillText(fmtRfKhz(af), x + (af === 0 ? 2 : 0), h * 0.30);
     }
   }
+  // The channel, once, where the RF row would have been. It belongs to the whole ruler rather
+  // than to any tick on it, which is the entire difference between an FM radio and an SSB one.
+  if (fm() && dialSet()) {
+    rctx.fillStyle = "#f5a83c"; rctx.textAlign = "left";
+    rctx.font = `${10 * d}px ${getComputedStyle(document.body).getPropertyValue("--mono")}`;
+    rctx.fillText(`${fmtChanMhz(ui.dialHz)} MHz`, 6 * d, h * 0.30);
+  }
   // Addressed to whoever can act on it. A public page has no dial control, so on one this line
-  // would be an instruction to do something the reader cannot do.
-  if (!dialSet() && !(cfg && cfg.publicMonitor)) {
+  // would be an instruction to do something the reader cannot do; and on FM there is no RF to
+  // see whatever is entered, so asking for a frequency would promise something that is not coming.
+  if (!dialSet() && !fm() && !(cfg && cfg.publicMonitor)) {
     rctx.fillStyle = "#4c5560"; rctx.textAlign = "left";
     rctx.font = `${9 * d}px ${getComputedStyle(document.body).getPropertyValue("--sans")}`;
     rctx.fillText("Set the dial frequency to see RF", 6 * d, h * 0.30);
@@ -1830,9 +1853,9 @@ function logCapture(ev) {
   const row = document.createElement("div");
   row.className = "fr cap";
   const t = new Date(Date.now() - ev.secondsAgo * 1000).toTimeString().slice(0, 8);
-  const rf = dialSet() ? ` · ${fmtRfMhz(ev.centreHz)} MHz` : "";
   const bits = [
-    `${Math.round(ev.centreHz)} Hz${rf}`,
+    `${Math.round(ev.centreHz)} Hz`,
+    ...(rfShown() ? [`${fmtRfMhz(ev.centreHz)} MHz`] : []),
     `${Math.round(ev.highHz - ev.lowHz)} Hz wide`,
     `${ev.durationSeconds.toFixed(1)} s`,
     `<i>${ev.snrDb.toFixed(1)} dB</i>`,
@@ -2302,7 +2325,7 @@ function hookHover(el) {
       db = ` · ${byteToDb(lastBins[b]).toFixed(0)} dB`;
     }
     tip.innerHTML = `AF ${Math.round(af)} Hz${db}` +
-      (dialSet() ? `<br><span class="rf">RF ${fmtRfMhz(af)} MHz</span>` : "");
+      (rfShown() ? `<br><span class="rf">RF ${fmtRfMhz(af)} MHz</span>` : "");
     tip.style.display = "block";
     tip.style.left = Math.min(window.innerWidth - 170, e.clientX + 14) + "px";
     tip.style.top = (e.clientY + 14) + "px";

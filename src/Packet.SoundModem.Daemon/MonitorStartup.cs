@@ -18,11 +18,17 @@ namespace Packet.SoundModem.Daemon;
 internal static class MonitorStartup
 {
     /// <summary>Runs the monitor. Returns the process exit code.</summary>
-    internal static async Task<int> RunAsync(DaemonConfig config)
+    /// <param name="config">The file, already loaded and checked.</param>
+    /// <param name="into">
+    /// Where the start-up says what it is doing and why it will not. The console's, which is what
+    /// the service's journal is; a test's own, so that asserting on a refusal does not mean
+    /// redirecting the console out from under every other test in the run.
+    /// </param>
+    internal static async Task<int> RunAsync(DaemonConfig config, StationJournal? into = null)
     {
         MonitorConfig monitor = config.Monitor!;
         WaterfallConfig waterfall = config.Waterfall!;
-        var journal = StationJournal.Console();
+        StationJournal journal = into ?? StationJournal.Console();
         journal.Write("monitor: many receivers behind one page, receive only");
 
         List<ModemConfig> modems = monitor.Modems;
@@ -51,6 +57,20 @@ internal static class MonitorStartup
                 "\"monitor\".\"modems\" has no \"rfFrequency\". A web receiver has no dial already "
                 + "set to read off, so the band plan is the only thing that can tune it: give "
                 + "every modem an \"rfFrequency\" and the dial is worked out from them.");
+            return 2;
+        }
+
+        // The same refusal a station with a web receiver gets, and for the same reason - except
+        // that here every receiver is a web receiver, so there is no half of this site that FM
+        // could work on. Left to run, the tuning below would take "not USB" as LSB and this
+        // whole monitor would demodulate one sideband of an FM signal without saying so.
+        if (plan.IsFm)
+        {
+            journal.WriteError(
+                "\"sideband\": \"fm\" cannot be served by a monitor: every receiver a monitor "
+                + "fronts is a web receiver, which is an SSB receiver, and this site would be "
+                + "demodulating one sideband of an FM signal. A monitor is for the SSB packet "
+                + "windows; an FM radio belongs to the station its audio comes out of.");
             return 2;
         }
 

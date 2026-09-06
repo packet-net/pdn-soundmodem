@@ -36,6 +36,21 @@ internal static class BandPlanner
             return null;
         }
 
+        // A channel radio takes a different route through all of this, and takes it first. On FM
+        // "rfFrequency" states the channel the modem is on rather than a place in a passband, so
+        // there is no dial to choose, nothing to move, and no audio centre to write back - which
+        // is also why the baseband refusal below does not apply: c4fsk on an FM set is the
+        // ordinary case, and "put it on 145.3" means exactly what it says there.
+        if (RfPlan.IsFmRadio(sideband))
+        {
+            return RfPlan.Solve(
+                [.. modems.Select(m => new RfSlot(
+                    m.SubChannel, m.Mode, m.RfFrequency!.Value, WidthOf(m, dspRate),
+                    FixedCentreHz: m.Frequency ?? ModemCatalog.DefaultCentreFrequencyFor(m.Mode)))],
+                sideband,
+                pinnedDialHz);
+        }
+
         // A mode with no audio centre at all cannot be placed on the band by one: fsk9600 and the
         // c4fsk family are baseband, occupying DC upwards, so "put it at 7.0516 MHz" has no meaning
         // for them. Said plainly here rather than left to produce a plan that cannot be built.
@@ -150,6 +165,27 @@ internal static class BandPlanner
     /// </param>
     internal static void Report(RfPlan.Result plan, TextWriter output, bool radioIsSelfTuning = false)
     {
+        if (plan.IsFm)
+        {
+            // Said as a channel, because that is what an operator sets on an FM radio, and with
+            // no "= N Hz audio" arithmetic beside each modem: there is none to do, and printing
+            // one would be the very claim this whole path exists to stop making.
+            output.WriteLine(
+                $"channel: {RfPlan.Mhz(plan.DialHz)} FM"
+                + (radioIsSelfTuning ? "" : " - set your radio to this"));
+            foreach (PlannedModem m in plan.Modems)
+            {
+                output.WriteLine(
+                    $"  modem {m.Slot.SubChannel} {m.Slot.Mode} on the channel"
+                    + (m.AudioCentreHz > 0 ? $", {m.AudioCentreHz:F0} Hz audio" : ""));
+            }
+
+            output.WriteLine(
+                "  on FM the audio is audio: a tone is not an offset from the channel, so no "
+                + "modem here is placed by RF");
+            return;
+        }
+
         output.WriteLine(
             $"dial: {RfPlan.Mhz(plan.DialHz)} {plan.Sideband.ToUpperInvariant()}"
             + (radioIsSelfTuning ? "" : " - set your radio to this"));

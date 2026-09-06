@@ -80,7 +80,8 @@ public sealed class ModemProspector
     /// frequency is clear or the framing is the problem.</param>
     /// <param name="dialFrequencyHz">The dial, for turning an audio centre into the band
     /// frequency a config file wants; 0 for a station in audio frequencies only.</param>
-    /// <param name="sideband">"usb" or "lsb", for the same.</param>
+    /// <param name="sideband">"usb" or "lsb", for the same. "fm" is a channel radio, where an
+    /// audio centre says nothing about RF, so a proposal from one carries no RF frequency.</param>
     public ModemProspector(
         ModemProspectorOptions options,
         IReadOnlyList<ModemBand> bands,
@@ -91,7 +92,12 @@ public sealed class ModemProspector
         ArgumentNullException.ThrowIfNull(bands);
         _options = options;
         _bands = bands;
-        _dialHz = dialFrequencyHz == 0 ? null : dialFrequencyHz;
+        // FM joins "no dial at all": a channel radio's audio centre says nothing about where on
+        // the band the thing was, so a proposal from one carries the audio frequency alone.
+        _dialHz = dialFrequencyHz == 0
+                  || string.Equals(sideband, "fm", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : dialFrequencyHz;
         _sideband = sideband;
     }
 

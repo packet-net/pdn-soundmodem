@@ -413,6 +413,25 @@ public class UplinkTests
         (await h.StatusAsync(picker)).Should().Be(System.Net.HttpStatusCode.OK);
     }
 
+    [Fact(Timeout = TestTimeoutMs)]
+    public async Task A_Relayed_Station_On_Fm_Is_Relayed_As_An_Fm_Station()
+    {
+        await using var h = await Harness.StartAsync();
+
+        // The kind of radio travels with the dial, because the page a visitor opens here draws
+        // the same scale the station's own page draws. Read as "usb" - which is what anything
+        // this end did not recognise used to become - an FM station's channel would be added to
+        // every audio frequency on it (issue #413).
+        await using var station = await StubStation.OpenAsync(
+            h.Port, h.Token, Callsign, dialHz: 145_300_000, extra: new { sideband = "fm" });
+        await station.WelcomedAsync();
+
+        await using Browser browser = await h.WatchAsync(Slug);
+        JsonElement config = await browser.UntilTextAsync("config");
+        config.GetProperty("sideband").GetString().Should().Be("fm");
+        config.GetProperty("dialHz").GetDouble().Should().Be(145_300_000);
+    }
+
     [Theory(Timeout = TestTimeoutMs)]
     [InlineData(6000, 30)]
     [InlineData(8000, 25)]

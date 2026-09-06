@@ -1021,7 +1021,11 @@ public sealed class WaterfallConfig
     /// one.</summary>
     public double DialFrequencyHz { get; set; }
 
-    /// <summary>"usb" (RF = dial + audio, default) or "lsb" (RF = dial − audio).</summary>
+    /// <summary>
+    /// What kind of radio the page is drawing for: "usb" (RF = dial + audio, the default), "lsb"
+    /// (RF = dial - audio), or "fm". On FM there is no arithmetic at all - the dial is the
+    /// channel, the audio is audio, and the page shows no RF scale.
+    /// </summary>
     public string Sideband { get; set; } = "usb";
 
     /// <summary>Waterfall line rate / display frame rate. Default 30.</summary>
@@ -1182,8 +1186,10 @@ public sealed class DaemonConfig
     public string Bind { get; set; } = "127.0.0.1";
 
     /// <summary>
-    /// Which sideband the radio is set to, for turning RF frequencies into audio ones: "usb"
-    /// (RF = dial + audio, the data-mode norm) or "lsb" (RF = dial - audio).
+    /// Which kind of radio this station is on, for turning RF frequencies into audio ones: "usb"
+    /// (RF = dial + audio, the data-mode norm), "lsb" (RF = dial - audio), or "fm" for a channel
+    /// radio, where there is nothing to turn: "rfFrequency" states the channel, the audio tones
+    /// are tones on it, and neither the planner nor the page does any arithmetic between them.
     /// </summary>
     public string Sideband { get; set; } = "usb";
 
@@ -1194,6 +1200,20 @@ public sealed class DaemonConfig
     /// </summary>
     [JsonIgnore]
     public bool SidebandWasStated { get; private set; }
+
+    /// <summary>
+    /// Whether the <c>waterfall</c> section stated a <c>sideband</c> of its own, as opposed to
+    /// taking the default.
+    /// </summary>
+    /// <remarks>
+    /// The page's kind comes from the band plan where there is one and from the section's own
+    /// value otherwise, so a station placed by audio centre has always had to say it twice. That
+    /// stays true for the two sidebands - a page told nothing draws a USB scale, as it always
+    /// has - but not for FM, where a page told nothing draws an RF scale that is a lie, which is
+    /// the whole of issue #413. So a defaulted value here lets a top-level "fm" through.
+    /// </remarks>
+    [JsonIgnore]
+    public bool WaterfallSidebandWasStated { get; private set; }
 
     /// <summary>
     /// Whether the file actually said "device", as opposed to taking the default. "device" and
@@ -1363,6 +1383,11 @@ public sealed class DaemonConfig
 
         ValidateAlsa(config, asPath ?? path);
 
+        // Above the flavour split: a monitor is a radio kind's business too - it plans its
+        // receivers in RF terms and draws pages off the answer - and below the return it would
+        // never be asked, so a monitor file could say anything at all here and be taken as USB.
+        RequireKnownRadioKind(config);
+
         if (config.Monitor is not null)
         {
             ValidateMonitor(config);
@@ -1409,8 +1434,12 @@ public sealed class DaemonConfig
                 + "KISS sub-channel (0-15) - renumber one of them.");
         }
 
-        ModemConfig? bothWays = config.Modems.FirstOrDefault(
-            m => m.RfFrequency is not null && m.Frequency is not null);
+        // Not on a channel radio, where the two are unrelated rather than the same thing twice:
+        // "rfFrequency" is the channel the set is on and "frequency" is where the tones sit in
+        // its audio, and an FM station may well have to say both.
+        ModemConfig? bothWays = RfPlan.IsFmRadio(config.Sideband)
+            ? null
+            : config.Modems.FirstOrDefault(m => m.RfFrequency is not null && m.Frequency is not null);
         if (bothWays is not null)
         {
             throw new InvalidDataException(
@@ -1481,6 +1510,7 @@ public sealed class DaemonConfig
         RequireBind(config);
 
         config.SidebandWasStated = StatesKey(path, "sideband");
+        config.WaterfallSidebandWasStated = StatesKey(path, "waterfall", "sideband");
         ValidateTxTest(config);
         ValidatePorts(config);
         config.Warnings = CollectWarnings(config);
@@ -1617,6 +1647,42 @@ public sealed class DaemonConfig
             throw new InvalidDataException(
                 $"\"bind\": \"{config.Bind}\" is not an IP address. Use \"127.0.0.1\" for "
                 + "loopback only, \"*\" for every interface, or the address of one interface.");
+        }
+    }
+
+    /// <summary>
+    /// Refuses a <c>sideband</c> that names no radio this daemon knows, in either place one can
+    /// be written.
+    /// </summary>
+    /// <remarks>
+    /// Checked at load rather than left to the band planner, which only ever sees the value on a
+    /// station configured in RF terms. Written down and misspelt, it would otherwise be taken as
+    /// "usb" without a word, and every frequency the page drew would be wrong in a way the
+    /// operator had no way to see.
+    /// </remarks>
+    private static void RequireKnownRadioKind(DaemonConfig config)
+    {
+        Check(config.Sideband, "\"sideband\"");
+        if (config.Waterfall is not null)
+        {
+            Check(config.Waterfall.Sideband, "\"waterfall\".\"sideband\"");
+        }
+
+        static void Check(string? kind, string where)
+        {
+            if (kind is not null
+                && (kind.Equals("usb", StringComparison.OrdinalIgnoreCase)
+                    || kind.Equals("lsb", StringComparison.OrdinalIgnoreCase)
+                    || RfPlan.IsFmRadio(kind)))
+            {
+                return;
+            }
+
+            throw new InvalidDataException(
+                $"{where}: {(kind is null ? "null" : $"\"{kind}\"")} is not a kind of radio this "
+                + $"knows. Use {RfPlan.RadioKinds} "
+                + "- the two sidebands, where RF is the dial plus or minus the audio, or FM, "
+                + "where the channel is the RF and the audio is only audio.");
         }
     }
 

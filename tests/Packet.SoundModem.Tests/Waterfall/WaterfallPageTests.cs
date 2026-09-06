@@ -1860,6 +1860,65 @@ public class WaterfallPageTests
     }
 
     /// <summary>
+    /// An FM station's page does no audio-to-RF arithmetic anywhere: no RF row on the ruler, no
+    /// prompt asking for a dial, and the channel said once rather than added to every tone.
+    /// </summary>
+    /// <remarks>
+    /// <para>Tom, of a station running over an FM set: "For FM modems, the flow of entering the
+    /// frequency into the UI to show RF is not correct. AF does not map on to RF with FM radio."
+    /// A 1700 Hz tone on 145.300 MHz is 1700 Hz of audio on that channel, not 145.3017 MHz of
+    /// RF, so a figure of that shape must not appear anywhere on the page.</para>
+    /// <para>The mirror of the LSB assertions above, which measure the arithmetic being right on
+    /// a radio that has some. This measures it not being done at all, which is the only thing
+    /// that can be measured on a radio that has none.</para>
+    /// </remarks>
+    [Fact]
+    public async Task An_Fm_Stations_Page_Says_The_Channel_Once_And_Draws_No_Rf_Scale()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port, new WaterfallOptions
+        {
+            DialFrequencyHz = 145_300_000,
+            Sideband = "fm",
+        });
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty();
+        probe.Connected.Should().BeTrue();
+
+        // The audio scale is drawn as it always was.
+        probe.DrawnOnArrival.Should().Contain("1.5k", "the ruler still measures audio");
+
+        // And the amber RF row is not: on USB it would have written the channel in kHz beside
+        // every tick, 145300.00 upwards, which is the wrong figure once per tick.
+        probe.DrawnOnArrival
+            .Where(drawn => drawn.Contains("145", StringComparison.Ordinal))
+            .Should().AllBe("145.300 MHz",
+                "the channel is the only RF figure on an FM ruler, and it belongs to the whole "
+                + "ruler rather than to any tick on it");
+        probe.DrawnOnArrival.Should().Contain("145.300 MHz", "the channel is worth saying once");
+
+        // Nothing asking for a dial either. There is no RF to see whatever is entered, so the
+        // prompt would be promising something that is not coming.
+        probe.DrawnOnArrival.Should().NotContain("Set the dial frequency to see RF");
+
+        // The chip carries the audio centre and the channel, and never their sum.
+        probe.ChipsOnArrival.Should().ContainSingle();
+        probe.ChipsOnArrival[0].Should().Contain("1723 Hz", "where the modem sits, in audio")
+            .And.Contain("145.300", "and the channel it is on")
+            .And.NotContain("145.301", "which is what adding the two would have produced");
+
+        probe.DialWhat.Should().Be("Channel", "an FM radio has no dial in the SSB sense");
+    }
+
+    /// <summary>
     /// What is left between the top of the page and its panels, on a page for a visitor: the
     /// receiver's state, whose receiver it is, and the listen control. Not the frame rate, not
     /// the labels naming what a button plainly is, not the KISS sub-channel of a modem.
@@ -2237,6 +2296,7 @@ public class WaterfallPageTests
         string[] ChipsAttached,
         string[] ChipsDetached,
         string[] DrawnOnArrival,
+        string DialWhat,
         MineFilter MineOnArrival,
         bool LinksHiddenBefore,
         bool LinksHiddenAfter,
