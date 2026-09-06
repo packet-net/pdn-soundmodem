@@ -2491,34 +2491,23 @@ else
         return 1;
     }
 
-    try
-    {
-        // Transmit: modulate at the DSP rate; play at the card-native capture rate through the
-        // image-rejecting upsampler (cards commonly refuse to open 12 kHz playback directly).
-        var alsaPlayback = new AlsaAudioOutput(device, captureRate == DspRate ? DspRate : captureRate);
-        alsaOut = alsaPlayback;
-        playback = captureRate == DspRate
-            ? alsaPlayback
-            : new UpsamplingAudioOutput(alsaPlayback, DspRate);
-        // Receive: capture at the card-native rate; ARDOP buffers more deeply (500 ms vs the
-        // 120 ms default) to ride out device hiccups (snd-aloop re-locking mid-frame).
-            var alsaInput = new AlsaAudioInput(device, captureRate, ardopModem is null ? 120_000 : 500_000);
-        alsaIn = alsaInput;
-        input = alsaInput;
-    }
-    catch (Exception e) when (e is IOException or UnauthorizedAccessException
-                                or InvalidOperationException or ArgumentException)
-    {
-        Console.Error.WriteLine(DeviceDiagnostics.Audio(device, configPath, e));
-        return 1;
-    }
-
-    Console.WriteLine($"audio: {device} capture {captureRate} Hz -> {DspRate} Hz");
-
-    // The card's mixer, through the same libasound the PCM above opened. Read even when the
-    // configuration asks for nothing, because a station's capture gain is the difference between
-    // clean audio and clipped audio and the start-up log should say what it is; written only
-    // where a key said so, so a file with no "alsa" section leaves every control alone.
+    // The card's mixer, BEFORE the PCM is opened, and finished with before it is.
+    //
+    // The order is the point, and it was found the hard way on radio1 (2026-09-06). Opening a
+    // capture stream does not start it: the kernel starts the endpoint on the first
+    // snd_pcm_readi, and on a USB card that start is a URB submission which fails with -EIO if
+    // the device is busy with a control transfer at that moment. Mixer traffic IS control
+    // transfers. Doing it between the open and the first read therefore leaves a window in which
+    // reading the card's own levels can stop the card from ever delivering audio, which showed up
+    // as "receive feed dead: the input device failed (snd_pcm_readi: Input/output error)" about a
+    // second after start-up, on 10 runs out of 13. Nothing here needs the PCM - reading a mixer
+    // never did, which is why --mixer-show works on a running station - so the window is closed
+    // by not being in it.
+    //
+    // Read even when the configuration asks for nothing, because a station's capture gain is the
+    // difference between clean audio and clipped audio and the start-up log should say what it
+    // is; written only where a key said so, so a file with no "alsa" section leaves every control
+    // alone.
     string mixerCard = alsaConfig?.Mixer?.Card ?? AlsaMixer.CardFor(device);
     if (AlsaMixer.TryOpen(mixerCard, out AlsaMixer? openedMixer, out string mixerWhy))
     {
@@ -2555,6 +2544,30 @@ else
             $"{MixerSetup.JournalPrefix}{mixerCard} has no mixer ({mixerWhy}); capture gain, AGC "
             + "and mic boost are left as the card has them");
     }
+
+    try
+    {
+        // Transmit: modulate at the DSP rate; play at the card-native capture rate through the
+        // image-rejecting upsampler (cards commonly refuse to open 12 kHz playback directly).
+        var alsaPlayback = new AlsaAudioOutput(device, captureRate == DspRate ? DspRate : captureRate);
+        alsaOut = alsaPlayback;
+        playback = captureRate == DspRate
+            ? alsaPlayback
+            : new UpsamplingAudioOutput(alsaPlayback, DspRate);
+        // Receive: capture at the card-native rate; ARDOP buffers more deeply (500 ms vs the
+        // 120 ms default) to ride out device hiccups (snd-aloop re-locking mid-frame).
+            var alsaInput = new AlsaAudioInput(device, captureRate, ardopModem is null ? 120_000 : 500_000);
+        alsaIn = alsaInput;
+        input = alsaInput;
+    }
+    catch (Exception e) when (e is IOException or UnauthorizedAccessException
+                                or InvalidOperationException or ArgumentException)
+    {
+        Console.Error.WriteLine(DeviceDiagnostics.Audio(device, configPath, e));
+        return 1;
+    }
+
+    Console.WriteLine($"audio: {device} capture {captureRate} Hz -> {DspRate} Hz");
 }
 
 using AlsaMixer? mixerLifetime = mixer;
