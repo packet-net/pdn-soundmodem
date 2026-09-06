@@ -14,17 +14,30 @@ public sealed class AlsaAudioInput : IAudioInput, IDisposable
     /// <summary>Opens a mono capture stream on <paramref name="device"/>.</summary>
     /// <param name="device">ALSA device name.</param>
     /// <param name="sampleRate">Capture rate (card-native; the daemon decimates).</param>
-    /// <param name="latencyMicroseconds">Buffer target - larger rides out device hiccups
-    /// (the daemon uses a deeper buffer for ARDOP).</param>
-    public AlsaAudioInput(string device, int sampleRate, int latencyMicroseconds = 120_000)
+    /// <param name="bufferMicroseconds">How long the receive loop may be away before the card
+    /// overruns. Half a second by default, which is not about steady-state latency (the period
+    /// stays short, and a read still returns as soon as its frames are there) but about the one
+    /// stall that is certain: the first pass through a modem, JIT-compiled and building its
+    /// filters, took 150 ms on a Pi and overran a 120 ms buffer at every start-up.</param>
+    public AlsaAudioInput(string device, int sampleRate, int bufferMicroseconds = 500_000)
     {
         _pcm = AlsaPcm.Open(
-            device, AlsaPcm.Direction.Capture, channels: 1, sampleRate, latencyMicroseconds);
+            device, AlsaPcm.Direction.Capture, channels: 1, sampleRate, bufferMicroseconds);
         SampleRate = sampleRate;
     }
 
     /// <inheritdoc />
     public int SampleRate { get; }
+
+    /// <summary>The buffer the card gave us, in milliseconds (0 if it would not say).</summary>
+    public int BufferMilliseconds => _pcm.BufferMilliseconds;
+
+    /// <summary>The period the card gave us, in milliseconds (0 if it would not say).</summary>
+    public int PeriodMilliseconds => _pcm.PeriodMilliseconds;
+
+    /// <summary>Why the buffer asked for was not the one used, or null when it was - see
+    /// <see cref="AlsaPcm.ConfigurationWarning"/>.</summary>
+    public string? ConfigurationWarning => _pcm.ConfigurationWarning;
 
     /// <summary>Xruns recovered so far (capture overruns) - see <see cref="AlsaPcm.Xruns"/>.</summary>
     public int Xruns => _pcm.Xruns;

@@ -2534,16 +2534,22 @@ else
 
     // The card's mixer, BEFORE the PCM is opened, and finished with before it is.
     //
-    // The order is the point, and it was found the hard way on radio1 (2026-09-06). Opening a
-    // capture stream does not start it: the kernel starts the endpoint on the first
-    // snd_pcm_readi, and on a USB card that start is a URB submission which fails with -EIO if
-    // the device is busy with a control transfer at that moment. Mixer traffic IS control
-    // transfers. Doing it between the open and the first read therefore leaves a window in which
-    // reading the card's own levels can stop the card from ever delivering audio, which showed up
-    // as "receive feed dead: the input device failed (snd_pcm_readi: Input/output error)" about a
-    // second after start-up, on 10 runs out of 13. Nothing here needs the PCM - reading a mixer
-    // never did, which is why --mixer-show works on a running station - so the window is closed
-    // by not being in it.
+    // The order is the point, and it was found the hard way on radio1 (2026-09-06): with the
+    // mixer pass between the open and the first read, the station stopped receiving about a
+    // second after start-up on 10 runs out of 13, with "receive feed dead: the input device
+    // failed (snd_pcm_readi: Input/output error)".
+    //
+    // What that window really is, from the strace of the same failure on a qpsk3600 station
+    // later the same day: everything between the open and the first steady reads is time the
+    // capture stream can overrun in, and an overrun the recovery cannot get out of comes back
+    // from snd_pcm_readi as -EIO, which reads as a dead device rather than as a late reader. It
+    // was blamed at the time on a mixer control transfer colliding with the URB submission the
+    // first read makes; that was a guess from the symptom, and the qpsk3600 failure had no mixer
+    // traffic in this window at all. AlsaPcm holds the actual fix (a 500 ms capture buffer, a
+    // start threshold of 1 so the stream starts on the first read, and a recovery that prepares,
+    // starts, pauses and retries), and this ordering is what keeps the gap short to begin with.
+    // Nothing here needs the PCM - reading a mixer never did, which is why --mixer-show works on
+    // a running station - so the window costs nothing to close.
     //
     // Read even when the configuration asks for nothing, because a station's capture gain is the
     // difference between clean audio and clipped audio and the start-up log should say what it
@@ -2595,9 +2601,11 @@ else
         playback = captureRate == DspRate
             ? alsaPlayback
             : new UpsamplingAudioOutput(alsaPlayback, DspRate);
-        // Receive: capture at the card-native rate; ARDOP buffers more deeply (500 ms vs the
-        // 120 ms default) to ride out device hiccups (snd-aloop re-locking mid-frame).
-            var alsaInput = new AlsaAudioInput(device, captureRate, ardopModem is null ? 120_000 : 500_000);
+        // Receive: capture at the card-native rate, into the half-second buffer AlsaAudioInput
+        // asks for by default. It used to be 120 ms here, with 500 ms for ARDOP alone on the
+        // grounds that only snd-aloop hiccupped; a qpsk3600 start-up on the bench CM108 overran
+        // the 120 ms one on every run, so every station gets the deep buffer now.
+        var alsaInput = new AlsaAudioInput(device, captureRate);
         alsaIn = alsaInput;
         input = alsaInput;
     }
@@ -2609,6 +2617,32 @@ else
     }
 
     Console.WriteLine($"audio: {device} capture {captureRate} Hz -> {DspRate} Hz");
+
+    // What the card actually gave us, because the buffer is the difference between a station
+    // that survives a slow first pass through the modem and one that dies at every start-up,
+    // and "what did it negotiate" was previously only answerable with a strace. Said even when
+    // the answer is that it would not say, for the same reason.
+    if (alsaIn is AlsaAudioInput openedInput)
+    {
+        Console.WriteLine(openedInput.BufferMilliseconds > 0
+            ? $"audio: capture buffer {openedInput.BufferMilliseconds} ms, "
+              + $"period {openedInput.PeriodMilliseconds} ms"
+            : "audio: capture buffer: the card would not say");
+    }
+
+    // And what it refused, if it refused anything. A card that will not take the deep buffer
+    // still runs, on the configuration the daemon always used, but it is now a station one
+    // stalled start-up away from the bug this was all about, so it says so rather than leaving
+    // the next person to strace it.
+    if (alsaIn?.ConfigurationWarning is string captureRefusal)
+    {
+        Console.Error.WriteLine($"audio: {captureRefusal}");
+    }
+
+    if (alsaOut?.ConfigurationWarning is string playbackRefusal)
+    {
+        Console.Error.WriteLine($"audio: {playbackRefusal}");
+    }
 }
 
 using AlsaMixer? mixerLifetime = mixer;
