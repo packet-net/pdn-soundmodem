@@ -416,6 +416,13 @@ public class TxTestTests
 
         runner.Control.IsRunning!().Should().BeFalse("nothing has been asked for yet");
 
+        // What the waterfall (and, behind it, the receive tap and the public monitor uplink) is
+        // told was transmitted - which review round 1 found still counted the whole 20 s burst
+        // regardless of where the stop landed, holding the receive gate shut for audio that was
+        // never actually sent.
+        int announcedSamples = 0;
+        channel.TransmittedAudio += mem => announcedSamples += mem.Length;
+
         // The fake card presses Stop on the very runner it is serving, from inside the write it
         // is asked to take mid-burst - a real operator's click, mid-burst, looks the same from
         // the runner's side: some audio already out, more of it queued.
@@ -437,6 +444,13 @@ public class TxTestTests
         audio.Should().NotBeEmpty("some of the tone reached the air before the stop");
         audio.Length.Should().BeLessThan(Rate, "the stop cut it off within about one block, not 20 s of them");
 
+        // What was announced must equal what was actually written - not the 240000-odd samples
+        // of a 20 s render, and not the whole array minus the fade either: exactly what reached
+        // the device, block by block, so a display or an uplink gated on "audio is still coming"
+        // is never held shut for audio that was never sent.
+        announcedSamples.Should().Be(audio.Length,
+            "the waterfall must not be told about audio a stop kept off the air");
+
         await stopTransmitter.CancelAsync();
         try
         {
@@ -448,6 +462,56 @@ public class TxTestTests
 
         ptt.Events.Should().Equal(
             ["key", "unkey"], "PTT dropped once the last queued block drained, not 20 s later");
+    }
+
+    /// <summary>
+    /// SHOULD FIX 2 (review round 1 of #430): a stop landing inside the TXDELAY lead - before any
+    /// tone sample has reached the device - still refuses with "nothing was transmitted", which
+    /// is true of the tone but reads as a flat contradiction of a PTT event on the radio's own
+    /// log, since the radio did key for the silent lead. The journal gets a line saying so.
+    /// </summary>
+    [Fact]
+    public async Task A_Stop_Inside_The_Txdelay_Lead_Notes_That_The_Radio_Keyed_Anyway()
+    {
+        var channel = new SoundModemChannel(Rate, randomSeed: 5);
+        channel.Csma.Persistence = 255;
+        // Long enough that one 40 ms write block (SoundModemChannel.WriteStoppably) lands
+        // entirely inside the lead, so a stop after the first block never reaches any tone.
+        channel.Csma.TxDelayMilliseconds = 100;
+        channel.Csma.TxTailMilliseconds = 0;
+
+        var journal = new List<string>();
+        var runner = new TxTestRunner(new TxTestOptions
+        {
+            Channel = channel,
+            Journal = new StationJournal("", journal.Add, journal.Add),
+        });
+
+        var ptt = new RecordingPtt();
+        var output = new StoppingAfterOutput(Rate, stopAfterWrites: 1, runner.Stop);
+
+        using var stopTransmitter = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        Task transmitter = channel.RunTransmitterAsync(output, ptt, stopTransmitter.Token);
+
+        TxTestOutcome outcome = await runner.RunAsync(new TxTestRequest(false, 999, 20));
+
+        outcome.Ran.Should().BeFalse("no tone sample ever reached the air");
+        outcome.Refusal.Should().Contain("nothing was transmitted");
+        journal.Should().Contain(
+            line => line.Contains("keyed for the TXDELAY lead only"),
+            "the radio did key, briefly, and the journal must not read as though it never did");
+
+        // The radio really did key - this is the point of the note above.
+        await stopTransmitter.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        ptt.Events.Should().Equal(["key", "unkey"], "PTT came down once the write settled");
     }
 
     [Fact]

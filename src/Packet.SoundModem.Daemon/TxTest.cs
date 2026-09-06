@@ -298,6 +298,19 @@ internal sealed class TxTestRunner
             double onAir = Math.Max(0, producedSamples - leadSamples) / (double)_options.Channel.SampleRate;
             if (onAir <= 0)
             {
+                if (producedSamples > 0)
+                {
+                    // Every sample this branch counts is TXDELAY silence (onAir <= 0 means none
+                    // of it was tone), and reaching here at all means the item was taken off the
+                    // queue and keyed - the withdrawn-while-still-queued case above is a separate,
+                    // exception-driven path that never reaches this line. So the radio really did
+                    // key, briefly, for silence nobody asked to hear - worth its own line, or
+                    // "refused, nothing was transmitted" reads like a contradiction next to a PTT
+                    // event on the radio's own log.
+                    _options.Journal.Write(
+                        "tx test: the radio keyed for the TXDELAY lead only, stopped before any tone went out");
+                }
+
                 return Refuse("stopped before it reached the air, so nothing was transmitted");
             }
 

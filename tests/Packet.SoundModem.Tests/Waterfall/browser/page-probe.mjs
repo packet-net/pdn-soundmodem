@@ -157,6 +157,17 @@ function el(id) {
   els.set(id, e);
   return e;
 }
+// The button's static title, straight out of the shipped markup. The shim's getElementById
+// (el() above) hands back a blank object per id with no memory of the real HTML, so reading a
+// freshly touched element's .title here would answer undefined regardless of what the page
+// actually ships - which cannot tell a page that preserved its button's title from one that
+// quietly wiped it (review round 1 of #430, MUST FIX 4). Extracted rather than duplicated: a
+// real browser parses this straight off the same markup, and a copy typed out separately here
+// could drift from it without either source noticing.
+const txTestGoTitleAttr =
+  (/<[^>]*\bid="txTestGo"[^>]*\btitle="([^"]*)"/.exec(html) || [])[1] || "";
+el("txTestGo").title = txTestGoTitleAttr;
+
 const document_ = {
   getElementById: el, createElement: tag => el("new-" + tag + "-" + Math.random()),
   querySelector: () => el("q"), querySelectorAll: () => [], addEventListener: noop,
@@ -322,6 +333,12 @@ const txTestOffered = txTestCtl.hidden === false;
 const txTestOptions = sandbox.document.getElementById("txTestKind").children.map(o => o.textContent);
 const txTestDisabled = sandbox.document.getElementById("txTestGo").disabled === true;
 const txTestSaid = sandbox.document.getElementById("txTestWhat").textContent;
+// Read after the whole connect sequence (ws.onopen, the first config, initTxTest) has already
+// run, because review round 1 of #430 found the button's title wiped by that exact sequence: the
+// socket-state handler ran before initTxTest had captured it, wrote the empty placeholder it
+// read back over the real title, and initTxTest then captured that empty string as if it were
+// the real one - gone for the life of the page.
+const txTestGoTitleOnArrival = sandbox.document.getElementById("txTestGo").title;
 let txTestLabel = null, txTestSaidAfter = null;
 if (process.env.TXTEST) {
   run(`document.getElementById("txTestGo").click()`);
@@ -455,10 +472,13 @@ const txHeldNoSwr = readout();
 // Which KISS ports have a host on them, onto the modem chips. The server has one modem (0), and
 // both a dedicated port and the multiplexed one reach it - so the badge is about the modem, not
 // about any one port. Driven attached and then detached, because the second state is the one an
-// operator is looking for.
-run(`setHostPorts({type:"hosts", ports:[{port:8105, sub:null, clients:1}, {port:8101, sub:0, clients:1}]})`);
+// operator is looking for. Listed ascending by port number, the order the real server actually
+// emits (SetHostPorts sorts ascending) - which on the shipped defaults puts a modem's own
+// (lower-numbered) dedicated port ahead of the (higher-numbered) shared one, the opposite of the
+// friendlier shared-first order hostBadge now imposes on display regardless of this order.
+run(`setHostPorts({type:"hosts", ports:[{port:8101, sub:0, clients:1}, {port:8105, sub:null, clients:1}]})`);
 const chipsAttached = chips();
-run(`setHostPorts({type:"hosts", ports:[{port:8105, sub:null, clients:0}, {port:8101, sub:0, clients:0}]})`);
+run(`setHostPorts({type:"hosts", ports:[{port:8101, sub:0, clients:0}, {port:8105, sub:null, clients:0}]})`);
 const chipsDetached = chips();
 
 const frames = sandbox.document.getElementById("frames").children;
@@ -869,6 +889,7 @@ process.stdout.write(JSON.stringify({
   txTestOptions,
   txTestDisabled,
   txTestSaid,
+  txTestGoTitleOnArrival,
   txTestLabel,
   txTestSaidAfter,
   txTestLabelFromRunningConfig,

@@ -767,14 +767,19 @@ let txTestRunning = false;
 let txTestRefused = false;
 
 // The title the Send/Stop button carries while it can be clicked, restored once the socket comes
-// back - captured once rather than hard-coded a second time here.
-let txTestGoTitle = "";
+// back. Read here, at script scope, rather than inside initTxTest: initTxTest only runs once the
+// first config message arrives, which is always after ws.onopen has already fired and called
+// applyTxTestSocketState below - which, reading an empty txTestGoTitle at that point, wrote the
+// button's real title away with "" before initTxTest ever got to capture it, wiping it for the
+// life of the page (review round 1 of #430; reproduced with an open-socket title read in
+// page-probe.mjs: OPENTITLE was empty). Read here instead, nothing has run yet that could have
+// touched it, so this is always the title the markup shipped with.
+let txTestGoTitle = $("txTestGo").title;
 
 function initTxTest() {
   const control = cfg.txTest;
   if (!control || cfg.publicMonitor) return;
   const kind = $("txTestKind"), hz = $("txTestHz"), seconds = $("txTestSeconds"), go = $("txTestGo");
-  txTestGoTitle = go.title;
 
   // Two tones for linearity; then one tone free; then the four FM presets, each labelled with
   // the deviation its Bessel null calibrates - raise the transmit audio until the carrier
@@ -1482,11 +1487,17 @@ function hostBadge(sub) {
   if (cfg.publicMonitor) return "";
   const reach = hostPorts.filter(p => p.sub == null || p.sub === sub);
   if (!reach.length) return "";
-  const clients = reach.reduce((n, p) => n + (p.clients || 0), 0);
-  const detail = reach.map(p =>
+  // The shared port shown first, the modem's own dedicated one after it, regardless of what
+  // order the daemon happened to list them in - it sorts by port number (SetHostPorts), which on
+  // the shipped defaults (a low per-modem port, a higher shared one) puts the dedicated port
+  // first, and an operator reading "KISS 8101, 8105" would have no reason to know which of the
+  // two is the one every modem shares.
+  const ordered = [...reach.filter(p => p.sub == null), ...reach.filter(p => p.sub != null)];
+  const clients = ordered.reduce((n, p) => n + (p.clients || 0), 0);
+  const detail = ordered.map(p =>
     `${p.port} (${p.sub == null ? "all modems" : "this modem"}): ` +
     (p.clients ? `${p.clients} connected` : "nothing connected")).join("\n");
-  const ports = reach.map(p => p.port).join(", ");
+  const ports = esc(ordered.map(p => p.port).join(", "));
   const text = clients
     ? `KISS ${ports}: ${clients} host${clients === 1 ? "" : "s"}`
     : `KISS ${ports}, no host`;

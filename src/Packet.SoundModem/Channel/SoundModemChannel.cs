@@ -1047,8 +1047,18 @@ public sealed class SoundModemChannel
                         // the audio goes out, which is bounded, allocation-only and does not wait on
                         // anything - the rule that the transmitter must never wait on a picture still
                         // holds.
-                        TransmittedAudio?.Invoke(samples);
-                        WriteStoppably(output, samples, item.StopEarly, item.Written);
+                        //
+                        // For a stoppable item the announcement happens inside WriteStoppably, one
+                        // block at a time, immediately before that block is written - not here, once,
+                        // for the whole rendered array. A stop cuts the write short; announcing the
+                        // full array up front announced audio that never reached the air, which held
+                        // the receive tap (and the public monitor uplink, gated on the same pending
+                        // count) closed for however much of the nominal burst was left unplayed - a
+                        // stop 2 s into a 30 s test left 28 s of a tone nobody was sending painted on
+                        // the waterfall with nothing behind it.
+                        WriteStoppably(
+                            output, samples, item.StopEarly, item.Written,
+                            announce: mem => TransmittedAudio?.Invoke(mem));
                         output.Drain();
                         item.Done.TrySetResult();
                         inFlight = null;
@@ -1145,12 +1155,22 @@ public sealed class SoundModemChannel
     /// </summary>
     /// <remarks>
     /// <para>Every other caller passes <paramref name="stopEarly"/> null and gets exactly the one
-    /// <see cref="IAudioOutput.Write"/> call it always did. A test transmission renders its whole
-    /// burst up front too - a modem modulates frames and there is no frame here either - so the
-    /// only thing this changes for it is how that already-rendered burst reaches the device: a
-    /// stop can only take effect between blocks, which is why the burst is walked in blocks with
-    /// a check between each rather than handed to the device in one call nothing can interrupt.
+    /// <see cref="IAudioOutput.Write"/> call it always did, announced whole and up front exactly
+    /// as before. A test transmission renders its whole burst up front too - a modem modulates
+    /// frames and there is no frame here either - so the only thing this changes for it is how
+    /// that already-rendered burst reaches the device: a stop can only take effect between
+    /// blocks, which is why the burst is walked in blocks with a check between each rather than
+    /// handed to the device in one call nothing can interrupt.
     /// </para>
+    /// <para><b>Announced one block at a time, not as one call for the whole array.</b>
+    /// <paramref name="announce"/> is what feeds the waterfall's own transmit pacer (and, through
+    /// it, the receive tap and the public monitor uplink - both gated shut for as long as
+    /// announced-but-not-yet-played audio is outstanding). Announcing the whole rendered array up
+    /// front, as a single call would, tells the pacer about audio a stop is about to prevent from
+    /// ever reaching the device - which is exactly backwards for a caller whose whole reason for
+    /// existing is that the audio might not all go out. Announcing each block immediately before
+    /// it is written keeps the display, the receive gate and the device in step regardless of
+    /// where a stop lands.</para>
     /// <para><b>Nothing is drained between these blocks.</b> That is what the class remarks on
     /// <c>TxTestRunner</c> warn against - draining stops and re-primes a real card's PCM, and a
     /// burst with a hole in it every few hundred milliseconds is a poor instrument. These blocks
@@ -1159,10 +1179,12 @@ public sealed class SoundModemChannel
     /// than once, which every multi-frame keyup already does today, once per queued frame.</para>
     /// </remarks>
     private static void WriteStoppably(
-        IAudioOutput output, float[] samples, Func<bool>? stopEarly, Action<int>? written)
+        IAudioOutput output, float[] samples, Func<bool>? stopEarly, Action<int>? written,
+        Action<ReadOnlyMemory<float>> announce)
     {
         if (stopEarly is null)
         {
+            announce(samples);
             output.Write(samples);
             written?.Invoke(samples.Length);
             return;
@@ -1179,11 +1201,13 @@ public sealed class SoundModemChannel
                 // station's audio is shaped: a hard-keyed edge splatters. This is the last block
                 // that goes out, so there is nothing after it to pick the envelope back up from.
                 FadeToSilence(samples.AsSpan(offset, n));
+                announce(samples.AsMemory(offset, n));
                 output.Write(samples.AsSpan(offset, n));
                 offset += n;
                 break;
             }
 
+            announce(samples.AsMemory(offset, n));
             output.Write(samples.AsSpan(offset, n));
             offset += n;
         }

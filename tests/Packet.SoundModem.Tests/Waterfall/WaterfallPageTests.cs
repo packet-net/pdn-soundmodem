@@ -676,8 +676,9 @@ public class WaterfallPageTests
 
         // Set before the browser arrives, and never changed again: this is the state a page opened
         // at any moment other than a connect or a disconnect has to be given, and the whole reason
-        // the server carries it rather than only broadcasting the events.
-        server.SetHostPorts([new HostPortStatus(8105, null, 1), new HostPortStatus(8101, 0, 0)]);
+        // the server carries it rather than only broadcasting the events. Listed ascending, the
+        // order SetHostPorts actually emits regardless of what order they are given in here.
+        server.SetHostPorts([new HostPortStatus(8101, 0, 0), new HostPortStatus(8105, null, 1)]);
 
         Probe probe = await RunProbeAsync(node, port);
 
@@ -1016,6 +1017,12 @@ public class WaterfallPageTests
         probe.Thrown.Should().BeEmpty("the page must not throw when its own socket closes under it");
         probe.TxTestOffered.Should().BeTrue();
         probe.TxTestDisabled.Should().BeFalse("the control works before the socket closes");
+        // Review round 1 of #430: the socket-open handler ran before initTxTest had captured the
+        // button's real title, wiping it to "" for the life of the page. Checked here, after the
+        // connect sequence has already run once in full, which is exactly when the bug fired.
+        probe.TxTestGoTitleOnArrival.Should().Be(
+            "Key the radio and send the test through the normal transmit path at the station's transmit level",
+            "the button's own title must survive the connect sequence, not just exist");
         probe.TxTestDisabledWhileClosed.Should().BeTrue(
             "a click while the socket is not open would send nothing, silently, which must never "
             + "be what a visible Stop or Send does");
@@ -2190,6 +2197,7 @@ public class WaterfallPageTests
         string[] TxTestOptions,
         bool TxTestDisabled,
         string TxTestSaid,
+        string TxTestGoTitleOnArrival,
         string? TxTestLabel,
         string? TxTestSaidAfter,
         string? TxTestLabelFromRunningConfig,
