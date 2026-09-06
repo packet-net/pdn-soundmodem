@@ -149,6 +149,7 @@ int kissPort = 8105;
 string bindAddress = "127.0.0.1";
 string sideband = "usb";
 bool sidebandWasStated = false;
+bool waterfallSidebandWasStated = false;
 double? dialFrequency = null;
 FrameLogConfig? frameLogConfig = null;
 // 300 ms is a RADIO allowance, not a modem requirement - the modems themselves acquire
@@ -321,6 +322,7 @@ if (configPath is not null)
     bindAddress = config.Bind;
     sideband = config.Sideband;
     sidebandWasStated = config.SidebandWasStated;
+    waterfallSidebandWasStated = config.WaterfallSidebandWasStated;
     dialFrequency = config.DialFrequency;
     frameLogConfig = config.FrameLog;
     modems = config.Modems;
@@ -726,6 +728,18 @@ if (bandPlan is not null)
     }
 }
 
+// What kind of radio the page is told this station is on: the band plan's answer where there is
+// one, then the "waterfall" section's own, and failing both the top-level "sideband" - but only
+// when it says FM. An SSB page told nothing draws a USB scale, as it always has, and changing
+// that would move the page of every LSB station placed by audio centre; an FM page told nothing
+// draws an RF scale that is a lie, which is the whole of issue #413. So FM falls through and the
+// two sidebands do not.
+string pageSideband =
+    bandPlan?.Sideband
+    ?? (!waterfallSidebandWasStated && RfPlan.IsFmRadio(sideband) ? sideband : null)
+    ?? waterfallConfig?.Sideband
+    ?? "usb";
+
 var channel = new SoundModemChannel(DspRate);
 if (deviceIsUberSdr)
 {
@@ -864,11 +878,21 @@ foreach (ModemConfig modemConfig in modems)
         return 2;
     }
 
+    // Where this modem's audio actually sits, for an ident told to default to it. On SSB the
+    // planner has already written that back into "frequency"; on FM it deliberately writes
+    // nothing back, because there is nothing to work out, so the plan is the only place the
+    // centre is written down. A baseband mode has none either way and is refused below.
+    double? plannedCentreHz =
+        bandPlan?.Modems.FirstOrDefault(m => m.Slot.SubChannel == subChannel)
+            is { AudioCentreHz: > 0 } placed
+            ? placed.AudioCentreHz
+            : null;
+
     double? toneHz =
         id.ToneHz
         ?? (id.RfFrequency is double identRf && bandPlan is not null
             ? (bandPlan.IsUpperSideband ? identRf - bandPlan.DialHz : bandPlan.DialHz - identRf)
-            : modemConfig.Frequency);
+            : modemConfig.Frequency ?? plannedCentreHz);
 
     if (toneHz is not double tone)
     {
@@ -1216,7 +1240,7 @@ if (benchTxTest is null && waterfallConfig is not null)
             DialFrequencyHz = waterfallConfig.DialFrequencyHz != 0
                 ? waterfallConfig.DialFrequencyHz
                 : receiveDialHz ?? 0,
-            Sideband = bandPlan?.Sideband ?? waterfallConfig.Sideband,
+            Sideband = pageSideband,
             LinesPerSecond = waterfallConfig.LinesPerSecond,
             FftSize = waterfallConfig.FftSize,
             Public = waterfallConfig.Public,
@@ -1394,7 +1418,7 @@ if (surveyConfig is not null)
         DialFrequencyHz = waterfallConfig?.DialFrequencyHz is > 0
             ? waterfallConfig.DialFrequencyHz
             : receiveDialHz ?? 0,
-        Sideband = bandPlan?.Sideband ?? waterfallConfig?.Sideband ?? "usb",
+        Sideband = pageSideband,
     };
 
     if (surveyConfig.Capture is { Length: > 0 } wanted)
@@ -2948,7 +2972,7 @@ if (benchTxTest is null && publishConfig is not null)
             DialHz = waterfallConfig!.DialFrequencyHz != 0
                 ? waterfallConfig.DialFrequencyHz
                 : receiveDialHz ?? 0,
-            Sideband = bandPlan?.Sideband ?? waterfallConfig.Sideband,
+            Sideband = pageSideband,
         },
         TimeProvider.System,
         stationJournal.ErrorSink);

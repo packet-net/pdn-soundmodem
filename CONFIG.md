@@ -703,16 +703,22 @@ channel: 145.300000 MHz FM - set your radio to this
 the ruler shows audio frequencies only with no amber RF row, the modem chips, the frame rows and
 the hover readout show audio only, and the "set the dial frequency to see RF" prompt is not shown,
 because on FM there is no RF to be had from a dial. The Dial box is relabelled **Channel**; enter
-one and it appears once, in the corner of the ruler and on each chip (`145.300 MHz`), never added
-to a tone. Leaving it empty is fine and asks for nothing.
+one and it appears once, in the corner of the ruler (`145.300 MHz`) and on each chip (`145.300`,
+without the unit, as a USB chip's RF figure is drawn), never added to a tone. Leaving it empty is
+fine and asks for nothing.
 
 The page takes the kind and the channel from the plan above, so neither is written twice. A
-station that places its modems by audio `frequency` instead has no plan to inherit, and tells the
-page itself, exactly as an LSB one does:
+station that places its modems by audio `frequency` has no plan to inherit from, and there the
+top-level `"sideband": "fm"` is used for the page as well, since a page told nothing would draw an
+RF scale that is a lie. Writing it in the `waterfall` section still works and still wins:
 
 ```json
 "waterfall": { "port": 8107, "sideband": "fm", "dialFrequencyHz": 145300000 }
 ```
+
+Only FM falls through like that. On `"usb"` and `"lsb"` the page's kind is the `waterfall`
+section's own as it has always been, because changing that would move the scale on the page of
+every SSB station that placed its modems by audio centre.
 
 ### On a FlexRadio, it just does it
 
@@ -1261,7 +1267,7 @@ for confirming you are hearing the band at a sane level before trusting the deco
 |---|---|---|---|
 | `port` | int | `8107` | HTTP listen port |
 | `dialFrequencyHz` | number | `0` | Rig dial the RF scale derives from; 0 = audio frequencies only |
-| `sideband` | string | `"usb"` | `"usb"` (RF = dial + audio), `"lsb"` (RF = dial - audio), or `"fm"` (no RF scale at all; the dial is the channel) |
+| `sideband` | string | *(the band plan's, else `"usb"`)* | `"usb"` (RF = dial + audio), `"lsb"` (RF = dial - audio), or `"fm"` (no RF scale at all; the dial is the channel). Unset, the band plan's kind is used, and failing that a top-level [`sideband`](#band-plans-in-rf-terms) of `"fm"`, and only of `"fm"` |
 | `linesPerSecond` | int | `30` | Waterfall line / display frame rate |
 | `fftSize` | int | `0` | 0 = rate default (2048 at 12 kHz, 8192 at 48 kHz) |
 | `public` | bool | `false` | Dress the page for the public rather than the operator; see below |

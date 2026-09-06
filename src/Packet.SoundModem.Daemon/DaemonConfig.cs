@@ -1202,6 +1202,20 @@ public sealed class DaemonConfig
     public bool SidebandWasStated { get; private set; }
 
     /// <summary>
+    /// Whether the <c>waterfall</c> section stated a <c>sideband</c> of its own, as opposed to
+    /// taking the default.
+    /// </summary>
+    /// <remarks>
+    /// The page's kind comes from the band plan where there is one and from the section's own
+    /// value otherwise, so a station placed by audio centre has always had to say it twice. That
+    /// stays true for the two sidebands - a page told nothing draws a USB scale, as it always
+    /// has - but not for FM, where a page told nothing draws an RF scale that is a lie, which is
+    /// the whole of issue #413. So a defaulted value here lets a top-level "fm" through.
+    /// </remarks>
+    [JsonIgnore]
+    public bool WaterfallSidebandWasStated { get; private set; }
+
+    /// <summary>
     /// Whether the file actually said "device", as opposed to taking the default. "device" and
     /// "monitor" are exclusive, and refusing a monitor config because <c>Device</c> holds the
     /// string "default" that nobody wrote would be refusing it for a value the operator never
@@ -1369,6 +1383,11 @@ public sealed class DaemonConfig
 
         ValidateAlsa(config, asPath ?? path);
 
+        // Above the flavour split: a monitor is a radio kind's business too - it plans its
+        // receivers in RF terms and draws pages off the answer - and below the return it would
+        // never be asked, so a monitor file could say anything at all here and be taken as USB.
+        RequireKnownRadioKind(config);
+
         if (config.Monitor is not null)
         {
             ValidateMonitor(config);
@@ -1489,9 +1508,9 @@ public sealed class DaemonConfig
         }
 
         RequireBind(config);
-        RequireKnownRadioKind(config);
 
         config.SidebandWasStated = StatesKey(path, "sideband");
+        config.WaterfallSidebandWasStated = StatesKey(path, "waterfall", "sideband");
         ValidateTxTest(config);
         ValidatePorts(config);
         config.Warnings = CollectWarnings(config);

@@ -581,6 +581,28 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void Whether_The_Page_Was_Told_Its_Own_Kind_Is_Distinguishable_From_The_Default()
+    {
+        // The page's kind comes from the band plan where there is one and from the "waterfall"
+        // section otherwise, so a station placed by audio centre has always had to say it twice.
+        // That stays true of the two sidebands; on FM a defaulted value here is what lets the
+        // station's own "fm" through, because a page told nothing draws an RF scale that is a
+        // lie, and that lie is issue #413.
+        string stated = WriteConfig(
+            """
+            {"device": "null", "sideband": "fm", "waterfall": {"port": 8107, "sideband": "usb"}}
+            """);
+        DaemonConfig? told = DaemonConfig.TryLoad(stated, out string error);
+
+        told.Should().NotBeNull(error);
+        told!.WaterfallSidebandWasStated.Should().BeTrue();
+
+        string defaulted = WriteConfig(
+            """{"device": "null", "sideband": "fm", "waterfall": {"port": 8107}}""");
+        DaemonConfig.TryLoad(defaulted, out _)!.WaterfallSidebandWasStated.Should().BeFalse();
+    }
+
+    [Fact]
     public void Whether_Sideband_Was_Written_Down_Is_Distinguishable_From_The_Default()
     {
         // On a Flex the slice mode states the sideband, so a defaulted value is corrected

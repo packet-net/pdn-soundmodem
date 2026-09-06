@@ -34,7 +34,9 @@
   // Modems can be placed by absolute RF frequency instead of audio centre - state the band
   // plan the way you think of it and the daemon works out the dial, tells you what to set,
   // and refuses to start if no single dial can fit them all. See CONFIG.md.
-  //   "sideband": "usb",            // or "lsb"; RF = dial + audio on USB
+  //   "sideband": "usb",            // or "lsb"; RF = dial + audio on USB. "fm" is a channel
+  //                                 // radio: no dial arithmetic at all, "rfFrequency" is the
+  //                                 // channel, and the page shows audio as audio
   //   "dialFrequency": 7049450,     // omit and the daemon chooses one that fits
   //   "modems": [ { "subChannel": 0, "mode": "bpsk300", "rfFrequency": 7051600 } ]
   // The shared KISS port: every modem, selected by the KISS port nibble. A modem can also be
@@ -103,7 +105,8 @@
   // every modem's measured band overlaid (audio + RF centres), each decoded frame tagged
   // on its burst with callsign, SNR and frequency offset. "dialFrequencyHz" presets the
   // rig dial the RF scale derives from (0 = unset; every browser can retune its own copy);
-  // "sideband" is "usb" or "lsb"; "bind" "*" opens it beyond loopback.
+  // "sideband" is "usb", "lsb", or "fm" for a channel radio, which has no RF scale at all
+  // and shows the dial once as the channel; "bind" "*" opens it beyond loopback.
   // "waterfall": { "port": 8107, "dialFrequencyHz": 14105000, "sideband": "usb" },
   // "public": true dresses the page for strangers rather than the operator: a "title", an
   // "about" paragraph, a credit and link for the web receiver it listens through, and no KISS
