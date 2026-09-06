@@ -17,25 +17,31 @@ namespace Packet.SoundModem.Daemon;
 /// through <see cref="RunAsync"/> so there is one set of rules rather than three.</para>
 /// <para><b>The same path a frame takes.</b> The audio is queued on the channel exactly as a
 /// modulated frame is (<see cref="SoundModemChannel.EnqueueTransmit(Func{int, float[]},
-/// Action{Exception}, bool, object, TimeSpan?, CancellationToken)"/>), so it waits out a busy
-/// channel on the same p-persistence roll, defers to the same
+/// Action{Exception}, bool, object, TimeSpan?, CancellationToken, Func{bool}, Action{int})"/>),
+/// so it waits out a busy channel on the same p-persistence roll, defers to the same
 /// <see cref="SoundModemChannel.TransmitInhibit"/> an ARQ session sets, and goes out through
 /// whichever transmitter the station has - the sound card and its serial or CM108 PTT, or the
 /// Flex DAX path. What is measured is therefore what a frame gets. The one thing it does not
 /// share is a modem: the tones are generated here, because a modem modulates frames and there is
 /// no frame.</para>
-/// <para><b>One keyup, one array.</b> The burst is rendered whole and handed to the channel as a
-/// single transmission rather than a stream of blocks. That is not laziness: the transmitter
-/// drains the output device between queued items, which on a real card stops and re-primes the
-/// PCM, and a test signal with a hole in it every few hundred milliseconds is a poor instrument.
-/// The cost is that once the burst has been rendered it goes out to its full length - which is
-/// why the length is capped rather than merely defaulted.</para>
-/// <para><b>A cancelled test transmits nothing, ever.</b> <see cref="Stop"/> and the channel-wait
-/// timeout both withdraw the transmission from the channel's queue, so a test that has been given
-/// up on cannot key the radio minutes later when a busy channel finally clears - and the run is
-/// held open until the channel has actually given it back, so a retry cannot queue behind a stale
-/// one. Where the burst is already on the air the withdrawal cannot reach it and the tone fades
-/// out instead, which is the only case in which a stopped test is heard at all.</para>
+/// <para><b>One keyup, one array, rendered whole.</b> The burst is rendered as a single array
+/// rather than a stream of blocks - a modem modulates frames and there is no frame here either,
+/// so there is nothing to render incrementally against. That is not the same as it going to the
+/// device in one call nothing can interrupt any more (#425): the channel writes it to the device
+/// in blocks with a stop check between them, and nothing is drained until the whole write is
+/// over, so a real card is never stopped and re-primed mid-burst the way draining between queued
+/// items would - see <c>SoundModemChannel.WriteStoppably</c>. The length is still capped rather
+/// than merely defaulted, because the render itself is instant and unbounded airtime would still
+/// be a licensing problem even though a stop can now cut it short.</para>
+/// <para><b>A cancelled test transmits only what had already reached the device.</b>
+/// <see cref="Stop"/> withdraws the transmission from the channel's queue while it is still
+/// waiting for one - so a test given up on while the channel is busy cannot key the radio minutes
+/// later when it finally clears, and the run is held open until the channel has actually given it
+/// back, so a retry cannot queue behind a stale one - and, once the burst is on the air, ends the
+/// write within about one block: the block already handed to the device finishes, the next one is
+/// faded to silence instead of started, and PTT drops as soon as that drains. The channel-wait
+/// timeout uses the same withdrawal for a test that never got a clear channel to key on at
+/// all.</para>
 /// </remarks>
 internal sealed class TxTestRunner
 {
@@ -96,8 +102,11 @@ internal sealed class TxTestRunner
 
         internal void Cancel()
         {
-            // The tone first, so a burst already on the air fades rather than stopping dead; the
-            // withdrawal then takes it off the queue if it has not been reached yet.
+            // The tone first: harmless once it has already been rendered whole (the channel's own
+            // write loop is what fades a burst already on the air, in blocks - see
+            // SoundModemChannel.WriteStoppably), but it shortens what gets rendered at all in the
+            // rare case where this lands before the render has happened yet. The withdrawal then
+            // takes the item off the queue if the transmitter has not reached it yet either.
             Tone.Stop();
             try
             {
@@ -121,7 +130,22 @@ internal sealed class TxTestRunner
         Refusal = _options.Refusal,
         Start = request => _ = Task.Run(() => RunAsync(request)),
         Stop = Stop,
+        IsRunning = () => IsRunning,
     };
+
+    /// <summary>Whether a test is queued or on the air right now - what a page that just connected
+    /// or reconnected is told, in the config message, since a <see cref="TxTestStatus"/> only ever
+    /// reaches a page that was already listening when it was sent.</summary>
+    internal bool IsRunning
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _running is not null;
+            }
+        }
+    }
 
     /// <summary>
     /// Ends the test that is running, or cancels one still waiting for the channel. Does nothing
@@ -179,6 +203,8 @@ internal sealed class TxTestRunner
             _options.Report?.Invoke(new TxTestStatus("running", text));
 
             string? rejection = null;
+            int leadSamples = 0;
+            int producedSamples = 0;
             Task send = _options.Channel.EnqueueTransmit(
                 txDelay =>
                 {
@@ -192,10 +218,19 @@ internal sealed class TxTestRunner
                     // TXDELAY spent on silence, as the CW ident spends it: the PTT settling time
                     // wants the transmitter keyed and quiet, and an SSB rig radiates nothing
                     // without audio.
+                    //
+                    // Rendered whole, still - a modem modulates frames and there is no frame here
+                    // either, so there is nothing to render incrementally against. What changed
+                    // (#425) is not the render but the write: the channel now walks this array to
+                    // the device in blocks with a stop check between them (see
+                    // SoundModemChannel.WriteStoppably) rather than handing it over as one call
+                    // nothing can interrupt, which is what let a 5, 15 or 60 second test outlive
+                    // Stop entirely - the whole burst was already on its way to the sound card
+                    // before the button could do anything about it.
                     float[] burst = run.Tone.Render();
-                    int lead = (int)Math.Round(txDelay / 1000.0 * _options.Channel.SampleRate);
-                    var audio = new float[lead + burst.Length];
-                    burst.CopyTo(audio, lead);
+                    leadSamples = (int)Math.Round(txDelay / 1000.0 * _options.Channel.SampleRate);
+                    var audio = new float[leadSamples + burst.Length];
+                    burst.CopyTo(audio, leadSamples);
                     return audio;
                 },
                 rejected: refusal => rejection = refusal.Message,
@@ -203,7 +238,12 @@ internal sealed class TxTestRunner
                 // a modem's - the operator wants to measure the tones, not the frame in front of
                 // them.
                 source: this,
-                withdraw: run.Withdrawal.Token);
+                withdraw: run.Withdrawal.Token,
+                stopEarly: () => run.Cancelled,
+                // What actually reached the device, in case a stop cut the write short - not the
+                // same number as run.Tone.Produced any more, which the render above already set
+                // to the whole burst regardless of how much of it a stop later let through.
+                written: n => producedSamples = n);
 
             // A bound on the wall clock as well as on the airtime. The airtime is bounded by the
             // burst itself; this is the other half - the transmitter's own wait for a clear
@@ -255,9 +295,22 @@ internal sealed class TxTestRunner
                 return Fail(failure);
             }
 
-            double onAir = run.Tone.Produced / (double)_options.Channel.SampleRate;
+            double onAir = Math.Max(0, producedSamples - leadSamples) / (double)_options.Channel.SampleRate;
             if (onAir <= 0)
             {
+                if (producedSamples > 0)
+                {
+                    // Every sample this branch counts is TXDELAY silence (onAir <= 0 means none
+                    // of it was tone), and reaching here at all means the item was taken off the
+                    // queue and keyed - the withdrawn-while-still-queued case above is a separate,
+                    // exception-driven path that never reaches this line. So the radio really did
+                    // key, briefly, for silence nobody asked to hear - worth its own line, or
+                    // "refused, nothing was transmitted" reads like a contradiction next to a PTT
+                    // event on the radio's own log.
+                    _options.Journal.Write(
+                        "tx test: the radio keyed for the TXDELAY lead only, stopped before any tone went out");
+                }
+
                 return Refuse("stopped before it reached the air, so nothing was transmitted");
             }
 

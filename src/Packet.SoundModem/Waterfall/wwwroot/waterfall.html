@@ -779,6 +779,21 @@ function setRadioStatus(status) {
 // the --two-tone switch could not ask for.
 let txTestRunning = false;
 
+// Whether the control has been refused outright (no PTT, no transmitter): disabled for the life
+// of the page in that case, so the socket-state handling below leaves it alone rather than
+// re-enabling a button that was never going to work.
+let txTestRefused = false;
+
+// The title the Send/Stop button carries while it can be clicked, restored once the socket comes
+// back. Read here, at script scope, rather than inside initTxTest: initTxTest only runs once the
+// first config message arrives, which is always after ws.onopen has already fired and called
+// applyTxTestSocketState below - which, reading an empty txTestGoTitle at that point, wrote the
+// button's real title away with "" before initTxTest ever got to capture it, wiping it for the
+// life of the page (review round 1 of #430; reproduced with an open-socket title read in
+// page-probe.mjs: OPENTITLE was empty). Read here instead, nothing has run yet that could have
+// touched it, so this is always the title the markup shipped with.
+let txTestGoTitle = $("txTestGo").title;
+
 function initTxTest() {
   const control = cfg.txTest;
   if (!control || cfg.publicMonitor) return;
@@ -828,6 +843,7 @@ function initTxTest() {
     // Shown and disabled, with the reason: a control that is simply missing tells an operator
     // who was looking for it nothing at all.
     kind.disabled = hz.disabled = seconds.disabled = go.disabled = true;
+    txTestRefused = true;
     return;
   }
 
@@ -840,12 +856,37 @@ function initTxTest() {
       seconds: isFinite(asked) && asked > 0 ? asked : control.defaultSeconds,
     });
   };
+
+  // The socket may already be down by the time this first config is handled (unlikely, but the
+  // check costs nothing) - so this is not purely belt and braces on top of the connect handlers
+  // below.
+  applyTxTestSocketState();
 }
 
+// A WebSocket frame sent to a socket that is not open is not queued and not retried - it is
+// simply not sent, silently, and either way it never appears as a request in the browser's
+// network tab (#425: "nothing in the network tab" after clicking Stop is exactly what a dropped
+// message looks like, not evidence it was not sent). So the button must never be clickable while
+// it cannot possibly reach the daemon, which applyTxTestSocketState enforces from the same two
+// events that already say so in words next to the clock.
 function txTestSend(request) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(Object.assign({ type: "txtest" }, request)));
   }
+}
+
+// Disables Send/Stop for as long as the page's own socket is not open, and restores it once the
+// socket is live again - unless the control was refused outright (no PTT), which disables it for
+// the life of the page and is left alone here. Called on every open and close of the socket, and
+// once from initTxTest for the state the very first config left it in.
+function applyTxTestSocketState() {
+  const go = $("txTestGo");
+  if (!go || txTestRefused) return;
+  const open = !!(ws && ws.readyState === WebSocket.OPEN);
+  go.disabled = !open;
+  go.title = open
+    ? txTestGoTitle
+    : "Reconnecting to the station - the button works again once it is live";
 }
 
 function txTestSay(text, bad) {
@@ -867,6 +908,24 @@ function onTxTest(msg) {
     go.textContent = txTestRunning ? "Stop" : "Send";
   }
   txTestSay(msg.text, msg.state === "refused" || msg.state === "failed");
+}
+
+// Every config carries whether a test is running right now (cfg.txTest.running), because a page
+// that just connected or reconnected was not necessarily told: the test that was running when a
+// socket dropped may still be running, may have finished, or may have been started from another
+// tab or from /api/txtest entirely while this one was away - only the daemon knows which, so this
+// reads its answer rather than assuming either way (#425). Only the button state moves; the text
+// beside it is an event's own sentence and reconnecting is not one, so it is left as it was.
+function syncTxTestRunning() {
+  if (!cfg.txTest) return;
+  const running = !!cfg.txTest.running;
+  if (running === txTestRunning) return;
+  txTestRunning = running;
+  const go = $("txTestGo");
+  if (go) {
+    go.classList.toggle("on", running);
+    go.textContent = running ? "Stop" : "Send";
+  }
 }
 
 // Everything the public flavour takes off the page, by id. Three kinds: controls a visitor
@@ -1475,15 +1534,27 @@ function renderChips() {
 // Whether the node software is attached to a port that can reach this modem: its own dedicated
 // port, and the multiplexed one, which reaches every modem by nibble. Nothing at all when the
 // station has not said what it serves - an absent badge is honest, a green one would not be.
+// The port number used to live in the tooltip alone, which meant reading it required a hover
+// nobody watching the bar above the spectrum display was going to make (#427) - it is in the
+// chip text itself now, every port that reaches this modem, in the order the station listed them.
 function hostBadge(sub) {
   if (cfg.publicMonitor) return "";
   const reach = hostPorts.filter(p => p.sub == null || p.sub === sub);
   if (!reach.length) return "";
-  const clients = reach.reduce((n, p) => n + (p.clients || 0), 0);
-  const detail = reach.map(p =>
+  // The shared port shown first, the modem's own dedicated one after it, regardless of what
+  // order the daemon happened to list them in - it sorts by port number (SetHostPorts), which on
+  // the shipped defaults (a low per-modem port, a higher shared one) puts the dedicated port
+  // first, and an operator reading "KISS 8101, 8105" would have no reason to know which of the
+  // two is the one every modem shares.
+  const ordered = [...reach.filter(p => p.sub == null), ...reach.filter(p => p.sub != null)];
+  const clients = ordered.reduce((n, p) => n + (p.clients || 0), 0);
+  const detail = ordered.map(p =>
     `${p.port} (${p.sub == null ? "all modems" : "this modem"}): ` +
     (p.clients ? `${p.clients} connected` : "nothing connected")).join("\n");
-  const text = clients ? `${clients} host${clients === 1 ? "" : "s"}` : "no host";
+  const ports = esc(ordered.map(p => p.port).join(", "));
+  const text = clients
+    ? `KISS ${ports}: ${clients} host${clients === 1 ? "" : "s"}`
+    : `KISS ${ports}, no host`;
   return `<span class="host${clients ? " on" : ""}" title="${esc(detail)}">${text}</span>`;
 }
 
@@ -2334,13 +2405,16 @@ function connect() {
     // A detached links window has no waterfall to paint, so it asks not to be sent one - and
     // has to ask again on every reconnect, because the server starts every socket with it on.
     if (detached) { ws.send(JSON.stringify({ type: "spectrum", on: false })); }
-    // TX test: a test that was running when the socket dropped belongs to the station, not to
-    // this page. Its outcome was broadcast while we were away, so start again from not-running
-    // rather than leaving a Stop button that would stop nothing.
-    if (txTestRunning) { onTxTest({ state: "", text: "" }); }
+    // The button can be clicked again now the socket can carry it; the running state itself is
+    // resynced from the config message that is about to arrive, in syncTxTestRunning - not
+    // assumed here, because a test running when the socket dropped may still be.
+    applyTxTestSocketState();
   };
   ws.onclose = () => {
     $("conn").textContent = "reconnecting…"; $("conn").className = "dead";
+    // Nothing sent to a closed socket is queued or retried - it is silently not sent - so a
+    // Stop click here would look, to the operator, exactly like the bug this disables (#425).
+    applyTxTestSocketState();
     setTimeout(connect, 2000);
   };
   ws.onmessage = e => {
@@ -2368,6 +2442,7 @@ function connect() {
         checkPageVersion(msg.page);
         applyPublicFlavour();
         setRadioStatus(cfg.radioStatus);
+        syncTxTestRunning();
         renderChips(); resizeAll(); drawRuler(); drawOverlay();
       } else if (msg.type === "radio") {
         setRadioStatus(msg.status);
