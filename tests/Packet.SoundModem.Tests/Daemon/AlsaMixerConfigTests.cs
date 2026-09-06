@@ -236,6 +236,35 @@ public class AlsaMixerConfigTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// A trailing separator does not let the same file past the guard.
+    /// </summary>
+    /// <remarks>
+    /// <c>Path.GetFullPath</c> keeps a trailing separator, so "soundmodem.json/" compared unequal
+    /// to the same file and the friendly refusal did not fire. It failed safe rather than
+    /// dangerously - the write lands on "soundmodem.json/.pid.tmp" and errors - but the operator
+    /// then got a write-failure note instead of being told at start-up what they had typed.
+    /// </remarks>
+    [Fact]
+    public void A_Trailing_Slash_Does_Not_Slip_The_Same_File_Past_The_Guard()
+    {
+        string path = WriteConfig("""
+            {"device": "plughw:1,0", "alsa": {"mixer": {"stateFile": "soundmodem.json/"}}}
+            """);
+
+        string was = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.SetCurrentDirectory(_dir);
+            DaemonConfig.TryLoad(path, out string error).Should().BeNull();
+            error.Should().Contain("which is this configuration file");
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(was);
+        }
+    }
+
     [Fact]
     public void A_State_File_Somewhere_Else_Is_Perfectly_Ordinary()
     {

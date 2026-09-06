@@ -330,14 +330,23 @@ internal sealed class ConfigApi
     /// plan that cannot be built. Neither is exhaustive - a device that has been unplugged is
     /// discovered only by trying - which is what the ephemeral default is insurance for.</para>
     /// </remarks>
-    public static string? Validate(string json)
+    /// <param name="json">The proposed configuration document.</param>
+    /// <param name="asPath">
+    /// The config file this document is proposed to become, when the caller knows it. The parse
+    /// happens from a temporary file, so without this any check that compares a setting against
+    /// the config file's own location sees the temporary name: an <c>alsa.mixer.stateFile</c>
+    /// aimed at the station's real <c>soundmodem.json</c> would validate here and only be refused
+    /// at the restart, which takes the station down until somebody reads the journal. Null keeps
+    /// the old behaviour for a caller with no such path, which is what the tests use.
+    /// </param>
+    public static string? Validate(string json, string? asPath = null)
     {
         string temp = Path.Combine(
             Path.GetTempPath(), $"pdn-soundmodem-proposed-{Guid.NewGuid():N}.json");
         try
         {
             File.WriteAllText(temp, json);
-            DaemonConfig? proposed = DaemonConfig.TryLoad(temp, out string error);
+            DaemonConfig? proposed = DaemonConfig.TryLoad(temp, out string error, asPath);
             if (proposed is null)
             {
                 return error;
@@ -648,7 +657,7 @@ internal sealed class ConfigApi
             return;
         }
 
-        if (Validate(body) is string refusal)
+        if (Validate(body, _configPath) is string refusal)
         {
             // The station is untouched. This is the whole reason the API exists rather than an
             // operator editing the file: a refusal here costs nothing that was working.

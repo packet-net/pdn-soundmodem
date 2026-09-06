@@ -1267,7 +1267,15 @@ public sealed class DaemonConfig
     };
 
     /// <summary>Loads and validates a configuration file.</summary>
-    public static DaemonConfig Load(string path)
+    /// <param name="path">The file to read.</param>
+    /// <param name="asPath">
+    /// The path to validate as though the document lived at, when that is not where it is being
+    /// read from. <c>POST /api/config</c> parses a proposed document out of a temporary file, and
+    /// without this the checks that compare a setting against the config file's own location -
+    /// today <c>alsa.mixer.stateFile</c> - would compare it against the temporary name and pass
+    /// anything. The refusal has to arrive at the POST, not at the restart afterwards.
+    /// </param>
+    public static DaemonConfig Load(string path, string? asPath = null)
     {
         var config = JsonSerializer.Deserialize<DaemonConfig>(File.ReadAllText(path), Options)
             ?? throw new InvalidDataException(
@@ -1288,7 +1296,7 @@ public sealed class DaemonConfig
             ValidatePublish(config);
         }
 
-        ValidateAlsa(config, path);
+        ValidateAlsa(config, asPath ?? path);
 
         if (config.Monitor is not null)
         {
@@ -1491,8 +1499,7 @@ public sealed class DaemonConfig
     {
         try
         {
-            return string.Equals(
-                Path.GetFullPath(one), Path.GetFullPath(other), StringComparison.Ordinal);
+            return string.Equals(Trimmed(one), Trimmed(other), StringComparison.Ordinal);
         }
         catch (Exception e) when (e is ArgumentException or NotSupportedException
                                     or PathTooLongException)
@@ -1500,6 +1507,18 @@ public sealed class DaemonConfig
             // An unusable path is somebody else's error to report; this one only answers
             // "are these the same file", and a path that cannot be resolved is not.
             return false;
+        }
+
+        // Path.GetFullPath keeps a trailing separator, so "soundmodem.json/" would compare
+        // unequal to the same file and the friendly refusal would not fire. That case fails
+        // safe rather than dangerously - the write lands on "soundmodem.json/.<pid>.tmp" and
+        // errors - but the operator then gets a write-failure note instead of being told at
+        // start-up what they actually typed wrong. Trimmed here so they get the sentence.
+        static string Trimmed(string path)
+        {
+            string full = Path.GetFullPath(path);
+            string trimmed = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return trimmed.Length == 0 ? full : trimmed;
         }
     }
 
@@ -2251,7 +2270,11 @@ public sealed class DaemonConfig
     /// person who has to act on it reads it in `journalctl` - a .NET stack trace there tells
     /// them nothing they can use, and buries the one line that names the problem.
     /// </remarks>
-    public static DaemonConfig? TryLoad(string path, out string error)
+    /// <param name="path">The file to read.</param>
+    /// <param name="error">What an operator should read, when this returns null.</param>
+    /// <param name="asPath">The path to validate as though the document lived at; see
+    /// <see cref="Load(string, string?)"/>.</param>
+    public static DaemonConfig? TryLoad(string path, out string error, string? asPath = null)
     {
         try
         {
@@ -2264,7 +2287,7 @@ public sealed class DaemonConfig
                 return null;
             }
 
-            return Load(path);
+            return Load(path, asPath);
         }
         catch (FileNotFoundException)
         {
