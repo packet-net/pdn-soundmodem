@@ -353,6 +353,167 @@ public class TxTestTests
         rig.Records.Should().BeEmpty();
     }
 
+    /// <summary>A fake sound card that presses Stop on the very runner it belongs to, once it has
+    /// taken a given number of blocks - which is what an operator's Stop looks like while a test
+    /// is already on the air, without racing a fake output that takes no real time to "play"
+    /// anything.</summary>
+    private sealed class StoppingAfterOutput(int sampleRate, int stopAfterWrites, Action stop)
+        : IAudioOutput
+    {
+        private readonly List<float> _written = [];
+        private int _writes;
+
+        public int SampleRate { get; } = sampleRate;
+
+        public void Write(ReadOnlySpan<float> samples)
+        {
+            lock (_written)
+            {
+                _written.AddRange(samples.ToArray());
+            }
+
+            if (Interlocked.Increment(ref _writes) == stopAfterWrites)
+            {
+                stop();
+            }
+        }
+
+        public void Drain()
+        {
+        }
+
+        public float[] Snapshot()
+        {
+            lock (_written)
+            {
+                return [.. _written];
+            }
+        }
+    }
+
+    /// <summary>
+    /// Proves the actual cause of #425: <see cref="TestTone.Render"/> renders a whole burst in one
+    /// call, at the moment the channel keys up, so by the time an operator's Stop reached the
+    /// daemon the entire tone was already on its way to the sound card with nothing left to
+    /// shorten - a 5, 15 or 60 second test outlived Stop entirely. The fix leaves the render alone
+    /// and changes how the rendered burst reaches the device instead
+    /// (<see cref="SoundModemChannel.WriteStoppably"/>, not visible from here): in blocks, with a
+    /// check between them, so a stop only has to prevent the next one.
+    /// </summary>
+    [Fact]
+    public async Task Stopping_A_Test_Part_Way_Through_Ends_The_Audio_And_Releases_Ptt_Promptly()
+    {
+        var channel = new SoundModemChannel(Rate, randomSeed: 5);
+        channel.Csma.Persistence = 255;
+        channel.Csma.TxDelayMilliseconds = 20;
+        channel.Csma.TxTailMilliseconds = 0;
+
+        var runner = new TxTestRunner(new TxTestOptions
+        {
+            Channel = channel,
+            Journal = new StationJournal("", _ => { }, _ => { }),
+        });
+
+        runner.Control.IsRunning!().Should().BeFalse("nothing has been asked for yet");
+
+        // What the waterfall (and, behind it, the receive tap and the public monitor uplink) is
+        // told was transmitted - which review round 1 found still counted the whole 20 s burst
+        // regardless of where the stop landed, holding the receive gate shut for audio that was
+        // never actually sent.
+        int announcedSamples = 0;
+        channel.TransmittedAudio += mem => announcedSamples += mem.Length;
+
+        // The fake card presses Stop on the very runner it is serving, from inside the write it
+        // is asked to take mid-burst - a real operator's click, mid-burst, looks the same from
+        // the runner's side: some audio already out, more of it queued.
+        var ptt = new RecordingPtt();
+        var output = new StoppingAfterOutput(Rate, stopAfterWrites: 3, runner.Stop);
+
+        using var stopTransmitter = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        Task transmitter = channel.RunTransmitterAsync(output, ptt, stopTransmitter.Token);
+
+        TxTestOutcome outcome = await runner.RunAsync(new TxTestRequest(false, 999, 20));
+
+        outcome.Ran.Should().BeTrue("some of the tone reached the air before the stop cut it short");
+        outcome.Refusal.Should().BeNull();
+        runner.Control.IsRunning!().Should().BeFalse("the run ended when this outcome came back");
+
+        // A handful of 40 ms blocks - comfortably short of the 20 s that was asked for, which is
+        // the whole point: the old, whole-burst render would have produced 20 s regardless.
+        float[] audio = output.Snapshot();
+        audio.Should().NotBeEmpty("some of the tone reached the air before the stop");
+        audio.Length.Should().BeLessThan(Rate, "the stop cut it off within about one block, not 20 s of them");
+
+        // What was announced must equal what was actually written - not the 240000-odd samples
+        // of a 20 s render, and not the whole array minus the fade either: exactly what reached
+        // the device, block by block, so a display or an uplink gated on "audio is still coming"
+        // is never held shut for audio that was never sent.
+        announcedSamples.Should().Be(audio.Length,
+            "the waterfall must not be told about audio a stop kept off the air");
+
+        await stopTransmitter.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        ptt.Events.Should().Equal(
+            ["key", "unkey"], "PTT dropped once the last queued block drained, not 20 s later");
+    }
+
+    /// <summary>
+    /// SHOULD FIX 2 (review round 1 of #430): a stop landing inside the TXDELAY lead - before any
+    /// tone sample has reached the device - still refuses with "nothing was transmitted", which
+    /// is true of the tone but reads as a flat contradiction of a PTT event on the radio's own
+    /// log, since the radio did key for the silent lead. The journal gets a line saying so.
+    /// </summary>
+    [Fact]
+    public async Task A_Stop_Inside_The_Txdelay_Lead_Notes_That_The_Radio_Keyed_Anyway()
+    {
+        var channel = new SoundModemChannel(Rate, randomSeed: 5);
+        channel.Csma.Persistence = 255;
+        // Long enough that one 40 ms write block (SoundModemChannel.WriteStoppably) lands
+        // entirely inside the lead, so a stop after the first block never reaches any tone.
+        channel.Csma.TxDelayMilliseconds = 100;
+        channel.Csma.TxTailMilliseconds = 0;
+
+        var journal = new List<string>();
+        var runner = new TxTestRunner(new TxTestOptions
+        {
+            Channel = channel,
+            Journal = new StationJournal("", journal.Add, journal.Add),
+        });
+
+        var ptt = new RecordingPtt();
+        var output = new StoppingAfterOutput(Rate, stopAfterWrites: 1, runner.Stop);
+
+        using var stopTransmitter = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        Task transmitter = channel.RunTransmitterAsync(output, ptt, stopTransmitter.Token);
+
+        TxTestOutcome outcome = await runner.RunAsync(new TxTestRequest(false, 999, 20));
+
+        outcome.Ran.Should().BeFalse("no tone sample ever reached the air");
+        outcome.Refusal.Should().Contain("nothing was transmitted");
+        journal.Should().Contain(
+            line => line.Contains("keyed for the TXDELAY lead only"),
+            "the radio did key, briefly, and the journal must not read as though it never did");
+
+        // The radio really did key - this is the point of the note above.
+        await stopTransmitter.CancelAsync();
+        try
+        {
+            await transmitter;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        ptt.Events.Should().Equal(["key", "unkey"], "PTT came down once the write settled");
+    }
+
     [Fact]
     public async Task A_Test_Defers_To_A_Held_Channel_Exactly_As_A_Frame_Does()
     {

@@ -103,6 +103,51 @@ public class WaterfallTxTestTests : IAsyncLifetime
             .Should().Equal([1202, 2403, 3001, 5000]);
     }
 
+    /// <summary>
+    /// A joining page is told the truth about whether a test is running right now, not whatever
+    /// the config happened to say at the last unrelated rebuild.
+    /// </summary>
+    /// <remarks>
+    /// Review round 1 of #430 found <c>running</c> baked into the cached config message only at
+    /// start-up, on a radio-status or receiver change, or when the control itself is installed -
+    /// never when a test actually starts or stops. A page connecting mid-test was told
+    /// <c>running: false</c>, and a radio-status change landing during a test could bake
+    /// <c>running: true</c> into the cache for every page that joined afterwards, for the life of
+    /// the daemon, whether or not a test was still going.
+    /// </remarks>
+    [Fact]
+    public async Task A_Socket_Opened_While_A_Test_Runs_Is_Told_So_And_One_After_It_Ends_Is_Not()
+    {
+        bool running = false;
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(Channel(), port, new WaterfallOptions
+        {
+            TxTest = new TxTestControl
+            {
+                DefaultSeconds = 5,
+                MaxSeconds = 30,
+                Start = _asked.Add,
+                Stop = () => _stops++,
+                IsRunning = () => running,
+            },
+        });
+        server.Start();
+
+        running = true;
+        using ClientWebSocket duringTest = await OpenAsync(port);
+        (_, byte[] duringPayload) = await Receive(duringTest);
+        using JsonDocument duringConfig = JsonDocument.Parse(duringPayload);
+        duringConfig.RootElement.GetProperty("txTest").GetProperty("running").GetBoolean()
+            .Should().BeTrue("a page connecting while a test is on the air must not be shown a Send it could double up on");
+
+        running = false;
+        using ClientWebSocket afterTest = await OpenAsync(port);
+        (_, byte[] afterPayload) = await Receive(afterTest);
+        using JsonDocument afterConfig = JsonDocument.Parse(afterPayload);
+        afterConfig.RootElement.GetProperty("txTest").GetProperty("running").GetBoolean()
+            .Should().BeFalse("and a page connecting once it has ended must not be shown a Stop that would stop nothing");
+    }
+
     [Fact]
     public async Task A_Page_With_No_Control_Installed_Is_Not_Told_About_One()
     {

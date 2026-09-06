@@ -59,7 +59,9 @@ public sealed class SoundModemChannel
         Action<Exception>? Rejected,
         bool OwnsTiming,
         object Source,
-        TimeSpan? QuietAfter)
+        TimeSpan? QuietAfter,
+        Func<bool>? StopEarly = null,
+        Action<int>? Written = null)
     {
         /// <summary>
         /// The token registration that withdraws this item, disposed once it has gone out or been
@@ -408,9 +410,25 @@ public sealed class SoundModemChannel
     /// Silent once the transmission is under way; see <c>Withdraw</c>. The default cannot be
     /// cancelled and costs nothing.
     /// </param>
+    /// <param name="stopEarly">
+    /// Polled between blocks of this item's own audio, once it is on its way to the device: true
+    /// ends the write early, fading the block in progress to silence rather than cutting it dead.
+    /// Null (every caller but the operator's test transmission) writes the whole burst as one
+    /// call, exactly as before - the blocks share one continuous write with nothing drained
+    /// between them either way, so this is never what re-primes the PCM; see
+    /// <see cref="RunTransmitterAsync"/>.
+    /// </param>
+    /// <param name="written">
+    /// Told, once, how many samples of this item actually reached the device - the whole burst
+    /// unless <paramref name="stopEarly"/> cut it short. A caller that renders its whole burst up
+    /// front (the operator's test tone does, for a continuous tone) cannot otherwise tell a stop
+    /// from a completion: what it rendered and what was actually written stop being the same
+    /// number the moment a write can end early.
+    /// </param>
     public Task EnqueueTransmit(
         Func<int, float[]> modulate, Action<Exception>? rejected = null, bool ownsChannelTiming = false,
-        object? source = null, TimeSpan? quietAfter = null, CancellationToken withdraw = default)
+        object? source = null, TimeSpan? quietAfter = null, CancellationToken withdraw = default,
+        Func<bool>? stopEarly = null, Action<int>? written = null)
     {
         ArgumentNullException.ThrowIfNull(modulate);
         if (ReceiveOnlyReason is string receiveOnly)
@@ -425,8 +443,8 @@ public sealed class SoundModemChannel
 
         object identity = source ?? new object();
         return !ownsChannelTiming && TransmitInhibit is not null
-            ? EnqueueWhenPermittedAsync(modulate, rejected, identity, quietAfter, withdraw)
-            : EnqueueNow(modulate, rejected, ownsChannelTiming, identity, quietAfter, withdraw);
+            ? EnqueueWhenPermittedAsync(modulate, rejected, identity, quietAfter, withdraw, stopEarly, written)
+            : EnqueueNow(modulate, rejected, ownsChannelTiming, identity, quietAfter, withdraw, stopEarly, written);
     }
 
     /// <summary>
@@ -554,7 +572,7 @@ public sealed class SoundModemChannel
 
     private async Task EnqueueWhenPermittedAsync(
         Func<int, float[]> modulate, Action<Exception>? rejected, object source, TimeSpan? quietAfter,
-        CancellationToken withdraw)
+        CancellationToken withdraw, Func<bool>? stopEarly, Action<int>? written)
     {
         // The injected clock, per the repo's wall-clock discipline - this was the library's
         // one Stopwatch and its one bare Task.Delay, which no test could virtualise.
@@ -576,7 +594,7 @@ public sealed class SoundModemChannel
             await Task.Delay(InhibitPollInterval, _time).ConfigureAwait(false);
         }
 
-        await EnqueueNow(modulate, rejected, ownsChannelTiming: false, source, quietAfter, withdraw)
+        await EnqueueNow(modulate, rejected, ownsChannelTiming: false, source, quietAfter, withdraw, stopEarly, written)
             .ConfigureAwait(false);
     }
 
@@ -585,10 +603,11 @@ public sealed class SoundModemChannel
 
     private Task EnqueueNow(
         Func<int, float[]> modulate, Action<Exception>? rejected, bool ownsChannelTiming, object source,
-        TimeSpan? quietAfter, CancellationToken withdraw = default)
+        TimeSpan? quietAfter, CancellationToken withdraw = default,
+        Func<bool>? stopEarly = null, Action<int>? written = null)
     {
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var item = new TxItem(modulate, done, rejected, ownsChannelTiming, source, quietAfter);
+        var item = new TxItem(modulate, done, rejected, ownsChannelTiming, source, quietAfter, stopEarly, written);
         lock (_txGate)
         {
             if (!_txQueues.TryGetValue(source, out Queue<TxItem>? queue))
@@ -1028,8 +1047,18 @@ public sealed class SoundModemChannel
                         // the audio goes out, which is bounded, allocation-only and does not wait on
                         // anything - the rule that the transmitter must never wait on a picture still
                         // holds.
-                        TransmittedAudio?.Invoke(samples);
-                        output.Write(samples);
+                        //
+                        // For a stoppable item the announcement happens inside WriteStoppably, one
+                        // block at a time, immediately before that block is written - not here, once,
+                        // for the whole rendered array. A stop cuts the write short; announcing the
+                        // full array up front announced audio that never reached the air, which held
+                        // the receive tap (and the public monitor uplink, gated on the same pending
+                        // count) closed for however much of the nominal burst was left unplayed - a
+                        // stop 2 s into a 30 s test left 28 s of a tone nobody was sending painted on
+                        // the waterfall with nothing behind it.
+                        WriteStoppably(
+                            output, samples, item.StopEarly, item.Written,
+                            announce: mem => TransmittedAudio?.Invoke(mem));
                         output.Drain();
                         item.Done.TrySetResult();
                         inFlight = null;
@@ -1110,4 +1139,98 @@ public sealed class SoundModemChannel
 
     private Task Delay(TimeSpan wait, CancellationToken cancellation) =>
         Task.Delay(wait, _time, cancellation);
+
+    /// <summary>
+    /// How often a stoppable write checks in. Short enough that a stop reads as immediate against
+    /// a burst that can run to a minute; the same order of magnitude the waterfall already uses
+    /// for a block of received audio.
+    /// </summary>
+    private const int StopCheckMilliseconds = 40;
+
+    /// <summary>
+    /// Writes one item's audio, in blocks it can be asked to stop between rather than as a single
+    /// call - for the one transmitter that can change its mind mid-keyup, the operator's test
+    /// tone (see <c>TxTestRunner</c> in the daemon, which is not visible from here, hence the
+    /// delegates rather than a concrete type).
+    /// </summary>
+    /// <remarks>
+    /// <para>Every other caller passes <paramref name="stopEarly"/> null and gets exactly the one
+    /// <see cref="IAudioOutput.Write"/> call it always did, announced whole and up front exactly
+    /// as before. A test transmission renders its whole burst up front too - a modem modulates
+    /// frames and there is no frame here either - so the only thing this changes for it is how
+    /// that already-rendered burst reaches the device: a stop can only take effect between
+    /// blocks, which is why the burst is walked in blocks with a check between each rather than
+    /// handed to the device in one call nothing can interrupt.
+    /// </para>
+    /// <para><b>Announced one block at a time, not as one call for the whole array.</b>
+    /// <paramref name="announce"/> is what feeds the waterfall's own transmit pacer (and, through
+    /// it, the receive tap and the public monitor uplink - both gated shut for as long as
+    /// announced-but-not-yet-played audio is outstanding). Announcing the whole rendered array up
+    /// front, as a single call would, tells the pacer about audio a stop is about to prevent from
+    /// ever reaching the device - which is exactly backwards for a caller whose whole reason for
+    /// existing is that the audio might not all go out. Announcing each block immediately before
+    /// it is written keeps the display, the receive gate and the device in step regardless of
+    /// where a stop lands.</para>
+    /// <para><b>Nothing is drained between these blocks.</b> That is what the class remarks on
+    /// <c>TxTestRunner</c> warn against - draining stops and re-primes a real card's PCM, and a
+    /// burst with a hole in it every few hundred milliseconds is a poor instrument. These blocks
+    /// share one continuous write with no drain until the caller's own drain afterwards, so the
+    /// stream is never stopped mid-burst; only <see cref="IAudioOutput.Write"/> is called more
+    /// than once, which every multi-frame keyup already does today, once per queued frame.</para>
+    /// </remarks>
+    private static void WriteStoppably(
+        IAudioOutput output, float[] samples, Func<bool>? stopEarly, Action<int>? written,
+        Action<ReadOnlyMemory<float>> announce)
+    {
+        if (stopEarly is null)
+        {
+            announce(samples);
+            output.Write(samples);
+            written?.Invoke(samples.Length);
+            return;
+        }
+
+        int block = Math.Max(1, output.SampleRate * StopCheckMilliseconds / 1000);
+        int offset = 0;
+        while (offset < samples.Length)
+        {
+            int n = Math.Min(block, samples.Length - offset);
+            if (stopEarly())
+            {
+                // Faded rather than cut dead, for the same reason every other edge in this
+                // station's audio is shaped: a hard-keyed edge splatters. This is the last block
+                // that goes out, so there is nothing after it to pick the envelope back up from.
+                FadeToSilence(samples.AsSpan(offset, n));
+                announce(samples.AsMemory(offset, n));
+                output.Write(samples.AsSpan(offset, n));
+                offset += n;
+                break;
+            }
+
+            announce(samples.AsMemory(offset, n));
+            output.Write(samples.AsSpan(offset, n));
+            offset += n;
+        }
+
+        written?.Invoke(offset);
+    }
+
+    /// <summary>Raised-cosine fade from full amplitude at the first sample to silence at the
+    /// last, over whatever span it is given - the same shape
+    /// <see cref="Packet.SoundModem.Audio.TestTone"/> uses for its own edges, applied here to a
+    /// block that is ending the burst rather than one it rendered that way itself.</summary>
+    private static void FadeToSilence(Span<float> block)
+    {
+        int last = block.Length - 1;
+        if (last <= 0)
+        {
+            block.Clear();
+            return;
+        }
+
+        for (int k = 0; k <= last; k++)
+        {
+            block[k] *= (float)(0.5 * (1.0 + Math.Cos(Math.PI * k / last)));
+        }
+    }
 }

@@ -14,7 +14,7 @@ namespace Packet.SoundModem.Pocsag;
 /// decoded off the channel. Pages are deliberately NOT exposed as KISS frames - paging
 /// is a one-way medium carrying pages, not AX.25 - but transmission goes through the
 /// same channel-access path as every other mode (CSMA, PTT, TXDELAY, sample-domain
-/// TX-complete) via <see cref="SoundModemChannel.EnqueueTransmit(Func{int,float[]},Action{Exception},bool,object,System.TimeSpan?,System.Threading.CancellationToken)"/>.
+/// TX-complete) via <see cref="SoundModemChannel.EnqueueTransmit(Func{int,float[]},Action{Exception},bool,object,System.TimeSpan?,System.Threading.CancellationToken,Func{bool},Action{int})"/>.
 /// </summary>
 /// <remarks>
 /// <para>Grammar (client → server; replies go to the submitting client only):</para>

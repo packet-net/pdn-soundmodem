@@ -855,7 +855,8 @@ station's own monitor page on a second receiver.
   channel it is **withdrawn from the queue** and says so. That is the important word: an abandoned
   test is taken off the channel, so it cannot key the radio ten minutes later when the band
   finally clears. The same is true of Stop - a test that has not reached the air sends nothing at
-  all and never keys; only one already transmitting is heard, and that one fades out.
+  all and never keys; one already on the air ends within about one audio block, fading that last
+  block to silence rather than running on to its length.
 - **A radio another station is holding** (an arbitrated Flex) - refused, with the radio's own
   words. A PTT line that is simply gone is a *failure* rather than a refusal: the journal says
   `tx test: failed: ...`, the API answers 500 rather than 409, and the page puts its button back.
@@ -876,11 +877,16 @@ tone burst is not one, so what its `payload` holds is the sentence above; `audio
 (or the midpoint of the pair) and `rf_hz` is left null, a test tone not being a modem with a
 planned RF centre.
 
-**Once it is on the air it runs to its length.** The burst is handed to the sound card in one
-piece, because the transmitter drains the device between queued transmissions and a test signal
-with a hole in it every few hundred milliseconds would be a poor instrument. Stop withdraws a test
-that is still waiting for the channel - that one never keys the radio at all - and `maxSeconds` is
-what bounds one that has started.
+**Stop ends a test on the air within about one audio block.** The burst is still rendered whole
+and handed to the sound card as one continuous write, because the transmitter only drains the
+device between queued transmissions and a test signal with a hole in it every few hundred
+milliseconds would be a poor instrument - nothing is drained inside this write either. But that
+write reaches the device in about 40 ms blocks with a check between them, so Stop only ever has to
+prevent the next block rather than the rest of the burst: the block already handed to the card
+finishes, the next one is still sent - faded to silence rather than at its usual level - and PTT
+drops once that drains. Stop on a test that is still waiting for the channel withdraws it from the
+queue instead - that one never keys the radio at all - and `maxSeconds` is what bounds a test
+nobody stops.
 
 **It arms the station's identification.** A test is a transmission, so it starts the
 [`identify`](#identify) clock exactly as a frame does: a station that keys for tones owes anyone
@@ -1391,12 +1397,13 @@ so a readout that existed only during the keyup was one nobody ever managed to r
 figures without saying they are held would be worse, which is why the state is said in words as
 well as in colour. An SWR of 2.0 or more is flagged in either state.
 
-**Each modem's label says whether a host is attached.** The chips under the header carry the KISS
-attachment state - `1 host`, `2 hosts` or `no host` - covering both that modem's dedicated port
-and the multiplexed one, since either can reach it; the tooltip breaks it down by port. A node
-that quietly drops its TCP session stops passing traffic, and from the modem's side that is
-indistinguishable from a band that went quiet: the journal says so once, at the moment it happens,
-and then scrolls away. This follows clients in and out live.
+**Each modem's label says which KISS port reaches it, and whether a host is attached.** The chips
+under the header carry both, as `KISS 8105, no host` or `KISS 8105: 2 hosts` - covering both that
+modem's dedicated port and the multiplexed one when both reach it, since either can carry its
+traffic; the tooltip breaks the count down by port. A node that quietly drops its TCP session
+stops passing traffic, and from the modem's side that is indistinguishable from a band that went
+quiet: the journal says so once, at the moment it happens, and then scrolls away. This follows
+clients in and out live.
 
 **Your own frames are listed too**, in the decoded-frames panel, marked **TX** and styled apart
 so a transmission can never be misread as a station heard. The panel was a record of half the

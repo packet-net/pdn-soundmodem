@@ -1051,6 +1051,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                     toneHz = p.ToneHz,
                     deviationHz = Math.Round(p.DeviationHz),
                 }),
+                // Read fresh into every config, including a reconnect's: a TxTestStatus event only
+                // ever reaches a page that was already listening when it was sent, so this is the
+                // only way a page that just connected or reconnected finds out a test already
+                // under way is not its own to assume stopped (#425).
+                running = test.IsRunning?.Invoke() ?? false,
             },
             modems = _bands.Select(b => new
             {
@@ -2713,7 +2718,22 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
         try
         {
-            await socket.SendAsync(_configMessage, WebSocketMessageType.Text, true, stop.Token)
+            // txTest.running is the one field of the config that changes on every keyup, not on
+            // the rare events (start-up, a radio-status change, a receiver change, a control
+            // being installed) that rebuild the cached _configMessage - so the cache answers a
+            // joining page with whatever it was at the last unrelated rebuild. Review round 1
+            // reproduced both directions: a page connecting during a live test was told
+            // running: false, and a radio-status change that happened to land while a test was
+            // running baked running: true into the cache for every page that joined afterwards,
+            // for the life of the daemon, whether or not a test was still going. Rebuilt fresh
+            // here instead, only when a TX test control actually exists - an operator's own page,
+            // effectively never more than a tab or two connecting at once - so a public page or a
+            // station with a hundred monitor viewers keeps paying nothing for a field it is never
+            // even sent.
+            byte[] configMessage = _txTest is not null && _source is not null
+                ? BuildConfigMessage()
+                : _configMessage;
+            await socket.SendAsync(configMessage, WebSocketMessageType.Text, true, stop.Token)
                 .ConfigureAwait(false);
             if (_surveyMessage is { } survey)
             {

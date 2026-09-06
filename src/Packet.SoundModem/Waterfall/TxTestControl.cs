@@ -45,6 +45,15 @@ public sealed class TxTestControl
 
     /// <summary>Ends a test early, or cancels one still waiting for the channel.</summary>
     public required Action Stop { get; init; }
+
+    /// <summary>
+    /// Whether a test is running right now, queued or on the air. Read into every config message
+    /// (see <c>WaterfallWebServer.BuildConfigMessage</c>), which is how a page that just connected
+    /// or reconnected finds out - a <see cref="TxTestStatus"/> is an event for whoever was already
+    /// listening when it happened, and a page that was not is told nothing by it, ever. Null (no
+    /// station offers this) reads as not running, same as a control this station never installs.
+    /// </summary>
+    public Func<bool>? IsRunning { get; init; }
 }
 
 /// <summary>One single-tone preset: the tone, and the FM deviation its Bessel null calibrates.</summary>
