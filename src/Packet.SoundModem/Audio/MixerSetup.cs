@@ -17,6 +17,11 @@ namespace Packet.SoundModem.Audio;
 public sealed record MixerVolumeState(
     string Control, double? Decibels, double? MinDb, double? MaxDb, int Percent)
 {
+    /// <summary>
+    /// Whether the step below <see cref="MinDb"/> is the card's mute rather than a quieter level.
+    /// </summary>
+    public bool MutesBelowMin { get; init; }
+
     /// <summary>Whether this card publishes a dB scale for this control, so it can be set in dB.</summary>
     public bool HasDbScale => Decibels is not null && MinDb is not null && MaxDb is not null;
 }
@@ -277,7 +282,7 @@ public static class MixerSetup
             }
         }
 
-        bool hasScale = mixer.TryReadDbRange(control, direction, out double minDb, out double maxDb);
+        MixerDbRange? scale = mixer.ReadDbRange(control, direction);
         double? applied = null;
 
         if (decibelsWanted is double target)
@@ -286,13 +291,13 @@ public static class MixerSetup
             // carries on to the read-back rather than dropping the control from the report. The
             // start-up path must never stop over a mixer, and the operator has to be able to see
             // what the level actually is even when what they asked for was not possible.
-            if (!hasScale)
+            if (scale is null)
             {
                 say(NoDbScale(control, mixer.Card, key));
             }
-            else if (OutsideRange(target, minDb, maxDb))
+            else if (OutsideRange(target, scale.MinDb, scale.MaxDb))
             {
-                say(OutOfRange(key, target, control, mixer.Card, minDb, maxDb));
+                say(OutOfRange(key, target, control, mixer.Card, scale.MinDb, scale.MaxDb));
             }
             else if (!mixer.TrySetDb(control, direction, target))
             {
@@ -315,10 +320,13 @@ public static class MixerSetup
         return (
             new MixerVolumeState(
                 control,
-                hasScale ? decibels : null,
-                hasScale ? minDb : null,
-                hasScale ? maxDb : null,
-                read),
+                scale is null ? null : decibels,
+                scale?.MinDb,
+                scale?.MaxDb,
+                read)
+            {
+                MutesBelowMin = scale?.MutesBelowMin ?? false,
+            },
             applied);
     }
 
@@ -354,13 +362,13 @@ public static class MixerSetup
                 return null;
             }
 
-            if (!mixer.TryReadDbRange(control, direction, out double minDb, out double maxDb))
+            if (mixer.ReadDbRange(control, direction) is not MixerDbRange scale)
             {
                 return NoDbScale(control, mixer.Card, key);
             }
 
-            return OutsideRange(target, minDb, maxDb)
-                ? OutOfRange(key, target, control, mixer.Card, minDb, maxDb)
+            return OutsideRange(target, scale.MinDb, scale.MaxDb)
+                ? OutOfRange(key, target, control, mixer.Card, scale.MinDb, scale.MaxDb)
                 : null;
         }
     }
@@ -463,8 +471,11 @@ public static class MixerSetup
     {
         // A card with no dB scale has only a percentage to report, and saying which it is
         // matters: "57%" and "57 dB" would be a catastrophic thing to confuse on a transmitter.
+        // "its lowest step is mute" rather than a quieter number: an operator sliding a
+        // transmit level to the bottom is entitled to know the last step is silence.
+        string mute = state.MutesBelowMin ? ", below which it mutes" : "";
         string level = state is { Decibels: double value, MinDb: double min, MaxDb: double max }
-            ? $"{Db(value)} dB of {Db(min)} to {Db(max)} dB"
+            ? $"{Db(value)} dB of {Db(min)} to {Db(max)} dB{mute}"
             : $"{state.Percent}% (no dB scale)";
         string set = applied is double asked
             ? $" (set {Db(asked)} dB{From(source)})"

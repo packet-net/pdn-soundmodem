@@ -209,7 +209,7 @@ public class MixerStateFileTests : IDisposable
         runtime.StartUpReport.Summary.Should().Be(
             "alsa: mixer: Mic capture -3.00 dB of -12.00 to 23.00 dB (set -3.00 dB, config), "
             + "Auto Gain Control on (left as found), "
-            + "Speaker playback -8.00 dB of -37.00 to 0.00 dB (set -8.00 dB, state file)");
+            + "Speaker playback -8.00 dB of -36.00 to 0.00 dB, below which it mutes (set -8.00 dB, state file)");
     }
 
     [Fact]

@@ -32,13 +32,8 @@ internal sealed class ThrowingMixer : IAlsaMixer
     // throw here would prove only that the guard catches the first thing it touches. Answering
     // "this card has a dB scale" and then throwing from the setter is the harder case and the
     // realistic one - a libasound with the getters and not the setters.
-    public bool TryReadDbRange(
-        string control, MixerDirection direction, out double minDb, out double maxDb)
-    {
-        minDb = -12;
-        maxDb = 23;
-        return true;
-    }
+    public MixerDbRange? ReadDbRange(string control, MixerDirection direction) =>
+        new(-12, 23, false);
 
     public bool TrySetVolume(string control, MixerDirection direction, int percent) =>
         throw new EntryPointNotFoundException(
@@ -83,16 +78,27 @@ internal sealed class FakeLevel
     /// <summary>The dB at <see cref="Min"/>, or null when this card publishes no dB scale.</summary>
     public double? MinDb { get; init; }
 
+    /// <summary>
+    /// Whether the lowest raw step is the card's mute rather than a level, which is what a TLV
+    /// tagged <c>dBminmaxmute</c> means. The bench CM108's "Speaker" is one of these.
+    /// </summary>
+    public bool MutesAtMin { get; init; }
+
     /// <summary>The dB at <see cref="Max"/>.</summary>
     public double? MaxDb { get; init; }
 
     /// <summary>Whether the card publishes a dB scale for this side of this control.</summary>
     public bool HasDb => MinDb is not null && MaxDb is not null && Max > Min;
 
+    /// <summary>The lowest raw step that is a level rather than silence.</summary>
+    public long LowestLevel => MutesAtMin ? Min + 1 : Min;
+
+    /// <summary>The dB the card would report for a raw step, ignoring mute.</summary>
+    public double DecibelsAt(long raw) =>
+        MinDb!.Value + ((MaxDb!.Value - MinDb.Value) * (raw - Min) / (double)(Max - Min));
+
     /// <summary>The dB the card would report for where it is now.</summary>
-    public double? Decibels => HasDb
-        ? MinDb!.Value + ((MaxDb!.Value - MinDb.Value) * (Raw - Min) / (double)(Max - Min))
-        : null;
+    public double? Decibels => HasDb ? DecibelsAt(Raw) : null;
 
     /// <summary>Its level as a percentage of the raw range, which is what <c>alsamixer</c> shows.</summary>
     public int Percent => Max > Min
@@ -104,7 +110,7 @@ internal sealed class FakeLevel
     {
         double span = MaxDb!.Value - MinDb!.Value;
         double where = (decibels - MinDb.Value) / span * (Max - Min);
-        return Math.Clamp((long)Math.Round(where), Min, Max);
+        return Math.Clamp((long)Math.Round(where), LowestLevel, Max);
     }
 }
 
@@ -162,7 +168,10 @@ internal sealed class FakeMixer : IAlsaMixer
     /// is folded into the top of the capture range, so there is nothing separate to switch and a
     /// station that asks for micBoost on this card takes the "not found, skipped" path. Values as
     /// surveyed 2026-09-05; the control names here are the short ones the simple mixer API
-    /// presents rather than the long ones <c>amixer contents</c> prints.
+    /// presents rather than the long ones <c>amixer contents</c> prints. The Speaker's TLV is
+    /// tagged <c>dBminmaxmute</c>, so its bottom raw step is the card's mute and alsa-lib reports
+    /// the range minimum as the mute sentinel rather than -37 dB - which is why the usable range
+    /// this fake offers on playback is -36 to 0 dB.
     /// </remarks>
     public static FakeMixer Cm108(string card = "hw:3") => new(
         card,
@@ -176,7 +185,10 @@ internal sealed class FakeMixer : IAlsaMixer
         new FakeControl
         {
             Name = "Speaker",
-            Playback = new FakeLevel { Min = 0, Max = 37, Raw = 17, MinDb = -37, MaxDb = 0 },
+            Playback = new FakeLevel
+            {
+                Min = 0, Max = 37, Raw = 17, MinDb = -37, MaxDb = 0, MutesAtMin = true,
+            },
             On = true,
         });
 
@@ -233,20 +245,18 @@ internal sealed class FakeMixer : IAlsaMixer
     }
 
     /// <inheritdoc />
-    public bool TryReadDbRange(
-        string control, MixerDirection direction, out double minDb, out double maxDb)
+    public MixerDbRange? ReadDbRange(string control, MixerDirection direction)
     {
-        minDb = 0;
-        maxDb = 0;
         if (Find(control) is not FakeControl found
             || Level(found, direction) is not FakeLevel level || !level.HasDb)
         {
-            return false;
+            return null;
         }
 
-        minDb = level.MinDb!.Value;
-        maxDb = level.MaxDb!.Value;
-        return true;
+        // As the real thing does: a control whose bottom step is mute reports its range from the
+        // lowest step that is a level, and says the step below it is silence.
+        return new MixerDbRange(
+            level.DecibelsAt(level.LowestLevel), level.MaxDb!.Value, level.MutesAtMin);
     }
 
     /// <inheritdoc />

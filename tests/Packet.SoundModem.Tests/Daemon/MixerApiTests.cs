@@ -81,7 +81,7 @@ public class MixerApiTests : IDisposable
         body.GetProperty("summary").GetString().Should()
             .Be("alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB), "
                 + "Auto Gain Control off, "
-                + "Speaker playback -20.00 dB of -37.00 to 0.00 dB (left as found)",
+                + "Speaker playback -20.00 dB of -36.00 to 0.00 dB, below which it mutes (left as found)",
                 "a control the request said nothing about is named as untouched, not omitted");
     }
 

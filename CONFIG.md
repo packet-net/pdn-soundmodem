@@ -902,7 +902,7 @@ range. **The range differs by card**, so it is printed beside the value everywhe
 appears - the start-up journal, `--mixer-show`, [`/api/mixer`](#apimixer) and the operator page:
 
 ```
-alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB, config), Auto Gain Control off (config), Speaker playback -8.00 dB of -37.00 to 0.00 dB (set -8.00 dB, state file)
+alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB, config), Auto Gain Control off (config), Speaker playback -8.00 dB of -36.00 to 0.00 dB, below which it mutes (set -8.00 dB, state file)
 ```
 
 `pdn-soundmodem --mixer-show hw:3` prints the same line for a card without touching the station.
@@ -1376,16 +1376,18 @@ $ curl -s -H "X-API-Key: $KEY" http://radio:8107/api/mixer
   "card": "hw:3",
   "controls": [ "Mic", "Auto Gain Control", "Speaker" ],
   "capture": {
-    "control": "Mic", "decibels": 8, "dbRange": { "min": -12, "max": 23 },
+    "control": "Mic", "decibels": 8,
+    "dbRange": { "min": -12, "max": 23, "mutesBelowMin": false },
     "percent": 57, "source": "config"
   },
   "playback": {
-    "control": "Speaker", "decibels": -20, "dbRange": { "min": -37, "max": 0 },
+    "control": "Speaker", "decibels": -20,
+    "dbRange": { "min": -36, "max": 0, "mutesBelowMin": true },
     "percent": 46, "source": "state"
   },
   "agc": { "control": "Auto Gain Control", "on": true, "source": "none" },
   "micBoost": null,
-  "summary": "alsa: mixer: Mic capture 8.00 dB of -12.00 to 23.00 dB, Auto Gain Control on, Speaker playback -20.00 dB of -37.00 to 0.00 dB"
+  "summary": "alsa: mixer: Mic capture 8.00 dB of -12.00 to 23.00 dB, Auto Gain Control on, Speaker playback -20.00 dB of -36.00 to 0.00 dB, below which it mutes"
 }
 $ curl -sX POST -H "X-API-Key: $KEY" -d '{"captureGainDb": 6, "agc": false}' http://radio:8107/api/mixer
 ```

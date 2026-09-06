@@ -102,11 +102,13 @@ public class MixerSetupTests
 
         report.Summary.Should().Be(
             "alsa: mixer: Mic capture 8.00 dB of -12.00 to 23.00 dB, Auto Gain Control on, "
-            + "Speaker playback -20.00 dB of -37.00 to 0.00 dB");
+            + "Speaker playback -20.00 dB of -36.00 to 0.00 dB, below which it mutes");
         report.Capture!.MinDb.Should().Be(-12);
         report.Capture.MaxDb.Should().Be(23);
-        report.Playback!.MinDb.Should().Be(-37);
+        report.Playback!.MinDb.Should().Be(
+            -36, "the bottom raw step of this control is the card's mute, not -37 dB");
         report.Playback.MaxDb.Should().Be(0);
+        report.Playback.MutesBelowMin.Should().BeTrue();
     }
 
     [Fact]
@@ -155,6 +157,51 @@ public class MixerSetupTests
             "the percentage is all there is to report, and it says which unit it is in");
     }
 
+    /// <summary>
+    /// A control whose bottom step is the card's mute reports the range from the lowest step that
+    /// is a level, and never the sentinel ALSA answers with.
+    /// </summary>
+    /// <remarks>
+    /// The bench CM108's "Speaker" has a TLV tagged <c>dBminmaxmute</c>
+    /// (<c>dBminmaxmute-min=-37.00dB,max=0.00dB</c>), so <c>snd_tlv_get_dB_range</c> reports its
+    /// minimum as <c>SND_CTL_TLV_DB_GAIN_MUTE</c> - the sentinel -9999999 in hundredths of a dB.
+    /// Passed through, that is "-99999.99 dB" in the journal and a slider a thousand times too
+    /// long to aim a transmit level with, for a card whose real span is 37 dB. Seen on radio1,
+    /// 2026-09-06.
+    /// </remarks>
+    [Fact]
+    public void A_Control_Whose_Bottom_Step_Is_Mute_Reports_The_Lowest_Real_Level_Instead()
+    {
+        FakeMixer card = FakeMixer.Cm108();
+
+        MixerDbRange range = card.ReadDbRange("Speaker", MixerDirection.Playback)!;
+
+        range.MinDb.Should().Be(-36, "raw 0 is the mute and raw 1 is the quietest actual level");
+        range.MaxDb.Should().Be(0);
+        range.MutesBelowMin.Should().BeTrue();
+
+        var journal = new List<string>();
+        MixerReport report = MixerSetup.Apply(
+            card, new MixerSettings { PlaybackDb = -8 }, journal.Add);
+
+        journal.Should().NotContain(
+            line => line.Contains("99999", StringComparison.Ordinal),
+            "the mute sentinel must never reach an operator, in any line");
+        report.Summary.Should().Contain(
+            "Speaker playback -8.00 dB of -36.00 to 0.00 dB, below which it mutes (set -8.00 dB)");
+        report.Playback!.MutesBelowMin.Should().BeTrue(
+            "the API and the page have to be able to say what is under the bottom of the slider");
+    }
+
+    [Fact]
+    public void A_Level_Below_The_Lowest_Real_Step_Is_Refused_With_The_Usable_Range()
+    {
+        // -37 dB is where the card's scale nominally starts, but that step is its mute, so it is
+        // not a level this station will set a transmitter to by accident.
+        MixerSetup.WhyRefused(FakeMixer.Cm108(), new MixerSettings { PlaybackDb = -37 })
+            .Should().Contain("-36.00 to 0.00 dB");
+    }
+
     [Fact]
     public void A_Level_Outside_The_Cards_Range_Is_Refused_With_The_Range_And_The_Rest_Carries_On()
     {
@@ -197,7 +244,7 @@ public class MixerSetupTests
         MixerSetup.WhyRefused(card, new MixerSettings { CaptureGainDb = 30 })
             .Should().Contain("-12.00 to 23.00 dB");
         MixerSetup.WhyRefused(card, new MixerSettings { PlaybackDb = 6 })
-            .Should().Contain("-37.00 to 0.00 dB");
+            .Should().Contain("-36.00 to 0.00 dB");
         MixerSetup.WhyRefused(card, new MixerSettings { CaptureGainDb = 6, PlaybackDb = -8 })
             .Should().BeNull("both are inside the card's ranges");
         MixerSetup.WhyRefused(card, new MixerSettings { Agc = false })
@@ -371,7 +418,7 @@ public class MixerSetupTests
         report.Summary.Should().Be(
             "alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB, config), "
             + "Auto Gain Control off (state file), "
-            + "Speaker playback -20.00 dB of -37.00 to 0.00 dB (left as found)");
+            + "Speaker playback -20.00 dB of -36.00 to 0.00 dB, below which it mutes (left as found)");
         report.Sources.CaptureGain.Should().Be(
             MixerSource.Config, "the report carries it through to the API and the page");
     }
@@ -403,7 +450,7 @@ public class MixerSetupTests
                     + "\"Mic Boost (+20dB)\", \"Internal Mic Boost\", \"Mic Capture Boost\"), skipped",
                 "alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB), "
                     + "Auto Gain Control off, "
-                    + "Speaker playback -8.00 dB of -37.00 to 0.00 dB (set -8.00 dB)",
+                    + "Speaker playback -8.00 dB of -36.00 to 0.00 dB, below which it mutes (set -8.00 dB)",
             ],
             options => options.WithStrictOrdering());
         report.MicBoost.Should().BeNull();

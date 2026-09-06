@@ -1134,7 +1134,8 @@ function mixShow(state) {
     gain.min = range.min;
     gain.max = range.max;
     gain.value = capture.decibels;
-    gain.title = `Capture gain in dB, ${mixEnd(range.min)} to ${mixEnd(range.max)} on this card`;
+    gain.title = `Capture gain in dB, ${mixEnd(range.min)} to ${mixEnd(range.max)} on this card`
+      + (range.mutesBelowMin ? " (the step below the bottom is mute)" : "");
   }
   const read = $("mixRead");
   read.classList.remove("bad");

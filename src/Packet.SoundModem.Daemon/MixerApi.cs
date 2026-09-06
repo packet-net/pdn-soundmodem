@@ -250,7 +250,14 @@ internal static class MixerApi
             ["control"] = state.Control,
             ["decibels"] = state.Decibels,
             ["dbRange"] = state is { MinDb: double min, MaxDb: double max }
-                ? new JsonObject { ["min"] = min, ["max"] = max }
+                ? new JsonObject
+                {
+                    ["min"] = min,
+                    ["max"] = max,
+                    // True where the step below "min" is the card's mute rather than a quieter
+                    // level, so a page can say so instead of implying the scale runs on down.
+                    ["mutesBelowMin"] = state.MutesBelowMin,
+                }
                 : null,
             ["percent"] = state.Percent,
             ["source"] = Name(source),
