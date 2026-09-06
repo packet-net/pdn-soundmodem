@@ -21,8 +21,17 @@ public class AlsaHardwareTests
         using var pcm = TryOpen(AlsaPcm.Direction.Capture);
         Assert.SkipWhen(pcm is null, "default capture device would not open (busy or access denied)");
 
+        // The negotiated pair, on a real driver rather than the null plugin: everything the
+        // overrun fix does rests on the card taking a buffer that is deeper than the period, and
+        // on it saying what it took (the start-up line has nothing to print otherwise).
+        pcm!.BufferFrames.Should().BeGreaterThan(
+            0, "snd_pcm_get_params has to answer for the start-up line to say anything");
+        pcm.PeriodFrames.Should().BeGreaterThan(0);
+        pcm.PeriodFrames.Should().BeLessThanOrEqualTo(
+            pcm.BufferFrames, "a period bigger than the buffer is not a configuration");
+
         var buffer = new short[4800]; // 0.1 s mono at 48 kHz
-        int frames = pcm!.Read(buffer);
+        int frames = pcm.Read(buffer);
 
         frames.Should().Be(4800);
     }

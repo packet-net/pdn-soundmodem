@@ -39,6 +39,10 @@ public sealed class AlsaAudioOutput : IAudioOutput, IDisposable
     /// Every one is audio the transmitter did not send, recovered silently.</summary>
     public int Xruns => _pcm.Xruns;
 
+    /// <summary>Why the buffer asked for was not the one used, or null when it was - see
+    /// <see cref="AlsaPcm.ConfigurationWarning"/>.</summary>
+    public string? ConfigurationWarning => _pcm.ConfigurationWarning;
+
     /// <inheritdoc />
     public void Drain() => _pcm.Drain();
 

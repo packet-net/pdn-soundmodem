@@ -424,7 +424,8 @@ repo, not `packet.net`.)
   *Open question 1:* which firmware is on the 6500. `[partly unverified]`
 - **UDP timing on a busy box.** DAX RX is ~180-190 packets/s; the capture consumer must drain
   promptly or drop packets. Mirror nDAX's reorder ring and consider realtime priority; on the
-  mask-sweep box, use the deeper-jitter-buffer pattern the daemon already has for ARDOP. Losses look
+  mask-sweep box, use the deeper-jitter-buffer pattern the ALSA path has had since PR #422 (a
+  500 ms capture buffer with the period left short). Losses look
   like modem regressions - don't misread them (house rule: reds are real until proven otherwise).
 - **Licence hygiene.** Depend on **nothing** proprietary (no FlexLib/FlexLib_Core). The port draws
   on MIT Go code - record provenance in the source headers.

@@ -35,6 +35,10 @@ public sealed class AlsaAudioInput : IAudioInput, IDisposable
     /// <summary>The period the card gave us, in milliseconds (0 if it would not say).</summary>
     public int PeriodMilliseconds => _pcm.PeriodMilliseconds;
 
+    /// <summary>Why the buffer asked for was not the one used, or null when it was - see
+    /// <see cref="AlsaPcm.ConfigurationWarning"/>.</summary>
+    public string? ConfigurationWarning => _pcm.ConfigurationWarning;
+
     /// <summary>Xruns recovered so far (capture overruns) - see <see cref="AlsaPcm.Xruns"/>.</summary>
     public int Xruns => _pcm.Xruns;
 
