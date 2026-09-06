@@ -477,6 +477,47 @@ public class DaemonConfigTests : IDisposable
             .Which.Should().Contain("waterfall").And.Contain("colour");
     }
 
+    /// <summary>
+    /// The page's Mixer group and <c>/api/mixer</c> without an <c>api.key</c>: read as written,
+    /// and off on a file that says nothing about it.
+    /// </summary>
+    /// <remarks>
+    /// Off by default is the whole safety of it: every station that upgrades onto this release
+    /// keeps the behaviour it had, where the card is out of reach without the key.
+    /// </remarks>
+    [Theory]
+    [InlineData("""{"device": "null", "waterfall": {"port": 8107, "enableAudioControls": true}}""", true)]
+    [InlineData("""{"device": "null", "waterfall": {"port": 8107, "enableAudioControls": false}}""", false)]
+    [InlineData("""{"device": "null", "waterfall": {"port": 8107}}""", false)]
+    public void The_Page_May_Set_The_Card_Without_A_Key_Only_When_The_File_Says_So(
+        string json, bool open)
+    {
+        string path = WriteConfig(json);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Waterfall!.EnableAudioControls.Should().Be(open);
+        config.Warnings.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_Misspelt_Audio_Controls_Setting_Is_Called_Out_Rather_Than_Quietly_Off()
+    {
+        // The failure this has to catch: a station left with the card locked away and an
+        // operator who believes they opened it, because the singular reads perfectly well.
+        string path = WriteConfig("""
+            {"device": "null", "waterfall": {"enableAudioControl": true}}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
+
+        config.Should().NotBeNull();
+        config!.Waterfall!.EnableAudioControls.Should().BeFalse();
+        config.Warnings.Should().ContainSingle()
+            .Which.Should().Contain("waterfall").And.Contain("enableAudioControl");
+    }
+
     [Fact]
     public void A_Bind_That_Is_Not_An_Address_Is_Rejected()
     {
