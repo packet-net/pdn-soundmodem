@@ -165,8 +165,8 @@ internal sealed class FakeMixer : IAlsaMixer
     /// <remarks>
     /// "Mic Capture Volume" is 0-35 raw = -12 to +23 dB in whole-dB steps, "Speaker Playback
     /// Volume" is 0-37 raw = -37 to 0 dB, and there is no "Mic Boost" control at all: its +20 dB
-    /// is folded into the top of the capture range, so there is nothing separate to switch and a
-    /// station that asks for micBoost on this card takes the "not found, skipped" path. Values as
+    /// is folded into the top of the capture range, so there is nothing separate to switch and the
+    /// forced-off pass reports "no mic boost control" on this card. Values as
     /// surveyed 2026-09-05; the control names here are the short ones the simple mixer API
     /// presents rather than the long ones <c>amixer contents</c> prints. The Speaker's TLV is
     /// tagged <c>dBminmaxmute</c>, so its bottom raw step is the card's mute and alsa-lib reports

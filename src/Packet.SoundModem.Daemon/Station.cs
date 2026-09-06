@@ -261,6 +261,15 @@ internal sealed class Station : IDisposable
                 }
             }
 
+            // The card's own samples, before the decimator, for anything that has to judge them
+            // on the scale the converter actually works on. Not while we are keyed: nothing the
+            // card hears during our own transmission is a measurement of the band, and the
+            // channel drops those blocks for the same reason.
+            if (!keyedThisBlock)
+            {
+                _options.CardRateTap?.Invoke(_inputBuffer.AsSpan(0, got));
+            }
+
             if (_decimator is null)
             {
                 _channel.ProcessReceive(_inputBuffer.AsSpan(0, got));
@@ -538,6 +547,22 @@ internal sealed record StationOptions
     /// <summary>How much audio one <c>Read</c> asks for. 100 ms for the packet modes; 20 ms when
     /// ARDOP runs, whose ARQ timing budgets want RX latency low.</summary>
     public int BlockMilliseconds { get; init; } = 100;
+
+    /// <summary>
+    /// Each block of audio exactly as the device delivered it, at the card's own rate and
+    /// <b>before</b> the decimator. Null (the default) is a station that has nobody asking.
+    /// </summary>
+    /// <remarks>
+    /// <para>The channel's own <c>AddReceiveTap</c> is downstream of the 48 to 12 kHz decimating
+    /// FIR, which is fine for anything measuring a level and wrong for anything measuring the
+    /// converter's range: the filter's ripple moves peaks either way, so full scale downstream is
+    /// not full scale at the card. The waterfall's level meter uses this for its clip indicator
+    /// and nothing else does; see <c>WaterfallWebServer.MeterInputClipping</c>.</para>
+    /// <para>Called on the receive loop's own thread, once per block, and skipped for any block
+    /// the station was keyed during - so it must return promptly and must not allocate. The span
+    /// is the loop's buffer and is not valid after the call returns.</para>
+    /// </remarks>
+    public ReceiveTap? CardRateTap { get; init; }
 
     /// <summary>The wall clock the starvation watch and its grace timer run on.</summary>
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;

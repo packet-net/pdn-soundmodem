@@ -200,16 +200,6 @@ internal sealed class MixerRuntime
             yield return Level(MixerSetup.CaptureKey, capture);
         }
 
-        if (change.Agc is not null && _config?.Agc is bool agc)
-        {
-            yield return Switch("agc", agc);
-        }
-
-        if (change.MicBoost is not null && _config?.MicBoost is bool boost)
-        {
-            yield return Switch("micBoost", boost);
-        }
-
         if (change.PlaybackDb is not null && _config?.PlaybackDb is double playback)
         {
             yield return Level(MixerSetup.PlaybackKey, playback);
@@ -218,10 +208,6 @@ internal sealed class MixerRuntime
         static string Level(string key, double decibels) =>
             $"{key} is set in the config file as {MixerSetup.Db(decibels)} dB; this change lasts "
             + "until the next start.";
-
-        static string Switch(string key, bool on) =>
-            $"{key} is set in the config file as {(on ? "on" : "off")}; this change lasts until "
-            + "the next start.";
     }
 
     /// <summary>
@@ -230,8 +216,6 @@ internal sealed class MixerRuntime
     /// </summary>
     private MixerSources Sources() => new(
         Source(_config?.CaptureGainDb, _state.CaptureGainDb),
-        Source(_config?.Agc, _state.Agc),
-        Source(_config?.MicBoost, _state.MicBoost),
         Source(_config?.PlaybackDb, _state.PlaybackDb));
 
     private static MixerSource Source(object? fromConfig, object? fromState) =>

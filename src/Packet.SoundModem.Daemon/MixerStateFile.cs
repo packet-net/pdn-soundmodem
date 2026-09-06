@@ -9,10 +9,14 @@ namespace Packet.SoundModem.Daemon;
 /// What a page or API mixer change is remembered as between runs.
 /// </summary>
 /// <remarks>
-/// <para>Only the four settings, the card it was written for and when. Deliberately not a
+/// <para>Only the two levels, the card they were written for and when. Deliberately not a
 /// configuration document: this file is the daemon's own scribble, not a description of the
 /// intended station, and an operator is never expected to edit it. The config file remains the
 /// place a level is written down on purpose, and it wins - see <see cref="MixerStateFile"/>.</para>
+/// <para><b>The AGC and the mic boost are not here and never will be.</b> They are switched off
+/// at every start-up on any card that has them, so there is nothing to remember: a file that
+/// recorded them could only ever say "off", and a file from 0.58.x that does say so is read
+/// without complaint and rewritten without them.</para>
 /// <para>Every setting is nullable and only the ones that have actually been set through the page
 /// or the API are written. A control nobody has ever touched stays absent, so it keeps whatever
 /// the card has and the state file never quietly starts pinning something.</para>
@@ -31,23 +35,13 @@ internal sealed record MixerState
     [JsonPropertyName("captureGainDb")]
     public double? CaptureGainDb { get; init; }
 
-    /// <summary>Automatic gain control, or null if it has never been set here.</summary>
-    [JsonPropertyName("agc")]
-    public bool? Agc { get; init; }
-
-    /// <summary>Microphone boost, or null if it has never been set here.</summary>
-    [JsonPropertyName("micBoost")]
-    public bool? MicBoost { get; init; }
-
     /// <summary>The transmit-side level in dB, or null if none has ever been set here.</summary>
     [JsonPropertyName("playbackDb")]
     public double? PlaybackDb { get; init; }
 
     /// <summary>Whether this holds any setting at all.</summary>
     [JsonIgnore]
-    public bool HoldsAnything =>
-        CaptureGainDb is not null || Agc is not null
-        || MicBoost is not null || PlaybackDb is not null;
+    public bool HoldsAnything => CaptureGainDb is not null || PlaybackDb is not null;
 
     /// <summary>This state with one change folded into it, keeping what the change is silent about.</summary>
     /// <param name="change">What was just set on the card.</param>
@@ -61,8 +55,6 @@ internal sealed record MixerState
             Device = device,
             WrittenAt = now,
             CaptureGainDb = change.CaptureGainDb ?? CaptureGainDb,
-            Agc = change.Agc ?? Agc,
-            MicBoost = change.MicBoost ?? MicBoost,
             PlaybackDb = change.PlaybackDb ?? PlaybackDb,
         };
     }
@@ -74,16 +66,6 @@ internal sealed record MixerState
         if (CaptureGainDb is double capture)
         {
             parts.Add($"{MixerSetup.CaptureKey} {MixerSetup.Db(capture)} dB");
-        }
-
-        if (Agc is bool agc)
-        {
-            parts.Add($"agc {(agc ? "on" : "off")}");
-        }
-
-        if (MicBoost is bool boost)
-        {
-            parts.Add($"micBoost {(boost ? "on" : "off")}");
         }
 
         if (PlaybackDb is double playback)
@@ -286,20 +268,18 @@ internal static class MixerStateFile
         MixerSettings settings = config?.ToSettings() ?? new MixerSettings();
 
         double? capture = settings.CaptureGainDb ?? state?.CaptureGainDb;
-        bool? agc = settings.Agc ?? state?.Agc;
-        bool? boost = settings.MicBoost ?? state?.MicBoost;
         double? playback = settings.PlaybackDb ?? state?.PlaybackDb;
 
         return settings with
         {
             CaptureGainDb = capture,
-            Agc = agc,
-            MicBoost = boost,
             PlaybackDb = playback,
+
+            // The one thing here that is not "what the file said, else what the state file
+            // holds". It is the start-up pass, so it is the pass that switches the two off.
+            ForceAgcAndBoostOff = true,
             Sources = new MixerSources(
                 Source(settings.CaptureGainDb, capture),
-                Source(settings.Agc, agc),
-                Source(settings.MicBoost, boost),
                 Source(settings.PlaybackDb, playback)),
         };
 

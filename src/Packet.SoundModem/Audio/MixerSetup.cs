@@ -122,11 +122,19 @@ public static class MixerSetup
 
         Say($"{mixer.Card} has {string.Join(", ", mixer.Controls)}");
 
+        // First, and unconditionally on the start-up path: neither of these is a setting any
+        // more. One line for the pair of them, because "the two things that are always off are
+        // off" is one fact, and two lines about it on every start-up would be noise.
+        if (wanted.ForceAgcAndBoostOff)
+        {
+            Say(ForcedOffLine(mixer, wanted));
+        }
+
         (MixerVolumeState? capture, double? captureSet) = Volume(
             mixer, wanted.CaptureControls, MixerDirection.Capture, CaptureKey,
             wanted.CaptureGainDb, Say);
-        MixerSwitchState? agc = Switch(mixer, wanted.AgcControls, wanted.Agc, Say);
-        MixerSwitchState? boost = Switch(mixer, wanted.MicBoostControls, wanted.MicBoost, Say);
+        MixerSwitchState? agc = Switch(mixer, wanted.AgcControls);
+        MixerSwitchState? boost = Switch(mixer, wanted.MicBoostControls);
         (MixerVolumeState? playback, double? playbackSet) = Volume(
             mixer, wanted.PlaybackControls, MixerDirection.Playback, PlaybackKey,
             wanted.PlaybackDb, Say);
@@ -145,12 +153,12 @@ public static class MixerSetup
 
         if (agc is not null)
         {
-            parts.Add(Describe(agc, wanted.Agc, wanted.Sources.Agc, tag));
+            parts.Add(Describe(agc, wanted.ForceAgcAndBoostOff));
         }
 
         if (boost is not null)
         {
-            parts.Add(Describe(boost, wanted.MicBoost, wanted.Sources.MicBoost, tag));
+            parts.Add(Describe(boost, wanted.ForceAgcAndBoostOff));
         }
 
         if (playback is not null)
@@ -168,7 +176,7 @@ public static class MixerSetup
         else
         {
             Say($"{mixer.Card} has none of the controls this station looks for, so nothing "
-                + "was set; capture gain, AGC and mic boost stay as the card has them");
+                + "was set; the capture gain and the transmit level stay as the card has them");
         }
 
         return new MixerReport
@@ -216,8 +224,9 @@ public static class MixerSetup
         {
             why = $"{e.GetType().Name}: {e.Message}";
             journal?.Invoke(
-                $"{JournalPrefix}could not be read or set ({why}); capture gain, AGC and mic "
-                + "boost are left as the card has them");
+                $"{JournalPrefix}could not be read or set ({why}); the capture gain and the "
+                + "transmit level are left as the card has them, and AGC and mic boost could not "
+                + "be switched off");
             return null;
         }
     }
@@ -422,58 +431,87 @@ public static class MixerSetup
     public static string Db(double decibels) =>
         decibels.ToString("0.00", CultureInfo.InvariantCulture);
 
-    private static MixerSwitchState? Switch(
-        IAlsaMixer mixer, IReadOnlyList<string> names, bool? on, Action<string> say)
+    /// <summary>
+    /// Reads a switch back from the card. Read-only: nothing here writes.
+    /// </summary>
+    /// <remarks>
+    /// The two switches this station knows about are no longer settings, so the only thing left
+    /// to do with one is report it. Turning them off is <see cref="ForcedOffLine"/>'s job and
+    /// happens once, at start-up, before this.
+    /// </remarks>
+    private static MixerSwitchState? Switch(IAlsaMixer mixer, IReadOnlyList<string> names)
     {
         if (Find(mixer, names) is not string control)
         {
-            if (on is not null)
-            {
-                say(NotFound(names, mixer.Card));
-            }
-
             return null;
         }
 
-        // As in Volume: only a control the file asked for is worth a line about.
-        void Skipped()
-        {
-            if (on is not null)
-            {
-                say($"\"{control}\" on {mixer.Card} has no on/off switch, skipped");
-            }
-        }
-
-        if (on is bool state && !mixer.TrySetSwitch(control, state))
-        {
-            // Some cards present a boost as a level rather than a switch (an HDA "Mic Boost" is
-            // four steps of 10 dB). Off is the bottom of that range and on is the top, which is
-            // what a switch would have meant.
-            if (mixer.TrySetVolume(control, MixerDirection.Capture, state ? 100 : 0))
-            {
-                say($"\"{control}\" on {mixer.Card} is a level rather than a switch, "
-                    + $"set to {(state ? "100%" : "0%")}");
-            }
-            else
-            {
-                Skipped();
-                return null;
-            }
-        }
-
+        // Takes in anything changed outside this process since the last read. Volume() refreshes
+        // too, but only when it found a level control to read - and a card that has an AGC and
+        // none of the level controls this station knows would otherwise be reported from cache.
         mixer.Refresh();
         if (mixer.TryReadSwitch(control, out bool read))
         {
             return new MixerSwitchState(control, read);
         }
 
+        // Some cards present a boost as a level rather than a switch (an HDA "Mic Boost" is four
+        // steps of 10 dB). The bottom of that range is what "off" means on such a card.
         if (mixer.TryReadVolume(control, MixerDirection.Capture, out int percent, out _))
         {
             return new MixerSwitchState(control, percent >= 50);
         }
 
-        Skipped();
         return null;
+    }
+
+    /// <summary>
+    /// Switches the AGC and the mic boost off on any card that has them, and says so in one line.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Not a setting</b> (Tom, 2026-09-06: "AGC should just be forced off, as should mic
+    /// boost. No need for buttons for these."). Automatic gain fights the modem's own level
+    /// tracking and turns the noise floor into a moving target, and a mic boost left on puts the
+    /// receive path 20 dB into clipping and makes every strong signal decode worse than a weak
+    /// one (<c>docs/hardware/tm8100-cm108-interface-notes.md</c>). Neither has a case, so neither
+    /// has a key, a button or a state file entry.</para>
+    /// <para>One line for both, naming the control where there is one and saying so where there
+    /// is not: "no mic boost control" is the ordinary answer on a CM108 and an operator reading
+    /// the journal should be able to see it was looked for.</para>
+    /// </remarks>
+    /// <param name="mixer">The card's mixer.</param>
+    /// <param name="wanted">The settings, for the control-name lists.</param>
+    /// <returns>The line, without the prefix.</returns>
+    private static string ForcedOffLine(IAlsaMixer mixer, MixerSettings wanted) =>
+        "AGC and mic boost are always off on this station: "
+        + $"{Off(mixer, wanted.AgcControls, "AGC")}; "
+        + $"{Off(mixer, wanted.MicBoostControls, "mic boost")}";
+
+    /// <summary>Switches one control off, however this card presents it, and says what happened.</summary>
+    private static string Off(IAlsaMixer mixer, IReadOnlyList<string> names, string what)
+    {
+        if (Find(mixer, names) is not string control)
+        {
+            return $"no {what} control on {mixer.Card}";
+        }
+
+        if (!mixer.TrySetSwitch(control, false)
+            && !mixer.TrySetVolume(control, MixerDirection.Capture, 0))
+        {
+            return $"\"{control}\" has neither a switch nor a level to turn off";
+        }
+
+        mixer.Refresh();
+        if (Switch(mixer, [control]) is not MixerSwitchState read)
+        {
+            return $"\"{control}\" set off (the card will not say what it is now)";
+        }
+
+        // The read-back, not the write. A card that accepts a write and does not act on it is a
+        // real card, and an operator hunting a moving noise floor needs to see that here.
+        return read.On
+            ? $"\"{control}\" is STILL ON - the card would not switch it off"
+            : $"\"{control}\" off";
     }
 
     /// <summary>
@@ -507,18 +545,16 @@ public static class MixerSetup
         return $"{state.Control} {side} {level}{set}";
     }
 
-    private static string Describe(MixerSwitchState state, bool? asked, MixerSource source, bool tag)
+    /// <summary>One switch in the summary line: what it reads back as, and why it is that way.</summary>
+    /// <param name="state">What the card says.</param>
+    /// <param name="forced">Whether this pass switched it off.</param>
+    private static string Describe(MixerSwitchState state, bool forced)
     {
-        // A switch cannot be quantised, so the read-back alone says everything - unless the card
-        // did not take it, which is the one case worth spelling out.
-        if (asked is not bool wanted)
-        {
-            return $"{state.Control} {(state.On ? "on" : "off")}{(tag ? " (left as found)" : "")}";
-        }
-
-        string how = wanted != state.On
-            ? $" (set {(wanted ? "on" : "off")}{From(source)}, the card did not take it)"
-            : From(source) is { Length: > 0 } named ? $" ({named[2..]})" : "";
+        // A switch cannot be quantised, so the read-back alone says everything - unless this pass
+        // asked for off and the card is still on, which is the one case worth spelling out.
+        string how = !forced ? ""
+            : state.On ? " (asked off, the card did not take it)"
+            : " (forced)";
         return $"{state.Control} {(state.On ? "on" : "off")}{how}";
     }
 

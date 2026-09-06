@@ -35,8 +35,6 @@ public class AlsaMixerConfigTests : IDisposable
               "alsa": {
                 "mixer": {
                   "captureGainDb": 6.0,
-                  "agc": false,
-                  "micBoost": false,
                   "playbackDb": -8.5
                 }
               }
@@ -48,8 +46,6 @@ public class AlsaMixerConfigTests : IDisposable
         error.Should().BeEmpty();
         MixerSettings settings = config!.Alsa!.Mixer!.ToSettings();
         settings.CaptureGainDb.Should().Be(6.0);
-        settings.Agc.Should().BeFalse();
-        settings.MicBoost.Should().BeFalse();
         settings.PlaybackDb.Should().Be(-8.5, "a level is a decimal, not a whole number of steps");
     }
 
@@ -69,22 +65,127 @@ public class AlsaMixerConfigTests : IDisposable
     public void A_Setting_That_Is_Left_Out_Leaves_That_Control_As_The_Card_Has_It()
     {
         string path = WriteConfig("""
-            {"device": "plughw:1,0", "alsa": {"mixer": {"agc": false}}}
+            {"device": "plughw:1,0", "alsa": {"mixer": {"playbackDb": -8}}}
             """);
 
         DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
         MixerSettings settings = config!.Alsa!.Mixer!.ToSettings();
 
         settings.CaptureGainDb.Should().BeNull();
-        settings.MicBoost.Should().BeNull();
-        settings.PlaybackDb.Should().BeNull();
+        settings.PlaybackDb.Should().Be(-8);
 
         FakeMixer card = FakeMixer.Cm108();
         double? before = card.CaptureDb("Mic");
         MixerSetup.Apply(card, settings);
 
-        card.CaptureDb("Mic").Should().Be(before, "only the AGC was named");
-        card.Find("Auto Gain Control")!.On.Should().BeFalse();
+        card.CaptureDb("Mic").Should().Be(before, "only the transmit level was named");
+        card.PlaybackDb("Speaker").Should().Be(-8);
+    }
+
+    /// <summary>
+    /// The two switch keys are gone, and a file still carrying one is told what happened to it.
+    /// </summary>
+    /// <remarks>
+    /// Tom, 2026-09-06: "AGC should just be forced off, as should mic boost." A warning and not a
+    /// refusal, the same treatment the percentage keys get: the card ends up exactly the way the
+    /// key was asking for, so stopping a station over it would be perverse. What the operator
+    /// needs to know is that the key is doing nothing and that the daemon is doing it anyway.
+    /// </remarks>
+    [Theory]
+    [InlineData("agc")]
+    [InlineData("micBoost")]
+    public void The_Switch_Keys_Are_Refused_By_Name_And_Say_They_Are_Always_Off_Now(string gone)
+    {
+        string path = WriteConfig(
+            "{\"device\": \"plughw:1,0\", \"alsa\": {\"mixer\": {\"" + gone + "\": false}}}");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty("a stale key is a warning, not a station off the air");
+        config!.Warnings.Should().ContainSingle(w => w.Contains(
+            $"{gone} is no longer a setting: AGC and mic boost are switched off at every "
+            + "start-up on any card that has them", StringComparison.Ordinal));
+
+        // And the generic line as well, so a reader scanning for "IGNORED" still finds it.
+        config.Warnings.Should().ContainSingle(w =>
+            w.Contains($"\"{gone}\"", StringComparison.Ordinal)
+            && w.Contains("IGNORED", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The sentence takes the value, because the two values do not have the same consequence.
+    /// </summary>
+    /// <remarks>
+    /// "The card ends up the way it asked for either way" is true of <c>false</c> and a lie about
+    /// <c>true</c>, and <c>true</c> is precisely the file this migration note is written for: an
+    /// operator who deliberately switched their AGC on now gets the opposite, and being told it
+    /// made no difference would send them hunting somewhere else entirely.
+    /// </remarks>
+    [Theory]
+    [InlineData("agc", true)]
+    [InlineData("micBoost", true)]
+    public void A_Switch_Key_Set_On_Is_Told_The_Station_Overrides_It(string gone, bool asked)
+    {
+        string path = WriteConfig(
+            "{\"device\": \"plughw:1,0\", \"alsa\": {\"mixer\": {\"" + gone + "\": "
+            + (asked ? "true" : "false") + "}}}");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config!.Warnings.Should().ContainSingle(w =>
+            w.Contains("This station switches it off whatever the key says", StringComparison.Ordinal)
+            && w.Contains("asking for the opposite of what happens", StringComparison.Ordinal));
+        config.Warnings.Should().NotContain(w =>
+            w.Contains("the card ends up the way it asked for", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_Switch_Key_Set_Off_Is_Told_It_Changes_Nothing()
+    {
+        string path = WriteConfig("""
+            {"device": "plughw:1,0", "alsa": {"mixer": {"agc": false}}}
+            """);
+
+        DaemonConfig.TryLoad(path, out _)!.Warnings.Should().ContainSingle(w =>
+            w.Contains("the card ends up the way it asked for either way", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Which stations are offered the Mixer group, and with it the input level meter.
+    /// </summary>
+    /// <remarks>
+    /// The whole "never on a public page, a monitor or a FlexRadio" claim is this one expression,
+    /// and the meter's markup lives inside the group - so a station that is offered a meter it
+    /// can never draw measures audio and broadcasts a message forever for nobody.
+    /// </remarks>
+    [Theory]
+    // device,                     public, open,  key,     shown
+    [InlineData("plughw:1,0", false, false, "k", true)]
+    [InlineData("plughw:1,0", false, true, "", true)]
+    [InlineData("plughw:1,0", false, false, "", false)]
+    [InlineData("plughw:1,0", true, true, "k", false)]
+    [InlineData("flex:discover", false, true, "k", false)]
+    [InlineData("ubersdr:m9psy-1.instance.ubersdr.org", false, true, "k", false)]
+    [InlineData("pipe:/tmp/in,/tmp/out", false, true, "k", false)]
+    public void Only_An_Operators_Page_With_A_Card_And_A_Reachable_Mixer_Shows_The_Group(
+        string device, bool isPublic, bool open, string key, bool shown)
+    {
+        var waterfall = new WaterfallConfig
+        {
+            Public = isPublic,
+            EnableAudioControls = open,
+        };
+        var api = new ApiConfig { Key = key.Length == 0 ? null : key };
+
+        DaemonConfig.ShowsMixerGroup(device, waterfall, api).Should().Be(shown);
+    }
+
+    [Fact]
+    public void A_Station_With_No_Waterfall_At_All_Shows_No_Group()
+    {
+        DaemonConfig.ShowsMixerGroup("plughw:1,0", waterfall: null, new ApiConfig { Key = "k" })
+            .Should().BeFalse("there is no page to put it on");
     }
 
     /// <summary>
@@ -318,7 +419,7 @@ public class AlsaMixerConfigTests : IDisposable
     public void A_File_With_A_Good_Mixer_Block_Warns_About_Nothing()
     {
         string path = WriteConfig("""
-            {"device": "plughw:1,0", "alsa": {"mixer": {"captureGainDb": 6, "agc": false}}}
+            {"device": "plughw:1,0", "alsa": {"mixer": {"captureGainDb": 6, "playbackDb": -8}}}
             """);
 
         DaemonConfig.TryLoad(path, out _)!.Warnings.Should().BeEmpty();

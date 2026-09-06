@@ -684,51 +684,96 @@ const mixerPanel = () => ({
   gainMin: run(`String(document.getElementById("mixGain").min)`),
   gainMax: run(`String(document.getElementById("mixGain").max)`),
   gainDisabled: run(`document.getElementById("mixGain").disabled`),
+  // The transmit level: the card's playback control, second row of the same group.
+  playRead: run(`document.getElementById("mixPlayRead").textContent`),
+  play: run(`String(document.getElementById("mixPlay").value)`),
+  playMin: run(`String(document.getElementById("mixPlay").min)`),
+  playMax: run(`String(document.getElementById("mixPlay").max)`),
+  playDisabled: run(`document.getElementById("mixPlay").disabled`),
+  playTitle: run(`String(document.getElementById("mixPlay").title)`),
   note: run(`document.getElementById("mixNote").textContent`),
-  agc: run(`document.getElementById("mixAgc").className`),
-  boost: run(`document.getElementById("mixBoost").className`),
   keyHidden: run(`document.getElementById("mixKey").hidden`),
 });
+
+// The input level meter, which lives beside the capture slider and is driven by the daemon's
+// "level" messages rather than by anything the page asks for.
+const meterPanel = () => ({
+  hidden: run(`document.getElementById("mixMeter").hidden`),
+  barWidth: run(`String(document.getElementById("mixBar").style.width)`),
+  barClass: run(`document.getElementById("mixBar").className`),
+  rmsLeft: run(`String(document.getElementById("mixRms").style.left)`),
+  zoneLeft: run(`String(document.getElementById("mixZone").style.left)`),
+  zoneWidth: run(`String(document.getElementById("mixZone").style.width)`),
+  hotWidth: run(`String(document.getElementById("mixHot").style.width)`),
+  read: run(`document.getElementById("mixLevelRead").textContent`),
+  advice: run(`document.getElementById("mixAdvice").textContent`),
+  clipHidden: run(`document.getElementById("mixClip").hidden`),
+  clipClass: run(`document.getElementById("mixClip").className`),
+});
+
 if (process.env.MIXER) {
   await untilTrue(() => run(`document.getElementById("mixerCtl").hidden`) === false, 10000);
 }
 
+// The meter's two timers, driven by hand rather than by the server: the case they exist for is
+// the one where the NEXT message does not come (the receive tap is gated while the station
+// transmits), so a run with audio flowing could never show either of them firing.
+let meterAfterClip = null;
+let meterStale = null;
+let meterClipExpired = null;
+if (process.env.METERTIMERS) {
+  run(`onLevel({ peak: -5, rms: -22, clip: true })`);
+  meterAfterClip = meterPanel();
+  // Past the stale timeout and short of the clip latch: the bar has given up, the pill has not.
+  await wait(1400);
+  meterStale = meterPanel();
+  // And past the latch.
+  await wait(2000);
+  meterClipExpired = meterPanel();
+}
+
+let meter = null;
+if (process.env.METER) {
+  // The meter appears on the first message and not before, so waiting for it to appear is also
+  // the check that the daemon sent one.
+  await untilTrue(() => run(`document.getElementById("mixMeter").hidden`) === false, 10000);
+  // One more reading, so what is captured is a bar the page has drawn rather than the first
+  // one it happened to be caught in the middle of.
+  await wait(400);
+  meter = meterPanel();
+}
+
 const mixerOnArrival = mixerPanel();
 let mixerAfterGain = null;
-let mixerAfterAgc = null;
-let mixerAfterBoost = null;
+let mixerAfterPlay = null;
 if (process.env.MIXGAIN) {
   // Through the page's own handlers, as a browser fires them: the slider is moved and a "change"
-  // is dispatched, and the AGC and Boost buttons are clicked. That covers the wiring - which
-  // event each control listens for, what each handler sends, and that the Boost button the card
-  // has not got refuses to send anything - none of which calling mixSend by hand would prove.
+  // is dispatched. That covers the wiring - which event each slider listens for and what each
+  // handler sends - which calling mixSend by hand would not prove.
   const before = mixerPanel().read;
   run(`document.getElementById("mixGain").value = ${process.env.MIXGAIN}`);
   sandbox.__fire("mixGain", "change");
   await untilTrue(() => run(`document.getElementById("mixRead").textContent`) !== before, 10000);
   mixerAfterGain = mixerPanel();
+}
 
-  const beforeAgc = mixerAfterGain.agc;
-  sandbox.__fire("mixAgc", "click");
-  await untilTrue(() => run(`document.getElementById("mixAgc").className`) !== beforeAgc, 10000);
-  mixerAfterAgc = mixerPanel();
-
-  // A control the card has not got: the button is disabled and its handler must send nothing, so
-  // this is a wait for something NOT to happen. A second of it is enough to catch a request that
-  // does go out, and the assertion is that the panel is unchanged.
-  const beforeBoost = mixerPanel();
-  sandbox.__fire("mixBoost", "click");
-  await wait(1000);
-  mixerAfterBoost = mixerPanel();
-  mixerAfterBoost.unchangedByBoost =
-    beforeBoost.read === mixerAfterBoost.read && beforeBoost.agc === mixerAfterBoost.agc;
+if (process.env.MIXPLAY) {
+  const before = mixerPanel().playRead;
+  run(`document.getElementById("mixPlay").value = ${process.env.MIXPLAY}`);
+  sandbox.__fire("mixPlay", "change");
+  await untilTrue(
+    () => run(`document.getElementById("mixPlayRead").textContent`) !== before, 10000);
+  mixerAfterPlay = mixerPanel();
 }
 
 process.stdout.write(JSON.stringify({
   mixerOnArrival,
   mixerAfterGain,
-  mixerAfterAgc,
-  mixerAfterBoost,
+  mixerAfterPlay,
+  meter,
+  meterAfterClip,
+  meterStale,
+  meterClipExpired,
   socketUrl,
   linksWindowUrl,
   // Whether the page decided it is the torn-off links window rather than the waterfall.

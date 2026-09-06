@@ -336,24 +336,17 @@ public sealed class AlsaConfig
 /// <c>mixer-state.json</c> and applied at the next start-up, but only for a control this section
 /// says nothing about (Tom, 2026-09-06). So a level pinned here is the level the station comes up
 /// on, every time, whatever the page did last week.</para>
-/// <para><b>Recommended for a data modem:</b> <c>agc: false</c>, because automatic gain fights
-/// the modem's own level tracking and turns the noise floor into a moving target, and
-/// <c>micBoost: false</c> unless the radio's output is genuinely low. Recommendations, not
-/// defaults: leave the key out and the control is not touched.</para>
+/// <para><b>The AGC and the mic boost are not settings here</b> (Tom, 2026-09-06: "AGC should
+/// just be forced off, as should mic boost. No need for buttons for these."). Any card that has
+/// either has it switched off at every start-up, journalled in one line. They were keys in
+/// 0.57.0 and 0.58.x, recommended off in both; a file still carrying one is told at start-up that
+/// it is now unconditional, and nothing else happens - the outcome is what the key asked for.
+/// See <see cref="ForcedOffKeys"/>.</para>
 /// </remarks>
 public sealed class AlsaMixerConfig
 {
     /// <summary>Capture gain in dB, inside the card's own range; null leaves it.</summary>
     public double? CaptureGainDb { get; set; }
-
-    /// <summary>Automatic gain control on or off; null leaves it.</summary>
-    public bool? Agc { get; set; }
-
-    /// <summary>
-    /// Microphone boost on or off; null leaves it. Many cards have no such control - a CM108
-    /// folds its boost into the top of the capture range - and the journal says so and carries on.
-    /// </summary>
-    public bool? MicBoost { get; set; }
 
     /// <summary>Transmit-side playback level in dB, inside the card's range; null leaves it.</summary>
     public double? PlaybackDb { get; set; }
@@ -380,10 +373,16 @@ public sealed class AlsaMixerConfig
     /// <summary>Names to look for the capture gain under, in order; null takes the built-in list.</summary>
     public List<string>? CaptureControls { get; set; }
 
-    /// <summary>Names to look for the AGC switch under, in order; null takes the built-in list.</summary>
+    /// <summary>
+    /// Names to look for the AGC switch under, in order; null takes the built-in list. It is
+    /// looked for so that it can be switched OFF - that is the only thing done with it.
+    /// </summary>
     public List<string>? AgcControls { get; set; }
 
-    /// <summary>Names to look for the mic boost under, in order; null takes the built-in list.</summary>
+    /// <summary>
+    /// Names to look for the mic boost under, in order; null takes the built-in list. Also only
+    /// ever switched off.
+    /// </summary>
     public List<string>? MicBoostControls { get; set; }
 
     /// <summary>Names to look for the playback level under, in order; null takes the built-in list.</summary>
@@ -397,8 +396,6 @@ public sealed class AlsaMixerConfig
     public MixerSettings ToSettings() => new()
     {
         CaptureGainDb = CaptureGainDb,
-        Agc = Agc,
-        MicBoost = MicBoost,
         PlaybackDb = PlaybackDb,
         CaptureControls = Names(CaptureControls, MixerSettings.DefaultCaptureControls),
         AgcControls = Names(AgcControls, MixerSettings.DefaultAgcControls),
@@ -431,6 +428,43 @@ public sealed class AlsaMixerConfig
     public static string? WhyRenamed(string key) =>
         RenamedKeys.TryGetValue(key ?? "", out string? now)
             ? $"{key} is no longer read; use {now}, the card's range is shown by --mixer-show"
+            : null;
+
+    /// <summary>
+    /// The keys this section used to have for the two switches, which are now unconditional.
+    /// </summary>
+    /// <remarks>
+    /// Kept as names to refuse rather than quietly dropped into the unknown-key bucket, for the
+    /// same reason the percentage keys are: an operator whose 0.58.x file says
+    /// <c>"agc": false</c> is entitled to be told that the daemon now does that whatever the file
+    /// says, rather than to read "unknown setting" and wonder whether their AGC came back on.
+    /// </remarks>
+    public static readonly IReadOnlySet<string> ForcedOffKeys =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "agc", "micBoost" };
+
+    /// <summary>
+    /// What to say about an <c>agc</c> or <c>micBoost</c> key that is still in a file or a
+    /// request body, or null if <paramref name="key"/> is not one.
+    /// </summary>
+    /// <remarks>
+    /// <para>One sentence, so the start-up warning and the API's 400 cannot drift apart - the
+    /// same rule <see cref="WhyRenamed"/> keeps.</para>
+    /// <para><b>The value matters.</b> "The card ends up the way it asked for either way" is true
+    /// of <c>false</c> and a lie about <c>true</c>, which is exactly the file this message is
+    /// written for: somebody who deliberately turned their AGC on is now getting the opposite,
+    /// and being told it made no difference would send them looking somewhere else.</para>
+    /// </remarks>
+    /// <param name="key">The key that was found.</param>
+    /// <param name="asked">What it was set to, or null when that cannot be read.</param>
+    public static string? WhyForcedOff(string key, bool? asked = null) =>
+        ForcedOffKeys.Contains(key ?? "")
+            ? $"{key} is no longer a setting: AGC and mic boost are switched off at every "
+                + "start-up on any card that has them, because automatic gain fights the modem's "
+                + "own level tracking and a boost left on puts the receive path into clipping. "
+                + (asked == true
+                    ? "This station switches it off whatever the key says, so remove it: as "
+                        + "written it is asking for the opposite of what happens."
+                    : "Remove the key; the card ends up the way it asked for either way.")
             : null;
 
     /// <summary>An override list if there is a usable one, else the built-in fallbacks.</summary>
@@ -1454,6 +1488,28 @@ public sealed class DaemonConfig
     }
 
     /// <summary>
+    /// Whether the operator's page will carry the Mixer group, and with it the input level meter.
+    /// </summary>
+    /// <remarks>
+    /// <para>Three things have to be true at once, and each of them removes the group on its own:
+    /// the station has a sound card to mix, the page is the operator's rather than the public
+    /// flavour, and <c>/api/mixer</c> answers this browser at all - which needs either an
+    /// <c>api.key</c> or <c>waterfall.enableAudioControls</c>. Without the last one the endpoint
+    /// is a 404, the page hides the whole group, and a level meter drawn inside it is a message
+    /// nothing renders.</para>
+    /// <para>Here rather than inline in the daemon's top-level statements so that it can be
+    /// tested: the flavour gate is the whole "never on a public page, a monitor or a FlexRadio"
+    /// claim, and it was one uncovered expression.</para>
+    /// </remarks>
+    /// <param name="device">The <c>device</c> setting.</param>
+    /// <param name="waterfall">The <c>waterfall</c> section, or null when there is no page.</param>
+    /// <param name="api">The <c>api</c> section, or null when there is none.</param>
+    public static bool ShowsMixerGroup(string device, WaterfallConfig? waterfall, ApiConfig? api) =>
+        waterfall is { Public: false }
+        && IsSoundCard(device)
+        && (waterfall.AudioControlsOpen || !string.IsNullOrWhiteSpace(api?.Key));
+
+    /// <summary>
     /// Whether a device string names a sound card, as opposed to a FlexRadio, a web receiver or
     /// a pair of pipes. Only the first kind has a mixer.
     /// </summary>
@@ -1497,9 +1553,9 @@ public sealed class DaemonConfig
         {
             throw new InvalidDataException(
                 $"\"alsa\".\"mixer\" is set but \"device\" is \"{config.Device}\", which is not a "
-                + "sound card. Capture gain, AGC and mic boost are the card's mixer; a FlexRadio "
-                + "or a web receiver has none. Remove the \"alsa\" section, or point \"device\" at "
-                + "the card.");
+                + "sound card. The capture gain and the transmit level are the card's mixer; a "
+                + "FlexRadio or a web receiver has none. Remove the \"alsa\" section, or point "
+                + "\"device\" at the card.");
         }
 
         // The one way the promise "this daemon never writes your config file" could be broken is
@@ -2121,7 +2177,25 @@ public sealed class DaemonConfig
             {
                 warnings.Add($"alsa mixer: {renamed}");
             }
+
+            if (AlsaMixerConfig.WhyForcedOff(key, Asked(key)) is string forced)
+            {
+                warnings.Add($"alsa mixer: {forced}");
+            }
         }
+        // What a stale switch key was actually set to, so the sentence can be honest about it.
+        // Anything that is not a JSON true or false has no answer, and the wording falls back to
+        // the one that is true whatever the value was.
+        bool? Asked(string key) =>
+            config.Alsa?.Mixer?.UnknownSettings?.TryGetValue(key, out JsonElement value) == true
+                ? value.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    _ => null,
+                }
+                : null;
+
         foreach (ModemConfig modem in config.Modems)
         {
             Unknown($"modem {modem.SubChannel}", modem.UnknownSettings);
