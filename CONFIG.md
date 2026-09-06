@@ -2733,9 +2733,13 @@ When the sound device loses audio, that is reported too:
 ```
 audio: 3 capture overruns, 1 playback underrun (4 since start) - each one is lost audio: a dropped
 frame on receive, a discontinuity in what we transmitted. This is the machine not scheduling the
-modem within the ~120 ms of buffer it has, not a radio problem; give it more CPU share, or fewer
-neighbours.
+modem within the capture buffer the card gave it (the start-up audio: lines say how deep that is),
+not a radio problem; give it more CPU share, or fewer neighbours.
 ```
+
+How deep that buffer is comes from the card, and start-up says so: `audio: capture buffer 480 ms,
+period 30 ms`. Half a second is asked for, with the period left short so nothing waits longer for
+its audio than it used to; a card that will not go that deep gets what it will give.
 
 ALSA recovers from an overrun or underrun by restarting the stream, silently - so without this a
 station being starved of CPU is indistinguishable from a station on a quiet band. Reported as

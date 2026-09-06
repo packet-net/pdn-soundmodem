@@ -58,14 +58,20 @@ row in the matrix. A fix isn't finished until the ledger records it.
   under a C locale renders anything above 0x7F as `<E2><80><94>`, and a station's console is
   not ours to configure. Maths notation (pi, sigma, plus-minus, section marks) is fine in
   comments, which are never printed. `SourceTextTests` enforces both rules.
-- **ALSA: all mixer work finishes before the PCM is opened.** Opening a capture stream does not
-  start it - the kernel starts the endpoint on the first `snd_pcm_readi`, and on a USB card that
-  is a URB submission which fails with `-EIO` if the device is busy with a control transfer at
-  that moment. Mixer traffic *is* control transfers, so anything between `snd_pcm_open` and the
-  first read can stop the card ever delivering audio. It is intermittent, so it presents as flaky
-  hardware rather than as a bug: 10 dead runs out of 13 on the bench CM108 when the mixer pass
-  sat in that window, 10 of 10 alive with it moved ahead of the open. Nothing in the pass needs
-  the PCM (`--mixer-show` reads a card on a running station), so keep the whole block above the
+- **ALSA: all mixer work finishes before the PCM is opened.** The rule stands; the mechanism is
+  not what was written here first. A capture stream that has been started is losing audio from
+  the moment its buffer is full, so anything between `snd_pcm_open` and the first steady reads is
+  time the stream can overrun in, and the overrun surfaces as `snd_pcm_readi: Input/output error`
+  once the recovery fails - which reads as a dead device, not as a late reader. That is what the
+  mixer pass did when it sat in that window (10 dead runs out of 13 on the bench CM108, 10 of 10
+  alive with it moved ahead of the open, 2026-09-06), and the same window then killed every
+  qpsk3600 start-up on the same card with nothing in it but the modem's own first pass: straced,
+  a 120 ms buffer, 150 ms between the first two reads, `-EPIPE`, and `-EIO` from the read 5 ms
+  after the recovery's prepare. The real fix is in `AlsaPcm`: a 500 ms capture buffer, a start
+  threshold of 1 so the stream starts on the first read rather than at open, and a recovery that
+  prepares, starts, pauses and retries (`PcmTransfer`). The ordering rule stays anyway, because
+  nothing in the mixer pass needs the PCM (`--mixer-show` reads a card on a running station) and
+  a shorter gap is still worth having: keep the whole block above the
   `AlsaAudioOutput`/`AlsaAudioInput` construction in `Program.cs`. `StartUpOrderTests` pins it;
   [docs/roadmap.md](docs/roadmap.md) #17 has the measurements.
 - CI: every workflow job MUST target `[self-hosted, Linux, X64]` - no GitHub-hosted

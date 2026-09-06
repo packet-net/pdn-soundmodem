@@ -19,16 +19,19 @@ public class StartUpOrderTests
     /// Every ALSA mixer call must be finished with before the capture stream is opened.
     /// </summary>
     /// <remarks>
-    /// <para>Opening a capture stream does not start it: the kernel starts the endpoint on the
-    /// first <c>snd_pcm_readi</c>, and on a USB card that start is a URB submission which comes
-    /// back as <c>-EIO</c> if the device is busy with a control transfer at that moment. Mixer
-    /// traffic is control transfers. So mixer work between <c>snd_pcm_open</c> and the first read
-    /// sits in a window where reading the card's own levels can stop the card ever delivering
-    /// audio.</para>
+    /// <para>A capture stream is losing audio as soon as its buffer is full, so everything
+    /// between <c>snd_pcm_open</c> and the first steady reads is time the stream can overrun in,
+    /// and an overrun the recovery cannot get out of reads as a dead device. Mixer work in that
+    /// window is the avoidable kind: nothing in the pass needs the PCM.</para>
     /// <para>Measured on radio1, 2026-09-06, with the mixer pass inside that window: 10 runs dead
     /// out of 13, against 12 of 12 alive for the same source doing two fewer reads per control;
     /// with the pass moved ahead of the open, 10 of 10 alive. It presents as flaky hardware, not
-    /// as a bug, and it cost thirteen bench runs to find.</para>
+    /// as a bug, and it cost thirteen bench runs to find. The mechanism was misread at the time
+    /// as a mixer control transfer colliding with the first read's URB submission; the strace of
+    /// the qpsk3600 start-up failure the same evening shows a 120 ms buffer overrunning while the
+    /// modem's own first pass was compiled, then <c>-EIO</c> from a read 5 ms after the
+    /// recovery's prepare. The buffer and the recovery are fixed in <c>AlsaPcm</c> and
+    /// <c>PcmTransfer</c>; this rule is what keeps the gap short to begin with.</para>
     /// <para>This is one tidy-up away from coming back - somebody grouping "all the audio device
     /// setup" together would reintroduce it - so it is pinned here rather than left to the
     /// comment at the block and the roadmap entry. See CLAUDE.md and docs/roadmap.md #17.</para>
@@ -74,14 +77,13 @@ public class StartUpOrderTests
         // window. Pin the LAST mixer call, which is what the rule actually says.
         mixerWorked.Should().BeLessThan(
             streamOpened,
-            "every ALSA mixer call must finish BEFORE the capture stream is opened. Mixer traffic "
-            + "is USB control transfers, and the kernel starts the capture endpoint on the first "
-            + "snd_pcm_readi; a control transfer in flight at that moment makes the URB "
-            + "submission fail with -EIO and the station never receives. It is intermittent, so "
-            + "it presents as flaky hardware: 10 dead runs out of 13 on the bench CM108, against "
-            + "10 of 10 alive with the mixer pass ahead of the open. Nothing in the mixer pass "
-            + "needs the PCM - --mixer-show reads a card on a running station - so keep the whole "
-            + "block above the AlsaAudioOutput/AlsaAudioInput construction");
+            "every ALSA mixer call must finish BEFORE the capture stream is opened. Everything "
+            + "between the open and the first steady reads is time the capture stream can overrun "
+            + "in, and the station never receives. It is intermittent, so it presents as flaky "
+            + "hardware: 10 dead runs out of 13 on the bench CM108, against 10 of 10 alive with "
+            + "the mixer pass ahead of the open. Nothing in the mixer pass needs the PCM - "
+            + "--mixer-show reads a card on a running station - so keep the whole block above the "
+            + "AlsaAudioOutput/AlsaAudioInput construction");
     }
 
     /// <summary>
