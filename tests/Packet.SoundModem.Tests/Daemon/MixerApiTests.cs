@@ -164,8 +164,45 @@ public class MixerApiTests : IDisposable
         station.Card!.CaptureDb("Mic").Should().Be(6, "the card is set: that is the point");
         body.GetProperty("persisted").GetBoolean().Should().BeFalse();
         body.GetProperty("note").GetString().Should().Contain("persist=false");
+        body.GetProperty("warn").GetBoolean().Should().BeFalse(
+            "not writing it down is what the caller asked for, so it is not something to warn "
+            + "them about; warning about what somebody requested teaches them to stop reading "
+            + "the field. CONFIG.md promises this");
         File.Exists(station.StatePath).Should().BeFalse(
             "a value being tried is not a value being kept");
+    }
+
+    /// <summary>
+    /// The three things <c>warn</c> means, in one case each, because it is a field in an API
+    /// answer that CONFIG.md makes a promise about and the operator page acts on.
+    /// </summary>
+    /// <remarks>
+    /// True when there is something to read now - a control the config file will take back, or a
+    /// state file that could not be written - and false otherwise, including for a
+    /// <c>?persist=false</c> the caller asked for. The page shows the sentence on the strength of
+    /// this alone, so the three have to stay apart.
+    /// </remarks>
+    [Fact]
+    public async Task Warn_Is_True_Only_When_There_Is_Something_To_Read_Now()
+    {
+        using var plain = new Station(_dir, FakeMixer.Cm108());
+
+        (await plain.PostAsync("""{"captureGainDb": 6}""")).GetProperty("warn").GetBoolean()
+            .Should().BeFalse("set and kept is the ordinary outcome");
+        (await plain.PostAsync("""{"captureGainDb": 3}""", persist: false))
+            .GetProperty("warn").GetBoolean()
+            .Should().BeFalse("persist=false is what the caller asked for");
+
+        // A control the config file pins warns whether or not it was written down, because the
+        // file takes it back at the next start either way.
+        using var pinned = new Station(
+            _dir, FakeMixer.Cm108(), pinned: new AlsaMixerConfig { CaptureGainDb = -3 });
+
+        (await pinned.PostAsync("""{"captureGainDb": 6}""")).GetProperty("warn").GetBoolean()
+            .Should().BeTrue("the config file will take this back at the next start");
+        (await pinned.PostAsync("""{"captureGainDb": 3}""", persist: false))
+            .GetProperty("warn").GetBoolean()
+            .Should().BeTrue("still true: persist=false is not why this one warns");
     }
 
     /// <summary>
