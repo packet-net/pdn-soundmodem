@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Modems;
 /// 1200 baud) mode family, both phase-modulating a 1500 Hz tone - as an
 /// <see cref="IModem"/>. Symbol rates and carrier are Nino's, per the v3/4.43
 /// mode-switch mapping in flashtnc's release-notes.txt.</summary>
-public sealed class BpskModem : IModem, IConstellationSource
+public sealed class BpskModem : IModem, IConstellationSource, IFrameSpanSource
 {
     private readonly BpskDemodulator _demodulator;
     private readonly BpskModulator _modulator;
@@ -16,6 +16,13 @@ public sealed class BpskModem : IModem, IConstellationSource
     /// the trailer a held plain reading waits for (32 bits).</summary>
     private const int DedupeWindowSymbols = 48;
     private readonly Il2pReceiver[] _deframers;
+    /// <summary>
+    /// Where the frame just delivered was in the receive audio, for the channel's per-frame
+    /// level: marked at the sync its deframer locked on and at the sample its last bit was taken
+    /// on, both from the demodulator's own count of input samples. See <see cref="FrameSpan"/>.
+    /// </summary>
+    private readonly FrameSpan _span = new(TimingDiversity.PhaseCount);
+
     private readonly FrameDeduper _deduper;
     private readonly int _baud;
     private long _symbolsSeen;
@@ -62,6 +69,7 @@ public sealed class BpskModem : IModem, IConstellationSource
         _deframers = new Il2pReceiver[TimingDiversity.PhaseCount];
         for (int phase = 0; phase < _deframers.Length; phase++)
         {
+            int reading = phase;
             _deframers[phase] = new Il2pReceiver(
                 (frame, info, delivery) =>
                 {
@@ -75,6 +83,8 @@ public sealed class BpskModem : IModem, IConstellationSource
                         frameReceived(frame);
                     }
 
+                    // Before the event, so the channel's handler reads this frame's span.
+                    _span.Complete(reading, demodulator!.InputSamplePosition);
                     FrameDecoded?.Invoke(frame, new FrameQuality(
                         Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                         HeaderType: info.HeaderType,
@@ -88,6 +98,7 @@ public sealed class BpskModem : IModem, IConstellationSource
                         MonitorOnly: delivery.MonitorOnly));
                 },
                 crc, acceptPlainIl2p);
+            _deframers[phase].SyncFound = () => _span.Sync(reading, demodulator!.InputSamplePosition);
         }
 
         // Reset the deframers on the DCD falling edge. Without this, a frame whose carrier
@@ -218,6 +229,10 @@ public sealed class BpskModem : IModem, IConstellationSource
     /// its symbol instants (rx-roadmap workstream 4). Not part of the deployment surface.
     /// </summary>
     internal BpskDemodulator Demodulator => _demodulator;
+
+    /// <inheritdoc />
+    public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>
+        _span.TryTakeFrameSpan(out fromSample, out toSample);
 
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples) => _demodulator.Process(samples);

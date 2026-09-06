@@ -31,7 +31,7 @@ public enum Afsk300Framing
 /// polarities (ours since the 9600 IL2P work; the NinoTNC's since firmware 2.42's "IL2P
 /// receive inversion detection"). Bench-confirmed against a NinoTNC either way.
 /// </remarks>
-public sealed class Afsk300Modem : IModem
+public sealed class Afsk300Modem : IModem, IFrameSpanSource
 {
     private const int Baud = 300;
 
@@ -80,6 +80,13 @@ public sealed class Afsk300Modem : IModem
     private readonly double _centerFrequency;
     private readonly FrameDeduper _deduper = new(DedupeWindowBits);
     private long _bitsSeen;
+    /// <summary>
+    /// Where the frame just delivered was in the receive audio, for the channel's per-frame
+    /// level: marked at the sync its deframer locked on and at the sample its last bit was taken
+    /// on. See <see cref="FrameSpan"/>.
+    /// </summary>
+    private readonly FrameSpan _span = new(AfskDemodulator.TimingPhaseCount);
+
 
     /// <summary>Creates the modem.</summary>
     /// <param name="sampleRate">Channel DSP rate (multiple of 300).</param>
@@ -129,6 +136,7 @@ public sealed class Afsk300Modem : IModem
             for (int phase = 0; phase < phases; phase++)
             {
                 nrzi[phase] = new NrziDecoder();
+                int reading = phase;
                 deframers[phase] = new HdlcDeframer(frame =>
                 {
                     if (!_deduper.ShouldEmit(frame, _bitsSeen))
@@ -137,12 +145,16 @@ public sealed class Afsk300Modem : IModem
                     }
 
                     frameReceived(frame);
+
+                    // Before the event, so the channel's handler reads this frame's span.
+                    _span.Complete(reading, demodulator!.InputSamplePosition);
                     FrameDecoded?.Invoke(frame, new FrameQuality(
                         Mode, frame.Length, null, null,
                         // Read at the end of the burst that carried the frame, while the slicer
                         // envelopes it is derived from still describe that burst.
                         FrequencyOffsetHz: demodulator!.CarrierOffsetHz));
                 });
+                deframers[phase].FrameOpened = () => _span.Sync(reading, demodulator!.InputSamplePosition);
             }
 
             phaseBitSink = (level, phase) =>
@@ -160,6 +172,7 @@ public sealed class Afsk300Modem : IModem
             var deframers = new Il2pReceiver[phases];
             for (int phase = 0; phase < phases; phase++)
             {
+                int reading = phase;
                 deframers[phase] = new Il2pReceiver(
                     (frame, info, delivery) =>
                     {
@@ -173,6 +186,8 @@ public sealed class Afsk300Modem : IModem
                             frameReceived(frame);
                         }
 
+                        // Before the event, so the channel reads this frame's span.
+                        _span.Complete(reading, demodulator!.InputSamplePosition);
                         FrameDecoded?.Invoke(frame, new FrameQuality(
                             Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                             HeaderType: info.HeaderType,
@@ -182,6 +197,7 @@ public sealed class Afsk300Modem : IModem
                             MonitorOnly: delivery.MonitorOnly));
                     },
                     crcMode: framing == Afsk300Framing.Il2pCrc, acceptPlainIl2p: acceptPlainIl2p);
+                deframers[phase].SyncFound = () => _span.Sync(reading, demodulator!.InputSamplePosition);
             }
 
             // Reset the deframers on the DCD falling edge - same rationale as BpskModem:
@@ -233,6 +249,10 @@ public sealed class Afsk300Modem : IModem
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulator.ChannelBusy;
+
+    /// <inheritdoc />
+    public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>
+        _span.TryTakeFrameSpan(out fromSample, out toSample);
 
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples) => _demodulator.Process(samples);

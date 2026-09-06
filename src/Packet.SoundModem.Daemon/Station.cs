@@ -556,8 +556,13 @@ internal sealed record StationOptions
     /// <para>The channel's own <c>AddReceiveTap</c> is downstream of the 48 to 12 kHz decimating
     /// FIR, which is fine for anything measuring a level and wrong for anything measuring the
     /// converter's range: the filter's ripple moves peaks either way, so full scale downstream is
-    /// not full scale at the card. The waterfall's level meter uses this for its clip indicator
-    /// and nothing else does; see <c>WaterfallWebServer.MeterInputClipping</c>.</para>
+    /// not full scale at the card. Two things need it: the waterfall's level meter, for its clip
+    /// indicator (<c>WaterfallWebServer.MeterInputClipping</c>), and the channel, for the clip
+    /// flag each decoded frame carries (<c>SoundModemChannel.NoteCardClipping</c>). The daemon
+    /// composes them into this one tap, and the two want different stations: the meter has read
+    /// whatever the station's input delivers since v0.59.0, while the frame's flag is only wired
+    /// where the input really is a sound card, because a frame on a Flex or an ubersdr feed
+    /// cannot honestly say anything about a converter this station does not have.</para>
     /// <para>Called on the receive loop's own thread, once per block, and skipped for any block
     /// the station was keyed during - so it must return promptly and must not allocate. The span
     /// is the loop's buffer and is not valid after the call returns.</para>

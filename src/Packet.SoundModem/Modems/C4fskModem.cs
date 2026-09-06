@@ -36,7 +36,7 @@ namespace Packet.SoundModem.Modems;
 /// and decides the same symbol. See the 2026-08-21 (later5) entry in docs/mode-validation.md.
 /// </para>
 /// </remarks>
-public sealed class C4fskModem : IModem
+public sealed class C4fskModem : IModem, IFrameSpanSource
 {
     private readonly int _sampleRate;
     private readonly int _symbolRate;
@@ -55,6 +55,20 @@ public sealed class C4fskModem : IModem
     private long _pendingInstant = -1;
     private long _symbolsSeen;
     private int _symbolsSinceGate;
+    /// <summary>
+    /// Where the frame just delivered was in the receive audio, for the channel's per-frame
+    /// level: marked at the sync its deframer locked on and at the sample its last bit was taken
+    /// on. See <see cref="FrameSpan"/>.
+    /// </summary>
+    private readonly FrameSpan _span = new(PhaseFractions.Length);
+
+    /// <summary>
+    /// How much audio this modem has been given, as the zero-based index of the input sample it
+    /// is working on. Counted here rather than in a demodulator because this modem is its own:
+    /// the same clock the channel counts its receive audio on.
+    /// </summary>
+    private long _inputSampleIndex = -1;
+
     private double _clockPhase;
     private int _lastSign;
     private bool _previousEnergyBusy;
@@ -221,6 +235,7 @@ public sealed class C4fskModem : IModem
         _deframers = new Il2pReceiver[PhaseFractions.Length];
         for (int phase = 0; phase < _deframers.Length; phase++)
         {
+            int reading = phase;
             _deframers[phase] = new Il2pReceiver(
                 (frame, info, delivery) =>
                 {
@@ -234,6 +249,8 @@ public sealed class C4fskModem : IModem
                         frameReceived(frame);
                     }
 
+                    // Before the event, so the channel's handler reads this frame's span.
+                    _span.Complete(reading, _inputSampleIndex);
                     FrameDecoded?.Invoke(frame, new FrameQuality(
                         Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                         HeaderType: info.HeaderType,
@@ -242,6 +259,7 @@ public sealed class C4fskModem : IModem
                         MonitorOnly: delivery.MonitorOnly));
                 },
                 crcMode: crc, acceptPlainIl2p: acceptPlainIl2p, syncWord: SyncWord);
+            _deframers[phase].SyncFound = () => _span.Sync(reading, _inputSampleIndex);
         }
 
         _ffeTaps = new float[PhaseFractions.Length * FfeLength];
@@ -333,10 +351,15 @@ public sealed class C4fskModem : IModem
     public bool ChannelBusy => _packetDcd.Asserted || _energyBusy.Busy;
 
     /// <inheritdoc />
+    public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>
+        _span.TryTakeFrameSpan(out fromSample, out toSample);
+
+    /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples)
     {
         foreach (float sample in samples)
         {
+            _inputSampleIndex++;
             float filtered = _rxFilter.Next(sample);
             _energyBusy.Process(filtered);
 

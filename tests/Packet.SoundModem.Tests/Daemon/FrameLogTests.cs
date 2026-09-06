@@ -181,6 +181,121 @@ public class FrameLogTests : IDisposable
         SqliteConnection.ClearAllPools();
     }
 
+    /// <summary>
+    /// A log in the schema as it shipped in v0.59.0: <c>plain_il2p</c> present, the two per-frame
+    /// level columns not. This is what the live node and the public monitor have on disk.
+    /// </summary>
+    private void WriteLogInThePreLevelSchema()
+    {
+        using (var old = new SqliteConnection($"Data Source={DbPath}"))
+        {
+            old.Open();
+            using SqliteCommand create = old.CreateCommand();
+            create.CommandText = """
+                CREATE TABLE frames (
+                    id                INTEGER PRIMARY KEY,
+                    heard_at          TEXT    NOT NULL,
+                    direction         TEXT    NOT NULL DEFAULT 'rx',
+                    sub_channel       INTEGER NOT NULL,
+                    mode              TEXT    NOT NULL,
+                    mode_name         TEXT    NOT NULL,
+                    source            TEXT,
+                    destination       TEXT,
+                    length            INTEGER NOT NULL,
+                    corrected         INTEGER,
+                    crc_valid         INTEGER,
+                    plain_il2p        INTEGER,
+                    trailer_near_bits INTEGER,
+                    monitor_only      INTEGER,
+                    erased_bytes      INTEGER,
+                    chased_bits       INTEGER,
+                    snr_db            REAL,
+                    offset_hz         REAL,
+                    audio_hz          REAL,
+                    rf_hz             REAL,
+                    payload           BLOB    NOT NULL,
+                    tx_trim_hz        REAL
+                );
+                CREATE INDEX frames_heard_at ON frames(heard_at);
+                CREATE INDEX frames_source ON frames(source);
+                INSERT INTO frames
+                  (heard_at, direction, sub_channel, mode, mode_name, source, destination,
+                   length, corrected, crc_valid, plain_il2p, snr_db, offset_hz, audio_hz, rf_hz,
+                   payload)
+                VALUES
+                  ('2026-09-05T11:00:00.0000000+00:00', 'rx', 0, 'qpsk3600-il2pc',
+                   'QPSK3600 IL2Pc', 'GB7RDG', 'BEACON', 4, 0, 1, 0, 21.4, -2.5, 1500.0,
+                   7051600.0, X'01020304');
+                """;
+            create.ExecuteNonQuery();
+        }
+
+        SqliteConnection.ClearAllPools();
+    }
+
+    /// <summary>
+    /// A log written before a frame's own audio level was measured gains the two columns on
+    /// open, keeps every row it had, and claims nothing about them.
+    /// </summary>
+    /// <remarks>
+    /// The nulls are the point. How loud a frame heard last week was, and whether the card railed
+    /// under it, were not written down at the time - so those rows come back out of the backlog
+    /// with no figure and no badge, exactly as they drew before there was one, and only frames
+    /// heard after the upgrade carry a level.
+    /// </remarks>
+    [Fact]
+    public async Task A_Log_From_Before_The_Level_Columns_Gains_Them_And_Keeps_Its_History()
+    {
+        WriteLogInThePreLevelSchema();
+
+        List<Dictionary<string, object?>> rows = await ReadBackAsync(
+            log => log.Record(0, Frame(), new FrameQuality(
+                "qpsk3600-il2pc", FrameBytes: 32, CorrectedBytes: 0, CrcValid: true,
+                PeakDbFs: -14.2, Clipped: true), null, null));
+
+        rows.Should().HaveCount(2, "a station's existing history must survive the upgrade");
+        rows[0]["source"].Should().Be("GB7RDG", "the old row is untouched");
+        rows[0]["snr_db"].Should().Be(21.4, "including the columns it did have");
+        rows[0]["peak_dbfs"].Should().BeNull(
+            "how loud that frame was was not measured at the time, and a figure is a claim");
+        rows[0]["clipped"].Should().BeNull();
+        rows[1]["peak_dbfs"].Should().Be(-14.2, "and every frame heard after the upgrade says so");
+        rows[1]["clipped"].Should().Be(1L);
+    }
+
+    /// <summary>
+    /// A frame's level goes into the log and comes back out of the backlog queries unchanged,
+    /// so a replayed row says what the live row said. A transmission has none: nothing measured
+    /// what our own audio sounded like at our own converter, and inventing it would be inventing
+    /// a measurement of ourselves.
+    /// </summary>
+    [Fact]
+    public async Task The_Backlog_Reads_A_Frames_Level_Back_And_A_Transmission_Has_None()
+    {
+        await using FrameLog log = FrameLog.Open(DbPath, _time);
+        log.Record(0, Frame(from: "G0AAA"), new FrameQuality(
+            "qpsk3600-il2pc", FrameBytes: 32, CorrectedBytes: 0, CrcValid: true,
+            PeakDbFs: -14.2, Clipped: false), audioHz: 1500, rfHz: 7_051_600);
+        log.RecordTransmitted(0, Frame(from: "M0LTE"), "qpsk3600-il2pc", 1500, 7_051_600);
+
+        for (int i = 0; i < 100 && log.Recent(10).Count < 2; i++)
+        {
+            await Task.Delay(20);
+        }
+
+        IReadOnlyList<Packet.SoundModem.Waterfall.LoggedFrame> recent = log.Recent(10);
+        recent.Should().HaveCount(2);
+        recent[0].PeakDbFs.Should().Be(-14.2, "the figure the panel drew live is the one it replays");
+        recent[0].Clipped.Should().BeFalse("this card had headroom, which is not the same as unknown");
+        recent[1].Transmitted.Should().BeTrue();
+        recent[1].PeakDbFs.Should().BeNull("a transmission is not a measurement of what we heard");
+        recent[1].Clipped.Should().BeNull();
+
+        // The other backlog query, which the links replay reads: same columns, same answers.
+        log.RecentWithPayload(10)[0].Frame.PeakDbFs.Should().Be(-14.2);
+        log.RecentWithPayload(10)[0].Frame.Clipped.Should().BeFalse();
+    }
+
     private static FrameQuality Quality(string mode = "bpsk300-il2pc") =>
         new(mode, FrameBytes: 32, CorrectedBytes: 2, CrcValid: true,
             FrequencyOffsetHz: -3.5, EmphasisDb: null);

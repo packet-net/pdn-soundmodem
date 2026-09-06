@@ -666,7 +666,8 @@ internal sealed class RelayStation : IMonitorStation
             new FrameQuality(
                 frame.Mode, frame.LengthBytes, frame.CorrectedBytes, frame.CrcValid,
                 FrequencyOffsetHz: frame.OffsetHz, PlainIl2p: frame.PlainIl2p,
-                MonitorOnly: frame.MonitorOnly, SnrDb: frame.SnrDb),
+                MonitorOnly: frame.MonitorOnly, SnrDb: frame.SnrDb,
+                PeakDbFs: frame.PeakDbFs, Clipped: frame.Clipped),
             audioHz: null, rfHz: null, modeName: null, at: frame.At);
     }
 

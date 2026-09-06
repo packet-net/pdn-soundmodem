@@ -194,6 +194,17 @@ public sealed class WaterfallOptions
 /// written down, and treating an unknown as withheld would throw away real history. What reads
 /// it is the start-up replay into the links pane, which such a row must not feed.
 /// </param>
+/// <param name="PeakDbFs">
+/// How loud the audio this frame arrived on was, in dBFS, over the frame's own stretch of it
+/// (see <see cref="Modems.FrameQuality.PeakDbFs"/>). Null on a transmission, on a row logged
+/// before the column existed, and wherever the frame's audio could not be placed - the panel
+/// then shows no figure and no badge, which is what it did before there was one.
+/// </param>
+/// <param name="Clipped">
+/// Whether the sound card ran out of codes during that same stretch. Null is "not written down",
+/// which is a row from before the column and any row whose station was not handing its card's
+/// own samples over; false is a card that had headroom.
+/// </param>
 /// <param name="PlainIl2p">
 /// True for a row read as plain IL2P, with no trailing CRC behind it - Reed-Solomon alone
 /// (see <see cref="Modems.FrameQuality.PlainIl2p"/>). What the panel badges <b>RS ONLY</b>, and
@@ -215,7 +226,9 @@ public sealed record LoggedFrame(
     bool Transmitted = false,
     double? TxTrimHz = null,
     bool MonitorOnly = false,
-    bool PlainIl2p = false);
+    bool PlainIl2p = false,
+    double? PeakDbFs = null,
+    bool? Clipped = null);
 
 /// <summary>A band the host declares rather than the waterfall measuring it.</summary>
 /// <param name="SubChannel">Which modem, for ordering and labels.</param>
@@ -1424,6 +1437,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // handed on, which is the operator's own configuration answering back.
             plainIl2p: quality.PlainIl2p,
             monitorOnly: quality.MonitorOnly,
+            // How loud this frame's own audio was, and whether the card railed while it was
+            // arriving - measured over the frame's own stretch of input by the channel
+            // (FrameLevelMonitor), not re-derived here: the frame log and a monitor watching
+            // this station's uplink carry the same two numbers, and three measurements of one
+            // burst is the branch-index-offset mistake with a different noun.
+            peakDbFs: quality.PeakDbFs,
+            clipped: quality.Clipped,
             // For a relay, and for nobody else: a monitor folds its own links out of these bytes
             // rather than being sent a summary of them.
             raw: frame);
@@ -1720,6 +1740,32 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             corrected: null, crc: true, idBeacon: true);
     }
 
+    /// <summary>
+    /// What a frame's own level is worth saying about it: <c>loud</c>, <c>quiet</c>, or nothing
+    /// at all.
+    /// </summary>
+    /// <remarks>
+    /// Nothing between the two, which is the point (issue #426): every demodulator here is
+    /// level-tolerant, so a badge is for a level worth doing something about - the card running
+    /// out of codes, or a signal so far under the target zone that the capture gain wants
+    /// looking at - and a row that says nothing is a row with nothing wrong with it. The
+    /// thresholds are <see cref="Audio.InputLevelMeter"/>'s, beside the band the meter draws.
+    /// </remarks>
+    private static string? LevelTag(double? peakDbFs, bool? clipped)
+    {
+        if (peakDbFs is not { } peak)
+        {
+            return null;
+        }
+
+        if (clipped is true || peak >= Audio.InputLevelMeter.FrameLoudPeakDbFs)
+        {
+            return "loud";
+        }
+
+        return peak < Audio.InputLevelMeter.FrameQuietPeakDbFs ? "quiet" : null;
+    }
+
     // `raw` is the frame's own bytes, where the caller has them, and exists for the relay: a
     // monitor reads them into its own link observer rather than being sent a summary of them.
     // Nothing is sent to a browser that was not sent before - the panel already has everything it
@@ -1731,6 +1777,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         bool idBeacon = false, bool transmitted = false,
         string? note = null, string? headerType = null, string? frameHex = null,
         bool plainIl2p = false, bool monitorOnly = false, double? txTrimHz = null,
+        double? peakDbFs = null, bool? clipped = null,
         byte[]? raw = null)
     {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
@@ -1771,6 +1818,19 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // either way, because the frame is RS-only either way, but the operator reading it
             // wants to know which of the two things their configuration did.
             monitorOnly = monitorOnly ? true : (bool?)null,
+            // How loud this frame's own audio was, in dBFS, and whether the card railed during
+            // it. One decimal, like the meter's, because the card's own steps are whole dB and a
+            // figure that twitches in the second decimal is one nobody can read a trend off.
+            // Absent on a transmission, on a relayed row from a station too old to send it, and
+            // on any frame whose audio could not be placed - a row without them draws as it
+            // always did.
+            peakDbFs = peakDbFs is { } peak ? Math.Round(peak, 1) : (double?)null,
+            clipped = clipped is true ? true : (bool?)null,
+            // The verdict, made here so that every page - this station's own, and a monitor's
+            // copy of its rows - reads the same two thresholds. See InputLevelMeter's
+            // FrameLoudPeakDbFs and FrameQuietPeakDbFs; null is a frame with nothing to say
+            // about it, which is most of them and is what "the level is fine" looks like.
+            level = LevelTag(peakDbFs, clipped),
         }, Json);
         Broadcast(WebSocketMessageType.Text, message);
 
@@ -1805,6 +1865,8 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 FrameHex = frameHex,
                 PlainIl2p = plainIl2p,
                 MonitorOnly = monitorOnly,
+                PeakDbFs = peakDbFs,
+                Clipped = clipped,
                 At = _options.TimeProvider.GetUtcNow(),
                 Raw = raw,
             });
@@ -1859,7 +1921,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             idBeacon: frame.IdBeacon, transmitted: frame.Transmitted,
             note: frame.Note, headerType: frame.HeaderType, frameHex: frame.FrameHex,
             plainIl2p: frame.PlainIl2p, monitorOnly: frame.MonitorOnly,
-            txTrimHz: frame.TransmitTrimHz, raw: frame.Raw);
+            txTrimHz: frame.TransmitTrimHz,
+            // Both null from a station running a version that does not send them, which is what
+            // the wire's tolerance of their absence buys: the row lists as it always did.
+            peakDbFs: frame.PeakDbFs, clipped: frame.Clipped,
+            raw: frame.Raw);
 
         // The same rule OnFrame applies, for the same reason: a frame Reed-Solomon alone stood
         // behind is not evidence that the pair of callsigns in it were ever talking, so it is
@@ -2924,6 +2990,13 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 // them lost the badge outright, which read as a frame something had checked.
                 plain = f.PlainIl2p ? true : (bool?)null,
                 monitorOnly = f.MonitorOnly ? true : (bool?)null,
+                // Under the same names, and with the verdict recomputed from the same two
+                // thresholds, so a replayed row carries the figure and the badge it carried when
+                // it was heard. Null on a row logged before the columns existed, and on every
+                // transmission, and the page then shows nothing new on it.
+                peakDbFs = f.PeakDbFs is { } peak ? Math.Round(peak, 1) : (double?)null,
+                clipped = f.Clipped is true ? true : (bool?)null,
+                level = LevelTag(f.PeakDbFs, f.Clipped),
                 hist = true,
             }),
         }, Json);

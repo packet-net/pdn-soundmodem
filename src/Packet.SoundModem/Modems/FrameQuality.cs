@@ -87,6 +87,21 @@ namespace Packet.SoundModem.Modems;
 /// Null when the band was quiet at decode time (a frame that cannot be attributed to
 /// visible energy), when the modem's band was never measurable, or when the frame did not
 /// come through a <see cref="Packet.SoundModem.Channel.SoundModemChannel"/>.</param>
+/// <param name="PeakDbFs">How loud the audio this frame arrived on was: the loudest 10 ms of
+/// the stretch of receive audio the frame itself occupied, in dBFS, measured by the channel's
+/// own <see cref="Packet.SoundModem.Channel.FrameLevelMonitor"/> and rounded to 0.1 dB so every
+/// consumer records the identical figure. <b>A measurement of the frame, not of the channel</b>:
+/// the level meter's five-a-second reading covers whatever was on the input at the time, which
+/// on a fast mode is mostly not this frame and on an FM receiver with the squelch open is mostly
+/// the hiss between frames. Null when the modem's airtime could not be measured, when the frame
+/// is older than the level history holds, or when the frame did not come through a
+/// <see cref="Packet.SoundModem.Channel.SoundModemChannel"/>.</param>
+/// <param name="Clipped">Whether the sound card ran out of codes anywhere in that same stretch -
+/// judged on the card's own samples, before any resampling, which is the only place it is a fact
+/// (see <see cref="Packet.SoundModem.Audio.InputLevelMeter.AddCardSamples"/>). Null where nothing
+/// is handing the card's samples over, which is "not measured" and not "no": a station whose
+/// audio arrives from a Flex or an ubersdr receiver has no converter of ours to have run out of
+/// codes, and says so by leaving this null.</param>
 /// <param name="MonitorOnly">The frame was <b>not</b> passed to the host: it reached
 /// <see cref="IModem.FrameDecoded"/> and everything hanging off it - display, frame log,
 /// journal, survey - but never the modem's constructor frame sink. A fact about what
@@ -109,7 +124,9 @@ public readonly record struct FrameQuality(
     int? TrailerNearBits = null,
     int? ErasedBytes = null,
     int? ChasedBits = null,
-    double? SnrDb = null);
+    double? SnrDb = null,
+    double? PeakDbFs = null,
+    bool? Clipped = null);
 
 /// <summary>
 /// How much a reading of a transmission actually established, for choosing between two decoder

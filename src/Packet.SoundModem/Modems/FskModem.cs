@@ -35,7 +35,7 @@ public enum FskFraming
 /// behind a symbol-clocked content dedupe. The filter, the slicer's envelope tracker, the clock
 /// and DCD are shared, so the cost is the decision stage and six extra deframers.
 /// </remarks>
-public sealed class FskModem : IModem
+public sealed class FskModem : IModem, IFrameSpanSource
 {
     private readonly int _baud;
     private readonly int _sampleRate;
@@ -95,6 +95,20 @@ public sealed class FskModem : IModem
     private readonly Action? _resetDeframers;
     private long _symbolsSeen;
     private bool _previousDcd;
+    /// <summary>
+    /// Where the frame just delivered was in the receive audio, for the channel's per-frame
+    /// level: marked at the sync its deframer locked on and at the sample its last bit was taken
+    /// on. See <see cref="FrameSpan"/>.
+    /// </summary>
+    private readonly FrameSpan _span = new(TimingDiversity.PhaseCount);
+
+    /// <summary>
+    /// How much audio this modem has been given, as the zero-based index of the input sample it
+    /// is working on. Counted here rather than in a demodulator because this modem is its own:
+    /// the same clock the channel counts its receive audio on.
+    /// </summary>
+    private long _inputSampleIndex = -1;
+
 
     // Recent slicer excess (the envelope-midpoint-removed value the level is sliced from),
     // indexed by decision point modulo the ring length, so a decision can be taken a little
@@ -160,6 +174,7 @@ public sealed class FskModem : IModem
         {
             for (int phase = 0; phase < _sinks.Length; phase++)
             {
+                int reading = phase;
                 var deframer = new HdlcDeframer(frame =>
                 {
                     if (!_deduper.ShouldEmit(frame, _symbolsSeen))
@@ -168,12 +183,17 @@ public sealed class FskModem : IModem
                     }
 
                     frameReceived(frame);
+
+                    // Before the event, so the channel's handler reads this frame's span.
+                    _span.Complete(reading, _inputSampleIndex);
+
                     // HDLC has no FEC: an FCS pass proves zero residual errors, not how many
                     // the channel had - CorrectedBytes is honestly null. What the phases buy
                     // here is exactly "any phase whose FCS checks", which is how Dire Wolf's
                     // multi-slicer decoders earn theirs.
                     FrameDecoded?.Invoke(frame, new FrameQuality(Mode, frame.Length, null, null));
                 });
+                deframer.FrameOpened = () => _span.Sync(reading, _inputSampleIndex);
                 var descrambler = new G3ruhScrambler();
                 var nrzi = new NrziDecoder();
                 _sinks[phase] = level => deframer.PushBit(nrzi.Decode(descrambler.Descramble(level)));
@@ -184,6 +204,7 @@ public sealed class FskModem : IModem
             var deframers = new Il2pReceiver[TimingDiversity.PhaseCount];
             for (int phase = 0; phase < deframers.Length; phase++)
             {
+                int reading = phase;
                 var deframer = new Il2pReceiver(
                     (frame, info, delivery) =>
                     {
@@ -197,6 +218,8 @@ public sealed class FskModem : IModem
                             frameReceived(frame);
                         }
 
+                        // Before the event, so the channel reads this frame's span.
+                        _span.Complete(reading, _inputSampleIndex);
                         FrameDecoded?.Invoke(frame, new FrameQuality(
                             Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                             HeaderType: info.HeaderType,
@@ -205,6 +228,7 @@ public sealed class FskModem : IModem
                             MonitorOnly: delivery.MonitorOnly));
                     },
                     crcMode: framing == FskFraming.Il2pCrc, acceptPlainIl2p: acceptPlainIl2p);
+                deframer.SyncFound = () => _span.Sync(reading, _inputSampleIndex);
                 deframers[phase] = deframer;
                 _sinks[phase] = bit => deframer.PushBit(bit);
             }
@@ -306,10 +330,15 @@ public sealed class FskModem : IModem
     public bool ChannelBusy => _packetDcd.Asserted || _energyBusy.Busy;
 
     /// <inheritdoc />
+    public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>
+        _span.TryTakeFrameSpan(out fromSample, out toSample);
+
+    /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples)
     {
         foreach (float sample in samples)
         {
+            _inputSampleIndex++;
             float filtered = _rxFilter.Next(sample);
             _energyBusy.Process(filtered);
 

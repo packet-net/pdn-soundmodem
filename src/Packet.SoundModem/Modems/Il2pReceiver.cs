@@ -137,6 +137,9 @@ internal sealed class Il2pReceiver
     private long _lastDeliveredAtBit;
     private uint _trailerBits;
     private int _trailerBitCount;
+    private readonly uint _syncWord;
+    private uint _syncShift;
+    private int _syncWarmup;
 
     /// <summary>Creates the receiver.</summary>
     /// <param name="frameReceived">Called synchronously from <see cref="PushBit(int, float)"/> with each
@@ -159,6 +162,7 @@ internal sealed class Il2pReceiver
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _frameReceived = frameReceived;
+        _syncWord = (uint)(syncWord ?? Il2pCodec.SyncWord) & SyncMask;
 
         // On a crcMode: false link the one deframer IS the plain reading, and its frames are the
         // link's own traffic: RS-only, so worth badging, and delivered, because that is the mode
@@ -180,6 +184,41 @@ internal sealed class Il2pReceiver
                 : new Il2pDeframer(OnPlainDeframed, crcMode: false);
         }
     }
+
+    /// <summary>
+    /// Raised, synchronously from <see cref="PushBit(int, float)"/>, on the bit that completes
+    /// the sync word - where the frame's own bits begin, for a caller counting samples.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Watched here rather than asked of the deframer</b>, which is
+    /// <see cref="Il2pDeframer"/> in a package that reports frames and says nothing about where
+    /// they started. It watches the same 24 bits, from the same published constant
+    /// (<see cref="Il2pCodec.SyncWord"/>, or the non-standard word a C4FSK link uses), shifted
+    /// in most-significant bit first as the wire carries it.</para>
+    /// <para><b>And it applies the deframer's test, not a stricter one.</b> That deframer syncs
+    /// within a Hamming distance of one, and on the complemented word as well, so that a link
+    /// whose baseband arrives inverted still decodes - which is a property this tree relies on
+    /// (<see cref="C4fskModem"/>'s note, and the Dire Wolf cross-validation's inverted 9600
+    /// baseband). An exact-equality watcher looked right and was silently absent on every
+    /// inverted link and on every frame whose sync word took a single hit, which is the everyday
+    /// case at a working error rate. Verified against the pinned package by construction: one
+    /// flipped bit in the sync word still delivers a frame, two do not, and a wholly inverted
+    /// bit stream delivers.</para>
+    /// <para>Both readings of an IL2P+CRC link share it: they hunt the same word over the same
+    /// bits and start together, and which of them eventually delivers the frame does not move
+    /// where the frame began. See <see cref="Modems.FrameSpan"/> for what reads it.</para>
+    /// </remarks>
+    public Action? SyncFound { get; set; }
+
+    /// <summary>The sync word is 24 bits, whichever word a link uses.</summary>
+    private const uint SyncMask = 0xFFFFFF;
+
+    /// <summary>
+    /// How many bits must have entered the register before a match means anything, mirroring
+    /// the deframer's own hunt warm-up: until the register is full of received bits, a match is
+    /// against the zeros it was constructed with.
+    /// </summary>
+    private const int SyncWarmupBits = 23;
 
     /// <summary>Whether this receiver runs a second, plain reading alongside the link's own -
     /// true on every IL2P+CRC link, false on one that is already reading plain IL2P.</summary>
@@ -227,6 +266,15 @@ internal sealed class Il2pReceiver
     public void PushBit(int bit, float confidence)
     {
         _bitsPushed++;
+        _syncShift = ((_syncShift << 1) | (uint)(bit & 1)) & SyncMask;
+        if (_syncWarmup < SyncWarmupBits)
+        {
+            _syncWarmup++;
+        }
+        else if (SyncFound is { } syncFound && MatchesSync(_syncShift))
+        {
+            syncFound();
+        }
 
         // While a plain frame is held, the wire is delivering the very bits the hold exists
         // to wait for - the trailer. Collect them for the corroboration check at release.
@@ -252,6 +300,21 @@ internal sealed class Il2pReceiver
         }
     }
 
+    /// <summary>
+    /// Whether the register holds this link's sync word as the deframer would accept it: within
+    /// one bit of it, or within one bit of its complement.
+    /// </summary>
+    /// <remarks>
+    /// <c>difference ^ <see cref="SyncMask"/></c> is the complement test: the bits that differ
+    /// from the word are exactly the bits that agree with its complement.
+    /// </remarks>
+    private bool MatchesSync(uint shift)
+    {
+        uint difference = shift ^ _syncWord;
+        return System.Numerics.BitOperations.PopCount(difference) <= 1
+               || System.Numerics.BitOperations.PopCount(difference ^ SyncMask) <= 1;
+    }
+
     /// <summary>Abandons any frame in progress and returns to hunting for a sync word - see
     /// <see cref="Il2pDeframer.Reset"/>. Every caller does this on the DCD or burst falling
     /// edge.</summary>
@@ -266,6 +329,11 @@ internal sealed class Il2pReceiver
         ReleaseHeld();
         _deframer.Reset();
         _plainDeframer?.Reset();
+
+        // The hunt goes back to warming up with them: the register holds bits from a burst that
+        // has been abandoned, and a match against those is a match against nothing.
+        _syncShift = 0;
+        _syncWarmup = 0;
 
         // The late-reading guard must not survive the burst it was armed in. Its window is
         // sized for deframer skew within one transmission (a rewound collection), but at

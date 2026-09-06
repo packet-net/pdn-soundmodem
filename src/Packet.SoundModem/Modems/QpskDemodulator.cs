@@ -233,6 +233,16 @@ public sealed class QpskDemodulator
          _trackedRotation[0] / _delaySamples * _sampleRate / (2 * Math.PI));
 
     private long _chainSampleIndex = -1;
+    private long _inputSampleIndex = -1;
+
+    /// <summary>
+    /// How much audio this demodulator has been given, as the zero-based index of the input
+    /// sample it is working on - the same clock the channel counts its receive audio on, so a
+    /// mark taken here places a frame in the input stream exactly. Deliberately not
+    /// <c>_chainSampleIndex</c>, which counts the threefold-upsampled decode grid on the
+    /// differential path. See <see cref="Modems.FrameSpan"/>.
+    /// </summary>
+    public long InputSamplePosition => _inputSampleIndex;
 
     /// <summary>Creates a demodulator delivering dibits (left bit first) to
     /// <paramref name="dibitSink"/> once per symbol.</summary>
@@ -535,6 +545,8 @@ public sealed class QpskDemodulator
     {
         foreach (float sample in samples)
         {
+            _inputSampleIndex++;
+
             // Band-pass and energy detection stay on the input grid whatever the decode chain
             // does: they answer "is something there", which needs no sub-sample resolution, and
             // keeping them here means upsampling costs the decode chain only.

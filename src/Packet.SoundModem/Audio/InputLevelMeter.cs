@@ -88,6 +88,30 @@ public sealed class InputLevelMeter
     public const double HotPeakDbFs = -3;
 
     /// <summary>
+    /// At or above this - or with the card clipped - one frame's own peak is called too loud.
+    /// </summary>
+    /// <remarks>
+    /// The same edge as <see cref="HotPeakDbFs"/>, which is where the meter's bar turns red, and
+    /// written as that constant rather than as another -3 so the badge on a frame row and the
+    /// colour on the bar can never come to say different things. Here rather than beside the
+    /// panel that draws it because the verdict is the daemon's: the page is told <c>loud</c> or
+    /// <c>quiet</c>, and keeps its own copy of these two numbers only to word the explanation
+    /// (pinned by <c>The_Pages_Frame_Level_Thresholds_Are_The_Daemons</c>).
+    /// </remarks>
+    public const double FrameLoudPeakDbFs = HotPeakDbFs;
+
+    /// <summary>Below this, one frame's own peak is called too quiet.</summary>
+    /// <remarks>
+    /// Six dB under the bottom of the target zone, which is the headroom figure this tree already
+    /// works to and one S-point-ish step: a frame a little under the zone is not worth a badge -
+    /// every demodulator here is level-tolerant and being quiet costs nothing until it is very
+    /// quiet - but a frame this far under says the capture gain, or the far station, has
+    /// something wrong with it. Deliberately not <see cref="QuietPeakDbFs"/>, the meter's own
+    /// grey edge: that one is about a bar with nothing on the channel, and a frame is a signal.
+    /// </remarks>
+    public const double FrameQuietPeakDbFs = TargetPeakLowDbFs - 6;
+
+    /// <summary>
     /// How often a reading is produced: five a second, which is fast enough to see a slider move
     /// and slow enough that the message is nothing on any link that carries a waterfall.
     /// </summary>

@@ -88,6 +88,7 @@ public sealed class SoundModemChannel
     private readonly Random _random;
     private readonly SpectrumSource? _spectrum;
     private readonly BurstSnrMonitor _burstSnr;
+    private readonly FrameLevelMonitor _frameLevel;
     private readonly Action<int, ReadOnlyMemory<byte>>? _constellationSink;
     private volatile bool _transmitting;
 
@@ -116,6 +117,7 @@ public sealed class SoundModemChannel
         }
 
         _burstSnr = new BurstSnrMonitor(sampleRate);
+        _frameLevel = new FrameLevelMonitor(sampleRate);
         _constellationSink = constellationSink;
     }
 
@@ -179,8 +181,33 @@ public sealed class SoundModemChannel
             // sub-channel renews it too. That costs the others at most one more window each, and
             // a carrier we can decode is one CSMA would have deferred to anyway.
             NoteHeard(modem);
+
+            // Two measurements of the same burst, taken here for the same reason: how strong it
+            // was against the band's noise floor, and how loud it was against the converter's
+            // full scale. The second is not the first - a station can be the loudest thing on a
+            // quiet band and still be 30 dB under where the capture gain should put it - and it
+            // is the one an operator setting that gain needs per frame (issue #426).
+            //
+            // The span comes from the modem, taken from its own per-sample count while it was
+            // decoding, and is consumed by the asking. Nothing out here could work it out: this
+            // runs inside the modem's decode of one block, and on a station reading 100 ms
+            // blocks a whole qpsk3600 frame fits inside one with room to spare. A modem that
+            // does not report a span (FreeDV and MS110D decode from native frames, and the
+            // ARDOP bridge is not a modem at all) carries no level rather than a guessed one.
+            (double? peakDbFs, bool? clipped) =
+                modem is IFrameSpanSource source
+                && source.TryTakeFrameSpan(out long spanFrom, out long spanTo)
+                    ? _frameLevel.Measure(spanFrom, spanTo)
+                    : (null, null);
             FrameReceivedWithQuality?.Invoke(
-                subChannel, frame, quality with { SnrDb = _burstSnr.MeasureBurst(subChannel) });
+                subChannel,
+                frame,
+                quality with
+                {
+                    SnrDb = _burstSnr.MeasureBurst(subChannel),
+                    PeakDbFs = peakDbFs,
+                    Clipped = clipped,
+                });
         };
         if (_constellationSink is { } sink && modem is IConstellationSource psk)
         {
@@ -201,6 +228,27 @@ public sealed class SoundModemChannel
         _receiveTaps.Add(tap);
     }
 
+    /// <summary>
+    /// Offers one block of audio exactly as the sound card delivered it, at the card's own rate
+    /// and before any resampling, so that a decoded frame can say whether the converter clipped
+    /// while it was arriving (<see cref="Modems.FrameQuality.Clipped"/>).
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Clipping is the one reading that cannot be taken downstream of the decimator.</b>
+    /// On a 48 kHz card the audio the modems hear has been through a decimating FIR whose ripple
+    /// moves peaks either way, so a signal with real headroom at the converter can leave it at
+    /// full scale and one that genuinely railed can leave it lower - on the bench CM108 the
+    /// difference was about 1.3 dB (radio1, 2026-09-06). Only the card's own samples can answer
+    /// it, and only the host has them.</para>
+    /// <para>Call it with the block the device returned, immediately before the
+    /// <see cref="ProcessReceive"/> of what that block becomes, and not while the station is
+    /// keyed. Optional: a channel nobody hands card samples to reports clipping as null - not
+    /// measured - rather than as false. Called on the receive thread, so it returns promptly and
+    /// allocates nothing.</para>
+    /// </remarks>
+    /// <param name="samples">The block as the device delivered it, at the card's own rate.</param>
+    public void NoteCardClipping(ReadOnlySpan<float> samples) => _frameLevel.NoteCardClipping(samples);
+
     /// <summary>Feeds received audio to every modem and the spectrum source. Skipped
     /// while transmitting (half duplex).</summary>
     public void ProcessReceive(ReadOnlySpan<float> samples)
@@ -214,6 +262,7 @@ public sealed class SoundModemChannel
         // Below the half-duplex gate on purpose: our own transmission is not a signal we
         // heard, and feeding it here would attribute a huge SNR to whatever decodes next.
         _burstSnr.Process(samples);
+        _frameLevel.Process(samples);
         foreach (IModem modem in _modems.Values)
         {
             modem.Process(samples);

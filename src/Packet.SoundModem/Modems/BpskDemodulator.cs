@@ -461,6 +461,14 @@ public sealed class BpskDemodulator
         _mlse?.Reset();
     }
 
+    /// <summary>
+    /// How much audio this demodulator has been given, as the zero-based index of the input
+    /// sample it is working on - the same clock the channel counts its receive audio on, so a
+    /// mark taken here places a frame in the input stream exactly. See
+    /// <see cref="Modems.FrameSpan"/>.
+    /// </summary>
+    public long InputSamplePosition => _sampleIndex;
+
     /// <summary>Processes a block of audio samples.</summary>
     public void Process(ReadOnlySpan<float> samples)
     {
