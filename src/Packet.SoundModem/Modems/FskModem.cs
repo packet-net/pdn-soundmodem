@@ -100,7 +100,7 @@ public sealed class FskModem : IModem, IFrameSpanSource
     /// level: marked at the sync its deframer locked on and at the sample its last bit was taken
     /// on. See <see cref="FrameSpan"/>.
     /// </summary>
-    private readonly FrameSpan _span = new();
+    private readonly FrameSpan _span = new(TimingDiversity.PhaseCount);
 
     /// <summary>
     /// How much audio this modem has been given, as the zero-based index of the input sample it
@@ -174,6 +174,7 @@ public sealed class FskModem : IModem, IFrameSpanSource
         {
             for (int phase = 0; phase < _sinks.Length; phase++)
             {
+                int reading = phase;
                 var deframer = new HdlcDeframer(frame =>
                 {
                     if (!_deduper.ShouldEmit(frame, _symbolsSeen))
@@ -184,7 +185,7 @@ public sealed class FskModem : IModem, IFrameSpanSource
                     frameReceived(frame);
 
                     // Before the event, so the channel's handler reads this frame's span.
-                    _span.Complete(_inputSampleIndex);
+                    _span.Complete(reading, _inputSampleIndex);
 
                     // HDLC has no FEC: an FCS pass proves zero residual errors, not how many
                     // the channel had - CorrectedBytes is honestly null. What the phases buy
@@ -192,7 +193,7 @@ public sealed class FskModem : IModem, IFrameSpanSource
                     // multi-slicer decoders earn theirs.
                     FrameDecoded?.Invoke(frame, new FrameQuality(Mode, frame.Length, null, null));
                 });
-                deframer.FrameOpened = () => _span.Sync(_inputSampleIndex);
+                deframer.FrameOpened = () => _span.Sync(reading, _inputSampleIndex);
                 var descrambler = new G3ruhScrambler();
                 var nrzi = new NrziDecoder();
                 _sinks[phase] = level => deframer.PushBit(nrzi.Decode(descrambler.Descramble(level)));
@@ -203,6 +204,7 @@ public sealed class FskModem : IModem, IFrameSpanSource
             var deframers = new Il2pReceiver[TimingDiversity.PhaseCount];
             for (int phase = 0; phase < deframers.Length; phase++)
             {
+                int reading = phase;
                 var deframer = new Il2pReceiver(
                     (frame, info, delivery) =>
                     {
@@ -217,7 +219,7 @@ public sealed class FskModem : IModem, IFrameSpanSource
                         }
 
                         // Before the event, so the channel reads this frame's span.
-                        _span.Complete(_inputSampleIndex);
+                        _span.Complete(reading, _inputSampleIndex);
                         FrameDecoded?.Invoke(frame, new FrameQuality(
                             Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                             HeaderType: info.HeaderType,
@@ -226,7 +228,7 @@ public sealed class FskModem : IModem, IFrameSpanSource
                             MonitorOnly: delivery.MonitorOnly));
                     },
                     crcMode: framing == FskFraming.Il2pCrc, acceptPlainIl2p: acceptPlainIl2p);
-                deframer.SyncFound = () => _span.Sync(_inputSampleIndex);
+                deframer.SyncFound = () => _span.Sync(reading, _inputSampleIndex);
                 deframers[phase] = deframer;
                 _sinks[phase] = bit => deframer.PushBit(bit);
             }

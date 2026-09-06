@@ -2987,6 +2987,35 @@ await using var uplinkLifetime = uplink;
 long frameLogDropsSeen = 0;
 long captureDropsSeen = 0;
 
+// The card's own samples, before the decimator, for the two things that have to judge audio on
+// the scale the converter actually works on. They want different populations, so the tap is
+// composed here rather than either of them growing one of its own: there is one card, one block
+// and one place it arrives.
+//
+//   - The page's CLIP pill wants every station that has a meter, as it has since v0.59.0. On a
+//     Flex or an ubersdr feed the samples did not come from a converter of ours, and the pill has
+//     always said what it says about them; that is a shipped behaviour and not this feature's to
+//     change.
+//   - The clip flag a decoded frame carries wants a real sound card and nothing else. A frame
+//     that said its card had headroom - or ran out of codes - about a card this station does not
+//     have would be a fact invented, and null is what FrameQuality.Clipped's "not measured"
+//     means.
+ReceiveTap? cardRateTap = null;
+if (waterfallServer is { } metered)
+{
+    cardRateTap = alsaIn is null
+        ? metered.MeterInputClipping
+        : samples =>
+        {
+            channel.NoteCardClipping(samples);
+            metered.MeterInputClipping(samples);
+        };
+}
+else if (alsaIn is not null)
+{
+    cardRateTap = channel.NoteCardClipping;
+}
+
 // The station: the input, the channel it feeds, the watches that decide the feed has died,
 // and the loop that turns between them. One implementation for every device kind, so a
 // second flavour of deployment cannot quietly grow a second opinion about a dead feed.
@@ -3002,27 +3031,9 @@ using var station = new Station(
         BlockMilliseconds = ardopModem is null ? 100 : 20,
         SessionLive = uberSdrSessionLive,
 
-        // The card's own samples, for the two things that have to judge audio on the scale the
-        // converter actually works on: the page's clip indicator, and the clip flag a decoded
-        // frame carries. The channel's own tap is downstream of the decimator, where full scale
-        // is not full scale any more, so neither reading can be taken there. Both want the same
-        // block, so they are composed here rather than either of them growing a second tap:
-        // there is one card, one block and one place it arrives.
-        //
-        // Null unless there IS a converter. A Flex, an ubersdr feed and a WAV loop deliver
-        // samples that never went through one of ours, and running the clip test over them would
-        // have a frame say its card had headroom - or ran out of codes - about a card this
-        // station does not have. Absent is the honest answer there, and it is what
-        // FrameQuality.Clipped's null means.
-        CardRateTap = alsaIn is null
-            ? null
-            : waterfallServer is { } metered
-                ? samples =>
-                {
-                    channel.NoteCardClipping(samples);
-                    metered.MeterInputClipping(samples);
-                }
-                : channel.NoteCardClipping,
+        // Built above: the page's clip pill on every station with a meter, and the frame's own
+        // clip flag only where there is a converter to have run out of codes.
+        CardRateTap = cardRateTap,
 
         // A station that has deliberately given up its slice is silent on purpose, and restarting
         // it is the one response guaranteed to be wrong. Measured on the live 40 m station,

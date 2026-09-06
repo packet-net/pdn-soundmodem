@@ -1241,11 +1241,21 @@ sample by sample and so knows which sample its sync landed on and which its last
 The two native waveforms do not: `freedv-*` and `ms110d-*` hand blocks to a codec that reports
 frames and says nothing about where in the audio they were, so their rows carry no figure and no
 badge rather than a guessed one. Nor does a frame relayed from a station running an older
-release, or one replayed from a log written before the columns existed. The measurement is
-deliberately not inferred from the frame's length and the audio block it was reported in: on a
-station reading 100 ms blocks, a frame shorter than a block - which is every qpsk3600 frame under
-about 45 bytes - cannot be placed inside that block from outside it, and a peak over a guessed
-window reports whatever was loudest nearby.
+release, or one replayed from a log written before the columns existed, or one this station sent
+itself.
+
+**And which frames.** A little is trimmed off each end of the frame's span before it is read, to
+keep the demodulator's own filter delay out of the answer, so a frame has to be long enough to
+have something left. Measured across the catalogue, every mode carries a level from the smallest
+AX.25 frame there is (16 bytes, an empty UI frame) except `qpsk3600` and `c4fsk19200`, which need
+17; on every other size of every mode, a frame that decodes carries a figure. A frame that comes
+out too short to read reports no level rather than a bad one, and that is the only reason a
+packet mode's row would arrive without one.
+
+The measurement is deliberately not inferred from the frame's length and the audio block it was
+reported in: on a station reading 100 ms blocks, a frame shorter than a block - which is every
+qpsk3600 frame under about 45 bytes - cannot be placed inside that block from outside it, and a
+peak over a guessed window reports whatever was loudest nearby.
 
 **The rate.** Five readings a second, one per 200 ms. The boundary is checked when an audio block
 arrives, and the packet stations read 100 ms at a time (ARDOP 20 ms), so five is what you get; a

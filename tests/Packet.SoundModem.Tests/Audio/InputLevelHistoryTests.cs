@@ -31,6 +31,24 @@ public class InputLevelHistoryTests
         return block;
     }
 
+    /// <summary>
+    /// A cell is 10 ms on the channels that run at 12 kHz, and 120 samples wherever that is
+    /// shorter - which is the 48 kHz channels, where the fast modes live.
+    /// </summary>
+    /// <remarks>
+    /// A 17-byte c4fsk19200 frame is under 20 ms of air. With 10 ms cells there was nothing left
+    /// to read once each end of its span had been trimmed, so the modes Tom asked about most
+    /// loudly were the ones that got no figure.
+    /// </remarks>
+    [Fact]
+    public void A_Cell_Is_Never_Longer_Than_Ten_Milliseconds_Or_A_Hundred_And_Twenty_Samples()
+    {
+        new InputLevelHistory(8000).CellSamples.Should().Be(80, "10 ms at 8 kHz");
+        new InputLevelHistory(SampleRate).CellSamples.Should().Be(120, "10 ms at 12 kHz");
+        new InputLevelHistory(48000).CellSamples.Should().Be(
+            InputLevelHistory.MaximumCellSamples, "2.5 ms at 48 kHz, where the frames are short");
+    }
+
     [Fact]
     public void A_Cell_Reports_The_Loudest_Sample_In_Its_Own_Ten_Milliseconds()
     {
@@ -109,7 +127,7 @@ public class InputLevelHistoryTests
     public void A_Window_The_Ring_No_Longer_Holds_Is_Refused()
     {
         var history = new InputLevelHistory(SampleRate);
-        int wholeRing = (int)(InputLevelHistory.MemorySeconds * SampleRate);
+        int wholeRing = (int)(InputLevelHistory.MemorySeconds * SampleRate) + CellSamples;
         history.Add(Block(wholeRing + (10 * CellSamples), 0.5f));
 
         history.TryMeasure(0, CellSamples, out _, out _).Should().BeFalse(

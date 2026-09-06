@@ -325,35 +325,156 @@ public class FrameLevelTests
     }
 
     /// <summary>
-    /// Which modes can say where their frames were, and which cannot - pinned, because it is
-    /// what CONFIG.md tells an operator to expect a level on.
+    /// Two frames of the same quiet transmission, with something far louder between them, and
+    /// each reports its own level.
     /// </summary>
     /// <remarks>
-    /// Every packet demodulator here decodes in a streaming loop over input samples, so it knows
-    /// the sample its sync landed on and the sample its last bit landed on. The two native
-    /// waveforms do not: FreeDV and MS110D hand blocks to a codec that reports frames and nothing
-    /// about where in the audio they were. Those get no level rather than a guessed one, and a
-    /// new mode that quietly joined them would silently drop a column off the frame log.
+    /// <para>The shape that broke the first span mechanism. A mark was never spent, so a frame
+    /// that did not manage to mark a sync of its own was handed the previous frame's, and the
+    /// span it got covered both frames and everything in between - which is where the tone was.
+    /// The second frame decoded perfectly and reported the tone, badged TOO LOUD.</para>
+    /// <para>Run over a diversity bank as well as a single modem, because three of the four
+    /// banks then stored a branch's leftover span whenever they asked for one and did not get
+    /// it, which is the same wrong answer arriving by the other route.</para>
+    /// </remarks>
+    [Theory]
+    [InlineData("fsk9600-il2p")]
+    [InlineData("bpsk300")]
+    [InlineData("afsk1200-multi")]
+    public void Two_Quiet_Frames_Astride_Something_Loud_Each_Report_Their_Own_Level(string mode)
+    {
+        int rate = ModemCatalog.DspRateFor(mode);
+        var channel = new SoundModemChannel(rate, randomSeed: 7);
+        channel.AddModem(0, sink => ModemCatalog.Create(mode, rate, sink));
+        var heard = new List<FrameQuality>();
+        channel.FrameReceivedWithQuality += (_, _, quality) => heard.Add(quality);
+
+        float[] burst = Scaled(
+            ModemCatalog.Create(mode, rate, static _ => { })
+                .Modulate(Ax25UiFrame.Build("GB7RDG", "M0LTE", "astride"u8.ToArray()), 300),
+            QuietFramePeak);
+
+        // quiet, frame, a second of tone 33 dB louder, frame, quiet.
+        int gap = rate;
+        var audio = new float[(rate / 2) + burst.Length + gap + burst.Length + (rate / 2)];
+        int second = (rate / 2) + burst.Length + gap;
+        for (int n = 0; n < gap; n++)
+        {
+            audio[(rate / 2) + burst.Length + n] = Pcm16.ToFloat(Pcm16.FromFloat(
+                TonePeak * MathF.Sin(2 * MathF.PI * (rate * 5 / 12) * n / rate)));
+        }
+
+        burst.CopyTo(audio, rate / 2);
+        burst.CopyTo(audio, second);
+
+        int block = rate / 10;
+        foreach (float[] chunk in Blocks(audio, block))
+        {
+            channel.ProcessReceive(chunk);
+        }
+
+        heard.Should().HaveCountGreaterThanOrEqualTo(2, $"{mode} has to hear both frames");
+        foreach (FrameQuality quality in heard)
+        {
+            quality.PeakDbFs.Should().NotBeNull();
+            quality.PeakDbFs!.Value.Should().BeApproximately(
+                20 * Math.Log10(QuietFramePeak),
+                1,
+                "neither frame may be measured over the tone between them");
+        }
+    }
+
+    /// <summary>
+    /// A link whose baseband arrives inverted decodes, and its frames still carry a level.
+    /// </summary>
+    /// <remarks>
+    /// The IL2P deframer hunts its sync word within one bit and hunts the complemented word too,
+    /// so an inverted path decodes - a property this tree relies on, and one the Dire Wolf
+    /// cross-validation exercises with an inverted 9600 baseband. The watcher that stands in for
+    /// that hunt matched on exact equality in the first cut, so on an inverted link every frame
+    /// decoded and none of them got a level: the feature was silently absent.
+    /// </remarks>
+    [Theory]
+    [InlineData("fsk9600-il2p")]
+    [InlineData("fsk4800-il2p")]
+    public void An_Inverted_Baseband_Still_Carries_A_Level(string mode)
+    {
+        int rate = ModemCatalog.DspRateFor(mode);
+        var channel = new SoundModemChannel(rate, randomSeed: 7);
+        channel.AddModem(0, sink => ModemCatalog.Create(mode, rate, sink));
+        FrameQuality? heard = null;
+        channel.FrameReceivedWithQuality += (_, _, quality) => heard ??= quality;
+
+        float[] burst = Scaled(
+            ModemCatalog.Create(mode, rate, static _ => { })
+                .Modulate(Ax25UiFrame.Build("GB7RDG", "M0LTE", "inverted"u8.ToArray()), 300),
+            FramePeak);
+        var audio = new float[(rate / 2) + burst.Length + (rate / 2)];
+        for (int n = 0; n < burst.Length; n++)
+        {
+            audio[(rate / 2) + n] = -burst[n];
+        }
+
+        foreach (float[] chunk in Blocks(audio, rate / 10))
+        {
+            channel.ProcessReceive(chunk);
+        }
+
+        heard.Should().NotBeNull($"{mode} decodes an inverted baseband, which is the point");
+        heard!.Value.PeakDbFs.Should().NotBeNull(
+            "and the sync watcher accepts the same inversion the deframer does");
+        heard.Value.PeakDbFs!.Value.Should().BeApproximately(20 * Math.Log10(FramePeak), 1);
+    }
+
+    /// <summary>
+    /// Which modes can say where their frames were, and which cannot - measured by decoding one
+    /// real frame per mode, because it is what CONFIG.md tells an operator to expect a level on.
+    /// </summary>
+    /// <remarks>
+    /// Asking only whether a mode implements <see cref="IFrameSpanSource"/> pins nothing: every
+    /// mode here would pass that with a <c>TryTakeFrameSpan</c> that returned false for ever,
+    /// which is exactly what a sync watcher stricter than its deframer turns it into. So this
+    /// modulates a frame, decodes it, and asks what came back.
     /// </remarks>
     [Fact]
-    public void Every_Packet_Mode_Says_Where_Its_Frames_Were_And_The_Native_Ones_Do_Not()
+    public void Every_Packet_Mode_Reports_A_Level_For_A_Real_Frame_And_The_Native_Ones_Do_Not()
     {
-        var silent = new List<string>();
+        var withLevel = new List<string>();
+        var withoutLevel = new List<string>();
+        var undecoded = new List<string>();
         foreach (string mode in ModemCatalog.KnownModes)
         {
             int rate = ModemCatalog.DspRateFor(mode);
-            if (ModemCatalog.Create(mode, rate, static _ => { }) is not IFrameSpanSource)
+            var channel = new SoundModemChannel(rate, randomSeed: 7);
+            channel.AddModem(0, sink => ModemCatalog.Create(mode, rate, sink));
+            FrameQuality? heard = null;
+            channel.FrameReceivedWithQuality += (_, _, quality) => heard ??= quality;
+
+            float[] burst = Scaled(
+                ModemCatalog.Create(mode, rate, static _ => { })
+                    .Modulate(Ax25UiFrame.Build("GB7RDG", "M0LTE", "one frame each"u8.ToArray()), 300),
+                FramePeak);
+            var audio = new float[(rate / 2) + burst.Length + (rate / 2)];
+            burst.CopyTo(audio, rate / 2);
+            foreach (float[] chunk in Blocks(audio, rate / 10))
             {
-                silent.Add(mode);
+                channel.ProcessReceive(chunk);
             }
+
+            (heard is null ? undecoded : heard.Value.PeakDbFs is null ? withoutLevel : withLevel)
+                .Add(mode);
         }
 
-        silent.Should().OnlyContain(
+        undecoded.Should().BeEmpty("every mode decodes its own loopback");
+        withoutLevel.Should().OnlyContain(
             mode => mode.StartsWith("freedv-", StringComparison.Ordinal)
                     || mode.StartsWith("ms110d-", StringComparison.Ordinal),
-            "every mode that demodulates sample by sample can place its own frames, and only the "
-                + "two native block waveforms cannot");
-        silent.Should().NotBeEmpty("and the two that cannot are still in the catalogue");
+            "only the two native block waveforms cannot place their own frames");
+        withoutLevel.Should().NotBeEmpty("and those two are still in the catalogue");
+        withLevel.Should().Contain(
+            ["afsk1200", "afsk1200-fx25", "afsk1200-multi", "afsk300-il2pc", "bpsk300",
+             "bpsk300-multi", "qpsk3600", "fsk9600", "fsk9600-il2p", "c4fsk19200"],
+            "which is every packet family, its banks and both framings of them");
     }
 
     /// <summary>Runs the audio through a real station and returns the first frame's quality.</summary>

@@ -335,7 +335,12 @@ public sealed class BpskMultiModem : IModem, IConstellationSource, IFrameSpanSou
         // The branch's span goes into the candidate rather than being read at the emit below:
         // by then the chunk has moved on, and it is the branch that decoded this copy that knows
         // where it was. Consumed by the asking, so a branch cannot hand the same span twice.
-        branch.TryTakeFrameSpan(out long from, out long to);
+        // Only where the branch had one. The out values of a take that returned false are the
+        // branch's PREVIOUS span, so storing them regardless is how a frame ends up measured over
+        // an earlier one; an empty range is this bank saying it has nothing to report.
+        (long from, long to) = branch.TryTakeFrameSpan(out long marked, out long ended)
+            ? (marked, ended)
+            : (0, 0);
         _candidates.Add(new Candidate(frame, offsetHz, quality.FrequencyOffsetHz, quality, from, to));
     }
 

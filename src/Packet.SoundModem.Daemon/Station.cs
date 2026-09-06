@@ -559,9 +559,10 @@ internal sealed record StationOptions
     /// not full scale at the card. Two things need it: the waterfall's level meter, for its clip
     /// indicator (<c>WaterfallWebServer.MeterInputClipping</c>), and the channel, for the clip
     /// flag each decoded frame carries (<c>SoundModemChannel.NoteCardClipping</c>). The daemon
-    /// composes the pair into this one tap, and leaves it null on a station whose audio does not
-    /// come from a converter of ours at all - a Flex, an ubersdr feed - where there is nothing to
-    /// judge and "not measured" is the answer both want.</para>
+    /// composes them into this one tap, and the two want different stations: the meter has read
+    /// whatever the station's input delivers since v0.59.0, while the frame's flag is only wired
+    /// where the input really is a sound card, because a frame on a Flex or an ubersdr feed
+    /// cannot honestly say anything about a converter this station does not have.</para>
     /// <para>Called on the receive loop's own thread, once per block, and skipped for any block
     /// the station was keyed during - so it must return promptly and must not allocate. The span
     /// is the loop's buffer and is not valid after the call returns.</para>

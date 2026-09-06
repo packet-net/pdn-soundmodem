@@ -35,33 +35,32 @@ namespace Packet.SoundModem.Channel;
 internal sealed class FrameLevelMonitor
 {
     /// <summary>
-    /// How much of each end of the span is left out of the reading.
+    /// How much of each end of the span is left out of the reading, in samples.
     /// </summary>
     /// <remarks>
     /// <para>Both of a span's marks are late by the demodulator's own front-end group delay -
     /// the band-pass and matched filters between the antenna and the bit - because both are
-    /// taken from the same chain. The span's length is therefore right and its position is a few
-    /// milliseconds late, so its late end overhangs the burst by that much. Measured through the
-    /// real channel by the review of the first cut: 15.8 ms on bpsk300, 6.7 ms on afsk1200,
-    /// 3.3 ms on qpsk3600. This is wider than the worst of those, and wider again than one cell,
-    /// so the overhang cannot reach the reading whatever the mode - which matters because the
-    /// reading is a peak, and one cell of loud audio at the edge takes the whole answer
-    /// over.</para>
+    /// taken from the same chain. The span's length is therefore right and its position is a
+    /// little late, so its late end overhangs the burst by that much, and the reading is a peak,
+    /// so one cell of louder audio hanging over the edge takes the whole answer over.</para>
+    /// <para><b>Samples, not milliseconds.</b> The overhang is a few symbol periods of the
+    /// front end, so it shrinks with the symbol rate rather than staying put in time, and the
+    /// channels that run at 48 kHz here are exactly the fast modes. Measured through the real
+    /// channel by the review: the worst overhang is 17.1 ms on the 12 kHz modes (bpsk300 and
+    /// qpsk600, 205 samples) and 0.4 ms on the 48 kHz ones (19 samples). One count of samples
+    /// covers both with room - 20 ms at 12 kHz, 5 ms at 48 kHz - where 25 ms flat took the level
+    /// away from most real frames on the 9600 and 19200 modes, which are the ones this feature
+    /// was asked for.</para>
     /// <para>Taken off the near end too. Nothing measured needs it there - the mark is already
     /// inside the burst, with the sender's transmit delay in front of it - but it costs a long
     /// frame nothing, it covers a sync taken a symbol early, and a rule with one number in it is
     /// a rule that can be checked.</para>
     /// </remarks>
-    public const double MarginMilliseconds = 25;
+    public const int MarginSamples = 240;
 
     private readonly InputLevelHistory _history;
-    private readonly int _marginSamples;
 
-    public FrameLevelMonitor(int sampleRate)
-    {
-        _history = new InputLevelHistory(sampleRate);
-        _marginSamples = (int)Math.Round(sampleRate * MarginMilliseconds / 1000);
-    }
+    public FrameLevelMonitor(int sampleRate) => _history = new InputLevelHistory(sampleRate);
 
     /// <summary>Feeds received (never transmitted) audio, at the channel's rate.</summary>
     public void Process(ReadOnlySpan<float> samples) => _history.Add(samples);
@@ -82,8 +81,8 @@ internal sealed class FrameLevelMonitor
     /// <returns>The peak in dBFS over the frame's own audio and whether the card clipped in it.</returns>
     public (double? PeakDbFs, bool? Clipped) Measure(long fromSample, long toSample)
     {
-        long from = fromSample + _marginSamples;
-        long to = toSample - _marginSamples;
+        long from = fromSample + MarginSamples;
+        long to = toSample - MarginSamples;
         return _history.TryMeasure(from, to, out double peakDbFs, out bool? clipped)
             ? (Math.Round(peakDbFs, 1), clipped)
             : (null, null);

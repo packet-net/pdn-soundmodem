@@ -60,7 +60,7 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
     /// level: marked at the sync its deframer locked on and at the sample its last bit was taken
     /// on. See <see cref="FrameSpan"/>.
     /// </summary>
-    private readonly FrameSpan _span = new();
+    private readonly FrameSpan _span = new(PhaseFractions.Length);
 
     /// <summary>
     /// How much audio this modem has been given, as the zero-based index of the input sample it
@@ -235,6 +235,7 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
         _deframers = new Il2pReceiver[PhaseFractions.Length];
         for (int phase = 0; phase < _deframers.Length; phase++)
         {
+            int reading = phase;
             _deframers[phase] = new Il2pReceiver(
                 (frame, info, delivery) =>
                 {
@@ -249,7 +250,7 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
                     }
 
                     // Before the event, so the channel's handler reads this frame's span.
-                    _span.Complete(_inputSampleIndex);
+                    _span.Complete(reading, _inputSampleIndex);
                     FrameDecoded?.Invoke(frame, new FrameQuality(
                         Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                         HeaderType: info.HeaderType,
@@ -258,7 +259,7 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
                         MonitorOnly: delivery.MonitorOnly));
                 },
                 crcMode: crc, acceptPlainIl2p: acceptPlainIl2p, syncWord: SyncWord);
-            _deframers[phase].SyncFound = () => _span.Sync(_inputSampleIndex);
+            _deframers[phase].SyncFound = () => _span.Sync(reading, _inputSampleIndex);
         }
 
         _ffeTaps = new float[PhaseFractions.Length * FfeLength];

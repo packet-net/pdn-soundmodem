@@ -33,8 +33,19 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
     /// </summary>
     private readonly FrameSpan _span = new();
 
-    /// <summary>Where each branch's deframers last locked on to an opening flag, on that
-    /// branch's own demodulator's count of input samples.</summary>
+    /// <summary>
+    /// Where each branch's deframers last locked on to an opening flag, on that branch's own
+    /// demodulator's count of input samples - one mark per branch <em>per timing phase</em>,
+    /// indexed <c>branch * phases + phase</c>.
+    /// </summary>
+    /// <remarks>
+    /// Per phase because an HDLC deframer opens a frame on every flag, including the closing
+    /// flag of the frame another phase is in the middle of delivering: with one mark per branch
+    /// a phase that decoded nothing could move the mark of the phase that did, and collapse its
+    /// span to a couple of milliseconds. Spent when it is used, for the same reason
+    /// <see cref="FrameSpan.Complete"/> spends one: a frame with no mark of its own must get no
+    /// span rather than the last frame's.
+    /// </remarks>
     private readonly long[] _syncAt;
 
     private long _samplesProcessed;
@@ -95,7 +106,7 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
         int frequencyCount = 2 * offsetPairs + 1;
         _demodulators = new AfskDemodulator[frequencyCount * emphasisCount];
         _preFilters = new EmphasisFilter[_demodulators.Length];
-        _syncAt = new long[_demodulators.Length];
+        _syncAt = new long[_demodulators.Length * AfskDemodulator.TimingPhaseCount];
         Array.Fill(_syncAt, -1);
         for (int i = 0; i < _demodulators.Length; i++)
         {
@@ -115,9 +126,11 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
             for (int phase = 0; phase < phases; phase++)
             {
                 nrzi[phase] = new NrziDecoder();
-                deframers[phase] = new HdlcDeframer(frame => OnFrame(frame, offset, emphasisDb, branch));
+                int reading = (branch * phases) + phase;
+                deframers[phase] = new HdlcDeframer(
+                    frame => OnFrame(frame, offset, emphasisDb, branch, reading));
                 deframers[phase].FrameOpened =
-                    () => _syncAt[branch] = _demodulators[branch].InputSamplePosition;
+                    () => _syncAt[reading] = _demodulators[branch].InputSamplePosition;
             }
 
             _demodulators[i] = new AfskDemodulator(
@@ -261,13 +274,19 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
     // Several branches usually decode the same transmission within a frame-time of each
     // other, which is well inside one chunk. Hold them all and let the chunk end decide,
     // rather than emitting whichever finished first.
-    private void OnFrame(byte[] frame, double offsetHz, int emphasisDb, int branch) =>
+    private void OnFrame(byte[] frame, double offsetHz, int emphasisDb, int branch, int reading)
+    {
         // The branch's marks go into the candidate rather than being read at the emit below: by
         // then the chunk has moved on, and it is the branch that decoded this copy that knows
-        // where it was.
+        // where it was. The mark is spent by the reading of it, so a later frame that carries no
+        // mark of its own gets an empty range and no level rather than this frame's.
+        long syncAt = _syncAt[reading];
+        _syncAt[reading] = -1;
+        long ended = _demodulators[branch].InputSamplePosition;
         _candidates.Add(new Candidate(
             frame, offsetHz, _demodulators[branch].CarrierOffsetHz, emphasisDb,
-            _syncAt[branch], _demodulators[branch].InputSamplePosition));
+            syncAt < 0 ? 0 : syncAt, syncAt < 0 ? 0 : ended));
+    }
 
     /// <summary>
     /// Emits one frame per distinct transmission seen this chunk, from the branch that was

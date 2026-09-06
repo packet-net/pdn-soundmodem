@@ -21,7 +21,7 @@ public sealed class QpskModem : IModem, IConstellationSource, IFrameSpanSource
     /// level (see <see cref="FrameSpan"/>). Marked at the sync its deframer locked on and at the
     /// sample its last bit was taken on, both from the demodulator's own count of input samples.
     /// </summary>
-    private readonly FrameSpan _span = new();
+    private readonly FrameSpan _span = new(QpskDemodulator.TimingPhaseCount);
 
     private readonly FrameDeduper _deduper;
     private readonly int _bitRate;
@@ -52,6 +52,7 @@ public sealed class QpskModem : IModem, IConstellationSource, IFrameSpanSource
         _deframers = new Il2pReceiver[QpskDemodulator.TimingPhaseCount];
         for (int phase = 0; phase < _deframers.Length; phase++)
         {
+            int reading = phase;
             _deframers[phase] = new Il2pReceiver(
                 (frame, info, delivery) =>
                 {
@@ -66,7 +67,7 @@ public sealed class QpskModem : IModem, IConstellationSource, IFrameSpanSource
                     }
 
                     // Before the event, so the channel's handler reads this frame's span.
-                    _span.Complete(demodulator!.InputSamplePosition);
+                    _span.Complete(reading, demodulator!.InputSamplePosition);
                     FrameDecoded?.Invoke(frame, new FrameQuality(
                         Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                         // The measurement BpskModem has carried since issue #202; without it
@@ -80,7 +81,7 @@ public sealed class QpskModem : IModem, IConstellationSource, IFrameSpanSource
                         MonitorOnly: delivery.MonitorOnly));
                 },
                 crc, acceptPlainIl2p);
-            _deframers[phase].SyncFound = () => _span.Sync(demodulator!.InputSamplePosition);
+            _deframers[phase].SyncFound = () => _span.Sync(reading, demodulator!.InputSamplePosition);
         }
 
         // Reset the deframers when the carrier goes - same rationale as BpskModem: a

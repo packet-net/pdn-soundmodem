@@ -29,14 +29,27 @@ namespace Packet.SoundModem.Audio;
 /// </remarks>
 public sealed class InputLevelHistory
 {
-    /// <summary>How much audio one cell covers.</summary>
+    /// <summary>The longest a cell is allowed to cover.</summary>
     /// <remarks>
-    /// 10 ms is short enough to sit inside the shortest frame this is for - a minimal qpsk3600
-    /// frame is around 90 ms of air - and long enough that a cell of a modulated signal holds
-    /// several cycles of it, so a cell's peak is the burst's envelope rather than wherever the
-    /// waveform happened to be sampled.
+    /// 10 ms is short enough to sit inside the shortest frame on the 12 kHz modes - a minimal
+    /// qpsk3600 frame is around 90 ms of air - and long enough that a cell of a modulated signal
+    /// holds several cycles of it, so a cell's peak is the burst's envelope rather than wherever
+    /// the waveform happened to be sampled.
     /// </remarks>
     public const double CellMilliseconds = 10;
+
+    /// <summary>And the longest, in samples, whatever the rate.</summary>
+    /// <remarks>
+    /// <para>The 48 kHz channels carry the fast modes, whose frames are short in time as well as
+    /// in bytes: a 17-byte c4fsk19200 frame is under 20 ms of air, so 10 ms cells leave nothing
+    /// to read once each end has been trimmed, and the mode Tom asked about loudest is the one
+    /// that gets no figure. Capping the cell at 120 samples makes it 2.5 ms there - 24 symbols
+    /// at 9600 baud, still a peak of the envelope rather than of one cycle - and leaves the
+    /// 12 kHz channels on the 10 ms it was chosen for.</para>
+    /// <para>The ring grows to match, so the memory follows the rate: about 5 KB per channel at
+    /// 12 kHz and 19 KB at 48 kHz, preallocated once.</para>
+    /// </remarks>
+    public const int MaximumCellSamples = 120;
 
     /// <summary>How far back the ring remembers.</summary>
     /// <remarks>
@@ -71,8 +84,9 @@ public sealed class InputLevelHistory
     public InputLevelHistory(int sampleRate)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(sampleRate, 0);
-        _cellSamples = Math.Max(1, (int)Math.Round(sampleRate * CellMilliseconds / 1000));
-        _cells = (int)Math.Ceiling(MemorySeconds * 1000 / CellMilliseconds);
+        _cellSamples = Math.Clamp(
+            (int)Math.Round(sampleRate * CellMilliseconds / 1000), 1, MaximumCellSamples);
+        _cells = (int)Math.Ceiling(MemorySeconds * sampleRate / _cellSamples);
         _peak = new float[_cells];
         _clipped = new bool[_cells];
     }
