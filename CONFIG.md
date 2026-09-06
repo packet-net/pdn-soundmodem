@@ -1340,12 +1340,13 @@ so a readout that existed only during the keyup was one nobody ever managed to r
 figures without saying they are held would be worse, which is why the state is said in words as
 well as in colour. An SWR of 2.0 or more is flagged in either state.
 
-**Each modem's label says whether a host is attached.** The chips under the header carry the KISS
-attachment state - `1 host`, `2 hosts` or `no host` - covering both that modem's dedicated port
-and the multiplexed one, since either can reach it; the tooltip breaks it down by port. A node
-that quietly drops its TCP session stops passing traffic, and from the modem's side that is
-indistinguishable from a band that went quiet: the journal says so once, at the moment it happens,
-and then scrolls away. This follows clients in and out live.
+**Each modem's label says which KISS port reaches it, and whether a host is attached.** The chips
+under the header carry both, as `KISS 8105, no host` or `KISS 8105: 2 hosts` - covering both that
+modem's dedicated port and the multiplexed one when both reach it, since either can carry its
+traffic; the tooltip breaks the count down by port. A node that quietly drops its TCP session
+stops passing traffic, and from the modem's side that is indistinguishable from a band that went
+quiet: the journal says so once, at the moment it happens, and then scrolls away. This follows
+clients in and out live.
 
 **Your own frames are listed too**, in the decoded-frames panel, marked **TX** and styled apart
 so a transmission can never be misread as a station heard. The panel was a record of half the

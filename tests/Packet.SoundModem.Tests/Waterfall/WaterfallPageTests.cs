@@ -691,13 +691,18 @@ public class WaterfallPageTests
         probe.ChipsAttached[0].Should().Contain("2 hosts")
             .And.Contain("class=\"host on\"", "attached is the state that reads as good")
             .And.Contain("8105 (all modems): 1 connected", "the tooltip says which port")
-            .And.Contain("8101 (this modem): 1 connected");
+            .And.Contain("8101 (this modem): 1 connected")
+            // The port numbers used to live in the tooltip alone; #427 asks for them in the
+            // always-visible chip text too, the shared port and the modem's own dedicated one
+            // both, since both reach this modem.
+            .And.Contain("KISS 8105, 8101: 2 hosts");
 
         // And it follows them out again, which is the state worth noticing.
         probe.ChipsDetached.Should().ContainSingle();
         probe.ChipsDetached[0].Should().Contain("no host")
             .And.Contain("class=\"host\"", "nothing attached must not be wearing the good colour")
-            .And.Contain("nothing connected");
+            .And.Contain("nothing connected")
+            .And.Contain("KISS 8105, 8101, no host", "the ports stay in the text when nobody is attached");
 
         // The rest of the label is untouched: the badge is an addition, not a replacement.
         probe.ChipsDetached[0].Should().Contain("AFSK1200").And.Contain("1723 Hz");
@@ -973,6 +978,90 @@ public class WaterfallPageTests
         probe.TxTestSaid.Should().Contain("no \"ptt\" is configured");
         probe.TxTestLabel.Should().BeNull("nothing was ever on the air, so nothing became Stop");
         asked.Should().BeEmpty("and pressing it asks the station for nothing");
+    }
+
+    /// <summary>
+    /// The button must never be clickable when a click could not possibly reach the daemon.
+    /// </summary>
+    /// <remarks>
+    /// A WebSocket frame handed to a socket that is not open is not queued and not retried - it is
+    /// simply not sent - and neither outcome ever shows up as a request in the browser's network
+    /// tab, so "the button did nothing, and there was nothing in the network tab" is exactly what
+    /// a click that reached the daemon looks like too. The only report an operator can trust is
+    /// the button itself refusing the click (#425).
+    /// </remarks>
+    [Fact]
+    public async Task The_Tx_Test_Button_Is_Disabled_While_The_Socket_Is_Not_Open()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port, new WaterfallOptions
+        {
+            TxTest = new TxTestControl
+            {
+                DefaultSeconds = 5,
+                MaxSeconds = 30,
+                Start = _ => { },
+                Stop = () => { },
+            },
+        });
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port, txTestClose: true);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw when its own socket closes under it");
+        probe.TxTestOffered.Should().BeTrue();
+        probe.TxTestDisabled.Should().BeFalse("the control works before the socket closes");
+        probe.TxTestDisabledWhileClosed.Should().BeTrue(
+            "a click while the socket is not open would send nothing, silently, which must never "
+            + "be what a visible Stop or Send does");
+        probe.TxTestTitleWhileClosed.Should().Contain(
+            "Reconnecting", "the disabled button says why, not only that it is");
+    }
+
+    /// <summary>
+    /// A page that connects, or reconnects, finds out whether a test is already running from the
+    /// daemon's own answer rather than assuming either way.
+    /// </summary>
+    /// <remarks>
+    /// A test that was running when a socket dropped may still be running when it comes back - or
+    /// it may have been started by another tab, or by <c>/api/txtest</c>, while this one was away.
+    /// A <c>TxTestStatus</c> event only ever reaches a page that was already listening when it was
+    /// sent, so a page that just connected has to be told the current state some other way: every
+    /// config message now carries it (<c>txTest.running</c>), including a reconnect's (#425).
+    /// </remarks>
+    [Fact]
+    public async Task The_Tx_Test_Button_Follows_The_Servers_Own_Running_State_On_A_Fresh_Config()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port, new WaterfallOptions
+        {
+            TxTest = new TxTestControl
+            {
+                DefaultSeconds = 5,
+                MaxSeconds = 30,
+                Start = _ => { },
+                Stop = () => { },
+            },
+        });
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port, txTestResync: true);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw on a synthetic config");
+        probe.TxTestLabelFromRunningConfig.Should().Be(
+            "Stop", "the config said a test is running, and nothing on this page started it");
+        probe.TxTestLabelFromStoppedConfig.Should().Be(
+            "Send", "and it follows the config back down again");
     }
 
     private static void FeedTone(SoundModemChannel channel, CancellationToken token)
@@ -1383,7 +1472,8 @@ public class WaterfallPageTests
         string node, int port, bool audio = false, string? protocol = null, string? pathname = null,
         string? stored = null, string? pageText = null, string? txTest = null, string? apiKey = null,
         bool mixer = false, double? mixerGain = null, double? mixerPlayback = null,
-        bool meter = false, bool meterTimers = false)
+        bool meter = false, bool meterTimers = false, bool txTestClose = false,
+        bool txTestResync = false)
     {
         string here = Path.GetDirectoryName(typeof(WaterfallPageTests).Assembly.Location)!;
         var start = new ProcessStartInfo(node)
@@ -1404,6 +1494,8 @@ public class WaterfallPageTests
         if (mixer) start.Environment["MIXER"] = "1";
         if (meter) start.Environment["METER"] = "1";
         if (meterTimers) start.Environment["METERTIMERS"] = "1";
+        if (txTestClose) start.Environment["TXTEST_CLOSE"] = "1";
+        if (txTestResync) start.Environment["TXTEST_RESYNC"] = "1";
         if (mixerGain is double gain)
         {
             start.Environment["MIXGAIN"] = gain.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -2100,6 +2192,8 @@ public class WaterfallPageTests
         string TxTestSaid,
         string? TxTestLabel,
         string? TxTestSaidAfter,
+        string? TxTestLabelFromRunningConfig,
+        string? TxTestLabelFromStoppedConfig,
         string? ClickError,
         bool Listening,
         string Label,
@@ -2161,6 +2255,8 @@ public class WaterfallPageTests
         MeterPanel? MeterAfterClip,
         MeterPanel? MeterStale,
         MeterPanel? MeterClipExpired,
+        bool? TxTestDisabledWhileClosed,
+        string? TxTestTitleWhileClosed,
         string[] Thrown);
 
     /// <summary>

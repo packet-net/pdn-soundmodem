@@ -1047,6 +1047,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                     toneHz = p.ToneHz,
                     deviationHz = Math.Round(p.DeviationHz),
                 }),
+                // Read fresh into every config, including a reconnect's: a TxTestStatus event only
+                // ever reaches a page that was already listening when it was sent, so this is the
+                // only way a page that just connected or reconnected finds out a test already
+                // under way is not its own to assume stopped (#425).
+                running = test.IsRunning?.Invoke() ?? false,
             },
             modems = _bands.Select(b => new
             {

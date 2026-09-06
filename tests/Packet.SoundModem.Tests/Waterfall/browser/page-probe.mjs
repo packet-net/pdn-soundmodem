@@ -345,6 +345,23 @@ if (process.env.TXTEST) {
   txTestSaidAfter = run(`document.getElementById("txTestWhat").textContent`);
 }
 
+// Whether the button follows the daemon's own answer for whether a test is running, on a config
+// that says so without this page having clicked anything - the shape of a reconnect after a test
+// outlived the socket drop, or another tab (or /api/txtest) starting one while this tab was away.
+// Delivered as a synthetic config through the page's own socket handler, the same technique the
+// version-reload check further down uses, because what is under test is the page's reaction to
+// the message rather than the reconnect machinery that would normally deliver it (#425).
+let txTestLabelFromRunningConfig = null, txTestLabelFromStoppedConfig = null;
+if (process.env.TXTEST_RESYNC) {
+  const deliverTxTest = (running) => run(
+    `ws.onmessage({ data: JSON.stringify(Object.assign({}, cfg, ` +
+    `{ txTest: Object.assign({}, cfg.txTest, { running: ${running} }) })) })`);
+  deliverTxTest(true);
+  txTestLabelFromRunningConfig = run(`document.getElementById("txTestGo").textContent`);
+  deliverTxTest(false);
+  txTestLabelFromStoppedConfig = run(`document.getElementById("txTestGo").textContent`);
+}
+
 let clickError = null;
 try { vm.runInContext(`document.getElementById("listen").click()`, sandbox); }
 catch (e) { clickError = String(e); }
@@ -766,6 +783,23 @@ if (process.env.MIXPLAY) {
   mixerAfterPlay = mixerPanel();
 }
 
+// A closed socket must never leave a clickable Stop, or a clickable Send that would look like one
+// once pressed: a message handed to a socket that is not open is not queued and not retried, it
+// is simply not sent, and neither outcome ever appears in the browser's network tab - "nothing in
+// the network tab" after a click is exactly what a message that reached the daemon looks like
+// too, over a WebSocket, so it cannot be read as proof the click did nothing (#425). Gated and run
+// last, against the real socket rather than a message the page would only be sending itself: every
+// step above this one may depend on it being open, and nothing below it does.
+let txTestDisabledWhileClosed = null;
+let txTestTitleWhileClosed = null;
+if (process.env.TXTEST_CLOSE) {
+  const goEl = () => sandbox.document.getElementById("txTestGo");
+  run("ws.close()");
+  await untilTrue(() => goEl().disabled === true, 5000);
+  txTestDisabledWhileClosed = goEl().disabled;
+  txTestTitleWhileClosed = goEl().title;
+}
+
 process.stdout.write(JSON.stringify({
   mixerOnArrival,
   mixerAfterGain,
@@ -837,6 +871,8 @@ process.stdout.write(JSON.stringify({
   txTestSaid,
   txTestLabel,
   txTestSaidAfter,
+  txTestLabelFromRunningConfig,
+  txTestLabelFromStoppedConfig,
   clickError,
   listening,
   label,
@@ -844,5 +880,7 @@ process.stdout.write(JSON.stringify({
   peakAmplitude: Number(whilePlaying.peak.toFixed(3)),
   blocksAfterStop: sandbox.__stats().played - at,
   stoppedLabel: run(`document.getElementById("listen").textContent`),
+  txTestDisabledWhileClosed,
+  txTestTitleWhileClosed,
   thrown,
 }) + "\n", () => process.exit(0));
