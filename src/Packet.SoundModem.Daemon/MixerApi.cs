@@ -15,23 +15,13 @@ public sealed class MixerChange
     [JsonPropertyName("captureGainDb")]
     public double? CaptureGainDb { get; set; }
 
-    /// <summary>Automatic gain control on or off.</summary>
-    [JsonPropertyName("agc")]
-    public bool? Agc { get; set; }
-
-    /// <summary>Microphone boost on or off.</summary>
-    [JsonPropertyName("micBoost")]
-    public bool? MicBoost { get; set; }
-
     /// <summary>Transmit-side playback level in dB, inside the card's range.</summary>
     [JsonPropertyName("playbackDb")]
     public double? PlaybackDb { get; set; }
 
     /// <summary>Whether this asks for anything at all.</summary>
     [JsonIgnore]
-    public bool SetsAnything =>
-        CaptureGainDb is not null || Agc is not null
-        || MicBoost is not null || PlaybackDb is not null;
+    public bool SetsAnything => CaptureGainDb is not null || PlaybackDb is not null;
 
     /// <summary>What this asks for, in one phrase, for a journal line.</summary>
     public string Describe()
@@ -40,16 +30,6 @@ public sealed class MixerChange
         if (CaptureGainDb is double capture)
         {
             parts.Add($"{MixerSetup.CaptureKey} {MixerSetup.Db(capture)} dB");
-        }
-
-        if (Agc is bool agc)
-        {
-            parts.Add($"agc {(agc ? "on" : "off")}");
-        }
-
-        if (MicBoost is bool boost)
-        {
-            parts.Add($"micBoost {(boost ? "on" : "off")}");
         }
 
         if (PlaybackDb is double playback)
@@ -77,9 +57,12 @@ public sealed class MixerChange
         return baseline with
         {
             CaptureGainDb = CaptureGainDb,
-            Agc = Agc,
-            MicBoost = MicBoost,
             PlaybackDb = PlaybackDb,
+
+            // A request never forces the switches off: they were forced off at start-up and a
+            // GET or a POST is not a start-up. Writing to a card in answer to a read would also
+            // make --mixer-show and the page's own probe change the station they are describing.
+            ForceAgcAndBoostOff = false,
 
             // Nothing here came from the config file or the state file: it came from whoever is
             // holding the API key, this second. Saying "config" beside it would be a lie the
@@ -112,9 +95,9 @@ internal static class MixerApi
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true,
         // A field this does not know is refused rather than dropped, which is the same answer the
-        // config file gives the same four keys. Dropped, {"captureGain": 6, "agc": false} would
-        // set the AGC, silently ignore the gain, and report success - and the caller's only clue
-        // would be a read-back they did not think to check.
+        // config file gives the same keys. Dropped, {"captureGain": 6, "playbackDb": -8} would
+        // set the transmit level, silently ignore the capture gain, and report success - and the
+        // caller's only clue would be a read-back they did not think to check.
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
 
@@ -139,14 +122,17 @@ internal static class MixerApi
         change = new MixerChange();
         why = "";
 
-        // The renamed keys first, and by name rather than by letting the strict reader trip over
-        // them, because "captureGainPercent is not a field this endpoint knows" is true and
-        // useless to somebody whose script worked in 0.57.0. The unit changed as well as the
+        // The keys that are gone first, and by name rather than by letting the strict reader
+        // trip over them, because "captureGainPercent is not a field this endpoint knows" is true
+        // and useless to somebody whose script worked in 0.57.0. The unit changed as well as the
         // name: 60 used to mean 60% of the card's range and now means 60 dB, which on the bench
-        // CM108 is 37 dB past the top of it. Aliasing them would have set exactly that.
-        if (Renamed(body) is string renamed)
+        // CM108 is 37 dB past the top of it. Aliasing them would have set exactly that. "agc" and
+        // "micBoost" went the same way in 0.59.0 for a different reason - they are switched off
+        // at every start-up and are not settings any more - and a script that still sends one
+        // deserves to be told which of the two happened to it.
+        if (Gone(body) is string gone)
         {
-            why = renamed;
+            why = gone;
             return false;
         }
 
@@ -157,16 +143,16 @@ internal static class MixerApi
         catch (JsonException e)
         {
             why = $"the body must be a JSON object of mixer settings - {MixerSetup.CaptureKey}, "
-                + $"agc, micBoost, {MixerSetup.PlaybackKey} - e.g. "
-                + $"{{\"{MixerSetup.CaptureKey}\": 6.0, \"agc\": false}}. The levels are in dB; "
-                + "GET this endpoint for the card's own range. " + e.Message;
+                + $"{MixerSetup.PlaybackKey} - e.g. "
+                + $"{{\"{MixerSetup.CaptureKey}\": 6.0}}. The levels are in dB; GET this "
+                + "endpoint for the card's own range. " + e.Message;
             return false;
         }
 
         if (!change.SetsAnything)
         {
-            why = $"no mixer settings in the body. Send at least one of {MixerSetup.CaptureKey}, "
-                + $"agc, micBoost or {MixerSetup.PlaybackKey}; an empty object would change nothing.";
+            why = $"no mixer settings in the body. Send {MixerSetup.CaptureKey}, "
+                + $"{MixerSetup.PlaybackKey}, or both; an empty object would change nothing.";
             return false;
         }
 
@@ -174,10 +160,10 @@ internal static class MixerApi
     }
 
     /// <summary>
-    /// The refusal for a body still carrying one of the percentage keys, or null.
+    /// The refusal for a body still carrying a key that no longer exists, or null.
     /// </summary>
     /// <param name="body">The request body.</param>
-    private static string? Renamed(string body)
+    private static string? Gone(string body)
     {
         JsonNode? root;
         try
@@ -201,6 +187,11 @@ internal static class MixerApi
             if (AlsaMixerConfig.WhyRenamed(key) is string sentence)
             {
                 return $"{sentence}, and by GET on this endpoint.";
+            }
+
+            if (AlsaMixerConfig.WhyForcedOff(key) is string forced)
+            {
+                return forced;
             }
         }
 
@@ -227,8 +218,8 @@ internal static class MixerApi
             ["controls"] = new JsonArray([.. report.Controls.Select(c => JsonValue.Create(c))]),
             ["capture"] = Volume(report.Capture, report.Sources.CaptureGain),
             ["playback"] = Volume(report.Playback, report.Sources.Playback),
-            ["agc"] = Switch(report.Agc, report.Sources.Agc),
-            ["micBoost"] = Switch(report.MicBoost, report.Sources.MicBoost),
+            ["agc"] = Switch(report.Agc),
+            ["micBoost"] = Switch(report.MicBoost),
             ["summary"] = report.Summary,
             ["journal"] = new JsonArray([.. report.Journal.Select(l => JsonValue.Create(l))]),
         };
@@ -263,13 +254,29 @@ internal static class MixerApi
             ["source"] = Name(source),
         };
 
-    private static JsonNode? Switch(MixerSwitchState? state, MixerSource source) => state is null
+    /// <summary>
+    /// A switch this station does not set, reported so that a caller can see it was found and see
+    /// what it actually is.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Kept rather than dropped</b>, and read-only. AGC and mic boost stopped being
+    /// settings in 0.59.0 - they are switched off at every start-up - so there is no
+    /// <c>source</c> to name and no value to POST. What is left is still worth serving: it is the
+    /// only way for a script or a page to see that a card <em>has</em> an AGC and that the card
+    /// refused to switch it off, which is a real thing cards do and is invisible otherwise.
+    /// Dropping the fields would have made that failure look exactly like the ordinary CM108,
+    /// which simply has no mic boost at all.</para>
+    /// <para>Null still means "this card has not got one".</para>
+    /// </remarks>
+    private static JsonNode? Switch(MixerSwitchState? state) => state is null
         ? null
         : new JsonObject
         {
             ["control"] = state.Control,
             ["on"] = state.On,
-            ["source"] = Name(source),
+            // Always true, and said anyway: a caller reading "on": true needs the next sentence
+            // to be "and this daemon asked for off", not a search of the release notes.
+            ["forcedOff"] = true,
         };
 
     /// <summary>The source as the API spells it: lower case, ASCII, stable for a script.</summary>

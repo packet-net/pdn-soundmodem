@@ -36,26 +36,23 @@ public class MixerStateFileTests : IDisposable
     [Fact]
     public void The_Config_File_Wins_Over_The_State_File_Control_By_Control()
     {
-        var config = new AlsaMixerConfig { CaptureGainDb = -3, Agc = false };
+        var config = new AlsaMixerConfig { CaptureGainDb = -3 };
         var state = new MixerState
         {
             Device = Device,
             CaptureGainDb = 6,
-            Agc = true,
             PlaybackDb = -8,
         };
 
         MixerSettings settings = MixerStateFile.Combine(config, state);
 
         settings.CaptureGainDb.Should().Be(-3, "the file is the description of the intended station");
-        settings.Agc.Should().BeFalse();
         settings.PlaybackDb.Should().Be(-8, "and the state file fills in what the file left out");
-        settings.MicBoost.Should().BeNull("neither one mentioned it, so the card keeps it");
 
         settings.Sources.CaptureGain.Should().Be(MixerSource.Config);
-        settings.Sources.Agc.Should().Be(MixerSource.Config);
         settings.Sources.Playback.Should().Be(MixerSource.StateFile);
-        settings.Sources.MicBoost.Should().Be(MixerSource.None);
+        settings.ForceAgcAndBoostOff.Should().BeTrue(
+            "this is the start-up pass, and the start-up pass is what switches them off");
     }
 
     [Fact]
@@ -65,7 +62,7 @@ public class MixerStateFileTests : IDisposable
             new AlsaMixerConfig { CaptureGainDb = -3 }, state: null);
 
         settings.CaptureGainDb.Should().Be(-3);
-        settings.Agc.Should().BeNull();
+        settings.PlaybackDb.Should().BeNull();
         settings.Sources.CaptureGain.Should().Be(MixerSource.Config);
     }
 
@@ -74,16 +71,22 @@ public class MixerStateFileTests : IDisposable
     /// state file, nothing written to the card at all.
     /// </summary>
     [Fact]
-    public void With_Neither_Nothing_Is_Asked_Of_The_Card()
+    public void With_Neither_Nothing_But_The_Switches_Is_Asked_Of_The_Card()
     {
         MixerSettings settings = MixerStateFile.Combine(config: null, state: null);
 
-        settings.SetsAnything.Should().BeFalse();
+        settings.CaptureGainDb.Should().BeNull();
+        settings.PlaybackDb.Should().BeNull();
 
         FakeMixer card = FakeMixer.Cm108();
         double? before = card.CaptureDb("Mic");
+        double? beforePlayback = card.PlaybackDb("Speaker");
         MixerSetup.Apply(card, settings);
-        card.CaptureDb("Mic").Should().Be(before);
+
+        card.CaptureDb("Mic").Should().Be(before, "no level was named by anything");
+        card.PlaybackDb("Speaker").Should().Be(beforePlayback);
+        card.Find("Auto Gain Control")!.On.Should().BeFalse(
+            "the AGC is the one thing a start-up does without being asked");
     }
 
     [Fact]
@@ -106,7 +109,6 @@ public class MixerStateFileTests : IDisposable
             Device = Device,
             WrittenAt = new DateTimeOffset(2026, 9, 6, 11, 22, 33, TimeSpan.Zero),
             CaptureGainDb = -3.5,
-            Agc = false,
         };
 
         MixerStateFile.TryWrite(path, state, out string why).Should().BeTrue(why);
@@ -114,12 +116,42 @@ public class MixerStateFileTests : IDisposable
         MixerState? read = MixerStateFile.TryRead(path, Device, out string ignored);
         ignored.Should().BeEmpty();
         read!.CaptureGainDb.Should().Be(-3.5);
-        read.Agc.Should().BeFalse();
-        read.MicBoost.Should().BeNull("an absent key stays absent rather than becoming a default");
+        read.PlaybackDb.Should().BeNull("an absent key stays absent rather than becoming a default");
 
         // And it is readable by a person, which is half of why it is JSON.
         File.ReadAllText(path).Should().Contain("\"captureGainDb\": -3.5")
-            .And.NotContain("micBoost", "a null is left out rather than written as null");
+            .And.NotContain("playbackDb", "a null is left out rather than written as null");
+    }
+
+    /// <summary>
+    /// A state file from 0.58.x, which recorded the AGC, is read without complaint and rewritten
+    /// without it.
+    /// </summary>
+    /// <remarks>
+    /// The switches are not settings any more, so the file has no field for them and the reader
+    /// ignores the key rather than refusing the file. Refusing would cost the operator the
+    /// capture level they had trimmed, over a key whose value the daemon now enforces anyway.
+    /// </remarks>
+    [Fact]
+    public void A_State_File_From_Before_The_Switches_Went_Is_Read_And_Then_Rewritten_Without_Them()
+    {
+        string path = Write("""
+            {
+              "device": "plughw:CARD=Device,DEV=0",
+              "captureGainDb": 6,
+              "agc": false,
+              "micBoost": false
+            }
+            """);
+
+        MixerState? read = MixerStateFile.TryRead(path, Device, out string ignored);
+
+        ignored.Should().BeEmpty("an unknown key is not a reason to throw away a trimmed level");
+        read!.CaptureGainDb.Should().Be(6);
+
+        MixerStateFile.TryWrite(path, read, out string why).Should().BeTrue(why);
+        File.ReadAllText(path).Should().Contain("\"captureGainDb\": 6")
+            .And.NotContain("agc").And.NotContain("micBoost");
     }
 
     /// <summary>
@@ -208,8 +240,10 @@ public class MixerStateFileTests : IDisposable
             + "2026-09-06 11:22:33Z");
         runtime.StartUpReport.Summary.Should().Be(
             "alsa: mixer: Mic capture -3.00 dB of -12.00 to 23.00 dB (set -3.00 dB, config), "
-            + "Auto Gain Control on (left as found), "
+            + "Auto Gain Control off (forced), "
             + "Speaker playback -8.00 dB of -36.00 to 0.00 dB, below which it mutes (set -8.00 dB, state file)");
+        card.Find("Auto Gain Control")!.On.Should().BeFalse(
+            "and no key in either file asked for that: start-up does it");
     }
 
     [Fact]

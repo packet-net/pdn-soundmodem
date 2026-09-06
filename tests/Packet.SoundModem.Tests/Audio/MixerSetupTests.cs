@@ -61,7 +61,7 @@ public class MixerSetupTests
 
         MixerSetup.Apply(mixer, new MixerSettings
         {
-            Agc = false,
+            ForceAgcAndBoostOff = true,
             AgcControls = ["auto gain CONTROL"],
         });
 
@@ -80,12 +80,12 @@ public class MixerSetupTests
         var journal = new List<string>();
         MixerReport report = MixerSetup.Apply(
             mixer,
-            new MixerSettings { CaptureGainDb = 6, Agc = false, MicBoost = false },
+            new MixerSettings { CaptureGainDb = 6, ForceAgcAndBoostOff = true },
             journal.Add);
 
         report.Summary.Should().Be(
             "alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB), "
-            + "Auto Gain Control off, Mic Boost off");
+            + "Auto Gain Control off (forced), Mic Boost off (forced)");
         journal.Should().Contain(report.Summary!, "the summary is journalled, not just returned");
         mixer.Refreshes.Should().BeGreaterThan(
             0, "the card is asked for fresh values before it is read back");
@@ -209,7 +209,8 @@ public class MixerSetupTests
 
         var journal = new List<string>();
         MixerReport report = MixerSetup.Apply(
-            mixer, new MixerSettings { CaptureGainDb = 30, Agc = false }, journal.Add);
+            mixer, new MixerSettings { CaptureGainDb = 30, ForceAgcAndBoostOff = true },
+            journal.Add);
 
         journal.Should().Contain(
             "alsa: mixer: captureGainDb 30.00 dB is outside the range of \"Mic\" on hw:3, which "
@@ -247,7 +248,7 @@ public class MixerSetupTests
             .Should().Contain("-36.00 to 0.00 dB");
         MixerSetup.WhyRefused(card, new MixerSettings { CaptureGainDb = 6, PlaybackDb = -8 })
             .Should().BeNull("both are inside the card's ranges");
-        MixerSetup.WhyRefused(card, new MixerSettings { Agc = false })
+        MixerSetup.WhyRefused(card, new MixerSettings { ForceAgcAndBoostOff = true })
             .Should().BeNull("a switch has no dB scale to be outside of");
 
         card.CaptureDb("Mic").Should().Be(8, "asking never writes to the card");
@@ -271,12 +272,11 @@ public class MixerSetupTests
         var journal = new List<string>();
         MixerReport report = MixerSetup.Apply(
             mixer,
-            new MixerSettings { Agc = false, AgcControls = ["Auto Gain Control"] },
+            new MixerSettings { PlaybackDb = -8, PlaybackControls = ["Speaker"] },
             journal.Add);
 
-        journal.Should().Contain(
-            "alsa: mixer: no control named \"Auto Gain Control\" on hw:1, skipped");
-        report.Agc.Should().BeNull("there is no such control to report a state for");
+        journal.Should().Contain("alsa: mixer: no control named \"Speaker\" on hw:1, skipped");
+        report.Playback.Should().BeNull("there is no such control to report a state for");
     }
 
     [Fact]
@@ -285,11 +285,11 @@ public class MixerSetupTests
         var mixer = new FakeMixer("hw:3", new FakeControl { Name = "Mic", Capture = Cm108Capture() });
 
         var journal = new List<string>();
-        MixerSetup.Apply(mixer, new MixerSettings { MicBoost = true }, journal.Add);
+        MixerSetup.Apply(mixer, new MixerSettings { PlaybackDb = -8 }, journal.Add);
 
         journal.Should().Contain(
-            "alsa: mixer: no control named \"Mic Boost\" on hw:3 (also tried "
-            + "\"Mic Boost (+20dB)\", \"Internal Mic Boost\", \"Mic Capture Boost\"), skipped");
+            "alsa: mixer: no control named \"Speaker\" on hw:3 (also tried "
+            + "\"PCM\", \"Master\", \"Headphone\"), skipped");
     }
 
     [Fact]
@@ -324,23 +324,24 @@ public class MixerSetupTests
     }
 
     [Fact]
-    public void A_Boost_That_Is_A_Level_Rather_Than_A_Switch_Is_Driven_To_Its_Ends()
+    public void A_Boost_That_Is_A_Level_Rather_Than_A_Switch_Is_Driven_To_Its_Bottom()
     {
-        // An HDA "Mic Boost" is four 10 dB steps, not an on/off. On means the top of it - and it
-        // stays a switch in the configuration, because +20 dB ahead of everything is on or off
-        // and there is no dB figure for an operator to type.
+        // An HDA "Mic Boost" is four 10 dB steps, not an on/off. Off is the bottom of that range,
+        // which is what a switch would have meant, and off is the only thing this station ever
+        // asks a boost for.
         var mixer = new FakeMixer(
             "hw:0",
-            new FakeControl { Name = "Mic Boost", Capture = new FakeLevel { Max = 3, Raw = 0 } });
+            new FakeControl { Name = "Mic Boost", Capture = new FakeLevel { Max = 3, Raw = 3 } });
 
         var journal = new List<string>();
         MixerReport report = MixerSetup.Apply(
-            mixer, new MixerSettings { MicBoost = true }, journal.Add);
+            mixer, new MixerSettings { ForceAgcAndBoostOff = true }, journal.Add);
 
         journal.Should().Contain(
-            "alsa: mixer: \"Mic Boost\" on hw:0 is a level rather than a switch, set to 100%");
-        mixer.Find("Mic Boost")!.Capture!.Raw.Should().Be(3);
-        report.MicBoost!.On.Should().BeTrue();
+            "alsa: mixer: AGC and mic boost are always off on this station: no AGC control on "
+            + "hw:0; \"Mic Boost\" off");
+        mixer.Find("Mic Boost")!.Capture!.Raw.Should().Be(0);
+        report.MicBoost!.On.Should().BeFalse();
     }
 
     [Fact]
@@ -349,11 +350,16 @@ public class MixerSetupTests
         var mixer = new FakeMixer(
             "hw:1", new FakeControl { Name = "Auto Gain Control", On = true, IgnoresWrites = true });
 
-        MixerReport report = MixerSetup.Apply(mixer, new MixerSettings { Agc = false });
+        var journal = new List<string>();
+        MixerReport report = MixerSetup.Apply(
+            mixer, new MixerSettings { ForceAgcAndBoostOff = true }, journal.Add);
 
         report.Agc!.On.Should().BeTrue("the read-back is what the card says, not what it was told");
+        journal.Should().Contain(line => line.Contains(
+            "\"Auto Gain Control\" is STILL ON - the card would not switch it off",
+            StringComparison.Ordinal));
         report.Summary.Should().Be(
-            "alsa: mixer: Auto Gain Control on (set off, the card did not take it)");
+            "alsa: mixer: Auto Gain Control on (asked off, the card did not take it)");
     }
 
     [Fact]
@@ -393,7 +399,7 @@ public class MixerSetupTests
         report.Summary.Should().BeNull();
         journal.Should().Contain(
             "alsa: mixer: hw:2 has none of the controls this station looks for, so nothing was "
-            + "set; capture gain, AGC and mic boost stay as the card has them");
+            + "set; the capture gain and the transmit level stay as the card has them");
     }
 
     /// <summary>
@@ -410,25 +416,26 @@ public class MixerSetupTests
             new MixerSettings
             {
                 CaptureGainDb = 6,
-                Agc = false,
+                PlaybackDb = -8,
                 Sources = new MixerSources(
-                    CaptureGain: MixerSource.Config, Agc: MixerSource.StateFile),
+                    CaptureGain: MixerSource.Config, Playback: MixerSource.StateFile),
             });
 
         report.Summary.Should().Be(
             "alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB, config), "
-            + "Auto Gain Control off (state file), "
-            + "Speaker playback -20.00 dB of -36.00 to 0.00 dB, below which it mutes (left as found)");
+            + "Auto Gain Control on, "
+            + "Speaker playback -8.00 dB of -36.00 to 0.00 dB, below which it mutes "
+            + "(set -8.00 dB, state file)");
         report.Sources.CaptureGain.Should().Be(
             MixerSource.Config, "the report carries it through to the API and the page");
     }
 
     [Fact]
-    public void The_Bench_Cm108_Takes_A_Gain_And_An_Agc_And_Skips_The_Boost_It_Has_Not_Got()
+    public void The_Bench_Cm108_Takes_Both_Levels_And_Has_Its_Agc_Forced_Off()
     {
-        // The whole of #17 on the card it was asked for, in one case: capture gain set in dB and
-        // read back with the range, AGC switched off, mic boost asked for and not there, Speaker
-        // level set.
+        // The whole start-up pass on the card it was asked for, in one case: AGC switched off
+        // whatever it was, a mic boost looked for and not there, both levels set in dB and read
+        // back with the card's own range.
         FakeMixer mixer = FakeMixer.Cm108();
 
         var journal = new List<string>();
@@ -437,25 +444,103 @@ public class MixerSetupTests
             new MixerSettings
             {
                 CaptureGainDb = 6,
-                Agc = false,
-                MicBoost = false,
                 PlaybackDb = -8,
+                ForceAgcAndBoostOff = true,
             },
             journal.Add);
 
         journal.Should().BeEquivalentTo(
             [
                 "alsa: mixer: hw:3 has Mic, Auto Gain Control, Speaker",
-                "alsa: mixer: no control named \"Mic Boost\" on hw:3 (also tried "
-                    + "\"Mic Boost (+20dB)\", \"Internal Mic Boost\", \"Mic Capture Boost\"), skipped",
+                "alsa: mixer: AGC and mic boost are always off on this station: "
+                    + "\"Auto Gain Control\" off; no mic boost control on hw:3",
                 "alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB), "
-                    + "Auto Gain Control off, "
+                    + "Auto Gain Control off (forced), "
                     + "Speaker playback -8.00 dB of -36.00 to 0.00 dB, below which it mutes (set -8.00 dB)",
             ],
             options => options.WithStrictOrdering());
-        report.MicBoost.Should().BeNull();
+        report.MicBoost.Should().BeNull("the bench revision has no such control at all");
         report.Agc!.On.Should().BeFalse();
         mixer.PlaybackDb("Speaker").Should().Be(-8);
+    }
+
+    /// <summary>
+    /// The AGC is switched off at start-up whatever it was, and nothing has to ask for it.
+    /// </summary>
+    /// <remarks>
+    /// Tom, 2026-09-06, on the bench Pi: "AGC should just be forced off, as should mic boost. No
+    /// need for buttons for these." Both directions are checked here because the interesting one
+    /// is a card that was left with its AGC ON by alsamixer, a reboot or a re-plug - which is the
+    /// whole reason there is a mixer pass at all.
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void The_Agc_And_The_Mic_Boost_Are_Switched_Off_At_Start_Up_Whatever_They_Were(bool wasOn)
+    {
+        var mixer = new FakeMixer(
+            "hw:1",
+            new FakeControl { Name = "Mic", Capture = Cm108Capture() },
+            new FakeControl { Name = "Auto Gain Control", On = wasOn },
+            new FakeControl { Name = "Mic Boost", On = wasOn });
+
+        var journal = new List<string>();
+        MixerReport report = MixerSetup.Apply(
+            mixer, new MixerSettings { ForceAgcAndBoostOff = true }, journal.Add);
+
+        mixer.Find("Auto Gain Control")!.On.Should().BeFalse();
+        mixer.Find("Mic Boost")!.On.Should().BeFalse();
+        report.Agc!.On.Should().BeFalse();
+        report.MicBoost!.On.Should().BeFalse();
+        journal.Should().Contain(
+            "alsa: mixer: AGC and mic boost are always off on this station: "
+            + "\"Auto Gain Control\" off; \"Mic Boost\" off",
+            "one line, whatever the card has: two would be noise on every start-up");
+    }
+
+    /// <summary>
+    /// A card with neither control still gets exactly one line, saying it was looked for.
+    /// </summary>
+    [Fact]
+    public void A_Card_With_No_Agc_And_No_Boost_Says_So_Once_And_Sets_Nothing()
+    {
+        var mixer = new FakeMixer(
+            "hw:7", new FakeControl { Name = "Mic", Capture = Cm108Capture() });
+
+        var journal = new List<string>();
+        MixerReport report = MixerSetup.Apply(
+            mixer, new MixerSettings { ForceAgcAndBoostOff = true }, journal.Add);
+
+        journal.Should().Contain(
+            "alsa: mixer: AGC and mic boost are always off on this station: no AGC control on "
+            + "hw:7; no mic boost control on hw:7");
+        report.Agc.Should().BeNull();
+        report.MicBoost.Should().BeNull();
+    }
+
+    /// <summary>
+    /// A read - <c>GET /api/mixer</c>, <c>--mixer-show</c>, the page's own probe - never writes.
+    /// </summary>
+    /// <remarks>
+    /// <c>--mixer-show</c> reads the card of a station somebody else is running, so a read that
+    /// switched anything would change a station nobody asked it to touch. The force is the
+    /// start-up pass's job and nothing else's.
+    /// </remarks>
+    [Fact]
+    public void Reading_The_Card_Never_Switches_Anything_Off()
+    {
+        var mixer = new FakeMixer(
+            "hw:1",
+            new FakeControl { Name = "Auto Gain Control", On = true },
+            new FakeControl { Name = "Mic Boost", On = true });
+
+        var journal = new List<string>();
+        MixerReport report = MixerSetup.Apply(mixer, new MixerSettings(), journal.Add);
+
+        mixer.Find("Auto Gain Control")!.On.Should().BeTrue("a read-back writes nothing");
+        mixer.Find("Mic Boost")!.On.Should().BeTrue();
+        report.Agc!.On.Should().BeTrue("what it actually is, which is what a read reports");
+        journal.Should().NotContain(line => line.Contains("always off", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -474,7 +559,7 @@ public class MixerSetupTests
 
         MixerReport? report = MixerSetup.TryApply(
             new ThrowingMixer(),
-            new MixerSettings { CaptureGainDb = 6, Agc = false },
+            new MixerSettings { CaptureGainDb = 6 },
             journal.Add,
             out string why);
 
@@ -483,7 +568,27 @@ public class MixerSetupTests
             .And.Contain("snd_mixer_selem_set_capture_dB_all",
                 "a genuine fault has to stay visible rather than be swallowed");
         journal.Should().ContainSingle(line => line.Contains(
-            "capture gain, AGC and mic boost are left as the card has them", StringComparison.Ordinal));
+            "the capture gain and the transmit level are left as the card has them",
+            StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// And the same when it is the forced-off pass that hits the missing symbol, which is now the
+    /// first thing a start-up touches.
+    /// </summary>
+    [Fact]
+    public void A_Missing_Symbol_In_The_Forced_Off_Pass_Costs_The_Mixer_And_Not_The_Daemon()
+    {
+        var journal = new List<string>();
+
+        MixerReport? report = MixerSetup.TryApply(
+            new ThrowingMixer(),
+            new MixerSettings { ForceAgcAndBoostOff = true },
+            journal.Add,
+            out string why);
+
+        report.Should().BeNull();
+        why.Should().Contain("snd_mixer_selem_set_capture_switch_all");
     }
 
     [Fact]

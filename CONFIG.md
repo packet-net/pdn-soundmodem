@@ -39,7 +39,7 @@ with `su -` and drop the prefix.)
 | `modemPlugins` | array | *(none)* | Load modem assemblies from outside this package - [below](#modemplugins) |
 | `ptt` | object | *(none - VOX)* | How the radio is keyed - [below](#ptt) |
 | `txTest` | object | *(on, 5 s, capped at 30 s)* | The operator's two-tone and single-tone transmitter test - [below](#txtest) |
-| `alsa` | object | *(card left as it is)* | The sound card's mixer in dB: capture gain, AGC, mic boost, playback level - [below](#alsa) |
+| `alsa` | object | *(card left as it is)* | The sound card's mixer in dB: capture gain and playback level - [below](#alsa) |
 | `waterfall` | object | *(disabled)* | Browser spectrum/waterfall page - [below](#waterfall) |
 | `paging` | object | *(disabled)* | POCSAG paging endpoint - [below](#paging) |
 | `ardop` | object | *(disabled)* | ARDOP virtual TNC - [below](#ardop) |
@@ -862,25 +862,23 @@ whatever the file says.
 
 ## `alsa`
 
-The sound card's own mixer: capture gain, the Auto Gain Control switch, Mic Boost, and the
-transmit-side playback level. Between them these decide whether the receive audio is clean,
-clipped or buried, and a reboot or a re-plug can silently reset them.
+The sound card's own mixer: the capture gain and the transmit-side playback level. Between them
+these decide whether the receive audio is clean, clipped or buried, and a reboot or a re-plug can
+silently reset them.
 
 ```json
-"alsa": { "mixer": { "captureGainDb": 6.0, "agc": false, "micBoost": false, "playbackDb": -8.0 } }
+"alsa": { "mixer": { "captureGainDb": 6.0, "playbackDb": -8.0 } }
 ```
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `captureGainDb` | number | *(left alone)* | Capture gain in dB, inside the card's own range |
-| `agc` | bool | *(left alone)* | Automatic gain control. **Recommended off for a data modem** |
-| `micBoost` | bool | *(left alone)* | Microphone boost. **Recommended off** unless the radio's output is genuinely low |
 | `playbackDb` | number | *(left alone)* | The level the radio is driven at, in dB |
 | `card` | string | *(from `device`)* | The mixer card, if not the one `device` implies |
 | `stateFile` | string | *(see [below](#where-a-page-change-is-remembered))* | Where a change made on the operator page is remembered |
 | `captureControls` | array | `["Mic", "Mic Capture", "Capture"]` | Names to look for the capture gain under, in order |
-| `agcControls` | array | `["Auto Gain Control", "AGC", "Mic AGC"]` | Names to look for the AGC switch under |
-| `micBoostControls` | array | `["Mic Boost", "Mic Boost (+20dB)", "Internal Mic Boost", "Mic Capture Boost"]` | Names to look for the boost under |
+| `agcControls` | array | `["Auto Gain Control", "AGC", "Mic AGC"]` | Names to look for the AGC switch under, [to switch it off](#agc-and-mic-boost-are-always-off) |
+| `micBoostControls` | array | `["Mic Boost", "Mic Boost (+20dB)", "Internal Mic Boost", "Mic Capture Boost"]` | Names to look for the boost under, the same way |
 | `playbackControls` | array | `["Speaker", "PCM", "Master", "Headphone"]` | Names to look for the playback level under |
 
 **Every key is optional and leaving one out leaves that control exactly as the card has it.**
@@ -893,6 +891,11 @@ are no hidden defaults. Only a sound card has a mixer, so an `alsa` section alon
 > aliased: 60 used to mean 60% of the card's raw range and would now mean 60 dB, which on a CM108
 > is 37 dB past the top of the card. A file still carrying one warns at start-up, naming the key
 > that replaced it, and that control is left alone.
+>
+> **Changed since 0.58.1.** `agc` and `micBoost` are gone as well, for a different reason: both
+> are now switched off at every start-up on any card that has them, so there is nothing left to
+> configure. A file still carrying one warns at start-up saying so, and the card ends up the way
+> the key was asking for anyway. See [below](#agc-and-mic-boost-are-always-off).
 
 ### dB, and the card's own range
 
@@ -902,7 +905,7 @@ range. **The range differs by card**, so it is printed beside the value everywhe
 appears - the start-up journal, `--mixer-show`, [`/api/mixer`](#apimixer) and the operator page:
 
 ```
-alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB, config), Auto Gain Control off (config), Speaker playback -8.00 dB of -36.00 to 0.00 dB, below which it mutes (set -8.00 dB, state file)
+alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB, config), Auto Gain Control off (forced), Speaker playback -8.00 dB of -36.00 to 0.00 dB, below which it mutes (set -8.00 dB, state file)
 ```
 
 `pdn-soundmodem --mixer-show hw:3` prints the same line for a card without touching the station.
@@ -947,8 +950,8 @@ alsa: mixer: "Mic" on hw:5 has no dB scale, so captureGainDb cannot be set - thi
 alsa: mixer: Mic capture 40% (no dB scale)
 ```
 
-Mic Boost and AGC are switches, not levels, and stay switches: +20 dB ahead of everything is on
-or it is off, and there is no dB figure to type.
+Mic Boost and AGC are switches, not levels, and are not settings at all: they are switched off,
+every time. See [below](#agc-and-mic-boost-are-always-off).
 
 ### Control names differ by card
 
@@ -984,19 +987,46 @@ nothing. **A card with no mixer at all does not stop the daemon**: it is said on
 carries on.
 
 ```
-alsa: mixer: hw:3 has no mixer (snd_mixer_attach(hw:3): No such file or directory); capture gain, AGC and mic boost are left as the card has them
+alsa: mixer: hw:3 has no mixer (snd_mixer_attach(hw:3): No such file or directory); the capture gain and the transmit level are left as the card has them, and there is no AGC or mic boost to switch off
 ```
 
-### Why AGC off
+### AGC and mic boost are always off
 
-Automatic gain control fights the modem's own level tracking and turns the noise floor into a
-moving target: it raises the gain in the gaps between frames and then pulls it down as a frame
-arrives, which is exactly backwards for a demodulator that is measuring SNR and holding a
-threshold. Mic Boost is +20 dB of gain ahead of everything, which is the wrong tool unless the
-radio's output really is too low to reach the card's range - reach for the capture gain first and
-watch the level meter on the waterfall page.
+**Neither is a setting.** At every start-up, on any card that has them, the Auto Gain Control is
+switched off and the Mic Boost is switched off, whatever they were and whatever the config file
+says. One journal line records it:
 
-Both are recommendations, not forced defaults. The daemon writes neither unless the file says so.
+```
+alsa: mixer: AGC and mic boost are always off on this station: "Auto Gain Control" off; no mic boost control on hw:3
+```
+
+They were keys in 0.57.0 and 0.58.x, recommended off in both. Tom, 2026-09-06: "AGC should just
+be forced off, as should mic boost. No need for buttons for these." Nobody has produced a case
+for either on a data modem:
+
+- **Automatic gain control** fights the modem's own level tracking and turns the noise floor into
+  a moving target. It raises the gain in the gaps between frames and pulls it down as a frame
+  arrives, which is exactly backwards for a demodulator that is measuring SNR and holding a
+  threshold. On the bench NinoTNC loop it was silently applying about 12 dB
+  (`docs/ninotnc-loop.md`).
+- **Mic Boost** is +20 dB of gain ahead of everything. Left on into a radio that does not need it,
+  it puts the receive path 20 dB into clipping and makes every strong signal decode worse than a
+  weak one (`docs/hardware/tm8100-cm108-interface-notes.md`). If the radio really is too quiet,
+  the capture gain is the control for it, and the [level meter](#the-level-meter) is how you tell.
+
+A card with no such control is not an error; the line says it was looked for and there was
+nothing there, which is the ordinary answer on the bench CM108 (its +20 dB is folded into the top
+of the capture range). A card that accepts the write and does not act on it is reported as it
+actually is:
+
+```
+alsa: mixer: AGC and mic boost are always off on this station: "Auto Gain Control" is STILL ON - the card would not switch it off; no mic boost control on hw:5
+```
+
+`GET /api/mixer` still reports both, read-only, as `{"control": ..., "on": ..., "forcedOff": true}`
+- see [`/api/mixer`](#apimixer). **Reading never writes**: `--mixer-show` and a `GET` describe a
+card without touching it, so pointing `--mixer-show` at a station somebody else is running cannot
+change it.
 
 ### The mixer is read at every start-up
 
@@ -1059,13 +1089,19 @@ lines of levels - so it is caught before it can happen rather than found afterwa
 
 ### Setting it while watching the waterfall
 
-With an [`api`](#api) key set, the operator page grows a **Mixer** group beside the display levels:
-a capture-gain slider **bounded by the card's own dB range**, with the level and the range beside
-it, and AGC and Mic Boost buttons. A change is kept: it goes to the state file and the next
-start-up sets it again. The group is never on the public page, and it is not there at all on a
-station with no `api.key` or no sound card - which also means **a station with neither an
-`api.key` nor [`enableAudioControls`](#waterfall) has no page mixer control and nothing ever
-writes the state file**. See [`api`](#api) for `/api/mixer`.
+With an [`api`](#api) key set, the operator page grows a **Mixer** group beside the display levels,
+with two sliders **bounded by the card's own dB range** and the level and the range beside each:
+
+- **RX gain**, the capture level: what the modems hear, with the [level meter](#the-level-meter)
+  next to it so you can see what you are doing.
+- **TX gain**, the card's playback level: what drives the radio's mic or data input.
+
+A change is kept: it goes to the state file and the next start-up sets it again. There are no AGC
+or Mic Boost buttons, because [neither is a setting](#agc-and-mic-boost-are-always-off). The group
+is never on the public page, and it is not there at all on a station with no `api.key` or no sound
+card - which also means **a station with neither an `api.key` nor
+[`enableAudioControls`](#waterfall) has no page mixer control and nothing ever writes the state
+file**. See [`api`](#api) for `/api/mixer`.
 
 **Or with no key at all**, on a station whose page only the operator can reach:
 [`"waterfall": { "enableAudioControls": true }`](#waterfall). The group is the same group and the
@@ -1079,6 +1115,47 @@ anything that can reach the waterfall port. Read that section before turning it 
 > its own key, or reach the operator page over SSH rather than that hostname. And the prompt shows
 > the current key in clear while it is open, which is a screen-sharing consideration rather than a
 > network one.
+
+#### The level meter
+
+Beside the RX gain slider is a live reading of the audio arriving from the card, measured at the
+daemon's input - after the card, before any modem - and sent to the page five times a second over
+the page's own WebSocket. **Listen does not have to be on**, and it costs the station nothing
+while no browser has the page open.
+
+The bar is the **peak** of the last 200 ms in dBFS, on a scale from -60 to 0. A hairline shows the
+RMS. A `CLIP` pill lights, and stays lit for three seconds, whenever a sample in the interval
+reached full scale. And the sentence under it says what to aim for:
+
+> Aim for received signals to peak in the green, -18 to -9 dBFS; never into the red, and with
+> nothing on the channel the bar should sit below -30.
+
+**Where those figures come from.** They are not a borrowed convention; they are what this
+repository has already measured on real hardware, and four sources agree:
+
+| Source | Received peak |
+|---|---|
+| The bench NinoTNC loop's "GOOD" band (`docs/ninotnc-loop.md`) | 0.17 to 0.28 full scale, i.e. -15.4 to -11.1 dBFS |
+| A CFO campaign's exonerated recordings (`docs/cfo/evidence/2026-07-31-cfo-1-qpsk-differential`) | 0.18 to 0.25, i.e. -14.9 to -12.0 dBFS |
+| The CM108 interface's design target (`docs/hardware/tm8100-cm108-interface-notes.md`) | -12 dBFS at 60% of class deviation |
+| An over-the-air capture called "comfortably adequate" (`docs/ms110d/evidence/2026-07-24-ota-c0`) | -11.7 dBFS peak, 12 dB of headroom, no clipped samples |
+
+The green band is widened a little either side of that, to -18 to -9 dBFS, because a real
+station's bursts vary and a zone the signal flickers out of is one an operator learns to ignore.
+The red starts at -3 dBFS: the only existing verdict on a capture level in this tree is
+`Packet.SoundModem.NinoBench`, whose "CLIPPING" is -0.9 dBFS, and the house reserve for a receive
+path is about 6 dB of headroom. Under -30 dBFS the bar goes grey.
+
+**Being under the band is not a fault.** Every demodulator here is level-tolerant: the AFSK
+discriminator power-normalises and is barely affected from -40 dBFS up, the PSK detectors are
+scale-invariant, and MS110D has an AGC of its own. Clipping is the failure that actually costs
+decodes, so the alarm is at the top and the advice at the bottom is only advice. The meter is
+measured at the 12 kHz modem rate, after the resampler, so the clip indicator is a strong signal
+rather than a sample-exact count of what the card's converter did.
+
+The meter is on the operator's page only, on a station with a sound card of its own. A public
+page, a monitor's receiver pages and a `flex:` or `ubersdr:` station never receive the message at
+all.
 
 ## Channel access is the host's, not the config's
 
@@ -1149,8 +1226,8 @@ receiver is only asked for while somebody is looking:
 "waterfall": { "port": 8107, "enableAudioControls": true }
 ```
 
-The [Mixer](#setting-it-while-watching-the-waterfall) group - capture gain in dB, AGC, mic boost -
-appears on the operator's page and [`/api/mixer`](#apimixer) answers `GET` and `POST`, with no
+The [Mixer](#setting-it-while-watching-the-waterfall) group - the RX and TX levels in dB, with
+the [level meter](#the-level-meter) - appears on the operator's page and [`/api/mixer`](#apimixer) answers `GET` and `POST`, with no
 `api.key` set and no key presented. It is for the station whose page is already reachable only by
 whoever is allowed to reach it: a bench station on your own LAN, or a page you open over SSH.
 Without it a station with no `api.key` has no Mixer group and a 404 on `/api/mixer`, which is
@@ -1158,7 +1235,8 @@ unchanged and is still the default.
 
 > **It exposes the card's levels to anything that can reach the waterfall port**, which is the
 > same exposure the page's TX test button already has - and there is no authentication on that
-> port. Anyone who can reach it can turn your capture gain up or down, and the change is
+> port. Anyone who can reach it can turn your capture gain, or the level your transmitter is
+> driven at, up or down, and the change is
 > remembered in the [state file](#where-a-page-change-is-remembered) and set again at the next
 > start-up. Loopback, or a LAN you trust; if the page is exposed at all, leave this off and set
 > an `api.key` instead. The start-up warning about listening beyond loopback says so too when
@@ -1453,11 +1531,11 @@ $ curl -s -H "X-API-Key: $KEY" http://radio:8107/api/mixer
     "dbRange": { "min": -36, "max": 0, "mutesBelowMin": true },
     "percent": 46, "source": "state"
   },
-  "agc": { "control": "Auto Gain Control", "on": true, "source": "none" },
+  "agc": { "control": "Auto Gain Control", "on": false, "forcedOff": true },
   "micBoost": null,
-  "summary": "alsa: mixer: Mic capture 8.00 dB of -12.00 to 23.00 dB, Auto Gain Control on, Speaker playback -20.00 dB of -36.00 to 0.00 dB, below which it mutes"
+  "summary": "alsa: mixer: Mic capture 8.00 dB of -12.00 to 23.00 dB, Auto Gain Control off, Speaker playback -20.00 dB of -36.00 to 0.00 dB, below which it mutes"
 }
-$ curl -sX POST -H "X-API-Key: $KEY" -d '{"captureGainDb": 6, "agc": false}' http://radio:8107/api/mixer
+$ curl -sX POST -H "X-API-Key: $KEY" -d '{"captureGainDb": 6, "playbackDb": -8}' http://radio:8107/api/mixer
 ```
 
 Every level comes with `dbRange`, the card's own span, because that is what a slider is drawn
@@ -1468,10 +1546,19 @@ here or on the page, in the [state file](#where-a-page-change-is-remembered)), o
 in words - such a control cannot be set in dB and a `POST` that tries is a `400`.
 
 `POST` takes only the settings you want changed, unlike `/api/config`, which takes a whole
-document. A control the body does not mention is left exactly as the card has it. A level outside
-the card's range comes back as `400` with the range in it, before anything is touched, and so
-does a body still carrying `captureGainPercent` or `playbackPercent`, naming the key that
-replaced it.
+document. The two settings are `captureGainDb` and `playbackDb`; a control the body does not
+mention is left exactly as the card has it. A level outside the card's range comes back as `400`
+with the range in it, before anything is touched, and so does a body still carrying
+`captureGainPercent` or `playbackPercent`, naming the key that replaced it.
+
+**`agc` and `micBoost` are not settings**, here or in the config file: both are
+[switched off at every start-up](#agc-and-mic-boost-are-always-off), so a `POST` carrying either
+is a `400` naming the key and saying so, and the whole request is refused rather than half
+applied. They are still **reported** by `GET`, read-only, as
+`{"control": ..., "on": ..., "forcedOff": true}` with no `source`. That is deliberate: it is the
+only way to see that a card has an AGC *and* refused to switch it off, which is a real thing cards
+do. Dropping the fields would have made that failure look identical to the ordinary CM108, which
+simply has no mic boost at all.
 
 A control the card has not got reads back as `null` - `micBoost` above is a CM108 that folds its
 boost into the capture range - and a station with no sound card at all answers
@@ -2855,6 +2942,7 @@ enumerated yet at boot, for instance - still restarts on its own as usual.
 | `alsa.mixer` level outside the card's range | *(not a start-up refusal: the card's range is unknown until the card is open, so it is one journal line naming the range and that control is left alone)* |
 | `alsa.mixer.stateFile` naming the config file | `... which is this configuration file. That file is never written by this daemon and a mixer change would overwrite it; point "stateFile" somewhere else ...` |
 | `alsa.mixer` alongside a `flex:`/`ubersdr:` device | `… which is not a sound card … Remove the "alsa" section, or point "device" at the card.` |
+| `alsa.mixer.agc` or `.micBoost` | *(not a start-up refusal: one warning line naming the key and saying AGC and mic boost are switched off at every start-up on any card that has them)* |
 | `alsa.mixer` alongside `monitor` | `A monitor fronts web receivers and has no sound card of its own …` |
 | `ubersdr:` with no `rfFrequency` and no `dialFrequency` | `the UberSDR instance … has to be told where to listen` |
 | `ptt.type` not `serial` or `cm108` | `unknown ptt type 'X'` |

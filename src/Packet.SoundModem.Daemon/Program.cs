@@ -1218,6 +1218,12 @@ if (benchTxTest is null && waterfallConfig is not null)
             // Where a page dropped for not answering says so. Untagged, like every other line
             // this process writes, because it runs one station.
             Log = stationJournal.Write,
+
+            // The input level meter beside the Mixer group's capture slider. An operator's page
+            // on a station with a card of its own, and nothing else: a public page carries no
+            // operator controls, and a flex:, ubersdr: or pipe: station has no capture gain the
+            // person looking at the page could act on even if it had a level to show them.
+            InputLevelMeter = !waterfallConfig.Public && DaemonConfig.IsSoundCard(device),
         },
         // One bind for every listener; the waterfall no longer carries its own.
         bindAddress);
@@ -1290,7 +1296,8 @@ if (benchTxTest is null && waterfallConfig is not null)
                   + "port can key your transmitter on your licence.")
             + (openAudioControls
                 ? " \"enableAudioControls\" is on, so it also carries this sound card's mixer "
-                  + "with no key: anything that can reach this port can change your capture gain."
+                  + "with no key: anything that can reach this port can change your capture gain "
+                  + "and the level your transmitter is driven at."
                 : ""));
     }
 }
@@ -2588,8 +2595,9 @@ else
         // a station to stop receiving.
         mixerWhyNot = $"{mixerCard} has no mixer: {mixerWhy}";
         Console.WriteLine(
-            $"{MixerSetup.JournalPrefix}{mixerCard} has no mixer ({mixerWhy}); capture gain, AGC "
-            + "and mic boost are left as the card has them");
+            $"{MixerSetup.JournalPrefix}{mixerCard} has no mixer ({mixerWhy}); the capture gain "
+            + "and the transmit level are left as the card has them, and there is no AGC or mic "
+            + "boost to switch off");
     }
 
     try

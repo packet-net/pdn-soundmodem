@@ -35,8 +35,6 @@ public class AlsaMixerConfigTests : IDisposable
               "alsa": {
                 "mixer": {
                   "captureGainDb": 6.0,
-                  "agc": false,
-                  "micBoost": false,
                   "playbackDb": -8.5
                 }
               }
@@ -48,8 +46,6 @@ public class AlsaMixerConfigTests : IDisposable
         error.Should().BeEmpty();
         MixerSettings settings = config!.Alsa!.Mixer!.ToSettings();
         settings.CaptureGainDb.Should().Be(6.0);
-        settings.Agc.Should().BeFalse();
-        settings.MicBoost.Should().BeFalse();
         settings.PlaybackDb.Should().Be(-8.5, "a level is a decimal, not a whole number of steps");
     }
 
@@ -69,22 +65,51 @@ public class AlsaMixerConfigTests : IDisposable
     public void A_Setting_That_Is_Left_Out_Leaves_That_Control_As_The_Card_Has_It()
     {
         string path = WriteConfig("""
-            {"device": "plughw:1,0", "alsa": {"mixer": {"agc": false}}}
+            {"device": "plughw:1,0", "alsa": {"mixer": {"playbackDb": -8}}}
             """);
 
         DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
         MixerSettings settings = config!.Alsa!.Mixer!.ToSettings();
 
         settings.CaptureGainDb.Should().BeNull();
-        settings.MicBoost.Should().BeNull();
-        settings.PlaybackDb.Should().BeNull();
+        settings.PlaybackDb.Should().Be(-8);
 
         FakeMixer card = FakeMixer.Cm108();
         double? before = card.CaptureDb("Mic");
         MixerSetup.Apply(card, settings);
 
-        card.CaptureDb("Mic").Should().Be(before, "only the AGC was named");
-        card.Find("Auto Gain Control")!.On.Should().BeFalse();
+        card.CaptureDb("Mic").Should().Be(before, "only the transmit level was named");
+        card.PlaybackDb("Speaker").Should().Be(-8);
+    }
+
+    /// <summary>
+    /// The two switch keys are gone, and a file still carrying one is told what happened to it.
+    /// </summary>
+    /// <remarks>
+    /// Tom, 2026-09-06: "AGC should just be forced off, as should mic boost." A warning and not a
+    /// refusal, the same treatment the percentage keys get: the card ends up exactly the way the
+    /// key was asking for, so stopping a station over it would be perverse. What the operator
+    /// needs to know is that the key is doing nothing and that the daemon is doing it anyway.
+    /// </remarks>
+    [Theory]
+    [InlineData("agc")]
+    [InlineData("micBoost")]
+    public void The_Switch_Keys_Are_Refused_By_Name_And_Say_They_Are_Always_Off_Now(string gone)
+    {
+        string path = WriteConfig(
+            "{\"device\": \"plughw:1,0\", \"alsa\": {\"mixer\": {\"" + gone + "\": false}}}");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty("a stale key is a warning, not a station off the air");
+        config!.Warnings.Should().ContainSingle(w => w.Contains(
+            $"{gone} is no longer a setting: AGC and mic boost are switched off at every "
+            + "start-up on any card that has them", StringComparison.Ordinal));
+
+        // And the generic line as well, so a reader scanning for "IGNORED" still finds it.
+        config.Warnings.Should().ContainSingle(w =>
+            w.Contains($"\"{gone}\"", StringComparison.Ordinal)
+            && w.Contains("IGNORED", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -318,7 +343,7 @@ public class AlsaMixerConfigTests : IDisposable
     public void A_File_With_A_Good_Mixer_Block_Warns_About_Nothing()
     {
         string path = WriteConfig("""
-            {"device": "plughw:1,0", "alsa": {"mixer": {"captureGainDb": 6, "agc": false}}}
+            {"device": "plughw:1,0", "alsa": {"mixer": {"captureGainDb": 6, "playbackDb": -8}}}
             """);
 
         DaemonConfig.TryLoad(path, out _)!.Warnings.Should().BeEmpty();

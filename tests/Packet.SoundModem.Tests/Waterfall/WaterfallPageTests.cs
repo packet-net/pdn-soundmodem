@@ -1027,9 +1027,10 @@ public class WaterfallPageTests
     /// <para>The page half of the feature, run as a browser runs it: the shipping script, real
     /// <c>fetch</c>, a real <see cref="ConfigApi"/> on the waterfall's own listener, and a made-up
     /// card behind it. Without this the group is only known to parse.</para>
-    /// <para>The card is the CM108 revision on the bench, which has no "Mic Boost" control at
-    /// all - so the Boost button has to come back marked missing rather than looking like a
-    /// setting the operator can reach, which is a page decision no server-side assertion sees.</para>
+    /// <para>The card is the CM108 revision on the bench, whose Speaker mutes at the bottom of
+    /// its range - so the transmit slider's bottom has to be the lowest step that is a level, and
+    /// its tooltip has to say what is under it, which is a page decision no server-side assertion
+    /// sees.</para>
     /// </remarks>
     [Fact]
     public async Task The_Operator_Pages_Mixer_Group_Reads_The_Card_And_Sets_It()
@@ -1066,7 +1067,7 @@ public class WaterfallPageTests
             server.Start();
 
             Probe probe = await RunProbeAsync(
-                node, port, apiKey: key, mixer: true, mixerGain: 6);
+                node, port, apiKey: key, mixer: true, mixerGain: 6, mixerPlayback: -8);
 
             probe.Thrown.Should().BeEmpty("the page must not throw while driving the mixer");
             probe.Connected.Should().BeTrue();
@@ -1081,9 +1082,17 @@ public class WaterfallPageTests
             arrival.GainMin.Should().Be("-12", "the slider's ends are the card's ends");
             arrival.GainMax.Should().Be("23");
             arrival.GainDisabled.Should().BeFalse();
-            arrival.Agc.Should().Contain("on", "this card's AGC is on and the button says so");
-            arrival.Boost.Should().Contain(
-                "missing", "this CM108 revision has no mic boost control to offer");
+
+            // The transmit level: the second slider, which is what Tom found missing ("I don't
+            // see a TX Gain control"). The bench CM108's Speaker mutes below its bottom step, so
+            // the slider stops at the lowest step that is a level and says what is under it.
+            arrival.PlayRead.Should().Be("-20.0 dB of -36 to 0");
+            arrival.Play.Should().Be("-20");
+            arrival.PlayMin.Should().Be(
+                "-36", "the mute step under the card's range is not a level to slide to");
+            arrival.PlayMax.Should().Be("0");
+            arrival.PlayDisabled.Should().BeFalse();
+            arrival.PlayTitle.Should().Contain("the step below the bottom is mute");
 
             // Moving the slider and dispatching "change", as a browser does when the operator lets
             // go of it. The handler, not mixSend by hand: which event the slider listens for is
@@ -1095,15 +1104,17 @@ public class WaterfallPageTests
             gained.Note.Should().BeEmpty(
                 "a change that was made and kept has nothing the operator has to be told");
 
-            // And a click on the AGC button.
-            MixerPanel switched = probe.MixerAfterAgc!;
-            switched.Agc.Should().NotContain("on");
-            card.Find("Auto Gain Control")!.On.Should().BeFalse("the click reached the card");
+            // And the transmit slider, the same way.
+            MixerPanel played = probe.MixerAfterPlay!;
+            played.PlayRead.Should().Be("-8.0 dB of -36 to 0");
+            card.PlaybackDb("Speaker").Should().Be(-8, "the transmit slider reached the card too");
+            played.Read.Should().Be(
+                "6.0 dB of -12 to 23", "and it left the capture gain exactly where it was");
 
-            // A click on the Boost button, which this card has no control for. It is disabled, so
-            // its handler must send nothing at all rather than a request the daemon has to refuse.
-            probe.MixerAfterBoost!.UnchangedByBoost.Should().BeTrue(
-                "a control the card has not got is not something a click can change");
+            // There are no AGC or Boost buttons any more: both are switched off at start-up, so
+            // there is nothing for a press to change (Tom, 2026-09-06).
+            card.Find("Auto Gain Control")!.On.Should().BeFalse(
+                "start-up switched it off and nothing on the page can put it back");
 
             // The same station, the same card, the same key in the browser, dressed for the
             // public. This is the assertion the whole "operator page only" claim rests on, and it
@@ -1124,6 +1135,94 @@ public class WaterfallPageTests
                 "6.0 dB of -12 to 23", "a public page must not even read the card");
             card.CaptureDb("Mic").Should().Be(
                 6, "and nothing a visitor's page did may have reached it");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The input level meter: the daemon's own reading of what it is hearing, drawn on the page
+    /// with the target band painted into it.
+    /// </summary>
+    /// <remarks>
+    /// <para>Tom, 2026-09-06, watching the Mixer group on the bench Pi: "Some assistance in
+    /// setting the capture level would be useful. No way for the user to know what good means."
+    /// So the answer is in the picture - a green band to land peaks in and a red top to stay out
+    /// of - and the page half of that is what is checked here: the zone drawn where the constants
+    /// say, the bar where the reading says, and one sentence underneath.</para>
+    /// <para>Real time and a real tone, as the Listen test does: the message is paced at five a
+    /// second by the daemon's own clock, and the probe is another process with no way to advance
+    /// a fake one.</para>
+    /// </remarks>
+    [Fact]
+    public async Task The_Level_Meter_Draws_The_Daemons_Reading_And_The_Band_To_Aim_At()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        const string key = "page-test-key-not-a-secret";
+        string dir = Directory.CreateTempSubdirectory("pdnsm-page-meter").FullName;
+        try
+        {
+            string configPath = Path.Combine(dir, "soundmodem.json");
+            File.WriteAllText(configPath, """
+                {"device": "plughw:1,0", "modems": [ { "subChannel": 0, "mode": "afsk1200" } ]}
+                """);
+
+            var card = FakeMixer.Cm108();
+            var api = new ConfigApi(
+                key, configPath, Path.Combine(dir, "pending.json"),
+                runningJson: () => File.ReadAllText(configPath),
+                ephemeralInForce: false,
+                requestRestart: () => throw new InvalidOperationException(
+                    "a mixer change must never restart the station"));
+            api.ServeMixer(MixerRuntime.Start(
+                card,
+                new AlsaMixerConfig { StateFile = Path.Combine(dir, "mixer-state.json") },
+                configPath, "plughw:1,0", _ => { }, out _)!);
+
+            var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+            channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+            int port = FreePorts.Next();
+            await using var server = new WaterfallWebServer(
+                channel, port, new WaterfallOptions { InputLevelMeter = true });
+            server.ApiHandler = api.HandleAsync;
+            server.Start();
+
+            // A tone at 0.25 full scale, which is -12.0 dBFS peak: the middle of the band this
+            // repository has measured as good on real hardware.
+            using var feeding = new CancellationTokenSource();
+            Task tone = Task.Factory.StartNew(
+                () => FeedTone(channel, feeding.Token),
+                CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+            Probe probe = await RunProbeAsync(node, port, apiKey: key, mixer: true, meter: true);
+            await feeding.CancelAsync();
+            await tone;
+
+            probe.Thrown.Should().BeEmpty("the page must not throw while drawing the meter");
+
+            MeterPanel meter = probe.Meter!;
+            meter.Hidden.Should().BeFalse("the meter appears on the first reading that arrives");
+            meter.Read.Should().StartWith(
+                "-12", "which is the peak of a 0.25 full-scale tone, to the tenth of a dB");
+
+            // The band and the red, drawn from the daemon's own figures: -18 to -9 dBFS on a bar
+            // that runs from -60 to 0, so the green starts at 70% and is 15% wide, and the red is
+            // the top 5%. If these move, InputLevelMeter's constants moved with them.
+            meter.ZoneLeft.Should().Be("70%");
+            meter.ZoneWidth.Should().Be("15%");
+            meter.HotWidth.Should().Be("5%");
+            meter.BarWidth.Should().Be("80%", "-12 dBFS is 80% of the way up a -60 to 0 bar");
+            meter.BarClass.Should().NotContain("hot").And.NotContain(
+                "quiet", "a tone in the target band is drawn in the target colour");
+            meter.ClipHidden.Should().BeFalse("the clip pill is shown with the meter");
+            meter.ClipClass.Should().NotContain("lit", "nothing here came near full scale");
+
+            meter.Advice.Should().Contain("-18 to -9 dBFS")
+                .And.Contain("-30", "the sentence has to say what good means, in words");
         }
         finally
         {
@@ -1236,7 +1335,8 @@ public class WaterfallPageTests
     private static async Task<Probe> RunProbeAsync(
         string node, int port, bool audio = false, string? protocol = null, string? pathname = null,
         string? stored = null, string? pageText = null, string? txTest = null, string? apiKey = null,
-        bool mixer = false, double? mixerGain = null)
+        bool mixer = false, double? mixerGain = null, double? mixerPlayback = null,
+        bool meter = false)
     {
         string here = Path.GetDirectoryName(typeof(WaterfallPageTests).Assembly.Location)!;
         var start = new ProcessStartInfo(node)
@@ -1255,9 +1355,16 @@ public class WaterfallPageTests
         if (txTest is not null) start.Environment["TXTEST"] = txTest;
         if (apiKey is not null) start.Environment["APIKEY"] = apiKey;
         if (mixer) start.Environment["MIXER"] = "1";
+        if (meter) start.Environment["METER"] = "1";
         if (mixerGain is double gain)
         {
             start.Environment["MIXGAIN"] = gain.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        if (mixerPlayback is double playback)
+        {
+            start.Environment["MIXPLAY"] =
+                playback.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
         using Process probe = Process.Start(start)!;
@@ -1285,6 +1392,55 @@ public class WaterfallPageTests
     /// neighbouring test. Nothing here is worth keeping after a failure either: these bytes are
     /// the shipped page, identical every run, and they are in the assembly.
     /// </remarks>
+    /// <summary>
+    /// The page's own copy of the meter's four figures, checked against the daemon's.
+    /// </summary>
+    /// <remarks>
+    /// The zone has to be drawn where the daemon's documentation says it is, and the page cannot
+    /// be handed the numbers per message without spending bytes five times a second on four
+    /// constants that never change. So they are written down twice and pinned here: if
+    /// <see cref="InputLevelMeter"/> moves, this fails and the page moves with it.
+    /// </remarks>
+    [Fact]
+    public void The_Pages_Target_Band_Is_The_Daemons_Target_Band()
+    {
+        string page = EmbeddedPageText();
+
+        page.Should().Contain($"MIX_TARGET_LOW = {InputLevelMeter.TargetPeakLowDbFs:0}")
+            .And.Contain($"MIX_TARGET_HIGH = {InputLevelMeter.TargetPeakHighDbFs:0}")
+            .And.Contain($"MIX_QUIET = {InputLevelMeter.QuietPeakDbFs:0}")
+            .And.Contain($"MIX_HOT = {InputLevelMeter.HotPeakDbFs:0}");
+    }
+
+    /// <summary>
+    /// The AGC and Boost buttons are gone from the page, not merely hidden.
+    /// </summary>
+    /// <remarks>
+    /// Tom, 2026-09-06: "AGC should just be forced off, as should mic boost. No need for buttons
+    /// for these." A hidden button is still a button somebody can find with a debugger and a
+    /// handler that would send a field the daemon now refuses, so the markup, the handlers and
+    /// the ids all go.
+    /// </remarks>
+    [Fact]
+    public void The_Agc_And_Boost_Buttons_Are_Not_On_The_Page_At_All()
+    {
+        string page = EmbeddedPageText();
+
+        page.Should().NotContain("mixAgc").And.NotContain("mixBoost");
+        page.Should().NotContain("\"agc\":").And.NotContain("micBoost");
+        page.Should().Contain("mixPlay", "the transmit level slider replaces them");
+    }
+
+    /// <summary>The page exactly as it ships, without going through the server.</summary>
+    private static string EmbeddedPageText()
+    {
+        using Stream? resource = typeof(WaterfallWebServer).Assembly
+            .GetManifestResourceStream("Packet.SoundModem.Waterfall.wwwroot.waterfall.html");
+        resource.Should().NotBeNull("the page ships embedded in the library");
+        using var reader = new StreamReader(resource!);
+        return reader.ReadToEnd();
+    }
+
     private sealed class PageFile : IDisposable
     {
         public PageFile(string? text = null)
@@ -1952,29 +2108,32 @@ public class WaterfallPageTests
         int[] ConfigReloads,
         MixerPanel? MixerOnArrival,
         MixerPanel? MixerAfterGain,
-        MixerPanel? MixerAfterAgc,
-        MixerPanel? MixerAfterBoost,
+        MixerPanel? MixerAfterPlay,
+        MeterPanel? Meter,
         string[] Thrown);
 
     /// <summary>
-    /// The operator page's Mixer group as the page left it: whether it is on the page at all, the
-    /// gain it shows, and which of AGC and Mic Boost the card was found to have.
+    /// The operator page's Mixer group as the page left it: whether it is on the page at all, and
+    /// where each of its two sliders sits.
     /// </summary>
     /// <param name="Hidden">Whether the group is on the page. Null is a page that never touched
     /// it, which is every flavour with no config API behind it.</param>
     /// <param name="ClassName">The group's classes, which carry the locked state.</param>
-    /// <param name="Read">The readout beside the slider.</param>
-    /// <param name="Gain">The slider's position, in dB.</param>
-    /// <param name="GainMin">The bottom of the slider, which is the bottom of the card.</param>
+    /// <param name="Read">The readout beside the capture slider.</param>
+    /// <param name="Gain">The capture slider's position, in dB.</param>
+    /// <param name="GainMin">The bottom of it, which is the bottom of the card.</param>
     /// <param name="GainMax">The top of it.</param>
-    /// <param name="GainDisabled">Whether the slider can be moved.</param>
-    /// <param name="Note">The sentence under the row, when there is one the operator has to
+    /// <param name="GainDisabled">Whether it can be moved.</param>
+    /// <param name="PlayRead">The readout beside the transmit slider.</param>
+    /// <param name="Play">The transmit slider's position, in dB.</param>
+    /// <param name="PlayMin">The bottom of it: on a card whose lowest step is mute, the lowest
+    /// step that is a level.</param>
+    /// <param name="PlayMax">The top of it.</param>
+    /// <param name="PlayDisabled">Whether it can be moved.</param>
+    /// <param name="PlayTitle">Its tooltip, which is where the mute under the bottom is said.</param>
+    /// <param name="Note">The sentence under the rows, when there is one the operator has to
     /// read: a control the config file will take back, or a state file that was not written.</param>
-    /// <param name="Agc">The AGC button's classes: "on", "missing", or neither.</param>
-    /// <param name="Boost">The Mic Boost button's classes, the same way.</param>
     /// <param name="KeyHidden">Whether the Key button is out of the way.</param>
-    /// <param name="UnchangedByBoost">Whether clicking the Boost button the card has not got
-    /// left the panel exactly as it was, which is what a disabled control has to do.</param>
     private sealed record MixerPanel(
         bool? Hidden,
         string? ClassName,
@@ -1983,9 +2142,40 @@ public class WaterfallPageTests
         string? GainMin,
         string? GainMax,
         bool? GainDisabled,
+        string? PlayRead,
+        string? Play,
+        string? PlayMin,
+        string? PlayMax,
+        bool? PlayDisabled,
+        string? PlayTitle,
         string? Note,
-        string? Agc,
-        string? Boost,
-        bool? KeyHidden,
-        bool? UnchangedByBoost);
+        bool? KeyHidden);
+
+    /// <summary>
+    /// The input level meter as the page drew it from the daemon's own messages.
+    /// </summary>
+    /// <param name="Hidden">Whether the meter is on the page. It appears on the first reading,
+    /// so false is also "a level message arrived".</param>
+    /// <param name="BarWidth">The peak bar's width, as a percentage of the meter.</param>
+    /// <param name="BarClass">"hot", "quiet", or neither, which is the colour it is drawn in.</param>
+    /// <param name="RmsLeft">Where the RMS hairline sits.</param>
+    /// <param name="ZoneLeft">The left edge of the green target band.</param>
+    /// <param name="ZoneWidth">Its width.</param>
+    /// <param name="HotWidth">The width of the red at the top.</param>
+    /// <param name="Read">The dBFS figure beside the bar.</param>
+    /// <param name="Advice">The sentence under it, which is what says what good means.</param>
+    /// <param name="ClipHidden">Whether the clip pill is on the page at all.</param>
+    /// <param name="ClipClass">"lit" while a clip is being shown.</param>
+    private sealed record MeterPanel(
+        bool? Hidden,
+        string? BarWidth,
+        string? BarClass,
+        string? RmsLeft,
+        string? ZoneLeft,
+        string? ZoneWidth,
+        string? HotWidth,
+        string? Read,
+        string? Advice,
+        bool? ClipHidden,
+        string? ClipClass);
 }

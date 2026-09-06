@@ -18,25 +18,27 @@ public enum MixerSource
     StateFile,
 }
 
-/// <summary>Where each of the four settings came from.</summary>
+/// <summary>Where each of the two settings came from.</summary>
 /// <param name="CaptureGain">The capture level's source.</param>
-/// <param name="Agc">The automatic gain control's source.</param>
-/// <param name="MicBoost">The microphone boost's source.</param>
 /// <param name="Playback">The transmit-side level's source.</param>
+/// <remarks>
+/// Two, not four. AGC and mic boost stopped being settings in 0.59.0 - they are switched off at
+/// every start-up on any card that has them - so there is no longer a source to name for either:
+/// the answer is always "this daemon did it", and a field that has one value is not a fact.
+/// </remarks>
 public sealed record MixerSources(
     MixerSource CaptureGain = MixerSource.None,
-    MixerSource Agc = MixerSource.None,
-    MixerSource MicBoost = MixerSource.None,
     MixerSource Playback = MixerSource.None);
 
 /// <summary>
 /// What a station wants its sound card's mixer set to, and which control names to look for.
 /// </summary>
 /// <remarks>
-/// <para>Every value is nullable and null means <b>leave that control exactly as the card has
+/// <para>Every level is nullable and null means <b>leave that control exactly as the card has
 /// it</b>. That is the whole safety property of this feature: a station that says nothing about
-/// its mixer gets the behaviour it had before this existed, and one that names two of the four
-/// controls has the other two left alone rather than reset to a default somebody invented.</para>
+/// its levels gets the behaviour it had before this existed, and one that names the capture gain
+/// has the transmit level left alone rather than reset to a default somebody invented. The one
+/// exception is <see cref="ForceAgcAndBoostOff"/>, which is not a level and not a preference.</para>
 /// <para>The levels are in dB, which is what a level actually sits on and what the radio at the
 /// other end of the lead is specified in. See <see cref="AlsaMixer"/>: the card's own dB range
 /// bounds them, a card that publishes no dB scale is said so rather than guessed at, and a value
@@ -53,7 +55,8 @@ public sealed record MixerSettings
 
     /// <summary>
     /// Names to look for the automatic gain control under, in order. "Auto Gain Control" is what
-    /// a CM108 presents; "AGC" and "Mic AGC" turn up on other USB codecs.
+    /// a CM108 presents; "AGC" and "Mic AGC" turn up on other USB codecs. Looked for so that it
+    /// can be switched off; see <see cref="ForceAgcAndBoostOff"/>.
     /// </summary>
     public static readonly IReadOnlyList<string> DefaultAgcControls =
         ["Auto Gain Control", "AGC", "Mic AGC"];
@@ -65,8 +68,8 @@ public sealed record MixerSettings
     /// Plenty of cards have no such control at all: the CM108 revision on the bench folds its
     /// boost into the top of the capture range (0-35 raw is -12 to +23 dB), so there is nothing
     /// separate to switch. That is the ordinary outcome here, not a fault.
-    /// <para>A switch, not a level, and deliberately still a switch after the move to dB: +20 dB
-    /// of boost ahead of everything is on or it is off, and there is no dB figure to type.</para>
+    /// <para>Looked for so that it can be switched OFF, which is all this station ever does with
+    /// it; see <see cref="ForceAgcAndBoostOff"/>.</para>
     /// </remarks>
     public static readonly IReadOnlyList<string> DefaultMicBoostControls =
         ["Mic Boost", "Mic Boost (+20dB)", "Internal Mic Boost", "Mic Capture Boost"];
@@ -81,14 +84,24 @@ public sealed record MixerSettings
     /// <summary>Capture gain in dB, or null to leave it.</summary>
     public double? CaptureGainDb { get; init; }
 
-    /// <summary>Automatic gain control on or off, or null to leave it.</summary>
-    public bool? Agc { get; init; }
-
-    /// <summary>Microphone boost on or off, or null to leave it.</summary>
-    public bool? MicBoost { get; init; }
-
     /// <summary>Transmit-side playback level in dB, or null to leave it.</summary>
     public double? PlaybackDb { get; init; }
+
+    /// <summary>
+    /// Switch the AGC and the mic boost off, on any card that has them, whatever they were set to.
+    /// </summary>
+    /// <remarks>
+    /// <para>The one thing here that is not "null leaves it alone", and deliberately so (Tom,
+    /// 2026-09-06: "AGC should just be forced off, as should mic boost. No need for buttons for
+    /// these."). Both are wrong for a data modem in every case anybody has produced: automatic
+    /// gain fights the modem's own level tracking and turns the noise floor into a moving target,
+    /// and +20 dB ahead of everything is a way of clipping the card rather than of hearing a
+    /// quiet radio. There was no third setting worth a button, so there is no setting.</para>
+    /// <para>False on the read-back paths - <c>--mixer-show</c>, <c>GET /api/mixer</c>,
+    /// <see cref="LeaveEverything"/> - because those must not write to a card at all. It is the
+    /// station's own start-up that sets it, once.</para>
+    /// </remarks>
+    public bool ForceAgcAndBoostOff { get; init; }
 
     /// <summary>Where to look for the capture gain.</summary>
     public IReadOnlyList<string> CaptureControls { get; init; } = DefaultCaptureControls;
@@ -115,14 +128,12 @@ public sealed record MixerSettings
     public MixerSettings LeaveEverything() => this with
     {
         CaptureGainDb = null,
-        Agc = null,
-        MicBoost = null,
         PlaybackDb = null,
+        ForceAgcAndBoostOff = false,
         Sources = new MixerSources(),
     };
 
     /// <summary>Whether this asks for any change at all.</summary>
     public bool SetsAnything =>
-        CaptureGainDb is not null || Agc is not null
-        || MicBoost is not null || PlaybackDb is not null;
+        CaptureGainDb is not null || PlaybackDb is not null || ForceAgcAndBoostOff;
 }

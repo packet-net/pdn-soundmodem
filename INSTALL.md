@@ -111,8 +111,8 @@ software, or the PDN node at it.
 ### The one file the daemon writes for itself
 
 If you set an `api.key`, the operator page grows a **Mixer** group for the sound card's capture
-gain, AGC, mic boost and playback level, in dB. A change made there is kept: the daemon writes
-those four values, the device name and a timestamp to
+gain and playback level, in dB, with a live input level meter beside the capture slider. A change
+made there is kept: the daemon writes those two levels, the device name and a timestamp to
 `/var/lib/pdn-soundmodem/mixer-state.json` and applies them again at the next start-up. That
 directory is created and owned by the service user through the unit's `StateDirectory=`, so
 nothing else needs opening up - **`/etc/pdn-soundmodem/soundmodem.json` is never written by the
@@ -122,6 +122,11 @@ is the level the station comes up on. A station with no `api.key` and no
 `waterfall`.`enableAudioControls` has no API and no page mixer control, so nothing writes the file
 at all. Delete it to start again;
 [CONFIG.md § alsa](CONFIG.md#alsa) has the detail.
+
+The card's **Auto Gain Control and Mic Boost are switched off at every start-up**, on any card
+that has them, and are not settings anywhere: not in the config file, not on the page and not
+over the API. Both are wrong for a data modem, one journal line records what was done, and the
+state file has nothing to say about them.
 
 ## Permissions
 

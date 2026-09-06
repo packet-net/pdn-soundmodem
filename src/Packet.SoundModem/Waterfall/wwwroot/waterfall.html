@@ -68,24 +68,60 @@
      readout with nothing to say would sit in the header showing dashes. */
   .ctl[hidden] { display: none; }
 
-  /* ---- Mixer: the sound card's own capture gain, AGC and mic boost. Operator page only. ---- */
-  #mixGain { width: 84px; }
+  /* ---- Mixer: the sound card's own capture and transmit levels, and what the input is doing
+     right now. Operator page only. ---- */
+  #mixGain, #mixPlay { width: 84px; }
   /* Wide enough for "-12.0 dB of -12 to 23", which is the whole answer: where the level is and
      how much is left above it. A dB with no range beside it is not a level anyone can act on. */
-  #mixRead { font: 11px/1 var(--mono); color: var(--ink); min-width: 132px; white-space: nowrap; }
-  #mixRead.bad { color: #ff9a7a; }
+  #mixRead, #mixPlayRead {
+    font: 11px/1 var(--mono); color: var(--ink); min-width: 132px; white-space: nowrap;
+  }
+  #mixRead.bad, #mixPlayRead.bad { color: #ff9a7a; }
+  /* Which half of the card each row is. The group's own label says "Mixer" once; these say which
+     direction, because "gain" on its own is the question an operator is trying to answer. */
+  .mixside {
+    font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+    min-width: 52px; white-space: nowrap;
+  }
   /* What happens to this change at the next start-up, when that is not simply "it is kept": the
      config file pins this control and will take it back, or the state file could not be written.
      Shown as words rather than left in a tooltip - a tooltip is not an answer on a touchscreen. */
   #mixNote {
     font: 10px/1.25 var(--sans); color: #ffcf9a; max-width: 340px; white-space: normal;
   }
-  /* A control the card has not got: still shown, so the operator can see it was looked for and
-     is not there, and not clickable, because there is nothing behind it to click. */
-  #mixerCtl .seg-btn.missing {
-    opacity: .4; text-decoration: line-through; cursor: default; border-style: dashed;
+  #mixerCtl.locked #mixRead, #mixerCtl.locked #mixPlayRead { color: var(--muted); }
+
+  /* ---- The input level meter, beside the capture slider it is there to aim. ----
+     A bar with the target zone painted into it, because a number alone does not answer "is this
+     right", which is the whole question. The zone is drawn from the same figures the daemon
+     documents (see initMeter); nothing here hard-codes a position. */
+  #mixMeter {
+    position: relative; width: 132px; height: 11px; background: #0c1016;
+    border: 1px solid var(--edge); border-radius: 2px; overflow: hidden; flex: none;
   }
-  #mixerCtl.locked #mixRead { color: var(--muted); }
+  /* Under the bar, so a peak sitting in the zone still shows the zone either side of it. */
+  #mixZone { position: absolute; top: 0; bottom: 0; background: rgba(90,200,120,.30); }
+  #mixHot { position: absolute; top: 0; bottom: 0; right: 0; background: rgba(226,80,60,.30); }
+  #mixBar { position: absolute; left: 0; top: 2px; bottom: 2px; width: 0; background: #7fd8a0; }
+  #mixBar.quiet { background: #6f7d8c; }
+  #mixBar.hot { background: #e2503c; }
+  /* The RMS as a hairline, which is where the noise floor is when nothing is being received.
+     A second bar would compete with the peak; a tick reads as context. */
+  #mixRms { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.55); }
+  #mixLevelRead {
+    font: 11px/1 var(--mono); color: var(--ink); min-width: 64px; white-space: nowrap;
+  }
+  /* Latched for a moment: a clip is one interval out of five a second and would otherwise blink
+     past unseen, and the operator has to act on it rather than notice it. */
+  #mixClip {
+    font: 9px/1 var(--sans); letter-spacing: .08em; padding: 3px 5px; border-radius: 3px;
+    background: #7a1f14; color: #ffd0c4; visibility: hidden;
+  }
+  #mixClip.lit { visibility: visible; }
+  /* The one sentence that says what good means, which is the thing the meter exists for. */
+  #mixAdvice {
+    font: 10px/1.25 var(--sans); color: var(--muted); max-width: 340px; white-space: normal;
+  }
 
   /* What the transmitter did. Red while it is up, neutral once it is down - and the label says
      which, because two shades of pill are the same pill to anyone who cannot compare them side
@@ -470,23 +506,43 @@
     </div>
   </div>
 
-  <!-- Mixer: the sound card's own capture gain, AGC and mic boost, set through the config API
-       so the operator can trim the level while watching the waterfall. Operator page only - it
-       is in PUBLIC_HIDES, and a public monitor fronts web receivers and has no card anyway. The
-       whole group stays hidden unless the daemon answers /api/mixer with a card; see initMixer. -->
+  <!-- Mixer: the sound card's own capture and transmit levels, set through the config API so the
+       operator can trim them while watching the waterfall, with a live reading of what the input
+       is actually doing. Operator page only - it is in PUBLIC_HIDES, and a public monitor fronts
+       web receivers and has no card anyway. The whole group stays hidden unless the daemon
+       answers /api/mixer with a card; see initMixer.
+       There are no AGC or mic boost buttons: both are switched off at every start-up on any card
+       that has them, so there is nothing to press (Tom, 2026-09-06). -->
   <div class="ctl" id="mixerCtl" hidden>
     <label for="mixGain">Mixer</label>
     <div class="ctl-row">
+      <span class="mixside">RX gain</span>
       <!-- Bounded by the card's own dB range, which the daemon sends with the value: the ends of
            this slider are the ends of the card, so there is no way to ask for a level it has not
            got. A card that publishes no dB scale sends no range and the slider stays disabled. -->
       <input type="range" id="mixGain" min="-60" max="0" step="0.5" value="0" disabled
              title="Capture gain in dB, bounded by the card's own range">
       <span id="mixRead">-</span>
-      <button class="seg-btn" id="mixAgc" title="Automatic gain control. Off for a data modem: it fights the modem's own level tracking and turns the noise floor into a moving target.">AGC</button>
-      <button class="seg-btn" id="mixBoost" title="Microphone boost. Off unless the radio's output is genuinely low.">Boost</button>
+      <!-- What the daemon is hearing, five times a second, whether or not Listen is on. The
+           target zone and the red are painted from the daemon's own figures by initMeter. -->
+      <div id="mixMeter" hidden title="Input level at the daemon, after the card and before the modems">
+        <div id="mixZone"></div><div id="mixHot"></div><div id="mixBar"></div><div id="mixRms"></div>
+      </div>
+      <span id="mixLevelRead" hidden></span>
+      <span id="mixClip" hidden>CLIP</span>
+    </div>
+    <div class="ctl-row">
+      <span class="mixside">TX gain</span>
+      <!-- The card's playback level: what drives the radio's mic or data input. Same rules as the
+           capture slider - the card's own range, refused rather than clamped, remembered in the
+           state file - and one more: on a card whose bottom step is its mute (a CM108's Speaker)
+           the range starts at the lowest step that is a level, and the title says what is under. -->
+      <input type="range" id="mixPlay" min="-60" max="0" step="0.5" value="0" disabled
+             title="Transmit level in dB, bounded by the card's own range">
+      <span id="mixPlayRead">-</span>
       <button class="btn" id="mixKey" hidden title="This station's api.key, kept in this browser only">Key</button>
     </div>
+    <div id="mixAdvice" hidden></div>
     <div id="mixNote" hidden></div>
   </div>
 
@@ -1028,22 +1084,29 @@ function initControls() {
     $("floor").value = ui.floorDb; $("top").value = ui.topDb; save();
   });
 
+  initMeter();
   initMixer();
 }
 
 /* ---------- Mixer (operator page only) ---------- */
-// The sound card's own capture gain, AGC and mic boost, beside the display levels, so the level
-// can be trimmed against the waterfall it changes. Every change goes to /api/mixer, which is the
+// The sound card's own capture and transmit levels, beside the display levels, so they can be
+// trimmed against the waterfall they change. Every change goes to /api/mixer, which is the
 // station's config API under the station's own key: the card is set as the request is served and
 // the change is remembered in the daemon's state file, so it survives a restart. Nothing restarts
 // here - restarting a station to nudge its capture gain would drop the very picture being trimmed
 // against.
 //
-// The gain is in dB, bounded by the card's own range, which the daemon sends with the value.
+// Both levels are in dB, bounded by the card's own range, which the daemon sends with the value.
 // Two things the answer can carry that the operator has to be told rather than left to discover:
 // a control the CONFIG FILE pins is taken back at the next start-up whatever is done here, and a
 // state file that could not be written means this run only. Both arrive as "warn" and the
-// sentence goes under the row, in words.
+// sentence goes under the rows, in words.
+//
+// There is no AGC button and no Boost button. Both are switched off at every start-up on any card
+// that has them (Tom, 2026-09-06: "AGC should just be forced off, as should mic boost. No need
+// for buttons for these"), so there is no state for a button to hold and nothing for a press to
+// change. GET /api/mixer still reports them, read-only, which is where to look if a card refuses
+// to switch its AGC off.
 //
 // The whole group is hidden unless the daemon answers: 404 means this station has no config API
 // at all (no api.key), and "available": false means it has one but no sound card to mix. Which
@@ -1079,12 +1142,14 @@ function mixHide() {
   ctl.hidden = true;
   ctl.classList.remove("locked");
   $("mixKey").hidden = true;
-  $("mixRead").textContent = "-";
-  $("mixRead").classList.remove("bad");
+  for (const id of ["mixRead", "mixPlayRead"]) {
+    $(id).textContent = "-";
+    $(id).classList.remove("bad");
+  }
   mixNote("");
 }
 
-// The sentence under the row, or nothing. Its own element rather than a title attribute: what it
+// The sentence under the rows, or nothing. Its own element rather than a title attribute: what it
 // says ("the config file will take this back at the next start") is the sort of thing an operator
 // needs to see without knowing to hover, and on a phone there is no hover at all.
 function mixNote(text) {
@@ -1104,22 +1169,44 @@ function mixEnd(db) { return Number.isInteger(db) ? String(db) : db.toFixed(1); 
 // something the operator can act on, and hiding it would look like the feature is missing. The
 // daemon will not say whether there is a card without the key - the key check is in front of
 // everything - so if it turns out there is not one, the answer to the next probe hides it again.
+// The meter is left exactly as it is: a reading is not a control and needs no key, and a station
+// whose page is open but whose key is on another machine is precisely when a level still helps.
 function mixLocked() {
   $("mixerCtl").hidden = false;
   $("mixerCtl").classList.add("locked");
-  $("mixGain").disabled = true;
-  $("mixRead").textContent = "key needed";
-  $("mixRead").classList.remove("bad");
+  for (const [slider, read] of [["mixGain", "mixRead"], ["mixPlay", "mixPlayRead"]]) {
+    $(slider).disabled = true;
+    $(read).textContent = "key needed";
+    $(read).classList.remove("bad");
+  }
   $("mixKey").hidden = false;
   mixNote("");
-  for (const id of ["mixAgc", "mixBoost"]) {
-    $(id).classList.remove("on", "missing");
-    $(id).disabled = true;
-  }
 }
 
-// What the card says it is now. Read-back, not what we asked for: a card quantises a level to
-// its own steps and can decline a switch outright, and the operator must see the card.
+// One level control onto one slider and its readout. Read-back, not what we asked for: a card
+// quantises a level to its own steps, and the operator must see the card.
+function mixLevel(control, sliderId, readId, what) {
+  const slider = $(sliderId);
+  // decibels as well as dbRange: a card that publishes a range but fails the per-channel dB
+  // read sends one without the other, and assigning null to the slider then throws in mixDb()
+  // and aborts the whole group.
+  const range = control && control.dbRange && control.decibels != null ? control.dbRange : null;
+  slider.disabled = !range;
+  if (range) {
+    slider.min = range.min;
+    slider.max = range.max;
+    slider.value = control.decibels;
+    slider.title = `${what} in dB, ${mixEnd(range.min)} to ${mixEnd(range.max)} on this card`
+      + (range.mutesBelowMin ? " (the step below the bottom is mute)" : "");
+  }
+  const read = $(readId);
+  read.classList.remove("bad");
+  read.textContent = !control ? "no control"
+    : !range ? `${control.percent}% (no dB scale)`
+    : `${mixDb(control.decibels)} dB of ${mixEnd(range.min)} to ${mixEnd(range.max)}`;
+}
+
+// What the card says it is now, both halves of it.
 function mixShow(state) {
   const ctl = $("mixerCtl");
   ctl.hidden = false;
@@ -1127,51 +1214,22 @@ function mixShow(state) {
   $("mixKey").hidden = true;
   mixNote("");
 
-  // The card's own range becomes the slider's, so there is no way to ask for a level this card
-  // has not got. A control with no dB scale sends no range: the slider is disabled and the
-  // readout says why, rather than offering a number that would be refused.
-  const gain = $("mixGain");
-  const capture = state.capture;
-  // decibels as well as dbRange: a card that publishes a range but fails the per-channel dB
-  // read sends one without the other, and assigning null to the slider then throws in mixDb()
-  // and aborts the whole group.
-  const range = capture && capture.dbRange && capture.decibels != null ? capture.dbRange : null;
-  gain.disabled = !range;
-  if (range) {
-    gain.min = range.min;
-    gain.max = range.max;
-    gain.value = capture.decibels;
-    gain.title = `Capture gain in dB, ${mixEnd(range.min)} to ${mixEnd(range.max)} on this card`
-      + (range.mutesBelowMin ? " (the step below the bottom is mute)" : "");
-  }
-  const read = $("mixRead");
-  read.classList.remove("bad");
-  read.textContent = !capture ? "no gain control"
-    : !range ? `${capture.percent}% (no dB scale)`
-    : `${mixDb(capture.decibels)} dB of ${mixEnd(range.min)} to ${mixEnd(range.max)}`;
-  read.title = state.summary || "";
-
-  for (const [id, control] of [["mixAgc", state.agc], ["mixBoost", state.micBoost]]) {
-    const button = $(id);
-    button.classList.toggle("missing", !control);
-    button.classList.toggle("on", !!control && control.on);
-    button.disabled = !control;
-    if (!control) {
-      // Named, because "this card has not got one" is the answer for a good number of CM108
-      // revisions, which fold the boost into the top of the capture range instead.
-      button.title = `${id === "mixAgc" ? "Automatic gain control" : "Microphone boost"}: `
-        + `${state.card} has no such control`;
-    }
-  }
+  mixLevel(state.capture, "mixGain", "mixRead", "Capture gain");
+  mixLevel(state.playback, "mixPlay", "mixPlayRead", "Transmit level");
+  $("mixRead").title = state.summary || "";
+  $("mixPlayRead").title = state.summary || "";
 }
 
 async function mixSend(patch) {
+  // Whichever readout the change came from is the one that reports on it, so a refused transmit
+  // level does not put "refused" beside the capture gain.
+  const readId = "playbackDb" in patch ? "mixPlayRead" : "mixRead";
   let answer;
   try {
     answer = await mixFetch("POST", patch);
   } catch {
-    $("mixRead").textContent = "not reachable";
-    $("mixRead").classList.add("bad");
+    $(readId).textContent = "not reachable";
+    $(readId).classList.add("bad");
     return;
   }
 
@@ -1180,19 +1238,81 @@ async function mixSend(patch) {
     // The daemon's own sentence, which is the same one the journal carries: a level off the end
     // of the card's range comes back with the range in it, so it is shown and not just hovered.
     const text = await answer.text();
-    $("mixRead").textContent = "refused";
-    $("mixRead").classList.add("bad");
-    $("mixRead").title = text;
+    $(readId).textContent = "refused";
+    $(readId).classList.add("bad");
+    $(readId).title = text;
     mixNote(text);
     return;
   }
 
   const state = await answer.json();
   mixShow(state);
-  if (state.note) $("mixRead").title = `${state.summary || ""}\n${state.note}`;
+  if (state.note) $(readId).title = `${state.summary || ""}\n${state.note}`;
   // Only when there is something to act on. "It has been remembered" is the ordinary outcome and
   // saying it after every nudge of the slider would train the operator to stop reading the line.
   mixNote(state.warn ? state.note : "");
+}
+
+/* ---------- Input level meter ---------- */
+// What the daemon is actually hearing, five times a second, over the page socket and without
+// Listen being on. It answers the question the slider on its own cannot (Tom, 2026-09-06: "No way
+// for the user to know what good means"), so the bar carries the answer painted into it: a green
+// band to land signal peaks in, a red top to stay out of, and one sentence underneath.
+//
+// The four figures are the daemon's, from InputLevelMeter, and they are what this repository has
+// already measured rather than a convention imported from somewhere: the bench NinoTNC loop's
+// GOOD band is a received peak of 0.17 to 0.28 full scale (-15.4 to -11.1 dBFS), the CM108
+// interface is designed for -12 dBFS at 60% of class deviation, and the MS110D over-the-air
+// capture called "comfortably adequate" peaked at -11.7 dBFS. Widened either side so a real
+// station's bursts do not flicker in and out of the zone.
+const MIX_METER_MIN = -60;   // the left-hand end of the bar, in dBFS
+const MIX_TARGET_LOW = -18;  // the green band, on received-signal peaks
+const MIX_TARGET_HIGH = -9;
+const MIX_QUIET = -30;       // under this the bar goes grey: quieter than it needs to be
+const MIX_HOT = -3;          // over this the bar goes red: less headroom than a receive path keeps
+let mixClipUntil = 0;
+
+// Where a dBFS figure sits along the bar, as a percentage. Clamped, because a resampler can
+// overshoot a clipped waveform past 0 dBFS and a bar 103% wide is a layout bug.
+function mixMeterPct(db) {
+  return Math.max(0, Math.min(100, (db - MIX_METER_MIN) * 100 / (0 - MIX_METER_MIN)));
+}
+
+// The zone and the red painted from the constants above, once, so that the picture and the
+// sentence under it can never say different numbers.
+function initMeter() {
+  const low = mixMeterPct(MIX_TARGET_LOW);
+  $("mixZone").style.left = `${low}%`;
+  $("mixZone").style.width = `${mixMeterPct(MIX_TARGET_HIGH) - low}%`;
+  $("mixHot").style.width = `${100 - mixMeterPct(MIX_HOT)}%`;
+  $("mixAdvice").textContent =
+    `Aim for received signals to peak in the green, ${MIX_TARGET_LOW} to ${MIX_TARGET_HIGH} dBFS;`
+    + ` never into the red, and with nothing on the channel the bar should sit below ${MIX_QUIET}.`;
+}
+
+// One reading. The meter appears on the first one rather than being shown empty: a station that
+// does not send them (a public page, a monitor, a receiver that is not a sound card) then has no
+// dead bar sitting in its header pretending to be a measurement.
+let meterShown = false;
+function onLevel(msg) {
+  if (!meterShown) {
+    meterShown = true;
+    for (const id of ["mixMeter", "mixLevelRead", "mixClip", "mixAdvice"]) $(id).hidden = false;
+  }
+
+  const bar = $("mixBar");
+  bar.style.width = `${mixMeterPct(msg.peak)}%`;
+  bar.classList.toggle("hot", !!msg.clip || msg.peak >= MIX_HOT);
+  bar.classList.toggle("quiet", !msg.clip && msg.peak < MIX_QUIET);
+  $("mixRms").style.left = `${mixMeterPct(msg.rms)}%`;
+  $("mixLevelRead").textContent = `${msg.peak.toFixed(1)} dBFS`;
+  $("mixLevelRead").title =
+    `peak ${msg.peak.toFixed(1)} dBFS, rms ${msg.rms.toFixed(1)} dBFS, at the daemon's input`;
+
+  // Latched for three seconds. A clip is one 200 ms interval and would otherwise blink past
+  // unseen, and this is the one reading on the meter that has to be acted on rather than noticed.
+  if (msg.clip) mixClipUntil = performance.now() + 3000;
+  $("mixClip").classList.toggle("lit", performance.now() < mixClipUntil);
 }
 
 async function initMixer() {
@@ -1234,12 +1354,7 @@ async function initMixer() {
 
   // "change" and not "input": a drag is one request at the end of it, not sixty on the way.
   $("mixGain").addEventListener("change", () => mixSend({ captureGainDb: +$("mixGain").value }));
-  $("mixAgc").addEventListener("click", () => {
-    if (!$("mixAgc").disabled) mixSend({ agc: !$("mixAgc").classList.contains("on") });
-  });
-  $("mixBoost").addEventListener("click", () => {
-    if (!$("mixBoost").disabled) mixSend({ micBoost: !$("mixBoost").classList.contains("on") });
-  });
+  $("mixPlay").addEventListener("change", () => mixSend({ playbackDb: +$("mixPlay").value }));
   $("mixKey").addEventListener("click", () => {
     const given = prompt("This station's api.key, to set its mixer from this browser:", mixKey());
     if (given === null) return;
@@ -2164,6 +2279,10 @@ function connect() {
         onLinks(msg);
       } else if (msg.type === "link") {
         onLinkEvent(msg);
+      } else if (msg.type === "level") {
+        // The daemon's own input level. Only an operator's page on a station with a sound card is
+        // ever sent one, so there is no flavour check here: the message not arriving is the check.
+        onLevel(msg);
       }
       return;
     }

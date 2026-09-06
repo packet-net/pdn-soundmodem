@@ -136,6 +136,23 @@ public sealed class WaterfallOptions
     /// library's. See <see cref="TxTestControl"/>.
     /// </remarks>
     public TxTestControl? TxTest { get; set; }
+
+    /// <summary>
+    /// Measure the level of the audio arriving from the sound card and send it to the page a few
+    /// times a second, so the operator can see what the capture gain is doing.
+    /// </summary>
+    /// <remarks>
+    /// <para>Off by default, and set by the daemon only on a station with a real sound card and
+    /// an operator's page (Tom, 2026-09-06: "Some assistance in setting the capture level would
+    /// be useful. No way for the user to know what good means."). It is a control-room reading:
+    /// a public page never gets it, and neither does a monitor, whose audio arrives over an
+    /// uplink from somebody else's card and whose level says nothing about any card the person
+    /// looking at it can reach.</para>
+    /// <para>Free while nobody is watching, the same rule the audio relay keeps: with no viewers
+    /// the meter is reset and not accumulated, so a station serving nobody does no work for it.
+    /// See <see cref="Audio.InputLevelMeter"/> for the numbers and where they come from.</para>
+    /// </remarks>
+    public bool InputLevelMeter { get; set; }
 }
 
 /// <summary>
@@ -274,6 +291,23 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     private readonly object _clientsLock = new();
     private readonly List<WaterfallClient> _clients = [];
     private readonly List<short> _audioBlock = [];
+
+    /// <summary>
+    /// The input level meter, or null on a page that does not offer one. Touched only from the
+    /// receive tap, which is one thread.
+    /// </summary>
+    private readonly Audio.InputLevelMeter? _levelMeter;
+
+    /// <summary>
+    /// How many browsers are attached, readable without taking <see cref="_clientsLock"/>.
+    /// </summary>
+    /// <remarks>
+    /// Kept beside the list rather than derived from it because the receive tap asks the question
+    /// on every audio block for the life of the daemon, and the answer decides whether to do any
+    /// work at all. Written under the lock at the three places the list changes, so it is never
+    /// stale by more than one connection arriving or leaving.
+    /// </remarks>
+    private volatile int _viewerCount;
 
     // The spectrum source is fed from two threads - the receive loop and the transmitter - and
     // is not itself thread-safe. Half duplex keeps them apart in practice, but not across the
@@ -499,6 +533,9 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         _channel = channel;
         _options = options ?? new WaterfallOptions();
         _txTest = _options.TxTest;
+        _levelMeter = _options.InputLevelMeter
+            ? new Audio.InputLevelMeter(_options.TimeProvider)
+            : null;
         Url = "";
     }
 
@@ -922,6 +959,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
 
             // The listener feed is a stream of its own and has nothing to do with the transform.
             BroadcastAudio(samples);
+
+            // Outside the display gate above, deliberately: this is a reading of the input, and
+            // the drain tail after a key-up is audio the card really is delivering. It is kept
+            // out of the picture because it would smear the transform, which is a different
+            // problem from whether the capture gain is right.
+            MeterInput(samples);
         });
 
         // Draw what we transmit, so the display stays continuous across a keyup instead of
@@ -2201,6 +2244,54 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// The level of the audio just in from the sound card, sent to every open page five times a
+    /// second, so an operator moving the capture gain can see where the level is landing.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Free when nobody is watching</b>, which is the same rule the audio relay keeps:
+    /// with no viewers the meter is reset and nothing is accumulated, so the cost of the feature
+    /// on a station serving nobody is one volatile read per audio block. The reset matters as
+    /// much as the skip - a half-interval kept across a gap of hours would be handed to the next
+    /// viewer as their first reading, showing them a peak from whenever the last one left.</para>
+    /// <para><b>Sent rather than subscribed to.</b> It is under 60 bytes five times a second, so
+    /// a request/cancel protocol would cost more code than it could ever save bytes; and a page
+    /// that opens the Mixer group late (the group appears on the answer to its own probe of
+    /// <c>/api/mixer</c>) then has a meter already reading rather than one that starts blank.
+    /// Every page that gets this message is an operator's own page: the server only offers it
+    /// when the daemon asked for it, and the daemon asks only for a station with a sound card.
+    /// </para>
+    /// </remarks>
+    private void MeterInput(ReadOnlySpan<float> samples)
+    {
+        if (_levelMeter is not Audio.InputLevelMeter meter)
+        {
+            return;
+        }
+
+        if (_viewerCount == 0)
+        {
+            meter.Reset();
+            return;
+        }
+
+        meter.Add(samples);
+        if (!meter.TryTake(out Audio.InputLevel level))
+        {
+            return;
+        }
+
+        // One decimal place. The card's own steps are whole dB on every revision seen so far, and
+        // a bar that twitches in the second decimal is a bar nobody can read a trend off.
+        Broadcast(WebSocketMessageType.Text, JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            type = "level",
+            peak = Math.Round(level.PeakDbFs, 1),
+            rms = Math.Round(level.RmsDbFs, 1),
+            clip = level.Clipped,
+        }, Json));
+    }
+
     private void Broadcast(WebSocketMessageType kind, byte[] payload)
     {
         lock (_clientsLock)
@@ -2584,6 +2675,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             {
                 _clients.Add(client);
                 viewers = _clients.Count;
+                _viewerCount = viewers;
             }
         }
 
@@ -2663,6 +2755,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             {
                 _clients.Remove(client);
                 viewers = _clients.Count;
+                _viewerCount = viewers;
             }
 
             // Before the count is announced, so that the journal reads in the order things
@@ -2954,6 +3047,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             }
 
             _clients.Clear();
+            _viewerCount = 0;
         }
 
         _stopping.Dispose();

@@ -100,8 +100,8 @@ public class MixerApiTests : IDisposable
 
         JsonElement read = await station.GetAsync();
         read.GetProperty("capture").GetProperty("decibels").GetDouble().Should().Be(8);
-        (await station.PostAsync("""{"agc": false}"""))
-            .GetProperty("agc").GetProperty("on").GetBoolean().Should().BeFalse();
+        (await station.PostAsync("""{"playbackDb": -8}"""))
+            .GetProperty("playback").GetProperty("decibels").GetDouble().Should().Be(-8);
 
         HttpResponseMessage config = await station.Client.GetAsync(
             new Uri(station.ConfigUrl, UriKind.Absolute));
@@ -225,7 +225,20 @@ public class MixerApiTests : IDisposable
             57, "the percentage alsamixer shows is still reported beside the dB");
         capture.GetProperty("source").GetString().Should().Be(
             "none", "nothing has pinned this control");
-        body.GetProperty("agc").GetProperty("on").GetBoolean().Should().BeTrue();
+        JsonElement playback = body.GetProperty("playback");
+        playback.GetProperty("control").GetString().Should().Be("Speaker");
+        playback.GetProperty("decibels").GetDouble().Should().Be(-20);
+        playback.GetProperty("dbRange").GetProperty("min").GetDouble().Should().Be(
+            -36, "the bottom step of this control is the card's mute, not a level");
+        playback.GetProperty("dbRange").GetProperty("max").GetDouble().Should().Be(0);
+        playback.GetProperty("dbRange").GetProperty("mutesBelowMin").GetBoolean().Should().BeTrue();
+
+        // Read-only facts, not settings: the AGC was switched off when the station started and
+        // there is no source to name and nothing to POST.
+        JsonElement agc = body.GetProperty("agc");
+        agc.GetProperty("on").GetBoolean().Should().BeFalse("start-up switched it off");
+        agc.GetProperty("forcedOff").GetBoolean().Should().BeTrue();
+        agc.TryGetProperty("source", out _).Should().BeFalse("nothing pins what is unconditional");
         body.GetProperty("micBoost").ValueKind.Should().Be(
             JsonValueKind.Null, "this CM108 revision has no mic boost control");
         station.Card!.CaptureDb("Mic").Should().Be(8, "reading changes nothing");
@@ -236,10 +249,11 @@ public class MixerApiTests : IDisposable
     {
         using var station = new Station(_dir, FakeMixer.Cm108());
 
-        JsonElement body = await station.PostAsync("""{"captureGainDb": 6, "agc": false}""");
+        JsonElement body = await station.PostAsync("""{"captureGainDb": 6}""");
 
         station.Card!.CaptureDb("Mic").Should().Be(6);
-        station.Card.Find("Auto Gain Control")!.On.Should().BeFalse();
+        station.Card.Find("Auto Gain Control")!.On.Should().BeFalse(
+            "and start-up had already switched it off");
         body.GetProperty("applied").GetBoolean().Should().BeTrue();
         body.GetProperty("capture").GetProperty("decibels").GetDouble().Should().Be(6);
         body.GetProperty("summary").GetString().Should()
@@ -247,6 +261,45 @@ public class MixerApiTests : IDisposable
                 + "Auto Gain Control off, "
                 + "Speaker playback -20.00 dB of -36.00 to 0.00 dB, below which it mutes (left as found)",
                 "a control the request said nothing about is named as untouched, not omitted");
+    }
+
+    /// <summary>
+    /// The transmit level is the second slider on the page, and it works the same way.
+    /// </summary>
+    /// <remarks>
+    /// Tom, 2026-09-06, on the bench Pi: "I don't see a TX Gain control." The endpoint has taken
+    /// <c>playbackDb</c> since 0.58.0 and reported the control's range; only the page was missing.
+    /// </remarks>
+    [Fact]
+    public async Task Setting_The_Transmit_Level_Lands_On_The_Card_And_Is_Remembered()
+    {
+        using var station = new Station(_dir, FakeMixer.Cm108());
+
+        JsonElement body = await station.PostAsync("""{"playbackDb": -8}""");
+
+        station.Card!.PlaybackDb("Speaker").Should().Be(-8);
+        station.Card.CaptureDb("Mic").Should().Be(8, "the capture side was not mentioned");
+        body.GetProperty("playback").GetProperty("decibels").GetDouble().Should().Be(-8);
+        body.GetProperty("persisted").GetBoolean().Should().BeTrue();
+        station.State().GetProperty("playbackDb").GetDouble().Should().Be(-8);
+    }
+
+    /// <summary>
+    /// The mute step under a CM108 Speaker's range is refused with the range, not clamped to.
+    /// </summary>
+    [Fact]
+    public async Task A_Transmit_Level_Below_The_Cards_Lowest_Real_Step_Is_Refused_With_The_Range()
+    {
+        using var station = new Station(_dir, FakeMixer.Cm108());
+
+        HttpResponseMessage answer = await station.Client.PostAsync(
+            new Uri(station.Url, UriKind.Absolute),
+            new StringContent("""{"playbackDb": -37}""", Encoding.UTF8, "application/json"));
+
+        answer.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await answer.Content.ReadAsStringAsync()).Should().Contain("-36.00 to 0.00 dB");
+        station.Card!.PlaybackDb("Speaker").Should().Be(
+            -20, "a transmitter is not silenced by a slider that went one step too far");
     }
 
     /// <summary>
@@ -268,7 +321,7 @@ public class MixerApiTests : IDisposable
     {
         using var station = new Station(_dir, FakeMixer.Cm108());
 
-        JsonElement body = await station.PostAsync("""{"captureGainDb": 6, "agc": false}""");
+        JsonElement body = await station.PostAsync("""{"captureGainDb": 6}""");
 
         body.GetProperty("persisted").GetBoolean().Should().BeTrue();
         body.GetProperty("stateFile").GetString().Should().Be(station.StatePath);
@@ -278,7 +331,6 @@ public class MixerApiTests : IDisposable
 
         JsonElement written = station.State();
         written.GetProperty("captureGainDb").GetDouble().Should().Be(6);
-        written.GetProperty("agc").GetBoolean().Should().BeFalse();
         written.GetProperty("device").GetString().Should().Be(Device);
         written.TryGetProperty("playbackDb", out _).Should().BeFalse(
             "a control nobody has ever set here stays absent, so it keeps whatever the card has");
@@ -310,12 +362,12 @@ public class MixerApiTests : IDisposable
         using var station = new Station(_dir, FakeMixer.Cm108());
 
         await station.PostAsync("""{"captureGainDb": 6}""");
-        await station.PostAsync("""{"agc": false}""");
+        await station.PostAsync("""{"playbackDb": -8}""");
 
         JsonElement written = station.State();
         written.GetProperty("captureGainDb").GetDouble().Should().Be(
             6, "the earlier change is still what the next start-up should set");
-        written.GetProperty("agc").GetBoolean().Should().BeFalse();
+        written.GetProperty("playbackDb").GetDouble().Should().Be(-8);
     }
 
     [Fact]
@@ -402,12 +454,12 @@ public class MixerApiTests : IDisposable
         using var station = new Station(
             _dir, FakeMixer.Cm108(), pinned: new AlsaMixerConfig { CaptureGainDb = -3 });
 
-        JsonElement body = await station.PostAsync("""{"agc": false}""");
+        JsonElement body = await station.PostAsync("""{"playbackDb": -8}""");
 
         body.GetProperty("warn").GetBoolean().Should().BeFalse();
         body.GetProperty("note").GetString().Should().NotContain("set in the config file");
-        body.GetProperty("agc").GetProperty("source").GetString().Should().Be(
-            "state", "the state file is what pins the AGC now");
+        body.GetProperty("playback").GetProperty("source").GetString().Should().Be(
+            "state", "the state file is what pins the transmit level now");
         body.GetProperty("capture").GetProperty("source").GetString().Should().Be("config");
     }
 
@@ -442,12 +494,46 @@ public class MixerApiTests : IDisposable
         HttpResponseMessage answer = await station.Client.PostAsync(
             new Uri(station.Url, UriKind.Absolute),
             new StringContent(
-                """{"captureGain": 6, "agc": false}""", Encoding.UTF8, "application/json"));
+                """{"captureGain": 6, "playbackDb": -8}""", Encoding.UTF8, "application/json"));
 
         answer.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await answer.Content.ReadAsStringAsync()).Should().Contain("captureGainDb");
         station.Card!.CaptureDb("Mic").Should().Be(8, "nothing reached the card");
-        station.Card.Find("Auto Gain Control")!.On.Should().BeTrue();
+        station.Card.PlaybackDb("Speaker").Should().Be(-20);
+    }
+
+    /// <summary>
+    /// A body still carrying <c>agc</c> or <c>micBoost</c> is refused by name, saying they are
+    /// always off now.
+    /// </summary>
+    /// <remarks>
+    /// Tom, 2026-09-06: "AGC should just be forced off, as should mic boost. No need for buttons
+    /// for these." Refused by name rather than left to the strict reader's "not a field this
+    /// endpoint knows", which is true and useless to somebody whose script worked last week - and
+    /// silently accepting it would be worse, because the daemon would then look as though it had
+    /// switched something a request asked it to.
+    /// </remarks>
+    [Theory]
+    [InlineData("agc")]
+    [InlineData("micBoost")]
+    public async Task A_Post_Still_Carrying_A_Switch_Is_Refused_By_Name(string gone)
+    {
+        using var station = new Station(_dir, FakeMixer.Cm108());
+
+        HttpResponseMessage answer = await station.Client.PostAsync(
+            new Uri(station.Url, UriKind.Absolute),
+            new StringContent(
+                $$"""{"captureGainDb": 6, "{{gone}}": true}""",
+                Encoding.UTF8, "application/json"));
+
+        answer.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        string why = await answer.Content.ReadAsStringAsync();
+        why.Should().Contain($"{gone} is no longer a setting")
+            .And.Contain("switched off at every start-up");
+        station.Card!.CaptureDb("Mic").Should().Be(
+            8, "the whole request is refused, so the level beside it never reached the card");
+        station.Card.Find("Auto Gain Control")!.On.Should().BeFalse(
+            "and it is still off, because start-up switched it off");
     }
 
     /// <summary>
@@ -549,7 +635,7 @@ public class MixerApiTests : IDisposable
 
         HttpResponseMessage answer = await station.Client.PostAsync(
             new Uri(station.Url, UriKind.Absolute),
-            new StringContent("""{"agc": false}""", Encoding.UTF8, "application/json"));
+            new StringContent("""{"captureGainDb": 6}""", Encoding.UTF8, "application/json"));
 
         answer.StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
