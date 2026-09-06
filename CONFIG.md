@@ -1444,7 +1444,9 @@ nothing for a one-run default to insure against.
 ```
 
 `?persist=false` is the one-run try, for a value you are listening to rather than keeping: the
-card is set and nothing is written down.
+card is set and nothing is written down. That is not a warning - you asked for it - so it answers
+`"warn": false`. **`warn` is true only when there is something to read now**: a control the config
+file pins and will take back at the next start, or a state file that could not be written.
 
 **The config file is never written.** It stays the description of the intended station,
 hand-edited and full of your comments, and it wins at start-up. So a change to a control the file
@@ -2794,7 +2796,7 @@ enumerated yet at boot, for instance - still restarts on its own as usual.
 | `ptt` alongside a `flex:` device | `--device flex: keys the radio itself; remove the conflicting --ptt …` |
 | `ptt` alongside a `ubersdr:` device | `--device ubersdr: is a receive-only station … Remove "ptt".` |
 | `alsa.mixer` level outside the card's range | *(not a start-up refusal: the card's range is unknown until the card is open, so it is one journal line naming the range and that control is left alone)* |
-| `alsa.mixer.stateFile` naming the config file | `… which is this configuration file. That file is never written by this daemon and a mixer change would overwrite it; point "stateFile" somewhere else …` |
+| `alsa.mixer.stateFile` naming the config file | `... which is this configuration file. That file is never written by this daemon and a mixer change would overwrite it; point "stateFile" somewhere else ...` |
 | `alsa.mixer` alongside a `flex:`/`ubersdr:` device | `… which is not a sound card … Remove the "alsa" section, or point "device" at the card.` |
 | `alsa.mixer` alongside `monitor` | `A monitor fronts web receivers and has no sound card of its own …` |
 | `ubersdr:` with no `rfFrequency` and no `dialFrequency` | `the UberSDR instance … has to be told where to listen` |
