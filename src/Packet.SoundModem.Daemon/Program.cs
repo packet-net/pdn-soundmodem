@@ -2554,9 +2554,11 @@ else
         playback = captureRate == DspRate
             ? alsaPlayback
             : new UpsamplingAudioOutput(alsaPlayback, DspRate);
-        // Receive: capture at the card-native rate; ARDOP buffers more deeply (500 ms vs the
-        // 120 ms default) to ride out device hiccups (snd-aloop re-locking mid-frame).
-            var alsaInput = new AlsaAudioInput(device, captureRate, ardopModem is null ? 120_000 : 500_000);
+        // Receive: capture at the card-native rate, into the half-second buffer AlsaAudioInput
+        // asks for by default. It used to be 120 ms here, with 500 ms for ARDOP alone on the
+        // grounds that only snd-aloop hiccupped; a qpsk3600 start-up on the bench CM108 overran
+        // the 120 ms one on every run, so every station gets the deep buffer now.
+        var alsaInput = new AlsaAudioInput(device, captureRate);
         alsaIn = alsaInput;
         input = alsaInput;
     }
@@ -2568,6 +2570,16 @@ else
     }
 
     Console.WriteLine($"audio: {device} capture {captureRate} Hz -> {DspRate} Hz");
+
+    // What the card actually gave us, because the buffer is the difference between a station
+    // that survives a slow first pass through the modem and one that dies at every start-up,
+    // and "what did it negotiate" was previously only answerable with a strace.
+    if (alsaIn is { BufferMilliseconds: > 0 } openedInput)
+    {
+        Console.WriteLine(
+            $"audio: capture buffer {openedInput.BufferMilliseconds} ms, "
+            + $"period {openedInput.PeriodMilliseconds} ms");
+    }
 }
 
 using AlsaMixer? mixerLifetime = mixer;
