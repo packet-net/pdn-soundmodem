@@ -17,7 +17,8 @@ namespace Packet.SoundModem.Survey;
 /// <param name="RfCentreHz">Where it sat on the band, when the station knows its dial -
 /// null on a station running in audio frequencies only.</param>
 /// <param name="DialHz">The dial the RF figure was derived from.</param>
-/// <param name="Sideband">Which sideband, for the same reason.</param>
+/// <param name="Sideband">Which kind of radio, for the same reason. "fm" is a channel radio,
+/// where an audio frequency is not an RF one, so <c>RfCentreHz</c> is null on one.</param>
 /// <param name="SampleRate">Sample rate of the WAV beside this file.</param>
 /// <param name="Modems">What the station was configured to listen to, so a capture read months
 /// later says what "unclaimed" meant at the time.</param>

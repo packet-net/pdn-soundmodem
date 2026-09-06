@@ -80,6 +80,30 @@ public class ModemProspectorTests
     }
 
     [Fact]
+    public void On_Fm_A_Proposal_Is_In_Audio_Terms_Only()
+    {
+        // The same beacon on a channel radio. A proposal carrying "rfFrequency" here would be
+        // proposing a config line that means something else entirely, so it carries the audio
+        // centre alone and the operator writes "frequency" (#413).
+        var prospector = new ModemProspector(
+            Options(), [], dialFrequencyHz: 145_300_000, sideband: "fm");
+        var proposed = new List<ModemProposal>();
+        prospector.Proposed += proposed.Add;
+
+        (float[] audio, int rate) = Load();
+        for (int i = 0; i < 3; i++)
+        {
+            prospector.Examine(CaptureAt(TimeSpan.FromMinutes(20 * i)), audio, Modes(rate));
+        }
+
+        ModemProposal proposal = proposed.Should().ContainSingle().Subject;
+        proposal.AudioCentreHz.Should().BeApproximately(1134, 5, "where it sits in the audio");
+        proposal.RfFrequencyHz.Should().BeNull("a tone on a channel has no RF of its own");
+        proposal.Summary().Should().NotContain("MHz",
+            "and the line the operator reads must not offer one either");
+    }
+
+    [Fact]
     public void One_Beacon_Sent_Again_And_Again_Is_Evidence_Rather_Than_A_Duplicate()
     {
         // The gate that had to be got right. The obvious one is "how many DIFFERENT frames",

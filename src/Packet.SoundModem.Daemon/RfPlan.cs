@@ -11,7 +11,9 @@ namespace Packet.SoundModem.Daemon;
 /// <param name="FixedCentreHz">
 /// The audio centre this mode is pinned to by its own standard, or null where the centre is the
 /// planner's to choose. A pinned one turns the modem around: it cannot be moved to suit a dial, so
-/// it <i>is</i> the dial - the only one placing it on the RF frequency asked for.
+/// it <i>is</i> the dial - the only one placing it on the RF frequency asked for. On a channel
+/// radio every modem's centre is pinned, because there is no dial to trade it against: FM slots
+/// carry the centre the modem will actually use here, and the planner moves none of them.
 /// </param>
 internal sealed record RfSlot(
     int SubChannel, string Mode, double RfCentreHz, double BandwidthHz, double? FixedCentreHz = null)
@@ -110,7 +112,41 @@ internal static class RfPlan
         IReadOnlyList<string> Warnings)
     {
         internal bool IsUpperSideband => Sideband.Equals("usb", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Whether this is a channel radio rather than a sideband one. On FM there is no
+        /// arithmetic to read out of the plan: <see cref="DialHz"/> is the channel every modem
+        /// is on, not a carrier their audio is measured from.
+        /// </summary>
+        internal bool IsFm => IsFmRadio(Sideband);
     }
+
+    /// <summary>The radio kinds a station can be set to, as a message lists them.</summary>
+    internal const string RadioKinds = "\"usb\", \"lsb\" or \"fm\"";
+
+    /// <summary>
+    /// Whether a configured <c>sideband</c> names a channel radio. FM rides in the same field as
+    /// the two sidebands because it answers the same question - what kind of radio is this, and
+    /// does its audio add up to RF - and a second key would only be a second thing to contradict
+    /// the first with.
+    /// </summary>
+    internal static bool IsFmRadio(string? sideband) =>
+        sideband is not null && sideband.Equals("fm", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The radio kind a FlexRadio slice mode states, or null where the mode says nothing about
+    /// one. The slice knows which it is, so on a headless Flex this is read rather than
+    /// configured: DIGU and USB are upper sideband, DIGL and LSB lower, and FM and NFM are a
+    /// channel radio, whose audio has no RF offset at all.
+    /// </summary>
+    internal static string? SidebandForSliceMode(string sliceMode) =>
+        sliceMode.ToUpperInvariant() switch
+        {
+            "DIGU" or "USB" => "usb",
+            "DIGL" or "LSB" => "lsb",
+            "FM" or "NFM" => "fm",
+            _ => null,
+        };
 
     /// <summary>Audio offset of an RF frequency for a given dial and sideband.</summary>
     private static double AudioFor(double rfHz, double dialHz, bool upper) =>
@@ -138,11 +174,20 @@ internal static class RfPlan
             throw new ArgumentException("no RF-addressed modems to plan", nameof(slots));
         }
 
+        // A channel radio is answered here and goes no further: there is no dial to choose and
+        // no offset to work out, so none of the machinery below applies to one.
+        if (IsFmRadio(sideband))
+        {
+            return OnChannel(slots, pinnedDialHz, passband);
+        }
+
         bool upper = sideband.Equals("usb", StringComparison.OrdinalIgnoreCase);
         if (!upper && !sideband.Equals("lsb", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidDataException(
-                $"\"sideband\": \"{sideband}\" is not a sideband. Use \"usb\" or \"lsb\".");
+                $"\"sideband\": \"{sideband}\" is not a radio kind this can plan for. "
+                + $"Use {RadioKinds} - FM being a channel radio, whose audio is not an offset "
+                + "from a dial at all.");
         }
 
         double dial = pinnedDialHz ?? DialFixedBy(slots, upper) ?? Choose(slots, upper, passband);
@@ -174,6 +219,54 @@ internal static class RfPlan
             ? []
             : [Explain(slots, offenders, dial, upper, pinnedDialHz, passband, dialFixer, planned)];
         return new Result(dial, upper ? "usb" : "lsb", planned, passband, warnings);
+    }
+
+    /// <summary>
+    /// The plan for a channel radio, where there is nothing to solve. An FM receiver's
+    /// demodulated audio is not offset from a carrier - a 1700 Hz tone is 1700 Hz of audio on
+    /// whatever channel the set is on, not "channel + 1.7 kHz" - so the channel is the RF of
+    /// every modem, each keeps the audio centre it was given, and the plan is only a statement of
+    /// which channel they all share.
+    /// </summary>
+    /// <param name="pinnedChannelHz">
+    /// The channel from <c>dialFrequency</c>, where the operator wrote one. On FM that and a
+    /// modem's <c>rfFrequency</c> are the same figure, so they have to agree.
+    /// </param>
+    /// <param name="passband">
+    /// Carried through unchanged: what the radio's audio path passes is a question about the
+    /// audio path, and being on FM does not answer it differently.
+    /// </param>
+    private static Result OnChannel(
+        IReadOnlyList<RfSlot> slots, double? pinnedChannelHz, Passband passband)
+    {
+        double asked = slots[0].RfCentreHz;
+        if (slots.Any(s => Math.Abs(s.RfCentreHz - asked) > 0.5))
+        {
+            string channels = string.Join(
+                ", ", slots.Select(s => s.RfCentreHz).Distinct().Order().Select(Mhz));
+            throw new InvalidDataException(
+                "on FM every modem is on the one channel the radio is set to, and these ask "
+                + $"for {channels}. Modems that share a channel share a radio; give the others "
+                + "a radio of their own.");
+        }
+
+        if (pinnedChannelHz is double pinned && Math.Abs(pinned - asked) > 0.5)
+        {
+            throw new InvalidDataException(
+                $"\"dialFrequency\" is {Mhz(pinned)} and the modems' \"rfFrequency\" is "
+                + $"{Mhz(asked)}. On FM those are the same thing said twice - the channel - and "
+                + "a radio is on one channel at a time. Keep whichever you meant.");
+        }
+
+        // The audio centres are not the planner's to set here, so they are reported as they
+        // stand: a modem with a centre of its own keeps it, and a baseband mode (c4fsk over FM is
+        // the ordinary case) has none to keep.
+        return new Result(
+            pinnedChannelHz ?? asked,
+            "fm",
+            [.. slots.Select(s => new PlannedModem(s, s.FixedCentreHz ?? 0))],
+            passband,
+            []);
     }
 
     /// <summary>

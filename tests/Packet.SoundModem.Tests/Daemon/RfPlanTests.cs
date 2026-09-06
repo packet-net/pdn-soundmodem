@@ -178,7 +178,90 @@ public class RfPlanTests
     {
         Action solve = () => RfPlan.Solve(FortyMetres(), "upper");
 
-        solve.Should().Throw<InvalidDataException>().WithMessage("*not a sideband*usb*lsb*");
+        solve.Should().Throw<InvalidDataException>()
+            .WithMessage("*not a radio kind*\"usb\", \"lsb\" or \"fm\"*");
+    }
+
+    // ---- FM, which is a channel radio and so has no arithmetic to do at all ----
+
+    /// <summary>Two modems on one 2 m channel, which is the only place any of them can be.</summary>
+    private static List<RfSlot> TwoMetreChannel() =>
+    [
+        new(0, "c4fsk9600", FmChannel, 3600),
+        new(1, "afsk1200", FmChannel, 1200, FixedCentreHz: 1700),
+    ];
+
+    private const double FmChannel = 145_300_000;
+
+    [Fact]
+    public void An_Fm_Radios_Modems_Are_Tones_On_A_Channel()
+    {
+        // This set was refused outright before: "fm" was not a sideband, and the alternative was
+        // to claim the radio was USB and have every audio frequency labelled as an RF one it is
+        // not (issue #413).
+        RfPlan.Result plan = RfPlan.Solve(TwoMetreChannel(), "fm");
+
+        plan.Sideband.Should().Be("fm");
+        plan.IsFm.Should().BeTrue();
+        plan.DialHz.Should().Be(FmChannel, "the channel is the only frequency there is");
+        plan.Warnings.Should().BeEmpty();
+
+        // Not one Hz of offset arithmetic: the channel is the RF of every modem, and each keeps
+        // the audio centre it arrived with (none at all, for a baseband mode).
+        plan.Modems.Should().HaveCount(2);
+        plan.Modems.Should().AllSatisfy(m => m.Slot.RfCentreHz.Should().Be(FmChannel));
+        plan.Modems.Single(m => m.Slot.Mode == "afsk1200").AudioCentreHz.Should().Be(1700);
+        plan.Modems.Single(m => m.Slot.Mode == "c4fsk9600").AudioCentreHz.Should().Be(0);
+    }
+
+    [Fact]
+    public void An_Fm_Channel_Can_Be_Pinned_Like_A_Dial_But_Has_To_Agree()
+    {
+        RfPlan.Solve(TwoMetreChannel(), "fm", pinnedDialHz: FmChannel).DialHz.Should().Be(FmChannel);
+
+        Action disagreeing = () => RfPlan.Solve(TwoMetreChannel(), "fm", pinnedDialHz: 145_325_000);
+
+        disagreeing.Should().Throw<InvalidDataException>()
+            .WithMessage("*145.325000 MHz*145.300000 MHz*same thing said twice*");
+    }
+
+    [Fact]
+    public void Two_Fm_Channels_At_Once_Need_Two_Radios()
+    {
+        Action solve = () => RfPlan.Solve(
+            [new(0, "afsk1200", FmChannel, 1200), new(1, "afsk1200", 145_325_000, 1200)], "fm");
+
+        solve.Should().Throw<InvalidDataException>()
+            .WithMessage("*one channel the radio is set to*145.300000 MHz, 145.325000 MHz*");
+    }
+
+    [Fact]
+    public void An_Fm_Plan_Is_Reported_As_A_Channel_Rather_Than_A_Dial()
+    {
+        var report = new StringWriter();
+        BandPlanner.Report(RfPlan.Solve(TwoMetreChannel(), "fm"), report, radioIsSelfTuning: false);
+
+        string said = report.ToString();
+        said.Should().Contain("channel: 145.300000 MHz FM - set your radio to this");
+        said.Should().Contain("modem 0 c4fsk9600 on the channel");
+        said.Should().Contain("modem 1 afsk1200 on the channel, 1700 Hz audio");
+        said.Should().NotContain("dial:", "there is no dial on an FM radio to report");
+        said.Should().NotContain("= ", "and no audio arithmetic to show beside a modem");
+    }
+
+    [Fact]
+    public void A_Flex_Slice_Mode_States_Which_Kind_Of_Radio_It_Is()
+    {
+        // The slice already knows, so nothing is configured alongside it. FM and NFM used to fall
+        // through to null, leaving an FM slice being planned and drawn as if it were USB.
+        RfPlan.SidebandForSliceMode("DIGU").Should().Be("usb");
+        RfPlan.SidebandForSliceMode("USB").Should().Be("usb");
+        RfPlan.SidebandForSliceMode("DIGL").Should().Be("lsb");
+        RfPlan.SidebandForSliceMode("LSB").Should().Be("lsb");
+        RfPlan.SidebandForSliceMode("FM").Should().Be("fm");
+        RfPlan.SidebandForSliceMode("NFM").Should().Be("fm");
+        RfPlan.SidebandForSliceMode("nfm").Should().Be("fm", "the mode is read back in any case");
+        RfPlan.SidebandForSliceMode("CW").Should().BeNull("a mode that says nothing says nothing");
     }
 
     [Fact]
