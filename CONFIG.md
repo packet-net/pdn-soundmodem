@@ -832,9 +832,10 @@ device between queued transmissions and a test signal with a hole in it every fe
 milliseconds would be a poor instrument - nothing is drained inside this write either. But that
 write reaches the device in about 40 ms blocks with a check between them, so Stop only ever has to
 prevent the next block rather than the rest of the burst: the block already handed to the card
-finishes, the next one is faded to silence instead of being sent, and PTT drops once that drains.
-Stop on a test that is still waiting for the channel withdraws it from the queue instead - that one
-never keys the radio at all - and `maxSeconds` is what bounds a test nobody stops.
+finishes, the next one is still sent - faded to silence rather than at its usual level - and PTT
+drops once that drains. Stop on a test that is still waiting for the channel withdraws it from the
+queue instead - that one never keys the radio at all - and `maxSeconds` is what bounds a test
+nobody stops.
 
 **It arms the station's identification.** A test is a transmission, so it starts the
 [`identify`](#identify) clock exactly as a frame does: a station that keys for tones owes anyone
