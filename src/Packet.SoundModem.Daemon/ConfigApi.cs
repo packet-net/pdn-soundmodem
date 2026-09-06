@@ -34,6 +34,10 @@ namespace Packet.SoundModem.Daemon;
 /// the station to the file. An experiment that goes wrong therefore self-heals, and the config
 /// file stays the description of the intended station. <c>?persist=true</c> writes the file
 /// instead, for a change meant to outlive the session.</para>
+/// <para><b><c>/api/mixer</c> is the exception</b> (Tom, 2026-09-06). It restarts nothing and it
+/// persists by default, because a level trimmed on the operator page is meant to stay trimmed and
+/// there is no restart for a one-run default to insure against. It writes the daemon's own state
+/// file rather than the config file, which it never touches; see <see cref="MixerRuntime"/>.</para>
 /// </remarks>
 internal sealed class ConfigApi
 {
