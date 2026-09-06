@@ -1270,10 +1270,20 @@ const MIX_TARGET_LOW = -18;  // the green band, on received-signal peaks
 const MIX_TARGET_HIGH = -9;
 const MIX_QUIET = -30;       // under this the bar goes grey: quieter than it needs to be
 const MIX_HOT = -3;          // over this the bar goes red: less headroom than a receive path keeps
-let mixClipUntil = 0;
+// How long a clip stays lit, and how long a bar is trusted after the last reading. Both are
+// timers of their own rather than something re-evaluated on the next message, because the case
+// that matters is the one where the next message does NOT come: the receive tap is gated while
+// the station transmits, so a burst freezes the bar with nothing saying so, and audio stopping
+// altogether would leave a lit CLIP pill lit for ever.
+const MIX_CLIP_LIT_MS = 3000;
+const MIX_STALE_MS = 1000;
+let mixClipTimer = 0;
+let mixStaleTimer = 0;
 
-// Where a dBFS figure sits along the bar, as a percentage. Clamped, because a resampler can
-// overshoot a clipped waveform past 0 dBFS and a bar 103% wide is a layout bug.
+// Where a dBFS figure sits along the bar, as a percentage. The daemon clamps its readings to the
+// ends of the scale already; this clamps too, because a bar 103% wide is a layout bug and the
+// page has no way to know which version of the daemon a tab left open across an upgrade is
+// talking to.
 function mixMeterPct(db) {
   return Math.max(0, Math.min(100, (db - MIX_METER_MIN) * 100 / (0 - MIX_METER_MIN)));
 }
@@ -1290,9 +1300,25 @@ function initMeter() {
     + ` never into the red, and with nothing on the channel the bar should sit below ${MIX_QUIET}.`;
 }
 
+// No reading for a second: the bar is emptied and says so, rather than sitting frozen at whatever
+// it last showed. A keyup does this every time - nothing is received while transmitting - and so
+// does a card that has stopped delivering, and the two look identical to a stale bar.
+function mixMeterStale() {
+  $("mixBar").style.width = "0%";
+  $("mixBar").classList.remove("hot", "quiet");
+  $("mixRms").style.left = "0%";
+  $("mixLevelRead").textContent = "no reading";
+  $("mixLevelRead").title = "nothing has arrived for a second: the station is transmitting, or "
+    + "its audio has stopped";
+  // The CLIP pill is deliberately left alone: it is a latch on something that happened, its own
+  // timer owns it, and a clip a second ago is still worth acting on. Two owners for one element
+  // is how a pill ends up cleared by whichever timer happens to fire second.
+}
+
 // One reading. The meter appears on the first one rather than being shown empty: a station that
-// does not send them (a public page, a monitor, a receiver that is not a sound card) then has no
-// dead bar sitting in its header pretending to be a measurement.
+// does not send them - a public page, a monitor, a receiver that is not a sound card, or one with
+// no Mixer group to put the meter in - then has no dead bar sitting in its header pretending to
+// be a measurement.
 let meterShown = false;
 function onLevel(msg) {
   if (!meterShown) {
@@ -1309,10 +1335,17 @@ function onLevel(msg) {
   $("mixLevelRead").title =
     `peak ${msg.peak.toFixed(1)} dBFS, rms ${msg.rms.toFixed(1)} dBFS, at the daemon's input`;
 
-  // Latched for three seconds. A clip is one 200 ms interval and would otherwise blink past
-  // unseen, and this is the one reading on the meter that has to be acted on rather than noticed.
-  if (msg.clip) mixClipUntil = performance.now() + 3000;
-  $("mixClip").classList.toggle("lit", performance.now() < mixClipUntil);
+  // Latched for three seconds, by a timer rather than by the next message: a clip is one 200 ms
+  // interval and would otherwise blink past unseen, and this is the one reading on the meter that
+  // has to be acted on rather than noticed. Re-armed by each clip, so a run of them stays lit.
+  if (msg.clip) {
+    $("mixClip").classList.add("lit");
+    clearTimeout(mixClipTimer);
+    mixClipTimer = setTimeout(() => $("mixClip").classList.remove("lit"), MIX_CLIP_LIT_MS);
+  }
+
+  clearTimeout(mixStaleTimer);
+  mixStaleTimer = setTimeout(mixMeterStale, MIX_STALE_MS);
 }
 
 async function initMixer() {

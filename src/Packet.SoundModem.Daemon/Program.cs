@@ -1219,11 +1219,13 @@ if (benchTxTest is null && waterfallConfig is not null)
             // this process writes, because it runs one station.
             Log = stationJournal.Write,
 
-            // The input level meter beside the Mixer group's capture slider. An operator's page
-            // on a station with a card of its own, and nothing else: a public page carries no
-            // operator controls, and a flex:, ubersdr: or pipe: station has no capture gain the
-            // person looking at the page could act on even if it had a level to show them.
-            InputLevelMeter = !waterfallConfig.Public && DaemonConfig.IsSoundCard(device),
+            // The input level meter, which lives beside the Mixer group's capture slider and is
+            // therefore only worth measuring on a page that will have that group: an operator's
+            // page, a station with a card of its own, and an /api/mixer this browser can reach
+            // (an api.key or enableAudioControls). Without the last one the endpoint is a 404,
+            // the page hides the whole group, and the message would go out several times a
+            // second to a browser that draws none of it.
+            InputLevelMeter = DaemonConfig.ShowsMixerGroup(device, waterfallConfig, apiConfig),
         },
         // One bind for every listener; the waterfall no longer carries its own.
         bindAddress);
@@ -2948,6 +2950,13 @@ using var station = new Station(
         DeadFeed = deadFeedConfig,
         BlockMilliseconds = ardopModem is null ? 100 : 20,
         SessionLive = uberSdrSessionLive,
+
+        // The card's own samples, for the level meter's clip indicator alone. The channel's tap
+        // is downstream of the decimator, where full scale is not full scale any more, so the one
+        // reading the page tells the operator to act on has to come from here. Null on a station
+        // with no page at all; on a page that was not offered a meter it costs one null check per
+        // block, which is what every other unused hook here costs.
+        CardRateTap = waterfallServer is { } metered ? metered.MeterInputClipping : null,
 
         // A station that has deliberately given up its slice is silent on purpose, and restarting
         // it is the one response guaranteed to be wrong. Measured on the live 40 m station,

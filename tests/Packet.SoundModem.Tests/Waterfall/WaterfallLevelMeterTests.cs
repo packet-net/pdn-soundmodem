@@ -1,11 +1,14 @@
 using System.Net.WebSockets;
 using System.Text.Json;
 using AwesomeAssertions;
+using M0LTE.Radio.Audio;
 using Microsoft.Extensions.Time.Testing;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
+using Packet.SoundModem.Daemon;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Waterfall;
+using DaemonStation = Packet.SoundModem.Daemon.Station;
 
 namespace Packet.SoundModem.Tests.Waterfall;
 
@@ -78,10 +81,12 @@ public class WaterfallLevelMeterTests : IAsyncLifetime
         _channel.ProcessReceive(block);
     }
 
-    private async Task<ClientWebSocket> AttachAsync()
+    private Task<ClientWebSocket> AttachAsync() => AttachToAsync(_port);
+
+    private async Task<ClientWebSocket> AttachToAsync(int port)
     {
         var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{_port}/ws"), _cancellation.Token);
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws"), _cancellation.Token);
 
         // The config message is sent from the connection's own task after the client is in the
         // list, so waiting for it is also how this test knows the server counts a viewer.
@@ -144,6 +149,11 @@ public class WaterfallLevelMeterTests : IAsyncLifetime
 
         var block = new float[600];
         Array.Fill(block, Pcm16.ToFloat(short.MinValue));
+
+        // Both taps, in the order a station calls them: the card's samples decide the clip, the
+        // channel's decide the level. Here they are the same block, which is what a 12 kHz
+        // station with no decimator delivers.
+        _server.MeterInputClipping(block);
         FeedAcrossAnInterval(block);
 
         using JsonDocument level = await NextAsync(page, "level");
@@ -178,6 +188,124 @@ public class WaterfallLevelMeterTests : IAsyncLifetime
             -12.0, 0.1, "the loud audio arrived while the page was closed and was never measured");
         level.RootElement.GetProperty("clip").GetBoolean().Should().BeFalse(
             "and a clip nobody was watching is not held over to the next viewer");
+    }
+
+    /// <summary>
+    /// A 48 kHz station's own path, decimator and all: a loud sine that never rails does not
+    /// light the clip indicator, and one that does rail does.
+    /// </summary>
+    /// <remarks>
+    /// <para>This is the case the first cut of the meter got wrong and the bench caught. Peak and
+    /// RMS are measured on the channel's receive tap, which on a 48 kHz card is the output of the
+    /// 48 to 12 kHz decimating FIR; the filter's ripple moves peaks either way, up to about 1.3
+    /// dB on radio1. So a signal with 1.3 dB of headroom at the converter left the decimator at
+    /// full scale, the pill lit, and the page told the operator to turn a perfectly good capture
+    /// gain down. The clip count comes from a card-rate tap now.</para>
+    /// <para>Driven through a real <c>Station</c> rather than by calling the two entry
+    /// points in the right order by hand, because the order and the wiring are half of what
+    /// broke: every other test in this file feeds <c>ProcessReceive</c> directly and would have
+    /// gone on passing throughout.</para>
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_Real_48k_Station_Lights_Clip_Only_When_The_Card_Itself_Railed(bool rail)
+    {
+        // Its own server on the system clock: the station's loop runs on real time, so a meter
+        // paced by this class's FakeTimeProvider would never reach a boundary.
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(
+            channel, port, new WaterfallOptions { InputLevelMeter = true });
+        server.Start();
+
+        using ClientWebSocket page = await AttachToAsync(port);
+
+        // 0.86 full scale is -1.3 dB, which is what the bench decimator's worst ripple turned
+        // into a reported clip. Railed, the same tone is hard-limited to the converter's end
+        // codes, which is what a real over-driven capture delivers.
+        float[] card = CardTone(rail ? 1.4f : 0.86f, seconds: 0.4);
+
+        using var stopping = new CancellationTokenSource();
+        var journal = new StationJournal("", _ => { }, _ => { });
+        using var station = new DaemonStation(
+            new StationOptions
+            {
+                Channel = channel,
+                Input = new CardInput(48000, card),
+                DspRate = SampleRate,
+                Journal = journal,
+                DeviceKind = DeadFeedDevice.Alsa,
+                CardRateTap = server.MeterInputClipping,
+            },
+            stopping.Token);
+
+        Task loop = Task.Factory.StartNew(
+            station.Run, CancellationToken.None, TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        try
+        {
+            // The station's loop is on real time, so the meter is too: three blocks of 100 ms is
+            // more than one 200 ms interval whichever block the take lands on.
+            using var giveUp = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            using JsonDocument level = await NextAsync(page, "level", giveUp.Token);
+
+            level.RootElement.GetProperty("clip").GetBoolean().Should().Be(
+                rail,
+                rail
+                    ? "the card's own samples reached its end codes"
+                    : "1.3 dB of headroom at the converter is not a clip, whatever the decimator "
+                        + "does with it");
+            level.RootElement.GetProperty("peak").GetDouble().Should().BeLessThanOrEqualTo(
+                0, "0 dBFS is the top of the scale and no reading may read past it");
+        }
+        finally
+        {
+            await stopping.CancelAsync();
+            await loop.WaitAsync(TimeSpan.FromSeconds(20));
+        }
+    }
+
+    /// <summary>
+    /// A tone at the card's rate, hard-limited to the converter's end codes as a real one is.
+    /// </summary>
+    /// <param name="amplitude">Above 1 to drive it into the rails.</param>
+    /// <param name="seconds">How much to make.</param>
+    private static float[] CardTone(float amplitude, double seconds)
+    {
+        var block = new float[(int)(48000 * seconds)];
+        for (int n = 0; n < block.Length; n++)
+        {
+            float raw = amplitude * MathF.Sin(2 * MathF.PI * 1700 * n / 48000f);
+            // Through the same conversion a card's samples arrive by, so "full scale" means
+            // exactly what InputLevelMeter says it means.
+            block[n] = Pcm16.ToFloat(Pcm16.FromFloat(raw));
+        }
+
+        return block;
+    }
+
+    /// <summary>A card that hands out one recording over and over, at the loop's block size.</summary>
+    private sealed class CardInput(int sampleRate, float[] audio) : IAudioInput
+    {
+        private int _position;
+
+        public int SampleRate { get; } = sampleRate;
+
+        public int Read(Span<float> buffer)
+        {
+            // As slow as a real card, so the station's loop does not spin a core while the test
+            // waits for one 200 ms interval to pass.
+            Thread.Sleep(buffer.Length * 1000 / SampleRate);
+            for (int n = 0; n < buffer.Length; n++)
+            {
+                buffer[n] = audio[_position];
+                _position = (_position + 1) % audio.Length;
+            }
+
+            return buffer.Length;
+        }
     }
 
     /// <summary>

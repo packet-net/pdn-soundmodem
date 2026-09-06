@@ -537,6 +537,33 @@ public class MixerApiTests : IDisposable
     }
 
     /// <summary>
+    /// The refusal takes the value: asking for it ON is told the station overrides it.
+    /// </summary>
+    /// <remarks>
+    /// A script that says <c>{"agc": true}</c> is asking for the opposite of what this station
+    /// does, and "the card ends up the way it asked for either way" would be a lie that sends
+    /// whoever wrote it looking somewhere else. Asking for OFF gets the other half of the
+    /// sentence, which is true.
+    /// </remarks>
+    [Theory]
+    [InlineData(true, "This station switches it off whatever the key says")]
+    [InlineData(false, "the card ends up the way it asked for either way")]
+    public async Task The_Switch_Refusal_Says_What_Actually_Happens_To_That_Value(
+        bool asked, string expected)
+    {
+        using var station = new Station(_dir, FakeMixer.Cm108());
+
+        HttpResponseMessage answer = await station.Client.PostAsync(
+            new Uri(station.Url, UriKind.Absolute),
+            new StringContent(
+                $$"""{"agc": {{(asked ? "true" : "false")}}}""",
+                Encoding.UTF8, "application/json"));
+
+        answer.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await answer.Content.ReadAsStringAsync()).Should().Contain(expected);
+    }
+
+    /// <summary>
     /// A body still carrying 0.57.0's percentage key is refused by name, with the key that
     /// replaced it.
     /// </summary>

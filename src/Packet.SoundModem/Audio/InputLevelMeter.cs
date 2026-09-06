@@ -1,15 +1,24 @@
 namespace Packet.SoundModem.Audio;
 
 /// <summary>One interval's worth of receive level, in dBFS, as the operator page draws it.</summary>
-/// <param name="PeakDbFs">The loudest sample in the interval, as dBFS: 1.0 is 0 dBFS.</param>
-/// <param name="RmsDbFs">The interval's root-mean-square level, as dBFS.</param>
-/// <param name="Clipped">Whether any sample in the interval reached full scale.</param>
+/// <param name="PeakDbFs">The loudest sample in the interval, as dBFS: 1.0 is 0 dBFS, and
+/// nothing reads above that or below <see cref="InputLevelMeter.FloorDbFs"/>.</param>
+/// <param name="RmsDbFs">The interval's root-mean-square level, as dBFS, on the same scale.</param>
+/// <param name="Clipped">Whether any sample the card delivered in the interval was at the top or
+/// the bottom code of the converter's range.</param>
 /// <remarks>
-/// Peak first because peak is what decides whether the card clips, and because a peak is what
-/// this code base already states a level as: every modulator's key-down amplitude is a peak
+/// <para>Peak first because peak is what decides whether the card clips, and because a peak is
+/// what this code base already states a level as: every modulator's key-down amplitude is a peak
 /// (0.8), and <see cref="TestTone"/> says why - "the transmitter sees peaks". RMS travels with it
 /// because the two answer different questions: the peak says whether a signal fits, and the RMS
-/// with no signal on the channel says where the noise floor is sitting.
+/// with no signal on the channel says where the noise floor is sitting.</para>
+/// <para><b>The two halves are measured in different places, deliberately.</b> The peak and the
+/// RMS come from the audio the modems get, which on a 48 kHz card has been through the decimating
+/// FIR; that costs a fraction of a dB and buys a free hook. <see cref="Clipped"/> cannot be
+/// measured there at all: the filter's ripple moves peaks either way, so a signal with real
+/// headroom at the converter can leave the decimator at 0.99997 and a genuinely railed one can
+/// leave it lower. It is counted on the card's own samples instead, before the decimator, which
+/// is the only place "the converter ran out of codes" is a fact rather than an inference.</para>
 /// </remarks>
 public readonly record struct InputLevel(double PeakDbFs, double RmsDbFs, bool Clipped);
 
@@ -43,15 +52,16 @@ public readonly record struct InputLevel(double PeakDbFs, double RmsDbFs, bool C
 /// station's bursts vary and a zone the signal flickers out of teaches an operator to ignore it.
 /// The two edges either side of it come from the same place: the only existing verdict on a
 /// capture level in this tree is <c>Packet.SoundModem.NinoBench</c>, whose "TOO LOW" is 0.05
-/// (-26 dBFS) and whose "CLIPPING" is 0.90 (-0.9 dBFS), and the house reserve for a receiver is
-/// about 6 dB of headroom (<c>Packet.SoundModem.Ota.FlexIqTransmitter</c>).</para>
+/// (-26 dBFS) and whose "CLIPPING" is 0.90 (-0.9 dBFS), and 6 dB is the headroom figure this
+/// tree already works to elsewhere.</para>
 /// <para><b>Being under the zone is not a fault.</b> Every demodulator here is level-tolerant:
 /// the AFSK discriminator power-normalises and is "barely touched" from -40 dBFS up, the PSK
 /// detectors are scale-invariant by construction, and MS110D has an AGC of its own. Clipping is
 /// the failure that actually costs decodes, so the meter's alarm is at the top and its advice at
 /// the bottom is only advice.</para>
 /// <para><b>Cost.</b> One pass over the block: an absolute value, a comparison and a
-/// multiply-add per sample, no allocation, no LINQ. It is called from the audio thread and is not
+/// multiply-add per sample, no allocation, no LINQ, plus one compare per card-rate sample in
+/// <see cref="AddCardSamples"/>. Both are called from the audio thread and neither is
 /// thread-safe - one meter, one thread, which is what a receive tap is.</para>
 /// </remarks>
 public sealed class InputLevelMeter
@@ -81,20 +91,46 @@ public sealed class InputLevelMeter
     /// How often a reading is produced: five a second, which is fast enough to see a slider move
     /// and slow enough that the message is nothing on any link that carries a waterfall.
     /// </summary>
+    /// <remarks>
+    /// A ceiling as well as a target. The boundary is only tested when an audio block arrives, so
+    /// a station whose blocks are longer than this gets one reading per block instead: the packet
+    /// stations read 100 ms at a time and ARDOP 20 ms, so both get the five.
+    /// </remarks>
     public static readonly TimeSpan DefaultInterval = TimeSpan.FromMilliseconds(200);
 
+    /// <summary>The top code of a 16-bit converter, as a float: <c>short.MaxValue</c>.</summary>
+    /// <remarks>
+    /// <see cref="Pcm16.ToFloat"/> divides by 32768, so the largest positive code arrives as
+    /// 32767/32768 and not as 1.0. Comparing against 1.0 would never see a clipped positive
+    /// half-cycle at all.
+    /// </remarks>
+    public const float TopCode = 32767f / 32768f;
+
+    /// <summary>The bottom code, as a float: <c>short.MinValue</c>, which is exactly -1.0.</summary>
+    public const float BottomCode = -1f;
+
     /// <summary>
-    /// The magnitude at which a sample counts as having reached full scale.
+    /// Whether one sample from the card is sitting on a rail.
     /// </summary>
     /// <remarks>
-    /// <see cref="Pcm16.ToFloat"/> divides by 32768, so the largest positive 16-bit code arrives
-    /// as 32767/32768 and the largest negative one as exactly -1.0. Comparing against 1.0 would
-    /// therefore never see a clipped positive half-cycle.
+    /// <para><b>Exactly the two end codes, nothing near them.</b> A converter that runs out of
+    /// range does not produce a value close to the rail, it produces the rail, usually several
+    /// samples in a row; a signal that merely comes close is a signal with less headroom than you
+    /// wanted, which is what the meter's red band above -3 dBFS is for. Widening this to "within
+    /// a code or two" would only make the pill fire on loud-but-clean audio, which is the fault
+    /// this test exists to avoid.</para>
+    /// <para>Judged on the card's own samples, before any resampling - see
+    /// <see cref="AddCardSamples"/>.</para>
     /// </remarks>
-    public const float ClipMagnitude = 32767f / 32768f;
+    /// <param name="sample">One sample as the device delivered it, nominally -1 to +1.</param>
+    public static bool IsClipped(float sample) => sample >= TopCode || sample <= BottomCode;
 
     private readonly TimeProvider _clock;
     private readonly TimeSpan _interval;
+
+    /// <summary>The interval in the clock's own timestamp units, so the pacing is integer maths.</summary>
+    private readonly long _intervalStamps;
+
     private long _startedAt;
     private float _peak;
     private double _sumSquares;
@@ -109,13 +145,23 @@ public sealed class InputLevelMeter
     {
         _clock = clock ?? TimeProvider.System;
         _interval = interval ?? DefaultInterval;
+        _intervalStamps = Math.Max(
+            1, (long)Math.Round(_interval.TotalSeconds * _clock.TimestampFrequency));
         _startedAt = _clock.GetTimestamp();
     }
 
     /// <summary>How often <see cref="TryTake"/> will produce a reading.</summary>
     public TimeSpan Interval => _interval;
 
-    /// <summary>Takes one block of audio into the current interval.</summary>
+    /// <summary>
+    /// Takes one block of the audio the modems hear into the current interval, for the peak and
+    /// the RMS.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately says nothing about clipping: on a 48 kHz card these samples have been through
+    /// the decimating FIR, whose ripple moves peaks either way, so "this reached full scale" is
+    /// not a question they can answer. <see cref="AddCardSamples"/> answers it.
+    /// </remarks>
     /// <param name="samples">The block, nominally -1 to +1.</param>
     public void Add(ReadOnlySpan<float> samples)
     {
@@ -135,7 +181,39 @@ public sealed class InputLevelMeter
         _peak = peak;
         _sumSquares = sum;
         _count += samples.Length;
-        _clipped |= peak >= ClipMagnitude;
+    }
+
+    /// <summary>
+    /// Takes one block of audio exactly as the card delivered it, for the clip indicator alone.
+    /// </summary>
+    /// <remarks>
+    /// <para>Called before any resampling, which is the whole point of it existing separately
+    /// from <see cref="Add"/>. On the bench CM108 the decimator's output ran up to about 1.3 dB
+    /// above the card's own peak, so a clip test on the decimated audio lit the indicator on
+    /// signals with real headroom and reported levels past the top of the scale (radio1,
+    /// 2026-09-06). The converter's rails are a fact about the card, and this is where they
+    /// are.</para>
+    /// <para>It contributes nothing to the peak or the RMS. Doing both here would mean two
+    /// passes over the 48 kHz block instead of one over the 12 kHz one, for a fraction of a dB.
+    /// </para>
+    /// </remarks>
+    /// <param name="samples">The block as the device delivered it, at the card's own rate.</param>
+    public void AddCardSamples(ReadOnlySpan<float> samples)
+    {
+        if (_clipped)
+        {
+            // Already latched for this interval; nothing another sample can add.
+            return;
+        }
+
+        foreach (float sample in samples)
+        {
+            if (IsClipped(sample))
+            {
+                _clipped = true;
+                return;
+            }
+        }
     }
 
     /// <summary>
@@ -150,12 +228,21 @@ public sealed class InputLevelMeter
     {
         level = default;
         long now = _clock.GetTimestamp();
-        if (_clock.GetElapsedTime(_startedAt, now) < _interval)
+        long elapsed = now - _startedAt;
+        if (elapsed < _intervalStamps)
         {
             return false;
         }
 
-        _startedAt = now;
+        // Advanced by whole intervals, not set to now. Set to now, the interval restarts from the
+        // moment of the take rather than from the boundary it crossed, and the boundary is only
+        // ever tested when an audio block arrives - so with 100 ms blocks and a 200 ms interval,
+        // one block a hair under 100 ms puts the next test at 199.x ms, skips it, and locks the
+        // meter at 300 ms spacing for ever. That is what the bench measured: 3.4 messages a
+        // second against a documented five (radio1, 2026-09-06). Catching up in whole intervals
+        // has no such ratchet, and a station that was not watched for an hour resumes on the next
+        // boundary rather than firing an hour's worth.
+        _startedAt += elapsed / _intervalStamps * _intervalStamps;
         if (_count == 0)
         {
             return false;
@@ -188,10 +275,15 @@ public sealed class InputLevelMeter
 
     /// <summary>A magnitude on the 0 to 1 full-scale convention, in dBFS.</summary>
     /// <param name="magnitude">The magnitude; 1.0 is 0 dBFS.</param>
-    /// <returns>The level in dBFS, never below <see cref="FloorDbFs"/>. Values above 0 are not
-    /// clamped: a resampler can overshoot a clipped waveform, and saying so is more use than
-    /// hiding it.</returns>
+    /// <returns>The level in dBFS, never below <see cref="FloorDbFs"/> and never above 0.</returns>
+    /// <remarks>
+    /// <b>Clamped at both ends.</b> 0 dBFS is the top of the scale by definition, and a reading
+    /// above it is not a measurement of anything a converter can deliver - it is the decimating
+    /// FIR's ripple, which put "+0.8 dBFS" on the bench Pi's meter (radio1, 2026-09-06) and made
+    /// an operator-facing number say the impossible. The bottom is clamped because digital
+    /// silence is minus infinity, which JSON cannot carry and a bar cannot be drawn at.
+    /// </remarks>
     public static double DbFs(double magnitude) => magnitude <= 0
         ? FloorDbFs
-        : Math.Max(FloorDbFs, 20 * Math.Log10(magnitude));
+        : Math.Clamp(20 * Math.Log10(magnitude), FloorDbFs, 0);
 }

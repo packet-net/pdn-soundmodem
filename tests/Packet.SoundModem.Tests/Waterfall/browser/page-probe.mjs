@@ -715,6 +715,23 @@ if (process.env.MIXER) {
   await untilTrue(() => run(`document.getElementById("mixerCtl").hidden`) === false, 10000);
 }
 
+// The meter's two timers, driven by hand rather than by the server: the case they exist for is
+// the one where the NEXT message does not come (the receive tap is gated while the station
+// transmits), so a run with audio flowing could never show either of them firing.
+let meterAfterClip = null;
+let meterStale = null;
+let meterClipExpired = null;
+if (process.env.METERTIMERS) {
+  run(`onLevel({ peak: -5, rms: -22, clip: true })`);
+  meterAfterClip = meterPanel();
+  // Past the stale timeout and short of the clip latch: the bar has given up, the pill has not.
+  await wait(1400);
+  meterStale = meterPanel();
+  // And past the latch.
+  await wait(2000);
+  meterClipExpired = meterPanel();
+}
+
 let meter = null;
 if (process.env.METER) {
   // The meter appears on the first message and not before, so waiting for it to appear is also
@@ -754,6 +771,9 @@ process.stdout.write(JSON.stringify({
   mixerAfterGain,
   mixerAfterPlay,
   meter,
+  meterAfterClip,
+  meterStale,
+  meterClipExpired,
   socketUrl,
   linksWindowUrl,
   // Whether the page decided it is the torn-off links window rather than the waterfall.

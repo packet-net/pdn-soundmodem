@@ -1047,9 +1047,13 @@ is what lets that file stay JSONC full of your comments.
   "device": "plughw:CARD=Device,DEV=0",
   "writtenAt": "2026-09-06T11:22:33+00:00",
   "captureGainDb": 6,
-  "agc": false
+  "playbackDb": -8
 }
 ```
+
+Those two levels are all it ever holds. A file written by 0.58.x that also carries `agc` or
+`micBoost` still loads - the keys are ignored, and the next change rewrites the file without
+them.
 
 Where it lives, in order:
 
@@ -1121,11 +1125,13 @@ anything that can reach the waterfall port. Read that section before turning it 
 Beside the RX gain slider is a live reading of the audio arriving from the card, measured at the
 daemon's input - after the card, before any modem - and sent to the page five times a second over
 the page's own WebSocket. **Listen does not have to be on**, and it costs the station nothing
-while no browser has the page open.
+while no browser has the page open. It appears wherever the Mixer group does, on the same terms:
+an operator's page, a sound card, and an `api.key` or
+[`enableAudioControls`](#waterfall). A station with neither never measures it and never sends it.
 
 The bar is the **peak** of the last 200 ms in dBFS, on a scale from -60 to 0. A hairline shows the
-RMS. A `CLIP` pill lights, and stays lit for three seconds, whenever a sample in the interval
-reached full scale. And the sentence under it says what to aim for:
+RMS. A `CLIP` pill lights for three seconds whenever a sample **the card delivered** sat on the
+top or the bottom code of its range. And the sentence under it says what to aim for:
 
 > Aim for received signals to peak in the green, -18 to -9 dBFS; never into the red, and with
 > nothing on the channel the bar should sit below -30.
@@ -1143,18 +1149,32 @@ repository has already measured on real hardware, and four sources agree:
 The green band is widened a little either side of that, to -18 to -9 dBFS, because a real
 station's bursts vary and a zone the signal flickers out of is one an operator learns to ignore.
 The red starts at -3 dBFS: the only existing verdict on a capture level in this tree is
-`Packet.SoundModem.NinoBench`, whose "CLIPPING" is -0.9 dBFS, and the house reserve for a receive
-path is about 6 dB of headroom. Under -30 dBFS the bar goes grey.
+`Packet.SoundModem.NinoBench`, whose "CLIPPING" is -0.9 dBFS, and 6 dB is the headroom figure
+this tree already works to elsewhere. Under -30 dBFS the bar goes grey.
 
 **Being under the band is not a fault.** Every demodulator here is level-tolerant: the AFSK
 discriminator power-normalises and is barely affected from -40 dBFS up, the PSK detectors are
 scale-invariant, and MS110D has an AGC of its own. Clipping is the failure that actually costs
-decodes, so the alarm is at the top and the advice at the bottom is only advice. The meter is
-measured at the 12 kHz modem rate, after the resampler, so the clip indicator is a strong signal
-rather than a sample-exact count of what the card's converter did.
+decodes, so the alarm is at the top and the advice at the bottom is only advice.
 
-The meter is on the operator's page only, on a station with a sound card of its own. A public
-page, a monitor's receiver pages and a `flex:` or `ubersdr:` station never receive the message at
+**Where each half is measured.** The peak and the RMS come off the audio the modems hear, which
+on a 48 kHz card has been through the 48 to 12 kHz decimating filter; that costs a fraction of a
+dB and is free to hook. The clip indicator does not: the filter's ripple moves peaks either way,
+so a signal with real headroom at the converter can leave the decimator at full scale, and on the
+bench that lit the pill on five intervals out of seventeen with the card never railing. It is
+counted on the card's own samples instead, before the decimator, and only an exact top or bottom
+code counts - a converter that runs out of range produces the rail, not a value near it. Peak and
+RMS are reported clamped to 0 dBFS, which is the top of the scale by definition.
+
+**The rate.** Five readings a second, one per 200 ms. The boundary is checked when an audio block
+arrives, and the packet stations read 100 ms at a time (ARDOP 20 ms), so five is what you get; a
+station reading in blocks longer than 200 ms would get one per block. If nothing arrives for a
+second - which is every keyup, because nothing is received while transmitting - the bar empties
+and reads `no reading` rather than freezing at its last value.
+
+The meter is on the operator's page only, on a station with a sound card of its own that is
+serving `/api/mixer`. A public page, a monitor's receiver pages, a `flex:` or `ubersdr:` station,
+and a station with neither an `api.key` nor `enableAudioControls` never receive the message at
 all.
 
 ## Channel access is the host's, not the config's

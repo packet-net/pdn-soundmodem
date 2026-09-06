@@ -2262,6 +2262,32 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// when the daemon asked for it, and the daemon asks only for a station with a sound card.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// One block of audio exactly as the sound card delivered it, for the level meter's clip
+    /// indicator. Called before any resampling; does nothing on a page that has no meter.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Why the host has to hand this over separately.</b> The peak and the RMS come off
+    /// the channel's receive tap, which on a 48 kHz card is the decimator's output. Clipping
+    /// cannot be judged there: the filter's ripple moves peaks either way, so a signal with real
+    /// headroom at the converter can leave the decimator at full scale and light the indicator.
+    /// On the bench CM108 that was five intervals in seventeen, on a signal that never railed
+    /// (radio1, 2026-09-06). Only the card's own samples can answer it, and only the host has
+    /// them.</para>
+    /// <para>Call it with the block the device returned, before the decimator, and not while the
+    /// station is keyed - our own transmission is not a measurement of what the card is hearing.
+    /// Called on the receive thread, like the tap, and subject to the same rules: it returns
+    /// promptly, allocates nothing, and does nothing at all while no page is open.</para>
+    /// </remarks>
+    /// <param name="samples">The block as the device delivered it, at the card's own rate.</param>
+    public void MeterInputClipping(ReadOnlySpan<float> samples)
+    {
+        if (_levelMeter is Audio.InputLevelMeter meter && _viewerCount > 0)
+        {
+            meter.AddCardSamples(samples);
+        }
+    }
+
     private void MeterInput(ReadOnlySpan<float> samples)
     {
         if (_levelMeter is not Audio.InputLevelMeter meter)

@@ -182,14 +182,17 @@ internal static class MixerApi
             return null;
         }
 
-        foreach (string key in sent.Select(pair => pair.Key))
+        foreach ((string key, JsonNode? value) in sent)
         {
             if (AlsaMixerConfig.WhyRenamed(key) is string sentence)
             {
                 return $"{sentence}, and by GET on this endpoint.";
             }
 
-            if (AlsaMixerConfig.WhyForcedOff(key) is string forced)
+            // The value as well as the key: a request that says {"agc": true} is asking for the
+            // opposite of what this station does, and telling it the card ends up the same way
+            // either way would be false and would send the caller looking somewhere else.
+            if (AlsaMixerConfig.WhyForcedOff(key, Asked(value)) is string forced)
             {
                 return forced;
             }
@@ -197,6 +200,10 @@ internal static class MixerApi
 
         return null;
     }
+
+    /// <summary>A JSON true or false as a bool, or null for anything else.</summary>
+    private static bool? Asked(JsonNode? value) =>
+        value is JsonValue literal && literal.TryGetValue(out bool state) ? state : null;
 
     /// <summary>What a station with no mixer to offer answers with.</summary>
     /// <param name="why">What it would say to an operator.</param>

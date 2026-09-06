@@ -113,6 +113,82 @@ public class AlsaMixerConfigTests : IDisposable
     }
 
     /// <summary>
+    /// The sentence takes the value, because the two values do not have the same consequence.
+    /// </summary>
+    /// <remarks>
+    /// "The card ends up the way it asked for either way" is true of <c>false</c> and a lie about
+    /// <c>true</c>, and <c>true</c> is precisely the file this migration note is written for: an
+    /// operator who deliberately switched their AGC on now gets the opposite, and being told it
+    /// made no difference would send them hunting somewhere else entirely.
+    /// </remarks>
+    [Theory]
+    [InlineData("agc", true)]
+    [InlineData("micBoost", true)]
+    public void A_Switch_Key_Set_On_Is_Told_The_Station_Overrides_It(string gone, bool asked)
+    {
+        string path = WriteConfig(
+            "{\"device\": \"plughw:1,0\", \"alsa\": {\"mixer\": {\"" + gone + "\": "
+            + (asked ? "true" : "false") + "}}}");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config!.Warnings.Should().ContainSingle(w =>
+            w.Contains("This station switches it off whatever the key says", StringComparison.Ordinal)
+            && w.Contains("asking for the opposite of what happens", StringComparison.Ordinal));
+        config.Warnings.Should().NotContain(w =>
+            w.Contains("the card ends up the way it asked for", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_Switch_Key_Set_Off_Is_Told_It_Changes_Nothing()
+    {
+        string path = WriteConfig("""
+            {"device": "plughw:1,0", "alsa": {"mixer": {"agc": false}}}
+            """);
+
+        DaemonConfig.TryLoad(path, out _)!.Warnings.Should().ContainSingle(w =>
+            w.Contains("the card ends up the way it asked for either way", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Which stations are offered the Mixer group, and with it the input level meter.
+    /// </summary>
+    /// <remarks>
+    /// The whole "never on a public page, a monitor or a FlexRadio" claim is this one expression,
+    /// and the meter's markup lives inside the group - so a station that is offered a meter it
+    /// can never draw measures audio and broadcasts a message forever for nobody.
+    /// </remarks>
+    [Theory]
+    // device,                     public, open,  key,     shown
+    [InlineData("plughw:1,0", false, false, "k", true)]
+    [InlineData("plughw:1,0", false, true, "", true)]
+    [InlineData("plughw:1,0", false, false, "", false)]
+    [InlineData("plughw:1,0", true, true, "k", false)]
+    [InlineData("flex:discover", false, true, "k", false)]
+    [InlineData("ubersdr:m9psy-1.instance.ubersdr.org", false, true, "k", false)]
+    [InlineData("pipe:/tmp/in,/tmp/out", false, true, "k", false)]
+    public void Only_An_Operators_Page_With_A_Card_And_A_Reachable_Mixer_Shows_The_Group(
+        string device, bool isPublic, bool open, string key, bool shown)
+    {
+        var waterfall = new WaterfallConfig
+        {
+            Public = isPublic,
+            EnableAudioControls = open,
+        };
+        var api = new ApiConfig { Key = key.Length == 0 ? null : key };
+
+        DaemonConfig.ShowsMixerGroup(device, waterfall, api).Should().Be(shown);
+    }
+
+    [Fact]
+    public void A_Station_With_No_Waterfall_At_All_Shows_No_Group()
+    {
+        DaemonConfig.ShowsMixerGroup("plughw:1,0", waterfall: null, new ApiConfig { Key = "k" })
+            .Should().BeFalse("there is no page to put it on");
+    }
+
+    /// <summary>
     /// A dB the card cannot reach is a warning at apply time and not a refusal at load time.
     /// </summary>
     /// <remarks>

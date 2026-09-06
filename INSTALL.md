@@ -111,7 +111,8 @@ software, or the PDN node at it.
 ### The one file the daemon writes for itself
 
 If you set an `api.key`, the operator page grows a **Mixer** group for the sound card's capture
-gain and playback level, in dB, with a live input level meter beside the capture slider. A change
+gain and playback level, in dB, with a live input level meter beside the capture slider (also
+with `waterfall`.`enableAudioControls` and no key). A change
 made there is kept: the daemon writes those two levels, the device name and a timestamp to
 `/var/lib/pdn-soundmodem/mixer-state.json` and applies them again at the next start-up. That
 directory is created and owned by the service user through the unit's `StateDirectory=`, so

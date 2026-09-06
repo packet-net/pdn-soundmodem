@@ -1231,6 +1231,53 @@ public class WaterfallPageTests
     }
 
     /// <summary>
+    /// The meter's two timers: the clip latch lets go after three seconds, and a bar with nothing
+    /// arriving says so rather than sitting frozen.
+    /// </summary>
+    /// <remarks>
+    /// <para>Both exist for the case where the <em>next</em> message does not come, which is
+    /// every keyup - nothing is received while transmitting, so the level messages simply stop -
+    /// and a card that has died altogether. Re-evaluating the latch on the next message, as the
+    /// first cut did, leaves a lit CLIP pill lit for ever and a bar frozen at a pre-key value
+    /// that reads exactly like a live one.</para>
+    /// <para>So this drives <c>onLevel</c> by hand against a station sending nothing: with real
+    /// audio flowing the stale timer is reset every 200 ms and could never fire.</para>
+    /// </remarks>
+    [Fact]
+    public async Task The_Clip_Pill_Lets_Go_And_A_Bar_With_No_Readings_Says_So()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port, meterTimers: true);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw while drawing the meter");
+
+        MeterPanel lit = probe.MeterAfterClip!;
+        lit.Hidden.Should().BeFalse("a reading arrived, even if this one was hand-fed");
+        lit.ClipClass.Should().Contain("lit");
+        lit.Read.Should().Be("-5.0 dBFS");
+        lit.BarWidth.Should().Be("91.66666666666667%", "-5 dBFS on a -60 to 0 bar");
+
+        MeterPanel stale = probe.MeterStale!;
+        stale.Read.Should().Be(
+            "no reading", "a second with nothing arriving is not a measurement of anything");
+        stale.BarWidth.Should().Be("0%");
+        stale.BarClass.Should().NotContain("hot").And.NotContain("quiet");
+        stale.ClipClass.Should().Contain(
+            "lit", "the clip is three seconds old at most and is still worth showing");
+
+        probe.MeterClipExpired!.ClipClass.Should().NotContain(
+            "lit", "and after three seconds it lets go on its own");
+    }
+
+    /// <summary>
     /// With <c>"waterfall"."enableAudioControls"</c> the Mixer group opens on a browser that has
     /// no key at all, and the public page still has no group.
     /// </summary>
@@ -1336,7 +1383,7 @@ public class WaterfallPageTests
         string node, int port, bool audio = false, string? protocol = null, string? pathname = null,
         string? stored = null, string? pageText = null, string? txTest = null, string? apiKey = null,
         bool mixer = false, double? mixerGain = null, double? mixerPlayback = null,
-        bool meter = false)
+        bool meter = false, bool meterTimers = false)
     {
         string here = Path.GetDirectoryName(typeof(WaterfallPageTests).Assembly.Location)!;
         var start = new ProcessStartInfo(node)
@@ -1356,6 +1403,7 @@ public class WaterfallPageTests
         if (apiKey is not null) start.Environment["APIKEY"] = apiKey;
         if (mixer) start.Environment["MIXER"] = "1";
         if (meter) start.Environment["METER"] = "1";
+        if (meterTimers) start.Environment["METERTIMERS"] = "1";
         if (mixerGain is double gain)
         {
             start.Environment["MIXGAIN"] = gain.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -2110,6 +2158,9 @@ public class WaterfallPageTests
         MixerPanel? MixerAfterGain,
         MixerPanel? MixerAfterPlay,
         MeterPanel? Meter,
+        MeterPanel? MeterAfterClip,
+        MeterPanel? MeterStale,
+        MeterPanel? MeterClipExpired,
         string[] Thrown);
 
     /// <summary>

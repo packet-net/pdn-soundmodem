@@ -447,16 +447,24 @@ public sealed class AlsaMixerConfig
     /// request body, or null if <paramref name="key"/> is not one.
     /// </summary>
     /// <remarks>
-    /// One sentence, so the start-up warning and the API's 400 cannot drift apart - the same rule
-    /// <see cref="WhyRenamed"/> keeps.
+    /// <para>One sentence, so the start-up warning and the API's 400 cannot drift apart - the
+    /// same rule <see cref="WhyRenamed"/> keeps.</para>
+    /// <para><b>The value matters.</b> "The card ends up the way it asked for either way" is true
+    /// of <c>false</c> and a lie about <c>true</c>, which is exactly the file this message is
+    /// written for: somebody who deliberately turned their AGC on is now getting the opposite,
+    /// and being told it made no difference would send them looking somewhere else.</para>
     /// </remarks>
     /// <param name="key">The key that was found.</param>
-    public static string? WhyForcedOff(string key) =>
+    /// <param name="asked">What it was set to, or null when that cannot be read.</param>
+    public static string? WhyForcedOff(string key, bool? asked = null) =>
         ForcedOffKeys.Contains(key ?? "")
             ? $"{key} is no longer a setting: AGC and mic boost are switched off at every "
                 + "start-up on any card that has them, because automatic gain fights the modem's "
                 + "own level tracking and a boost left on puts the receive path into clipping. "
-                + "Remove the key; the card ends up the way it asked for either way."
+                + (asked == true
+                    ? "This station switches it off whatever the key says, so remove it: as "
+                        + "written it is asking for the opposite of what happens."
+                    : "Remove the key; the card ends up the way it asked for either way.")
             : null;
 
     /// <summary>An override list if there is a usable one, else the built-in fallbacks.</summary>
@@ -1480,6 +1488,28 @@ public sealed class DaemonConfig
     }
 
     /// <summary>
+    /// Whether the operator's page will carry the Mixer group, and with it the input level meter.
+    /// </summary>
+    /// <remarks>
+    /// <para>Three things have to be true at once, and each of them removes the group on its own:
+    /// the station has a sound card to mix, the page is the operator's rather than the public
+    /// flavour, and <c>/api/mixer</c> answers this browser at all - which needs either an
+    /// <c>api.key</c> or <c>waterfall.enableAudioControls</c>. Without the last one the endpoint
+    /// is a 404, the page hides the whole group, and a level meter drawn inside it is a message
+    /// nothing renders.</para>
+    /// <para>Here rather than inline in the daemon's top-level statements so that it can be
+    /// tested: the flavour gate is the whole "never on a public page, a monitor or a FlexRadio"
+    /// claim, and it was one uncovered expression.</para>
+    /// </remarks>
+    /// <param name="device">The <c>device</c> setting.</param>
+    /// <param name="waterfall">The <c>waterfall</c> section, or null when there is no page.</param>
+    /// <param name="api">The <c>api</c> section, or null when there is none.</param>
+    public static bool ShowsMixerGroup(string device, WaterfallConfig? waterfall, ApiConfig? api) =>
+        waterfall is { Public: false }
+        && IsSoundCard(device)
+        && (waterfall.AudioControlsOpen || !string.IsNullOrWhiteSpace(api?.Key));
+
+    /// <summary>
     /// Whether a device string names a sound card, as opposed to a FlexRadio, a web receiver or
     /// a pair of pipes. Only the first kind has a mixer.
     /// </summary>
@@ -2148,11 +2178,24 @@ public sealed class DaemonConfig
                 warnings.Add($"alsa mixer: {renamed}");
             }
 
-            if (AlsaMixerConfig.WhyForcedOff(key) is string forced)
+            if (AlsaMixerConfig.WhyForcedOff(key, Asked(key)) is string forced)
             {
                 warnings.Add($"alsa mixer: {forced}");
             }
         }
+        // What a stale switch key was actually set to, so the sentence can be honest about it.
+        // Anything that is not a JSON true or false has no answer, and the wording falls back to
+        // the one that is true whatever the value was.
+        bool? Asked(string key) =>
+            config.Alsa?.Mixer?.UnknownSettings?.TryGetValue(key, out JsonElement value) == true
+                ? value.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    _ => null,
+                }
+                : null;
+
         foreach (ModemConfig modem in config.Modems)
         {
             Unknown($"modem {modem.SubChannel}", modem.UnknownSettings);
