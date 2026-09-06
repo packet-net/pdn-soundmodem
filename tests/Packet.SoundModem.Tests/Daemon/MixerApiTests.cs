@@ -9,28 +9,23 @@ using Packet.SoundModem.Tests.Audio;
 namespace Packet.SoundModem.Tests.Daemon;
 
 /// <summary>
-/// <c>/api/mixer</c> end to end: an HTTP request in, a change on the card, and the station's
-/// configuration document amended so the next start-up sets the same thing.
+/// <c>/api/mixer</c> end to end: an HTTP request in, a change on the card in dB, and the change
+/// remembered in the station's mixer state file so the next start-up sets the same thing.
 /// </summary>
 /// <remarks>
 /// <para>This is what the operator page's Mixer group does when a slider moves, so it is tested
 /// as the page uses it - over a real socket, through the real handler, with the real key check -
 /// against a made-up card rather than a real one.</para>
-/// <para>The one thing that separates this from <c>/api/config</c> is that nothing restarts: the
-/// setting lands on the card as the request is served, because restarting a station to trim its
-/// own capture gain would drop the waterfall the operator is trimming it against.</para>
+/// <para>Two things separate this from <c>/api/config</c>. Nothing restarts: the setting lands on
+/// the card as the request is served, because restarting a station to trim its own capture gain
+/// would drop the waterfall the operator is trimming it against. And it persists by default
+/// (Tom, 2026-09-06): a trim made on the page is meant to stay made, so it goes to the daemon's
+/// own state file. The config file is never written from here and always wins at start-up.</para>
 /// </remarks>
 public class MixerApiTests : IDisposable
 {
     private const string Key = "test-key-not-a-secret";
-
-    private static readonly string Running = """
-        {
-          "device": "plughw:1,0",
-          "kissPort": 8105,
-          "modems": [ { "subChannel": 0, "mode": "afsk1200" } ]
-        }
-        """;
+    private const string Device = "plughw:CARD=Device,DEV=0";
 
     private readonly string _dir = Directory.CreateTempSubdirectory("pdnsm-mixer-api").FullName;
 
@@ -45,11 +40,11 @@ public class MixerApiTests : IDisposable
         HttpResponseMessage answer = await stranger.GetAsync(new Uri(station.Url, UriKind.Absolute));
 
         answer.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-        station.Card!.Refreshes.Should().Be(0, "an unauthorised caller never reaches the card");
+        station.Card!.CaptureDb("Mic").Should().Be(8, "an unauthorised caller never reaches the card");
     }
 
     [Fact]
-    public async Task Reading_The_Mixer_Reports_The_Cards_Own_State()
+    public async Task Reading_The_Mixer_Reports_The_Cards_Own_State_And_Its_Range()
     {
         using var station = new Station(_dir, FakeMixer.Cm108());
 
@@ -57,140 +52,183 @@ public class MixerApiTests : IDisposable
 
         body.GetProperty("available").GetBoolean().Should().BeTrue();
         body.GetProperty("card").GetString().Should().Be("hw:3");
-        body.GetProperty("capture").GetProperty("control").GetString().Should().Be("Mic");
-        body.GetProperty("capture").GetProperty("percent").GetInt32().Should().Be(57);
+        JsonElement capture = body.GetProperty("capture");
+        capture.GetProperty("control").GetString().Should().Be("Mic");
+        capture.GetProperty("decibels").GetDouble().Should().Be(8);
+        capture.GetProperty("dbRange").GetProperty("min").GetDouble().Should().Be(-12);
+        capture.GetProperty("dbRange").GetProperty("max").GetDouble().Should().Be(23);
+        capture.GetProperty("percent").GetInt32().Should().Be(
+            57, "the percentage alsamixer shows is still reported beside the dB");
+        capture.GetProperty("source").GetString().Should().Be(
+            "none", "nothing has pinned this control");
         body.GetProperty("agc").GetProperty("on").GetBoolean().Should().BeTrue();
         body.GetProperty("micBoost").ValueKind.Should().Be(
             JsonValueKind.Null, "this CM108 revision has no mic boost control");
-        station.Card!.Find("Mic")!.Capture.Should().Be(57, "reading changes nothing");
+        station.Card!.CaptureDb("Mic").Should().Be(8, "reading changes nothing");
     }
 
     [Fact]
-    public async Task Setting_The_Gain_Lands_On_The_Card_And_Comes_Back_Read_Back()
+    public async Task Setting_The_Gain_Lands_On_The_Card_In_Db_And_Comes_Back_Read_Back()
     {
         using var station = new Station(_dir, FakeMixer.Cm108());
 
-        JsonElement body = await station.PostAsync("""{"captureGainPercent": 80, "agc": false}""");
+        JsonElement body = await station.PostAsync("""{"captureGainDb": 6, "agc": false}""");
 
-        station.Card!.Find("Mic")!.Capture.Should().Be(80);
+        station.Card!.CaptureDb("Mic").Should().Be(6);
         station.Card.Find("Auto Gain Control")!.On.Should().BeFalse();
         body.GetProperty("applied").GetBoolean().Should().BeTrue();
-        body.GetProperty("capture").GetProperty("percent").GetInt32().Should().Be(80);
+        body.GetProperty("capture").GetProperty("decibels").GetDouble().Should().Be(6);
         body.GetProperty("summary").GetString().Should()
-            .Be("alsa: mixer: Mic capture 80% / 16.00 dB (set 80%), Auto Gain Control off, "
-                + "Speaker playback 46% / -19.98 dB");
-    }
-
-    [Fact]
-    public async Task A_Change_Is_One_Run_Unless_It_Says_Otherwise()
-    {
-        using var station = new Station(_dir, FakeMixer.Cm108());
-
-        JsonElement body = await station.PostAsync("""{"captureGainPercent": 42}""");
-
-        body.GetProperty("persisted").GetBoolean().Should().BeFalse();
-        File.Exists(station.EphemeralPath).Should().BeTrue("the next start-up sets what is set now");
-
-        // Not /api/config's sentence, which is true there and false here: that endpoint restarts
-        // at once and the restart consumes the one-run file, while this one does not restart, and
-        // a mixer is never reset by a file that does not mention it.
-        string note = body.GetProperty("note").GetString()!;
-        note.Should().Contain("stays set");
-        note.Should().NotContain("In force until the next restart");
-        File.ReadAllText(station.ConfigPath).Should().Be(
-            Running, "the config file is the description of the intended station");
-
-        DaemonConfig? pending = DaemonConfig.TryLoad(station.EphemeralPath, out string error);
-        error.Should().BeEmpty();
-        pending!.Alsa!.Mixer!.CaptureGainPercent.Should().Be(42);
-        pending.Modems.Should().ContainSingle("the rest of the document is left alone");
-    }
-
-    [Fact]
-    public async Task Persist_True_Writes_The_Config_File_Instead()
-    {
-        using var station = new Station(_dir, FakeMixer.Cm108());
-
-        JsonElement body = await station.PostAsync("""{"agc": false}""", persist: true);
-
-        body.GetProperty("persisted").GetBoolean().Should().BeTrue();
-        DaemonConfig? written = DaemonConfig.TryLoad(station.ConfigPath, out _);
-        written!.Alsa!.Mixer!.Agc.Should().BeFalse();
-        File.Exists(station.EphemeralPath).Should().BeFalse();
+            .Be("alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB), "
+                + "Auto Gain Control off, "
+                + "Speaker playback -20.00 dB of -37.00 to 0.00 dB (left as found)",
+                "a control the request said nothing about is named as untouched, not omitted");
     }
 
     /// <summary>
-    /// A persisted change has to clear the one-run change waiting beside it, or the next restart
-    /// applies the older one and the persisted level arrives a restart late.
+    /// The card quantises a dB to its own steps, and the answer is the card's, not the request's.
     /// </summary>
-    /// <remarks>
-    /// Start-up prefers the one-run file over the config file and consumes it, and this endpoint -
-    /// alone among the writers here - does not restart, so a one-run change POSTed earlier in the
-    /// session is still sitting there when the persisted one is written. <c>POST /api/config</c>
-    /// cannot reach this state because every POST there restarts at once.
-    /// </remarks>
     [Fact]
-    public async Task A_Persisted_Change_Clears_The_One_Run_Change_Waiting_Beside_It()
+    public async Task A_Level_The_Card_Cannot_Hold_Comes_Back_As_The_Step_It_Took()
     {
         using var station = new Station(_dir, FakeMixer.Cm108());
 
-        await station.PostAsync("""{"captureGainPercent": 45}""");
-        File.Exists(station.EphemeralPath).Should().BeTrue("this is the state that used to win");
+        JsonElement body = await station.PostAsync("""{"captureGainDb": 6.4}""");
 
-        JsonElement body = await station.PostAsync("""{"captureGainPercent": 70}""", persist: true);
-
-        body.GetProperty("persisted").GetBoolean().Should().BeTrue();
-        File.Exists(station.EphemeralPath).Should().BeFalse(
-            "the next restart must start from the file, not from the earlier one-run change");
-        body.GetProperty("note").GetString().Should().Contain("has been removed");
-        DaemonConfig.TryLoad(station.ConfigPath, out _)!
-            .Alsa!.Mixer!.CaptureGainPercent.Should().Be(70);
+        body.GetProperty("capture").GetProperty("decibels").GetDouble().Should().Be(
+            6, "the bench CM108's capture moves in whole dB");
     }
 
-    /// <summary>
-    /// The file is read at the moment of the write, so an operator's edits since start-up are not
-    /// replaced by the snapshot this process came up on.
-    /// </summary>
     [Fact]
-    public async Task Persisting_Amends_The_File_As_It_Is_Now_And_Not_The_Start_Up_Snapshot()
+    public async Task A_Change_Is_Remembered_In_The_State_File_By_Default()
     {
         using var station = new Station(_dir, FakeMixer.Cm108());
 
-        // The operator edits the file while the station runs, as they are entitled to.
-        File.WriteAllText(station.ConfigPath, """
+        JsonElement body = await station.PostAsync("""{"captureGainDb": 6, "agc": false}""");
+
+        body.GetProperty("persisted").GetBoolean().Should().BeTrue();
+        body.GetProperty("stateFile").GetString().Should().Be(station.StatePath);
+        body.GetProperty("warn").GetBoolean().Should().BeFalse(
+            "nothing here needs the operator's attention: it was set and it was kept");
+        body.GetProperty("note").GetString().Should().Contain("Remembered in");
+
+        JsonElement written = station.State();
+        written.GetProperty("captureGainDb").GetDouble().Should().Be(6);
+        written.GetProperty("agc").GetBoolean().Should().BeFalse();
+        written.GetProperty("device").GetString().Should().Be(Device);
+        written.TryGetProperty("playbackDb", out _).Should().BeFalse(
+            "a control nobody has ever set here stays absent, so it keeps whatever the card has");
+        written.GetProperty("writtenAt").GetDateTimeOffset().Should().Be(Station.Now);
+    }
+
+    [Fact]
+    public async Task The_Config_File_Is_Never_Written_By_A_Mixer_Change()
+    {
+        using var station = new Station(_dir, FakeMixer.Cm108(), configText: """
             {
-              "device": "plughw:1,0",
-              "kissPort": 8199,
-              "modems": [ { "subChannel": 0, "mode": "afsk1200" }, { "subChannel": 1, "mode": "bpsk300" } ]
+              // the operator's own notes, which nothing here is entitled to delete
+              "device": "plughw:CARD=Device,DEV=0",
+              "modems": [ { "subChannel": 0, "mode": "afsk1200" } ]
             }
             """);
+        string before = File.ReadAllText(station.ConfigPath);
 
-        await station.PostAsync("""{"captureGainPercent": 65}""", persist: true);
+        await station.PostAsync("""{"captureGainDb": 6}""");
 
-        DaemonConfig written = DaemonConfig.TryLoad(station.ConfigPath, out string error)!;
-        error.Should().BeEmpty();
-        written.KissPort.Should().Be(8199, "the operator's edit survives");
-        written.Modems.Should().HaveCount(2, "and so does the modem they added");
-        written.Alsa!.Mixer!.CaptureGainPercent.Should().Be(65);
+        File.ReadAllText(station.ConfigPath).Should().Be(
+            before, "the config file is the operator's, comments and all");
+        station.State().GetProperty("captureGainDb").GetDouble().Should().Be(6);
     }
 
     [Fact]
-    public async Task A_File_Edited_Into_Something_That_Will_Not_Load_Is_Not_Written_Over()
+    public async Task A_Second_Change_Keeps_What_The_First_One_Set()
     {
         using var station = new Station(_dir, FakeMixer.Cm108());
 
-        // Half-finished, as an operator's file can be while the station carries on running.
-        File.WriteAllText(station.ConfigPath, """
-            {"device": "plughw:1,0", "modems": [{"subChannel": 0, "mode": "afsk1200 "}]}
-            """);
+        await station.PostAsync("""{"captureGainDb": 6}""");
+        await station.PostAsync("""{"agc": false}""");
 
-        JsonElement body = await station.PostAsync("""{"agc": false}""", persist: true);
+        JsonElement written = station.State();
+        written.GetProperty("captureGainDb").GetDouble().Should().Be(
+            6, "the earlier change is still what the next start-up should set");
+        written.GetProperty("agc").GetBoolean().Should().BeFalse();
+    }
 
+    [Fact]
+    public async Task Persist_False_Sets_The_Card_And_Writes_Nothing()
+    {
+        using var station = new Station(_dir, FakeMixer.Cm108());
+
+        JsonElement body = await station.PostAsync("""{"captureGainDb": 6}""", persist: false);
+
+        station.Card!.CaptureDb("Mic").Should().Be(6, "the card is set: that is the point");
         body.GetProperty("persisted").GetBoolean().Should().BeFalse();
-        body.GetProperty("note").GetString().Should().Contain("would not load");
-        File.ReadAllText(station.ConfigPath).Should().Contain(
-            "afsk1200 ", "the operator has to find their own mistake, not have it buried");
-        station.Card!.Find("Auto Gain Control")!.On.Should().BeFalse("the card is set regardless");
+        body.GetProperty("note").GetString().Should().Contain("persist=false");
+        File.Exists(station.StatePath).Should().BeFalse(
+            "a value being tried is not a value being kept");
+    }
+
+    /// <summary>
+    /// A control the config file pins is still changed, still remembered, and the operator is
+    /// told that the file takes it back at the next start-up.
+    /// </summary>
+    /// <remarks>
+    /// Precedence is config, then state file, then leave the card alone. Applying the change and
+    /// saying nothing would look like it had stuck; refusing it would be useless to somebody
+    /// trimming a level against the waterfall in front of them. So: do it, keep it, say it.
+    /// </remarks>
+    [Fact]
+    public async Task A_Control_The_Config_File_Pins_Is_Changed_And_The_Answer_Says_It_Comes_Back()
+    {
+        using var station = new Station(
+            _dir, FakeMixer.Cm108(), pinned: new AlsaMixerConfig { CaptureGainDb = -3 });
+
+        JsonElement body = await station.PostAsync("""{"captureGainDb": 6}""");
+
+        station.Card!.CaptureDb("Mic").Should().Be(6, "the change is real");
+        body.GetProperty("persisted").GetBoolean().Should().BeTrue("and it is still remembered");
+        body.GetProperty("warn").GetBoolean().Should().BeTrue();
+        body.GetProperty("note").GetString().Should().Contain(
+            "captureGainDb is set in the config file as -3.00 dB; this change lasts until the "
+            + "next start.");
+        body.GetProperty("capture").GetProperty("source").GetString().Should().Be(
+            "config", "which is what will still put -3 dB on the card at the next start-up");
+    }
+
+    [Fact]
+    public async Task The_Config_File_Note_Is_Absent_For_A_Control_The_File_Says_Nothing_About()
+    {
+        using var station = new Station(
+            _dir, FakeMixer.Cm108(), pinned: new AlsaMixerConfig { CaptureGainDb = -3 });
+
+        JsonElement body = await station.PostAsync("""{"agc": false}""");
+
+        body.GetProperty("warn").GetBoolean().Should().BeFalse();
+        body.GetProperty("note").GetString().Should().NotContain("set in the config file");
+        body.GetProperty("agc").GetProperty("source").GetString().Should().Be(
+            "state", "the state file is what pins the AGC now");
+        body.GetProperty("capture").GetProperty("source").GetString().Should().Be("config");
+    }
+
+    [Fact]
+    public async Task A_State_File_That_Cannot_Be_Written_Costs_The_Persistence_And_Not_The_Change()
+    {
+        // A file where the state file's directory should be, which is as close as a test gets to
+        // a read-only /var/lib without being root.
+        string blocker = Path.Combine(_dir, $"blocker-{Guid.NewGuid():N}");
+        File.WriteAllText(blocker, "not a directory");
+        using var station = new Station(
+            _dir, FakeMixer.Cm108(), statePath: Path.Combine(blocker, "mixer-state.json"));
+
+        JsonElement body = await station.PostAsync("""{"captureGainDb": 6}""");
+
+        station.Card!.CaptureDb("Mic").Should().Be(6, "the card is set either way");
+        body.GetProperty("applied").GetBoolean().Should().BeTrue();
+        body.GetProperty("persisted").GetBoolean().Should().BeFalse();
+        body.GetProperty("warn").GetBoolean().Should().BeTrue();
+        string note = body.GetProperty("note").GetString()!;
+        note.Should().Contain("could not be written");
+        note.Should().Contain("the next start-up will not set it");
     }
 
     [Fact]
@@ -203,28 +241,78 @@ public class MixerApiTests : IDisposable
         HttpResponseMessage answer = await station.Client.PostAsync(
             new Uri(station.Url, UriKind.Absolute),
             new StringContent(
-                """{"captureGain": 45, "agc": false}""", Encoding.UTF8, "application/json"));
+                """{"captureGain": 6, "agc": false}""", Encoding.UTF8, "application/json"));
 
         answer.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        (await answer.Content.ReadAsStringAsync()).Should().Contain("captureGainPercent");
-        station.Card!.Find("Mic")!.Capture.Should().Be(57, "nothing reached the card");
+        (await answer.Content.ReadAsStringAsync()).Should().Contain("captureGainDb");
+        station.Card!.CaptureDb("Mic").Should().Be(8, "nothing reached the card");
         station.Card.Find("Auto Gain Control")!.On.Should().BeTrue();
     }
 
-    [Fact]
-    public async Task A_Percentage_Outside_The_Range_Is_Refused_In_The_Same_Words_As_The_File()
+    /// <summary>
+    /// A body still carrying 0.57.0's percentage key is refused by name, with the key that
+    /// replaced it.
+    /// </summary>
+    /// <remarks>
+    /// Not aliased. 60 meant 60% of the card's raw range and now means 60 dB, which is 37 dB past
+    /// the top of the bench CM108 - so reading the old key as the new one would set a level
+    /// nobody asked for on the first request after an upgrade.
+    /// </remarks>
+    [Theory]
+    [InlineData("captureGainPercent", "captureGainDb")]
+    [InlineData("playbackPercent", "playbackDb")]
+    public async Task A_Percentage_Key_From_The_Version_Before_Is_Refused_By_Name(string gone, string now)
     {
         using var station = new Station(_dir, FakeMixer.Cm108());
 
         HttpResponseMessage answer = await station.Client.PostAsync(
             new Uri(station.Url, UriKind.Absolute),
-            new StringContent("""{"captureGainPercent": 150}""", Encoding.UTF8, "application/json"));
+            new StringContent($$"""{"{{gone}}": 60}""", Encoding.UTF8, "application/json"));
 
         answer.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         string text = await answer.Content.ReadAsStringAsync();
-        text.Should().Contain("\"alsa\".\"mixer\".\"captureGainPercent\" is 150");
-        text.Should().Contain("use 0-100");
-        station.Card!.Find("Mic")!.Capture.Should().Be(57, "a refusal costs nothing that was set");
+        text.Should().Contain($"{gone} is no longer read; use {now}");
+        text.Should().Contain("--mixer-show");
+        station.Card!.CaptureDb("Mic").Should().Be(8, "a refusal costs nothing that was set");
+        File.Exists(station.StatePath).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task A_Level_Outside_The_Cards_Range_Is_Refused_With_The_Range()
+    {
+        using var station = new Station(_dir, FakeMixer.Cm108());
+
+        HttpResponseMessage answer = await station.Client.PostAsync(
+            new Uri(station.Url, UriKind.Absolute),
+            new StringContent("""{"captureGainDb": 30}""", Encoding.UTF8, "application/json"));
+
+        answer.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        string text = await answer.Content.ReadAsStringAsync();
+        text.Should().Contain("captureGainDb 30.00 dB is outside the range of \"Mic\" on hw:3");
+        text.Should().Contain("-12.00 to 23.00 dB");
+        station.Card!.CaptureDb("Mic").Should().Be(8, "a refusal costs nothing that was set");
+    }
+
+    [Fact]
+    public async Task A_Control_With_No_Db_Scale_Is_Refused_In_Words_Rather_Than_Guessed_At()
+    {
+        var card = new FakeMixer(
+            "hw:5", new FakeControl { Name = "Mic", Capture = new FakeLevel { Max = 15, Raw = 6 } });
+        using var station = new Station(_dir, card);
+
+        HttpResponseMessage answer = await station.Client.PostAsync(
+            new Uri(station.Url, UriKind.Absolute),
+            new StringContent("""{"captureGainDb": 6}""", Encoding.UTF8, "application/json"));
+
+        answer.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await answer.Content.ReadAsStringAsync()).Should().Contain("has no dB scale");
+        card.Find("Mic")!.Capture!.Raw.Should().Be(6);
+
+        // And a GET says the same thing in the shape a page can act on: no range to draw a
+        // slider between.
+        JsonElement read = await station.GetAsync();
+        read.GetProperty("capture").GetProperty("dbRange").ValueKind.Should().Be(JsonValueKind.Null);
+        read.GetProperty("summary").GetString().Should().Contain("no dB scale");
     }
 
     [Fact]
@@ -265,60 +353,16 @@ public class MixerApiTests : IDisposable
         answer.StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
 
-    /// <summary>
-    /// A config file named without a directory - <c>--config soundmodem.json</c> from the
-    /// directory it sits in - must still give a one-run path that can be written.
-    /// </summary>
-    /// <remarks>
-    /// Found on the bench on 2026-09-05, from exactly that invocation.
-    /// <c>Path.GetDirectoryName("soundmodem.json")</c> is the empty string rather than null, so
-    /// the fallback never fired, the one-run path came out as a bare file name, and
-    /// <c>Directory.CreateDirectory("")</c> threw ArgumentException on the way to writing it. The
-    /// waterfall's catch-all then aborted the connection, so the POST set the card and answered
-    /// nothing at all - the worst possible shape for a failure, since the caller cannot tell it
-    /// from "nothing happened".
-    /// </remarks>
-    [Theory]
-    [InlineData("soundmodem.json")]
-    [InlineData("./soundmodem.json")]
-    [InlineData("/etc/pdn-soundmodem/soundmodem.json")]
-    public void A_One_Run_Path_Always_Names_A_Directory_That_Can_Be_Created(string configPath)
-    {
-        string pending = ConfigApi.EphemeralPathFor(configPath);
-
-        Path.GetFileName(pending).Should().Be("pending-config.json");
-        Path.GetDirectoryName(pending).Should().NotBeNullOrEmpty(
-            "Directory.CreateDirectory throws on an empty path, and that is where it is written");
-    }
-
-    [Fact]
-    public async Task A_Change_That_Cannot_Be_Written_Down_Still_Answers_In_Full()
-    {
-        // The card is set before the file is written, so a failure after that point must arrive as
-        // a complete answer saying so. An aborted connection would leave the operator believing
-        // nothing had happened while the station listened at a different gain.
-        string blocker = Path.Combine(_dir, $"blocker-{Guid.NewGuid():N}");
-        File.WriteAllText(blocker, "not a directory");
-        using var station = new Station(
-            _dir, FakeMixer.Cm108(), ephemeralPath: Path.Combine(blocker, "pending-config.json"));
-
-        JsonElement body = await station.PostAsync("""{"captureGainPercent": 45}""");
-
-        station.Card!.Find("Mic")!.Capture.Should().Be(45, "the card is set either way");
-        body.GetProperty("applied").GetBoolean().Should().BeTrue();
-        body.GetProperty("note").GetString().Should().Contain("could not be written");
-    }
-
     [Fact]
     public async Task Every_Answer_Carries_A_Body_And_Not_A_Closed_Socket()
     {
         using var station = new Station(_dir, FakeMixer.Cm108());
 
-        foreach (string url in (string[])[station.Url, station.Url + "?persist=true"])
+        foreach (string url in (string[])[station.Url, station.Url + "?persist=false"])
         {
             HttpResponseMessage answer = await station.Client.PostAsync(
                 new Uri(url, UriKind.Absolute),
-                new StringContent("""{"captureGainPercent": 45}""", Encoding.UTF8, "application/json"));
+                new StringContent("""{"captureGainDb": 6}""", Encoding.UTF8, "application/json"));
 
             answer.StatusCode.Should().Be(HttpStatusCode.OK);
             string text = await answer.Content.ReadAsStringAsync();
@@ -335,8 +379,8 @@ public class MixerApiTests : IDisposable
     /// The waterfall serves every request on a task of its own, and applying is set-then-read
     /// across several calls into the card, so without a lock two overlapping POSTs can each be
     /// answered with the other's level - and the read-back is the answer, and the read-back is
-    /// the whole point of this endpoint. The card here takes a millisecond to refresh, which is
-    /// the window they would interleave in.
+    /// the whole point of this endpoint. They would also both write the state file. The card here
+    /// takes a couple of milliseconds to refresh, which is the window they would interleave in.
     /// </remarks>
     [Fact]
     public async Task Two_Changes_At_Once_Each_Get_Their_Own_Read_Back()
@@ -345,105 +389,19 @@ public class MixerApiTests : IDisposable
         card.RefreshTakes = TimeSpan.FromMilliseconds(2);
         using var station = new Station(_dir, card);
 
-        int[] wanted = [10, 20, 30, 40, 50, 60, 70, 80];
-        JsonElement[] answers = await Task.WhenAll(wanted.Select(percent =>
-            station.PostAsync($$"""{"captureGainPercent": {{percent}} }""")));
+        double[] wanted = [-10, -8, -6, -4, -2, 0, 2, 4];
+        JsonElement[] answers = await Task.WhenAll(wanted.Select(db =>
+            station.PostAsync($$"""{"captureGainDb": {{db}} }""")));
 
         for (int i = 0; i < wanted.Length; i++)
         {
-            answers[i].GetProperty("capture").GetProperty("percent").GetInt32().Should().Be(
+            answers[i].GetProperty("capture").GetProperty("decibels").GetDouble().Should().Be(
                 wanted[i], "each caller is answered with the level it asked for, not another's");
         }
 
-        wanted.Should().Contain(card.Find("Mic")!.Capture!.Value, "and one of them won the card");
-    }
-
-    [Fact]
-    public void An_Amendment_Adds_The_Mixer_Block_And_Disturbs_Nothing_Else()
-    {
-        string? amended = MixerApi.Amend(
-            Running,
-            new MixerChange { CaptureGainPercent = 60, MicBoost = false },
-            out string why);
-
-        why.Should().BeEmpty();
-        using JsonDocument document = JsonDocument.Parse(amended!);
-        JsonElement mixer = document.RootElement.GetProperty("alsa").GetProperty("mixer");
-        mixer.GetProperty("captureGainPercent").GetInt32().Should().Be(60);
-        mixer.GetProperty("micBoost").GetBoolean().Should().BeFalse();
-        mixer.TryGetProperty("agc", out _).Should().BeFalse(
-            "a control the request said nothing about stays unmentioned, which leaves it alone");
-        document.RootElement.GetProperty("kissPort").GetInt32().Should().Be(8105);
-    }
-
-    /// <summary>
-    /// A config file here is JSONC and every real one has comments in it. Found on the bench
-    /// CM108 on 2026-09-05: the card was set and the fold-in then failed at the first "//".
-    /// </summary>
-    [Fact]
-    public void A_Configuration_With_Comments_Is_Amended_Rather_Than_Refused()
-    {
-        string running = """
-            {
-              // #17 bench config. Every real config file on this network looks like this.
-              "device": "plughw:CARD=Device,DEV=0",
-              /* and the shipped example is most of the way to being a manual */
-              "modems": [ { "subChannel": 0, "mode": "afsk1200" }, ],
-            }
-            """;
-
-        string? amended = MixerApi.Amend(
-            running, new MixerChange { CaptureGainPercent = 45, Agc = false }, out string why);
-
-        why.Should().BeEmpty();
-        amended.Should().NotBeNull("a commented file is an ordinary file here, not a broken one");
-        using JsonDocument document = JsonDocument.Parse(amended!);
-        document.RootElement.GetProperty("alsa").GetProperty("mixer")
-            .GetProperty("captureGainPercent").GetInt32().Should().Be(45);
-        document.RootElement.GetProperty("device").GetString().Should().Be("plughw:CARD=Device,DEV=0");
-    }
-
-    [Fact]
-    public async Task Persisting_Into_A_Commented_File_Sets_The_Card_And_Declines_The_Write()
-    {
-        // The card is what the operator can hear, so it is set either way. What is declined is
-        // writing a parsed document over the top of their comments, which would delete them.
-        using var station = new Station(_dir, FakeMixer.Cm108(), configText: """
-            {
-              // the operator's own notes, which a round trip would silently delete
-              "device": "plughw:1,0",
-              "modems": [ { "subChannel": 0, "mode": "afsk1200" } ]
-            }
-            """);
-
-        JsonElement body = await station.PostAsync("""{"captureGainPercent": 45}""", persist: true);
-
-        station.Card!.Find("Mic")!.Capture.Should().Be(45, "the card is set whatever the file is");
-        body.GetProperty("persisted").GetBoolean().Should().BeFalse();
-        string note = body.GetProperty("note").GetString()!;
-        note.Should().Contain("comments or trailing commas");
-        note.Should().Contain("NOT written");
-        note.Should().Contain("{\"alsa\":{\"mixer\":{\"captureGainPercent\":45}}}",
-            "the operator is given the line to paste");
-        File.ReadAllText(station.ConfigPath).Should().Contain(
-            "the operator's own notes", "the file is left exactly as it was");
-        File.Exists(station.EphemeralPath).Should().BeTrue("the change still lasts this run");
-    }
-
-    [Fact]
-    public void An_Amendment_Keeps_What_The_File_Already_Said_About_The_Other_Controls()
-    {
-        string running = """
-            {"device": "plughw:1,0", "alsa": {"mixer": {"agc": false, "captureGainPercent": 30}}}
-            """;
-
-        string? amended = MixerApi.Amend(
-            running, new MixerChange { CaptureGainPercent = 65 }, out _);
-
-        using JsonDocument document = JsonDocument.Parse(amended!);
-        JsonElement mixer = document.RootElement.GetProperty("alsa").GetProperty("mixer");
-        mixer.GetProperty("captureGainPercent").GetInt32().Should().Be(65);
-        mixer.GetProperty("agc").GetBoolean().Should().BeFalse("the file's AGC setting survives");
+        wanted.Should().Contain(card.CaptureDb("Mic")!.Value, "and one of them won the card");
+        station.State().GetProperty("captureGainDb").GetDouble().Should().BeOneOf(
+            [.. wanted], "and one of them was the last to write the state file");
     }
 
     /// <summary>
@@ -452,41 +410,49 @@ public class MixerApiTests : IDisposable
     /// </summary>
     private sealed class Station : IDisposable
     {
+        /// <summary>The moment every state file written here is stamped with.</summary>
+        public static readonly DateTimeOffset Now =
+            new(2026, 9, 6, 11, 22, 33, TimeSpan.Zero);
+
+        private static readonly string Running = """
+            {
+              "device": "plughw:CARD=Device,DEV=0",
+              "kissPort": 8105,
+              "modems": [ { "subChannel": 0, "mode": "afsk1200" } ]
+            }
+            """;
+
         private readonly HttpListener _listener = new();
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _serving;
 
         public Station(
-            string dir, FakeMixer? card, string? configText = null, string? ephemeralPath = null)
+            string dir, FakeMixer? card, string? configText = null, string? statePath = null,
+            AlsaMixerConfig? pinned = null)
         {
             Card = card;
-            ConfigPath = Path.Combine(dir, $"soundmodem-{Guid.NewGuid():N}.json");
-            EphemeralPath = ephemeralPath ?? Path.Combine(dir, $"pending-{Guid.NewGuid():N}.json");
-            string running = configText ?? Running;
-            File.WriteAllText(ConfigPath, running);
+            string mine = Path.Combine(dir, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(mine);
+            ConfigPath = Path.Combine(mine, "soundmodem.json");
+            StatePath = statePath ?? Path.Combine(mine, MixerStateFile.DefaultName);
+            File.WriteAllText(ConfigPath, configText ?? Running);
 
             var api = new ConfigApi(
-                Key, ConfigPath, EphemeralPath,
-                runningJson: () => running,
+                Key, ConfigPath, Path.Combine(mine, "pending.json"),
+                runningJson: () => File.ReadAllText(ConfigPath),
                 ephemeralInForce: false,
                 requestRestart: () => throw new InvalidOperationException(
                     "a mixer change must never restart the station"));
 
             if (card is not null)
             {
-                var wanted = new MixerSettings();
-                api.ServeMixer(
-                    read: () => MixerSetup.Apply(card, wanted, null),
-                    apply: change => MixerSetup.Apply(
-                        card,
-                        wanted with
-                        {
-                            CaptureGainPercent = change.CaptureGainPercent,
-                            Agc = change.Agc,
-                            MicBoost = change.MicBoost,
-                            PlaybackPercent = change.PlaybackPercent,
-                        },
-                        null));
+                AlsaMixerConfig mixerConfig = pinned ?? new AlsaMixerConfig();
+                mixerConfig.StateFile = StatePath;
+                MixerRuntime runtime = MixerRuntime.Start(
+                    card, mixerConfig, ConfigPath, Device, Journal.Add, out string why,
+                    new FixedClock(Now))!;
+                why.Should().BeEmpty();
+                api.ServeMixer(runtime);
             }
             else
             {
@@ -505,20 +471,27 @@ public class MixerApiTests : IDisposable
 
         public string ConfigPath { get; }
 
-        public string EphemeralPath { get; }
+        public string StatePath { get; }
 
         public string Url { get; }
+
+        /// <summary>Everything the daemon would have journalled, for an assertion to read.</summary>
+        public List<string> Journal { get; } = [];
 
         /// <summary>A client that carries the station's key, as the operator page does.</summary>
         public HttpClient Client { get; } = new();
 
+        /// <summary>The state file as it stands, parsed.</summary>
+        public JsonElement State() =>
+            JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(StatePath));
+
         public async Task<JsonElement> GetAsync() =>
             await Client.GetFromJsonAsync<JsonElement>(new Uri(Url, UriKind.Absolute));
 
-        public async Task<JsonElement> PostAsync(string body, bool persist = false)
+        public async Task<JsonElement> PostAsync(string body, bool persist = true)
         {
             HttpResponseMessage answer = await Client.PostAsync(
-                new Uri(persist ? Url + "?persist=true" : Url, UriKind.Absolute),
+                new Uri(persist ? Url : Url + "?persist=false", UriKind.Absolute),
                 new StringContent(body, Encoding.UTF8, "application/json"));
             answer.StatusCode.Should().Be(HttpStatusCode.OK, await answer.Content.ReadAsStringAsync());
             return JsonSerializer.Deserialize<JsonElement>(await answer.Content.ReadAsStringAsync());
@@ -569,5 +542,11 @@ public class MixerApiTests : IDisposable
                 });
             }
         }
+    }
+
+    /// <summary>A clock that does not move, so a written state file is byte-predictable.</summary>
+    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 }

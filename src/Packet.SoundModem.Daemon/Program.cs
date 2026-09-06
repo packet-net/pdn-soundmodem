@@ -114,11 +114,12 @@ using Packet.SoundModem.Ms110d;
 // SmartSDR is not using (it grabs DAX 1). See docs/flex-integration.md §4/§8.
 
 // --mixer-show DEVICE prints the sound card's mixer - every control it has, and the capture
-// gain, AGC, mic boost and playback level this station would drive - and exits. DEVICE is the
-// same string as --device (plughw:CARD=Device,DEV=0) or the card alone (hw:3). It only reads,
-// and reading a mixer does not touch the PCM, so it answers "what is my card called and where
-// is it set" on a station that is running. The "alsa" config section sets the same controls at
-// start-up; see CONFIG.md.
+// gain, AGC, mic boost and playback level this station would drive, each with the card's own dB
+// range - and exits. DEVICE is the same string as --device (plughw:CARD=Device,DEV=0) or the
+// card alone (hw:3). It only reads, and reading a mixer does not touch the PCM, so it answers
+// "what is my card called, what can it be set to, and where is it now" on a station that is
+// running. A control the card publishes no dB scale for says "no dB scale" rather than a
+// figure. The "alsa" config section sets the same controls at start-up; see CONFIG.md.
 
 // --device ubersdr:<instance> makes a RECEIVE-ONLY station out of a public UberSDR web
 // receiver: <instance> is a host (m9psy-1.instance.ubersdr.org), a host:port, or the https://
@@ -2018,10 +2019,11 @@ AlsaAudioOutput? alsaOut = null;
 AlsaAudioInput? alsaIn = null;
 // The card's mixer, on the ALSA path only. Opened whether or not the configuration sets
 // anything, so the start-up log records the level the station is actually listening at - but
-// nothing is written to the card unless a key in "alsa"."mixer" said so.
+// nothing is written to the card unless a key in "alsa"."mixer", or a change remembered in the
+// state file from an earlier run, said so.
 AlsaMixer? mixer = null;
+MixerRuntime? mixerRuntime = null;
 string mixerWhyNot = "this station has no sound card, so it has no mixer";
-MixerSettings mixerWanted = alsaConfig?.Mixer?.ToSettings() ?? new MixerSettings();
 
 if (PipeAudio.IsPipe(device) && wavLoopPath is null)
 {
@@ -2522,11 +2524,21 @@ else
     {
         mixer = openedMixer;
 
-        // TryApply and not Apply: these are top-level statements with nothing above them to catch
+        // Guarded, not bare: these are top-level statements with nothing above them to catch
         // anything, and TryOpen only proves the ten entry points it uses itself. A libasound
-        // missing one of the twenty Apply reaches would otherwise be a crash at every start-up
-        // and a systemd restart loop, over a mixer. It costs the mixer instead.
-        if (MixerSetup.TryApply(mixer!, mixerWanted, Console.WriteLine, out string applyWhy) is null)
+        // missing one of the twenty the apply reaches would otherwise be a crash at every
+        // start-up and a systemd restart loop, over a mixer. It costs the mixer instead.
+        //
+        // This is also where the state file is read and the precedence is decided: what
+        // "alsa"."mixer" pins is applied and wins, what it says nothing about comes from a
+        // change made on the page in some earlier run, and the rest is left as the card has it.
+        // "." for a station configured entirely on the command line, which puts the state file
+        // in the working directory. Nothing writes it on such a station anyway - the config API
+        // refuses to be served without a --config file - but the read still has to have a path.
+        mixerRuntime = MixerRuntime.Start(
+            mixer!, alsaConfig?.Mixer, configPath ?? ".", device, Console.WriteLine,
+            out string applyWhy);
+        if (mixerRuntime is null)
         {
             mixerWhyNot = $"{mixerCard} could not be read or set: {applyWhy}";
             openedMixer!.Dispose();
@@ -2550,20 +2562,9 @@ using AlsaMixer? mixerLifetime = mixer;
 // The operator page's mixer group and any script that wants the card's state come through here,
 // under the same key as every other change. A station with no mixer says so rather than 404ing,
 // so the page can tell "no mixer here" from "this daemon is too old to have the endpoint".
-if (mixer is AlsaMixer liveMixer)
+if (mixerRuntime is MixerRuntime liveMixer)
 {
-    runtimeApi?.ServeMixer(
-        read: () => MixerSetup.Apply(liveMixer, mixerWanted.LeaveEverything(), null),
-        apply: change => MixerSetup.Apply(
-            liveMixer,
-            mixerWanted with
-            {
-                CaptureGainPercent = change.CaptureGainPercent,
-                Agc = change.Agc,
-                MicBoost = change.MicBoost,
-                PlaybackPercent = change.PlaybackPercent,
-            },
-            Console.WriteLine));
+    runtimeApi?.ServeMixer(liveMixer);
 }
 else
 {

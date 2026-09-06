@@ -34,10 +34,10 @@ public class AlsaMixerConfigTests : IDisposable
               "device": "plughw:CARD=Device,DEV=0",
               "alsa": {
                 "mixer": {
-                  "captureGainPercent": 60,
+                  "captureGainDb": 6.0,
                   "agc": false,
                   "micBoost": false,
-                  "playbackPercent": 70
+                  "playbackDb": -8.5
                 }
               }
             }
@@ -47,10 +47,10 @@ public class AlsaMixerConfigTests : IDisposable
 
         error.Should().BeEmpty();
         MixerSettings settings = config!.Alsa!.Mixer!.ToSettings();
-        settings.CaptureGainPercent.Should().Be(60);
+        settings.CaptureGainDb.Should().Be(6.0);
         settings.Agc.Should().BeFalse();
         settings.MicBoost.Should().BeFalse();
-        settings.PlaybackPercent.Should().Be(70);
+        settings.PlaybackDb.Should().Be(-8.5, "a level is a decimal, not a whole number of steps");
     }
 
     [Fact]
@@ -75,23 +75,33 @@ public class AlsaMixerConfigTests : IDisposable
         DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
         MixerSettings settings = config!.Alsa!.Mixer!.ToSettings();
 
-        settings.CaptureGainPercent.Should().BeNull();
+        settings.CaptureGainDb.Should().BeNull();
         settings.MicBoost.Should().BeNull();
-        settings.PlaybackPercent.Should().BeNull();
+        settings.PlaybackDb.Should().BeNull();
 
         FakeMixer card = FakeMixer.Cm108();
-        int before = card.Find("Mic")!.Capture!.Value;
+        double? before = card.CaptureDb("Mic");
         MixerSetup.Apply(card, settings);
 
-        card.Find("Mic")!.Capture.Should().Be(before, "only the AGC was named");
+        card.CaptureDb("Mic").Should().Be(before, "only the AGC was named");
         card.Find("Auto Gain Control")!.On.Should().BeFalse();
     }
 
+    /// <summary>
+    /// A dB the card cannot reach is a warning at apply time and not a refusal at load time.
+    /// </summary>
+    /// <remarks>
+    /// Nothing at load time knows what the card's range is - the card is not open yet, and on a
+    /// station that has been unplugged it never will be. So the file is accepted, the card is
+    /// opened, and the one control that could not be set is journalled with the card's own range
+    /// while the others are set normally. Refusing to start over it would take a station off the
+    /// air for a level it could have carried on at.
+    /// </remarks>
     [Theory]
-    [InlineData("captureGainPercent", 101)]
-    [InlineData("captureGainPercent", -1)]
-    [InlineData("playbackPercent", 250)]
-    public void A_Percentage_Outside_Nought_To_A_Hundred_Is_A_Configuration_Error(string key, int value)
+    [InlineData("captureGainDb", 30)]
+    [InlineData("captureGainDb", -40)]
+    [InlineData("playbackDb", 12)]
+    public void A_Level_The_Card_Cannot_Reach_Loads_And_Is_Refused_At_The_Card(string key, int value)
     {
         string path = WriteConfig(
             "{\"device\": \"plughw:1,0\", \"alsa\": {\"mixer\": {\""
@@ -100,29 +110,67 @@ public class AlsaMixerConfigTests : IDisposable
 
         DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
 
-        config.Should().BeNull("a bad value stops start-up with exit 2, as every other one does");
-        error.Should().Contain($"\"alsa\".\"mixer\".\"{key}\" is {value}");
-        error.Should().Contain("use 0-100");
-        error.Should().Contain(path, "the operator has to know which file to edit");
-        error.Should().NotContain("Exception", "a stack trace is not an explanation");
+        error.Should().BeEmpty("the range is the card's, and no card is open at load time");
+        var journal = new List<string>();
+        MixerSetup.Apply(FakeMixer.Cm108(), config!.Alsa!.Mixer!.ToSettings(), journal.Add);
+
+        journal.Should().ContainSingle(line =>
+            line.Contains($"{key} {value}.00 dB is outside the range", StringComparison.Ordinal)
+            && line.Contains(" dB. The control is left exactly as the card has it.", StringComparison.Ordinal));
     }
 
     [Fact]
-    public void Nought_And_A_Hundred_Are_Both_Allowed()
+    public void A_Decimal_Level_Survives_The_Round_Trip_Rather_Than_Becoming_A_Whole_Number()
     {
         string path = WriteConfig("""
-            {"device": "plughw:1,0", "alsa": {"mixer": {"captureGainPercent": 0, "playbackPercent": 100}}}
+            {"device": "plughw:1,0", "alsa": {"mixer": {"captureGainDb": -3.5, "playbackDb": 0}}}
             """);
 
-        DaemonConfig.TryLoad(path, out string error).Should().NotBeNull();
+        MixerSettings settings = DaemonConfig.TryLoad(path, out string error)!.Alsa!.Mixer!.ToSettings();
+
         error.Should().BeEmpty();
+        settings.CaptureGainDb.Should().Be(-3.5);
+        settings.PlaybackDb.Should().Be(0, "0 dB is a level, not an absent key");
+    }
+
+    /// <summary>
+    /// The keys 0.57.0 shipped are gone rather than aliased, and a file still carrying one is
+    /// told what to write instead.
+    /// </summary>
+    /// <remarks>
+    /// The unit changed as well as the name. <c>"captureGainPercent": 60</c> meant 60% of the
+    /// card's raw range; read as dB it would be 37 dB past the top of the bench CM108. So an
+    /// alias would have silently set a level nobody asked for on every station that upgraded,
+    /// which is precisely the failure a mixer makes inaudible until the decodes stop.
+    /// </remarks>
+    [Theory]
+    [InlineData("captureGainPercent", "captureGainDb")]
+    [InlineData("playbackPercent", "playbackDb")]
+    public void A_Percentage_Key_From_The_Version_Before_Names_Its_Replacement(string gone, string now)
+    {
+        string path = WriteConfig(
+            "{\"device\": \"plughw:1,0\", \"alsa\": {\"mixer\": {\"" + gone + "\": 60}}}");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty("a stale key is a warning, not a station off the air");
+        config!.Alsa!.Mixer!.CaptureGainDb.Should().BeNull("nothing is aliased into the new key");
+        config.Alsa.Mixer.PlaybackDb.Should().BeNull();
+        config.Warnings.Should().ContainSingle(w => w.Contains(
+            $"{gone} is no longer read; use {now}, the card's range is shown by --mixer-show",
+            StringComparison.Ordinal));
+
+        // And the generic line as well, so a reader scanning for "IGNORED" still finds it.
+        config.Warnings.Should().ContainSingle(w =>
+            w.Contains($"\"{gone}\"", StringComparison.Ordinal)
+            && w.Contains("IGNORED", StringComparison.Ordinal));
     }
 
     [Fact]
     public void A_Mixer_On_A_Flexradio_Is_Refused_Rather_Than_Silently_Ignored()
     {
         string path = WriteConfig("""
-            {"device": "flex:discover", "alsa": {"mixer": {"captureGainPercent": 60}}}
+            {"device": "flex:discover", "alsa": {"mixer": {"captureGainDb": 6}}}
             """);
 
         DaemonConfig.TryLoad(path, out string error).Should().BeNull();
@@ -175,7 +223,7 @@ public class AlsaMixerConfigTests : IDisposable
     public void A_Key_The_Daemon_Does_Not_Know_Is_Reported_Rather_Than_Dropped()
     {
         string path = WriteConfig("""
-            {"device": "plughw:1,0", "alsa": {"mixer": {"micGain": 60}, "cardName": "x"}}
+            {"device": "plughw:1,0", "alsa": {"mixer": {"micGain": 6}, "cardName": "x"}}
             """);
 
         DaemonConfig? config = DaemonConfig.TryLoad(path, out _);
@@ -196,7 +244,7 @@ public class AlsaMixerConfigTests : IDisposable
     public void A_File_With_A_Good_Mixer_Block_Warns_About_Nothing()
     {
         string path = WriteConfig("""
-            {"device": "plughw:1,0", "alsa": {"mixer": {"captureGainPercent": 60, "agc": false}}}
+            {"device": "plughw:1,0", "alsa": {"mixer": {"captureGainDb": 6, "agc": false}}}
             """);
 
         DaemonConfig.TryLoad(path, out _)!.Warnings.Should().BeEmpty();
@@ -228,6 +276,8 @@ public class AlsaMixerConfigTests : IDisposable
             Path.Combine(RepoRoot(), "soundmodem.example.json"));
 
         example.Should().Contain("\"alsa\"", "the section has to be discoverable in the example");
+        example.Should().NotContain(
+            "captureGainPercent", "the example must not still teach the key that went away");
         DaemonConfig? config = DaemonConfig.TryLoad(
             WriteConfig(example), out string error);
         error.Should().BeEmpty();
