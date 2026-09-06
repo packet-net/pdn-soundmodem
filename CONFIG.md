@@ -923,6 +923,20 @@ station is not taken off the air over a level it could have carried on at. Over 
 alsa: mixer: captureGainDb 30.00 dB is outside the range of "Mic" on hw:3, which is -12.00 to 23.00 dB. The control is left exactly as the card has it.
 ```
 
+**Some cards mute at the bottom of their range.** A control whose TLV carries the mute flag - the
+bench CM108's `Speaker` is one (`amixer` prints `dBminmaxmute-min=-37.00dB,max=0.00dB`) - has a
+bottom step that is silence rather than a level, and ALSA reports its range minimum as a sentinel
+(-99999.99 dB). The range you are shown is therefore the lowest step that is an actual level, and
+the line says what is under it, so a transmit level slid to the bottom is not a surprise:
+
+```
+alsa: mixer: Speaker playback -8.00 dB of -36.00 to 0.00 dB, below which it mutes (set -8.00 dB)
+```
+
+A value below that bottom is refused with the usable range, as any other out-of-range value is.
+The sentinel never appears anywhere: not in the journal, not in `--mixer-show`, not in the API's
+`dbRange`, which instead carries `"mutesBelowMin": true`.
+
 **Some cards publish no dB scale at all**, only raw steps. ALSA cannot set a dB on those, and
 this daemon will not invent a mapping the card never published - so the setting is refused in
 words and the control is left alone. The read-back then reports the percentage `alsamixer`
@@ -1036,6 +1050,11 @@ back at the next start.
 Two things are ignored, each with one journal line and no fuss: a state file stamped with a
 different `device` (a level chosen for one card is not a level for another), and one that will
 not parse (delete it to start again).
+
+One thing is refused outright at start-up: a `stateFile` that names the config file itself. That
+is the only way the "the daemon never writes your config file" promise could be broken, and the
+first change made on the page would replace a hand-edited JSONC file, comments and all, with six
+lines of levels - so it is caught before it can happen rather than found afterwards.
 
 ### Setting it while watching the waterfall
 
@@ -2775,6 +2794,7 @@ enumerated yet at boot, for instance - still restarts on its own as usual.
 | `ptt` alongside a `flex:` device | `--device flex: keys the radio itself; remove the conflicting --ptt …` |
 | `ptt` alongside a `ubersdr:` device | `--device ubersdr: is a receive-only station … Remove "ptt".` |
 | `alsa.mixer` level outside the card's range | *(not a start-up refusal: the card's range is unknown until the card is open, so it is one journal line naming the range and that control is left alone)* |
+| `alsa.mixer.stateFile` naming the config file | `… which is this configuration file. That file is never written by this daemon and a mixer change would overwrite it; point "stateFile" somewhere else …` |
 | `alsa.mixer` alongside a `flex:`/`ubersdr:` device | `… which is not a sound card … Remove the "alsa" section, or point "device" at the card.` |
 | `alsa.mixer` alongside `monitor` | `A monitor fronts web receivers and has no sound card of its own …` |
 | `ubersdr:` with no `rfFrequency` and no `dialFrequency` | `the UberSDR instance … has to be told where to listen` |

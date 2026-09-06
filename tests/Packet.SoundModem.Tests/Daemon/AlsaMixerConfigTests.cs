@@ -204,6 +204,51 @@ public class AlsaMixerConfigTests : IDisposable
         error.Should().Contain("A monitor fronts web receivers and has no sound card of its own");
     }
 
+    /// <summary>
+    /// A state file aimed at the config file itself is refused at start-up.
+    /// </summary>
+    /// <remarks>
+    /// The one way the "this daemon never writes your config file" promise could be broken. The
+    /// first change made on the operator page would replace a hand-written JSONC file, comments
+    /// and all, with six lines of levels - and afterwards is too late, because the file it
+    /// destroyed was the only copy of what the station was meant to be.
+    /// </remarks>
+    [Fact]
+    public void A_State_File_Aimed_At_The_Config_File_Is_Refused_Before_It_Can_Eat_It()
+    {
+        string path = WriteConfig("""
+            {"device": "plughw:1,0", "alsa": {"mixer": {"stateFile": "soundmodem.json"}}}
+            """);
+
+        // Named relatively, from the directory it sits in, which is the shape that would slip
+        // past a plain string comparison.
+        string was = Directory.GetCurrentDirectory();
+        try
+        {
+            Directory.SetCurrentDirectory(_dir);
+            DaemonConfig.TryLoad(path, out string error).Should().BeNull();
+            error.Should().Contain("which is this configuration file");
+            error.Should().Contain("point \"stateFile\" somewhere else");
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(was);
+        }
+    }
+
+    [Fact]
+    public void A_State_File_Somewhere_Else_Is_Perfectly_Ordinary()
+    {
+        string path = WriteConfig("""
+            {"device": "plughw:1,0", "alsa": {"mixer": {"stateFile": "/var/lib/pdn-soundmodem/mixer-state.json"}}}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        error.Should().BeEmpty();
+        config!.Alsa!.Mixer!.StateFile.Should().Be("/var/lib/pdn-soundmodem/mixer-state.json");
+    }
+
     [Fact]
     public void An_Empty_Alsa_Section_Is_Not_An_Error()
     {

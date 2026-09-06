@@ -1288,7 +1288,7 @@ public sealed class DaemonConfig
             ValidatePublish(config);
         }
 
-        ValidateAlsa(config);
+        ValidateAlsa(config, path);
 
         if (config.Monitor is not null)
         {
@@ -1439,7 +1439,7 @@ public sealed class DaemonConfig
     /// skipped - a warning rather than an exit, because a station must not be stopped from
     /// receiving by a level it could have carried on at.</para>
     /// </remarks>
-    private static void ValidateAlsa(DaemonConfig config)
+    private static void ValidateAlsa(DaemonConfig config, string configPath)
     {
         if (config.Alsa?.Mixer is not AlsaMixerConfig mixer)
         {
@@ -1461,6 +1461,45 @@ public sealed class DaemonConfig
                 + "sound card. Capture gain, AGC and mic boost are the card's mixer; a FlexRadio "
                 + "or a web receiver has none. Remove the \"alsa\" section, or point \"device\" at "
                 + "the card.");
+        }
+
+        // The one way the promise "this daemon never writes your config file" could be broken is
+        // by the operator aiming the state file at it. Then the first change made on the page
+        // would replace a hand-written JSONC file, comments and all, with six lines of levels.
+        // Refused at start-up rather than discovered afterwards, because afterwards is too late:
+        // the file it would have destroyed is the only copy of what the station was meant to be.
+        if (mixer.StateFile is { Length: > 0 } state && SamePath(state, configPath))
+        {
+            throw new InvalidDataException(
+                $"\"alsa\".\"mixer\".\"stateFile\" is \"{mixer.StateFile}\", which is this "
+                + "configuration file. That file is never written by this daemon and a mixer "
+                + "change would overwrite it; point \"stateFile\" somewhere else, or remove it "
+                + $"to take the default ({MixerStateFile.DefaultName} in the state directory).");
+        }
+    }
+
+    /// <summary>
+    /// Whether two paths name the same file, as far as can be told without opening either.
+    /// </summary>
+    /// <remarks>
+    /// Full-path comparison, so "soundmodem.json" and "./soundmodem.json" and an absolute path to
+    /// the same file all match. It does not resolve symlinks or hard links, so it is a floor and
+    /// not a proof - which is the right shape for a guard whose job is to catch the plausible
+    /// mistake rather than to defeat somebody determined to make it.
+    /// </remarks>
+    private static bool SamePath(string one, string other)
+    {
+        try
+        {
+            return string.Equals(
+                Path.GetFullPath(one), Path.GetFullPath(other), StringComparison.Ordinal);
+        }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException
+                                    or PathTooLongException)
+        {
+            // An unusable path is somebody else's error to report; this one only answers
+            // "are these the same file", and a path that cannot be resolved is not.
+            return false;
         }
     }
 
