@@ -52,7 +52,8 @@ public sealed class SignalSurveyOptions
     /// <summary>Rig dial, for the RF figure in the sidecar; 0 = audio frequencies only.</summary>
     public double DialFrequencyHz { get; set; }
 
-    /// <summary>"usb" or "lsb", for the same.</summary>
+    /// <summary>"usb" or "lsb", for the same. "fm" is a channel radio: there is no RF figure
+    /// to be had from an audio one there, so the sidecar carries none.</summary>
     public string Sideband { get; set; } = "usb";
 
     /// <summary>Which verdicts are worth writing out.</summary>
@@ -609,8 +610,11 @@ public sealed class SignalSurvey : IDisposable
         return _lineSamples[(int)(((lineIndex % _lineSamples.Length) + _lineSamples.Length) % _lineSamples.Length)];
     }
 
+    // Nothing on FM: the demodulated audio is not offset from the channel, so a band frequency
+    // worked out from one would be invented rather than measured. The audio figure stands alone.
     private double? RfOf(double audioHz) =>
         _options.DialFrequencyHz == 0
+            || string.Equals(_options.Sideband, "fm", StringComparison.OrdinalIgnoreCase)
             ? null
             : string.Equals(_options.Sideband, "lsb", StringComparison.OrdinalIgnoreCase)
                 ? _options.DialFrequencyHz - audioHz

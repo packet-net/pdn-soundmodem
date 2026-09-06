@@ -539,6 +539,48 @@ public class DaemonConfigTests : IDisposable
     }
 
     [Fact]
+    public void An_Fm_Radio_Is_A_Radio_Kind_Beside_The_Two_Sidebands()
+    {
+        // Issue #413: an FM set is a channel radio, and the field that says which sideband a
+        // station is on is the field that says it is not on one at all.
+        string path = WriteConfig("""
+            {"device": "null", "captureRate": 48000, "sideband": "fm", "modems": [
+              {"subChannel": 0, "mode": "afsk1200", "rfFrequency": 145300000, "frequency": 1500}
+            ]}
+            """);
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().NotBeNull(error);
+        config!.Sideband.Should().Be("fm");
+
+        // And both frequencies together, which on a sideband radio is refused as one thing said
+        // twice: on FM they are the channel and where the tones sit in its audio.
+        config.Modems[0].RfFrequency.Should().Be(145_300_000);
+        config.Modems[0].Frequency.Should().Be(1500);
+    }
+
+    [Fact]
+    public void A_Sideband_That_Names_No_Radio_This_Knows_Is_Rejected()
+    {
+        string path = WriteConfig("""{"device": "null", "sideband": "am"}""");
+
+        DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
+
+        config.Should().BeNull();
+        error.Should().Contain("\"am\"")
+            .And.Contain("\"usb\"").And.Contain("\"lsb\"").And.Contain("\"fm\"",
+                "the message has to name every kind there is, not the two it used to");
+
+        // The page's own copy of the setting goes through the same check, for the same reason:
+        // taken as "usb" without a word, every frequency it drew would be wrong.
+        string page = WriteConfig(
+            """{"device": "null", "waterfall": {"port": 8107, "sideband": "am"}}""");
+        DaemonConfig.TryLoad(page, out string pageError).Should().BeNull();
+        pageError.Should().Contain("\"waterfall\".\"sideband\"");
+    }
+
+    [Fact]
     public void Whether_Sideband_Was_Written_Down_Is_Distinguishable_From_The_Default()
     {
         // On a Flex the slice mode states the sideband, so a defaulted value is corrected

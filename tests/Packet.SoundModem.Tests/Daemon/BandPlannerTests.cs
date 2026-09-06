@@ -49,6 +49,32 @@ public class BandPlannerTests
     }
 
     [Fact]
+    public void An_Fm_Stations_Modems_Are_Left_Exactly_Where_They_Are()
+    {
+        // Tom's FM radio: everything on one 2 m channel. This set was refused twice over before
+        // issue #413 - "fm" was not a sideband, and a baseband mode cannot be band-planned - so
+        // the only way to enter the channel at all was to claim the radio was USB and have every
+        // audio frequency labelled as an RF one it is not.
+        var modems = new List<ModemConfig>
+        {
+            new() { SubChannel = 0, Mode = "c4fsk9600", RfFrequency = 145_300_000 },
+            new() { SubChannel = 1, Mode = "afsk1200", RfFrequency = 145_300_000, Frequency = 1500 },
+        };
+
+        RfPlan.Result? plan = BandPlanner.Plan(modems, "fm", pinnedDialHz: null, dspRate: 48000);
+
+        plan.Should().NotBeNull();
+        plan!.IsFm.Should().BeTrue();
+        plan.DialHz.Should().Be(145_300_000, "the channel is the whole of the plan");
+        plan.Modems.Should().AllSatisfy(m => m.Slot.RfCentreHz.Should().Be(145_300_000));
+
+        // Nothing is written back, because nothing was worked out: a baseband mode still has no
+        // audio centre and one that had a centre keeps the one it was given.
+        modems[0].Frequency.Should().BeNull("a baseband mode has no centre to be given one");
+        modems[1].Frequency.Should().Be(1500, "an FM plan moves nobody");
+    }
+
+    [Fact]
     public void The_Whole_Ensemble_Still_Fits_The_Radio_It_Has_To_Fit()
     {
         // The same plan on a radio the daemon cannot open (nominal 2400 Hz window) is refused
