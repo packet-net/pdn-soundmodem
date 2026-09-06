@@ -1050,6 +1050,10 @@ function initControls() {
 // leaves one case where it is shown but cannot act - the API is on and this browser has not been
 // given the key - and that is what the Key button is for. The key lives in this browser's
 // localStorage and nowhere else; the daemon never sends it to a page.
+//
+// A station with "waterfall": { "enableAudioControls": true } answers this endpoint without a key
+// at all, so the probe below succeeds with nothing in localStorage and the group opens unlocked.
+// Nothing here has to know which of the two it is talking to: the answer is the same answer.
 const MIX_LS = "pdnsm-api-key";
 let mixWired = false;
 
