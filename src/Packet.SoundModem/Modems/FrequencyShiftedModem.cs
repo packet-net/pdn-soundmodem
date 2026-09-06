@@ -38,7 +38,7 @@ namespace Packet.SoundModem.Modems;
 /// just latency) and processes through fixed scratch chunks, so the steady state allocates
 /// nothing.</para>
 /// </remarks>
-public sealed class FrequencyShiftedModem : IModem, IHardwareControllable
+public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFrameSpanSource
 {
     /// <summary>See the type remarks for why this is so much longer than the shifter's default.</summary>
     private const int HilbertTaps = 639;
@@ -140,6 +140,20 @@ public sealed class FrequencyShiftedModem : IModem, IHardwareControllable
 
     /// <inheritdoc/>
     public bool ChannelBusy => _inner.ChannelBusy;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The inner modem's own, unchanged: this wrapper band-passes and shifts sample for sample,
+    /// so the two count the same audio and a mark taken inside means the same thing outside. Its
+    /// filters add their group delay to the span's lateness, which is what the reading's margin
+    /// covers (<c>FrameLevelMonitor.MarginMilliseconds</c>).
+    /// </remarks>
+    public bool TryTakeFrameSpan(out long fromSample, out long toSample)
+    {
+        fromSample = 0;
+        toSample = 0;
+        return _inner is IFrameSpanSource source && source.TryTakeFrameSpan(out fromSample, out toSample);
+    }
 
     /// <inheritdoc/>
     public void Process(ReadOnlySpan<float> samples)

@@ -44,6 +44,19 @@ public sealed class HdlcDeframer
     /// <summary>Count of frames dropped for a bad FCS since construction (diagnostics).</summary>
     public long CrcFailures { get; private set; }
 
+    /// <summary>
+    /// Raised, synchronously from <see cref="PushBit"/>, on the bit that completes a flag and so
+    /// opens a frame - the instant a caller counting samples can mark as where the frame began.
+    /// </summary>
+    /// <remarks>
+    /// Raised after the flag has closed whatever was in progress, so a caller that marks the
+    /// start here and reads it when a frame is delivered gets that frame's own opening flag and
+    /// not the closing one it shares with the next. Fires on every flag, including the run of
+    /// them a station sends as its transmit delay, which is what makes the last one before the
+    /// data the mark that is wanted. See <see cref="Modems.FrameSpan"/>.
+    /// </remarks>
+    public Action? FrameOpened { get; set; }
+
     /// <summary>Pushes one logical bit (0/1) through the deframer.</summary>
     public void PushBit(int bit)
     {
@@ -60,6 +73,7 @@ public sealed class HdlcDeframer
             _bitCount = 0;
             _length = 0;
             _onesRun = 0;
+            FrameOpened?.Invoke();
             return;
         }
 

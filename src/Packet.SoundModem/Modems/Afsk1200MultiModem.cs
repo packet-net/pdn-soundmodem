@@ -13,7 +13,7 @@ namespace Packet.SoundModem.Modems;
 /// transmitters decode on whichever branch fits best. Transmit uses the centre
 /// frequency only.
 /// </summary>
-public sealed class Afsk1200MultiModem : IModem
+public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
 {
     /// <summary>Bell 202 deviation of each tone from the centre (mark = centre − 500,
     /// space = centre + 500); the demodulators' default shift.</summary>
@@ -27,6 +27,16 @@ public sealed class Afsk1200MultiModem : IModem
     private readonly FrameDeduper _deduper;
     private readonly int _dedupeChunk;
     private readonly List<Candidate> _candidates = [];
+    /// <summary>
+    /// Where the frame just delivered was in the receive audio, from the branch that decoded it,
+    /// for the channel's per-frame level. See <see cref="FrameSpan"/>.
+    /// </summary>
+    private readonly FrameSpan _span = new();
+
+    /// <summary>Where each branch's deframers last locked on to an opening flag, on that
+    /// branch's own demodulator's count of input samples.</summary>
+    private readonly long[] _syncAt;
+
     private long _samplesProcessed;
     private bool _carrierWasPresent;
 
@@ -36,7 +46,8 @@ public sealed class Afsk1200MultiModem : IModem
     /// is the station's offset from the bank's centre however far out the branch that copied
     /// it happened to be (the issue #202 model, as in <see cref="Afsk300MultiModem"/>).</summary>
     private readonly record struct Candidate(
-        byte[] Frame, double BranchOffsetHz, double ResidualHz, int EmphasisDb);
+        byte[] Frame, double BranchOffsetHz, double ResidualHz, int EmphasisDb,
+        long SpanFrom, long SpanTo);
 
     /// <summary>Creates the bank.</summary>
     /// <param name="sampleRate">Channel DSP rate.</param>
@@ -84,6 +95,8 @@ public sealed class Afsk1200MultiModem : IModem
         int frequencyCount = 2 * offsetPairs + 1;
         _demodulators = new AfskDemodulator[frequencyCount * emphasisCount];
         _preFilters = new EmphasisFilter[_demodulators.Length];
+        _syncAt = new long[_demodulators.Length];
+        Array.Fill(_syncAt, -1);
         for (int i = 0; i < _demodulators.Length; i++)
         {
             int step = (i % frequencyCount) - offsetPairs;
@@ -103,6 +116,8 @@ public sealed class Afsk1200MultiModem : IModem
             {
                 nrzi[phase] = new NrziDecoder();
                 deframers[phase] = new HdlcDeframer(frame => OnFrame(frame, offset, emphasisDb, branch));
+                deframers[phase].FrameOpened =
+                    () => _syncAt[branch] = _demodulators[branch].InputSamplePosition;
             }
 
             _demodulators[i] = new AfskDemodulator(
@@ -141,6 +156,10 @@ public sealed class Afsk1200MultiModem : IModem
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulators.Any(d => d.ChannelBusy);
+
+    /// <inheritdoc />
+    public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>
+        _span.TryTakeFrameSpan(out fromSample, out toSample);
 
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples)
@@ -243,8 +262,12 @@ public sealed class Afsk1200MultiModem : IModem
     // other, which is well inside one chunk. Hold them all and let the chunk end decide,
     // rather than emitting whichever finished first.
     private void OnFrame(byte[] frame, double offsetHz, int emphasisDb, int branch) =>
+        // The branch's marks go into the candidate rather than being read at the emit below: by
+        // then the chunk has moved on, and it is the branch that decoded this copy that knows
+        // where it was.
         _candidates.Add(new Candidate(
-            frame, offsetHz, _demodulators[branch].CarrierOffsetHz, emphasisDb));
+            frame, offsetHz, _demodulators[branch].CarrierOffsetHz, emphasisDb,
+            _syncAt[branch], _demodulators[branch].InputSamplePosition));
 
     /// <summary>
     /// Emits one frame per distinct transmission seen this chunk, from the branch that was
@@ -304,6 +327,7 @@ public sealed class Afsk1200MultiModem : IModem
             // with. The bank's width is receiver construction - it stays on IModem.Mode for
             // the daemon's own use, and FrameQuality.Mode says why an identity cannot carry
             // it (issue #343).
+            _span.Set(best.SpanFrom, best.SpanTo);
             FrameDecoded?.Invoke(best.Frame, new FrameQuality(
                 "afsk1200", best.Frame.Length, CorrectedBytes: null, CrcValid: null,
                 FrequencyOffsetHz: best.BranchOffsetHz + best.ResidualHz,

@@ -880,7 +880,12 @@ const PUBLIC_HIDES = ["dialCtl", "spanCtl", "levelCtl", "mixerCtl", "audioLabel"
   // TX test. Belt and braces: a public page is never sent the txTest block that reveals this,
   // so the control is already absent - but a transmit control is the one thing on this page it
   // would be worst to leave showing if that ever changed.
-  "txTestCtl"];
+  "txTestCtl",
+  // The sentence explaining what a row's dBFS figure is and what to aim for. The figure itself
+  // stays - a visitor watching a relayed station can see how loud its traffic is - but the advice
+  // is about a capture gain they do not own, on the page where the meter and the mixer it refers
+  // to are hidden for exactly that reason.
+  "framesHint"];
 
 // A deployment on the open internet: a title of its own, a paragraph of what the visitor is
 // looking at, and whose receiver it is. It is somebody else's receiver; the credit and the link
@@ -1776,8 +1781,10 @@ function logFrame(ev) {
   if (ev.snrDb != null) bits.push(`<i>${ev.snrDb.toFixed(1)} dB</i>`);
   // Whole dB. The card's own steps are whole dB and this is a figure to act on, not to trend.
   if (ev.peakDbFs != null) {
+    // Rounded here rather than with toFixed, which renders anything from -0.5 up as "-0 dBFS".
+    const shown = Math.round(ev.peakDbFs) || 0;
     bits.push(`<i title="Peak audio level of this frame's own burst, at the station's input${
-      ev.clipped ? " - and the card ran out of codes during it" : ""}">${ev.peakDbFs.toFixed(0)} dBFS</i>`);
+      ev.clipped ? " - and the card ran out of codes during it" : ""}">${shown} dBFS</i>`);
   }
   if (ev.offsetHz != null) bits.push(`<i>${ev.offsetHz >= 0 ? "+" : ""}${ev.offsetHz.toFixed(0)} Hz</i>`);
   // Ours, and a command rather than a measurement, so it is worded as an aim and not as an

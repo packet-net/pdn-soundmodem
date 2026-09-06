@@ -172,12 +172,17 @@ public sealed class InputLevelHistory
             return false;
         }
 
-        // Whole cells only, and only cells the ring still holds: the newest cell is the one the
-        // last sample landed in, and the oldest is a ring's length behind it.
+        // Cells wholly INSIDE the stretch, not every cell that overlaps it. A cell that
+        // straddles either edge is part this stretch and part whatever is next to it, and since
+        // the answer is a peak, 20 samples of something louder hanging over the edge takes the
+        // whole reading (measured: a bpsk300 frame read -0.9 dBFS - the tone beside it - because
+        // the last cell of its window ran 20 samples past the burst). Rounding inwards costs at
+        // most one cell at each end of a stretch that is many.
         long newest = (_samples - 1) / _cellSamples;
         long oldest = Math.Max(0, newest - _cells + 1);
-        long first = Math.Max(oldest, fromSample / _cellSamples);
-        long last = Math.Min(newest, (toSample - 1) / _cellSamples);
+        long from = Math.Max(0, fromSample);
+        long first = Math.Max(oldest, (from + _cellSamples - 1) / _cellSamples);
+        long last = Math.Min(newest, (toSample / _cellSamples) - 1);
         if (toSample <= fromSample || last < first)
         {
             return false;

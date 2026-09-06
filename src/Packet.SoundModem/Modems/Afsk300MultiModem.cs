@@ -30,7 +30,7 @@ namespace Packet.SoundModem.Modems;
 /// on here.
 /// </para>
 /// </remarks>
-public sealed class Afsk300MultiModem : IModem
+public sealed class Afsk300MultiModem : IModem, IFrameSpanSource
 {
     /// <summary>Per-branch receive filter width. Tighter than the single modem's 300
     /// default: a branch only has to serve half an <c>offsetHz</c> step of residual
@@ -44,6 +44,12 @@ public sealed class Afsk300MultiModem : IModem
     private readonly int _dedupeChunk;
     private readonly Afsk300Framing _framing;
     private readonly List<Candidate> _candidates = [];
+    /// <summary>
+    /// Where the frame just delivered was in the receive audio, taken over from the branch that
+    /// decoded it, for the channel's per-frame level. See <see cref="FrameSpan"/>.
+    /// </summary>
+    private readonly FrameSpan _span = new();
+
     private long _samplesProcessed;
     private bool _carrierWasPresent;
 
@@ -52,7 +58,8 @@ public sealed class Afsk300MultiModem : IModem
     /// the signal sat from <em>its</em> centre, so branch + residual is the station's offset
     /// from the bank's centre however far out the branch that copied it happened to be.</summary>
     private readonly record struct Candidate(
-        byte[] Frame, double BranchOffsetHz, double ResidualHz, FrameQuality Quality);
+        byte[] Frame, double BranchOffsetHz, double ResidualHz, FrameQuality Quality,
+        long SpanFrom, long SpanTo);
 
     /// <summary>Creates the bank.</summary>
     /// <param name="sampleRate">Channel DSP rate (multiple of 300).</param>
@@ -112,7 +119,8 @@ public sealed class Afsk300MultiModem : IModem
                 sampleRate, static _ => { }, framing, centerFrequency + offset,
                 bandPassHalfWidth: BranchFilterHz, lowPassCutoff: BranchFilterHz,
                 acceptPlainIl2p: acceptPlainIl2p);
-            _branches[i].FrameDecoded += (frame, quality) => OnFrame(frame, offset, quality);
+            Afsk300Modem branch = _branches[i];
+            branch.FrameDecoded += (frame, quality) => OnFrame(branch, frame, offset, quality);
         }
 
         _transmit = _branches[offsetPairs]; // the centre (offset 0) branch
@@ -157,6 +165,10 @@ public sealed class Afsk300MultiModem : IModem
             return false;
         }
     }
+
+    /// <inheritdoc />
+    public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>
+        _span.TryTakeFrameSpan(out fromSample, out toSample);
 
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples)
@@ -209,9 +221,16 @@ public sealed class Afsk300MultiModem : IModem
     // Several branches usually decode the same transmission within a frame-time of each other,
     // which is well inside one chunk. Hold them all and let the chunk end decide, rather than
     // emitting whichever finished first.
-    private void OnFrame(byte[] frame, double offsetHz, FrameQuality quality) =>
+    private void OnFrame(
+        Afsk300Modem branch, byte[] frame, double offsetHz, FrameQuality quality)
+    {
+        // The branch's span goes into the candidate rather than being read at the emit below:
+        // by then the chunk has moved on, and it is the branch that decoded this copy that knows
+        // where it was. Consumed by the asking, so a branch cannot hand the same span twice.
+        branch.TryTakeFrameSpan(out long from, out long to);
         _candidates.Add(new Candidate(
-            frame, offsetHz, quality.FrequencyOffsetHz ?? 0, quality));
+            frame, offsetHz, quality.FrequencyOffsetHz ?? 0, quality, from, to));
+    }
 
     /// <summary>
     /// Emits one frame per distinct transmission seen this chunk, from the branch that was
@@ -275,6 +294,7 @@ public sealed class Afsk300MultiModem : IModem
             // identical on every branch. The bank's width is receiver construction - it stays
             // on IModem.Mode for the daemon's own use, and FrameQuality.Mode says why an
             // identity cannot carry it (issue #343).
+            _span.Set(best.SpanFrom, best.SpanTo);
             FrameDecoded?.Invoke(best.Frame, best.Quality with
             {
                 FrequencyOffsetHz = best.BranchOffsetHz + best.ResidualHz,

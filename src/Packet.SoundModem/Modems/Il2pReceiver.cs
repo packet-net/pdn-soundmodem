@@ -137,6 +137,8 @@ internal sealed class Il2pReceiver
     private long _lastDeliveredAtBit;
     private uint _trailerBits;
     private int _trailerBitCount;
+    private readonly uint _syncWord;
+    private uint _syncShift;
 
     /// <summary>Creates the receiver.</summary>
     /// <param name="frameReceived">Called synchronously from <see cref="PushBit(int, float)"/> with each
@@ -159,6 +161,7 @@ internal sealed class Il2pReceiver
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _frameReceived = frameReceived;
+        _syncWord = (uint)(syncWord ?? Il2pCodec.SyncWord) & SyncMask;
 
         // On a crcMode: false link the one deframer IS the plain reading, and its frames are the
         // link's own traffic: RS-only, so worth badging, and delivered, because that is the mode
@@ -180,6 +183,27 @@ internal sealed class Il2pReceiver
                 : new Il2pDeframer(OnPlainDeframed, crcMode: false);
         }
     }
+
+    /// <summary>
+    /// Raised, synchronously from <see cref="PushBit(int, float)"/>, on the bit that completes
+    /// the sync word - where the frame's own bits begin, for a caller counting samples.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Watched here rather than asked of the deframer</b>, which is
+    /// <see cref="Il2pDeframer"/> in a package that reports frames and nothing about where they
+    /// started. This is the same 24 bits the deframer hunts, taken from the same published
+    /// constant (<see cref="Il2pCodec.SyncWord"/>, or the non-standard word a C4FSK link uses),
+    /// shifted in most-significant bit first as the wire carries it - so it fires on the bit the
+    /// deframer starts collecting on, and one shift, one mask and one compare is the whole
+    /// cost.</para>
+    /// <para>Both readings of an IL2P+CRC link share it: they hunt the same word over the same
+    /// bits and start together, and which of them eventually delivers the frame does not move
+    /// where the frame began. See <see cref="Modems.FrameSpan"/> for what reads it.</para>
+    /// </remarks>
+    public Action? SyncFound { get; set; }
+
+    /// <summary>The sync word is 24 bits, whichever word a link uses.</summary>
+    private const uint SyncMask = 0xFFFFFF;
 
     /// <summary>Whether this receiver runs a second, plain reading alongside the link's own -
     /// true on every IL2P+CRC link, false on one that is already reading plain IL2P.</summary>
@@ -227,6 +251,11 @@ internal sealed class Il2pReceiver
     public void PushBit(int bit, float confidence)
     {
         _bitsPushed++;
+        _syncShift = ((_syncShift << 1) | (uint)(bit & 1)) & SyncMask;
+        if (_syncShift == _syncWord)
+        {
+            SyncFound?.Invoke();
+        }
 
         // While a plain frame is held, the wire is delivering the very bits the hold exists
         // to wait for - the trailer. Collect them for the corroboration check at release.

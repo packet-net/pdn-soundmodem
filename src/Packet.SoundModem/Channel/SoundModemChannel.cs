@@ -185,7 +185,18 @@ public sealed class SoundModemChannel
             // full scale. The second is not the first - a station can be the loudest thing on a
             // quiet band and still be 30 dB under where the capture gain should put it - and it
             // is the one an operator setting that gain needs per frame (issue #426).
-            (double? peakDbFs, bool? clipped) = _frameLevel.Measure(subChannel, quality.FrameBytes);
+            //
+            // The span comes from the modem, taken from its own per-sample count while it was
+            // decoding, and is consumed by the asking. Nothing out here could work it out: this
+            // runs inside the modem's decode of one block, and on a station reading 100 ms
+            // blocks a whole qpsk3600 frame fits inside one with room to spare. A modem that
+            // does not report a span (FreeDV and MS110D decode from native frames, and the
+            // ARDOP bridge is not a modem at all) carries no level rather than a guessed one.
+            (double? peakDbFs, bool? clipped) =
+                modem is IFrameSpanSource source
+                && source.TryTakeFrameSpan(out long spanFrom, out long spanTo)
+                    ? _frameLevel.Measure(spanFrom, spanTo)
+                    : (null, null);
             FrameReceivedWithQuality?.Invoke(
                 subChannel,
                 frame,
@@ -203,7 +214,6 @@ public sealed class SoundModemChannel
         }
 
         _burstSnr.AddModem(subChannel, modem);
-        _frameLevel.AddModem(subChannel, modem);
         _modems.Add(subChannel, modem);
     }
 

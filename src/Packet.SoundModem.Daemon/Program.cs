@@ -3008,13 +3008,21 @@ using var station = new Station(
         // is not full scale any more, so neither reading can be taken there. Both want the same
         // block, so they are composed here rather than either of them growing a second tap:
         // there is one card, one block and one place it arrives.
-        CardRateTap = waterfallServer is { } metered
-            ? samples =>
-            {
-                channel.NoteCardClipping(samples);
-                metered.MeterInputClipping(samples);
-            }
-            : channel.NoteCardClipping,
+        //
+        // Null unless there IS a converter. A Flex, an ubersdr feed and a WAV loop deliver
+        // samples that never went through one of ours, and running the clip test over them would
+        // have a frame say its card had headroom - or ran out of codes - about a card this
+        // station does not have. Absent is the honest answer there, and it is what
+        // FrameQuality.Clipped's null means.
+        CardRateTap = alsaIn is null
+            ? null
+            : waterfallServer is { } metered
+                ? samples =>
+                {
+                    channel.NoteCardClipping(samples);
+                    metered.MeterInputClipping(samples);
+                }
+                : channel.NoteCardClipping,
 
         // A station that has deliberately given up its slice is silent on purpose, and restarting
         // it is the one response guaranteed to be wrong. Measured on the live 40 m station,

@@ -30,7 +30,7 @@ namespace Packet.SoundModem.Modems;
 /// default (a one-branch bank is a plain modem).
 /// </para>
 /// </remarks>
-public sealed class QpskMultiModem : IModem, IConstellationSource
+public sealed class QpskMultiModem : IModem, IConstellationSource, IFrameSpanSource
 {
     private readonly QpskModem[] _branches;
     private readonly QpskModem _transmit;
@@ -43,6 +43,12 @@ public sealed class QpskMultiModem : IModem, IConstellationSource
     private readonly int _offsetPairs;
     private readonly int _perPosition;
     private readonly List<Candidate> _candidates = [];
+    /// <summary>
+    /// Where the frame just delivered was in the receive audio, taken over from the branch that
+    /// decoded it, for the channel's per-frame level. See <see cref="FrameSpan"/>.
+    /// </summary>
+    private readonly FrameSpan _span = new();
+
     private long _samplesProcessed;
     private bool _carrierWasPresent;
 
@@ -52,7 +58,8 @@ public sealed class QpskMultiModem : IModem, IConstellationSource
     /// branch + residual is the station's offset from the bank's centre however far out the
     /// branch that copied it happened to be.</summary>
     private readonly record struct Candidate(
-        byte[] Frame, double BranchOffsetHz, double? ResidualHz, FrameQuality Quality);
+        byte[] Frame, double BranchOffsetHz, double? ResidualHz, FrameQuality Quality,
+        long SpanFrom, long SpanTo);
 
     /// <summary>Creates the bank.</summary>
     /// <param name="sampleRate">Channel DSP rate.</param>
@@ -128,7 +135,8 @@ public sealed class QpskMultiModem : IModem, IConstellationSource
             // frame sink is a no-op so each decode reaches the deduper exactly once.
             _branches[i * perPosition] = Branch(
                 sampleRate, crc, baud, centreFrequency + offset, detector, acceptPlainIl2p);
-            _branches[i * perPosition].FrameDecoded += (frame, quality) => OnFrame(frame, offset, quality);
+            QpskModem primary = _branches[i * perPosition];
+            primary.FrameDecoded += (frame, quality) => OnFrame(primary, frame, offset, quality);
             if (perPosition == 2)
             {
                 // The ensemble twin: the same position under the second detector. The bank's
@@ -136,7 +144,8 @@ public sealed class QpskMultiModem : IModem, IConstellationSource
                 // the union comes for exactly one more branch's CPU per position.
                 _branches[(i * perPosition) + 1] = Branch(
                     sampleRate, crc, baud, centreFrequency + offset, secondDetector!.Value, acceptPlainIl2p);
-                _branches[(i * perPosition) + 1].FrameDecoded += (frame, quality) => OnFrame(frame, offset, quality);
+                QpskModem twin = _branches[(i * perPosition) + 1];
+                twin.FrameDecoded += (frame, quality) => OnFrame(twin, frame, offset, quality);
             }
         }
 
@@ -278,6 +287,10 @@ public sealed class QpskMultiModem : IModem, IConstellationSource
     }
 
     /// <inheritdoc />
+    public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>
+        _span.TryTakeFrameSpan(out fromSample, out toSample);
+
+    /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples)
     {
         // Feed the bank in bounded chunks so the dedupe clock advances with the audio even when a
@@ -343,8 +356,14 @@ public sealed class QpskMultiModem : IModem, IConstellationSource
     // Several branches usually decode the same transmission within a frame-time of each other,
     // which is well inside one chunk. Hold them all and let the chunk end decide, rather than
     // emitting whichever finished first.
-    private void OnFrame(byte[] frame, double offsetHz, FrameQuality quality) =>
-        _candidates.Add(new Candidate(frame, offsetHz, quality.FrequencyOffsetHz, quality));
+    private void OnFrame(QpskModem branch, byte[] frame, double offsetHz, FrameQuality quality)
+    {
+        // The branch's span goes into the candidate rather than being read at the emit below:
+        // by then the chunk has moved on, and it is the branch that decoded this copy that knows
+        // where it was. Consumed by the asking, so a branch cannot hand the same span twice.
+        branch.TryTakeFrameSpan(out long from, out long to);
+        _candidates.Add(new Candidate(frame, offsetHz, quality.FrequencyOffsetHz, quality, from, to));
+    }
 
     /// <summary>
     /// Emits one frame per distinct transmission seen this chunk, from the branch that was
@@ -397,6 +416,7 @@ public sealed class QpskMultiModem : IModem, IConstellationSource
             // identical on every branch. The bank's width is receiver construction - it stays
             // on IModem.Mode for the daemon's own use, and FrameQuality.Mode says why an
             // identity cannot carry it (issue #343).
+            _span.Set(best.SpanFrom, best.SpanTo);
             FrameDecoded?.Invoke(best.Frame, best.Quality with
             {
                 FrequencyOffsetHz = best.ResidualHz is { } residual

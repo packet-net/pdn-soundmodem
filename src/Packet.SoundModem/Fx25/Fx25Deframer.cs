@@ -29,6 +29,13 @@ public sealed class Fx25Deframer
     /// <summary>Blocks that matched a tag but failed Reed-Solomon decoding.</summary>
     public long RsFailures { get; private set; }
 
+    /// <summary>
+    /// Raised, synchronously from <see cref="PushBit"/>, on the bit that completes a correlation
+    /// tag and so opens a block - where the transmission's own bits begin, for a caller counting
+    /// samples. See <see cref="Modems.FrameSpan"/>.
+    /// </summary>
+    public Action? BlockOpened { get; set; }
+
     /// <summary>Pushes one logical bit (post-NRZI-decode).</summary>
     public void PushBit(int bit)
     {
@@ -45,6 +52,7 @@ public sealed class Fx25Deframer
                 _block = new byte[format.RsDataBytes + format.ParityBytes];
                 _byteIndex = 0;
                 _bitMask = 1;
+                BlockOpened?.Invoke();
             }
 
             return;

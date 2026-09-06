@@ -10,7 +10,7 @@ namespace Packet.SoundModem.Modems;
 /// NRZI decoding (hdlc_rec_bit), and the proven 9600 IL2P framing choice here.
 /// Transparency comes from IL2P's packet-synchronous scrambler, not bit stuffing.
 /// </summary>
-public sealed class Afsk1200Il2pModem : IModem
+public sealed class Afsk1200Il2pModem : IModem, IFrameSpanSource
 {
     private const int Baud = 1200;
 
@@ -26,6 +26,13 @@ public sealed class Afsk1200Il2pModem : IModem
     private readonly AfskDemodulator _demodulator;
     private readonly AfskModulator _modulator;
     private readonly bool _crc;
+    /// <summary>
+    /// Where the frame just delivered was in the receive audio, for the channel's per-frame
+    /// level: marked at the sync its deframer locked on and at the sample its last bit was taken
+    /// on. See <see cref="FrameSpan"/>.
+    /// </summary>
+    private readonly FrameSpan _span = new();
+
     private readonly FrameDeduper _deduper = new(DedupeWindowBits);
     private long _bitsSeen;
 
@@ -45,6 +52,10 @@ public sealed class Afsk1200Il2pModem : IModem
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _crc = crc;
+        // Declared ahead of the deframers because they mark the frame's span against its
+        // count of input samples; assigned below, and only ever read from inside a decode.
+        AfskDemodulator? demodulator = null;
+
         // One deframer per timing phase (see AfskDemodulator.TimingPhaseCount), behind a
         // bit-clocked content dedupe - the Afsk300Modem/QpskModem arrangement.
         var deframers = new Il2pReceiver[AfskDemodulator.TimingPhaseCount];
@@ -63,6 +74,8 @@ public sealed class Afsk1200Il2pModem : IModem
                         frameReceived(frame);
                     }
 
+                    // Before the event, so the channel's handler reads this frame's span.
+                    _span.Complete(demodulator!.InputSamplePosition);
                     FrameDecoded?.Invoke(frame, new FrameQuality(
                         Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                         HeaderType: info.HeaderType,
@@ -71,13 +84,13 @@ public sealed class Afsk1200Il2pModem : IModem
                         MonitorOnly: delivery.MonitorOnly));
                 },
                 crcMode: crc, acceptPlainIl2p: acceptPlainIl2p);
+            deframers[phase].SyncFound = () => _span.Sync(demodulator!.InputSamplePosition);
         }
 
         // Reset the deframers on the DCD falling edge - same rationale as BpskModem:
         // a carrier that drops mid-collection leaves the deframer consuming the next
         // transmission's sync word as phantom payload.
         bool previousDcd = false;
-        AfskDemodulator? demodulator = null;
         demodulator = new AfskDemodulator(
             sampleRate, static _ => { }, centerFrequency,
             phaseBitSink: (bit, phase) =>
@@ -115,6 +128,10 @@ public sealed class Afsk1200Il2pModem : IModem
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulator.ChannelBusy;
+
+    /// <inheritdoc />
+    public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>
+        _span.TryTakeFrameSpan(out fromSample, out toSample);
 
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples) => _demodulator.Process(samples);

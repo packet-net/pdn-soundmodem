@@ -24,7 +24,9 @@ namespace Packet.SoundModem.Tests.Channel;
 /// <para>Driven through a real <see cref="DaemonStation"/> with a real modulator and a real
 /// demodulator, in the style of the level meter's own real-path test, because the alignment is
 /// the whole claim and the alignment is a property of the wiring: what feeds what, in which
-/// order, and how much audio has gone past by the time a deframer fires.</para>
+/// order, and where in the input stream the demodulator says the frame was. The station reads
+/// its default 100 ms blocks, which is what every station without ARDOP on it does and the case
+/// the first cut of this feature got wrong.</para>
 /// </remarks>
 public class FrameLevelTests
 {
@@ -50,6 +52,10 @@ public class FrameLevelTests
 
     /// <summary>A frame far enough under the band to earn the other badge: -34 dBFS.</summary>
     private const float QuietFramePeak = 0.02f;
+
+    /// <summary>The tone in the alignment sweep: -0.9 dBFS, 15.6 dB over the frame and the
+    /// loudest thing anything could mistake for it.</summary>
+    private const float TonePeak = 0.9f;
 
     /// <summary>
     /// A frame between two stretches of noise louder than itself reports its own level.
@@ -194,26 +200,160 @@ public class FrameLevelTests
     }
 
     /// <summary>
-    /// Every mode in the catalogue can be added to a channel: the airtime probe either measures
-    /// the mode or declines it, and never takes a station down on the way up.
+    /// Wherever in the audio block the decode lands, the level is the frame's own.
     /// </summary>
     /// <remarks>
-    /// The probe modulates two throwaway frames of different lengths and takes the difference
-    /// (<c>FrameLevelMonitor.AddModem</c>), which is one more thing asked of every modem at
-    /// start-up - and a mode that refused the long one by throwing something the probe did not
-    /// expect would stop the daemon before it opened the sound card. The sweep is cheap insurance
-    /// against exactly that, and it is the same sweep <c>ModemBandProbe</c> would want.
+    /// <para>The adversarial shape, and the one that failed the first cut of this feature: a
+    /// station reading 100 ms at a time (which is every station without ARDOP on it), a frame
+    /// far shorter than one of those blocks, and audio 15 dB louder immediately either side of
+    /// it. Nothing outside the demodulator can place the frame inside the block it was reported
+    /// in, and a peak taken over a guessed window reports the tone - which is worse than the
+    /// meter this feature exists to improve on, because the row presents it as a measurement of
+    /// the frame.</para>
+    /// <para>Swept across the block grid in eighths, because the failure was an alignment
+    /// failure: the first cut was right at one phase in eight and 15.6 dB high at five of
+    /// them.</para>
+    /// </remarks>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    [InlineData(7)]
+    public void A_Short_Fast_Frame_Reports_Its_Own_Level_At_Every_Alignment_In_The_Block(int eighth)
+    {
+        // 17 bytes at 3600 bps is about 110 ms of air including its IL2P overhead, so the frame
+        // is comparable to the 100 ms block and much shorter than the pair of them the old
+        // window could span.
+        FrameQuality quality = DecodeThroughBlocks(
+            "qpsk3600", SampleRate, Ax25UiFrame.Build("GB7RDG", "M0LTE", [0x2A]), eighth);
+
+        quality.PeakDbFs.Should().NotBeNull(
+            "qpsk3600 reports the span its demodulator decoded over");
+        quality.PeakDbFs!.Value.Should().BeApproximately(
+            20 * Math.Log10(FramePeak),
+            1,
+            "the reading is the frame's own audio wherever in the block the deframer fired, and "
+                + "not the tone either side of it");
+    }
+
+    /// <summary>
+    /// The same for a frame far longer than a block, where the failure was the other end of the
+    /// window rather than its position.
+    /// </summary>
+    /// <remarks>
+    /// A 36-byte bpsk300 frame is nearly two seconds of air, so the first cut's window arithmetic
+    /// was working as designed - and it still reported the tone on 2 of 8 alignments, because the
+    /// deframer fires up to 15.8 ms after the block that held the last bit and a peak needs only
+    /// one loud cell. Here the late end comes off the demodulator's own mark, less a margin that
+    /// covers its front-end delay.
+    /// </remarks>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    [InlineData(4)]
+    [InlineData(6)]
+    public void A_Long_Slow_Frame_Reports_Its_Own_Level_At_Every_Alignment_In_The_Block(int eighth)
+    {
+        FrameQuality quality = DecodeThroughBlocks(
+            "bpsk300",
+            SampleRate,
+            Ax25UiFrame.Build("GB7RDG", "M0LTE", "twenty bytes of it"u8.ToArray()),
+            eighth);
+
+        quality.PeakDbFs.Should().NotBeNull();
+        quality.PeakDbFs!.Value.Should().BeApproximately(
+            20 * Math.Log10(FramePeak), 1, "and the late end does not overhang into the tone");
+    }
+
+    /// <summary>
+    /// Feeds a real channel in 100 ms blocks: a loud tone, the frame at a known lower level with
+    /// its start pushed <paramref name="eighth"/> eighths of a block along, and the tone again.
+    /// </summary>
+    private static FrameQuality DecodeThroughBlocks(
+        string mode, int sampleRate, byte[] frame, int eighth)
+    {
+        var channel = new SoundModemChannel(sampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => ModemCatalog.Create(mode, sampleRate, sink));
+        FrameQuality? heard = null;
+        channel.FrameReceivedWithQuality += (_, _, quality) => heard ??= quality;
+
+        float[] burst = Scaled(
+            ModemCatalog.Create(mode, sampleRate, static _ => { })
+                .Modulate(frame, txDelayMilliseconds: 300),
+            FramePeak);
+
+        int block = sampleRate / 10;
+        int lead = sampleRate + (eighth * block / 8);
+        var audio = new float[lead + burst.Length + sampleRate];
+        for (int n = 0; n < audio.Length; n++)
+        {
+            // A tone rather than noise: 15 dB over the frame, well clear of every mode's own
+            // band so it cannot stop the decode, and with a peak this test can name exactly.
+            audio[n] = Pcm16.ToFloat(Pcm16.FromFloat(
+                TonePeak * MathF.Sin(2 * MathF.PI * 5000 * n / sampleRate)));
+        }
+
+        burst.CopyTo(audio, lead);
+        foreach (float[] chunk in Blocks(audio, block))
+        {
+            channel.ProcessReceive(chunk);
+        }
+
+        heard.Should().NotBeNull($"{mode} has to decode the frame at eighth {eighth}");
+        return heard!.Value;
+    }
+
+    /// <summary>Audio scaled so its peak is exactly <paramref name="peak"/>.</summary>
+    private static float[] Scaled(float[] audio, float peak)
+    {
+        float loudest = 0;
+        foreach (float sample in audio)
+        {
+            loudest = Math.Max(loudest, Math.Abs(sample));
+        }
+
+        for (int n = 0; n < audio.Length; n++)
+        {
+            audio[n] = Pcm16.ToFloat(Pcm16.FromFloat(audio[n] / loudest * peak));
+        }
+
+        return audio;
+    }
+
+    /// <summary>
+    /// Which modes can say where their frames were, and which cannot - pinned, because it is
+    /// what CONFIG.md tells an operator to expect a level on.
+    /// </summary>
+    /// <remarks>
+    /// Every packet demodulator here decodes in a streaming loop over input samples, so it knows
+    /// the sample its sync landed on and the sample its last bit landed on. The two native
+    /// waveforms do not: FreeDV and MS110D hand blocks to a codec that reports frames and nothing
+    /// about where in the audio they were. Those get no level rather than a guessed one, and a
+    /// new mode that quietly joined them would silently drop a column off the frame log.
     /// </remarks>
     [Fact]
-    public void Every_Mode_In_The_Catalogue_Survives_Being_Asked_How_Long_A_Frame_Takes()
+    public void Every_Packet_Mode_Says_Where_Its_Frames_Were_And_The_Native_Ones_Do_Not()
     {
+        var silent = new List<string>();
         foreach (string mode in ModemCatalog.KnownModes)
         {
             int rate = ModemCatalog.DspRateFor(mode);
-            var channel = new SoundModemChannel(rate, randomSeed: 7);
-            Action adding = () => channel.AddModem(0, sink => ModemCatalog.Create(mode, rate, sink));
-            adding.Should().NotThrow($"{mode} has to be addable to a station");
+            if (ModemCatalog.Create(mode, rate, static _ => { }) is not IFrameSpanSource)
+            {
+                silent.Add(mode);
+            }
         }
+
+        silent.Should().OnlyContain(
+            mode => mode.StartsWith("freedv-", StringComparison.Ordinal)
+                    || mode.StartsWith("ms110d-", StringComparison.Ordinal),
+            "every mode that demodulates sample by sample can place its own frames, and only the "
+                + "two native block waveforms cannot");
+        silent.Should().NotBeEmpty("and the two that cannot are still in the catalogue");
     }
 
     /// <summary>Runs the audio through a real station and returns the first frame's quality.</summary>
@@ -236,13 +376,6 @@ public class FrameLevelTests
                 DspRate = SampleRate,
                 Journal = journal,
                 DeviceKind = DeadFeedDevice.Alsa,
-
-                // 20 ms, which is what a station with ARDOP on it reads, and short enough that
-                // the block the deframer fires in is a small part of a frame. See
-                // FrameLevelMonitor.Measure: the reading loses the block's own length off the
-                // near end of the window, because nothing knows where in a block a decode
-                // happened.
-                BlockMilliseconds = 20,
 
                 // The station's own wiring, as Program.cs does it: the card's own samples, before
                 // any resampling, are the only place clipping is a fact.

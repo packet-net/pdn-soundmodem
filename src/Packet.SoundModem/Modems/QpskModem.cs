@@ -6,7 +6,7 @@ namespace Packet.SoundModem.Modems;
 /// 1500 Hz) and 3600 (1800 baud, 1650 Hz) mode family - as an <see cref="IModem"/>.
 /// Symbol rates and carriers are Nino's, per the v3/4.43 mode-switch mapping in
 /// flashtnc's release-notes.txt.</summary>
-public sealed class QpskModem : IModem, IConstellationSource
+public sealed class QpskModem : IModem, IConstellationSource, IFrameSpanSource
 {
     private readonly QpskDemodulator _demodulator;
     private readonly QpskModulator _modulator;
@@ -16,6 +16,13 @@ public sealed class QpskModem : IModem, IConstellationSource
     /// held plain reading waits for (32 bits, 16 symbols).</summary>
     private const int DedupeWindowSymbols = 32;
     private readonly Il2pReceiver[] _deframers;
+    /// <summary>
+    /// Where the frame just delivered was in the receive audio, for the channel's per-frame
+    /// level (see <see cref="FrameSpan"/>). Marked at the sync its deframer locked on and at the
+    /// sample its last bit was taken on, both from the demodulator's own count of input samples.
+    /// </summary>
+    private readonly FrameSpan _span = new();
+
     private readonly FrameDeduper _deduper;
     private readonly int _bitRate;
     private long _symbolsSeen;
@@ -58,6 +65,8 @@ public sealed class QpskModem : IModem, IConstellationSource
                         frameReceived(frame);
                     }
 
+                    // Before the event, so the channel's handler reads this frame's span.
+                    _span.Complete(demodulator!.InputSamplePosition);
                     FrameDecoded?.Invoke(frame, new FrameQuality(
                         Mode, frame.Length, info.CorrectedSymbols, info.CrcValid,
                         // The measurement BpskModem has carried since issue #202; without it
@@ -71,6 +80,7 @@ public sealed class QpskModem : IModem, IConstellationSource
                         MonitorOnly: delivery.MonitorOnly));
                 },
                 crc, acceptPlainIl2p);
+            _deframers[phase].SyncFound = () => _span.Sync(demodulator!.InputSamplePosition);
         }
 
         // Reset the deframers when the carrier goes - same rationale as BpskModem: a
@@ -261,6 +271,10 @@ public sealed class QpskModem : IModem, IConstellationSource
 
     /// <summary>Bench seam: this modem's demodulator. Not part of the deployment surface.</summary>
     internal QpskDemodulator Demodulator => _demodulator;
+
+    /// <inheritdoc />
+    public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>
+        _span.TryTakeFrameSpan(out fromSample, out toSample);
 
     /// <inheritdoc />
     public void Process(ReadOnlySpan<float> samples) => _demodulator.Process(samples);

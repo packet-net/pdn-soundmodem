@@ -99,7 +99,9 @@ namespace Packet.SoundModem.Modems;
 /// <param name="Clipped">Whether the sound card ran out of codes anywhere in that same stretch -
 /// judged on the card's own samples, before any resampling, which is the only place it is a fact
 /// (see <see cref="Packet.SoundModem.Audio.InputLevelMeter.AddCardSamples"/>). Null where nothing
-/// is handing the card's samples over, which is "not measured" and not "no".</param>
+/// is handing the card's samples over, which is "not measured" and not "no": a station whose
+/// audio arrives from a Flex or an ubersdr receiver has no converter of ours to have run out of
+/// codes, and says so by leaving this null.</param>
 /// <param name="MonitorOnly">The frame was <b>not</b> passed to the host: it reached
 /// <see cref="IModem.FrameDecoded"/> and everything hanging off it - display, frame log,
 /// journal, survey - but never the modem's constructor frame sink. A fact about what
