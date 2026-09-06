@@ -123,6 +123,13 @@ internal sealed class MixerRuntime
     /// <summary>
     /// Sets the card, reads it back, and remembers the change for the next start-up.
     /// </summary>
+    /// <remarks>
+    /// <b>Call this one at a time.</b> It is a read-modify-write of the remembered state and of
+    /// the state file, and <see cref="MixerStateFile.TryWrite"/>'s temp name is keyed only on the
+    /// process id, so two concurrent callers in one process would interleave the state and
+    /// collide on the temp file. <c>ConfigApi</c>'s mixer gate is what serialises them today and
+    /// is this method's precondition; the concurrency test drives eight at once through it.
+    /// </remarks>
     /// <param name="change">What to set.</param>
     /// <param name="persist">False for a one-run try: the card is set and nothing is written.</param>
     public MixerOutcome Apply(MixerChange change, bool persist)
@@ -170,8 +177,10 @@ internal sealed class MixerRuntime
             }
         }
 
+        // A failed write warns; a persist=false the caller asked for does not. Warning about
+        // something somebody deliberately requested trains them to stop reading the field.
         return new MixerOutcome(
-            report with { Sources = Sources() }, persisted, warn || !persisted,
+            report with { Sources = Sources() }, persisted, warn || (persist && !persisted),
             string.Join(" ", notes));
     }
 

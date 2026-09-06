@@ -1128,7 +1128,10 @@ function mixShow(state) {
   // readout says why, rather than offering a number that would be refused.
   const gain = $("mixGain");
   const capture = state.capture;
-  const range = capture && capture.dbRange;
+  // decibels as well as dbRange: a card that publishes a range but fails the per-channel dB
+  // read sends one without the other, and assigning null to the slider then throws in mixDb()
+  // and aborts the whole group.
+  const range = capture && capture.dbRange && capture.decibels != null ? capture.dbRange : null;
   gain.disabled = !range;
   if (range) {
     gain.min = range.min;

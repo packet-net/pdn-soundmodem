@@ -256,7 +256,7 @@ public static class MixerSetup
         IAlsaMixer mixer, IReadOnlyList<string> names, MixerDirection direction,
         string key, double? decibelsWanted, Action<string> say)
     {
-        string side = direction == MixerDirection.Capture ? "capture" : "playback";
+        string side = Side(direction);
         if (Find(mixer, names) is not string control)
         {
             // Only when the operator asked for something. A card that simply has no such control
@@ -293,6 +293,17 @@ public static class MixerSetup
             // what the level actually is even when what they asked for was not possible.
             if (scale is null)
             {
+                // ReadDbRange answers null for three different reasons and only one of them is
+                // "this card publishes no dB scale". A control that is present but has no volume
+                // on this side at all is a different thing, and used to be told both sentences at
+                // once: "this card publishes only raw steps" followed by "has no capture volume,
+                // skipped", which contradict each other.
+                if (!mixer.TryReadVolume(control, direction, out _, out _))
+                {
+                    Skipped();
+                    return (null, null);
+                }
+
                 say(NoDbScale(control, mixer.Card, key));
             }
             else if (OutsideRange(target, scale.MinDb, scale.MaxDb))
@@ -364,7 +375,11 @@ public static class MixerSetup
 
             if (mixer.ReadDbRange(control, direction) is not MixerDbRange scale)
             {
-                return NoDbScale(control, mixer.Card, key);
+                // The same distinction the journal makes: no volume on this side is not the same
+                // refusal as no dB scale, and a 400 should not say the wrong one.
+                return mixer.TryReadVolume(control, direction, out _, out _)
+                    ? NoDbScale(control, mixer.Card, key)
+                    : NoVolume(control, mixer.Card, Side(direction), key);
             }
 
             return OutsideRange(target, scale.MinDb, scale.MaxDb)
@@ -382,6 +397,15 @@ public static class MixerSetup
     /// </remarks>
     private static bool OutsideRange(double decibels, double minDb, double maxDb) =>
         decibels < minDb - 0.005 || decibels > maxDb + 0.005;
+
+    /// <summary>"capture" or "playback", as every line here names the two sides.</summary>
+    private static string Side(MixerDirection direction) =>
+        direction == MixerDirection.Capture ? "capture" : "playback";
+
+    /// <summary>The sentence for a control that has no volume on the side being asked about.</summary>
+    private static string NoVolume(string control, string card, string side, string key) =>
+        $"\"{control}\" on {card} has no {side} volume, so {key} cannot be set. The control is "
+        + "there, but not on this side of the card.";
 
     /// <summary>The sentence for a control the card publishes no dB scale for.</summary>
     private static string NoDbScale(string control, string card, string key) =>

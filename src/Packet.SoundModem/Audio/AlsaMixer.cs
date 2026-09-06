@@ -37,16 +37,15 @@ public sealed class AlsaMixer : IAlsaMixer
     private const int FirstChannel = 0;
 
     /// <summary>
-    /// alsa-lib's mute sentinel, <c>SND_CTL_TLV_DB_GAIN_MUTE</c> from <c>alsa/control.h</c>, in
-    /// hundredths of a dB. It is what <c>snd_tlv_get_dB_range</c> reports as the minimum of a
-    /// control whose TLV carries the mute flag, and it is not a level.
+    /// Anything at or below this is a sentinel rather than a reading, in hundredths of a dB.
     /// </summary>
-    private const long MuteSentinel = -9999999;
-
-    /// <summary>
-    /// Anything at or below this is the sentinel rather than a reading. Real controls bottom out
-    /// in the tens of dB; -10000 dB is not a level any sound card has.
-    /// </summary>
+    /// <remarks>
+    /// The sentinel it is there to catch is alsa-lib's <c>SND_CTL_TLV_DB_GAIN_MUTE</c>
+    /// (<c>alsa/control.h</c>), which is -9999999, and which <c>snd_tlv_get_dB_range</c> reports
+    /// as the minimum of a control whose TLV carries the mute flag. A threshold rather than an
+    /// equality test on that value, deliberately: it catches the sentinel and any driver that
+    /// answers something similarly absurd, and -10000 dB is not a level any sound card has.
+    /// </remarks>
     private const long NotALevel = -1000000;
 
     /// <summary>
@@ -67,6 +66,13 @@ public sealed class AlsaMixer : IAlsaMixer
     /// invalidates it (<c>db_initialized</c> in <c>simple_none.c</c> is set once). So reading it
     /// again per access buys nothing and costs a TLV round trip on every start-up line, every
     /// GET of the API and every move of the operator page's slider.
+    /// <para><b>Why this may be cached when element pointers deliberately may not</b> (see
+    /// <see cref="TryElement"/>). A pointer freed by a re-plug is a use-after-free; a stale dB
+    /// range is at worst a wrong number. And it cannot go stale in practice: this cache is keyed
+    /// by control name and outlives the element, where alsa-lib's own dies with it, but a re-plug
+    /// kills the capture feed, and a dead feed shuts the daemon down for systemd to restart - the
+    /// same reasoning that makes the mixer-before-PCM ordering durable. A different card behind
+    /// the same name would therefore be met by a fresh process with an empty cache.</para>
     /// </remarks>
     private readonly Dictionary<(string Control, MixerDirection Direction), MixerDbRange?> _ranges
         = [];
@@ -491,7 +497,7 @@ public sealed class AlsaMixer : IAlsaMixer
 
         long min = low.Value;
         long max = high.Value;
-        if (max <= NotALevel)  // MuteSentinel itself, or worse
+        if (max <= NotALevel)  // the mute sentinel itself, or worse
         {
             // A range whose top is the sentinel is not a scale at all.
             return null;
