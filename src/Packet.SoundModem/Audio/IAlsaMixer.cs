@@ -41,12 +41,36 @@ public interface IAlsaMixer : IDisposable
     /// </summary>
     void Refresh();
 
+    /// <summary>Sets every channel of a control's volume to a level in dB.</summary>
+    /// <param name="control">The control's name, as <see cref="Controls"/> spells it.</param>
+    /// <param name="direction">Capture or playback.</param>
+    /// <param name="decibels">The level wanted, in dB. The card takes the nearest step it has.</param>
+    /// <returns>False when there is no such control, it has no volume on that side, or it
+    /// publishes no dB scale to set one on. Ask <see cref="TryReadDbRange"/> first to tell those
+    /// apart: a card with no dB scale is refused with a reason rather than guessed at.</returns>
+    bool TrySetDb(string control, MixerDirection direction, double decibels);
+
+    /// <summary>The span of levels a control can be set to, in dB.</summary>
+    /// <param name="control">The control's name.</param>
+    /// <param name="direction">Capture or playback.</param>
+    /// <param name="minDb">The quietest setting the card has.</param>
+    /// <param name="maxDb">The loudest.</param>
+    /// <returns>False when there is no such control, it has no volume on that side, or it
+    /// publishes only raw steps and no dB scale at all. Plenty of cards do, and that is the
+    /// case a dB setting has to say "no dB scale" about rather than invent a number for.</returns>
+    bool TryReadDbRange(string control, MixerDirection direction, out double minDb, out double maxDb);
+
     /// <summary>Sets every channel of a control's volume to a percentage of its range.</summary>
     /// <param name="control">The control's name, as <see cref="Controls"/> spells it.</param>
     /// <param name="direction">Capture or playback.</param>
     /// <param name="percent">0-100, linear on the card's raw range (what <c>amixer</c> means by
     /// a percentage, and what <c>alsamixer</c> shows).</param>
     /// <returns>False when there is no such control, or it has no volume on that side.</returns>
+    /// <remarks>
+    /// The station's own levels are set in dB (<see cref="TrySetDb"/>); this is here for the one
+    /// case that is not a level at all - a "Mic Boost" that some cards present as a few steps
+    /// rather than a switch, where on means the top of the range and off means the bottom.
+    /// </remarks>
     bool TrySetVolume(string control, MixerDirection direction, int percent);
 
     /// <summary>Reads a control's volume back from the card.</summary>
@@ -54,7 +78,8 @@ public interface IAlsaMixer : IDisposable
     /// <param name="direction">Capture or playback.</param>
     /// <param name="percent">0-100 of the card's raw range.</param>
     /// <param name="decibels">The same setting in dB when the card publishes a dB scale, else
-    /// null. Cards that report one are worth quoting: dB is what a level sits on.</param>
+    /// null. This is the figure the station works in; the percentage is what <c>alsamixer</c>
+    /// shows beside it, and is all there is to report on a card with no dB scale.</param>
     /// <returns>False when there is no such control, or it has no volume on that side.</returns>
     bool TryReadVolume(string control, MixerDirection direction, out int percent, out double? decibels);
 

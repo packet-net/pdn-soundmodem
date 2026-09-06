@@ -3,9 +3,9 @@ using Packet.SoundModem.Audio;
 namespace Packet.SoundModem.Tests.Audio;
 
 /// <summary>
-/// Finding a card's controls, setting them, reading them back, and what the journal says about
-/// each - all of it against a made-up card, because a CI runner has no sound hardware and this
-/// is the layer that has to be right whatever hardware turns up.
+/// Finding a card's controls, setting them in dB against the card's own range, reading them back,
+/// and what the journal says about each - all of it against a made-up card, because a CI runner
+/// has no sound hardware and this is the layer that has to be right whatever hardware turns up.
 /// </summary>
 /// <remarks>
 /// What is deliberately not here is the P/Invoke in <see cref="AlsaMixer"/>, which needs a card.
@@ -14,22 +14,26 @@ namespace Packet.SoundModem.Tests.Audio;
 /// </remarks>
 public class MixerSetupTests
 {
+    /// <summary>A capture side with the bench CM108's numbers: 36 steps of one whole dB.</summary>
+    private static FakeLevel Cm108Capture(long raw = 20) =>
+        new() { Min = 0, Max = 35, Raw = raw, MinDb = -12, MaxDb = 23 };
+
     [Fact]
     public void The_First_Control_Name_That_The_Card_Has_Is_The_One_Used()
     {
         // A card that calls it "Mic Capture", second in the fallback list.
         var mixer = new FakeMixer(
             "hw:1",
-            new FakeControl { Name = "Capture", Capture = 10 },
-            new FakeControl { Name = "Mic Capture", Capture = 20 });
+            new FakeControl { Name = "Capture", Capture = Cm108Capture(raw: 4) },
+            new FakeControl { Name = "Mic Capture", Capture = Cm108Capture(raw: 4) });
 
-        MixerReport report = MixerSetup.Apply(
-            mixer, new MixerSettings { CaptureGainPercent = 60 });
+        MixerReport report = MixerSetup.Apply(mixer, new MixerSettings { CaptureGainDb = 6 });
 
         report.Capture!.Control.Should().Be(
             "Mic Capture", "\"Mic Capture\" comes before \"Capture\" in the fallback list");
-        mixer.Find("Mic Capture")!.Capture.Should().Be(60);
-        mixer.Find("Capture")!.Capture.Should().Be(10, "the control that was not chosen is untouched");
+        mixer.CaptureDb("Mic Capture").Should().Be(6);
+        mixer.CaptureDb("Capture").Should().Be(
+            -8, "the control that was not chosen is untouched");
     }
 
     [Fact]
@@ -37,17 +41,17 @@ public class MixerSetupTests
     {
         var mixer = new FakeMixer(
             "hw:1",
-            new FakeControl { Name = "Mic", Capture = 10 },
-            new FakeControl { Name = "Line In Gain", Capture = 10 });
+            new FakeControl { Name = "Mic", Capture = Cm108Capture(raw: 4) },
+            new FakeControl { Name = "Line In Gain", Capture = Cm108Capture(raw: 4) });
 
         MixerSetup.Apply(mixer, new MixerSettings
         {
-            CaptureGainPercent = 40,
+            CaptureGainDb = 3,
             CaptureControls = ["Line In Gain"],
         });
 
-        mixer.Find("Line In Gain")!.Capture.Should().Be(40);
-        mixer.Find("Mic")!.Capture.Should().Be(10, "the operator named the other one");
+        mixer.CaptureDb("Line In Gain").Should().Be(3);
+        mixer.CaptureDb("Mic").Should().Be(-8, "the operator named the other one");
     }
 
     [Fact]
@@ -65,61 +69,157 @@ public class MixerSetupTests
     }
 
     [Fact]
-    public void What_Was_Set_Is_Read_Back_From_The_Card_And_Journalled()
+    public void What_Was_Set_Is_Read_Back_From_The_Card_And_Journalled_With_The_Range()
     {
         var mixer = new FakeMixer(
             "hw:1",
-            new FakeControl { Name = "Mic", Capture = 20 },
+            new FakeControl { Name = "Mic", Capture = Cm108Capture(raw: 0) },
             new FakeControl { Name = "Auto Gain Control", On = true },
             new FakeControl { Name = "Mic Boost", On = true });
 
         var journal = new List<string>();
         MixerReport report = MixerSetup.Apply(
             mixer,
-            new MixerSettings { CaptureGainPercent = 75, Agc = false, MicBoost = false },
+            new MixerSettings { CaptureGainDb = 6, Agc = false, MicBoost = false },
             journal.Add);
 
         report.Summary.Should().Be(
-            "alsa: mixer: Mic capture 75% (set 75%), Auto Gain Control off, Mic Boost off");
+            "alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB), "
+            + "Auto Gain Control off, Mic Boost off");
         journal.Should().Contain(report.Summary!, "the summary is journalled, not just returned");
         mixer.Refreshes.Should().BeGreaterThan(
             0, "the card is asked for fresh values before it is read back");
     }
 
+    /// <summary>
+    /// The range is quoted beside the value on a pure read-back too, which is what
+    /// <c>--mixer-show</c> and <c>GET /api/mixer</c> serve.
+    /// </summary>
     [Fact]
-    public void A_Card_That_Quantises_A_Level_Has_Both_Figures_Journalled()
+    public void A_Read_Back_Quotes_The_Cards_Range_Beside_Every_Level()
     {
-        // 0-35 raw steps, as the bench CM108 has: 75% is not a step it can hold, so what the
-        // operator asked for and what the card did are different numbers and both are printed.
-        var mixer = new FakeMixer(
-            "hw:3",
-            new FakeControl { Name = "Mic", Capture = 20, IgnoresWrites = true });
+        MixerReport report = MixerSetup.Apply(FakeMixer.Cm108(), new MixerSettings());
 
-        MixerReport report = MixerSetup.Apply(
-            mixer, new MixerSettings { CaptureGainPercent = 75 });
-
-        report.Capture!.Percent.Should().Be(20, "the read-back is the card's answer, not ours");
-        report.Summary.Should().Be("alsa: mixer: Mic capture 20% (set 75%)");
+        report.Summary.Should().Be(
+            "alsa: mixer: Mic capture 8.00 dB of -12.00 to 23.00 dB, Auto Gain Control on, "
+            + "Speaker playback -20.00 dB of -37.00 to 0.00 dB");
+        report.Capture!.MinDb.Should().Be(-12);
+        report.Capture.MaxDb.Should().Be(23);
+        report.Playback!.MinDb.Should().Be(-37);
+        report.Playback.MaxDb.Should().Be(0);
     }
 
     [Fact]
-    public void A_Card_That_Publishes_A_Decibel_Scale_Has_It_Quoted()
+    public void A_Card_That_Quantises_A_Level_Has_Both_Figures_Journalled()
+    {
+        // The bench CM108's capture is whole dB and nothing between, so 6.4 dB is not a level it
+        // can hold: what the operator asked for and what the card did are different numbers and
+        // the line prints both.
+        var mixer = new FakeMixer("hw:3", new FakeControl { Name = "Mic", Capture = Cm108Capture() });
+
+        MixerReport report = MixerSetup.Apply(mixer, new MixerSettings { CaptureGainDb = 6.4 });
+
+        report.Capture!.Decibels.Should().Be(6, "the read-back is the card's answer, not ours");
+        report.Summary.Should().Be(
+            "alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.40 dB)");
+    }
+
+    /// <summary>
+    /// A card that publishes only raw steps cannot be set in dB, and says so rather than having a
+    /// number invented for it.
+    /// </summary>
+    /// <remarks>
+    /// The alternative was to convert the dB into a percentage of the raw range, which would be
+    /// setting a level against a mapping the card never published - an operator asking for 6 dB
+    /// would get whatever 6-of-something happened to land on. Refused, journalled, carried on.
+    /// </remarks>
+    [Fact]
+    public void A_Control_With_No_Db_Scale_Is_Refused_In_Words_And_Left_Alone()
     {
         var mixer = new FakeMixer(
-            "hw:3",
-            new FakeControl { Name = "Mic", Capture = 0, Decibels = percent => -12 + (percent * 0.35) });
+            "hw:5",
+            new FakeControl { Name = "Mic", Capture = new FakeLevel { Max = 15, Raw = 6 } });
 
+        var journal = new List<string>();
         MixerReport report = MixerSetup.Apply(
-            mixer, new MixerSettings { CaptureGainPercent = 60 });
+            mixer, new MixerSettings { CaptureGainDb = 6 }, journal.Add);
 
-        report.Capture!.Decibels.Should().BeApproximately(9.0, 0.001);
-        report.Summary.Should().Be("alsa: mixer: Mic capture 60% / 9.00 dB (set 60%)");
+        journal.Should().Contain(
+            "alsa: mixer: \"Mic\" on hw:5 has no dB scale, so captureGainDb cannot be set - this "
+            + "card publishes only raw steps. The control is left exactly as the card has it.");
+        mixer.Find("Mic")!.Capture!.Raw.Should().Be(6, "nothing was written to the card");
+        report.Capture!.Decibels.Should().BeNull();
+        report.Capture.MinDb.Should().BeNull();
+        report.Summary.Should().Be(
+            "alsa: mixer: Mic capture 40% (no dB scale) (left as found)",
+            "the percentage is all there is to report, and it says which unit it is in");
+    }
+
+    [Fact]
+    public void A_Level_Outside_The_Cards_Range_Is_Refused_With_The_Range_And_The_Rest_Carries_On()
+    {
+        FakeMixer mixer = FakeMixer.Cm108();
+
+        var journal = new List<string>();
+        MixerReport report = MixerSetup.Apply(
+            mixer, new MixerSettings { CaptureGainDb = 30, Agc = false }, journal.Add);
+
+        journal.Should().Contain(
+            "alsa: mixer: captureGainDb 30.00 dB is outside the range of \"Mic\" on hw:3, which "
+            + "is -12.00 to 23.00 dB. The control is left exactly as the card has it.");
+        mixer.CaptureDb("Mic").Should().Be(8, "the card keeps the level it had");
+        report.Agc!.On.Should().BeFalse("the rest of the request still happened");
+    }
+
+    [Theory]
+    [InlineData(-12.0)]
+    [InlineData(23.0)]
+    public void Both_Ends_Of_The_Cards_Range_Are_Inside_It(double decibels)
+    {
+        FakeMixer mixer = FakeMixer.Cm108();
+
+        var journal = new List<string>();
+        MixerSetup.Apply(mixer, new MixerSettings { CaptureGainDb = decibels }, journal.Add);
+
+        journal.Should().NotContain(line => line.Contains("outside the range", StringComparison.Ordinal));
+        mixer.CaptureDb("Mic").Should().Be(decibels);
+    }
+
+    /// <summary>
+    /// The API asks before it acts, because there is somebody waiting for an answer and nothing
+    /// has been touched yet - unlike start-up, which journals and carries on.
+    /// </summary>
+    [Fact]
+    public void The_Same_Two_Refusals_Can_Be_Asked_For_Before_Anything_Is_Touched()
+    {
+        FakeMixer card = FakeMixer.Cm108();
+
+        MixerSetup.WhyRefused(card, new MixerSettings { CaptureGainDb = 30 })
+            .Should().Contain("-12.00 to 23.00 dB");
+        MixerSetup.WhyRefused(card, new MixerSettings { PlaybackDb = 6 })
+            .Should().Contain("-37.00 to 0.00 dB");
+        MixerSetup.WhyRefused(card, new MixerSettings { CaptureGainDb = 6, PlaybackDb = -8 })
+            .Should().BeNull("both are inside the card's ranges");
+        MixerSetup.WhyRefused(card, new MixerSettings { Agc = false })
+            .Should().BeNull("a switch has no dB scale to be outside of");
+
+        card.CaptureDb("Mic").Should().Be(8, "asking never writes to the card");
+    }
+
+    [Fact]
+    public void A_Control_With_No_Db_Scale_Is_Refused_Before_Anything_Is_Touched_Too()
+    {
+        var card = new FakeMixer(
+            "hw:5", new FakeControl { Name = "Mic", Capture = new FakeLevel { Max = 15, Raw = 6 } });
+
+        MixerSetup.WhyRefused(card, new MixerSettings { CaptureGainDb = 6 })
+            .Should().Contain("has no dB scale");
     }
 
     [Fact]
     public void A_Control_The_Card_Does_Not_Have_Is_Skipped_And_Said_So()
     {
-        var mixer = new FakeMixer("hw:1", new FakeControl { Name = "Mic", Capture = 40 });
+        var mixer = new FakeMixer("hw:1", new FakeControl { Name = "Mic", Capture = Cm108Capture() });
 
         var journal = new List<string>();
         MixerReport report = MixerSetup.Apply(
@@ -135,7 +235,7 @@ public class MixerSetupTests
     [Fact]
     public void The_Names_That_Were_Tried_Are_Named_When_There_Was_More_Than_One()
     {
-        var mixer = new FakeMixer("hw:3", new FakeControl { Name = "Mic", Capture = 40 });
+        var mixer = new FakeMixer("hw:3", new FakeControl { Name = "Mic", Capture = Cm108Capture() });
 
         var journal = new List<string>();
         MixerSetup.Apply(mixer, new MixerSettings { MicBoost = true }, journal.Add);
@@ -153,7 +253,7 @@ public class MixerSetupTests
         FakeMixer mixer = FakeMixer.Cm108();
 
         var journal = new List<string>();
-        MixerSetup.Apply(mixer, new MixerSettings { CaptureGainPercent = 57 }, journal.Add);
+        MixerSetup.Apply(mixer, new MixerSettings { CaptureGainDb = 6 }, journal.Add);
 
         journal.Should().NotContain(line => line.Contains("Mic Boost", StringComparison.Ordinal));
     }
@@ -168,7 +268,7 @@ public class MixerSetupTests
         var journal = new List<string>();
         MixerReport report = MixerSetup.Apply(
             mixer,
-            new MixerSettings { CaptureGainPercent = 50, CaptureControls = ["Auto Gain Control"] },
+            new MixerSettings { CaptureGainDb = 6, CaptureControls = ["Auto Gain Control"] },
             journal.Add);
 
         journal.Should().Contain(
@@ -179,8 +279,12 @@ public class MixerSetupTests
     [Fact]
     public void A_Boost_That_Is_A_Level_Rather_Than_A_Switch_Is_Driven_To_Its_Ends()
     {
-        // An HDA "Mic Boost" is four 10 dB steps, not an on/off. On means the top of it.
-        var mixer = new FakeMixer("hw:0", new FakeControl { Name = "Mic Boost", Capture = 0 });
+        // An HDA "Mic Boost" is four 10 dB steps, not an on/off. On means the top of it - and it
+        // stays a switch in the configuration, because +20 dB ahead of everything is on or off
+        // and there is no dB figure for an operator to type.
+        var mixer = new FakeMixer(
+            "hw:0",
+            new FakeControl { Name = "Mic Boost", Capture = new FakeLevel { Max = 3, Raw = 0 } });
 
         var journal = new List<string>();
         MixerReport report = MixerSetup.Apply(
@@ -188,7 +292,7 @@ public class MixerSetupTests
 
         journal.Should().Contain(
             "alsa: mixer: \"Mic Boost\" on hw:0 is a level rather than a switch, set to 100%");
-        mixer.Find("Mic Boost")!.Capture.Should().Be(100);
+        mixer.Find("Mic Boost")!.Capture!.Raw.Should().Be(3);
         report.MicBoost!.On.Should().BeTrue();
     }
 
@@ -214,11 +318,12 @@ public class MixerSetupTests
 
         MixerReport report = MixerSetup.Apply(mixer, new MixerSettings());
 
-        report.Summary.Should().Be(
-            "alsa: mixer: Mic capture 57% / 7.95 dB, Auto Gain Control on, "
-            + "Speaker playback 46% / -19.98 dB");
-        mixer.Find("Mic")!.Capture.Should().Be(57, "a read-back changes nothing on the card");
+        report.Capture!.Decibels.Should().Be(8);
+        report.Capture.Percent.Should().Be(57, "which is what alsamixer shows for the same step");
+        mixer.CaptureDb("Mic").Should().Be(8, "a read-back changes nothing on the card");
         mixer.Find("Auto Gain Control")!.On.Should().BeTrue();
+        report.Summary.Should().NotContain(
+            "left as found", "a pure read-back describes the card and stops there");
     }
 
     [Fact]
@@ -244,11 +349,39 @@ public class MixerSetupTests
             + "set; capture gain, AGC and mic boost stay as the card has them");
     }
 
+    /// <summary>
+    /// Where each applied value came from is journalled beside it, so a start-up log answers "why
+    /// is the gain 6 dB" without anybody having to open two files to find out.
+    /// </summary>
+    [Fact]
+    public void Every_Applied_Value_Says_Which_Source_Put_It_There()
+    {
+        FakeMixer mixer = FakeMixer.Cm108();
+
+        MixerReport report = MixerSetup.Apply(
+            mixer,
+            new MixerSettings
+            {
+                CaptureGainDb = 6,
+                Agc = false,
+                Sources = new MixerSources(
+                    CaptureGain: MixerSource.Config, Agc: MixerSource.StateFile),
+            });
+
+        report.Summary.Should().Be(
+            "alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB, config), "
+            + "Auto Gain Control off (state file), "
+            + "Speaker playback -20.00 dB of -37.00 to 0.00 dB (left as found)");
+        report.Sources.CaptureGain.Should().Be(
+            MixerSource.Config, "the report carries it through to the API and the page");
+    }
+
     [Fact]
     public void The_Bench_Cm108_Takes_A_Gain_And_An_Agc_And_Skips_The_Boost_It_Has_Not_Got()
     {
-        // The whole of #17 on the card it was asked for, in one case: capture gain set and read
-        // back, AGC switched off, mic boost asked for and not there, Speaker level set.
+        // The whole of #17 on the card it was asked for, in one case: capture gain set in dB and
+        // read back with the range, AGC switched off, mic boost asked for and not there, Speaker
+        // level set.
         FakeMixer mixer = FakeMixer.Cm108();
 
         var journal = new List<string>();
@@ -256,10 +389,10 @@ public class MixerSetupTests
             mixer,
             new MixerSettings
             {
-                CaptureGainPercent = 60,
+                CaptureGainDb = 6,
                 Agc = false,
                 MicBoost = false,
-                PlaybackPercent = 70,
+                PlaybackDb = -8,
             },
             journal.Add);
 
@@ -268,12 +401,14 @@ public class MixerSetupTests
                 "alsa: mixer: hw:3 has Mic, Auto Gain Control, Speaker",
                 "alsa: mixer: no control named \"Mic Boost\" on hw:3 (also tried "
                     + "\"Mic Boost (+20dB)\", \"Internal Mic Boost\", \"Mic Capture Boost\"), skipped",
-                "alsa: mixer: Mic capture 60% / 9.00 dB (set 60%), Auto Gain Control off, "
-                    + "Speaker playback 70% / -11.10 dB (set 70%)",
+                "alsa: mixer: Mic capture 6.00 dB of -12.00 to 23.00 dB (set 6.00 dB), "
+                    + "Auto Gain Control off, "
+                    + "Speaker playback -8.00 dB of -37.00 to 0.00 dB (set -8.00 dB)",
             ],
             options => options.WithStrictOrdering());
         report.MicBoost.Should().BeNull();
         report.Agc!.On.Should().BeFalse();
+        mixer.PlaybackDb("Speaker").Should().Be(-8);
     }
 
     /// <summary>
@@ -292,13 +427,13 @@ public class MixerSetupTests
 
         MixerReport? report = MixerSetup.TryApply(
             new ThrowingMixer(),
-            new MixerSettings { CaptureGainPercent = 60, Agc = false },
+            new MixerSettings { CaptureGainDb = 6, Agc = false },
             journal.Add,
             out string why);
 
         report.Should().BeNull();
         why.Should().Contain("EntryPointNotFoundException")
-            .And.Contain("snd_mixer_selem_set_capture_volume_all",
+            .And.Contain("snd_mixer_selem_set_capture_dB_all",
                 "a genuine fault has to stay visible rather than be swallowed");
         journal.Should().ContainSingle(line => line.Contains(
             "capture gain, AGC and mic boost are left as the card has them", StringComparison.Ordinal));
@@ -308,10 +443,10 @@ public class MixerSetupTests
     public void A_Card_That_Answers_Normally_Comes_Back_From_The_Guarded_Apply_Too()
     {
         MixerReport? report = MixerSetup.TryApply(
-            FakeMixer.Cm108(), new MixerSettings { CaptureGainPercent = 60 }, null, out string why);
+            FakeMixer.Cm108(), new MixerSettings { CaptureGainDb = 6 }, null, out string why);
 
         why.Should().BeEmpty();
-        report!.Capture!.Percent.Should().Be(60);
+        report!.Capture!.Decibels.Should().Be(6);
     }
 
     /// <summary>
@@ -327,7 +462,7 @@ public class MixerSetupTests
         var mixer = new FakeMixer(
             "hw:1",
             new FakeControl { Name = "Capture", On = true },
-            new FakeControl { Name = "AGC", Capture = 40 });
+            new FakeControl { Name = "AGC", Capture = Cm108Capture() });
 
         var journal = new List<string>();
         MixerReport report = MixerSetup.Apply(mixer, new MixerSettings(), journal.Add);
@@ -345,7 +480,7 @@ public class MixerSetupTests
         var journal = new List<string>();
         MixerSetup.Apply(
             mixer,
-            new MixerSettings { CaptureGainPercent = 50, CaptureControls = ["Capture"] },
+            new MixerSettings { CaptureGainDb = 6, CaptureControls = ["Capture"] },
             journal.Add);
 
         journal.Should().Contain(

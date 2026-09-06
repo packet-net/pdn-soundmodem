@@ -4,9 +4,22 @@ namespace Packet.SoundModem.Audio;
 
 /// <summary>One volume control as the card reports it back.</summary>
 /// <param name="Control">The control's name on this card.</param>
-/// <param name="Percent">Its level, 0-100 of the card's range.</param>
-/// <param name="Decibels">The same level in dB, when the card publishes a scale; else null.</param>
-public sealed record MixerVolumeState(string Control, int Percent, double? Decibels);
+/// <param name="Decibels">Its level in dB, when the card publishes a scale; else null.</param>
+/// <param name="MinDb">The quietest the card can be set to, in dB; null with no scale.</param>
+/// <param name="MaxDb">The loudest, in dB; null with no scale.</param>
+/// <param name="Percent">The same level as 0-100 of the card's raw range, which is what
+/// <c>alsamixer</c> shows and the only figure there is on a card with no dB scale.</param>
+/// <remarks>
+/// The range travels with the value everywhere it is shown - the start-up journal, the API, the
+/// operator page, <c>--mixer-show</c> - because "6.00 dB" says nothing about how much is left
+/// above it, and how much is left is the question an operator setting a level is asking.
+/// </remarks>
+public sealed record MixerVolumeState(
+    string Control, double? Decibels, double? MinDb, double? MaxDb, int Percent)
+{
+    /// <summary>Whether this card publishes a dB scale for this control, so it can be set in dB.</summary>
+    public bool HasDbScale => Decibels is not null && MinDb is not null && MaxDb is not null;
+}
 
 /// <summary>One on/off control as the card reports it back.</summary>
 /// <param name="Control">The control's name on this card.</param>
@@ -37,6 +50,9 @@ public sealed record MixerReport
     /// <summary>Microphone boost, or null when there is no such control.</summary>
     public MixerSwitchState? MicBoost { get; init; }
 
+    /// <summary>Where each setting that is in force came from, for the API and the page.</summary>
+    public MixerSources Sources { get; init; } = new();
+
     /// <summary>The lines that were journalled, in order, prefix and all.</summary>
     public IReadOnlyList<string> Journal { get; init; } = [];
 
@@ -60,12 +76,24 @@ public sealed record MixerReport
 /// <para><b>Read-back is not optional.</b> A mixer setting that did not take is invisible - the
 /// station simply sounds wrong - so every control this finds is read back from the card after
 /// the write and the journal states what the card says, not what it was told. Cards quantise: a
-/// capture range of 0-35 steps cannot hold 75%, and the line says so by printing both.</para>
+/// capture range of 0-35 raw steps holds whole dB and nothing between, and the line says so by
+/// printing what was asked for beside what the card did with it.</para>
+/// <para><b>Two ways a dB setting can be impossible, and neither is guessed at.</b> A control
+/// with no dB scale is refused with those words and left as the card has it, because converting
+/// a dB into a percentage of a raw range the card never published would be setting a number that
+/// means nothing. A value outside the card's range is refused with the range, because clamping
+/// silently would tell an operator they had 30 dB of gain when the card stops at 23.</para>
 /// </remarks>
 public static class MixerSetup
 {
     /// <summary>What every line here is prefixed with, so the journal groups at a glance.</summary>
     public const string JournalPrefix = "alsa: mixer: ";
+
+    /// <summary>The configuration key the capture level is set by, named in every refusal.</summary>
+    public const string CaptureKey = "captureGainDb";
+
+    /// <summary>The configuration key the playback level is set by.</summary>
+    public const string PlaybackKey = "playbackDb";
 
     /// <summary>
     /// Applies <paramref name="wanted"/> to <paramref name="mixer"/> and reads the result back.
@@ -89,32 +117,40 @@ public static class MixerSetup
 
         Say($"{mixer.Card} has {string.Join(", ", mixer.Controls)}");
 
-        MixerVolumeState? capture = Volume(
-            mixer, wanted.CaptureControls, MixerDirection.Capture, wanted.CaptureGainPercent, Say);
+        (MixerVolumeState? capture, double? captureSet) = Volume(
+            mixer, wanted.CaptureControls, MixerDirection.Capture, CaptureKey,
+            wanted.CaptureGainDb, Say);
         MixerSwitchState? agc = Switch(mixer, wanted.AgcControls, wanted.Agc, Say);
         MixerSwitchState? boost = Switch(mixer, wanted.MicBoostControls, wanted.MicBoost, Say);
-        MixerVolumeState? playback = Volume(
-            mixer, wanted.PlaybackControls, MixerDirection.Playback, wanted.PlaybackPercent, Say);
+        (MixerVolumeState? playback, double? playbackSet) = Volume(
+            mixer, wanted.PlaybackControls, MixerDirection.Playback, PlaybackKey,
+            wanted.PlaybackDb, Say);
+
+        // A pure read-back - a GET, --mixer-show, a station whose file and state file say
+        // nothing - describes the card and stops there, as it always has. Once anything IS being
+        // set, every control gets a source or a "left as found", because the question an operator
+        // then has is not "what is it" but "what put it there and will it come back".
+        bool tag = wanted.SetsAnything;
 
         var parts = new List<string>();
         if (capture is not null)
         {
-            parts.Add(Describe(capture, "capture", wanted.CaptureGainPercent));
+            parts.Add(Describe(capture, "capture", captureSet, wanted.Sources.CaptureGain, tag));
         }
 
         if (agc is not null)
         {
-            parts.Add(Describe(agc, wanted.Agc));
+            parts.Add(Describe(agc, wanted.Agc, wanted.Sources.Agc, tag));
         }
 
         if (boost is not null)
         {
-            parts.Add(Describe(boost, wanted.MicBoost));
+            parts.Add(Describe(boost, wanted.MicBoost, wanted.Sources.MicBoost, tag));
         }
 
         if (playback is not null)
         {
-            parts.Add(Describe(playback, "playback", wanted.PlaybackPercent));
+            parts.Add(Describe(playback, "playback", playbackSet, wanted.Sources.Playback, tag));
         }
 
         string? summary = null;
@@ -138,6 +174,7 @@ public static class MixerSetup
             Playback = playback,
             Agc = agc,
             MicBoost = boost,
+            Sources = wanted.Sources,
             Journal = lines,
             Summary = summary,
         };
@@ -203,9 +240,16 @@ public static class MixerSetup
         return null;
     }
 
-    private static MixerVolumeState? Volume(
+    /// <summary>
+    /// Finds a level control, sets it if a dB was asked for and the card can take one, and reads
+    /// it back with the card's range.
+    /// </summary>
+    /// <returns>What the card reads back as, and the dB that was actually applied to it - which
+    /// is null when nothing was asked for and also when the ask was refused, so that the summary
+    /// line never claims to have set a level it did not.</returns>
+    private static (MixerVolumeState? State, double? Applied) Volume(
         IAlsaMixer mixer, IReadOnlyList<string> names, MixerDirection direction,
-        int? percent, Action<string> say)
+        string key, double? decibelsWanted, Action<string> say)
     {
         string side = direction == MixerDirection.Capture ? "capture" : "playback";
         if (Find(mixer, names) is not string control)
@@ -213,12 +257,12 @@ public static class MixerSetup
             // Only when the operator asked for something. A card that simply has no such control
             // and a configuration that never mentioned it is not news, and a line about it on
             // every start-up would be noise on every station of that card revision.
-            if (percent is not null)
+            if (decibelsWanted is not null)
             {
                 say(NotFound(names, mixer.Card));
             }
 
-            return null;
+            return (null, null);
         }
 
         // Said only when the file asked for this control, the same rule as the not-found line
@@ -227,27 +271,124 @@ public static class MixerSetup
         // every start-up, about a setting nobody has ever mentioned.
         void Skipped()
         {
-            if (percent is not null)
+            if (decibelsWanted is not null)
             {
                 say($"\"{control}\" on {mixer.Card} has no {side} volume, skipped");
             }
         }
 
-        if (percent is int target && !mixer.TrySetVolume(control, direction, target))
+        bool hasScale = mixer.TryReadDbRange(control, direction, out double minDb, out double maxDb);
+        double? applied = null;
+
+        if (decibelsWanted is double target)
         {
-            Skipped();
-            return null;
+            // Three ways this does not happen, and every one of them journals a sentence and
+            // carries on to the read-back rather than dropping the control from the report. The
+            // start-up path must never stop over a mixer, and the operator has to be able to see
+            // what the level actually is even when what they asked for was not possible.
+            if (!hasScale)
+            {
+                say(NoDbScale(control, mixer.Card, key));
+            }
+            else if (OutsideRange(target, minDb, maxDb))
+            {
+                say(OutOfRange(key, target, control, mixer.Card, minDb, maxDb));
+            }
+            else if (!mixer.TrySetDb(control, direction, target))
+            {
+                Skipped();
+                return (null, null);
+            }
+            else
+            {
+                applied = target;
+            }
         }
 
         mixer.Refresh();
         if (!mixer.TryReadVolume(control, direction, out int read, out double? decibels))
         {
             Skipped();
-            return null;
+            return (null, null);
         }
 
-        return new MixerVolumeState(control, read, decibels);
+        return (
+            new MixerVolumeState(
+                control,
+                hasScale ? decibels : null,
+                hasScale ? minDb : null,
+                hasScale ? maxDb : null,
+                read),
+            applied);
     }
+
+    /// <summary>
+    /// Why a set of settings cannot be put on this card, or null when it can - for a caller that
+    /// has to answer before it acts.
+    /// </summary>
+    /// <remarks>
+    /// <para><see cref="Apply"/> journals these and carries on, which is right for start-up: a
+    /// config file with one impossible level must not cost the station the other three controls,
+    /// or the station. An API request is the other case - there is somebody waiting for an answer
+    /// and nothing has been touched yet - so <c>/api/mixer</c> asks this first and refuses with
+    /// the sentence, rather than applying half of a request and reporting success.</para>
+    /// <para>Only the two dB refusals. A control the card has not got at all is left to
+    /// <see cref="Apply"/>'s "not found, skipped", which is what it has always done and what the
+    /// operator page relies on to mark a button missing.</para>
+    /// </remarks>
+    /// <param name="mixer">The card's mixer.</param>
+    /// <param name="wanted">What is about to be asked of it.</param>
+    public static string? WhyRefused(IAlsaMixer mixer, MixerSettings wanted)
+    {
+        ArgumentNullException.ThrowIfNull(mixer);
+        ArgumentNullException.ThrowIfNull(wanted);
+
+        return Refusal(wanted.CaptureControls, MixerDirection.Capture, CaptureKey, wanted.CaptureGainDb)
+            ?? Refusal(wanted.PlaybackControls, MixerDirection.Playback, PlaybackKey, wanted.PlaybackDb);
+
+        string? Refusal(
+            IReadOnlyList<string> names, MixerDirection direction, string key, double? wantedDb)
+        {
+            if (wantedDb is not double target || Find(mixer, names) is not string control)
+            {
+                return null;
+            }
+
+            if (!mixer.TryReadDbRange(control, direction, out double minDb, out double maxDb))
+            {
+                return NoDbScale(control, mixer.Card, key);
+            }
+
+            return OutsideRange(target, minDb, maxDb)
+                ? OutOfRange(key, target, control, mixer.Card, minDb, maxDb)
+                : null;
+        }
+    }
+
+    /// <summary>
+    /// Whether a level is off the end of a card's range, with a hundredth of a dB of slack.
+    /// </summary>
+    /// <remarks>
+    /// alsa-lib works in hundredths of a dB, so the range's own ends are exact to that and a
+    /// value that reads as exactly the maximum must not be refused for a floating-point hair.
+    /// </remarks>
+    private static bool OutsideRange(double decibels, double minDb, double maxDb) =>
+        decibels < minDb - 0.005 || decibels > maxDb + 0.005;
+
+    /// <summary>The sentence for a control the card publishes no dB scale for.</summary>
+    private static string NoDbScale(string control, string card, string key) =>
+        $"\"{control}\" on {card} has no dB scale, so {key} cannot be set - this card publishes "
+        + "only raw steps. The control is left exactly as the card has it.";
+
+    /// <summary>The sentence for a level off the end of the card's range, with the range in it.</summary>
+    private static string OutOfRange(
+        string key, double decibels, string control, string card, double minDb, double maxDb) =>
+        $"{key} {Db(decibels)} dB is outside the range of \"{control}\" on {card}, which is "
+        + $"{Db(minDb)} to {Db(maxDb)} dB. The control is left exactly as the card has it.";
+
+    /// <summary>A dB figure as every line here prints one: two places, invariant, ASCII.</summary>
+    public static string Db(double decibels) =>
+        decibels.ToString("0.00", CultureInfo.InvariantCulture);
 
     private static MixerSwitchState? Switch(
         IAlsaMixer mixer, IReadOnlyList<string> names, bool? on, Action<string> say)
@@ -317,22 +458,44 @@ public static class MixerSetup
         return $"no control named \"{first}\" on {card}{also}, skipped";
     }
 
-    private static string Describe(MixerVolumeState state, string side, int? asked)
+    private static string Describe(
+        MixerVolumeState state, string side, double? applied, MixerSource source, bool tag)
     {
-        string db = state.Decibels is double value
-            ? " / " + value.ToString("0.00", CultureInfo.InvariantCulture) + " dB"
-            : "";
-        string set = asked is int percent ? $" (set {percent}%)" : "";
-        return $"{state.Control} {side} {state.Percent}%{db}{set}";
+        // A card with no dB scale has only a percentage to report, and saying which it is
+        // matters: "57%" and "57 dB" would be a catastrophic thing to confuse on a transmitter.
+        string level = state is { Decibels: double value, MinDb: double min, MaxDb: double max }
+            ? $"{Db(value)} dB of {Db(min)} to {Db(max)} dB"
+            : $"{state.Percent}% (no dB scale)";
+        string set = applied is double asked
+            ? $" (set {Db(asked)} dB{From(source)})"
+            : tag ? " (left as found)" : "";
+        return $"{state.Control} {side} {level}{set}";
     }
 
-    private static string Describe(MixerSwitchState state, bool? asked)
+    private static string Describe(MixerSwitchState state, bool? asked, MixerSource source, bool tag)
     {
         // A switch cannot be quantised, so the read-back alone says everything - unless the card
         // did not take it, which is the one case worth spelling out.
-        string disagreed = asked is bool wanted && wanted != state.On
-            ? $" (set {(wanted ? "on" : "off")}, the card did not take it)"
-            : "";
-        return $"{state.Control} {(state.On ? "on" : "off")}{disagreed}";
+        if (asked is not bool wanted)
+        {
+            return $"{state.Control} {(state.On ? "on" : "off")}{(tag ? " (left as found)" : "")}";
+        }
+
+        string how = wanted != state.On
+            ? $" (set {(wanted ? "on" : "off")}{From(source)}, the card did not take it)"
+            : From(source) is { Length: > 0 } named ? $" ({named[2..]})" : "";
+        return $"{state.Control} {(state.On ? "on" : "off")}{how}";
     }
+
+    /// <summary>", config" or ", state file" for a value that has a recorded source.</summary>
+    /// <remarks>
+    /// Empty for a change coming in over the API, which has no source to name beyond the person
+    /// who just made it: "(set 6.00 dB)" in answer to a request that said 6.00 dB is enough.
+    /// </remarks>
+    private static string From(MixerSource source) => source switch
+    {
+        MixerSource.Config => ", config",
+        MixerSource.StateFile => ", state file",
+        _ => "",
+    };
 }
