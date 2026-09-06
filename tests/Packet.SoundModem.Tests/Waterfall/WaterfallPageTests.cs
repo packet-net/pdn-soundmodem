@@ -1140,9 +1140,10 @@ public class WaterfallPageTests
     /// shown on the strength of the answer to its own probe, and this station answers it. The
     /// browser here has nothing in <c>localStorage</c> - no APIKEY is given - so a group that
     /// still wanted a key would come back locked and reading "key needed".</para>
-    /// <para>The public page is the assertion that matters second: the same open API behind a
-    /// page dressed for strangers still shows nothing, because a visitor's browser is not the
-    /// operator's whatever the station has opened.</para>
+    /// <para>The public page is the second half, and it is built as the daemon builds one: a
+    /// public station never installs the API open, so the visitor's page probes a closed endpoint
+    /// and has no group to show. The other half of that claim - that the page hides the group
+    /// even where the endpoint does answer - is the keyed test above.</para>
     /// </remarks>
     [Fact]
     public async Task An_Open_Mixer_Group_Needs_No_Key_And_Is_Still_Not_On_The_Public_Page()
@@ -1192,10 +1193,29 @@ public class WaterfallPageTests
             probe.MixerAfterGain!.Read.Should().Be("6.0 dB of -12 to 23");
             card.CaptureDb("Mic").Should().Be(6, "and the slider reached the card, with no key");
 
+            // The same station and the same card dressed for the public, built the way the daemon
+            // builds one: "public": true zeroes the flag before the API is constructed
+            // (WaterfallConfig.AudioControlsOpen, pinned in DaemonConfigTests), so the visitor's
+            // page probes a CLOSED endpoint. Hanging the open handler on a public server would
+            // have tested the opposite of what ships - a public site with its card in reach - and
+            // the page hiding the group in front of an open endpoint is already covered by the
+            // keyed test above.
+            var closed = new ConfigApi(
+                "", configPath, Path.Combine(dir, "pending.json"),
+                runningJson: () => File.ReadAllText(configPath),
+                ephemeralInForce: false,
+                requestRestart: () => throw new InvalidOperationException(
+                    "a mixer change must never restart the station"),
+                openAudioControls: false);
+            closed.ServeMixer(MixerRuntime.Start(
+                card,
+                new AlsaMixerConfig { StateFile = Path.Combine(dir, "mixer-state.json") },
+                configPath, "plughw:1,0", _ => { }, out _)!);
+
             int publicPort = FreePorts.Next();
             await using var publicServer = new WaterfallWebServer(
                 channel, publicPort, new WaterfallOptions { Public = true, Title = "packet monitor" });
-            publicServer.ApiHandler = api.HandleAsync;
+            publicServer.ApiHandler = closed.HandleAsync;
             publicServer.Start();
 
             Probe visitor = await RunProbeAsync(node, publicPort);

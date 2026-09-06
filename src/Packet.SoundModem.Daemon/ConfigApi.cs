@@ -455,12 +455,21 @@ internal sealed class ConfigApi
 
         if (path is "/api/mixer")
         {
-            if (open && context.Request.HttpMethod == "POST" && !SameSite(context.Request))
+            // Only a keyless one. A caller holding the shared secret has better evidence than
+            // a header the browser wrote, and refusing them would take away something the key
+            // used to buy on a station that has both. The length check is not decoration:
+            // FixedTimeEquals of two empty arrays is true, so on a station with no key an empty
+            // X-API-Key would otherwise "match" and skip the check below.
+            bool keyed = _key.Length > 0 && Authorised(context.Request);
+
+            if (open && !keyed && context.Request.HttpMethod == "POST"
+                && !SameSite(context.Request))
             {
                 await RespondAsync(context, 403,
                     "forbidden: this request came from a page this station did not serve, and "
-                    + "\"waterfall\".\"enableAudioControls\" asks for no key. A page of your own "
-                    + "and a client that sends no Origin header (curl, a script) are both fine.")
+                    + "\"waterfall\".\"enableAudioControls\" asks for no key. A page of your own, "
+                    + "a client that sends no Origin header (curl, a script), and a caller "
+                    + "presenting the api key are all fine.")
                     .ConfigureAwait(false);
                 return true;
             }
@@ -803,6 +812,15 @@ internal sealed class ConfigApi
     /// ambient credentials for somebody else's page to borrow. See
     /// <see cref="Waterfall.WaterfallWebServer.OriginMayKey"/>, which this calls rather than
     /// reimplements: two dialects of one rule drift apart.
+    /// <para>Asked of a POST and not of a GET, deliberately. Nothing is served with CORS headers
+    /// anywhere in this tree, so a foreign page can issue the read and cannot see the answer,
+    /// and the answer is what the operator's page already shows anyway. What it cannot do is
+    /// change the card.</para>
+    /// <para>What this rule buys is that a page cannot reach the station <em>by name</em>. It
+    /// compares against the Host of the same request, so a page that rebinds its own name to
+    /// this station's address arrives with the two agreeing and gets through - inherited from
+    /// the transmit test, which has the same hole (issue #423), and a reason the flag belongs on
+    /// a network the operator trusts rather than a defence to lean on.</para>
     /// </remarks>
     private static bool SameSite(HttpListenerRequest request) =>
         Waterfall.WaterfallWebServer.OriginMayKey(

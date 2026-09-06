@@ -479,25 +479,34 @@ public class DaemonConfigTests : IDisposable
 
     /// <summary>
     /// The page's Mixer group and <c>/api/mixer</c> without an <c>api.key</c>: read as written,
-    /// and off on a file that says nothing about it.
+    /// off on a file that says nothing about it, and off on a public page whatever it says.
     /// </summary>
     /// <remarks>
-    /// Off by default is the whole safety of it: every station that upgrades onto this release
-    /// keeps the behaviour it had, where the card is out of reach without the key.
+    /// <para>Off by default is the whole safety of it: every station that upgrades onto this
+    /// release keeps the behaviour it had, where the card is out of reach without the key.</para>
+    /// <para><c>AudioControlsOpen</c> is the last column and the one that matters. That single
+    /// "and not public" is the whole of "never on a public page" - the page, the GET and the POST
+    /// all follow from whether the daemon installs the API open - and it lives on the config
+    /// object so that this test can reach it. In <c>Program.cs</c> it was a conjunction in
+    /// top-level statements that no test constructs, where dropping it would have left the suite
+    /// green and the card in reach of strangers.</para>
     /// </remarks>
     [Theory]
-    [InlineData("""{"device": "null", "waterfall": {"port": 8107, "enableAudioControls": true}}""", true)]
-    [InlineData("""{"device": "null", "waterfall": {"port": 8107, "enableAudioControls": false}}""", false)]
-    [InlineData("""{"device": "null", "waterfall": {"port": 8107}}""", false)]
+    [InlineData("""{"device": "null", "waterfall": {"port": 8107, "enableAudioControls": true}}""", true, true)]
+    [InlineData("""{"device": "null", "waterfall": {"port": 8107, "enableAudioControls": false}}""", false, false)]
+    [InlineData("""{"device": "null", "waterfall": {"port": 8107}}""", false, false)]
+    [InlineData("""{"device": "null", "waterfall": {"port": 8099, "public": true, "enableAudioControls": true}}""", true, false)]
     public void The_Page_May_Set_The_Card_Without_A_Key_Only_When_The_File_Says_So(
-        string json, bool open)
+        string json, bool asked, bool served)
     {
         string path = WriteConfig(json);
 
         DaemonConfig? config = DaemonConfig.TryLoad(path, out string error);
 
         config.Should().NotBeNull(error);
-        config!.Waterfall!.EnableAudioControls.Should().Be(open);
+        config!.Waterfall!.EnableAudioControls.Should().Be(asked, "the file is read as written");
+        config.Waterfall.AudioControlsOpen.Should().Be(
+            served, "a public page never carries the operator's mixer, whatever the file asks for");
         config.Warnings.Should().BeEmpty();
     }
 

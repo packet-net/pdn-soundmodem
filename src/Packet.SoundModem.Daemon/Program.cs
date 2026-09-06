@@ -1265,7 +1265,7 @@ if (benchTxTest is null && waterfallConfig is not null)
     // own LAN or over SSH. Never on a public page: the group is not on one whatever the config
     // says, so opening the endpoint behind it would put the card in reach of strangers and put
     // nothing on the page for the operator. Said rather than ignored quietly.
-    openAudioControls = waterfallConfig.EnableAudioControls && !waterfallConfig.Public;
+    openAudioControls = waterfallConfig.AudioControlsOpen;
     if (waterfallConfig.EnableAudioControls && waterfallConfig.Public)
     {
         Console.Error.WriteLine(
@@ -2614,7 +2614,8 @@ else
 using AlsaMixer? mixerLifetime = mixer;
 
 // The operator page's mixer group and any script that wants the card's state come through here,
-// under the same key as every other change. A station with no mixer says so rather than 404ing,
+// under the same key as every other change - or under no key at all, where
+// "waterfall"."enableAudioControls" says so. A station with no mixer says so rather than 404ing,
 // so the page can tell "no mixer here" from "this daemon is too old to have the endpoint".
 if (mixerRuntime is MixerRuntime liveMixer)
 {

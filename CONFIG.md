@@ -1002,7 +1002,8 @@ Both are recommendations, not forced defaults. The daemon writes neither unless 
 
 On a sound card the mixer is opened and read whether or not the file asks for anything, so the
 journal records the level the station is actually listening at. Nothing is written to the card
-unless a key said so, or a change made on the operator page was remembered from an earlier run.
+unless a key said so, or a change made on the operator page (with an `api.key`, or with
+[`enableAudioControls`](#waterfall)) was remembered from an earlier run.
 
 ### Where a page change is remembered
 
@@ -1062,9 +1063,9 @@ With an [`api`](#api) key set, the operator page grows a **Mixer** group beside 
 a capture-gain slider **bounded by the card's own dB range**, with the level and the range beside
 it, and AGC and Mic Boost buttons. A change is kept: it goes to the state file and the next
 start-up sets it again. The group is never on the public page, and it is not there at all on a
-station with no `api.key` or no sound card - which also means **a station without an `api.key`
-has no page mixer control and nothing ever writes the state file**. See [`api`](#api) for
-`/api/mixer`.
+station with no `api.key` or no sound card - which also means **a station with neither an
+`api.key` nor [`enableAudioControls`](#waterfall) has no page mixer control and nothing ever
+writes the state file**. See [`api`](#api) for `/api/mixer`.
 
 **Or with no key at all**, on a station whose page only the operator can reach:
 [`"waterfall": { "enableAudioControls": true }`](#waterfall). The group is the same group and the
@@ -1165,11 +1166,13 @@ unchanged and is still the default.
 
 It opens that one endpoint. `/api/config`, `/api/proposals` and `/api/txtest` still want the
 `api.key`, and are still a 404 on a station that has not got one; with both a key and this flag
-set, the key is what the rest of the API asks for and the mixer is the exception. A `POST`
-carrying an `Origin` header from somewhere this station did not serve is refused with `403` - a
-browser sets that header itself and script cannot change it, so a page the operator's browser
-happens to load cannot reach into the card - while `curl` and a script, which send no `Origin` at
-all, are left alone. And it is never on a public page: `"public": true` together with this is
+set, the key is what the rest of the API asks for and the mixer is the exception. A **keyless**
+`POST` carrying an `Origin` header from somewhere this station did not serve is refused with
+`403` - a browser sets that header itself and script cannot change it, so a page the operator's
+browser happens to load cannot reach into the card **by name**; a page that rebinds its own name
+to this station's address still can, which is another reason this belongs on a network you trust.
+`curl` and a script, which send no `Origin` at all, are left alone, and so is a caller presenting
+the `api.key`, which is better evidence than the header. And it is never on a public page: `"public": true` together with this is
 ignored, with a line at start-up saying so, because a public page has no Mixer group to put it in
 and the visitors are strangers.
 
@@ -1430,8 +1433,9 @@ the operator is trimming it against.
 **This is the one endpoint that can be open**, with
 [`"waterfall": { "enableAudioControls": true }`](#waterfall): it then answers with no key, on a
 station that has one and on a station that has not, while everything else under `/api/` goes on
-wanting the key. A `POST` from a page this station did not serve (an `Origin` header naming
-somewhere else) is refused with `403`; `curl`, which sends no `Origin`, is not affected.
+wanting the key. A **keyless** `POST` from a page this station did not serve (an `Origin` header
+naming somewhere else) is refused with `403`; `curl`, which sends no `Origin`, and a caller that
+presents the `api.key` are both unaffected.
 
 ```
 $ curl -s -H "X-API-Key: $KEY" http://radio:8107/api/mixer

@@ -1021,6 +1021,20 @@ public sealed class WaterfallConfig
     /// </remarks>
     public bool EnableAudioControls { get; set; }
 
+    /// <summary>
+    /// Whether this station actually serves the open controls: <see cref="EnableAudioControls"/>
+    /// and not a <see cref="Public"/> page.
+    /// </summary>
+    /// <remarks>
+    /// One property rather than the same conjunction at the start-up block, because this single
+    /// "and not public" is the whole of "never on a public page" - for the page, the GET and the
+    /// POST at once, since all three follow from whether the API is installed open. Written where
+    /// a test can reach it: a tidy-up that dropped the clause in <c>Program.cs</c>, which is
+    /// top-level statements no test constructs, would have left the suite green.
+    /// </remarks>
+    [JsonIgnore]
+    internal bool AudioControlsOpen => EnableAudioControls && !Public;
+
     /// <summary>Public page title, in the tab and at the top of the page. Null keeps the
     /// page's own.</summary>
     public string? Title { get; set; }

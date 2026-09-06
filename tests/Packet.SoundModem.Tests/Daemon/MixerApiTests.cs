@@ -150,6 +150,44 @@ public class MixerApiTests : IDisposable
 
         allowed.StatusCode.Should().Be(HttpStatusCode.OK);
         station.Card.CaptureDb("Mic").Should().Be(0);
+
+        // And an empty key header is not a key. CryptographicOperations.FixedTimeEquals of two
+        // empty arrays is true, so without the length check in front of it an empty X-API-Key
+        // would read as "authorised" on a station that has no key, and skip this gate.
+        var blank = new HttpRequestMessage(HttpMethod.Post, new Uri(station.Url, UriKind.Absolute))
+        {
+            Content = new StringContent("""{"captureGainDb": 6}""", Encoding.UTF8, "application/json"),
+        };
+        blank.Headers.Add("Origin", "http://someone-elses-page.example");
+        blank.Headers.TryAddWithoutValidation("X-API-Key", "");
+
+        HttpResponseMessage stillRefused = await station.Client.SendAsync(blank);
+
+        stillRefused.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        station.Card.CaptureDb("Mic").Should().Be(
+            0, "and the card is still where the last one left it");
+    }
+
+    /// <summary>
+    /// A caller holding the <c>api.key</c> is not origin-checked: the key is better evidence than
+    /// a header the browser wrote, and the flag must not take away what the key used to buy.
+    /// </summary>
+    [Fact]
+    public async Task A_Correct_Key_Changes_The_Card_Whatever_Origin_It_Carries()
+    {
+        using var station = new Station(_dir, FakeMixer.Cm108(), openAudioControls: true);
+
+        var keyed = new HttpRequestMessage(HttpMethod.Post, new Uri(station.Url, UriKind.Absolute))
+        {
+            Content = new StringContent("""{"captureGainDb": 2}""", Encoding.UTF8, "application/json"),
+        };
+        keyed.Headers.Add("Origin", "http://someone-elses-page.example");
+
+        // The station's own client carries the key, as the operator page does.
+        HttpResponseMessage answer = await station.Client.SendAsync(keyed);
+
+        answer.StatusCode.Should().Be(HttpStatusCode.OK, await answer.Content.ReadAsStringAsync());
+        station.Card!.CaptureDb("Mic").Should().Be(2);
     }
 
     /// <summary>
