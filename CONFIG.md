@@ -1217,6 +1217,17 @@ counted on the card's own samples instead, before the decimator, and only an exa
 code counts - a converter that runs out of range produces the rail, not a value near it. Peak and
 RMS are reported clamped to 0 dBFS, which is the top of the scale by definition.
 
+**And per decoded frame, the same question answered properly.** The meter reads the whole input
+five times a second, which is the right instrument for a slider and the wrong one for a frame: a
+qpsk3600 frame is over inside one of its intervals, and on an FM radio with the squelch open the
+noise between frames is louder than the frames, so the bar is a reading of the hiss. So every
+decoded frame carries its own peak as well - measured over the frame's own stretch of audio, in
+10 ms cells - shown on its row in the [decoded frames panel](#waterfall) and written into the
+[frame log](#framelog) as `peak_dbfs` and `clipped`. Same scale and the same target band, and a
+row is badged **`TOO LOUD`** at -3 dBFS or above (or with the card clipped) and **`TOO QUIET`**
+below -24 dBFS, which is 6 dB under the band. Nothing in between: every demodulator here is
+level-tolerant, so a badge is for a level worth acting on.
+
 **The rate.** Five readings a second, one per 200 ms. The boundary is checked when an audio block
 arrives, and the packet stations read 100 ms at a time (ARDOP 20 ms), so five is what you get; a
 station reading in blocks longer than 200 ms would get one per block. If nothing arrives for a
@@ -1381,6 +1392,18 @@ and its cyan edge as well as the dimming, so it reads as both: yours, and from b
 the page. The backlog is listed, never tagged onto the waterfall: those frames happened before
 the scroll on screen began and belong to no burst on it. Reconnecting rebuilds the panel from the
 log rather than stacking a second copy of the same frames.
+
+**Every row carries that frame's own audio level**, as `-14 dBFS`, with a **`TOO LOUD`** or
+**`TOO QUIET`** badge where it is worth acting on and nothing at all where it is not - and a
+sentence under the heading saying what the figure is and what to aim for. It is measured over the
+frame's own burst rather than over the meter's 200 ms interval, which is what makes it usable on
+the fast modes; see [the level meter](#the-level-meter) for the band and the thresholds. The
+`frame` message carries it as `peakDbFs` (one decimal), `clipped` and `level` (`loud`, `quiet`,
+or absent - the daemon's own verdict, so a monitor and a station cannot come to disagree about a
+row). Rows that arrive without those fields - this station's own transmissions, frames replayed
+from a log written before the columns existed, and frames relayed from a station running an older
+release - show nothing new. A relayed station's rows do carry the figure its own operator sees:
+the two numbers cross the uplink with the frame.
 
 **The transmit readout holds the last burst.** On a radio that reports its meters (a Flex), the
 header carries forward power and SWR. While the transmitter is up the figures are live and the
@@ -1707,6 +1730,8 @@ Omit the section and frames come and go without being written down. One row per 
 | `erased_bytes` | bytes the decode erased on the receiver's own confidence flags before Reed-Solomon repaired the frame - how a frame beyond the errors-only budget was still read. Null when no erasures were needed, or before the column existed |
 | `chased_bits` | wire bits chase decoding flipped outright - the receiver's least-confident bits, tried in combination after errors-only decoding and the erasure ladder both failed, each accepted attempt still leaving Reed-Solomon parity in reserve. The only rescue the 2-parity IL2P header has. Null when no chase was needed, or before the column existed |
 | `snr_db` | strength of the burst the frame arrived on: mean in-band power over the burst against a rolling minimum noise floor, in dB. **The band-tracker convention, not the 3 kHz-referenced SNR the simulation ladders quote** - the two differ by a bandwidth ratio and must not be compared without converting. Null when the band was quiet at decode time, and on rows from before the column existed |
+| `peak_dbfs` | how loud the audio the frame arrived on was: the loudest 10 ms of the frame's own burst, in dBFS, on the same scale as [the level meter](#the-level-meter). A measurement of the frame and not of the channel around it, which is the whole reason it is not the meter's reading. Null on transmitted rows, on rows from before the column existed, and where the frame's audio could not be placed |
+| `clipped` | 1 where the sound card ran out of codes during that same stretch, 0 where it had headroom, null where nothing was in a position to judge - only a station handing its card's own samples over can, since past the decimator full scale is not full scale any more. Null on transmitted rows and on rows from before the column existed |
 | `offset_hz` | how far off centre the sender actually was - measured, not the diversity branch that copied it; null where the decoder could not measure it |
 | `audio_hz`, `rf_hz` | where that modem sits - `rf_hz` filled in when you have given it an `rfFrequency` |
 | `payload` | the frame itself, as a blob |
@@ -1714,9 +1739,9 @@ Omit the section and frames come and go without being written down. One row per 
 **On a transmitted row, `heard_at` is when it went out.** The column keeps its name because
 renaming it would silently break every query, dashboard and example already written against this
 log - an ugly name is the smaller cost, and this is the note that stops it being a surprise. A
-transmitted row also leaves `corrected`, `crc_valid` and `offset_hz` **null**: those are receive
-measurements, and filling them in for our own transmission would be inventing a measurement of
-ourselves. Everything else - who to who, mode, length, where the modem sits, the payload - is
+transmitted row also leaves `corrected`, `crc_valid`, `offset_hz`, `peak_dbfs` and `clipped`
+**null**: those are receive measurements, and filling them in for our own transmission would be
+inventing a measurement of ourselves. Everything else - who to who, mode, length, where the modem sits, the payload - is
 recorded exactly as for a frame heard. A row is written once the audio has gone to the device, so
 a logged transmission is one that actually went on air.
 

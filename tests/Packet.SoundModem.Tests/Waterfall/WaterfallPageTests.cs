@@ -1461,6 +1461,69 @@ public class WaterfallPageTests
     }
 
     /// <summary>
+    /// Each frame row carries its own audio level, and a badge only where that level is worth
+    /// doing something about.
+    /// </summary>
+    /// <remarks>
+    /// <para>Tom, 2026-09-06 (issue #426): the meter reads the whole input five times a second,
+    /// which cannot answer "was that frame's audio right" on a mode whose frames are over inside
+    /// one of its intervals. So the figure goes on the row.</para>
+    /// <para>The fourth row is the one that matters most for the monitor: a station running a
+    /// version that does not measure this, a transmission, and anything whose audio could not be
+    /// placed all arrive without the fields, and must draw exactly as they did before there were
+    /// any.</para>
+    /// </remarks>
+    [Fact]
+    public async Task Each_Frame_Row_Carries_Its_Own_Level_And_Is_Badged_Only_When_It_Matters()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        Probe probe = await RunProbeAsync(node, port);
+
+        probe.Thrown.Should().BeEmpty("the page must not throw while listing a level");
+
+        // Newest first, so the four rows read backwards from the order they were sent.
+        probe.LevelRows[3].Should().Contain("-14 dBFS", "the figure is on the row, in whole dB")
+            .And.NotContain(">TOO LOUD<").And.NotContain(">TOO QUIET<",
+                "a frame inside the band to aim at earns no badge at all");
+        probe.LevelRows[2].Should().Contain("-1 dBFS").And.Contain(">TOO LOUD<")
+            .And.Contain("ran out of codes", "the row says the card clipped during it");
+        probe.LevelRows[1].Should().Contain("-39 dBFS").And.Contain(">TOO QUIET<");
+        probe.LevelRows[0].Should().NotContain("dBFS")
+            .And.NotContain(">TOO LOUD<").And.NotContain(">TOO QUIET<",
+                "a row that arrived without the fields shows nothing new");
+
+        probe.FramesHint.Should().Contain("-18 to -9 dBFS")
+            .And.Contain("TOO LOUD").And.Contain("TOO QUIET",
+                "and the list says once what the figure is and what to aim for");
+    }
+
+    /// <summary>
+    /// The page's own copy of the two per-frame thresholds, checked against the daemon's.
+    /// </summary>
+    /// <remarks>
+    /// The daemon decides which badge a frame gets and sends the word, so these two numbers are
+    /// on the page only to word the sentence under the list and the badges' tooltips. That is
+    /// exactly how a page comes to explain a rule it is not applying: pinned here, so a threshold
+    /// that moves in <see cref="InputLevelMeter"/> takes the page's wording with it.
+    /// </remarks>
+    [Fact]
+    public void The_Pages_Frame_Level_Thresholds_Are_The_Daemons()
+    {
+        string page = EmbeddedPageText();
+
+        page.Should().Contain($"FRAME_LOUD = {InputLevelMeter.FrameLoudPeakDbFs:0}")
+            .And.Contain($"FRAME_QUIET = {InputLevelMeter.FrameQuietPeakDbFs:0}");
+    }
+
+    /// <summary>
     /// The AGC and Boost buttons are gone from the page, not merely hidden.
     /// </summary>
     /// <remarks>
@@ -2179,6 +2242,8 @@ public class WaterfallPageTests
         string[] HistoryRowClasses,
         string HostileRow,
         string HostileChip,
+        string[] LevelRows,
+        string FramesHint,
         string? TxHistBorder,
         string? TxBorder,
         string? HistBorder,

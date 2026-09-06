@@ -3002,12 +3002,19 @@ using var station = new Station(
         BlockMilliseconds = ardopModem is null ? 100 : 20,
         SessionLive = uberSdrSessionLive,
 
-        // The card's own samples, for the level meter's clip indicator alone. The channel's tap
-        // is downstream of the decimator, where full scale is not full scale any more, so the one
-        // reading the page tells the operator to act on has to come from here. Null on a station
-        // with no page at all; on a page that was not offered a meter it costs one null check per
-        // block, which is what every other unused hook here costs.
-        CardRateTap = waterfallServer is { } metered ? metered.MeterInputClipping : null,
+        // The card's own samples, for the two things that have to judge audio on the scale the
+        // converter actually works on: the page's clip indicator, and the clip flag a decoded
+        // frame carries. The channel's own tap is downstream of the decimator, where full scale
+        // is not full scale any more, so neither reading can be taken there. Both want the same
+        // block, so they are composed here rather than either of them growing a second tap:
+        // there is one card, one block and one place it arrives.
+        CardRateTap = waterfallServer is { } metered
+            ? samples =>
+            {
+                channel.NoteCardClipping(samples);
+                metered.MeterInputClipping(samples);
+            }
+            : channel.NoteCardClipping,
 
         // A station that has deliberately given up its slice is silent on purpose, and restarting
         // it is the one response guaranteed to be wrong. Measured on the live 40 m station,

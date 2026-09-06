@@ -239,6 +239,13 @@
      the channel is busier than its rate limit, and nothing else anywhere says so. */
   #survey { font-family: var(--mono); letter-spacing: 0; text-transform: none; color: var(--muted); }
   #survey.busy { color: var(--amber); }
+  /* What the dBFS figure on a row means, said once and next to the list. The meter in the header
+     reads the whole input five times a second; this reads one frame, and nothing else on the page
+     would say which. */
+  #framesHint {
+    font: 10px/1.35 var(--sans); color: var(--muted); padding: 6px 12px;
+    border-bottom: 1px solid var(--edge);
+  }
   .fr.cap { border-left: 2px solid #b07de8; padding-left: 10px; }
   .fr.cap .from { color: #cba3f0; }
   .fr .dl { color: #7fb6e8; text-decoration: none; border-bottom: 1px dotted #47617d; }
@@ -271,6 +278,14 @@
      a check that was never there, and they must not read as the same event. Written as .id.rs so
      it outranks .fr.tx .id on the one row that could carry both. */
   .fr .id.rs { background: #f0b45a; }
+  /* How loud this frame's own audio was, where that is worth doing something about. Red for one
+     that clipped the card or came within 3 dB of it, cool grey for one far enough under the
+     target zone that the capture gain wants looking at, and nothing at all in between - every
+     demodulator here is level-tolerant, so a badge on a frame that decoded comfortably would be
+     noise on every row. After .fr.tx .id for the same reason .id.rs is: equal specificity, so
+     the later rule is the one that wins. */
+  .fr .id.loud { background: #e8695c; }
+  .fr .id.quiet { background: #8fa3b8; }
   /* A transmission deliberately shifted off the channel centre, to land where an off-frequency
      station's receiver is actually listening. Marked because a signal that is not where the band
      plan says it should be is otherwise indistinguishable from a fault, and because the whole
@@ -605,6 +620,7 @@
   </div>
   <aside id="log">
     <h2>Decoded frames<span id="survey" hidden></span></h2>
+    <div id="framesHint"></div>
     <div id="frames"><div class="empty">Nothing decoded yet. Frames appear here and as tags on the waterfall; what this station sends is listed too, marked TX.</div></div>
   </aside>
 </main>
@@ -1097,6 +1113,7 @@ function initControls() {
     $("floor").value = ui.floorDb; $("top").value = ui.topDb; save();
   });
 
+  initFramesHint();
   initMeter();
   initMixer();
 }
@@ -1283,6 +1300,13 @@ const MIX_TARGET_LOW = -18;  // the green band, on received-signal peaks
 const MIX_TARGET_HIGH = -9;
 const MIX_QUIET = -30;       // under this the bar goes grey: quieter than it needs to be
 const MIX_HOT = -3;          // over this the bar goes red: less headroom than a receive path keeps
+// And the two edges a single decoded frame is judged against, which are not the meter's: the
+// meter's grey is about a bar with nothing on the channel, and a frame is a signal. The daemon
+// decides which badge a frame gets and sends the word (WaterfallWebServer.LevelTag); the page
+// keeps its own copy of the numbers only to word the sentence under the list and the badges'
+// tooltips, and a test pins the two copies together.
+const FRAME_LOUD = -3;       // at or above this, or with the card clipped: TOO LOUD
+const FRAME_QUIET = -24;     // below this: TOO QUIET
 // How long a clip stays lit, and how long a bar is trusted after the last reading. Both are
 // timers of their own rather than something re-evaluated on the next message, because the case
 // that matters is the one where the next message does NOT come: the receive tap is gated while
@@ -1311,6 +1335,16 @@ function initMeter() {
   $("mixAdvice").textContent =
     `Aim for received signals to peak in the green, ${MIX_TARGET_LOW} to ${MIX_TARGET_HIGH} dBFS;`
     + ` never into the red, and with nothing on the channel the bar should sit below ${MIX_QUIET}.`;
+}
+
+// The one sentence that says what the figure on a frame row is. Written from the constants above
+// so the sentence, the badges and the daemon's verdict cannot come to say three different things,
+// and phrased to match the meter's advice: the target band is the same band.
+function initFramesHint() {
+  $("framesHint").textContent =
+    "Each row carries that frame's own peak level, measured over its burst rather than over the"
+    + ` meter's interval. Aim for ${MIX_TARGET_LOW} to ${MIX_TARGET_HIGH} dBFS; ${FRAME_LOUD} and`
+    + ` above, or a clipped card, is TOO LOUD, and below ${FRAME_QUIET} is TOO QUIET.`;
 }
 
 // No reading for a second: the bar is emptied and says so, rather than sitting frozen at whatever
@@ -1719,6 +1753,14 @@ function logFrame(ev) {
         ? "Plain IL2P: no trailing CRC, so Reed-Solomon alone stood behind this frame. Shown here and NOT passed to the KISS host - set acceptPlainIl2p on this modem if you want these delivered."
         : "Plain IL2P: no trailing CRC, so Reed-Solomon alone stood behind this frame. Passed to the KISS host, because this modem sets acceptPlainIl2p."}">RS ONLY</span>`
     : "";
+  // How loud this frame's own audio was, where it is worth saying. The daemon's verdict rather
+  // than the page's arithmetic: it measured the level over the frame's own burst and decided, so
+  // a monitor listing somebody else's frames badges them exactly as that station's own page does.
+  const level = ev.level === "loud"
+    ? `<span class="id loud" title="This frame's audio peaked at ${FRAME_LOUD} dBFS or above, or the sound card ran out of codes during it. Clipping is the failure that actually costs decodes: turn the capture gain down, or the sending station's transmit audio.">TOO LOUD</span>`
+    : ev.level === "quiet"
+      ? `<span class="id quiet" title="This frame's audio peaked below ${FRAME_QUIET} dBFS, well under the ${MIX_TARGET_LOW} to ${MIX_TARGET_HIGH} dBFS band to aim at. Every demodulator here is level-tolerant, so this is advice rather than a fault - but it is where headroom is being given away.">TOO QUIET</span>`
+      : "";
   const trim = ev.txTrimHz != null
     ? `<span class="trim" title="Transmitted ${ev.txTrimHz.toFixed(1)} Hz off the channel centre, to land where this station's receiver is listening. Measured from its own frames: its transmit and receive share one oscillator, so a station heard high is listening high.">SHIFTED</span>`
     : "";
@@ -1728,10 +1770,15 @@ function logFrame(ev) {
   // somebody else's station never went through.
   const who = (ev.from
     ? `<span class="from">${esc(ev.from)}</span><span class="arrow">›</span><span class="to">${esc(ev.to || "?")}</span>`
-    : `<span class="to">unattributed</span>`) + badge + plain + trim;
+    : `<span class="to">unattributed</span>`) + badge + plain + level + trim;
   const bits = [];
   bits.push(`${ev.sub}·${esc(ev.mode)}`);
   if (ev.snrDb != null) bits.push(`<i>${ev.snrDb.toFixed(1)} dB</i>`);
+  // Whole dB. The card's own steps are whole dB and this is a figure to act on, not to trend.
+  if (ev.peakDbFs != null) {
+    bits.push(`<i title="Peak audio level of this frame's own burst, at the station's input${
+      ev.clipped ? " - and the card ran out of codes during it" : ""}">${ev.peakDbFs.toFixed(0)} dBFS</i>`);
+  }
   if (ev.offsetHz != null) bits.push(`<i>${ev.offsetHz >= 0 ? "+" : ""}${ev.offsetHz.toFixed(0)} Hz</i>`);
   // Ours, and a command rather than a measurement, so it is worded as an aim and not as an
   // observation: "shifted +4 Hz", never "+4 Hz" alongside the offsets of stations we heard.

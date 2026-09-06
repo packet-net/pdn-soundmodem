@@ -147,6 +147,18 @@ public sealed record RelayedFrame
     /// <summary>Listed and logged, but not passed to the station's own KISS hosts.</summary>
     public bool MonitorOnly { get; init; }
 
+    /// <summary>
+    /// How loud the audio this frame arrived on was, in dBFS, over the frame's own stretch of it
+    /// (see <see cref="Modems.FrameQuality.PeakDbFs"/>). Null from a station running a version
+    /// that does not measure it, which is what makes it safe to add: a monitor lists such a row
+    /// exactly as it always did.
+    /// </summary>
+    public double? PeakDbFs { get; init; }
+
+    /// <summary>Whether that station's card ran out of codes during the same stretch; null where
+    /// it was not measured.</summary>
+    public bool? Clipped { get; init; }
+
     /// <summary>When the station decoded it, or sent it (UTC).</summary>
     public DateTimeOffset At { get; init; }
 

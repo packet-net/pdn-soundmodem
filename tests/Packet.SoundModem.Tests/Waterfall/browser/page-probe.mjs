@@ -631,6 +631,19 @@ const hostileRow = sandbox.document.getElementById("frames").children[0].innerHT
 run(`cfg.modems.push({sub: 9, mode: '<img src=x onerror=boom>', modeName: null, lowHz: 800, highHz: 900, centreHz: 850}); renderChips();`);
 const hostileChip = sandbox.document.getElementById("chips").children.map(c => c.innerHTML).pop();
 
+// A frame's own audio level, which the daemon measures over the frame's burst and hands over
+// already judged: the figure on the row, and a badge only where the level is worth acting on.
+// Driven last and captured on its own, so these four rows move nobody else's. The fourth is a
+// station running a version that does not measure it, or a transmission, or anything the level
+// could not be placed for - which must draw exactly as it always did.
+run(`onFrameEvent({sub:0, mode:"qpsk3600-il2pc", from:"GB7RDG", to:"M0LTE", line:0, lenBytes:31, snrDb:19.4, peakDbFs:-14.2, clipped:false})`);
+run(`onFrameEvent({sub:0, mode:"qpsk3600-il2pc", from:"G0AAA", to:"M0LTE", line:0, lenBytes:31, peakDbFs:-1.4, clipped:true, level:"loud"})`);
+run(`onFrameEvent({sub:0, mode:"qpsk3600-il2pc", from:"G0BBB", to:"M0LTE", line:0, lenBytes:31, peakDbFs:-38.6, clipped:false, level:"quiet"})`);
+run(`onFrameEvent({sub:0, mode:"qpsk3600-il2pc", from:"G0CCC", to:"M0LTE", line:0, lenBytes:31, snrDb:11.0})`);
+// Newest first, as the panel prepends: the one with no level is on top.
+const levelRows = sandbox.document.getElementById("frames").children.map(c => c.innerHTML).slice(0, 4);
+const framesHint = sandbox.document.getElementById("framesHint").textContent;
+
 // What a public deployment dresses the page with, as the handshake left it: the title, the
 // about strip with the receiver credit, and the body class the stylesheet keys off.
 //
@@ -807,6 +820,8 @@ process.stdout.write(JSON.stringify({
   historyRowClasses: afterHistory.map(c => c.className),
   hostileRow,
   hostileChip,
+  levelRows,
+  framesHint,
   linksHiddenBefore,
   linksHiddenAfter,
   linksOnArrival,

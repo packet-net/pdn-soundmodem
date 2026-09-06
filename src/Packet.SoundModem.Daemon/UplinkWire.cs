@@ -262,6 +262,11 @@ internal static class UplinkWire
             FrameHex = Capped(root, "hex", NoteCap),
             PlainIl2p = Bool(root, "plain") ?? false,
             MonitorOnly = Bool(root, "monitorOnly") ?? false,
+            // Absent from a station that does not measure them, and left null rather than
+            // defaulted: a row with no level shows none, which is what every page did before
+            // there was one.
+            PeakDbFs = Finite(root, "peakDbFs"),
+            Clipped = Bool(root, "clipped"),
             // Clamped to a day either side of this site's own clock. A station is a semi-trusted
             // publisher and this is the one field of its own it could use against itself: a frame
             // dated in the year 9999 is written into the site's copy of its log and sorts above
