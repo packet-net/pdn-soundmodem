@@ -55,17 +55,25 @@ internal sealed class ConfigApi
     private readonly Func<string> _runningJson;
     private readonly Action _requestRestart;
     private readonly bool _ephemeralInForce;
+    private readonly bool _openAudioControls;
 
-    /// <param name="key">The shared secret every request must present.</param>
+    /// <param name="key">The shared secret every request must present. Empty serves nothing but
+    /// an open mixer.</param>
     /// <param name="configPath">The config file, for <c>?persist=true</c>.</param>
     /// <param name="ephemeralPath">Where a non-persisted change is left for the next start-up.</param>
     /// <param name="runningJson">The configuration this process is running, as JSON.</param>
     /// <param name="ephemeralInForce">Whether this process started from an ephemeral change.</param>
     /// <param name="requestRestart">Asks the daemon to shut down for systemd to bring back.</param>
+    /// <param name="openAudioControls">
+    /// Whether <c>/api/mixer</c> answers without a key, from
+    /// <c>"waterfall"."enableAudioControls"</c>. It opens that one endpoint and nothing else.
+    /// </param>
     public ConfigApi(
         string key, string configPath, string ephemeralPath,
-        Func<string> runningJson, bool ephemeralInForce, Action requestRestart)
+        Func<string> runningJson, bool ephemeralInForce, Action requestRestart,
+        bool openAudioControls = false)
     {
+        _openAudioControls = openAudioControls;
         _key = key;
         _configPath = configPath;
         _ephemeralPath = ephemeralPath;
@@ -414,7 +422,22 @@ internal sealed class ConfigApi
             return false;
         }
 
-        if (!Authorised(context.Request))
+        // The one endpoint that can be open: "waterfall"."enableAudioControls" (Tom, 2026-09-06).
+        // It is the operator's own capture gain, on the operator's own page, on a station whose
+        // operator asked for it in the config file. Everything else here can retune the radio and
+        // key the transmitter, and still wants the key - including on a station that also has one,
+        // where this flag decides the mixer and nothing more.
+        bool open = _openAudioControls && path is "/api/mixer";
+
+        if (!open && _key.Length == 0)
+        {
+            // No key configured, so there is nothing to present one to. A 404, which is what this
+            // path answered before the flag gave a keyless station a reason to install a handler
+            // at all - a station without an "api" section still has no configuration API.
+            return false;
+        }
+
+        if (!open && !Authorised(context.Request))
         {
             // 401 without a WWW-Authenticate challenge on purpose: this is a machine interface
             // with a shared secret, and inviting a browser to pop a password box would suggest
@@ -432,6 +455,25 @@ internal sealed class ConfigApi
 
         if (path is "/api/mixer")
         {
+            // Only a keyless one. A caller holding the shared secret has better evidence than
+            // a header the browser wrote, and refusing them would take away something the key
+            // used to buy on a station that has both. The length check is not decoration:
+            // FixedTimeEquals of two empty arrays is true, so on a station with no key an empty
+            // X-API-Key would otherwise "match" and skip the check below.
+            bool keyed = _key.Length > 0 && Authorised(context.Request);
+
+            if (open && !keyed && context.Request.HttpMethod == "POST"
+                && !SameSite(context.Request))
+            {
+                await RespondAsync(context, 403,
+                    "forbidden: this request came from a page this station did not serve, and "
+                    + "\"waterfall\".\"enableAudioControls\" asks for no key. A page of your own, "
+                    + "a client that sends no Origin header (curl, a script), and a caller "
+                    + "presenting the api key are all fine.")
+                    .ConfigureAwait(false);
+                return true;
+            }
+
             await GuardedAsync(context, () => MixerAsync(context)).ConfigureAwait(false);
             return true;
         }
@@ -757,6 +799,32 @@ internal sealed class ConfigApi
             Directory.CreateDirectory(directory);
         }
     }
+
+    /// <summary>
+    /// Whether a keyless mixer change may be acted on, given where the page that sent it came
+    /// from.
+    /// </summary>
+    /// <remarks>
+    /// The same rule as the operator page's transmit test, and the same reasoning: with no key in
+    /// front of it, the only thing between the card and a page the operator's browser happens to
+    /// load is that a browser sets <c>Origin</c> itself and script cannot change it. A non-browser
+    /// client - curl, a script, the test suite - sends none at all and is left alone, having no
+    /// ambient credentials for somebody else's page to borrow. See
+    /// <see cref="Waterfall.WaterfallWebServer.OriginMayKey"/>, which this calls rather than
+    /// reimplements: two dialects of one rule drift apart.
+    /// <para>Asked of a POST and not of a GET, deliberately. Nothing is served with CORS headers
+    /// anywhere in this tree, so a foreign page can issue the read and cannot see the answer,
+    /// and the answer is what the operator's page already shows anyway. What it cannot do is
+    /// change the card.</para>
+    /// <para>What this rule buys is that a page cannot reach the station <em>by name</em>. It
+    /// compares against the Host of the same request, so a page that rebinds its own name to
+    /// this station's address arrives with the two agreeing and gets through - inherited from
+    /// the transmit test, which has the same hole (issue #423), and a reason the flag belongs on
+    /// a network the operator trusts rather than a defence to lean on.</para>
+    /// </remarks>
+    private static bool SameSite(HttpListenerRequest request) =>
+        Waterfall.WaterfallWebServer.OriginMayKey(
+            new Waterfall.PageOrigin(request.Headers["Origin"] ?? "", request.UserHostName ?? ""));
 
     private bool Authorised(HttpListenerRequest request)
     {

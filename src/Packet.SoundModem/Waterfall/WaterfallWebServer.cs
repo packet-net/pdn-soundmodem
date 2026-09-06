@@ -1892,8 +1892,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// where there is something to defend: a public page and a relayed one carry no transmit
     /// control, and they are the pages most likely to sit behind a tunnel or a proxy that could
     /// make a legitimate origin and host disagree.</para>
+    /// <para>Public rather than internal because the daemon asks the same question of a keyless
+    /// <c>POST /api/mixer</c> ("waterfall"."enableAudioControls"), and one rule with two
+    /// implementations is one rule that will drift.</para>
     /// </remarks>
-    internal static bool OriginMayKey(PageOrigin from)
+    public static bool OriginMayKey(PageOrigin from)
     {
         if (string.IsNullOrEmpty(from.Declared))
         {

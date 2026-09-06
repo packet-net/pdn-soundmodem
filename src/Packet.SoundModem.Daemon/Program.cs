@@ -1181,6 +1181,10 @@ if (wavPath is not null)
 // before audio flows: Start() measures every modem's band off its own modulator and
 // registers the channel receive tap.
 Packet.SoundModem.Waterfall.WaterfallWebServer? waterfallServer = null;
+// Whether the page's Mixer group and /api/mixer answer with no api.key, from
+// "waterfall"."enableAudioControls". Decided in the block below, where the page it opens is
+// started, and used again at the configuration API further down.
+bool openAudioControls = false;
 // Not on a --two-tone/--tone run: such a run lives for a few seconds, and a page or a scraper
 // that attached to it would lose it again immediately. It also means a bench run does not stop
 // with "cannot serve the waterfall" when the operator has left the service holding the port -
@@ -1257,6 +1261,19 @@ if (benchTxTest is null && waterfallConfig is not null)
 
     Console.WriteLine($"waterfall: {waterfallServer.Url}");
 
+    // The sound card's controls without a key, for the operator who reaches this page over their
+    // own LAN or over SSH. Never on a public page: the group is not on one whatever the config
+    // says, so opening the endpoint behind it would put the card in reach of strangers and put
+    // nothing on the page for the operator. Said rather than ignored quietly.
+    openAudioControls = waterfallConfig.AudioControlsOpen;
+    if (waterfallConfig.EnableAudioControls && waterfallConfig.Public)
+    {
+        Console.Error.WriteLine(
+            "waterfall: \"enableAudioControls\" is IGNORED on a \"public\" page. The Mixer group "
+            + "is the operator's and a public page never carries it; set \"api\".\"key\" and use "
+            + "api/mixer if a script has to reach this card.");
+    }
+
     // The same warning the KISS ports carry, for the same reason and now with a sharper one.
     // The page is read-only on a public deployment, but on an operator's own station it carries
     // the transmit test, and there is no password on it.
@@ -1270,7 +1287,11 @@ if (benchTxTest is null && waterfallConfig is not null)
             + (waterfallConfig.Public
                 ? "anything that can reach this port can watch this station."
                 : "on an operator's page it carries a transmit test: anything that can reach this "
-                  + "port can key your transmitter on your licence."));
+                  + "port can key your transmitter on your licence.")
+            + (openAudioControls
+                ? " \"enableAudioControls\" is on, so it also carries this sound card's mixer "
+                  + "with no key: anything that can reach this port can change your capture gain."
+                : ""));
     }
 }
 
@@ -1655,10 +1676,14 @@ using var cancellation = new CancellationTokenSource();
 // Runtime configuration, on the waterfall's listener. Off unless a key is set, and refused
 // outright if there is no listener to hang it on - an "api" section on a station with no
 // waterfall is a setting that would silently do nothing.
+// One other thing installs it: "waterfall"."enableAudioControls", which serves /api/mixer, and
+// only /api/mixer, with no key. That flag can only come from a config file and only where the
+// waterfall is running, so the two refusals below stay the "api" section's own.
 // Held beyond the block below because the sound card's mixer is opened much later, with the
 // audio device, and has to be handed to the API once it exists.
 ConfigApi? runtimeApi = null;
-if (benchTxTest is null && apiConfig?.Key is { Length: > 0 } apiKey)
+string apiKey = apiConfig?.Key ?? "";
+if (benchTxTest is null && (apiKey.Length > 0 || openAudioControls))
 {
     if (waterfallServer is null)
     {
@@ -1689,27 +1714,43 @@ if (benchTxTest is null && apiConfig?.Key is { Length: > 0 } apiKey)
             // has already been validated.
             restartRequested = true;
             cancellation.Cancel();
-        });
+        },
+        openAudioControls: openAudioControls);
     waterfallServer.ApiHandler = configApi.HandleAsync;
-    if (proposals is not null)
+
+    // One line, because this is the station's sound card in reach of whoever can reach the page,
+    // and an operator who has forgotten the flag is set should be told at every start-up.
+    if (openAudioControls)
     {
-        configApi.ServeProposals(proposals, prospectorCounts!);
         Console.WriteLine(
-            $"api: modem proposals over {waterfallServer.Url}api/proposals (key required); each "
-            + "carries the configuration to POST back to api/config.");
+            $"api: audio controls are OPEN - the page's Mixer group and {waterfallServer.Url}"
+            + "api/mixer answer with NO key, because \"waterfall\".\"enableAudioControls\" is "
+            + "true. Anything that can reach this port can change this card's levels.");
     }
 
-    Console.WriteLine(
-        $"api: configuration over {waterfallServer.Url}api/config (key required). "
-        + $"POST replaces it for one run; add ?persist=true to write {configPath}.");
-
-    // Said out loud because the whole apply path assumes something will restart the process. Run
-    // by hand, nothing will, and "it applied and then the station stopped" is a bad surprise.
-    if (Environment.GetEnvironmentVariable("INVOCATION_ID") is null)
+    if (apiKey.Length > 0)
     {
-        Console.Error.WriteLine(
-            "api: WARNING - this daemon does not appear to be running under systemd, so an "
-            + "applied change will STOP it rather than restart it onto the new configuration.");
+        if (proposals is not null)
+        {
+            configApi.ServeProposals(proposals, prospectorCounts!);
+            Console.WriteLine(
+                $"api: modem proposals over {waterfallServer.Url}api/proposals (key required); "
+                + "each carries the configuration to POST back to api/config.");
+        }
+
+        Console.WriteLine(
+            $"api: configuration over {waterfallServer.Url}api/config (key required). "
+            + $"POST replaces it for one run; add ?persist=true to write {configPath}.");
+
+        // Said out loud because the whole apply path assumes something will restart the process.
+        // Run by hand, nothing will, and "it applied and then the station stopped" is a bad
+        // surprise.
+        if (Environment.GetEnvironmentVariable("INVOCATION_ID") is null)
+        {
+            Console.Error.WriteLine(
+                "api: WARNING - this daemon does not appear to be running under systemd, so an "
+                + "applied change will STOP it rather than restart it onto the new configuration.");
+        }
     }
 }
 
@@ -2573,7 +2614,8 @@ else
 using AlsaMixer? mixerLifetime = mixer;
 
 // The operator page's mixer group and any script that wants the card's state come through here,
-// under the same key as every other change. A station with no mixer says so rather than 404ing,
+// under the same key as every other change - or under no key at all, where
+// "waterfall"."enableAudioControls" says so. A station with no mixer says so rather than 404ing,
 // so the page can tell "no mixer here" from "this daemon is too old to have the endpoint".
 if (mixerRuntime is MixerRuntime liveMixer)
 {

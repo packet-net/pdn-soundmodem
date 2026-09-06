@@ -43,6 +43,170 @@ public class MixerApiTests : IDisposable
         station.Card!.CaptureDb("Mic").Should().Be(8, "an unauthorised caller never reaches the card");
     }
 
+    /// <summary>
+    /// <c>"waterfall"."enableAudioControls"</c>: the card reads and sets with no key at all.
+    /// </summary>
+    /// <remarks>
+    /// The bench station's case. Its page is on a home LAN and it has no <c>api.key</c>, so
+    /// before this the Mixer group was hidden and this endpoint was a 404, and trimming a capture
+    /// gain meant `amixer` over SSH while watching the waterfall on another screen.
+    /// </remarks>
+    [Fact]
+    public async Task With_The_Flag_On_And_No_Key_The_Card_Reads_And_Sets()
+    {
+        using var station = new Station(
+            _dir, FakeMixer.Cm108(), openAudioControls: true, configuredKey: "",
+            presentTheKey: false);
+
+        JsonElement read = await station.GetAsync();
+        read.GetProperty("available").GetBoolean().Should().BeTrue();
+        read.GetProperty("capture").GetProperty("decibels").GetDouble().Should().Be(8);
+
+        JsonElement set = await station.PostAsync("""{"captureGainDb": 6}""");
+
+        set.GetProperty("capture").GetProperty("decibels").GetDouble().Should().Be(6);
+        station.Card!.CaptureDb("Mic").Should().Be(6, "no key was asked for and none was sent");
+        station.State().GetProperty("captureGainDb").GetDouble().Should().Be(
+            6, "and it is remembered, exactly as a keyed change is");
+    }
+
+    /// <summary>
+    /// The flag is the mixer's alone: the rest of the API is a 404 on a station with no key,
+    /// exactly as it was before this handler was installed for the mixer's sake.
+    /// </summary>
+    [Fact]
+    public async Task An_Open_Mixer_Opens_Nothing_Else()
+    {
+        using var station = new Station(
+            _dir, FakeMixer.Cm108(), openAudioControls: true, configuredKey: "",
+            presentTheKey: false);
+
+        HttpResponseMessage answer = await station.Client.GetAsync(
+            new Uri(station.ConfigUrl, UriKind.Absolute));
+
+        answer.StatusCode.Should().Be(
+            HttpStatusCode.NotFound, "a station with no api.key has no configuration API");
+    }
+
+    /// <summary>
+    /// With both set, the flag wins for the mixer: no header, and the card still answers. The
+    /// rest of the API goes on wanting the key.
+    /// </summary>
+    [Fact]
+    public async Task With_A_Key_As_Well_The_Flag_Still_Answers_The_Mixer_Without_One()
+    {
+        using var station = new Station(
+            _dir, FakeMixer.Cm108(), openAudioControls: true, presentTheKey: false);
+
+        JsonElement read = await station.GetAsync();
+        read.GetProperty("capture").GetProperty("decibels").GetDouble().Should().Be(8);
+        (await station.PostAsync("""{"agc": false}"""))
+            .GetProperty("agc").GetProperty("on").GetBoolean().Should().BeFalse();
+
+        HttpResponseMessage config = await station.Client.GetAsync(
+            new Uri(station.ConfigUrl, UriKind.Absolute));
+
+        config.StatusCode.Should().Be(
+            HttpStatusCode.Unauthorized,
+            "the flag opens the mixer, not the endpoint that can retune the radio");
+    }
+
+    /// <summary>
+    /// A keyless POST from a page this station did not serve is refused, the same rule the
+    /// transmit test keeps.
+    /// </summary>
+    /// <remarks>
+    /// With the key gone, the only thing between the card and a page the operator's browser
+    /// happens to load is that a browser sets <c>Origin</c> itself and script cannot change it.
+    /// A client that sends none - curl, a script, every other test here - is left alone.
+    /// </remarks>
+    [Fact]
+    public async Task A_Keyless_Change_From_Somebody_Elses_Page_Is_Refused()
+    {
+        using var station = new Station(
+            _dir, FakeMixer.Cm108(), openAudioControls: true, configuredKey: "",
+            presentTheKey: false);
+
+        var foreign = new HttpRequestMessage(HttpMethod.Post, new Uri(station.Url, UriKind.Absolute))
+        {
+            Content = new StringContent("""{"captureGainDb": 0}""", Encoding.UTF8, "application/json"),
+        };
+        foreign.Headers.Add("Origin", "http://someone-elses-page.example");
+
+        HttpResponseMessage refused = await station.Client.SendAsync(foreign);
+
+        refused.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await refused.Content.ReadAsStringAsync()).Should().Contain("did not serve");
+        station.Card!.CaptureDb("Mic").Should().Be(8, "and the card was never touched");
+
+        // And the station's own page, which sends the origin it was served from, is not.
+        var mine = new HttpRequestMessage(HttpMethod.Post, new Uri(station.Url, UriKind.Absolute))
+        {
+            Content = new StringContent("""{"captureGainDb": 0}""", Encoding.UTF8, "application/json"),
+        };
+        mine.Headers.Add("Origin", station.Origin);
+
+        HttpResponseMessage allowed = await station.Client.SendAsync(mine);
+
+        allowed.StatusCode.Should().Be(HttpStatusCode.OK);
+        station.Card.CaptureDb("Mic").Should().Be(0);
+
+        // And an empty key header is not a key. CryptographicOperations.FixedTimeEquals of two
+        // empty arrays is true, so without the length check in front of it an empty X-API-Key
+        // would read as "authorised" on a station that has no key, and skip this gate.
+        var blank = new HttpRequestMessage(HttpMethod.Post, new Uri(station.Url, UriKind.Absolute))
+        {
+            Content = new StringContent("""{"captureGainDb": 6}""", Encoding.UTF8, "application/json"),
+        };
+        blank.Headers.Add("Origin", "http://someone-elses-page.example");
+        blank.Headers.TryAddWithoutValidation("X-API-Key", "");
+
+        HttpResponseMessage stillRefused = await station.Client.SendAsync(blank);
+
+        stillRefused.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        station.Card.CaptureDb("Mic").Should().Be(
+            0, "and the card is still where the last one left it");
+    }
+
+    /// <summary>
+    /// A caller holding the <c>api.key</c> is not origin-checked: the key is better evidence than
+    /// a header the browser wrote, and the flag must not take away what the key used to buy.
+    /// </summary>
+    [Fact]
+    public async Task A_Correct_Key_Changes_The_Card_Whatever_Origin_It_Carries()
+    {
+        using var station = new Station(_dir, FakeMixer.Cm108(), openAudioControls: true);
+
+        var keyed = new HttpRequestMessage(HttpMethod.Post, new Uri(station.Url, UriKind.Absolute))
+        {
+            Content = new StringContent("""{"captureGainDb": 2}""", Encoding.UTF8, "application/json"),
+        };
+        keyed.Headers.Add("Origin", "http://someone-elses-page.example");
+
+        // The station's own client carries the key, as the operator page does.
+        HttpResponseMessage answer = await station.Client.SendAsync(keyed);
+
+        answer.StatusCode.Should().Be(HttpStatusCode.OK, await answer.Content.ReadAsStringAsync());
+        station.Card!.CaptureDb("Mic").Should().Be(2);
+    }
+
+    /// <summary>
+    /// Without the flag, a station with no key answers the mixer with a 404, which is what hides
+    /// the page's group - the v0.58.0 behaviour, unchanged.
+    /// </summary>
+    [Fact]
+    public async Task Without_The_Flag_A_Station_With_No_Key_Has_No_Mixer_Endpoint()
+    {
+        using var station = new Station(
+            _dir, FakeMixer.Cm108(), configuredKey: "", presentTheKey: false);
+
+        HttpResponseMessage answer = await station.Client.GetAsync(
+            new Uri(station.Url, UriKind.Absolute));
+
+        answer.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        station.Card!.CaptureDb("Mic").Should().Be(8);
+    }
+
     [Fact]
     public async Task Reading_The_Mixer_Reports_The_Cards_Own_State_And_Its_Range()
     {
@@ -463,9 +627,20 @@ public class MixerApiTests : IDisposable
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _serving;
 
+        /// <param name="dir">Where this station's config and state files go.</param>
+        /// <param name="card">The made-up card, or null for a station with no mixer.</param>
+        /// <param name="configText">The config file, when a test needs a particular one.</param>
+        /// <param name="statePath">Where the state file goes, when a test needs it elsewhere.</param>
+        /// <param name="pinned">What the config file's <c>alsa.mixer</c> block pins.</param>
+        /// <param name="openAudioControls">
+        /// <c>"waterfall"."enableAudioControls"</c>: the mixer answers without a key.
+        /// </param>
+        /// <param name="configuredKey">The station's <c>api.key</c>; empty for a station without one.</param>
+        /// <param name="presentTheKey">Whether this station's own client carries the key.</param>
         public Station(
             string dir, FakeMixer? card, string? configText = null, string? statePath = null,
-            AlsaMixerConfig? pinned = null)
+            AlsaMixerConfig? pinned = null, bool openAudioControls = false,
+            string configuredKey = Key, bool presentTheKey = true)
         {
             Card = card;
             string mine = Path.Combine(dir, Guid.NewGuid().ToString("N"));
@@ -475,11 +650,12 @@ public class MixerApiTests : IDisposable
             File.WriteAllText(ConfigPath, configText ?? Running);
 
             var api = new ConfigApi(
-                Key, ConfigPath, Path.Combine(mine, "pending.json"),
+                configuredKey, ConfigPath, Path.Combine(mine, "pending.json"),
                 runningJson: () => File.ReadAllText(ConfigPath),
                 ephemeralInForce: false,
                 requestRestart: () => throw new InvalidOperationException(
-                    "a mixer change must never restart the station"));
+                    "a mixer change must never restart the station"),
+                openAudioControls: openAudioControls);
 
             if (card is not null)
             {
@@ -496,9 +672,15 @@ public class MixerApiTests : IDisposable
                 api.NoMixer("hw:9 has no mixer: snd_mixer_attach(hw:9): No such file or directory");
             }
 
-            Client.DefaultRequestHeaders.Add("X-API-Key", Key);
+            if (presentTheKey && configuredKey.Length > 0)
+            {
+                Client.DefaultRequestHeaders.Add("X-API-Key", configuredKey);
+            }
+
             int port = FreePorts.Next();
             Url = $"http://127.0.0.1:{port}/api/mixer";
+            ConfigUrl = $"http://127.0.0.1:{port}/api/config";
+            Origin = $"http://127.0.0.1:{port}";
             _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
             _listener.Start();
             _serving = ServeAsync(api);
@@ -511,6 +693,12 @@ public class MixerApiTests : IDisposable
         public string StatePath { get; }
 
         public string Url { get; }
+
+        /// <summary>The rest of the API, which an open mixer must not have opened.</summary>
+        public string ConfigUrl { get; } = "";
+
+        /// <summary>What a page this station served would send as its <c>Origin</c>.</summary>
+        public string Origin { get; } = "";
 
         /// <summary>Everything the daemon would have journalled, for an assertion to read.</summary>
         public List<string> Journal { get; } = [];

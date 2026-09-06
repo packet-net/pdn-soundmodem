@@ -249,6 +249,10 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-09-06 (later) - the sound card's controls can be opened without an api key
+
+Roadmap #17 amended again at Tom's request: `"waterfall": { "enableAudioControls": true }`, off by default, shows the operator page's Mixer group and answers `GET`/`POST /api/mixer` with no `api.key` set and none presented. It is for the station whose page is already reachable only by whoever is allowed to reach it - the bench station has no key, so the group was hidden and the endpoint a 404 - and it costs the card's levels being in reach of anything that can reach the waterfall port, which is the exposure the page's TX test button already carries. It lives under `waterfall` because it is a statement about who may reach that page and that port rather than about the card, and because the page it opens is the one `"public": true` must never carry: the two together are ignored, and said so at start-up. It opens that one endpoint; `/api/config`, `/api/proposals` and `/api/txtest` still want the key, and a station without one still answers them 404. A keyless `POST` whose `Origin` names a page this station did not serve is refused with 403, the same rule the transmit test keeps and through the same code. The page needed no change at all: it shows the group on the strength of the answer to its own probe, and this station answers it.
+
 ### 2026-09-06 - the sound card's mixer moves to dB and remembers itself, and all mixer work moves ahead of the PCM
 
 Roadmap #17 amended at Tom's request (PR #419): levels in dB against the card's own range rather than percentages of it, and a change made on the operator page kept between runs. The config file is never written - what it pins is applied at start-up and wins, what it says nothing about comes from `mixer-state.json` in the systemd state directory, and the rest of the card is left alone. The two percentage keys are gone rather than aliased, because 60 meant 60% and would now mean 60 dB, which is off the end of the bench card.

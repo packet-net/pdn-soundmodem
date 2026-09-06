@@ -1131,6 +1131,108 @@ public class WaterfallPageTests
         }
     }
 
+    /// <summary>
+    /// With <c>"waterfall"."enableAudioControls"</c> the Mixer group opens on a browser that has
+    /// no key at all, and the public page still has no group.
+    /// </summary>
+    /// <remarks>
+    /// <para>The page half of the flag, and the reason it needed no page change: the group is
+    /// shown on the strength of the answer to its own probe, and this station answers it. The
+    /// browser here has nothing in <c>localStorage</c> - no APIKEY is given - so a group that
+    /// still wanted a key would come back locked and reading "key needed".</para>
+    /// <para>The public page is the second half, and it is built as the daemon builds one: a
+    /// public station never installs the API open, so the visitor's page probes a closed endpoint
+    /// and has no group to show. The other half of that claim - that the page hides the group
+    /// even where the endpoint does answer - is the keyed test above.</para>
+    /// </remarks>
+    [Fact]
+    public async Task An_Open_Mixer_Group_Needs_No_Key_And_Is_Still_Not_On_The_Public_Page()
+    {
+        string node = ResolveNode();
+        Assert.SkipWhen(node.Length == 0, "node is not installed; the page cannot be executed");
+
+        string dir = Directory.CreateTempSubdirectory("pdnsm-page-open-mixer").FullName;
+        try
+        {
+            string configPath = Path.Combine(dir, "soundmodem.json");
+            File.WriteAllText(configPath, """
+                {"device": "plughw:1,0", "modems": [ { "subChannel": 0, "mode": "afsk1200" } ],
+                 "waterfall": { "port": 8107, "enableAudioControls": true }}
+                """);
+
+            var card = FakeMixer.Cm108();
+            var api = new ConfigApi(
+                // No api.key at all, which is the bench station this flag is for.
+                "", configPath, Path.Combine(dir, "pending.json"),
+                runningJson: () => File.ReadAllText(configPath),
+                ephemeralInForce: false,
+                requestRestart: () => throw new InvalidOperationException(
+                    "a mixer change must never restart the station"),
+                openAudioControls: true);
+            api.ServeMixer(MixerRuntime.Start(
+                card,
+                new AlsaMixerConfig { StateFile = Path.Combine(dir, "mixer-state.json") },
+                configPath, "plughw:1,0", _ => { }, out _)!);
+
+            var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+            channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+            int port = FreePorts.Next();
+            await using var server = new WaterfallWebServer(channel, port);
+            server.ApiHandler = api.HandleAsync;
+            server.Start();
+
+            Probe probe = await RunProbeAsync(node, port, mixer: true, mixerGain: 6);
+
+            probe.Thrown.Should().BeEmpty("the page must not throw while driving the mixer");
+            MixerPanel arrival = probe.MixerOnArrival!;
+            arrival.Hidden.Should().BeFalse("the station answers, so there is a group to show");
+            arrival.ClassName.Should().NotContain(
+                "locked", "nothing was asked of this browser and nothing was refused");
+            arrival.KeyHidden.Should().BeTrue("there is no key to ask for");
+            arrival.Read.Should().Be("8.0 dB of -12 to 23", "the group opens showing the card");
+            probe.MixerAfterGain!.Read.Should().Be("6.0 dB of -12 to 23");
+            card.CaptureDb("Mic").Should().Be(6, "and the slider reached the card, with no key");
+
+            // The same station and the same card dressed for the public, built the way the daemon
+            // builds one: "public": true zeroes the flag before the API is constructed
+            // (WaterfallConfig.AudioControlsOpen, pinned in DaemonConfigTests), so the visitor's
+            // page probes a CLOSED endpoint. Hanging the open handler on a public server would
+            // have tested the opposite of what ships - a public site with its card in reach - and
+            // the page hiding the group in front of an open endpoint is already covered by the
+            // keyed test above.
+            var closed = new ConfigApi(
+                "", configPath, Path.Combine(dir, "pending.json"),
+                runningJson: () => File.ReadAllText(configPath),
+                ephemeralInForce: false,
+                requestRestart: () => throw new InvalidOperationException(
+                    "a mixer change must never restart the station"),
+                openAudioControls: false);
+            closed.ServeMixer(MixerRuntime.Start(
+                card,
+                new AlsaMixerConfig { StateFile = Path.Combine(dir, "mixer-state.json") },
+                configPath, "plughw:1,0", _ => { }, out _)!);
+
+            int publicPort = FreePorts.Next();
+            await using var publicServer = new WaterfallWebServer(
+                channel, publicPort, new WaterfallOptions { Public = true, Title = "packet monitor" });
+            publicServer.ApiHandler = closed.HandleAsync;
+            publicServer.Start();
+
+            Probe visitor = await RunProbeAsync(node, publicPort);
+
+            visitor.Thrown.Should().BeEmpty();
+            visitor.PublicPage.Hidden["mixerCtl"].Should().BeTrue(
+                "the card is the operator's, whatever this station has opened");
+            visitor.MixerOnArrival!.Read.Should().NotBe(
+                "6.0 dB of -12 to 23", "a public page must not even read the card");
+            card.CaptureDb("Mic").Should().Be(6, "and nothing a visitor's page did reached it");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     private static async Task<Probe> RunProbeAsync(
         string node, int port, bool audio = false, string? protocol = null, string? pathname = null,
         string? stored = null, string? pageText = null, string? txTest = null, string? apiKey = null,

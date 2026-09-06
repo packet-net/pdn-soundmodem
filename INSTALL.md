@@ -118,8 +118,9 @@ directory is created and owned by the service user through the unit's `StateDire
 nothing else needs opening up - **`/etc/pdn-soundmodem/soundmodem.json` is never written by the
 daemon**, and `/etc` stays read-only to the service. Anything you set in the config file's
 `alsa.mixer` block is applied first and wins over that file, so a level you wrote down on purpose
-is the level the station comes up on. A station with no `api.key` has no API and no page mixer
-control, so nothing writes the file at all. Delete it to start again;
+is the level the station comes up on. A station with no `api.key` and no
+`waterfall`.`enableAudioControls` has no API and no page mixer control, so nothing writes the file
+at all. Delete it to start again;
 [CONFIG.md § alsa](CONFIG.md#alsa) has the detail.
 
 ## Permissions

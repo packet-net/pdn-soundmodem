@@ -1004,6 +1004,37 @@ public sealed class WaterfallConfig
     /// </summary>
     public bool Public { get; set; }
 
+    /// <summary>
+    /// The operator's page carries the sound card's Mixer group, and <c>/api/mixer</c> answers,
+    /// with no <c>api.key</c> at all. Off by default.
+    /// </summary>
+    /// <remarks>
+    /// <para>For a station whose page is already reachable only by whoever is allowed to reach it
+    /// - a bench station on a home LAN, or a page behind SSH - where making the operator paste a
+    /// shared secret into a browser to nudge a capture gain buys nothing. It opens exactly one
+    /// endpoint: everything else under <c>/api/</c> can retune the radio and key the transmitter,
+    /// and still wants the key.</para>
+    /// <para>It lives here rather than under <c>alsa.mixer</c> because it says who may reach this
+    /// page and this port, not what the card is set to. The exposure it creates is the
+    /// waterfall's, and it is the waterfall's own <see cref="Public"/> page that must never carry
+    /// it.</para>
+    /// </remarks>
+    public bool EnableAudioControls { get; set; }
+
+    /// <summary>
+    /// Whether this station actually serves the open controls: <see cref="EnableAudioControls"/>
+    /// and not a <see cref="Public"/> page.
+    /// </summary>
+    /// <remarks>
+    /// One property rather than the same conjunction at the start-up block, because this single
+    /// "and not public" is the whole of "never on a public page" - for the page, the GET and the
+    /// POST at once, since all three follow from whether the API is installed open. Written where
+    /// a test can reach it: a tidy-up that dropped the clause in <c>Program.cs</c>, which is
+    /// top-level statements no test constructs, would have left the suite green.
+    /// </remarks>
+    [JsonIgnore]
+    internal bool AudioControlsOpen => EnableAudioControls && !Public;
+
     /// <summary>Public page title, in the tab and at the top of the page. Null keeps the
     /// page's own.</summary>
     public string? Title { get; set; }

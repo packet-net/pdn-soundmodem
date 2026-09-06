@@ -1002,7 +1002,8 @@ Both are recommendations, not forced defaults. The daemon writes neither unless 
 
 On a sound card the mixer is opened and read whether or not the file asks for anything, so the
 journal records the level the station is actually listening at. Nothing is written to the card
-unless a key said so, or a change made on the operator page was remembered from an earlier run.
+unless a key said so, or a change made on the operator page (with an `api.key`, or with
+[`enableAudioControls`](#waterfall)) was remembered from an earlier run.
 
 ### Where a page change is remembered
 
@@ -1062,9 +1063,14 @@ With an [`api`](#api) key set, the operator page grows a **Mixer** group beside 
 a capture-gain slider **bounded by the card's own dB range**, with the level and the range beside
 it, and AGC and Mic Boost buttons. A change is kept: it goes to the state file and the next
 start-up sets it again. The group is never on the public page, and it is not there at all on a
-station with no `api.key` or no sound card - which also means **a station without an `api.key`
-has no page mixer control and nothing ever writes the state file**. See [`api`](#api) for
-`/api/mixer`.
+station with no `api.key` or no sound card - which also means **a station with neither an
+`api.key` nor [`enableAudioControls`](#waterfall) has no page mixer control and nothing ever
+writes the state file**. See [`api`](#api) for `/api/mixer`.
+
+**Or with no key at all**, on a station whose page only the operator can reach:
+[`"waterfall": { "enableAudioControls": true }`](#waterfall). The group is the same group and the
+browser is never asked for anything; what it costs is that the card's levels are then in reach of
+anything that can reach the waterfall port. Read that section before turning it on.
 
 > **Where the key ends up.** The daemon never sends `api.key` to a page. The group asks for it
 > once and keeps it in that browser's `localStorage`, so it survives a reload and reaches nothing
@@ -1117,6 +1123,7 @@ for confirming you are hearing the band at a sane level before trusting the deco
 | `linesPerSecond` | int | `30` | Waterfall line / display frame rate |
 | `fftSize` | int | `0` | 0 = rate default (2048 at 12 kHz, 8192 at 48 kHz) |
 | `public` | bool | `false` | Dress the page for the public rather than the operator; see below |
+| `enableAudioControls` | bool | `false` | The sound card's [Mixer](#setting-it-while-watching-the-waterfall) group, and [`/api/mixer`](#apimixer), with no `api.key`; see below |
 | `title` | string | *(none)* | Public page title, in the tab and the top bar |
 | `about` | string | *(none)* | One paragraph for the visitor, shown under the top bar |
 
@@ -1135,6 +1142,39 @@ receiver is only asked for while somebody is looking:
 "waterfall": { "port": 8099, "public": true, "title": "40 m packet monitor",
                "about": "The 7050-7052 kHz packet window, receive only." }
 ```
+
+**`enableAudioControls` puts the sound card's own levels on the page without a key.**
+
+```json
+"waterfall": { "port": 8107, "enableAudioControls": true }
+```
+
+The [Mixer](#setting-it-while-watching-the-waterfall) group - capture gain in dB, AGC, mic boost -
+appears on the operator's page and [`/api/mixer`](#apimixer) answers `GET` and `POST`, with no
+`api.key` set and no key presented. It is for the station whose page is already reachable only by
+whoever is allowed to reach it: a bench station on your own LAN, or a page you open over SSH.
+Without it a station with no `api.key` has no Mixer group and a 404 on `/api/mixer`, which is
+unchanged and is still the default.
+
+> **It exposes the card's levels to anything that can reach the waterfall port**, which is the
+> same exposure the page's TX test button already has - and there is no authentication on that
+> port. Anyone who can reach it can turn your capture gain up or down, and the change is
+> remembered in the [state file](#where-a-page-change-is-remembered) and set again at the next
+> start-up. Loopback, or a LAN you trust; if the page is exposed at all, leave this off and set
+> an `api.key` instead. The start-up warning about listening beyond loopback says so too when
+> this is on, and there is a line at every start-up saying the controls are open.
+
+It opens that one endpoint. `/api/config`, `/api/proposals` and `/api/txtest` still want the
+`api.key`, and are still a 404 on a station that has not got one; with both a key and this flag
+set, the key is what the rest of the API asks for and the mixer is the exception. A **keyless**
+`POST` carrying an `Origin` header from somewhere this station did not serve is refused with
+`403` - a browser sets that header itself and script cannot change it, so a page the operator's
+browser happens to load cannot reach into the card **by name**; a page that rebinds its own name
+to this station's address still can, which is another reason this belongs on a network you trust.
+`curl` and a script, which send no `Origin` at all, are left alone, and so is a caller presenting
+the `api.key`, which is better evidence than the header. And it is never on a public page: `"public": true` together with this is
+ignored, with a line at start-up saying so, because a public page has no Mixer group to put it in
+and the visitors are strangers.
 
 **The page can play the received audio.** Press *Listen* in the top bar and the station's
 receive audio streams to the browser, so you can hear the channel you are watching - an SSB
@@ -1312,7 +1352,9 @@ it on, and a setting that silently does nothing is worse than one that says so.
 
 **Present the key** as `Authorization: Bearer KEY` or `X-API-Key: KEY`. Compared in fixed time,
 because the socket may be reachable from the LAN and a byte-at-a-time comparison leaks a secret a
-byte at a time. There is no unauthenticated mode and no default key.
+byte at a time. There is no unauthenticated mode and no default key. The one thing that can be
+served without one is [`/api/mixer`](#apimixer), and only where the operator has asked for it with
+[`"waterfall": { "enableAudioControls": true }`](#waterfall).
 
 > **This can change frequency and transmit power**, which makes it a bigger gun than the
 > waterfall it shares a socket with. The same warning that applies to KISS applies here and more
@@ -1387,6 +1429,13 @@ The sound card's [mixer](#alsa), for a script or for the operator page's Mixer g
 and **no restart**: a mixer setting lands on the card as the request is served, the PCM stream is
 not touched, and restarting a station to trim its own capture gain would drop the very waterfall
 the operator is trimming it against.
+
+**This is the one endpoint that can be open**, with
+[`"waterfall": { "enableAudioControls": true }`](#waterfall): it then answers with no key, on a
+station that has one and on a station that has not, while everything else under `/api/` goes on
+wanting the key. A **keyless** `POST` from a page this station did not serve (an `Origin` header
+naming somewhere else) is refused with `403`; `curl`, which sends no `Origin`, and a caller that
+presents the `api.key` are both unaffected.
 
 ```
 $ curl -s -H "X-API-Key: $KEY" http://radio:8107/api/mixer
