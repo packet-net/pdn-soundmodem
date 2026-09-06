@@ -1047,25 +1047,16 @@ public class WaterfallPageTests
                 """);
 
             var card = FakeMixer.Cm108();
-            var wanted = new MixerSettings();
             var api = new ConfigApi(
                 key, configPath, Path.Combine(dir, "pending.json"),
                 runningJson: () => File.ReadAllText(configPath),
                 ephemeralInForce: false,
                 requestRestart: () => throw new InvalidOperationException(
                     "a mixer change must never restart the station"));
-            api.ServeMixer(
-                read: () => MixerSetup.Apply(card, wanted, null),
-                apply: change => MixerSetup.Apply(
-                    card,
-                    wanted with
-                    {
-                        CaptureGainPercent = change.CaptureGainPercent,
-                        Agc = change.Agc,
-                        MicBoost = change.MicBoost,
-                        PlaybackPercent = change.PlaybackPercent,
-                    },
-                    null));
+            api.ServeMixer(MixerRuntime.Start(
+                card,
+                new AlsaMixerConfig { StateFile = Path.Combine(dir, "mixer-state.json") },
+                configPath, "plughw:1,0", _ => { }, out _)!);
 
             var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
             channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
@@ -1075,7 +1066,7 @@ public class WaterfallPageTests
             server.Start();
 
             Probe probe = await RunProbeAsync(
-                node, port, apiKey: key, mixer: true, mixerGain: 80);
+                node, port, apiKey: key, mixer: true, mixerGain: 6);
 
             probe.Thrown.Should().BeEmpty("the page must not throw while driving the mixer");
             probe.Connected.Should().BeTrue();
@@ -1084,8 +1075,11 @@ public class WaterfallPageTests
             arrival.Hidden.Should().BeFalse("the station has a card and this browser has the key");
             arrival.ClassName.Should().NotContain("locked");
             arrival.KeyHidden.Should().BeTrue("there is nothing to ask for");
-            arrival.Read.Should().Be("57% / 7.9 dB", "the group opens showing the card, not a guess");
-            arrival.Gain.Should().Be("57");
+            arrival.Read.Should().Be(
+                "8.0 dB of -12 to 23", "the group opens showing the card, not a guess");
+            arrival.Gain.Should().Be("8", "the slider sits at the card's own level, in dB");
+            arrival.GainMin.Should().Be("-12", "the slider's ends are the card's ends");
+            arrival.GainMax.Should().Be("23");
             arrival.GainDisabled.Should().BeFalse();
             arrival.Agc.Should().Contain("on", "this card's AGC is on and the button says so");
             arrival.Boost.Should().Contain(
@@ -1095,8 +1089,11 @@ public class WaterfallPageTests
             // go of it. The handler, not mixSend by hand: which event the slider listens for is
             // part of what shipped.
             MixerPanel gained = probe.MixerAfterGain!;
-            gained.Read.Should().Be("80% / 16.0 dB", "the readout is the card's answer, read back");
-            card.Find("Mic")!.Capture.Should().Be(80, "the request reached the card");
+            gained.Read.Should().Be(
+                "6.0 dB of -12 to 23", "the readout is the card's answer, read back");
+            card.CaptureDb("Mic").Should().Be(6, "the request reached the card in dB");
+            gained.Note.Should().BeEmpty(
+                "a change that was made and kept has nothing the operator has to be told");
 
             // And a click on the AGC button.
             MixerPanel switched = probe.MixerAfterAgc!;
@@ -1124,9 +1121,9 @@ public class WaterfallPageTests
             visitor.PublicPage.Hidden["mixerCtl"].Should().BeTrue(
                 "the sound card's gain is never a visitor's, whatever key their browser holds");
             visitor.MixerOnArrival!.Read.Should().NotBe(
-                "57% / 7.9 dB", "a public page must not even read the card");
-            card.Find("Mic")!.Capture.Should().Be(
-                80, "and nothing a visitor's page did may have reached it");
+                "6.0 dB of -12 to 23", "a public page must not even read the card");
+            card.CaptureDb("Mic").Should().Be(
+                6, "and nothing a visitor's page did may have reached it");
         }
         finally
         {
@@ -1137,7 +1134,7 @@ public class WaterfallPageTests
     private static async Task<Probe> RunProbeAsync(
         string node, int port, bool audio = false, string? protocol = null, string? pathname = null,
         string? stored = null, string? pageText = null, string? txTest = null, string? apiKey = null,
-        bool mixer = false, int? mixerGain = null)
+        bool mixer = false, double? mixerGain = null)
     {
         string here = Path.GetDirectoryName(typeof(WaterfallPageTests).Assembly.Location)!;
         var start = new ProcessStartInfo(node)
@@ -1156,7 +1153,7 @@ public class WaterfallPageTests
         if (txTest is not null) start.Environment["TXTEST"] = txTest;
         if (apiKey is not null) start.Environment["APIKEY"] = apiKey;
         if (mixer) start.Environment["MIXER"] = "1";
-        if (mixerGain is int gain)
+        if (mixerGain is double gain)
         {
             start.Environment["MIXGAIN"] = gain.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
@@ -1865,8 +1862,12 @@ public class WaterfallPageTests
     /// it, which is every flavour with no config API behind it.</param>
     /// <param name="ClassName">The group's classes, which carry the locked state.</param>
     /// <param name="Read">The readout beside the slider.</param>
-    /// <param name="Gain">The slider's position.</param>
+    /// <param name="Gain">The slider's position, in dB.</param>
+    /// <param name="GainMin">The bottom of the slider, which is the bottom of the card.</param>
+    /// <param name="GainMax">The top of it.</param>
     /// <param name="GainDisabled">Whether the slider can be moved.</param>
+    /// <param name="Note">The sentence under the row, when there is one the operator has to
+    /// read: a control the config file will take back, or a state file that was not written.</param>
     /// <param name="Agc">The AGC button's classes: "on", "missing", or neither.</param>
     /// <param name="Boost">The Mic Boost button's classes, the same way.</param>
     /// <param name="KeyHidden">Whether the Key button is out of the way.</param>
@@ -1877,7 +1878,10 @@ public class WaterfallPageTests
         string? ClassName,
         string? Read,
         string? Gain,
+        string? GainMin,
+        string? GainMax,
         bool? GainDisabled,
+        string? Note,
         string? Agc,
         string? Boost,
         bool? KeyHidden,

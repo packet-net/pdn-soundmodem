@@ -114,11 +114,12 @@ using Packet.SoundModem.Ms110d;
 // SmartSDR is not using (it grabs DAX 1). See docs/flex-integration.md §4/§8.
 
 // --mixer-show DEVICE prints the sound card's mixer - every control it has, and the capture
-// gain, AGC, mic boost and playback level this station would drive - and exits. DEVICE is the
-// same string as --device (plughw:CARD=Device,DEV=0) or the card alone (hw:3). It only reads,
-// and reading a mixer does not touch the PCM, so it answers "what is my card called and where
-// is it set" on a station that is running. The "alsa" config section sets the same controls at
-// start-up; see CONFIG.md.
+// gain, AGC, mic boost and playback level this station would drive, each with the card's own dB
+// range - and exits. DEVICE is the same string as --device (plughw:CARD=Device,DEV=0) or the
+// card alone (hw:3). It only reads, and reading a mixer does not touch the PCM, so it answers
+// "what is my card called, what can it be set to, and where is it now" on a station that is
+// running. A control the card publishes no dB scale for says "no dB scale" rather than a
+// figure. The "alsa" config section sets the same controls at start-up; see CONFIG.md.
 
 // --device ubersdr:<instance> makes a RECEIVE-ONLY station out of a public UberSDR web
 // receiver: <instance> is a host (m9psy-1.instance.ubersdr.org), a host:port, or the https://
@@ -2018,10 +2019,11 @@ AlsaAudioOutput? alsaOut = null;
 AlsaAudioInput? alsaIn = null;
 // The card's mixer, on the ALSA path only. Opened whether or not the configuration sets
 // anything, so the start-up log records the level the station is actually listening at - but
-// nothing is written to the card unless a key in "alsa"."mixer" said so.
+// nothing is written to the card unless a key in "alsa"."mixer", or a change remembered in the
+// state file from an earlier run, said so.
 AlsaMixer? mixer = null;
+MixerRuntime? mixerRuntime = null;
 string mixerWhyNot = "this station has no sound card, so it has no mixer";
-MixerSettings mixerWanted = alsaConfig?.Mixer?.ToSettings() ?? new MixerSettings();
 
 if (PipeAudio.IsPipe(device) && wavLoopPath is null)
 {
@@ -2489,6 +2491,60 @@ else
         return 1;
     }
 
+    // The card's mixer, BEFORE the PCM is opened, and finished with before it is.
+    //
+    // The order is the point, and it was found the hard way on radio1 (2026-09-06). Opening a
+    // capture stream does not start it: the kernel starts the endpoint on the first
+    // snd_pcm_readi, and on a USB card that start is a URB submission which fails with -EIO if
+    // the device is busy with a control transfer at that moment. Mixer traffic IS control
+    // transfers. Doing it between the open and the first read therefore leaves a window in which
+    // reading the card's own levels can stop the card from ever delivering audio, which showed up
+    // as "receive feed dead: the input device failed (snd_pcm_readi: Input/output error)" about a
+    // second after start-up, on 10 runs out of 13. Nothing here needs the PCM - reading a mixer
+    // never did, which is why --mixer-show works on a running station - so the window is closed
+    // by not being in it.
+    //
+    // Read even when the configuration asks for nothing, because a station's capture gain is the
+    // difference between clean audio and clipped audio and the start-up log should say what it
+    // is; written only where a key said so, so a file with no "alsa" section leaves every control
+    // alone.
+    string mixerCard = alsaConfig?.Mixer?.Card ?? AlsaMixer.CardFor(device);
+    if (AlsaMixer.TryOpen(mixerCard, out AlsaMixer? openedMixer, out string mixerWhy))
+    {
+        mixer = openedMixer;
+
+        // Guarded, not bare: these are top-level statements with nothing above them to catch
+        // anything, and TryOpen only proves the ten entry points it uses itself. A libasound
+        // missing one of the twenty the apply reaches would otherwise be a crash at every
+        // start-up and a systemd restart loop, over a mixer. It costs the mixer instead.
+        //
+        // This is also where the state file is read and the precedence is decided: what
+        // "alsa"."mixer" pins is applied and wins, what it says nothing about comes from a
+        // change made on the page in some earlier run, and the rest is left as the card has it.
+        // "." for a station configured entirely on the command line, which puts the state file
+        // in the working directory. Nothing writes it on such a station anyway - the config API
+        // refuses to be served without a --config file - but the read still has to have a path.
+        mixerRuntime = MixerRuntime.Start(
+            mixer!, alsaConfig?.Mixer, configPath ?? ".", device, Console.WriteLine,
+            out string applyWhy);
+        if (mixerRuntime is null)
+        {
+            mixerWhyNot = $"{mixerCard} could not be read or set: {applyWhy}";
+            openedMixer!.Dispose();
+            mixer = null;
+        }
+    }
+    else
+    {
+        // Not a failure. A card with no mixer at all is a real thing (a bare I2S codec, a loopback
+        // device), and so is a libasound with no mixer functions in it - neither is a reason for
+        // a station to stop receiving.
+        mixerWhyNot = $"{mixerCard} has no mixer: {mixerWhy}";
+        Console.WriteLine(
+            $"{MixerSetup.JournalPrefix}{mixerCard} has no mixer ({mixerWhy}); capture gain, AGC "
+            + "and mic boost are left as the card has them");
+    }
+
     try
     {
         // Transmit: modulate at the DSP rate; play at the card-native capture rate through the
@@ -2512,37 +2568,6 @@ else
     }
 
     Console.WriteLine($"audio: {device} capture {captureRate} Hz -> {DspRate} Hz");
-
-    // The card's mixer, through the same libasound the PCM above opened. Read even when the
-    // configuration asks for nothing, because a station's capture gain is the difference between
-    // clean audio and clipped audio and the start-up log should say what it is; written only
-    // where a key said so, so a file with no "alsa" section leaves every control alone.
-    string mixerCard = alsaConfig?.Mixer?.Card ?? AlsaMixer.CardFor(device);
-    if (AlsaMixer.TryOpen(mixerCard, out AlsaMixer? openedMixer, out string mixerWhy))
-    {
-        mixer = openedMixer;
-
-        // TryApply and not Apply: these are top-level statements with nothing above them to catch
-        // anything, and TryOpen only proves the ten entry points it uses itself. A libasound
-        // missing one of the twenty Apply reaches would otherwise be a crash at every start-up
-        // and a systemd restart loop, over a mixer. It costs the mixer instead.
-        if (MixerSetup.TryApply(mixer!, mixerWanted, Console.WriteLine, out string applyWhy) is null)
-        {
-            mixerWhyNot = $"{mixerCard} could not be read or set: {applyWhy}";
-            openedMixer!.Dispose();
-            mixer = null;
-        }
-    }
-    else
-    {
-        // Not a failure. A card with no mixer at all is a real thing (a bare I2S codec, a loopback
-        // device), and so is a libasound with no mixer functions in it - neither is a reason for
-        // a station to stop receiving.
-        mixerWhyNot = $"{mixerCard} has no mixer: {mixerWhy}";
-        Console.WriteLine(
-            $"{MixerSetup.JournalPrefix}{mixerCard} has no mixer ({mixerWhy}); capture gain, AGC "
-            + "and mic boost are left as the card has them");
-    }
 }
 
 using AlsaMixer? mixerLifetime = mixer;
@@ -2550,20 +2575,9 @@ using AlsaMixer? mixerLifetime = mixer;
 // The operator page's mixer group and any script that wants the card's state come through here,
 // under the same key as every other change. A station with no mixer says so rather than 404ing,
 // so the page can tell "no mixer here" from "this daemon is too old to have the endpoint".
-if (mixer is AlsaMixer liveMixer)
+if (mixerRuntime is MixerRuntime liveMixer)
 {
-    runtimeApi?.ServeMixer(
-        read: () => MixerSetup.Apply(liveMixer, mixerWanted.LeaveEverything(), null),
-        apply: change => MixerSetup.Apply(
-            liveMixer,
-            mixerWanted with
-            {
-                CaptureGainPercent = change.CaptureGainPercent,
-                Agc = change.Agc,
-                MicBoost = change.MicBoost,
-                PlaybackPercent = change.PlaybackPercent,
-            },
-            Console.WriteLine));
+    runtimeApi?.ServeMixer(liveMixer);
 }
 else
 {

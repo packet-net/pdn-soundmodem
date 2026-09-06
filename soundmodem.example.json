@@ -81,15 +81,22 @@
   // The sound card's own mixer (optional). Every key is optional and LEAVING ONE OUT LEAVES
   // THAT CONTROL EXACTLY AS THE CARD HAS IT - which is why nothing here is set by default: the
   // card is whatever alsamixer, a reboot or a re-plug last left it, and this is for pinning the
-  // ones that matter. Gains are percentages of the card's own range, the same number alsamixer
-  // shows; the journal reports the dB the card says it came out at. Recommended for a data
-  // modem: "agc": false (automatic gain fights the modem's own level tracking and turns the
-  // noise floor into a moving target) and "micBoost": false unless the radio's output is
-  // genuinely low. Many cards have no mic boost control at all - a CM108 folds it into the top
-  // of the capture range - and the journal says so and carries on. Control names differ by card
-  // revision, so run `pdn-soundmodem --mixer-show hw:1` to see what yours calls them (it only
-  // reads, and works while the station is running).
-  // "alsa": { "mixer": { "captureGainPercent": 60, "agc": false, "micBoost": false, "playbackPercent": 70 } },
+  // ones that matter. THE LEVELS ARE IN dB, inside the card's own range, which differs by card:
+  // `pdn-soundmodem --mixer-show hw:1` prints the range and the control names (it only reads,
+  // and works while the station is running). A CM108 is typically -12 to +23 dB on capture and
+  // -37 to 0 dB on playback. A level outside the range is journalled with the range and that
+  // one control is left alone; a card that publishes no dB scale at all says so and is left
+  // alone too. Recommended for a data modem: "agc": false (automatic gain fights the modem's own
+  // level tracking and turns the noise floor into a moving target) and "micBoost": false unless
+  // the radio's output is genuinely low. Many cards have no mic boost control at all - a CM108
+  // folds it into the top of the capture range - and the journal says so and carries on.
+  //
+  // Anything set here is applied at every start-up and WINS over a change made on the operator
+  // page. A page change to a control this block does not mention is remembered in
+  // mixer-state.json (in the systemd state directory, /var/lib/pdn-soundmodem for the package)
+  // and applied at the next start-up; "stateFile" moves that file somewhere else (it may not
+  // name this config file - the daemon never writes this one, and it is refused if you try).
+  // "alsa": { "mixer": { "captureGainDb": 6.0, "agc": false, "micBoost": false, "playbackDb": -8.0 } },
   // Browser waterfall (optional): 30 fps spectrum + waterfall at http://<bind>:<port>/,
   // every modem's measured band overlaid (audio + RF centres), each decoded frame tagged
   // on its burst with callsign, SNR and frequency offset. "dialFrequencyHz" presets the

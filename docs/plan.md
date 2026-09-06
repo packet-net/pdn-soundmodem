@@ -249,6 +249,14 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
 
 ## Amendment log
 
+### 2026-09-06 - the sound card's mixer moves to dB and remembers itself, and all mixer work moves ahead of the PCM
+
+Roadmap #17 amended at Tom's request (PR #419): levels in dB against the card's own range rather than percentages of it, and a change made on the operator page kept between runs. The config file is never written - what it pins is applied at start-up and wins, what it says nothing about comes from `mixer-state.json` in the systemd state directory, and the rest of the card is left alone. The two percentage keys are gone rather than aliased, because 60 meant 60% and would now mean 60 dB, which is off the end of the bench card.
+
+**All ALSA mixer work now finishes before the PCM is opened, and that is a rule rather than a tidy-up.** Opening a capture stream does not start it: the kernel starts the endpoint on the first `snd_pcm_readi`, and on a USB card that is a URB submission which fails with `-EIO` if the device is mid control transfer - and mixer traffic is control transfers. Measured on radio1 with the pass inside that window, 10 runs dead out of 13, against 12 of 12 alive for the same source doing two fewer reads per control, and 10 of 10 alive with it moved ahead of the open. It is a latent hazard v0.57.0 shared and got away with, and it presents as flaky hardware rather than as a bug, so it is written into CLAUDE.md, pinned by `StartUpOrderTests` and recorded with the numbers in [roadmap.md](roadmap.md) #17.
+
+**Two card behaviours worth knowing.** A control whose TLV carries the mute flag (the bench CM108's Speaker, `dBminmaxmute`) reports its range minimum as alsa-lib's mute sentinel, -99999.99 dB; taken literally that is a useless slider and a transmit level that can be set to silence, so the usable bottom is found by asking the card what each raw step above it is worth. And a card that publishes no dB scale at all is said so and left alone rather than having a mapping invented for it.
+
 ### 2026-09-04 (Phase 3) - the public monitor site accepts private stations that opt in
 
 Phase 3 of [docs/uplink-plan.md](uplink-plan.md), the monitor's side of the station-initiated uplink: the `/uplink` endpoint, the token table behind it, and what a station becomes once it is through. Phase 1 (#395) put the seam in the waterfall server; this is the end that uses it. The station's own side is Phase 2 and is not in this branch.

@@ -34,6 +34,10 @@ namespace Packet.SoundModem.Daemon;
 /// the station to the file. An experiment that goes wrong therefore self-heals, and the config
 /// file stays the description of the intended station. <c>?persist=true</c> writes the file
 /// instead, for a change meant to outlive the session.</para>
+/// <para><b><c>/api/mixer</c> is the exception</b> (Tom, 2026-09-06). It restarts nothing and it
+/// persists by default, because a level trimmed on the operator page is meant to stay trimmed and
+/// there is no restart for a one-run default to insure against. It writes the daemon's own state
+/// file rather than the config file, which it never touches; see <see cref="MixerRuntime"/>.</para>
 /// </remarks>
 internal sealed class ConfigApi
 {
@@ -42,8 +46,7 @@ internal sealed class ConfigApi
     private Func<IReadOnlyList<Survey.ModemProposal>>? _proposals;
     private TxTestRunner? _txTest;
     private Func<(long Examined, long Read, long Dropped)>? _prospectorCounts;
-    private Func<MixerReport>? _mixerRead;
-    private Func<MixerChange, MixerReport>? _mixerApply;
+    private MixerRuntime? _mixer;
     private string _mixerWhyNot = "this station has no sound-card mixer";
 
     /// <summary>One mixer change at a time; see the wait in <see cref="MixerAsync"/>.</summary>
@@ -199,13 +202,8 @@ internal sealed class ConfigApi
     /// start-up, for the same reason as the proposals: the mixer is opened from the very
     /// configuration this class serves.
     /// </summary>
-    /// <param name="read">The card's state, read back fresh.</param>
-    /// <param name="apply">Applies a change to the card and returns what it then reads back.</param>
-    public void ServeMixer(Func<MixerReport> read, Func<MixerChange, MixerReport> apply)
-    {
-        _mixerRead = read;
-        _mixerApply = apply;
-    }
+    /// <param name="mixer">The station's open card, its state file and what pinned each control.</param>
+    public void ServeMixer(MixerRuntime mixer) => _mixer = mixer;
 
     /// <summary>
     /// Why this station has no mixer to offer, for the answer a caller gets instead of one.
@@ -332,14 +330,23 @@ internal sealed class ConfigApi
     /// plan that cannot be built. Neither is exhaustive - a device that has been unplugged is
     /// discovered only by trying - which is what the ephemeral default is insurance for.</para>
     /// </remarks>
-    public static string? Validate(string json)
+    /// <param name="json">The proposed configuration document.</param>
+    /// <param name="asPath">
+    /// The config file this document is proposed to become, when the caller knows it. The parse
+    /// happens from a temporary file, so without this any check that compares a setting against
+    /// the config file's own location sees the temporary name: an <c>alsa.mixer.stateFile</c>
+    /// aimed at the station's real <c>soundmodem.json</c> would validate here and only be refused
+    /// at the restart, which takes the station down until somebody reads the journal. Null keeps
+    /// the old behaviour for a caller with no such path, which is what the tests use.
+    /// </param>
+    public static string? Validate(string json, string? asPath = null)
     {
         string temp = Path.Combine(
             Path.GetTempPath(), $"pdn-soundmodem-proposed-{Guid.NewGuid():N}.json");
         try
         {
             File.WriteAllText(temp, json);
-            DaemonConfig? proposed = DaemonConfig.TryLoad(temp, out string error);
+            DaemonConfig? proposed = DaemonConfig.TryLoad(temp, out string error, asPath);
             if (proposed is null)
             {
                 return error;
@@ -536,14 +543,16 @@ internal sealed class ConfigApi
     /// <para>Unlike <c>/api/config</c> this does not restart anything. A mixer setting takes
     /// effect on the card as it is written, the PCM stream is untouched, and restarting a station
     /// to trim its capture gain would drop the waterfall the operator is trimming it against.</para>
-    /// <para>The write that follows is only so the next start-up sets the same thing, and it
-    /// keeps the same rule as every other change here: one run unless <c>?persist=true</c>. So an
-    /// experiment with the gain self-heals to the config file on the next restart, exactly as a
-    /// bad modem entry does.</para>
+    /// <para><b>And, unlike everything else here, it persists by default</b> (Tom, 2026-09-06).
+    /// A level trimmed on the page is meant to stay trimmed, so it is remembered in the daemon's
+    /// own state file and applied at the next start-up. Nothing rewrites the config file: what
+    /// that file pins is applied first and wins, and the answer says so when the control just
+    /// changed is one of them. <c>?persist=false</c> is the one-run try, for a value being
+    /// listened to rather than kept.</para>
     /// </remarks>
     private async Task MixerAsync(HttpListenerContext context)
     {
-        if (_mixerRead is null || _mixerApply is null)
+        if (_mixer is not MixerRuntime mixer)
         {
             if (context.Request.HttpMethod == "GET")
             {
@@ -560,7 +569,7 @@ internal sealed class ConfigApi
         if (context.Request.HttpMethod == "GET")
         {
             await RespondJsonAsync(
-                context, 200, MixerApi.Describe(_mixerRead()).ToJsonString(Pretty))
+                context, 200, MixerApi.Describe(mixer.Read()).ToJsonString(Pretty))
                 .ConfigureAwait(false);
             return;
         }
@@ -586,106 +595,42 @@ internal sealed class ConfigApi
 
         // One change at a time. Applying is set-then-read across several calls into the card, so
         // two overlapping POSTs would each be answered with the other's level - and the read-back
-        // is the answer, and the answer is the point. They would also both write the same file.
+        // is the answer, and the answer is the point. They would also both write the state file.
         // The waterfall serves every request on its own task, so nothing else is stopping them.
         await _mixerGate.WaitAsync().ConfigureAwait(false);
         try
         {
-            // The card first. It is the thing the operator is listening to, and everything below
-            // is only about writing down what it is now set to.
-            MixerReport report = _mixerApply(change);
-
-            // Always built, and always from what this process is running: this is the document
-            // the next start-up would come up on, and it has to exist even if the persist path
-            // below cannot be taken.
-            string? oneRun = MixerApi.Amend(_runningJson(), change, out string why);
-            if (oneRun is null)
+            // Asked of the open card, before anything is touched: a dB the card cannot take is a
+            // 400 with the card's own range in it, not a level half-applied and reported as a
+            // success. This is the only check that needs the hardware, so it cannot be done at
+            // parse time - the config file's equivalent is a journal line at start-up instead.
+            if (mixer.WhyRefused(change) is string cannot)
             {
-                await RespondAsync(context, 500,
-                    "the card was set, but the change could not be folded into the running "
-                    + $"configuration: {why}").ConfigureAwait(false);
+                await RespondAsync(context, 400, cannot).ConfigureAwait(false);
                 return;
             }
 
-            // Its own branch, because the two failures have two different reasons to give and
-            // the fold-in's is the empty string when it is the validation that failed - which
-            // read as a sentence ending in a dangling colon with the actual reason discarded.
-            if (Validate(oneRun) is string wrong)
-            {
-                await RespondAsync(context, 500,
-                    "the card was set, but the running configuration with this change folded in "
-                    + $"would not load: {wrong}").ConfigureAwait(false);
-                return;
-            }
+            // persist=false is the deliberate opt-out; anything else, including no query string
+            // at all, persists. The page never sends it: a trim made on the page is meant to
+            // stay made.
+            bool persist = !string.Equals(
+                context.Request.QueryString["persist"], "false", StringComparison.OrdinalIgnoreCase);
 
-            bool persist = string.Equals(
-                context.Request.QueryString["persist"], "true", StringComparison.OrdinalIgnoreCase);
-            string declined = "";
-            string document = oneRun;
-
-            if (persist)
-            {
-                // The file as it is NOW, not the snapshot this process started on. An operator
-                // who has edited soundmodem.json since start-up must not have those edits
-                // replaced by a months-old copy of it because they moved a slider.
-                if (!MixerApi.TryReadRewritable(_configPath, out string current, out string cannot))
-                {
-                    declined = $"{cannot}, so it was NOT written. To keep this, add "
-                        + $"{MixerApi.Snippet(change)} to it by hand. ";
-                    persist = false;
-                }
-                else if (MixerApi.Amend(current, change, out string fileWhy) is not string edited)
-                {
-                    declined = $"{_configPath} was NOT written: {fileWhy}. To keep this, add "
-                        + $"{MixerApi.Snippet(change)} to it by hand. ";
-                    persist = false;
-                }
-                else if (Validate(edited) is string invalid)
-                {
-                    // The file has been edited since start-up into something that would not load.
-                    // Writing this over the top would bury that, so it is left for the operator
-                    // to find, and the change lives on as a one-run instead.
-                    declined = $"{_configPath} was NOT written, because it has been edited into "
-                        + $"something that would not load ({invalid}). To keep this, fix the file "
-                        + $"and add {MixerApi.Snippet(change)} to it. ";
-                    persist = false;
-                }
-                else
-                {
-                    document = edited;
-                }
-            }
-
-            string target = persist ? _configPath : _ephemeralPath;
-            string written;
-            try
-            {
-                EnsureDirectoryOf(target);
-                File.WriteAllText(target, document);
-                written = declined + (persist
-                    ? PersistedNote()
-                    : OneRunNote());
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException
-                                        or ArgumentException or NotSupportedException)
-            {
-                // The card is set either way, and saying so matters: the operator can hear the
-                // difference and would otherwise assume nothing happened.
-                persist = false;
-                written = declined + $"The card is set and stays set, but {target} could not be "
-                    + $"written ({e.Message}), so nothing on disk records it.";
-            }
+            MixerOutcome outcome = mixer.Apply(change, persist);
 
             // The mixer's own lines have already been printed by the apply above, prefix and all,
-            // so this only has to say who asked and how long it lasts - not repeat them behind a
-            // second prefix.
-            Console.WriteLine(
-                $"api: mixer set over the API, {(persist ? "persisted" : "for this run")}");
+            // so this only has to say who asked - not repeat them behind a second prefix.
+            Console.WriteLine("api: mixer set over the API");
 
-            JsonObject answer = MixerApi.Describe(report);
+            JsonObject answer = MixerApi.Describe(outcome.Report);
             answer["applied"] = true;
-            answer["persisted"] = persist;
-            answer["note"] = written;
+            answer["persisted"] = outcome.Persisted;
+            // Whether the note is something to put in front of the operator now. The page shows
+            // it on the strength of this, rather than inferring it from the other fields and
+            // getting it subtly wrong for the cases that matter.
+            answer["warn"] = outcome.Warn;
+            answer["stateFile"] = mixer.StatePath;
+            answer["note"] = outcome.Note;
             await RespondJsonAsync(context, 200, answer.ToJsonString(Pretty)).ConfigureAwait(false);
         }
         finally
@@ -693,58 +638,6 @@ internal sealed class ConfigApi
             _mixerGate.Release();
         }
     }
-
-    /// <summary>
-    /// What a persisted mixer change actually did, which includes clearing any one-run change
-    /// that was waiting.
-    /// </summary>
-    /// <remarks>
-    /// The clearing is the point rather than tidiness. Start-up prefers the one-run file over the
-    /// config file, and this endpoint - alone among the writers here - does not restart, so a
-    /// one-run change POSTed earlier in the session would still be sitting there and would win at
-    /// the next restart. The station would come up on the older level, consume the file, and only
-    /// reach the persisted one at the restart after that.
-    /// </remarks>
-    private string PersistedNote()
-    {
-        string cleared = "";
-        try
-        {
-            if (File.Exists(_ephemeralPath))
-            {
-                File.Delete(_ephemeralPath);
-                cleared = " An earlier one-run change was waiting and has been removed, so the "
-                    + "file is what applies.";
-            }
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            cleared = $" WARNING: a one-run change is still waiting in {_ephemeralPath} and could "
-                + $"not be removed ({e.Message}); the next restart will apply that instead.";
-        }
-
-        return $"The card is set now, and {_configPath} has been written, so every restart from "
-            + $"here sets it too.{cleared}";
-    }
-
-    /// <summary>
-    /// What a one-run mixer change actually did. Deliberately not the sentence
-    /// <c>/api/config</c> uses, which is true there and false here.
-    /// </summary>
-    /// <remarks>
-    /// Two differences, both of which change what an operator should do next. That endpoint
-    /// restarts at once and the restart consumes the one-run file, so "in force until the next
-    /// restart" is exactly right for it; this one does not restart, so the file is still on disk
-    /// at the next restart and is applied then. And a mixer is never reset: a config file with no
-    /// <c>alsa.mixer</c> block writes nothing to the card at all, so once the one-run file has
-    /// been consumed the card simply keeps this level. Saying "until the next restart" would tell
-    /// an operator their change was temporary when it is, in practice, permanent.
-    /// </remarks>
-    private string OneRunNote() =>
-        "The card is set now and stays set: nothing ever resets a mixer, so this level holds "
-        + $"until something sets it again. {_ephemeralPath} holds the change for the next "
-        + $"restart; the restart after that goes back to {_configPath}, which will not touch the "
-        + "mixer at all unless it has an \"alsa\".\"mixer\" block. Add one to make this deliberate.";
 
     /// <summary>Indented, because these answers are read by people as often as by scripts.</summary>
     private static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true };
@@ -764,7 +657,7 @@ internal sealed class ConfigApi
             return;
         }
 
-        if (Validate(body) is string refusal)
+        if (Validate(body, _configPath) is string refusal)
         {
             // The station is untouched. This is the whole reason the API exists rather than an
             // operator editing the file: a refusal here costs nothing that was working.

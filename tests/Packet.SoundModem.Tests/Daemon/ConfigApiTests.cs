@@ -249,4 +249,35 @@ public class ConfigApiTests : IDisposable
 
         ConfigApi.Redact(json).Should().Be(json);
     }
+    /// <summary>
+    /// A posted configuration whose <c>stateFile</c> names the station's real config file is
+    /// refused at the POST, not at the restart afterwards.
+    /// </summary>
+    /// <remarks>
+    /// Validation parses the proposal out of a temporary file, so without being told the path the
+    /// document is proposed to become, the guard compared <c>stateFile</c> against the temporary
+    /// name and passed anything. The change would then be written or staged and the restart would
+    /// exit 2 on the new sentence, taking the station down until somebody read the journal.
+    /// </remarks>
+    [Fact]
+    public void A_State_File_Aimed_At_The_Real_Config_Is_Refused_At_The_Post()
+    {
+        const string json = """
+            {
+              "device": "plughw:1,0",
+              "modems": [ { "subChannel": 0, "mode": "afsk1200" } ],
+              "alsa": { "mixer": { "stateFile": "/etc/pdn-soundmodem/soundmodem.json" } }
+            }
+            """;
+
+        ConfigApi.Validate(json, "/etc/pdn-soundmodem/soundmodem.json")
+            .Should().Contain("which is this configuration file");
+
+        // And it is still accepted for a station whose config file is somewhere else, so the
+        // guard is about this file rather than about the name.
+        ConfigApi.Validate(json, "/etc/pdn-soundmodem/other.json").Should().BeNull();
+        ConfigApi.Validate(json).Should().BeNull(
+            "a caller with no such path to offer keeps the old behaviour");
+    }
+
 }

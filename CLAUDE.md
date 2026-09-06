@@ -58,6 +58,16 @@ row in the matrix. A fix isn't finished until the ledger records it.
   under a C locale renders anything above 0x7F as `<E2><80><94>`, and a station's console is
   not ours to configure. Maths notation (pi, sigma, plus-minus, section marks) is fine in
   comments, which are never printed. `SourceTextTests` enforces both rules.
+- **ALSA: all mixer work finishes before the PCM is opened.** Opening a capture stream does not
+  start it - the kernel starts the endpoint on the first `snd_pcm_readi`, and on a USB card that
+  is a URB submission which fails with `-EIO` if the device is busy with a control transfer at
+  that moment. Mixer traffic *is* control transfers, so anything between `snd_pcm_open` and the
+  first read can stop the card ever delivering audio. It is intermittent, so it presents as flaky
+  hardware rather than as a bug: 10 dead runs out of 13 on the bench CM108 when the mixer pass
+  sat in that window, 10 of 10 alive with it moved ahead of the open. Nothing in the pass needs
+  the PCM (`--mixer-show` reads a card on a running station), so keep the whole block above the
+  `AlsaAudioOutput`/`AlsaAudioInput` construction in `Program.cs`. `StartUpOrderTests` pins it;
+  [docs/roadmap.md](docs/roadmap.md) #17 has the measurements.
 - CI: every workflow job MUST target `[self-hosted, Linux, X64]` - no GitHub-hosted
   runners (no minutes budget). Same rule as packet.net.
 - PRs merge on locally-run green tests (`dotnet test`); fix forward.

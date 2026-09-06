@@ -325,10 +325,17 @@ public sealed class AlsaConfig
 /// whatever <c>alsamixer</c>, a reboot or a re-plug last left it, and this section exists to pin
 /// the ones that matter without taking over the ones that do not. A file with no
 /// <c>alsa.mixer</c> block changes nothing about a station that was working before it existed.</para>
-/// <para><b>Percentages, not dB.</b> See <see cref="Packet.SoundModem.Audio.AlsaMixer"/>: not
-/// every card publishes a dB scale, every card with a volume answers a raw one, and a percentage
-/// is what <c>alsamixer</c> shows on the same card. The journal reports the dB the card says the
-/// setting came out at, when it knows one.</para>
+/// <para><b>dB, not percentages</b> (Tom, 2026-09-06: "change to dB, far more useful"). A level
+/// in dB means the same thing on every card; a percentage of a card's own raw range means nothing
+/// until you know the range. The card's range is printed beside the level everywhere it is shown -
+/// the start-up journal, <c>--mixer-show</c>, <c>/api/mixer</c> and the operator page - and a
+/// value outside it is refused with the range rather than clamped. A card that publishes no dB
+/// scale at all is said so and left alone; see <see cref="Packet.SoundModem.Audio.AlsaMixer"/>.</para>
+/// <para><b>What is set here is applied at every start-up and wins over the state file.</b> A
+/// change made from the operator page or <c>/api/mixer</c> is remembered in
+/// <c>mixer-state.json</c> and applied at the next start-up, but only for a control this section
+/// says nothing about (Tom, 2026-09-06). So a level pinned here is the level the station comes up
+/// on, every time, whatever the page did last week.</para>
 /// <para><b>Recommended for a data modem:</b> <c>agc: false</c>, because automatic gain fights
 /// the modem's own level tracking and turns the noise floor into a moving target, and
 /// <c>micBoost: false</c> unless the radio's output is genuinely low. Recommendations, not
@@ -336,8 +343,8 @@ public sealed class AlsaConfig
 /// </remarks>
 public sealed class AlsaMixerConfig
 {
-    /// <summary>Capture gain, 0-100 as a percentage of the card's range; null leaves it.</summary>
-    public int? CaptureGainPercent { get; set; }
+    /// <summary>Capture gain in dB, inside the card's own range; null leaves it.</summary>
+    public double? CaptureGainDb { get; set; }
 
     /// <summary>Automatic gain control on or off; null leaves it.</summary>
     public bool? Agc { get; set; }
@@ -348,14 +355,27 @@ public sealed class AlsaMixerConfig
     /// </summary>
     public bool? MicBoost { get; set; }
 
-    /// <summary>Transmit-side playback level, 0-100 as a percentage; null leaves it.</summary>
-    public int? PlaybackPercent { get; set; }
+    /// <summary>Transmit-side playback level in dB, inside the card's range; null leaves it.</summary>
+    public double? PlaybackDb { get; set; }
 
     /// <summary>
     /// The mixer card, when it is not the one the <c>device</c> string implies. Rarely needed:
     /// <c>plughw:CARD=Device,DEV=0</c> gives <c>hw:CARD=Device</c> by itself.
     /// </summary>
     public string? Card { get; set; }
+
+    /// <summary>
+    /// Where a change made from the operator page or <c>/api/mixer</c> is remembered between
+    /// runs; null takes the default.
+    /// </summary>
+    /// <remarks>
+    /// The default is <c>mixer-state.json</c> in the systemd state directory
+    /// (<c>/var/lib/pdn-soundmodem</c> under the shipped unit, which the service user owns), or
+    /// beside the config file when there is no state directory. Anything a key above pins is
+    /// applied from the config file instead, so this file only ever fills in for a control the
+    /// file says nothing about. See <see cref="MixerStateFile"/>.
+    /// </remarks>
+    public string? StateFile { get; set; }
 
     /// <summary>Names to look for the capture gain under, in order; null takes the built-in list.</summary>
     public List<string>? CaptureControls { get; set; }
@@ -376,10 +396,10 @@ public sealed class AlsaMixerConfig
     /// <summary>This section as the mixer layer wants it.</summary>
     public MixerSettings ToSettings() => new()
     {
-        CaptureGainPercent = CaptureGainPercent,
+        CaptureGainDb = CaptureGainDb,
         Agc = Agc,
         MicBoost = MicBoost,
-        PlaybackPercent = PlaybackPercent,
+        PlaybackDb = PlaybackDb,
         CaptureControls = Names(CaptureControls, MixerSettings.DefaultCaptureControls),
         AgcControls = Names(AgcControls, MixerSettings.DefaultAgcControls),
         MicBoostControls = Names(MicBoostControls, MixerSettings.DefaultMicBoostControls),
@@ -387,30 +407,31 @@ public sealed class AlsaMixerConfig
     };
 
     /// <summary>
-    /// Why a pair of percentages is not usable, or null when they are. One method, so the
-    /// start-up refusal and the API's 400 cannot drift apart: the operator gets the same
-    /// sentence whichever door they came in by.
+    /// The percentage keys this section used to have, and the dB key that replaced each.
     /// </summary>
-    /// <param name="captureGainPercent">The capture gain asked for, or null.</param>
-    /// <param name="playbackPercent">The playback level asked for, or null.</param>
-    public static string? WhyNotUsable(int? captureGainPercent, int? playbackPercent)
-    {
-        foreach ((string name, int? percent) in (ReadOnlySpan<(string, int?)>)
-            [
-                ("captureGainPercent", captureGainPercent),
-                ("playbackPercent", playbackPercent),
-            ])
+    /// <remarks>
+    /// Not aliased, deliberately. 60 meant 60% of a raw range and now means 60 dB, which on the
+    /// bench CM108's -12..23 dB capture would be off the end of the card - so quietly reading the
+    /// old key as the new one would set a level nobody asked for. They are gone, and a file or a
+    /// request that still carries one is told which key to use instead.
+    /// </remarks>
+    public static readonly IReadOnlyDictionary<string, string> RenamedKeys =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            if (percent is < 0 or > 100)
-            {
-                return $"\"alsa\".\"mixer\".\"{name}\" is {percent}. That is a percentage of the "
-                    + "card's own volume range - use 0-100, or remove it to leave the control "
-                    + "exactly as the card has it.";
-            }
-        }
+            ["captureGainPercent"] = MixerSetup.CaptureKey,
+            ["playbackPercent"] = MixerSetup.PlaybackKey,
+        };
 
-        return null;
-    }
+    /// <summary>
+    /// What to say about a percentage key that is still in a file or a request body, or null if
+    /// <paramref name="key"/> is not one. One sentence, so the start-up warning and the API's 400
+    /// cannot drift apart.
+    /// </summary>
+    /// <param name="key">The key that was found.</param>
+    public static string? WhyRenamed(string key) =>
+        RenamedKeys.TryGetValue(key ?? "", out string? now)
+            ? $"{key} is no longer read; use {now}, the card's range is shown by --mixer-show"
+            : null;
 
     /// <summary>An override list if there is a usable one, else the built-in fallbacks.</summary>
     private static IReadOnlyList<string> Names(List<string>? given, IReadOnlyList<string> fallback)
@@ -1246,7 +1267,15 @@ public sealed class DaemonConfig
     };
 
     /// <summary>Loads and validates a configuration file.</summary>
-    public static DaemonConfig Load(string path)
+    /// <param name="path">The file to read.</param>
+    /// <param name="asPath">
+    /// The path to validate as though the document lived at, when that is not where it is being
+    /// read from. <c>POST /api/config</c> parses a proposed document out of a temporary file, and
+    /// without this the checks that compare a setting against the config file's own location -
+    /// today <c>alsa.mixer.stateFile</c> - would compare it against the temporary name and pass
+    /// anything. The refusal has to arrive at the POST, not at the restart afterwards.
+    /// </param>
+    public static DaemonConfig Load(string path, string? asPath = null)
     {
         var config = JsonSerializer.Deserialize<DaemonConfig>(File.ReadAllText(path), Options)
             ?? throw new InvalidDataException(
@@ -1267,7 +1296,7 @@ public sealed class DaemonConfig
             ValidatePublish(config);
         }
 
-        ValidateAlsa(config);
+        ValidateAlsa(config, asPath ?? path);
 
         if (config.Monitor is not null)
         {
@@ -1412,18 +1441,17 @@ public sealed class DaemonConfig
     /// a FlexRadio would silently do nothing, and a setting that silently does nothing is worse
     /// than one that says so. Exit 2, so systemd's RestartPreventExitStatus=2 stops retrying and
     /// the journal carries one readable sentence.
+    /// <para>The dB levels themselves are NOT checked here, because nothing at load time knows
+    /// what the card's range is. They are checked against the open card at apply time, where a
+    /// value off the end of the range is journalled with the range and that one control is
+    /// skipped - a warning rather than an exit, because a station must not be stopped from
+    /// receiving by a level it could have carried on at.</para>
     /// </remarks>
-    private static void ValidateAlsa(DaemonConfig config)
+    private static void ValidateAlsa(DaemonConfig config, string configPath)
     {
         if (config.Alsa?.Mixer is not AlsaMixerConfig mixer)
         {
             return;
-        }
-
-        if (AlsaMixerConfig.WhyNotUsable(mixer.CaptureGainPercent, mixer.PlaybackPercent)
-            is string wrong)
-        {
-            throw new InvalidDataException(wrong);
         }
 
         if (config.Monitor is not null)
@@ -1441,6 +1469,56 @@ public sealed class DaemonConfig
                 + "sound card. Capture gain, AGC and mic boost are the card's mixer; a FlexRadio "
                 + "or a web receiver has none. Remove the \"alsa\" section, or point \"device\" at "
                 + "the card.");
+        }
+
+        // The one way the promise "this daemon never writes your config file" could be broken is
+        // by the operator aiming the state file at it. Then the first change made on the page
+        // would replace a hand-written JSONC file, comments and all, with six lines of levels.
+        // Refused at start-up rather than discovered afterwards, because afterwards is too late:
+        // the file it would have destroyed is the only copy of what the station was meant to be.
+        if (mixer.StateFile is { Length: > 0 } state && SamePath(state, configPath))
+        {
+            throw new InvalidDataException(
+                $"\"alsa\".\"mixer\".\"stateFile\" is \"{mixer.StateFile}\", which is this "
+                + "configuration file. That file is never written by this daemon and a mixer "
+                + "change would overwrite it; point \"stateFile\" somewhere else, or remove it "
+                + $"to take the default ({MixerStateFile.DefaultName} in the state directory).");
+        }
+    }
+
+    /// <summary>
+    /// Whether two paths name the same file, as far as can be told without opening either.
+    /// </summary>
+    /// <remarks>
+    /// Full-path comparison, so "soundmodem.json" and "./soundmodem.json" and an absolute path to
+    /// the same file all match. It does not resolve symlinks or hard links, so it is a floor and
+    /// not a proof - which is the right shape for a guard whose job is to catch the plausible
+    /// mistake rather than to defeat somebody determined to make it.
+    /// </remarks>
+    private static bool SamePath(string one, string other)
+    {
+        try
+        {
+            return string.Equals(Trimmed(one), Trimmed(other), StringComparison.Ordinal);
+        }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException
+                                    or PathTooLongException)
+        {
+            // An unusable path is somebody else's error to report; this one only answers
+            // "are these the same file", and a path that cannot be resolved is not.
+            return false;
+        }
+
+        // Path.GetFullPath keeps a trailing separator, so "soundmodem.json/" would compare
+        // unequal to the same file and the friendly refusal would not fire. That case fails
+        // safe rather than dangerously - the write lands on "soundmodem.json/.<pid>.tmp" and
+        // errors - but the operator then gets a write-failure note instead of being told at
+        // start-up what they actually typed wrong. Trimmed here so they get the sentence.
+        static string Trimmed(string path)
+        {
+            string full = Path.GetFullPath(path);
+            string trimmed = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return trimmed.Length == 0 ? full : trimmed;
         }
     }
 
@@ -2001,6 +2079,18 @@ public sealed class DaemonConfig
         Unknown("flex", config.Flex?.UnknownSettings);
         Unknown("alsa", config.Alsa?.UnknownSettings);
         Unknown("alsa mixer", config.Alsa?.Mixer?.UnknownSettings);
+
+        // The generic line above says a key is being ignored; this one says what to write
+        // instead. Both, because "captureGainPercent is not a setting this version knows" on a
+        // file that worked in 0.57.0 is true and useless - the operator needs the new name and
+        // the fact that its unit changed, or they will type 60 into a dB field.
+        foreach (string key in config.Alsa?.Mixer?.UnknownSettings?.Keys ?? Enumerable.Empty<string>())
+        {
+            if (AlsaMixerConfig.WhyRenamed(key) is string renamed)
+            {
+                warnings.Add($"alsa mixer: {renamed}");
+            }
+        }
         foreach (ModemConfig modem in config.Modems)
         {
             Unknown($"modem {modem.SubChannel}", modem.UnknownSettings);
@@ -2180,7 +2270,11 @@ public sealed class DaemonConfig
     /// person who has to act on it reads it in `journalctl` - a .NET stack trace there tells
     /// them nothing they can use, and buries the one line that names the problem.
     /// </remarks>
-    public static DaemonConfig? TryLoad(string path, out string error)
+    /// <param name="path">The file to read.</param>
+    /// <param name="error">What an operator should read, when this returns null.</param>
+    /// <param name="asPath">The path to validate as though the document lived at; see
+    /// <see cref="Load(string, string?)"/>.</param>
+    public static DaemonConfig? TryLoad(string path, out string error, string? asPath = null)
     {
         try
         {
@@ -2193,7 +2287,7 @@ public sealed class DaemonConfig
                 return null;
             }
 
-            return Load(path);
+            return Load(path, asPath);
         }
         catch (FileNotFoundException)
         {

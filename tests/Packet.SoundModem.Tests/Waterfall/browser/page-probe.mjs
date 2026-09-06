@@ -681,7 +681,10 @@ const mixerPanel = () => ({
   // A browser's input.value is always a string, whatever was assigned to it; the shim keeps
   // whatever it was given, so the coercion happens here instead.
   gain: run(`String(document.getElementById("mixGain").value)`),
+  gainMin: run(`String(document.getElementById("mixGain").min)`),
+  gainMax: run(`String(document.getElementById("mixGain").max)`),
   gainDisabled: run(`document.getElementById("mixGain").disabled`),
+  note: run(`document.getElementById("mixNote").textContent`),
   agc: run(`document.getElementById("mixAgc").className`),
   boost: run(`document.getElementById("mixBoost").className`),
   keyHidden: run(`document.getElementById("mixKey").hidden`),

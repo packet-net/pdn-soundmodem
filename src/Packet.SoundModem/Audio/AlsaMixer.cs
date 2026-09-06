@@ -11,12 +11,16 @@ namespace Packet.SoundModem.Audio;
 /// own capture gain has a dependency on a package it does not declare, an exit code to interpret
 /// and a locale to be surprised by. The simple mixer API is a dozen entry points and this is all
 /// of them we need.</para>
-/// <para><b>Percentages, not dB, are the unit.</b> <c>snd_mixer_selem_set_capture_dB_all</c> only
-/// works on a card that publishes a dB scale, and plenty do not; every card with a capture volume
-/// at all answers <c>snd_mixer_selem_set_capture_volume_all</c>. A percentage is also what
-/// <c>alsamixer</c> puts on the screen, so what an operator types here and what they see on the
-/// same card agree. The dB figure is read back and reported when the card knows one, because dB
-/// is what a level actually sits on.</para>
+/// <para><b>dB is the unit</b> (Tom, 2026-09-06: "change to dB, far more useful"). A level in dB
+/// means the same thing on every card and on the radio at the other end of the lead, while a
+/// percentage of a card's own raw range means nothing until you know the range. So the station's
+/// levels are set with <c>snd_mixer_selem_set_capture_dB_all</c> and its playback twin, and read
+/// back in dB with the card's own range quoted beside them.</para>
+/// <para><b>Not every card has a dB scale.</b> Those calls only work where the card publishes
+/// one, and plenty publish only raw steps. That is not guessed at: <see cref="ReadDbRange"/>
+/// answers null, the layer above says "no dB scale" in the journal and in the API, and the
+/// control is left exactly as the card has it. A percentage is still read back for such a card,
+/// because it is the only figure there is and it is what <c>alsamixer</c> shows.</para>
 /// <para><b>Nothing here throws for a missing control.</b> Card revisions differ - "Mic" against
 /// "Mic Capture", an "Auto Gain Control" that some revisions do not have at all - and the layer
 /// above (<see cref="MixerSetup"/>) turns absence into a journal line, not a failure.</para>
@@ -32,7 +36,47 @@ public sealed class AlsaMixer : IAlsaMixer
     /// </summary>
     private const int FirstChannel = 0;
 
+    /// <summary>
+    /// Anything at or below this is a sentinel rather than a reading, in hundredths of a dB.
+    /// </summary>
+    /// <remarks>
+    /// The sentinel it is there to catch is alsa-lib's <c>SND_CTL_TLV_DB_GAIN_MUTE</c>
+    /// (<c>alsa/control.h</c>), which is -9999999, and which <c>snd_tlv_get_dB_range</c> reports
+    /// as the minimum of a control whose TLV carries the mute flag. A threshold rather than an
+    /// equality test on that value, deliberately: it catches the sentinel and any driver that
+    /// answers something similarly absurd, and -10000 dB is not a level any sound card has.
+    /// </remarks>
+    private const long NotALevel = -1000000;
+
+    /// <summary>
+    /// How far up the raw range to look for the first step that is a level rather than mute.
+    /// One step is the answer on every card seen; the bound is only so that a card answering
+    /// nonsense cannot turn this into a long loop at start-up.
+    /// </summary>
+    private const int MuteSearchSteps = 64;
+
     private readonly object _gate = new();
+
+    /// <summary>
+    /// The dB range per control and side, worked out once.
+    /// </summary>
+    /// <remarks>
+    /// A range is a property of the card, not of where the level currently sits, and alsa-lib
+    /// itself caches the parsed TLV behind these calls for the life of the element and never
+    /// invalidates it (<c>db_initialized</c> in <c>simple_none.c</c> is set once). So reading it
+    /// again per access buys nothing and costs a TLV round trip on every start-up line, every
+    /// GET of the API and every move of the operator page's slider.
+    /// <para><b>Why this may be cached when element pointers deliberately may not</b> (see
+    /// <see cref="TryElement"/>). A pointer freed by a re-plug is a use-after-free; a stale dB
+    /// range is at worst a wrong number. And it cannot go stale in practice: this cache is keyed
+    /// by control name and outlives the element, where alsa-lib's own dies with it, but a re-plug
+    /// kills the capture feed, and a dead feed shuts the daemon down for systemd to restart - the
+    /// same reasoning that makes the mixer-before-PCM ordering durable. A different card behind
+    /// the same name would therefore be met by a fresh process with an empty cache.</para>
+    /// </remarks>
+    private readonly Dictionary<(string Control, MixerDirection Direction), MixerDbRange?> _ranges
+        = [];
+
     private IntPtr _mixer;
 
     private AlsaMixer(IntPtr mixer, string card, List<string> controls)
@@ -191,6 +235,50 @@ public sealed class AlsaMixer : IAlsaMixer
     }
 
     /// <inheritdoc />
+    public bool TrySetDb(string control, MixerDirection direction, double decibels)
+    {
+        lock (_gate)
+        {
+            if (!TryElement(control, out IntPtr element) || !HasVolume(element, direction))
+            {
+                return false;
+            }
+
+            // Refused rather than approximated. A card with no dB scale cannot be told a dB, and
+            // converting one into a percentage of its raw range would be inventing a mapping the
+            // card never published - the operator would be setting a number that means nothing.
+            if (Range(control, element, direction) is null)
+            {
+                return false;
+            }
+
+            // Hundredths of a dB, which is alsa-lib's unit throughout, and dir 0: put the level
+            // at the nearest step the card has rather than the one below (-1) or above (+1).
+            // 6.0 dB on a card with 1 dB steps is 6.0 dB; 6.4 dB is 6.0 dB, not 6.0 or 7.0
+            // depending on which way alsa-lib happened to lean.
+            var value = new CLong((nint)(long)Math.Round(decibels * 100.0));
+            int err = direction == MixerDirection.Capture
+                ? snd_mixer_selem_set_capture_dB_all(element, value, 0)
+                : snd_mixer_selem_set_playback_dB_all(element, value, 0);
+            return err >= 0;
+        }
+    }
+
+    /// <inheritdoc />
+    public MixerDbRange? ReadDbRange(string control, MixerDirection direction)
+    {
+        lock (_gate)
+        {
+            if (!TryElement(control, out IntPtr element) || !HasVolume(element, direction))
+            {
+                return null;
+            }
+
+            return Range(control, element, direction);
+        }
+    }
+
+    /// <inheritdoc />
     public bool TrySetVolume(string control, MixerDirection direction, int percent)
     {
         lock (_gate)
@@ -200,7 +288,7 @@ public sealed class AlsaMixer : IAlsaMixer
                 return false;
             }
 
-            if (Range(element, direction) is not (long min, long max))
+            if (Raw(element, direction) is not (long min, long max))
             {
                 return false;
             }
@@ -226,7 +314,7 @@ public sealed class AlsaMixer : IAlsaMixer
                 return false;
             }
 
-            if (Range(element, direction) is not (long min, long max))
+            if (Raw(element, direction) is not (long min, long max))
             {
                 return false;
             }
@@ -363,7 +451,98 @@ public sealed class AlsaMixer : IAlsaMixer
             ? snd_mixer_selem_has_capture_volume(element) != 0
             : snd_mixer_selem_has_playback_volume(element) != 0;
 
-    private static (long Min, long Max)? Range(IntPtr element, MixerDirection direction)
+    /// <summary>
+    /// A control's dB span, worked out once and remembered. Null when the card publishes only
+    /// raw steps.
+    /// </summary>
+    private MixerDbRange? Range(string control, IntPtr element, MixerDirection direction)
+    {
+        if (_ranges.TryGetValue((control, direction), out MixerDbRange? known))
+        {
+            return known;
+        }
+
+        MixerDbRange? found = DbRange(element, direction);
+        _ranges[(control, direction)] = found;
+        return found;
+    }
+
+    /// <summary>
+    /// A control's dB span as the card publishes it, with the mute sentinel resolved into the
+    /// lowest step that is actually a level.
+    /// </summary>
+    /// <remarks>
+    /// <para>Two ways to have no scale, and both are ordinary. alsa-lib answers a negative error
+    /// for a control with no dB information at all; a few drivers answer 0 with the range
+    /// collapsed to a point, which is the same thing said differently and would otherwise look
+    /// like a card whose only setting is 0.00 dB.</para>
+    /// <para>A third way is not a missing scale at all and must not be treated as one: a control
+    /// whose TLV carries the mute flag reports its minimum as
+    /// <c>SND_CTL_TLV_DB_GAIN_MUTE</c> (-9999999, i.e. -99999.99 dB), because its bottom step is
+    /// silence rather than a level. The bench CM108's "Speaker" is one of these
+    /// (<c>dBminmaxmute-min=-37.00dB,max=0.00dB</c>). Reported as-is it makes a journal line that
+    /// reads "-99999.99 to 0.00 dB" and a slider a thousand times too long to aim a transmit
+    /// level with, so the sentinel is recognised and the card is asked what each raw step above
+    /// the bottom actually is until one of them is a level.</para>
+    /// </remarks>
+    private static MixerDbRange? DbRange(IntPtr element, MixerDirection direction)
+    {
+        int err = direction == MixerDirection.Capture
+            ? snd_mixer_selem_get_capture_dB_range(element, out CLong low, out CLong high)
+            : snd_mixer_selem_get_playback_dB_range(element, out low, out high);
+        if (err < 0)
+        {
+            return null;
+        }
+
+        long min = low.Value;
+        long max = high.Value;
+        if (max <= NotALevel)  // the mute sentinel itself, or worse
+        {
+            // A range whose top is the sentinel is not a scale at all.
+            return null;
+        }
+
+        if (min > NotALevel)
+        {
+            return max <= min ? null : new MixerDbRange(min / 100.0, max / 100.0, false);
+        }
+
+        // The bottom is mute. Walk up the raw steps for the first one the card calls a level.
+        if (Raw(element, direction) is not (long rawMin, long rawMax))
+        {
+            return null;
+        }
+
+        int steps = (int)Math.Min(MuteSearchSteps, Math.Max(0, rawMax - rawMin));
+        for (int step = 1; step <= steps; step++)
+        {
+            if (AskDb(element, direction, rawMin + step) is not long decibels
+                || decibels <= NotALevel)
+            {
+                continue;
+            }
+
+            return decibels >= max
+                ? null
+                : new MixerDbRange(decibels / 100.0, max / 100.0, true);
+        }
+
+        return null;
+    }
+
+    /// <summary>What the card says a raw step is worth in hundredths of a dB, or null.</summary>
+    private static long? AskDb(IntPtr element, MixerDirection direction, long raw)
+    {
+        var value = new CLong((nint)raw);
+        int err = direction == MixerDirection.Capture
+            ? snd_mixer_selem_ask_capture_vol_dB(element, value, out CLong decibels)
+            : snd_mixer_selem_ask_playback_vol_dB(element, value, out decibels);
+        return err < 0 ? null : decibels.Value;
+    }
+
+    /// <summary>A control's raw step range, which is what the dB scale is indexed by.</summary>
+    private static (long Min, long Max)? Raw(IntPtr element, MixerDirection direction)
     {
         int err = direction == MixerDirection.Capture
             ? snd_mixer_selem_get_capture_volume_range(element, out CLong low, out CLong high)
@@ -460,6 +639,35 @@ public sealed class AlsaMixer : IAlsaMixer
     [DllImport(Lib)]
     private static extern int snd_mixer_selem_get_playback_volume(
         IntPtr element, int channel, out CLong value);
+
+    // int snd_mixer_selem_ask_*_vol_dB(snd_mixer_elem_t *elem, long value, long *dBvalue) -
+    // what one raw step is worth in hundredths of a dB. Used to find the bottom of a range whose
+    // lowest step is the card's mute rather than a level.
+    [DllImport(Lib)]
+    private static extern int snd_mixer_selem_ask_capture_vol_dB(
+        IntPtr element, CLong value, out CLong decibels);
+
+    [DllImport(Lib)]
+    private static extern int snd_mixer_selem_ask_playback_vol_dB(
+        IntPtr element, CLong value, out CLong decibels);
+
+    [DllImport(Lib)]
+    private static extern int snd_mixer_selem_get_capture_dB_range(
+        IntPtr element, out CLong min, out CLong max);
+
+    [DllImport(Lib)]
+    private static extern int snd_mixer_selem_get_playback_dB_range(
+        IntPtr element, out CLong min, out CLong max);
+
+    // The trailing int is alsa-lib's rounding direction: -1 rounds down, +1 rounds up, 0 takes
+    // the nearest step. It is an int and not a C long, unlike the value beside it.
+    [DllImport(Lib)]
+    private static extern int snd_mixer_selem_set_capture_dB_all(
+        IntPtr element, CLong value, int dir);
+
+    [DllImport(Lib)]
+    private static extern int snd_mixer_selem_set_playback_dB_all(
+        IntPtr element, CLong value, int dir);
 
     [DllImport(Lib)]
     private static extern int snd_mixer_selem_get_capture_dB(
