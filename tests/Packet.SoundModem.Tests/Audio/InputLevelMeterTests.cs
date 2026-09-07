@@ -337,7 +337,9 @@ public class InputLevelMeterTests
     /// </summary>
     /// <remarks>
     /// They are not a convention borrowed from elsewhere; they are what this repository has
-    /// measured. See <see cref="InputLevelMeter"/> for the four sources. The page carries the
+    /// measured. See <see cref="InputLevelMeter"/> for the four sources, and
+    /// <c>docs/receive-levels.md</c> for the audit that kept the zone and moved the red edge from
+    /// -3 to -6, which is the strictest mode's own headroom requirement. The page carries the
     /// same numbers as JavaScript constants, and <c>WaterfallPageTests</c> checks the two agree.
     /// </remarks>
     [Fact]
@@ -346,7 +348,7 @@ public class InputLevelMeterTests
         InputLevelMeter.TargetPeakLowDbFs.Should().Be(-18);
         InputLevelMeter.TargetPeakHighDbFs.Should().Be(-9);
         InputLevelMeter.QuietPeakDbFs.Should().Be(-30);
-        InputLevelMeter.HotPeakDbFs.Should().Be(-3);
+        InputLevelMeter.HotPeakDbFs.Should().Be(-6);
         InputLevelMeter.DefaultInterval.Should().Be(
             TimeSpan.FromMilliseconds(200), "five a second: fast enough to aim a slider by");
         InputLevelMeter.TopCode.Should().Be(

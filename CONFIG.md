@@ -1205,14 +1205,24 @@ repository has already measured on real hardware, and four sources agree:
 
 The green band is widened a little either side of that, to -18 to -9 dBFS, because a real
 station's bursts vary and a zone the signal flickers out of is one an operator learns to ignore.
-The red starts at -3 dBFS: the only existing verdict on a capture level in this tree is
-`Packet.SoundModem.NinoBench`, whose "CLIPPING" is -0.9 dBFS, and 6 dB is the headroom figure
-this tree already works to elsewhere. Under -30 dBFS the bar goes grey.
+The red starts at **-6 dBFS**, which is the most headroom any mode in the catalogue asks for:
+`c4fsk19200` loses a decibel of link margin the moment the converter clips at all and every frame
+9 dB past that, and 6 dB is how much louder than the last one the next station may reasonably be.
+The bar cannot know which mode the loudest thing on the input belonged to, so it warns at the
+strictest mode's line. Under -30 dBFS the bar goes grey.
 
-**Being under the band is not a fault.** Every demodulator here is level-tolerant: the AFSK
-discriminator power-normalises and is barely affected from -40 dBFS up, the PSK detectors are
-scale-invariant, and MS110D has an AGC of its own. Clipping is the failure that actually costs
-decodes, so the alarm is at the top and the advice at the bottom is only advice.
+**The zone survived being audited** ([docs/receive-levels.md](docs/receive-levels.md), 2026-09-07),
+which is worth saying because the four sources above are about capture levels people were happy
+with rather than about what any demodulator here needs. Decoding real frames at every level from
+24 dB past full scale down to the converter's own floor puts the zone 21 dB above the earliest
+cliff any mode has and 3 dB below the strictest headroom line, so a signal landing in it is
+comfortable for every mode at once. The red edge moved from -3 to -6 in that audit; the zone and
+the grey edge did not move.
+
+**Being under the band is not a fault**, and the audit says how far from one: the sign-sliced and
+angle-sliced modes - AFSK 300, BPSK, QPSK, two-level FSK - lose nothing measurable from -84 dBFS
+up, and the 1200 baud AFSK family nothing above about -45. Clipping is the failure that actually
+costs decodes, so the alarm is at the top and the advice at the bottom is only advice.
 
 **Where each half is measured.** The peak and the RMS come off the audio the modems hear, which
 on a 48 kHz card has been through the 48 to 12 kHz decimating filter; that costs a fraction of a
@@ -1230,10 +1240,28 @@ noise between frames is louder than the frames, so the bar is a reading of the h
 decoded frame carries its own peak as well - measured over the stretch of audio **the
 demodulator says the frame occupied**, in half-millisecond cells - shown on its row in the
 [decoded frames panel](#waterfall) and written into the [frame log](#framelog) as `peak_dbfs` and
-`clipped`. Same scale and the same target band, and a row is badged **`TOO LOUD`** at -3 dBFS or
-above (or with the card clipped) and **`TOO QUIET`** below -24 dBFS, which is 6 dB under the
-band. Nothing in between: every demodulator here is level-tolerant, so a badge is for a level
-worth acting on.
+`clipped`. Same scale, and a row is badged **`TOO LOUD`** or **`TOO QUIET`** where the level has
+started to cost that frame's own mode something. Nothing in between, and most rows earn neither,
+which is what a healthy capture gain looks like.
+
+**The two edges are the mode's own**, measured by decoding real frames at every level from 24 dB
+past full scale down to the converter's floor ([docs/receive-levels.md](docs/receive-levels.md)).
+The catalogue splits into three, and the split is a property of the slicer:
+
+| group | modes | `TOO LOUD` at | `TOO QUIET` below |
+|---|---|---|---|
+| sign or angle slicer | AFSK 300, BPSK 300/1200, QPSK 600/2400/3600, FSK 4800/9600, every framing of each | 0 dBFS | -78 dBFS |
+| four-level slicer | `c4fsk9600`, `c4fsk19200` | -6 dBFS | -78 dBFS |
+| power-normalised discriminator | the 1200 baud AFSK family, all six | 0 dBFS | -39 dBFS |
+
+A clipped card badges `TOO LOUD` on any mode whatever the peak was: a converter that ran out of
+codes is a fact rather than a prediction, and it costs at least a decibel on every mode measured.
+Eighteen of the twenty shrug off 24 dB of overdrive for 1 to 5 dB of link margin - clipping a
+signal whose bits are decided by a sign leaves the sign alone - and fourteen lose nothing at all
+down to -84 dBFS, which is a 16-bit converter running out of codes rather than any demodulator
+objecting. v0.60.0 shipped one pair for all of them, -3 and -24, taken from the meter's own bands;
+on the radio1 bench that badged four frames `TOO QUIET` at -26 dBFS which decoded perfectly and
+had another fifty dB in hand.
 
 **Which modes carry one.** Every packet mode does - the AFSK, BPSK, QPSK, FSK and C4FSK families,
 their diversity banks, and the FX.25 and IL2P framings of each - because each of those decodes
@@ -1424,7 +1452,8 @@ the scroll on screen began and belong to no burst on it. Reconnecting rebuilds t
 log rather than stacking a second copy of the same frames.
 
 **Every row carries that frame's own audio level**, as `-14 dBFS`, with a **`TOO LOUD`** or
-**`TOO QUIET`** badge where it is worth acting on and nothing at all where it is not - and a
+**`TOO QUIET`** badge where the level has started to cost that frame's own mode something and
+nothing at all where it has not - and a
 sentence under the heading saying what the figure is and what to aim for. It is measured over the
 span its own demodulator reports rather than over the meter's 200 ms interval, which is what
 makes it usable on the fast modes; see [the level meter](#the-level-meter) for the band, the

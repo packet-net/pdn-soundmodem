@@ -1745,26 +1745,18 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     /// at all.
     /// </summary>
     /// <remarks>
-    /// Nothing between the two, which is the point (issue #426): every demodulator here is
-    /// level-tolerant, so a badge is for a level worth doing something about - the card running
-    /// out of codes, or a signal so far under the target zone that the capture gain wants
-    /// looking at - and a row that says nothing is a row with nothing wrong with it. The
-    /// thresholds are <see cref="Audio.InputLevelMeter"/>'s, beside the band the meter draws.
+    /// Nothing between the two, which is the point (issue #426): a badge is for a level that has
+    /// started to cost this mode something - the card running out of codes, or a signal far
+    /// enough down that the demodulator has begun losing link margin to it - and a row that says
+    /// nothing is a row with nothing wrong with it. The thresholds are the mode's own
+    /// (<see cref="Audio.FrameLevelLimits"/>, measured in <c>docs/receive-levels.md</c>), which
+    /// is why the mode is passed: the catalogue splits into three groups that differ by 6 dB at
+    /// the loud end and 39 at the quiet one, and one pair for all of them would badge a bpsk300
+    /// frame that cost its operator nothing while letting a c4fsk19200 one through at a level
+    /// where 6 dB more would kill it.
     /// </remarks>
-    private static string? LevelTag(double? peakDbFs, bool? clipped)
-    {
-        if (peakDbFs is not { } peak)
-        {
-            return null;
-        }
-
-        if (clipped is true || peak >= Audio.InputLevelMeter.FrameLoudPeakDbFs)
-        {
-            return "loud";
-        }
-
-        return peak < Audio.InputLevelMeter.FrameQuietPeakDbFs ? "quiet" : null;
-    }
+    private static string? LevelTag(string mode, double? peakDbFs, bool? clipped) =>
+        ModemCatalog.FrameLevelsFor(mode).Tag(peakDbFs, clipped);
 
     // `raw` is the frame's own bytes, where the caller has them, and exists for the relay: a
     // monitor reads them into its own link observer rather than being sent a summary of them.
@@ -1827,10 +1819,11 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             peakDbFs = peakDbFs is { } peak ? Math.Round(peak, 1) : (double?)null,
             clipped = clipped is true ? true : (bool?)null,
             // The verdict, made here so that every page - this station's own, and a monitor's
-            // copy of its rows - reads the same two thresholds. See InputLevelMeter's
-            // FrameLoudPeakDbFs and FrameQuietPeakDbFs; null is a frame with nothing to say
-            // about it, which is most of them and is what "the level is fine" looks like.
-            level = LevelTag(peakDbFs, clipped),
+            // copy of its rows - reads the same rule. The thresholds are this mode's own
+            // (FrameLevelLimits, and docs/receive-levels.md for where each number was measured);
+            // null is a frame with nothing to say about it, which is most of them and is what
+            // "the level is fine" looks like.
+            level = LevelTag(mode, peakDbFs, clipped),
         }, Json);
         Broadcast(WebSocketMessageType.Text, message);
 
@@ -2996,7 +2989,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 // transmission, and the page then shows nothing new on it.
                 peakDbFs = f.PeakDbFs is { } peak ? Math.Round(peak, 1) : (double?)null,
                 clipped = f.Clipped is true ? true : (bool?)null,
-                level = LevelTag(f.PeakDbFs, f.Clipped),
+                level = LevelTag(f.Mode, f.PeakDbFs, f.Clipped),
                 hist = true,
             }),
         }, Json);

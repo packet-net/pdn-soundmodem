@@ -50,8 +50,19 @@ public class FrameLevelTests
     /// nearly at the top of the scale, and would be badged TOO LOUD if it were reported.</summary>
     private const float NoisePeak = 0.7f;
 
-    /// <summary>A frame far enough under the band to earn the other badge: -34 dBFS.</summary>
+    /// <summary>A frame far enough under the band to be read as quiet in the sweeps: -34 dBFS.</summary>
     private const float QuietFramePeak = 0.02f;
+
+    /// <summary>
+    /// And one far enough under to earn the badge on this mode: -42 dBFS.
+    /// </summary>
+    /// <remarks>
+    /// afsk1200 is in the group whose quiet badge sits at -39 dBFS, because its discriminator's
+    /// normalisation floor starts costing it link margin from about -45 (docs/receive-levels.md
+    /// section 5). Every other family badges 39 dB lower still, so this number is this mode's and
+    /// not a general one.
+    /// </remarks>
+    private const float BadgedQuietFramePeak = 0.008f;
 
     /// <summary>The tone in the alignment sweep: -0.9 dBFS, 15.6 dB over the frame and the
     /// loudest thing anything could mistake for it.</summary>
@@ -158,7 +169,7 @@ public class FrameLevelTests
         }
 
         byte[] frame = Ax25UiFrame.Build("GB7RDG", "M0LTE", "wire check"u8.ToArray());
-        float[] audio = NoiseThenFrameThenNoise(frame, railTheNoise: false, QuietFramePeak);
+        float[] audio = NoiseThenFrameThenNoise(frame, railTheNoise: false, BadgedQuietFramePeak);
         foreach (float[] block in Blocks(audio, SampleRate / 10))
         {
             channel.ProcessReceive(block);
@@ -167,9 +178,12 @@ public class FrameLevelTests
         using JsonDocument message = await NextAsync(page, "frame", giveUp.Token);
         JsonElement row = message.RootElement;
         row.GetProperty("peakDbFs").GetDouble().Should().BeApproximately(
-            20 * Math.Log10(QuietFramePeak), 1, "the figure the page draws is measured, not made");
+            20 * Math.Log10(BadgedQuietFramePeak), 1,
+            "the figure the page draws is measured, not made");
         row.GetProperty("level").GetString().Should().Be(
-            "quiet", "-34 dBFS is well under the band the meter tells an operator to aim for");
+            "quiet",
+            "-42 dBFS is under this mode's own quiet edge, which is where its discriminator "
+                + "starts losing link margin");
         row.TryGetProperty("clipped", out JsonElement clipped).Should().BeTrue();
         clipped.ValueKind.Should().Be(JsonValueKind.Null,
             "nothing handed this channel the card's own samples, so nothing can say");

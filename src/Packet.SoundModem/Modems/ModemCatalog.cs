@@ -1,3 +1,4 @@
+using Packet.SoundModem.Audio;
 using Packet.SoundModem.Fx25;
 using Packet.SoundModem.Ms110d;
 
@@ -312,6 +313,37 @@ public static class ModemCatalog
     public static int DspRateFor(string mode) =>
         ByName.TryGetValue(mode, out ModeDescriptor? found) ? found.DspRate
         : ModemPluginRegistry.DescriptorFor(mode)?.DspRate ?? 12000;
+
+    /// <summary>
+    /// The two levels a decoded frame of this mode is badged against - see
+    /// <see cref="FrameLevelLimits"/> and <c>docs/receive-levels.md</c>, which is where each
+    /// number was measured.
+    /// </summary>
+    /// <remarks>
+    /// <para>Keyed on the mode name rather than carried on <see cref="ModeDescriptor"/> because
+    /// the caller that needs it does not have a modem: a badge is decided in
+    /// <c>WaterfallWebServer</c>, for this station's own decodes and for a relayed row from a
+    /// station on the other end of an uplink, and all either of them has is the name. The three
+    /// groups are the three the sweep measured, and the grouping is a property of the slicer -
+    /// the two C4FSK modes read an amplitude, the 1200 baud AFSK family divides by its own
+    /// in-band power with an absolute floor under it, and everything else decides on a sign or an
+    /// angle and does not care what the level is.</para>
+    /// <para><b>Total, and null-tolerant.</b> A plugin mode, an unrecognised name and a null all
+    /// answer <see cref="FrameLevelLimits.Default"/>: nothing here has measured them, and the
+    /// sign-and-angle group is both the largest and the one that badges least, so an unmeasured
+    /// mode is not given a badge this repository cannot stand behind. Total because the caller is
+    /// inside a frame event on the receive thread and a lookup that could throw there would take
+    /// a decoded frame off the page over a label. Every built-in mode is pinned to its group by
+    /// <c>Every_Modes_Frame_Level_Limits_Are_The_Measured_Ones</c>.</para>
+    /// </remarks>
+    /// <param name="mode">The mode name, as it appears on a frame row.</param>
+    public static FrameLevelLimits FrameLevelsFor(string? mode) => mode switch
+    {
+        "c4fsk9600" or "c4fsk19200" => FrameLevelLimits.ClipSensitive,
+        not null when mode.StartsWith("afsk1200", StringComparison.Ordinal) =>
+            FrameLevelLimits.QuietSensitive,
+        _ => FrameLevelLimits.Default,
+    };
 
     /// <summary>
     /// Whether a mode has a settable audio-centre frequency. The variable-centre families - the
