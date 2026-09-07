@@ -290,6 +290,11 @@
     font-size: 9px; font-weight: 700; letter-spacing: .08em; vertical-align: 1px;
     color: #7fe3f7; border: 1px solid #31d2f2;
   }
+  /* Not on an FM page. The shift is a correction in RF terms - land where an off-frequency
+     receiver is listening - and an FM set is a channel radio whose audio is not RF (see fm()),
+     so there the badge reads as a fault that is not there. A class on body rather than a
+     decision at render time, so changing the sideband takes it off rows already listed. */
+  body.fm .fr .trim, body.fm .fr .trimtxt { display: none; }
   /* Read out of the station's frame log when the page opened, not heard since - dimmed so the
      backlog cannot be mistaken for a channel that is busy right now. Its timestamps are real,
      which is the other half of saying so. */
@@ -466,7 +471,9 @@
 </head>
 <body>
 <header>
-  <div class="wordmark"><b>pdn-soundmodem</b> <span>waterfall</span>
+  <!-- The span is empty on the operator page; the detached links window puts "links" in it
+       and the public flavour puts the daemon's name there under the monitor's own title. -->
+  <div class="wordmark"><b>pdn-soundmodem</b> <span></span>
     <!-- The radio's frequency reference, when it has one to report. Hidden entirely rather
          than shown empty, so a soundcard station is not told about an absent oscillator. -->
     <span id="radioStatus" class="radio-status" hidden></span>
@@ -504,15 +511,6 @@
     <label for="linksBtn" id="linksLabel">AX.25</label>
     <div class="ctl-row">
       <button id="linksBtn" class="seg-btn" title="What the stations heard are saying to each other, one card per link (L)">Links<span class="n" id="linksN"></span></button>
-    </div>
-  </div>
-
-  <div class="ctl" id="levelCtl">
-    <label>Level · dBFS</label>
-    <div class="ctl-row">
-      <input type="range" id="floor" min="-100" max="-45" step="1" title="Floor">
-      <input type="range" id="top" min="-60" max="0" step="1" title="Top">
-      <button class="btn" id="auto" title="Set floor and top from the current spectrum">Auto</button>
     </div>
   </div>
 
@@ -579,6 +577,18 @@
       <button class="btn" id="txTestGo" title="Key the radio and send the test through the normal transmit path at the station's transmit level">Send</button>
     </div>
     <span id="txTestWhat"></span>
+  </div>
+
+  <!-- Last on purpose: the header wraps on a narrow window, and this is the control that
+       belongs beside the waterfall it sets the colours of, so it is the one to go down to the
+       next line while the mixer and TX test stay together (Tom, 2026-09-07). -->
+  <div class="ctl" id="levelCtl">
+    <label>Level · dBFS</label>
+    <div class="ctl-row">
+      <input type="range" id="floor" min="-100" max="-45" step="1" title="Floor">
+      <input type="range" id="top" min="-60" max="0" step="1" title="Top">
+      <button class="btn" id="auto" title="Set floor and top from the current spectrum">Auto</button>
+    </div>
   </div>
 
   <div class="spacer"></div>
@@ -1129,8 +1139,11 @@ function initControls() {
   });
 
   const sb = $("sideband");
-  const showSb = () => sb.querySelectorAll("button").forEach(b =>
-    b.classList.toggle("on", b.dataset.sb === ui.sideband));
+  const showSb = () => {
+    sb.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.sb === ui.sideband));
+    // What the stylesheet keys FM-only differences off (the SHIFTED marks, for one).
+    document.body.classList.toggle("fm", fm());
+  };
   showSb();
   sb.addEventListener("click", e => {
     if (!e.target.dataset.sb) return;

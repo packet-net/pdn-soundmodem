@@ -154,7 +154,9 @@ only way to find out whether this helps is to be able to point at the frames it 
 
 - **Waterfall panel**: a `SHIFTED` badge beside the callsigns, and `shifted +4.5 Hz` in the
   detail line. Outlined rather than filled, so it reads as an annotation on our own frame rather
-  than another station's badge. The tooltip explains the reasoning.
+  than another station's badge. The tooltip explains the reasoning. Neither is shown while the
+  page's sideband is FM: the shift is a correction in RF terms and an FM set's audio is not RF,
+  so on that page the badge would read as a fault that is not there.
 - **Journal**: `tx[2] bpsk300 GB7RDG-2>EI0RSI-1 37 bytes  shifted +2.3 Hz to suit them`.
 - **Frame log**: a `tx_trim_hz` column, added by the same migration path as the others, so
   existing logs pick it up without losing their history.
