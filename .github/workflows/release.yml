@@ -36,6 +36,9 @@ permissions:
 jobs:
   release:
     runs-on: [self-hosted, Linux, X64]
+    # A normal run is about 11 minutes; 40 leaves headroom for three architectures and the
+    # asset uploads while still catching a wedge on the same shared self-hosted runner.
+    timeout-minutes: 40
     env:
       NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
       GH_TOKEN: ${{ github.token }}
@@ -99,7 +102,9 @@ jobs:
       - name: Restore (bypassing the NuGet HTTP cache)
         run: dotnet restore --no-http-cache
 
+      # Same suite that wedged; same step-level timeout as ci.yml's Test step.
       - name: Test
+        timeout-minutes: 30
         run: dotnet test --configuration Release --no-restore -- --filter-not-trait "Category=Aspiration"
 
       # Same reason as ci.yml: the runner prints only "Failed: N" and writes the names to a

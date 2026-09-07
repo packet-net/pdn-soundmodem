@@ -8,6 +8,13 @@ on:
 jobs:
   build-test:
     runs-on: [self-hosted, Linux, X64]
+    # The runner is self-hosted and shared across jobs, so a wedged job does not just fail
+    # on its own, it blocks every job queued behind it. Run 34061989287 sat 90 minutes stuck
+    # in the Test step with no output before it had to be cancelled by hand, and the next
+    # run then queued behind it for its own full length. A normal run takes 4 to 17 minutes
+    # of job time, so 45 is comfortably above the worst honest run while still bounding a
+    # wedge to well under an hour.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       # A filename legal on Linux but not on Windows (`: ? * < > | "`) does not merely
@@ -40,7 +47,12 @@ jobs:
         run: dotnet restore --no-http-cache
       - name: Build
         run: dotnet build --configuration Release --no-restore
+      # This is the step that wedged for 90 minutes on run 34061989287 with no output at all.
+      # A step timeout tighter than the job's catches a repeat faster, and it also names
+      # Test as the one that timed out in the run summary, rather than leaving the whole job
+      # to show up as a plain cancellation with no indication of where it stuck.
       - name: Test
+        timeout-minutes: 30
         run: dotnet test --configuration Release --no-build -- --filter-not-trait "Category=Aspiration"
 
       # A red build that does not name the test is a reproduce-and-guess cycle every time. The
