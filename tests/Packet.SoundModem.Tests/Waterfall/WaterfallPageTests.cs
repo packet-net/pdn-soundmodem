@@ -659,8 +659,11 @@ public class WaterfallPageTests
     /// A host that quietly dropped its TCP session stops passing traffic, and from the modem's
     /// side that is indistinguishable from a band that went quiet - the one journal line that
     /// said so scrolled past hours ago. The badge is per modem rather than per port because a
-    /// modem is reachable through both its own dedicated port and the multiplexed one, and what
-    /// the operator is asking is "can anything get to this modem", not "which socket".
+    /// modem is reachable through both its own dedicated port and the multiplexed one - but a
+    /// modem with a dedicated port shows and counts only that one, since that is the socket an
+    /// operator actually plugged a TNC into; a modem with no dedicated port falls back to the
+    /// shared one, since that is the only thing that reaches it. Either way the tooltip lists
+    /// every port that reaches the modem.
     /// </remarks>
     [Fact]
     public async Task A_Modem_Label_Says_Whether_A_Host_Is_Attached()
@@ -670,6 +673,9 @@ public class WaterfallPageTests
 
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         channel.AddModem(0, sink => new Afsk1200Modem(SampleRate, sink));
+        // A second modem with no dedicated port of its own, so the fallback to the shared port is
+        // exercised in the same run as the modem that has one.
+        channel.AddModem(1, sink => new Afsk1200Modem(SampleRate, sink));
         int port = FreePorts.Next();
         await using var server = new WaterfallWebServer(channel, port);
         server.Start();
@@ -677,33 +683,38 @@ public class WaterfallPageTests
         // Set before the browser arrives, and never changed again: this is the state a page opened
         // at any moment other than a connect or a disconnect has to be given, and the whole reason
         // the server carries it rather than only broadcasting the events. Listed ascending, the
-        // order SetHostPorts actually emits regardless of what order they are given in here.
+        // order SetHostPorts actually emits regardless of what order they are given in here. Only
+        // modem 0 has a dedicated port (8101); modem 1 is reachable only through the shared one.
         server.SetHostPorts([new HostPortStatus(8101, 0, 0), new HostPortStatus(8105, null, 1)]);
 
         Probe probe = await RunProbeAsync(node, port);
 
         probe.Thrown.Should().BeEmpty("the page must not throw on a host-port snapshot");
 
-        probe.ChipsOnArrival.Should().ContainSingle();
+        probe.ChipsOnArrival.Should().HaveCount(2, "the station has two modems");
         probe.ChipsOnArrival[0].Should().Contain(
+            "KISS 8101, no host", "modem 0's own port has no client yet, and the shared port's " +
+            "existing client does not count for a modem that has a port of its own");
+        probe.ChipsOnArrival[1].Should().Contain(
             "1 host", "the handshake's snapshot has to reach the labels with nothing else happening");
 
-        probe.ChipsAttached.Should().ContainSingle("the station has one modem");
-        probe.ChipsAttached[0].Should().Contain("2 hosts")
+        probe.ChipsAttached.Should().HaveCount(2, "the station has two modems");
+        probe.ChipsAttached[0].Should().Contain(
+            "KISS 8101: 1 host", "modem 0 has its own port, so the chip names and counts that " +
+            "port alone, never the shared one")
             .And.Contain("class=\"host on\"", "attached is the state that reads as good")
-            .And.Contain("8105 (all modems): 1 connected", "the tooltip says which port")
-            .And.Contain("8101 (this modem): 1 connected")
-            // The port numbers used to live in the tooltip alone; #427 asks for them in the
-            // always-visible chip text too, the shared port and the modem's own dedicated one
-            // both, since both reach this modem.
-            .And.Contain("KISS 8105, 8101: 2 hosts");
+            .And.Contain("8105 (all modems): 1 connected", "the tooltip still says which port")
+            .And.Contain("8101 (this modem): 1 connected");
+        probe.ChipsAttached[1].Should().Contain(
+            "KISS 8105: 1 host", "modem 1 has no dedicated port, so it falls back to showing the " +
+            "shared one, same as before");
 
         // And it follows them out again, which is the state worth noticing.
-        probe.ChipsDetached.Should().ContainSingle();
-        probe.ChipsDetached[0].Should().Contain("no host")
-            .And.Contain("class=\"host\"", "nothing attached must not be wearing the good colour")
+        probe.ChipsDetached.Should().HaveCount(2, "the station has two modems");
+        probe.ChipsDetached[0].Should().Contain("class=\"host\"", "nothing attached must not be wearing the good colour")
             .And.Contain("nothing connected")
-            .And.Contain("KISS 8105, 8101, no host", "the ports stay in the text when nobody is attached");
+            .And.Contain("KISS 8101, no host", "the dedicated port stays in the text when nobody is attached");
+        probe.ChipsDetached[1].Should().Contain("KISS 8105, no host");
 
         // The rest of the label is untouched: the badge is an addition, not a replacement.
         probe.ChipsDetached[0].Should().Contain("AFSK1200").And.Contain("1723 Hz");

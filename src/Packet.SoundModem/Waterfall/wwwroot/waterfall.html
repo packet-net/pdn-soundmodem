@@ -1514,22 +1514,24 @@ function renderChips() {
 // station has not said what it serves - an absent badge is honest, a green one would not be.
 // The port number used to live in the tooltip alone, which meant reading it required a hover
 // nobody watching the bar above the spectrum display was going to make (#427) - it is in the
-// chip text itself now, every port that reaches this modem, in the order the station listed them.
+// chip text itself now.
 function hostBadge(sub) {
   if (cfg.publicMonitor) return "";
   const reach = hostPorts.filter(p => p.sub == null || p.sub === sub);
   if (!reach.length) return "";
-  // The shared port shown first, the modem's own dedicated one after it, regardless of what
-  // order the daemon happened to list them in - it sorts by port number (SetHostPorts), which on
-  // the shipped defaults (a low per-modem port, a higher shared one) puts the dedicated port
-  // first, and an operator reading "KISS 8101, 8105" would have no reason to know which of the
-  // two is the one every modem shares.
-  const ordered = [...reach.filter(p => p.sub == null), ...reach.filter(p => p.sub != null)];
-  const clients = ordered.reduce((n, p) => n + (p.clients || 0), 0);
-  const detail = ordered.map(p =>
+  // A modem with its own dedicated port shows only that port in the chip text and counts only
+  // its own clients - the shared port also reaches it, but is not what an operator plugged a TNC
+  // into, and naming both told the reader nothing they could act on. A modem with no dedicated
+  // port falls back to the shared port, as before. The tooltip still lists every port that
+  // reaches the modem, shared and dedicated alike, so the shared port's hosts stay discoverable
+  // on hover even for a modem whose chip text has stopped naming it.
+  const own = reach.find(p => p.sub === sub);
+  const shown = own ? [own] : reach;
+  const clients = shown.reduce((n, p) => n + (p.clients || 0), 0);
+  const detail = reach.map(p =>
     `${p.port} (${p.sub == null ? "all modems" : "this modem"}): ` +
     (p.clients ? `${p.clients} connected` : "nothing connected")).join("\n");
-  const ports = esc(ordered.map(p => p.port).join(", "));
+  const ports = esc(shown.map(p => p.port).join(", "));
   const text = clients
     ? `KISS ${ports}: ${clients} host${clients === 1 ? "" : "s"}`
     : `KISS ${ports}, no host`;

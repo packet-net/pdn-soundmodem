@@ -1497,11 +1497,13 @@ figures without saying they are held would be worse, which is why the state is s
 well as in colour. An SWR of 2.0 or more is flagged in either state.
 
 **Each modem's label says which KISS port reaches it, and whether a host is attached.** The chips
-under the header carry both, as `KISS 8105, no host` or `KISS 8105: 2 hosts` - covering both that
-modem's dedicated port and the multiplexed one when both reach it, since either can carry its
-traffic; the tooltip breaks the count down by port. A node that quietly drops its TCP session
-stops passing traffic, and from the modem's side that is indistinguishable from a band that went
-quiet: the journal says so once, at the moment it happens, and then scrolls away. This follows
+under the header carry both, as `KISS 8105, no host` or `KISS 8101: 2 hosts` - a modem's own
+dedicated port when it has one, since that is the socket an operator actually plugged a TNC into,
+and the shared multiplexed port when it does not; the tooltip lists every port that reaches the
+modem, dedicated and shared alike, and breaks the count down by port. A node that quietly drops
+its TCP session stops passing traffic, and from the modem's side that is indistinguishable from a
+band that went quiet: the journal says so once, at the moment it happens, and then scrolls away.
+This follows
 clients in and out live.
 
 **Your own frames are listed too**, in the decoded-frames panel, marked **TX** and styled apart

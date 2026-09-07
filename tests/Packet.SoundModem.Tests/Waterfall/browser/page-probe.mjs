@@ -473,13 +473,12 @@ const txHeld = readout();
 run(`setTransmitReading({type:"tx", keyed:false, watts:27.5, swr:null, at:"2026-08-14T09:15:23.000Z"})`);
 const txHeldNoSwr = readout();
 
-// Which KISS ports have a host on them, onto the modem chips. The server has one modem (0), and
-// both a dedicated port and the multiplexed one reach it - so the badge is about the modem, not
-// about any one port. Driven attached and then detached, because the second state is the one an
-// operator is looking for. Listed ascending by port number, the order the real server actually
-// emits (SetHostPorts sorts ascending) - which on the shipped defaults puts a modem's own
-// (lower-numbered) dedicated port ahead of the (higher-numbered) shared one, the opposite of the
-// friendlier shared-first order hostBadge now imposes on display regardless of this order.
+// Which KISS ports have a host on them, onto the modem chips. Modem 0 is reachable through both
+// a dedicated port and the multiplexed one, so this exercises hostBadge's fallback rule: a modem
+// with its own port shows and counts that port alone, and the shared one shows only for a modem
+// that has no dedicated port of its own. Driven attached and then detached, because the second
+// state is the one an operator is looking for. Listed ascending by port number, the order the
+// real server actually emits (SetHostPorts sorts ascending).
 run(`setHostPorts({type:"hosts", ports:[{port:8101, sub:0, clients:1}, {port:8105, sub:null, clients:1}]})`);
 const chipsAttached = chips();
 run(`setHostPorts({type:"hosts", ports:[{port:8101, sub:0, clients:0}, {port:8105, sub:null, clients:0}]})`);
