@@ -1307,10 +1307,12 @@ public class WaterfallPageTests
 
             // The band and the red, drawn from the daemon's own figures: -18 to -9 dBFS on a bar
             // that runs from -60 to 0, so the green starts at 70% and is 15% wide, and the red is
-            // the top 5%. If these move, InputLevelMeter's constants moved with them.
+            // the top 10% - which is HotPeakDbFs at -6, the strictest mode's own headroom
+            // requirement (docs/receive-levels.md). If these move, InputLevelMeter's constants
+            // moved with them.
             meter.ZoneLeft.Should().Be("70%");
             meter.ZoneWidth.Should().Be("15%");
-            meter.HotWidth.Should().Be("5%");
+            meter.HotWidth.Should().Be("10%");
             meter.BarWidth.Should().Be("80%", "-12 dBFS is 80% of the way up a -60 to 0 bar");
             meter.BarClass.Should().NotContain("hot").And.NotContain(
                 "quiet", "a tone in the target band is drawn in the target colour");
@@ -1605,21 +1607,23 @@ public class WaterfallPageTests
     }
 
     /// <summary>
-    /// The page's own copy of the two per-frame thresholds, checked against the daemon's.
+    /// The page keeps no copy of the per-frame thresholds at all, because there is no longer one
+    /// pair to copy.
     /// </summary>
     /// <remarks>
-    /// The daemon decides which badge a frame gets and sends the word, so these two numbers are
-    /// on the page only to word the sentence under the list and the badges' tooltips. That is
-    /// exactly how a page comes to explain a rule it is not applying: pinned here, so a threshold
-    /// that moves in <see cref="InputLevelMeter"/> takes the page's wording with it.
+    /// It used to keep two numbers to word the sentence under the list and the badges' tooltips,
+    /// pinned to the daemon's. Since the thresholds became the mode's own
+    /// (<see cref="FrameLevelLimits"/>, measured in <c>docs/receive-levels.md</c>) the catalogue
+    /// splits into three groups that differ by 6 dB at the loud end and 39 at the quiet one, so
+    /// any single number on the page would be wrong for two thirds of the rows it explained. The
+    /// daemon sends the word and the page words the tooltips in terms of what was measured.
     /// </remarks>
     [Fact]
-    public void The_Pages_Frame_Level_Thresholds_Are_The_Daemons()
+    public void The_Page_Names_No_Frame_Level_Threshold_Of_Its_Own()
     {
         string page = EmbeddedPageText();
 
-        page.Should().Contain($"FRAME_LOUD = {InputLevelMeter.FrameLoudPeakDbFs:0}")
-            .And.Contain($"FRAME_QUIET = {InputLevelMeter.FrameQuietPeakDbFs:0}");
+        page.Should().NotContain("FRAME_LOUD").And.NotContain("FRAME_QUIET");
     }
 
     /// <summary>

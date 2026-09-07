@@ -1,0 +1,83 @@
+# connected to ws://radio1:8407/ws, watching for 360s
+# config: sideband=fm dialHz=145300000 -> fm=true dialSet=true rfShown=false (rfShown is what draws the amber RF row and the RF prompt; on FM it is always false)
+# config: FM channel line the ruler would draw: 145.300 MHz
+# config: modems=[{"sub":0,"mode":"qpsk3600-il2pc-multi1","modeName":"QPSK3600 IL2Pc","lowHz":656.2,"highHz":2601.6,"centreHz":1628.9}]
+# hosts #1 at 00:38:58.893: [{"port":8405,"sub":null,"clients":0}] -> chip "KISS 8405, no host"
+# level meter at 00:38:59.033: peak -23.1 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:39:04.052: peak -23.4 dBFS, rms -31.8 dBFS, clip false
+00:39:04.445  GB7RDG>GB7WOD      mode=qpsk3600-il2pc   len=15 snr=- peakDbFs=-26.5 clipped=false level=quiet badge=TOO QUIET
+00:39:08.554  GB7RDG>GB7WOD      mode=qpsk3600-il2pc   len=15 snr=- peakDbFs=-26.3 clipped=false level=quiet badge=TOO QUIET
+# level meter at 00:39:09.243: peak -22.3 dBFS, rms -32 dBFS, clip false
+# level meter at 00:39:14.257: peak -22.7 dBFS, rms -31.7 dBFS, clip false
+# level meter at 00:39:19.445: peak -23.1 dBFS, rms -31.8 dBFS, clip false
+# level meter at 00:39:24.457: peak -23.5 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:39:29.649: peak -23.6 dBFS, rms -32.1 dBFS, clip false
+# level meter at 00:39:34.658: peak -22.5 dBFS, rms -31.7 dBFS, clip false
+# level meter at 00:39:39.848: peak -22.5 dBFS, rms -31.8 dBFS, clip false
+# level meter at 00:39:44.859: peak -23.4 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:39:50.049: peak -22.7 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:39:55.061: peak -22.9 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:40:00.251: peak -22.9 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:40:05.262: peak -23.7 dBFS, rms -32.1 dBFS, clip false
+# level meter at 00:40:10.455: peak -23.5 dBFS, rms -32 dBFS, clip false
+# level meter at 00:40:15.463: peak -22.2 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:40:20.654: peak -22.8 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:40:25.672: peak -23.1 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:40:30.852: peak -22.7 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:40:35.855: peak -22.8 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:40:41.057: peak -23 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:40:46.068: peak -23.4 dBFS, rms -32 dBFS, clip false
+# level meter at 00:40:51.255: peak -21.8 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:40:56.269: peak -23.4 dBFS, rms -32 dBFS, clip false
+# level meter at 00:41:01.459: peak -22.7 dBFS, rms -32 dBFS, clip false
+# level meter at 00:41:06.467: peak -22.6 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:41:11.649: peak -23 dBFS, rms -31.8 dBFS, clip false
+# level meter at 00:41:16.671: peak -22 dBFS, rms -31.8 dBFS, clip false
+# level meter at 00:41:21.862: peak -23 dBFS, rms -31.7 dBFS, clip false
+# level meter at 00:41:26.874: peak -22.7 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:41:32.068: peak -22.8 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:41:37.073: peak -22.9 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:41:42.265: peak -22.2 dBFS, rms -32 dBFS, clip false
+# level meter at 00:41:47.275: peak -22.1 dBFS, rms -31.8 dBFS, clip false
+# level meter at 00:41:52.464: peak -22.5 dBFS, rms -31.9 dBFS, clip false
+00:41:53.969  GB7RDG>GB7WOD      mode=qpsk3600-il2pc   len=15 snr=- peakDbFs=-26 clipped=false level=quiet badge=TOO QUIET
+# level meter at 00:41:57.475: peak -23.2 dBFS, rms -32 dBFS, clip false
+# level meter at 00:42:02.671: peak -23.6 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:42:07.679: peak -21.5 dBFS, rms -32 dBFS, clip false
+# level meter at 00:42:12.869: peak -23.1 dBFS, rms -32 dBFS, clip false
+# level meter at 00:42:17.881: peak -22 dBFS, rms -31.8 dBFS, clip false
+# level meter at 00:42:22.918: peak -23.5 dBFS, rms -32 dBFS, clip false
+# level meter at 00:42:28.080: peak -22.8 dBFS, rms -31.8 dBFS, clip false
+# level meter at 00:42:33.272: peak -22.5 dBFS, rms -32 dBFS, clip false
+# level meter at 00:42:38.289: peak -22.6 dBFS, rms -31.7 dBFS, clip false
+# level meter at 00:42:43.473: peak -22.9 dBFS, rms -32 dBFS, clip false
+# level meter at 00:42:48.485: peak -22.6 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:42:53.679: peak -22.5 dBFS, rms -31.8 dBFS, clip false
+# level meter at 00:42:58.684: peak -23.3 dBFS, rms -31.8 dBFS, clip false
+# level meter at 00:43:03.865: peak -22.5 dBFS, rms -32 dBFS, clip false
+# level meter at 00:43:08.887: peak -22.4 dBFS, rms -32 dBFS, clip false
+# level meter at 00:43:14.078: peak -23.1 dBFS, rms -32 dBFS, clip false
+# level meter at 00:43:19.089: peak -23.1 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:43:24.277: peak -23.3 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:43:29.294: peak -23 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:43:34.478: peak -21.7 dBFS, rms -31.8 dBFS, clip false
+# level meter at 00:43:39.492: peak -23.6 dBFS, rms -32 dBFS, clip false
+# level meter at 00:43:44.674: peak -22.8 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:43:49.694: peak -23 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:43:54.883: peak -22.5 dBFS, rms -32 dBFS, clip false
+# level meter at 00:43:59.895: peak -23.1 dBFS, rms -32 dBFS, clip false
+# level meter at 00:44:05.074: peak -22.7 dBFS, rms -32 dBFS, clip false
+# level meter at 00:44:10.091: peak -22.9 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:44:15.275: peak -24 dBFS, rms -32 dBFS, clip false
+# level meter at 00:44:20.298: peak -22.6 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:44:25.487: peak -22.5 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:44:30.503: peak -22.1 dBFS, rms -32 dBFS, clip false
+# level meter at 00:44:35.686: peak -23.1 dBFS, rms -31.9 dBFS, clip false
+00:44:40.401  GB7RDG>GB7WOD      mode=qpsk3600-il2pc   len=15 snr=- peakDbFs=-27.3 clipped=false level=quiet badge=TOO QUIET
+# level meter at 00:44:40.699: peak -22.2 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:44:45.890: peak -22.8 dBFS, rms -31.9 dBFS, clip false
+# level meter at 00:44:50.902: peak -22.9 dBFS, rms -31.8 dBFS, clip false
+# level meter at 00:44:56.094: peak -22.5 dBFS, rms -31.9 dBFS, clip false
+---
+frames: 4 total, 4 carried a level (0 TOO LOUD, 4 TOO QUIET, 0 no badge)
+# closed (1000)

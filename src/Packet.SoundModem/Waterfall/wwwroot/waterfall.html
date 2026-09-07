@@ -1358,19 +1358,21 @@ async function mixSend(patch) {
 // GOOD band is a received peak of 0.17 to 0.28 full scale (-15.4 to -11.1 dBFS), the CM108
 // interface is designed for -12 dBFS at 60% of class deviation, and the MS110D over-the-air
 // capture called "comfortably adequate" peaked at -11.7 dBFS. Widened either side so a real
-// station's bursts do not flicker in and out of the zone.
+// station's bursts do not flicker in and out of the zone, and audited against the demodulators
+// themselves in docs/receive-levels.md: the zone sits 21 dB above the earliest cliff any mode
+// has and 3 dB below the strictest mode's headroom line, which is what a bar on a card that may
+// be carrying any of them has to be.
 const MIX_METER_MIN = -60;   // the left-hand end of the bar, in dBFS
 const MIX_TARGET_LOW = -18;  // the green band, on received-signal peaks
 const MIX_TARGET_HIGH = -9;
 const MIX_QUIET = -30;       // under this the bar goes grey: quieter than it needs to be
-const MIX_HOT = -3;          // over this the bar goes red: less headroom than a receive path keeps
-// And the two edges a single decoded frame is judged against, which are not the meter's: the
-// meter's grey is about a bar with nothing on the channel, and a frame is a signal. The daemon
-// decides which badge a frame gets and sends the word (WaterfallWebServer.LevelTag); the page
-// keeps its own copy of the numbers only to word the sentence under the list and the badges'
-// tooltips, and a test pins the two copies together.
-const FRAME_LOUD = -3;       // at or above this, or with the card clipped: TOO LOUD
-const FRAME_QUIET = -24;     // below this: TOO QUIET
+const MIX_HOT = -6;          // over this the bar goes red: less headroom than a receive path keeps
+// A single decoded frame is judged against its own mode's two edges instead, which the page
+// deliberately does not keep a copy of: the catalogue splits into three groups that differ by
+// 6 dB at the loud end and 39 at the quiet one (docs/receive-levels.md), so there is no one pair
+// to name. The daemon decides which badge a frame gets and sends the word
+// (WaterfallWebServer.LevelTag); the page draws the word and words the tooltips in terms of what
+// was measured rather than in numbers it would have to keep in step.
 // How long a clip stays lit, and how long a bar is trusted after the last reading. Both are
 // timers of their own rather than something re-evaluated on the next message, because the case
 // that matters is the one where the next message does NOT come: the receive tap is gated while
@@ -1407,8 +1409,10 @@ function initMeter() {
 function initFramesHint() {
   $("framesHint").textContent =
     "Each row carries that frame's own peak level, measured over its burst rather than over the"
-    + ` meter's interval. Aim for ${MIX_TARGET_LOW} to ${MIX_TARGET_HIGH} dBFS; ${FRAME_LOUD} and`
-    + ` above, or a clipped card, is TOO LOUD, and below ${FRAME_QUIET} is TOO QUIET.`;
+    + ` meter's interval. Aim for ${MIX_TARGET_LOW} to ${MIX_TARGET_HIGH} dBFS. A badge appears`
+    + " only where the level has started to cost that mode something: TOO LOUD for a clipped card"
+    + " or a frame with no headroom left, TOO QUIET for one far enough down to be losing link"
+    + " margin. Most rows earn neither, which is what a healthy capture gain looks like.";
 }
 
 // No reading for a second: the bar is emptied and says so, rather than sitting frozen at whatever
@@ -1833,9 +1837,9 @@ function logFrame(ev) {
   // than the page's arithmetic: it measured the level over the frame's own burst and decided, so
   // a monitor listing somebody else's frames badges them exactly as that station's own page does.
   const level = ev.level === "loud"
-    ? `<span class="id loud" title="This frame's audio peaked at ${FRAME_LOUD} dBFS or above, or the sound card ran out of codes during it. Clipping is the failure that actually costs decodes: turn the capture gain down, or the sending station's transmit audio.">TOO LOUD</span>`
+    ? `<span class="id loud" title="The sound card ran out of codes during this frame, or its audio came close enough to full scale that a station a few dB louder would clip. Clipping is the failure that actually costs decodes - the four-level C4FSK modes lose a decibel of link margin as soon as it starts and every frame 9 dB past it. Turn the capture gain down, or the sending station's transmit audio.">TOO LOUD</span>`
     : ev.level === "quiet"
-      ? `<span class="id quiet" title="This frame's audio peaked below ${FRAME_QUIET} dBFS, well under the ${MIX_TARGET_LOW} to ${MIX_TARGET_HIGH} dBFS band to aim at. Every demodulator here is level-tolerant, so this is advice rather than a fault - but it is where headroom is being given away.">TOO QUIET</span>`
+      ? `<span class="id quiet" title="This frame's audio peaked below the level this mode measurably starts losing link margin at, well under the ${MIX_TARGET_LOW} to ${MIX_TARGET_HIGH} dBFS band to aim at. Every demodulator here is level-tolerant over tens of dB, so this is advice rather than a fault - but it is the point where being quiet has begun to cost something.">TOO QUIET</span>`
       : "";
   const trim = ev.txTrimHz != null
     ? `<span class="trim" title="Transmitted ${ev.txTrimHz.toFixed(1)} Hz off the channel centre, to land where this station's receiver is listening. Measured from its own frames: its transmit and receive share one oscillator, so a station heard high is listening high.">SHIFTED</span>`

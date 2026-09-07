@@ -50,15 +50,24 @@ public readonly record struct InputLevel(double PeakDbFs, double RmsDbFs, bool C
 /// <para>So the zone is <see cref="TargetPeakLowDbFs"/> to <see cref="TargetPeakHighDbFs"/> on
 /// received-signal peaks, widened a little either side of the measured band because a real
 /// station's bursts vary and a zone the signal flickers out of teaches an operator to ignore it.
-/// The two edges either side of it come from the same place: the only existing verdict on a
-/// capture level in this tree is <c>Packet.SoundModem.NinoBench</c>, whose "TOO LOW" is 0.05
-/// (-26 dBFS) and whose "CLIPPING" is 0.90 (-0.9 dBFS), and 6 dB is the headroom figure this
-/// tree already works to elsewhere.</para>
-/// <para><b>Being under the zone is not a fault.</b> Every demodulator here is level-tolerant:
-/// the AFSK discriminator power-normalises and is "barely touched" from -40 dBFS up, the PSK
-/// detectors are scale-invariant by construction, and MS110D has an AGC of its own. Clipping is
-/// the failure that actually costs decodes, so the meter's alarm is at the top and its advice at
-/// the bottom is only advice.</para>
+/// <see cref="QuietPeakDbFs"/> below it comes from the only existing verdict on a capture level
+/// in this tree, <c>Packet.SoundModem.NinoBench</c>'s "TOO LOW" at 0.05 (-26 dBFS);
+/// <see cref="HotPeakDbFs"/> above it is now the strictest mode's own requirement, and says
+/// where it came from.</para>
+/// <para><b>The zone survived being audited</b> (2026-09-07, docs/receive-levels.md), which is
+/// worth saying because the four sources above are about capture levels people were happy with
+/// and not about what any demodulator here needs. Decoding real frames at every level from 24 dB
+/// past full scale down to the converter's floor puts the zone 21 dB above the earliest cliff any
+/// mode has (-39 dBFS on the 1200 baud AFSK family) and 3 dB below the strictest mode's headroom
+/// line, so a signal landing in it is comfortable for every mode in the catalogue at once - which
+/// is what a bar on a card that may be carrying any of them has to be.</para>
+/// <para><b>Being under the zone is not a fault.</b> Every demodulator here is level-tolerant,
+/// and the sweep measured how far: the sign-sliced and angle-sliced modes - AFSK 300, BPSK, QPSK
+/// and two-level FSK - lose nothing at all from -84 dBFS up, and the 1200 baud AFSK family
+/// nothing above about -45. Clipping is the failure that actually costs decodes, so the meter's
+/// alarm is at the top and its advice at the bottom is only advice. What a single decoded frame
+/// is judged against is <see cref="FrameLevelLimits"/>, which is per mode because the modes
+/// differ by 6 dB at the loud end and 39 at the quiet one.</para>
 /// <para><b>Cost.</b> One pass over the block: an absolute value, a comparison and a
 /// multiply-add per sample, no allocation, no LINQ, plus one compare per card-rate sample in
 /// <see cref="AddCardSamples"/>. Both are called from the audio thread and neither is
@@ -85,31 +94,21 @@ public sealed class InputLevelMeter
     public const double QuietPeakDbFs = -30;
 
     /// <summary>Above this there is less headroom left than a receive path should keep.</summary>
-    public const double HotPeakDbFs = -3;
-
-    /// <summary>
-    /// At or above this - or with the card clipped - one frame's own peak is called too loud.
-    /// </summary>
     /// <remarks>
-    /// The same edge as <see cref="HotPeakDbFs"/>, which is where the meter's bar turns red, and
-    /// written as that constant rather than as another -3 so the badge on a frame row and the
-    /// colour on the bar can never come to say different things. Here rather than beside the
-    /// panel that draws it because the verdict is the daemon's: the page is told <c>loud</c> or
-    /// <c>quiet</c>, and keeps its own copy of these two numbers only to word the explanation
-    /// (pinned by <c>The_Pages_Frame_Level_Thresholds_Are_The_Daemons</c>).
+    /// <para>Six dB under full scale, which is the strictest thing any mode in the catalogue
+    /// asks for: c4fsk19200 loses a decibel of link margin the moment the converter clips at all,
+    /// 4 dB at 4 dB of overdrive and every frame at 9, and
+    /// <see cref="FrameLevelLimits.StationSpreadDb"/> is how much louder than the last one the
+    /// next station may reasonably be (docs/receive-levels.md). The bar cannot know which mode
+    /// the loudest thing on the input belonged to, so it warns at the strictest mode's line;
+    /// <see cref="FrameLevelLimits.ClipSensitive"/> is that same line applied to a frame that is
+    /// known to be one of those two modes.</para>
+    /// <para>Was -3 from v0.59.0 to v0.60.0, taken from <c>Packet.SoundModem.NinoBench</c>'s
+    /// "CLIPPING" verdict at -0.9 dBFS. The same sentence went on to name 6 dB as this tree's
+    /// headroom figure and then subtracted three of it; the sweep now says six was the right
+    /// number.</para>
     /// </remarks>
-    public const double FrameLoudPeakDbFs = HotPeakDbFs;
-
-    /// <summary>Below this, one frame's own peak is called too quiet.</summary>
-    /// <remarks>
-    /// Six dB under the bottom of the target zone, which is the headroom figure this tree already
-    /// works to and one S-point-ish step: a frame a little under the zone is not worth a badge -
-    /// every demodulator here is level-tolerant and being quiet costs nothing until it is very
-    /// quiet - but a frame this far under says the capture gain, or the far station, has
-    /// something wrong with it. Deliberately not <see cref="QuietPeakDbFs"/>, the meter's own
-    /// grey edge: that one is about a bar with nothing on the channel, and a frame is a signal.
-    /// </remarks>
-    public const double FrameQuietPeakDbFs = TargetPeakLowDbFs - 6;
+    public const double HotPeakDbFs = -6;
 
     /// <summary>
     /// How often a reading is produced: five a second, which is fast enough to see a slider move
@@ -140,7 +139,7 @@ public sealed class InputLevelMeter
     /// <para><b>Exactly the two end codes, nothing near them.</b> A converter that runs out of
     /// range does not produce a value close to the rail, it produces the rail, usually several
     /// samples in a row; a signal that merely comes close is a signal with less headroom than you
-    /// wanted, which is what the meter's red band above -3 dBFS is for. Widening this to "within
+    /// wanted, which is what the meter's red band above -6 dBFS is for. Widening this to "within
     /// a code or two" would only make the pill fire on loud-but-clean audio, which is the fault
     /// this test exists to avoid.</para>
     /// <para>Judged on the card's own samples, before any resampling - see

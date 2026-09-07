@@ -716,6 +716,62 @@ public class WaterfallRelayTests : IDisposable
     }
 
     /// <summary>
+    /// A pushed frame is badged against the mode it says it is, not against one pair for
+    /// everything: a c4fsk row four dB under full scale is TOO LOUD on a monitor, and a bpsk300
+    /// row at the same level is not.
+    /// </summary>
+    /// <remarks>
+    /// The relayed path had no level test at all, and it is the path where a wrong answer is
+    /// least visible: the monitor recomputes the verdict from the mode and the peak the uplink
+    /// carried (<c>WaterfallWebServer.BroadcastFrame</c>), because <c>level</c> is a rule applied
+    /// to the measurements and does not cross the wire. -4 dBFS is two dB inside the cliff the
+    /// four-level slicer falls off (docs/receive-levels.md section 4) and comfortably clear of
+    /// anything a sign-sliced mode notices, so one row each way pins both halves of the split.
+    /// The mode string is the one a real C4FSK modem reports, <c>c4fsk19200-il2pc</c> and not the
+    /// catalogue spelling, which is the distinction the first cut of the lookup got wrong.
+    /// </remarks>
+    [Fact]
+    public async Task A_Pushed_Frame_Is_Badged_Against_Its_Own_Modes_Level_Limits()
+    {
+        var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
+        int port = FreePorts.Next();
+        await using var server = new WaterfallWebServer(channel, port);
+        server.Start();
+
+        using ClientWebSocket socket = await ConnectAsync(port);
+
+        RelayedFrame Pushed(string mode) => new()
+        {
+            SubChannel = 0, Mode = mode, From = "M0LTE-9", To = "GB7RDG", LengthBytes = 24,
+            CrcValid = true, At = DateTimeOffset.UnixEpoch, Raw = TestFrame(),
+            PeakDbFs = -4, Clipped = false,
+        };
+
+        server.PushFrame(Pushed("c4fsk19200-il2pc"));
+        server.PushFrame(Pushed("bpsk300-il2pc"));
+
+        const string marker = "badged-pushed";
+        server.SetRadioStatus(marker);
+        List<(WebSocketMessageType Kind, byte[] Payload)> messages = await DrainAsync(socket, marker);
+
+        string?[] levels = [.. messages
+            .Where(m => Describe(m) == "frame")
+            .Select(m =>
+            {
+                using JsonDocument row = JsonDocument.Parse(m.Payload);
+                return row.RootElement.TryGetProperty("level", out JsonElement level)
+                    && level.ValueKind == JsonValueKind.String
+                        ? level.GetString()
+                        : null;
+            })];
+
+        levels.Should().Equal(
+            ["loud", null],
+            "a four-level slicer four dB under full scale has two dB of headroom left and a "
+                + "sign-sliced one shrugs off six times that");
+    }
+
+    /// <summary>
     /// A pushed frame that Reed-Solomon alone stood behind is listed and opens no link, and
     /// neither does one that arrived with no bytes.
     /// </summary>
