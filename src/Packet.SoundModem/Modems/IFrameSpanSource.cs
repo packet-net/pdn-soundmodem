@@ -56,6 +56,30 @@ public interface IFrameSpanSource
     /// all on the frames a working link is mostly made of.
     /// </remarks>
     int FrameSpanMarginSamples { get; }
+
+    /// <summary>
+    /// The two levels a frame decoded by this modem is judged against - see
+    /// <see cref="Packet.SoundModem.Audio.FrameLevelLimits"/>, and
+    /// <c>docs/receive-levels.md</c> for where each number was measured.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Here rather than in a table keyed by mode name</b> (Tom, 2026-09-07: "wonder if
+    /// the thresholds are low enough in the stack... a fundamental property of a decode"). The
+    /// limits are a property of the slicer - four amplitude levels against fixed thresholds, or a
+    /// sign, or a power-normalised discriminator with an absolute floor under it - so the object
+    /// that owns the slicer is the only one that can answer without matching a string. A lookup
+    /// by name had every C4FSK frame silently taking the wrong pair for a release, because a
+    /// <c>c4fsk19200</c> modem reports itself as <c>c4fsk19200-il2pc</c> and the table matched the
+    /// catalogue spelling (PR #433 review-1).</para>
+    /// <para>On this interface and not a sibling because the answer is only ever wanted where a
+    /// span is: a modem that cannot say where its frames were carries no level, so it has nothing
+    /// to judge. One <c>is</c> test in the channel serves both.</para>
+    /// <para>A bank answers with its branches' limits. Every branch of a bank is the same
+    /// demodulator at a different offset or a different timing phase, so which one decoded cannot
+    /// change the answer, and asking a fixed branch avoids threading the winner out of the dedupe
+    /// for a number that would be identical either way.</para>
+    /// </remarks>
+    Packet.SoundModem.Audio.FrameLevelLimits FrameLevels { get; }
 }
 
 /// <summary>

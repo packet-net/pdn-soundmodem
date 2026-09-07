@@ -1,5 +1,6 @@
 using M0LTE.Dsp;
 using M0LTE.Il2p;
+using Packet.SoundModem.Audio;
 
 namespace Packet.SoundModem.Modems;
 
@@ -357,6 +358,13 @@ public sealed class C4fskModem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public int FrameSpanMarginSamples => _spanMargin;
+
+    /// <inheritdoc />
+    /// <remarks>the only slicer in the tree that reads an amplitude: four levels against fixed thresholds at
+    /// zero and plus or minus two thirds of a tracked envelope. Clipping compresses the outer
+    /// levels into the inner ones and no envelope tracker can undo it, so this mode wants the
+    /// whole station-to-station spread as headroom (docs/receive-levels.md).</remarks>
+    public FrameLevelLimits FrameLevels => FrameLevelLimits.ClipSensitive;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

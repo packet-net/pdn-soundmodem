@@ -111,6 +111,15 @@ namespace Packet.SoundModem.Modems;
 /// handing an RS-only frame to a host that asked for IL2P+CRC. Anything relaying frames onward
 /// - the KISS server's quality sidecar included - must skip these, or it reports a frame its
 /// peer never received.</param>
+/// <param name="Level">
+/// What <paramref name="PeakDbFs"/> and <paramref name="Clipped"/> came to, judged against the
+/// limits of the modem that decoded this frame
+/// (<see cref="Packet.SoundModem.Audio.FrameLevelLimits"/>). Set once, by the channel, at the
+/// moment of the decode, so the frame log, the operator page, an uplinked monitor and any host
+/// watching the quality sidecar all carry the same verdict without any of them knowing the rule.
+/// Null where there was nothing to judge: a decoder that cannot place its frames in the audio, or
+/// one of our own transmissions.
+/// </param>
 public readonly record struct FrameQuality(
     string Mode,
     int FrameBytes,
@@ -126,7 +135,8 @@ public readonly record struct FrameQuality(
     int? ChasedBits = null,
     double? SnrDb = null,
     double? PeakDbFs = null,
-    bool? Clipped = null);
+    bool? Clipped = null,
+    Packet.SoundModem.Audio.FrameLevel? Level = null);
 
 /// <summary>
 /// How much a reading of a transmission actually established, for choosing between two decoder

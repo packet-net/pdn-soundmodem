@@ -1,6 +1,7 @@
 using M0LTE.Dsp;
 using Packet.SoundModem.Hdlc;
 using M0LTE.Il2p;
+using Packet.SoundModem.Audio;
 
 namespace Packet.SoundModem.Modems;
 
@@ -257,6 +258,11 @@ public sealed class Afsk300Modem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public int FrameSpanMarginSamples => _spanMargin;
+
+    /// <inheritdoc />
+    /// <remarks>the 300 baud AFSK chain slices a power-normalised discriminator with a sign test, and the
+    /// sweep finds it flat from -84 dBFS up to full scale (docs/receive-levels.md).</remarks>
+    public FrameLevelLimits FrameLevels => FrameLevelLimits.Default;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

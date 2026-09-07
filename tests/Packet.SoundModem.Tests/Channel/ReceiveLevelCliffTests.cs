@@ -142,47 +142,52 @@ public class ReceiveLevelCliffTests
     /// a frame row actually carries, which is not the name it was configured under.
     /// </summary>
     /// <remarks>
-    /// <para><b>The names matter more than the mapping.</b> The badge is fed
-    /// <see cref="FrameQuality.Mode"/>, which is <see cref="ModeNames.Identity"/> of the modem's
-    /// own <see cref="IModem.Mode"/>: a <c>c4fsk19200</c> modem reports <c>c4fsk19200-il2pc</c>,
-    /// an <c>afsk1200-il2p</c> one reports <c>afsk1200-il2pc</c>, and a bank's branch count is
-    /// stripped back off. The first cut of this test walked
-    /// <see cref="ModemCatalog.KnownModes"/>, the configuration spellings, and so passed while
-    /// the C4FSK pair - the one group the per-mode thresholds exist for - silently took the
-    /// sign-and-angle limits in production (review of PR #433). It builds each modem and asks it
-    /// its own name now.</para>
-    /// <para>A mode added without a thought about its receive level gets
-    /// <see cref="FrameLevelLimits.Default"/>, which is the right default and the wrong answer if
-    /// its slicer reads an amplitude. This covers all twenty that carry a level, so adding one
-    /// fails here and the person adding it has to say which group it is in - or measure it.</para>
+    /// <para><b>Asked of the object, not of a table.</b> The limits belong to the modem
+    /// (<see cref="IFrameSpanSource.FrameLevels"/>), so this builds every catalogue mode and asks
+    /// it. What it replaces is a lookup keyed on the mode name, which passed a test walking the
+    /// configuration spellings while every C4FSK frame in production silently took the
+    /// sign-and-angle limits, because a <c>c4fsk19200</c> modem calls itself
+    /// <c>c4fsk19200-il2pc</c> (PR #433 review-1). There is no name to get wrong now.</para>
+    /// <para>A mode added without a thought about its receive level has to say something here,
+    /// because <see cref="IFrameSpanSource"/> will not compile without it, and this pins which
+    /// group each of the twenty that carry a level was measured in - the doc's own table,
+    /// sections 4 and 5. The eighteen that cannot place their frames implement nothing and carry
+    /// no verdict.</para>
     /// </remarks>
     [Fact]
     public void Every_Modes_Frame_Level_Limits_Are_The_Measured_Ones()
     {
-        var seen = new List<string>();
+        string[] clipSensitive = ["c4fsk9600", "c4fsk19200"];
+        string[] quietSensitive =
+        [
+            "afsk1200", "afsk1200-fx25", "afsk1200-fx25rx", "afsk1200-multi", "afsk1200-il2p",
+            "afsk1200-il2p-nocrc",
+        ];
+
+        var placeable = new List<string>();
         foreach (string mode in ModemCatalog.KnownModes)
         {
-            string row = ModeNames.Identity(
-                ModemCatalog.Create(mode, ModemCatalog.DspRateFor(mode), static _ => { }).Mode);
-            seen.Add(row);
+            IModem modem = ModemCatalog.Create(mode, ModemCatalog.DspRateFor(mode), static _ => { });
+            if (modem is not IFrameSpanSource source)
+            {
+                mode.Should().Match(
+                    m => m.StartsWith("freedv-", StringComparison.Ordinal)
+                        || m.StartsWith("ms110d-", StringComparison.Ordinal),
+                    "only the two native block waveforms cannot place their own frames");
+                continue;
+            }
 
+            placeable.Add(mode);
             FrameLevelLimits expected =
-                row.StartsWith("c4fsk", StringComparison.Ordinal) ? FrameLevelLimits.ClipSensitive
-                : row.StartsWith("afsk1200", StringComparison.Ordinal)
-                    ? FrameLevelLimits.QuietSensitive
-                    : FrameLevelLimits.Default;
+                clipSensitive.Contains(mode) ? FrameLevelLimits.ClipSensitive
+                : quietSensitive.Contains(mode) ? FrameLevelLimits.QuietSensitive
+                : FrameLevelLimits.Default;
 
-            ModemCatalog.FrameLevelsFor(row).Should().Be(
-                expected,
-                $"{mode} reports its rows as {row}, and that is what "
-                    + "docs/receive-levels.md sections 4 and 5 measured");
+            source.FrameLevels.Should().Be(
+                expected, $"{mode} is measured in docs/receive-levels.md sections 4 and 5");
         }
 
-        // And the two names the C4FSK arm has to match are the ones that reach it, spelled out,
-        // so a modem that changed how it describes itself fails here rather than going quiet.
-        seen.Should().Contain(["c4fsk9600-il2pc", "c4fsk19200-il2pc"]);
-        ModemCatalog.FrameLevelsFor("c4fsk19200-il2pc").Should().Be(FrameLevelLimits.ClipSensitive);
-        ModemCatalog.FrameLevelsFor("afsk1200-il2pc").Should().Be(FrameLevelLimits.QuietSensitive);
+        placeable.Should().HaveCount(22, "which is every packet mode in the catalogue");
 
         // And the numbers themselves, so a change to one is a change to the document it was
         // derived in rather than a constant somebody nudged.
@@ -194,38 +199,64 @@ public class ReceiveLevelCliffTests
             FrameLevelLimits.ClipSensitive.LoudPeakDbFs,
             "the bar cannot know which mode the loudest thing on the input belonged to, so it "
                 + "warns at the strictest mode's line");
-
-        // A plugin mode nothing here has measured takes the group that badges least, and so does
-        // a name that is missing altogether: the lookup runs inside a frame event on the receive
-        // thread, so it answers rather than throws.
-        ModemCatalog.FrameLevelsFor("not-a-mode").Should().Be(FrameLevelLimits.Default);
-        ModemCatalog.FrameLevelsFor(null).Should().Be(FrameLevelLimits.Default);
     }
 
     /// <summary>
-    /// The badge itself: loud at or above the mode's loud edge or with the card clipped, quiet
-    /// below its quiet edge, and nothing at all in between.
+    /// The verdict itself: loud at or above the mode's loud edge or with the card clipped, quiet
+    /// below its quiet edge, ok in between, and nothing at all where there was no reading.
     /// </summary>
+    /// <remarks>
+    /// Three outcomes and not two. A page draws a badge for two of them, but the log and the
+    /// uplink have to be able to tell a frame that was measured and found fine from one nothing
+    /// could measure, which is the distinction <see cref="FrameLevel.Ok"/> against null carries.
+    /// </remarks>
     [Fact]
-    public void A_Frames_Badge_Is_Its_Own_Modes_Two_Edges()
+    public void A_Frames_Verdict_Is_Its_Own_Modes_Two_Edges()
     {
         FrameLevelLimits sign = FrameLevelLimits.Default;
         FrameLevelLimits four = FrameLevelLimits.ClipSensitive;
 
-        sign.Tag(peakDbFs: null, clipped: null).Should().BeNull("no level, no verdict");
-        sign.Tag(-30, clipped: false).Should().BeNull();
-        sign.Tag(-2, clipped: false).Should().BeNull(
-            "a sign-sliced mode two dB under full scale has lost nothing");
-        four.Tag(-2, clipped: false).Should().Be(
-            "loud", "where a four-level one is inside its headroom");
-        sign.Tag(-30, clipped: true).Should().Be(
-            "loud", "the card running out of codes is a fact and badges whatever the peak was");
-        sign.Tag(0, clipped: false).Should().Be("loud");
-        sign.Tag(-73, clipped: false).Should().Be("quiet");
-        sign.Tag(-71, clipped: false).Should().BeNull();
-        FrameLevelLimits.QuietSensitive.Tag(-35, clipped: false).Should().Be(
-            "quiet", "which the same level on any other mode would not be");
-        sign.Tag(-35, clipped: false).Should().BeNull();
+        sign.Classify(peakDbFs: null, clipped: null).Should().BeNull("no reading, no verdict");
+        sign.Classify(-30, clipped: false).Should().Be(FrameLevel.Ok);
+        sign.Classify(-2, clipped: false).Should().Be(
+            FrameLevel.Ok, "a sign-sliced mode two dB under full scale has lost nothing");
+        four.Classify(-2, clipped: false).Should().Be(
+            FrameLevel.Loud, "where a four-level one is inside its headroom");
+        sign.Classify(-30, clipped: true).Should().Be(
+            FrameLevel.Loud,
+            "the card running out of codes is a fact and badges whatever the peak was");
+        sign.Classify(0, clipped: false).Should().Be(FrameLevel.Loud);
+        sign.Classify(-73, clipped: false).Should().Be(FrameLevel.Quiet);
+        sign.Classify(-71, clipped: false).Should().Be(FrameLevel.Ok);
+        FrameLevelLimits.QuietSensitive.Classify(-35, clipped: false).Should().Be(
+            FrameLevel.Quiet, "which the same level on any other mode would not be");
+        sign.Classify(-35, clipped: false).Should().Be(FrameLevel.Ok);
+    }
+
+    /// <summary>
+    /// The one spelling that leaves the process round-trips, and an unknown word reads as no
+    /// verdict rather than throwing.
+    /// </summary>
+    /// <remarks>
+    /// Both ends of it are read by software built at a different time from the writer: a monitor
+    /// reads a station's uplink, and a backlog query reads rows an older build wrote. A word this
+    /// build does not know has to mean "not measured" there, or a station one release ahead takes
+    /// a monitor's frame panel down.
+    /// </remarks>
+    [Fact]
+    public void A_Verdict_Survives_The_Round_Trip_And_An_Unknown_Word_Does_Not()
+    {
+        foreach (FrameLevel level in Enum.GetValues<FrameLevel>())
+        {
+            FrameLevelText.Parse(FrameLevelText.From(level)).Should().Be(level);
+        }
+
+        FrameLevelText.From(null).Should().BeNull();
+        FrameLevelText.Parse(null).Should().BeNull();
+        FrameLevelText.Parse("").Should().BeNull();
+        FrameLevelText.Parse("LOUD").Should().BeNull("the spelling on the wire is lower case");
+        FrameLevelText.Parse("deafening").Should().BeNull(
+            "a verdict a later build invented reads as no verdict here, not as an exception");
     }
 
     /// <summary>How many of <see cref="Trials"/> frames copy at one level and one SNR.</summary>

@@ -194,11 +194,17 @@ public sealed class SoundModemChannel
             // blocks a whole qpsk3600 frame fits inside one with room to spare. A modem that
             // does not report a span (FreeDV and MS110D decode from native frames, and the
             // ARDOP bridge is not a modem at all) carries no level rather than a guessed one.
-            (double? peakDbFs, bool? clipped) =
+            //
+            // And the verdict on that reading is taken here too, from the deciding modem's own
+            // limits (IFrameSpanSource.FrameLevels), so that "this frame was too loud" is a
+            // property of the decode rather than a rule each consumer reapplies. It used to be
+            // reapplied at the edge, by mode name, which is how every C4FSK frame came to take
+            // the wrong pair of thresholds for a whole release.
+            (double? peakDbFs, bool? clipped, Audio.FrameLevel? level) =
                 modem is IFrameSpanSource source
                 && source.TryTakeFrameSpan(out long spanFrom, out long spanTo)
-                    ? _frameLevel.Measure(spanFrom, spanTo, source.FrameSpanMarginSamples)
-                    : (null, null);
+                    ? Judge(source, _frameLevel.Measure(spanFrom, spanTo, source.FrameSpanMarginSamples))
+                    : (null, null, null);
             FrameReceivedWithQuality?.Invoke(
                 subChannel,
                 frame,
@@ -207,6 +213,7 @@ public sealed class SoundModemChannel
                     SnrDb = _burstSnr.MeasureBurst(subChannel),
                     PeakDbFs = peakDbFs,
                     Clipped = clipped,
+                    Level = level,
                 });
         };
         if (_constellationSink is { } sink && modem is IConstellationSource psk)
@@ -218,6 +225,12 @@ public sealed class SoundModemChannel
         _burstSnr.AddModem(subChannel, modem);
         _modems.Add(subChannel, modem);
     }
+
+    /// <summary>One reading plus the verdict the deciding modem's own limits put on it.</summary>
+    private static (double? PeakDbFs, bool? Clipped, Audio.FrameLevel? Level) Judge(
+        IFrameSpanSource source, (double? PeakDbFs, bool? Clipped) reading) =>
+        (reading.PeakDbFs, reading.Clipped,
+            source.FrameLevels.Classify(reading.PeakDbFs, reading.Clipped));
 
     /// <summary>Adds a non-KISS receive listener - a service decoder (e.g. POCSAG
     /// paging) that shares the channel's audio without occupying a KISS sub-channel.

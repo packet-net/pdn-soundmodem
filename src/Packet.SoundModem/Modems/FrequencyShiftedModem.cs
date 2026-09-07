@@ -1,4 +1,5 @@
 using M0LTE.Dsp;
+using Packet.SoundModem.Audio;
 
 namespace Packet.SoundModem.Modems;
 
@@ -149,6 +150,17 @@ public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFram
     /// </remarks>
     public int FrameSpanMarginSamples =>
         _inner is IFrameSpanSource source ? source.FrameSpanMarginSamples + HilbertGroupDelay : 0;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The inner modem's, unchanged: this wrapper band-passes and shifts sample for sample and
+    /// changes no amplitude, so the slicer that decides the bits is the inner one's and so are
+    /// the levels it wants. <see cref="FrameLevelLimits.Default"/> where the inner modem reports
+    /// no span at all, which is every mode this wrapper is used for today and a case that carries
+    /// no level to judge anyway.
+    /// </remarks>
+    public FrameLevelLimits FrameLevels =>
+        _inner is IFrameSpanSource levels ? levels.FrameLevels : FrameLevelLimits.Default;
 
     /// <summary>Half the Hilbert pair's length, which is what it delays by.</summary>
     private const int HilbertGroupDelay = (HilbertTaps - 1) / 2;

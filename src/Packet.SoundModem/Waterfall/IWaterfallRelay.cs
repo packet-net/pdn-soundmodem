@@ -159,6 +159,19 @@ public sealed record RelayedFrame
     /// it was not measured.</summary>
     public bool? Clipped { get; init; }
 
+    /// <summary>
+    /// The verdict the far station's own decoding modem put on those two, carried rather than
+    /// recomputed.
+    /// </summary>
+    /// <remarks>
+    /// A monitor has no rule of its own any more: the thresholds belong to the modem that decoded
+    /// the frame, and that modem is at the other end of the uplink. Null from a station running a
+    /// version that does not send one - v0.60.x sends the two measurements and no verdict - and a
+    /// monitor lists such a row with its figure and no badge, which is the honest reading of "the
+    /// station that heard it did not say".
+    /// </remarks>
+    public Audio.FrameLevel? Level { get; init; }
+
     /// <summary>When the station decoded it, or sent it (UTC).</summary>
     public DateTimeOffset At { get; init; }
 

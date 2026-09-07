@@ -205,6 +205,12 @@ public sealed class WaterfallOptions
 /// which is a row from before the column and any row whose station was not handing its card's
 /// own samples over; false is a card that had headroom.
 /// </param>
+/// <param name="Level">
+/// The verdict the decoding modem's own limits put on those two when the frame was decoded
+/// (<see cref="Modems.FrameQuality.Level"/>), read back out of the log so that a backlog row
+/// badges exactly as the live row did. Null on a transmission and on a row written before the
+/// column existed - a badge is a claim, and no claim was recorded for those.
+/// </param>
 /// <param name="PlainIl2p">
 /// True for a row read as plain IL2P, with no trailing CRC behind it - Reed-Solomon alone
 /// (see <see cref="Modems.FrameQuality.PlainIl2p"/>). What the panel badges <b>RS ONLY</b>, and
@@ -228,7 +234,8 @@ public sealed record LoggedFrame(
     bool MonitorOnly = false,
     bool PlainIl2p = false,
     double? PeakDbFs = null,
-    bool? Clipped = null);
+    bool? Clipped = null,
+    Audio.FrameLevel? Level = null);
 
 /// <summary>A band the host declares rather than the waterfall measuring it.</summary>
 /// <param name="SubChannel">Which modem, for ordering and labels.</param>
@@ -1444,6 +1451,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // burst is the branch-index-offset mistake with a different noun.
             peakDbFs: quality.PeakDbFs,
             clipped: quality.Clipped,
+            level: quality.Level,
             // For a relay, and for nobody else: a monitor folds its own links out of these bytes
             // rather than being sent a summary of them.
             raw: frame);
@@ -1741,22 +1749,27 @@ public sealed class WaterfallWebServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// What a frame's own level is worth saying about it: <c>loud</c>, <c>quiet</c>, or nothing
-    /// at all.
+    /// The word a page is sent for a frame's level: <c>loud</c>, <c>quiet</c>, or nothing at all.
     /// </summary>
     /// <remarks>
-    /// Nothing between the two, which is the point (issue #426): a badge is for a level that has
-    /// started to cost this mode something - the card running out of codes, or a signal far
-    /// enough down that the demodulator has begun losing link margin to it - and a row that says
-    /// nothing is a row with nothing wrong with it. The thresholds are the mode's own
-    /// (<see cref="Audio.FrameLevelLimits"/>, measured in <c>docs/receive-levels.md</c>), which
-    /// is why the mode is passed: the catalogue splits into three groups that differ by 6 dB at
-    /// the loud end and 39 at the quiet one, and one pair for all of them would badge a bpsk300
-    /// frame that cost its operator nothing while letting a c4fsk19200 one through at a level
-    /// where 6 dB more would kill it.
+    /// <para>A mapping now, not a rule. The verdict is taken when the frame is decoded, by the
+    /// modem's own limits (<see cref="Modems.IFrameSpanSource.FrameLevels"/>, measured in
+    /// <c>docs/receive-levels.md</c>), and arrives here on
+    /// <see cref="Modems.FrameQuality.Level"/> or on a relayed row. This class no longer knows
+    /// what a threshold is, which is the point: it used to look one up by mode name, and a name
+    /// that did not match left every C4FSK frame taking the wrong pair.</para>
+    /// <para><see cref="Audio.FrameLevel.Ok"/> and null both send nothing, because the page
+    /// badges only the two verdicts worth acting on and has never had a third value to draw. The
+    /// distinction between "measured and fine" and "not measured" is kept where it is needed -
+    /// the frame log's column and the uplink's field, which is <see cref="Audio.FrameLevelText"/>
+    /// - and dropped here.</para>
     /// </remarks>
-    private static string? LevelTag(string mode, double? peakDbFs, bool? clipped) =>
-        ModemCatalog.FrameLevelsFor(mode).Tag(peakDbFs, clipped);
+    private static string? LevelTag(Audio.FrameLevel? level) => level switch
+    {
+        Audio.FrameLevel.Loud => "loud",
+        Audio.FrameLevel.Quiet => "quiet",
+        _ => null,
+    };
 
     // `raw` is the frame's own bytes, where the caller has them, and exists for the relay: a
     // monitor reads them into its own link observer rather than being sent a summary of them.
@@ -1769,7 +1782,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
         bool idBeacon = false, bool transmitted = false,
         string? note = null, string? headerType = null, string? frameHex = null,
         bool plainIl2p = false, bool monitorOnly = false, double? txTrimHz = null,
-        double? peakDbFs = null, bool? clipped = null,
+        double? peakDbFs = null, bool? clipped = null, Audio.FrameLevel? level = null,
         byte[]? raw = null)
     {
         byte[] message = JsonSerializer.SerializeToUtf8Bytes(new
@@ -1818,12 +1831,12 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             // always did.
             peakDbFs = peakDbFs is { } peak ? Math.Round(peak, 1) : (double?)null,
             clipped = clipped is true ? true : (bool?)null,
-            // The verdict, made here so that every page - this station's own, and a monitor's
-            // copy of its rows - reads the same rule. The thresholds are this mode's own
-            // (FrameLevelLimits, and docs/receive-levels.md for where each number was measured);
-            // null is a frame with nothing to say about it, which is most of them and is what
-            // "the level is fine" looks like.
-            level = LevelTag(mode, peakDbFs, clipped),
+            // The verdict, made when the frame was decoded rather than here: the deciding
+            // modem's own limits said so (IFrameSpanSource.FrameLevels, and
+            // docs/receive-levels.md for where each number was measured), and this only picks
+            // the word for it. Absent is a frame with nothing to say about it, which is most of
+            // them and is what "the level is fine" looks like.
+            level = LevelTag(level),
         }, Json);
         Broadcast(WebSocketMessageType.Text, message);
 
@@ -1917,7 +1930,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
             txTrimHz: frame.TransmitTrimHz,
             // Both null from a station running a version that does not send them, which is what
             // the wire's tolerance of their absence buys: the row lists as it always did.
-            peakDbFs: frame.PeakDbFs, clipped: frame.Clipped,
+            peakDbFs: frame.PeakDbFs, clipped: frame.Clipped, level: frame.Level,
             raw: frame.Raw);
 
         // The same rule OnFrame applies, for the same reason: a frame Reed-Solomon alone stood
@@ -2989,7 +3002,7 @@ public sealed class WaterfallWebServer : IAsyncDisposable
                 // transmission, and the page then shows nothing new on it.
                 peakDbFs = f.PeakDbFs is { } peak ? Math.Round(peak, 1) : (double?)null,
                 clipped = f.Clipped is true ? true : (bool?)null,
-                level = LevelTag(f.Mode, f.PeakDbFs, f.Clipped),
+                level = LevelTag(f.Level),
                 hist = true,
             }),
         }, Json);

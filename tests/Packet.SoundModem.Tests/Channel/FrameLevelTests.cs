@@ -88,6 +88,43 @@ public class FrameLevelTests
     }
 
     /// <summary>
+    /// The verdict is set when the frame is decoded, by the limits of the modem that decoded it.
+    /// </summary>
+    /// <remarks>
+    /// <para>Tom, 2026-09-07: "wonder if the thresholds are low enough in the stack. Have you
+    /// made them a UI concern or a fundamental property of a decode?" This is the answer: the
+    /// channel asks the deciding modem for its limits and puts the result on
+    /// <see cref="FrameQuality.Level"/>, so the frame log, the page, an uplink and any host
+    /// watching the quality sidecar all carry the same verdict without knowing the rule.</para>
+    /// <para>Both outcomes on one mode, because the interesting failure is a verdict that is
+    /// merely absent: <see cref="FrameLevel.Ok"/> is a frame that was measured and found fine,
+    /// and null is one nothing could measure. A page draws neither, so only a test can tell them
+    /// apart.</para>
+    /// </remarks>
+    [Fact]
+    public async Task A_Decoded_Frame_Carries_The_Verdict_Of_Its_Own_Modems_Limits()
+    {
+        byte[] frame = Ax25UiFrame.Build("GB7RDG", "M0LTE", "verdict"u8.ToArray());
+
+        FrameQuality comfortable = await DecodeAsync(
+            NoiseThenFrameThenNoise(frame, railTheNoise: false));
+        comfortable.Level.Should().Be(
+            FrameLevel.Ok,
+            "-16.5 dBFS is between afsk1200's two edges, which is measured and fine rather than "
+                + "not measured at all");
+
+        FrameQuality quiet = await DecodeAsync(
+            NoiseThenFrameThenNoise(frame, railTheNoise: false, BadgedQuietFramePeak));
+        quiet.Level.Should().Be(
+            FrameLevel.Quiet,
+            "-42 dBFS is under this family's own quiet edge, and no other family's");
+
+        // The same level on a mode from the sign-and-angle group is nothing to report, which is
+        // the whole reason the limits belong to the modem rather than to a shared constant.
+        FrameLevelLimits.Default.Classify(-42, clipped: false).Should().Be(FrameLevel.Ok);
+    }
+
+    /// <summary>
     /// The clip flag is placed in time too: a card that railed on the noise and had headroom
     /// through the frame leaves the frame's row unbadged.
     /// </summary>

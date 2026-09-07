@@ -1,6 +1,7 @@
 using M0LTE.Dsp;
 using Packet.SoundModem.Hdlc;
 using M0LTE.Il2p;
+using Packet.SoundModem.Audio;
 
 namespace Packet.SoundModem.Modems;
 
@@ -336,6 +337,11 @@ public sealed class FskModem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public int FrameSpanMarginSamples => _spanMargin;
+
+    /// <inheritdoc />
+    /// <remarks>the G3RUH chain slices its eye against a tracked midpoint and then takes a sign, and the
+    /// sweep finds both rates flat from -84 dBFS up through 24 dB of overdrive (docs/receive-levels.md).</remarks>
+    public FrameLevelLimits FrameLevels => FrameLevelLimits.Default;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>
