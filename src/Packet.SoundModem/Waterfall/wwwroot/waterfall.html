@@ -239,13 +239,6 @@
      the channel is busier than its rate limit, and nothing else anywhere says so. */
   #survey { font-family: var(--mono); letter-spacing: 0; text-transform: none; color: var(--muted); }
   #survey.busy { color: var(--amber); }
-  /* What the dBFS figure on a row means, said once and next to the list. The meter in the header
-     reads the whole input five times a second; this reads one frame, and nothing else on the page
-     would say which. */
-  #framesHint {
-    font: 10px/1.35 var(--sans); color: var(--muted); padding: 6px 12px;
-    border-bottom: 1px solid var(--edge);
-  }
   .fr.cap { border-left: 2px solid #b07de8; padding-left: 10px; }
   .fr.cap .from { color: #cba3f0; }
   .fr .dl { color: #7fb6e8; text-decoration: none; border-bottom: 1px dotted #47617d; }
@@ -620,7 +613,6 @@
   </div>
   <aside id="log">
     <h2>Decoded frames<span id="survey" hidden></span></h2>
-    <div id="framesHint"></div>
     <div id="frames"><div class="empty">Nothing decoded yet. Frames appear here and as tags on the waterfall; what this station sends is listed too, marked TX.</div></div>
   </aside>
 </main>
@@ -939,12 +931,7 @@ const PUBLIC_HIDES = ["dialCtl", "spanCtl", "levelCtl", "mixerCtl", "audioLabel"
   // TX test. Belt and braces: a public page is never sent the txTest block that reveals this,
   // so the control is already absent - but a transmit control is the one thing on this page it
   // would be worst to leave showing if that ever changed.
-  "txTestCtl",
-  // The sentence explaining what a row's dBFS figure is and what to aim for. The figure itself
-  // stays - a visitor watching a relayed station can see how loud its traffic is - but the advice
-  // is about a capture gain they do not own, on the page where the meter and the mixer it refers
-  // to are hidden for exactly that reason.
-  "framesHint"];
+  "txTestCtl"];
 
 // A deployment on the open internet: a title of its own, a paragraph of what the visitor is
 // looking at, and whose receiver it is. It is somebody else's receiver; the credit and the link
@@ -1177,7 +1164,6 @@ function initControls() {
     $("floor").value = ui.floorDb; $("top").value = ui.topDb; save();
   });
 
-  initFramesHint();
   initMeter();
   initMixer();
 }
@@ -1401,18 +1387,6 @@ function initMeter() {
   $("mixAdvice").textContent =
     `Aim for received signals to peak in the green, ${MIX_TARGET_LOW} to ${MIX_TARGET_HIGH} dBFS;`
     + ` never into the red, and with nothing on the channel the bar should sit below ${MIX_QUIET}.`;
-}
-
-// The one sentence that says what the figure on a frame row is. Written from the constants above
-// so the sentence, the badges and the daemon's verdict cannot come to say three different things,
-// and phrased to match the meter's advice: the target band is the same band.
-function initFramesHint() {
-  $("framesHint").textContent =
-    "Each row carries that frame's own peak level, measured over its burst rather than over the"
-    + ` meter's interval. Aim for ${MIX_TARGET_LOW} to ${MIX_TARGET_HIGH} dBFS. A badge appears`
-    + " only where the level has started to cost that mode something: TOO LOUD for a clipped card"
-    + " or a frame with no headroom left, TOO QUIET for one far enough down to be losing link"
-    + " margin. Most rows earn neither, which is what a healthy capture gain looks like.";
 }
 
 // No reading for a second: the bar is emptied and says so, rather than sitting frozen at whatever

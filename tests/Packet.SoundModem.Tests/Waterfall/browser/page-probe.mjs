@@ -679,7 +679,6 @@ run(`onFrameEvent({sub:0, mode:"qpsk3600-il2pc", from:"G0BBB", to:"M0LTE", line:
 run(`onFrameEvent({sub:0, mode:"qpsk3600-il2pc", from:"G0CCC", to:"M0LTE", line:0, lenBytes:31, snrDb:11.0})`);
 // Newest first, as the panel prepends: the one with no level is on top.
 const levelRows = sandbox.document.getElementById("frames").children.map(c => c.innerHTML).slice(0, 4);
-const framesHint = sandbox.document.getElementById("framesHint").textContent;
 
 // What a public deployment dresses the page with, as the handshake left it: the title, the
 // about strip with the receiver credit, and the body class the stylesheet keys off.
@@ -875,7 +874,6 @@ process.stdout.write(JSON.stringify({
   hostileRow,
   hostileChip,
   levelRows,
-  framesHint,
   linksHiddenBefore,
   linksHiddenAfter,
   linksOnArrival,
