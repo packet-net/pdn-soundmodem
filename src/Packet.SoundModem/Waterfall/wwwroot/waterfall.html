@@ -290,11 +290,14 @@
     font-size: 9px; font-weight: 700; letter-spacing: .08em; vertical-align: 1px;
     color: #7fe3f7; border: 1px solid #31d2f2;
   }
-  /* Not on an FM page. The shift is a correction in RF terms - land where an off-frequency
-     receiver is listening - and an FM set is a channel radio whose audio is not RF (see fm()),
-     so there the badge reads as a fault that is not there. A class on body rather than a
-     decision at render time, so changing the sideband takes it off rows already listed. */
-  body.fm .fr .trim, body.fm .fr .trimtxt { display: none; }
+  /* Not on an FM page, and nor is the "+8 Hz" a received frame was measured off its centre.
+     Both are RF ideas: the shift is a correction to land where an off-frequency receiver is
+     listening, the offset is how far off the far station's oscillator is, and an FM set is a
+     channel radio whose audio is not RF (see fm()). There a few hertz of tone is the far TNC's
+     audio, nothing to act on, and beside a channel radio it reads as a tuning error that is not
+     there (Tom, 2026-09-07). A class on body rather than a decision at render time, so changing
+     the sideband takes them off rows already listed. */
+  body.fm .fr .trim, body.fm .fr .trimtxt, body.fm .fr .offtxt { display: none; }
   /* Read out of the station's frame log when the page opened, not heard since - dimmed so the
      backlog cannot be mistaken for a channel that is busy right now. Its timestamps are real,
      which is the other half of saying so. */
@@ -1141,7 +1144,7 @@ function initControls() {
   const sb = $("sideband");
   const showSb = () => {
     sb.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.sb === ui.sideband));
-    // What the stylesheet keys FM-only differences off (the SHIFTED marks, for one).
+    // What the stylesheet keys FM-only differences off (the SHIFTED marks and the Hz offsets).
     document.body.classList.toggle("fm", fm());
   };
   showSb();
@@ -1720,7 +1723,9 @@ function tagFrame(ev) {
   // identified next to it" - without the word they read identically.
   if (ev.id) parts.push("ID");
   if (ev.snrDb != null) parts.push(ev.snrDb.toFixed(1) + " dB");
-  if (ev.offsetHz != null) parts.push((ev.offsetHz >= 0 ? "+" : "") + ev.offsetHz.toFixed(0) + " Hz");
+  // Painted into the ring, so this one is decided here rather than by the stylesheet: on FM
+  // the offset is not shown, for the reason body.fm .offtxt gives.
+  if (ev.offsetHz != null && !fm()) parts.push((ev.offsetHz >= 0 ? "+" : "") + ev.offsetHz.toFixed(0) + " Hz");
   const text = parts.join(" · ");
 
   // The tag is written into the ring (so it scrolls with the energy it names); a second
@@ -1850,7 +1855,7 @@ function logFrame(ev) {
     bits.push(`<i title="Peak audio level of this frame's own burst, at the station's input${
       ev.clipped ? " - and the card ran out of codes during it" : ""}">${shown} dBFS</i>`);
   }
-  if (ev.offsetHz != null) bits.push(`<i>${ev.offsetHz >= 0 ? "+" : ""}${ev.offsetHz.toFixed(0)} Hz</i>`);
+  if (ev.offsetHz != null) bits.push(`<i class="offtxt">${ev.offsetHz >= 0 ? "+" : ""}${ev.offsetHz.toFixed(0)} Hz</i>`);
   // Ours, and a command rather than a measurement, so it is worded as an aim and not as an
   // observation: "shifted +4 Hz", never "+4 Hz" alongside the offsets of stations we heard.
   if (ev.txTrimHz != null) {
