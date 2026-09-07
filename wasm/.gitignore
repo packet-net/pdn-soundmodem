@@ -1,0 +1,3 @@
+# Build output: `./build.sh` puts the wasm bundle here.
+browser/_framework/
+browser/main.mjs

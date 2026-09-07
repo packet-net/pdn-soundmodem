@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The pdn-soundmodem core, compiled to WebAssembly, with a small JS-facing surface:
+       open a mode, push received audio, pull decoded AX.25 frames, read carrier sense,
+       modulate a frame to audio. Nothing else crosses the boundary - no waterfall, no
+       config API, no KISS. The frames are raw AX.25, which is what @packet-net/ax25 takes.
+
+       OutputType is Exe with a no-op Main only so the bundle also runs under Node
+       (`node main.mjs <file.wav> <mode>`), which is how the decode is checked against the
+       native build. A browser page ignores main.mjs and imports _framework/dotnet.js. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>pdn-modem-wasm</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <WasmMainJSPath>main.mjs</WasmMainJSPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Packet.SoundModem/Packet.SoundModem.csproj" />
+  </ItemGroup>
+
+</Project>

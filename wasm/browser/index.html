@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pdn-soundmodem in the browser</title>
+<style>
+  :root { color-scheme: dark; --bg:#101418; --panel:#171d24; --line:#2a333d; --ink:#d6e0ea; --dim:#7d8a99; --on:#4ade80; --off:#374151; --hot:#f87171; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; gap:14px; align-items:baseline; flex-wrap:wrap; }
+  h1 { font-size:15px; margin:0; font-weight:600; letter-spacing:.02em; }
+  .sub { color:var(--dim); font-size:12px; }
+  main { display:grid; grid-template-columns:320px 1fr; gap:0; min-height:calc(100vh - 52px); }
+  @media (max-width:820px) { main { grid-template-columns:1fr; } }
+  aside { padding:16px 18px; border-right:1px solid var(--line); display:flex; flex-direction:column; gap:14px; }
+  section h2 { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:0 0 6px; font-weight:600; }
+  label { display:block; font-size:12px; color:var(--dim); margin:8px 0 3px; }
+  select, input, button { width:100%; background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:5px; padding:7px 9px; font:inherit; font-size:13px; }
+  button { cursor:pointer; }
+  button:hover:not(:disabled) { border-color:#3d4a58; }
+  button:disabled { opacity:.45; cursor:default; }
+  button.go { background:#1d4ed8; border-color:#1d4ed8; color:#fff; }
+  .row { display:flex; gap:8px; }
+  .lamps { display:flex; gap:16px; padding:10px 0; }
+  .lamp { display:flex; gap:7px; align-items:center; font-size:12px; color:var(--dim); }
+  .dot { width:11px; height:11px; border-radius:50%; background:var(--off); transition:background .1s; }
+  .dot.on { background:var(--on); box-shadow:0 0 8px #4ade8066; }
+  .dot.tx { background:var(--hot); box-shadow:0 0 8px #f8717166; }
+  #log { padding:16px 18px; overflow:auto; max-height:calc(100vh - 52px); font-size:13px; }
+  .frame { padding:6px 0; border-bottom:1px solid #1d242c; white-space:pre-wrap; word-break:break-word; }
+  .frame .meta { color:var(--dim); font-size:11px; }
+  .frame.tx { color:#93c5fd; }
+  .frame.sys { color:var(--dim); font-style:italic; }
+  .frame.err { color:var(--hot); }
+</style>
+</head>
+<body>
+<header>
+  <h1>pdn-soundmodem &rarr; WebAssembly</h1>
+  <span class="sub" id="banner">loading the modem core...</span>
+</header>
+<main>
+  <aside>
+    <section>
+      <h2>Radio</h2>
+      <label for="mode">Mode</label>
+      <select id="mode"></select>
+      <label for="input">Audio in</label>
+      <select id="input"><option>grant microphone access first</option></select>
+      <label for="output">Audio out</label>
+      <select id="output"><option>default</option></select>
+      <label for="ptt">PTT</label>
+      <div class="row">
+        <select id="ptt"><option value="none">none (VOX / receive only)</option><option value="rts">serial RTS</option><option value="dtr">serial DTR</option></select>
+        <button id="pick-serial" style="width:auto; white-space:nowrap;">Port...</button>
+      </div>
+      <label for="mycall">MYCALL</label>
+      <input id="mycall" value="M0LTE-1" spellcheck="false">
+      <div class="lamps">
+        <div class="lamp"><span class="dot" id="dcd"></span>DCD</div>
+        <div class="lamp"><span class="dot" id="busy"></span>BUSY</div>
+        <div class="lamp"><span class="dot" id="tx"></span>TX</div>
+      </div>
+      <button id="start" class="go">Start modem</button>
+    </section>
+    <section>
+      <h2>Send</h2>
+      <label for="beacon">UI frame to APRS-style unproto</label>
+      <input id="beacon" value="hello from a browser" spellcheck="false">
+      <div class="row" style="margin-top:8px;">
+        <input id="unproto" value="TEST" spellcheck="false" style="flex:0 0 40%;">
+        <button id="send" disabled>Send UI</button>
+      </div>
+      <label for="peer">Connect to</label>
+      <div class="row">
+        <input id="peer" value="GB7RDG-1" spellcheck="false">
+        <button id="connect" disabled style="width:auto;">C</button>
+      </div>
+    </section>
+  </aside>
+  <div id="log"></div>
+</main>
+
+<script type="module">
+// The page is deliberately thin: everything radio lives in sm-modem.js (the wasm core plus
+// the audio graph and PTT) and sm-transport.js (the @packet-net/ax25 adapter). What is left
+// here is wiring and a monitor pane.
+import { SoundModem, SerialPtt, NoPtt } from './sm-modem.js'
+import { SoundModemTransport } from './sm-transport.js'
+
+const AX25 = '@packet-net/ax25@0.17.0'
+const { Ax25Listener, Callsign, decodeFrame, classify } = await import(`https://esm.sh/${AX25}`)
+
+const $ = (id) => document.getElementById(id)
+const log = (text, kind = '') => {
+  const el = document.createElement('div')
+  el.className = `frame ${kind}`
+  el.textContent = text
+  $('log').append(el)
+  $('log').scrollTop = $('log').scrollHeight
+  while ($('log').childElementCount > 500) $('log').firstElementChild.remove()
+}
+
+let modem, transport, listener, ptt = NoPtt
+
+modem = await SoundModem.load()
+for (const mode of modem.modes) {
+  const option = document.createElement('option')
+  option.value = option.textContent = mode
+  $('mode').append(option)
+}
+$('mode').value = 'afsk1200'
+$('banner').textContent = `${modem.modes.length} modes loaded, ready`
+log('modem core loaded. pick a mode and an input, then Start.', 'sys')
+
+// Device names only appear after the user has granted audio access, so ask first.
+navigator.mediaDevices.getUserMedia({ audio: true }).then(async (stream) => {
+  stream.getTracks().forEach((t) => t.stop())
+  const devices = await navigator.mediaDevices.enumerateDevices()
+  for (const [kind, select] of [['audioinput', $('input')], ['audiooutput', $('output')]]) {
+    select.innerHTML = ''
+    for (const device of devices.filter((d) => d.kind === kind)) {
+      const option = document.createElement('option')
+      option.value = device.deviceId
+      option.textContent = device.label || `${kind} ${device.deviceId.slice(0, 8)}`
+      select.append(option)
+    }
+  }
+}).catch((e) => log(`no audio access: ${e.message}`, 'err'))
+
+$('pick-serial').onclick = async () => {
+  try {
+    ptt = await SerialPtt.request({ signal: $('ptt').value === 'dtr' ? 'dtr' : 'rts' })
+    log(`PTT port opened, keying ${$('ptt').value.toUpperCase()}`, 'sys')
+  } catch (e) { log(`PTT: ${e.message}`, 'err') }
+}
+
+$('start').onclick = async () => {
+  $('start').disabled = true
+  try {
+    const dspRate = await modem.open({
+      mode: $('mode').value,
+      inputDeviceId: $('input').value || undefined,
+      outputDeviceId: $('output').value || undefined,
+      ptt: $('ptt').value === 'none' ? NoPtt : ptt,
+    })
+    log(`${$('mode').value} running: audio at ${modem.sampleRate} Hz, chain at ${dspRate} Hz`, 'sys')
+
+    transport = new SoundModemTransport(modem)
+    listener = new Ax25Listener(transport, {
+      myCall: $('mycall').value.trim(),
+      carrierSense: transport,          // the modem's own busy detector gates every keyup
+    })
+    listener.onFrameTraced((event) => { if (event.direction === 'tx') describe(event.frame, 'tx') })
+    await listener.start()
+    $('send').disabled = $('connect').disabled = false
+    setInterval(paint, 100)
+  } catch (e) {
+    log(`start failed: ${e.message}`, 'err')
+    $('start').disabled = false
+  }
+}
+
+// Every decoded frame reaches the monitor whether or not the session layer wanted it.
+const describe = (frame, kind) => {
+  try {
+    const digis = frame.digipeaters?.length ? ',' + frame.digipeaters.map(String).join(',') : ''
+    const info = frame.info?.length ? new TextDecoder().decode(frame.info).replace(/\r/g, '\n') : ''
+    log(`${frame.source}>${frame.destination}${digis} <${classify(frame)}>\n${info}`, kind)
+  } catch { log('(unparsable frame)', 'err') }
+}
+
+$('send').onclick = async () => {
+  $('send').disabled = true
+  try {
+    await listener.sendUi(
+      Callsign.parse($('unproto').value.trim()),
+      new TextEncoder().encode($('beacon').value))
+  } catch (e) {
+    log(`send failed: ${e.message}`, 'err')
+  } finally {
+    $('send').disabled = false
+  }
+}
+
+$('connect').onclick = async () => {
+  const peer = $('peer').value.trim()
+  log(`connect to ${peer}...`, 'sys')
+  try {
+    const session = await listener.connect(peer)
+    session.onData((bytes) => log(new TextDecoder().decode(bytes)))
+    session.onDisconnected(() => log(`disconnected from ${peer}`, 'sys'))
+    log(`connected to ${peer}`, 'sys')
+  } catch (e) {
+    log(`connect failed: ${e.message}`, 'err')
+  }
+}
+
+// The lamps are the modem's own view of the channel, read at slot-time resolution.
+function paint() {
+  $('dcd').className = `dot ${modem.carrierDetect ? 'on' : ''}`
+  $('busy').className = `dot ${modem.channelBusy() && !modem.transmitting ? 'on' : ''}`
+  $('tx').className = `dot ${modem.transmitting ? 'tx' : ''}`
+}
+
+// The monitor gets frames straight from the modem too, so a frame addressed to nobody here
+// is still visible - a soundcard modem hears the whole channel and there is no reason to
+// throw that away.
+modem.onFrame((bytes) => {
+  try { describe(decodeFrame(bytes), '') }
+  catch { log(`raw ${bytes.length} bytes`, 'sys') }
+})
+</script>
+</body>
+</html>

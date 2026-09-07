@@ -1,0 +1,9 @@
+{
+  "name": "pdn-soundmodem-wasm-test",
+  "private": true,
+  "type": "module",
+  "description": "Two-station loopback for the WebAssembly modem: real DSP, real AX.25, simulated wire.",
+  "dependencies": {
+    "@packet-net/ax25": "0.17.0"
+  }
+}
