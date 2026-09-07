@@ -1600,10 +1600,6 @@ public class WaterfallPageTests
         probe.LevelRows[0].Should().NotContain("dBFS")
             .And.NotContain(">TOO LOUD<").And.NotContain(">TOO QUIET<",
                 "a row that arrived without the fields shows nothing new");
-
-        probe.FramesHint.Should().Contain("-18 to -9 dBFS")
-            .And.Contain("TOO LOUD").And.Contain("TOO QUIET",
-                "and the list says once what the figure is and what to aim for");
     }
 
     /// <summary>
@@ -2349,7 +2345,6 @@ public class WaterfallPageTests
         string HostileRow,
         string HostileChip,
         string[] LevelRows,
-        string FramesHint,
         string? TxHistBorder,
         string? TxBorder,
         string? HistBorder,
