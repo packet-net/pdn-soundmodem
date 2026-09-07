@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Time.Testing;
+using Packet.SoundModem.Audio;
 using Packet.SoundModem.Daemon;
 using Packet.SoundModem.Modems;
 
@@ -234,14 +235,14 @@ public class FrameLogTests : IDisposable
     }
 
     /// <summary>
-    /// A log written before a frame's own audio level was measured gains the two columns on
+    /// A log written before a frame's own audio level was measured gains the three columns on
     /// open, keeps every row it had, and claims nothing about them.
     /// </summary>
     /// <remarks>
-    /// The nulls are the point. How loud a frame heard last week was, and whether the card railed
-    /// under it, were not written down at the time - so those rows come back out of the backlog
-    /// with no figure and no badge, exactly as they drew before there was one, and only frames
-    /// heard after the upgrade carry a level.
+    /// The nulls are the point. How loud a frame heard last week was, whether the card railed
+    /// under it, and what its own modem made of that were not written down at the time - so those
+    /// rows come back out of the backlog with no figure and no badge, exactly as they drew before
+    /// there was one, and only frames heard after the upgrade carry a level.
     /// </remarks>
     [Fact]
     public async Task A_Log_From_Before_The_Level_Columns_Gains_Them_And_Keeps_Its_History()
@@ -251,7 +252,7 @@ public class FrameLogTests : IDisposable
         List<Dictionary<string, object?>> rows = await ReadBackAsync(
             log => log.Record(0, Frame(), new FrameQuality(
                 "qpsk3600-il2pc", FrameBytes: 32, CorrectedBytes: 0, CrcValid: true,
-                PeakDbFs: -14.2, Clipped: true), null, null));
+                PeakDbFs: -14.2, Clipped: true, Level: FrameLevel.Loud), null, null));
 
         rows.Should().HaveCount(2, "a station's existing history must survive the upgrade");
         rows[0]["source"].Should().Be("GB7RDG", "the old row is untouched");
@@ -259,8 +260,14 @@ public class FrameLogTests : IDisposable
         rows[0]["peak_dbfs"].Should().BeNull(
             "how loud that frame was was not measured at the time, and a figure is a claim");
         rows[0]["clipped"].Should().BeNull();
+        rows[0]["level"].Should().BeNull(
+            "and no modem judged it, so the row carries no verdict rather than a cheerful one");
         rows[1]["peak_dbfs"].Should().Be(-14.2, "and every frame heard after the upgrade says so");
         rows[1]["clipped"].Should().Be(1L);
+        rows[1]["level"].Should().Be(
+            "loud",
+            "the verdict its own modem reached at the moment of the decode, stored rather than "
+                + "left for a reader to derive");
     }
 
     /// <summary>
@@ -275,7 +282,8 @@ public class FrameLogTests : IDisposable
         await using FrameLog log = FrameLog.Open(DbPath, _time);
         log.Record(0, Frame(from: "G0AAA"), new FrameQuality(
             "qpsk3600-il2pc", FrameBytes: 32, CorrectedBytes: 0, CrcValid: true,
-            PeakDbFs: -14.2, Clipped: false), audioHz: 1500, rfHz: 7_051_600);
+            PeakDbFs: -14.2, Clipped: false, Level: FrameLevel.Ok),
+            audioHz: 1500, rfHz: 7_051_600);
         log.RecordTransmitted(0, Frame(from: "M0LTE"), "qpsk3600-il2pc", 1500, 7_051_600);
 
         for (int i = 0; i < 100 && log.Recent(10).Count < 2; i++)
@@ -288,12 +296,18 @@ public class FrameLogTests : IDisposable
         recent[0].PeakDbFs.Should().Be(-14.2, "the figure the panel drew live is the one it replays");
         recent[0].Clipped.Should().BeFalse("this card had headroom, which is not the same as unknown");
         recent[1].Transmitted.Should().BeTrue();
+        recent[0].Level.Should().Be(
+            FrameLevel.Ok,
+            "measured and found fine, which the backlog has to be able to tell from not measured "
+                + "at all even though neither draws a badge");
         recent[1].PeakDbFs.Should().BeNull("a transmission is not a measurement of what we heard");
         recent[1].Clipped.Should().BeNull();
+        recent[1].Level.Should().BeNull();
 
         // The other backlog query, which the links replay reads: same columns, same answers.
         log.RecentWithPayload(10)[0].Frame.PeakDbFs.Should().Be(-14.2);
         log.RecentWithPayload(10)[0].Frame.Clipped.Should().BeFalse();
+        log.RecentWithPayload(10)[0].Frame.Level.Should().Be(FrameLevel.Ok);
     }
 
     private static FrameQuality Quality(string mode = "bpsk300-il2pc") =>

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
+using Packet.SoundModem.Audio;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Waterfall;
 
@@ -124,6 +125,7 @@ internal sealed class FrameLog : IAsyncDisposable
                     snr_db            REAL,
                     peak_dbfs         REAL,
                     clipped           INTEGER,
+                    level             TEXT,
                     offset_hz         REAL,
                     audio_hz          REAL,
                     rf_hz             REAL,
@@ -150,9 +152,10 @@ internal sealed class FrameLog : IAsyncDisposable
     /// receives, so <c>'rx'</c> is the truth about them rather than a guess.
     /// <c>trailer_near_bits</c>, <c>monitor_only</c> and <c>plain_il2p</c> stay null on old rows:
     /// whether a frame was corroborated, withheld, or read without a CRC behind it was not
-    /// written down at the time, and null says so. So do <c>peak_dbfs</c> and <c>clipped</c>:
-    /// how loud a frame was and whether the card railed under it were not measured then, and a
-    /// backlog row without them draws exactly as it did before the columns existed.
+    /// written down at the time, and null says so. So do <c>peak_dbfs</c>, <c>clipped</c> and
+    /// <c>level</c>: how loud a frame was, whether the card railed under it, and what its own
+    /// modem made of that were not written down then, and a backlog row without them draws
+    /// exactly as it did before the columns existed.
     /// </remarks>
     private static void Migrate(SqliteConnection connection)
     {
@@ -168,6 +171,7 @@ internal sealed class FrameLog : IAsyncDisposable
                      ("plain_il2p", "INTEGER"),
                      ("peak_dbfs", "REAL"),
                      ("clipped", "INTEGER"),
+                     ("level", "TEXT"),
                  })
         {
             using SqliteCommand columns = connection.CreateCommand();
@@ -243,6 +247,10 @@ internal sealed class FrameLog : IAsyncDisposable
             // rather than from memory.
             quality.PeakDbFs,
             quality.Clipped,
+            // The verdict the deciding modem's own limits reached at the moment of the decode,
+            // stored rather than re-derived: a backlog row badges as the live row did, and
+            // nothing reading this log has to know what a threshold is.
+            quality.Level,
             quality.FrequencyOffsetHz,
             audioHz,
             rfHz,
@@ -308,6 +316,7 @@ internal sealed class FrameLog : IAsyncDisposable
             SnrDb: null,
             PeakDbFs: null,
             Clipped: null,
+            Level: null,
             OffsetHz: null,
             audioHz,
             rfHz,
@@ -365,7 +374,7 @@ internal sealed class FrameLog : IAsyncDisposable
             query.CommandText = """
                 SELECT heard_at, sub_channel, mode, source, destination,
                        length, corrected, crc_valid, offset_hz, direction, tx_trim_hz,
-                       monitor_only, plain_il2p, peak_dbfs, clipped
+                       monitor_only, plain_il2p, peak_dbfs, clipped, level
                 FROM frames ORDER BY id DESC LIMIT $count
                 """;
             query.Parameters.AddWithValue("$count", count);
@@ -398,7 +407,11 @@ internal sealed class FrameLog : IAsyncDisposable
                     // columns, and 0 dBFS with a clear clip flag would be a claim that the frame
                     // arrived at full scale.
                     row.IsDBNull(13) ? null : row.GetDouble(13),
-                    row.IsDBNull(14) ? null : row.GetInt32(14) != 0));
+                    row.IsDBNull(14) ? null : row.GetInt32(14) != 0,
+                    // And the verdict its own modem reached, so the backlog badges what the live
+                    // row badged. An unrecognised word reads as null, which is how a log written
+                    // by a later build stays readable here.
+                    FrameLevelText.Parse(row.IsDBNull(15) ? null : row.GetString(15))));
             }
         }
         catch (Exception e) when (e is SqliteException or IOException or FormatException)
@@ -438,7 +451,7 @@ internal sealed class FrameLog : IAsyncDisposable
             query.CommandText = """
                 SELECT heard_at, sub_channel, mode, source, destination,
                        length, corrected, crc_valid, offset_hz, direction, tx_trim_hz,
-                       monitor_only, plain_il2p, payload, peak_dbfs, clipped
+                       monitor_only, plain_il2p, payload, peak_dbfs, clipped, level
                 FROM frames ORDER BY id DESC LIMIT $count
                 """;
             query.Parameters.AddWithValue("$count", count);
@@ -460,7 +473,8 @@ internal sealed class FrameLog : IAsyncDisposable
                     !row.IsDBNull(11) && row.GetInt32(11) != 0,
                     !row.IsDBNull(12) && row.GetInt32(12) != 0,
                     row.IsDBNull(14) ? null : row.GetDouble(14),
-                    row.IsDBNull(15) ? null : row.GetInt32(15) != 0),
+                    row.IsDBNull(15) ? null : row.GetInt32(15) != 0,
+                    FrameLevelText.Parse(row.IsDBNull(16) ? null : row.GetString(16))),
                     (byte[])row.GetValue(13)));
             }
         }
@@ -481,18 +495,18 @@ internal sealed class FrameLog : IAsyncDisposable
               (heard_at, direction, sub_channel, mode, mode_name, source, destination,
                length, corrected, crc_valid, trailer_near_bits, monitor_only, plain_il2p,
                erased_bytes, chased_bits, snr_db, offset_hz, audio_hz, rf_hz, payload,
-               tx_trim_hz, peak_dbfs, clipped)
+               tx_trim_hz, peak_dbfs, clipped, level)
             VALUES
               ($heard_at, $direction, $sub, $mode, $mode_name, $source, $destination,
                $length, $corrected, $crc, $trailer, $monitor, $plain, $erased, $chased, $snr,
-               $offset, $audio, $rf, $payload, $tx_trim, $peak, $clipped)
+               $offset, $audio, $rf, $payload, $tx_trim, $peak, $clipped, $level)
             """;
         foreach (string name in new[]
                  {
                      "$heard_at", "$direction", "$sub", "$mode", "$mode_name", "$source",
                      "$destination", "$length", "$corrected", "$crc", "$trailer", "$monitor",
                      "$plain", "$erased", "$chased", "$snr", "$offset", "$audio", "$rf", "$payload",
-                     "$tx_trim", "$peak", "$clipped",
+                     "$tx_trim", "$peak", "$clipped", "$level",
                  })
         {
             insert.Parameters.Add(new SqliteParameter(name, DBNull.Value));
@@ -519,6 +533,8 @@ internal sealed class FrameLog : IAsyncDisposable
                 insert.Parameters["$chased"].Value = (object?)entry.ChasedBits ?? DBNull.Value;
                 insert.Parameters["$snr"].Value = (object?)entry.SnrDb ?? DBNull.Value;
                 insert.Parameters["$peak"].Value = (object?)entry.PeakDbFs ?? DBNull.Value;
+                insert.Parameters["$level"].Value =
+                    (object?)FrameLevelText.From(entry.Level) ?? DBNull.Value;
                 insert.Parameters["$clipped"].Value =
                     entry.Clipped is bool clipped ? clipped ? 1 : 0 : DBNull.Value;
                 insert.Parameters["$offset"].Value = (object?)entry.OffsetHz ?? DBNull.Value;
@@ -590,6 +606,7 @@ internal sealed class FrameLog : IAsyncDisposable
         double? SnrDb,
         double? PeakDbFs,
         bool? Clipped,
+        FrameLevel? Level,
         double? OffsetHz,
         double? AudioHz,
         double? RfHz,

@@ -28,6 +28,14 @@ internal static class UplinkWire
     private const int RadioCap = 60;
     private const int ModeCap = 24;
     private const int NoteCap = 256;
+
+    /// <summary>The longest a level verdict can be: "quiet" is five.</summary>
+    /// <remarks>
+    /// Capped like every other string off the wire rather than trusted for being short. Over-long
+    /// reads as absent, which parses to no verdict and draws no badge - the same outcome as a
+    /// station that never sent one.
+    /// </remarks>
+    private const int LevelCap = 8;
     private const int SiteCap = 200;
 
     /// <summary>
@@ -267,6 +275,12 @@ internal static class UplinkWire
             // there was one.
             PeakDbFs = Finite(root, "peakDbFs"),
             Clipped = Bool(root, "clipped"),
+            // And the far station's own verdict on those two. A v0.60.x station sends the
+            // measurements and no verdict, and this reads null for it: the monitor lists the
+            // figure and draws no badge, because the thresholds live in the modem that decoded
+            // the frame and that modem is over there. An unrecognised word reads as null too,
+            // which is what lets a later station add a verdict this build has never heard of.
+            Level = Audio.FrameLevelText.Parse(Capped(root, "level", LevelCap)),
             // Clamped to a day either side of this site's own clock. A station is a semi-trusted
             // publisher and this is the one field of its own it could use against itself: a frame
             // dated in the year 9999 is written into the site's copy of its log and sorts above

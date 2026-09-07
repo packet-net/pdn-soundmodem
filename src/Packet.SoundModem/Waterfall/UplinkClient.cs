@@ -413,12 +413,14 @@ public sealed class UplinkClient : IWaterfallRelay, IAsyncDisposable
                 hex = frame.FrameHex,
                 plain = frame.PlainIl2p ? true : (bool?)null,
                 monitorOnly = frame.MonitorOnly ? true : (bool?)null,
-                // Two more numbers on a message that is already a few hundred bytes, so that a
-                // relayed station's rows carry the level its own operator sees. Absent where it
-                // was not measured, which is what the far end's parser expects of every optional
-                // field here.
+                // The two measurements and the verdict this station's own modem put on them, so
+                // that a relayed row carries the level its operator sees and the monitor does not
+                // have to hold a copy of a rule that belongs to a demodulator it is not running.
+                // All three absent where nothing was measured, which is what the far end's parser
+                // expects of every optional field here.
                 peakDbFs = frame.PeakDbFs,
                 clipped = frame.Clipped,
+                level = Packet.SoundModem.Audio.FrameLevelText.From(frame.Level),
                 at = frame.At.ToUniversalTime()
                     .ToString("O", System.Globalization.CultureInfo.InvariantCulture),
                 raw = frame.Raw is null ? null : Convert.ToBase64String(frame.Raw),

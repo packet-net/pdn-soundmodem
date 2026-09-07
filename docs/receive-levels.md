@@ -421,6 +421,42 @@ the strictest mode's line in each direction:
 
 ---
 
+## 6a. Where the verdict is made
+
+Tom, 2026-09-07, on the version of this document that shipped with PR #433: *"wonder if the
+thresholds are low enough in the stack. Have you made them a UI concern or a fundamental property
+of a decode? The latter would, I think, be favourable."* They were the former, and they are now
+the latter.
+
+**The limits belong to the modem.** Each demodulator publishes its own pair through
+`IFrameSpanSource.FrameLevels`, beside the span margin it already published there, and a bank
+answers with its branches'. Nothing looks a limit up by mode name any more, because the thing that
+knows which slicer decided the bits is the object that owns the slicer. The lookup this replaces
+matched the catalogue spelling `c4fsk19200` while a real modem calls itself `c4fsk19200-il2pc`, so
+for one release every C4FSK frame silently took the sign-and-angle pair - the one group the
+per-mode thresholds exist for.
+
+**The verdict is taken once, at the decode.** `SoundModemChannel` measures the frame's span,
+classifies it with the deciding modem's limits, and puts the result on `FrameQuality.Level` beside
+`PeakDbFs` and `Clipped`. Everything downstream carries it rather than re-deriving it: the frame
+log stores it in a `level` column (`loud`, `quiet`, `ok`, and null for a frame nothing could
+measure), the uplink sends it as an optional `level` field, and the operator page maps it to the
+badge it already drew. Three consumers that used to need the rule, and none of them knows it now.
+
+**Ok is not the same as nothing.** A frame that was measured and found to be between its mode's
+edges is `ok`; a frame whose audio could not be placed at all - the FreeDV and MS110D decoders
+report frames and not where in the audio they were - has no verdict. Neither draws a badge, so the
+page collapses them, but a log and a monitor have to be able to tell them apart.
+
+**A monitor has no thresholds of its own.** It shows the verdict the station sent. A station
+running v0.60.x sends the two measurements and no verdict, and its rows are listed with their
+figure and no badge, which is the honest reading of "the station that heard it did not say" - the
+alternative would be this site guessing with a copy of a rule that belongs to a demodulator it is
+not running. In the other direction the field is inert: a v0.60.x monitor ignores it and reads
+everything else exactly as before.
+
+---
+
 ## 7. Two checks
 
 **Frame length.** The sweep uses a 15-byte supervisory frame because that is what a working link is
