@@ -1,3 +1,4 @@
+using System.Reflection;
 using AwesomeAssertions;
 using Packet.SoundModem.Audio;
 using Packet.SoundModem.Modems;
@@ -148,11 +149,19 @@ public class ReceiveLevelCliffTests
     /// configuration spellings while every C4FSK frame in production silently took the
     /// sign-and-angle limits, because a <c>c4fsk19200</c> modem calls itself
     /// <c>c4fsk19200-il2pc</c> (PR #433 review-1). There is no name to get wrong now.</para>
-    /// <para>A mode added without a thought about its receive level has to say something here,
-    /// because <see cref="IFrameSpanSource"/> will not compile without it, and this pins which
-    /// group each of the twenty that carry a level was measured in - the doc's own table,
-    /// sections 4 and 5. The eighteen that cannot place their frames implement nothing and carry
-    /// no verdict.</para>
+    /// <para><b>Two things are pinned, and the second is not implied by the first.</b> Each of
+    /// the 22 modes that carry a level answers with the group the doc measured it into (sections
+    /// 4 and 5), and each of them <em>declares</em> the member rather than inheriting
+    /// <see cref="IFrameSpanSource"/>'s default. The value check alone cannot stand in for the
+    /// declaration check: 14 of the 22 are measured into
+    /// <see cref="FrameLevelLimits.Default"/>, which is also what the interface default answers,
+    /// so a modem that quietly dropped its member would give the same answer and pass. Before the
+    /// default existed the compiler was the guard; the default makes the plugin surface additive
+    /// and takes that guard away, so this reflection check puts it back for the built-ins.
+    /// "Tested green and unpinned in production" is the exact failure this whole feature exists
+    /// to undo.</para>
+    /// <para>The 18 modes that cannot place their frames implement nothing and carry no
+    /// verdict.</para>
     /// </remarks>
     [Fact]
     public void Every_Modes_Frame_Level_Limits_Are_The_Measured_Ones()
@@ -178,6 +187,11 @@ public class ReceiveLevelCliffTests
             }
 
             placeable.Add(mode);
+            DeclaresItsOwnFrameLevels(modem.GetType()).Should().BeTrue(
+                $"{mode} must state the group it was measured into rather than inherit "
+                    + "IFrameSpanSource's default, which is invisible to the value check below "
+                    + "for the fourteen modes whose measured group is Default");
+
             FrameLevelLimits expected =
                 clipSensitive.Contains(mode) ? FrameLevelLimits.ClipSensitive
                 : quietSensitive.Contains(mode) ? FrameLevelLimits.QuietSensitive
@@ -257,6 +271,38 @@ public class ReceiveLevelCliffTests
         FrameLevelText.Parse("LOUD").Should().BeNull("the spelling on the wire is lower case");
         FrameLevelText.Parse("deafening").Should().BeNull(
             "a verdict a later build invented reads as no verdict here, not as an exception");
+    }
+
+    /// <summary>
+    /// Whether <paramref name="type"/> supplies <c>FrameLevels</c> itself rather than falling
+    /// through to <see cref="IFrameSpanSource"/>'s default implementation.
+    /// </summary>
+    /// <remarks>
+    /// Both spellings count: an ordinary public property on the class, and an explicit interface
+    /// implementation, which is invisible to <c>GetProperty</c> and shows up in the interface map
+    /// instead. What does not count is the default, whose target method is declared on the
+    /// interface itself - which is precisely the case this exists to catch.
+    /// </remarks>
+    private static bool DeclaresItsOwnFrameLevels(Type type)
+    {
+        const BindingFlags Own =
+            BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        if (type.GetProperty(nameof(IFrameSpanSource.FrameLevels), Own) is not null)
+        {
+            return true;
+        }
+
+        InterfaceMapping map = type.GetInterfaceMap(typeof(IFrameSpanSource));
+        for (int i = 0; i < map.InterfaceMethods.Length; i++)
+        {
+            if (map.InterfaceMethods[i].Name
+                == $"get_{nameof(IFrameSpanSource.FrameLevels)}")
+            {
+                return map.TargetMethods[i].DeclaringType != typeof(IFrameSpanSource);
+            }
+        }
+
+        return false;
     }
 
     /// <summary>How many of <see cref="Trials"/> frames copy at one level and one SNR.</summary>

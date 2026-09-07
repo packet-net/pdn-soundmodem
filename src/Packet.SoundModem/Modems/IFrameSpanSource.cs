@@ -85,11 +85,17 @@ public interface IFrameSpanSource
     /// <see cref="Packet.SoundModem.Audio.FrameLevelLimits.Default"/>, which is what the mode-name
     /// lookup this replaces answered for a name it did not recognise: the sign-and-angle group is
     /// the largest and the one that badges least, so an unmeasured mode is not given a badge this
-    /// repository cannot stand behind. Every modem in this tree states its group explicitly all
-    /// the same, and <c>Every_Modes_Frame_Level_Limits_Are_The_Measured_Ones</c> fails if one
-    /// stops - a built-in falling through to the default would be a mode nobody had thought
-    /// about, which is exactly the mistake the default exists to be kind about in somebody else's
-    /// repository and not in this one.</para>
+    /// repository cannot stand behind.</para>
+    /// <para><b>No modem in this tree relies on it, and that is checked rather than asserted.</b>
+    /// Making the member optional took away the compiler as the guard, and comparing values
+    /// cannot replace it: 14 of the 22 modes that carry a level are measured into
+    /// <see cref="Packet.SoundModem.Audio.FrameLevelLimits.Default"/>, so one of those falling
+    /// through to this default would answer exactly as it should and be invisible. So
+    /// <c>Every_Modes_Frame_Level_Limits_Are_The_Measured_Ones</c> asks by reflection whether each
+    /// built-in <em>declares</em> the member - as an ordinary property or as an explicit interface
+    /// implementation - as well as what it answers. A built-in falling through would be a mode
+    /// nobody had thought about, which is the mistake this default exists to be kind about in
+    /// somebody else's repository and not in this one.</para>
     /// </remarks>
     Packet.SoundModem.Audio.FrameLevelLimits FrameLevels
         => Packet.SoundModem.Audio.FrameLevelLimits.Default;
