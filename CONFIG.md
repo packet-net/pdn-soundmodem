@@ -1477,12 +1477,15 @@ sentence under the heading saying what the figure is and what to aim for. It is 
 span its own demodulator reports rather than over the meter's 200 ms interval, which is what
 makes it usable on the fast modes; see [the level meter](#the-level-meter) for the band, the
 thresholds and which modes carry one. The
-`frame` message carries it as `peakDbFs` (one decimal), `clipped` and `level` (`loud`, `quiet`,
-or absent - the daemon's own verdict, so a monitor and a station cannot come to disagree about a
-row). Rows that arrive without those fields - this station's own transmissions, frames replayed
-from a log written before the columns existed, and frames relayed from a station running an older
-release - show nothing new. A relayed station's rows do carry the figure its own operator sees:
-the two numbers cross the uplink with the frame.
+`frame` message carries it as `peakDbFs` (one decimal), `clipped` and `level` (`loud`, `quiet`, or
+absent - the verdict the modem that decoded the frame reached at the moment it decoded it, so
+nothing between there and the row reapplies a rule of its own). Rows that arrive without those
+fields - this station's own transmissions, frames replayed from a log written before the columns
+existed, and frames relayed from a station running an older release - show nothing new. All three
+cross the uplink with the frame, so a relayed station's rows carry the figure **and the badge** its
+own operator sees; a station too old to send a verdict gets its figure and no badge, because the
+thresholds belong to a demodulator the monitor is not running and guessing would be worse than
+saying nothing.
 
 **The transmit readout holds the last burst.** On a radio that reports its meters (a Flex), the
 header carries forward power and SWR. While the transmitter is up the figures are live and the

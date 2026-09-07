@@ -115,10 +115,9 @@ namespace Packet.SoundModem.Modems;
 /// What <paramref name="PeakDbFs"/> and <paramref name="Clipped"/> came to, judged against the
 /// limits of the modem that decoded this frame
 /// (<see cref="Packet.SoundModem.Audio.FrameLevelLimits"/>). Set once, by the channel, at the
-/// moment of the decode, so the frame log, the operator page, an uplinked monitor and any host
-/// watching the quality sidecar all carry the same verdict without any of them knowing the rule.
-/// Null where there was nothing to judge: a decoder that cannot place its frames in the audio, or
-/// one of our own transmissions.
+/// moment of the decode, so the frame log, the operator page and an uplinked monitor all carry
+/// the same verdict without any of them knowing the rule. Null where there was nothing to judge:
+/// a decoder that cannot place its frames in the audio, or one of our own transmissions.
 /// </param>
 public readonly record struct FrameQuality(
     string Mode,

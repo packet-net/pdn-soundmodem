@@ -94,8 +94,8 @@ public class FrameLevelTests
     /// <para>Tom, 2026-09-07: "wonder if the thresholds are low enough in the stack. Have you
     /// made them a UI concern or a fundamental property of a decode?" This is the answer: the
     /// channel asks the deciding modem for its limits and puts the result on
-    /// <see cref="FrameQuality.Level"/>, so the frame log, the page, an uplink and any host
-    /// watching the quality sidecar all carry the same verdict without knowing the rule.</para>
+    /// <see cref="FrameQuality.Level"/>, so the frame log, the page and an uplink all carry the
+    /// same verdict without knowing the rule.</para>
     /// <para>Both outcomes on one mode, because the interesting failure is a verdict that is
     /// merely absent: <see cref="FrameLevel.Ok"/> is a frame that was measured and found fine,
     /// and null is one nothing could measure. A page draws neither, so only a test can tell them

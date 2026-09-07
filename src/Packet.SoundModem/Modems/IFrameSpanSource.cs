@@ -78,8 +78,21 @@ public interface IFrameSpanSource
     /// demodulator at a different offset or a different timing phase, so which one decoded cannot
     /// change the answer, and asking a fixed branch avoids threading the winner out of the dedupe
     /// for a number that would be identical either way.</para>
+    /// <para><b>Defaulted so the published surface stays additive.</b> This interface is part of
+    /// the plugin API (<c>docs/modem-binding.md</c>), so a required member would stop an
+    /// out-of-tree modem compiling against a new release for the sake of a number nothing here
+    /// has measured for it. The default is
+    /// <see cref="Packet.SoundModem.Audio.FrameLevelLimits.Default"/>, which is what the mode-name
+    /// lookup this replaces answered for a name it did not recognise: the sign-and-angle group is
+    /// the largest and the one that badges least, so an unmeasured mode is not given a badge this
+    /// repository cannot stand behind. Every modem in this tree states its group explicitly all
+    /// the same, and <c>Every_Modes_Frame_Level_Limits_Are_The_Measured_Ones</c> fails if one
+    /// stops - a built-in falling through to the default would be a mode nobody had thought
+    /// about, which is exactly the mistake the default exists to be kind about in somebody else's
+    /// repository and not in this one.</para>
     /// </remarks>
-    Packet.SoundModem.Audio.FrameLevelLimits FrameLevels { get; }
+    Packet.SoundModem.Audio.FrameLevelLimits FrameLevels
+        => Packet.SoundModem.Audio.FrameLevelLimits.Default;
 }
 
 /// <summary>
