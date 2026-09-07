@@ -109,7 +109,7 @@ public class ReceiveLevelCliffTests
             .Should().BeGreaterThanOrEqualTo(
                 Trials * 3 / 4,
                 $"{mode} is flat to -84 dBFS (docs/receive-levels.md #5), so its badge at "
-                    + "-78 still has the station spread in hand");
+                    + "-72 still has the station spread in hand");
     }
 
     /// <summary>
@@ -130,47 +130,65 @@ public class ReceiveLevelCliffTests
         Copies("afsk1200", FrameLevelLimits.QuietSensitive.QuietPeakDbFs, snrDb)
             .Should().BeGreaterThanOrEqualTo(
                 Trials * 3 / 4,
-                "afsk1200 is flat to -42 dBFS, so its badge at -39 is still on the flat part");
+                "afsk1200 is flat to -42 dBFS set, and its badge at -33 is a reported peak, "
+                    + "which on this family's own links sits about 5 dB above the level set");
         Copies("afsk1200", peakDbFs: -72, snrDb - 4).Should().BeLessThanOrEqualTo(
             Trials / 4,
             "and four dB of margin down by -72, which is the cliff the badge is placed above");
     }
 
     /// <summary>
-    /// Every mode in the catalogue is on the group the sweep measured it in.
+    /// Every mode in the catalogue is on the group the sweep measured it in - asked with the name
+    /// a frame row actually carries, which is not the name it was configured under.
     /// </summary>
     /// <remarks>
-    /// A mode added without a thought about its receive level gets
+    /// <para><b>The names matter more than the mapping.</b> The badge is fed
+    /// <see cref="FrameQuality.Mode"/>, which is <see cref="ModeNames.Identity"/> of the modem's
+    /// own <see cref="IModem.Mode"/>: a <c>c4fsk19200</c> modem reports <c>c4fsk19200-il2pc</c>,
+    /// an <c>afsk1200-il2p</c> one reports <c>afsk1200-il2pc</c>, and a bank's branch count is
+    /// stripped back off. The first cut of this test walked
+    /// <see cref="ModemCatalog.KnownModes"/>, the configuration spellings, and so passed while
+    /// the C4FSK pair - the one group the per-mode thresholds exist for - silently took the
+    /// sign-and-angle limits in production (review of PR #433). It builds each modem and asks it
+    /// its own name now.</para>
+    /// <para>A mode added without a thought about its receive level gets
     /// <see cref="FrameLevelLimits.Default"/>, which is the right default and the wrong answer if
-    /// its slicer reads an amplitude. This lists all twenty that carry a level, so adding one
-    /// fails here and the person adding it has to say which group it is in - or measure it.
+    /// its slicer reads an amplitude. This covers all twenty that carry a level, so adding one
+    /// fails here and the person adding it has to say which group it is in - or measure it.</para>
     /// </remarks>
     [Fact]
     public void Every_Modes_Frame_Level_Limits_Are_The_Measured_Ones()
     {
-        string[] clipSensitive = ["c4fsk9600", "c4fsk19200"];
-        string[] quietSensitive =
-        [
-            "afsk1200", "afsk1200-fx25", "afsk1200-fx25rx", "afsk1200-multi", "afsk1200-il2p",
-            "afsk1200-il2p-nocrc",
-        ];
-
+        var seen = new List<string>();
         foreach (string mode in ModemCatalog.KnownModes)
         {
-            FrameLevelLimits expected =
-                clipSensitive.Contains(mode) ? FrameLevelLimits.ClipSensitive
-                : quietSensitive.Contains(mode) ? FrameLevelLimits.QuietSensitive
-                : FrameLevelLimits.Default;
+            string row = ModeNames.Identity(
+                ModemCatalog.Create(mode, ModemCatalog.DspRateFor(mode), static _ => { }).Mode);
+            seen.Add(row);
 
-            ModemCatalog.FrameLevelsFor(mode).Should().Be(
-                expected, $"{mode} is measured in docs/receive-levels.md sections 4 and 5");
+            FrameLevelLimits expected =
+                row.StartsWith("c4fsk", StringComparison.Ordinal) ? FrameLevelLimits.ClipSensitive
+                : row.StartsWith("afsk1200", StringComparison.Ordinal)
+                    ? FrameLevelLimits.QuietSensitive
+                    : FrameLevelLimits.Default;
+
+            ModemCatalog.FrameLevelsFor(row).Should().Be(
+                expected,
+                $"{mode} reports its rows as {row}, and that is what "
+                    + "docs/receive-levels.md sections 4 and 5 measured");
         }
+
+        // And the two names the C4FSK arm has to match are the ones that reach it, spelled out,
+        // so a modem that changed how it describes itself fails here rather than going quiet.
+        seen.Should().Contain(["c4fsk9600-il2pc", "c4fsk19200-il2pc"]);
+        ModemCatalog.FrameLevelsFor("c4fsk19200-il2pc").Should().Be(FrameLevelLimits.ClipSensitive);
+        ModemCatalog.FrameLevelsFor("afsk1200-il2pc").Should().Be(FrameLevelLimits.QuietSensitive);
 
         // And the numbers themselves, so a change to one is a change to the document it was
         // derived in rather than a constant somebody nudged.
-        FrameLevelLimits.Default.Should().Be(new FrameLevelLimits(0, -78));
-        FrameLevelLimits.ClipSensitive.Should().Be(new FrameLevelLimits(-6, -78));
-        FrameLevelLimits.QuietSensitive.Should().Be(new FrameLevelLimits(0, -39));
+        FrameLevelLimits.Default.Should().Be(new FrameLevelLimits(0, -72));
+        FrameLevelLimits.ClipSensitive.Should().Be(new FrameLevelLimits(-6, -72));
+        FrameLevelLimits.QuietSensitive.Should().Be(new FrameLevelLimits(0, -33));
         FrameLevelLimits.StationSpreadDb.Should().Be(6);
         InputLevelMeter.HotPeakDbFs.Should().Be(
             FrameLevelLimits.ClipSensitive.LoudPeakDbFs,
@@ -203,11 +221,11 @@ public class ReceiveLevelCliffTests
         sign.Tag(-30, clipped: true).Should().Be(
             "loud", "the card running out of codes is a fact and badges whatever the peak was");
         sign.Tag(0, clipped: false).Should().Be("loud");
-        sign.Tag(-79, clipped: false).Should().Be("quiet");
-        sign.Tag(-77, clipped: false).Should().BeNull();
-        FrameLevelLimits.QuietSensitive.Tag(-40, clipped: false).Should().Be(
+        sign.Tag(-73, clipped: false).Should().Be("quiet");
+        sign.Tag(-71, clipped: false).Should().BeNull();
+        FrameLevelLimits.QuietSensitive.Tag(-34, clipped: false).Should().Be(
             "quiet", "which the same level on any other mode would not be");
-        sign.Tag(-40, clipped: false).Should().BeNull();
+        sign.Tag(-34, clipped: false).Should().BeNull();
     }
 
     /// <summary>How many of <see cref="Trials"/> frames copy at one level and one SNR.</summary>

@@ -15,8 +15,10 @@ namespace Packet.SoundModem.Audio;
 /// into three, and the split is a property of the slicer.</para>
 /// <list type="bullet">
 /// <item><description><see cref="Default"/> - every mode whose slicer is a sign or an angle test,
-/// which is all of AFSK, BPSK, QPSK and two-level FSK. Measured flat: at most 1 dB of margin lost
-/// at 24 dB of overdrive, and nothing at all down to -84 dBFS.</description></item>
+/// which is all of AFSK, BPSK, QPSK and two-level FSK. Six dB of overdrive costs each of them at
+/// most 1 dB of link margin, and 24 dB costs between 1 and 5; none of the fourteen outside the
+/// 1200 baud AFSK family loses anything measurable at any level from -72 dBFS up to full
+/// scale.</description></item>
 /// <item><description><see cref="ClipSensitive"/> - the two C4FSK modes, the only ones here that
 /// slice four amplitude levels against fixed thresholds at zero and plus or minus two thirds of a
 /// tracked envelope. Clipping compresses the outer levels into the inner ones and no envelope
@@ -28,10 +30,18 @@ namespace Packet.SoundModem.Audio;
 /// its own arithmetic, and the sweep finds the family losing margin from about -45.</description>
 /// </item>
 /// </list>
+/// <para><b>Both numbers are in the units the badge reads</b>, which is a peak over the frame's
+/// span of the audio the modems hear - signal and channel noise together, not the signal alone.
+/// The quiet thresholds are therefore derived from the probe's reported-peak column and not from
+/// the level the sweep set, which on a working link sits 1 to 7 dB under it; on a link close to
+/// its own decode knee the gap is at the top of that range, so the quiet badge is late by a few
+/// dB there. <c>docs/receive-levels.md</c> section 6 does the arithmetic and says how much.</para>
 /// <para><b>The clip flag is a separate, unconditional trigger</b> and always has been: a
 /// converter that ran out of codes is a fact about the station rather than a prediction, and it
-/// costs at least a decibel on every mode measured. <see cref="LoudPeakDbFs"/> is the other
-/// half - the headroom warning that has to fire before the clipping starts.</para>
+/// costs at least a decibel on every mode measured. It is only available where the station has a
+/// sound card of its own, though - a Flex or an ubersdr feed reports it null by design
+/// (<c>Program.cs</c>'s <c>CardRateTap</c>), so on those stations the loud badge is
+/// <see cref="LoudPeakDbFs"/> alone.</para>
 /// </remarks>
 /// <param name="LoudPeakDbFs">At or above this, the frame is badged too loud.</param>
 /// <param name="QuietPeakDbFs">Below this, the frame is badged too quiet.</param>
@@ -58,20 +68,24 @@ public readonly record struct FrameLevelLimits(double LoudPeakDbFs, double Quiet
     /// three QPSK rates, and the two-level G3RUH FSK modes.
     /// </summary>
     /// <remarks>
-    /// <para><b>Loud: the top of the scale, and nothing below it.</b> These lose at most 1 dB of
-    /// margin at 24 dB of overdrive - clipping a signal whose bits are decided by a sign leaves
-    /// the sign alone - so <see cref="StationSpreadDb"/> of headroom buys nothing and a threshold
-    /// under 0 dBFS would badge frames that measurably cost their operator nothing. The reading
-    /// is clamped at 0 dBFS (<see cref="InputLevelMeter.DbFs"/>), so this fires exactly when the
-    /// frame's own audio reached the top of the scale.</para>
-    /// <para><b>Quiet: -78 dBFS.</b> The sweep finds no mode in this group losing anything above
-    /// -84 dBFS, which is a 16-bit converter running out of codes to describe the signal with
-    /// rather than any demodulator objecting, and <see cref="StationSpreadDb"/> above that is
-    /// -78. <b>This is a quantisation-only floor</b>: a real card's analogue noise sits above it
-    /// by an amount nothing in this repository has measured, so the true figure on real hardware
-    /// is somewhere higher and this threshold is optimistic by that much.</para>
+    /// <para><b>Loud: the top of the scale, and nothing below it.</b> Six dB of overdrive - which
+    /// is the whole of <see cref="StationSpreadDb"/> applied to a frame already at full scale -
+    /// costs these modes at most 1 dB of margin, because clipping a signal whose bits are decided
+    /// by a sign leaves the sign alone. So the headroom buys nothing and a threshold under 0 dBFS
+    /// would badge frames that measurably cost their operator nothing. The reading is clamped at
+    /// 0 dBFS (<see cref="InputLevelMeter.DbFs"/>), so this fires when the frame's own audio
+    /// reached the top of the scale.</para>
+    /// <para><b>Quiet: -72 dBFS.</b> The sweep's shallowest measured level at which every mode
+    /// taking this pair is still flat is -78 dBFS set, which the badge reads as about -77, and
+    /// <see cref="StationSpreadDb"/> above that is -71, rounded onto the sweep's own 3 dB grid.
+    /// What stops them there is a 16-bit converter running out of codes to describe the signal
+    /// with rather than any demodulator objecting. <b>It is a quantisation-only floor and it is
+    /// below any real card's</b>: the reading includes the input noise, so it cannot sit under
+    /// the card's own idle level, which on CM108-class hardware with the gain up is nearer -60 to
+    /// -70 dBFS. On that hardware this badge cannot fire at all, which is the honest consequence
+    /// of the measurement rather than a bug - see <c>docs/receive-levels.md</c> section 6.</para>
     /// </remarks>
-    public static FrameLevelLimits Default { get; } = new(0, -78);
+    public static FrameLevelLimits Default { get; } = new(0, -72);
 
     /// <summary>
     /// The two C4FSK modes, whose four-level slicer is the only one here that reads an amplitude.
@@ -81,8 +95,9 @@ public readonly record struct FrameLevelLimits(double LoudPeakDbFs, double Quiet
     /// another -6 because they are the same claim: the strictest mode in the catalogue wants the
     /// whole of <see cref="StationSpreadDb"/> as headroom, and the meter's bar - which cannot
     /// know which mode the loudest thing on the input belonged to - turns red at the strictest
-    /// mode's line. Quiet is <see cref="Default"/>'s: c4fsk9600 and c4fsk19200 are flat down to
-    /// -84 dBFS like everything else, and it is only the loud end that sets them apart.
+    /// mode's line. Quiet is <see cref="Default"/>'s, and c4fsk19200 is in fact the mode that
+    /// sets it: it is the first of the group to lose anything as the level falls, at -84 dBFS
+    /// set, and its last flat cell at -78 is what the -72 was derived from.
     /// </remarks>
     public static FrameLevelLimits ClipSensitive { get; } =
         new(InputLevelMeter.HotPeakDbFs, Default.QuietPeakDbFs);
@@ -91,15 +106,16 @@ public readonly record struct FrameLevelLimits(double LoudPeakDbFs, double Quiet
     /// The 1200 baud AFSK family, in every framing and both banks.
     /// </summary>
     /// <remarks>
-    /// Quiet at -39 dBFS: the sweep has afsk1200 flat to -42 and 2 dB down by -48, so the
-    /// decibel is lost at about -45, and <see cref="StationSpreadDb"/> above that is -39. The
-    /// mechanism is in the demodulator and is not in dispute - the discriminator divides by its
-    /// own in-band power plus a floor of 1e-5, whose own comment puts half gain at about -44 dBFS
-    /// for this modulator's amplitudes. Loud is <see cref="Default"/>'s: the discriminator's
-    /// output feeds a sign test, so clipping costs this family 1 dB at 6 dB of overdrive and 3 dB
-    /// at 24.
+    /// Quiet at -33 dBFS. The sweep has afsk1200 flat at -42 dBFS set and 2 dB down by -48, so
+    /// the decibel is lost at about -45 set - which the badge reads as about -40, because at this
+    /// family's knee the channel noise adds some 5 dB to the frame's own peak. Six dB above that
+    /// reading is -34, on the 3 dB grid -33. The mechanism is in the demodulator and is not in
+    /// dispute: the discriminator divides by its own in-band power plus a floor of 1e-5, whose
+    /// own comment puts half gain at about -44 dBFS for this modulator's amplitudes. Loud is
+    /// <see cref="Default"/>'s, because the discriminator's output feeds a sign test: clipping
+    /// costs this family 1 dB at 6 dB of overdrive and 3 dB at 24.
     /// </remarks>
-    public static FrameLevelLimits QuietSensitive { get; } = new(Default.LoudPeakDbFs, -39);
+    public static FrameLevelLimits QuietSensitive { get; } = new(Default.LoudPeakDbFs, -33);
 
     /// <summary>
     /// What one frame's level is worth saying about it: <c>loud</c>, <c>quiet</c>, or nothing.

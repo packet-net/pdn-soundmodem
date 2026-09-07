@@ -1250,18 +1250,29 @@ The catalogue splits into three, and the split is a property of the slicer:
 
 | group | modes | `TOO LOUD` at | `TOO QUIET` below |
 |---|---|---|---|
-| sign or angle slicer | AFSK 300, BPSK 300/1200, QPSK 600/2400/3600, FSK 4800/9600, every framing of each | 0 dBFS | -78 dBFS |
-| four-level slicer | `c4fsk9600`, `c4fsk19200` | -6 dBFS | -78 dBFS |
-| power-normalised discriminator | the 1200 baud AFSK family, all six | 0 dBFS | -39 dBFS |
+| sign or angle slicer | AFSK 300, BPSK 300/1200, QPSK 600/2400/3600, FSK 4800/9600, every framing of each | 0 dBFS | -72 dBFS |
+| four-level slicer | `c4fsk9600`, `c4fsk19200` | -6 dBFS | -72 dBFS |
+| power-normalised discriminator | the 1200 baud AFSK family, all six | 0 dBFS | -33 dBFS |
 
 A clipped card badges `TOO LOUD` on any mode whatever the peak was: a converter that ran out of
 codes is a fact rather than a prediction, and it costs at least a decibel on every mode measured.
-Eighteen of the twenty shrug off 24 dB of overdrive for 1 to 5 dB of link margin - clipping a
-signal whose bits are decided by a sign leaves the sign alone - and fourteen lose nothing at all
-down to -84 dBFS, which is a 16-bit converter running out of codes rather than any demodulator
-objecting. v0.60.0 shipped one pair for all of them, -3 and -24, taken from the meter's own bands;
-on the radio1 bench that badged four frames `TOO QUIET` at -26 dBFS which decoded perfectly and
-had another fifty dB in hand.
+Six dB of overdrive - which is how much louder than the last one the next station may reasonably
+be - costs eighteen of the twenty at most 1 dB of link margin, and 24 dB of it costs them 1 to 5,
+because clipping a signal whose bits are decided by a sign leaves the sign alone. Fourteen lose
+nothing measurable at any level from -72 dBFS up to full scale, which is a 16-bit converter running
+out of codes rather than any demodulator objecting. v0.60.0 shipped one pair for all of them, -3
+and -24, taken from the meter's own bands; on the radio1 bench that badged four frames `TOO QUIET`
+at -26 dBFS which decoded perfectly and had another fifty dB in hand.
+
+**Two things follow from those numbers, and they are why the meter above is the instrument for
+setting a capture gain rather than these badges.** -72 dBFS is below what any real card delivers -
+the reading is a peak that includes the input noise, and a CM108-class capture with the gain up
+idles nearer -60 to -70 - so on the fourteen modes that take it the `TOO QUIET` badge cannot fire
+at all. And a station with no sound card of its own, a Flex or an ubersdr feed, has no clip flag:
+`FrameQuality.Clipped` is null there by design, because there is no converter of ours to have run
+out of codes, so those stations get no `TOO LOUD` badge either until a frame's own reading reaches
+the top of the scale. Put the input's peak in the meter's green band and watch the `CLIP` pill; a
+frame badge is a report about one burst in one mode, not a gain control.
 
 **Which modes carry one.** Every packet mode does - the AFSK, BPSK, QPSK, FSK and C4FSK families,
 their diversity banks, and the FX.25 and IL2P framings of each - because each of those decodes

@@ -1,0 +1,83 @@
+# connected to ws://radio1:8407/ws, watching for 360s
+# config: sideband=fm dialHz=145300000 -> fm=true dialSet=true rfShown=false (rfShown is what draws the amber RF row and the RF prompt; on FM it is always false)
+# config: FM channel line the ruler would draw: 145.300 MHz
+# config: modems=[{"sub":0,"mode":"qpsk3600-il2pc-multi1","modeName":"QPSK3600 IL2Pc","lowHz":656.2,"highHz":2601.6,"centreHz":1628.9}]
+# hosts #1 at 00:32:51.428: [{"port":8405,"sub":null,"clients":0}] -> chip "KISS 8405, no host"
+# level meter at 00:32:51.692: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:32:56.803: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:33:01.906: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:33:07.006: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:33:12.105: peak 0 dBFS, rms -3.1 dBFS, clip true
+# level meter at 00:33:17.204: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:33:22.308: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:33:27.407: peak 0 dBFS, rms -3.1 dBFS, clip true
+# level meter at 00:33:32.497: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:33:37.608: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:33:42.698: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:33:47.805: peak 0 dBFS, rms -3.1 dBFS, clip true
+# level meter at 00:33:52.902: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:33:58.012: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:34:03.201: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:34:08.213: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:34:13.311: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:34:18.412: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:34:23.607: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:34:28.616: peak 0 dBFS, rms -3.1 dBFS, clip true
+# level meter at 00:34:33.806: peak 0 dBFS, rms -3 dBFS, clip true
+00:34:38.308  GB7RDG>GB7WOD      mode=qpsk3600-il2pc   len=15 snr=- peakDbFs=0 clipped=true level=loud badge=TOO LOUD
+# level meter at 00:34:38.806: peak 0 dBFS, rms -2.9 dBFS, clip true
+00:34:43.704  GB7RDG>GB7WOD      mode=qpsk3600-il2pc   len=15 snr=- peakDbFs=0 clipped=true level=loud badge=TOO LOUD
+# level meter at 00:34:44.004: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:34:49.018: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:34:54.207: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:34:59.220: peak 0 dBFS, rms -3.1 dBFS, clip true
+# level meter at 00:35:04.411: peak 0 dBFS, rms -2.8 dBFS, clip true
+# level meter at 00:35:09.422: peak 0 dBFS, rms -3.1 dBFS, clip true
+# level meter at 00:35:14.611: peak 0 dBFS, rms -3.1 dBFS, clip true
+# level meter at 00:35:19.623: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:35:24.813: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:35:29.824: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:35:35.014: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:35:40.023: peak 0 dBFS, rms -3.2 dBFS, clip true
+# level meter at 00:35:45.217: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:35:50.395: peak 0 dBFS, rms -2.9 dBFS, clip true
+00:35:52.616  GB7RDG>ID          mode=qpsk3600-il2pc   len=79 snr=- peakDbFs=0 clipped=true level=loud badge=TOO LOUD
+# level meter at 00:35:55.417: peak 0 dBFS, rms -3.2 dBFS, clip true
+# level meter at 00:36:00.426: peak 0 dBFS, rms -3.1 dBFS, clip true
+# level meter at 00:36:05.618: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:36:10.634: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:36:15.819: peak 0 dBFS, rms -3 dBFS, clip true
+00:36:20.621  GB7RDG>GB7WOD      mode=qpsk3600-il2pc   len=15 snr=- peakDbFs=0 clipped=true level=loud badge=TOO LOUD
+# level meter at 00:36:20.826: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:36:26.018: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:36:31.037: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:36:36.223: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:36:41.237: peak 0 dBFS, rms -3.2 dBFS, clip true
+# level meter at 00:36:46.424: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:36:51.432: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:36:56.625: peak 0 dBFS, rms -3.1 dBFS, clip true
+# level meter at 00:37:01.634: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:37:06.827: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:37:11.838: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:37:17.029: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:37:22.040: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:37:27.219: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:37:32.245: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:37:37.431: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:37:42.431: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:37:47.631: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:37:52.642: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:37:57.833: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:38:02.834: peak 0 dBFS, rms -3.1 dBFS, clip true
+# level meter at 00:38:08.035: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:38:13.047: peak 0 dBFS, rms -3.1 dBFS, clip true
+# level meter at 00:38:18.237: peak 0 dBFS, rms -2.9 dBFS, clip true
+# level meter at 00:38:23.248: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:38:28.438: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:38:33.438: peak 0 dBFS, rms -3.1 dBFS, clip true
+# level meter at 00:38:38.646: peak 0 dBFS, rms -3.1 dBFS, clip true
+# level meter at 00:38:43.651: peak 0 dBFS, rms -3 dBFS, clip true
+# level meter at 00:38:48.830: peak 0 dBFS, rms -2.9 dBFS, clip true
+---
+frames: 4 total, 4 carried a level (4 TOO LOUD, 0 TOO QUIET, 0 no badge)
+# closed (1000)

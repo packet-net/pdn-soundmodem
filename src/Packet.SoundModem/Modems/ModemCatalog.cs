@@ -328,6 +328,14 @@ public static class ModemCatalog
     /// the two C4FSK modes read an amplitude, the 1200 baud AFSK family divides by its own
     /// in-band power with an absolute floor under it, and everything else decides on a sign or an
     /// angle and does not care what the level is.</para>
+    /// <para><b>Both arms match on a prefix, and must.</b> The name here is the one a frame row
+    /// carries, which is <see cref="ModeNames.Identity"/> of the modem's own
+    /// <see cref="IModem.Mode"/> and not the string the operator configured: a
+    /// <c>c4fsk19200</c> modem reports <c>c4fsk19200-il2pc</c>, an <c>afsk1200-il2p</c> one
+    /// reports <c>afsk1200-il2pc</c>, and a bank adds a suffix that
+    /// <see cref="ModeNames.Identity"/> takes off again. An exact match on the configuration
+    /// spelling was tested green and dead in production - it meant the C4FSK pair, the one group
+    /// this exists for, silently took the sign-and-angle limits (review of PR #433).</para>
     /// <para><b>Total, and null-tolerant.</b> A plugin mode, an unrecognised name and a null all
     /// answer <see cref="FrameLevelLimits.Default"/>: nothing here has measured them, and the
     /// sign-and-angle group is both the largest and the one that badges least, so an unmeasured
@@ -339,7 +347,8 @@ public static class ModemCatalog
     /// <param name="mode">The mode name, as it appears on a frame row.</param>
     public static FrameLevelLimits FrameLevelsFor(string? mode) => mode switch
     {
-        "c4fsk9600" or "c4fsk19200" => FrameLevelLimits.ClipSensitive,
+        not null when mode.StartsWith("c4fsk", StringComparison.Ordinal) =>
+            FrameLevelLimits.ClipSensitive,
         not null when mode.StartsWith("afsk1200", StringComparison.Ordinal) =>
             FrameLevelLimits.QuietSensitive,
         _ => FrameLevelLimits.Default,
