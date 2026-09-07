@@ -74,6 +74,28 @@ WA8LMF Track 2 for AFSK (redistribution terms TBC).
   envelope trackers; a mode-aware clamp took 44.1 kHz 955 → 987 and 12 kHz single-decoder
   269 → 426. A conclusion that stopped at "the remaining gap is the other implementation's
   margin" was the thing that kept it hidden.
+- ✅ **The corpus benchmark is a tool in the tree, and Track 1 is now ahead of the
+  reference too** (2026-09-07). `tools/Packet.SoundModem.TncTest` (sm-tnctest,
+  [docs/tnc-test-cd.md](tnc-test-cd.md)) plays a track through any catalogue mode and scores
+  it; it reads the corpus FLAC directly, so there is no conversion step to get wrong, and it
+  shares pdn-decode's resampler so a benchmark score and a forensic decode of the same file
+  cannot disagree about the audio. Re-measured at 12 kHz, multi+emphasis bank vs single
+  decoder: **Track 1 (flat) 1007 / 968** and **Track 2 (de-emphasised) 1011 / 534**, against
+  the 999 and 970 recorded for atest above - so the receive-path work since July has taken
+  Track 1 from 959 to 1007 and Track 2 from 972 to 1011, past the reference on both. The
+  100-flat-Mic-E-burst track, the only one whose true count is known, scores **100 of 100**.
+  Three things the tool surfaced that were not written down anywhere. **The tags on this rip
+  are not reliable**: the file tagged "100 Mic-E Bursts DE-Emphasized" is 25:49 long, decodes
+  1011 frames and yields the same 845 distinct contents from the same 119 callsigns as
+  Track 1 - it is the de-emphasised copy of the traffic recording, which is also what makes
+  it the file the Track 2 figures above were measured on. **This copy of Track 1 is 25:49
+  despite a title tag saying 40 minutes** (the file's own MD5 verifies the decode, so the
+  audio is what it is; scores off it are not comparable with figures from a 40 minute copy).
+  And **the measured station offset moves with the emphasis, not with the transmitters** -
+  centred near -30 Hz on the flat file and on 0 with a tail past +150 on the de-emphasised
+  one, the same stations both times, which is the discriminator's DC level following the
+  twist. The atest comparison rests on the numbers recorded above rather than a re-run; Dire
+  Wolf is not built on the machine this was measured on.
 - ⬜ Phase 0 hardware corpus validation for the IL2P modes (needs rig time).
 - Exit: corpus decode rates ≥ QtSoundModem and ≥ NinoTNC on identical recordings
   (needs Phase 0 recordings - loopback tests alone do not demonstrate this).
