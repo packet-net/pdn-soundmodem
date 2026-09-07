@@ -102,7 +102,9 @@ jobs:
       - name: Restore (bypassing the NuGet HTTP cache)
         run: dotnet restore --no-http-cache
 
+      # Same suite that wedged; same step-level timeout as ci.yml's Test step.
       - name: Test
+        timeout-minutes: 30
         run: dotnet test --configuration Release --no-restore -- --filter-not-trait "Category=Aspiration"
 
       # Same reason as ci.yml: the runner prints only "Failed: N" and writes the names to a
