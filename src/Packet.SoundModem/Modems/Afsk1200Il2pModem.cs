@@ -33,6 +33,10 @@ public sealed class Afsk1200Il2pModem : IModem, IFrameSpanSource
     /// </summary>
     private readonly FrameSpan _span = new(AfskDemodulator.TimingPhaseCount);
 
+    /// <summary>What a reading leaves off the end of one of this modem's spans; see
+    /// <see cref="FrameSpan.MarginSamplesFor"/>.</summary>
+    private readonly int _spanMargin;
+
     private readonly FrameDeduper _deduper = new(DedupeWindowBits);
     private long _bitsSeen;
 
@@ -51,6 +55,7 @@ public sealed class Afsk1200Il2pModem : IModem, IFrameSpanSource
         double centerFrequency = 1700, bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
+        _spanMargin = FrameSpan.MarginSamplesFor(sampleRate, 1200);
         _crc = crc;
         // Declared ahead of the deframers because they mark the frame's span against its
         // count of input samples; assigned below, and only ever read from inside a decode.
@@ -129,6 +134,9 @@ public sealed class Afsk1200Il2pModem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulator.ChannelBusy;
+
+    /// <inheritdoc />
+    public int FrameSpanMarginSamples => _spanMargin;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

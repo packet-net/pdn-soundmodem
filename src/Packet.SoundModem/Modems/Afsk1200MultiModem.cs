@@ -33,6 +33,10 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
     /// </summary>
     private readonly FrameSpan _span = new();
 
+    /// <summary>What a reading leaves off the end of one of this modem's spans; see
+    /// <see cref="FrameSpan.MarginSamplesFor"/>.</summary>
+    private readonly int _spanMargin;
+
     /// <summary>
     /// Where each branch's deframers last locked on to an opening flag, on that branch's own
     /// demodulator's count of input samples - one mark per branch <em>per timing phase</em>,
@@ -79,6 +83,7 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
         bool emphasisVariants = true)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
+        _spanMargin = FrameSpan.MarginSamplesFor(sampleRate, 1200);
         ArgumentOutOfRangeException.ThrowIfNegative(offsetPairs);
         _frameReceived = frameReceived;
         _dedupeChunk = Math.Max(1, sampleRate / 10);
@@ -169,6 +174,9 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulators.Any(d => d.ChannelBusy);
+
+    /// <inheritdoc />
+    public int FrameSpanMarginSamples => _spanMargin;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

@@ -17,7 +17,7 @@ namespace Packet.SoundModem.Tests.Audio;
 public class InputLevelHistoryTests
 {
     private const int SampleRate = 12000;
-    private const int CellSamples = 120;
+    private const int CellSamples = 6;
 
     /// <summary>A block of a constant magnitude, alternating sign so it is not a DC level.</summary>
     private static float[] Block(int samples, float magnitude)
@@ -32,28 +32,28 @@ public class InputLevelHistoryTests
     }
 
     /// <summary>
-    /// A cell is 10 ms on the channels that run at 12 kHz, and 120 samples wherever that is
-    /// shorter - which is the 48 kHz channels, where the fast modes live.
+    /// A cell is half a millisecond at every rate, because only whole cells inside a frame's own
+    /// span are read and the shortest frames are only a few milliseconds of air.
     /// </summary>
     /// <remarks>
-    /// A 17-byte c4fsk19200 frame is under 20 ms of air. With 10 ms cells there was nothing left
-    /// to read once each end of its span had been trimmed, so the modes Tom asked about most
-    /// loudly were the ones that got no figure.
+    /// A 15-byte supervisory frame - the most common frame on a working link - is 7.9 ms on
+    /// c4fsk19200 and 42 ms on qpsk3600. Ten-millisecond cells threw away more than those
+    /// readings contained, so those frames got no level at all: seven real GB7RDG frames on the
+    /// radio1 bench, every one of them 15 bytes, every one with no figure.
     /// </remarks>
     [Fact]
-    public void A_Cell_Is_Never_Longer_Than_Ten_Milliseconds_Or_A_Hundred_And_Twenty_Samples()
+    public void A_Cell_Is_Half_A_Millisecond_At_Every_Rate()
     {
-        new InputLevelHistory(8000).CellSamples.Should().Be(80, "10 ms at 8 kHz");
-        new InputLevelHistory(SampleRate).CellSamples.Should().Be(120, "10 ms at 12 kHz");
-        new InputLevelHistory(48000).CellSamples.Should().Be(
-            InputLevelHistory.MaximumCellSamples, "2.5 ms at 48 kHz, where the frames are short");
+        new InputLevelHistory(8000).CellSamples.Should().Be(4);
+        new InputLevelHistory(SampleRate).CellSamples.Should().Be(6);
+        new InputLevelHistory(48000).CellSamples.Should().Be(24);
     }
 
     [Fact]
-    public void A_Cell_Reports_The_Loudest_Sample_In_Its_Own_Ten_Milliseconds()
+    public void A_Cell_Reports_The_Loudest_Sample_In_Its_Own_Half_Millisecond()
     {
         var history = new InputLevelHistory(SampleRate);
-        history.CellSamples.Should().Be(CellSamples, "10 ms at 12 kHz");
+        history.CellSamples.Should().Be(CellSamples, "half a millisecond at 12 kHz");
 
         // Three cells: quiet, loud, quiet. The loud one is a tenth of full scale, the others a
         // hundredth, so the two are 20 dB apart and no rounding can confuse them.

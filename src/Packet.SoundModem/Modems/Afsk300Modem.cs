@@ -87,6 +87,10 @@ public sealed class Afsk300Modem : IModem, IFrameSpanSource
     /// </summary>
     private readonly FrameSpan _span = new(AfskDemodulator.TimingPhaseCount);
 
+    /// <summary>What a reading leaves off the end of one of this modem's spans; see
+    /// <see cref="FrameSpan.MarginSamplesFor"/>.</summary>
+    private readonly int _spanMargin;
+
 
     /// <summary>Creates the modem.</summary>
     /// <param name="sampleRate">Channel DSP rate (multiple of 300).</param>
@@ -110,6 +114,7 @@ public sealed class Afsk300Modem : IModem, IFrameSpanSource
         bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
+        _spanMargin = FrameSpan.MarginSamplesFor(sampleRate, 300);
         _framing = framing;
         _sampleRate = sampleRate;
         _centerFrequency = centerFrequency;
@@ -249,6 +254,9 @@ public sealed class Afsk300Modem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulator.ChannelBusy;
+
+    /// <inheritdoc />
+    public int FrameSpanMarginSamples => _spanMargin;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

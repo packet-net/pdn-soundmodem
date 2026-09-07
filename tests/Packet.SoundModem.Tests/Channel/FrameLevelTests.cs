@@ -307,6 +307,17 @@ public class FrameLevelTests
         return heard!.Value;
     }
 
+    /// <summary>
+    /// The smallest legal AX.25 frame: two addresses and a control byte, which is what an RR,
+    /// RNR, REJ, UA, DM or SABM is, and what most of the traffic on a working link is.
+    /// </summary>
+    private static byte[] Supervisory()
+    {
+        byte[] frame = Ax25UiFrame.Build("GB7RDG", "GB7WOD", ReadOnlySpan<byte>.Empty)[..15];
+        frame[14] = 0x01;   // RR, poll bit clear
+        return frame;
+    }
+
     /// <summary>Audio scaled so its peak is exactly <paramref name="peak"/>.</summary>
     private static float[] Scaled(float[] audio, float peak)
     {
@@ -427,17 +438,85 @@ public class FrameLevelTests
     }
 
     /// <summary>
-    /// Which modes can say where their frames were, and which cannot - measured by decoding one
-    /// real frame per mode, because it is what CONFIG.md tells an operator to expect a level on.
+    /// Each mode's margin covers the overhang that mode actually has, with headroom.
     /// </summary>
     /// <remarks>
-    /// Asking only whether a mode implements <see cref="IFrameSpanSource"/> pins nothing: every
-    /// mode here would pass that with a <c>TryTakeFrameSpan</c> that returned false for ever,
-    /// which is exactly what a sync watcher stricter than its deframer turns it into. So this
-    /// modulates a frame, decodes it, and asks what came back.
+    /// <para>The last-bit mark lands past the end of the burst, by the demodulator's own
+    /// front-end group delay and by whatever a held plain reading waited through. The margin
+    /// exists to keep that overhang out of a reading which is a peak, so it has to cover the
+    /// overhang - and it has to cover it on every mode, not on the slowest one, because the same
+    /// number of milliseconds is a fifth of a bpsk300 frame and two and a half times the whole of
+    /// a c4fsk19200 supervisory one.</para>
+    /// <para>So this measures the overhang against the burst the modulator produced, mode by
+    /// mode, and asserts the mode's own margin covers it. Both are in samples at the channel's
+    /// rate, which is the only scale on which they can be compared.</para>
+    /// <para>Only that half of the bargain is tested here. The other half - that the margin does
+    /// not eat the frame it is protecting - cannot be a ratio against this overhang, because the
+    /// margin legitimately covers something this test does not provoke: the 32 bits a held plain
+    /// reading waits through, which at 300 bps is 107 ms against a 4 ms front end. What proves it
+    /// is <see cref="Every_Packet_Mode_Reports_A_Level_For_A_Fifteen_Byte_Frame"/>, which asks
+    /// the smallest frame there is for a level and gets one on every mode.</para>
     /// </remarks>
     [Fact]
-    public void Every_Packet_Mode_Reports_A_Level_For_A_Real_Frame_And_The_Native_Ones_Do_Not()
+    public void Every_Modes_Margin_Covers_Its_Own_Overhang()
+    {
+        foreach (string mode in ModemCatalog.KnownModes)
+        {
+            int rate = ModemCatalog.DspRateFor(mode);
+            IModem modem = ModemCatalog.Create(mode, rate, static _ => { });
+            if (modem is not IFrameSpanSource source)
+            {
+                continue;
+            }
+
+            float[] burst = Scaled(
+                ModemCatalog.Create(mode, rate, static _ => { }).Modulate(Supervisory(), 300),
+                FramePeak);
+            long lead = rate / 2;
+            var audio = new float[lead + burst.Length + (rate / 2)];
+            burst.CopyTo(audio, (int)lead);
+
+            long ended = -1;
+            modem.FrameDecoded += (_, _) =>
+            {
+                if (ended < 0 && source.TryTakeFrameSpan(out _, out long to))
+                {
+                    ended = to;
+                }
+            };
+
+            foreach (float[] chunk in Blocks(audio, rate / 10))
+            {
+                modem.Process(chunk);
+            }
+
+            ended.Should().BeGreaterThan(0, $"{mode} has to decode and mark the frame");
+            long overhang = ended - (lead + burst.Length);
+            overhang.Should().BeLessThanOrEqualTo(
+                source.FrameSpanMarginSamples,
+                $"{mode} overhangs its burst by {overhang} samples and allows for "
+                    + $"{source.FrameSpanMarginSamples}");
+        }
+    }
+
+    /// <summary>
+    /// Which modes can say where their frames were, and which cannot - measured by decoding a
+    /// real 15-byte supervisory frame on each, because that is the frame a working link is
+    /// mostly made of and what CONFIG.md tells an operator to expect a level on.
+    /// </summary>
+    /// <remarks>
+    /// <para>Fifteen bytes deliberately, not a size chosen to pass. An AX.25 S-frame - RR, RNR,
+    /// REJ, and the U-frames UA, DM and SABM - is two addresses and one control byte, and it is
+    /// the commonest frame there is: the radio1 bench decoded seven real frames from GB7RDG over
+    /// ten minutes and every one of them was 15 bytes. With a margin and a cell size that did not
+    /// scale, every one of them also came through with no level, which is a feature an operator
+    /// would never once see.</para>
+    /// <para>Asking only whether a mode implements <see cref="IFrameSpanSource"/> pins nothing:
+    /// every mode here would pass that with a <c>TryTakeFrameSpan</c> that returned false for
+    /// ever. So this modulates a frame, decodes it, and asks what came back.</para>
+    /// </remarks>
+    [Fact]
+    public void Every_Packet_Mode_Reports_A_Level_For_A_Fifteen_Byte_Frame()
     {
         var withLevel = new List<string>();
         var withoutLevel = new List<string>();
@@ -451,8 +530,7 @@ public class FrameLevelTests
             channel.FrameReceivedWithQuality += (_, _, quality) => heard ??= quality;
 
             float[] burst = Scaled(
-                ModemCatalog.Create(mode, rate, static _ => { })
-                    .Modulate(Ax25UiFrame.Build("GB7RDG", "M0LTE", "one frame each"u8.ToArray()), 300),
+                ModemCatalog.Create(mode, rate, static _ => { }).Modulate(Supervisory(), 300),
                 FramePeak);
             var audio = new float[(rate / 2) + burst.Length + (rate / 2)];
             burst.CopyTo(audio, rate / 2);
