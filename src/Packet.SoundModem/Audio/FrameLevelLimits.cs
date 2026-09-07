@@ -1,11 +1,77 @@
 namespace Packet.SoundModem.Audio;
 
 /// <summary>
+/// What a decoded frame's own audio level was worth saying about it, decided when the frame was
+/// decoded rather than when a page draws it.
+/// </summary>
+/// <remarks>
+/// <para><b>Why an enum on the decode and not a rule at the edge</b> (Tom, 2026-09-07): "wonder
+/// if the thresholds are low enough in the stack. Have you made them a UI concern or a
+/// fundamental property of a decode? The latter would, I think, be favourable." Until this it was
+/// the former: the waterfall server looked the limits up by mode <em>name</em> at broadcast time,
+/// the frame log stored only the two measurements, and a monitor re-applied its own copy of the
+/// rule to a relayed row. Three places to keep in step, one of them a string match - which is
+/// exactly how the C4FSK badge came to be silently dead in production for a release
+/// (PR #433 review-1). The verdict is now taken once, by the modem that decoded the frame, and
+/// everything downstream carries it.</para>
+/// <para>Null wherever there is no verdict: the frame's audio could not be placed (the FreeDV and
+/// MS110D decoders report frames and not where in the audio they were), the row came from a log
+/// or an uplink written before this existed, or it is one of our own transmissions. Null is "not
+/// measured" and never "fine" - <see cref="Ok"/> is fine.</para>
+/// </remarks>
+public enum FrameLevel
+{
+    /// <summary>Measured, and between the mode's two edges: nothing to say.</summary>
+    Ok,
+
+    /// <summary>At or above the mode's loud edge, or the card ran out of codes during it.</summary>
+    Loud,
+
+    /// <summary>Below the mode's quiet edge.</summary>
+    Quiet,
+}
+
+/// <summary>
+/// The one spelling of a <see cref="FrameLevel"/> that leaves this process: the frame log's
+/// <c>level</c> column and the uplink's <c>level</c> field.
+/// </summary>
+/// <remarks>
+/// Lower case and stable, because both of those are read by software that was not built at the
+/// same time as the writer: a monitor reads a station's rows, and a backlog query reads rows this
+/// build did not write. An unrecognised word parses to null - "not measured" - rather than
+/// throwing, which is what lets a future verdict be added without breaking an old reader.
+/// </remarks>
+public static class FrameLevelText
+{
+    /// <summary>The word for a verdict, or null where there is none.</summary>
+    public static string? From(FrameLevel? level) => level switch
+    {
+        FrameLevel.Loud => "loud",
+        FrameLevel.Quiet => "quiet",
+        FrameLevel.Ok => "ok",
+        _ => null,
+    };
+
+    /// <summary>The verdict behind a word, or null for a missing or unrecognised one.</summary>
+    public static FrameLevel? Parse(string? text) => text switch
+    {
+        "loud" => FrameLevel.Loud,
+        "quiet" => FrameLevel.Quiet,
+        "ok" => FrameLevel.Ok,
+        _ => null,
+    };
+}
+
+/// <summary>
 /// The two levels at which one decoded frame's own peak is worth a badge on its row: at or above
 /// <see cref="LoudPeakDbFs"/> it is called too loud, below <see cref="QuietPeakDbFs"/> too quiet,
 /// and anywhere between the two it says nothing at all.
 /// </summary>
 /// <remarks>
+/// <para><b>Owned by the modem that decoded the frame.</b> Published through
+/// <see cref="Modems.IFrameSpanSource.FrameLevels"/> beside the span margin, for the same reason
+/// that is published there: it is a property of the demodulator and only the demodulator knows
+/// it. Nothing looks a limit up by mode name any more.</para>
 /// <para><b>Per mode, because the modems differ.</b> Tom, on the pair that shipped in v0.60.0:
 /// "the two thresholds should be determined by examining the modems and determining what the
 /// desired/optimal levels are". They now are - by decoding real frames through a real channel at
@@ -124,18 +190,19 @@ public readonly record struct FrameLevelLimits(double LoudPeakDbFs, double Quiet
     public static FrameLevelLimits QuietSensitive { get; } = new(Default.LoudPeakDbFs, -34);
 
     /// <summary>
-    /// What one frame's level is worth saying about it: <c>loud</c>, <c>quiet</c>, or nothing.
+    /// The verdict on one frame's measured level, or null where there was nothing to measure.
     /// </summary>
     /// <remarks>
-    /// Nothing between the two, which is the point (issue #426): a badge is for a level that has
-    /// started to cost the mode something, and a row that says nothing is a row with nothing
-    /// wrong with it. Decided in the daemon so that a station's own page and a monitor's copy of
-    /// its rows read the same rule.
+    /// Three outcomes and not two, which is the difference between this and the badge it feeds:
+    /// <see cref="FrameLevel.Ok"/> is a frame that was measured and found to be between the
+    /// edges, and null is a frame nothing could measure. A page draws neither, but a log and a
+    /// monitor need to be able to tell them apart. Called once, by the channel, at the moment of
+    /// the decode.
     /// </remarks>
     /// <param name="peakDbFs">The frame's own peak, or null where its audio could not be placed.</param>
     /// <param name="clipped">Whether the card railed during it, null where nothing could judge.</param>
-    /// <returns><c>loud</c>, <c>quiet</c>, or null.</returns>
-    public string? Tag(double? peakDbFs, bool? clipped)
+    /// <returns>The verdict, or null where there is no reading to judge.</returns>
+    public FrameLevel? Classify(double? peakDbFs, bool? clipped)
     {
         if (peakDbFs is not { } peak)
         {
@@ -144,9 +211,9 @@ public readonly record struct FrameLevelLimits(double LoudPeakDbFs, double Quiet
 
         if (clipped is true || peak >= LoudPeakDbFs)
         {
-            return "loud";
+            return FrameLevel.Loud;
         }
 
-        return peak < QuietPeakDbFs ? "quiet" : null;
+        return peak < QuietPeakDbFs ? FrameLevel.Quiet : FrameLevel.Ok;
     }
 }

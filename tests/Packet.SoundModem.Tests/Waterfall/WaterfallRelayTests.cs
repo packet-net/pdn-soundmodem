@@ -4,6 +4,7 @@ using System.Text.Json;
 using AwesomeAssertions;
 using M0LTE.Radio.Audio;
 using Microsoft.Extensions.Time.Testing;
+using Packet.SoundModem.Audio;
 using Packet.SoundModem.Channel;
 using Packet.SoundModem.Modems;
 using Packet.SoundModem.Waterfall;
@@ -716,22 +717,23 @@ public class WaterfallRelayTests : IDisposable
     }
 
     /// <summary>
-    /// A pushed frame is badged against the mode it says it is, not against one pair for
-    /// everything: a c4fsk row four dB under full scale is TOO LOUD on a monitor, and a bpsk300
-    /// row at the same level is not.
+    /// A pushed frame's badge is the verdict the station that heard it sent, and a station that
+    /// sent none gets none - whatever its mode and whatever its level.
     /// </summary>
     /// <remarks>
-    /// The relayed path had no level test at all, and it is the path where a wrong answer is
-    /// least visible: the monitor recomputes the verdict from the mode and the peak the uplink
-    /// carried (<c>WaterfallWebServer.BroadcastFrame</c>), because <c>level</c> is a rule applied
-    /// to the measurements and does not cross the wire. -4 dBFS is two dB inside the cliff the
-    /// four-level slicer falls off (docs/receive-levels.md section 4) and comfortably clear of
-    /// anything a sign-sliced mode notices, so one row each way pins both halves of the split.
-    /// The mode string is the one a real C4FSK modem reports, <c>c4fsk19200-il2pc</c> and not the
-    /// catalogue spelling, which is the distinction the first cut of the lookup got wrong.
+    /// <para>The monitor has no thresholds of its own. They belong to the modem that decoded the
+    /// frame (<c>IFrameSpanSource.FrameLevels</c>), and on this path that modem is at the far end
+    /// of an uplink, running whatever release its operator installed. This used to recompute the
+    /// verdict here from the mode name and the peak, which is a copy of a rule that can drift plus
+    /// a string match - and the string match is what left every C4FSK row unbadged for a
+    /// release.</para>
+    /// <para>So the three rows below are the same mode at the same level and differ only in what
+    /// the station said about them. -4 dBFS is two dB inside the four-level slicer's loud edge
+    /// (docs/receive-levels.md section 4), so a monitor still applying a rule would badge all
+    /// three the same way; one that carries the verdict badges what it was told.</para>
     /// </remarks>
     [Fact]
-    public async Task A_Pushed_Frame_Is_Badged_Against_Its_Own_Modes_Level_Limits()
+    public async Task A_Pushed_Frames_Badge_Is_The_Verdict_It_Arrived_With()
     {
         var channel = new SoundModemChannel(SampleRate, randomSeed: 7);
         int port = FreePorts.Next();
@@ -740,15 +742,18 @@ public class WaterfallRelayTests : IDisposable
 
         using ClientWebSocket socket = await ConnectAsync(port);
 
-        RelayedFrame Pushed(string mode) => new()
+        RelayedFrame Pushed(FrameLevel? level) => new()
         {
-            SubChannel = 0, Mode = mode, From = "M0LTE-9", To = "GB7RDG", LengthBytes = 24,
-            CrcValid = true, At = DateTimeOffset.UnixEpoch, Raw = TestFrame(),
-            PeakDbFs = -4, Clipped = false,
+            SubChannel = 0, Mode = "c4fsk19200-il2pc", From = "M0LTE-9", To = "GB7RDG",
+            LengthBytes = 24, CrcValid = true, At = DateTimeOffset.UnixEpoch, Raw = TestFrame(),
+            PeakDbFs = -4, Clipped = false, Level = level,
         };
 
-        server.PushFrame(Pushed("c4fsk19200-il2pc"));
-        server.PushFrame(Pushed("bpsk300-il2pc"));
+        server.PushFrame(Pushed(FrameLevel.Loud));
+        server.PushFrame(Pushed(FrameLevel.Ok));
+
+        // And a v0.60.x station, which measured the level and had no verdict to send.
+        server.PushFrame(Pushed(level: null));
 
         const string marker = "badged-pushed";
         server.SetRadioStatus(marker);
@@ -766,9 +771,9 @@ public class WaterfallRelayTests : IDisposable
             })];
 
         levels.Should().Equal(
-            ["loud", null],
-            "a four-level slicer four dB under full scale has two dB of headroom left and a "
-                + "sign-sliced one shrugs off six times that");
+            ["loud", null, null],
+            "the station's own verdict, then a frame it measured and found fine, then one it "
+                + "could not judge - and only the first is worth a badge");
     }
 
     /// <summary>

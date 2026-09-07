@@ -1,3 +1,5 @@
+using Packet.SoundModem.Audio;
+
 namespace Packet.SoundModem.Modems;
 
 /// <summary>
@@ -173,6 +175,15 @@ public sealed class Afsk300MultiModem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public int FrameSpanMarginSamples => _spanMargin;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// A branch's, because every branch is the same <see cref="Afsk300Modem"/> at a different
+    /// offset and they cannot disagree. Asking a fixed one rather than the branch that
+    /// decoded keeps the number in one place - the leaf modem - without threading the
+    /// winner out of the dedupe for an answer that would be identical either way.
+    /// </remarks>
+    public FrameLevelLimits FrameLevels => _branches[0].FrameLevels;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

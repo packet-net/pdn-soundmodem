@@ -667,7 +667,11 @@ internal sealed class RelayStation : IMonitorStation
                 frame.Mode, frame.LengthBytes, frame.CorrectedBytes, frame.CrcValid,
                 FrequencyOffsetHz: frame.OffsetHz, PlainIl2p: frame.PlainIl2p,
                 MonitorOnly: frame.MonitorOnly, SnrDb: frame.SnrDb,
-                PeakDbFs: frame.PeakDbFs, Clipped: frame.Clipped),
+                // The far station's own verdict, carried into this site's copy of its log
+                // rather than recomputed: the thresholds belong to the modem that decoded the
+                // frame, and that modem is at the other end of the uplink. Null from a station
+                // too old to send one, and a row with no verdict earns no badge.
+                PeakDbFs: frame.PeakDbFs, Clipped: frame.Clipped, Level: frame.Level),
             audioHz: null, rfHz: null, modeName: null, at: frame.At);
     }
 

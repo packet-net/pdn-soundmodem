@@ -1,4 +1,5 @@
 using M0LTE.Il2p;
+using Packet.SoundModem.Audio;
 
 namespace Packet.SoundModem.Modems;
 
@@ -280,6 +281,10 @@ public sealed class QpskModem : IModem, IConstellationSource, IFrameSpanSource
 
     /// <inheritdoc />
     public int FrameSpanMarginSamples => _spanMargin;
+
+    /// <inheritdoc />
+    /// <remarks>a QPSK symbol is a quadrant, which is an angle test: scale-invariant by construction (docs/receive-levels.md).</remarks>
+    public FrameLevelLimits FrameLevels => FrameLevelLimits.Default;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

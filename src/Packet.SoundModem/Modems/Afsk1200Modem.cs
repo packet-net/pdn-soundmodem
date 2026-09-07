@@ -1,5 +1,6 @@
 using Packet.SoundModem.Fx25;
 using Packet.SoundModem.Hdlc;
+using Packet.SoundModem.Audio;
 
 namespace Packet.SoundModem.Modems;
 
@@ -200,6 +201,11 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public int FrameSpanMarginSamples => _spanMargin;
+
+    /// <inheritdoc />
+    /// <remarks>the 1200 baud AFSK discriminator divides by its own in-band power with a floor of 1e-5 under
+    /// it, and that floor starts costing this family link margin from about -45 dBFS (docs/receive-levels.md).</remarks>
+    public FrameLevelLimits FrameLevels => FrameLevelLimits.QuietSensitive;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

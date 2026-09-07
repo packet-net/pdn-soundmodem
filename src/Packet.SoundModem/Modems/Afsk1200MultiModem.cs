@@ -1,4 +1,5 @@
 using Packet.SoundModem.Hdlc;
+using Packet.SoundModem.Audio;
 
 namespace Packet.SoundModem.Modems;
 
@@ -177,6 +178,13 @@ public sealed class Afsk1200MultiModem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public int FrameSpanMarginSamples => _spanMargin;
+
+    /// <inheritdoc />
+    /// <remarks>a bank of 1200 baud AFSK discriminators, which is the family whose normalisation floor sets
+    /// the quiet edge. Stated here rather than delegated because the branches are
+    /// <see cref="AfskDemodulator"/> instances rather than modems, and a demodulator does not
+    /// publish this (docs/receive-levels.md).</remarks>
+    public FrameLevelLimits FrameLevels => FrameLevelLimits.QuietSensitive;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

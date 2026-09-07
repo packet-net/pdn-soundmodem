@@ -1254,6 +1254,14 @@ The catalogue splits into three, and the split is a property of the slicer:
 | four-level slicer | `c4fsk9600`, `c4fsk19200` | -6 dBFS | -72 dBFS |
 | power-normalised discriminator | the 1200 baud AFSK family, all six | 0 dBFS | -34 dBFS |
 
+**The verdict is made when the frame is decoded, not when a page draws it.** The limits belong to
+the modem that decoded it, which publishes them itself, and the channel classifies the frame's own
+reading against them at the moment of the decode. The result travels with the frame: into the
+[frame log](#framelog) as `level`, over the [uplink](#monitor) as an optional field, and to the
+page as the badge. Nothing downstream holds a copy of a threshold, so nothing downstream can drift
+out of step with the demodulators - which is what happened when the rule was applied at the edge by
+mode name, and left the two C4FSK modes taking the wrong pair.
+
 A clipped card badges `TOO LOUD` on any mode whatever the peak was: a converter that ran out of
 codes is a fact rather than a prediction, and it costs at least a decibel on every mode measured.
 Six dB of overdrive - which is how much louder than the last one the next station may reasonably
@@ -1469,12 +1477,15 @@ sentence under the heading saying what the figure is and what to aim for. It is 
 span its own demodulator reports rather than over the meter's 200 ms interval, which is what
 makes it usable on the fast modes; see [the level meter](#the-level-meter) for the band, the
 thresholds and which modes carry one. The
-`frame` message carries it as `peakDbFs` (one decimal), `clipped` and `level` (`loud`, `quiet`,
-or absent - the daemon's own verdict, so a monitor and a station cannot come to disagree about a
-row). Rows that arrive without those fields - this station's own transmissions, frames replayed
-from a log written before the columns existed, and frames relayed from a station running an older
-release - show nothing new. A relayed station's rows do carry the figure its own operator sees:
-the two numbers cross the uplink with the frame.
+`frame` message carries it as `peakDbFs` (one decimal), `clipped` and `level` (`loud`, `quiet`, or
+absent - the verdict the modem that decoded the frame reached at the moment it decoded it, so
+nothing between there and the row reapplies a rule of its own). Rows that arrive without those
+fields - this station's own transmissions, frames replayed from a log written before the columns
+existed, and frames relayed from a station running an older release - show nothing new. All three
+cross the uplink with the frame, so a relayed station's rows carry the figure **and the badge** its
+own operator sees; a station too old to send a verdict gets its figure and no badge, because the
+thresholds belong to a demodulator the monitor is not running and guessing would be worse than
+saying nothing.
 
 **The transmit readout holds the last burst.** On a radio that reports its meters (a Flex), the
 header carries forward power and SWR. While the transmitter is up the figures are live and the
@@ -1804,6 +1815,7 @@ Omit the section and frames come and go without being written down. One row per 
 | `snr_db` | strength of the burst the frame arrived on: mean in-band power over the burst against a rolling minimum noise floor, in dB. **The band-tracker convention, not the 3 kHz-referenced SNR the simulation ladders quote** - the two differ by a bandwidth ratio and must not be compared without converting. Null when the band was quiet at decode time, and on rows from before the column existed |
 | `peak_dbfs` | how loud the audio the frame arrived on was: the loudest half millisecond of the span its own demodulator says it occupied, in dBFS, on the same scale as [the level meter](#the-level-meter). A measurement of the frame and not of the channel around it, which is the whole reason it is not the meter's reading. Null on transmitted rows, on rows from before the column existed, and on the modes that cannot place their own frames (`freedv-*`, `ms110d-*` - see [the level meter](#the-level-meter)) |
 | `clipped` | 1 where the sound card ran out of codes during that same stretch, 0 where it had headroom, null where nothing was in a position to judge - only a station handing its card's own samples over can, since past the decimator full scale is not full scale any more. Null on transmitted rows and on rows from before the column existed |
+| `level` | what the decoding modem's own limits made of those two at the moment of the decode: `loud`, `quiet`, or `ok` for a frame that was measured and found to be between its mode's edges. Null where nothing could judge - a transmitted row, a row from before the column existed, a mode that cannot place its own frames, or a relayed row from a station too old to send a verdict. Stored rather than re-derived, so a replayed row badges exactly as the live row did and a reader needs no thresholds of its own. See [the level meter](#the-level-meter) |
 | `offset_hz` | how far off centre the sender actually was - measured, not the diversity branch that copied it; null where the decoder could not measure it |
 | `audio_hz`, `rf_hz` | where that modem sits - `rf_hz` filled in when you have given it an `rfFrequency` |
 | `payload` | the frame itself, as a blob |
@@ -1811,7 +1823,7 @@ Omit the section and frames come and go without being written down. One row per 
 **On a transmitted row, `heard_at` is when it went out.** The column keeps its name because
 renaming it would silently break every query, dashboard and example already written against this
 log - an ugly name is the smaller cost, and this is the note that stops it being a surprise. A
-transmitted row also leaves `corrected`, `crc_valid`, `offset_hz`, `peak_dbfs` and `clipped`
+transmitted row also leaves `corrected`, `crc_valid`, `offset_hz`, `peak_dbfs`, `clipped` and `level`
 **null**: those are receive measurements, and filling them in for our own transmission would be
 inventing a measurement of ourselves. Everything else - who to who, mode, length, where the modem sits, the payload - is
 recorded exactly as for a frame heard. A row is written once the audio has gone to the device, so
