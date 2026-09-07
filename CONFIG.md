@@ -1228,7 +1228,7 @@ five times a second, which is the right instrument for a slider and the wrong on
 qpsk3600 frame is over inside one of its intervals, and on an FM radio with the squelch open the
 noise between frames is louder than the frames, so the bar is a reading of the hiss. So every
 decoded frame carries its own peak as well - measured over the stretch of audio **the
-demodulator says the frame occupied**, in 10 ms cells - shown on its row in the
+demodulator says the frame occupied**, in half-millisecond cells - shown on its row in the
 [decoded frames panel](#waterfall) and written into the [frame log](#framelog) as `peak_dbfs` and
 `clipped`. Same scale and the same target band, and a row is badged **`TOO LOUD`** at -3 dBFS or
 above (or with the card clipped) and **`TOO QUIET`** below -24 dBFS, which is 6 dB under the
@@ -1244,13 +1244,14 @@ badge rather than a guessed one. Nor does a frame relayed from a station running
 release, or one replayed from a log written before the columns existed, or one this station sent
 itself.
 
-**And which frames.** A little is trimmed off each end of the frame's span before it is read, to
-keep the demodulator's own filter delay out of the answer, so a frame has to be long enough to
-have something left. Measured across the catalogue, every mode carries a level from the smallest
-AX.25 frame there is (16 bytes, an empty UI frame) except `qpsk3600` and `c4fsk19200`, which need
-17; on every other size of every mode, a frame that decodes carries a figure. A frame that comes
-out too short to read reports no level rather than a bad one, and that is the only reason a
-packet mode's row would arrive without one.
+**And which frames: all of them.** Measured across the catalogue at every size from 15 bytes up,
+every mode that reports a span carries a level for every frame that decodes - including the
+15-byte supervisory frames (RR, RNR, REJ, UA, DM, SABM) that most of the traffic on a working
+link is made of. A little is trimmed off the late end of the span before it is read, to keep the
+demodulator's own filter delay out of the answer, and how much is the mode's own business: 48 bit
+periods of its bit rate, which is 160 ms at 300 bps and 2.5 ms at 19200. A single figure for
+every mode does not work, and while there was one the fast modes lost the level on exactly the
+frames it was wanted for.
 
 The measurement is deliberately not inferred from the frame's length and the audio block it was
 reported in: on a station reading 100 ms blocks, a frame shorter than a block - which is every
@@ -1761,7 +1762,7 @@ Omit the section and frames come and go without being written down. One row per 
 | `erased_bytes` | bytes the decode erased on the receiver's own confidence flags before Reed-Solomon repaired the frame - how a frame beyond the errors-only budget was still read. Null when no erasures were needed, or before the column existed |
 | `chased_bits` | wire bits chase decoding flipped outright - the receiver's least-confident bits, tried in combination after errors-only decoding and the erasure ladder both failed, each accepted attempt still leaving Reed-Solomon parity in reserve. The only rescue the 2-parity IL2P header has. Null when no chase was needed, or before the column existed |
 | `snr_db` | strength of the burst the frame arrived on: mean in-band power over the burst against a rolling minimum noise floor, in dB. **The band-tracker convention, not the 3 kHz-referenced SNR the simulation ladders quote** - the two differ by a bandwidth ratio and must not be compared without converting. Null when the band was quiet at decode time, and on rows from before the column existed |
-| `peak_dbfs` | how loud the audio the frame arrived on was: the loudest 10 ms of the span its own demodulator says it occupied, in dBFS, on the same scale as [the level meter](#the-level-meter). A measurement of the frame and not of the channel around it, which is the whole reason it is not the meter's reading. Null on transmitted rows, on rows from before the column existed, and on the modes that cannot place their own frames (`freedv-*`, `ms110d-*` - see [the level meter](#the-level-meter)) |
+| `peak_dbfs` | how loud the audio the frame arrived on was: the loudest half millisecond of the span its own demodulator says it occupied, in dBFS, on the same scale as [the level meter](#the-level-meter). A measurement of the frame and not of the channel around it, which is the whole reason it is not the meter's reading. Null on transmitted rows, on rows from before the column existed, and on the modes that cannot place their own frames (`freedv-*`, `ms110d-*` - see [the level meter](#the-level-meter)) |
 | `clipped` | 1 where the sound card ran out of codes during that same stretch, 0 where it had headroom, null where nothing was in a position to judge - only a station handing its card's own samples over can, since past the decimator full scale is not full scale any more. Null on transmitted rows and on rows from before the column existed |
 | `offset_hz` | how far off centre the sender actually was - measured, not the diversity branch that copied it; null where the decoder could not measure it |
 | `audio_hz`, `rf_hz` | where that modem sits - `rf_hz` filled in when you have given it an `rfFrequency` |

@@ -1,8 +1,8 @@
 namespace Packet.SoundModem.Audio;
 
 /// <summary>
-/// The receive level over the last few seconds, in cells of about 10 ms, so that a level can be
-/// quoted for one decoded frame rather than for whatever the meter's interval happened to cover.
+/// The receive level over the last few seconds, in cells of half a millisecond, so that a level
+/// can be quoted for one decoded frame rather than for whatever the meter's interval covered.
 /// </summary>
 /// <remarks>
 /// <para><b>Why this exists alongside <see cref="InputLevelMeter"/></b> (Tom, 2026-09-06): "it's
@@ -12,8 +12,8 @@ namespace Packet.SoundModem.Audio;
 /// about a qpsk3600 frame that is over in a fraction of one of its intervals - and on an FM radio
 /// with the squelch open the noise between the frames is louder than the frames, so the meter's
 /// bar is a reading of the hiss.</para>
-/// <para><b>Cells, not a running peak.</b> Each cell holds the loudest magnitude in its 10 ms of
-/// audio and whether the card clipped during it, and the ring holds
+/// <para><b>Cells, not a running peak.</b> Each cell holds the loudest magnitude in its half
+/// millisecond of audio and whether the card clipped during it, and the ring holds
 /// <see cref="MemorySeconds"/> of them. That is what lets a caller come back after a frame has
 /// decoded and ask about the stretch of audio the frame occupied, which is the whole point: the
 /// question is always asked in arrears.</para>
@@ -29,27 +29,24 @@ namespace Packet.SoundModem.Audio;
 /// </remarks>
 public sealed class InputLevelHistory
 {
-    /// <summary>The longest a cell is allowed to cover.</summary>
+    /// <summary>How much audio one cell covers.</summary>
     /// <remarks>
-    /// 10 ms is short enough to sit inside the shortest frame on the 12 kHz modes - a minimal
-    /// qpsk3600 frame is around 90 ms of air - and long enough that a cell of a modulated signal
-    /// holds several cycles of it, so a cell's peak is the burst's envelope rather than wherever
-    /// the waveform happened to be sampled.
+    /// <para><b>Half a millisecond, because only whole cells inside a frame's span are read</b>
+    /// and the shortest frames are very short indeed. A 15-byte supervisory frame - RR, RNR,
+    /// REJ, UA, DM, SABM, the most common frame on a working link - is 7.9 ms of air on
+    /// c4fsk19200 and 42 ms on qpsk3600, so a cell of 10 ms threw away more than the reading
+    /// contained and those frames got no level at all. That is what the bench found on radio1:
+    /// seven real GB7RDG frames in ten minutes, every one of them 15 bytes, every one of them
+    /// with no figure. Rounding inwards now costs under a millisecond in total.</para>
+    /// <para>Half a millisecond is 6 samples at 12 kHz and 24 at 48 kHz. A single cell's peak is
+    /// therefore a coarse thing on the slowest modes - six samples of a 1200 Hz tone can miss its
+    /// crest by a fraction of a dB - but a reading is the largest of every cell in the span, and
+    /// the shortest span here is ten cells, so what is reported is the crest all the same.</para>
+    /// <para><b>Cost.</b> The ring is <see cref="MemorySeconds"/> of cells whatever the rate:
+    /// 24000 of them, 120 KB per channel, preallocated once and never grown. That is the same
+    /// order as the FFT buffers the waterfall keeps per channel beside it.</para>
     /// </remarks>
-    public const double CellMilliseconds = 10;
-
-    /// <summary>And the longest, in samples, whatever the rate.</summary>
-    /// <remarks>
-    /// <para>The 48 kHz channels carry the fast modes, whose frames are short in time as well as
-    /// in bytes: a 17-byte c4fsk19200 frame is under 20 ms of air, so 10 ms cells leave nothing
-    /// to read once each end has been trimmed, and the mode Tom asked about loudest is the one
-    /// that gets no figure. Capping the cell at 120 samples makes it 2.5 ms there - 24 symbols
-    /// at 9600 baud, still a peak of the envelope rather than of one cycle - and leaves the
-    /// 12 kHz channels on the 10 ms it was chosen for.</para>
-    /// <para>The ring grows to match, so the memory follows the rate: about 5 KB per channel at
-    /// 12 kHz and 19 KB at 48 kHz, preallocated once.</para>
-    /// </remarks>
-    public const int MaximumCellSamples = 120;
+    public const double CellMilliseconds = 0.5;
 
     /// <summary>How far back the ring remembers.</summary>
     /// <remarks>
@@ -84,8 +81,7 @@ public sealed class InputLevelHistory
     public InputLevelHistory(int sampleRate)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(sampleRate, 0);
-        _cellSamples = Math.Clamp(
-            (int)Math.Round(sampleRate * CellMilliseconds / 1000), 1, MaximumCellSamples);
+        _cellSamples = Math.Max(1, (int)Math.Round(sampleRate * CellMilliseconds / 1000));
         _cells = (int)Math.Ceiling(MemorySeconds * sampleRate / _cellSamples);
         _peak = new float[_cells];
         _clipped = new bool[_cells];

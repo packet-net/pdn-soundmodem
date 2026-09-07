@@ -34,30 +34,6 @@ namespace Packet.SoundModem.Channel;
 /// </remarks>
 internal sealed class FrameLevelMonitor
 {
-    /// <summary>
-    /// How much of each end of the span is left out of the reading, in samples.
-    /// </summary>
-    /// <remarks>
-    /// <para>Both of a span's marks are late by the demodulator's own front-end group delay -
-    /// the band-pass and matched filters between the antenna and the bit - because both are
-    /// taken from the same chain. The span's length is therefore right and its position is a
-    /// little late, so its late end overhangs the burst by that much, and the reading is a peak,
-    /// so one cell of louder audio hanging over the edge takes the whole answer over.</para>
-    /// <para><b>Samples, not milliseconds.</b> The overhang is a few symbol periods of the
-    /// front end, so it shrinks with the symbol rate rather than staying put in time, and the
-    /// channels that run at 48 kHz here are exactly the fast modes. Measured through the real
-    /// channel by the review: the worst overhang is 17.1 ms on the 12 kHz modes (bpsk300 and
-    /// qpsk600, 205 samples) and 0.4 ms on the 48 kHz ones (19 samples). One count of samples
-    /// covers both with room - 20 ms at 12 kHz, 5 ms at 48 kHz - where 25 ms flat took the level
-    /// away from most real frames on the 9600 and 19200 modes, which are the ones this feature
-    /// was asked for.</para>
-    /// <para>Taken off the near end too. Nothing measured needs it there - the mark is already
-    /// inside the burst, with the sender's transmit delay in front of it - but it costs a long
-    /// frame nothing, it covers a sync taken a symbol early, and a rule with one number in it is
-    /// a rule that can be checked.</para>
-    /// </remarks>
-    public const int MarginSamples = 240;
-
     private readonly InputLevelHistory _history;
 
     public FrameLevelMonitor(int sampleRate) => _history = new InputLevelHistory(sampleRate);
@@ -75,15 +51,29 @@ internal sealed class FrameLevelMonitor
     /// The level of the audio a just-decoded frame arrived on, over the span its own demodulator
     /// reported, or nulls where that span is too short to read or older than the history holds.
     /// </summary>
+    /// <remarks>
+    /// <para><b>The margin comes off the late end only, and the modem says how much.</b> Both of
+    /// a span's marks are late by the demodulator's own front-end group delay - the band-pass and
+    /// matched filters between the antenna and the bit - because both are taken from the same
+    /// chain. So the late end overhangs the burst by that delay, and the reading is a peak, which
+    /// half a millisecond of louder audio at the edge takes over completely. The near end needs
+    /// nothing: being late by the same amount puts it inside the frame already, with the sender's
+    /// transmit delay in front of that.</para>
+    /// <para>The size is <see cref="IFrameSpanSource.FrameSpanMarginSamples"/>, which is the
+    /// mode's own bit rate over <see cref="FrameSpan.MarginBits"/>. A single figure for every
+    /// mode cannot work: 20 ms is a fifth of a bpsk300 frame and two and a half times the whole
+    /// of a c4fsk19200 supervisory one.</para>
+    /// </remarks>
     /// <param name="fromSample">Where the frame's sync was taken, from
     /// <see cref="IFrameSpanSource.TryTakeFrameSpan"/>.</param>
     /// <param name="toSample">Where its last bit was taken.</param>
+    /// <param name="marginSamples">What to leave off the late end, from
+    /// <see cref="IFrameSpanSource.FrameSpanMarginSamples"/>.</param>
     /// <returns>The peak in dBFS over the frame's own audio and whether the card clipped in it.</returns>
-    public (double? PeakDbFs, bool? Clipped) Measure(long fromSample, long toSample)
+    public (double? PeakDbFs, bool? Clipped) Measure(long fromSample, long toSample, int marginSamples)
     {
-        long from = fromSample + MarginSamples;
-        long to = toSample - MarginSamples;
-        return _history.TryMeasure(from, to, out double peakDbFs, out bool? clipped)
+        return _history.TryMeasure(
+            fromSample, toSample - marginSamples, out double peakDbFs, out bool? clipped)
             ? (Math.Round(peakDbFs, 1), clipped)
             : (null, null);
     }

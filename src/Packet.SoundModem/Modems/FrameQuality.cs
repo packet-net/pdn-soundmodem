@@ -87,13 +87,13 @@ namespace Packet.SoundModem.Modems;
 /// Null when the band was quiet at decode time (a frame that cannot be attributed to
 /// visible energy), when the modem's band was never measurable, or when the frame did not
 /// come through a <see cref="Packet.SoundModem.Channel.SoundModemChannel"/>.</param>
-/// <param name="PeakDbFs">How loud the audio this frame arrived on was: the loudest 10 ms of
-/// the stretch of receive audio the frame itself occupied, in dBFS, measured by the channel's
-/// own <see cref="Packet.SoundModem.Channel.FrameLevelMonitor"/> and rounded to 0.1 dB so every
-/// consumer records the identical figure. <b>A measurement of the frame, not of the channel</b>:
+/// <param name="PeakDbFs">How loud the audio this frame arrived on was: the loudest half
+/// millisecond of the receive audio the frame itself occupied, in dBFS, measured by the
+/// channel's own <see cref="Packet.SoundModem.Channel.FrameLevelMonitor"/>, rounded to 0.1 dB
+/// so every consumer records the identical figure. <b>A measurement of the frame, not of the channel</b>:
 /// the level meter's five-a-second reading covers whatever was on the input at the time, which
 /// on a fast mode is mostly not this frame and on an FM receiver with the squelch open is mostly
-/// the hiss between frames. Null when the modem's airtime could not be measured, when the frame
+/// the hiss between frames. Null when the modem cannot say where its frames were, when the frame
 /// is older than the level history holds, or when the frame did not come through a
 /// <see cref="Packet.SoundModem.Channel.SoundModemChannel"/>.</param>
 /// <param name="Clipped">Whether the sound card ran out of codes anywhere in that same stretch -

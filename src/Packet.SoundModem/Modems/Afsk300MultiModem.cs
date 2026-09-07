@@ -50,6 +50,10 @@ public sealed class Afsk300MultiModem : IModem, IFrameSpanSource
     /// </summary>
     private readonly FrameSpan _span = new();
 
+    /// <summary>What a reading leaves off the end of one of this modem's spans; see
+    /// <see cref="FrameSpan.MarginSamplesFor"/>.</summary>
+    private readonly int _spanMargin;
+
     private long _samplesProcessed;
     private bool _carrierWasPresent;
 
@@ -87,6 +91,7 @@ public sealed class Afsk300MultiModem : IModem, IFrameSpanSource
         bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
+        _spanMargin = FrameSpan.MarginSamplesFor(sampleRate, 300);
         ArgumentOutOfRangeException.ThrowIfNegative(offsetPairs);
         _frameReceived = frameReceived;
         _framing = framing;
@@ -165,6 +170,9 @@ public sealed class Afsk300MultiModem : IModem, IFrameSpanSource
             return false;
         }
     }
+
+    /// <inheritdoc />
+    public int FrameSpanMarginSamples => _spanMargin;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

@@ -143,6 +143,18 @@ public sealed class FrequencyShiftedModem : IModem, IHardwareControllable, IFram
 
     /// <inheritdoc />
     /// <remarks>
+    /// The inner modem's, plus this wrapper's own Hilbert group delay, which is 319 samples on
+    /// top of whatever the inner front end already smears. Zero where the inner modem reports no
+    /// span at all, which today is every mode this wrapper is used for.
+    /// </remarks>
+    public int FrameSpanMarginSamples =>
+        _inner is IFrameSpanSource source ? source.FrameSpanMarginSamples + HilbertGroupDelay : 0;
+
+    /// <summary>Half the Hilbert pair's length, which is what it delays by.</summary>
+    private const int HilbertGroupDelay = (HilbertTaps - 1) / 2;
+
+    /// <inheritdoc />
+    /// <remarks>
     /// The inner modem's own, unchanged: this wrapper band-passes and shifts sample for sample,
     /// so the two count the same audio and a mark taken inside means the same thing outside. Its
     /// filters add their group delay to the span's lateness, which is what the reading's margin

@@ -43,6 +43,19 @@ public interface IFrameSpanSource
     /// <param name="toSample">The sample its last bit was taken at.</param>
     /// <returns>False when this modem has no span to report.</returns>
     bool TryTakeFrameSpan(out long fromSample, out long toSample);
+
+    /// <summary>
+    /// How much of the end of one of this modem's spans to leave out of a reading of it, in
+    /// samples - see <see cref="FrameSpan.MarginSamplesFor"/> for what it is made of.
+    /// </summary>
+    /// <remarks>
+    /// Published by the modem because it is a property of the modem: it scales with the bit
+    /// rate, and the bit rates here run from 300 to 19200. One figure for all of them was 20 ms
+    /// at 12 kHz, which is half of a qpsk3600 supervisory frame and more than twice the whole of
+    /// a c4fsk19200 one - so the fast modes, the ones this feature was asked for, got no level at
+    /// all on the frames a working link is mostly made of.
+    /// </remarks>
+    int FrameSpanMarginSamples { get; }
 }
 
 /// <summary>
@@ -77,6 +90,39 @@ public interface IFrameSpanSource
 /// </remarks>
 public sealed class FrameSpan
 {
+    /// <summary>
+    /// How much of a span's late end is not read, in bit periods of the mode's own bit rate.
+    /// </summary>
+    /// <remarks>
+    /// <para>Two things put the last-bit mark past the end of the burst, and both are counted in
+    /// bits rather than in milliseconds, which is why this is.</para>
+    /// <para><b>The front end's group delay</b>, measured through the real channel at 4 to 20 bit
+    /// periods across the catalogue: 5.2 bits on bpsk300 (17.2 ms), 10.2 on qpsk600, 10.6 on
+    /// qpsk2400, 10.8 on afsk1200, 18.8 on afsk1200-il2p, 19.8 on qpsk3600 (5.5 ms), and under 4
+    /// on every 48 kHz mode. <b>And the trailer a held plain reading waits through</b>, which is
+    /// the IL2P trailing CRC's 32 bits: a frame the CRC reading refused and the plain reading
+    /// released is delivered that much after its own last bit.</para>
+    /// <para>48 covers the worst of both with better than twice the headroom on the front end,
+    /// and is 13.3 ms at 3600 bps against the 20 ms a flat figure cost there. The near end takes
+    /// no margin at all: the sync mark is late by the same group delay, so it already sits inside
+    /// the frame, with the sender's transmit delay in front of that.</para>
+    /// </remarks>
+    public const int MarginBits = 48;
+
+    /// <summary>
+    /// <see cref="MarginBits"/> at a mode's own bit rate, in samples at the channel's rate.
+    /// </summary>
+    /// <param name="sampleRate">The channel's sample rate.</param>
+    /// <param name="bitRate">The mode's bit rate: 1200 for afsk1200, 3600 for qpsk3600, 19200
+    /// for c4fsk19200. Bits on the wire, not symbols, so a mode carrying two bits a symbol
+    /// counts both.</param>
+    public static int MarginSamplesFor(int sampleRate, int bitRate)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(sampleRate, 0);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(bitRate, 0);
+        return (int)Math.Ceiling((double)MarginBits * sampleRate / bitRate);
+    }
+
     private readonly long[] _syncAt;
     private long _from;
     private long _to;

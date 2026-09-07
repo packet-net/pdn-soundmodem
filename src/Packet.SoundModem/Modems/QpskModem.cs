@@ -25,6 +25,10 @@ public sealed class QpskModem : IModem, IConstellationSource, IFrameSpanSource
 
     private readonly FrameDeduper _deduper;
     private readonly int _bitRate;
+
+    /// <summary>What a reading leaves off the end of one of this modem's spans; see
+    /// <see cref="FrameSpan.MarginSamplesFor"/>.</summary>
+    private readonly int _spanMargin;
     private long _symbolsSeen;
     private readonly bool _crc;
 
@@ -36,6 +40,7 @@ public sealed class QpskModem : IModem, IConstellationSource, IFrameSpanSource
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
         _bitRate = baud * 2;
+        _spanMargin = FrameSpan.MarginSamplesFor(sampleRate, _bitRate);
         _crc = crc;
         QpskDemodulator? demodulator = null;
         // One deframer per timing phase (see QpskDemodulator.TimingPhaseCount): the phases
@@ -272,6 +277,9 @@ public sealed class QpskModem : IModem, IConstellationSource, IFrameSpanSource
 
     /// <summary>Bench seam: this modem's demodulator. Not part of the deployment surface.</summary>
     internal QpskDemodulator Demodulator => _demodulator;
+
+    /// <inheritdoc />
+    public int FrameSpanMarginSamples => _spanMargin;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

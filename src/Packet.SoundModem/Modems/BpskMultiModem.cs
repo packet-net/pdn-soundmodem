@@ -45,6 +45,10 @@ public sealed class BpskMultiModem : IModem, IConstellationSource, IFrameSpanSou
     /// </summary>
     private readonly FrameSpan _span = new();
 
+    /// <summary>What a reading leaves off the end of one of this modem's spans; see
+    /// <see cref="FrameSpan.MarginSamplesFor"/>.</summary>
+    private readonly int _spanMargin;
+
     private long _samplesProcessed;
     private bool _carrierWasPresent;
 
@@ -85,6 +89,7 @@ public sealed class BpskMultiModem : IModem, IConstellationSource, IFrameSpanSou
         bool acceptPlainIl2p = false, PskDetector? secondDetector = null)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
+        _spanMargin = FrameSpan.MarginSamplesFor(sampleRate, baud);
         ArgumentOutOfRangeException.ThrowIfNegative(offsetPairs);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
         _frameReceived = frameReceived;
@@ -274,6 +279,9 @@ public sealed class BpskMultiModem : IModem, IConstellationSource, IFrameSpanSou
             return total;
         }
     }
+
+    /// <inheritdoc />
+    public int FrameSpanMarginSamples => _spanMargin;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

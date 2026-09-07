@@ -102,6 +102,10 @@ public sealed class FskModem : IModem, IFrameSpanSource
     /// </summary>
     private readonly FrameSpan _span = new(TimingDiversity.PhaseCount);
 
+    /// <summary>What a reading leaves off the end of one of this modem's spans; see
+    /// <see cref="FrameSpan.MarginSamplesFor"/>.</summary>
+    private readonly int _spanMargin;
+
     /// <summary>
     /// How much audio this modem has been given, as the zero-based index of the input sample it
     /// is working on. Counted here rather than in a demodulator because this modem is its own:
@@ -141,6 +145,7 @@ public sealed class FskModem : IModem, IFrameSpanSource
         bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
+        _spanMargin = FrameSpan.MarginSamplesFor(sampleRate, baud);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(baud, 0);
         if (sampleRate % baud != 0)
         {
@@ -328,6 +333,9 @@ public sealed class FskModem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _packetDcd.Asserted || _energyBusy.Busy;
+
+    /// <inheritdoc />
+    public int FrameSpanMarginSamples => _spanMargin;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

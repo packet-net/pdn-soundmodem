@@ -197,7 +197,7 @@ public sealed class SoundModemChannel
             (double? peakDbFs, bool? clipped) =
                 modem is IFrameSpanSource source
                 && source.TryTakeFrameSpan(out long spanFrom, out long spanTo)
-                    ? _frameLevel.Measure(spanFrom, spanTo)
+                    ? _frameLevel.Measure(spanFrom, spanTo, source.FrameSpanMarginSamples)
                     : (null, null);
             FrameReceivedWithQuality?.Invoke(
                 subChannel,

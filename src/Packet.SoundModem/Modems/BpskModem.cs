@@ -23,6 +23,10 @@ public sealed class BpskModem : IModem, IConstellationSource, IFrameSpanSource
     /// </summary>
     private readonly FrameSpan _span = new(TimingDiversity.PhaseCount);
 
+    /// <summary>What a reading leaves off the end of one of this modem's spans; see
+    /// <see cref="FrameSpan.MarginSamplesFor"/>.</summary>
+    private readonly int _spanMargin;
+
     private readonly FrameDeduper _deduper;
     private readonly int _baud;
     private long _symbolsSeen;
@@ -50,6 +54,7 @@ public sealed class BpskModem : IModem, IConstellationSource, IFrameSpanSource
         bool acceptPlainIl2p = false)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
+        _spanMargin = FrameSpan.MarginSamplesFor(sampleRate, baud);
         _crc = crc;
         _baud = baud;
         // Declared ahead of the deframer because its callback needs it - the carrier-offset
@@ -229,6 +234,9 @@ public sealed class BpskModem : IModem, IConstellationSource, IFrameSpanSource
     /// its symbol instants (rx-roadmap workstream 4). Not part of the deployment surface.
     /// </summary>
     internal BpskDemodulator Demodulator => _demodulator;
+
+    /// <inheritdoc />
+    public int FrameSpanMarginSamples => _spanMargin;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>

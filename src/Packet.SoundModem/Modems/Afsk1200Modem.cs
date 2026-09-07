@@ -51,6 +51,10 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
     /// </summary>
     private readonly FrameSpan _span = new(2 * AfskDemodulator.TimingPhaseCount);
 
+    /// <summary>What a reading leaves off the end of one of this modem's spans; see
+    /// <see cref="FrameSpan.MarginSamplesFor"/>.</summary>
+    private readonly int _spanMargin;
+
     private long _bitsSeen;
     private bool _carrierWasPresent;
 
@@ -69,6 +73,7 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
         int fx25CheckBytes = 16)
     {
         ArgumentNullException.ThrowIfNull(frameReceived);
+        _spanMargin = FrameSpan.MarginSamplesFor(sampleRate, 1200);
         _fx25 = fx25;
         _fx25CheckBytes = fx25CheckBytes;
         _dedupeChunk = Math.Max(1, sampleRate / 10);
@@ -192,6 +197,9 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
 
     /// <inheritdoc />
     public bool ChannelBusy => _demodulator.ChannelBusy;
+
+    /// <inheritdoc />
+    public int FrameSpanMarginSamples => _spanMargin;
 
     /// <inheritdoc />
     public bool TryTakeFrameSpan(out long fromSample, out long toSample) =>
