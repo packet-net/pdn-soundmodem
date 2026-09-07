@@ -20,7 +20,7 @@ the loud end and one family at the quiet end, for reasons that are visible in th
 |---|---|---|---|---|
 | sign or angle slicer | AFSK 300, BPSK 300/1200, QPSK 600/2400/3600, FSK 4800/9600, every framing of each | a bit is a sign or a quadrant; clipping does not move either | **0 dBFS** | **-72 dBFS** |
 | four-level slicer | `c4fsk9600`, `c4fsk19200` | four amplitudes against fixed thresholds at 0 and +-2/3 of a tracked envelope | **-6 dBFS** | **-72 dBFS** |
-| power-normalised discriminator | the 1200 baud AFSK family, all six | divides by its own in-band power with an absolute floor of 1e-5 under it | **0 dBFS** | **-33 dBFS** |
+| power-normalised discriminator | the 1200 baud AFSK family, all six | divides by its own in-band power with an absolute floor of 1e-5 under it | **0 dBFS** | **-34 dBFS** |
 
 Both quiet numbers are stated in the units the badge reads, which is not the unit the sweep sets;
 section 6 does that conversion and it is worth 1 to 8 dB depending on the mode.
@@ -224,28 +224,31 @@ threshold: the reading is a peak over the frame's span of signal and channel noi
 sits above the level set by an amount that grows as the link approaches its own decode knee. These
 cells were read at each mode's knee plus 6 dB.
 
-| mode | ref knee | -30 | -42 | -48 | -54 | -60 | -72 | -84 | -90 |
-|---|---|---|---|---|---|---|---|---|---|
-| `afsk1200` | +5 | 0 (-24.8) | 0 (-36.8) | **+2 (-43.7)** | +3 (-50.1) | +4 (-56.5) | +4 (-68.4) | +4 (-80.8) | +6 (-89.3) |
-| `afsk1200-fx25` | +3 | 0 (-24.0) | +1 (-36.5) | +1 (-42.5) | +2 (-49.0) | +3 (-55.4) | +3 (-67.4) | +3 (-79.8) | +5 (-84.8) |
-| `afsk1200-fx25rx` | +5 | 0 (-24.8) | 0 (-36.8) | **+2 (-43.7)** | +3 (-50.1) | +4 (-56.5) | +4 (-68.4) | +4 (-80.8) | +6 (-89.3) |
-| `afsk1200-multi` | +5 | 0 (-24.8) | 0 (-36.8) | +1 (-43.3) | +2 (-49.7) | +2 (-55.7) | +2 (-67.8) | +2 (-80.2) | +5 (-87.8) |
-| `afsk1200-il2p` | +4 | 0 (-24.4) | 0 (-36.4) | 0 (-42.4) | +1 (-48.9) | +1 (-54.9) | +1 (-66.9) | +1 (-78.7) | +2 (-84.3) |
-| `afsk1200-il2p-nocrc` | +4 | 0 (-24.5) | 0 (-36.5) | 0 (-42.6) | +1 (-49.0) | +1 (-55.0) | +1 (-67.0) | +1 (-79.1) | +2 (-84.3) |
-| `afsk300` | 0 | 0 (-23.1) | 0 (-35.1) | 0 (-41.1) | 0 (-47.1) | 0 (-53.1) | 0 (-65.0) | +1 (-78.3) | +2 (-84.3) |
-| `afsk300-il2p` | -1 | 0 (-22.1) | -1 (-33.4) | 0 (-40.1) | 0 (-46.1) | 0 (-52.1) | 0 (-64.1) | 0 (-75.9) | +1 (-83.4) |
-| `afsk300-il2pc` | -1 | 0 (-21.8) | -1 (-33.2) | 0 (-39.8) | 0 (-45.8) | 0 (-51.8) | 0 (-63.8) | 0 (-75.9) | +1 (-82.5) |
-| `bpsk300` | -5 | 0 (-21.7) | 0 (-33.7) | 0 (-39.7) | 0 (-45.7) | 0 (-51.7) | 0 (-63.7) | 0 (-75.9) | 0 (-80.8) |
-| `bpsk300-nocrc` | -5 | 0 (-22.0) | 0 (-34.0) | 0 (-40.0) | 0 (-46.0) | 0 (-52.0) | 0 (-64.0) | 0 (-76.1) | 0 (-81.2) |
-| `bpsk1200` | +1 | 0 (-26.0) | 0 (-38.0) | 0 (-44.0) | 0 (-50.1) | 0 (-56.1) | 0 (-68.0) | 0 (-80.4) | +1 (-86.3) |
-| `qpsk600` | -1 | 0 (-24.0) | 0 (-36.0) | 0 (-42.0) | 0 (-48.0) | 0 (-54.0) | 0 (-66.0) | 0 (-78.1) | 0 (-84.3) |
-| `qpsk2400` | +5 | 0 (-27.3) | 0 (-39.3) | 0 (-45.3) | 0 (-51.3) | 0 (-57.4) | 0 (-69.4) | 0 (-80.8) | +2 (-90.3) |
-| `qpsk3600` | +8 | 0 (-28.6) | 0 (-40.6) | 0 (-46.6) | 0 (-52.6) | 0 (-58.6) | 0 (-70.7) | 0 (-83.4) | +3 (-90.3) |
-| `fsk9600` | +13 | 0 (-27.6) | 0 (-39.6) | 0 (-45.6) | 0 (-51.6) | 0 (-57.6) | 0 (-69.7) | 0 (-80.8) | +2 (-90.3) |
-| `fsk9600-il2p` | +9 | 0 (-26.8) | 0 (-38.7) | 0 (-44.8) | 0 (-50.7) | 0 (-56.7) | 0 (-68.7) | 0 (-80.8) | +1 (-89.3) |
-| `fsk4800-il2p` | +6 | 0 (-24.2) | 0 (-36.2) | 0 (-42.2) | 0 (-48.2) | 0 (-54.2) | 0 (-66.2) | 0 (-78.0) | +2 (-84.3) |
-| `c4fsk9600` | +19 | 0 (-28.7) | 0 (-40.8) | 0 (-46.7) | -1 (-52.5) | 0 (-58.8) | -1 (-70.4) | **+1 (-84.0)** | **>45** |
-| `c4fsk19200` | +20 | 0 (-28.9) | 0 (-40.9) | 0 (-46.9) | 0 (-52.9) | 0 (-58.9) | 0 (-71.0) | **+4 (-84.3)** | **>45** |
+The sweep's quiet ladder is -24 down to -90 in 6 dB steps; the columns below drop -24, -36 and -66
+for width and keep every level either threshold is read off.
+
+| mode | ref knee | -30 | -42 | -48 | -54 | -60 | -72 | -78 | -84 | -90 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `afsk1200` | +5 | 0 (-24.8) | 0 (-36.8) | **+2 (-43.7)** | +3 (-50.1) | +4 (-56.5) | +4 (-68.4) | +4 (-74.6) | +4 (-80.8) | +6 (-89.3) |
+| `afsk1200-fx25` | +3 | 0 (-24.0) | +1 (-36.5) | +1 (-42.5) | +2 (-49.0) | +3 (-55.4) | +3 (-67.4) | +3 (-73.5) | +3 (-79.8) | +5 (-84.8) |
+| `afsk1200-fx25rx` | +5 | 0 (-24.8) | 0 (-36.8) | **+2 (-43.7)** | +3 (-50.1) | +4 (-56.5) | +4 (-68.4) | +4 (-74.6) | +4 (-80.8) | +6 (-89.3) |
+| `afsk1200-multi` | +5 | 0 (-24.8) | 0 (-36.8) | +1 (-43.3) | +2 (-49.7) | +2 (-55.7) | +2 (-67.8) | +3 (-74.2) | +2 (-80.2) | +5 (-87.8) |
+| `afsk1200-il2p` | +4 | 0 (-24.4) | 0 (-36.4) | 0 (-42.4) | +1 (-48.9) | +1 (-54.9) | +1 (-66.9) | +1 (-72.9) | +1 (-78.7) | +2 (-84.3) |
+| `afsk1200-il2p-nocrc` | +4 | 0 (-24.5) | 0 (-36.5) | 0 (-42.6) | +1 (-49.0) | +1 (-55.0) | +1 (-67.0) | +1 (-73.0) | +1 (-79.1) | +2 (-84.3) |
+| `afsk300` | 0 | 0 (-23.1) | 0 (-35.1) | 0 (-41.1) | 0 (-47.1) | 0 (-53.1) | 0 (-65.0) | 0 (-71.2) | +1 (-78.3) | +2 (-84.3) |
+| `afsk300-il2p` | -1 | 0 (-22.1) | -1 (-33.4) | 0 (-40.1) | 0 (-46.1) | 0 (-52.1) | 0 (-64.1) | 0 (-70.1) | 0 (-75.9) | +1 (-83.4) |
+| `afsk300-il2pc` | -1 | 0 (-21.8) | -1 (-33.2) | 0 (-39.8) | 0 (-45.8) | 0 (-51.8) | 0 (-63.8) | +1 (-70.5) | 0 (-75.9) | +1 (-82.5) |
+| `bpsk300` | -5 | 0 (-21.7) | 0 (-33.7) | 0 (-39.7) | 0 (-45.7) | 0 (-51.7) | 0 (-63.7) | 0 (-69.7) | 0 (-75.9) | 0 (-80.8) |
+| `bpsk300-nocrc` | -5 | 0 (-22.0) | 0 (-34.0) | 0 (-40.0) | 0 (-46.0) | 0 (-52.0) | 0 (-64.0) | 0 (-70.0) | 0 (-76.1) | 0 (-81.2) |
+| `bpsk1200` | +1 | 0 (-26.0) | 0 (-38.0) | 0 (-44.0) | 0 (-50.1) | 0 (-56.1) | 0 (-68.0) | 0 (-74.1) | 0 (-80.4) | +1 (-86.3) |
+| `qpsk600` | -1 | 0 (-24.0) | 0 (-36.0) | 0 (-42.0) | 0 (-48.0) | 0 (-54.0) | 0 (-66.0) | 0 (-72.0) | 0 (-78.1) | 0 (-84.3) |
+| `qpsk2400` | +5 | 0 (-27.3) | 0 (-39.3) | 0 (-45.3) | 0 (-51.3) | 0 (-57.4) | 0 (-69.4) | 0 (-75.2) | 0 (-80.8) | +2 (-90.3) |
+| `qpsk3600` | +8 | 0 (-28.6) | 0 (-40.6) | 0 (-46.6) | 0 (-52.6) | 0 (-58.6) | 0 (-70.7) | 0 (-76.2) | 0 (-83.4) | +3 (-90.3) |
+| `fsk9600` | +13 | 0 (-27.6) | 0 (-39.6) | 0 (-45.6) | 0 (-51.6) | 0 (-57.6) | 0 (-69.7) | 0 (-75.6) | 0 (-80.8) | +2 (-90.3) |
+| `fsk9600-il2p` | +9 | 0 (-26.8) | 0 (-38.7) | 0 (-44.8) | 0 (-50.7) | 0 (-56.7) | 0 (-68.7) | 0 (-74.7) | 0 (-80.8) | +1 (-89.3) |
+| `fsk4800-il2p` | +6 | 0 (-24.2) | 0 (-36.2) | 0 (-42.2) | 0 (-48.2) | 0 (-54.2) | 0 (-66.2) | +1 (-72.6) | 0 (-78.0) | +2 (-84.3) |
+| `c4fsk9600` | +19 | 0 (-28.7) | 0 (-40.8) | 0 (-46.7) | -1 (-52.5) | 0 (-58.8) | -1 (-70.4) | 0 (-76.5) | **+1 (-84.0)** | **>45** |
+| `c4fsk19200` | +20 | 0 (-28.9) | 0 (-40.9) | 0 (-46.9) | 0 (-52.9) | 0 (-58.9) | 0 (-71.0) | **+1 (-77.0)** | **+4 (-84.3)** | **>45** |
 
 **The fourteen modes outside the 1200 baud AFSK family lose nothing measurable at any level from
 -72 dBFS up to full scale**, and eleven of them nothing at -84 either. What stops the rest there is
@@ -346,18 +349,26 @@ the mode goes from working to silent inside 3 dB.
 
 ### Quiet
 
-Read off the bracketed column of section 5, so the cliff and the threshold are both in the units
-the badge works in.
+The cliff is **the level at which the binding mode has lost one decibel of link margin**, read
+straight off section 5 where a cell lands on +1 and interpolated between two cells where they
+straddle it. The threshold is what the badge read for those frames, plus the spread, so that both
+ends of the sum are in the units the badge works in.
 
-| group | binding mode | first dB lost, set | which those frames read | + spread | threshold |
-|---|---|---|---|---|---|
-| sign or angle slicer, and both C4FSK modes | `c4fsk19200` | -78 dBFS | -77.0 | -71.0 | **-72 dBFS** |
-| 1200 baud AFSK family | `afsk1200` | about -45 dBFS | about -40.3 | -34.3 | **-33 dBFS** |
+| group | binding mode | one dB lost at, set | how that was read | which those frames read | + spread | threshold |
+|---|---|---|---|---|---|---|
+| sign or angle slicer, and both C4FSK modes | `c4fsk19200` | -78 dBFS | the -78 cell is +1 | -77.0 | -71.0 | **-72 dBFS** |
+| 1200 baud AFSK family | `afsk1200` | about -45 dBFS | 0 at -42, +2 at -48 | about -40.3 | -34.3 | **-34 dBFS** |
 
-Rounded onto the 3 dB grid the sweep steps on, nearest either way; the rounding is inside the
-sweep's own plus or minus 1 dB. In set-signal units the same two lines would have been -72 and -39,
-so doing the arithmetic in the right units moved the AFSK number 6 dB and the other one not at all -
-the offset is 5 dB on a mode whose knee is +5 and 1 dB on one whose knee is +20.
+In set-signal units the same two lines would have been -72 and -39, so doing the arithmetic in the
+right units moved the AFSK number 5 dB and the other one not at all: the offset is 5 dB on a mode
+whose knee is +5 and 1 dB on one whose knee is +20.
+
+**Neither threshold is rounded onto a grid.** The sweep's quiet ladder steps 6 dB throughout, so
+the levels either side of -34.3 are -30 and -36, 4.3 and 2.3 dB away; snapping to one of those
+would move the number by more than the sweep's own uncertainty and invent precision it does not
+have, so it is published as the whole decibel the arithmetic gives. -71.0 is a different case: it
+is one decibel off -72, a level the sweep did measure, and it is taken there because a decibel is
+inside the uncertainty and because it is a threshold no real card can reach anyway (below).
 
 `c4fsk19200` binds the first row because it is the first mode in that group to lose anything as the
 level falls; the eleven sign-and-angle modes below it are still flat at -84 and `bpsk300` and
@@ -365,14 +376,14 @@ level falls; the eleven sign-and-angle modes below it are still flat at -84 and 
 second row, including the IL2P framings whose own cliff is 6 dB lower: they share the demodulator
 and the constant, and the difference is Reed-Solomon covering the first errors rather than the
 front end behaving differently. If `afsk1200-fx25`'s single +1 at -42 dBFS is a cliff rather than
-measurement noise, that row would be -30 instead of -33.
+measurement noise, that row would be about -31 instead of -34.
 
 **Three things about the quiet end that the operator should read rather than infer.**
 
 **The offset is not fixed, so the badge is late by a few dB on a marginal link.** The bracketed
 column was read at each mode's knee plus 6 dB. Closer in, the noise is a bigger part of the reading
 and the offset grows: an independent measurement of `afsk1200` at knee plus 2 gave +7.2 dB rather
-than +5.2, which would put that row at -30. -33 is the number at knee plus 6 and it is 3 dB late at
+than +5.2, which would put that row at -32. -34 is the number at knee plus 6 and it is 2 dB late at
 knee plus 2. A badge cannot know which it is looking at, because the frame's own peak is all it has.
 
 **-72 dBFS is below any real card's floor, so on the fourteen modes that take it the quiet badge

@@ -75,9 +75,11 @@ public readonly record struct FrameLevelLimits(double LoudPeakDbFs, double Quiet
     /// would badge frames that measurably cost their operator nothing. The reading is clamped at
     /// 0 dBFS (<see cref="InputLevelMeter.DbFs"/>), so this fires when the frame's own audio
     /// reached the top of the scale.</para>
-    /// <para><b>Quiet: -72 dBFS.</b> The sweep's shallowest measured level at which every mode
-    /// taking this pair is still flat is -78 dBFS set, which the badge reads as about -77, and
-    /// <see cref="StationSpreadDb"/> above that is -71, rounded onto the sweep's own 3 dB grid.
+    /// <para><b>Quiet: -72 dBFS.</b> The shallowest level at which any mode taking this pair has
+    /// lost a decibel is c4fsk19200 at -78 dBFS set, which the badge reads as -77.0, and
+    /// <see cref="StationSpreadDb"/> above that is -71.0. Taken out to -72, the nearest level the
+    /// sweep's 6 dB quiet ladder actually measured, which is a decibel of a threshold no real
+    /// card can reach.
     /// What stops them there is a 16-bit converter running out of codes to describe the signal
     /// with rather than any demodulator objecting. <b>It is a quantisation-only floor and it is
     /// below any real card's</b>: the reading includes the input noise, so it cannot sit under
@@ -96,8 +98,9 @@ public readonly record struct FrameLevelLimits(double LoudPeakDbFs, double Quiet
     /// whole of <see cref="StationSpreadDb"/> as headroom, and the meter's bar - which cannot
     /// know which mode the loudest thing on the input belonged to - turns red at the strictest
     /// mode's line. Quiet is <see cref="Default"/>'s, and c4fsk19200 is in fact the mode that
-    /// sets it: it is the first of the group to lose anything as the level falls, at -84 dBFS
-    /// set, and its last flat cell at -78 is what the -72 was derived from.
+    /// sets it: it is the first of the group to lose anything as the level falls, a decibel down
+    /// at -78 dBFS set and 4 dB down at -84, and it is that -78 cell - which those frames read as
+    /// -77.0 - that the -72 was derived from.
     /// </remarks>
     public static FrameLevelLimits ClipSensitive { get; } =
         new(InputLevelMeter.HotPeakDbFs, Default.QuietPeakDbFs);
@@ -106,16 +109,19 @@ public readonly record struct FrameLevelLimits(double LoudPeakDbFs, double Quiet
     /// The 1200 baud AFSK family, in every framing and both banks.
     /// </summary>
     /// <remarks>
-    /// Quiet at -33 dBFS. The sweep has afsk1200 flat at -42 dBFS set and 2 dB down by -48, so
-    /// the decibel is lost at about -45 set - which the badge reads as about -40, because at this
-    /// family's knee the channel noise adds some 5 dB to the frame's own peak. Six dB above that
-    /// reading is -34, on the 3 dB grid -33. The mechanism is in the demodulator and is not in
+    /// Quiet at -34 dBFS. The sweep has afsk1200 flat at -42 dBFS set and 2 dB down by -48, so
+    /// the decibel is lost at about -45 set - which the badge reads as about -40.3, because at
+    /// this family's knee the channel noise adds some 5 dB to the frame's own peak. Six dB above
+    /// that reading is -34.3, published as the whole decibel it rounds to rather than snapped to
+    /// the sweep's 6 dB quiet ladder: the measured levels either side of it are -30 and -36, and
+    /// moving 2.3 dB to reach one of them would be inventing precision the sweep does not have.
+    /// The mechanism is in the demodulator and is not in
     /// dispute: the discriminator divides by its own in-band power plus a floor of 1e-5, whose
     /// own comment puts half gain at about -44 dBFS for this modulator's amplitudes. Loud is
     /// <see cref="Default"/>'s, because the discriminator's output feeds a sign test: clipping
     /// costs this family 1 dB at 6 dB of overdrive and 3 dB at 24.
     /// </remarks>
-    public static FrameLevelLimits QuietSensitive { get; } = new(Default.LoudPeakDbFs, -33);
+    public static FrameLevelLimits QuietSensitive { get; } = new(Default.LoudPeakDbFs, -34);
 
     /// <summary>
     /// What one frame's level is worth saying about it: <c>loud</c>, <c>quiet</c>, or nothing.

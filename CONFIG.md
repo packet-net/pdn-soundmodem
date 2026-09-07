@@ -1252,7 +1252,7 @@ The catalogue splits into three, and the split is a property of the slicer:
 |---|---|---|---|
 | sign or angle slicer | AFSK 300, BPSK 300/1200, QPSK 600/2400/3600, FSK 4800/9600, every framing of each | 0 dBFS | -72 dBFS |
 | four-level slicer | `c4fsk9600`, `c4fsk19200` | -6 dBFS | -72 dBFS |
-| power-normalised discriminator | the 1200 baud AFSK family, all six | 0 dBFS | -33 dBFS |
+| power-normalised discriminator | the 1200 baud AFSK family, all six | 0 dBFS | -34 dBFS |
 
 A clipped card badges `TOO LOUD` on any mode whatever the peak was: a converter that ran out of
 codes is a fact rather than a prediction, and it costs at least a decibel on every mode measured.

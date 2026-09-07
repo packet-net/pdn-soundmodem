@@ -130,7 +130,7 @@ public class ReceiveLevelCliffTests
         Copies("afsk1200", FrameLevelLimits.QuietSensitive.QuietPeakDbFs, snrDb)
             .Should().BeGreaterThanOrEqualTo(
                 Trials * 3 / 4,
-                "afsk1200 is flat to -42 dBFS set, and its badge at -33 is a reported peak, "
+                "afsk1200 is flat to -42 dBFS set, and its badge at -34 is a reported peak, "
                     + "which on this family's own links sits about 5 dB above the level set");
         Copies("afsk1200", peakDbFs: -72, snrDb - 4).Should().BeLessThanOrEqualTo(
             Trials / 4,
@@ -188,7 +188,7 @@ public class ReceiveLevelCliffTests
         // derived in rather than a constant somebody nudged.
         FrameLevelLimits.Default.Should().Be(new FrameLevelLimits(0, -72));
         FrameLevelLimits.ClipSensitive.Should().Be(new FrameLevelLimits(-6, -72));
-        FrameLevelLimits.QuietSensitive.Should().Be(new FrameLevelLimits(0, -33));
+        FrameLevelLimits.QuietSensitive.Should().Be(new FrameLevelLimits(0, -34));
         FrameLevelLimits.StationSpreadDb.Should().Be(6);
         InputLevelMeter.HotPeakDbFs.Should().Be(
             FrameLevelLimits.ClipSensitive.LoudPeakDbFs,
@@ -223,9 +223,9 @@ public class ReceiveLevelCliffTests
         sign.Tag(0, clipped: false).Should().Be("loud");
         sign.Tag(-73, clipped: false).Should().Be("quiet");
         sign.Tag(-71, clipped: false).Should().BeNull();
-        FrameLevelLimits.QuietSensitive.Tag(-34, clipped: false).Should().Be(
+        FrameLevelLimits.QuietSensitive.Tag(-35, clipped: false).Should().Be(
             "quiet", "which the same level on any other mode would not be");
-        sign.Tag(-34, clipped: false).Should().BeNull();
+        sign.Tag(-35, clipped: false).Should().BeNull();
     }
 
     /// <summary>How many of <see cref="Trials"/> frames copy at one level and one SNR.</summary>
