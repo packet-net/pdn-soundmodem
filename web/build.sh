@@ -23,8 +23,9 @@ cp -r "$bundle/_framework" package/_framework
 # Types come from the JSDoc on the shipped JavaScript, so there is no transpiled copy that
 # could drift from the code that was tested. Optional: only a publish actually needs them.
 if command -v npm > /dev/null; then
-  npm --prefix package install --silent --no-audit --no-fund
-  npm --prefix package run --silent types
+  # cd rather than --prefix, for the reason release.yml spells out: --prefix is not honoured
+  # uniformly across npm versions.
+  ( cd package && npm install --silent --no-audit --no-fund && npm run --silent types )
 else
   echo "npm not found: skipping type declarations (fine for a local run, not for publishing)"
 fi
