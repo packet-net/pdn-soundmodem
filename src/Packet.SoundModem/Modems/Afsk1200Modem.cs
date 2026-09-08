@@ -40,6 +40,15 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
     private readonly int _dedupeChunk;
     private readonly FrameDeduper? _fx25RouteDeduper;
     private long _samplesProcessed;
+
+    /// <summary>Repair support: the echo gate that drops repaired copies of bursts this
+    /// modem also decoded cleanly (see <see cref="RepairEchoGate"/>), the hold that keeps a
+    /// repaired frame waiting until any clean copy of its burst has been delivered, and the
+    /// final delivery chain the flush feeds (captured at construction).</summary>
+    private readonly RepairEchoGate _echoGate;
+    private readonly long _echoHoldSamples;
+    private readonly List<(byte[] Frame, int EditedBits, int Reading, long At, long Deadline)> _pendingRepairs = [];
+    private Action<int, byte[], FrameQuality, long>? _deliver;
     /// <summary>
     /// Where the frame just delivered was in the receive audio, for the channel's per-frame
     /// level: marked at the opening flag (or FX.25 correlation tag) its deframer locked on and
@@ -78,18 +87,27 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
         _fx25 = fx25;
         _fx25CheckBytes = fx25CheckBytes;
         _dedupeChunk = Math.Max(1, sampleRate / 10);
+        _echoGate = new RepairEchoGate(sampleRate);
+        _echoHoldSamples = (long)(RepairEchoGate.WindowFraction * sampleRate);
 
         // Quality rides with whichever decode the deduper lets through: a clean FX.25
         // block also decodes as plain HDLC, and the consumer should see one frame with
         // the diagnostics of the path that delivered it.
         AfskDemodulator? demodulator = null;
-        Action<int, byte[], FrameQuality> deliver = (reading, frame, quality) =>
+        Action<int, byte[], FrameQuality, long> deliver = (reading, frame, quality, at) =>
         {
+            // A clean delivery is what a later repaired copy of the same burst is judged
+            // against; a repaired delivery (ChasedBits set) never gates another repair.
+            if (quality.ChasedBits is null)
+            {
+                _echoGate.RecordClean(frame, at);
+            }
+
             frameReceived(frame);
 
             // Before the event, so the channel's handler reads this frame's span, and against
             // the reading that actually delivered it.
-            _span.Complete(reading, demodulator!.InputSamplePosition);
+            _span.Complete(reading, at);
             FrameDecoded?.Invoke(frame, quality);
         };
         if (fx25 != Fx25Mode.None)
@@ -110,17 +128,17 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
             // new transmission however close behind it falls.
             var routeDeduper = new FrameDeduper(sampleRate * 2040L / 1200);
             _fx25RouteDeduper = routeDeduper;
-            Action<int, byte[], FrameQuality> inner = deliver;
-            deliver = (reading, frame, quality) =>
+            Action<int, byte[], FrameQuality, long> inner = deliver;
+            deliver = (reading, frame, quality, at) =>
             {
                 if (quality.CorrectedBytes is null)
                 {
                     routeDeduper.RecordDelivery(frame, _samplesProcessed);
-                    inner(reading, frame, quality);
+                    inner(reading, frame, quality, at);
                 }
                 else if (routeDeduper.ShouldEmit(frame, _samplesProcessed))
                 {
-                    inner(reading, frame, quality);
+                    inner(reading, frame, quality, at);
                 }
             };
         }
@@ -130,14 +148,16 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
         // is the one that gets delivered - no FEC on this mode, so "any phase whose FCS checks"
         // is the whole benefit, which is how Dire Wolf's multi-slicer decoders earn theirs.
         var phaseDeduper = new FrameDeduper(DedupeWindowBits);
-        Action<int, byte[], FrameQuality> phased = deliver;
-        deliver = (reading, frame, quality) =>
+        Action<int, byte[], FrameQuality, long> phased = deliver;
+        deliver = (reading, frame, quality, at) =>
         {
             if (phaseDeduper.ShouldEmit(frame, _bitsSeen))
             {
-                phased(reading, frame, quality);
+                phased(reading, frame, quality, at);
             }
         };
+
+        _deliver = deliver;
 
         int phases = AfskDemodulator.TimingPhaseCount;
         var deframers = new HdlcDeframer[phases];
@@ -148,13 +168,20 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
             nrzi[phase] = new NrziDecoder();
             int hdlcReading = phase;
             int fx25Reading = phases + phase;
-            deframers[phase] = new HdlcDeframer(frame =>
-                deliver(hdlcReading, frame, new FrameQuality(Mode, frame.Length, null, null)));
+            deframers[phase] = new HdlcDeframer(
+                frame => deliver(
+                    hdlcReading, frame, new FrameQuality(Mode, frame.Length, null, null),
+                    demodulator!.InputSamplePosition),
+                repair: HdlcRepairPolicy.Corpus);
+            deframers[phase].FrameRepaired =
+                (frame, editedBits) => OnRepaired(hdlcReading, frame, editedBits);
             deframers[phase].FrameOpened =
                 () => _span.Sync(hdlcReading, demodulator!.InputSamplePosition);
             fx25Deframers[phase] = fx25 != Fx25Mode.None
                 ? new Fx25Deframer((frame, correctedBytes) =>
-                    deliver(fx25Reading, frame, new FrameQuality(Mode, frame.Length, correctedBytes, null)))
+                    deliver(
+                        fx25Reading, frame, new FrameQuality(Mode, frame.Length, correctedBytes, null),
+                        demodulator!.InputSamplePosition))
                 : null;
             if (fx25Deframers[phase] is { } tagged)
             {
@@ -166,7 +193,20 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
             sampleRate,
             static _ => { },
             centerFrequency,
-            phaseBitSink: (level, phase) =>
+            // The demodulator's default filter lengths (256/128 at 12 kHz) stay right for a
+            // LONE decoder, and the bank's doubled lengths (512/256, Afsk1200MultiModem) are
+            // wrong here - measured across the WA8LMF corpus on a single flat branch: the
+            // longer I/Q low-pass (21 ms of memory against 0.83 ms bits) smears a flag
+            // preamble's two-bit mark blips into a marginal eye, which a lone decoder has
+            // nothing to cover - Track 3's hundred identical bursts fall 65 -> 3 and Track 2
+            // 547 -> 418 - while the bank's 21 branches each smear differently and the burst
+            // decodes on whichever branch fits. The shorter filter is also the weak-signal
+            // preference on the tracks that matter daily: Track 1 963 and Track 4 91 at
+            // 256/128 against 943/78 at 512/64, the other end of the single-decoder trade
+            // (a short 64-tap low-pass buys the strong-signal tracks back - Track 2 671,
+            // Track 3 92 - at exactly that weak-signal cost; the corpus tables live in
+            // docs/tnc-test-cd.md).
+            softPhaseBitSink: (level, soft, phase) =>
             {
                 if (phase == 0)
                 {
@@ -174,7 +214,7 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
                 }
 
                 int bit = nrzi[phase].Decode(level);
-                deframers[phase].PushBit(bit);
+                deframers[phase].PushBit(bit, soft);
                 fx25Deframers[phase]?.PushBit(bit);
             });
         _demodulator = demodulator;
@@ -223,6 +263,7 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
             var slice = samples.Slice(position, Math.Min(_dedupeChunk, samples.Length - position));
             _demodulator.Process(slice);
             _samplesProcessed += slice.Length;
+            FlushRepairs();
 
             // An acquisition boundary for the FX.25 route window: the carrier dropped and
             // came back, so whatever it remembers belongs to an earlier transmission and
@@ -240,6 +281,45 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
 
                 _carrierWasPresent = carrier;
             }
+        }
+    }
+
+    /// <summary>A repaired frame arrived: hold it against the clean copy of its burst that
+    /// may still be on its way (another phase's read of the same closing flag finishes bits
+    /// later), then let the flush decide.</summary>
+    private void OnRepaired(int reading, byte[] frame, int editedBits)
+    {
+        long at = _demodulator.InputSamplePosition;
+        if (_echoGate.IsEcho(frame, at))
+        {
+            return;
+        }
+
+        _pendingRepairs.Add((frame, editedBits, reading, at, at + _echoHoldSamples));
+    }
+
+    /// <summary>Delivers the repaired frames whose hold has expired and which no clean
+    /// delivery claimed in the meantime.</summary>
+    private void FlushRepairs()
+    {
+        for (int i = 0; i < _pendingRepairs.Count; i++)
+        {
+            (byte[] frame, int editedBits, int reading, long at, long deadline) = _pendingRepairs[i];
+            if (_samplesProcessed < deadline)
+            {
+                continue;
+            }
+
+            _pendingRepairs.RemoveAt(i);
+            i--;
+            if (_echoGate.IsEcho(frame, at))
+            {
+                continue;
+            }
+
+            _deliver!(
+                reading, frame,
+                new FrameQuality(Mode, frame.Length, null, null, ChasedBits: editedBits), at);
         }
     }
 
@@ -268,5 +348,10 @@ public sealed class Afsk1200Modem : IModem, IFrameSpanSource
     }
 
     /// <inheritdoc />
-    public void ResetCarrierState() => _demodulator.ResetCarrierState();
+    public void ResetCarrierState()
+    {
+        _pendingRepairs.Clear();
+        _echoGate.Clear();
+        _demodulator.ResetCarrierState();
+    }
 }
